@@ -43,7 +43,7 @@ import {
 import {AgentTeam, createAgent, createOrganizationChart} from "@ujima/framework";
 
 const pmRole = {
-  name: "pm",
+  name: "product",
   title: "Product Manager",
   instructions: "Keep the team aligned.",
   workspaceScopes: ["."],
@@ -53,7 +53,7 @@ const pmRole = {
 };
 
 const frontendRole = {
-  name: "frontend-engineer",
+  name: "frontend",
   title: "Frontend Engineer",
   instructions: "Build and polish the UI.",
   provider: "openai",
@@ -65,7 +65,7 @@ const frontendRole = {
 };
 
 const backendRole = {
-  name: "backend-engineer",
+  name: "backend",
   title: "Backend Engineer",
   instructions: "Keep the backend simple and secure.",
   provider: "openai",
@@ -77,17 +77,17 @@ const backendRole = {
 };
 
 const agents = [
-  createAgent("Sam Patel", "pm", "direct"),
-  createAgent("Alice Nguyen", "frontend-engineer", "thoughtful"),
-  createAgent("Bob Chen", "frontend-engineer", "skeptical"),
-  createAgent("Priya Shah", "backend-engineer", "precise"),
+  createAgent("Taylor Morgan", "product", "direct"),
+  createAgent("Sam Patel", "frontend", "thoughtful"),
+  createAgent("Alice Nguyen", "frontend", "skeptical"),
+  createAgent("Priya Shah", "backend", "precise"),
 ];
 
 const organizationChart = createOrganizationChart(
   {
-    "Alice Nguyen": "Sam Patel",
-    "Bob Chen": "Sam Patel",
-    "Priya Shah": "Sam Patel",
+    "Sam Patel": "Taylor Morgan",
+    "Alice Nguyen": "Taylor Morgan",
+    "Priya Shah": "Taylor Morgan",
   },
   agents,
 );
@@ -97,7 +97,7 @@ const team = AgentTeam({
   workspace: {
     root: "/Users/me/acme",
     roleScopes: {
-      "frontend-engineer": ["apps/web"],
+      frontend: ["apps/web"],
     },
   },
   roles: [pmRole, frontendRole, backendRole],
@@ -151,18 +151,18 @@ const team = AgentTeam({
   workspace: {
     root: "/Users/me/acme",
     roleScopes: {
-      "frontend-engineer": ["apps/web"],
+      frontend: ["apps/web"],
     },
   },
   organizationChart: createOrganizationChart(
     {
       "Sam Patel": "Taylor Morgan",
-      "Alice Nguyen": "Sam Patel",
+      "Alice Nguyen": "Taylor Morgan",
     },
     [
-      createAgent("Taylor Morgan", "pm", "direct"),
-      createAgent("Sam Patel", "frontend-engineer", "thoughtful"),
-      createAgent("Alice Nguyen", "frontend-engineer", "skeptical"),
+      createAgent("Taylor Morgan", "product", "direct"),
+      createAgent("Sam Patel", "frontend", "thoughtful"),
+      createAgent("Alice Nguyen", "frontend", "skeptical"),
     ],
   ),
   providers: {
@@ -173,7 +173,7 @@ const team = AgentTeam({
   },
   roles: [
     {
-      name: "pm",
+      name: "product",
       title: "Product Manager",
       instructions: "Keep the team aligned and moving.",
       workspaceScopes: ["."],
@@ -182,7 +182,7 @@ const team = AgentTeam({
       channels: ["general"],
     },
     {
-      name: "frontend-engineer",
+      name: "frontend",
       title: "Frontend Engineer",
       instructions: "Build and polish the UI.",
       provider: "openai",
