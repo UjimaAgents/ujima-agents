@@ -63,7 +63,7 @@ Use the schemas to validate app state and incoming payloads.
 - `RoleScopesSchema`
 - `WorkspaceConfigSchema`
 - `OrganizationSchema`
-- `OrganizationChartSchema`
+- `OrganizationChartSchema` - reporting lines between member or agent IDs
 - `MemberSchema`
 - `ChannelSchema`
 - `ConversationThreadSchema`
@@ -155,6 +155,8 @@ assertWorkspaceBoundary(root, target);
 `@ujima/shared` treats the organization workspace root as a hard boundary.
 
 If a path resolves outside the root, it should be rejected before any file or shell action runs.
+
+Organization charts are also identity-based: they connect named members or agents, not role labels.
 
 ## 🧪 Testing
 

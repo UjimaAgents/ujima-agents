@@ -2,6 +2,8 @@
 
 Local backend for Ujima.
 
+Roles describe what an agent can do. Named agents are the concrete people in the org, and the org chart connects those names.
+
 This service owns:
 - team loading and validation
 - organization onboarding and settings

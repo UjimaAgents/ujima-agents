@@ -54,6 +54,8 @@ Includes:
 - `AgentTeam(...)`
 - starter team config generation
 - role presets
+- personality presets
+- named agents
 - provider/tool helpers
 - shared agent prompt composition
 - workspace and loader utilities

@@ -9,6 +9,7 @@ The extension will provide:
 - approvals
 - run visibility
 - workspace-aware actions inside the opened project
+- agent and org identity visibility tied to the local backend
 
 ## Status
 

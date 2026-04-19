@@ -9,7 +9,7 @@ The web app will provide:
 - agent-to-agent messaging
 - approvals
 - run streams
-- settings for providers, roles, workspace scope, and organization hierarchy
+- settings for providers, roles, agents, workspace scope, personality presets, and organization hierarchy
 
 ## Status
 

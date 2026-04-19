@@ -6,7 +6,7 @@ The CLI will:
 - create or load an organization
 - prompt for the workspace root
 - configure provider keys
-- generate starter team config
+- generate starter team config with roles, named agents, and personality presets
 - start the local API and web UI
 - help attach the VS Code extension to the same backend
 

@@ -127,7 +127,7 @@ const team = AgentTeam({
 ### 👥 Team API
 
 - **`AgentTeam(config)`**: The primary entry point. Validates, normalizes, and packages your team definition into a handle for the API.
-- **`createStarterAgentTeamConfig(options?)`**: Generates a high-quality boilerplate configuration for a new organization, including all role presets.
+- **`createStarterAgentTeamConfig(options?)`**: Generates a high-quality boilerplate configuration for a new organization, including starter roles, agents, and personality presets.
 - **`createOrganizationChart(reportsTo, agents)`**: Validates reporting lines against the defined agents and normalizes them into the framework chart shape.
 - **`loadAgentTeam(config)`**: A lightweight alias to `AgentTeam(config)` for semantic clarity in loader pipelines.
 - **`loadAgentTeamFromFile(filePath)`**: Dynamically loads and resolves a team configuration from `.json`, `.js`, or `.ts` files and returns a validated handle.
@@ -144,30 +144,59 @@ const team = AgentTeam({
 Example:
 
 ```ts
-import {AgentTeam} from "@ujima/framework";
+import {AgentTeam, createAgent, createOrganizationChart} from "@ujima/framework";
 
 const team = AgentTeam({
   name: "Acme Team",
   workspace: {
     root: "/Users/me/acme",
-    roleScopes: {},
+    roleScopes: {
+      "frontend-engineer": ["apps/web"],
+    },
   },
-  providers: {},
+  organizationChart: createOrganizationChart(
+    {
+      "Sam Patel": "Taylor Morgan",
+      "Alice Nguyen": "Sam Patel",
+    },
+    [
+      createAgent("Taylor Morgan", "pm", "direct"),
+      createAgent("Sam Patel", "frontend-engineer", "thoughtful"),
+      createAgent("Alice Nguyen", "frontend-engineer", "skeptical"),
+    ],
+  ),
+  providers: {
+    openai: {
+      defaultModel: "gpt-5.4",
+      models: ["gpt-5.4"],
+    },
+  },
   roles: [
     {
       name: "pm",
       title: "Product Manager",
-      instructions: "Keep the team aligned.",
+      instructions: "Keep the team aligned and moving.",
       workspaceScopes: ["."],
-      tools: ["filesystem"],
-      skills: ["product-marketing-context", "analytics-tracking"],
+      tools: ["filesystem", "message"],
+      skills: ["product-marketing-context"],
+      channels: ["general"],
+    },
+    {
+      name: "frontend-engineer",
+      title: "Frontend Engineer",
+      instructions: "Build and polish the UI.",
+      provider: "openai",
+      model: "gpt-5.4",
+      workspaceScopes: ["apps/web"],
+      tools: ["filesystem", "shell", "message"],
+      skills: ["react-best-practices"],
       channels: ["general"],
     },
   ],
 });
 
 console.log(team.getRole("pm"));
-console.log(team.getAgent("frontend-alice"));
+console.log(team.getAgent("Sam Patel"));
 ```
 
 ### 🎭 Role Helpers
