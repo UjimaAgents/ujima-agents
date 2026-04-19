@@ -10,7 +10,7 @@ The project is structured as a Bun monorepo with:
 - a VS Code extension
 - a CLI for bootstrapping and running the local stack
 
-## Current State
+## ✨ Current State
 
 The repo is in active scaffold mode. The strongest pieces today are:
 - `packages/shared`: shared schemas, socket event contracts, and workspace boundary helpers
@@ -18,28 +18,18 @@ The repo is in active scaffold mode. The strongest pieces today are:
 
 The app layers are scaffolded and will be wired to these packages next.
 
-## GitHub Discoverability
-
-GitHub topics are configured in the repository settings, not in this README.
-
-Useful topics for this project:
-
-`ai-agents`, `agent-framework`, `agentic-ai`, `developer-tools`, `local-first`, `mcp`, `model-context-protocol`, `multi-agent-systems`, `nodejs`, `nextjs`, `open-source`, `realtime`, `software-development`, `slack-alternative`, `typescript`, `vscode-extension`
-
-GitHub also gives this repo more surface area when you add a social preview image, release tags like `v0.1.0`, and the standard community files: `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`, and `LICENSE`.
-
-## Requirements
+## 🛠 Requirements
 
 - Bun 1.3+
 - Node-compatible editor support for TypeScript
 
-## Install
+## 📦 Install
 
 ```bash
 bun install
 ```
 
-## Package Overview
+## 🧩 Package Overview
 
 ### `packages/shared`
 Shared runtime contracts used by every layer in the system.
@@ -76,7 +66,7 @@ Editor surface for working with agent teams inside VS Code-compatible editors.
 ### `packages/cli`
 Local bootstrap and setup CLI.
 
-## Working With The Packages
+## 🧪 Working With The Packages
 
 Run package tests directly while iterating:
 
@@ -95,14 +85,14 @@ If you are editing the framework package, start here:
 - `packages/ujima/src/providers.ts`
 - `packages/ujima/src/loaders.ts`
 
-## Suggested Development Order
+## 🧭 Suggested Development Order
 
 1. Finish `apps/api` around the shared contracts.
 2. Wire `apps/vscode-extension` to the same backend.
 3. Wire `apps/web` to the API.
 4. Finish `packages/cli` once the boot flow is stable.
 
-## Notes For Contributors
+## 🤝 Notes For Contributors
 
 - Use Bun for installs, scripts, and tests.
 - Keep shared contracts small, explicit, and reusable.

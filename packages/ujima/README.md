@@ -4,7 +4,7 @@ A framework SDK for defining Agent teams in code.
 
 This is the package you install when you want to create an organization, declare agent roles, assign tools, bind providers, and load a team definition into the local backend.
 
-## Install
+## 📦 Install
 
 ```bash
 bun add @ujima/framework
@@ -16,7 +16,7 @@ In this monorepo:
 bun install
 ```
 
-## Import
+## 🔌 Import
 
 ```ts
 import {
@@ -33,7 +33,7 @@ import {
 } from "@ujima/framework";
 ```
 
-## Quick Start
+## ⚡ Quick Start
 
 ```ts
 import {AgentTeam} from "@ujima/framework";
@@ -67,7 +67,7 @@ const team = AgentTeam({
 });
 ```
 
-## What This Package Gives Users
+## 🧠 What This Package Gives Users
 
 - a typed `AgentTeam(...)` entrypoint
 - starter presets for common engineering roles
@@ -76,9 +76,9 @@ const team = AgentTeam({
 - workspace-aware team loading
 - defaults for the local tool catalog
 
-## Public API
+## 🧩 Public API
 
-### Team API
+### 👥 Team API
 
 - `AgentTeam(config)`
 - `createStarterAgentTeamConfig(options?)`
@@ -126,7 +126,7 @@ const team = AgentTeam({
 console.log(team.getRole("pm"));
 ```
 
-### Role Helpers
+### 🎭 Role Helpers
 
 - `ROLE_PRESETS`
 - `listRolePresets()`
@@ -146,19 +146,19 @@ const frontendEngineer = createRoleFromPreset("frontendEngineer", {
 });
 ```
 
-### Provider Helpers
+### ☁️ Provider Helpers
 
 - `defineProvider(provider)`
 - `normalizeProviders(providers)`
 
-### Tool Helpers
+### 🧰 Tool Helpers
 
 - `DEFAULT_TOOL_CATALOG`
 - `defineTool(tool)`
 - `normalizeTools(tools)`
 - `listDefaultToolNames()`
 
-### Workspace Helpers
+### 🧭 Workspace Helpers
 
 - `createWorkspaceConfig(root, roleScopes?)`
 - `normalizeWorkspaceRoot(root)`
@@ -166,7 +166,7 @@ const frontendEngineer = createRoleFromPreset("frontendEngineer", {
 - `resolveWorkspacePath(root, relativePath?)`
 - `assertWorkspaceBoundary(root, candidatePath)`
 
-### Schemas
+### 🧷 Schemas
 
 The framework package also exports the typed config schemas:
 
@@ -187,7 +187,7 @@ And their inferred TypeScript types:
 - `AgentTeamConfig`
 - `AgentTeamConfigInput`
 
-## Configuration Rules
+## ✅ Configuration Rules
 
 - `workspace.root` is required.
 - `roles` must not be empty.
@@ -197,13 +197,13 @@ And their inferred TypeScript types:
 - workspace scopes are normalized against the workspace root.
 - the workspace root is treated as a hard boundary.
 
-## Testing
+## 🧪 Testing
 
 ```bash
 bun test packages/ujima/index.test.ts
 ```
 
-## Loading Teams From Files
+## 📄 Loading Teams From Files
 
 Use `loadAgentTeamFromFile()` when you want to load a JSON or ESM config file:
 
@@ -213,7 +213,7 @@ import {loadAgentTeamFromFile} from "@ujima/framework";
 const team = await loadAgentTeamFromFile("./ujima.team.json");
 ```
 
-## Notes For App Authors
+## 📝 Notes For App Authors
 
 - Keep this package as the canonical team-definition surface.
 - Let the API consume this package rather than duplicating its rules.

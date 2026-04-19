@@ -4,7 +4,7 @@ Shared runtime contracts for Ujima.
 
 This package defines the data shapes, event payloads, and workspace safety helpers used by the rest of the monorepo.
 
-## Install
+## 📦 Install
 
 ```bash
 bun add @ujima/shared
@@ -16,7 +16,7 @@ In this monorepo, the package is already available through workspace linking:
 bun install
 ```
 
-## Import
+## 🔌 Import
 
 ```ts
 import {
@@ -27,14 +27,14 @@ import {
 } from "@ujima/shared";
 ```
 
-## What This Package Is For
+## 🧠 What This Package Is For
 
 - validating org, member, channel, message, run, approval, and audit data
 - defining `socket.io` event contracts
 - enforcing workspace root boundaries
 - sharing enums, IDs, and defaults across the API, UI, CLI, and framework package
 
-## What This Package Is Not For
+## 🚫 What This Package Is Not For
 
 - orchestration logic
 - provider routing
@@ -42,9 +42,9 @@ import {
 - database access
 - editor integration
 
-## Public API
+## 🧩 Public API
 
-### Schemas
+### 🧷 Schemas
 
 Use the schemas to validate app state and incoming payloads.
 
@@ -88,7 +88,7 @@ const organization = OrganizationSchema.parse({
 });
 ```
 
-### Events
+### 📡 Events
 
 Use these for realtime sync over `socket.io`.
 
@@ -123,7 +123,7 @@ const event = SocketEventSchemas[SocketEventNames.channelMessage].parse({
 });
 ```
 
-### Workspace Helpers
+### 🧭 Workspace Helpers
 
 Use these helpers to keep all agent work inside the organization workspace root.
 
@@ -143,24 +143,24 @@ const target = resolveWorkspacePath(root, "apps/web");
 assertWorkspaceBoundary(root, target);
 ```
 
-### Constants
+### 🔣 Constants
 
 - `DEFAULT_GENERAL_CHANNEL`
 - `DEFAULT_WORKSPACE_ROLE_SCOPES`
 
-## Workspace Safety
+## 🛡 Workspace Safety
 
 `@ujima/shared` treats the organization workspace root as a hard boundary.
 
 If a path resolves outside the root, it should be rejected before any file, shell, or git action runs.
 
-## Testing
+## 🧪 Testing
 
 ```bash
 bun test packages/shared/index.test.ts
 ```
 
-## Notes
+## 📝 Notes
 
 - Keep this package framework-agnostic.
 - Keep schemas explicit and small.
