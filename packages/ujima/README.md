@@ -60,7 +60,7 @@ const team = AgentTeam({
       provider: "openai",
       model: "gpt-5.4",
       workspaceScopes: ["apps/web"],
-      tools: ["filesystem", "git"],
+      tools: ["filesystem", "shell", "message"],
       skills: ["react-best-practices", "terminal-ui"],
       channels: ["general"],
     },
@@ -72,7 +72,7 @@ const team = AgentTeam({
 
 - a typed `AgentTeam(...)` entrypoint
 - starter presets for common engineering roles
-- helper factories for providers, tools, and roles
+- helper factories for providers, tools, roles, and prompt composition
 - config normalization and validation
 - workspace-aware team loading
 - defaults for the local tool catalog
@@ -149,7 +149,7 @@ const frontendEngineer = createRoleFromPreset("frontendEngineer", {
 
 ### 🧰 Tool Helpers
 
-- **`DEFAULT_TOOL_CATALOG`**: The standard set of tools available locally (filesystem, git, shell, mcp).
+- **`DEFAULT_TOOL_CATALOG`**: The standard set of tools available locally (filesystem, shell, message, mcp).
 - **`defineTool(tool)`**: Validates a tool capability structure, ensuring actions and path-restrictions are correctly formatted.
 - **`normalizeTools(tools)`**: Validates a map of tool definitions and merges them with defaults.
 - **`listDefaultToolNames()`**: Convenience utility to see all tools available in the standard local catalog.
@@ -180,6 +180,8 @@ The framework package exports the underlying Zod schemas and their TypeScript ty
 - Channels, providers, and tools referenced by a role must exist.
 - Workspace scopes are normalized against the workspace root.
 - The workspace root is treated as a hard boundary for all operations.
+- Shell is the execution path for git commands.
+- Messaging is a first-class tool for threads, channels, and DMs.
 
 ## 🧪 Testing
 

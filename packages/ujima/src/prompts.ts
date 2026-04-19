@@ -1,3 +1,4 @@
+import type { Channel, Member, OrganizationChart } from "@ujima/shared";
 import type { RoleConfig } from "./schemas.js";
 
 export const SHARED_AGENT_SYSTEM_PROMPT = [
@@ -26,11 +27,73 @@ function listChannels(role: RoleConfig): string {
   return role.channels.length ? role.channels.join(", ") : "none";
 }
 
+function formatChannelTargets(channels: Channel[]): string {
+  return channels.length
+    ? channels.map((channel) => `- ${channel.name} [${channel.id}] (${channel.kind})`).join("\n")
+    : "- none";
+}
+
+function formatDirectMessageTargets(currentMemberId: string, members: Member[]): string {
+  const targets = members.filter((member) => member.id !== currentMemberId);
+
+  return targets.length
+    ? targets.map((member) => `- ${member.name} [${member.id}]`).join("\n")
+    : "- none";
+}
+
+function formatJoinedAt(value: string | undefined): string {
+  return value ? value.slice(0, 10) : "unknown";
+}
+
+function formatOrgChart(members: Member[], chart: OrganizationChart): string {
+  const roots = members.filter((member) => !chart.reportsTo[member.id]);
+  const visited = new Set<string>();
+
+  const renderNode = (member: Member, depth: number): string[] => {
+    if (visited.has(member.id)) {
+      return [];
+    }
+    visited.add(member.id);
+
+    const indent = "  ".repeat(depth);
+    const line = `${indent}- ${member.name} (${member.roleName}, ${member.kind}, joined ${formatJoinedAt(member.createdAt)})`;
+    const children = members.filter((child) => chart.reportsTo[child.id] === member.id);
+    return [line, ...children.flatMap((child) => renderNode(child, depth + 1))];
+  };
+
+  return roots.length
+    ? roots.flatMap((member) => renderNode(member, 0)).join("\n")
+    : members
+        .map((member) => `- ${member.name} (${member.roleName}, ${member.kind}, joined ${formatJoinedAt(member.createdAt)})`)
+        .join("\n");
+}
+
+export function buildOrganizationContextPrompt(
+  organizationName: string,
+  members: Member[],
+  organizationChart: OrganizationChart,
+): string {
+  return [
+    `Organization: ${organizationName}`,
+    "Other employees and hierarchy:",
+    formatOrgChart(members, organizationChart),
+  ].join("\n");
+}
+
 export function buildAgentSystemPrompt(
   workspaceRoot: string,
   organizationName: string,
+  currentMemberId: string,
+  currentThreadId: string,
   role: RoleConfig,
+  members: Member[] = [],
+  channels: Channel[] = [],
+  organizationChart: OrganizationChart = { reportsTo: {} },
 ): string {
+  const accessibleChannels = role.channels.length
+    ? channels.filter((channel) => role.channels.includes(channel.name))
+    : channels;
+
   return [
     `You are an employee of ${organizationName}, acting as ${role.title} (${role.name}).`,
     SHARED_AGENT_SYSTEM_PROMPT,
@@ -38,6 +101,16 @@ export function buildAgentSystemPrompt(
     "Use 'I' as an employee of the organization, not as a generic assistant.",
     role.description ? `Role objective: ${role.description}` : "",
     role.instructions,
+    "",
+    buildOrganizationContextPrompt(organizationName, members, organizationChart),
+    "",
+    "Messaging:",
+    `Current thread ID: ${currentThreadId}`,
+    "Accessible channel IDs:",
+    formatChannelTargets(accessibleChannels),
+    "Direct message recipient IDs:",
+    formatDirectMessageTargets(currentMemberId, members),
+    "Use destination: thread for the current conversation, channel for a channel post, and dm for a direct recipient.",
     "",
     `Workspace root: ${workspaceRoot}`,
     `Allowed scopes: ${listScopes(role)}`,

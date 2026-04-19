@@ -39,6 +39,44 @@ export class SettingsService {
     return this.listProviders(organizationId);
   }
 
+  getOrganizationSettings(organizationId: string) {
+    this.requireOrganization(organizationId);
+
+    const organization = this.context.repo.getOrganization(organizationId);
+    if (!organization) {
+      throw new Error(`Organization not found: ${organizationId}`);
+    }
+
+    return {
+      organization,
+      members: this.context.repo.listMembers(organizationId),
+      channels: this.context.repo.listChannels(organizationId),
+    };
+  }
+
+  updateOrganizationSettings(input: {
+    organizationId: string;
+    organizationName?: string;
+    organizationChart?: { reportsTo: Record<string, string> };
+  }) {
+    const organization = this.context.repo.getOrganization(input.organizationId);
+    if (!organization) {
+      throw new Error(`Organization not found: ${input.organizationId}`);
+    }
+
+    const updated = this.context.repo.saveOrganization({
+      ...organization,
+      name: input.organizationName ?? organization.name,
+      organizationChart: input.organizationChart ?? organization.organizationChart,
+    });
+
+    return {
+      organization: updated,
+      members: this.context.repo.listMembers(input.organizationId),
+      channels: this.context.repo.listChannels(input.organizationId),
+    };
+  }
+
   private requireTeam() {
     if (!this.context.team) {
       throw new Error("Team config not loaded");
@@ -53,4 +91,3 @@ export class SettingsService {
     }
   }
 }
-

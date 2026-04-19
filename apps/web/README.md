@@ -6,13 +6,14 @@ The web app will provide:
 - onboarding
 - chat and channel views
 - DMs and mentions
+- agent-to-agent messaging
 - approvals
 - run streams
-- settings for providers, roles, and workspace scope
+- settings for providers, roles, workspace scope, and organization hierarchy
 
 ## Status
 
-This is the primary browser UI, but it is not the source of truth. It consumes the local API.
+This is the primary browser UI, but it is not the source of truth. It consumes the local API for onboarding, messaging, approvals, and realtime runs.
 
 ## Install
 
@@ -27,4 +28,3 @@ bun install
 - Use existing UI primitives first.
 - Keep the UI thin and driven by API contracts.
 - Align all workspace actions with the org root selected during onboarding.
-

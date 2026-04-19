@@ -22,7 +22,7 @@ export function createApiServices(context: ApiServicesContext) {
   const approvals = new ApprovalService(context.repo, context.realtime, (organizationId, runId) =>
     runs.resumeAfterApproval(organizationId, runId),
   );
-  const tools = new ToolService(context.team, context.repo, approvals, context.realtime);
+  const tools = new ToolService(context.team, context.repo, approvals, conversations, context.realtime);
   const ai = new AiService(context.team, context.repo, tools);
   runs = new RunService(context.team, context.repo, context.realtime, conversations, ai, tools);
 

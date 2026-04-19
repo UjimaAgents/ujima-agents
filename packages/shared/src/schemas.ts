@@ -12,7 +12,7 @@ export type MemberKind = z.infer<typeof MemberKindSchema>;
 export const ChannelKindSchema = z.enum(["general", "group", "dm"]);
 export type ChannelKind = z.infer<typeof ChannelKindSchema>;
 
-export const ToolActionSchema = z.enum(["read", "write", "execute", "git", "mcp"]);
+export const ToolActionSchema = z.enum(["read", "write", "execute", "mcp", "message"]);
 export type ToolAction = z.infer<typeof ToolActionSchema>;
 
 export const ProviderScopeSchema = z.enum(["organization", "workspace", "member"]);
@@ -40,7 +40,7 @@ export type MessageKind = z.infer<typeof MessageKindSchema>;
 export const PresenceStateSchema = z.enum(["online", "offline", "busy", "away"]);
 export type PresenceState = z.infer<typeof PresenceStateSchema>;
 
-export const ResourceTypeSchema = z.enum(["file", "folder", "shell", "git", "mcp"]);
+export const ResourceTypeSchema = z.enum(["file", "folder", "shell", "mcp", "message"]);
 export type ResourceType = z.infer<typeof ResourceTypeSchema>;
 
 export const RoleScopesSchema = z.record(z.array(z.string().min(1))).default({});
@@ -52,10 +52,16 @@ export const WorkspaceConfigSchema = z.object({
 });
 export type WorkspaceConfig = z.infer<typeof WorkspaceConfigSchema>;
 
+export const OrganizationChartSchema = z.object({
+  reportsTo: z.record(IdSchema, IdSchema).default({}),
+});
+export type OrganizationChart = z.infer<typeof OrganizationChartSchema>;
+
 export const OrganizationSchema = z.object({
   id: IdSchema,
   name: z.string().min(1),
   workspace: WorkspaceConfigSchema,
+  organizationChart: OrganizationChartSchema.default({ reportsTo: {} }),
 });
 export type Organization = z.infer<typeof OrganizationSchema>;
 
@@ -66,6 +72,7 @@ export const MemberSchema = z.object({
   kind: MemberKindSchema,
   roleName: z.string().min(1),
   presence: PresenceStateSchema.default("offline"),
+  createdAt: TimestampSchema.optional(),
 });
 export type Member = z.infer<typeof MemberSchema>;
 

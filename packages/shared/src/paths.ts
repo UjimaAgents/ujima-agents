@@ -1,5 +1,5 @@
 import path from "node:path";
-import { realpathSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { RoleScopesSchema, type RoleScopes } from "./schemas.js";
 
 export function normalizeWorkspaceRoot(root: string, baseDirectory = process.cwd()): string {
@@ -40,9 +40,17 @@ export function normalizeRoleScopes(roleScopes: RoleScopes = {}, root: string): 
 export function assertWorkspaceBoundary(root: string, candidatePath: string): string {
   const normalizedRoot = path.resolve(root);
   const resolvedCandidate = path.isAbsolute(candidatePath) ? path.resolve(candidatePath) : path.resolve(normalizedRoot, candidatePath);
+  if (!existsSync(normalizedRoot)) {
+    if (!isPathInsideRoot(normalizedRoot, resolvedCandidate)) {
+      throw new Error(`Path "${candidatePath}" escapes workspace root "${normalizedRoot}"`);
+    }
 
-  try {
-    const realRoot = realpathSync(normalizedRoot);
+    return resolvedCandidate;
+  }
+
+  const realRoot = realpathSync(normalizedRoot);
+
+  if (existsSync(resolvedCandidate)) {
     const realCandidate = realpathSync(resolvedCandidate);
 
     if (!isPathInsideRoot(realRoot, realCandidate)) {
@@ -50,18 +58,21 @@ export function assertWorkspaceBoundary(root: string, candidatePath: string): st
     }
 
     return realCandidate;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-      throw error;
-    }
-
-    const parentRealPath = realpathSync(path.dirname(resolvedCandidate));
-    const realRoot = realpathSync(normalizedRoot);
-
-    if (!isPathInsideRoot(realRoot, parentRealPath)) {
-      throw new Error(`Path "${candidatePath}" escapes workspace root "${realRoot}"`);
-    }
-
-    return resolvedCandidate;
   }
+
+  let ancestor = path.dirname(resolvedCandidate);
+  while (ancestor !== path.dirname(ancestor)) {
+    if (existsSync(ancestor)) {
+      const realAncestor = realpathSync(ancestor);
+      if (!isPathInsideRoot(realRoot, realAncestor)) {
+        throw new Error(`Path "${candidatePath}" escapes workspace root "${realRoot}"`);
+      }
+
+      return resolvedCandidate;
+    }
+
+    ancestor = path.dirname(ancestor);
+  }
+
+  return resolvedCandidate;
 }

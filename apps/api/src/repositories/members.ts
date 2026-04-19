@@ -28,7 +28,7 @@ export function saveMember(db: Database, member: Member): Member {
       payload.kind,
       payload.roleName,
       payload.presence,
-      now(),
+      payload.createdAt ?? now(),
       now(),
     ],
   );
@@ -53,6 +53,7 @@ export function getMember(db: Database, organizationId: string, memberId: string
     kind: rowString(row, "kind"),
     roleName: rowString(row, "role_name"),
     presence: rowString(row, "presence"),
+    createdAt: rowString(row, "created_at"),
   });
 }
 
@@ -69,7 +70,7 @@ export function listMembers(db: Database, organizationId: string): Member[] {
       kind: rowString(row, "kind"),
       roleName: rowString(row, "role_name"),
       presence: rowString(row, "presence"),
+      createdAt: rowString(row, "created_at"),
     }),
   );
 }
-

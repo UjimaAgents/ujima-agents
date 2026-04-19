@@ -1,4 +1,4 @@
-import { IdSchema } from "@ujima/shared";
+import { IdSchema, OrganizationChartSchema } from "@ujima/shared";
 import { z } from "zod";
 
 const WorkspaceRootSchema = z.string().min(1);
@@ -28,6 +28,7 @@ export const BootstrapResponseSchema = z.object({
 
 export const OnboardingRequestSchema = z.object({
   organizationName: z.string().min(1),
+  ownerName: z.string().min(1),
   workspaceRoot: WorkspaceRootSchema,
   providerKeys: z.record(z.string().min(1)).default({}),
   configFilePath: z.string().min(1).optional(),
@@ -65,6 +66,16 @@ export const ApprovalResolveSchema = z.object({
 
 export const TeamSettingsQuerySchema = z.object({
   organizationId: IdSchema.optional(),
+});
+
+export const OrganizationSettingsQuerySchema = z.object({
+  organizationId: IdSchema,
+});
+
+export const OrganizationSettingsUpdateSchema = z.object({
+  organizationId: IdSchema,
+  organizationName: z.string().min(1).optional(),
+  organizationChart: OrganizationChartSchema.optional(),
 });
 
 export const SocketSubscribeSchema = z.object({

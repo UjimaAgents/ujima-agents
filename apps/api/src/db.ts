@@ -28,6 +28,7 @@ export function initDatabase(dbPath = resolveDatabasePath()) {
       name TEXT NOT NULL,
       workspace_root TEXT NOT NULL,
       workspace_role_scopes TEXT NOT NULL DEFAULT '{}',
+      organization_chart_json TEXT NOT NULL DEFAULT '{"reportsTo":{}}',
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     )
@@ -191,6 +192,7 @@ export function initDatabase(dbPath = resolveDatabasePath()) {
   `);
 
   ensureColumn(db, "organizations", "workspace_role_scopes", "TEXT NOT NULL DEFAULT '{}'");
+  ensureColumn(db, "organizations", "organization_chart_json", "TEXT NOT NULL DEFAULT '{\"reportsTo\":{}}'");
   ensureColumn(db, "organizations", "updated_at", "TEXT NOT NULL DEFAULT ''");
   ensureColumn(db, "workspace_settings", "updated_at", "TEXT NOT NULL DEFAULT ''");
   ensureColumn(db, "members", "updated_at", "TEXT NOT NULL DEFAULT ''");

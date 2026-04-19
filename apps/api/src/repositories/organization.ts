@@ -10,6 +10,13 @@ export function getOrganization(db: Database, organizationId: string): Organizat
     return null;
   }
 
+  let organizationChart = { reportsTo: {} as Record<string, string> };
+  try {
+    organizationChart = JSON.parse(rowString(row, "organization_chart_json")) as Organization["organizationChart"];
+  } catch {
+    organizationChart = { reportsTo: {} };
+  }
+
   return OrganizationSchema.parse({
     id: rowString(row, "id"),
     name: rowString(row, "name"),
@@ -17,6 +24,7 @@ export function getOrganization(db: Database, organizationId: string): Organizat
       root: rowString(row, "workspace_root"),
       roleScopes: parseJsonObject(row.workspace_role_scopes),
     },
+    organizationChart,
   });
 }
 
@@ -32,12 +40,13 @@ export function getLatestOrganization(db: Database): Organization | null {
 export function saveOrganization(db: Database, organization: Organization): Organization {
   db.run(
     `
-    INSERT INTO organizations (id, name, workspace_root, workspace_role_scopes, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?)
+    INSERT INTO organizations (id, name, workspace_root, workspace_role_scopes, organization_chart_json, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       name = excluded.name,
       workspace_root = excluded.workspace_root,
       workspace_role_scopes = excluded.workspace_role_scopes,
+      organization_chart_json = excluded.organization_chart_json,
       updated_at = excluded.updated_at
     `,
     [
@@ -45,6 +54,7 @@ export function saveOrganization(db: Database, organization: Organization): Orga
       organization.name,
       organization.workspace.root,
       JSON.stringify(organization.workspace.roleScopes),
+      JSON.stringify(organization.organizationChart ?? { reportsTo: {} }),
       now(),
       now(),
     ],
@@ -85,4 +95,3 @@ export function getProviderCredential(
 
   return row ? rowString(row, "api_key") : null;
 }
-

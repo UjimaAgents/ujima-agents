@@ -6,6 +6,7 @@ import { assertWorkspaceBoundary, SocketEventNames, type AuditStatus, type Resou
 import { checkToolPolicy } from "../policy.ts";
 import type { Repository } from "../repositories.ts";
 import { ApprovalService } from "./approval.service.ts";
+import { ConversationService } from "./conversation.service.ts";
 import { memberRoom, runRoom, type RealtimeService } from "../realtime.ts";
 
 export interface ToolInvocation {
@@ -17,6 +18,7 @@ export interface ToolInvocation {
   action: ToolAction;
   resourceType: ResourceType;
   resourcePath?: string;
+  threadId: string;
   input: Record<string, unknown>;
 }
 
@@ -32,6 +34,7 @@ export class ToolService {
     private readonly team: AgentTeamHandle | null,
     private readonly repo: Repository,
     private readonly approvals: ApprovalService,
+    private readonly conversations: ConversationService,
     private readonly realtime: RealtimeService,
   ) {}
 
@@ -146,15 +149,74 @@ export class ToolService {
       return this.executeShell(invocation);
     }
     
-    if (invocation.toolId === "git") {
-      return this.executeGit(invocation);
-    }
-
     if (invocation.toolId === "mcp") {
       throw new Error("MCP proxying is not yet implemented in the local runtime");
     }
 
+    if (invocation.toolId === "message") {
+      return this.sendMessage(invocation);
+    }
+
     throw new Error(`Tool "${invocation.toolId}" action "${invocation.action}" is not implemented`);
+  }
+
+  private sendMessage(invocation: ToolInvocation) {
+    const destination = invocation.input?.destination as string | undefined;
+    const content = invocation.input?.content as string | undefined;
+    const mentions = Array.isArray(invocation.input?.mentions)
+      ? invocation.input.mentions.filter((mention): mention is string => typeof mention === "string")
+      : [];
+
+    if (typeof destination !== "string") {
+      throw new Error("Input 'destination' must be a string");
+    }
+
+    if (typeof content !== "string") {
+      throw new Error("Input 'content' must be a string");
+    }
+
+    if (destination === "thread") {
+      return this.conversations.sendMessage({
+        organizationId: invocation.organizationId,
+        threadId: invocation.threadId,
+        senderId: invocation.memberId,
+        content,
+        mentions,
+      });
+    }
+
+    if (destination === "channel") {
+      const channelId = invocation.input?.channelId as string | undefined;
+      if (typeof channelId !== "string") {
+        throw new Error("Input 'channelId' must be a string");
+      }
+
+      return this.conversations.sendMessage({
+        organizationId: invocation.organizationId,
+        threadId: invocation.threadId,
+        channelId,
+        senderId: invocation.memberId,
+        content,
+        mentions,
+      });
+    }
+
+    if (destination === "dm") {
+      const recipientId = invocation.input?.recipientId as string | undefined;
+      if (typeof recipientId !== "string") {
+        throw new Error("Input 'recipientId' must be a string");
+      }
+
+      return this.conversations.sendDirectMessage({
+        organizationId: invocation.organizationId,
+        senderId: invocation.memberId,
+        recipientId,
+        content,
+        mentions,
+      });
+    }
+
+    throw new Error(`Unknown message destination "${destination}"`);
   }
 
   private async readFilesystemResource(invocation: ToolInvocation) {
@@ -208,18 +270,6 @@ export class ToolService {
     }
 
     return this.runProcess(command, args);
-  }
-
-  private async executeGit(invocation: ToolInvocation) {
-    const args = Array.isArray(invocation.input?.args)
-      ? invocation.input.args.filter((arg): arg is string => typeof arg === "string")
-      : [];
-
-    if (args.length === 0) {
-      throw new Error("Input 'args' must contain at least one git argument");
-    }
-
-    return this.runProcess("git", args);
   }
 
   private async runProcess(command: string, args: string[]) {

@@ -27,6 +27,10 @@ export function checkToolPolicy(
     };
   }
 
+  if (toolId === "message") {
+    return { allowed: true, requiresApproval: false };
+  }
+
   if (resourcePath) {
     try {
       assertWorkspaceBoundary(team.workspace.root, resourcePath);
@@ -52,4 +56,3 @@ export function checkToolPolicy(
     requiresApproval: action !== "read",
   };
 }
-

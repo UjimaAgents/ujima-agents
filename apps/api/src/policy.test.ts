@@ -24,7 +24,7 @@ const team = AgentTeam({
       provider: "openai",
       model: "gpt-5.4",
       workspaceScopes: ["apps/web"],
-      tools: ["filesystem", "git"],
+      tools: ["filesystem", "shell"],
       channels: ["general"],
     },
   ],
@@ -39,7 +39,7 @@ const team = AgentTeam({
 });
 
 test("policy blocks unknown tools and out-of-scope paths", () => {
-  expect(checkToolPolicy(team, "frontend-engineer", "shell", "execute", "/tmp/ujima-test/apps/web")).toMatchObject({
+  expect(checkToolPolicy(team, "frontend-engineer", "message", "message")).toMatchObject({
     allowed: false,
   });
 
@@ -63,4 +63,3 @@ test("policy allows scoped read and flags writes for approval", () => {
     requiresApproval: true,
   });
 });
-

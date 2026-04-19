@@ -29,7 +29,7 @@ import {
 
 ## 🧠 What This Package Is For
 
-- validating org, member, channel, message, run, approval, and audit data
+- validating organization charts, members, channels, messages, runs, approvals, and audit data
 - defining `socket.io` event contracts
 - enforcing workspace root boundaries
 - sharing enums, IDs, and defaults across the API, UI, CLI, and framework package
@@ -52,17 +52,18 @@ Use the schemas to validate app state and incoming payloads.
 - `TimestampSchema`
 - `MemberKindSchema`
 - `ChannelKindSchema`
-- `ToolActionSchema`
+- `ToolActionSchema` (`read`, `write`, `execute`, `mcp`, `message`)
 - `ProviderScopeSchema`
 - `ApprovalStatusSchema`
 - `AuditStatusSchema`
 - `RunStatusSchema`
 - `MessageKindSchema`
 - `PresenceStateSchema`
-- `ResourceTypeSchema`
+- `ResourceTypeSchema` (`file`, `folder`, `shell`, `mcp`, `message`)
 - `RoleScopesSchema`
 - `WorkspaceConfigSchema`
 - `OrganizationSchema`
+- `OrganizationChartSchema`
 - `MemberSchema`
 - `ChannelSchema`
 - `ConversationThreadSchema`
@@ -96,6 +97,7 @@ Use these for realtime sync over `socket.io`.
 - `SocketEventSchemas`
 - `ChannelMessageEventSchema`
 - `ThreadMessageEventSchema`
+- `DMMessageEventSchema`
 - `ChannelPresenceEventSchema`
 - `ApprovalRequestedEventSchema`
 - `ApprovalResolvedEventSchema`
@@ -152,7 +154,7 @@ assertWorkspaceBoundary(root, target);
 
 `@ujima/shared` treats the organization workspace root as a hard boundary.
 
-If a path resolves outside the root, it should be rejected before any file, shell, or git action runs.
+If a path resolves outside the root, it should be rejected before any file or shell action runs.
 
 ## 🧪 Testing
 

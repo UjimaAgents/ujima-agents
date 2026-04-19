@@ -13,11 +13,34 @@ function channelId(channel: { id?: string; name: string }) {
   return channel.id ?? channel.name;
 }
 
+function buildInitialOrganizationChart(ownerId: string, roleMemberIds: Map<string, string>): { reportsTo: Record<string, string> } {
+  const reportsTo: Record<string, string> = {};
+
+  for (const [roleName, memberId] of roleMemberIds) {
+    if (roleName === "engineering-manager" || roleName === "pm") {
+      reportsTo[memberId] = ownerId;
+      continue;
+    }
+
+    if (roleName === "frontend-engineer" || roleName === "backend-engineer" || roleName === "qa-engineer") {
+      reportsTo[memberId] = roleMemberIds.get("engineering-manager") ?? ownerId;
+      continue;
+    }
+
+    if (roleName === "code-reviewer") {
+      reportsTo[memberId] = roleMemberIds.get("engineering-manager") ?? ownerId;
+    }
+  }
+
+  return { reportsTo };
+}
+
 export class OnboardingService {
   constructor(private readonly repo: Repository) {}
 
   async onboard(input: {
     organizationName: string;
+    ownerName: string;
     workspaceRoot: string;
     providerKeys: Record<string, string>;
     configFilePath?: string;
@@ -37,20 +60,36 @@ export class OnboardingService {
       throw new Error(`Missing provider keys: ${missingProviders.join(", ")}`);
     }
 
+    const ownerId = randomUUID();
     const organizationId = randomUUID();
+    const memberIdByRole = new Map(team.roles.map((role) => [role.name, roleMemberId(role.id, role.name)]));
+    const organizationChart = buildInitialOrganizationChart(ownerId, memberIdByRole);
+
     const organization = OrganizationSchema.parse({
       id: organizationId,
       name: input.organizationName,
       workspace: team.workspace,
+      organizationChart,
     });
 
     this.repo.saveOrganization(organization);
+    const owner = MemberSchema.parse({
+      id: ownerId,
+      organizationId,
+      name: input.ownerName,
+      kind: "human",
+      roleName: "owner",
+      presence: "offline",
+      createdAt: new Date().toISOString(),
+    });
 
     for (const [providerName, apiKey] of Object.entries(input.providerKeys)) {
       this.repo.saveProviderCredential(organizationId, providerName, apiKey);
     }
 
-    const members = team.roles.map((role) =>
+    const members = [
+      owner,
+      ...team.roles.map((role) =>
       MemberSchema.parse({
         id: roleMemberId(role.id, role.name),
         organizationId,
@@ -58,8 +97,9 @@ export class OnboardingService {
         kind: role.kind,
         roleName: role.name,
         presence: "offline",
-      }),
-    );
+        createdAt: new Date().toISOString(),
+      })),
+    ];
 
     for (const member of members) {
       this.repo.saveMember(member);
@@ -106,6 +146,8 @@ export class OnboardingService {
       this.repo.setChannelMembers(channelId, [...memberIds]);
     }
 
+    this.repo.saveOrganization(organization);
+
     return {
       organization,
       members,
@@ -114,4 +156,3 @@ export class OnboardingService {
     };
   }
 }
-

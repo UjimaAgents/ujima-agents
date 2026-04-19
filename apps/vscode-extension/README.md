@@ -5,13 +5,14 @@ Editor surface for the Ujima agent system.
 The extension will provide:
 - channel and DM views
 - chat with agents
+- agent messaging
 - approvals
 - run visibility
 - workspace-aware actions inside the opened project
 
 ## Status
 
-This is a thin client for the local backend, not a separate orchestration engine.
+This is a thin client for the local backend, not a separate orchestration engine. It uses the same API contract as the web app.
 
 ## Install
 
@@ -26,4 +27,3 @@ bun install
 - Keep the extension connected to the same local API as the web app.
 - Do not duplicate backend policy or orchestration logic here.
 - Keep all editor actions aligned with the selected workspace root.
-

@@ -7,7 +7,7 @@ export declare const MemberKindSchema: z.ZodEnum<["human", "agent"]>;
 export type MemberKind = z.infer<typeof MemberKindSchema>;
 export declare const ChannelKindSchema: z.ZodEnum<["general", "group", "dm"]>;
 export type ChannelKind = z.infer<typeof ChannelKindSchema>;
-export declare const ToolActionSchema: z.ZodEnum<["read", "write", "execute", "git", "mcp"]>;
+export declare const ToolActionSchema: z.ZodEnum<["read", "write", "execute", "mcp", "message"]>;
 export type ToolAction = z.infer<typeof ToolActionSchema>;
 export declare const ProviderScopeSchema: z.ZodEnum<["organization", "workspace", "member"]>;
 export type ProviderScope = z.infer<typeof ProviderScopeSchema>;
@@ -21,7 +21,7 @@ export declare const MessageKindSchema: z.ZodEnum<["human", "agent", "system"]>;
 export type MessageKind = z.infer<typeof MessageKindSchema>;
 export declare const PresenceStateSchema: z.ZodEnum<["online", "offline", "busy", "away"]>;
 export type PresenceState = z.infer<typeof PresenceStateSchema>;
-export declare const ResourceTypeSchema: z.ZodEnum<["file", "folder", "shell", "git", "mcp"]>;
+export declare const ResourceTypeSchema: z.ZodEnum<["file", "folder", "shell", "mcp", "message"]>;
 export type ResourceType = z.infer<typeof ResourceTypeSchema>;
 export declare const RoleScopesSchema: z.ZodDefault<z.ZodRecord<z.ZodString, z.ZodArray<z.ZodString, "many">>>;
 export type RoleScopes = z.infer<typeof RoleScopesSchema>;
@@ -36,6 +36,14 @@ export declare const WorkspaceConfigSchema: z.ZodObject<{
     roleScopes?: Record<string, string[]> | undefined;
 }>;
 export type WorkspaceConfig = z.infer<typeof WorkspaceConfigSchema>;
+export declare const OrganizationChartSchema: z.ZodObject<{
+    reportsTo: z.ZodDefault<z.ZodRecord<z.ZodString, z.ZodString>>;
+}, "strip", z.ZodTypeAny, {
+    reportsTo: Record<string, string>;
+}, {
+    reportsTo?: Record<string, string> | undefined;
+}>;
+export type OrganizationChart = z.infer<typeof OrganizationChartSchema>;
 export declare const OrganizationSchema: z.ZodObject<{
     id: z.ZodString;
     name: z.ZodString;
@@ -49,12 +57,22 @@ export declare const OrganizationSchema: z.ZodObject<{
         root: string;
         roleScopes?: Record<string, string[]> | undefined;
     }>;
+    organizationChart: z.ZodDefault<z.ZodObject<{
+        reportsTo: z.ZodDefault<z.ZodRecord<z.ZodString, z.ZodString>>;
+    }, "strip", z.ZodTypeAny, {
+        reportsTo: Record<string, string>;
+    }, {
+        reportsTo?: Record<string, string> | undefined;
+    }>>;
 }, "strip", z.ZodTypeAny, {
     id: string;
     name: string;
     workspace: {
         root: string;
         roleScopes: Record<string, string[]>;
+    };
+    organizationChart: {
+        reportsTo: Record<string, string>;
     };
 }, {
     id: string;
@@ -63,6 +81,9 @@ export declare const OrganizationSchema: z.ZodObject<{
         root: string;
         roleScopes?: Record<string, string[]> | undefined;
     };
+    organizationChart?: {
+        reportsTo?: Record<string, string> | undefined;
+    } | undefined;
 }>;
 export type Organization = z.infer<typeof OrganizationSchema>;
 export declare const MemberSchema: z.ZodObject<{
@@ -72,6 +93,7 @@ export declare const MemberSchema: z.ZodObject<{
     kind: z.ZodEnum<["human", "agent"]>;
     roleName: z.ZodString;
     presence: z.ZodDefault<z.ZodEnum<["online", "offline", "busy", "away"]>>;
+    createdAt: z.ZodOptional<z.ZodString>;
 }, "strip", z.ZodTypeAny, {
     id: string;
     name: string;
@@ -79,6 +101,7 @@ export declare const MemberSchema: z.ZodObject<{
     organizationId: string;
     roleName: string;
     presence: "online" | "offline" | "busy" | "away";
+    createdAt?: string | undefined;
 }, {
     id: string;
     name: string;
@@ -86,6 +109,7 @@ export declare const MemberSchema: z.ZodObject<{
     organizationId: string;
     roleName: string;
     presence?: "online" | "offline" | "busy" | "away" | undefined;
+    createdAt?: string | undefined;
 }>;
 export type Member = z.infer<typeof MemberSchema>;
 export declare const ChannelSchema: z.ZodObject<{
@@ -190,21 +214,21 @@ export declare const ToolCapabilitySchema: z.ZodObject<{
     id: z.ZodString;
     name: z.ZodString;
     description: z.ZodDefault<z.ZodString>;
-    actions: z.ZodDefault<z.ZodArray<z.ZodEnum<["read", "write", "execute", "git", "mcp"]>, "many">>;
+    actions: z.ZodDefault<z.ZodArray<z.ZodEnum<["read", "write", "execute", "mcp", "message"]>, "many">>;
     pathScopes: z.ZodDefault<z.ZodArray<z.ZodString, "many">>;
     requiresApproval: z.ZodDefault<z.ZodBoolean>;
 }, "strip", z.ZodTypeAny, {
     id: string;
     name: string;
     description: string;
-    actions: ("read" | "write" | "execute" | "git" | "mcp")[];
+    actions: ("read" | "write" | "execute" | "mcp" | "message")[];
     pathScopes: string[];
     requiresApproval: boolean;
 }, {
     id: string;
     name: string;
     description?: string | undefined;
-    actions?: ("read" | "write" | "execute" | "git" | "mcp")[] | undefined;
+    actions?: ("read" | "write" | "execute" | "mcp" | "message")[] | undefined;
     pathScopes?: string[] | undefined;
     requiresApproval?: boolean | undefined;
 }>;
@@ -214,9 +238,9 @@ export declare const ApprovalRequestSchema: z.ZodObject<{
     organizationId: z.ZodString;
     runId: z.ZodOptional<z.ZodString>;
     requestedBy: z.ZodString;
-    resourceType: z.ZodEnum<["file", "folder", "shell", "git", "mcp"]>;
+    resourceType: z.ZodEnum<["file", "folder", "shell", "mcp", "message"]>;
     resourcePath: z.ZodString;
-    action: z.ZodEnum<["read", "write", "execute", "git", "mcp"]>;
+    action: z.ZodEnum<["read", "write", "execute", "mcp", "message"]>;
     status: z.ZodDefault<z.ZodEnum<["pending", "approved", "rejected"]>>;
     reason: z.ZodDefault<z.ZodString>;
     createdAt: z.ZodString;
@@ -227,9 +251,9 @@ export declare const ApprovalRequestSchema: z.ZodObject<{
     organizationId: string;
     createdAt: string;
     requestedBy: string;
-    resourceType: "git" | "mcp" | "file" | "folder" | "shell";
+    resourceType: "mcp" | "message" | "file" | "folder" | "shell";
     resourcePath: string;
-    action: "read" | "write" | "execute" | "git" | "mcp";
+    action: "read" | "write" | "execute" | "mcp" | "message";
     reason: string;
     runId?: string | undefined;
     resolvedAt?: string | undefined;
@@ -238,9 +262,9 @@ export declare const ApprovalRequestSchema: z.ZodObject<{
     organizationId: string;
     createdAt: string;
     requestedBy: string;
-    resourceType: "git" | "mcp" | "file" | "folder" | "shell";
+    resourceType: "mcp" | "message" | "file" | "folder" | "shell";
     resourcePath: string;
-    action: "read" | "write" | "execute" | "git" | "mcp";
+    action: "read" | "write" | "execute" | "mcp" | "message";
     status?: "pending" | "approved" | "rejected" | undefined;
     runId?: string | undefined;
     reason?: string | undefined;

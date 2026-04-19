@@ -19,9 +19,29 @@ const ShellToolInvocationSchema = z.object({
   args: z.array(z.string()).default([]),
 });
 
+const MessageToolInvocationSchema = z.discriminatedUnion("destination", [
+  z.object({
+    destination: z.literal("thread"),
+    content: z.string().min(1),
+    mentions: z.array(z.string().min(1)).default([]),
+  }),
+  z.object({
+    destination: z.literal("channel"),
+    channelId: z.string().min(1),
+    content: z.string().min(1),
+    mentions: z.array(z.string().min(1)).default([]),
+  }),
+  z.object({
+    destination: z.literal("dm"),
+    recipientId: z.string().min(1),
+    content: z.string().min(1),
+    mentions: z.array(z.string().min(1)).default([]),
+  }),
+]);
+
 const GenericToolInvocationSchema = z.object({
-  action: z.enum(["read", "write", "execute", "git", "mcp"]),
-  resourceType: z.enum(["file", "folder", "shell", "git", "mcp"]),
+  action: z.enum(["read", "write", "execute", "mcp", "message"]),
+  resourceType: z.enum(["file", "folder", "shell", "mcp", "message"]),
   resourcePath: z.string().min(1).optional(),
   input: z.record(z.string(), z.unknown()).default({}),
 });
@@ -103,7 +123,16 @@ export class AiService {
     const toolDefs = Object.fromEntries(
       role.tools.map((toolId) => [toolId, this.buildToolDefinition(input, toolId, team)]),
     ) as ToolSet;
-    const system = buildAgentSystemPrompt(team.workspace.root, organization.name, role);
+    const system = buildAgentSystemPrompt(
+      team.workspace.root,
+      organization.name,
+      member.id,
+      input.threadId,
+      role,
+      this.repo.listMembers(input.organizationId).filter((current) => current.id !== member.id),
+      team.channels,
+      organization.organizationChart,
+    );
 
     const messages = toModelMessages(this.repo.listMessages(input.organizationId, input.threadId));
     if (input.summary) {
@@ -174,7 +203,27 @@ export class AiService {
             toolId,
             action: "execute",
             resourceType: "shell",
+            threadId: input.threadId,
             input: { command: args.command, args: args.args },
+          }),
+      });
+    }
+
+    if (toolId === "message") {
+      return tool({
+        description: team.tools[toolId]?.description,
+        inputSchema: MessageToolInvocationSchema,
+        execute: async (args, { toolCallId }) =>
+          this.tools.invoke({
+            organizationId: input.organizationId,
+            runId: input.runId,
+            memberId: input.agentId,
+            toolCallId,
+            toolId,
+            action: "message",
+            resourceType: "message",
+            threadId: input.threadId,
+            input: args,
           }),
       });
     }
@@ -192,6 +241,7 @@ export class AiService {
           action: args.action,
           resourceType: args.resourceType,
           resourcePath: args.resourcePath,
+          threadId: input.threadId,
           input: args.input,
         }),
     });

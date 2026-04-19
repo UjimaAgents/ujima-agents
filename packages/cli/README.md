@@ -12,7 +12,7 @@ The CLI will:
 
 ## Status
 
-The CLI is scaffolded and will become the main local entrypoint after the backend boot flow is stable.
+The CLI is scaffolded and will become the main local entrypoint after the backend boot flow is stable. It should wire into the onboarding flow that creates the human owner member and seeds the org chart.
 
 ## Install
 
@@ -27,4 +27,3 @@ bun install
 - Keep the CLI opinionated and low-friction.
 - Treat workspace selection as part of onboarding.
 - Prefer wiring existing package primitives over duplicating setup logic.
-

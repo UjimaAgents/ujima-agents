@@ -14,9 +14,9 @@ export class ApprovalService {
     organizationId: string;
     runId: string;
     requestedBy: string;
-    resourceType: "file" | "folder" | "shell" | "git" | "mcp";
+    resourceType: "file" | "folder" | "shell" | "mcp" | "message";
     resourcePath: string;
-    action: "read" | "write" | "execute" | "git" | "mcp";
+    action: "read" | "write" | "execute" | "mcp" | "message";
     reason: string;
   }): ApprovalRequest {
     const approval = ApprovalRequestSchema.parse({
