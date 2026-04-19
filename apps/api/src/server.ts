@@ -1,0 +1,76 @@
+import cors from "@fastify/cors";
+import fastify from "fastify";
+import { ZodError } from "zod";
+import { Server as SocketServer } from "socket.io";
+import { maybeLoadTeam, resolveDatabasePath, isAllowedLocalOrigin } from "./config.ts";
+import { initDatabase } from "./db.ts";
+import { Repository } from "./repositories.ts";
+import { RealtimeService } from "./realtime.ts";
+import onboardingRoutes from "./routes/onboarding.ts";
+import settingsRoutes from "./routes/settings.ts";
+import conversationRoutes from "./routes/conversations.ts";
+import runRoutes from "./routes/runs.ts";
+import { createApiServices, type ApiServices } from "./services/index.ts";
+
+export async function createServer() {
+  const team = await maybeLoadTeam();
+  const db = initDatabase(resolveDatabasePath());
+  const repo = new Repository(db);
+  const server = fastify({
+    logger: true,
+    trustProxy: false,
+  });
+
+  await server.register(cors, {
+    origin: (origin, callback) => {
+      callback(null, isAllowedLocalOrigin(origin));
+    },
+    credentials: true,
+  });
+
+  const io = new SocketServer(server.server, {
+    cors: {
+      origin: (origin, callback) => {
+        callback(null, isAllowedLocalOrigin(origin));
+      },
+      credentials: true,
+    },
+  });
+
+  const realtime = new RealtimeService(io, repo);
+  const services = createApiServices({
+    team,
+    repo,
+    realtime,
+  });
+
+  server.setErrorHandler((error, _request, reply) => {
+    if (error instanceof ZodError) {
+      return reply.code(400).send({ error: "Invalid request", issues: error.issues });
+    }
+
+    server.log.error(error);
+    return reply.code(500).send({ error: "Internal server error" });
+  });
+
+  server.decorate("services", services);
+
+  server.get("/health", async () => ({ status: "ok" }));
+
+  await server.register(onboardingRoutes);
+  await server.register(settingsRoutes);
+  await server.register(conversationRoutes);
+  await server.register(runRoutes);
+
+  server.addHook("onClose", async () => {
+    io.close();
+  });
+
+  return server;
+}
+
+declare module "fastify" {
+  interface FastifyInstance {
+    services: ApiServices;
+  }
+}

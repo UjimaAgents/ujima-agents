@@ -18,14 +18,6 @@ export const DEFAULT_TOOL_CATALOG: Record<string, ToolCapability> = {
     pathScopes: ["."],
     requiresApproval: true,
   },
-  git: {
-    id: "git",
-    name: "Git",
-    description: "Inspect and change git state inside the organization workspace.",
-    actions: ["read", "git"],
-    pathScopes: ["."],
-    requiresApproval: true,
-  },
   mcp: {
     id: "mcp",
     name: "MCP",
@@ -42,9 +34,9 @@ export const ROLE_PRESETS: Record<string, RolePreset> = {
     title: "Frontend Engineer",
     description: "Builds UI surfaces, client workflows, and interaction polish.",
     instructions:
-      "Implement and refine client-facing experiences, keep UX coherent, and surface clear implementation tradeoffs.",
+      "Act like the product's frontend owner. Implement and refine client-facing experiences, keep the UI coherent, and make tradeoffs concrete and easy for the team to act on.",
     workspaceScopes: ["apps/web"],
-    tools: ["filesystem", "git", "mcp"],
+    tools: ["filesystem", "shell", "mcp"],
     channels: ["general"],
   },
   backendEngineer: {
@@ -52,9 +44,9 @@ export const ROLE_PRESETS: Record<string, RolePreset> = {
     title: "Backend Engineer",
     description: "Owns local services, data flow, and backend integration work.",
     instructions:
-      "Design pragmatic backend changes, keep APIs small, and favor direct end-to-end implementations.",
+      "Act like the backend owner on the team. Design pragmatic service changes, keep APIs small, and prefer direct end-to-end implementation over abstractions.",
     workspaceScopes: ["apps/api", "packages"],
-    tools: ["filesystem", "shell", "git", "mcp"],
+    tools: ["filesystem", "shell", "mcp"],
     channels: ["general"],
   },
   pm: {
@@ -62,9 +54,9 @@ export const ROLE_PRESETS: Record<string, RolePreset> = {
     title: "Product Manager",
     description: "Shapes scope, sequencing, and product clarity.",
     instructions:
-      "Clarify requirements, tighten scope, and keep the team aligned on concrete user outcomes.",
+      "Act like the product lead for the org. Clarify requirements, tighten scope, and keep the team aligned on concrete user outcomes and decision-ready next steps.",
     workspaceScopes: ["."],
-    tools: ["filesystem", "git", "mcp"],
+    tools: ["filesystem", "shell", "mcp"],
     channels: ["general"],
   },
   codeReviewer: {
@@ -72,9 +64,9 @@ export const ROLE_PRESETS: Record<string, RolePreset> = {
     title: "Code Reviewer",
     description: "Reviews diffs, flags risk, and keeps implementation lean.",
     instructions:
-      "Review code for correctness, security, and simplicity. Call out bugs, regressions, and missing tests first.",
+      "Act like a senior peer reviewer inside the org. Review code for correctness, security, and simplicity, and call out bugs, regressions, and missing tests first.",
     workspaceScopes: ["."],
-    tools: ["filesystem", "git", "mcp"],
+    tools: ["filesystem", "shell", "mcp"],
     channels: ["general"],
   },
   engineeringManager: {
@@ -82,9 +74,9 @@ export const ROLE_PRESETS: Record<string, RolePreset> = {
     title: "Engineering Manager",
     description: "Coordinates execution, tradeoffs, and delivery sequencing.",
     instructions:
-      "Track progress, unblock the team, and keep changes shippable without overengineering.",
+      "Act like the engineering manager for the org. Track progress, unblock the team, keep changes shippable, and make decisions from the workspace state instead of guesswork.",
     workspaceScopes: ["."],
-    tools: ["filesystem", "git", "mcp"],
+    tools: ["filesystem", "shell", "mcp"],
     channels: ["general"],
   },
   qaEngineer: {
@@ -92,9 +84,9 @@ export const ROLE_PRESETS: Record<string, RolePreset> = {
     title: "QA Engineer",
     description: "Checks behavior, edge cases, and validation paths.",
     instructions:
-      "Build verification plans, probe edge cases, and confirm the implementation behaves as intended.",
+      "Act like the org's QA owner. Build verification plans, probe edge cases, and confirm the implementation behaves as intended with focused repros.",
     workspaceScopes: ["."],
-    tools: ["filesystem", "shell", "git", "mcp"],
+    tools: ["filesystem", "shell", "mcp"],
     channels: ["general"],
   },
 };

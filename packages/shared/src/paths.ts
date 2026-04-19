@@ -1,4 +1,5 @@
 import path from "node:path";
+import { realpathSync } from "node:fs";
 import { RoleScopesSchema, type RoleScopes } from "./schemas.js";
 
 export function normalizeWorkspaceRoot(root: string, baseDirectory = process.cwd()): string {
@@ -37,9 +38,30 @@ export function normalizeRoleScopes(roleScopes: RoleScopes = {}, root: string): 
 }
 
 export function assertWorkspaceBoundary(root: string, candidatePath: string): string {
-  if (!isPathInsideRoot(root, candidatePath)) {
-    throw new Error(`Path "${candidatePath}" escapes workspace root "${path.resolve(root)}"`);
-  }
+  const normalizedRoot = path.resolve(root);
+  const resolvedCandidate = path.isAbsolute(candidatePath) ? path.resolve(candidatePath) : path.resolve(normalizedRoot, candidatePath);
 
-  return path.resolve(candidatePath);
+  try {
+    const realRoot = realpathSync(normalizedRoot);
+    const realCandidate = realpathSync(resolvedCandidate);
+
+    if (!isPathInsideRoot(realRoot, realCandidate)) {
+      throw new Error(`Path "${candidatePath}" escapes workspace root "${realRoot}"`);
+    }
+
+    return realCandidate;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw error;
+    }
+
+    const parentRealPath = realpathSync(path.dirname(resolvedCandidate));
+    const realRoot = realpathSync(normalizedRoot);
+
+    if (!isPathInsideRoot(realRoot, parentRealPath)) {
+      throw new Error(`Path "${candidatePath}" escapes workspace root "${realRoot}"`);
+    }
+
+    return resolvedCandidate;
+  }
 }

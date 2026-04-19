@@ -18,6 +18,7 @@ test("starter config includes the preset team shape", () => {
   expect(config.name).toBe("Ujima Demo");
   expect(config.channels[0].name).toBe("general");
   expect(Object.keys(config.tools)).toContain("filesystem");
+  expect(Object.keys(config.tools)).toContain("shell");
   expect(config.roles.map((role) => role.name)).toContain("frontend-engineer");
   expect(config.workspace.root).toBe("/tmp/ujima-org");
   expect(config.workspace.roleScopes["frontend-engineer"][0]).toBe("/tmp/ujima-org/apps/web");
@@ -68,7 +69,7 @@ test("AgentTeam normalizes and validates the team config", () => {
         provider: "openai",
         model: "gpt-5.4",
         workspaceScopes: ["apps/web"],
-        tools: ["filesystem", "git"],
+        tools: ["filesystem", "shell"],
         channels: ["general"],
       },
     ],
@@ -103,7 +104,7 @@ test("loadAgentTeam returns a ready-to-use handle", () => {
         provider: "openai",
         model: "gpt-5.4",
         workspaceScopes: ["apps/web"],
-        tools: ["filesystem", "git"],
+        tools: ["filesystem", "shell"],
         channels: ["general"],
       },
     ],

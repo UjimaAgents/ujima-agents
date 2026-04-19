@@ -30,7 +30,9 @@ coverage
 
 # local data
 *.db
+*.db-*
 *.sqlite
+*.sqlite-*
 *.sqlite3
 *.log
 logs
