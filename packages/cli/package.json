@@ -1,0 +1,13 @@
+{
+  "name": "ujima",
+  "version": "1.0.0",
+  "type": "module",
+  "bin": "bin/ujima.js",
+  "dependencies": {
+    "@ujima/framework": "workspace:*",
+    "chalk": "^5.3.0",
+    "commander": "^12.1.0",
+    "inquirer": "^11.1.0",
+    "ora": "^8.1.0"
+  }
+}

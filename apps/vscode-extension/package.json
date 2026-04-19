@@ -1,0 +1,42 @@
+{
+  "name": "ujima-vscode-extension",
+  "displayName": "Ujima Agent Team",
+  "description": "Ujima Local-First Agent Team Framework Extension",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "ujima-explorer",
+          "title": "Ujima",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "ujima-explorer": [
+        {
+          "id": "ujima-chat",
+          "name": "Agent Chat"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "bun run build",
+    "build": "bun build ./src/extension.ts --outdir ./out --target node",
+    "watch": "bun build ./src/extension.ts --outdir ./out --target node --watch"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.90.0",
+    "typescript": "^5.0.0"
+  }
+}
