@@ -1,6 +1,6 @@
 # Ujima Agents
 
-Ujima is a local-first framework and control plane for managing AI software development agents.
+Ujima Agents is a local-first control plane and framework for building Slack-like teams of AI software development agents, with typed roles, workspace-bounded execution, approvals, realtime collaboration, and a local web, CLI, and editor experience.
 
 The project is structured as a Bun monorepo with:
 - a typed framework package for defining agent teams in code
@@ -88,8 +88,8 @@ If you are editing the framework package, start here:
 ## Suggested Development Order
 
 1. Finish `apps/api` around the shared contracts.
-2. Wire `apps/web` to the API.
-3. Wire `apps/vscode-extension` to the same backend.
+2. Wire `apps/vscode-extension` to the same backend.
+3. Wire `apps/web` to the API.
 4. Finish `packages/cli` once the boot flow is stable.
 
 ## Notes For Contributors
