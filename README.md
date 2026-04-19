@@ -18,23 +18,15 @@ The repo is in active scaffold mode. The strongest pieces today are:
 
 The app layers are scaffolded and will be wired to these packages next.
 
-## GitHub Launch Checklist
+## GitHub Discoverability
 
-GitHub topics are one of the fastest ways to make the repo easier to discover. Add them in repository settings, keep them lowercase, and stay under 20 total.
+GitHub topics are configured in the repository settings, not in this README.
 
-Recommended topics:
+Useful topics for this project:
 
 `ai-agents`, `agent-framework`, `agentic-ai`, `developer-tools`, `local-first`, `mcp`, `model-context-protocol`, `multi-agent-systems`, `nodejs`, `nextjs`, `open-source`, `realtime`, `software-development`, `slack-alternative`, `typescript`, `vscode-extension`
 
-GitHub also gives this repo more surface area when you add:
-- a social preview image in repository settings
-- release tags like `v0.1.0`
-- `CONTRIBUTING.md`
-- `CODE_OF_CONDUCT.md`
-- `SECURITY.md`
-- `LICENSE` before the public launch
-
-If the project starts taking sponsorships later, add `.github/FUNDING.yml` too.
+GitHub also gives this repo more surface area when you add a social preview image, release tags like `v0.1.0`, and the standard community files: `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`, and `LICENSE`.
 
 ## Requirements
 
