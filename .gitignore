@@ -1,0 +1,42 @@
+# dependencies
+node_modules
+**/node_modules
+
+# build output
+dist
+**/dist
+out
+**/out
+.next
+**/.next
+coverage
+**/coverage
+*.tsbuildinfo
+
+# caches
+.turbo
+**/.turbo
+.cache
+**/.cache
+.eslintcache
+**/.eslintcache
+
+# environment and secrets
+.env
+.env.*
+*.pem
+*.key
+*.crt
+
+# local data
+*.db
+*.sqlite
+*.sqlite3
+*.log
+logs
+**/logs
+
+# editor and OS files
+.DS_Store
+.idea
+.vscode
