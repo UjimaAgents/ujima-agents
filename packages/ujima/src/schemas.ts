@@ -29,6 +29,7 @@ export const RolePresetSchema = z.object({
   workspaceScopes: z.array(z.string().min(1)).default([]),
   tools: z.array(z.string().min(1)).default([]),
   channels: z.array(z.string().min(1)).default(["general"]),
+  skills: z.array(z.string().min(1)).default([]),
 });
 export type RolePreset = z.infer<typeof RolePresetSchema>;
 
@@ -44,6 +45,7 @@ export const RoleConfigSchema = z.object({
   workspaceScopes: z.array(z.string().min(1)).default([]),
   tools: z.array(z.string().min(1)).default([]),
   channels: z.array(z.string().min(1)).default(["general"]),
+  skills: z.array(z.string().min(1)).default([]),
 });
 export type RoleConfig = z.infer<typeof RoleConfigSchema>;
 

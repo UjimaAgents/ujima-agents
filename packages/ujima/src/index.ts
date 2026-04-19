@@ -3,6 +3,7 @@ export * from "./loaders.js";
 export * from "./providers.js";
 export * from "./roles.js";
 export * from "./schemas.js";
+export * from "./skills.js";
 export * from "./team.js";
 export * from "./tools.js";
 export * from "./workspace.js";

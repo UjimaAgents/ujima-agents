@@ -48,8 +48,8 @@ const team = AgentTeam({
   },
   providers: {
     openai: {
-      defaultModel: "gpt-4.1-mini",
-      models: ["gpt-4.1-mini"],
+      defaultModel: "gpt-5.4",
+      models: ["gpt-5.4"],
     },
   },
   roles: [
@@ -58,7 +58,7 @@ const team = AgentTeam({
       title: "Frontend Engineer",
       instructions: "Build and polish the UI.",
       provider: "openai",
-      model: "gpt-4.1-mini",
+      model: "gpt-5.4",
       workspaceScopes: ["apps/web"],
       tools: ["filesystem", "git"],
       channels: ["general"],
@@ -80,24 +80,18 @@ const team = AgentTeam({
 
 ### 👥 Team API
 
-- `AgentTeam(config)`
-- `createStarterAgentTeamConfig(options?)`
-- `loadAgentTeam(config)`
-- `loadAgentTeamFromFile(filePath)`
+- **`AgentTeam(config)`**: The primary entry point. Validates, normalizes, and packages your team definition into a handle for the API.
+- **`createStarterAgentTeamConfig(options?)`**: Generates a high-quality boilerplate configuration for a new organization, including all role presets.
+- **`loadAgentTeam(config)`**: A lightweight alias to `AgentTeam(config)` for semantic clarity in loader pipelines.
+- **`loadAgentTeamFromFile(filePath)`**: Dynamically loads and resolves a team configuration from `.json`, `.js`, or `.ts` files and returns a validated handle.
 
 `AgentTeam()` returns a handle with:
 
-- `kind`
-- `config`
-- `workspace`
-- `providers`
-- `roles`
-- `channels`
-- `tools`
-- `getRole(name)`
-- `getChannel(name)`
-- `getProvider(name)`
-- `toJSON()`
+- `kind`, `config`, `workspace`, `providers`, `roles`, `channels`, `tools`
+- `getRole(name)`: Retrieves a normalized role by name or ID.
+- `getChannel(name)`: Retrieves a normalized channel by name or ID.
+- `getProvider(name)`: Retrieves provider configuration by name.
+- `toJSON()`: Returns the normalized configuration object.
 
 Example:
 
@@ -128,12 +122,12 @@ console.log(team.getRole("pm"));
 
 ### 🎭 Role Helpers
 
-- `ROLE_PRESETS`
-- `listRolePresets()`
-- `getRolePreset(name)`
-- `createRoleFromPreset(name, overrides?)`
-- `defineRole(role)`
-- `normalizeRoles(roles, workspaceRoot)`
+- **`ROLE_PRESETS`**: The raw catalog of pre-configured agent roles (Frontend, Backend, PM, etc.).
+- **`listRolePresets()`**: Returns the full catalog of role blueprints available in the framework.
+- **`getRolePreset(name)`**: Retrieves a specific role blueprint by its identifier (e.g., 'frontendEngineer').
+- **`createRoleFromPreset(name, overrides?)`**: Instantiates a role with standard instructions, while allowing overrides for models or tools.
+- **`defineRole(role)`**: Validates and normalizes a custom role object against the internal `RoleConfigSchema`.
+- **`normalizeRoles(roles, workspaceRoot)`**: Mass-normalizes an array of roles and resolves their workspace scopes against the root.
 
 Example:
 
@@ -142,60 +136,48 @@ import {createRoleFromPreset} from "@ujima/framework";
 
 const frontendEngineer = createRoleFromPreset("frontendEngineer", {
   provider: "openai",
-  model: "gpt-4.1-mini",
+  model: "gpt-5.4",
 });
 ```
 
 ### ☁️ Provider Helpers
 
-- `defineProvider(provider)`
-- `normalizeProviders(providers)`
+- **`defineProvider(provider)`**: A type-safe helper to wrap provider configurations (models and model selection).
+- **`normalizeProviders(providers)`**: Validates and applies defaults to a map of provider configurations.
 
 ### 🧰 Tool Helpers
 
-- `DEFAULT_TOOL_CATALOG`
-- `defineTool(tool)`
-- `normalizeTools(tools)`
-- `listDefaultToolNames()`
+- **`DEFAULT_TOOL_CATALOG`**: The standard set of tools available locally (filesystem, git, shell, mcp).
+- **`defineTool(tool)`**: Validates a tool capability structure, ensuring actions and path-restrictions are correctly formatted.
+- **`normalizeTools(tools)`**: Validates a map of tool definitions and merges them with defaults.
+- **`listDefaultToolNames()`**: Convenience utility to see all tools available in the standard local catalog.
 
 ### 🧭 Workspace Helpers
 
-- `createWorkspaceConfig(root, roleScopes?)`
-- `normalizeWorkspaceRoot(root)`
-- `normalizeRoleScopes(roleScopes, root)`
-- `resolveWorkspacePath(root, relativePath?)`
-- `assertWorkspaceBoundary(root, candidatePath)`
+- **`createWorkspaceConfig(root, roleScopes?)`**: Formalizes the relationship between the organization's hard filesystem boundary and role sub-access.
+- **`normalizeWorkspaceRoot(root)`**: Resolves relative paths into absolute machine-safe paths.
+- **`normalizeRoleScopes(roleScopes, root)`**: Ensures all role-specific path restrictions resolve correctly within the root.
+- **`resolveWorkspacePath(root, relativePath?)`**: Securely resolves a path while ensuring it never escapes the workspace root.
+- **`assertWorkspaceBoundary(root, candidatePath)`**: A strict security check that throws if a path attempts to break out of the sandbox.
+
+### 🧪 Skills (SKILL.md)
+
+- **`getSkillInstructions(role)`**: Generates the specialized instruction block used to point agents toward their `.ujima/skills` directory at runtime.
 
 ### 🧷 Schemas
 
-The framework package also exports the typed config schemas:
+The framework package exports the underlying Zod schemas and their TypeScript types:
 
-- `ProviderConfigSchema`
-- `PolicySchema`
-- `RolePresetSchema`
-- `RoleConfigSchema`
-- `ChannelConfigSchema`
-- `AgentTeamConfigSchema`
-
-And their inferred TypeScript types:
-
-- `ProviderConfig`
-- `PolicyConfig`
-- `RolePreset`
-- `RoleConfig`
-- `ChannelConfig`
-- `AgentTeamConfig`
-- `AgentTeamConfigInput`
+- **Schemas**: `ProviderConfigSchema`, `PolicySchema`, `RolePresetSchema`, `RoleConfigSchema`, `ChannelConfigSchema`, `AgentTeamConfigSchema`.
+- **Types**: `ProviderConfig`, `PolicyConfig`, `RolePreset`, `RoleConfig`, `ChannelConfig`, `AgentTeamConfig`, `AgentTeamConfigInput`.
 
 ## ✅ Configuration Rules
 
 - `workspace.root` is required.
 - `roles` must not be empty.
-- channels referenced by a role must exist.
-- providers referenced by a role must exist.
-- tools referenced by a role must exist.
-- workspace scopes are normalized against the workspace root.
-- the workspace root is treated as a hard boundary.
+- Channels, providers, and tools referenced by a role must exist.
+- Workspace scopes are normalized against the workspace root.
+- The workspace root is treated as a hard boundary for all operations.
 
 ## 🧪 Testing
 
@@ -205,7 +187,7 @@ bun test packages/ujima/index.test.ts
 
 ## 📄 Loading Teams From Files
 
-Use `loadAgentTeamFromFile()` when you want to load a JSON or ESM config file:
+Use `loadAgentTeamFromFile()` to load a JSON or ESM config file:
 
 ```ts
 import {loadAgentTeamFromFile} from "@ujima/framework";
@@ -217,5 +199,4 @@ const team = await loadAgentTeamFromFile("./ujima.team.json");
 
 - Keep this package as the canonical team-definition surface.
 - Let the API consume this package rather than duplicating its rules.
-- Prefer explicit config over builder magic.
-- Keep path safety and role validation strict.
+- Path safety and role validation are hard-enforced at the framework level.

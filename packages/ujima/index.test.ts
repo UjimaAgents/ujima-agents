@@ -7,7 +7,7 @@ import {
   defineProvider,
   defineTool,
   loadAgentTeam,
-} from "./index.ts";
+} from "./index";
 
 test("starter config includes the preset team shape", () => {
   const config = createStarterAgentTeamConfig({
@@ -25,8 +25,8 @@ test("starter config includes the preset team shape", () => {
 
 test("framework helpers normalize roles, tools, and providers", () => {
   const provider = defineProvider({
-    defaultModel: "gpt-4.1-mini",
-    models: ["gpt-4.1-mini"],
+    defaultModel: "gpt-5.4",
+    models: ["gpt-5.4"],
   });
   const tool = defineTool({
     id: "filesystem",
@@ -37,10 +37,10 @@ test("framework helpers normalize roles, tools, and providers", () => {
   });
   const role = createRoleFromPreset("frontendEngineer", {
     provider: "openai",
-    model: "gpt-4.1-mini",
+    model: "gpt-5.4",
   });
 
-  expect(provider.defaultModel).toBe("gpt-4.1-mini");
+  expect(provider.defaultModel).toBe("gpt-5.4");
   expect(tool.id).toBe("filesystem");
   expect(role.name).toBe("frontend-engineer");
 });
@@ -56,8 +56,8 @@ test("AgentTeam normalizes and validates the team config", () => {
     },
     providers: {
       openai: {
-        defaultModel: "gpt-4.1-mini",
-        models: ["gpt-4.1-mini"],
+        defaultModel: "gpt-5.4",
+        models: ["gpt-5.4"],
       },
     },
     roles: [
@@ -66,7 +66,7 @@ test("AgentTeam normalizes and validates the team config", () => {
         title: "Frontend Engineer",
         instructions: ROLE_PRESETS.frontendEngineer.instructions,
         provider: "openai",
-        model: "gpt-4.1-mini",
+        model: "gpt-5.4",
         workspaceScopes: ["apps/web"],
         tools: ["filesystem", "git"],
         channels: ["general"],
@@ -76,7 +76,7 @@ test("AgentTeam normalizes and validates the team config", () => {
 
   expect(team.kind).toBe("ujima.agent-team");
   expect(team.getRole("frontend-engineer")?.workspaceScopes[0]).toBe("/tmp/ujima-org/apps/web");
-  expect(team.getProvider("openai")?.defaultModel).toBe("gpt-4.1-mini");
+  expect(team.getProvider("openai")?.defaultModel).toBe("gpt-5.4");
   expect(team.getChannel("general")?.kind).toBe("general");
 });
 
@@ -91,8 +91,8 @@ test("loadAgentTeam returns a ready-to-use handle", () => {
     },
     providers: {
       openai: {
-        defaultModel: "gpt-4.1-mini",
-        models: ["gpt-4.1-mini"],
+        defaultModel: "gpt-5.4",
+        models: ["gpt-5.4"],
       },
     },
     roles: [
@@ -101,7 +101,7 @@ test("loadAgentTeam returns a ready-to-use handle", () => {
         title: "Frontend Engineer",
         instructions: ROLE_PRESETS.frontendEngineer.instructions,
         provider: "openai",
-        model: "gpt-4.1-mini",
+        model: "gpt-5.4",
         workspaceScopes: ["apps/web"],
         tools: ["filesystem", "git"],
         channels: ["general"],

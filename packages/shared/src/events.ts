@@ -7,18 +7,23 @@ import {
   MessageSchema,
   PresenceStateSchema,
   RunStateSchema,
+  ToolCallSchema,
+  ToolResultSchema,
 } from "./schemas.js";
 
 export const SocketEventNames = Object.freeze({
   channelMessage: "channel:message",
   channelPresence: "channel:presence",
   threadMessage: "thread:message",
+  dmMessage: "dm:message",
   approvalRequested: "approval:requested",
   approvalResolved: "approval:resolved",
   runStarted: "run:started",
   runUpdated: "run:updated",
   runCompleted: "run:completed",
   memberUpdated: "member:updated",
+  toolCalled: "tool:called",
+  toolResult: "tool:result",
 });
 
 export type SocketEventName = (typeof SocketEventNames)[keyof typeof SocketEventNames];
@@ -36,6 +41,12 @@ export const ThreadMessageEventSchema = z.object({
   message: MessageSchema,
 });
 export type ThreadMessageEvent = z.infer<typeof ThreadMessageEventSchema>;
+
+export const DMMessageEventSchema = z.object({
+  organizationId: IdSchema,
+  message: MessageSchema,
+});
+export type DMMessageEvent = z.infer<typeof DMMessageEventSchema>;
 
 export const ChannelPresenceEventSchema = z.object({
   organizationId: IdSchema,
@@ -75,14 +86,34 @@ export const ChannelUpdatedEventSchema = z.object({
 });
 export type ChannelUpdatedEvent = z.infer<typeof ChannelUpdatedEventSchema>;
 
+export const ToolCalledEventSchema = z.object({
+  organizationId: IdSchema,
+  runId: IdSchema,
+  agentId: IdSchema,
+  toolCall: ToolCallSchema,
+});
+export type ToolCalledEvent = z.infer<typeof ToolCalledEventSchema>;
+
+export const ToolResultEventSchema = z.object({
+  organizationId: IdSchema,
+  runId: IdSchema,
+  agentId: IdSchema,
+  toolResult: ToolResultSchema,
+});
+export type ToolResultEvent = z.infer<typeof ToolResultEventSchema>;
+
 export const SocketEventSchemas = Object.freeze({
   [SocketEventNames.channelMessage]: ChannelMessageEventSchema,
   [SocketEventNames.channelPresence]: ChannelPresenceEventSchema,
   [SocketEventNames.threadMessage]: ThreadMessageEventSchema,
+  [SocketEventNames.dmMessage]: DMMessageEventSchema,
   [SocketEventNames.approvalRequested]: ApprovalRequestedEventSchema,
   [SocketEventNames.approvalResolved]: ApprovalResolvedEventSchema,
   [SocketEventNames.runStarted]: RunEventSchema,
   [SocketEventNames.runUpdated]: RunEventSchema,
   [SocketEventNames.runCompleted]: RunEventSchema,
   [SocketEventNames.memberUpdated]: MemberUpdatedEventSchema,
+  [SocketEventNames.toolCalled]: ToolCalledEventSchema,
+  [SocketEventNames.toolResult]: ToolResultEventSchema,
 });
+

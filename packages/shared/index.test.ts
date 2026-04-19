@@ -6,7 +6,7 @@ import {
   SocketEventNames,
   SocketEventSchemas,
   resolveWorkspacePath,
-} from "./index.ts";
+} from "./index";
 
 test("resolveWorkspacePath keeps work inside the root", () => {
   expect(resolveWorkspacePath("/tmp/ujima-org", "apps/web")).toBe("/tmp/ujima-org/apps/web");

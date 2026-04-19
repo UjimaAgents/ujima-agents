@@ -161,3 +161,17 @@ export const RunStateSchema = z.object({
   endedAt: TimestampSchema.optional(),
 });
 export type RunState = z.infer<typeof RunStateSchema>;
+
+export const ToolCallSchema = z.object({
+  toolCallId: IdSchema,
+  toolName: z.string().min(1),
+  args: z.record(z.string(), z.unknown()),
+});
+export type ToolCall = z.infer<typeof ToolCallSchema>;
+
+export const ToolResultSchema = z.object({
+  toolCallId: IdSchema,
+  result: z.unknown(),
+  isError: z.boolean().default(false),
+});
+export type ToolResult = z.infer<typeof ToolResultSchema>;

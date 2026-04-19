@@ -51,14 +51,22 @@ export function defineRole(role: unknown): RoleConfig {
   return parsed;
 }
 
+import { getSkillInstructions } from "./skills.js";
+
 export function normalizeRoles(
   roles: Array<unknown> = [],
   workspaceRoot: string,
 ): RoleConfig[] {
   return roles.map((role) => {
     const parsed = defineRole(role);
+    const skillInstructions = getSkillInstructions(parsed);
+    const instructions = skillInstructions
+      ? `${parsed.instructions}${skillInstructions}`
+      : parsed.instructions;
+
     return {
       ...parsed,
+      instructions,
       workspaceScopes: parsed.workspaceScopes.map((scope) => resolveWorkspacePath(workspaceRoot, scope)),
     };
   });
