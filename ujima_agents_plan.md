@@ -145,10 +145,13 @@ Phase one optimizes for solo developers and small teams on a single machine. The
 - Every tool invocation that touches the local machine must be checked against the org root-folder policy before execution.
 
 ### Agent Skills Library
-- Do not invent a proprietary Ujima-only skill format.
-- Support the open `SKILL.md` standard so users can seamlessly adopt existing open-source agent skills (e.g., from awesome-agent-skills libraries).
-- Allow users to add skills from these open-source libraries to agents, teams, or organizations they create.
-- Add a thin Ujima management layer on top for installation, trust, workspace scoping, and permission gating.
+- Do not invent a proprietary Ujima-only skill format. Support the open `SKILL.md` standard to let users seamlessly adopt existing open-source agent skills (e.g., from awesome-agent-skills).
+- **Skill Storage:** Skills are installed locally within the organization workspace under a `<org-root>/.ujima/skills/` directory. Each installed skill lives in its own subdirectory containing its `SKILL.md` and any associated scripts/assets.
+- **Workflow & Lifecycle:**
+  - **Installation:** Users can install skills via the CLI (e.g., `ujima skill add <source>`) or via the Next.js UI. The files are securely fetched and saved strictly inside `.ujima/skills`.
+  - **Assignment:** In the UI or via the `AgentTeam(...)` configuration, downloaded skills can be explicitly bound to specific agents, dedicated teams, or the whole organization.
+  - **Execution Context:** When a skill is bound to an agent, the framework automatically loads the `SKILL.md` contents into that agent's system prompt or contextual knowledge base.
+  - **Trust & Policy:** Any custom tool scripts or commands accompanying the skill execute strictly under Ujima's central security policy. They are constrained to the organization's root folder boundary and remain subject to the same human approval flows for sensitive actions (file writes, shell execution, git mutations).
 
 ### Memory and audit
 - Layered memory in phase one:
