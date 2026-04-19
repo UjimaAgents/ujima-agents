@@ -1,5 +1,7 @@
 # Ujima Agents
 
+![Ujima Agents Banner](./assets/banner.png)
+
 Ujima Agents is a local-first control plane and framework for building Slack-like teams of AI software development agents, with typed roles, workspace-bounded execution, approvals, realtime collaboration, and a local web, CLI, and editor experience.
 
 The project is structured as a Bun monorepo with:
