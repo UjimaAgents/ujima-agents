@@ -144,6 +144,12 @@ Phase one optimizes for solo developers and small teams on a single machine. The
 - Keep tool definitions declarative and schema-validated. No dynamic execute-config-as-code path anywhere.
 - Every tool invocation that touches the local machine must be checked against the org root-folder policy before execution.
 
+### Agent Skills Library
+- Do not invent a proprietary Ujima-only skill format.
+- Support the open `SKILL.md` standard so users can seamlessly adopt existing open-source agent skills (e.g., from awesome-agent-skills libraries).
+- Allow users to add skills from these open-source libraries to agents, teams, or organizations they create.
+- Add a thin Ujima management layer on top for installation, trust, workspace scoping, and permission gating.
+
 ### Memory and audit
 - Layered memory in phase one:
   - run memory: transcript, tool events, outputs
