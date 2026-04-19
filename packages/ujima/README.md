@@ -40,7 +40,57 @@ import {
 ## ⚡ Quick Start
 
 ```ts
-import {AgentTeam} from "@ujima/framework";
+import {AgentTeam, createAgent, createOrganizationChart} from "@ujima/framework";
+
+const pmRole = {
+  name: "pm",
+  title: "Product Manager",
+  instructions: "Keep the team aligned.",
+  workspaceScopes: ["."],
+  tools: ["filesystem", "shell", "message"],
+  skills: ["product-marketing-context", "analytics-tracking"],
+  channels: ["general"],
+};
+
+const frontendRole = {
+  name: "frontend-engineer",
+  title: "Frontend Engineer",
+  instructions: "Build and polish the UI.",
+  provider: "openai",
+  model: "gpt-5.4",
+  workspaceScopes: ["apps/web"],
+  tools: ["filesystem", "shell", "message"],
+  skills: ["react-best-practices", "terminal-ui"],
+  channels: ["general"],
+};
+
+const backendRole = {
+  name: "backend-engineer",
+  title: "Backend Engineer",
+  instructions: "Keep the backend simple and secure.",
+  provider: "openai",
+  model: "gpt-5.4",
+  workspaceScopes: ["apps/api"],
+  tools: ["filesystem", "shell", "message"],
+  skills: ["terminal-ui"],
+  channels: ["general"],
+};
+
+const agents = [
+  createAgent("Sam Patel", "pm", "direct"),
+  createAgent("Alice Nguyen", "frontend-engineer", "thoughtful"),
+  createAgent("Bob Chen", "frontend-engineer", "skeptical"),
+  createAgent("Priya Shah", "backend-engineer", "precise"),
+];
+
+const organizationChart = createOrganizationChart(
+  {
+    "Alice Nguyen": "Sam Patel",
+    "Bob Chen": "Sam Patel",
+    "Priya Shah": "Sam Patel",
+  },
+  agents,
+);
 
 const team = AgentTeam({
   name: "Acme Team",
@@ -50,49 +100,15 @@ const team = AgentTeam({
       "frontend-engineer": ["apps/web"],
     },
   },
-  organizationChart: createOrganizationChart(
-    {
-      "frontend-alice": "pm",
-      "frontend-bob": "pm",
-      "backend-engineer": "pm",
-    },
-    [
-      createAgent("pm", "pm", "direct"),
-      createAgent("frontend-alice", "frontend-engineer", "thoughtful"),
-      createAgent("frontend-bob", "frontend-engineer", "skeptical"),
-      createAgent("backend-engineer", "backend-engineer", "precise"),
-    ],
-  ),
+  roles: [pmRole, frontendRole, backendRole],
+  agents,
+  organizationChart,
   providers: {
     openai: {
       defaultModel: "gpt-5.4",
       models: ["gpt-5.4"],
     },
   },
-  roles: [
-    {
-      name: "frontend-engineer",
-      title: "Frontend Engineer",
-      instructions: "Build and polish the UI.",
-      provider: "openai",
-      model: "gpt-5.4",
-      workspaceScopes: ["apps/web"],
-      tools: ["filesystem", "shell", "message"],
-      skills: ["react-best-practices", "terminal-ui"],
-      channels: ["general"],
-    },
-    {
-      name: "backend-engineer",
-      title: "Backend Engineer",
-      instructions: "Keep the backend simple and secure.",
-      provider: "openai",
-      model: "gpt-5.4",
-      workspaceScopes: ["apps/api"],
-      tools: ["filesystem", "shell", "message"],
-      skills: ["terminal-ui"],
-      channels: ["general"],
-    },
-  ],
 });
 ```
 
