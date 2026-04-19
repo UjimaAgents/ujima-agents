@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
+    "build": "bun build --target=bun --outdir=dist src/index.ts",
     "start": "bun src/index.ts",
     "dev": "bun --watch src/index.ts",
     "test": "bun test"

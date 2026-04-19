@@ -21,7 +21,10 @@ bun install
 ```ts
 import {
   AgentTeam,
+  createAgent,
+  createPersonalityFromPreset,
   createStarterAgentTeamConfig,
+  createOrganizationChart,
   createRoleFromPreset,
   defineRole,
   defineTool,
@@ -29,6 +32,7 @@ import {
   loadAgentTeam,
   loadAgentTeamFromFile,
   ROLE_PRESETS,
+  PERSONALITY_PRESETS,
   DEFAULT_TOOL_CATALOG,
 } from "@ujima/framework";
 ```
@@ -46,6 +50,19 @@ const team = AgentTeam({
       "frontend-engineer": ["apps/web"],
     },
   },
+  organizationChart: createOrganizationChart(
+    {
+      "frontend-alice": "pm",
+      "frontend-bob": "pm",
+      "backend-engineer": "pm",
+    },
+    [
+      createAgent("pm", "pm", "direct"),
+      createAgent("frontend-alice", "frontend-engineer", "thoughtful"),
+      createAgent("frontend-bob", "frontend-engineer", "skeptical"),
+      createAgent("backend-engineer", "backend-engineer", "precise"),
+    ],
+  ),
   providers: {
     openai: {
       defaultModel: "gpt-5.4",
@@ -64,6 +81,17 @@ const team = AgentTeam({
       skills: ["react-best-practices", "terminal-ui"],
       channels: ["general"],
     },
+    {
+      name: "backend-engineer",
+      title: "Backend Engineer",
+      instructions: "Keep the backend simple and secure.",
+      provider: "openai",
+      model: "gpt-5.4",
+      workspaceScopes: ["apps/api"],
+      tools: ["filesystem", "shell", "message"],
+      skills: ["terminal-ui"],
+      channels: ["general"],
+    },
   ],
 });
 ```
@@ -71,11 +99,12 @@ const team = AgentTeam({
 ## 🧠 What This Package Gives Users
 
 - a typed `AgentTeam(...)` entrypoint
-- starter presets for common engineering roles
+- starter presets for common engineering roles and personalities
 - helper factories for providers, tools, roles, and prompt composition
 - config normalization and validation
 - workspace-aware team loading
 - defaults for the local tool catalog
+- named agent definitions and org-chart validation at the framework layer
 
 ## 🧩 Public API
 
@@ -83,12 +112,14 @@ const team = AgentTeam({
 
 - **`AgentTeam(config)`**: The primary entry point. Validates, normalizes, and packages your team definition into a handle for the API.
 - **`createStarterAgentTeamConfig(options?)`**: Generates a high-quality boilerplate configuration for a new organization, including all role presets.
+- **`createOrganizationChart(reportsTo, agents)`**: Validates reporting lines against the defined agents and normalizes them into the framework chart shape.
 - **`loadAgentTeam(config)`**: A lightweight alias to `AgentTeam(config)` for semantic clarity in loader pipelines.
 - **`loadAgentTeamFromFile(filePath)`**: Dynamically loads and resolves a team configuration from `.json`, `.js`, or `.ts` files and returns a validated handle.
 
 `AgentTeam()` returns a handle with:
 
-- `kind`, `config`, `workspace`, `providers`, `roles`, `channels`, `tools`
+- `kind`, `config`, `workspace`, `organizationChart`, `agents`, `providers`, `roles`, `channels`, `tools`
+- `getAgent(name)`: Retrieves a named agent by name.
 - `getRole(name)`: Retrieves a normalized role by name or ID.
 - `getChannel(name)`: Retrieves a normalized channel by name or ID.
 - `getProvider(name)`: Retrieves provider configuration by name.
@@ -120,6 +151,7 @@ const team = AgentTeam({
 });
 
 console.log(team.getRole("pm"));
+console.log(team.getAgent("frontend-alice"));
 ```
 
 ### 🎭 Role Helpers
@@ -130,6 +162,16 @@ console.log(team.getRole("pm"));
 - **`createRoleFromPreset(name, overrides?)`**: Instantiates a role with standard instructions, while allowing overrides for models or tools.
 - **`defineRole(role)`**: Validates and normalizes a custom role object against the internal `RoleConfigSchema`.
 - **`normalizeRoles(roles, workspaceRoot)`**: Mass-normalizes an array of roles and resolves their workspace scopes against the root.
+
+### 🧍 Agent Helpers
+
+- **`PERSONALITY_PRESETS`**: The raw catalog of personality blueprints available in the framework.
+- **`listPersonalityPresets()`**: Returns the full catalog of personality blueprints.
+- **`getPersonalityPreset(name)`**: Retrieves a specific personality blueprint by its identifier.
+- **`createPersonalityFromPreset(name, overrides?)`**: Instantiates a personality preset with standard instructions, while allowing overrides.
+- **`definePersonality(personality)`**: Validates and normalizes a custom personality object against the internal `PersonalityPresetSchema`.
+- **`createAgent(name, roleName, personalityName?)`**: Creates a named agent instance with a role and personality preset.
+- **`normalizeAgents(agents, roles)`**: Normalizes named agents and validates that names are unique, roles exist, and personalities exist.
 
 Example:
 
@@ -170,16 +212,20 @@ const frontendEngineer = createRoleFromPreset("frontendEngineer", {
 
 The framework package exports the underlying Zod schemas and their TypeScript types:
 
-- **Schemas**: `ProviderConfigSchema`, `PolicySchema`, `RolePresetSchema`, `RoleConfigSchema`, `ChannelConfigSchema`, `AgentTeamConfigSchema`.
-- **Types**: `ProviderConfig`, `PolicyConfig`, `RolePreset`, `RoleConfig`, `ChannelConfig`, `AgentTeamConfig`, `AgentTeamConfigInput`.
+- **Schemas**: `ProviderConfigSchema`, `PolicySchema`, `PersonalityPresetSchema`, `RolePresetSchema`, `RoleConfigSchema`, `AgentConfigSchema`, `ChannelConfigSchema`, `AgentTeamConfigSchema`.
+- **Types**: `ProviderConfig`, `PolicyConfig`, `PersonalityPreset`, `RolePreset`, `RoleConfig`, `AgentConfig`, `ChannelConfig`, `AgentTeamConfig`, `AgentTeamConfigInput`.
 
 ## ✅ Configuration Rules
 
 - `workspace.root` is required.
 - `roles` must not be empty.
+- `agents` must have unique names.
 - Channels, providers, and tools referenced by a role must exist.
 - Workspace scopes are normalized against the workspace root.
 - The workspace root is treated as a hard boundary for all operations.
+- `organizationChart` can be defined directly in the team config and is preserved through normalization.
+- Use `createOrganizationChart(...)` to validate reporting lines against the agents you defined.
+- Each agent can select a different personality preset.
 - Shell is the execution path for git commands.
 - Messaging is a first-class tool for threads, channels, and DMs.
 

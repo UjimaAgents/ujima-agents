@@ -1,6 +1,50 @@
 import type { ApiServiceContext } from "./context.ts";
 import { listProviderStatuses, validateProviderKeys } from "./team.ts";
 
+function validateOrganizationChart(
+  reportsTo: Record<string, string>,
+  memberIds: Set<string>,
+) {
+  for (const [childId, parentId] of Object.entries(reportsTo)) {
+    if (!memberIds.has(childId)) {
+      throw new Error(`Organization chart references unknown member "${childId}"`);
+    }
+
+    if (!memberIds.has(parentId)) {
+      throw new Error(`Organization chart references unknown manager "${parentId}"`);
+    }
+
+    if (childId === parentId) {
+      throw new Error(`Member "${childId}" cannot report to itself`);
+    }
+  }
+
+  const visiting = new Set<string>();
+  const visited = new Set<string>();
+
+  const walk = (memberId: string) => {
+    if (visited.has(memberId)) {
+      return;
+    }
+
+    if (visiting.has(memberId)) {
+      throw new Error(`Organization chart contains a cycle at member "${memberId}"`);
+    }
+
+    visiting.add(memberId);
+    const parentId = reportsTo[memberId];
+    if (parentId) {
+      walk(parentId);
+    }
+    visiting.delete(memberId);
+    visited.add(memberId);
+  };
+
+  for (const memberId of Object.keys(reportsTo)) {
+    walk(memberId);
+  }
+}
+
 export class SettingsService {
   constructor(private readonly context: ApiServiceContext) {}
 
@@ -10,6 +54,8 @@ export class SettingsService {
     return {
       name: team.config.name,
       workspace: team.workspace,
+      organizationChart: team.organizationChart,
+      agents: team.agents,
       roles: team.roles,
       channels: team.channels,
       tools: team.tools,
@@ -62,6 +108,13 @@ export class SettingsService {
     const organization = this.context.repo.getOrganization(input.organizationId);
     if (!organization) {
       throw new Error(`Organization not found: ${input.organizationId}`);
+    }
+
+    if (input.organizationChart) {
+      validateOrganizationChart(
+        input.organizationChart.reportsTo,
+        new Set(this.context.repo.listMembers(input.organizationId).map((member) => member.id)),
+      );
     }
 
     const updated = this.context.repo.saveOrganization({

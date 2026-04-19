@@ -93,6 +93,11 @@ export class RunService {
       throw new Error(`Role not found: ${member.roleName}`);
     }
 
+    const agent = team.getAgent(member.id) ?? team.getAgent(member.name);
+    if (!agent) {
+      return this.failRun(run, `Agent not found: ${member.id}`);
+    }
+
     const providerName = role.provider;
     if (providerName && !this.repo.getProviderCredential(run.organizationId, providerName)) {
       return this.failRun(run, `Provider key missing for "${providerName}"`);

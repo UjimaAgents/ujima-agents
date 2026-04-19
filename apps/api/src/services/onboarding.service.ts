@@ -5,30 +5,35 @@ import { loadTeam, summarizeTeam } from "../config.ts";
 import type { Repository } from "../repositories.ts";
 import { validateProviderKeys } from "./team.ts";
 
-function roleMemberId(roleId: string | undefined, roleName: string) {
-  return roleId ?? roleName;
-}
-
 function channelId(channel: { id?: string; name: string }) {
   return channel.id ?? channel.name;
 }
 
-function buildInitialOrganizationChart(ownerId: string, roleMemberIds: Map<string, string>): { reportsTo: Record<string, string> } {
+function buildInitialOrganizationChart(ownerId: string, agents: Array<{ name: string; roleName: string }>): { reportsTo: Record<string, string> } {
   const reportsTo: Record<string, string> = {};
+  const byRole = new Map<string, string[]>();
 
-  for (const [roleName, memberId] of roleMemberIds) {
-    if (roleName === "engineering-manager" || roleName === "pm") {
-      reportsTo[memberId] = ownerId;
+  for (const agent of agents) {
+    const current = byRole.get(agent.roleName) ?? [];
+    current.push(agent.name);
+    byRole.set(agent.roleName, current);
+  }
+
+  const engineeringManagerId = byRole.get("engineering-manager")?.[0] ?? ownerId;
+
+  for (const agent of agents) {
+    if (agent.roleName === "engineering-manager" || agent.roleName === "pm") {
+      reportsTo[agent.name] = ownerId;
       continue;
     }
 
-    if (roleName === "frontend-engineer" || roleName === "backend-engineer" || roleName === "qa-engineer") {
-      reportsTo[memberId] = roleMemberIds.get("engineering-manager") ?? ownerId;
+    if (agent.roleName === "frontend-engineer" || agent.roleName === "backend-engineer" || agent.roleName === "qa-engineer") {
+      reportsTo[agent.name] = engineeringManagerId;
       continue;
     }
 
-    if (roleName === "code-reviewer") {
-      reportsTo[memberId] = roleMemberIds.get("engineering-manager") ?? ownerId;
+    if (agent.roleName === "code-reviewer") {
+      reportsTo[agent.name] = engineeringManagerId;
     }
   }
 
@@ -62,8 +67,10 @@ export class OnboardingService {
 
     const ownerId = randomUUID();
     const organizationId = randomUUID();
-    const memberIdByRole = new Map(team.roles.map((role) => [role.name, roleMemberId(role.id, role.name)]));
-    const organizationChart = buildInitialOrganizationChart(ownerId, memberIdByRole);
+    const organizationChart =
+      Object.keys(team.organizationChart.reportsTo).length > 0
+        ? team.organizationChart
+        : buildInitialOrganizationChart(ownerId, team.agents);
 
     const organization = OrganizationSchema.parse({
       id: organizationId,
@@ -89,13 +96,13 @@ export class OnboardingService {
 
     const members = [
       owner,
-      ...team.roles.map((role) =>
+      ...team.agents.map((agent) =>
       MemberSchema.parse({
-        id: roleMemberId(role.id, role.name),
+        id: agent.name,
         organizationId,
-        name: role.title,
-        kind: role.kind,
-        roleName: role.name,
+        name: agent.name,
+        kind: "agent",
+        roleName: agent.roleName,
         presence: "offline",
         createdAt: new Date().toISOString(),
       })),
@@ -121,32 +128,39 @@ export class OnboardingService {
     }
 
     const channelsByName = new Map(channels.map((channel) => [channel.name, channel]));
-    const memberIdsByRole = new Map(members.map((member) => [member.roleName, member.id]));
+    const memberIdsByRole = new Map<string, string[]>();
     const channelMemberships = new Map<string, Set<string>>(
       channels.map((channel) => [channel.id, new Set(channel.memberIds)]),
     );
 
-    for (const role of team.roles) {
-      const memberId = memberIdsByRole.get(role.name);
-      if (!memberId) {
+    for (const member of members) {
+      if (member.kind !== "agent") {
         continue;
       }
 
-      for (const channelName of role.channels) {
+      const memberIds = memberIdsByRole.get(member.roleName) ?? [];
+      memberIds.push(member.id);
+      memberIdsByRole.set(member.roleName, memberIds);
+    }
+
+    for (const agent of team.agents) {
+      const memberIds = memberIdsByRole.get(agent.roleName) ?? [];
+
+      for (const channelName of team.getRole(agent.roleName)?.channels ?? []) {
         const channel = channelsByName.get(channelName);
         if (!channel) {
           continue;
         }
 
-        channelMemberships.get(channel.id)?.add(memberId);
+        for (const memberId of memberIds) {
+          channelMemberships.get(channel.id)?.add(memberId);
+        }
       }
     }
 
     for (const [channelId, memberIds] of channelMemberships) {
       this.repo.setChannelMembers(channelId, [...memberIds]);
     }
-
-    this.repo.saveOrganization(organization);
 
     return {
       organization,

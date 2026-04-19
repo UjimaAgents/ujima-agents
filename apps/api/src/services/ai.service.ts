@@ -94,9 +94,14 @@ export class AiService {
       throw new Error(`Member not found: ${input.agentId}`);
     }
 
-    const role = team.getRole(member.roleName);
+    const agent = team.getAgent(member.id) ?? team.getAgent(member.name);
+    if (!agent) {
+      throw new Error(`Agent not found: ${member.id}`);
+    }
+
+    const role = team.getRole(agent.roleName);
     if (!role) {
-      throw new Error(`Role not found: ${member.roleName}`);
+      throw new Error(`Role not found: ${agent.roleName}`);
     }
 
     if (!role.provider) {
@@ -128,8 +133,10 @@ export class AiService {
       organization.name,
       member.id,
       input.threadId,
+      agent,
       role,
       this.repo.listMembers(input.organizationId).filter((current) => current.id !== member.id),
+      team.agents,
       team.channels,
       organization.organizationChart,
     );

@@ -6,7 +6,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](http://makeapullrequest.com)
 
-Ujima Agents is a local-first control plane and framework for building Slack-like teams of AI software development agents, with typed roles, workspace-bounded execution, approvals, realtime collaboration, agent messaging, and a local web, CLI, and editor experience.
+Ujima Agents is a local-first control plane and framework for building Slack-like teams of AI software development agents, with typed roles, named agents, workspace-bounded execution, approvals, realtime collaboration, agent messaging, and a local web, CLI, and editor experience.
 
 ## ✨ Features
 
@@ -14,13 +14,13 @@ Ujima Agents is a local-first control plane and framework for building Slack-lik
 - **Human-in-the-Loop by Default:** GUI-level approval gates block sensitive shell and filesystem actions without your explicit permission.
 - **Slack-Like Mechanics:** Interact across group channels, threads, or DMs. Agents can message each other directly and retain cross-conversation memory as persistent virtual members.
 - **Strict Workspace Bounds:** Hard-enforced sandbox directories prevent your agents from destructive traversal outside the organization boundary.
-- **Typed Role & Skill Ecosystem:** Declarative TS configuration to bind presets, custom logic, and widely-available open source `SKILL.md` capabilities to specific agents.
+- **Typed Role, Agent, and Skill Ecosystem:** Declarative TS configuration to bind role presets, named agents, personality presets, custom logic, and widely-available open source `SKILL.md` capabilities to specific agents.
 
 ## 🚀 Current State
 
 The repo is in active build-out. The strongest pieces today are:
 - `packages/shared`: shared schemas, socket event contracts, org charts, and workspace boundary helpers
-- `packages/ujima`: the framework SDK for `AgentTeam`, role presets, provider/tool helpers, prompt composition, and loaders
+- `packages/ujima`: the framework SDK for `AgentTeam`, role presets, personality presets, named agents, org chart definition, provider/tool helpers, prompt composition, and loaders
 - `apps/api`: the runnable backend for onboarding, persistence, messaging, approvals, realtime, and AI runs
 
 ## 🛠 Requirements
@@ -85,6 +85,8 @@ If you are editing the framework package, start here:
 - `packages/shared/src/schemas.ts`
 - `packages/shared/src/events.ts`
 - `packages/shared/src/paths.ts`
+- `packages/ujima/src/agents.ts`
+- `packages/ujima/src/personality.ts`
 - `packages/ujima/src/team.ts`
 - `packages/ujima/src/roles.ts`
 - `packages/ujima/src/tools.ts`

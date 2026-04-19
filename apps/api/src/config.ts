@@ -38,7 +38,9 @@ export function summarizeTeam(team: AgentTeamHandle) {
   return {
     name: team.config.name,
     workspaceRoot: team.workspace.root,
+    organizationChart: team.organizationChart,
     roles: team.roles.map((role) => role.name),
+    agents: team.agents.map((agent) => agent.name),
     channels: team.channels.map((channel) => channel.name),
   };
 }
@@ -50,4 +52,3 @@ export function isAllowedLocalOrigin(origin: string | null | undefined): boolean
 
   return LOCAL_ORIGIN.test(origin);
 }
-

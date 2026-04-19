@@ -1,5 +1,6 @@
 import type { Channel, Member, OrganizationChart } from "@ujima/shared";
-import type { RoleConfig } from "./schemas.js";
+import { getPersonalityPreset } from "./personality.js";
+import type { AgentConfig, RoleConfig } from "./schemas.js";
 
 export const SHARED_AGENT_SYSTEM_PROMPT = [
   "You are a trusted employee inside the organization.",
@@ -45,9 +46,21 @@ function formatJoinedAt(value: string | undefined): string {
   return value ? value.slice(0, 10) : "unknown";
 }
 
+function formatMemberLine(member: Member, agent?: AgentConfig): string {
+  const personality = agent ? getPersonalityPreset(agent.personalityName) : undefined;
+  const parts = [member.name, member.roleName, member.kind, `joined ${formatJoinedAt(member.createdAt)}`];
+
+  if (personality) {
+    parts.splice(2, 0, personality.title);
+  }
+
+  return `- ${parts.join(" | ")}`;
+}
+
 function formatOrgChart(members: Member[], chart: OrganizationChart): string {
   const roots = members.filter((member) => !chart.reportsTo[member.id]);
   const visited = new Set<string>();
+  const byId = new Map(members.map((member) => [member.id, member]));
 
   const renderNode = (member: Member, depth: number): string[] => {
     if (visited.has(member.id)) {
@@ -64,18 +77,26 @@ function formatOrgChart(members: Member[], chart: OrganizationChart): string {
   return roots.length
     ? roots.flatMap((member) => renderNode(member, 0)).join("\n")
     : members
-        .map((member) => `- ${member.name} (${member.roleName}, ${member.kind}, joined ${formatJoinedAt(member.createdAt)})`)
+        .map((member) => {
+          const resolved = byId.get(member.id) ?? member;
+          return formatMemberLine(resolved);
+        })
         .join("\n");
 }
 
-export function buildOrganizationContextPrompt(
+function buildOrganizationContextPrompt(
   organizationName: string,
   members: Member[],
+  agents: AgentConfig[],
   organizationChart: OrganizationChart,
 ): string {
+  const agentsByName = new Map(agents.map((agent) => [agent.name, agent]));
+
   return [
     `Organization: ${organizationName}`,
-    "Other employees and hierarchy:",
+    "Employees:",
+    members.map((member) => formatMemberLine(member, agentsByName.get(member.name))).join("\n"),
+    "Hierarchy:",
     formatOrgChart(members, organizationChart),
   ].join("\n");
 }
@@ -85,24 +106,29 @@ export function buildAgentSystemPrompt(
   organizationName: string,
   currentMemberId: string,
   currentThreadId: string,
+  agent: AgentConfig,
   role: RoleConfig,
   members: Member[] = [],
+  agents: AgentConfig[] = [],
   channels: Channel[] = [],
   organizationChart: OrganizationChart = { reportsTo: {} },
 ): string {
   const accessibleChannels = role.channels.length
     ? channels.filter((channel) => role.channels.includes(channel.name))
     : channels;
+  const personality = getPersonalityPreset(agent.personalityName);
 
   return [
-    `You are an employee of ${organizationName}, acting as ${role.title} (${role.name}).`,
+    `You are ${agent.name}, an employee of ${organizationName}, acting as ${role.title} (${role.name}).`,
+    personality ? `Personality: ${personality.title} (${personality.name})` : "",
     SHARED_AGENT_SYSTEM_PROMPT,
     "",
     "Use 'I' as an employee of the organization, not as a generic assistant.",
     role.description ? `Role objective: ${role.description}` : "",
     role.instructions,
+    personality?.instructions ?? "",
     "",
-    buildOrganizationContextPrompt(organizationName, members, organizationChart),
+    buildOrganizationContextPrompt(organizationName, members, agents, organizationChart),
     "",
     "Messaging:",
     `Current thread ID: ${currentThreadId}`,

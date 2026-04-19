@@ -1,13 +1,16 @@
 import {
   DEFAULT_GENERAL_CHANNEL,
   ChannelSchema,
+  type OrganizationChart,
   normalizeRoleScopes,
   normalizeWorkspaceRoot,
   type Channel,
   type ToolCapability,
 } from "@ujima/shared";
 import { DEFAULT_TOOL_CATALOG, ROLE_PRESETS } from "./constants.js";
+import { createAgent, normalizeAgents, type AgentConfig } from "./agents.js";
 import { normalizeProviders } from "./providers.js";
+import { createOrganizationChart } from "./organization-chart.js";
 import { listRolePresets, normalizeRoles } from "./roles.js";
 import {
   AgentTeamConfigSchema,
@@ -25,18 +28,22 @@ export interface AgentTeamHandle {
   kind: "ujima.agent-team";
   config: NormalizedAgentTeamConfig;
   workspace: NormalizedAgentTeamConfig["workspace"];
+  organizationChart: OrganizationChart;
+  agents: AgentConfig[];
   providers: Record<string, ProviderConfig>;
   roles: RoleConfig[];
   channels: Channel[];
   tools: Record<string, ToolCapability>;
+  getAgent(name: string): AgentConfig | undefined;
   getRole(name: string): RoleConfig | undefined;
   getChannel(name: string): Channel | undefined;
   getProvider(name: string): ProviderConfig | undefined;
   toJSON(): AgentTeamConfig;
 }
 
-export type NormalizedAgentTeamConfig = Omit<AgentTeamConfig, "channels"> & {
+export type NormalizedAgentTeamConfig = Omit<AgentTeamConfig, "channels" | "agents"> & {
   channels: Channel[];
+  agents: AgentConfig[];
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -94,12 +101,16 @@ function validateRoleTools(roles: RoleConfig[], tools: Record<string, ToolCapabi
 export function createStarterAgentTeamConfig({
   name,
   workspaceRoot,
+  organizationChart,
+  agents,
   providers = {},
   tools = {},
   roleScopes = {},
 }: {
   name?: string;
   workspaceRoot?: string;
+  organizationChart?: OrganizationChart;
+  agents?: AgentConfig[];
   providers?: Record<string, ProviderConfig>;
   tools?: Record<string, unknown>;
   roleScopes?: Record<string, string[]>;
@@ -116,6 +127,10 @@ export function createStarterAgentTeamConfig({
   const defaultRoleScopes = Object.fromEntries(
     Object.values(ROLE_PRESETS).map((preset) => [preset.name, preset.workspaceScopes]),
   ) as Record<string, string[]>;
+  const normalizedAgents = normalizeAgents(
+    agents ?? starterRoles.map((role) => createAgent(role.name, role.name)),
+    starterRoles,
+  );
 
   return {
     name: name ?? "Ujima Team",
@@ -123,6 +138,8 @@ export function createStarterAgentTeamConfig({
       root,
       Object.keys(roleScopes).length > 0 ? roleScopes : defaultRoleScopes,
     ),
+    organizationChart: createOrganizationChart(organizationChart?.reportsTo ?? {}, normalizedAgents),
+    agents: normalizedAgents,
     providers: normalizeProviders(providers),
     roles: normalizeRoles(starterRoles, root),
     channels: normalizeChannels([DEFAULT_GENERAL_CHANNEL]),
@@ -144,17 +161,20 @@ export function normalizeAgentTeamConfig(config: unknown): NormalizedAgentTeamCo
     channels:
       channelsInput ?? [DEFAULT_GENERAL_CHANNEL],
     tools: toolsInput ?? DEFAULT_TOOL_CATALOG,
+    organizationChart: isRecord(input.organizationChart) ? input.organizationChart : { reportsTo: {} },
   });
 
   const workspaceRoot = normalizeWorkspaceRoot(parsed.workspace.root);
   const tools = normalizeTools(parsed.tools);
   const channels = normalizeChannels(parsed.channels);
   const roles = normalizeRoles(parsed.roles, workspaceRoot);
+  const agents = normalizeAgents(parsed.agents, roles);
   const providers = normalizeProviders(parsed.providers);
   const roleScopes =
     Object.keys(parsed.workspace.roleScopes).length > 0
       ? normalizeRoleScopes(parsed.workspace.roleScopes, workspaceRoot)
       : {};
+  const organizationChart = createOrganizationChart(parsed.organizationChart.reportsTo, agents);
 
   validateRoleChannels(roles, channels);
   validateRoleProviders(roles, providers);
@@ -166,6 +186,8 @@ export function normalizeAgentTeamConfig(config: unknown): NormalizedAgentTeamCo
       root: workspaceRoot,
       roleScopes,
     },
+    organizationChart,
+    agents,
     providers,
     roles,
     channels,
@@ -180,10 +202,15 @@ export function AgentTeam(config: AgentTeamConfig | Record<string, unknown>): Ag
     kind: "ujima.agent-team",
     config: normalized,
     workspace: normalized.workspace,
+    organizationChart: normalized.organizationChart,
+    agents: normalized.agents,
     providers: normalized.providers,
     roles: normalized.roles,
     channels: normalized.channels,
     tools: normalized.tools,
+    getAgent(name: string): AgentConfig | undefined {
+      return normalized.agents.find((agent) => agent.name === name);
+    },
     getRole(name: string): RoleConfig | undefined {
       return normalized.roles.find((role) => role.name === name || role.id === name);
     },

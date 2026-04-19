@@ -1,6 +1,9 @@
 import { expect, test } from "bun:test";
 import {
   AgentTeam,
+  createAgent,
+  createOrganizationChart,
+  createPersonalityFromPreset,
   ROLE_PRESETS,
   createRoleFromPreset,
   createStarterAgentTeamConfig,
@@ -13,12 +16,19 @@ test("starter config includes the preset team shape", () => {
   const config = createStarterAgentTeamConfig({
     name: "Ujima Demo",
     workspaceRoot: "/tmp/ujima-org",
+    organizationChart: {
+      reportsTo: {
+        "frontend-engineer": "pm",
+      },
+    },
   });
 
   expect(config.name).toBe("Ujima Demo");
   expect(config.channels[0].name).toBe("general");
   expect(Object.keys(config.tools)).toContain("filesystem");
   expect(Object.keys(config.tools)).toContain("shell");
+  expect(config.agents.map((agent) => agent.name)).toContain("pm");
+  expect(config.organizationChart.reportsTo["frontend-engineer"]).toBe("pm");
   expect(config.roles.map((role) => role.name)).toContain("frontend-engineer");
   expect(config.workspace.root).toBe("/tmp/ujima-org");
   expect(config.workspace.roleScopes["frontend-engineer"][0]).toBe("/tmp/ujima-org/apps/web");
@@ -44,6 +54,21 @@ test("framework helpers normalize roles, tools, and providers", () => {
   expect(provider.defaultModel).toBe("gpt-5.4");
   expect(tool.id).toBe("filesystem");
   expect(role.name).toBe("frontend-engineer");
+  expect(createPersonalityFromPreset("direct").name).toBe("direct");
+});
+
+test("createOrganizationChart validates agent references", () => {
+  const chart = createOrganizationChart(
+    {
+      "frontend-alice": "pm",
+    },
+    [
+      createAgent("pm", "pm", "direct"),
+      createAgent("frontend-alice", "frontend-engineer", "thoughtful"),
+    ],
+  );
+
+  expect(chart.reportsTo["frontend-alice"]).toBe("pm");
 });
 
 test("AgentTeam normalizes and validates the team config", () => {
@@ -55,6 +80,17 @@ test("AgentTeam normalizes and validates the team config", () => {
         "frontend-engineer": ["apps/web"],
       },
     },
+    organizationChart: {
+      reportsTo: {
+        "frontend-alice": "pm",
+        "frontend-bob": "pm",
+      },
+    },
+    agents: [
+      createAgent("pm", "pm", "direct"),
+      createAgent("frontend-alice", "frontend-engineer", "thoughtful"),
+      createAgent("frontend-bob", "frontend-engineer", "skeptical"),
+    ],
     providers: {
       openai: {
         defaultModel: "gpt-5.4",
@@ -62,6 +98,14 @@ test("AgentTeam normalizes and validates the team config", () => {
       },
     },
     roles: [
+      {
+        name: "pm",
+        title: "Product Manager",
+        instructions: ROLE_PRESETS.pm.instructions,
+        workspaceScopes: ["."],
+        tools: ["filesystem"],
+        channels: ["general"],
+      },
       {
         name: "frontend-engineer",
         title: "Frontend Engineer",
@@ -76,6 +120,8 @@ test("AgentTeam normalizes and validates the team config", () => {
   });
 
   expect(team.kind).toBe("ujima.agent-team");
+  expect(team.organizationChart.reportsTo["frontend-alice"]).toBe("pm");
+  expect(team.getAgent("frontend-bob")?.personalityName).toBe("skeptical");
   expect(team.getRole("frontend-engineer")?.workspaceScopes[0]).toBe("/tmp/ujima-org/apps/web");
   expect(team.getProvider("openai")?.defaultModel).toBe("gpt-5.4");
   expect(team.getChannel("general")?.kind).toBe("general");
@@ -90,6 +136,15 @@ test("loadAgentTeam returns a ready-to-use handle", () => {
         "frontend-engineer": ["apps/web"],
       },
     },
+    organizationChart: {
+      reportsTo: {
+        "frontend-alice": "pm",
+      },
+    },
+    agents: [
+      createAgent("pm", "pm", "direct"),
+      createAgent("frontend-alice", "frontend-engineer", "precise"),
+    ],
     providers: {
       openai: {
         defaultModel: "gpt-5.4",
@@ -97,6 +152,14 @@ test("loadAgentTeam returns a ready-to-use handle", () => {
       },
     },
     roles: [
+      {
+        name: "pm",
+        title: "Product Manager",
+        instructions: ROLE_PRESETS.pm.instructions,
+        workspaceScopes: ["."],
+        tools: ["filesystem"],
+        channels: ["general"],
+      },
       {
         name: "frontend-engineer",
         title: "Frontend Engineer",
@@ -111,4 +174,5 @@ test("loadAgentTeam returns a ready-to-use handle", () => {
   });
 
   expect(team.getRole("frontend-engineer")?.name).toBe("frontend-engineer");
+  expect(team.getAgent("frontend-alice")?.roleName).toBe("frontend-engineer");
 });
