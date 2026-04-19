@@ -112,7 +112,7 @@ export class ToolService {
     try {
       const result = await this.executeTool(invocation);
       this.audit(invocation, "ok", { status: "completed" });
-      
+
       this.realtime.emit(SocketEventNames.toolResult, {
         organizationId: invocation.organizationId,
         runId: invocation.runId,
@@ -123,7 +123,7 @@ export class ToolService {
       return { status: "completed", result };
     } catch (error) {
       this.audit(invocation, "error", { error: (error as Error).message });
-      
+
       this.realtime.emit(SocketEventNames.toolResult, {
         organizationId: invocation.organizationId,
         runId: invocation.runId,
@@ -148,7 +148,7 @@ export class ToolService {
     if (invocation.toolId === "shell") {
       return this.executeShell(invocation);
     }
-    
+
     if (invocation.toolId === "mcp") {
       throw new Error("MCP proxying is not yet implemented in the local runtime");
     }
@@ -273,28 +273,31 @@ export class ToolService {
   }
 
   private async runProcess(command: string, args: string[]) {
-    return await new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
+    return new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
       const child = spawn(command, args, {
         cwd: this.requireTeam().workspace.root,
         shell: false,
       });
 
+      // Type workaround: bun-types sometimes conflicts with @types/node EventEmitter typings
+      const proc = child as any;
+
       let stdout = "";
       let stderr = "";
 
-      child.stdout.on("data", (chunk) => {
+      proc.stdout.on("data", (chunk: any) => {
         stdout += chunk.toString();
       });
 
-      child.stderr.on("data", (chunk) => {
+      proc.stderr.on("data", (chunk: any) => {
         stderr += chunk.toString();
       });
 
-      child.on("error", (error) => {
+      proc.on("error", (error: any) => {
         reject(error);
       });
 
-      child.on("close", (code) => {
+      proc.on("close", (code: number) => {
         if (code !== 0) {
           reject(new Error(stderr.trim() || `Command "${command}" exited with code ${code}`));
           return;

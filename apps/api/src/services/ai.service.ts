@@ -156,7 +156,6 @@ export class AiService {
       tools: toolDefs,
       maxOutputTokens: 1200,
       temperature: 0.2,
-      maxSteps: 5,
     });
   }
 
@@ -187,6 +186,7 @@ export class AiService {
             organizationId: input.organizationId,
             runId: input.runId,
             memberId: input.agentId,
+            threadId: input.threadId,
             toolCallId,
             toolId,
             action: args.action,
@@ -206,11 +206,11 @@ export class AiService {
             organizationId: input.organizationId,
             runId: input.runId,
             memberId: input.agentId,
+            threadId: input.threadId,
             toolCallId,
             toolId,
             action: "execute",
             resourceType: "shell",
-            threadId: input.threadId,
             input: { command: args.command, args: args.args },
           }),
       });
@@ -243,12 +243,12 @@ export class AiService {
           organizationId: input.organizationId,
           runId: input.runId,
           memberId: input.agentId,
+          threadId: input.threadId,
           toolCallId,
           toolId,
           action: args.action,
           resourceType: args.resourceType,
           resourcePath: args.resourcePath,
-          threadId: input.threadId,
           input: args.input,
         }),
     });

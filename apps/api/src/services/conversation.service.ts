@@ -55,6 +55,7 @@ export class ConversationService {
     channelId?: string;
     senderId: string;
     content: string;
+    mentions?: string[];
   }) {
     this.requireOrganization(input.organizationId);
 
@@ -86,6 +87,7 @@ export class ConversationService {
       senderKind: sender.kind,
       kind: sender.kind,
       content: input.content,
+      mentions: input.mentions ?? [],
       createdAt: new Date().toISOString(),
     });
 

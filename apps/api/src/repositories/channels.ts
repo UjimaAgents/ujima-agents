@@ -17,7 +17,7 @@ export function saveChannel(db: Database, channel: Channel): Channel {
       topic = excluded.topic,
       updated_at = excluded.updated_at
     `,
-    [payload.id, payload.organizationId, payload.name, payload.kind, payload.topic, now(), now()],
+    [payload.id as string, payload.organizationId as string, payload.name, payload.kind, payload.topic ?? "", now(), now()],
   );
 
   return payload;

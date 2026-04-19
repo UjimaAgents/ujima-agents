@@ -9,7 +9,7 @@ export default async function onboardingRoutes(fastify: FastifyInstance) {
   fastify.post("/api/onboarding", async (request, reply) => {
     const body = OnboardingRequestSchema.parse(request.body);
     try {
-      return await fastify.services.onboarding.onboard(body);
+      return fastify.services.onboarding.onboard(body);
     } catch (error) {
       return reply.code(400).send({ error: (error as Error).message });
     }

@@ -81,6 +81,14 @@ export class RunService {
     return this.repo.getRun(organizationId, runId);
   }
 
+  private getRooms(run: RunState) {
+    const rooms = [orgRoom(run.organizationId), memberRoom(run.agentId), runRoom(run.id)];
+    if (run.threadId) {
+      rooms.push(threadRoom(run.threadId));
+    }
+    return rooms;
+  }
+
   private async advanceRun(run: RunState): Promise<RunState> {
     const team = this.requireTeam();
     const member = this.repo.getMember(run.organizationId, run.agentId);
@@ -110,18 +118,13 @@ export class RunService {
       summary: "Run executing",
     });
 
-    this.realtime.emit(SocketEventNames.runUpdated, { organizationId: run.organizationId, run: running }, [
-      orgRoom(run.organizationId),
-      threadRoom(run.threadId),
-      memberRoom(run.agentId),
-      runRoom(run.id),
-    ]);
+    this.realtime.emit(SocketEventNames.runUpdated, { organizationId: run.organizationId, run: running }, this.getRooms(run));
 
     try {
       const result = await this.ai.generateRunReply({
         organizationId: run.organizationId,
         agentId: run.agentId,
-        threadId: run.threadId,
+        threadId: run.threadId ?? "",
         runId: run.id,
         summary: run.summary,
       });
@@ -141,8 +144,8 @@ export class RunService {
           MessageSchema.parse({
             id: randomUUID(),
             organizationId: run.organizationId,
-            threadId: run.threadId,
-            channelId: this.repo.getThread(run.organizationId, run.threadId)?.channelId,
+            threadId: run.threadId ?? "",
+            channelId: run.threadId ? this.repo.getThread(run.organizationId, run.threadId)?.channelId : undefined,
             senderId: run.agentId,
             senderKind: "agent",
             kind: "agent",
@@ -167,12 +170,7 @@ export class RunService {
       endedAt: new Date().toISOString(),
     });
 
-    this.realtime.emit(SocketEventNames.runCompleted, { organizationId: run.organizationId, run: completed }, [
-      orgRoom(run.organizationId),
-      threadRoom(run.threadId),
-      memberRoom(run.agentId),
-      runRoom(run.id),
-    ]);
+    this.realtime.emit(SocketEventNames.runCompleted, { organizationId: run.organizationId, run: completed }, this.getRooms(run));
 
     return completed;
   }
@@ -185,12 +183,7 @@ export class RunService {
       summary,
     });
 
-    this.realtime.emit(SocketEventNames.runUpdated, { organizationId: run.organizationId, run: waiting }, [
-      orgRoom(run.organizationId),
-      threadRoom(run.threadId),
-      memberRoom(run.agentId),
-      runRoom(run.id),
-    ]);
+    this.realtime.emit(SocketEventNames.runUpdated, { organizationId: run.organizationId, run: waiting }, this.getRooms(run));
 
     return waiting;
   }
@@ -204,12 +197,7 @@ export class RunService {
       endedAt: new Date().toISOString(),
     });
 
-    this.realtime.emit(SocketEventNames.runCompleted, { organizationId: run.organizationId, run: failed }, [
-      orgRoom(run.organizationId),
-      threadRoom(run.threadId),
-      memberRoom(run.agentId),
-      runRoom(run.id),
-    ]);
+    this.realtime.emit(SocketEventNames.runCompleted, { organizationId: run.organizationId, run: failed }, this.getRooms(run));
 
     return failed;
   }
