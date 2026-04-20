@@ -1,0 +1,10 @@
+{
+  "name": "@ujima/framework",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "index.ts",
+  "dependencies": {
+    "@ujima/shared": "workspace:*",
+    "zod": "^3.23.8"
+  }
+}

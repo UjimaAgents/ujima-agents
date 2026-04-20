@@ -13,7 +13,7 @@ async function main() {
   console.log(chalk.gray(`   Starting API Server...`));
 
   const port = Number.parseInt(process.env.PORT ?? "3000", 10);
-  const host = process.env.UJIMA_HOST ?? "0.0.0.0";
+  const host = process.env.UJIMA_HOST ?? "localhost";
   const server = await createServer();
 
   try {
@@ -21,7 +21,8 @@ async function main() {
     
     console.log(chalk.green(`\n   🚀 System Ready`));
     console.log(chalk.gray(`   Listening on: `) + chalk.cyan.underline(`http://${host}:${port}`));
-    console.log(chalk.gray(`   Health Check: `) + chalk.dim(`http://${host}:${port}/health\n`));
+    console.log(chalk.gray(`   Health Check: `) + chalk.dim(`http://${host}:${port}/health`));
+    console.log(chalk.gray(`   API Docs:     `) + chalk.dim(`http://${host}:${port}/docs\n`));
   } catch (error) {
     server.log.error(error);
     process.exit(1);

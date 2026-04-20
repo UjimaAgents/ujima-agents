@@ -1,5 +1,8 @@
 import cors from "@fastify/cors";
 import fastify from "fastify";
+import fastifySwagger from "@fastify/swagger";
+import fastifySwaggerUi from "@fastify/swagger-ui";
+import { jsonSchemaTransform, serializerCompiler, validatorCompiler, type ZodTypeProvider } from "fastify-type-provider-zod";
 import { ZodError } from "zod";
 import { Server as SocketServer } from "socket.io";
 import chalk from "chalk";
@@ -25,6 +28,25 @@ export async function createServer() {
   const server = fastify({
     logger: false,
     trustProxy: false,
+  }).withTypeProvider<ZodTypeProvider>();
+
+  server.setValidatorCompiler(validatorCompiler);
+  server.setSerializerCompiler(serializerCompiler);
+
+  await server.register(fastifySwagger, {
+    openapi: {
+      info: {
+        title: "Ujima API",
+        description: "The core orchestration API for the Ujima Agent framework.",
+        version: "1.0.0",
+      },
+      servers: [{ url: "http://localhost:3000" }],
+    },
+    transform: jsonSchemaTransform,
+  });
+
+  await server.register(fastifySwaggerUi, {
+    routePrefix: "/docs",
   });
 
   await server.register(cors, {

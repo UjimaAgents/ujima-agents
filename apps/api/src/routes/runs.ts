@@ -1,65 +1,106 @@
 import type { FastifyInstance } from "fastify";
-import { PaginationQuerySchema } from "@ujima/shared";
+import type { ZodTypeProvider } from "fastify-type-provider-zod";
+import { PaginationQuerySchema, IdSchema, RunStateSchema, ApprovalRequestSchema, createPaginatedSchema } from "@ujima/shared";
 import { ApprovalResolveSchema, OrganizationQuerySchema, RunCreateSchema } from "../schemas.ts";
+import { z } from "zod";
 
 export default async function runRoutes(fastify: FastifyInstance) {
-  fastify.get("/api/runs", async (request, reply) => {
-    const query = OrganizationQuerySchema.merge(PaginationQuerySchema).safeParse(request.query);
-    if (!query.success) {
-      return reply.code(400).send({ error: "Invalid query parameters" });
-    }
+  const app = fastify.withTypeProvider<ZodTypeProvider>();
 
+  app.get("/api/runs", {
+    schema: {
+      summary: "List agent runs",
+      description: "Retrieve a paginated list of agent execution runs for the organization.",
+      tags: ["Runs"],
+      querystring: OrganizationQuerySchema.merge(PaginationQuerySchema),
+      response: {
+        200: createPaginatedSchema(RunStateSchema),
+        400: z.object({ error: z.string() }),
+      },
+    },
+  }, async (request, reply) => {
     try {
-      return fastify.services.runs.listRuns(query.data.organizationId, query.data.cursor, query.data.limit);
+      const { organizationId, cursor, limit } = request.query;
+      return fastify.services.runs.listRuns(organizationId, cursor, limit);
     } catch (error) {
-      return reply.code(404).send({ error: (error as Error).message });
+      return reply.code(400).send({ error: (error as Error).message });
     }
   });
 
-  fastify.get("/api/runs/:runId", async (request, reply) => {
-    const query = OrganizationQuerySchema.safeParse(request.query);
-    if (!query.success) {
-      return reply.code(400).send({ error: "organizationId is required" });
-    }
-
-    const { runId } = request.params as { runId: string };
+  app.get("/api/runs/:runId", {
+    schema: {
+      summary: "Get run details",
+      description: "Retrieve detailed status and summary information for a specific agent execution run.",
+      tags: ["Runs"],
+      params: z.object({
+        runId: IdSchema,
+      }),
+      querystring: OrganizationQuerySchema,
+      response: {
+        200: RunStateSchema,
+        400: z.object({ error: z.string() }),
+        404: z.object({ error: z.string() }),
+      },
+    },
+  }, async (request, reply) => {
     try {
-      const run = fastify.services.runs.getRun(query.data.organizationId, runId);
+      const { runId } = request.params;
+      const { organizationId } = request.query;
+      const run = fastify.services.runs.getRun(organizationId, runId);
       if (!run) {
         return reply.code(404).send({ error: "Run not found" });
       }
       return run;
     } catch (error) {
-      return reply.code(404).send({ error: (error as Error).message });
+      return reply.code(400).send({ error: (error as Error).message });
     }
   });
 
-  fastify.post("/api/runs", async (request, reply) => {
-    const body = RunCreateSchema.parse(request.body);
+  app.post("/api/runs", {
+    schema: {
+      summary: "Start agent run",
+      description: "Initialize and trigger a new execution run for a specific agent in a thread.",
+      tags: ["Runs"],
+      body: RunCreateSchema,
+      response: {
+        200: RunStateSchema,
+        404: z.object({ error: z.string() }),
+        503: z.object({ error: z.string() }),
+      },
+    },
+  }, async (request, reply) => {
     try {
-      return fastify.services.runs.createRun({
-        organizationId: body.organizationId,
-        agentId: body.agentId,
-        threadId: body.threadId,
-        summary: body.summary,
-      });
+      return fastify.services.runs.createRun(request.body);
     } catch (error) {
       const message = (error as Error).message;
-      return reply.code(message.startsWith("Member not found") || message.startsWith("Organization not found") ? 404 : 503).send({
-        error: message,
-      });
+      const status = message.startsWith("Member not found") || message.startsWith("Organization not found") ? 404 : 503;
+      return reply.code(status).send({ error: message });
     }
   });
 
-  fastify.post("/api/approvals/:approvalId/resolve", async (request, reply) => {
-    const body = ApprovalResolveSchema.parse(request.body);
-    const { approvalId } = request.params as { approvalId: string };
+  app.post("/api/approvals/:approvalId/resolve", {
+    schema: {
+      summary: "Resolve tool approval",
+      description: "Approve or reject a pending tool execution request.",
+      tags: ["Approvals"],
+      params: z.object({
+        approvalId: IdSchema,
+      }),
+      body: ApprovalResolveSchema,
+      response: {
+        200: ApprovalRequestSchema,
+        400: z.object({ error: z.string() }),
+        404: z.object({ error: z.string() }),
+      },
+    },
+  }, async (request, reply) => {
+    const { approvalId } = request.params;
     try {
       return fastify.services.approvals.resolveApproval({
-        organizationId: body.organizationId,
+        organizationId: request.body.organizationId,
         approvalId,
-        status: body.status,
-        reason: body.reason,
+        status: request.body.status,
+        reason: request.body.reason,
       });
     } catch (error) {
       const message = (error as Error).message;

@@ -1,42 +1,74 @@
-import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
-import { MessageSchema, SocketEventNames } from "@ujima/shared";
-import { PaginationQuerySchema } from "@ujima/shared";
+import type { ZodTypeProvider } from "fastify-type-provider-zod";
+import { MessageSchema, ChannelSchema, PaginationQuerySchema, IdSchema, createPaginatedSchema } from "@ujima/shared";
 import { MessageCreateSchema, OrganizationQuerySchema } from "../schemas.ts";
+import { z } from "zod";
 
 export default async function conversationRoutes(fastify: FastifyInstance) {
-  fastify.get("/api/channels", async (request, reply) => {
-    const query = OrganizationQuerySchema.merge(PaginationQuerySchema).safeParse(request.query);
-    if (!query.success) {
-      return reply.code(400).send({ error: "Invalid query parameters" });
-    }
+  const app = fastify.withTypeProvider<ZodTypeProvider>();
 
+  app.get("/api/channels", {
+    schema: {
+      summary: "List channels",
+      description: "Retrieve a paginated list of all communication channels for the organization.",
+      tags: ["Conversations"],
+      querystring: OrganizationQuerySchema.merge(PaginationQuerySchema),
+      response: {
+        200: createPaginatedSchema(ChannelSchema),
+        400: z.object({ error: z.string() }),
+        404: z.object({ error: z.string() }),
+      },
+    },
+  }, async (request, reply) => {
     try {
-      return fastify.services.conversations.listChannels(query.data.organizationId, query.data.cursor, query.data.limit);
+      const { organizationId, cursor, limit } = request.query;
+      return fastify.services.conversations.listChannels(organizationId, cursor, limit);
     } catch (error) {
       return reply.code(404).send({ error: (error as Error).message });
     }
   });
 
-  fastify.get("/api/threads/:threadId/messages", async (request, reply) => {
-    const query = OrganizationQuerySchema.merge(PaginationQuerySchema).safeParse(request.query);
-    if (!query.success) {
-      return reply.code(400).send({ error: "Invalid query parameters" });
-    }
-
-    const { threadId } = request.params as { threadId: string };
+  app.get("/api/threads/:threadId/messages", {
+    schema: {
+      summary: "List thread messages",
+      description: "Retrieve a paginated list of messages within a specific conversation thread.",
+      tags: ["Conversations"],
+      params: z.object({
+        threadId: IdSchema,
+      }),
+      querystring: OrganizationQuerySchema.merge(PaginationQuerySchema),
+      response: {
+        200: createPaginatedSchema(MessageSchema),
+        400: z.object({ error: z.string() }),
+        404: z.object({ error: z.string() }),
+      },
+    },
+  }, async (request, reply) => {
     try {
-      return fastify.services.conversations.listMessages(query.data.organizationId, threadId, query.data.cursor, query.data.limit);
+      const { threadId } = request.params;
+      const { organizationId, cursor, limit } = request.query;
+      return fastify.services.conversations.listMessages(organizationId, threadId, cursor, limit);
     } catch (error) {
       const message = (error as Error).message;
-      return reply.code(message.startsWith("Thread not found") ? 404 : 404).send({ error: message });
+      return reply.code(404).send({ error: message });
     }
   });
 
-  fastify.post("/api/messages", async (request, reply) => {
-    const body = MessageCreateSchema.parse(request.body);
+  app.post("/api/messages", {
+    schema: {
+      summary: "Send message",
+      description: "Post a new message to a channel or thread.",
+      tags: ["Conversations"],
+      body: MessageCreateSchema,
+      response: {
+        200: MessageSchema,
+        400: z.object({ error: z.string() }),
+        404: z.object({ error: z.string() }),
+      },
+    },
+  }, async (request, reply) => {
     try {
-      return fastify.services.conversations.sendMessage(body);
+      return fastify.services.conversations.sendMessage(request.body);
     } catch (error) {
       const message = (error as Error).message;
       const status =

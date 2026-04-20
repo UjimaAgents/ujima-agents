@@ -1,0 +1,9 @@
+{
+  "name": "@ujima/shared",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "index.ts",
+  "dependencies": {
+    "zod": "^3.23.8"
+  }
+}
