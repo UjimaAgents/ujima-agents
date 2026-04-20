@@ -65,31 +65,43 @@ export const team = AgentTeam({
     },
   },
   providers: {
-    openai: { apiKey: process.env.OPENAI_API_KEY },
-    anthropic: { apiKey: process.env.ANTHROPIC_API_KEY },
+    openai: { apiKeyRef: "OPENAI_API_KEY" },
+    anthropic: { apiKeyRef: "ANTHROPIC_API_KEY" },
   },
-  roles: ["backend-engineer", "frontend-engineer", "code-reviewer"],
+  roles: [
+    { name: "backend-engineer",   title: "Backend Engineer",   instructions: "..." },
+    { name: "frontend-engineer",  title: "Frontend Engineer",  instructions: "..." },
+    { name: "code-reviewer",      title: "Code Reviewer",      instructions: "..." },
+  ],
+  agents: [
+    { name: "Alex",  roleName: "backend-engineer",  personalityName: "direct"    },
+    { name: "Dana",  roleName: "frontend-engineer", personalityName: "thorough"  },
+    { name: "Quinn", roleName: "code-reviewer",     personalityName: "skeptical" },
+  ],
   channels: ["general", "backend", "frontend"],
   policies: {
-    requireApprovalFor: ["fileWrite", "shellExec", "gitMutate"],
+    requireApprovalForWrites: true,
+    requireApprovalForShell: true,
   },
 });
 
 export default team;
 ```
 
+See [`packages/ujima/README.md`](./packages/ujima/README.md) for the full framework API reference.
+
 ---
 
 ## What's in the Monorepo
 
-| Package | Purpose |
-|---|---|
-| `packages/ujima` | Framework SDK — `AgentTeam`, roles, personality presets, named agents, providers, tools, prompt composition |
-| `packages/shared` | Shared schemas, socket event contracts, workspace path helpers, enums |
-| `apps/api` | Local backend — onboarding, persistence, realtime, approvals, AI SDK run orchestration |
-| `apps/web` | Next.js UI — channels, DMs, approvals, run activity, settings |
-| `apps/vscode-extension` | Editor surface for agent chat, approvals, and run status inside VS Code and Cursor |
-| `packages/cli` | `ujima` CLI for bootstrap and local setup |
+| Package | Purpose | Docs |
+|---|---|---|
+| `packages/ujima` | Framework SDK — `AgentTeam`, roles, personality presets, named agents, providers, tools, prompt composition | [README](./packages/ujima/README.md) |
+| `packages/shared` | Shared schemas, socket event contracts, workspace path helpers, enums | [README](./packages/shared/README.md) |
+| `apps/api` | Local backend — onboarding, persistence, realtime, approvals, AI SDK run orchestration | — |
+| `apps/web` | Next.js UI — channels, DMs, approvals, run activity, settings | — |
+| `apps/vscode-extension` | Editor surface for agent chat, approvals, and run status inside VS Code and Cursor | — |
+| `packages/cli` | `ujima` CLI for bootstrap and local setup | — |
 
 ---
 
@@ -137,7 +149,7 @@ packages/ujima/src/loaders.ts     # Config loaders
 - Prefer **declarative config and schema validation** over loose runtime objects.
 - Open a discussion before large architectural changes.
 
-See [CONTRIBUTING.md](./CONTRIBUTING.md) for the full guide.
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for the full guide · [SECURITY.md](./SECURITY.md) for vulnerability reporting · [CHANGELOG.md](./CHANGELOG.md) for release notes.
 
 ---
 
