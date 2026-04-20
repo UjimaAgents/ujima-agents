@@ -73,8 +73,8 @@ export class RunService {
     });
   }
 
-  listRuns(organizationId: string) {
-    return this.repo.listRuns(organizationId);
+  listRuns(organizationId: string, cursor?: string, limit?: number) {
+    return this.repo.listRuns(organizationId, cursor, limit);
   }
 
   getRun(organizationId: string, runId: string) {
@@ -140,19 +140,21 @@ export class RunService {
 
       const text = result.text.trim();
       if (text.length > 0) {
-        this.conversations.publishMessage(
-          MessageSchema.parse({
-            id: randomUUID(),
-            organizationId: run.organizationId,
-            threadId: run.threadId ?? "",
-            channelId: run.threadId ? this.repo.getThread(run.organizationId, run.threadId)?.channelId : undefined,
-            senderId: run.agentId,
-            senderKind: "agent",
-            kind: "agent",
-            content: text,
-            createdAt: new Date().toISOString(),
-          }),
-        );
+        if (run.threadId) {
+          this.conversations.publishMessage(
+            MessageSchema.parse({
+              id: randomUUID(),
+              organizationId: run.organizationId,
+              threadId: run.threadId,
+              channelId: this.repo.getThread(run.organizationId, run.threadId)?.channelId,
+              senderId: run.agentId,
+              senderKind: "agent",
+              kind: "agent",
+              content: text,
+              createdAt: new Date().toISOString(),
+            }),
+          );
+        }
       }
 
       return this.completeRun(running, text || "Run completed");

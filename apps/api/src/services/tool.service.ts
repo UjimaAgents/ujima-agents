@@ -279,32 +279,38 @@ export class ToolService {
         shell: false,
       });
 
-      // Type workaround: bun-types sometimes conflicts with @types/node EventEmitter typings
-      const proc = child as any;
-
       let stdout = "";
       let stderr = "";
+      let timeout: ReturnType<typeof setTimeout> | undefined;
 
-      proc.stdout.on("data", (chunk: any) => {
-        stdout += chunk.toString();
-      });
-
-      proc.stderr.on("data", (chunk: any) => {
-        stderr += chunk.toString();
-      });
-
-      proc.on("error", (error: any) => {
-        reject(error);
-      });
-
-      proc.on("close", (code: number) => {
-        if (code !== 0) {
-          reject(new Error(stderr.trim() || `Command "${command}" exited with code ${code}`));
-          return;
-        }
-
+      const finish = (error?: Error, code?: number) => {
+        if (timeout) clearTimeout(timeout);
+        if (error) return reject(error);
+        if (code !== 0) return reject(new Error(stderr.trim() || `Command "${command}" exited with code ${code}`));
         resolve({ stdout, stderr });
-      });
+      };
+
+      // Set 30s timeout
+      timeout = setTimeout(() => {
+        child.kill("SIGTERM");
+        finish(new Error("Command timed out after 30 seconds"));
+      }, 30000);
+
+      // Max buffer size of 5MB
+      const maxBytes = 5 * 1024 * 1024;
+      const handleData = (isStdout: boolean) => (chunk: Buffer) => {
+        if (isStdout) stdout += chunk.toString();
+        else stderr += chunk.toString();
+        if (stdout.length + stderr.length > maxBytes) {
+          child.kill("SIGTERM");
+          finish(new Error("Command exceeded maximum output size (5MB)"));
+        }
+      };
+
+      child.stdout?.on("data", handleData(true));
+      child.stderr?.on("data", handleData(false));
+      child.on("error", (error) => finish(error));
+      child.on("close", (code) => finish(undefined, code ?? 0));
     });
   }
 

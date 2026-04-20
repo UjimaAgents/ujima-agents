@@ -56,12 +56,31 @@ export function getRun(db: Database, organizationId: string, runId: string): Run
   });
 }
 
-export function listRuns(db: Database, organizationId: string): RunState[] {
-  const rows = db.query("SELECT * FROM runs WHERE organization_id = ? ORDER BY started_at DESC").all(
-    organizationId,
-  ) as Row[];
+export function listRuns(
+  db: Database,
+  organizationId: string,
+  cursor?: string,
+  limit: number = 50,
+): { data: RunState[]; nextCursor?: string; hasMore: boolean } {
+  let query = "SELECT * FROM runs WHERE organization_id = ?";
+  const params: any[] = [organizationId];
 
-  return rows.map((row) =>
+  if (cursor) {
+    query += " AND started_at < ?";
+    params.push(cursor);
+  }
+
+  query += " ORDER BY started_at DESC LIMIT ?";
+  params.push(limit + 1);
+
+  const rows = db.query(query).all(...params) as Row[];
+
+  const hasMore = rows.length > limit;
+  if (hasMore) {
+    rows.pop();
+  }
+
+  const data = rows.map((row) =>
     RunStateSchema.parse({
       id: rowString(row, "id"),
       organizationId: rowString(row, "organization_id"),
@@ -74,4 +93,8 @@ export function listRuns(db: Database, organizationId: string): RunState[] {
       endedAt: optionalRowString(row, "ended_at"),
     }),
   );
+
+  const nextCursor = hasMore && data.length > 0 ? data[data.length - 1].startedAt : undefined;
+
+  return { data, hasMore, nextCursor };
 }

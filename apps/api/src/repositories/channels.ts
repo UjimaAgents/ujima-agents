@@ -17,7 +17,7 @@ export function saveChannel(db: Database, channel: Channel): Channel {
       topic = excluded.topic,
       updated_at = excluded.updated_at
     `,
-    [payload.id as string, payload.organizationId as string, payload.name, payload.kind, payload.topic ?? "", now(), now()],
+    [payload.id as string, payload.organizationId ?? null, payload.name, payload.kind, payload.topic ?? "", now(), now()],
   );
 
   return payload;
@@ -40,15 +40,35 @@ export function getChannel(db: Database, organizationId: string, channelId: stri
     kind: rowString(row, "kind"),
     topic: rowString(row, "topic"),
     memberIds: listChannelMemberIds(db, rowString(row, "id")),
+    createdAt: typeof row.created_at === "string" ? row.created_at : undefined,
   });
 }
 
-export function listChannels(db: Database, organizationId: string): Channel[] {
-  const rows = db.query("SELECT * FROM channels WHERE organization_id = ? ORDER BY created_at ASC").all(
-    organizationId,
-  ) as Row[];
+export function listChannels(
+  db: Database,
+  organizationId: string,
+  cursor?: string,
+  limit: number = 50,
+): { data: Channel[]; nextCursor?: string; hasMore: boolean } {
+  let query = "SELECT * FROM channels WHERE organization_id = ?";
+  const params: any[] = [organizationId];
 
-  return rows.map((row) =>
+  if (cursor) {
+    query += " AND created_at < ?";
+    params.push(cursor);
+  }
+
+  query += " ORDER BY created_at DESC LIMIT ?";
+  params.push(limit + 1);
+
+  const rows = db.query(query).all(...params) as Row[];
+
+  const hasMore = rows.length > limit;
+  if (hasMore) {
+    rows.pop();
+  }
+
+  const data = rows.map((row) =>
     ChannelSchema.parse({
       id: rowString(row, "id"),
       organizationId: rowString(row, "organization_id"),
@@ -56,8 +76,13 @@ export function listChannels(db: Database, organizationId: string): Channel[] {
       kind: rowString(row, "kind"),
       topic: rowString(row, "topic"),
       memberIds: listChannelMemberIds(db, rowString(row, "id")),
+      createdAt: typeof row.created_at === "string" ? row.created_at : undefined,
     }),
   );
+
+  const nextCursor = hasMore && data.length > 0 ? data[data.length - 1].createdAt : undefined;
+
+  return { data, hasMore, nextCursor };
 }
 
 export function setChannelMembers(db: Database, channelId: string, memberIds: string[]) {

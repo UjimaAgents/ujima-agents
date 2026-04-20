@@ -1,15 +1,16 @@
 import type { FastifyInstance } from "fastify";
+import { PaginationQuerySchema } from "@ujima/shared";
 import { ApprovalResolveSchema, OrganizationQuerySchema, RunCreateSchema } from "../schemas.ts";
 
 export default async function runRoutes(fastify: FastifyInstance) {
   fastify.get("/api/runs", async (request, reply) => {
-    const query = OrganizationQuerySchema.safeParse(request.query);
+    const query = OrganizationQuerySchema.merge(PaginationQuerySchema).safeParse(request.query);
     if (!query.success) {
-      return reply.code(400).send({ error: "organizationId is required" });
+      return reply.code(400).send({ error: "Invalid query parameters" });
     }
 
     try {
-      return fastify.services.runs.listRuns(query.data.organizationId);
+      return fastify.services.runs.listRuns(query.data.organizationId, query.data.cursor, query.data.limit);
     } catch (error) {
       return reply.code(404).send({ error: (error as Error).message });
     }

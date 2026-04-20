@@ -6,6 +6,21 @@ export type Id = z.infer<typeof IdSchema>;
 export const TimestampSchema = z.string().datetime({ offset: true });
 export type Timestamp = z.infer<typeof TimestampSchema>;
 
+export const PaginationQuerySchema = z.object({
+  cursor: z.string().optional(),
+  limit: z.coerce.number().min(1).max(100).default(50),
+});
+export type PaginationQuery = z.infer<typeof PaginationQuerySchema>;
+
+export function createPaginatedSchema<T extends z.ZodTypeAny>(itemSchema: T) {
+  return z.object({
+    data: z.array(itemSchema),
+    nextCursor: z.string().optional(),
+    hasMore: z.boolean(),
+  });
+}
+
+
 export const MemberKindSchema = z.enum(["human", "agent"]);
 export type MemberKind = z.infer<typeof MemberKindSchema>;
 
@@ -83,6 +98,7 @@ export const ChannelSchema = z.object({
   kind: ChannelKindSchema,
   topic: z.string().default(""),
   memberIds: z.array(IdSchema).default([]),
+  createdAt: TimestampSchema.optional(),
 });
 export type Channel = z.infer<typeof ChannelSchema>;
 

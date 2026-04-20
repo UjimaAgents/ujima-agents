@@ -9,19 +9,19 @@ export class ConversationService {
     private readonly realtime: RealtimeService,
   ) {}
 
-  listChannels(organizationId: string) {
+  listChannels(organizationId: string, cursor?: string, limit?: number) {
     this.requireOrganization(organizationId);
-    return this.repo.listChannels(organizationId);
+    return this.repo.listChannels(organizationId, cursor, limit);
   }
 
-  listMessages(organizationId: string, threadId: string) {
+  listMessages(organizationId: string, threadId: string, cursor?: string, limit?: number) {
     this.requireOrganization(organizationId);
 
     if (!this.repo.getThread(organizationId, threadId)) {
       throw new Error(`Thread not found: ${threadId}`);
     }
 
-    return this.repo.listMessages(organizationId, threadId);
+    return this.repo.listMessages(organizationId, threadId, cursor, limit);
   }
 
   publishMessage(message: Message) {
