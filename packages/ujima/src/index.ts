@@ -19,6 +19,16 @@ export {
   type NormalizedAgentTeamConfig
 } from "./team.js";
 
+// Zod Schemas (for runtime validation and OpenAPI generation)
+export {
+  AgentTeamConfigSchema,
+  RoleConfigSchema,
+  AgentConfigSchema,
+  ChannelConfigSchema,
+  PolicySchema,
+  ProviderConfigSchema,
+} from "./schemas.js";
+
 // Types mapping directly to configurations
 export type { 
   ProviderConfig,
@@ -37,3 +47,4 @@ export {
   buildAgentSystemPrompt,
   SHARED_AGENT_SYSTEM_PROMPT
 } from "./prompts.js";
+

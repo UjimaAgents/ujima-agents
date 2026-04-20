@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import { ChannelSchema, MemberSchema, OrganizationSchema } from "@ujima/shared";
+import { loadAgentTeam, loadAgentTeamFromFile, type AgentTeamHandle } from "@ujima/framework";
 import { loadTeam, summarizeTeam } from "../config.ts";
 import type { Repository } from "../repositories.ts";
 import { validateProviderKeys } from "./team.ts";
@@ -49,11 +50,37 @@ export class OnboardingService {
     workspaceRoot: string;
     providerKeys: Record<string, string>;
     configFilePath?: string;
+    team?: {
+      name?: string;
+      agents?: unknown[];
+      roles?: unknown[];
+      channels?: unknown[];
+      providers?: Record<string, unknown>;
+      organizationChart?: { reportsTo: Record<string, string> };
+      policies?: unknown;
+    };
   }) {
-    const team = await loadTeam(input.configFilePath);
+    let team: AgentTeamHandle;
 
-    if (resolve(input.workspaceRoot) !== team.workspace.root) {
-      throw new Error("Workspace root must match the team config");
+    if (input.team) {
+      // Inline team config provided — build directly from the request body.
+      team = loadAgentTeam({
+        name: input.team.name ?? input.organizationName,
+        workspace: { root: resolve(input.workspaceRoot) },
+        agents: input.team.agents ?? [],
+        roles: input.team.roles ?? [],
+        channels: input.team.channels ?? [],
+        providers: input.team.providers ?? {},
+        organizationChart: input.team.organizationChart ?? { reportsTo: {} },
+        policies: input.team.policies,
+      } as Record<string, unknown>);
+    } else {
+      // Fall back to file-based config.
+      team = await loadTeam(input.configFilePath);
+
+      if (resolve(input.workspaceRoot) !== team.workspace.root) {
+        throw new Error("Workspace root must match the team config");
+      }
     }
 
     const { unknownProviders, missingProviders } = validateProviderKeys(team, input.providerKeys);

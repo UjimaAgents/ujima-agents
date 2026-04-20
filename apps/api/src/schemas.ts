@@ -1,4 +1,5 @@
 import { IdSchema, OrganizationChartSchema } from "@ujima/shared";
+import { AgentTeamConfigSchema } from "@ujima/framework";
 import { z } from "zod";
 
 const WorkspaceRootSchema = z.string().min(1);
@@ -26,12 +27,30 @@ export const BootstrapResponseSchema = z.object({
   ),
 });
 
+/**
+ * Inline team configuration that can be provided to bootstrap the organization
+ * without a ujima.config.ts file on disk.
+ *
+ * When `team` is omitted, the server falls back to loading from the config file.
+ */
+const InlineTeamConfigSchema = AgentTeamConfigSchema.pick({
+  name: true,
+  agents: true,
+  roles: true,
+  channels: true,
+  providers: true,
+  organizationChart: true,
+  policies: true,
+}).partial();
+
 export const OnboardingRequestSchema = z.object({
   organizationName: z.string().min(1),
   ownerName: z.string().min(1),
   workspaceRoot: WorkspaceRootSchema,
   providerKeys: z.record(z.string().min(1)).default({}),
   configFilePath: z.string().min(1).optional(),
+  /** Inline team definition — if provided, no config file is needed on disk. */
+  team: InlineTeamConfigSchema.optional(),
 });
 
 export const ProviderSecretsUpsertSchema = z.object({
