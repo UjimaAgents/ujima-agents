@@ -21,15 +21,7 @@ bun install
 ```ts
 import {
   AgentTeam,
-  createAgent,
-  createPersonalityFromPreset,
   createStarterAgentTeamConfig,
-  createOrganizationChart,
-  createRoleFromPreset,
-  defineRole,
-  defineTool,
-  defineProvider,
-  loadAgentTeam,
   loadAgentTeamFromFile,
   ROLE_PRESETS,
   PERSONALITY_PRESETS,
@@ -40,7 +32,7 @@ import {
 ## ⚡ Quick Start
 
 ```ts
-import {AgentTeam, createAgent, createOrganizationChart} from "@ujima/framework";
+import { AgentTeam } from "@ujima/framework";
 
 const pmRole = {
   name: "product",
@@ -76,33 +68,29 @@ const backendRole = {
   channels: ["general"],
 };
 
-const agents = [
-  createAgent("Taylor Morgan", "product", "direct"),
-  createAgent("Sam Patel", "frontend", "thoughtful"),
-  createAgent("Alice Nguyen", "frontend", "skeptical"),
-  createAgent("Priya Shah", "backend", "precise"),
-];
-
-const organizationChart = createOrganizationChart(
-  {
-    "Sam Patel": "Taylor Morgan",
-    "Alice Nguyen": "Taylor Morgan",
-    "Priya Shah": "Taylor Morgan",
-  },
-  agents,
-);
-
 const team = AgentTeam({
   name: "Acme Team",
-  workspace: {
-    root: "/Users/me/acme",
-    roleScopes: {
-      frontend: ["apps/web"],
-    },
-  },
+  // Workspace defaults to the current directory if omitted
+  // workspace: { root: "." },
   roles: [pmRole, frontendRole, backendRole],
-  agents,
-  organizationChart,
+  
+  // Agents can be defined cleanly using simple inline objects
+  agents: [
+    { name: "Taylor Morgan", roleName: "product", personalityName: "direct" },
+    { name: "Sam Patel", roleName: "frontend", personalityName: "thoughtful" },
+    { name: "Alice Nguyen", roleName: "frontend", personalityName: "skeptical" },
+    { name: "Priya Shah", roleName: "backend", personalityName: "precise" },
+  ],
+  
+  // Organization charts are natively understood and validated
+  organizationChart: {
+    reportsTo: {
+      "Sam Patel": "Taylor Morgan",
+      "Alice Nguyen": "Taylor Morgan",
+      "Priya Shah": "Taylor Morgan",
+    }
+  },
+  
   providers: {
     openai: {
       defaultModel: "gpt-5.4",
@@ -126,9 +114,8 @@ const team = AgentTeam({
 
 ### 👥 Team API
 
-- **`AgentTeam(config)`**: The primary entry point. Validates, normalizes, and packages your team definition into a handle for the API.
+- **`AgentTeam(config)`**: The primary declarative entry point. Validates, normalizes, and packages your raw team configuration object into a verified handle for the API.
 - **`createStarterAgentTeamConfig(options?)`**: Generates a high-quality boilerplate configuration for a new organization, including starter roles, agents, and personality presets.
-- **`createOrganizationChart(reportsTo, agents)`**: Validates reporting lines against the defined agents and normalizes them into the framework chart shape.
 - **`loadAgentTeam(config)`**: A lightweight alias to `AgentTeam(config)` for semantic clarity in loader pipelines.
 - **`loadAgentTeamFromFile(filePath)`**: Dynamically loads and resolves a team configuration from `.json`, `.js`, or `.ts` files and returns a validated handle.
 
@@ -144,27 +131,29 @@ const team = AgentTeam({
 Example:
 
 ```ts
-import {AgentTeam, createAgent, createOrganizationChart} from "@ujima/framework";
+import { AgentTeam } from "@ujima/framework";
 
 const team = AgentTeam({
   name: "Acme Team",
+  // Workspace is optional and defaults to the current working directory.
+  // Using explicit configuration dynamically enforces safe module path boundaries.
   workspace: {
-    root: "/Users/me/acme",
+    root: process.cwd(),
     roleScopes: {
       frontend: ["apps/web"],
     },
   },
-  organizationChart: createOrganizationChart(
-    {
+  organizationChart: {
+    reportsTo: {
       "Sam Patel": "Taylor Morgan",
       "Alice Nguyen": "Taylor Morgan",
-    },
-    [
-      createAgent("Taylor Morgan", "product", "direct"),
-      createAgent("Sam Patel", "frontend", "thoughtful"),
-      createAgent("Alice Nguyen", "frontend", "skeptical"),
-    ],
-  ),
+    }
+  },
+  agents: [
+    { name: "Taylor Morgan", roleName: "product", personalityName: "direct" },
+    { name: "Sam Patel", roleName: "frontend", personalityName: "thoughtful" },
+    { name: "Alice Nguyen", roleName: "frontend", personalityName: "skeptical" },
+  ],
   providers: {
     openai: {
       defaultModel: "gpt-5.4",
@@ -262,14 +251,13 @@ The framework package exports the underlying Zod schemas and their TypeScript ty
 
 ## ✅ Configuration Rules
 
-- `workspace.root` is required.
+- `workspace.root` defaults to the current working directory if omitted.
 - `roles` must not be empty.
 - `agents` must have unique names.
 - Channels, providers, and tools referenced by a role must exist.
 - Workspace scopes are normalized against the workspace root.
 - The workspace root is treated as a hard boundary for all operations.
-- `organizationChart` can be defined directly in the team config and is preserved through normalization.
-- Use `createOrganizationChart(...)` to validate reporting lines against the agents you defined.
+- `organizationChart` can be defined directly in the team config, and its reporting lines are automatically validated.
 - Each agent can select a different personality preset.
 - Shell is the execution path for git commands.
 - Messaging is a first-class tool for threads, channels, and DMs.

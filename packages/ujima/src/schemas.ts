@@ -72,8 +72,8 @@ export const ChannelConfigSchema = ChannelSchema.extend({
 export type ChannelConfig = z.infer<typeof ChannelConfigSchema>;
 
 export const AgentTeamConfigSchema = z.object({
-  name: z.string().min(1),
-  workspace: WorkspaceConfigSchema,
+  name: z.string().min(1).default("Ujima Team"),
+  workspace: WorkspaceConfigSchema.default({ root: "." }),
   organizationChart: OrganizationChartSchema.default({ reportsTo: {} }),
   agents: z.array(AgentConfigSchema).default([]),
   providers: z.record(ProviderConfigSchema).default({}),
@@ -88,17 +88,4 @@ export const AgentTeamConfigSchema = z.object({
 });
 export type AgentTeamConfig = z.infer<typeof AgentTeamConfigSchema>;
 
-export type AgentTeamConfigInput = {
-  name?: string;
-  workspace: {
-    root: string;
-    roleScopes?: z.infer<typeof RoleScopesSchema>;
-  };
-  organizationChart?: z.infer<typeof OrganizationChartSchema>;
-  agents?: AgentConfig[];
-  providers?: Record<string, ProviderConfig>;
-  roles: RoleConfig[];
-  channels?: ChannelConfig[];
-  tools?: Record<string, z.infer<typeof ToolCapabilitySchema>>;
-  policies?: Partial<PolicyConfig>;
-};
+export type AgentTeamConfigInput = z.input<typeof AgentTeamConfigSchema>;
