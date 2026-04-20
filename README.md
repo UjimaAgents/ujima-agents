@@ -8,7 +8,7 @@
 
 ---
 
-**What if you could run your agents as a team?**
+## What if you could run your agents as a team?
 
 A real, persistent team — with names, roles, memory, and a shared workspace. Agents that message each other, wait for your approval, and stay in scope.
 
