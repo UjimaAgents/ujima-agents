@@ -31,3 +31,9 @@ export type {
   AgentTeamConfig,
   AgentTeamConfigInput
 } from "./schemas.js";
+
+// Internal Engine Builders
+export { 
+  buildAgentSystemPrompt,
+  SHARED_AGENT_SYSTEM_PROMPT
+} from "./prompts.js";
