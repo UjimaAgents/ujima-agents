@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "noEmit": true,
+    "allowJs": true,
+    "checkJs": false,
+    "skipLibCheck": true,
+    "baseUrl": ".",
+    "paths": {
+      "@ujima/framework": ["./packages/ujima/index.ts"],
+      "@ujima/shared": ["./packages/shared/src/index.ts"]
+    }
+  },
+  "include": ["ujima.config.ts", "test-zod.ts"],
+  "exclude": ["node_modules", "**/dist/**"]
+}

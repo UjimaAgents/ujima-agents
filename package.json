@@ -8,5 +8,9 @@
   ],
   "scripts": {
     "dev": "bun --filter \"*\" dev"
+  },
+  "devDependencies": {
+    "@ujima/framework": "workspace:*",
+    "@ujima/shared": "workspace:*"
   }
 }

@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
+import chalk from "chalk";
 import { loadAgentTeamFromFile, type AgentTeamHandle } from "@ujima/framework";
 
 const DEFAULT_TEAM_CONFIG_FILE = "ujima.config.ts";
@@ -43,6 +44,28 @@ export function summarizeTeam(team: AgentTeamHandle) {
     agents: team.agents.map((agent) => agent.name),
     channels: team.channels.map((channel) => channel.name),
   };
+}
+
+export function logTeamSummary(team: AgentTeamHandle | null) {
+  if (!team) {
+    console.log(chalk.yellow("\n⚠️  No team configuration found. Ready for onboarding."));
+    return;
+  }
+
+  const summary = summarizeTeam(team);
+  console.log(chalk.cyan(`\n🔹 Team: ${chalk.bold(summary.name)}`));
+  console.log(chalk.gray(`   Workspace: ${chalk.white(summary.workspaceRoot)}`));
+  console.log(
+    chalk.gray(
+      `   Roles: ${chalk.white(summary.roles.length)} | Agents: ${chalk.white(summary.agents.length)} | Channels: ${chalk.white(summary.channels.length)}`,
+    ),
+  );
+
+  console.log(chalk.dim("\n   Agents:"));
+  team.agents.forEach((agent) => {
+    console.log(chalk.dim(`   - ${chalk.white(agent.name.padEnd(20))} [${chalk.blue(agent.roleName)}]`));
+  });
+  console.log("");
 }
 
 export function isAllowedLocalOrigin(origin: string | null | undefined): boolean {

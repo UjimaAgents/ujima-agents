@@ -2,7 +2,8 @@ import cors from "@fastify/cors";
 import fastify from "fastify";
 import { ZodError } from "zod";
 import { Server as SocketServer } from "socket.io";
-import { maybeLoadTeam, resolveDatabasePath, isAllowedLocalOrigin } from "./config.ts";
+import chalk from "chalk";
+import { maybeLoadTeam, resolveDatabasePath, isAllowedLocalOrigin, logTeamSummary } from "./config.ts";
 import { initDatabase } from "./db.ts";
 import { Repository } from "./repositories.ts";
 import { RealtimeService } from "./realtime.ts";
@@ -14,10 +15,15 @@ import { createApiServices, type ApiServices } from "./services/index.ts";
 
 export async function createServer() {
   const team = await maybeLoadTeam();
-  const db = initDatabase(resolveDatabasePath());
+  const dbPath = resolveDatabasePath();
+  const db = initDatabase(dbPath);
+  
+  logTeamSummary(team);
+  console.log(chalk.gray(`   Database:  ${chalk.white(dbPath)}\n`));
+
   const repo = new Repository(db);
   const server = fastify({
-    logger: true,
+    logger: false,
     trustProxy: false,
   });
 
@@ -49,7 +55,7 @@ export async function createServer() {
       return reply.code(400).send({ error: "Invalid request", issues: error.issues });
     }
 
-    server.log.error(error);
+    console.error(error);
     return reply.code(500).send({ error: "Internal server error" });
   });
 
