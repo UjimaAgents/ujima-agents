@@ -6,104 +6,168 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](http://makeapullrequest.com)
 
-Ujima Agents is a local-first control plane and framework for building Slack-like teams of AI software development agents, with typed roles, named agents, workspace-bounded execution, approvals, realtime collaboration, agent messaging, and a local web, CLI, and editor experience.
+---
 
-## ✨ Features
+**What if you could run your agents as a team?**
 
-- **Local-First & Secure:** Absolute control over AI execution—all orchestration, secrets, and agents reside on your machine or private infra.
-- **Human-in-the-Loop by Default:** GUI-level approval gates block sensitive shell and filesystem actions without your explicit permission.
-- **Slack-Like Mechanics:** Interact across group channels, threads, or DMs. Agents can message each other directly and retain cross-conversation memory as persistent virtual members.
-- **Strict Workspace Bounds:** Hard-enforced sandbox directories prevent your agents from destructive traversal outside the organization boundary.
-- **Typed Role, Agent, and Skill Ecosystem:** Declarative TS configuration to bind role presets, named agents, personality presets, custom logic, and widely-available open source `SKILL.md` capabilities to specific agents.
+A real, persistent team — with names, roles, memory, and a shared workspace. Agents that message each other, wait for your approval before touching production, and stay in scope.
 
-## 🚀 Current State
+Ujima is a local-first control plane for running AI software teams. Define your team in code, own every secret, and collaborate with your agents through a Slack-like web UI, a VS Code extension, or a CLI — all backed by the same local runtime.
 
-The repo is in active build-out. The strongest pieces today are:
-- `packages/shared`: shared schemas, socket event contracts, org charts, and workspace boundary helpers
-- `packages/ujima`: the framework SDK for `AgentTeam`, role presets, personality presets, named agents, org chart definition, provider/tool helpers, prompt composition, and loaders
-- `apps/api`: the runnable backend for onboarding, persistence, messaging, approvals, realtime, and AI runs
+---
 
-## 🛠 Requirements
+## Why Ujima
 
-- Bun 1.3+
-- Node-compatible editor support for TypeScript
+Ujima gives you an organization.
 
-## 📦 Install
+| What most frameworks give you | What Ujima gives you |
+|---|---|
+| Temporary, stateless agents | Persistent agents with identity and memory |
+| Global tool access | Role-scoped tool profiles with approval gates |
+| A single model entrypoint | Per-agent provider and model bindings |
+| Prompt chains | Channels, threads, DMs, and `@mentions` |
+| No boundaries | Hard-enforced workspace root — agents can't escape |
+
+---
+
+## Core Concepts
+
+**Organization** — your team has a name, a workspace root folder, and a set of members. Every agent is a persistent member of that org.
+
+**Roles** — agents are assigned typed roles (`backend-engineer`, `frontend-engineer`, `code-reviewer`, `pm`, etc.) that determine their instructions, tool access, and workspace scope.
+
+**Channels** — team communication happens in named channels, threads, and DMs. Agents respond when `@mentioned`; they don't spam every conversation.
+
+**Approvals** — sensitive actions (file writes, shell commands, git mutations) are gated behind human approval. Nothing lands without your say-so.
+
+**Workspace Bounds** — all agent execution is hard-sandboxed to your chosen org root. No traversal, no escape, no surprises.
+
+**Skills** — agents can be equipped with open-source `SKILL.md` capabilities from the community, loaded directly into their context.
+
+---
+
+## Quick Start
 
 ```bash
+# Install dependencies
 bun install
+
+# Start all services in dev mode
+bun dev
 ```
 
-## 🧩 Package Overview
+Then open the web UI, complete onboarding, and select a workspace root folder. Your agents are ready.
 
-### `packages/shared`
-Shared runtime contracts used by every layer in the system.
+> **Requires:** Bun 1.3+
 
-Includes:
-- domain schemas for organizations, org charts, members, channels, threads, messages, runs, approvals, and audits
-- `socket.io` event names and payload schemas
-- workspace path safety helpers
-- shared defaults and enums
+---
 
-See [`packages/shared/README.md`](packages/shared/README.md) for package API details.
+## Define Your Team in Code
 
-### `packages/ujima`
-The framework SDK users install to define an agent team in code.
+Your team lives in `ujima.config.ts` at the root of your project. This is the source of truth — the UI and CLI are operating surfaces over it, not the other way around.
 
-Includes:
-- `AgentTeam(...)`
-- starter team config generation
-- role presets
-- personality presets
-- named agents
-- provider/tool helpers
-- shared agent prompt composition
-- workspace and loader utilities
+```ts
+import { AgentTeam } from "@ujima/framework";
 
-See [`packages/ujima/README.md`](packages/ujima/README.md) for package API details.
+export const team = AgentTeam({
+  name: "Acme Product Team",
+  workspace: {
+    root: "/absolute/path/to/your/project",
+    roleScopes: {
+      "frontend-engineer": ["apps/web"],
+      "backend-engineer": ["apps/api"],
+    },
+  },
+  providers: {
+    openai: { apiKey: process.env.OPENAI_API_KEY },
+    anthropic: { apiKey: process.env.ANTHROPIC_API_KEY },
+  },
+  roles: ["backend-engineer", "frontend-engineer", "code-reviewer"],
+  channels: ["general", "backend", "frontend"],
+  policies: {
+    requireApprovalFor: ["fileWrite", "shellExec", "gitMutate"],
+  },
+});
 
-### `apps/api`
-Local backend for onboarding, persistence, policy enforcement, messaging, realtime events, approvals, and AI SDK-driven runs.
+export default team;
+```
 
-### `apps/web`
-Next.js UI for chat, approvals, runs, settings, and onboarding.
+---
 
-### `apps/vscode-extension`
-Editor surface for working with agent teams inside VS Code-compatible editors.
+## What's in the Monorepo
 
-### `packages/cli`
-Local bootstrap and setup CLI.
+| Package | Purpose |
+|---|---|
+| `packages/ujima` | Framework SDK — `AgentTeam`, roles, personality presets, named agents, providers, tools, prompt composition |
+| `packages/shared` | Shared schemas, socket event contracts, workspace path helpers, enums |
+| `apps/api` | Local backend — onboarding, persistence, realtime, approvals, AI SDK run orchestration |
+| `apps/web` | Next.js UI — channels, DMs, approvals, run activity, settings |
+| `apps/vscode-extension` | Editor surface for agent chat, approvals, and run status inside VS Code and Cursor |
+| `packages/cli` | `ujima` CLI for bootstrap and local setup |
 
-## 🧪 Working With The Packages
+---
 
-Run package tests directly while iterating:
+## Security Model
+
+- **Secrets stay local.** Provider API keys live only in the local backend. The browser and extension never see them.
+- **Workspace root is the boundary.** Every filesystem, shell, and git action is validated against the org root before execution. Traversal attempts are rejected outright.
+- **Approvals are not optional.** Write-capable tools always create approval requests. Agents cannot bypass this.
+- **Per-role path scopes.** Individual roles can be further restricted to specific subdirectories inside the org root.
+
+---
+
+## Development
+
+Run tests against individual packages while iterating:
 
 ```bash
 bun test packages/shared/index.test.ts
 bun test packages/ujima/index.test.ts
 ```
 
-If you are editing the framework package, start here:
-- `packages/shared/src/schemas.ts`
-- `packages/shared/src/events.ts`
-- `packages/shared/src/paths.ts`
-- `packages/ujima/src/agents.ts`
-- `packages/ujima/src/personality.ts`
-- `packages/ujima/src/team.ts`
-- `packages/ujima/src/roles.ts`
-- `packages/ujima/src/tools.ts`
-- `packages/ujima/src/providers.ts`
-- `packages/ujima/src/loaders.ts`
+Key source files to know:
 
-## 🧭 Suggested Development Order
+```
+packages/shared/src/schemas.ts    # Domain schemas
+packages/shared/src/events.ts     # Socket event contracts
+packages/shared/src/paths.ts      # Workspace path safety
 
-1. Keep hardening `apps/api` as the backend foundation.
-2. Wire `apps/web` and `apps/vscode-extension` to the same API.
-3. Finish `packages/cli` once the boot flow is stable.
+packages/ujima/src/team.ts        # AgentTeam config
+packages/ujima/src/agents.ts      # Named agents
+packages/ujima/src/roles.ts       # Role presets
+packages/ujima/src/personality.ts # Personality presets
+packages/ujima/src/tools.ts       # Tool definitions
+packages/ujima/src/providers.ts   # Provider helpers
+packages/ujima/src/loaders.ts     # Config loaders
+```
 
-## 🤝 Notes For Contributors
+---
 
-- Use Bun for installs, scripts, and tests.
-- Keep shared contracts small, explicit, and reusable.
-- Prefer typed config and validation over loose runtime objects.
-- Keep workspace path boundaries strict.
+## Contribution Guidelines
+
+- Use **Bun** for all installs, scripts, and tests.
+- Keep shared contracts **small, typed, and explicit** — the schema layer is load-bearing.
+- Workspace path boundaries are **non-negotiable** — never relax the sandboxing logic.
+- Prefer **declarative config and schema validation** over loose runtime objects.
+- Open a discussion before large architectural changes.
+
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for the full guide.
+
+---
+
+## Project Status
+
+Ujima is in active early development. The foundation is solid:
+
+- ✅ `packages/shared` — schemas, events, path helpers
+- ✅ `packages/ujima` — framework SDK and role system
+- ✅ `apps/api` — backend runtime, messaging, approvals, realtime, AI runs
+- 🔧 `apps/web` — UI wiring in progress
+- 🔧 `apps/vscode-extension` — editor surface in progress
+- 🔧 `packages/cli` — bootstrap CLI pending stable boot flow
+
+---
+
+## License
+
+[MIT](./LICENSE)
