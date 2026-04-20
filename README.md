@@ -10,23 +10,9 @@
 
 **What if you could run your agents as a team?**
 
-A real, persistent team — with names, roles, memory, and a shared workspace. Agents that message each other, wait for your approval before touching production, and stay in scope.
+A real, persistent team — with names, roles, memory, and a shared workspace. Agents that message each other, wait for your approval, and stay in scope.
 
-Ujima is a local-first control plane for running AI software teams. Define your team in code, own every secret, and collaborate with your agents through a Slack-like web UI, a VS Code extension, or a CLI — all backed by the same local runtime.
-
----
-
-## Why Ujima
-
-Ujima gives you an organization.
-
-| What most frameworks give you | What Ujima gives you |
-|---|---|
-| Temporary, stateless agents | Persistent agents with identity and memory |
-| Global tool access | Role-scoped tool profiles with approval gates |
-| A single model entrypoint | Per-agent provider and model bindings |
-| Prompt chains | Channels, threads, DMs, and `@mentions` |
-| No boundaries | Hard-enforced workspace root — agents can't escape |
+Ujima is a local-first control plane for running AI software teams. Setup and collaborate with your agents through a Slack-like web UI, a VS Code extension, or a CLI — all backed by the same local runtime.
 
 ---
 
@@ -62,9 +48,9 @@ Then open the web UI, complete onboarding, and select a workspace root folder. Y
 
 ---
 
-## Define Your Team in Code
+## Use the framework to define your team
 
-Your team lives in `ujima.config.ts` at the root of your project. This is the source of truth — the UI and CLI are operating surfaces over it, not the other way around.
+Ujima presents a simple API to define your team in code.
 
 ```ts
 import { AgentTeam } from "@ujima/framework";
@@ -111,7 +97,7 @@ export default team;
 
 - **Secrets stay local.** Provider API keys live only in the local backend. The browser and extension never see them.
 - **Workspace root is the boundary.** Every filesystem, shell, and git action is validated against the org root before execution. Traversal attempts are rejected outright.
-- **Approvals are not optional.** Write-capable tools always create approval requests. Agents cannot bypass this.
+- **Approvals are definable.** You can define which tools require approval before execution.
 - **Per-role path scopes.** Individual roles can be further restricted to specific subdirectories inside the org root.
 
 ---
