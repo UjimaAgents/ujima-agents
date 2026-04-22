@@ -8,37 +8,8 @@ import type { Message } from '@ujima/shared';
 import type { RepositoryReader } from './services/repository-reader.js';
 import type { TeamStore } from './services/team-store.js';
 import type { ToolService } from './services/tool-service.js';
+import { ORCHESTRATOR_TOOLS } from './tools/index.js';
 
-const FilesystemToolInvocationSchema = z.object({
-  action: z.enum(['read', 'write']),
-  resourcePath: z.string().min(1),
-  content: z.string().optional(),
-});
-
-const ShellToolInvocationSchema = z.object({
-  command: z.string().min(1),
-  args: z.array(z.string()).default([]),
-});
-
-const MessageToolInvocationSchema = z.discriminatedUnion('destination', [
-  z.object({
-    destination: z.literal('thread'),
-    content: z.string().min(1),
-    mentions: z.array(z.string().min(1)).default([]),
-  }),
-  z.object({
-    destination: z.literal('channel'),
-    channelId: z.string().min(1),
-    content: z.string().min(1),
-    mentions: z.array(z.string().min(1)).default([]),
-  }),
-  z.object({
-    destination: z.literal('dm'),
-    recipientId: z.string().min(1),
-    content: z.string().min(1),
-    mentions: z.array(z.string().min(1)).default([]),
-  }),
-]);
 
 const GenericToolInvocationSchema = z.object({
   action: z.enum(['read', 'write', 'execute', 'mcp', 'message']),
@@ -188,64 +159,27 @@ export class AiService {
     toolId: string,
     team: AgentTeamHandle,
   ) {
-    if (toolId === 'filesystem') {
+    const t = ORCHESTRATOR_TOOLS[toolId];
+    if (t) {
       return tool({
         description: team.tools[toolId]?.description,
-        inputSchema: FilesystemToolInvocationSchema,
-        execute: async (args, { toolCallId }) =>
-          this.tools.invoke({
+        inputSchema: t.schema,
+        execute: async (args, { toolCallId }) => {
+          const invocationData = t.toInvocation(args);
+          return this.tools.invoke({
             organizationId: input.organizationId,
             runId: input.runId,
             memberId: input.agentId,
             threadId: input.threadId,
             toolCallId,
             toolId,
-            action: args.action,
-            resourceType: 'file',
-            resourcePath: args.resourcePath,
-            input: { content: args.content },
-          }),
+            ...invocationData,
+          });
+        },
       });
     }
 
-    if (toolId === 'shell') {
-      return tool({
-        description: team.tools[toolId]?.description,
-        inputSchema: ShellToolInvocationSchema,
-        execute: async (args, { toolCallId }) =>
-          this.tools.invoke({
-            organizationId: input.organizationId,
-            runId: input.runId,
-            memberId: input.agentId,
-            threadId: input.threadId,
-            toolCallId,
-            toolId,
-            action: 'execute',
-            resourceType: 'shell',
-            input: { command: args.command, args: args.args },
-          }),
-      });
-    }
-
-    if (toolId === 'message') {
-      return tool({
-        description: team.tools[toolId]?.description,
-        inputSchema: MessageToolInvocationSchema,
-        execute: async (args, { toolCallId }) =>
-          this.tools.invoke({
-            organizationId: input.organizationId,
-            runId: input.runId,
-            memberId: input.agentId,
-            toolCallId,
-            toolId,
-            action: 'message',
-            resourceType: 'message',
-            threadId: input.threadId,
-            input: args,
-          }),
-      });
-    }
-
+    // Fallback for tools not natively implemented via ORCHESTRATOR_TOOLS (e.g. mcp)
     return tool({
       description: team.tools[toolId]?.description,
       inputSchema: GenericToolInvocationSchema,

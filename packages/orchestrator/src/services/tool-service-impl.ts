@@ -14,6 +14,7 @@ import type { ConversationService } from './conversation.js';
 import { checkToolPolicy } from './policy.js';
 import type { ApiRepository } from './repository-reader.js';
 import type { TeamStore } from './team-store.js';
+import { ORCHESTRATOR_TOOLS } from '../tools/index.js';
 import type {
   ToolInvocationInput,
   ToolInvocationResult,
@@ -177,195 +178,24 @@ export class ToolServiceImpl implements ToolService {
   }
 
   private async executeTool(invocation: ToolInvocationInput): Promise<unknown> {
-    if (invocation.toolId === 'filesystem') {
-      if (invocation.action === 'read') {
-        return this.readFilesystemResource(invocation);
-      }
-      if (invocation.action === 'write') {
-        return this.writeFilesystemResource(invocation);
-      }
-    }
-
-    if (invocation.toolId === 'shell') {
-      return this.executeShell(invocation);
+    const tool = ORCHESTRATOR_TOOLS[invocation.toolId];
+    
+    if (tool) {
+      return tool.execute({
+        invocation,
+        team: this.requireTeam(),
+        repo: this.repo,
+        conversations: this.conversations
+      });
     }
 
     if (invocation.toolId === 'mcp') {
       throw new Error('MCP proxying is not yet implemented in the local runtime');
     }
 
-    if (invocation.toolId === 'message') {
-      return this.sendMessage(invocation);
-    }
-
     throw new Error(
       `Tool "${invocation.toolId}" action "${invocation.action}" is not implemented`,
     );
-  }
-
-  private sendMessage(invocation: ToolInvocationInput) {
-    const destination = invocation.input?.destination as string | undefined;
-    const content = invocation.input?.content as string | undefined;
-    const mentions = Array.isArray(invocation.input?.mentions)
-      ? invocation.input.mentions.filter((mention): mention is string => typeof mention === 'string')
-      : [];
-
-    if (typeof destination !== 'string') {
-      throw new Error("Input 'destination' must be a string");
-    }
-
-    if (typeof content !== 'string') {
-      throw new Error("Input 'content' must be a string");
-    }
-
-    if (destination === 'thread') {
-      if (!invocation.threadId) {
-        throw new Error('threadId is required for thread messages');
-      }
-      return this.conversations.sendMessage({
-        organizationId: invocation.organizationId,
-        threadId: invocation.threadId,
-        senderId: invocation.memberId,
-        content,
-        mentions,
-      });
-    }
-
-    if (destination === 'channel') {
-      const channelId = invocation.input?.channelId as string | undefined;
-      if (typeof channelId !== 'string') {
-        throw new Error("Input 'channelId' must be a string");
-      }
-      if (!invocation.threadId) {
-        throw new Error('threadId is required for channel messages');
-      }
-      return this.conversations.sendMessage({
-        organizationId: invocation.organizationId,
-        threadId: invocation.threadId,
-        channelId,
-        senderId: invocation.memberId,
-        content,
-        mentions,
-      });
-    }
-
-    if (destination === 'dm') {
-      const recipientId = invocation.input?.recipientId as string | undefined;
-      if (typeof recipientId !== 'string') {
-        throw new Error("Input 'recipientId' must be a string");
-      }
-      return this.conversations.sendDirectMessage({
-        organizationId: invocation.organizationId,
-        senderId: invocation.memberId,
-        recipientId,
-        content,
-        mentions,
-      });
-    }
-
-    throw new Error(`Unknown message destination "${destination}"`);
-  }
-
-  private async readFilesystemResource(invocation: ToolInvocationInput) {
-    if (!invocation.resourcePath) {
-      throw new Error('resourcePath is required');
-    }
-
-    const resolved = assertWorkspaceBoundary(
-      this.requireTeam().workspace.root,
-      invocation.resourcePath,
-    );
-    const resource = await stat(resolved);
-
-    if (resource.isDirectory()) {
-      const entries = await readdir(resolved);
-      return {
-        type: 'folder' as const,
-        path: resolved,
-        entries,
-      };
-    }
-
-    return {
-      type: 'file' as const,
-      path: resolved,
-      content: await readFile(resolved, 'utf8'),
-    };
-  }
-
-  private async writeFilesystemResource(invocation: ToolInvocationInput) {
-    if (!invocation.resourcePath) {
-      throw new Error('resourcePath is required');
-    }
-
-    const resolved = assertWorkspaceBoundary(
-      this.requireTeam().workspace.root,
-      invocation.resourcePath,
-    );
-    const content = invocation.input?.content as string | undefined;
-
-    if (typeof content !== 'string') {
-      throw new Error("Input 'content' must be a string");
-    }
-
-    await writeFile(resolved, content, 'utf8');
-    return { success: true, path: resolved };
-  }
-
-  private async executeShell(invocation: ToolInvocationInput) {
-    const command = invocation.input?.command as string | undefined;
-    const args = Array.isArray(invocation.input?.args)
-      ? invocation.input.args.filter((arg): arg is string => typeof arg === 'string')
-      : [];
-
-    if (typeof command !== 'string') {
-      throw new Error("Input 'command' must be a string");
-    }
-
-    return this.runProcess(command, args);
-  }
-
-  private async runProcess(command: string, args: string[]) {
-    return new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
-      const child = spawn(command, args, {
-        cwd: this.requireTeam().workspace.root,
-        shell: false,
-      });
-
-      let stdout = '';
-      let stderr = '';
-
-      function finish(error?: Error, code?: number): void {
-        clearTimeout(timeout);
-        if (error) return reject(error);
-        if (code !== 0) {
-          return reject(
-            new Error(stderr.trim() || `Command "${command}" exited with code ${code}`),
-          );
-        }
-        resolve({ stdout, stderr });
-      }
-
-      const timeout = setTimeout(() => {
-        child.kill('SIGTERM');
-        finish(new Error('Command timed out after 30 seconds'));
-      }, 30000);
-
-      const maxBytes = 5 * 1024 * 1024;
-      const handleData = (isStdout: boolean) => (chunk: Buffer) => {
-        if (isStdout) stdout += chunk.toString();
-        else stderr += chunk.toString();
-        if (stdout.length + stderr.length > maxBytes) {
-          child.kill('SIGTERM');
-          finish(new Error('Command exceeded maximum output size (5MB)'));
-        }
-      };
-
-      child.stdout?.on('data', handleData(true));
-      child.stderr?.on('data', handleData(false));
-      child.on('error', (error) => finish(error));
-      child.on('close', (code) => finish(undefined, code ?? 0));
-    });
   }
 
   private requireTeam(): AgentTeamHandle {
