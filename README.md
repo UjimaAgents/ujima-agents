@@ -104,10 +104,10 @@ See [`packages/ujima/README.md`](./packages/ujima/README.md) for the full framew
 |---|---|---|
 | `packages/ujima` | Framework SDK — `AgentTeam`, roles, personality presets, named agents, providers, tools, prompt composition | [README](./packages/ujima/README.md) |
 | `packages/shared` | Shared schemas, socket event contracts, workspace path helpers, enums | [README](./packages/shared/README.md) |
-| `apps/api` | Local backend — onboarding, persistence, realtime, approvals, AI SDK run orchestration | — |
-| `apps/web` | Next.js UI — channels, DMs, approvals, run activity, settings | — |
-| `apps/vscode-extension` | Editor surface for agent chat, approvals, and run status inside VS Code and Cursor | — |
-| `packages/cli` | `ujima` CLI for bootstrap and local setup | — |
+| `apps/api` | Local backend — onboarding, persistence, realtime, approvals, AI SDK run orchestration | [README](./apps/api/README.md) |
+| `apps/web` | Next.js UI — channels, DMs, approvals, run activity, settings | [README](./apps/web/README.md) |
+| `apps/vscode-extension` | Editor surface for agent chat, approvals, and run status inside VS Code and Cursor | [README](./apps/vscode-extension/README.md) |
+| `packages/cli` | `ujima` CLI for bootstrap and local setup | [README](./packages/cli/README.md) |
 
 ---
 
