@@ -8,6 +8,7 @@ export {
   uniqueAgents,
   uniqueTypes,
 } from './activity-stream.js';
+export type { ActivityEvent, ActivityFilter } from './activity-stream.js';
 export * from './personas.js';
 export * from './governance.js';
 export * from './governance-policy.js';

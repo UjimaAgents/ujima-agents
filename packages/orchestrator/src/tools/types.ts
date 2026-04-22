@@ -1,8 +1,8 @@
-import { z } from 'zod';
-import type { ToolInvocationInput } from '../services/tool-service.js';
 import type { AgentTeamHandle } from '@ujima/framework';
-import type { ApiRepository } from '../services/repository-reader.js';
+import type { z } from 'zod';
 import type { ConversationService } from '../services/conversation.js';
+import type { ApiRepository } from '../services/repository-reader.js';
+import type { ToolInvocationInput } from '../services/tool-service.js';
 
 export interface ToolExecutionContext {
   invocation: ToolInvocationInput;
@@ -13,7 +13,7 @@ export interface ToolExecutionContext {
 
 export interface OrchestratorTool<TArgs extends z.ZodTypeAny = z.ZodTypeAny> {
   id: string;
-  schema: TArgs;
+  schema: z.ZodTypeAny;
   toInvocation: (args: z.infer<TArgs>) => Pick<ToolInvocationInput, 'action' | 'resourceType' | 'resourcePath' | 'input'>;
   execute: (context: ToolExecutionContext) => Promise<unknown> | unknown;
 }

@@ -64,7 +64,9 @@ async function main(): Promise<void> {
     for (const pid of pids) {
       if (pid) process.kill(Number(pid), 'SIGKILL');
     }
-  } catch {}
+  } catch (error) {
+    void error;
+  }
 
   const homeDir = resolveHomeDir();
   mkdirSync(homeDir, { recursive: true });

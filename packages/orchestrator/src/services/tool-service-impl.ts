@@ -1,6 +1,4 @@
-import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { readFile, readdir, stat, writeFile } from 'node:fs/promises';
 import type { AgentTeamHandle } from '@ujima/framework';
 import {
   SocketEventNames,
@@ -8,7 +6,6 @@ import {
   runRoom,
   type AuditStatus,
 } from '@ujima/shared';
-import { assertWorkspaceBoundary } from '@ujima/shared/workspace';
 import type { RealtimeService } from './context.js';
 import type { ConversationService } from './conversation.js';
 import { checkToolPolicy } from './policy.js';
@@ -179,13 +176,13 @@ export class ToolServiceImpl implements ToolService {
 
   private async executeTool(invocation: ToolInvocationInput): Promise<unknown> {
     const tool = ORCHESTRATOR_TOOLS[invocation.toolId];
-    
+
     if (tool) {
       return tool.execute({
         invocation,
         team: this.requireTeam(),
         repo: this.repo,
-        conversations: this.conversations
+        conversations: this.conversations,
       });
     }
 

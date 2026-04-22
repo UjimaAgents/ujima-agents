@@ -5,6 +5,7 @@ import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { execSync } from 'node:child_process';
+import { createServer } from 'node:net';
 
 const PKG_ROOT = resolve(__dirname, '..');
 const ENTRY = join(PKG_ROOT, 'dist', 'main.js');
@@ -12,7 +13,7 @@ const DIRTY_FLAG = 'runtime.dirty';
 
 beforeAll(() => {
   if (!existsSync(ENTRY)) {
-    execSync('pnpm build', { cwd: PKG_ROOT, stdio: 'inherit' });
+    execSync('bun run build', { cwd: PKG_ROOT, stdio: 'inherit' });
   }
 }, 60_000);
 
@@ -24,8 +25,15 @@ interface Ready {
 
 async function startDaemon(extraEnv?: Record<string, string>): Promise<Ready> {
   const home = await mkdtemp(join(tmpdir(), 'ujima-daemon-'));
+  const port = await reservePort();
   const child = spawn(process.execPath, [ENTRY], {
-    env: { ...process.env, UJIMA_HOME: home, UJIMA_LOG_LEVEL: 'info', ...extraEnv },
+    env: {
+      ...process.env,
+      UJIMA_HOME: home,
+      UJIMA_LOG_LEVEL: 'info',
+      UJIMA_PORT: String(port),
+      ...extraEnv,
+    },
     stdio: ['ignore', 'ignore', 'pipe'],
   });
   const logs: string[] = [];
@@ -44,6 +52,22 @@ async function startDaemon(extraEnv?: Record<string, string>): Promise<Ready> {
     setTimeout(() => rejectPromise(new Error(`timeout waiting for ready\n${logs.join('')}`)), 15_000);
   });
   return { home, child, logs };
+}
+
+async function reservePort(): Promise<number> {
+  return await new Promise((resolvePromise, rejectPromise) => {
+    const server = createServer();
+    server.unref();
+    server.once('error', rejectPromise);
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address();
+      if (typeof address !== 'object' || address === null) {
+        rejectPromise(new Error('failed to reserve port'));
+        return;
+      }
+      server.close(() => resolvePromise(address.port));
+    });
+  });
 }
 
 interface ExitInfo {
@@ -85,18 +109,21 @@ describe('ujima-runtime daemon', () => {
   it('detects a prior dirty shutdown and logs a warning', async () => {
     const home = await mkdtemp(join(tmpdir(), 'ujima-daemon-dirty-'));
     await writeFile(join(home, DIRTY_FLAG), '99999', 'utf8');
+    const port = await reservePort();
     const child = spawn(process.execPath, [ENTRY], {
-      env: { ...process.env, UJIMA_HOME: home, UJIMA_LOG_LEVEL: 'info' },
+      env: {
+        ...process.env,
+        UJIMA_HOME: home,
+        UJIMA_LOG_LEVEL: 'info',
+        UJIMA_PORT: String(port),
+      },
       stdio: ['ignore', 'ignore', 'pipe'],
     });
     const logs: string[] = [];
     child.stderr!.on('data', (d: Buffer) => logs.push(d.toString('utf8')));
 
     try {
-      // Wait briefly for startup logs
-      await new Promise<void>((r) => setTimeout(r, 800));
-      const combined = logs.join('');
-      expect(combined).toContain('recovering from dirty shutdown');
+      await waitForLog(logs, 'recovering from dirty shutdown', 5_000);
     } finally {
       child.kill('SIGTERM');
       await waitForExit(child, 5_000);
@@ -104,3 +131,12 @@ describe('ujima-runtime daemon', () => {
     }
   });
 });
+
+async function waitForLog(logs: string[], needle: string, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (logs.join('').includes(needle)) return;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  expect(logs.join('')).toContain(needle);
+}
