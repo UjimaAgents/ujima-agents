@@ -66,10 +66,11 @@ export interface EventSubscription {
 
 export function createClient(opts: ClientOptions): UjimaClient {
   const baseUrl = opts.baseUrl.replace(/\/+$/, '');
+  const apiBaseUrl = baseUrl.endsWith('/api') ? baseUrl : `${baseUrl}/api`;
   const fetchImpl = opts.fetchImpl ?? fetch;
 
-  async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
-    const res = await fetchImpl(`${baseUrl}${path}`, {
+  async function request<T>(root: string, method: string, path: string, body?: unknown): Promise<T> {
+    const res = await fetchImpl(`${root}${path}`, {
       method,
       headers: {
         authorization: `Bearer ${opts.token}`,
@@ -87,31 +88,31 @@ export function createClient(opts: ClientOptions): UjimaClient {
 
   return {
     baseUrl,
-    health: () => request<HealthResponse>('GET', '/health'),
+    health: () => request<HealthResponse>(baseUrl, 'GET', '/health'),
     workspaces: {
-      list: () => request<ListWorkspacesResponse>('GET', '/workspaces'),
-      create: (input) => request<Workspace>('POST', '/workspaces', input),
-      get: (id) => request<Workspace>('GET', `/workspaces/${encodeURIComponent(id)}`),
-      update: (id, patch) => request<Workspace>('PUT', `/workspaces/${encodeURIComponent(id)}`, patch),
-      remove: (id) => request<{ removed: boolean }>('DELETE', `/workspaces/${encodeURIComponent(id)}`),
+      list: () => request<ListWorkspacesResponse>(apiBaseUrl, 'GET', '/workspaces'),
+      create: (input) => request<Workspace>(apiBaseUrl, 'POST', '/workspaces', input),
+      get: (id) => request<Workspace>(apiBaseUrl, 'GET', `/workspaces/${encodeURIComponent(id)}`),
+      update: (id, patch) => request<Workspace>(apiBaseUrl, 'PUT', `/workspaces/${encodeURIComponent(id)}`, patch),
+      remove: (id) => request<{ removed: boolean }>(apiBaseUrl, 'DELETE', `/workspaces/${encodeURIComponent(id)}`),
     },
     tasks: {
-      list: () => request<ListTasksResponse>('GET', '/tasks'),
-      get: (id) => request<ListTasksResponse['tasks'][number]>('GET', `/tasks/${encodeURIComponent(id)}`),
-      start: (input) => request<StartTaskResponse>('POST', '/tasks', input),
-      kill: (id) => request<{ killed: boolean }>('DELETE', `/tasks/${encodeURIComponent(id)}`),
+      list: () => request<ListTasksResponse>(apiBaseUrl, 'GET', '/tasks'),
+      get: (id) => request<ListTasksResponse['tasks'][number]>(apiBaseUrl, 'GET', `/tasks/${encodeURIComponent(id)}`),
+      start: (input) => request<StartTaskResponse>(apiBaseUrl, 'POST', '/tasks', input),
+      kill: (id) => request<{ killed: boolean }>(apiBaseUrl, 'DELETE', `/tasks/${encodeURIComponent(id)}`),
       killAgent: (taskId, agentId) =>
         request<{ killed: boolean }>(
+          apiBaseUrl,
           'POST',
           `/tasks/${encodeURIComponent(taskId)}/agents/${encodeURIComponent(agentId)}/kill`,
         ),
     },
     agents: {
-      list: () => request<ListAgentsResponse>('GET', '/agents'),
+      list: () => request<ListAgentsResponse>(apiBaseUrl, 'GET', '/agents'),
     },
     subscribeEvents(filter, handler) {
       const query: Record<string, string> = {};
-      if (filter.workspace_id) query.workspace_id = filter.workspace_id;
       if (filter.session_id) query.session_id = filter.session_id;
       if (filter.task_id) query.task_id = filter.task_id;
       if (filter.agent_id) query.agent_id = filter.agent_id;

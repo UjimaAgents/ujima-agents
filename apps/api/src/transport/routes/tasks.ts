@@ -1,8 +1,10 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
-import type { RuntimeHost } from '@ujima/runtime-core';
+import { ERR_NO_WORKSPACE_ROOT, NoWorkspaceRootError, type RuntimeHost } from '@ujima/runtime-core';
 import {
+  KillResponseSchema,
   ListTasksResponseSchema,
+  RunningTaskSchema,
   StartTaskRequestSchema,
   StartTaskResponseSchema,
   TaskPromotionRequestSchema,
@@ -31,6 +33,22 @@ export function registerTaskRoutes(_app: FastifyInstance, options: TaskRoutesOpt
     },
   }, async () => {
     return { tasks: host.listTasks().map(toTaskDto) };
+  });
+
+  app.get('/tasks/:id', {
+    schema: {
+      description: 'Get a running task by ID',
+      tags: ['Tasks'],
+      params: z.object({ id: z.string().min(1) }),
+      response: {
+        200: RunningTaskSchema,
+        404: ApiErrorSchema,
+      },
+    },
+  }, async (req, reply) => {
+    const task = host.listTasks().find((t) => t.taskId === req.params.id);
+    if (!task) return replyError(reply, 404, 'ERR_NOT_FOUND', `task "${req.params.id}" not found`);
+    return toTaskDto(task);
   });
 
   app.post('/tasks', {
@@ -65,8 +83,37 @@ export function registerTaskRoutes(_app: FastifyInstance, options: TaskRoutesOpt
         }),
       };
     } catch (err) {
+      if (err instanceof NoWorkspaceRootError || (err instanceof Error && err.message.includes(ERR_NO_WORKSPACE_ROOT))) {
+        return replyError(reply, 409, ERR_NO_WORKSPACE_ROOT, err instanceof Error ? err.message : String(err));
+      }
       return replyError(reply, 500, 'ERR_INTERNAL', err instanceof Error ? err.message : String(err));
     }
+  });
+
+  app.delete('/tasks/:id', {
+    schema: {
+      description: 'Kill a running task',
+      tags: ['Tasks'],
+      params: z.object({ id: z.string().min(1) }),
+      response: {
+        200: KillResponseSchema,
+      },
+    },
+  }, async (req) => {
+    return { killed: host.killTask(req.params.id) };
+  });
+
+  app.post('/tasks/:taskId/agents/:agentId/kill', {
+    schema: {
+      description: 'Kill a running agent',
+      tags: ['Tasks'],
+      params: z.object({ taskId: z.string().min(1), agentId: z.string().min(1) }),
+      response: {
+        200: KillResponseSchema,
+      },
+    },
+  }, async (req) => {
+    return { killed: host.killAgent(req.params.taskId, req.params.agentId) };
   });
 
   app.post('/tasks/promote', {

@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import { Server as SocketIOServer, type Socket } from 'socket.io';
 import type { Repository, RuntimeHost, Logger } from '@ujima/runtime-core';
@@ -67,12 +68,25 @@ export function createTransport(opts: TransportOptions): Transport {
   const { host, token, logger } = opts;
   const bindHost = opts.bindHost ?? DEFAULT_BIND_HOST;
   const port = opts.port ?? DEFAULT_BIND_PORT;
+  const useTls = Boolean(opts.tlsCertPath && opts.tlsKeyPath);
 
-  const fastify: FastifyInstance = Fastify({ 
+  if (!bindHostIsLoopback(bindHost) && !useTls) {
+    throw new Error('non-loopback bind requires TLS');
+  }
+
+  const fastify: FastifyInstance = Fastify({
     logger: false,
-    forceCloseConnections: true 
+    forceCloseConnections: true,
+    ...(useTls
+      ? {
+          https: {
+            key: readFileSync(opts.tlsKeyPath!),
+            cert: readFileSync(opts.tlsCertPath!),
+          },
+        }
+      : {}),
   });
-  
+
   fastify.setValidatorCompiler(validatorCompiler);
   fastify.setSerializerCompiler(serializerCompiler);
 
@@ -84,7 +98,7 @@ export function createTransport(opts: TransportOptions): Transport {
         description: 'Local control plane for running AI software teams',
         version: '1.0.0',
       },
-      servers: [{ url: `http://${bindHost}:${port}/api` }],
+      servers: [{ url: `${useTls ? 'https' : 'http'}://${bindHost}:${port}/api` }],
       components: {
         securitySchemes: {
           bearerAuth: { type: 'http', scheme: 'bearer' },
@@ -200,6 +214,10 @@ export function createTransport(opts: TransportOptions): Transport {
       await fastify.close();
     },
   };
+}
+
+function bindHostIsLoopback(bindHost: string): boolean {
+  return bindHost === '127.0.0.1' || bindHost === 'localhost' || bindHost === '::1';
 }
 
 function onSocketConnection(socket: Socket, host: RuntimeHost): void {

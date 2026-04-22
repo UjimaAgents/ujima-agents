@@ -4,10 +4,13 @@ import type { RuntimeHost } from '@ujima/runtime-core';
 import {
   CreateWorkspaceRequestSchema,
   ListWorkspacesResponseSchema,
+  UpdateWorkspaceRequestSchema,
   WorkspaceSchema,
   ApiErrorSchema,
 } from '@ujima/api-schema';
 import { z } from 'zod';
+
+const WorkspaceRemovedResponseSchema = z.object({ removed: z.boolean() });
 
 export function registerWorkspaceRoutes(_app: FastifyInstance, host: RuntimeHost): void {
   const app = _app.withTypeProvider<ZodTypeProvider>();
@@ -41,6 +44,26 @@ export function registerWorkspaceRoutes(_app: FastifyInstance, host: RuntimeHost
     return toWorkspaceDto(ws);
   });
 
+  app.put('/workspaces/:id', {
+    schema: {
+      description: 'Update a workspace',
+      tags: ['Workspaces'],
+      params: z.object({ id: z.string() }),
+      body: UpdateWorkspaceRequestSchema,
+      response: {
+        200: WorkspaceSchema,
+        404: ApiErrorSchema,
+      },
+    },
+  }, async (req, reply) => {
+    const { id } = req.params;
+    try {
+      return toWorkspaceDto(host.workspaces.update(id, req.body));
+    } catch (err) {
+      return replyError(reply, 404, 'ERR_NOT_FOUND', errMessage(err));
+    }
+  });
+
   app.get('/workspaces/:id', {
     schema: {
       description: 'Get workspace details by ID',
@@ -57,6 +80,20 @@ export function registerWorkspaceRoutes(_app: FastifyInstance, host: RuntimeHost
     if (!ws) return replyError(reply, 404, 'ERR_NOT_FOUND', `workspace "${id}" not found`);
     return toWorkspaceDto(ws);
   });
+
+  app.delete('/workspaces/:id', {
+    schema: {
+      description: 'Delete a workspace',
+      tags: ['Workspaces'],
+      params: z.object({ id: z.string() }),
+      response: {
+        200: WorkspaceRemovedResponseSchema,
+      },
+    },
+  }, async (req) => {
+    const { id } = req.params;
+    return { removed: host.workspaces.remove(id) };
+  });
 }
 
 function toWorkspaceDto(ws: { id: string; root_path: string | null; label: string | null; created_at: number; updated_at: number }) {
@@ -65,4 +102,8 @@ function toWorkspaceDto(ws: { id: string; root_path: string | null; label: strin
 
 function replyError(reply: FastifyReply, status: number, code: string, message: string): FastifyReply {
   return reply.status(status).send({ code, message });
+}
+
+function errMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }

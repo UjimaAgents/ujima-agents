@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createRuntimeHost, createBufferLogger, type RuntimeHost } from '@ujima/runtime-core';
+import { Repository } from '@ujima/runtime-core';
 import { createClient, UjimaApiError } from '@ujima/client-sdk';
 import { createTransport, type Transport } from '../src/transport/server';
 import type { LLMProvider } from '@ujima/llm';
@@ -32,12 +33,26 @@ describe('transport (in-process)', () => {
       },
       {},
     );
+    const apiRepo = new Repository(host.db.raw);
     transport = createTransport({
       host,
       token: TOKEN,
       logger: createBufferLogger(),
       bindHost: '127.0.0.1',
       port: 0,
+      apiServices: {
+        repo: apiRepo,
+        buildServices: () =>
+          ({
+            conversations: {},
+            runs: {},
+            approvals: {},
+            bootstrap: {},
+            onboarding: {},
+            settings: {},
+            taskPromoter: {},
+          } as any),
+      },
     });
     await transport.listen();
     baseUrl = transport.url;
@@ -62,14 +77,14 @@ describe('transport (in-process)', () => {
   });
 
   it('rejects requests without a bearer token', async () => {
-    const res = await fetch(`${baseUrl}/health`);
+    const res = await fetch(`${baseUrl}/api/workspaces`);
     expect(res.status).toBe(401);
     const body = (await res.json()) as { code: string };
     expect(body.code).toBe('ERR_UNAUTHORIZED');
   });
 
   it('rejects requests with a wrong bearer token', async () => {
-    const res = await fetch(`${baseUrl}/health`, { headers: { authorization: 'Bearer nope' } });
+    const res = await fetch(`${baseUrl}/api/workspaces`, { headers: { authorization: 'Bearer nope' } });
     expect(res.status).toBe(401);
   });
 
@@ -120,6 +135,17 @@ describe('transport (in-process)', () => {
     const client = createClient({ baseUrl, token: TOKEN });
     expect((await client.tasks.list()).tasks).toEqual([]);
     expect((await client.agents.list()).agents).toEqual([]);
+  });
+
+  it('supports task lookup and kill endpoints', async () => {
+    const client = createClient({ baseUrl, token: TOKEN });
+
+    await expect(client.tasks.get('missing')).rejects.toMatchObject({
+      status: 404,
+      code: 'ERR_NOT_FOUND',
+    });
+    expect(await client.tasks.kill('missing')).toEqual({ killed: false });
+    expect(await client.tasks.killAgent('missing', 'agent')).toEqual({ killed: false });
   });
 
   it('opens a WS subscription and receives a ready frame', async () => {
