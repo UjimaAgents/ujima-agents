@@ -1,0 +1,1405 @@
+<!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <title>Ujima &mdash; Collective Work&comma; Collective Intelligence</title>
+            <style>
+/* From extension vscode.github */
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+.vscode-dark img[src$=\#gh-light-mode-only],
+.vscode-light img[src$=\#gh-dark-mode-only],
+.vscode-high-contrast:not(.vscode-high-contrast-light) img[src$=\#gh-light-mode-only],
+.vscode-high-contrast-light img[src$=\#gh-dark-mode-only] {
+	display: none;
+}
+
+</style>
+            
+        <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/Microsoft/vscode/extensions/markdown-language-features/media/markdown.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/Microsoft/vscode/extensions/markdown-language-features/media/highlight.css">
+<style>
+            body {
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe WPC', 'Segoe UI', system-ui, 'Ubuntu', 'Droid Sans', sans-serif;
+                font-size: 14px;
+                line-height: 1.6;
+            }
+        </style>
+        <style>
+.task-list-item {
+    list-style-type: none;
+}
+
+.task-list-item-checkbox {
+    margin-left: -20px;
+    vertical-align: middle;
+    pointer-events: none;
+}
+</style>
+<style>
+:root {
+  --color-note: #0969da;
+  --color-tip: #1a7f37;
+  --color-warning: #9a6700;
+  --color-severe: #bc4c00;
+  --color-caution: #d1242f;
+  --color-important: #8250df;
+}
+
+</style>
+<style>
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-note: #2f81f7;
+    --color-tip: #3fb950;
+    --color-warning: #d29922;
+    --color-severe: #db6d28;
+    --color-caution: #f85149;
+    --color-important: #a371f7;
+  }
+}
+
+</style>
+<style>
+.markdown-alert {
+  padding: 0.5rem 1rem;
+  margin-bottom: 16px;
+  color: inherit;
+  border-left: .25em solid #888;
+}
+
+.markdown-alert>:first-child {
+  margin-top: 0
+}
+
+.markdown-alert>:last-child {
+  margin-bottom: 0
+}
+
+.markdown-alert .markdown-alert-title {
+  display: flex;
+  font-weight: 500;
+  align-items: center;
+  line-height: 1
+}
+
+.markdown-alert .markdown-alert-title .octicon {
+  margin-right: 0.5rem;
+  display: inline-block;
+  overflow: visible !important;
+  vertical-align: text-bottom;
+  fill: currentColor;
+}
+
+.markdown-alert.markdown-alert-note {
+  border-left-color: var(--color-note);
+}
+
+.markdown-alert.markdown-alert-note .markdown-alert-title {
+  color: var(--color-note);
+}
+
+.markdown-alert.markdown-alert-important {
+  border-left-color: var(--color-important);
+}
+
+.markdown-alert.markdown-alert-important .markdown-alert-title {
+  color: var(--color-important);
+}
+
+.markdown-alert.markdown-alert-warning {
+  border-left-color: var(--color-warning);
+}
+
+.markdown-alert.markdown-alert-warning .markdown-alert-title {
+  color: var(--color-warning);
+}
+
+.markdown-alert.markdown-alert-tip {
+  border-left-color: var(--color-tip);
+}
+
+.markdown-alert.markdown-alert-tip .markdown-alert-title {
+  color: var(--color-tip);
+}
+
+.markdown-alert.markdown-alert-caution {
+  border-left-color: var(--color-caution);
+}
+
+.markdown-alert.markdown-alert-caution .markdown-alert-title {
+  color: var(--color-caution);
+}
+
+</style>
+        
+        </head>
+        <body class="vscode-body vscode-light">
+            <h1 id="ujima--collective-work-collective-intelligence">Ujima — Collective Work, Collective Intelligence</h1>
+<h2 id="whitepaper--technical-specification--feature-documentation">Whitepaper · Technical Specification · Feature Documentation</h2>
+<blockquote>
+<p><em>Ujima (oo-JEE-mah): The third principle of Kwanzaa. Collective work and responsibility — to build and maintain our community together, and to make our community's problems our problems, and to solve them together.</em></p>
+</blockquote>
+<hr>
+<h2 id="table-of-contents">Table of Contents</h2>
+<ol>
+<li><a href="#1-executive-summary">Executive Summary</a></li>
+<li><a href="#2-problem-statement">Problem Statement</a></li>
+<li><a href="#3-the-vision-an-agent-operating-system">The Vision: An Agent Operating System</a></li>
+<li><a href="#4-core-concepts">Core Concepts</a>
+<ul>
+<li>4.1 The Orchestrator (Manual + Auto modes)</li>
+<li>4.2 Agents</li>
+<li>4.3 MCP Servers — Separate Servers, Multiple Agents Each</li>
+<li>4.4b Execution Mode — Concurrent vs Slim</li>
+<li>4.5 Shared Context Store</li>
+<li>4.6 Event Bus</li>
+<li>4.7 Governance Layer</li>
+</ul>
+</li>
+<li><a href="#5-system-architecture">System Architecture</a></li>
+<li><a href="#6-the-agent-model">The Agent Model</a></li>
+<li><a href="#7-communication--coordination">Communication &amp; Coordination</a>
+7b. <a href="#7b-concurrent-execution--conflict-resolution">Concurrent Execution &amp; Conflict Resolution</a> <em>(Conflict resolution: v1)</em></li>
+<li><a href="#8-governance-layer">Governance Layer</a></li>
+<li><a href="#9-feature-specifications">Feature Specifications</a></li>
+<li><a href="#10-user-flows">User Flows</a></li>
+<li><a href="#11-mvp-scope">MVP Scope</a></li>
+<li><a href="#12-roadmap">Roadmap</a></li>
+<li><a href="#13-open-questions--design-decisions">Open Questions &amp; Design Decisions</a></li>
+</ol>
+<hr>
+<h2 id="1-executive-summary">1. Executive Summary</h2>
+<p><strong>Ujima</strong> is a VS Code plugin that transforms a developer's editor into a multi-agent orchestration environment. It allows any number of AI agents — each connected to a domain-specific MCP (Model Context Protocol) server — to be onboarded, assigned roles, given permissions, and set to work together on a shared task.</p>
+<p>The architecture is built on two interlocking ideas. First, <strong>each domain has its own dedicated MCP server</strong> — a Figma MCP, a Playwright MCP, a DB MCP — each a fully independent interface to its tool. Second, <strong>each of those MCP servers supports multiple simultaneous agent connections</strong>, so a domain can be staffed by a team, not a single agent. The Figma MCP is connected to both a Senior Designer agent and a Junior Designer agent at the same time. The Playwright MCP is connected to both a Senior QA agent and a Junior QA agent at the same time. All domain teams run concurrently — not waiting on each other, but publishing their outputs to a shared context store that every agent reads in real time.</p>
+<p>Ujima provides three things the current agent ecosystem entirely lacks:</p>
+<ul>
+<li><strong>A standard onboarding interface</strong> — any MCP-compatible agent can be registered and configured without custom integration work.</li>
+<li><strong>Structured multi-agent collaboration</strong> — agents share context, communicate peer-to-peer, and hand off work through an event-driven backbone that survives long-running tasks.</li>
+<li><strong>A governance and permissions layer</strong> — a central control room where team leads, security engineers, or product owners can see exactly what every agent did, constrain what tools they can use, and kill a runaway process.</li>
+</ul>
+<p>The target users are developers, engineering teams, and open source contributors who want to use AI agents collaboratively — not just as individual copilots, but as a coordinated workforce with real accountability.</p>
+<hr>
+<h2 id="2-problem-statement">2. Problem Statement</h2>
+<h3 id="21-agents-today-are-isolated">2.1 Agents today are isolated</h3>
+<p>AI coding tools — Cursor, GitHub Copilot, Cline, Claude Code — are powerful individually. But they operate in silos. Each agent knows only what is in its context window. When a developer needs a Figma-aware agent to inform a test-writing agent, the handoff is manual: copy a component name, paste it into another prompt, hope nothing gets lost.</p>
+<p>There is no shared memory. No handoff protocol. No feedback loop.</p>
+<h3 id="22-integration-is-bespoke-and-brittle">2.2 Integration is bespoke and brittle</h3>
+<p>Every agent integration is built from scratch. Teams write custom glue code to connect agents to their tools. When a new MCP server is published, there is no standard way to say &quot;register this with my agent setup and give it the right permissions.&quot; Each configuration is a one-off — fragile, undocumented, non-transferable.</p>
+<h3 id="23-there-is-no-control-room">2.3 There is no control room</h3>
+<p>When an agent fails, causes unexpected side effects, or runs for hours producing nothing, there is no central place to see what happened. No audit log of tool calls. No way to revoke permissions mid-run. No kill switch that doesn't involve closing a terminal window.</p>
+<p>Enterprise teams cannot adopt agentic workflows without governance. The absence of a governance layer is the primary reason AI agents remain a developer toy rather than a team-level capability.</p>
+<h3 id="24-agent-roles-dont-exist">2.4 Agent roles don't exist</h3>
+<p>Today, every agent is given the same shape: a system prompt, a set of tools, a model. There is no concept of seniority, responsibility, or review hierarchy. No agent is a junior that escalates to a senior. No agent is a reviewer that signs off before work proceeds downstream.</p>
+<p>The result is that multi-agent workflows either run in parallel with no coordination, or run sequentially through a single orchestrator with no specialisation.</p>
+<hr>
+<h2 id="3-the-vision-an-agent-operating-system">3. The Vision: An Agent Operating System</h2>
+<p>Ujima is not a tool. It is an <strong>operating system for agent teams</strong>, built where developers already live.</p>
+<p>The core metaphor is the <strong>open claw</strong>: each MCP server is a claw — a live interface to a domain tool. Multiple agents can grip the same claw at the same time, each with their own role and permission scope.</p>
+<p>A developer opens Ujima, describes a product to build, and the system spins up a team. Not a queue of tasks — a team working in parallel. The Senior Designer and Junior Designer are both connected to the Figma MCP from the start. The Senior QA and Junior QA are both connected to the Playwright MCP from the start. The DB agent is reading schema simultaneously.</p>
+<p>Nobody waits for a handoff. The Junior Designer creates frames; those frames appear in the shared context store as they are produced. The QA agents see them and begin drafting tests immediately. The Senior Designer reviews and approves in real time — not at the end of a pipeline, but as a concurrent participant. The Senior QA reviews test output the same way.</p>
+<p>The orchestrator is not a conveyor belt. It is a coordinator — watching all agents simultaneously, resolving conflicts, and surfacing decisions that require the developer's judgment.</p>
+<hr>
+<h2 id="4-core-concepts">4. Core Concepts</h2>
+<h3 id="41-the-orchestrator">4.1 The Orchestrator</h3>
+<p>The orchestrator is the brain of the system. It receives a task, decomposes it, determines which agents to engage, spawns them when needed, monitors progress, and synthesises the final output. It never executes tool calls directly — it delegates to agents.</p>
+<p>The orchestrator is model-agnostic: it runs on any LLM connected to the developer's editor — local via Ollama, hosted via API, or bundled with the IDE.</p>
+<p><strong>The orchestrator runs in one of two modes, selectable per task:</strong></p>
+<p><strong>Manual mode — developer-defined teams.</strong> The developer pre-configures agents with specific roles, personas, and permissions. The orchestrator reads the registered team, assigns sub-tasks to the appropriate agents, and coordinates their work. The developer controls exactly who is on the team and what they can do.</p>
+<p><strong>Auto mode — orchestrator-generated roles.</strong> The developer provides only a task description. The orchestrator analyses the task, determines what domains and roles are needed, generates agent definitions on the fly (persona, permissions, escalation rules), and assembles a team. Generated agents are ephemeral by default but can be saved to the registry for reuse. Auto mode is the fastest path — zero configuration required.</p>
+<blockquote>
+<p><strong>Auto-mode implementation phases.</strong> v0.1 MVP ships a <strong>template-matching router</strong>: keyword patterns in the task prompt map to preset teams (e.g. &quot;design + build&quot; → Sr/Jr Designer + Sr/Jr Engineer + DB Agent). When no preset matches confidently, Ujima falls back gracefully — it tells the developer &quot;I can't confidently pick a team for this prompt; use manual mode or rephrase&quot; rather than guessing wrong. <strong>Full LLM-based role inference</strong> — where the orchestrator generates novel personas and permissions from first principles — arrives in v0.2. The UX surface is identical in both phases; only the routing engine changes.</p>
+</blockquote>
+<p>Both modes share the same execution engine, event bus, and context store. The only difference is how the team is assembled before execution begins.</p>
+<p><strong>Agent lifecycle — spawn on demand, not always on.</strong> Agents are not persistent running processes. An agent is a definition — a persona, a permission set, a model reference. The orchestrator spawns an agent process only when it has work for that agent, passes it the relevant context from the store, receives the output, and the process exits. The context store holds all state between invocations. This keeps resource usage proportional to actual work — 20 registered agents does not mean 20 processes running.</p>
+<h3 id="42-agents">4.2 Agents</h3>
+<p>An agent is an identity bound to a model, a role definition, a set of tool permissions, and a communication channel. Agents do not share context windows — they communicate through the shared context store and the event bus.</p>
+<p>Each agent has:</p>
+<ul>
+<li><strong>A persona</strong> — a system prompt defining its identity, expertise, seniority, and behaviour.</li>
+<li><strong>A tool permission set</strong> — which MCP tools it can call, and which are blocked.</li>
+<li><strong>A communication scope</strong> — which events it publishes and subscribes to.</li>
+<li><strong>An escalation path</strong> — conditions under which it stops and waits for human or senior-agent approval.</li>
+</ul>
+<h3 id="43-mcp-servers--separate-servers-multiple-agents-each">4.3 MCP Servers — Separate Servers, Multiple Agents Each</h3>
+<p>Ujima does not use a single shared MCP. Each domain tool runs as its own <strong>independent MCP server</strong>. The Figma MCP is a separate server from the Playwright MCP, which is separate from the DB MCP. Each server is a fully isolated interface to its domain.</p>
+<p>What makes Ujima distinct is that each of these separate servers supports <strong>multiple simultaneous agent connections</strong>. A domain is not assigned to one agent — it is staffed by a team:</p>
+<table>
+<thead>
+<tr>
+<th>MCP Server</th>
+<th>Connected Agents</th>
+<th>Simultaneous</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Figma MCP</td>
+<td>Senior Designer + Junior Designer</td>
+<td>Both live from task start</td>
+</tr>
+<tr>
+<td>Playwright MCP</td>
+<td>Senior QA + Junior QA</td>
+<td>Both live from task start</td>
+</tr>
+<tr>
+<td>DB MCP</td>
+<td>DB Agent</td>
+<td>Live from task start</td>
+</tr>
+</tbody>
+</table>
+<p>Every agent holds a persistent, live connection to its own MCP server. All agents are active at the same time. No domain waits for another domain to finish.</p>
+<p>The Junior Designer is creating frames in Figma while the Junior QA is already drafting test scaffolding from the DB schema that the DB agent has published to the shared context store. When the Senior Designer approves a frame, it enters the context store immediately — the QA agents consume it without waiting for a prompt or a pipeline trigger.</p>
+<p>The work is <strong>concurrent across independent domains, with internal team structure within each domain</strong>.</p>
+<h3 id="44-the-shared-context-store">4.4 The Shared Context Store</h3>
+<p>The shared context store is a persistent, queryable key-value store that all agents can read and write, subject to their permissions. It is the team's working memory — where the designer deposits design tokens, the DB agent deposits a schema summary, and the Playwright agent picks up both to write accurate tests.</p>
+<p>The context store survives individual agent crashes. If an agent is restarted mid-task, it reads the store and continues from where it left off.</p>
+<h3 id="44b-execution-mode--concurrent-vs-slim">4.4b Execution mode — concurrent vs slim</h3>
+<p>Ujima supports two execution modes, switchable per task:</p>
+<p><strong>Concurrent mode (default).</strong> All agents across all MCP domains are spawned and working simultaneously. The fastest path to a result. Best when token cost is not a constraint and speed matters.</p>
+<p><strong>Slim mode — linear, token-efficient.</strong> Agents are spawned one at a time in a defined sequence. Each agent completes its work, writes to the context store, and exits before the next is spawned. No concurrent processes. Significantly lower token usage because agents are not all consuming context at the same time.</p>
+<pre><code>Concurrent mode:             Slim mode:
+────────────────             ──────────
+DB Agent    ══════           DB Agent     ══ [exits]
+Sr Designer ══════           Jr Designer           ══ [exits]
+Jr Designer ══════           Sr Designer                ══ [exits]  
+Sr QA       ══════           Jr QA                           ══ [exits]
+Jr QA       ══════           Sr QA                                ══ [exits]
+</code></pre>
+<p>Slim mode is recommended for: exploratory tasks where you want to inspect output at each stage, cost-sensitive environments, and tasks where one domain's output is a hard dependency for the next with no parallel work possible.</p>
+<p>The orchestrator manages the sequencing in slim mode. The developer can also define a custom sequence order in the task config.</p>
+<h3 id="45-the-event-bus">4.5 The Event Bus</h3>
+<p>The event bus is the communication backbone. Agents publish events when they complete significant actions. Other agents subscribe to the events they care about. The orchestrator subscribes to all events and uses them to track progress and trigger the next step.</p>
+<p>Because agents communicate asynchronously through events rather than directly, a task can run for hours without a single point of failure breaking the chain.</p>
+<h3 id="46-the-governance-layer">4.6 The Governance Layer</h3>
+<p>The governance layer is the control room — the single authoritative source of truth for what every agent is allowed to do, what it has done, and what the overall state of a running task is. It is implemented as a cloud backend, shared across a team, persistent across sessions.</p>
+<hr>
+<h2 id="5-system-architecture">5. System Architecture</h2>
+<pre><code>┌──────────────────────────────────────────────────────────────┐
+│                        VS Code Plugin                         │
+│  Task Input · Activity Stream · Governance UI · Agent Cards   │
+└────────────────────────────┬─────────────────────────────────┘
+                             │ task
+                             ▼
+               ┌─────────────────────────┐
+               │    Orchestrator Agent    │
+               │  (local, model-agnostic) │
+               └──┬──────────┬──────────┬┘
+                  │          │          │
+         ┌────────▼──┐  ┌────▼────┐  ┌─▼──────────┐
+         │Sr Designer│  │Sr QA    │  │ DB Agent   │
+         │Jr Designer│  │Jr QA    │  │            │
+         └────┬──┬───┘  └───┬──┬──┘  └─────┬──────┘
+              │  │          │  │            │
+              │  └──────────┘  └────────────┤
+              │  (all agents active at      │
+              │   the same time)            │
+              ▼          ▼                  ▼
+        ┌──────────┐ ┌──────────────┐ ┌──────────┐
+        │ Figma    │ │ Playwright   │ │ DB MCP   │
+        │ MCP      │ │ MCP          │ │          │
+        │          │ │              │ │          │
+        │ ← Sr Des │ │ ← Sr QA      │ │ ← DB Agt │
+        │ ← Jr Des │ │ ← Jr QA      │ │          │
+        └──────────┘ └──────────────┘ └──────────┘
+              │               │              │
+              └───────────────┼──────────────┘
+                              │
+               ┌──────────────▼──────────────┐
+               │    Shared Context Store      │
+               │  (all agents read/write)     │
+               │  results available instantly │
+               └──────────────┬──────────────┘
+                              │
+               ┌──────────────▼──────────────┐
+               │         Event Bus            │
+               │  publish as you produce,     │
+               │  subscribe to what you need  │
+               └──────────────┬──────────────┘
+                              │
+┌─────────────────────────────▼───────────────────────────────┐
+│                    Governance Layer (Cloud)                   │
+│    Permissions · Audit Log · Rate Limits · Kill Switch        │
+└─────────────────────────────────────────────────────────────┘
+</code></pre>
+<p><strong>The key principle:</strong> every agent is live from the moment the task starts. The Junior Designer is creating frames in Figma while the Junior QA is already drafting test scaffolding from whatever schema and design context is already in the store. When the Senior Designer approves a frame, it appears in the context store immediately — the QA agents consume it without waiting for a prompt. Work flows continuously across all domains at once.</p>
+<h3 id="51-local-first-architecture">5.1 Local-first architecture</h3>
+<p>Ujima runs entirely on your machine. There is no cloud dependency to start using it. Everything — the orchestrator, agent processes, context store, event bus, and MCP connections — runs locally.</p>
+<p>Cloud is additive, not required. You connect a cloud workspace when you want two things: team collaboration (shared agent definitions, shared task history) and remote monitoring (watching what agents are doing from outside the VS Code session). The product is fully functional without it.</p>
+<table>
+<thead>
+<tr>
+<th>Component</th>
+<th>Default</th>
+<th>Cloud adds</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>VS Code plugin</td>
+<td>Local</td>
+<td>—</td>
+</tr>
+<tr>
+<td>Orchestrator</td>
+<td>Local</td>
+<td>—</td>
+</tr>
+<tr>
+<td>Agent processes</td>
+<td>Local</td>
+<td>—</td>
+</tr>
+<tr>
+<td>MCP servers</td>
+<td>Local or remote (per MCP)</td>
+<td>—</td>
+</tr>
+<tr>
+<td>Shared context store</td>
+<td>Local (SQLite or JSON)</td>
+<td>Sync across team members</td>
+</tr>
+<tr>
+<td>Event bus</td>
+<td>Local (EventEmitter)</td>
+<td>—</td>
+</tr>
+<tr>
+<td>MCP Registry</td>
+<td>Local config file</td>
+<td>Community registry + team-shared configs</td>
+</tr>
+<tr>
+<td>Governance / monitoring</td>
+<td>Local audit log</td>
+<td>Remote monitoring dashboard, team-wide audit log</td>
+</tr>
+<tr>
+<td>Agent definitions</td>
+<td>Local JSON files</td>
+<td>Shared team registry, versioned</td>
+</tr>
+</tbody>
+</table>
+<h3 id="52-technology-choices">5.2 Technology choices</h3>
+<table>
+<thead>
+<tr>
+<th>Layer</th>
+<th>Technology</th>
+<th>Rationale</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>VS Code plugin</td>
+<td>TypeScript, VS Code Extension API</td>
+<td>Native, same ecosystem as orchestrator</td>
+</tr>
+<tr>
+<td>Webview UI (rich panels)</td>
+<td>React + Vite</td>
+<td>Standard pattern used by Cursor, Continue, Cline; fast dev loop, rich component ecosystem for activity streams, governance panels, and onboarding wizards</td>
+</tr>
+<tr>
+<td>Sidebar UI</td>
+<td>Native VS Code TreeView</td>
+<td>Keeps the always-visible agent list feeling native; matches VS Code navigation conventions</td>
+</tr>
+<tr>
+<td>Monorepo tooling</td>
+<td>pnpm workspaces + Turborepo</td>
+<td>One git repo for plugin, orchestrator, agent runtime, and shared types; avoids npm publish steps for internal packages; Turbo caches build/test across packages</td>
+</tr>
+<tr>
+<td>Orchestrator runtime</td>
+<td>Node.js (TypeScript)</td>
+<td>Event loop is ideal for concurrent async agent streams; MCP SDK is TypeScript-native</td>
+</tr>
+<tr>
+<td>Agent processes</td>
+<td>Node.js child processes</td>
+<td>Crash isolation, independent restart, same runtime</td>
+</tr>
+<tr>
+<td>Context store</td>
+<td>SQLite (local, zero config)</td>
+<td>File-based, no server required, fast for local use</td>
+</tr>
+<tr>
+<td>Event bus</td>
+<td>Node.js EventEmitter (local)</td>
+<td>Zero dependencies for local mode</td>
+</tr>
+<tr>
+<td>MCP client</td>
+<td><code>@modelcontextprotocol/sdk</code> (official TypeScript)</td>
+<td>One canonical client; same SDK the MCP spec authors maintain; supports stdio, SSE, and streamable HTTP transports</td>
+</tr>
+<tr>
+<td>MCP connection</td>
+<td>JSON config paste or registry</td>
+<td>Same pattern as Claude desktop MCP config</td>
+</tr>
+<tr>
+<td>LLM abstraction</td>
+<td>Vercel AI SDK + first-class <code>vscode.lm</code> adapter</td>
+<td>Vercel AI SDK unifies streaming across Anthropic, OpenAI-compatible, Ollama, and others; the <code>vscode.lm</code> adapter lets Ujima use the user's already-active chat model (Copilot, etc.) with zero API-key configuration — the &quot;use whatever chat is already in my editor&quot; path</td>
+</tr>
+<tr>
+<td>Provider selection order</td>
+<td><code>vscode.lm</code> → configured API → Ollama</td>
+<td>Zero-config default; falls back gracefully when the host chat model is unavailable or rate-limited</td>
+</tr>
+<tr>
+<td>Testing</td>
+<td>Vitest (unit) + Playwright (e2e, via <code>@vscode/test-electron</code>)</td>
+<td>Vitest is fast, ESM-native, parity with the dev runtime; Playwright codegen accelerates webview test authoring</td>
+</tr>
+<tr>
+<td>Cloud sync (optional)</td>
+<td>Node.js + PostgreSQL</td>
+<td>Team workspace, shared agent registry</td>
+</tr>
+<tr>
+<td>Remote monitoring (optional)</td>
+<td>WebSocket stream to cloud dashboard</td>
+<td>Watch agent activity outside VS Code</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="6-the-agent-model">6. The Agent Model</h2>
+<h3 id="61-agent-definition-schema">6.1 Agent definition schema</h3>
+<pre><code class="language-json"><span class="hljs-punctuation">{</span>
+  <span class="hljs-attr">&quot;id&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;figma-senior-designer&quot;</span><span class="hljs-punctuation">,</span>
+  <span class="hljs-attr">&quot;name&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;Senior Designer&quot;</span><span class="hljs-punctuation">,</span>
+  <span class="hljs-attr">&quot;persona&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;You are a senior product designer with 8 years of experience. You establish the design system, make architectural decisions about component structure, and review work produced by junior designers before it proceeds to engineering. You never implement details when a design system decision is needed first.&quot;</span><span class="hljs-punctuation">,</span>
+  <span class="hljs-attr">&quot;model&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;local/ollama:llama3&quot;</span><span class="hljs-punctuation">,</span>
+  <span class="hljs-attr">&quot;mcp&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;figma&quot;</span><span class="hljs-punctuation">,</span>
+  <span class="hljs-attr">&quot;permissions&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">{</span>
+    <span class="hljs-attr">&quot;allowed_tools&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">[</span><span class="hljs-string">&quot;get_file&quot;</span><span class="hljs-punctuation">,</span> <span class="hljs-string">&quot;get_components&quot;</span><span class="hljs-punctuation">,</span> <span class="hljs-string">&quot;get_styles&quot;</span><span class="hljs-punctuation">,</span> <span class="hljs-string">&quot;create_frame&quot;</span><span class="hljs-punctuation">,</span> <span class="hljs-string">&quot;update_frame&quot;</span><span class="hljs-punctuation">,</span> <span class="hljs-string">&quot;delete_frame&quot;</span><span class="hljs-punctuation">]</span><span class="hljs-punctuation">,</span>
+    <span class="hljs-attr">&quot;blocked_tools&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">[</span><span class="hljs-punctuation">]</span><span class="hljs-punctuation">,</span>
+    <span class="hljs-attr">&quot;rate_limit&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">{</span> <span class="hljs-attr">&quot;calls_per_minute&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-number">30</span><span class="hljs-punctuation">,</span> <span class="hljs-attr">&quot;max_session_tokens&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-number">50000</span> <span class="hljs-punctuation">}</span>
+  <span class="hljs-punctuation">}</span><span class="hljs-punctuation">,</span>
+  <span class="hljs-attr">&quot;communication&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">{</span>
+    <span class="hljs-attr">&quot;publishes&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">[</span><span class="hljs-string">&quot;design_system_ready&quot;</span><span class="hljs-punctuation">,</span> <span class="hljs-string">&quot;frame_approved&quot;</span><span class="hljs-punctuation">,</span> <span class="hljs-string">&quot;review_required&quot;</span><span class="hljs-punctuation">]</span><span class="hljs-punctuation">,</span>
+    <span class="hljs-attr">&quot;subscribes&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">[</span><span class="hljs-string">&quot;task_assigned&quot;</span><span class="hljs-punctuation">,</span> <span class="hljs-string">&quot;junior_frame_ready&quot;</span><span class="hljs-punctuation">]</span>
+  <span class="hljs-punctuation">}</span><span class="hljs-punctuation">,</span>
+  <span class="hljs-attr">&quot;escalation&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">{</span>
+    <span class="hljs-attr">&quot;conditions&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">[</span><span class="hljs-string">&quot;conflicting_design_direction&quot;</span><span class="hljs-punctuation">,</span> <span class="hljs-string">&quot;unclear_requirements&quot;</span><span class="hljs-punctuation">]</span><span class="hljs-punctuation">,</span>
+    <span class="hljs-attr">&quot;escalate_to&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;human&quot;</span>
+  <span class="hljs-punctuation">}</span><span class="hljs-punctuation">,</span>
+  <span class="hljs-attr">&quot;seniority&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;senior&quot;</span><span class="hljs-punctuation">,</span>
+  <span class="hljs-attr">&quot;reports_to&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;orchestrator&quot;</span><span class="hljs-punctuation">,</span>
+  <span class="hljs-attr">&quot;reviews&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">[</span><span class="hljs-string">&quot;figma-junior-designer&quot;</span><span class="hljs-punctuation">]</span>
+<span class="hljs-punctuation">}</span>
+</code></pre>
+<pre><code class="language-json"><span class="hljs-punctuation">{</span>
+  <span class="hljs-attr">&quot;id&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;figma-junior-designer&quot;</span><span class="hljs-punctuation">,</span>
+  <span class="hljs-attr">&quot;name&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;Junior Designer&quot;</span><span class="hljs-punctuation">,</span>
+  <span class="hljs-attr">&quot;persona&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;You are a junior product designer. You implement UI designs strictly within the design system established by the senior designer. You never introduce new components, colours, or typographic choices. When unsure, you flag and wait. You do not delete existing components.&quot;</span><span class="hljs-punctuation">,</span>
+  <span class="hljs-attr">&quot;model&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;local/ollama:llama3&quot;</span><span class="hljs-punctuation">,</span>
+  <span class="hljs-attr">&quot;mcp&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;figma&quot;</span><span class="hljs-punctuation">,</span>
+  <span class="hljs-attr">&quot;permissions&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">{</span>
+    <span class="hljs-attr">&quot;allowed_tools&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">[</span><span class="hljs-string">&quot;get_file&quot;</span><span class="hljs-punctuation">,</span> <span class="hljs-string">&quot;get_components&quot;</span><span class="hljs-punctuation">,</span> <span class="hljs-string">&quot;get_styles&quot;</span><span class="hljs-punctuation">,</span> <span class="hljs-string">&quot;create_frame&quot;</span><span class="hljs-punctuation">,</span> <span class="hljs-string">&quot;update_frame&quot;</span><span class="hljs-punctuation">]</span><span class="hljs-punctuation">,</span>
+    <span class="hljs-attr">&quot;blocked_tools&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">[</span><span class="hljs-string">&quot;delete_frame&quot;</span><span class="hljs-punctuation">,</span> <span class="hljs-string">&quot;delete_component&quot;</span><span class="hljs-punctuation">,</span> <span class="hljs-string">&quot;update_styles&quot;</span><span class="hljs-punctuation">]</span><span class="hljs-punctuation">,</span>
+    <span class="hljs-attr">&quot;rate_limit&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">{</span> <span class="hljs-attr">&quot;calls_per_minute&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-number">20</span><span class="hljs-punctuation">,</span> <span class="hljs-attr">&quot;max_session_tokens&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-number">30000</span> <span class="hljs-punctuation">}</span>
+  <span class="hljs-punctuation">}</span><span class="hljs-punctuation">,</span>
+  <span class="hljs-attr">&quot;communication&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">{</span>
+    <span class="hljs-attr">&quot;publishes&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">[</span><span class="hljs-string">&quot;junior_frame_ready&quot;</span><span class="hljs-punctuation">,</span> <span class="hljs-string">&quot;clarification_needed&quot;</span><span class="hljs-punctuation">]</span><span class="hljs-punctuation">,</span>
+    <span class="hljs-attr">&quot;subscribes&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">[</span><span class="hljs-string">&quot;design_system_ready&quot;</span><span class="hljs-punctuation">,</span> <span class="hljs-string">&quot;task_assigned&quot;</span><span class="hljs-punctuation">,</span> <span class="hljs-string">&quot;revision_requested&quot;</span><span class="hljs-punctuation">]</span>
+  <span class="hljs-punctuation">}</span><span class="hljs-punctuation">,</span>
+  <span class="hljs-attr">&quot;escalation&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">{</span>
+    <span class="hljs-attr">&quot;conditions&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">[</span><span class="hljs-string">&quot;ambiguous_requirement&quot;</span><span class="hljs-punctuation">,</span> <span class="hljs-string">&quot;missing_design_token&quot;</span><span class="hljs-punctuation">]</span><span class="hljs-punctuation">,</span>
+    <span class="hljs-attr">&quot;escalate_to&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;figma-senior-designer&quot;</span>
+  <span class="hljs-punctuation">}</span><span class="hljs-punctuation">,</span>
+  <span class="hljs-attr">&quot;seniority&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;junior&quot;</span><span class="hljs-punctuation">,</span>
+  <span class="hljs-attr">&quot;reports_to&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;figma-senior-designer&quot;</span>
+<span class="hljs-punctuation">}</span>
+</code></pre>
+<h3 id="62-same-mcp-different-behaviour">6.2 Same MCP, different behaviour</h3>
+<p>The Figma MCP exposes the same set of tools to both agents. What changes is the permission wrapper Ujima applies before any tool call reaches the MCP:</p>
+<pre><code>Agent makes tool call
+        ↓
+Ujima permission middleware
+        ↓
+Is tool in agent's allowed_tools?
+        ├── YES → forward to MCP, log to audit
+        └── NO  → block, log to audit, notify orchestrator
+</code></pre>
+<p>The MCP server does not need to know about agent roles. Governance logic lives entirely in Ujima.</p>
+<h3 id="63-seniority-and-concurrent-review">6.3 Seniority and concurrent review</h3>
+<p>Senior and junior agents on the same MCP are active at the same time. The junior is not blocked waiting for the senior to define things before starting — it works with whatever context is already in the store, and updates its output reactively as the senior publishes decisions.</p>
+<p>The senior's role is continuous oversight, not a final gate:</p>
+<pre><code>[Both agents active simultaneously from task start]
+
+Junior Designer → creating frames in Figma, publishing to context store as each is ready
+Senior Designer → monitoring context store, reviewing frames as they arrive
+Senior Designer → publishes: frame_approved (unblocks QA agents for that frame)
+Senior Designer → publishes: revision_requested (junior updates that specific frame)
+Junior Designer → revises specific frame, republishes
+
+[QA agents are already working with already-approved frames — they do not wait]
+</code></pre>
+<p>The orchestrator tracks the approval state of each unit of work. Downstream agents (Playwright) consume approved outputs immediately as they become available, not after all design work is complete. The pipeline is a <strong>graph of parallel streams</strong>, not a sequence of stages.</p>
+<hr>
+<h2 id="7-communication--coordination">7. Communication &amp; Coordination</h2>
+<h3 id="71-event-bus-design">7.1 Event bus design</h3>
+<p>Events are structured JSON payloads published to named channels:</p>
+<pre><code class="language-json"><span class="hljs-punctuation">{</span>
+  <span class="hljs-attr">&quot;event_id&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;evt_01j9x2k4m&quot;</span><span class="hljs-punctuation">,</span>
+  <span class="hljs-attr">&quot;type&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;junior_frame_ready&quot;</span><span class="hljs-punctuation">,</span>
+  <span class="hljs-attr">&quot;publisher&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;figma-junior-designer&quot;</span><span class="hljs-punctuation">,</span>
+  <span class="hljs-attr">&quot;timestamp&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;2025-04-13T10:23:44Z&quot;</span><span class="hljs-punctuation">,</span>
+  <span class="hljs-attr">&quot;payload&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">{</span>
+    <span class="hljs-attr">&quot;frame_id&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;1234:5678&quot;</span><span class="hljs-punctuation">,</span>
+    <span class="hljs-attr">&quot;frame_name&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;Dashboard - Empty State&quot;</span><span class="hljs-punctuation">,</span>
+    <span class="hljs-attr">&quot;figma_url&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;https://figma.com/file/...&quot;</span>
+  <span class="hljs-punctuation">}</span><span class="hljs-punctuation">,</span>
+  <span class="hljs-attr">&quot;task_id&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;task_ujima_001&quot;</span><span class="hljs-punctuation">,</span>
+  <span class="hljs-attr">&quot;session_id&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;session_2025_04_13&quot;</span>
+<span class="hljs-punctuation">}</span>
+</code></pre>
+<p>All events are persisted to the audit log before delivery to subscribers. The audit log is a complete, ordered history of everything that happened in a session — not a sample.</p>
+<h3 id="72-shared-context-store-structure">7.2 Shared context store structure</h3>
+<p>The context store uses namespaced keys to prevent agent collisions:</p>
+<pre><code>task:{task_id}:status             → running | paused | complete | failed
+task:{task_id}:design_system      → JSON blob of design tokens, spacing, colours
+task:{task_id}:schema             → Database schema summary from DB agent
+task:{task_id}:approved_frames    → List of Figma frame IDs approved by senior designer
+task:{task_id}:test_results       → Playwright test output
+agent:{agent_id}:last_action      → Timestamp and description of last action
+agent:{agent_id}:token_usage      → Running token count for rate limit enforcement
+</code></pre>
+<h3 id="72b-context-hydration-on-agent-spawn">7.2b Context hydration on agent spawn</h3>
+<p>Because agents are spawned on demand rather than held as long-lived processes, each spawn is cold — the agent has no in-memory history from its previous invocations. The context store is the sole source of truth for continuity. This creates a trade-off: how much history and cross-domain context should be loaded into the agent's prompt on each spawn?</p>
+<p>Ujima takes the <strong>generous hydration</strong> position. On each spawn, the agent runtime loads:</p>
+<ul>
+<li>The agent's persona and the full task description</li>
+<li>All events published in the agent's domain within a recent window (default 30 minutes)</li>
+<li>Every artifact currently marked <code>approved</code> in the agent's domain</li>
+<li>Peer-agent outputs referenced by events the agent subscribes to</li>
+<li>The last N audit entries for this specific agent (default 10)</li>
+</ul>
+<p>The bundle is compacted to fit the model's context window, prioritising approved artifacts → recent events → older history. Tokens cost more per spawn than a minimal hydration strategy would — the explicit decision is that <strong>agent output quality is worth more than the token saved</strong>. Lean hydration can be enabled per agent for cost-sensitive workflows, but is not the default.</p>
+<p>This is the reason spawn-on-demand works at all: the store carries state the process cannot.</p>
+<h3 id="73-handling-long-running-tasks">7.3 Handling long-running tasks</h3>
+<p>For tasks that run over hours:</p>
+<ul>
+<li>Agents write progress checkpoints to the context store every N actions.</li>
+<li>If an agent process dies, the orchestrator detects it via heartbeat timeout and restarts it.</li>
+<li>On restart, the agent reads its last checkpoint from the context store and continues.</li>
+<li>The event bus retains undelivered events for a configurable window (default: 24 hours).</li>
+</ul>
+<h3 id="74-conflict-resolution">7.4 Conflict resolution</h3>
+<p>When two agents produce conflicting outputs — for example, the junior designer uses a colour not in the design system — the senior agent raises a <code>conflict_detected</code> event. The orchestrator pauses the workflow, surfaces the conflict in the VS Code UI, and waits for resolution — from the senior agent, or from the human developer.</p>
+<hr>
+<hr>
+<h2 id="7b-concurrent-execution--conflict-resolution">7b. Concurrent Execution &amp; Conflict Resolution</h2>
+<h3 id="7b1-the-concurrency-model">7b.1 The concurrency model</h3>
+<p>When a task starts, the orchestrator does not sequence agents one after another. It activates all registered agents simultaneously and opens a shared workspace — the context store — that all agents can read and write to in real time.</p>
+<p>Each domain team (Figma, Playwright, DB) works independently inside its own MCP server. Within each team, the senior and junior agents are both live. The result is a matrix of concurrent activity:</p>
+<pre><code>Time →
+
+Figma MCP:
+  Senior Designer  ══════[monitor]══[review A]══[approve A]══[review B]══════
+  Junior Designer  ══[frame A]══════════════════[frame B]══[revise B]═════════
+
+Playwright MCP:
+  Senior QA        ══════[monitor]══════════════════════════[review tests]═════
+  Junior QA        ══[scaffold]══[test A from schema]══[update with frame A]═══
+
+DB MCP:
+  DB Agent         ══[read schema]══[publish]══[respond to queries]════════════
+
+Shared Context Store:
+                   ←── all agents write here as they produce
+                   ←── all agents read here continuously
+</code></pre>
+<p>Nothing is blocked waiting for a stage to complete. The Junior QA does not wait for design to finish — it begins immediately with whatever is in the context store and updates its tests reactively as new approved frames arrive.</p>
+<h3 id="7b2-how-the-orchestrator-detects-conflicts">7b.2 How the orchestrator detects conflicts</h3>
+<p>The orchestrator subscribes to all events from all agents across all MCP domains. It runs a continuous conflict detection loop — not a final validation, but a live monitor.</p>
+<p><strong>Conflict types:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Type</th>
+<th>Example</th>
+<th>Detection method</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Cross-domain semantic conflict</td>
+<td>QA test references a component name the designer has since renamed</td>
+<td>Orchestrator compares published entity names across domains</td>
+</tr>
+<tr>
+<td>Intra-domain contradiction</td>
+<td>Junior designer uses a colour the senior designer explicitly banned in the design system</td>
+<td>Senior agent raises <code>policy_violation</code> event</td>
+</tr>
+<tr>
+<td>Dependency staleness</td>
+<td>Playwright test was written against schema version 1; DB agent publishes schema version 2 with a renamed column</td>
+<td>Orchestrator compares schema version in context store against version referenced in test artifact</td>
+</tr>
+<tr>
+<td>Approval bypass</td>
+<td>A downstream agent consumes an output that has not yet been approved by the domain senior</td>
+<td>Orchestrator checks approval state before allowing cross-domain context consumption</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Detection flow:</strong></p>
+<pre><code>Agent publishes output to context store
+        ↓
+Orchestrator receives published event
+        ↓
+Conflict checker runs:
+  ├── Check: does this output reference entities from other domains?
+  │     └── YES → verify those entities are approved and current
+  ├── Check: does this output contradict any active policy published by a senior agent?
+  │     └── YES → raise policy_conflict event
+  ├── Check: does any existing downstream artifact depend on the version of context this output changes?
+  │     └── YES → raise dependency_stale event
+  └── CLEAR → mark output as conflict-free, available for consumption
+</code></pre>
+<h3 id="7b3-conflict-resolution-protocol">7b.3 Conflict resolution protocol</h3>
+<p>When a conflict is detected, the orchestrator follows a resolution hierarchy before surfacing anything to the developer. Most conflicts are resolvable autonomously.</p>
+<p><strong>Resolution hierarchy:</strong></p>
+<pre><code>Conflict detected
+        ↓
+Level 1 — Autonomous senior resolution
+  Can the senior agent in the affected domain resolve this
+  without changing the task scope?
+        ├── YES → senior agent publishes correction, junior updates
+        │         orchestrator re-validates, marks resolved
+        └── NO  → escalate to Level 2
+
+Level 2 — Cross-domain senior consensus
+  Can the senior agents in the two conflicting domains
+  agree on a resolution by publishing to the event bus?
+        ├── YES → both publish resolution events
+        │         orchestrator applies resolution to context store
+        │         affected downstream agents receive update event
+        └── NO  → escalate to Level 3
+
+Level 3 — Human review card
+  Orchestrator pauses affected streams only
+  (unaffected agents continue working)
+  Developer receives a structured review card in VS Code:
+
+  ┌─────────────────────────────────────────────────────┐
+  │ ⚠ Conflict: Dependency staleness                    │
+  │                                                     │
+  │ DB Agent published schema v2:                       │
+  │   user_name → full_name (renamed)                   │
+  │                                                     │
+  │ Affected: 3 Playwright tests reference 'user_name'  │
+  │                                                     │
+  │ Proposed resolution:                                │
+  │   Junior QA updates affected tests to 'full_name'  │
+  │                                                     │
+  │ [Accept]  [Reject]  [Edit resolution]               │
+  └─────────────────────────────────────────────────────┘
+
+  Developer approves or edits
+        ↓
+  Orchestrator applies resolution
+  Paused streams resume
+  Unaffected streams were never paused
+</code></pre>
+<h3 id="7b4-partial-pausing--only-what-is-affected">7b.4 Partial pausing — only what is affected</h3>
+<p>A critical property of Ujima's conflict resolution is <strong>selective stream pausing</strong>. When a conflict is detected between the DB domain and the Playwright domain, only the Playwright agents are paused. The Figma team continues working. The DB agent continues responding to queries.</p>
+<p>This prevents a single conflict from freezing the entire task — which is the failure mode of linear pipelines. In Ujima, a conflict is contained to its blast radius.</p>
+<pre><code>Conflict: DB schema change breaks Playwright tests
+
+Figma MCP:
+  Senior Designer  ════════════════════════ [continues unaffected] ══════════
+  Junior Designer  ════════════════════════ [continues unaffected] ══════════
+
+Playwright MCP:
+  Senior QA        ══════ [PAUSED — conflict resolution in progress] ══════
+  Junior QA        ══════ [PAUSED — conflict resolution in progress] ══════
+
+DB MCP:
+  DB Agent         ════════════════════════ [continues, responding to queries] ═
+
+Shared Context:    ════ Figma outputs still flowing ════ DB queries still served ═
+</code></pre>
+<p>Once resolution is applied and the Playwright agents resume, they pick up from their last checkpoint in the context store — not from scratch.</p>
+<h3 id="7b5-conflict-event-schema">7b.5 Conflict event schema</h3>
+<pre><code class="language-json"><span class="hljs-punctuation">{</span>
+  <span class="hljs-attr">&quot;event_id&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;evt_conflict_01&quot;</span><span class="hljs-punctuation">,</span>
+  <span class="hljs-attr">&quot;type&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;conflict_detected&quot;</span><span class="hljs-punctuation">,</span>
+  <span class="hljs-attr">&quot;conflict_type&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;dependency_stale&quot;</span><span class="hljs-punctuation">,</span>
+  <span class="hljs-attr">&quot;detected_by&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;orchestrator&quot;</span><span class="hljs-punctuation">,</span>
+  <span class="hljs-attr">&quot;timestamp&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;2025-04-13T11:42:00Z&quot;</span><span class="hljs-punctuation">,</span>
+  <span class="hljs-attr">&quot;affected_agents&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">[</span><span class="hljs-string">&quot;playwright-junior-qa&quot;</span><span class="hljs-punctuation">,</span> <span class="hljs-string">&quot;playwright-senior-qa&quot;</span><span class="hljs-punctuation">]</span><span class="hljs-punctuation">,</span>
+  <span class="hljs-attr">&quot;affected_streams&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">[</span><span class="hljs-string">&quot;playwright&quot;</span><span class="hljs-punctuation">]</span><span class="hljs-punctuation">,</span>
+  <span class="hljs-attr">&quot;source_event&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">{</span>
+    <span class="hljs-attr">&quot;event_id&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;evt_db_schema_v2&quot;</span><span class="hljs-punctuation">,</span>
+    <span class="hljs-attr">&quot;publisher&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;db-agent&quot;</span><span class="hljs-punctuation">,</span>
+    <span class="hljs-attr">&quot;type&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;schema_updated&quot;</span>
+  <span class="hljs-punctuation">}</span><span class="hljs-punctuation">,</span>
+  <span class="hljs-attr">&quot;conflict_detail&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">{</span>
+    <span class="hljs-attr">&quot;stale_reference&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;user_name&quot;</span><span class="hljs-punctuation">,</span>
+    <span class="hljs-attr">&quot;current_value&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;full_name&quot;</span><span class="hljs-punctuation">,</span>
+    <span class="hljs-attr">&quot;affected_artifacts&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">[</span><span class="hljs-string">&quot;test_user_profile.spec.ts&quot;</span><span class="hljs-punctuation">,</span> <span class="hljs-string">&quot;test_dashboard_table.spec.ts&quot;</span><span class="hljs-punctuation">]</span>
+  <span class="hljs-punctuation">}</span><span class="hljs-punctuation">,</span>
+  <span class="hljs-attr">&quot;proposed_resolution&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">{</span>
+    <span class="hljs-attr">&quot;action&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;update_references&quot;</span><span class="hljs-punctuation">,</span>
+    <span class="hljs-attr">&quot;from&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;user_name&quot;</span><span class="hljs-punctuation">,</span>
+    <span class="hljs-attr">&quot;to&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;full_name&quot;</span><span class="hljs-punctuation">,</span>
+    <span class="hljs-attr">&quot;assignee&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;playwright-junior-qa&quot;</span>
+  <span class="hljs-punctuation">}</span><span class="hljs-punctuation">,</span>
+  <span class="hljs-attr">&quot;resolution_level&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-number">3</span><span class="hljs-punctuation">,</span>
+  <span class="hljs-attr">&quot;status&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;awaiting_human_approval&quot;</span>
+<span class="hljs-punctuation">}</span>
+</code></pre>
+<hr>
+<h2 id="8-governance-layer">8. Governance Layer</h2>
+<h3 id="81-what-governance-controls">8.1 What governance controls</h3>
+<p><strong>Permissions</strong> — what each agent is allowed to do. Defined at registration, modifiable live. Changes take effect on the next tool call.</p>
+<p><strong>Audit log</strong> — a complete, tamper-resistant record of every event, tool call, token usage, and permission check. Queryable by agent, tool, time window, and task.</p>
+<p><strong>Rate limits</strong> — per-agent caps on token usage, tool calls per minute, and maximum session duration. Prevents runaway agents from burning compute budget or flooding an external API.</p>
+<p><strong>Kill switch</strong> — halts a specific agent, an entire team, or a full session immediately. Stops tool calls mid-flight, persists current state to the context store, and marks the session as paused.</p>
+<h3 id="81b-approval-routing">8.1b Approval routing</h3>
+<p>When an artifact requires approval before downstream agents can consume it, the question of <em>who</em> approves is configurable via <code>ujima.approvals.mode</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Mode</th>
+<th>Behaviour</th>
+<th>When to use</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>human_all</code> <em>(default in v0.1)</em></td>
+<td>Every approval surfaces to the developer as a review card. Senior agents can propose resolutions but do not silently co-sign.</td>
+<td>New teams, high-stakes work, demos where visibility matters</td>
+</tr>
+<tr>
+<td><code>senior_auto</code></td>
+<td>Senior agents in the affected domain auto-approve their juniors' outputs. Humans only see exceptions — conflicts, escalations, and destructive actions.</td>
+<td>Trusted teams running well-scoped tasks</td>
+</tr>
+<tr>
+<td><code>hybrid</code></td>
+<td>Senior agents auto-approve low-risk outputs; human approval is required for destructive tool calls and cross-domain artifacts.</td>
+<td>Day-to-day work once the team has proven itself</td>
+</tr>
+</tbody>
+</table>
+<p>The setting is per-workspace and can be overridden per task. Regardless of mode, <strong>every approval decision is written to the audit log</strong> — no approval is invisible.</p>
+<h3 id="82-permission-levels">8.2 Permission levels</h3>
+<table>
+<thead>
+<tr>
+<th>Level</th>
+<th>Who sets it</th>
+<th>Scope</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Platform defaults</td>
+<td>Ujima</td>
+<td>Applies to all agents unless overridden</td>
+</tr>
+<tr>
+<td>MCP-level policy</td>
+<td>MCP administrator</td>
+<td>Applies to all agents using that MCP</td>
+</tr>
+<tr>
+<td>Agent-level policy</td>
+<td>Team lead / developer</td>
+<td>Applies to a specific agent definition</td>
+</tr>
+<tr>
+<td>Session override</td>
+<td>Developer at runtime</td>
+<td>Temporary, applies to current session only</td>
+</tr>
+</tbody>
+</table>
+<h3 id="83-audit-log-schema">8.3 Audit log schema</h3>
+<pre><code class="language-sql"><span class="hljs-keyword">CREATE</span> <span class="hljs-keyword">TABLE</span> audit_events (
+  id            UUID <span class="hljs-keyword">PRIMARY</span> KEY <span class="hljs-keyword">DEFAULT</span> gen_random_uuid(),
+  event_id      TEXT <span class="hljs-keyword">NOT</span> <span class="hljs-keyword">NULL</span>,
+  event_type    TEXT <span class="hljs-keyword">NOT</span> <span class="hljs-keyword">NULL</span>,       <span class="hljs-comment">-- tool_call | permission_check | event_published | escalation</span>
+  agent_id      TEXT <span class="hljs-keyword">NOT</span> <span class="hljs-keyword">NULL</span>,
+  task_id       TEXT <span class="hljs-keyword">NOT</span> <span class="hljs-keyword">NULL</span>,
+  session_id    TEXT <span class="hljs-keyword">NOT</span> <span class="hljs-keyword">NULL</span>,
+  tool_name     TEXT,
+  tool_input    JSONB,
+  tool_output   JSONB,
+  allowed       <span class="hljs-type">BOOLEAN</span> <span class="hljs-keyword">NOT</span> <span class="hljs-keyword">NULL</span>,
+  block_reason  TEXT,
+  tokens_used   <span class="hljs-type">INTEGER</span>,
+  duration_ms   <span class="hljs-type">INTEGER</span>,
+  created_at    TIMESTAMPTZ <span class="hljs-keyword">NOT</span> <span class="hljs-keyword">NULL</span> <span class="hljs-keyword">DEFAULT</span> now()
+);
+</code></pre>
+<h3 id="84-governance-ui-panels">8.4 Governance UI panels</h3>
+<p><strong>Agent Status Panel</strong> — live view of all registered agents. Shows current state (idle / active / waiting / blocked), last action, token usage against limit, and a per-agent kill switch.</p>
+<p><strong>Audit Log Panel</strong> — filterable, scrollable log of all events. Exportable as JSON or CSV.</p>
+<p><strong>Permission Editor</strong> — form-based UI for modifying agent permission sets. Changes can be applied to the running session or saved to the agent definition for future sessions.</p>
+<hr>
+<h2 id="9-feature-specifications">9. Feature Specifications</h2>
+<h3 id="91-mcp-registry">9.1 MCP Registry</h3>
+<p>The MCP Registry is a central catalogue of available MCP servers — a package manager for agent tooling.</p>
+<p><strong>Core features:</strong></p>
+<ul>
+<li>Browse and search MCP servers by name, category, and capability.</li>
+<li>One-click registration: add an MCP to a project and configure connection parameters.</li>
+<li>Version pinning: pin an MCP to a specific version for reproducible agent behaviour.</li>
+<li>Capability manifest: each registered MCP declares its tools, input/output schemas, and required permissions.</li>
+<li>Community contributions: open source MCP servers can be submitted to the registry.</li>
+</ul>
+<p><strong>Registry entry schema:</strong></p>
+<pre><code class="language-json"><span class="hljs-punctuation">{</span>
+  <span class="hljs-attr">&quot;id&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;mcp-figma&quot;</span><span class="hljs-punctuation">,</span>
+  <span class="hljs-attr">&quot;name&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;Figma MCP&quot;</span><span class="hljs-punctuation">,</span>
+  <span class="hljs-attr">&quot;version&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;1.2.0&quot;</span><span class="hljs-punctuation">,</span>
+  <span class="hljs-attr">&quot;description&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;Connect agents to Figma files, components, styles, and frames.&quot;</span><span class="hljs-punctuation">,</span>
+  <span class="hljs-attr">&quot;category&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;design&quot;</span><span class="hljs-punctuation">,</span>
+  <span class="hljs-attr">&quot;connection&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">{</span>
+    <span class="hljs-attr">&quot;type&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;sse&quot;</span><span class="hljs-punctuation">,</span>
+    <span class="hljs-attr">&quot;url&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;https://mcp.figma.com/sse&quot;</span><span class="hljs-punctuation">,</span>
+    <span class="hljs-attr">&quot;auth&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;oauth2&quot;</span>
+  <span class="hljs-punctuation">}</span><span class="hljs-punctuation">,</span>
+  <span class="hljs-attr">&quot;tools&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">[</span>
+    <span class="hljs-punctuation">{</span> <span class="hljs-attr">&quot;name&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;get_file&quot;</span><span class="hljs-punctuation">,</span> <span class="hljs-attr">&quot;description&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;Read a Figma file by ID&quot;</span><span class="hljs-punctuation">,</span> <span class="hljs-attr">&quot;destructive&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-keyword">false</span> <span class="hljs-punctuation">}</span><span class="hljs-punctuation">,</span>
+    <span class="hljs-punctuation">{</span> <span class="hljs-attr">&quot;name&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;create_frame&quot;</span><span class="hljs-punctuation">,</span> <span class="hljs-attr">&quot;description&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;Create a new frame&quot;</span><span class="hljs-punctuation">,</span> <span class="hljs-attr">&quot;destructive&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-keyword">false</span> <span class="hljs-punctuation">}</span><span class="hljs-punctuation">,</span>
+    <span class="hljs-punctuation">{</span> <span class="hljs-attr">&quot;name&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;delete_frame&quot;</span><span class="hljs-punctuation">,</span> <span class="hljs-attr">&quot;description&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;Delete a frame permanently&quot;</span><span class="hljs-punctuation">,</span> <span class="hljs-attr">&quot;destructive&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-keyword">true</span> <span class="hljs-punctuation">}</span>
+  <span class="hljs-punctuation">]</span><span class="hljs-punctuation">,</span>
+  <span class="hljs-attr">&quot;default_permissions&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">{</span>
+    <span class="hljs-attr">&quot;safe_tools&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">[</span><span class="hljs-string">&quot;get_file&quot;</span><span class="hljs-punctuation">,</span> <span class="hljs-string">&quot;get_components&quot;</span><span class="hljs-punctuation">,</span> <span class="hljs-string">&quot;get_styles&quot;</span><span class="hljs-punctuation">]</span><span class="hljs-punctuation">,</span>
+    <span class="hljs-attr">&quot;destructive_tools&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">[</span><span class="hljs-string">&quot;delete_frame&quot;</span><span class="hljs-punctuation">,</span> <span class="hljs-string">&quot;delete_component&quot;</span><span class="hljs-punctuation">]</span>
+  <span class="hljs-punctuation">}</span>
+<span class="hljs-punctuation">}</span>
+</code></pre>
+<h3 id="92-agent-onboarding">9.2 Agent Onboarding</h3>
+<p>Onboarding an agent is the core UX of Ujima. It should take under two minutes.</p>
+<p><strong>Onboarding steps:</strong></p>
+<ol>
+<li><strong>Connect an MCP</strong> — three ways:
+<ul>
+<li>Browse the built-in registry and click to register</li>
+<li>Paste an MCP JSON config directly (same format as Claude desktop <code>mcpServers</code> config):<pre><code class="language-json"><span class="hljs-punctuation">{</span>
+  <span class="hljs-attr">&quot;mcpServers&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">{</span>
+    <span class="hljs-attr">&quot;figma&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">{</span>
+      <span class="hljs-attr">&quot;command&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;npx&quot;</span><span class="hljs-punctuation">,</span>
+      <span class="hljs-attr">&quot;args&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">[</span><span class="hljs-string">&quot;-y&quot;</span><span class="hljs-punctuation">,</span> <span class="hljs-string">&quot;figma-mcp&quot;</span><span class="hljs-punctuation">]</span><span class="hljs-punctuation">,</span>
+      <span class="hljs-attr">&quot;env&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">{</span> <span class="hljs-attr">&quot;FIGMA_TOKEN&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;your-token-here&quot;</span> <span class="hljs-punctuation">}</span>
+    <span class="hljs-punctuation">}</span>
+  <span class="hljs-punctuation">}</span>
+<span class="hljs-punctuation">}</span>
+</code></pre>
+</li>
+<li>Provide a custom SSE URL for a remote MCP server</li>
+</ul>
+</li>
+<li><strong>Name the agent and set its role</strong> — Senior Designer, Junior QA, DB Analyst, etc.</li>
+<li><strong>Write or select a persona</strong> — a system prompt defining behaviour, seniority, and constraints. Templates provided for common roles. In auto mode, the orchestrator generates this.</li>
+<li><strong>Choose a model</strong> — select from models available in the connected IDE or provide an API key for any OpenAI-compatible endpoint.</li>
+<li><strong>Configure permissions</strong> — choose from a preset (read-only, read-write, full access) or customise per-tool. Destructive tools are flagged clearly.</li>
+<li><strong>Set escalation rules</strong> — conditions under which the agent stops and flags for human or senior-agent review.</li>
+<li><strong>Test connection</strong> — Ujima spawns the agent with a test prompt, fires a test tool call, shows the result.</li>
+<li><strong>Save</strong> — to local config (default) or to team registry (cloud).</li>
+</ol>
+<h3 id="93-agent-team-configuration">9.3 Agent Team Configuration</h3>
+<p>Agents are assembled into teams for a task. A team definition specifies which agents participate, who orchestrates, and what human review is required before critical actions.</p>
+<pre><code class="language-json"><span class="hljs-punctuation">{</span>
+  <span class="hljs-attr">&quot;team_id&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;team_product_build_01&quot;</span><span class="hljs-punctuation">,</span>
+  <span class="hljs-attr">&quot;name&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;Product Build Team&quot;</span><span class="hljs-punctuation">,</span>
+  <span class="hljs-attr">&quot;agents&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">[</span>
+    <span class="hljs-string">&quot;figma-senior-designer&quot;</span><span class="hljs-punctuation">,</span>
+    <span class="hljs-string">&quot;figma-junior-designer&quot;</span><span class="hljs-punctuation">,</span>
+    <span class="hljs-string">&quot;db-agent&quot;</span><span class="hljs-punctuation">,</span>
+    <span class="hljs-string">&quot;playwright-agent&quot;</span>
+  <span class="hljs-punctuation">]</span><span class="hljs-punctuation">,</span>
+  <span class="hljs-attr">&quot;orchestrator&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">{</span>
+    <span class="hljs-attr">&quot;model&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;local/ollama:llama3&quot;</span><span class="hljs-punctuation">,</span>
+    <span class="hljs-attr">&quot;max_task_duration_hours&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-number">4</span><span class="hljs-punctuation">,</span>
+    <span class="hljs-attr">&quot;human_review_required_before&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">[</span><span class="hljs-string">&quot;production_deploy&quot;</span><span class="hljs-punctuation">,</span> <span class="hljs-string">&quot;database_migration&quot;</span><span class="hljs-punctuation">]</span>
+  <span class="hljs-punctuation">}</span>
+<span class="hljs-punctuation">}</span>
+</code></pre>
+<p>Teams can be saved, versioned, and shared. A team is a reusable template — spin it up for a new task without reconfiguring from scratch.</p>
+<h3 id="94-task-interface">9.4 Task Interface</h3>
+<p><strong>Input modes:</strong></p>
+<ul>
+<li>Natural language prompt — describe the task in plain English. The orchestrator decomposes it.</li>
+<li>Structured task file — a YAML or JSON file describing sub-tasks, dependencies, and agent assignments.</li>
+<li>VS Code command — trigger a task from the command palette with context from the current file or selection.</li>
+</ul>
+<p><strong>Output display:</strong></p>
+<ul>
+<li>Activity stream — real-time, chronological log of agent actions.</li>
+<li>Agent cards — per-agent summary of current state, last action, and token usage.</li>
+<li>Human review queue — pending items requiring developer approval before the workflow continues.</li>
+<li>Result panel — final synthesised output from the orchestrator.</li>
+</ul>
+<h3 id="95-governance-ui">9.5 Governance UI</h3>
+<table>
+<thead>
+<tr>
+<th>View</th>
+<th>What it shows</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Live agents</td>
+<td>Status, current action, tokens used, kill switch per agent</td>
+</tr>
+<tr>
+<td>Audit log</td>
+<td>All events in the session, filterable and exportable</td>
+</tr>
+<tr>
+<td>Permission editor</td>
+<td>Per-agent permission sets, editable live</td>
+</tr>
+<tr>
+<td>Rate limit dashboard</td>
+<td>Token usage, call frequency, budget remaining</td>
+</tr>
+<tr>
+<td>Session history</td>
+<td>Past sessions, their outcomes, and their full audit logs</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="10-user-flows">10. User Flows</h2>
+<h3 id="101-first-time-setup">10.1 First-time setup</h3>
+<pre><code>Install Ujima plugin from VS Code marketplace
+        ↓
+Connect to Ujima cloud (governance) or run fully local (MVP mode)
+        ↓
+Select a model: local (Ollama) or API key (OpenAI-compatible)
+        ↓
+Browse MCP Registry → select Figma MCP
+        ↓
+Configure MCP connection (OAuth / API key)
+        ↓
+Walk through agent onboarding flow
+        ↓
+Agent saved. Agent card visible in sidebar.
+        ↓
+Setup complete. Create a task.
+</code></pre>
+<h3 id="102-running-a-multi-agent-task">10.2 Running a multi-agent task</h3>
+<pre><code>Developer opens task panel
+        ↓
+Types: &quot;Design and build a payroll summary dashboard.
+        Use the existing DB schema.
+        Write Playwright tests for the table component.&quot;
+        ↓
+Orchestrator receives task
+        ↓
+All agents activated simultaneously:
+
+  Figma MCP          DB MCP           Playwright MCP
+  ─────────          ──────           ──────────────
+  Jr Designer →      DB Agent →       Jr QA →
+  starts frames      reads schema,    starts test
+                     writes to store  scaffolding from
+  Sr Designer →                       whatever is in store
+  monitors, reviews
+  as frames arrive   [schema now      Sr QA →
+                     available to     reviews tests as
+  [frame approved]   all agents]      they are written
+       ↓
+  Jr QA updates      [Jr QA picks up approved frame,
+  tests for that     refines tests immediately]
+  frame immediately
+        ↓
+Activity stream shows all agents working in real time
+        ↓
+Human review card appears when Senior Designer flags a decision
+that requires developer input — not at the end, but mid-flow
+        ↓
+Developer approves. Agents continue.
+        ↓
+Orchestrator synthesises final output when all streams are complete:
+design links, test coverage report, schema diff
+</code></pre>
+<h3 id="103-onboarding-a-new-agent-mid-task">10.3 Onboarding a new agent mid-task</h3>
+<pre><code>Task is running. Developer realises a linting agent is needed.
+        ↓
+Opens MCP Registry → finds ESLint MCP
+        ↓
+Creates &quot;Linting Agent&quot; with read + report permissions (no write)
+        ↓
+Agent added to running team
+        ↓
+Developer sends instruction:
+  &quot;Have the linting agent review generated code before tests run&quot;
+        ↓
+Orchestrator inserts linting step into task graph
+        ↓
+Linting agent runs → publishes lint_report event
+        ↓
+Playwright agent subscribes to lint_report → proceeds
+</code></pre>
+<h3 id="104-using-the-kill-switch">10.4 Using the kill switch</h3>
+<pre><code>Activity stream shows DB agent looping — same query, 847 calls in 3 minutes
+        ↓
+Developer opens Governance → Live Agents view
+        ↓
+Sees DB agent rate limit breached (limit: 30/min)
+        ↓
+Clicks Kill on DB agent
+        ↓
+Governance layer blocks all further tool calls from DB agent
+        ↓
+Current state flushed to context store
+        ↓
+Orchestrator receives agent_killed event → pauses dependent sub-tasks
+        ↓
+Developer reviews audit log to diagnose the loop
+        ↓
+Fixes escalation rule on DB agent definition
+        ↓
+Restarts DB agent — reads context store, continues from last valid checkpoint
+</code></pre>
+<h3 id="105-team-member-accessing-shared-agents">10.5 Team member accessing shared agents</h3>
+<pre><code>New engineer joins the team
+        ↓
+Installs Ujima plugin → connects to team's cloud workspace via invite link
+        ↓
+All shared agent definitions, MCP registrations, and team configs sync automatically
+        ↓
+Engineer runs a task — same agents, same permissions, same governance rules as team lead
+</code></pre>
+<hr>
+<h2 id="11-mvp-scope">11. MVP Scope</h2>
+<p>The MVP is fully local — no cloud dependency. It proves the core loop: manual and auto orchestrator modes, multiple independent MCP servers each staffed by a role-differentiated agent team, concurrent and slim execution modes, and a local governance log.</p>
+<h3 id="111-mvp-components">11.1 MVP components</h3>
+<table>
+<thead>
+<tr>
+<th>Component</th>
+<th>Included</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>VS Code plugin shell</td>
+<td>✅</td>
+<td>Activity stream, task input, agent cards</td>
+</tr>
+<tr>
+<td>Orchestrator — manual mode</td>
+<td>✅</td>
+<td>Developer-defined agent teams</td>
+</tr>
+<tr>
+<td>Orchestrator — auto mode</td>
+<td>✅</td>
+<td>Orchestrator generates roles from task description</td>
+</tr>
+<tr>
+<td>MCP JSON paste (Claude-style)</td>
+<td>✅</td>
+<td>Paste mcpServers JSON to connect any MCP instantly</td>
+</tr>
+<tr>
+<td>MCP Registry (local, curated)</td>
+<td>✅</td>
+<td>Browse and one-click register MCPs</td>
+</tr>
+<tr>
+<td>Agent onboarding flow</td>
+<td>✅</td>
+<td>Full UI with persona templates</td>
+</tr>
+<tr>
+<td>Separate MCP servers, multi-agent</td>
+<td>✅</td>
+<td>Figma MCP → Sr + Jr Designer; Playwright MCP → Sr + Jr QA</td>
+</tr>
+<tr>
+<td>Agent spawn-on-demand lifecycle</td>
+<td>✅</td>
+<td>Spawned when needed, exits when done — no idle processes</td>
+</tr>
+<tr>
+<td>Concurrent mode</td>
+<td>✅</td>
+<td>All agents active simultaneously across domains</td>
+</tr>
+<tr>
+<td>Slim mode</td>
+<td>✅</td>
+<td>Sequential execution for token efficiency</td>
+</tr>
+<tr>
+<td>Shared context store</td>
+<td>✅</td>
+<td>Local SQLite, zero config, no server required</td>
+</tr>
+<tr>
+<td>Event bus</td>
+<td>✅</td>
+<td>Node.js EventEmitter (local)</td>
+</tr>
+<tr>
+<td>Local audit log</td>
+<td>✅</td>
+<td>Complete record of all spawns, tool calls, events</td>
+</tr>
+<tr>
+<td>Permission middleware</td>
+<td>✅</td>
+<td>Per-agent allow/block list</td>
+</tr>
+<tr>
+<td>Kill switch</td>
+<td>✅</td>
+<td>Per-agent and full-session halt</td>
+</tr>
+<tr>
+<td>Cloud monitoring / team sync</td>
+<td>❌</td>
+<td>v2 — cloud is for teams working together</td>
+</tr>
+<tr>
+<td>Agent marketplace</td>
+<td>❌</td>
+<td>v2</td>
+</tr>
+<tr>
+<td>Conflict resolution protocol</td>
+<td>❌</td>
+<td>v1</td>
+</tr>
+<tr>
+<td>Structured task file (YAML)</td>
+<td>❌</td>
+<td>v1</td>
+</tr>
+</tbody>
+</table>
+<h3 id="112-mvp-success-criteria">11.2 MVP success criteria</h3>
+<p>The MVP is successful when the following scenario runs end-to-end without manual tool-level intervention:</p>
+<ol>
+<li>Developer types a task involving Figma and a local database.</li>
+<li>Orchestrator assigns junior designer and DB agent.</li>
+<li>Junior designer creates frames in Figma.</li>
+<li>DB agent reads schema and publishes it to the context store.</li>
+<li>Senior designer reviews junior's frames and approves.</li>
+<li>Developer sees approval card, clicks Approve.</li>
+<li>Orchestrator synthesises output.</li>
+<li>Audit log contains a complete record of all tool calls.</li>
+</ol>
+<hr>
+<h2 id="12-roadmap">12. Roadmap</h2>
+<h3 id="v01--mvp-fully-local">v0.1 — MVP (Fully Local)</h3>
+<ul>
+<li>Plugin shell: task input, activity stream, agent cards, local audit log</li>
+<li>Orchestrator: manual mode + auto mode (generates roles from task)</li>
+<li>MCP connection: JSON paste + curated local registry</li>
+<li>Agent onboarding: full UI with persona templates</li>
+<li>Multiple independent MCP servers, each with senior + junior agent team</li>
+<li>Agent spawn-on-demand lifecycle (no idle processes)</li>
+<li>Concurrent mode + slim mode (linear, token-efficient)</li>
+<li>Local SQLite context store, Node.js EventEmitter bus</li>
+<li>Permission middleware, kill switch</li>
+</ul>
+<h3 id="v10--conflict-resolution--structured-tasks">v1.0 — Conflict Resolution + Structured Tasks</h3>
+<ul>
+<li>Conflict resolution protocol (cross-domain detection + resolution hierarchy)</li>
+<li>Selective stream pausing (only affected domain pauses)</li>
+<li>Structured task file input (YAML) for deterministic task routing</li>
+<li>Checkpoint and resume for long-running tasks</li>
+</ul>
+<h3 id="v20--cloud-teams-working-together">v2.0 — Cloud: Teams Working Together</h3>
+<ul>
+<li>Cloud workspace for team collaboration</li>
+<li>Shared agent definitions and team registry</li>
+<li>Remote monitoring dashboard (watch agents from outside VS Code)</li>
+<li>Team-wide audit log with filtering and export</li>
+<li>Shared context store sync across team members</li>
+</ul>
+<h3 id="v30--open-platform">v3.0 — Open Platform</h3>
+<ul>
+<li>Public MCP Registry with community submissions</li>
+<li>Agent marketplace (shareable persona templates)</li>
+<li>Plugin API for third-party integrations</li>
+<li>Self-hosted deployment option</li>
+</ul>
+<hr>
+<h2 id="13-open-questions--design-decisions">13. Open Questions &amp; Design Decisions</h2>
+<h3 id="131-resolved">13.1 Resolved</h3>
+<table>
+<thead>
+<tr>
+<th>Decision</th>
+<th>Choice</th>
+<th>Rationale</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Peer communication</td>
+<td>Event bus + shared context store</td>
+<td>Resilient for long-running tasks, crash recovery</td>
+</tr>
+<tr>
+<td>Deployment model</td>
+<td>Local-first, cloud is additive</td>
+<td>Fully works offline; cloud adds teams + remote monitoring</td>
+</tr>
+<tr>
+<td>Model coupling</td>
+<td>Model-agnostic</td>
+<td>Any LLM connected to the editor — Ollama, API, IDE-bundled</td>
+</tr>
+<tr>
+<td>MCP permission enforcement</td>
+<td>Middleware in Ujima</td>
+<td>MCP servers stay clean; governance is centralised</td>
+</tr>
+<tr>
+<td>Runtime language</td>
+<td>Node.js / TypeScript</td>
+<td>MCP SDK is TypeScript-native; event loop matches concurrency model; one language for plugin + orchestrator + agents</td>
+</tr>
+<tr>
+<td>Context store (local)</td>
+<td>SQLite</td>
+<td>Zero config, file-based, no Docker required</td>
+</tr>
+<tr>
+<td>Agent lifecycle</td>
+<td>Spawn on demand, exit on complete</td>
+<td>No idle processes; context store holds state between invocations</td>
+</tr>
+<tr>
+<td>Orchestrator modes</td>
+<td>Manual + auto</td>
+<td>Developer controls team in manual; orchestrator generates roles in auto</td>
+</tr>
+<tr>
+<td>Execution modes</td>
+<td>Concurrent + slim</td>
+<td>Concurrent for speed; slim for token efficiency</td>
+</tr>
+<tr>
+<td>MCP connection UX</td>
+<td>JSON paste + registry</td>
+<td>Same pattern as Claude desktop; zero friction for existing MCP configs</td>
+</tr>
+<tr>
+<td>Conflict resolution</td>
+<td>v1 (not MVP)</td>
+<td>Core loop proven first; conflict resolution added when multi-domain tasks are stable</td>
+</tr>
+</tbody>
+</table>
+<h3 id="132-all-decisions-closed">13.2 All decisions closed</h3>
+<table>
+<thead>
+<tr>
+<th>Decision</th>
+<th>Choice</th>
+<th>Rationale</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Context store (local)</td>
+<td><strong>SQLite</strong></td>
+<td>JSON files break under concurrent writes — no locking. Redis requires Docker. SQLite is a single file, handles concurrent reads/writes natively, zero config, zero dependencies. When cloud sync is needed in v2, swap the adapter for PostgreSQL. Same query interface. No rewrite.</td>
+</tr>
+<tr>
+<td>Event bus (MVP)</td>
+<td><strong>Node.js EventEmitter</strong></td>
+<td>In-process, zero dependencies, plenty fast for local single-machine use. The upgrade path to Redis pub/sub is one interface swap when cross-machine events are needed for team mode in v2. Don't add Redis as a dependency just to remove it later.</td>
+</tr>
+<tr>
+<td>Agent process isolation</td>
+<td><strong>Child processes</strong></td>
+<td>Worker threads share the same memory space — a misbehaving agent can corrupt orchestrator state or other agents. Child processes are fully isolated. A crashed agent cannot take down the orchestrator. IPC overhead is negligible because agent workloads are IO-bound (waiting on LLM and MCP responses), not CPU-bound. This is the same reason Node's own cluster module uses child processes.</td>
+</tr>
+<tr>
+<td>Governance backend auth</td>
+<td><strong>Clerk</strong></td>
+<td>Custom auth is months of work that has nothing to do with what Ujima is. Auth0 is expensive at scale. Clerk ships in an afternoon, has a generous free tier, handles OAuth, magic links, and org/team management out of the box — which you need for shared workspaces in v2. Migration off Clerk later is straightforward if required.</td>
+</tr>
+<tr>
+<td>Pricing model</td>
+<td><strong>Open core</strong></td>
+<td>The split is already designed into the architecture. Plugin + orchestrator + local execution = free and open source. Cloud workspace + remote monitoring + team registry = paid. Open source drives adoption and trust with developers. The cloud layer is genuinely additive — not features locked away from free users. This is how Cursor, Raycast, and most successful developer tools work.</td>
+</tr>
+<tr>
+<td>Agent persona templates</td>
+<td><strong>Curated by Ujima first, community contributions at v2</strong></td>
+<td>Bad community templates at v0.1 make the product feel unreliable. Ship 8–10 high-quality curated templates covering the most common roles: Senior Engineer, Junior Engineer, Senior Designer, Junior Designer, Senior QA, Junior QA, DB Analyst, Tech Writer, Security Reviewer. Open community submissions at v2 when there is enough adoption to moderate and enough good examples to set the quality bar.</td>
+</tr>
+<tr>
+<td>Webview UI framework</td>
+<td><strong>React + Vite</strong></td>
+<td>Standard pattern across the VS Code ecosystem (Cursor, Continue, Cline). Fast dev loop, rich component ecosystem for activity streams and governance panels. Alternatives like Svelte or vanilla TS don't give enough leverage for the panels Ujima needs.</td>
+</tr>
+<tr>
+<td>Monorepo tooling</td>
+<td><strong>pnpm workspaces + Turborepo</strong></td>
+<td>Plugin, orchestrator, agent runtime, and shared types all need to share code without npm publish overhead. pnpm handles the workspace graph; Turbo caches build/test across packages so iteration stays fast as the repo grows.</td>
+</tr>
+<tr>
+<td>LLM abstraction</td>
+<td><strong>Vercel AI SDK + first-class <code>vscode.lm</code> adapter</strong></td>
+<td>The AI SDK unifies streaming across Anthropic, OpenAI-compatible, and Ollama behind one interface. The <code>vscode.lm</code> adapter is the novel piece — it lets Ujima agents run on whatever chat model the developer already has active in VS Code (Copilot, etc.), removing the &quot;bring your own API key&quot; friction for first-time users. Default provider order is <code>vscode.lm</code> → configured API → Ollama.</td>
+</tr>
+<tr>
+<td>MCP client SDK</td>
+<td><strong>Official <code>@modelcontextprotocol/sdk</code></strong></td>
+<td>One canonical client maintained by the MCP spec authors. Supports all three transports (stdio, SSE, streamable HTTP). Any gaps in multi-client support are handled by Ujima's connection multiplexer rather than forking the SDK.</td>
+</tr>
+<tr>
+<td>Auto-mode routing (v0.1)</td>
+<td><strong>Template keyword matching, LLM role-gen deferred to v0.2</strong></td>
+<td>Full LLM-generated personas from a task prompt is a research problem — a bad generated team ruins the first impression. Template matching is deterministic, debuggable, and covers the common cases (&quot;design + build&quot;, &quot;add tests&quot;, &quot;schema migration&quot;). When no preset matches, Ujima asks the user to rephrase or drop to manual mode. The UX surface is identical when LLM role-gen arrives in v0.2 — only the routing engine changes.</td>
+</tr>
+<tr>
+<td>Approval routing</td>
+<td><strong>Setting <code>ujima.approvals.mode</code> — <code>human_all</code> default, <code>senior_auto</code>, <code>hybrid</code></strong></td>
+<td>Auto-approval by senior agents is the right end-state for trusted teams, but the MVP demo needs to feel in-control — humans should see every approval until they opt in to automation. Making it a setting avoids the false choice between &quot;always manual&quot; and &quot;always auto&quot;, and keeps every approval audit-logged regardless of who signed.</td>
+</tr>
+<tr>
+<td>Context hydration on spawn</td>
+<td><strong>Generous by default — trade tokens for agent quality</strong></td>
+<td>Spawn-on-demand means every run starts cold. Minimal hydration saves tokens but produces shallow, context-free output — the exact failure mode that makes single-agent tools feel dumb. Generous hydration loads persona, approved artifacts, recent domain events, and peer outputs on each spawn, compacted to fit the model's context window. Lean hydration is available per agent for cost-sensitive workflows but is opt-in, not default.</td>
+</tr>
+<tr>
+<td>Testing stack</td>
+<td><strong>Vitest (unit) + Playwright (e2e via <code>@vscode/test-electron</code>)</strong></td>
+<td>Vitest is ESM-native, fast, and matches the dev runtime so snapshot tests don't skew. Playwright's <code>codegen</code> materially accelerates webview test authoring. <code>@vscode/test-electron</code> is the only supported path for running the extension host in CI.</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<p><em>Ujima is designed to be an open standard. The protocol, agent definition schema, and MCP registry format are open. The governance backend is the commercial layer.</em></p>
+<p><em>Built with collective work. Run with collective intelligence.</em></p>
+
+            
+            
+        </body>
+        </html>
