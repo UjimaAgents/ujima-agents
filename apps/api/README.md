@@ -4,6 +4,56 @@ Local backend and runtime service for Ujima Agents.
 
 This app owns onboarding, organization state, SQLite persistence, approvals, realtime events, tool execution, and AI orchestration. It is the source of truth for workspace boundaries and run execution.
 
+## System Architecture
+
+```mermaid
+graph TD
+    User([User])
+    
+    subgraph Clients ["Clients"]
+        WebUI[Web UI / Next.js]
+        Extension[VS Code Extension]
+        CLI[CLI]
+    end
+
+    subgraph API ["Local API Service (apps/api)"]
+        Fastify[Fastify Server]
+        EventBus[Realtime Event Bus]
+        Orchestrator[Agent Orchestrator]
+        ApprovalService[Approval Service]
+        Database[(SQLite DB)]
+    end
+
+    subgraph Framework ["Framework Layer"]
+        SDK[@ujima/framework]
+        Config[ujima.config.ts]
+    end
+
+    subgraph Runtime ["Execution Runtime"]
+        Tools[Tool Adapters: FS, Shell, MCP]
+        Workspace[Local Filesystem Workspace]
+    end
+
+    LLM[LLM: OpenAI / Anthropic]
+
+    User <--> Clients
+    Clients <--> Fastify
+    Clients <--> EventBus
+    
+    Fastify <--> Database
+    Orchestrator <--> Database
+    
+    Orchestrator --> SDK
+    SDK --> Config
+    
+    Orchestrator <--> LLM
+    Orchestrator --> ApprovalService
+    ApprovalService <--> EventBus
+    
+    Orchestrator --> Tools
+    Tools --> Workspace
+```
+
 ## Build
 
 ```bash

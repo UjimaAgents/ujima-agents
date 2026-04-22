@@ -64,6 +64,12 @@ export const team = AgentTeam({
       "backend-engineer": ["apps/api"],
     },
   },
+  organizationChart: {
+    reportsTo: {
+      Alex: "Quinn",
+      Dana: "Quinn",
+    },
+  },
   providers: {
     openai: { apiKeyRef: "OPENAI_API_KEY" },
     anthropic: { apiKeyRef: "ANTHROPIC_API_KEY" },
@@ -102,6 +108,41 @@ See [`packages/ujima/README.md`](./packages/ujima/README.md) for the full framew
 | `apps/web` | Next.js UI — channels, DMs, approvals, run activity, settings | — |
 | `apps/vscode-extension` | Editor surface for agent chat, approvals, and run status inside VS Code and Cursor | — |
 | `packages/cli` | `ujima` CLI for bootstrap and local setup | — |
+
+---
+
+## System Overview
+
+```mermaid
+graph LR
+    subgraph Interfaces ["Interfaces"]
+        Web[Web UI]
+        VSCode[VS Code]
+        CLI[CLI]
+    end
+
+    subgraph Core ["Local Control Plane"]
+        API[apps/api]
+        DB[(SQLite)]
+    end
+
+    subgraph Logic ["Orchestration"]
+        Framework[@ujima/framework]
+        Agents[Agent Team]
+    end
+
+    subgraph External ["External"]
+        LLM[LLMs]
+        MCP[MCP Servers]
+    end
+
+    Web & VSCode & CLI <--> API
+    API <--> DB
+    API --> Framework
+    Framework --> Agents
+    API <--> LLM
+    API <--> MCP
+```
 
 ---
 
@@ -157,12 +198,15 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) for the full guide · [SECURITY.md](./S
 
 Ujima is in active early development. The foundation is solid:
 
-- ✅ `packages/shared` — schemas, events, path helpers
-- ✅ `packages/ujima` — framework SDK and role system
-- ✅ `apps/api` — backend runtime, messaging, approvals, realtime, AI runs
-- 🔧 `apps/web` — UI wiring in progress
-- 🔧 `apps/vscode-extension` — editor surface in progress
-- 🔧 `packages/cli` — bootstrap CLI pending stable boot flow
+- ✅ `packages/shared` — core schemas, socket events, and path safety
+- ✅ `packages/ujima` — framework SDK and declarative role system
+- ✅ `apps/api` — local backend, messaging, approvals, and AI orchestration
+- ✅ `apps/web` — Next.js control plane for channel-based collaboration
+- ✅ `apps/vscode-extension` — deep editor integration for agent chat and task execution
+- ✅ `packages/cli` — zero-config setup, onboarding, and local management
+- ✅ `packages/mcp-client` — Model Context Protocol integration for external tools
+- 🔧 `packages/permissions` — advanced governance and policy auditing (Beta)
+- 🔧 `packages/llm` — unified provider routing and token tracking (Refinement)
 
 ---
 
