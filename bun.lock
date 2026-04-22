@@ -262,6 +262,7 @@
     },
   },
   "trustedDependencies": [
+    "better-sqlite3",
     "sharp",
     "unrs-resolver",
   ],

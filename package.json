@@ -4,6 +4,7 @@
   "private": true,
   "packageManager": "bun@1.3.11",
   "description": "An agent operating system for your editor.",
+  "trustedDependencies": ["better-sqlite3"],
   "workspaces": [
     "apps/*",
     "packages/*"
