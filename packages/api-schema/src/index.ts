@@ -105,7 +105,6 @@ export const KillResponseSchema = z.object({ killed: z.boolean() });
 export type KillResponse = z.infer<typeof KillResponseSchema>;
 
 export const EventSubscribeQuerySchema = z.object({
-  workspace_id: z.string().optional(),
   session_id: z.string().optional(),
   task_id: z.string().optional(),
   agent_id: z.string().optional(),

@@ -17,7 +17,7 @@ export function registerConversationRoutes(
 ): void {
   const { conversations } = options;
 
-  app.get('/api/channels', async (req, reply) => {
+  app.get('/channels', async (req, reply) => {
     const query = ListChannelsQuerySchema.safeParse(req.query);
     if (!query.success) return badRequest(reply, query.error.message);
     try {
@@ -31,7 +31,7 @@ export function registerConversationRoutes(
     }
   });
 
-  app.get('/api/threads/:threadId/messages', async (req, reply) => {
+  app.get('/threads/:threadId/messages', async (req, reply) => {
     const params = ThreadIdParamsSchema.safeParse(req.params);
     if (!params.success) return badRequest(reply, params.error.message);
     const query = ListChannelsQuerySchema.safeParse(req.query);
@@ -48,7 +48,7 @@ export function registerConversationRoutes(
     }
   });
 
-  app.post('/api/messages', async (req, reply) => {
+  app.post('/messages', async (req, reply) => {
     const body = MessageCreateSchema.safeParse(req.body);
     if (!body.success) return badRequest(reply, body.error.message);
     try {

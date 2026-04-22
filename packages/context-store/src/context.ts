@@ -1,6 +1,6 @@
-import type { Database as DbHandle } from 'better-sqlite3';
 import { EventEmitter } from 'node:events';
-import { nowMs } from './db';
+import { nowMs, type DbHandle } from './db';
+
 
 export interface ContextEntry<T = unknown> {
   key: string;

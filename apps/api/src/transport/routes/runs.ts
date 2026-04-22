@@ -24,7 +24,7 @@ export function registerRunRoutes(
 ): void {
   const { runs, approvals } = options;
 
-  app.get('/api/runs', async (req, reply) => {
+  app.get('/runs', async (req, reply) => {
     const query = RunListQuerySchema.safeParse(req.query);
     if (!query.success) return badRequest(reply, query.error.message);
     try {
@@ -34,7 +34,7 @@ export function registerRunRoutes(
     }
   });
 
-  app.get('/api/runs/:runId', async (req, reply) => {
+  app.get('/runs/:runId', async (req, reply) => {
     const params = RunIdParamsSchema.safeParse(req.params);
     if (!params.success) return badRequest(reply, params.error.message);
     const query = RunDetailQuerySchema.safeParse(req.query);
@@ -48,7 +48,7 @@ export function registerRunRoutes(
     }
   });
 
-  app.get('/api/runs/:runId/detail', async (req, reply) => {
+  app.get('/runs/:runId/detail', async (req, reply) => {
     const params = RunIdParamsSchema.safeParse(req.params);
     if (!params.success) return badRequest(reply, params.error.message);
     const query = RunDetailQuerySchema.safeParse(req.query);
@@ -62,7 +62,7 @@ export function registerRunRoutes(
     }
   });
 
-  app.post('/api/runs', async (req, reply) => {
+  app.post('/runs', async (req, reply) => {
     const body = RunCreateSchema.safeParse(req.body);
     if (!body.success) return badRequest(reply, body.error.message);
     try {
@@ -77,7 +77,7 @@ export function registerRunRoutes(
     }
   });
 
-  app.get('/api/approvals', async (req, reply) => {
+  app.get('/approvals', async (req, reply) => {
     const query = ApprovalListQuerySchema.safeParse(req.query);
     if (!query.success) return badRequest(reply, query.error.message);
     try {
@@ -87,7 +87,7 @@ export function registerRunRoutes(
     }
   });
 
-  app.post('/api/approvals/:approvalId/resolve', async (req, reply) => {
+  app.post('/approvals/:approvalId/resolve', async (req, reply) => {
     const params = ApprovalIdParamsSchema.safeParse(req.params);
     if (!params.success) return badRequest(reply, params.error.message);
     const body = ApprovalResolveSchema.safeParse(req.body);

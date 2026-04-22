@@ -2,6 +2,7 @@
 import { mkdirSync, writeFileSync, unlinkSync, existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
+import { execSync } from 'node:child_process';
 import chalk from 'chalk';
 import {
   createFileSecretStore,
@@ -24,7 +25,7 @@ const STARTUP_SPLASH = `
    █  █   █ █ █▀▄▀█ █▀█
    █  █   █ █ █ ▀ █ █▀█
    ▀▀▀  ▀▀▀ ▀ ▀   ▀ ▀ ▀
-   A G E N T S
+   A G E N T  S Y S T E M
 `;
 
 function resolveHomeDir(): string {
@@ -57,10 +58,29 @@ function wasDirtyShutdown(homeDir: string): boolean {
 }
 
 async function main(): Promise<void> {
+  const port = Number.parseInt(process.env.UJIMA_PORT ?? String(DEFAULT_BIND_PORT), 10);
+  try {
+    const pids = execSync(`lsof -t -i:${port}`).toString().trim().split('\n');
+    for (const pid of pids) {
+      if (pid) process.kill(Number(pid), 'SIGKILL');
+    }
+  } catch {}
+
   const homeDir = resolveHomeDir();
   mkdirSync(homeDir, { recursive: true });
   const logger = createJsonLogger({
-    write: (line: string) => process.stderr.write(line + '\n'),
+    write: (line: string) => {
+      if (process.env.NODE_ENV === 'production') {
+        process.stderr.write(line + '\n');
+      } else {
+        const log = JSON.parse(line);
+        const time = chalk.dim(new Date(log.ts).toLocaleTimeString());
+        const level = log.level === 'error' ? chalk.red(log.level) : log.level === 'warn' ? chalk.yellow(log.level) : chalk.blue(log.level);
+        const msg = chalk.white(log.message);
+        const comp = chalk.magenta(`[${log.component || 'sys'}]`);
+        process.stderr.write(`${time} ${level} ${comp} ${msg}\n`);
+      }
+    },
     level: (process.env.UJIMA_LOG_LEVEL as 'debug' | 'info' | 'warn' | 'error' | undefined) ?? 'info',
     baseFields: { component: 'runtime' },
   });
@@ -92,10 +112,7 @@ async function main(): Promise<void> {
 
   const token = ensureBearerToken(homeDir);
   const bindHost = process.env.UJIMA_BIND_HOST ?? DEFAULT_BIND_HOST;
-  const port = Number.parseInt(process.env.UJIMA_PORT ?? String(DEFAULT_BIND_PORT), 10);
 
-  console.log(chalk.blue(STARTUP_SPLASH));
-  console.log(chalk.gray('   Starting API Server...'));
 
   const secretStore = createFileSecretStore({ homeDir });
   const repository = new Repository(host.db.raw, secretStore);
@@ -161,10 +178,12 @@ async function main(): Promise<void> {
   });
   await transport.listen();
 
-  console.log(chalk.green('\n   System Ready'));
-  console.log(chalk.gray('   Listening on: ') + chalk.cyan.underline(transport.url));
-  console.log(chalk.gray('   Health Check: ') + chalk.dim(`${transport.url}/health`));
-  console.log(chalk.gray('   Events:       ') + chalk.dim(`${transport.url}/events\n`));
+  console.log(chalk.cyan(STARTUP_SPLASH));
+  console.log(`   ${chalk.green('✓')} ${chalk.bold('System Ready')}`);
+  console.log(`   ${chalk.gray('↳')} ${chalk.white('API:')}         ${chalk.cyan.underline(transport.url)}`);
+  console.log(`   ${chalk.gray('↳')} ${chalk.white('Health:')}      ${chalk.dim(transport.url + '/health')}`);
+  console.log(`   ${chalk.gray('↳')} ${chalk.white('Events:')}      ${chalk.dim(transport.url + '/events')}`);
+  console.log(`   ${chalk.gray('↳')} ${chalk.white('Docs:')}        ${chalk.cyan(transport.url + '/docs')}\n`);
 
   logger.info('runtime: ready', {
     homeDir,

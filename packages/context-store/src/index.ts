@@ -1,5 +1,4 @@
-import type { Database as DbHandle } from 'better-sqlite3';
-import { openDatabase } from './db';
+import { openDatabase, type DbHandle } from './db';
 
 export type SqliteDbHandle = DbHandle;
 import { createContextStore, type ContextStore } from './context';
