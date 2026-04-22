@@ -1,8 +1,5 @@
-import {
-  ToolCapabilitySchema,
-  type ToolCapability,
-} from "@ujima/shared";
-import { DEFAULT_TOOL_CATALOG } from "./constants.js";
+import { ToolCapabilitySchema, type ToolCapability } from '@ujima/shared';
+import { DEFAULT_TOOL_CATALOG } from './constants.js';
 
 export function defineTool(tool: unknown): ToolCapability {
   return ToolCapabilitySchema.parse(tool);
@@ -19,7 +16,7 @@ export function normalizeTools(
 
   return Object.fromEntries(
     Object.entries(catalog).map(([id, tool]) => {
-      const record = typeof tool === "object" && tool !== null ? tool : {};
+      const record = typeof tool === 'object' && tool !== null ? tool : {};
       return [id, ToolCapabilitySchema.parse({ id, ...record })];
     }),
   );

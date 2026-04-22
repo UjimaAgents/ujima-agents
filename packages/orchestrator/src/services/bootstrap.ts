@@ -1,0 +1,45 @@
+import type { BootstrapSnapshot, ApiRepository } from './repository-reader.js';
+import type { TeamStore } from './team-store.js';
+import {
+  listProviderStatuses,
+  summarizeTeam,
+  type TeamSummary,
+} from './team.js';
+
+export interface BootstrapResponse {
+  serviceReady: true;
+  onboardingStatus: 'pending' | 'ready';
+  organization: { id: string; name: string } | null;
+  team: TeamSummary | null;
+  providers: { name: string; hasKey: boolean }[];
+  members: BootstrapSnapshot['members'];
+  channels: BootstrapSnapshot['channels'];
+  pendingApprovals: BootstrapSnapshot['pendingApprovals'];
+  activeRuns: BootstrapSnapshot['activeRuns'];
+}
+
+export class BootstrapService {
+  constructor(
+    private readonly repo: ApiRepository,
+    private readonly teamStore: TeamStore,
+  ) {}
+
+  getBootstrap(): BootstrapResponse {
+    const snapshot = this.repo.getBootstrapSnapshot();
+    const team = this.teamStore.getTeam();
+
+    return {
+      serviceReady: true,
+      onboardingStatus: snapshot.organization ? 'ready' : 'pending',
+      organization: snapshot.organization
+        ? { id: snapshot.organization.id, name: snapshot.organization.name }
+        : null,
+      team: team ? summarizeTeam(team) : null,
+      providers: team ? listProviderStatuses(team, snapshot.providerCredentials) : [],
+      members: snapshot.members,
+      channels: snapshot.channels,
+      pendingApprovals: snapshot.pendingApprovals,
+      activeRuns: snapshot.activeRuns,
+    };
+  }
+}

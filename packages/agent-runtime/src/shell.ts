@@ -1,0 +1,235 @@
+import type { UjimaEvent } from '@ujima/shared';
+import type { LLMMessage } from '@ujima/llm';
+import { hydrate } from './hydrate';
+import { runToolLoop } from './tool-loop';
+import type { AgentRunInputs, AgentRunResult, ExitReason } from './types';
+
+const DEFAULT_MAX_ITERATIONS = 12;
+const DEFAULT_HEARTBEAT_MS = 10_000;
+
+export interface AgentHandle {
+  agentId: string;
+  taskId: string;
+  sessionId: string;
+  readonly result: Promise<AgentRunResult>;
+  kill(): void;
+  isRunning(): boolean;
+}
+
+export function runAgent(inputs: AgentRunInputs): AgentHandle {
+  const controller = new AbortController();
+  const externalSignal = inputs.abortSignal;
+  if (externalSignal) {
+    if (externalSignal.aborted) controller.abort();
+    else externalSignal.addEventListener('abort', () => controller.abort(), { once: true });
+  }
+
+  let running = true;
+  const result = execute(inputs, controller).finally(() => {
+    running = false;
+  });
+
+  return {
+    agentId: inputs.agent.id,
+    taskId: inputs.task.task_id,
+    sessionId: inputs.sessionId,
+    result,
+    kill: () => controller.abort(),
+    isRunning: () => running,
+  };
+}
+
+async function execute(inputs: AgentRunInputs, controller: AbortController): Promise<AgentRunResult> {
+  const {
+    agent,
+    task,
+    sessionId,
+    provider,
+    mcp,
+    permissions,
+    eventBus,
+    context,
+    audit,
+    agentState,
+    approvals,
+    maxToolIterations = DEFAULT_MAX_ITERATIONS,
+    heartbeatIntervalMs = DEFAULT_HEARTBEAT_MS,
+    onEvent,
+    onStream,
+    gateResolver,
+  } = inputs;
+
+  await agentState.upsert(agent.id, { status: 'active', last_action: 'starting' });
+  await audit.write({
+    event_id: `spawn_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    event_type: 'spawn',
+    agent_id: agent.id,
+    task_id: task.task_id,
+    session_id: sessionId,
+    allowed: true,
+  });
+
+  const heartbeat = setInterval(() => {
+    void agentState.heartbeat(agent.id);
+  }, heartbeatIntervalMs);
+  heartbeat.unref();
+
+  const emit = async (event: UjimaEvent): Promise<void> => {
+    for (const channel of agent.communication.publishes) {
+      await eventBus.publish(channel, event);
+    }
+    if (agent.communication.publishes.length === 0) {
+      await eventBus.publish(`agent:${agent.id}`, event);
+    }
+    onEvent?.(event);
+  };
+
+  try {
+    const bundle = inputs.hydration ?? (await hydrate({
+      agent,
+      task,
+      context,
+      eventBus,
+      approvals,
+    }));
+
+    const tools = await mcp.listTools();
+
+    let peerCursorMs = Date.now();
+    const refreshPeerContext = async (): Promise<LLMMessage | undefined> => {
+      const newEvents = (
+        await Promise.all(
+          agent.communication.subscribes.map((ch) => eventBus.replay(ch, peerCursorMs)),
+        )
+      )
+        .flat()
+        .filter((e) => e.publisher !== agent.id);
+      const newPeerEntries: { key: string; value: unknown }[] = [];
+      for (const channel of agent.communication.subscribes) {
+        const prefix = `task:${task.task_id}:${channel}`;
+        const rows = await context.list(prefix);
+        for (const row of rows) {
+          if (row.updatedAt > peerCursorMs) {
+            newPeerEntries.push({ key: row.key, value: row.value });
+          }
+        }
+      }
+      peerCursorMs = Date.now();
+      if (newEvents.length === 0 && newPeerEntries.length === 0) return undefined;
+
+      const lines: string[] = ['[ujima] Peer activity since your last turn:'];
+      for (const e of newEvents) {
+        lines.push(`- event ${e.type} from ${e.publisher}: ${JSON.stringify(e.payload).slice(0, 240)}`);
+      }
+      for (const p of newPeerEntries) {
+        lines.push(`- output ${p.key}: ${JSON.stringify(p.value).slice(0, 240)}`);
+      }
+      return { role: 'user', content: lines.join('\n') };
+    };
+
+    const outcome = await runToolLoop({
+      agent,
+      taskId: task.task_id,
+      sessionId,
+      provider,
+      mcp,
+      tools,
+      permissions,
+      audit,
+      systemPrompt: bundle.systemPrompt,
+      userPrompt: bundle.taskPrompt,
+      maxIterations: maxToolIterations,
+      abortSignal: controller.signal,
+      emitEvent: emit,
+      onStream,
+      refreshPeerContext,
+      gateResolver,
+    });
+
+    const outputKey = `task:${task.task_id}:agent:${agent.id}:output`;
+    await context.put(outputKey, {
+      agentId: agent.id,
+      taskId: task.task_id,
+      exitReason: outcome.exitReason,
+      finalText: outcome.finalText,
+      toolCalls: outcome.toolCalls,
+      iterations: outcome.iterations,
+      tokensUsed: outcome.tokensUsed,
+      completedAt: Date.now(),
+    });
+
+    if (outcome.browserState) {
+      const browserKey = `task:${task.task_id}:agent:${agent.id}:browser_state`;
+      await context.put(browserKey, {
+        agentId: agent.id,
+        taskId: task.task_id,
+        ...outcome.browserState,
+      });
+    }
+
+    const exitReason: ExitReason = outcome.exitReason;
+    await agentState.upsert(agent.id, {
+      status: exitReason === 'completed' ? 'exited' : exitReason === 'killed' ? 'killed' : 'blocked',
+      last_action: exitReason,
+    });
+
+    await audit.write({
+      event_id: `exit_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      event_type: 'exit',
+      agent_id: agent.id,
+      task_id: task.task_id,
+      session_id: sessionId,
+      allowed: true,
+      tool_output: { exitReason, toolCalls: outcome.toolCalls, tokensUsed: outcome.tokensUsed },
+    });
+
+    await emit({
+      event_id: `evt_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      type: 'agent_exited',
+      publisher: agent.id,
+      timestamp: new Date().toISOString(),
+      task_id: task.task_id,
+      session_id: sessionId,
+      payload: { exitReason, outputKey, finalText: outcome.finalText },
+    });
+
+    return {
+      agentId: agent.id,
+      taskId: task.task_id,
+      sessionId,
+      exitReason,
+      toolCalls: outcome.toolCalls,
+      iterations: outcome.iterations,
+      tokensUsed: outcome.tokensUsed,
+      finalText: outcome.finalText,
+      escalationReason: outcome.escalationReason,
+      error: outcome.error,
+      browserState: outcome.browserState,
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    await agentState.upsert(agent.id, { status: 'blocked', last_action: `error: ${message}` });
+    await audit.write({
+      event_id: `exit_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      event_type: 'exit',
+      agent_id: agent.id,
+      task_id: task.task_id,
+      session_id: sessionId,
+      allowed: false,
+      block_reason: message,
+    });
+    return {
+      agentId: agent.id,
+      taskId: task.task_id,
+      sessionId,
+      exitReason: 'error',
+      toolCalls: 0,
+      iterations: 0,
+      tokensUsed: 0,
+      finalText: '',
+      error: message,
+    };
+  } finally {
+    clearInterval(heartbeat);
+  }
+}

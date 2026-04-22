@@ -1,25 +1,18 @@
-export { 
-  DEFAULT_TOOL_CATALOG, 
-  ROLE_PRESETS, 
-  PERSONALITY_PRESETS 
-} from "./constants.js";
+export { DEFAULT_TOOL_CATALOG, ROLE_PRESETS, PERSONALITY_PRESETS } from './constants.js';
 
-// Loaders
-export { 
-  loadAgentTeam, 
+export {
+  loadAgentTeam,
   loadAgentTeamFromFile,
-  loadAgentTeamConfigFromFile
-} from "./loaders.js";
+  loadAgentTeamConfigFromFile,
+} from './loaders.js';
 
-// Main Team Builder
-export { 
+export {
   AgentTeam,
   createStarterAgentTeamConfig,
   type AgentTeamHandle,
-  type NormalizedAgentTeamConfig
-} from "./team.js";
+  type NormalizedAgentTeamConfig,
+} from './team.js';
 
-// Zod Schemas (for runtime validation and OpenAPI generation)
 export {
   AgentTeamConfigSchema,
   RoleConfigSchema,
@@ -27,10 +20,9 @@ export {
   ChannelConfigSchema,
   PolicySchema,
   ProviderConfigSchema,
-} from "./schemas.js";
+} from './schemas.js';
 
-// Types mapping directly to configurations
-export type { 
+export type {
   ProviderConfig,
   PolicyConfig,
   PersonalityPreset,
@@ -39,12 +31,26 @@ export type {
   AgentConfig,
   ChannelConfig,
   AgentTeamConfig,
-  AgentTeamConfigInput
-} from "./schemas.js";
+  AgentTeamConfigInput,
+} from './schemas.js';
 
-// Internal Engine Builders
-export { 
-  buildAgentSystemPrompt,
-  SHARED_AGENT_SYSTEM_PROMPT
-} from "./prompts.js";
+export { buildAgentSystemPrompt, SHARED_AGENT_SYSTEM_PROMPT } from './prompts.js';
 
+export {
+  listPersonalityPresets,
+  getPersonalityPreset,
+  createPersonalityFromPreset,
+  definePersonality,
+} from './personality.js';
+
+export { listRolePresets, getRolePreset, createRoleFromPreset, defineRole, normalizeRoles } from './roles.js';
+
+export { defineProvider, normalizeProviders } from './providers.js';
+
+export { defineTool, listDefaultToolNames, normalizeTools } from './tools.js';
+
+export { createOrganizationChart } from './organization-chart.js';
+
+export { createAgent, normalizeAgents } from './agents.js';
+
+export { createWorkspaceConfig } from './workspace.js';

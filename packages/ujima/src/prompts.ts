@@ -1,60 +1,65 @@
-import type { Channel, Member, OrganizationChart } from "@ujima/shared";
-import { getPersonalityPreset } from "./personality.js";
-import type { AgentConfig, RoleConfig } from "./schemas.js";
+import type { Channel, Member, OrganizationChart } from '@ujima/shared';
+import { getPersonalityPreset } from './personality.js';
+import type { AgentConfig, RoleConfig } from './schemas.js';
 
 export const SHARED_AGENT_SYSTEM_PROMPT = [
-  "You are a trusted employee inside the organization.",
-  "Roleplay the assigned role faithfully. Do not act like a generic assistant.",
-  "Speak and behave like a teammate inside the company.",
-  "Be concrete, brief, and task-focused. Prefer direct action over explanation.",
-  "Use the workspace and conversation context to ground your decisions.",
+  'You are a trusted employee inside the organization.',
+  'Roleplay the assigned role faithfully. Do not act like a generic assistant.',
+  'Speak and behave like a teammate inside the company.',
+  'Be concrete, brief, and task-focused. Prefer direct action over explanation.',
+  'Use the workspace and conversation context to ground your decisions.',
   "Stay inside the organization workspace root and the role's allowed scopes.",
-  "Treat filesystem, shell, and MCP as tools. Shell is the general execution path, including git commands.",
-  "Ask for approval before write, shell, git-style, or otherwise destructive actions when required.",
-  "Never claim a tool result, file edit, or command output unless the tool actually returned it.",
-  "If blocked, say exactly what is needed next and stop.",
-  "If a skill is relevant, inspect its SKILL.md before acting.",
-].join("\n");
+  'Treat filesystem, shell, and MCP as tools. Shell is the general execution path, including git commands.',
+  'Ask for approval before write, shell, git-style, or otherwise destructive actions when required.',
+  'Never claim a tool result, file edit, or command output unless the tool actually returned it.',
+  'If blocked, say exactly what is needed next and stop.',
+  'If a skill is relevant, inspect its SKILL.md before acting.',
+].join('\n');
 
 function listTools(role: RoleConfig): string {
-  return role.tools.length ? role.tools.join(", ") : "none";
+  return role.tools.length ? role.tools.join(', ') : 'none';
 }
 
 function listScopes(role: RoleConfig): string {
-  return role.workspaceScopes.length ? role.workspaceScopes.join(", ") : "none";
+  return role.workspaceScopes.length ? role.workspaceScopes.join(', ') : 'none';
 }
 
 function listChannels(role: RoleConfig): string {
-  return role.channels.length ? role.channels.join(", ") : "none";
+  return role.channels.length ? role.channels.join(', ') : 'none';
 }
 
 function formatChannelTargets(channels: Channel[]): string {
   return channels.length
-    ? channels.map((channel) => `- ${channel.name} [${channel.id}] (${channel.kind})`).join("\n")
-    : "- none";
+    ? channels.map((channel) => `- ${channel.name} [${channel.id}] (${channel.kind})`).join('\n')
+    : '- none';
 }
 
 function formatDirectMessageTargets(currentMemberId: string, members: Member[]): string {
   const targets = members.filter((member) => member.id !== currentMemberId);
 
   return targets.length
-    ? targets.map((member) => `- ${member.name} [${member.id}]`).join("\n")
-    : "- none";
+    ? targets.map((member) => `- ${member.name} [${member.id}]`).join('\n')
+    : '- none';
 }
 
 function formatJoinedAt(value: string | undefined): string {
-  return value ? value.slice(0, 10) : "unknown";
+  return value ? value.slice(0, 10) : 'unknown';
 }
 
 function formatMemberLine(member: Member, agent?: AgentConfig): string {
   const personality = agent ? getPersonalityPreset(agent.personalityName) : undefined;
-  const parts = [member.name, member.roleName, member.kind, `joined ${formatJoinedAt(member.createdAt)}`];
+  const parts = [
+    member.name,
+    member.roleName,
+    member.kind,
+    `joined ${formatJoinedAt(member.createdAt)}`,
+  ];
 
   if (personality) {
     parts.splice(2, 0, personality.title);
   }
 
-  return `- ${parts.join(" | ")}`;
+  return `- ${parts.join(' | ')}`;
 }
 
 function formatOrgChart(members: Member[], chart: OrganizationChart): string {
@@ -68,20 +73,20 @@ function formatOrgChart(members: Member[], chart: OrganizationChart): string {
     }
     visited.add(member.id);
 
-    const indent = "  ".repeat(depth);
+    const indent = '  '.repeat(depth);
     const line = `${indent}- ${member.name} (${member.roleName}, ${member.kind}, joined ${formatJoinedAt(member.createdAt)})`;
     const children = members.filter((child) => chart.reportsTo[child.id] === member.id);
     return [line, ...children.flatMap((child) => renderNode(child, depth + 1))];
   };
 
   return roots.length
-    ? roots.flatMap((member) => renderNode(member, 0)).join("\n")
+    ? roots.flatMap((member) => renderNode(member, 0)).join('\n')
     : members
         .map((member) => {
           const resolved = byId.get(member.id) ?? member;
           return formatMemberLine(resolved);
         })
-        .join("\n");
+        .join('\n');
 }
 
 function buildOrganizationContextPrompt(
@@ -94,11 +99,11 @@ function buildOrganizationContextPrompt(
 
   return [
     `Organization: ${organizationName}`,
-    "Employees:",
-    members.map((member) => formatMemberLine(member, agentsByName.get(member.name))).join("\n"),
-    "Hierarchy:",
+    'Employees:',
+    members.map((member) => formatMemberLine(member, agentsByName.get(member.name))).join('\n'),
+    'Hierarchy:',
     formatOrgChart(members, organizationChart),
-  ].join("\n");
+  ].join('\n');
 }
 
 export function buildAgentSystemPrompt(
@@ -120,29 +125,29 @@ export function buildAgentSystemPrompt(
 
   return [
     `You are ${agent.name}, an employee of ${organizationName}, acting as ${role.title} (${role.name}).`,
-    personality ? `Personality: ${personality.title} (${personality.name})` : "",
+    personality ? `Personality: ${personality.title} (${personality.name})` : '',
     SHARED_AGENT_SYSTEM_PROMPT,
-    "",
+    '',
     "Use 'I' as an employee of the organization, not as a generic assistant.",
-    role.description ? `Role objective: ${role.description}` : "",
+    role.description ? `Role objective: ${role.description}` : '',
     role.instructions,
-    personality?.instructions ?? "",
-    "",
+    personality?.instructions ?? '',
+    '',
     buildOrganizationContextPrompt(organizationName, members, agents, organizationChart),
-    "",
-    "Messaging:",
+    '',
+    'Messaging:',
     `Current thread ID: ${currentThreadId}`,
-    "Accessible channel IDs:",
+    'Accessible channel IDs:',
     formatChannelTargets(accessibleChannels),
-    "Direct message recipient IDs:",
+    'Direct message recipient IDs:',
     formatDirectMessageTargets(currentMemberId, members),
-    "Use destination: thread for the current conversation, channel for a channel post, and dm for a direct recipient.",
-    "",
+    'Use destination: thread for the current conversation, channel for a channel post, and dm for a direct recipient.',
+    '',
     `Workspace root: ${workspaceRoot}`,
     `Allowed scopes: ${listScopes(role)}`,
     `Available tools: ${listTools(role)}`,
     `Available channels: ${listChannels(role)}`,
   ]
     .filter(Boolean)
-    .join("\n");
+    .join('\n');
 }

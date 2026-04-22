@@ -1,42 +1,265 @@
 {
   "name": "ujima-vscode-extension",
-  "displayName": "Ujima Agent Team",
-  "description": "Ujima Local-First Agent Team Framework Extension",
-  "version": "0.0.1",
+  "displayName": "Ujima",
+  "description": "An agent operating system for your editor.",
+  "version": "0.1.0",
+  "private": true,
+  "publisher": "ujima",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/BlazinArtemis/ujima.git"
+  },
   "engines": {
-    "vscode": "^1.90.0"
+    "vscode": "^1.90.0",
+    "node": ">=20"
   },
   "categories": [
-    "Other"
+    "Other",
+    "AI",
+    "Chat"
   ],
-  "main": "./out/extension.js",
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "contributes": {
-    "commands": [],
+    "commands": [
+      {
+        "command": "ujima.newTask",
+        "title": "Ujima: New Task",
+        "icon": "$(add)"
+      },
+      {
+        "command": "ujima.openRegistry",
+        "title": "Ujima: Open MCP Registry"
+      },
+      {
+        "command": "ujima.addMcp",
+        "title": "Ujima: Add MCP Server"
+      },
+      {
+        "command": "ujima.onboardAgent",
+        "title": "Ujima: Onboard New Agent"
+      },
+      {
+        "command": "ujima.onboardAgentWizard",
+        "title": "Ujima: Onboard New Agent (Wizard)"
+      },
+      {
+        "command": "ujima.offboardAgent",
+        "title": "Ujima: Offboard Agent",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "ujima.createTeam",
+        "title": "Ujima: Create Team"
+      },
+      {
+        "command": "ujima.manageTeams",
+        "title": "Ujima: Manage Teams"
+      },
+      {
+        "command": "ujima.openGovernance",
+        "title": "Ujima: Open Governance Panel"
+      },
+      {
+        "command": "ujima.openActivityStream",
+        "title": "Ujima: Open Activity Stream"
+      },
+      {
+        "command": "ujima.openAgentChat",
+        "title": "Ujima: Open Agent Chat"
+      },
+      {
+        "command": "ujima.loadDemoScenario",
+        "title": "Ujima: Load demo scenario"
+      },
+      {
+        "command": "ujima.validateDemoEnv",
+        "title": "Ujima: Validate demo environment"
+      },
+      {
+        "command": "ujima.killAgent",
+        "title": "Ujima: Kill Agent",
+        "icon": "$(stop-circle)"
+      },
+      {
+        "command": "ujima.killSession",
+        "title": "Ujima: Kill Session",
+        "icon": "$(debug-stop)"
+      }
+    ],
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "ujima-explorer",
+          "id": "ujima",
           "title": "Ujima",
-          "icon": "media/icon.svg"
+          "icon": "$(organization)"
         }
       ]
     },
     "views": {
-      "ujima-explorer": [
+      "ujima": [
         {
-          "id": "ujima-chat",
-          "name": "Agent Chat"
+          "id": "ujima.actions",
+          "name": "Actions"
+        },
+        {
+          "id": "ujima.agents",
+          "name": "Agents"
+        },
+        {
+          "id": "ujima.teams",
+          "name": "Teams"
+        },
+        {
+          "id": "ujima.mcps",
+          "name": "MCP Servers"
         }
       ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "ujima.agents",
+        "contents": "No agents spawned yet.\n[Onboard Agent](command:ujima.onboardAgent)\n[Load demo scenario](command:ujima.loadDemoScenario)"
+      },
+      {
+        "view": "ujima.teams",
+        "contents": "No teams yet.\n[Create Team](command:ujima.createTeam)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "ujima.newTask",
+          "when": "view == ujima.agents",
+          "group": "navigation@1"
+        },
+        {
+          "command": "ujima.killSession",
+          "when": "view == ujima.agents",
+          "group": "navigation@2"
+        },
+        {
+          "command": "ujima.onboardAgent",
+          "when": "view == ujima.agents",
+          "group": "navigation@3"
+        },
+        {
+          "command": "ujima.onboardAgentWizard",
+          "when": "view == ujima.agents",
+          "group": "navigation@4"
+        },
+        {
+          "command": "ujima.createTeam",
+          "when": "view == ujima.teams",
+          "group": "navigation@1"
+        },
+        {
+          "command": "ujima.manageTeams",
+          "when": "view == ujima.teams",
+          "group": "navigation@2"
+        },
+        {
+          "command": "ujima.addMcp",
+          "when": "view == ujima.mcps",
+          "group": "navigation@1"
+        },
+        {
+          "command": "ujima.openRegistry",
+          "when": "view == ujima.mcps",
+          "group": "navigation@2"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "ujima.killAgent",
+          "when": "view == ujima.agents && viewItem == ujima.agent",
+          "group": "inline@1"
+        },
+        {
+          "command": "ujima.offboardAgent",
+          "when": "view == ujima.agents && viewItem == ujima.agent",
+          "group": "inline@2"
+        },
+        {
+          "command": "ujima.offboardAgent",
+          "when": "view == ujima.agents && viewItem == ujima.agent",
+          "group": "9_modification"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Ujima",
+      "properties": {
+        "ujima.approvals.mode": {
+          "type": "string",
+          "enum": ["human_all", "senior_auto", "hybrid"],
+          "default": "human_all",
+          "description": "Who approves artifacts before downstream agents consume them. human_all: every approval surfaces to you. senior_auto: senior agents silently co-sign. hybrid: senior auto-approves low-risk, you see destructive/cross-domain."
+        },
+        "ujima.execution.defaultMode": {
+          "type": "string",
+          "enum": ["concurrent", "slim"],
+          "default": "concurrent",
+          "description": "Default execution mode for new tasks."
+        },
+        "ujima.llm.vscodeLm.vendor": {
+          "type": "string",
+          "default": "",
+          "description": "Pin the vscode.lm chat provider vendor (e.g. \"copilot\"). Leave empty to auto-select."
+        },
+        "ujima.llm.vscodeLm.family": {
+          "type": "string",
+          "default": "",
+          "description": "Pin the vscode.lm chat model family (e.g. \"gpt-4o\" or \"claude-3.5-sonnet\"). Leave empty to try preferred families in order."
+        },
+        "ujima.mcp.env": {
+          "type": "object",
+          "default": {},
+          "description": "Environment variables injected into every spawned MCP server process (e.g. FIGMA_API_KEY). Merged on top of process.env; values here win.",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "ujima.mcp.custom": {
+          "type": "array",
+          "default": [],
+          "description": "Custom MCP server definitions (added via \"Ujima: Add MCP Server\"). Each entry is a full MCPDef with id, transport, command/url, args, env.",
+          "items": {
+            "type": "object"
+          }
+        }
+      }
     }
   },
   "scripts": {
-    "vscode:prepublish": "bun run build",
-    "build": "bun build ./src/extension.ts --outdir ./out --target node",
-    "watch": "bun build ./src/extension.ts --outdir ./out --target node --watch"
+    "build": "node esbuild.mjs --production",
+    "dev": "node esbuild.mjs --watch",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src",
+    "test": "vitest run",
+    "package": "node esbuild.mjs --production && bun --filter @ujima/webview build && rm -rf webview && mkdir -p webview && cp -R ../../packages/webview/dist webview/dist && vsce package --no-dependencies --out ujima.vsix && node scripts/bundle-native.mjs && rm -rf webview",
+    "clean": "rm -rf dist webview .turbo *.tsbuildinfo *.vsix"
+  },
+  "dependencies": {
+    "@ujima/agent-runtime": "workspace:*",
+    "@ujima/context-store": "workspace:*",
+    "@ujima/event-bus": "workspace:*",
+    "@ujima/llm": "workspace:*",
+    "@ujima/mcp-client": "workspace:*",
+    "@ujima/orchestrator": "workspace:*",
+    "@ujima/permissions": "workspace:*",
+    "@ujima/runtime-core": "workspace:*",
+    "@ujima/shared": "workspace:*",
+    "better-sqlite3": "11.10.0"
   },
   "devDependencies": {
+    "@electron/rebuild": "^4.0.3",
     "@types/vscode": "^1.90.0",
+    "@vscode/test-electron": "^2.4.1",
+    "@vscode/vsce": "^3.0.0",
+    "esbuild": "^0.28.0",
     "typescript": "^5.0.0"
   }
 }

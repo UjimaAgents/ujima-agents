@@ -1,17 +1,19 @@
 import {
-  DEFAULT_GENERAL_CHANNEL,
   ChannelSchema,
   type OrganizationChart,
-  normalizeRoleScopes,
-  normalizeWorkspaceRoot,
   type Channel,
   type ToolCapability,
-} from "@ujima/shared";
-import { DEFAULT_TOOL_CATALOG, ROLE_PRESETS } from "./constants.js";
-import { createAgent, normalizeAgents, type AgentConfig } from "./agents.js";
-import { normalizeProviders } from "./providers.js";
-import { createOrganizationChart } from "./organization-chart.js";
-import { listRolePresets, normalizeRoles } from "./roles.js";
+} from '@ujima/shared';
+import {
+  DEFAULT_GENERAL_CHANNEL,
+  normalizeRoleScopes,
+  normalizeWorkspaceRoot,
+} from '@ujima/shared/workspace';
+import { DEFAULT_TOOL_CATALOG, ROLE_PRESETS } from './constants.js';
+import { createAgent, normalizeAgents, type AgentConfig } from './agents.js';
+import { normalizeProviders } from './providers.js';
+import { createOrganizationChart } from './organization-chart.js';
+import { listRolePresets, normalizeRoles } from './roles.js';
 import {
   AgentTeamConfigSchema,
   PolicySchema,
@@ -20,14 +22,14 @@ import {
   type ChannelConfig,
   type ProviderConfig,
   type RoleConfig,
-} from "./schemas.js";
-import { normalizeTools } from "./tools.js";
-import { createWorkspaceConfig } from "./workspace.js";
+} from './schemas.js';
+import { normalizeTools } from './tools.js';
+import { createWorkspaceConfig } from './workspace.js';
 
 export interface AgentTeamHandle {
-  kind: "ujima.agent-team";
+  kind: 'ujima.agent-team';
   config: NormalizedAgentTeamConfig;
-  workspace: NormalizedAgentTeamConfig["workspace"];
+  workspace: NormalizedAgentTeamConfig['workspace'];
   organizationChart: OrganizationChart;
   agents: AgentConfig[];
   providers: Record<string, ProviderConfig>;
@@ -41,26 +43,31 @@ export interface AgentTeamHandle {
   toJSON(): AgentTeamConfig;
 }
 
-export type NormalizedAgentTeamConfig = Omit<AgentTeamConfig, "channels" | "agents"> & {
+export type NormalizedAgentTeamConfig = Omit<AgentTeamConfig, 'channels' | 'agents'> & {
   channels: Channel[];
   agents: AgentConfig[];
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
+  return typeof value === 'object' && value !== null;
 }
 
-function normalizeChannels(channels: Array<ChannelConfig | unknown> = []): Channel[] {
+function normalizeChannels(channels: (ChannelConfig | unknown)[] = []): Channel[] {
   const input = channels.length ? channels : [DEFAULT_GENERAL_CHANNEL];
 
   return input.map((channel) => {
     const record = isRecord(channel) ? channel : {};
-    const id = typeof record.id === "string" ? record.id : typeof record.name === "string" ? record.name : "general";
+    const id =
+      typeof record.id === 'string'
+        ? record.id
+        : typeof record.name === 'string'
+          ? record.name
+          : 'general';
 
     return ChannelSchema.parse({
       ...record,
       id,
-      organizationId: typeof record.organizationId === "string" ? record.organizationId : undefined,
+      organizationId: typeof record.organizationId === 'string' ? record.organizationId : undefined,
     });
   });
 }
@@ -115,12 +122,12 @@ export function createStarterAgentTeamConfig({
   tools?: Record<string, unknown>;
   roleScopes?: Record<string, string[]>;
 } = {}): NormalizedAgentTeamConfig {
-  const root = normalizeWorkspaceRoot(workspaceRoot ?? ".");
+  const root = normalizeWorkspaceRoot(workspaceRoot ?? '.');
   const starterRoles = listRolePresets().map((preset) =>
     RoleConfigSchema.parse({
       ...preset,
       id: preset.name,
-      kind: "agent",
+      kind: 'agent',
     }),
   );
 
@@ -133,12 +140,15 @@ export function createStarterAgentTeamConfig({
   );
 
   return {
-    name: name ?? "Ujima Team",
+    name: name ?? 'Ujima Team',
     workspace: createWorkspaceConfig(
       root,
       Object.keys(roleScopes).length > 0 ? roleScopes : defaultRoleScopes,
     ),
-    organizationChart: createOrganizationChart(organizationChart?.reportsTo ?? {}, normalizedAgents),
+    organizationChart: createOrganizationChart(
+      organizationChart?.reportsTo ?? {},
+      normalizedAgents,
+    ),
     agents: normalizedAgents,
     providers: normalizeProviders(providers),
     roles: normalizeRoles(starterRoles, root),
@@ -147,7 +157,7 @@ export function createStarterAgentTeamConfig({
     policies: PolicySchema.parse({
       requireApprovalForWrites: true,
       requireApprovalForShell: true,
-      workspaceBoundaryMode: "hard",
+      workspaceBoundaryMode: 'hard',
     }),
   };
 }
@@ -158,10 +168,11 @@ export function normalizeAgentTeamConfig(config: unknown): NormalizedAgentTeamCo
   const toolsInput = isRecord(input.tools) ? input.tools : undefined;
   const parsed = AgentTeamConfigSchema.parse({
     ...input,
-    channels:
-      channelsInput ?? [DEFAULT_GENERAL_CHANNEL],
+    channels: channelsInput ?? [DEFAULT_GENERAL_CHANNEL],
     tools: toolsInput ?? DEFAULT_TOOL_CATALOG,
-    organizationChart: isRecord(input.organizationChart) ? input.organizationChart : { reportsTo: {} },
+    organizationChart: isRecord(input.organizationChart)
+      ? input.organizationChart
+      : { reportsTo: {} },
   });
 
   const workspaceRoot = normalizeWorkspaceRoot(parsed.workspace.root);
@@ -199,7 +210,7 @@ export function AgentTeam(config: AgentTeamConfig | Record<string, unknown>): Ag
   const normalized = normalizeAgentTeamConfig(config);
 
   const handle: AgentTeamHandle = Object.freeze({
-    kind: "ujima.agent-team",
+    kind: 'ujima.agent-team',
     config: normalized,
     workspace: normalized.workspace,
     organizationChart: normalized.organizationChart,
@@ -215,7 +226,9 @@ export function AgentTeam(config: AgentTeamConfig | Record<string, unknown>): Ag
       return normalized.roles.find((role) => role.name === name || role.id === name);
     },
     getChannel(name: string): Channel | undefined {
-      return normalized.channels.find((channel) => channel.name === name || channel.id === name);
+      return normalized.channels.find(
+        (channel) => channel.name === name || channel.id === name,
+      );
     },
     getProvider(name: string): ProviderConfig | undefined {
       return normalized.providers[name];

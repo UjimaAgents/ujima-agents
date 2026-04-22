@@ -1,13 +1,31 @@
 {
   "name": "ujima",
-  "version": "1.0.0",
-  "type": "module",
-  "bin": "bin/ujima.js",
+  "version": "0.0.0",
+  "private": true,
+  "main": "./dist/main.js",
+  "bin": {
+    "ujima": "./dist/main.js"
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsc -p tsconfig.json --watch --preserveWatchOutput",
+    "start": "node dist/main.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src",
+    "test": "vitest run --passWithNoTests",
+    "clean": "rm -rf dist .turbo *.tsbuildinfo"
+  },
   "dependencies": {
+    "@ujima/api-schema": "workspace:*",
     "@ujima/framework": "workspace:*",
-    "chalk": "^5.3.0",
-    "commander": "^12.1.0",
-    "inquirer": "^11.1.0",
-    "ora": "^8.1.0"
+    "@ujima/orchestrator": "workspace:*",
+    "@ujima/runtime-core": "workspace:*",
+    "@ujima/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "typescript": "^5.5.0",
+    "vitest": "^1.6.0"
   }
 }

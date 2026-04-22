@@ -1,7 +1,7 @@
-import { OrganizationChartSchema, type OrganizationChart } from "@ujima/shared";
-import type { AgentConfig } from "./schemas.js";
+import { OrganizationChartSchema, type OrganizationChart } from '@ujima/shared';
+import type { AgentConfig } from './schemas.js';
 
-type AgentRef = Pick<AgentConfig, "name">;
+type AgentRef = Pick<AgentConfig, 'name'>;
 
 function buildAgentLookup(agents: AgentRef[]) {
   const lookup = new Map<string, string>();
@@ -17,7 +17,7 @@ function buildAgentLookup(agents: AgentRef[]) {
   return lookup;
 }
 
-function resolveAgentRef(ref: string, lookup: Map<string, string>, kind: "child" | "parent") {
+function resolveAgentRef(ref: string, lookup: Map<string, string>, kind: 'child' | 'parent') {
   const resolved = lookup.get(ref);
   if (!resolved) {
     throw new Error(`Organization chart references unknown ${kind} agent "${ref}"`);
@@ -33,9 +33,11 @@ export function createOrganizationChart(
   const lookup = buildAgentLookup(agents);
   const normalized: Record<string, string> = {};
 
-  for (const [childRef, parentRef] of Object.entries(OrganizationChartSchema.parse({ reportsTo }).reportsTo)) {
-    const child = resolveAgentRef(childRef, lookup, "child");
-    const parent = resolveAgentRef(parentRef, lookup, "parent");
+  for (const [childRef, parentRef] of Object.entries(
+    OrganizationChartSchema.parse({ reportsTo }).reportsTo,
+  )) {
+    const child = resolveAgentRef(childRef, lookup, 'child');
+    const parent = resolveAgentRef(parentRef, lookup, 'parent');
 
     if (child === parent) {
       throw new Error(`Agent "${child}" cannot report to itself`);

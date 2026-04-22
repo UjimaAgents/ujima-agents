@@ -1,14 +1,14 @@
-import path from "node:path";
-import { readFile } from "node:fs/promises";
-import { pathToFileURL } from "node:url";
-import { AgentTeam, type AgentTeamHandle } from "./team.js";
-import type { AgentTeamConfig } from "./schemas.js";
+import path from 'node:path';
+import { readFile } from 'node:fs/promises';
+import { pathToFileURL } from 'node:url';
+import { AgentTeam, type AgentTeamHandle } from './team.js';
+import type { AgentTeamConfig } from './schemas.js';
 
 export async function loadAgentTeamConfigFromFile(filePath: string): Promise<unknown> {
   const extension = path.extname(filePath).toLowerCase();
 
-  if (extension === ".json") {
-    const text = await readFile(filePath, "utf8");
+  if (extension === '.json') {
+    const text = await readFile(filePath, 'utf8');
     return JSON.parse(text) as unknown;
   }
 

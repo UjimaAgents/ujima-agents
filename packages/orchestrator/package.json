@@ -1,0 +1,31 @@
+{
+  "name": "@ujima/orchestrator",
+  "version": "0.0.0",
+  "private": true,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsc -p tsconfig.json --watch --preserveWatchOutput",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src",
+    "test": "vitest run",
+    "clean": "rm -rf dist .turbo *.tsbuildinfo"
+  },
+  "dependencies": {
+    "@ai-sdk/anthropic": "^3.0.71",
+    "@ai-sdk/google": "^3.0.64",
+    "@ai-sdk/openai": "^3.0.53",
+    "@ujima/shared": "workspace:*",
+    "@ujima/context-store": "workspace:*",
+    "@ujima/event-bus": "workspace:*",
+    "@ujima/framework": "workspace:*",
+    "@ujima/agent-runtime": "workspace:*",
+    "@ujima/llm": "workspace:*",
+    "@ujima/mcp-client": "workspace:*",
+    "@ujima/permissions": "workspace:*",
+    "ai": "^6.0.168",
+    "zod": "^3.23.8"
+  }
+}

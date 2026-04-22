@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Ujima — webview dev harness</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --vscode-foreground: #e4e4e7;
+        --vscode-editor-background: #1e1e1e;
+        --vscode-editor-foreground: #e4e4e7;
+        --vscode-descriptionForeground: #a1a1aa;
+        --vscode-button-background: #0e639c;
+        --vscode-button-foreground: #ffffff;
+        --vscode-button-hoverBackground: #1177bb;
+        --vscode-input-background: #3c3c3c;
+        --vscode-input-foreground: #cccccc;
+        --vscode-input-border: #6b6b6b;
+        --vscode-list-activeSelectionBackground: #094771;
+        --vscode-list-hoverBackground: #2a2d2e;
+        --vscode-errorForeground: #f48771;
+        --vscode-charts-red: #e51400;
+        --vscode-charts-yellow: #e9e300;
+        --vscode-charts-green: #7fba00;
+        --vscode-panel-border: #3c3c3c;
+        --vscode-widget-border: #3c3c3c;
+        --vscode-badge-background: #4d4d4d;
+        --vscode-badge-foreground: #ffffff;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Ubuntu, sans-serif;
+        font-size: 13px;
+      }
+      body {
+        margin: 0;
+        background: var(--vscode-editor-background);
+      }
+      #harness-bar {
+        display: flex;
+        gap: 1rem;
+        padding: 0.5rem 1rem;
+        background: #252526;
+        border-bottom: 1px solid var(--vscode-panel-border);
+        color: var(--vscode-foreground);
+        font-size: 12px;
+      }
+      #harness-bar a {
+        color: #3794ff;
+        text-decoration: none;
+      }
+      #harness-bar a.active {
+        font-weight: 600;
+        text-decoration: underline;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="harness-bar">
+      <strong>webview dev harness</strong>
+      <a href="?view=activity" data-view="activity">activity stream</a>
+      <a href="?view=governance" data-view="governance">governance</a>
+      <span id="harness-note" style="opacity: 0.6"></span>
+    </div>
+    <div id="root"></div>
+    <script type="module">
+      // Browser stub for acquireVsCodeApi — the webview code prefers it; we
+      // degrade to window.postMessage when it's absent. Provide a minimal
+      // stub so postToHost doesn't silently drop messages during recording.
+      window.acquireVsCodeApi = () => ({
+        postMessage: (msg) => console.log('[webview→host]', msg),
+        getState: () => undefined,
+        setState: () => undefined,
+      });
+
+      const params = new URLSearchParams(location.search);
+      const view = params.get('view') === 'governance' ? 'governance' : 'activity';
+      window.__UJIMA_VIEW__ = view;
+      document.title = `Ujima harness — ${view}`;
+      for (const a of document.querySelectorAll('#harness-bar a')) {
+        if (a.dataset.view === view) a.classList.add('active');
+      }
+
+      // Seed realistic fixture messages so codegen has targets to click.
+      // The shape matches the HostToWebviewMessage discriminated union in
+      // @ujima/shared; keep in sync with host-bridge.ts.
+      const now = new Date().toISOString();
+      const seedActivity = () => {
+        window.postMessage(
+          {
+            type: 'events.appended',
+            payload: {
+              events: [
+                {
+                  event_id: 'evt_1',
+                  type: 'agent_registered',
+                  publisher: 'session',
+                  timestamp: now,
+                  task_id: 'demo-profile-card',
+                  payload: { agent_id: 'senior-designer-1', mcp: 'figma-ai-bridge' },
+                },
+                {
+                  event_id: 'evt_2',
+                  type: 'agent_registered',
+                  publisher: 'session',
+                  timestamp: now,
+                  task_id: 'demo-profile-card',
+                  payload: { agent_id: 'db-analyst-1', mcp: 'sqlite' },
+                },
+                {
+                  event_id: 'evt_3',
+                  type: 'tool_call_completed',
+                  publisher: 'db-analyst-1',
+                  timestamp: now,
+                  task_id: 'demo-profile-card',
+                  payload: { tool: 'list_tables', ok: true },
+                },
+              ],
+            },
+          },
+          '*',
+        );
+      };
+
+      const seedGovernance = () => {
+        window.postMessage(
+          {
+            type: 'governance.snapshot',
+            payload: {
+              session_id: 'sess_harness',
+              agents: [
+                {
+                  id: 'senior-designer-1',
+                  name: 'Sr Designer',
+                  mcp: 'figma-ai-bridge',
+                  status: 'active',
+                  lastAction: 'creating frames',
+                  tokensUsed: 4200,
+                  tokenCap: 20000,
+                },
+                {
+                  id: 'db-analyst-1',
+                  name: 'DB Analyst',
+                  mcp: 'sqlite',
+                  status: 'idle',
+                  lastAction: 'listed tables',
+                  tokensUsed: 800,
+                  tokenCap: 10000,
+                },
+              ],
+              audit: [
+                {
+                  id: 1,
+                  timestamp: now,
+                  agent_id: 'db-analyst-1',
+                  mcp_id: 'sqlite',
+                  tool_name: 'list_tables',
+                  event_type: 'tool_call',
+                  allowed: true,
+                  args_redacted: '{}',
+                  result_redacted: '["users"]',
+                },
+              ],
+              rate: [
+                {
+                  agentId: 'db-analyst-1',
+                  samples: [{ ts: Date.now(), calls: 2 }],
+                },
+              ],
+              sessions: [
+                {
+                  session_id: 'sess_harness',
+                  started_at: now,
+                  status: 'running',
+                  task_id: 'demo-profile-card',
+                  agents: 2,
+                  tool_calls: 1,
+                  blocked_calls: 0,
+                },
+              ],
+            },
+          },
+          '*',
+        );
+      };
+
+      const note = document.getElementById('harness-note');
+      note.textContent =
+        view === 'governance'
+          ? 'seeded 2 agents + 1 audit row + 1 session on load'
+          : 'seeded 3 activity events on load';
+
+      import('./src/main.tsx').then(() => {
+        // Dispatch after React has mounted and the useEffect subscribers
+        // are live. rAF twice to cover StrictMode double-invoke in dev.
+        requestAnimationFrame(() =>
+          requestAnimationFrame(() => (view === 'governance' ? seedGovernance() : seedActivity())),
+        );
+      });
+    </script>
+  </body>
+</html>

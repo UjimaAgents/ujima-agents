@@ -1,11 +1,11 @@
-import { MemberKindSchema, type MemberKind } from "@ujima/shared";
-import { getPersonalityPreset } from "./personality.js";
-import { AgentConfigSchema, type AgentConfig, type RoleConfig } from "./schemas.js";
+import { type MemberKind } from '@ujima/shared';
+import { getPersonalityPreset } from './personality.js';
+import { AgentConfigSchema, type AgentConfig, type RoleConfig } from './schemas.js';
 
-export { AgentConfigSchema, type AgentConfig } from "./schemas.js";
+export { AgentConfigSchema, type AgentConfig } from './schemas.js';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
+  return typeof value === 'object' && value !== null;
 }
 
 function validateUniqueAgentNames(agents: AgentConfig[]) {
@@ -33,20 +33,22 @@ function validateAgentRoles(agents: AgentConfig[], roles: RoleConfig[]) {
 function validateAgentPersonalities(agents: AgentConfig[]) {
   for (const agent of agents) {
     if (!getPersonalityPreset(agent.personalityName)) {
-      throw new Error(`Agent "${agent.name}" references unknown personality "${agent.personalityName}"`);
+      throw new Error(
+        `Agent "${agent.name}" references unknown personality "${agent.personalityName}"`,
+      );
     }
   }
 }
 
-export function normalizeAgents(agents: Array<unknown> = [], roles: RoleConfig[] = []): AgentConfig[] {
+export function normalizeAgents(agents: unknown[] = [], roles: RoleConfig[] = []): AgentConfig[] {
   const input = agents.length
     ? agents
     : roles.map((role) =>
         AgentConfigSchema.parse({
           name: role.name,
           roleName: role.name,
-          personalityName: "direct",
-          kind: "agent" satisfies MemberKind,
+          personalityName: 'direct',
+          kind: 'agent' satisfies MemberKind,
         }),
       );
 
@@ -55,8 +57,8 @@ export function normalizeAgents(agents: Array<unknown> = [], roles: RoleConfig[]
     return AgentConfigSchema.parse({
       ...record,
       personalityName:
-        typeof record.personalityName === "string" ? record.personalityName : "direct",
-      kind: typeof record.kind === "string" ? record.kind : "agent",
+        typeof record.personalityName === 'string' ? record.personalityName : 'direct',
+      kind: typeof record.kind === 'string' ? record.kind : 'agent',
     });
   });
 
@@ -70,7 +72,7 @@ export function normalizeAgents(agents: Array<unknown> = [], roles: RoleConfig[]
 export function createAgent(
   name: string,
   roleName: string,
-  personalityName = "direct",
+  personalityName = 'direct',
 ): AgentConfig {
-  return AgentConfigSchema.parse({ name, roleName, personalityName, kind: "agent" });
+  return AgentConfigSchema.parse({ name, roleName, personalityName, kind: 'agent' });
 }

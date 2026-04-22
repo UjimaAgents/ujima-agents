@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from 'zod';
 import {
   ChannelSchema,
   MemberKindSchema,
@@ -6,7 +6,7 @@ import {
   RoleScopesSchema,
   ToolCapabilitySchema,
   WorkspaceConfigSchema,
-} from "@ujima/shared";
+} from '@ujima/shared';
 
 export const ProviderConfigSchema = z.object({
   apiKeyRef: z.string().min(1).optional(),
@@ -18,7 +18,7 @@ export type ProviderConfig = z.infer<typeof ProviderConfigSchema>;
 export const PolicySchema = z.object({
   requireApprovalForWrites: z.boolean().default(true),
   requireApprovalForShell: z.boolean().default(true),
-  workspaceBoundaryMode: z.enum(["hard"]).default("hard"),
+  workspaceBoundaryMode: z.enum(['hard']).default('hard'),
 });
 export type PolicyConfig = z.infer<typeof PolicySchema>;
 
@@ -37,7 +37,7 @@ export const RolePresetSchema = z.object({
   instructions: z.string().min(1),
   workspaceScopes: z.array(z.string().min(1)).default([]),
   tools: z.array(z.string().min(1)).default([]),
-  channels: z.array(z.string().min(1)).default(["general"]),
+  channels: z.array(z.string().min(1)).default(['general']),
   skills: z.array(z.string().min(1)).default([]),
 });
 export type RolePreset = z.infer<typeof RolePresetSchema>;
@@ -46,14 +46,14 @@ export const RoleConfigSchema = z.object({
   id: z.string().min(1).optional(),
   name: z.string().min(1),
   title: z.string().min(1),
-  description: z.string().default(""),
+  description: z.string().default(''),
   instructions: z.string().min(1),
-  kind: MemberKindSchema.default("agent"),
+  kind: MemberKindSchema.default('agent'),
   provider: z.string().min(1).optional(),
   model: z.string().min(1).optional(),
   workspaceScopes: z.array(z.string().min(1)).default([]),
   tools: z.array(z.string().min(1)).default([]),
-  channels: z.array(z.string().min(1)).default(["general"]),
+  channels: z.array(z.string().min(1)).default(['general']),
   skills: z.array(z.string().min(1)).default([]),
 });
 export type RoleConfig = z.infer<typeof RoleConfigSchema>;
@@ -61,8 +61,8 @@ export type RoleConfig = z.infer<typeof RoleConfigSchema>;
 export const AgentConfigSchema = z.object({
   name: z.string().min(1),
   roleName: z.string().min(1),
-  personalityName: z.string().min(1).default("direct"),
-  kind: MemberKindSchema.default("agent"),
+  personalityName: z.string().min(1).default('direct'),
+  kind: MemberKindSchema.default('agent'),
 });
 export type AgentConfig = z.infer<typeof AgentConfigSchema>;
 
@@ -72,8 +72,8 @@ export const ChannelConfigSchema = ChannelSchema.extend({
 export type ChannelConfig = z.infer<typeof ChannelConfigSchema>;
 
 export const AgentTeamConfigSchema = z.object({
-  name: z.string().min(1).default("Ujima Team"),
-  workspace: WorkspaceConfigSchema.default({ root: "." }),
+  name: z.string().min(1).default('Ujima Team'),
+  workspace: WorkspaceConfigSchema.default({ root: '.', roleScopes: {} }),
   organizationChart: OrganizationChartSchema.default({ reportsTo: {} }),
   agents: z.array(AgentConfigSchema).default([]),
   providers: z.record(ProviderConfigSchema).default({}),
@@ -83,9 +83,12 @@ export const AgentTeamConfigSchema = z.object({
   policies: PolicySchema.default({
     requireApprovalForWrites: true,
     requireApprovalForShell: true,
-    workspaceBoundaryMode: "hard",
+    workspaceBoundaryMode: 'hard',
   }),
 });
 export type AgentTeamConfig = z.infer<typeof AgentTeamConfigSchema>;
 
 export type AgentTeamConfigInput = z.input<typeof AgentTeamConfigSchema>;
+
+// RoleScopesSchema re-used in normalization paths via @ujima/shared
+export { RoleScopesSchema };

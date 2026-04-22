@@ -1,0 +1,24 @@
+{
+  "name": "@ujima/agent-runtime",
+  "version": "0.0.0",
+  "private": true,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsc -p tsconfig.json --watch --preserveWatchOutput",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src",
+    "test": "vitest run",
+    "clean": "rm -rf dist .turbo *.tsbuildinfo"
+  },
+  "dependencies": {
+    "@ujima/shared": "workspace:*",
+    "@ujima/context-store": "workspace:*",
+    "@ujima/event-bus": "workspace:*",
+    "@ujima/permissions": "workspace:*",
+    "@ujima/mcp-client": "workspace:*",
+    "@ujima/llm": "workspace:*"
+  }
+}
