@@ -1,5 +1,4 @@
-import type { Database as DbHandle } from 'better-sqlite3';
-import { nowMs } from './db';
+import { nowMs, type DbHandle } from './db';
 
 export type AgentStatus = 'idle' | 'active' | 'waiting' | 'blocked' | 'killed' | 'exited';
 export type TaskStatus = 'running' | 'paused' | 'complete' | 'failed';

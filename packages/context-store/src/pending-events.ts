@@ -1,6 +1,5 @@
-import type { Database as DbHandle } from 'better-sqlite3';
 import type { UjimaEvent } from '@ujima/shared';
-import { nowMs } from './db';
+import { nowMs, type DbHandle } from './db';
 
 export interface PendingEventRecord {
   id: string;

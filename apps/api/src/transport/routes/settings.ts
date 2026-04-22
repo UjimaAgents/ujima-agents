@@ -23,7 +23,7 @@ export function registerSettingsRoutes(
 ): void {
   const { settings } = options;
 
-  app.get('/api/settings/team', async (_req, reply) => {
+  app.get('/settings/team', async (_req, reply) => {
     try {
       return settings.getTeamSettings();
     } catch (err) {
@@ -31,7 +31,7 @@ export function registerSettingsRoutes(
     }
   });
 
-  app.get('/api/settings/providers', async (req, reply) => {
+  app.get('/settings/providers', async (req, reply) => {
     const query = OrganizationQuerySchema.safeParse(req.query);
     if (!query.success) return badRequest(reply, query.error.message);
     try {
@@ -44,7 +44,7 @@ export function registerSettingsRoutes(
     }
   });
 
-  app.post('/api/settings/providers', async (req, reply) => {
+  app.post('/settings/providers', async (req, reply) => {
     const body = ProviderSecretsUpsertSchema.safeParse(req.body);
     if (!body.success) return badRequest(reply, body.error.message);
     try {
@@ -63,7 +63,7 @@ export function registerSettingsRoutes(
   });
 
   app.delete<{ Params: { providerName: string }; Querystring: { organizationId: string } }>(
-    '/api/settings/providers/:providerName',
+    '/settings/providers/:providerName',
     async (req, reply) => {
       const query = OrganizationQuerySchema.safeParse(req.query);
       if (!query.success) return badRequest(reply, query.error.message);
@@ -82,7 +82,7 @@ export function registerSettingsRoutes(
     },
   );
 
-  app.get('/api/settings/organization', async (req, reply) => {
+  app.get('/settings/organization', async (req, reply) => {
     const query = OrganizationSettingsQuerySchema.safeParse(req.query);
     if (!query.success) return badRequest(reply, query.error.message);
     try {
@@ -95,7 +95,7 @@ export function registerSettingsRoutes(
     }
   });
 
-  app.patch('/api/settings/organization', async (req, reply) => {
+  app.patch('/settings/organization', async (req, reply) => {
     const body = OrganizationSettingsUpdateSchema.safeParse(req.body);
     if (!body.success) return badRequest(reply, body.error.message);
     try {
@@ -108,7 +108,7 @@ export function registerSettingsRoutes(
     }
   });
 
-  app.post('/api/settings/providers/:providerName/test', async (req, reply) => {
+  app.post('/settings/providers/:providerName/test', async (req, reply) => {
     const params = ProviderTestParamsSchema.safeParse(req.params);
     if (!params.success) return badRequest(reply, params.error.message);
     const query = OrganizationQuerySchema.safeParse(req.query);
@@ -123,7 +123,7 @@ export function registerSettingsRoutes(
     }
   });
 
-  app.get('/api/orgs', async (_req, reply) => {
+  app.get('/orgs', async (_req, reply) => {
     try {
       return { organizations: settings.listOrganizations() };
     } catch (err) {
@@ -131,7 +131,7 @@ export function registerSettingsRoutes(
     }
   });
 
-  app.post('/api/orgs/:orgId/members', async (req, reply) => {
+  app.post('/orgs/:orgId/members', async (req, reply) => {
     const params = OrgIdParamsSchema.safeParse(req.params);
     if (!params.success) return badRequest(reply, params.error.message);
     const body = AddMemberRequestSchema.safeParse(req.body);

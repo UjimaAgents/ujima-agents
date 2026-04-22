@@ -1,6 +1,8 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
-import { OnboardingRequestSchema } from '@ujima/api-schema';
+import type { ZodTypeProvider } from 'fastify-type-provider-zod';
+import { OnboardingRequestSchema, ApiErrorSchema } from '@ujima/api-schema';
 import type { BootstrapService, OnboardingService } from '@ujima/orchestrator';
+import { z } from 'zod';
 
 export interface OnboardingRoutesOptions {
   bootstrap: BootstrapService;
@@ -8,20 +10,37 @@ export interface OnboardingRoutesOptions {
 }
 
 export function registerOnboardingRoutes(
-  app: FastifyInstance,
+  _app: FastifyInstance,
   options: OnboardingRoutesOptions,
 ): void {
   const { bootstrap, onboarding } = options;
+  const app = _app.withTypeProvider<ZodTypeProvider>();
 
-  app.get('/api/bootstrap', async () => {
+  app.get('/bootstrap', {
+    schema: {
+      description: 'Retrieve current system bootstrap state',
+      tags: ['Onboarding'],
+      response: {
+        200: z.object({}).passthrough(),
+      },
+    },
+  }, async () => {
     return bootstrap.getBootstrap();
   });
 
-  app.post('/api/onboarding', async (req, reply) => {
-    const body = OnboardingRequestSchema.safeParse(req.body);
-    if (!body.success) return badRequest(reply, body.error.message);
+  app.post('/onboarding', {
+    schema: {
+      description: 'Initial system onboarding and organization setup',
+      tags: ['Onboarding'],
+      body: OnboardingRequestSchema,
+      response: {
+        200: z.object({}).passthrough(),
+        400: ApiErrorSchema,
+      },
+    },
+  }, async (req, reply) => {
     try {
-      return await onboarding.onboard(body.data);
+      return await onboarding.onboard(req.body);
     } catch (err) {
       return badRequest(reply, errMessage(err));
     }
@@ -29,7 +48,7 @@ export function registerOnboardingRoutes(
 }
 
 function badRequest(reply: FastifyReply, message: string): FastifyReply {
-  return reply.code(400).send({ error: message });
+  return reply.code(400).send({ code: 'ERR_BAD_REQUEST', message });
 }
 
 function errMessage(err: unknown): string {
