@@ -2,7 +2,6 @@ import type { FastifyInstance, FastifyReply } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { OnboardingRequestSchema, OnboardingResponseSchema, BootstrapResponseSchema, ApiErrorSchema } from '@ujima/api-schema';
 import type { BootstrapService, OnboardingService } from '@ujima/orchestrator';
-import { z } from 'zod';
 
 export interface OnboardingRoutesOptions {
   bootstrap: BootstrapService;
