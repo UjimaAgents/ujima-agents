@@ -1,58 +1,88 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
-import { IdSchema, PaginationQuerySchema } from '@ujima/shared';
-import { MessageCreateSchema, OrganizationQuerySchema } from '@ujima/api-schema';
+import type { ZodTypeProvider } from 'fastify-type-provider-zod';
+import { createPaginatedSchema, ChannelSchema, IdSchema, MessageSchema, PaginationQuerySchema } from '@ujima/shared';
+import { ApiErrorSchema, MessageCreateSchema, OrganizationQuerySchema } from '@ujima/api-schema';
 import type { ConversationService } from '@ujima/orchestrator';
 import { z } from 'zod';
 
 const ThreadIdParamsSchema = z.object({ threadId: IdSchema });
 const ListChannelsQuerySchema = OrganizationQuerySchema.merge(PaginationQuerySchema);
+const ListChannelsResponseSchema = createPaginatedSchema(ChannelSchema);
+const ListMessagesResponseSchema = createPaginatedSchema(MessageSchema);
 
 export interface ConversationRoutesOptions {
   conversations: ConversationService;
 }
 
 export function registerConversationRoutes(
-  app: FastifyInstance,
+  _app: FastifyInstance,
   options: ConversationRoutesOptions,
 ): void {
   const { conversations } = options;
+  const app = _app.withTypeProvider<ZodTypeProvider>();
 
-  app.get('/channels', async (req, reply) => {
-    const query = ListChannelsQuerySchema.safeParse(req.query);
-    if (!query.success) return badRequest(reply, query.error.message);
+  app.get('/channels', {
+    schema: {
+      description: 'List channels for an organization',
+      tags: ['Conversations'],
+      querystring: ListChannelsQuerySchema,
+      response: {
+        200: ListChannelsResponseSchema,
+        400: ApiErrorSchema,
+        404: ApiErrorSchema,
+      },
+    },
+  }, async (req, reply) => {
     try {
       return conversations.listChannels(
-        query.data.organizationId,
-        query.data.cursor,
-        query.data.limit,
+        req.query.organizationId,
+        req.query.cursor,
+        req.query.limit,
       );
     } catch (err) {
       return notFound(reply, errMessage(err));
     }
   });
 
-  app.get('/threads/:threadId/messages', async (req, reply) => {
-    const params = ThreadIdParamsSchema.safeParse(req.params);
-    if (!params.success) return badRequest(reply, params.error.message);
-    const query = ListChannelsQuerySchema.safeParse(req.query);
-    if (!query.success) return badRequest(reply, query.error.message);
+  app.get('/threads/:threadId/messages', {
+    schema: {
+      description: 'List messages in a thread',
+      tags: ['Conversations'],
+      params: ThreadIdParamsSchema,
+      querystring: ListChannelsQuerySchema,
+      response: {
+        200: ListMessagesResponseSchema,
+        400: ApiErrorSchema,
+        404: ApiErrorSchema,
+      },
+    },
+  }, async (req, reply) => {
     try {
       return conversations.listMessages(
-        query.data.organizationId,
-        params.data.threadId,
-        query.data.cursor,
-        query.data.limit,
+        req.query.organizationId,
+        req.params.threadId,
+        req.query.cursor,
+        req.query.limit,
       );
     } catch (err) {
       return notFound(reply, errMessage(err));
     }
   });
 
-  app.post('/messages', async (req, reply) => {
-    const body = MessageCreateSchema.safeParse(req.body);
-    if (!body.success) return badRequest(reply, body.error.message);
+  app.post('/messages', {
+    schema: {
+      description: 'Send a thread or channel message',
+      tags: ['Conversations'],
+      body: MessageCreateSchema,
+      response: {
+        200: MessageSchema,
+        400: ApiErrorSchema,
+        404: ApiErrorSchema,
+      },
+    },
+  }, async (req, reply) => {
     try {
-      return conversations.sendMessage(body.data);
+      return conversations.sendMessage(req.body);
     } catch (err) {
       const message = errMessage(err);
       const status =
@@ -61,17 +91,17 @@ export function registerConversationRoutes(
         message.startsWith('Channel not found')
           ? 404
           : 400;
-      return reply.code(status).send({ error: message });
+      return replyError(reply, status, message);
     }
   });
 }
 
-function badRequest(reply: FastifyReply, message: string): FastifyReply {
-  return reply.code(400).send({ error: message });
+function notFound(reply: FastifyReply, message: string): FastifyReply {
+  return replyError(reply, 404, message);
 }
 
-function notFound(reply: FastifyReply, message: string): FastifyReply {
-  return reply.code(404).send({ error: message });
+function replyError(reply: FastifyReply, status: number, message: string): FastifyReply {
+  return reply.code(status).send({ code: status === 404 ? 'ERR_NOT_FOUND' : 'ERR_BAD_REQUEST', message });
 }
 
 function errMessage(err: unknown): string {

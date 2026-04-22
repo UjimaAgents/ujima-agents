@@ -3,13 +3,14 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import type { RuntimeHost } from '@ujima/runtime-core';
 import {
   CreateWorkspaceRequestSchema,
+  ApiErrorSchema,
   ListWorkspacesResponseSchema,
   UpdateWorkspaceRequestSchema,
   WorkspaceSchema,
-  ApiErrorSchema,
 } from '@ujima/api-schema';
 import { z } from 'zod';
 
+const WorkspaceIdParamsSchema = z.object({ id: z.string().min(1) });
 const WorkspaceRemovedResponseSchema = z.object({ removed: z.boolean() });
 
 export function registerWorkspaceRoutes(_app: FastifyInstance, host: RuntimeHost): void {
@@ -39,7 +40,7 @@ export function registerWorkspaceRoutes(_app: FastifyInstance, host: RuntimeHost
         400: ApiErrorSchema,
       },
     },
-  }, async (req, reply) => {
+  }, async (req) => {
     const ws = host.workspaces.create(req.body);
     return toWorkspaceDto(ws);
   });
@@ -48,7 +49,7 @@ export function registerWorkspaceRoutes(_app: FastifyInstance, host: RuntimeHost
     schema: {
       description: 'Update a workspace',
       tags: ['Workspaces'],
-      params: z.object({ id: z.string() }),
+      params: WorkspaceIdParamsSchema,
       body: UpdateWorkspaceRequestSchema,
       response: {
         200: WorkspaceSchema,
@@ -68,7 +69,7 @@ export function registerWorkspaceRoutes(_app: FastifyInstance, host: RuntimeHost
     schema: {
       description: 'Get workspace details by ID',
       tags: ['Workspaces'],
-      params: z.object({ id: z.string() }),
+      params: WorkspaceIdParamsSchema,
       response: {
         200: WorkspaceSchema,
         404: ApiErrorSchema,
@@ -85,7 +86,7 @@ export function registerWorkspaceRoutes(_app: FastifyInstance, host: RuntimeHost
     schema: {
       description: 'Delete a workspace',
       tags: ['Workspaces'],
-      params: z.object({ id: z.string() }),
+      params: WorkspaceIdParamsSchema,
       response: {
         200: WorkspaceRemovedResponseSchema,
       },

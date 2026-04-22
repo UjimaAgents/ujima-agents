@@ -1,55 +1,97 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
+import type { ZodTypeProvider } from 'fastify-type-provider-zod';
+import { AgentTeamConfigSchema } from '@ujima/framework';
+import { IdSchema, MemberSchema } from '@ujima/shared';
 import {
   AddMemberRequestSchema,
+  ApiErrorSchema,
+  ListOrganizationsResponseSchema,
   OrganizationQuerySchema,
   OrganizationSettingsQuerySchema,
+  OrganizationSettingsResponseSchema,
   OrganizationSettingsUpdateSchema,
+  ProviderSecretsUpsertResponseSchema,
   ProviderSecretsUpsertSchema,
+  ProviderStatusSchema,
 } from '@ujima/api-schema';
-import { IdSchema } from '@ujima/shared';
 import type { SettingsService } from '@ujima/orchestrator';
 import { z } from 'zod';
 
 const OrgIdParamsSchema = z.object({ orgId: IdSchema });
 const ProviderTestParamsSchema = z.object({ providerName: z.string().min(1) });
+const TeamSettingsResponseSchema = AgentTeamConfigSchema.omit({ providers: true });
+const ProviderStatusesResponseSchema = z.array(ProviderStatusSchema);
+const ProviderTestResultSchema = z.object({
+  provider: z.string(),
+  ok: z.boolean(),
+  message: z.string(),
+});
 
 export interface SettingsRoutesOptions {
   settings: SettingsService;
 }
 
 export function registerSettingsRoutes(
-  app: FastifyInstance,
+  _app: FastifyInstance,
   options: SettingsRoutesOptions,
 ): void {
   const { settings } = options;
+  const app = _app.withTypeProvider<ZodTypeProvider>();
 
-  app.get('/settings/team', async (_req, reply) => {
+  app.get('/settings/team', {
+    schema: {
+      description: 'Get the current team configuration',
+      tags: ['Settings'],
+      response: {
+        200: TeamSettingsResponseSchema,
+        503: ApiErrorSchema,
+      },
+    },
+  }, async (_req, reply) => {
     try {
-      return settings.getTeamSettings();
+      return settings.getTeamSettings() as z.infer<typeof TeamSettingsResponseSchema>;
     } catch (err) {
-      return reply.code(503).send({ error: errMessage(err) });
+      return replyError(reply, 503, errMessage(err));
     }
   });
 
-  app.get('/settings/providers', async (req, reply) => {
-    const query = OrganizationQuerySchema.safeParse(req.query);
-    if (!query.success) return badRequest(reply, query.error.message);
+  app.get('/settings/providers', {
+    schema: {
+      description: 'List configured providers for an organization',
+      tags: ['Settings'],
+      querystring: OrganizationQuerySchema,
+      response: {
+        200: ProviderStatusesResponseSchema,
+        400: ApiErrorSchema,
+        404: ApiErrorSchema,
+        503: ApiErrorSchema,
+      },
+    },
+  }, async (req, reply) => {
     try {
-      return settings.listProviders(query.data.organizationId);
+      return settings.listProviders(req.query.organizationId);
     } catch (err) {
       const message = errMessage(err);
-      return reply
-        .code(message.startsWith('Organization not found') ? 404 : 503)
-        .send({ error: message });
+      return replyError(reply, message.startsWith('Organization not found') ? 404 : 503, message);
     }
   });
 
-  app.post('/settings/providers', async (req, reply) => {
-    const body = ProviderSecretsUpsertSchema.safeParse(req.body);
-    if (!body.success) return badRequest(reply, body.error.message);
+  app.post('/settings/providers', {
+    schema: {
+      description: 'Upsert provider keys for an organization',
+      tags: ['Settings'],
+      body: ProviderSecretsUpsertSchema,
+      response: {
+        200: ProviderSecretsUpsertResponseSchema,
+        400: ApiErrorSchema,
+        404: ApiErrorSchema,
+        503: ApiErrorSchema,
+      },
+    },
+  }, async (req, reply) => {
     try {
       return {
-        providers: settings.upsertProviders(body.data.organizationId, body.data.providerKeys),
+        providers: settings.upsertProviders(req.body.organizationId, req.body.providerKeys),
       };
     } catch (err) {
       const message = errMessage(err);
@@ -58,102 +100,144 @@ export function registerSettingsRoutes(
         : message.startsWith('Unknown provider keys')
           ? 400
           : 503;
-      return reply.code(code).send({ error: message });
+      return replyError(reply, code, message);
     }
   });
 
-  app.delete<{ Params: { providerName: string }; Querystring: { organizationId: string } }>(
-    '/settings/providers/:providerName',
-    async (req, reply) => {
-      const query = OrganizationQuerySchema.safeParse(req.query);
-      if (!query.success) return badRequest(reply, query.error.message);
-      const providerName = req.params.providerName;
-      if (!providerName) return badRequest(reply, 'providerName required');
-      try {
-        return {
-          providers: settings.deleteProvider(query.data.organizationId, providerName),
-        };
-      } catch (err) {
-        const message = errMessage(err);
-        return reply
-          .code(message.startsWith('Organization not found') ? 404 : 503)
-          .send({ error: message });
-      }
+  app.delete('/settings/providers/:providerName', {
+    schema: {
+      description: 'Delete a provider key for an organization',
+      tags: ['Settings'],
+      params: ProviderTestParamsSchema,
+      querystring: OrganizationQuerySchema,
+      response: {
+        200: ProviderSecretsUpsertResponseSchema,
+        400: ApiErrorSchema,
+        404: ApiErrorSchema,
+        503: ApiErrorSchema,
+      },
     },
-  );
-
-  app.get('/settings/organization', async (req, reply) => {
-    const query = OrganizationSettingsQuerySchema.safeParse(req.query);
-    if (!query.success) return badRequest(reply, query.error.message);
+  }, async (req, reply) => {
     try {
-      return settings.getOrganizationSettings(query.data.organizationId);
+      return {
+        providers: settings.deleteProvider(req.query.organizationId, req.params.providerName),
+      };
     } catch (err) {
       const message = errMessage(err);
-      return reply
-        .code(message.startsWith('Organization not found') ? 404 : 503)
-        .send({ error: message });
+      return replyError(reply, message.startsWith('Organization not found') ? 404 : 503, message);
     }
   });
 
-  app.patch('/settings/organization', async (req, reply) => {
-    const body = OrganizationSettingsUpdateSchema.safeParse(req.body);
-    if (!body.success) return badRequest(reply, body.error.message);
+  app.get('/settings/organization', {
+    schema: {
+      description: 'Get organization settings',
+      tags: ['Settings'],
+      querystring: OrganizationSettingsQuerySchema,
+      response: {
+        200: OrganizationSettingsResponseSchema,
+        400: ApiErrorSchema,
+        404: ApiErrorSchema,
+        503: ApiErrorSchema,
+      },
+    },
+  }, async (req, reply) => {
     try {
-      return settings.updateOrganizationSettings(body.data);
+      return settings.getOrganizationSettings(req.query.organizationId);
     } catch (err) {
       const message = errMessage(err);
-      return reply
-        .code(message.startsWith('Organization not found') ? 404 : 400)
-        .send({ error: message });
+      return replyError(reply, message.startsWith('Organization not found') ? 404 : 503, message);
     }
   });
 
-  app.post('/settings/providers/:providerName/test', async (req, reply) => {
-    const params = ProviderTestParamsSchema.safeParse(req.params);
-    if (!params.success) return badRequest(reply, params.error.message);
-    const query = OrganizationQuerySchema.safeParse(req.query);
-    if (!query.success) return badRequest(reply, query.error.message);
+  app.patch('/settings/organization', {
+    schema: {
+      description: 'Update organization settings',
+      tags: ['Settings'],
+      body: OrganizationSettingsUpdateSchema,
+      response: {
+        200: OrganizationSettingsResponseSchema,
+        400: ApiErrorSchema,
+        404: ApiErrorSchema,
+      },
+    },
+  }, async (req, reply) => {
     try {
-      return settings.testProvider(query.data.organizationId, params.data.providerName);
+      return settings.updateOrganizationSettings(req.body);
     } catch (err) {
       const message = errMessage(err);
-      return reply
-        .code(message.startsWith('Organization not found') ? 404 : 503)
-        .send({ error: message });
+      return replyError(reply, message.startsWith('Organization not found') ? 404 : 400, message);
     }
   });
 
-  app.get('/orgs', async (_req, reply) => {
+  app.post('/settings/providers/:providerName/test', {
+    schema: {
+      description: 'Test whether a provider key is configured',
+      tags: ['Settings'],
+      params: ProviderTestParamsSchema,
+      querystring: OrganizationQuerySchema,
+      response: {
+        200: ProviderTestResultSchema,
+        400: ApiErrorSchema,
+        404: ApiErrorSchema,
+        503: ApiErrorSchema,
+      },
+    },
+  }, async (req, reply) => {
+    try {
+      return settings.testProvider(req.query.organizationId, req.params.providerName);
+    } catch (err) {
+      const message = errMessage(err);
+      return replyError(reply, message.startsWith('Organization not found') ? 404 : 503, message);
+    }
+  });
+
+  app.get('/orgs', {
+    schema: {
+      description: 'List organizations',
+      tags: ['Settings'],
+      response: {
+        200: ListOrganizationsResponseSchema,
+        503: ApiErrorSchema,
+      },
+    },
+  }, async (_req, reply) => {
     try {
       return { organizations: settings.listOrganizations() };
     } catch (err) {
-      return reply.code(503).send({ error: errMessage(err) });
+      return replyError(reply, 503, errMessage(err));
     }
   });
 
-  app.post('/orgs/:orgId/members', async (req, reply) => {
-    const params = OrgIdParamsSchema.safeParse(req.params);
-    if (!params.success) return badRequest(reply, params.error.message);
-    const body = AddMemberRequestSchema.safeParse(req.body);
-    if (!body.success) return badRequest(reply, body.error.message);
+  app.post('/orgs/:orgId/members', {
+    schema: {
+      description: 'Add a member to an organization',
+      tags: ['Settings'],
+      params: OrgIdParamsSchema,
+      body: AddMemberRequestSchema,
+      response: {
+        200: MemberSchema,
+        400: ApiErrorSchema,
+        404: ApiErrorSchema,
+      },
+    },
+  }, async (req, reply) => {
     try {
       return settings.addMember({
-        organizationId: params.data.orgId,
-        name: body.data.name,
-        kind: body.data.kind,
-        roleName: body.data.roleName,
+        organizationId: req.params.orgId,
+        name: req.body.name,
+        kind: req.body.kind,
+        roleName: req.body.roleName,
       });
     } catch (err) {
       const message = errMessage(err);
-      return reply
-        .code(message.startsWith('Organization not found') ? 404 : 400)
-        .send({ error: message });
+      return replyError(reply, message.startsWith('Organization not found') ? 404 : 400, message);
     }
   });
 }
 
-function badRequest(reply: FastifyReply, message: string): FastifyReply {
-  return reply.code(400).send({ error: message });
+function replyError(reply: FastifyReply, status: number, message: string): FastifyReply {
+  const code = status === 404 ? 'ERR_NOT_FOUND' : status === 503 ? 'ERR_INTERNAL' : 'ERR_BAD_REQUEST';
+  return reply.code(status).send({ code, message });
 }
 
 function errMessage(err: unknown): string {

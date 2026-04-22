@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyReply } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { ERR_NO_WORKSPACE_ROOT, NoWorkspaceRootError, type RuntimeHost } from '@ujima/runtime-core';
 import {
+  ApiErrorSchema,
   KillResponseSchema,
   ListTasksResponseSchema,
   RunningTaskSchema,
@@ -9,7 +10,6 @@ import {
   StartTaskResponseSchema,
   TaskPromotionRequestSchema,
   TaskPromotionResponseSchema,
-  ApiErrorSchema,
 } from '@ujima/api-schema';
 import { z } from 'zod';
 import type { TaskPromoterService } from '@ujima/orchestrator';
@@ -18,6 +18,12 @@ export interface TaskRoutesOptions {
   host: RuntimeHost;
   taskPromoter: TaskPromoterService;
 }
+
+const TaskIdParamsSchema = z.object({ id: z.string().min(1) });
+const TaskAgentKillParamsSchema = z.object({
+  taskId: z.string().min(1),
+  agentId: z.string().min(1),
+});
 
 export function registerTaskRoutes(_app: FastifyInstance, options: TaskRoutesOptions): void {
   const { host, taskPromoter } = options;
@@ -39,7 +45,7 @@ export function registerTaskRoutes(_app: FastifyInstance, options: TaskRoutesOpt
     schema: {
       description: 'Get a running task by ID',
       tags: ['Tasks'],
-      params: z.object({ id: z.string().min(1) }),
+      params: TaskIdParamsSchema,
       response: {
         200: RunningTaskSchema,
         404: ApiErrorSchema,
@@ -59,6 +65,8 @@ export function registerTaskRoutes(_app: FastifyInstance, options: TaskRoutesOpt
       response: {
         200: StartTaskResponseSchema,
         400: ApiErrorSchema,
+        409: ApiErrorSchema,
+        500: ApiErrorSchema,
       },
     },
   }, async (req, reply) => {
@@ -94,7 +102,7 @@ export function registerTaskRoutes(_app: FastifyInstance, options: TaskRoutesOpt
     schema: {
       description: 'Kill a running task',
       tags: ['Tasks'],
-      params: z.object({ id: z.string().min(1) }),
+      params: TaskIdParamsSchema,
       response: {
         200: KillResponseSchema,
       },
@@ -107,7 +115,7 @@ export function registerTaskRoutes(_app: FastifyInstance, options: TaskRoutesOpt
     schema: {
       description: 'Kill a running agent',
       tags: ['Tasks'],
-      params: z.object({ taskId: z.string().min(1), agentId: z.string().min(1) }),
+      params: TaskAgentKillParamsSchema,
       response: {
         200: KillResponseSchema,
       },
@@ -124,6 +132,7 @@ export function registerTaskRoutes(_app: FastifyInstance, options: TaskRoutesOpt
       response: {
         200: TaskPromotionResponseSchema,
         400: ApiErrorSchema,
+        404: ApiErrorSchema,
       },
     },
   }, async (req, reply) => {
@@ -132,7 +141,7 @@ export function registerTaskRoutes(_app: FastifyInstance, options: TaskRoutesOpt
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       const code = message.startsWith('Organization not found') ? 404 : 400;
-      return reply.code(code).send({ code: 'ERR_BAD_REQUEST', message });
+      return reply.code(code).send({ code: code === 404 ? 'ERR_NOT_FOUND' : 'ERR_BAD_REQUEST', message });
     }
   });
 }
