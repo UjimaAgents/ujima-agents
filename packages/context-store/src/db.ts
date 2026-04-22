@@ -1,11 +1,17 @@
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
+import Database from 'better-sqlite3';
 
-// Polyfill/Shim for DbHandle
+interface StatementHandle {
+  all(...params: unknown[]): unknown[];
+  get(...params: unknown[]): unknown;
+  run(...params: unknown[]): { changes: number };
+}
+
 export interface DbHandle {
-  prepare(sql: string): any;
-  query?(sql: string): any;
-  exec(sql: string): any;
+  prepare(sql: string): StatementHandle;
+  exec(sql: string): void;
+  pragma(sql: string): unknown;
   close(): void;
 }
 
@@ -325,18 +331,7 @@ export function openDatabase(options: DbOptions): DbHandle {
     mkdirSync(dirname(options.dbPath), { recursive: true });
   }
 
-  let db: DbHandle;
-  const isBun = !!(globalThis as any).Bun;
-
-  if (isBun) {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { Database } = require('bun:sqlite');
-    db = new Database(options.dbPath);
-  } else {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const Database = require('better-sqlite3');
-    db = new Database(options.dbPath);
-  }
+  const db = new Database(options.dbPath) as unknown as DbHandle;
 
   db.exec('PRAGMA journal_mode = WAL');
   db.exec('PRAGMA synchronous = NORMAL');
@@ -353,8 +348,8 @@ function runMigrations(db: DbHandle): void {
     );
   `);
 
-  const select = db.query ? db.query('SELECT id FROM schema_migrations') : db.prepare('SELECT id FROM schema_migrations');
-  const applied = new Set((select.all() as { id: string }[]).map((r: any) => r.id));
+  const select = db.prepare('SELECT id FROM schema_migrations');
+  const applied = new Set((select.all() as { id: string }[]).map((row) => row.id));
   const insert = db.prepare('INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)');
 
   for (const m of MIGRATIONS) {
