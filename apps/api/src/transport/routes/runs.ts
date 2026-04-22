@@ -1,8 +1,10 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
-import { IdSchema } from '@ujima/shared';
+import type { ZodTypeProvider } from 'fastify-type-provider-zod';
+import { ApprovalRequestSchema, MessageSchema, RunStateSchema, createPaginatedSchema, IdSchema } from '@ujima/shared';
 import {
   ApprovalListQuerySchema,
   ApprovalResolveSchema,
+  ApiErrorSchema,
   RunCreateSchema,
   RunListQuerySchema,
 } from '@ujima/api-schema';
@@ -12,6 +14,12 @@ import { z } from 'zod';
 const RunIdParamsSchema = z.object({ runId: IdSchema });
 const ApprovalIdParamsSchema = z.object({ approvalId: IdSchema });
 const RunDetailQuerySchema = z.object({ organizationId: IdSchema });
+const RunListResponseSchema = createPaginatedSchema(RunStateSchema);
+const RunDetailResponseSchema = z.object({
+  run: RunStateSchema,
+  approvals: z.array(ApprovalRequestSchema),
+  messages: z.array(MessageSchema),
+});
 
 export interface RunRoutesOptions {
   runs: RunService;
@@ -19,28 +27,45 @@ export interface RunRoutesOptions {
 }
 
 export function registerRunRoutes(
-  app: FastifyInstance,
+  _app: FastifyInstance,
   options: RunRoutesOptions,
 ): void {
   const { runs, approvals } = options;
+  const app = _app.withTypeProvider<ZodTypeProvider>();
 
-  app.get('/runs', async (req, reply) => {
-    const query = RunListQuerySchema.safeParse(req.query);
-    if (!query.success) return badRequest(reply, query.error.message);
+  app.get('/runs', {
+    schema: {
+      description: 'List runs for an organization',
+      tags: ['Runs'],
+      querystring: RunListQuerySchema,
+      response: {
+        200: RunListResponseSchema,
+        400: ApiErrorSchema,
+      },
+    },
+  }, async (req, reply) => {
     try {
-      return runs.listRuns(query.data.organizationId, query.data.cursor, query.data.limit);
+      return runs.listRuns(req.query.organizationId, req.query.cursor, req.query.limit);
     } catch (err) {
       return badRequest(reply, errMessage(err));
     }
   });
 
-  app.get('/runs/:runId', async (req, reply) => {
-    const params = RunIdParamsSchema.safeParse(req.params);
-    if (!params.success) return badRequest(reply, params.error.message);
-    const query = RunDetailQuerySchema.safeParse(req.query);
-    if (!query.success) return badRequest(reply, query.error.message);
+  app.get('/runs/:runId', {
+    schema: {
+      description: 'Get a run by ID',
+      tags: ['Runs'],
+      params: RunIdParamsSchema,
+      querystring: RunDetailQuerySchema,
+      response: {
+        200: RunStateSchema,
+        400: ApiErrorSchema,
+        404: ApiErrorSchema,
+      },
+    },
+  }, async (req, reply) => {
     try {
-      const run = runs.getRun(query.data.organizationId, params.data.runId);
+      const run = runs.getRun(req.query.organizationId, req.params.runId);
       if (!run) return notFound(reply, 'Run not found');
       return run;
     } catch (err) {
@@ -48,13 +73,21 @@ export function registerRunRoutes(
     }
   });
 
-  app.get('/runs/:runId/detail', async (req, reply) => {
-    const params = RunIdParamsSchema.safeParse(req.params);
-    if (!params.success) return badRequest(reply, params.error.message);
-    const query = RunDetailQuerySchema.safeParse(req.query);
-    if (!query.success) return badRequest(reply, query.error.message);
+  app.get('/runs/:runId/detail', {
+    schema: {
+      description: 'Get a run with its related approvals and messages',
+      tags: ['Runs'],
+      params: RunIdParamsSchema,
+      querystring: RunDetailQuerySchema,
+      response: {
+        200: RunDetailResponseSchema,
+        400: ApiErrorSchema,
+        404: ApiErrorSchema,
+      },
+    },
+  }, async (req, reply) => {
     try {
-      const detail = runs.getRunDetail(query.data.organizationId, params.data.runId);
+      const detail = runs.getRunDetail(req.query.organizationId, req.params.runId);
       if (!detail) return notFound(reply, 'Run not found');
       return detail;
     } catch (err) {
@@ -62,58 +95,89 @@ export function registerRunRoutes(
     }
   });
 
-  app.post('/runs', async (req, reply) => {
-    const body = RunCreateSchema.safeParse(req.body);
-    if (!body.success) return badRequest(reply, body.error.message);
+  app.post('/runs', {
+    schema: {
+      description: 'Create a run for an agent',
+      tags: ['Runs'],
+      body: RunCreateSchema,
+      response: {
+        200: RunStateSchema,
+        400: ApiErrorSchema,
+        404: ApiErrorSchema,
+        503: ApiErrorSchema,
+      },
+    },
+  }, async (req, reply) => {
     try {
-      return await runs.createRun(body.data);
+      return await runs.createRun(req.body);
     } catch (err) {
       const message = errMessage(err);
       const status =
         message.startsWith('Member not found') || message.startsWith('Organization not found')
           ? 404
           : 503;
-      return reply.code(status).send({ error: message });
+      return replyError(reply, status, message);
     }
   });
 
-  app.get('/approvals', async (req, reply) => {
-    const query = ApprovalListQuerySchema.safeParse(req.query);
-    if (!query.success) return badRequest(reply, query.error.message);
+  app.get('/approvals', {
+    schema: {
+      description: 'List pending approvals',
+      tags: ['Runs'],
+      querystring: ApprovalListQuerySchema,
+      response: {
+        200: z.array(ApprovalRequestSchema),
+        400: ApiErrorSchema,
+      },
+    },
+  }, async (req, reply) => {
     try {
-      return approvals.listPending(query.data.organizationId);
+      return approvals.listPending(req.query.organizationId);
     } catch (err) {
       return badRequest(reply, errMessage(err));
     }
   });
 
-  app.post('/approvals/:approvalId/resolve', async (req, reply) => {
-    const params = ApprovalIdParamsSchema.safeParse(req.params);
-    if (!params.success) return badRequest(reply, params.error.message);
-    const body = ApprovalResolveSchema.safeParse(req.body);
-    if (!body.success) return badRequest(reply, body.error.message);
+  app.post('/approvals/:approvalId/resolve', {
+    schema: {
+      description: 'Resolve a pending approval',
+      tags: ['Runs'],
+      params: ApprovalIdParamsSchema,
+      body: ApprovalResolveSchema,
+      response: {
+        200: ApprovalRequestSchema,
+        400: ApiErrorSchema,
+        404: ApiErrorSchema,
+      },
+    },
+  }, async (req, reply) => {
     try {
       return await approvals.resolveApproval({
-        organizationId: body.data.organizationId,
-        approvalId: params.data.approvalId,
-        status: body.data.status,
-        reason: body.data.reason,
+        organizationId: req.body.organizationId,
+        approvalId: req.params.approvalId,
+        status: req.body.status,
+        reason: req.body.reason,
       });
     } catch (err) {
       const message = errMessage(err);
       return reply
         .code(message.startsWith('Approval not found') ? 404 : 400)
-        .send({ error: message });
+        .send({ code: message.startsWith('Approval not found') ? 'ERR_NOT_FOUND' : 'ERR_BAD_REQUEST', message });
     }
   });
 }
 
 function badRequest(reply: FastifyReply, message: string): FastifyReply {
-  return reply.code(400).send({ error: message });
+  return replyError(reply, 400, message);
 }
 
 function notFound(reply: FastifyReply, message: string): FastifyReply {
-  return reply.code(404).send({ error: message });
+  return replyError(reply, 404, message);
+}
+
+function replyError(reply: FastifyReply, status: number, message: string): FastifyReply {
+  const code = status === 404 ? 'ERR_NOT_FOUND' : status === 503 ? 'ERR_INTERNAL' : 'ERR_BAD_REQUEST';
+  return reply.code(status).send({ code, message });
 }
 
 function errMessage(err: unknown): string {

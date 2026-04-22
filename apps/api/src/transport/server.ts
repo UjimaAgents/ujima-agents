@@ -21,6 +21,7 @@ import {
   type ErrorCode,
   type WsFrame,
 } from '@ujima/api-schema';
+import { z } from 'zod';
 import swagger from '@fastify/swagger';
 import swaggerUi from '@fastify/swagger-ui';
 import { jsonSchemaTransform, serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
@@ -35,6 +36,11 @@ import { registerAgentRoutes } from './routes/agents.js';
 
 const WS_QUEUE_CAP = 256;
 const STARTED_AT = Date.now();
+const EventHandshakeResponseSchema = z.object({
+  status: z.literal('ready'),
+  transport: z.literal('socket.io'),
+  path: z.literal('/events'),
+});
 
 export interface TransportOptions {
   host: RuntimeHost;
@@ -69,6 +75,8 @@ export function createTransport(opts: TransportOptions): Transport {
   const bindHost = opts.bindHost ?? DEFAULT_BIND_HOST;
   const port = opts.port ?? DEFAULT_BIND_PORT;
   const useTls = Boolean(opts.tlsCertPath && opts.tlsKeyPath);
+  const tlsKeyPath = opts.tlsKeyPath;
+  const tlsCertPath = opts.tlsCertPath;
 
   if (!bindHostIsLoopback(bindHost) && !useTls) {
     throw new Error('non-loopback bind requires TLS');
@@ -77,11 +85,11 @@ export function createTransport(opts: TransportOptions): Transport {
   const fastify: FastifyInstance = Fastify({
     logger: false,
     forceCloseConnections: true,
-    ...(useTls
+    ...(useTls && tlsKeyPath && tlsCertPath
       ? {
           https: {
-            key: readFileSync(opts.tlsKeyPath!),
-            cert: readFileSync(opts.tlsCertPath!),
+            key: readFileSync(tlsKeyPath),
+            cert: readFileSync(tlsCertPath),
           },
         }
       : {}),
@@ -98,6 +106,16 @@ export function createTransport(opts: TransportOptions): Transport {
         description: 'Local control plane for running AI software teams',
         version: '1.0.0',
       },
+      tags: [
+        { name: 'Agents' },
+        { name: 'Conversations' },
+        { name: 'Onboarding' },
+        { name: 'Runs' },
+        { name: 'Settings' },
+        { name: 'System' },
+        { name: 'Tasks' },
+        { name: 'Workspaces' },
+      ],
       servers: [{ url: `${useTls ? 'https' : 'http'}://${bindHost}:${port}/api` }],
       components: {
         securitySchemes: {
@@ -140,6 +158,9 @@ export function createTransport(opts: TransportOptions): Transport {
     schema: {
       description: 'Realtime event stream (Socket.IO)',
       tags: ['System'],
+      response: {
+        200: EventHandshakeResponseSchema,
+      },
     },
   }, async () => {
     return {
