@@ -25,7 +25,7 @@ graph TD
     end
 
     subgraph Framework ["Framework Layer"]
-        SDK[@ujima/framework]
+        SDK["@ujima/framework"]
         Config[ujima.config.ts]
     end
 

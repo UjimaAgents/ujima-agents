@@ -127,7 +127,7 @@ graph LR
     end
 
     subgraph Logic ["Orchestration"]
-        Framework[@ujima/framework]
+        Framework["@ujima/framework"]
         Agents[Agent Team]
     end
 
