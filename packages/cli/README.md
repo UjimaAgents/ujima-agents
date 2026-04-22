@@ -1,29 +1,30 @@
 # Ujima CLI
 
-Local bootstrap and setup command for the Ujima stack.
+Command-line entry point for bootstrapping and local setup.
 
-The CLI will:
-- create or load an organization
-- prompt for the workspace root
-- configure provider keys
-- generate starter team config with roles, named agents, and personality presets
-- start the local API and web UI
-- help attach the VS Code extension to the same backend
+The CLI is the fast path for getting a workspace ready. It should make the project easy to start, easy to understand, and hard to misconfigure.
 
-## Status
+## What It Does
 
-The CLI is scaffolded and will become the main local entrypoint after the backend boot flow is stable. It should wire into the onboarding flow that creates the human owner member and seeds the org chart.
+- creates or loads an organization
+- prompts for the workspace root
+- configures provider keys
+- seeds a starter team config
+- starts the local stack
 
-## Install
+## Why It Exists
 
-From the monorepo root:
+An open-source agent stack needs a clear first command. The CLI gives people a low-friction path from clone to running system.
+
+## Build
 
 ```bash
 bun install
+bun --cwd packages/cli run build
 ```
 
-## Development Notes
+## Notes
 
-- Keep the CLI opinionated and low-friction.
-- Treat workspace selection as part of onboarding.
-- Prefer wiring existing package primitives over duplicating setup logic.
+- Keep the flow opinionated.
+- Treat workspace selection as onboarding.
+- Reuse existing package primitives instead of duplicating setup logic.

@@ -2,7 +2,7 @@
 
 Editor surface for the Ujima agent system.
 
-The extension will provide:
+The extension provides:
 - channel and DM views
 - chat with agents
 - agent messaging
