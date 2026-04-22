@@ -66,6 +66,15 @@ const team = AgentTeam({
       frontend: ["apps/web"],
       backend: ["apps/api"],
     },
+  organizationChart: {
+    reportsTo: {
+      Taylor: "Sam", // Taylor reports to Sam
+    },
+  },
+  policies: {
+    requireApprovalForWrites: true,
+    requireApprovalForShell: true,
+    workspaceBoundaryMode: "hard",
   },
   roles: [
     {
@@ -90,6 +99,75 @@ const team = AgentTeam({
     { name: "Sam", roleName: "backend", personalityName: "precise" },
   ],
 });
+```
+
+## Defining Hierarchy
+
+The `organizationChart` defines the reporting structure of your team. This is used by the orchestrator to resolve escalations and determine who has authority over whom during multi-step tasks.
+
+```ts
+import { createOrganizationChart } from "@ujima/framework";
+
+const chart = createOrganizationChart(
+  {
+    "Taylor": "Sam", // Child: Parent
+  },
+  agents
+);
+```
+
+## Governance & Safety
+
+Ujima is built for autonomous action, which requires strong guardrails. The `policies` object controls how agents are allowed to interact with your system.
+
+- **`requireApprovalForWrites`**: Agents must request human approval via the event bus before modifying any files.
+- **`requireApprovalForShell`**: Agents must request approval before running commands in the shell.
+- **`workspaceBoundaryMode`**: When set to `"hard"`, agents are strictly forbidden from reading or writing outside of their defined `workspaceScopes`.
+
+## Workspace Isolation
+
+Workspace scopes allow you to partition your codebase. Agents only see and act on the paths they are explicitly assigned to.
+
+```ts
+workspace: {
+  root: ".",
+  roleScopes: {
+    "frontend": ["apps/web", "packages/ui"],
+    "backend": ["apps/api", "packages/db"],
+  }
+}
+```
+
+## Extending the Team
+
+You can define custom personalities and roles beyond the built-in presets:
+
+```ts
+import { defineRole, definePersonality } from "@ujima/framework";
+
+const customRole = defineRole({
+  name: "security-auditor",
+  title: "Security Auditor",
+  instructions: "Review every change for potential vulnerabilities.",
+  tools: ["filesystem", "mcp"]
+});
+
+const customPersonality = definePersonality({
+  name: "pedantic",
+  instructions: "Correct every small detail, even if it doesn't affect functionality."
+});
+```
+
+## Loading Teams
+
+You can define your team in a standalone `.json` or `.ts` file and load it dynamically:
+
+```ts
+import { loadAgentTeamFromFile } from "@ujima/framework";
+
+// Supports .json and .ts (via default export or 'team' export)
+const team = await loadAgentTeamFromFile("./ujima.config.ts");
+console.log(team.config.name); // "Ujima Sample Team"
 ```
 
 ## Build
