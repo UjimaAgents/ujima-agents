@@ -3,10 +3,10 @@ import { filesystemTool } from './filesystem.js';
 import { shellTool } from './shell.js';
 import { messageTool } from './message.js';
 
-export const ORCHESTRATOR_TOOLS: Record<string, OrchestratorTool<any>> = {
+export const ORCHESTRATOR_TOOLS = {
   filesystem: filesystemTool,
   shell: shellTool,
   message: messageTool,
-};
+} as unknown as Record<string, OrchestratorTool>;
 
 export type { OrchestratorTool, ToolExecutionContext } from './types.js';
