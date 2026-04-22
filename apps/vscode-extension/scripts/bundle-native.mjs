@@ -6,7 +6,7 @@
 // .vsix is a zip; we stage a clean copy and append it.
 
 import { execFileSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, readdirSync, readlinkSync, rmSync, lstatSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readlinkSync, rmSync, lstatSync, writeFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { rebuild } from '@electron/rebuild';
@@ -48,12 +48,12 @@ if (existsSync(stageRoot)) rmSync(stageRoot, { recursive: true, force: true });
 mkdirSync(stageNodeModules, { recursive: true });
 
 for (const pkg of PACKAGES) {
-  const linkPath = resolve(pluginRoot, 'node_modules', pkg);
+  const linkPath = resolve(pluginRoot, '../../node_modules', pkg);
   let source = linkPath;
   if (!existsSync(linkPath)) {
-    const found = locateInPnpmStore(pkg);
+    const found = locateInNodeModules(pkg);
     if (!found) {
-      console.error(`[bundle-native] could not locate ${pkg} in node_modules or pnpm store`);
+      console.error(`[bundle-native] could not locate ${pkg} in workspace node_modules`);
       process.exit(1);
     }
     source = found;
@@ -108,14 +108,13 @@ execFileSync(
 rmSync(stageRoot, { recursive: true, force: true });
 console.log(`[bundle-native] injected ${PACKAGES.join(', ')} → ${vsix}`);
 
-function locateInPnpmStore(pkg) {
-  const pnpmDir = resolve(pluginRoot, '../../node_modules/.pnpm');
-  if (!existsSync(pnpmDir)) return undefined;
-  for (const entry of readdirSync(pnpmDir)) {
-    if (entry.startsWith(`${pkg}@`)) {
-      const candidate = resolve(pnpmDir, entry, 'node_modules', pkg);
-      if (existsSync(candidate)) return candidate;
-    }
+function locateInNodeModules(pkg) {
+  const candidates = [
+    resolve(pluginRoot, '../../node_modules', pkg),
+    resolve(pluginRoot, '../../node_modules/.bun/node_modules', pkg),
+  ];
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate;
   }
   return undefined;
 }
