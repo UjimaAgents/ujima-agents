@@ -6,6 +6,7 @@ import {
   StartTaskRequestSchema,
   StartTaskResponseSchema,
   TaskPromotionRequestSchema,
+  TaskPromotionResponseSchema,
   ApiErrorSchema,
 } from '@ujima/api-schema';
 import { z } from 'zod';
@@ -74,7 +75,7 @@ export function registerTaskRoutes(_app: FastifyInstance, options: TaskRoutesOpt
       tags: ['Tasks'],
       body: TaskPromotionRequestSchema,
       response: {
-        200: z.object({}).passthrough(),
+        200: TaskPromotionResponseSchema,
         400: ApiErrorSchema,
       },
     },
@@ -84,7 +85,7 @@ export function registerTaskRoutes(_app: FastifyInstance, options: TaskRoutesOpt
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       const code = message.startsWith('Organization not found') ? 404 : 400;
-      return reply.code(code).send({ code: 'ERR_PROMOTION_FAILED', message });
+      return reply.code(code).send({ code: 'ERR_BAD_REQUEST', message });
     }
   });
 }

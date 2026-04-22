@@ -122,6 +122,19 @@ export function createTransport(opts: TransportOptions): Transport {
     cors: { origin: false },
   });
 
+  fastify.get('/events', {
+    schema: {
+      description: 'Realtime event stream (Socket.IO)',
+      tags: ['System'],
+    },
+  }, async () => {
+    return {
+      status: 'ready',
+      transport: 'socket.io',
+      path: '/events',
+    };
+  });
+
   io.use((socket, next) => {
     const authHeader = socket.handshake.auth?.token ?? socket.handshake.headers.authorization ?? '';
     const bearerMatch = /^Bearer\s+(.+)$/.exec(String(authHeader));

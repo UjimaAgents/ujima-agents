@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
-import { OnboardingRequestSchema, ApiErrorSchema } from '@ujima/api-schema';
+import { OnboardingRequestSchema, OnboardingResponseSchema, BootstrapResponseSchema, ApiErrorSchema } from '@ujima/api-schema';
 import type { BootstrapService, OnboardingService } from '@ujima/orchestrator';
 import { z } from 'zod';
 
@@ -21,7 +21,7 @@ export function registerOnboardingRoutes(
       description: 'Retrieve current system bootstrap state',
       tags: ['Onboarding'],
       response: {
-        200: z.object({}).passthrough(),
+        200: BootstrapResponseSchema,
       },
     },
   }, async () => {
@@ -34,7 +34,7 @@ export function registerOnboardingRoutes(
       tags: ['Onboarding'],
       body: OnboardingRequestSchema,
       response: {
-        200: z.object({}).passthrough(),
+        200: OnboardingResponseSchema,
         400: ApiErrorSchema,
       },
     },
