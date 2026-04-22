@@ -11,30 +11,30 @@ graph TD
     User([User])
     
     subgraph Clients ["Clients"]
-        WebUI[Web UI / Next.js]
-        Extension[VS Code Extension]
+        WebUI["Web UI / Next.js"]
+        Extension["VS Code Extension"]
         CLI[CLI]
     end
 
     subgraph API ["Local API Service (apps/api)"]
-        Fastify[Fastify Server]
-        EventBus[Realtime Event Bus]
-        Orchestrator[Agent Orchestrator]
-        ApprovalService[Approval Service]
+        Fastify["Fastify Server"]
+        EventBus["Realtime Event Bus"]
+        Orchestrator["Agent Orchestrator"]
+        ApprovalService["Approval Service"]
         Database[(SQLite DB)]
     end
 
     subgraph Framework ["Framework Layer"]
         SDK["@ujima/framework"]
-        Config[ujima.config.ts]
+        Config["ujima.config.ts"]
     end
 
     subgraph Runtime ["Execution Runtime"]
-        Tools[Tool Adapters: FS, Shell, MCP]
-        Workspace[Local Filesystem Workspace]
+        Tools["Tool Adapters: FS, Shell, MCP"]
+        Workspace["Local Filesystem Workspace"]
     end
 
-    LLM[LLM: OpenAI / Anthropic]
+    LLM["LLM: OpenAI / Anthropic"]
 
     User <--> Clients
     Clients <--> Fastify

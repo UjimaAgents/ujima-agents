@@ -116,24 +116,24 @@ See [`packages/ujima/README.md`](./packages/ujima/README.md) for the full framew
 ```mermaid
 graph LR
     subgraph Interfaces ["Interfaces"]
-        Web[Web UI]
-        VSCode[VS Code]
+        Web["Web UI"]
+        VSCode["VS Code"]
         CLI[CLI]
     end
 
     subgraph Core ["Local Control Plane"]
-        API[apps/api]
+        API["apps/api"]
         DB[(SQLite)]
     end
 
     subgraph Logic ["Orchestration"]
         Framework["@ujima/framework"]
-        Agents[Agent Team]
+        Agents["Agent Team"]
     end
 
     subgraph External ["External"]
         LLM[LLMs]
-        MCP[MCP Servers]
+        MCP["MCP Servers"]
     end
 
     Web & VSCode & CLI <--> API
