@@ -37,5 +37,5 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: ujima-vsix
-          path: apps/plugin/*.vsix
+          path: apps/vscode-extension/*.vsix
           if-no-files-found: error
