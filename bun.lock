@@ -34,6 +34,7 @@
         "@ujima/client-sdk": "workspace:*",
         "@ujima/context-store": "workspace:*",
         "@ujima/event-bus": "workspace:*",
+        "@ujima/framework": "workspace:*",
         "@ujima/llm": "workspace:*",
         "@ujima/mcp-client": "workspace:*",
         "@ujima/orchestrator": "workspace:*",
