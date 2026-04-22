@@ -9,7 +9,7 @@
   "files": ["dist"],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "dev": "tsc -p tsconfig.json --watch --preserveWatchOutput",
+    "dev": "bun --watch src/main.ts",
     "start": "node dist/main.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint src",
@@ -17,6 +17,8 @@
     "clean": "rm -rf dist .turbo *.tsbuildinfo"
   },
   "dependencies": {
+    "@fastify/swagger": "^8.14.0",
+    "@fastify/swagger-ui": "^1.10.0",
     "@ujima/agent-runtime": "workspace:*",
     "@ujima/api-schema": "workspace:*",
     "@ujima/client-sdk": "workspace:*",
@@ -28,11 +30,12 @@
     "@ujima/permissions": "workspace:*",
     "@ujima/runtime-core": "workspace:*",
     "@ujima/shared": "workspace:*",
+    "better-sqlite3": "^12.9.0",
     "chalk": "^5.6.2",
     "fastify": "^4.28.1",
+    "fastify-type-provider-zod": "^2.0.0",
     "socket.io": "^4.7.5",
-    "zod": "^3.23.8",
-    "better-sqlite3": "^11.1.2"
+    "zod": "^3.23.8"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",

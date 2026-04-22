@@ -1,6 +1,5 @@
-import type { Database as DbHandle } from 'better-sqlite3';
 import type { AuditRecord } from '@ujima/shared';
-import { nowMs } from './db';
+import { nowMs, type DbHandle } from './db';
 
 export type AuditEventType = AuditRecord['event_type'];
 
