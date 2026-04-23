@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, it, afterEach } from 'vitest';
 import { openDatabase } from '@ujima/context-store';
 import { Repository } from '@ujima/runtime-core';
+import { OrganizationSchema } from '@ujima/shared';
 import {
   ConfigSyncService,
   SettingsService,
@@ -79,6 +80,14 @@ function teamConfig(overrides: Record<string, unknown> = {}) {
 
 async function writeConfigFile(path: string, config: Record<string, unknown>): Promise<void> {
   await writeFile(path, `export default ${JSON.stringify(config, null, 2)};\n`, 'utf8');
+}
+
+function makeChannels(count: number) {
+  return Array.from({ length: count }, (_, index) => ({
+    name: `channel-${String(index + 1).padStart(2, '0')}`,
+    kind: 'group',
+    topic: `Channel ${index + 1}`,
+  }));
 }
 
 describe('team config reconcile', () => {
@@ -178,5 +187,104 @@ describe('team config reconcile', () => {
         organizationName: 'Manual Rename',
       }),
     ).toThrow(/managed by config/i);
+  });
+
+  it('reconciles a config file back into its bound organization instead of the latest org', async () => {
+    const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
+    const teamStore = createTeamStore();
+    const syncService = new ConfigSyncService(repo, teamStore);
+    const dir = await mkdtemp(join(tmpdir(), 'ujima-config-sync-'));
+    tempDirs.push(dir);
+    const configPath = join(dir, 'ujima.config.js');
+
+    await writeConfigFile(configPath, teamConfig({ name: 'Bound Org' }));
+    const first = await syncService.loadAndReconcileFromFile(configPath);
+
+    const other = repo.saveOrganization(
+      OrganizationSchema.parse({
+        id: 'other-org',
+        name: 'Other Org',
+        workspace: { root: '/tmp/other-org', roleScopes: {} },
+        organizationChart: { reportsTo: {} },
+      }),
+    );
+
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 25));
+    await writeConfigFile(configPath, teamConfig({ name: 'Bound Org Updated' }));
+    const second = await syncService.loadAndReconcileFromFile(configPath);
+
+    expect(second.organization.id).toBe(first.organization.id);
+    expect(second.organization.name).toBe('Bound Org Updated');
+    expect(repo.getOrganization(other.id)?.name).toBe('Other Org');
+    expect(repo.getWorkspaceSetting(first.organization.id, 'config_sync.path')).toBe(configPath);
+  });
+
+  it('archives dropped config-managed channels even when they fall past the first page', async () => {
+    const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
+    const teamStore = createTeamStore();
+    const syncService = new ConfigSyncService(repo, teamStore);
+    const dir = await mkdtemp(join(tmpdir(), 'ujima-config-sync-'));
+    tempDirs.push(dir);
+    const configPath = join(dir, 'ujima.config.js');
+    const channels = makeChannels(55);
+
+    await writeConfigFile(
+      configPath,
+      teamConfig({
+        roles: [
+          {
+            name: 'pm',
+            title: 'Product Manager',
+            instructions: 'Lead the work.',
+            workspaceScopes: ['.'],
+            tools: ['filesystem'],
+            channels: ['channel-01'],
+          },
+          {
+            name: 'frontend-engineer',
+            title: 'Frontend Engineer',
+            instructions: 'Build the product.',
+            provider: 'openai',
+            model: 'gpt-5.4',
+            workspaceScopes: ['apps/web'],
+            tools: ['filesystem', 'shell'],
+            channels: ['channel-01'],
+          },
+        ],
+        channels,
+      }),
+    );
+    const first = await syncService.loadAndReconcileFromFile(configPath);
+
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 25));
+    await writeConfigFile(
+      configPath,
+      teamConfig({
+        roles: [
+          {
+            name: 'pm',
+            title: 'Product Manager',
+            instructions: 'Lead the work.',
+            workspaceScopes: ['.'],
+            tools: ['filesystem'],
+            channels: ['channel-02'],
+          },
+          {
+            name: 'frontend-engineer',
+            title: 'Frontend Engineer',
+            instructions: 'Build the product.',
+            provider: 'openai',
+            model: 'gpt-5.4',
+            workspaceScopes: ['apps/web'],
+            tools: ['filesystem', 'shell'],
+            channels: ['channel-02'],
+          },
+        ],
+        channels: channels.filter((channel) => channel.name !== 'channel-01'),
+      }),
+    );
+    await syncService.loadAndReconcileFromFile(configPath, first.organization.id);
+
+    expect(repo.getChannel(first.organization.id, 'channel-01')?.archivedAt).toBeTruthy();
   });
 });
