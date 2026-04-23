@@ -16,6 +16,11 @@ export interface PoolGetOptions {
    * Ignored for shared MCPs (the default).
    */
   agentId?: string;
+  /**
+   * Optional caller-local path scopes. Pooling ignores these because they
+   * affect wrapper behavior, not which MCP process should be reused.
+   */
+  scopePaths?: string[];
 }
 
 export interface MCPPool {

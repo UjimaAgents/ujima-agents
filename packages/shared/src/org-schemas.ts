@@ -94,6 +94,15 @@ export const MemberSchema = z.object({
 });
 export type Member = z.infer<typeof MemberSchema>;
 
+export const WorkspaceMemberSchema = z.object({
+  organizationId: IdSchema,
+  memberId: IdSchema,
+  roleScopePaths: z.array(z.string().min(1)).default([]),
+  createdAt: TimestampSchema.optional(),
+  updatedAt: TimestampSchema.optional(),
+});
+export type WorkspaceMember = z.infer<typeof WorkspaceMemberSchema>;
+
 export const ChannelSchema = z.object({
   id: IdSchema,
   organizationId: IdSchema.optional(),

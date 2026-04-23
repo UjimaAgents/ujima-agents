@@ -3,6 +3,10 @@ import { MemberSchema, type Organization, type Member, type Channel } from '@uji
 import type { ApiRepository } from './repository-reader.js';
 import type { TeamStore } from './team-store.js';
 import { listProviderStatuses, validateProviderKeys, type ProviderStatus } from './team.js';
+import {
+  requireOrganizationWorkspaceRoot,
+  upsertWorkspaceMemberScopes,
+} from './workspace-root.js';
 
 export interface TeamSettingsResponse {
   name: string;
@@ -124,7 +128,7 @@ export class SettingsService {
     providerKeys: Record<string, string>,
   ): ProviderStatus[] {
     const team = this.requireTeam();
-    this.requireOrganization(organizationId);
+    requireOrganizationWorkspaceRoot(this.repo, organizationId);
 
     const { unknownProviders } = validateProviderKeys(team, providerKeys);
     if (unknownProviders.length > 0) {
@@ -140,7 +144,7 @@ export class SettingsService {
 
   deleteProvider(organizationId: string, providerName: string): ProviderStatus[] {
     this.requireTeam();
-    this.requireOrganization(organizationId);
+    requireOrganizationWorkspaceRoot(this.repo, organizationId);
     this.repo.deleteProviderCredential(organizationId, providerName);
     return this.listProviders(organizationId);
   }
@@ -166,7 +170,7 @@ export class SettingsService {
   }
 
   addMember(input: AddMemberInput): Member {
-    this.requireOrganization(input.organizationId);
+    requireOrganizationWorkspaceRoot(this.repo, input.organizationId);
     const member = MemberSchema.parse({
       id: randomUUID(),
       organizationId: input.organizationId,
@@ -174,7 +178,15 @@ export class SettingsService {
       kind: input.kind,
       roleName: input.roleName,
     });
-    return this.repo.saveMember(member);
+    const saved = this.repo.saveMember(member);
+    const role = this.teamStore.getTeam()?.getRole(input.roleName);
+    upsertWorkspaceMemberScopes(
+      this.repo,
+      input.organizationId,
+      saved.id,
+      role?.workspaceScopes ?? [],
+    );
+    return saved;
   }
 
   getOrganizationSettings(organizationId: string): OrganizationSettingsResponse {
@@ -191,10 +203,7 @@ export class SettingsService {
   }
 
   updateOrganizationSettings(input: UpdateOrganizationInput): OrganizationSettingsResponse {
-    const organization = this.repo.getOrganization(input.organizationId);
-    if (!organization) {
-      throw new Error(`Organization not found: ${input.organizationId}`);
-    }
+    const organization = requireOrganizationWorkspaceRoot(this.repo, input.organizationId);
 
     if (
       input.organizationName !== undefined &&

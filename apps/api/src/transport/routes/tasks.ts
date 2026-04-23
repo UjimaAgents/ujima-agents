@@ -12,7 +12,9 @@ import {
   TaskPromotionResponseSchema,
 } from '@ujima/api-schema';
 import { z } from 'zod';
-import type { TaskPromoterService } from '@ujima/orchestrator';
+import {
+  type TaskPromoterService,
+} from '@ujima/orchestrator';
 
 export interface TaskRoutesOptions {
   host: RuntimeHost;
@@ -132,6 +134,7 @@ export function registerTaskRoutes(_app: FastifyInstance, options: TaskRoutesOpt
       response: {
         200: TaskPromotionResponseSchema,
         400: ApiErrorSchema,
+        409: ApiErrorSchema,
         404: ApiErrorSchema,
       },
     },
@@ -139,6 +142,10 @@ export function registerTaskRoutes(_app: FastifyInstance, options: TaskRoutesOpt
     try {
       return await taskPromoter.promote(req.body);
     } catch (err) {
+      if (isWorkspaceRootRequiredError(err)) {
+        const message = err instanceof Error ? err.message : String(err);
+        return reply.code(409).send({ code: ERR_NO_WORKSPACE_ROOT, message });
+      }
       const message = err instanceof Error ? err.message : String(err);
       const code = message.startsWith('Organization not found') ? 404 : 400;
       return reply.code(code).send({ code: code === 404 ? 'ERR_NOT_FOUND' : 'ERR_BAD_REQUEST', message });
@@ -166,4 +173,8 @@ function toTaskDto(t: {
 
 function replyError(reply: FastifyReply, status: number, code: string, message: string): FastifyReply {
   return reply.status(status).send({ code, message });
+}
+
+function isWorkspaceRootRequiredError(err: unknown): boolean {
+  return !!err && typeof err === 'object' && (err as { code?: string }).code === ERR_NO_WORKSPACE_ROOT;
 }

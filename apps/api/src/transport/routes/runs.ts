@@ -11,6 +11,8 @@ import {
 import type { ApprovalService, RunService } from '@ujima/orchestrator';
 import { z } from 'zod';
 
+const ERR_NO_WORKSPACE_ROOT = 'ERR_NO_WORKSPACE_ROOT';
+
 const RunIdParamsSchema = z.object({ runId: IdSchema });
 const ApprovalIdParamsSchema = z.object({ approvalId: IdSchema });
 const RunDetailQuerySchema = z.object({ organizationId: IdSchema });
@@ -103,6 +105,7 @@ export function registerRunRoutes(
       response: {
         200: RunStateSchema,
         400: ApiErrorSchema,
+        409: ApiErrorSchema,
         404: ApiErrorSchema,
         503: ApiErrorSchema,
       },
@@ -112,6 +115,9 @@ export function registerRunRoutes(
       return await runs.createRun(req.body);
     } catch (err) {
       const message = errMessage(err);
+      if (isWorkspaceRootRequiredError(err)) {
+        return reply.code(409).send({ code: ERR_NO_WORKSPACE_ROOT, message });
+      }
       const status =
         message.startsWith('Member not found') || message.startsWith('Organization not found')
           ? 404
@@ -147,6 +153,7 @@ export function registerRunRoutes(
       response: {
         200: ApprovalRequestSchema,
         400: ApiErrorSchema,
+        409: ApiErrorSchema,
         404: ApiErrorSchema,
       },
     },
@@ -160,6 +167,9 @@ export function registerRunRoutes(
       });
     } catch (err) {
       const message = errMessage(err);
+      if (isWorkspaceRootRequiredError(err)) {
+        return reply.code(409).send({ code: ERR_NO_WORKSPACE_ROOT, message });
+      }
       return reply
         .code(message.startsWith('Approval not found') ? 404 : 400)
         .send({ code: message.startsWith('Approval not found') ? 'ERR_NOT_FOUND' : 'ERR_BAD_REQUEST', message });
@@ -182,4 +192,8 @@ function replyError(reply: FastifyReply, status: number, message: string): Fasti
 
 function errMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+function isWorkspaceRootRequiredError(err: unknown): boolean {
+  return !!err && typeof err === 'object' && (err as { code?: string }).code === ERR_NO_WORKSPACE_ROOT;
 }

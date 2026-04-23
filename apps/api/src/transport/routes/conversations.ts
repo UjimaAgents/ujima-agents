@@ -5,6 +5,8 @@ import { ApiErrorSchema, MessageCreateSchema, OrganizationQuerySchema } from '@u
 import type { ConversationService } from '@ujima/orchestrator';
 import { z } from 'zod';
 
+const ERR_NO_WORKSPACE_ROOT = 'ERR_NO_WORKSPACE_ROOT';
+
 const ThreadIdParamsSchema = z.object({ threadId: IdSchema });
 const ListChannelsQuerySchema = OrganizationQuerySchema.merge(PaginationQuerySchema);
 const ListChannelsResponseSchema = createPaginatedSchema(ChannelSchema);
@@ -77,6 +79,7 @@ export function registerConversationRoutes(
       response: {
         200: MessageSchema,
         400: ApiErrorSchema,
+        409: ApiErrorSchema,
         404: ApiErrorSchema,
       },
     },
@@ -85,6 +88,9 @@ export function registerConversationRoutes(
       return conversations.sendMessage(req.body);
     } catch (err) {
       const message = errMessage(err);
+      if (isWorkspaceRootRequiredError(err)) {
+        return reply.code(409).send({ code: ERR_NO_WORKSPACE_ROOT, message });
+      }
       const status =
         message.startsWith('Organization not found') ||
         message.startsWith('Sender not found') ||
@@ -106,4 +112,8 @@ function replyError(reply: FastifyReply, status: number, message: string): Fasti
 
 function errMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+function isWorkspaceRootRequiredError(err: unknown): boolean {
+  return !!err && typeof err === 'object' && (err as { code?: string }).code === ERR_NO_WORKSPACE_ROOT;
 }

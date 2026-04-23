@@ -17,6 +17,8 @@ import {
 import type { SettingsService } from '@ujima/orchestrator';
 import { z } from 'zod';
 
+const ERR_NO_WORKSPACE_ROOT = 'ERR_NO_WORKSPACE_ROOT';
+
 const OrgIdParamsSchema = z.object({ orgId: IdSchema });
 const ProviderTestParamsSchema = z.object({ providerName: z.string().min(1) });
 const TeamSettingsResponseSchema = AgentTeamConfigSchema.omit({ providers: true });
@@ -84,6 +86,7 @@ export function registerSettingsRoutes(
       response: {
         200: ProviderSecretsUpsertResponseSchema,
         400: ApiErrorSchema,
+        409: ApiErrorSchema,
         404: ApiErrorSchema,
         503: ApiErrorSchema,
       },
@@ -95,6 +98,9 @@ export function registerSettingsRoutes(
       };
     } catch (err) {
       const message = errMessage(err);
+      if (isWorkspaceRootRequiredError(err)) {
+        return reply.code(409).send({ code: ERR_NO_WORKSPACE_ROOT, message });
+      }
       const code = message.startsWith('Organization not found')
         ? 404
         : message.startsWith('Unknown provider keys')
@@ -113,6 +119,7 @@ export function registerSettingsRoutes(
       response: {
         200: ProviderSecretsUpsertResponseSchema,
         400: ApiErrorSchema,
+        409: ApiErrorSchema,
         404: ApiErrorSchema,
         503: ApiErrorSchema,
       },
@@ -124,6 +131,9 @@ export function registerSettingsRoutes(
       };
     } catch (err) {
       const message = errMessage(err);
+      if (isWorkspaceRootRequiredError(err)) {
+        return reply.code(409).send({ code: ERR_NO_WORKSPACE_ROOT, message });
+      }
       return replyError(reply, message.startsWith('Organization not found') ? 404 : 503, message);
     }
   });
@@ -157,6 +167,7 @@ export function registerSettingsRoutes(
       response: {
         200: OrganizationSettingsResponseSchema,
         400: ApiErrorSchema,
+        409: ApiErrorSchema,
         404: ApiErrorSchema,
       },
     },
@@ -165,6 +176,9 @@ export function registerSettingsRoutes(
       return settings.updateOrganizationSettings(req.body);
     } catch (err) {
       const message = errMessage(err);
+      if (isWorkspaceRootRequiredError(err)) {
+        return reply.code(409).send({ code: ERR_NO_WORKSPACE_ROOT, message });
+      }
       return replyError(reply, message.startsWith('Organization not found') ? 404 : 400, message);
     }
   });
@@ -217,6 +231,7 @@ export function registerSettingsRoutes(
       response: {
         200: MemberSchema,
         400: ApiErrorSchema,
+        409: ApiErrorSchema,
         404: ApiErrorSchema,
       },
     },
@@ -230,6 +245,9 @@ export function registerSettingsRoutes(
       });
     } catch (err) {
       const message = errMessage(err);
+      if (isWorkspaceRootRequiredError(err)) {
+        return reply.code(409).send({ code: ERR_NO_WORKSPACE_ROOT, message });
+      }
       return replyError(reply, message.startsWith('Organization not found') ? 404 : 400, message);
     }
   });
@@ -242,4 +260,8 @@ function replyError(reply: FastifyReply, status: number, message: string): Fasti
 
 function errMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+function isWorkspaceRootRequiredError(err: unknown): boolean {
+  return !!err && typeof err === 'object' && (err as { code?: string }).code === ERR_NO_WORKSPACE_ROOT;
 }
