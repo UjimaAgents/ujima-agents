@@ -81,6 +81,8 @@ config-managed org state.
   providers without deleting user-generated state.
 - Removing an agent from config sets `members.retired_at`; removing a channel
   from config sets `channels.archived_at`.
+- Archived config-managed channels reject new messages, and retired
+  config-managed agents cannot be assigned new runs or task promotions.
 - Config-owned fields are tracked with per-field ownership metadata so future
   dashboard edits can reject writes to code-owned settings.
 
