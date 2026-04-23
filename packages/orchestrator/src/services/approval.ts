@@ -10,6 +10,7 @@ import {
 } from '@ujima/shared';
 import type { RealtimeService } from './context.js';
 import type { ApiRepository } from './repository-reader.js';
+import { requireOrganizationWorkspaceRoot } from './workspace-root.js';
 
 export interface ApprovalRequestInput {
   organizationId: string;
@@ -65,6 +66,7 @@ export class ApprovalService {
   }
 
   async resolveApproval(input: ApprovalResolveInput): Promise<ApprovalRequest> {
+    requireOrganizationWorkspaceRoot(this.repo, input.organizationId);
     const approval = this.repo.resolveApproval(
       input.organizationId,
       input.approvalId,

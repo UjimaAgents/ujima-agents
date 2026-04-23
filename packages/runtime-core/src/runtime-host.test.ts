@@ -1,10 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createRuntimeHost } from './runtime-host';
+import { createRuntimeHost, sanitizeMcpArgs } from './runtime-host';
 import { createBufferLogger } from './logger';
 import type { LLMProvider } from '@ujima/llm/legacy';
+import { createPathResolver } from './path-resolver';
 
 function stubProvider(): LLMProvider {
   throw new Error('no provider configured');
@@ -74,5 +75,34 @@ describe('createRuntimeHost', () => {
     await expect(
       host.startTask({ workspaceId: 'x', sessionId: 's', prompt: 'p', teamId: 't' }),
     ).rejects.toThrow(/shutting down/);
+  });
+
+  it('sanitizes MCP path args against optional agent scope paths', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'ujima-host-scope-'));
+    await mkdir(join(root, 'apps', 'web'), { recursive: true });
+    await mkdir(join(root, 'apps', 'api'), { recursive: true });
+    await writeFile(join(root, 'apps', 'web', 'index.ts'), 'export {};\n', 'utf8');
+    await writeFile(join(root, 'apps', 'api', 'server.ts'), 'export {};\n', 'utf8');
+    const resolver = await createPathResolver({
+      root,
+      scopePaths: [join(root, 'apps', 'web')],
+    });
+
+    await expect(
+      sanitizeMcpArgs(
+        { filePath: 'apps/api/server.ts' },
+        resolver,
+      ),
+    ).rejects.toMatchObject({ code: 'ERR_PATH_ESCAPE' });
+
+    await expect(
+      sanitizeMcpArgs(
+        { cwd: 'apps/web', inputPath: 'apps/web/index.ts' },
+        resolver,
+      ),
+    ).resolves.toEqual({
+      cwd: await resolver.resolve('apps/web'),
+      inputPath: await resolver.resolve('apps/web/index.ts'),
+    });
   });
 });

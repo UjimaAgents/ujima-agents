@@ -14,6 +14,7 @@ import {
 import type { ApiRepository } from './repository-reader.js';
 import type { TeamStore } from './team-store.js';
 import { summarizeTeam, type TeamSummary } from './team.js';
+import { upsertWorkspaceMemberScopes } from './workspace-root.js';
 
 export interface ReconcileTeamConfigInput {
   team: AgentTeamHandle;
@@ -170,6 +171,13 @@ export class ConfigSyncService {
           createdAt: existing?.createdAt ?? now,
           retiredAt: undefined,
         }),
+      );
+      const role = input.team.getRole(agent.roleName);
+      upsertWorkspaceMemberScopes(
+        this.repo,
+        organizationId,
+        agent.name,
+        role?.workspaceScopes ?? [],
       );
       markConfigOwnership(this.repo, organizationId, 'member', agent.name, MEMBER_CONFIG_FIELDS);
       stats.membersUpserted += 1;
