@@ -56,6 +56,7 @@ export interface RepositoryReader {
  */
 export interface ConversationRepository extends RepositoryReader {
   getChannel(organizationId: string, channelId: string): Channel | null;
+  listAllChannels(organizationId: string): Channel[];
   listChannels(
     organizationId: string,
     cursor?: string,

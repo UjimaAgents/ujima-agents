@@ -23,6 +23,7 @@ import {
 } from './bootstrap.js';
 import {
   getChannel as readChannel,
+  listAllChannels as readAllChannels,
   listChannels as readChannels,
   saveChannel as writeChannel,
   setChannelMembers as writeChannelMembers,
@@ -138,6 +139,8 @@ export class Repository {
   saveChannel = (channel: Channel): Channel => writeChannel(this.db, channel);
   getChannel = (organizationId: string, channelId: string): Channel | null =>
     readChannel(this.db, organizationId, channelId);
+  listAllChannels = (organizationId: string): Channel[] =>
+    readAllChannels(this.db, organizationId);
   listChannels = (
     organizationId: string,
     cursor?: string,

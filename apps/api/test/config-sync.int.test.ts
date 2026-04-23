@@ -220,7 +220,8 @@ describe('team config reconcile', () => {
   });
 
   it('archives dropped config-managed channels even when they fall past the first page', async () => {
-    const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
+    const db = openDatabase({ dbPath: ':memory:' });
+    const repo = new Repository(db);
     const teamStore = createTeamStore();
     const syncService = new ConfigSyncService(repo, teamStore);
     const dir = await mkdtemp(join(tmpdir(), 'ujima-config-sync-'));
@@ -255,6 +256,15 @@ describe('team config reconcile', () => {
       }),
     );
     const first = await syncService.loadAndReconcileFromFile(configPath);
+
+    // Force identical timestamps across every channel row to simulate the
+    // pagination edge case from the review. Reconcile now uses an unpaginated
+    // scan, so duplicate created_at values cannot hide channels from archival.
+    db.prepare('UPDATE channels SET created_at = ?, updated_at = ? WHERE organization_id = ?').run(
+      '2026-01-01T00:00:00.000Z',
+      '2026-01-01T00:00:00.000Z',
+      first.organization.id,
+    );
 
     await new Promise((resolvePromise) => setTimeout(resolvePromise, 25));
     await writeConfigFile(

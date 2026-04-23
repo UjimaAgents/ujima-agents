@@ -105,6 +105,25 @@ export function listChannels(
   return { data, hasMore, nextCursor };
 }
 
+export function listAllChannels(db: DbHandle, organizationId: string): Channel[] {
+  const rows = db
+    .prepare('SELECT * FROM channels WHERE organization_id = ? ORDER BY created_at DESC, id DESC')
+    .all(organizationId) as Row[];
+
+  return rows.map((row) =>
+    ChannelSchema.parse({
+      id: rowString(row, 'id'),
+      organizationId: rowString(row, 'organization_id'),
+      name: rowString(row, 'name'),
+      kind: rowString(row, 'kind'),
+      topic: rowString(row, 'topic'),
+      memberIds: listChannelMemberIds(db, rowString(row, 'id')),
+      createdAt: typeof row.created_at === 'string' ? row.created_at : undefined,
+      archivedAt: typeof row.archived_at === 'string' ? row.archived_at : undefined,
+    }),
+  );
+}
+
 export function setChannelMembers(db: DbHandle, channelId: string, memberIds: string[]): void {
   db.prepare('DELETE FROM channel_members WHERE channel_id = ?').run(channelId);
   const insert = db.prepare('INSERT INTO channel_members (channel_id, member_id) VALUES (?, ?)');
