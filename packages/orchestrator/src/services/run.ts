@@ -44,6 +44,10 @@ export class RunService {
       throw new Error(`Member "${input.agentId}" is not an agent`);
     }
 
+    if (member.retiredAt) {
+      throw new Error(`Member "${input.agentId}" is retired`);
+    }
+
     const run = RunStateSchema.parse({
       id: randomUUID(),
       organizationId: input.organizationId,

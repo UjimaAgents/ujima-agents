@@ -33,10 +33,10 @@ export class ConversationService {
   }
 
   publishMessage(message: Message) {
-    this.repo.saveMessage(message);
     const channel = message.channelId
-      ? this.repo.getChannel(message.organizationId, message.channelId)
+      ? this.requireActiveChannel(message.organizationId, message.channelId)
       : null;
+    this.repo.saveMessage(message);
     const rooms =
       channel?.kind === 'dm'
         ? [channelRoom(channel.id), threadRoom(message.threadId), ...channel.memberIds.map(memberRoom)]
@@ -79,11 +79,8 @@ export class ConversationService {
     }
 
     const channel = input.channelId
-      ? this.repo.getChannel(input.organizationId, input.channelId)
+      ? this.requireActiveChannel(input.organizationId, input.channelId)
       : null;
-    if (input.channelId && !channel) {
-      throw new Error(`Channel not found: ${input.channelId}`);
-    }
 
     this.repo.ensureThread({
       id: input.threadId,
@@ -173,5 +170,16 @@ export class ConversationService {
     if (!this.repo.getOrganization(organizationId)) {
       throw new Error(`Organization not found: ${organizationId}`);
     }
+  }
+
+  private requireActiveChannel(organizationId: string, channelId: string) {
+    const channel = this.repo.getChannel(organizationId, channelId);
+    if (!channel) {
+      throw new Error(`Channel not found: ${channelId}`);
+    }
+    if (channel.archivedAt) {
+      throw new Error(`Channel is archived: ${channelId}`);
+    }
+    return channel;
   }
 }

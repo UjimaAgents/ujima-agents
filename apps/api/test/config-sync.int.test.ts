@@ -6,8 +6,11 @@ import { openDatabase } from '@ujima/context-store';
 import { Repository } from '@ujima/runtime-core';
 import { OrganizationSchema } from '@ujima/shared';
 import {
+  ConversationService,
   ConfigSyncService,
+  RunService,
   SettingsService,
+  TaskPromoterService,
   createTeamStore,
 } from '@ujima/orchestrator';
 
@@ -88,6 +91,12 @@ function makeChannels(count: number) {
     kind: 'group',
     topic: `Channel ${index + 1}`,
   }));
+}
+
+function createNoopRealtime() {
+  return {
+    emit: () => undefined,
+  };
 }
 
 describe('team config reconcile', () => {
@@ -296,5 +305,121 @@ describe('team config reconcile', () => {
     await syncService.loadAndReconcileFromFile(configPath, first.organization.id);
 
     expect(repo.getChannel(first.organization.id, 'channel-01')?.archivedAt).toBeTruthy();
+  });
+
+  it('rejects new messages to archived config-managed channels', async () => {
+    const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
+    const teamStore = createTeamStore();
+    const syncService = new ConfigSyncService(repo, teamStore);
+    const conversations = new ConversationService(repo, createNoopRealtime());
+    const dir = await mkdtemp(join(tmpdir(), 'ujima-config-sync-'));
+    tempDirs.push(dir);
+    const configPath = join(dir, 'ujima.config.js');
+
+    await writeConfigFile(configPath, teamConfig());
+    const first = await syncService.loadAndReconcileFromFile(configPath);
+
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 25));
+    await writeConfigFile(
+      configPath,
+      teamConfig({
+        roles: [
+          {
+            name: 'pm',
+            title: 'Product Manager',
+            instructions: 'Lead the work.',
+            workspaceScopes: ['.'],
+            tools: ['filesystem'],
+            channels: ['general'],
+          },
+          {
+            name: 'frontend-engineer',
+            title: 'Frontend Engineer',
+            instructions: 'Build the product.',
+            provider: 'openai',
+            model: 'gpt-5.4',
+            workspaceScopes: ['apps/web'],
+            tools: ['filesystem', 'shell'],
+            channels: ['general'],
+          },
+        ],
+        channels: [
+          {
+            name: 'general',
+            kind: 'general',
+            topic: 'General coordination',
+          },
+        ],
+      }),
+    );
+    await syncService.loadAndReconcileFromFile(configPath, first.organization.id);
+
+    expect(() =>
+      conversations.sendMessage({
+        organizationId: first.organization.id,
+        threadId: 'triage-thread',
+        channelId: 'triage',
+        senderId: 'pm',
+        content: 'still here?',
+      }),
+    ).toThrow(/channel is archived/i);
+  });
+
+  it('rejects retired config agents from new runs and task promotion', async () => {
+    const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
+    const teamStore = createTeamStore();
+    const syncService = new ConfigSyncService(repo, teamStore);
+    const realtime = createNoopRealtime();
+    const conversations = new ConversationService(repo, realtime);
+    const runs = new RunService(
+      teamStore,
+      repo,
+      realtime,
+      conversations,
+      { generateRunReply: async () => ({ text: '', toolResults: [] }) } as never,
+      { allowRun: () => undefined, invoke: async () => ({ ok: true }) } as never,
+    );
+    const promoter = new TaskPromoterService(repo, runs);
+    const dir = await mkdtemp(join(tmpdir(), 'ujima-config-sync-'));
+    tempDirs.push(dir);
+    const configPath = join(dir, 'ujima.config.js');
+
+    await writeConfigFile(configPath, teamConfig());
+    const first = await syncService.loadAndReconcileFromFile(configPath);
+
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 25));
+    await writeConfigFile(
+      configPath,
+      teamConfig({
+        agents: [
+          {
+            name: 'pm',
+            roleName: 'pm',
+            personalityName: 'direct',
+          },
+        ],
+        organizationChart: { reportsTo: {} },
+      }),
+    );
+    await syncService.loadAndReconcileFromFile(configPath, first.organization.id);
+
+    await expect(
+      runs.createRun({
+        organizationId: first.organization.id,
+        agentId: 'frontend-alice',
+        threadId: 'triage-thread',
+        summary: 'do work',
+      }),
+    ).rejects.toThrow(/retired/i);
+
+    await expect(
+      promoter.promote({
+        organizationId: first.organization.id,
+        channelId: 'general',
+        requestedBy: 'pm',
+        prompt: 'take this task',
+        assignedAgentId: 'frontend-alice',
+      }),
+    ).rejects.toThrow(/no agent member available/i);
   });
 });
