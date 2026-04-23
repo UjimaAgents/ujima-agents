@@ -6,7 +6,7 @@ import { createRuntimeHost, createBufferLogger, type RuntimeHost } from '@ujima/
 import { Repository } from '@ujima/runtime-core';
 import { createClient, UjimaApiError } from '@ujima/client-sdk';
 import { createTransport, type Transport } from '../src/transport/server';
-import type { LLMProvider } from '@ujima/llm';
+import type { LLMProvider } from '@ujima/llm/legacy';
 
 const TOKEN = 'a'.repeat(64);
 

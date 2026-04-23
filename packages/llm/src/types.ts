@@ -1,67 +1,28 @@
-export type ProviderId = 'mock' | 'vscode-lm' | 'anthropic' | 'openai-compat' | 'ollama';
+// New (AI SDK) LLM surface.
+//
+// Consumers should only import from this entrypoint. The old hand-rolled
+// clients live behind `@ujima/llm/legacy` and are on a deletion schedule.
 
-export interface LLMTextPart {
-  type: 'text';
-  text: string;
-}
+/**
+ * Provider kinds supported by the AI SDK resolver.
+ *
+ * - `anthropic`, `openai`, `google` — first-party `@ai-sdk/*` packages.
+ * - `openrouter` — OpenAI-compatible; uses `@ai-sdk/openai` with `baseURL`.
+ * - `ollama` — OpenAI-compatible; uses `@ai-sdk/openai` against a local host.
+ */
+export type ProviderKind = 'anthropic' | 'openai' | 'google' | 'openrouter' | 'ollama';
 
-export interface LLMToolCallPart {
-  type: 'tool_call';
-  id: string;
-  name: string;
-  arguments: Record<string, unknown>;
-}
-
-export interface LLMToolResultPart {
-  type: 'tool_result';
-  toolCallId: string;
-  content: unknown;
-  isError?: boolean;
-}
-
-export type LLMContentPart = LLMTextPart | LLMToolCallPart | LLMToolResultPart;
-
-export interface LLMMessage {
-  role: 'system' | 'user' | 'assistant' | 'tool';
-  content: string | LLMContentPart[];
-}
-
-export interface LLMToolSpec {
-  name: string;
-  description?: string;
-  parameters: Record<string, unknown>;
-}
-
-export interface LLMUsage {
-  inputTokens: number;
-  outputTokens: number;
-}
-
-export type LLMStreamDelta =
-  | { type: 'text'; text: string }
-  | { type: 'tool_call'; id: string; name: string; arguments: Record<string, unknown> }
-  | { type: 'finish'; reason: 'end_turn' | 'tool_use' | 'max_tokens' | 'error'; usage?: LLMUsage };
-
-export interface LLMStreamInput {
-  messages: LLMMessage[];
-  model: string;
-  tools?: LLMToolSpec[];
-  maxTokens?: number;
-  temperature?: number;
-  abortSignal?: AbortSignal;
-}
-
-export interface LLMProvider {
-  readonly id: ProviderId;
-  stream(input: LLMStreamInput): AsyncIterable<LLMStreamDelta>;
-}
+export const PROVIDER_KINDS = [
+  'anthropic',
+  'openai',
+  'google',
+  'openrouter',
+  'ollama',
+] as const satisfies readonly ProviderKind[];
 
 export class LLMError extends Error {
-  readonly code: 'rate_limited' | 'not_configured' | 'timeout' | 'bad_response' | 'unknown';
-  constructor(
-    code: 'rate_limited' | 'not_configured' | 'timeout' | 'bad_response' | 'unknown',
-    message: string,
-  ) {
+  readonly code: 'not_configured' | 'unsupported_kind' | 'bad_config';
+  constructor(code: 'not_configured' | 'unsupported_kind' | 'bad_config', message: string) {
     super(message);
     this.code = code;
     this.name = 'LLMError';

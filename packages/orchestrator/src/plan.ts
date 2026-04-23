@@ -1,5 +1,5 @@
 import type { AgentDef, TaskDef } from '@ujima/shared';
-import type { LLMMessage, LLMProvider } from '@ujima/llm';
+import type { LLMMessage, LLMProvider } from '@ujima/llm/legacy';
 
 export interface PlanAssignment {
   agentId: string;

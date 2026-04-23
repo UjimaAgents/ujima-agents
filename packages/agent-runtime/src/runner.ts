@@ -2,9 +2,11 @@ import { openDb } from '@ujima/context-store';
 import { createLocalEventBus } from '@ujima/event-bus';
 import { createPermissionMiddleware } from '@ujima/permissions';
 import { createMCPPool } from '@ujima/mcp-client';
-import { selectProvider } from '@ujima/llm';
+import { selectProvider } from '@ujima/llm/legacy';
+import { selectLanguageModel, type ProviderKind } from '@ujima/llm';
 import type { AgentDef, MCPDef, TaskDef } from '@ujima/shared';
 import { runAgent } from './shell';
+import { resolveOrchestratorEngine, type OrchestratorEngine } from './engine';
 import type { AgentRunResult, SpawnReason } from './types';
 
 export interface RunnerConfig {
@@ -14,9 +16,38 @@ export interface RunnerConfig {
   spawnReason: SpawnReason;
   dbPath: string;
   mcpDefId: string;
+  /**
+   * Orchestrator engine. Defaults to `'ai-sdk'` when `llm` is supplied,
+   * otherwise `'legacy'` to keep the existing child-process entrypoint
+   * (which reads provider env vars) working unchanged.
+   */
+  engine?: OrchestratorEngine;
+  /**
+   * AI SDK resolver inputs. Required when `engine === 'ai-sdk'`.
+   * Supplied either directly here or read from env (UJIMA_LLM_*).
+   */
+  llm?: {
+    kind: ProviderKind;
+    modelId: string;
+    apiKey?: string;
+    baseUrl?: string;
+  };
+}
+
+function readAiSdkConfigFromEnv(env: NodeJS.ProcessEnv): RunnerConfig['llm'] | undefined {
+  const kind = env.UJIMA_LLM_KIND as ProviderKind | undefined;
+  const modelId = env.UJIMA_LLM_MODEL_ID;
+  if (!kind || !modelId) return undefined;
+  return {
+    kind,
+    modelId,
+    apiKey: env.UJIMA_LLM_API_KEY,
+    baseUrl: env.UJIMA_LLM_BASE_URL,
+  };
 }
 
 export async function runInRunner(config: RunnerConfig): Promise<AgentRunResult> {
+  const engine = resolveOrchestratorEngine(config.engine ?? process.env.UJIMA_ORCHESTRATOR_ENGINE);
   const db = openDb({ dbPath: config.dbPath });
   const bus = createLocalEventBus({ audit: db.audit, pendingEvents: db.pendingEvents });
   const permissions = createPermissionMiddleware({ audit: db.audit, agentState: db.agentState });
@@ -29,14 +60,32 @@ export async function runInRunner(config: RunnerConfig): Promise<AgentRunResult>
     throw new Error(`MCP definition "${config.mcpDefId}" not found in context store`);
   }
   const mcp = await pool.get(mcpDef);
-  const provider = selectProvider();
+
+  const runInputs =
+    engine === 'ai-sdk'
+      ? (() => {
+          const llm = config.llm ?? readAiSdkConfigFromEnv(process.env);
+          if (!llm) {
+            throw new Error(
+              "runInRunner: engine='ai-sdk' requires `llm` config or UJIMA_LLM_KIND + UJIMA_LLM_MODEL_ID env vars.",
+            );
+          }
+          return {
+            engine: 'ai-sdk' as const,
+            model: selectLanguageModel(llm),
+          };
+        })()
+      : {
+          engine: 'legacy' as const,
+          provider: selectProvider(),
+        };
 
   const handle = runAgent({
     agent: config.agent,
     task: config.task,
     sessionId: config.sessionId,
     spawnReason: config.spawnReason,
-    provider,
+    ...runInputs,
     mcp,
     permissions,
     eventBus: bus,

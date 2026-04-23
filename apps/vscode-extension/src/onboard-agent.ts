@@ -14,7 +14,7 @@ import {
   listRegistry,
   type RegistryEntry,
 } from '@ujima/mcp-client';
-import { createMockProvider, selectProvider, textTurn, type LLMProvider } from '@ujima/llm';
+import { createMockProvider, selectProvider, textTurn, type LLMProvider } from '@ujima/llm/legacy';
 import type { SessionController } from './session-controller';
 import { detectAvailableModels } from './model-detection';
 import { createVscodeLmProvider } from './vscode-lm-provider';
