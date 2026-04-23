@@ -20,10 +20,12 @@ export {
   ChannelConfigSchema,
   PolicySchema,
   ProviderConfigSchema,
+  ProviderKindSchema,
 } from './schemas.js';
 
 export type {
   ProviderConfig,
+  ProviderKind,
   PolicyConfig,
   PersonalityPreset,
   RolePreset,

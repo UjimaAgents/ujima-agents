@@ -19,6 +19,11 @@
     "@ujima/event-bus": "workspace:*",
     "@ujima/permissions": "workspace:*",
     "@ujima/mcp-client": "workspace:*",
-    "@ujima/llm": "workspace:*"
+    "@ujima/llm": "workspace:*",
+    "ai": "^6.0.168",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@ai-sdk/provider": "^3.0.8"
   }
 }
