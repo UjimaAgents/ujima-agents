@@ -32,6 +32,9 @@ export type ToolAction = z.infer<typeof ToolActionSchema>;
 export const ProviderScopeSchema = z.enum(['organization', 'workspace', 'member']);
 export type ProviderScope = z.infer<typeof ProviderScopeSchema>;
 
+export const ConfigOwnerSchema = z.enum(['config', 'dashboard']);
+export type ConfigOwner = z.infer<typeof ConfigOwnerSchema>;
+
 export const OrgApprovalStatusSchema = z.enum(['pending', 'approved', 'rejected']);
 export type OrgApprovalStatus = z.infer<typeof OrgApprovalStatusSchema>;
 
@@ -87,6 +90,7 @@ export const MemberSchema = z.object({
   roleName: z.string().min(1),
   presence: PresenceStateSchema.default('offline'),
   createdAt: TimestampSchema.optional(),
+  retiredAt: TimestampSchema.optional(),
 });
 export type Member = z.infer<typeof MemberSchema>;
 
@@ -98,8 +102,20 @@ export const ChannelSchema = z.object({
   topic: z.string().default(''),
   memberIds: z.array(IdSchema).default([]),
   createdAt: TimestampSchema.optional(),
+  archivedAt: TimestampSchema.optional(),
 });
 export type Channel = z.infer<typeof ChannelSchema>;
+
+export const ConfigFieldOwnershipSchema = z.object({
+  organizationId: IdSchema,
+  entityType: z.enum(['organization', 'role', 'member', 'channel', 'provider']),
+  entityId: z.string().min(1),
+  fieldName: z.string().min(1),
+  owner: ConfigOwnerSchema.default('dashboard'),
+  allowDashboardOverride: z.boolean().default(false),
+  updatedAt: TimestampSchema.optional(),
+});
+export type ConfigFieldOwnership = z.infer<typeof ConfigFieldOwnershipSchema>;
 
 export const ConversationThreadSchema = z.object({
   id: IdSchema,

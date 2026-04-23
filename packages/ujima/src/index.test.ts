@@ -10,6 +10,7 @@ import {
   defineProvider,
   defineTool,
   loadAgentTeam,
+  validateAgentTeamConfig,
 } from './index.js';
 
 test('starter config includes the preset team shape', () => {
@@ -175,4 +176,24 @@ test('loadAgentTeam returns a ready-to-use handle', () => {
 
   expect(team.getRole('frontend-engineer')?.name).toBe('frontend-engineer');
   expect(team.getAgent('frontend-alice')?.roleName).toBe('frontend-engineer');
+});
+
+test('validateAgentTeamConfig rejects agents that reference unknown roles', () => {
+  expect(() =>
+    validateAgentTeamConfig({
+      name: 'Broken Team',
+      workspace: { root: '/tmp/ujima-org', roleScopes: {} },
+      roles: [
+        {
+          name: 'pm',
+          title: 'Product Manager',
+          instructions: ROLE_PRESETS.pm?.instructions ?? '',
+          workspaceScopes: ['.'],
+          tools: ['filesystem'],
+          channels: ['general'],
+        },
+      ],
+      agents: [createAgent('frontend-alice', 'frontend-engineer', 'direct')],
+    }),
+  ).toThrow(/unknown role/i);
 });

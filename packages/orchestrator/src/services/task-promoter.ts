@@ -67,10 +67,12 @@ export class TaskPromoterService {
   private resolveAssignee(input: TaskPromotionInput): string | null {
     if (input.assignedAgentId) {
       const member = this.repo.getMember(input.organizationId, input.assignedAgentId);
-      if (member && member.kind === 'agent') return member.id;
+      if (member && member.kind === 'agent' && !member.retiredAt) return member.id;
       return null;
     }
-    const agents = this.repo.listMembers(input.organizationId).filter((m) => m.kind === 'agent');
+    const agents = this.repo
+      .listMembers(input.organizationId)
+      .filter((m) => m.kind === 'agent' && !m.retiredAt);
     return agents[0]?.id ?? null;
   }
 

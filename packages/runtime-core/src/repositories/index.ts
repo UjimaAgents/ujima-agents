@@ -3,6 +3,7 @@ import type {
   ApprovalRequest,
   AuditEvent,
   Channel,
+  ConfigFieldOwnership,
   ConversationThread,
   Member,
   Message,
@@ -22,11 +23,17 @@ import {
 } from './bootstrap.js';
 import {
   getChannel as readChannel,
+  listAllChannels as readAllChannels,
   listChannels as readChannels,
   saveChannel as writeChannel,
   setChannelMembers as writeChannelMembers,
   type PaginatedChannels,
 } from './channels.js';
+import {
+  getConfigFieldOwnership as readConfigFieldOwnership,
+  listConfigFieldOwnership as readConfigFieldOwnershipList,
+  saveConfigFieldOwnership as writeConfigFieldOwnership,
+} from './config-ownership.js';
 import {
   getMember as readMember,
   listMembers as readMembers,
@@ -41,11 +48,14 @@ import type { SecretStore } from '../secret-store.js';
 import { createInMemorySecretStore } from '../secret-store.js';
 import {
   deleteProviderCredential as removeProviderCredential,
+  findOrganizationIdByWorkspaceSetting as readOrganizationIdByWorkspaceSetting,
+  getWorkspaceSetting as readWorkspaceSetting,
   getLatestOrganization as readLatestOrganization,
   getOrganization as readOrganization,
   getProviderCredential as readProviderCredential,
   listOrganizations as readOrganizations,
   listProviderCredentials as readProviderCredentials,
+  saveWorkspaceSetting as writeWorkspaceSetting,
   saveOrganization as writeOrganization,
   saveProviderCredential as writeProviderCredential,
 } from './organization.js';
@@ -78,6 +88,12 @@ export class Repository {
   listOrganizations = (): Organization[] => readOrganizations(this.db);
   saveOrganization = (organization: Organization): Organization =>
     writeOrganization(this.db, organization);
+  saveWorkspaceSetting = (organizationId: string, key: string, value: string): void =>
+    writeWorkspaceSetting(this.db, organizationId, key, value);
+  getWorkspaceSetting = (organizationId: string, key: string): string | null =>
+    readWorkspaceSetting(this.db, organizationId, key);
+  findOrganizationIdByWorkspaceSetting = (key: string, value: string): string | null =>
+    readOrganizationIdByWorkspaceSetting(this.db, key, value);
   saveProviderCredential = (
     organizationId: string,
     providerName: string,
@@ -101,6 +117,20 @@ export class Repository {
     return this.secrets.read(keyRef);
   };
 
+  saveConfigFieldOwnership = (ownership: ConfigFieldOwnership): ConfigFieldOwnership =>
+    writeConfigFieldOwnership(this.db, ownership);
+  getConfigFieldOwnership = (
+    organizationId: string,
+    entityType: ConfigFieldOwnership['entityType'],
+    entityId: string,
+    fieldName: string,
+  ): ConfigFieldOwnership | null =>
+    readConfigFieldOwnership(this.db, organizationId, entityType, entityId, fieldName);
+  listConfigFieldOwnership = (
+    organizationId: string,
+    entityType?: ConfigFieldOwnership['entityType'],
+  ): ConfigFieldOwnership[] => readConfigFieldOwnershipList(this.db, organizationId, entityType);
+
   saveMember = (member: Member): Member => writeMember(this.db, member);
   getMember = (organizationId: string, memberId: string): Member | null =>
     readMember(this.db, organizationId, memberId);
@@ -109,6 +139,8 @@ export class Repository {
   saveChannel = (channel: Channel): Channel => writeChannel(this.db, channel);
   getChannel = (organizationId: string, channelId: string): Channel | null =>
     readChannel(this.db, organizationId, channelId);
+  listAllChannels = (organizationId: string): Channel[] =>
+    readAllChannels(this.db, organizationId);
   listChannels = (
     organizationId: string,
     cursor?: string,

@@ -69,6 +69,21 @@ bun --cwd apps/api run typecheck
 - `src/transport/*` handles HTTP and realtime transport.
 - `test/*` covers the API runtime behavior.
 
+## Team Config Sync
+
+The daemon now treats `ujima.config.*` as a first-class source of truth for
+config-managed org state.
+
+- Resolution order is `UJIMA_TEAM_CONFIG` -> `ujima.config.ts` -> `ujima.config.js`.
+- The daemon reconciles config once at startup and watches the config directory
+  for saves to rerun reconcile automatically.
+- Reconcile updates config-owned organization fields, agents, channels, and
+  providers without deleting user-generated state.
+- Removing an agent from config sets `members.retired_at`; removing a channel
+  from config sets `channels.archived_at`.
+- Config-owned fields are tracked with per-field ownership metadata so future
+  dashboard edits can reject writes to code-owned settings.
+
 ## Dependencies
 
 The API is wired to the merged runtime packages, including `@ujima/agent-runtime`, `@ujima/api-schema`, `@ujima/client-sdk`, `@ujima/context-store`, `@ujima/event-bus`, `@ujima/llm`, `@ujima/mcp-client`, `@ujima/orchestrator`, `@ujima/permissions`, `@ujima/runtime-core`, and `@ujima/shared`.

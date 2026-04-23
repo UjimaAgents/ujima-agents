@@ -27,6 +27,12 @@ export type {
 } from './approval.js';
 export { BootstrapService } from './bootstrap.js';
 export type { BootstrapResponse } from './bootstrap.js';
+export { ConfigSyncService } from './config-sync.js';
+export type {
+  ReconcileTeamConfigInput,
+  ReconcileTeamConfigResult,
+  ReconcileTeamConfigStats,
+} from './config-sync.js';
 export { ConversationService } from './conversation.js';
 export { OnboardingService } from './onboarding.js';
 export type {

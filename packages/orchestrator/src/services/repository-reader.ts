@@ -2,6 +2,7 @@ import type {
   ApprovalRequest,
   AuditEvent,
   Channel,
+  ConfigFieldOwnership,
   ConversationThread,
   Member,
   Message,
@@ -55,6 +56,7 @@ export interface RepositoryReader {
  */
 export interface ConversationRepository extends RepositoryReader {
   getChannel(organizationId: string, channelId: string): Channel | null;
+  listAllChannels(organizationId: string): Channel[];
   listChannels(
     organizationId: string,
     cursor?: string,
@@ -99,6 +101,9 @@ export interface ApiRepository extends ConversationRepository {
   saveOrganization(organization: Organization): Organization;
   getLatestOrganization(): Organization | null;
   listOrganizations(): Organization[];
+  saveWorkspaceSetting(organizationId: string, key: string, value: string): void;
+  getWorkspaceSetting(organizationId: string, key: string): string | null;
+  findOrganizationIdByWorkspaceSetting(key: string, value: string): string | null;
   saveProviderCredential(
     organizationId: string,
     providerName: string,
@@ -106,6 +111,17 @@ export interface ApiRepository extends ConversationRepository {
   ): void;
   deleteProviderCredential(organizationId: string, providerName: string): void;
   listProviderCredentials(organizationId: string): Record<string, boolean>;
+  saveConfigFieldOwnership(ownership: ConfigFieldOwnership): ConfigFieldOwnership;
+  getConfigFieldOwnership(
+    organizationId: string,
+    entityType: ConfigFieldOwnership['entityType'],
+    entityId: string,
+    fieldName: string,
+  ): ConfigFieldOwnership | null;
+  listConfigFieldOwnership(
+    organizationId: string,
+    entityType?: ConfigFieldOwnership['entityType'],
+  ): ConfigFieldOwnership[];
   saveMember(member: Member): Member;
   getBootstrapSnapshot(): BootstrapSnapshot;
 }

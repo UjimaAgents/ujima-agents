@@ -127,3 +127,46 @@ export function deleteProviderCredential(
     'DELETE FROM provider_credentials WHERE organization_id = ? AND provider_name = ?',
   ).run(organizationId, providerName);
 }
+
+export function saveWorkspaceSetting(
+  db: DbHandle,
+  organizationId: string,
+  key: string,
+  value: string,
+): void {
+  db.prepare(
+    `INSERT INTO workspace_settings (organization_id, key, value, updated_at)
+     VALUES (?, ?, ?, ?)
+     ON CONFLICT(organization_id, key) DO UPDATE SET
+       value = excluded.value,
+       updated_at = excluded.updated_at`,
+  ).run(organizationId, key, value, now());
+}
+
+export function getWorkspaceSetting(
+  db: DbHandle,
+  organizationId: string,
+  key: string,
+): string | null {
+  const row = db
+    .prepare(
+      'SELECT value FROM workspace_settings WHERE organization_id = ? AND key = ?',
+    )
+    .get(organizationId, key) as Row | null;
+
+  return row ? rowString(row, 'value') : null;
+}
+
+export function findOrganizationIdByWorkspaceSetting(
+  db: DbHandle,
+  key: string,
+  value: string,
+): string | null {
+  const row = db
+    .prepare(
+      'SELECT organization_id FROM workspace_settings WHERE key = ? AND value = ? ORDER BY updated_at DESC LIMIT 1',
+    )
+    .get(key, value) as Row | null;
+
+  return row ? rowString(row, 'organization_id') : null;
+}

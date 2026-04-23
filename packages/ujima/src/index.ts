@@ -9,6 +9,7 @@ export {
 export {
   AgentTeam,
   createStarterAgentTeamConfig,
+  validateAgentTeamConfig,
   type AgentTeamHandle,
   type NormalizedAgentTeamConfig,
 } from './team.js';

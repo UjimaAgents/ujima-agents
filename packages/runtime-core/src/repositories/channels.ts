@@ -15,12 +15,13 @@ export function saveChannel(db: DbHandle, channel: Channel): Channel {
   const timestamp = now();
 
   db.prepare(
-    `INSERT INTO channels (id, organization_id, name, kind, topic, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO channels (id, organization_id, name, kind, topic, created_at, updated_at, archived_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
        name = excluded.name,
        kind = excluded.kind,
        topic = excluded.topic,
+       archived_at = excluded.archived_at,
        updated_at = excluded.updated_at`,
   ).run(
     payload.id,
@@ -30,6 +31,7 @@ export function saveChannel(db: DbHandle, channel: Channel): Channel {
     payload.topic ?? '',
     timestamp,
     timestamp,
+    payload.archivedAt ?? null,
   );
 
   return payload;
@@ -56,6 +58,7 @@ export function getChannel(
     topic: rowString(row, 'topic'),
     memberIds: listChannelMemberIds(db, rowString(row, 'id')),
     createdAt: typeof row.created_at === 'string' ? row.created_at : undefined,
+    archivedAt: typeof row.archived_at === 'string' ? row.archived_at : undefined,
   });
 }
 
@@ -92,6 +95,7 @@ export function listChannels(
       topic: rowString(row, 'topic'),
       memberIds: listChannelMemberIds(db, rowString(row, 'id')),
       createdAt: typeof row.created_at === 'string' ? row.created_at : undefined,
+      archivedAt: typeof row.archived_at === 'string' ? row.archived_at : undefined,
     }),
   );
 
@@ -99,6 +103,25 @@ export function listChannels(
   const nextCursor = tail?.createdAt;
 
   return { data, hasMore, nextCursor };
+}
+
+export function listAllChannels(db: DbHandle, organizationId: string): Channel[] {
+  const rows = db
+    .prepare('SELECT * FROM channels WHERE organization_id = ? ORDER BY created_at DESC, id DESC')
+    .all(organizationId) as Row[];
+
+  return rows.map((row) =>
+    ChannelSchema.parse({
+      id: rowString(row, 'id'),
+      organizationId: rowString(row, 'organization_id'),
+      name: rowString(row, 'name'),
+      kind: rowString(row, 'kind'),
+      topic: rowString(row, 'topic'),
+      memberIds: listChannelMemberIds(db, rowString(row, 'id')),
+      createdAt: typeof row.created_at === 'string' ? row.created_at : undefined,
+      archivedAt: typeof row.archived_at === 'string' ? row.archived_at : undefined,
+    }),
+  );
 }
 
 export function setChannelMembers(db: DbHandle, channelId: string, memberIds: string[]): void {
