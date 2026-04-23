@@ -421,5 +421,8 @@ describe('team config reconcile', () => {
         assignedAgentId: 'frontend-alice',
       }),
     ).rejects.toThrow(/no agent member available/i);
+
+    const retiredAgent = repo.getMember(first.organization.id, 'frontend-alice');
+    expect(retiredAgent?.retiredAt).toBeTruthy();
   });
 });

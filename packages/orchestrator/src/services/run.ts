@@ -131,6 +131,10 @@ export class RunService {
       throw new Error(`Member not found: ${run.agentId}`);
     }
 
+    if (member.retiredAt) {
+      return this.failRun(run, `Agent retired: ${run.agentId}`);
+    }
+
     const role = team.getRole(member.roleName);
     if (!role) {
       throw new Error(`Role not found: ${member.roleName}`);
