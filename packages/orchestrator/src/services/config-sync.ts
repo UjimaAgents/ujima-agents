@@ -138,7 +138,7 @@ export class ConfigSyncService {
 
     const existingMembers = this.repo.listMembers(organizationId);
     const existingMembersById = new Map(existingMembers.map((member) => [member.id, member]));
-    const existingChannels = this.listAllChannels(organizationId);
+    const existingChannels = this.repo.listAllChannels(organizationId);
     const existingChannelsById = new Map(existingChannels.map((channel) => [channel.id, channel]));
     const ownership = this.repo.listConfigFieldOwnership(organizationId);
     const configManagedMemberIds = ownershipEntityIds(ownership, 'member');
@@ -301,7 +301,7 @@ export class ConfigSyncService {
     return {
       organization,
       members: this.repo.listMembers(organizationId),
-      channels: this.listAllChannels(organizationId),
+      channels: this.repo.listAllChannels(organizationId),
       team: summarizeTeam(input.team),
       stats,
     };
@@ -326,21 +326,5 @@ export class ConfigSyncService {
     }
 
     return this.repo.getLatestOrganization();
-  }
-
-  private listAllChannels(organizationId: string): Channel[] {
-    const channels: Channel[] = [];
-    let cursor: string | undefined;
-
-    do {
-      const page = this.repo.listChannels(organizationId, cursor, 100);
-      channels.push(...page.data);
-      cursor = page.nextCursor;
-      if (!page.hasMore) {
-        break;
-      }
-    } while (cursor);
-
-    return channels;
   }
 }
