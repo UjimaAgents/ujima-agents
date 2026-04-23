@@ -3,7 +3,7 @@ import type { AgentDef, TaskDef, UjimaEvent } from '@ujima/shared';
 import { openDb, type UjimaDb } from '@ujima/context-store';
 import { createLocalEventBus, type EventBus } from '@ujima/event-bus';
 import { createPermissionMiddleware } from '@ujima/permissions';
-import { createMockProvider, textTurn, toolTurn } from '@ujima/llm';
+import { createMockProvider, textTurn, toolTurn } from '@ujima/llm/legacy';
 import { runAgent } from './shell';
 import { makeFakeMCPConnection } from './test-helpers';
 

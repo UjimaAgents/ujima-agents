@@ -9,7 +9,7 @@ import {
   toolTurn,
   type LLMMessage,
   type LLMProvider,
-} from '@ujima/llm';
+} from '@ujima/llm/legacy';
 import { runConcurrent } from './concurrent';
 import { makeFakeMCPConnection } from './test-helpers';
 

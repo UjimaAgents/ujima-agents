@@ -1,54 +1,72 @@
-import { createAnthropicProvider } from './anthropic';
-import { createOpenAICompatProvider } from './openai-compat';
-import { createOllamaProvider } from './ollama';
-import type { LLMProvider, ProviderId } from './types';
-import { LLMError } from './types';
+import { createAnthropic } from '@ai-sdk/anthropic';
+import { createGoogleGenerativeAI } from '@ai-sdk/google';
+import { createOpenAI } from '@ai-sdk/openai';
+import type { LanguageModel } from 'ai';
+import { LLMError, PROVIDER_KINDS, type ProviderKind } from './types.js';
 
-export interface ProviderConfig {
-  anthropicApiKey?: string;
-  openaiApiKey?: string;
-  openaiBaseUrl?: string;
-  ollamaBaseUrl?: string;
-  vscodeLmProvider?: LLMProvider;
+const DEFAULT_OLLAMA_BASE_URL = 'http://127.0.0.1:11434/v1';
+const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
+
+export interface SelectLanguageModelInput {
+  /** Provider kind. See {@link ProviderKind}. */
+  kind: ProviderKind;
+  /** Model id (e.g. `claude-opus-4-7`, `gpt-4o-mini`, `anthropic/claude-opus-4-7`). */
+  modelId: string;
+  /** API key. Required for all kinds except `ollama` (which only uses `baseUrl`). */
+  apiKey?: string;
+  /** Custom base URL. For `openrouter` defaults to the public router; for `ollama` defaults to `http://127.0.0.1:11434/v1`. */
+  baseUrl?: string;
 }
 
-export interface SelectProviderOptions {
-  order?: ProviderId[];
-  config?: ProviderConfig;
-  env?: NodeJS.ProcessEnv;
-}
-
-const DEFAULT_ORDER: ProviderId[] = ['vscode-lm', 'anthropic', 'openai-compat', 'ollama'];
-
-export function selectProvider(options: SelectProviderOptions = {}): LLMProvider {
-  const { order = DEFAULT_ORDER, config = {}, env = process.env } = options;
-  for (const id of order) {
-    const p = tryCreate(id, config, env);
-    if (p) return p;
+/**
+ * Resolve a provider kind + model id to an AI SDK {@link LanguageModel}.
+ *
+ * This is the single canonical entrypoint for LLM selection. Every code path
+ * that runs an agent turn — the `/api/runs` AiService, the legacy task runner
+ * under `engine='ai-sdk'`, the conflict referee, the task promoter — goes
+ * through here.
+ *
+ * Adding a new provider is one branch + one `PROVIDER_KINDS` entry; if the
+ * provider is OpenAI-compatible it's a base-URL-only change with zero new
+ * dependencies.
+ */
+export function selectLanguageModel(input: SelectLanguageModelInput): LanguageModel {
+  if (!PROVIDER_KINDS.includes(input.kind)) {
+    throw new LLMError('unsupported_kind', `Unsupported provider kind "${input.kind}"`);
   }
-  throw new LLMError(
-    'not_configured',
-    `No LLM provider available (tried: ${order.join(', ')}). Set ANTHROPIC_API_KEY, OPENAI_API_KEY, or run Ollama locally.`,
-  );
-}
 
-function tryCreate(id: ProviderId, config: ProviderConfig, env: NodeJS.ProcessEnv): LLMProvider | undefined {
-  switch (id) {
-    case 'vscode-lm':
-      return config.vscodeLmProvider;
-    case 'anthropic': {
-      const key = config.anthropicApiKey ?? env.ANTHROPIC_API_KEY;
-      if (!key) return undefined;
-      return createAnthropicProvider({ apiKey: key });
-    }
-    case 'openai-compat': {
-      const key = config.openaiApiKey ?? env.OPENAI_API_KEY;
-      if (!key) return undefined;
-      return createOpenAICompatProvider({ apiKey: key, baseUrl: config.openaiBaseUrl ?? env.OPENAI_BASE_URL });
-    }
-    case 'ollama':
-      return createOllamaProvider({ baseUrl: config.ollamaBaseUrl ?? env.OLLAMA_BASE_URL });
-    case 'mock':
-      return undefined;
+  if (input.kind === 'anthropic') {
+    if (!input.apiKey) throw new LLMError('not_configured', 'anthropic provider requires apiKey');
+    return createAnthropic({ apiKey: input.apiKey }).messages(input.modelId);
   }
+
+  if (input.kind === 'openai') {
+    if (!input.apiKey) throw new LLMError('not_configured', 'openai provider requires apiKey');
+    return createOpenAI({ apiKey: input.apiKey }).responses(input.modelId);
+  }
+
+  if (input.kind === 'google') {
+    if (!input.apiKey) throw new LLMError('not_configured', 'google provider requires apiKey');
+    return createGoogleGenerativeAI({ apiKey: input.apiKey }).languageModel(input.modelId);
+  }
+
+  if (input.kind === 'openrouter') {
+    if (!input.apiKey) throw new LLMError('not_configured', 'openrouter provider requires apiKey');
+    return createOpenAI({
+      apiKey: input.apiKey,
+      baseURL: input.baseUrl ?? OPENROUTER_BASE_URL,
+    }).chat(input.modelId);
+  }
+
+  if (input.kind === 'ollama') {
+    // Ollama exposes an OpenAI-compatible endpoint at /v1; key is irrelevant
+    // but the SDK requires a non-empty string.
+    return createOpenAI({
+      apiKey: input.apiKey ?? 'ollama',
+      baseURL: input.baseUrl ?? DEFAULT_OLLAMA_BASE_URL,
+    }).chat(input.modelId);
+  }
+
+  const exhaustive: never = input.kind;
+  throw new LLMError('unsupported_kind', `unreachable: ${String(exhaustive)}`);
 }

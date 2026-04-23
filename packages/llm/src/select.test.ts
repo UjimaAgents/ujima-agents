@@ -1,25 +1,75 @@
-import { describe, expect, it } from 'vitest';
-import { selectProvider } from './select';
-import { LLMError } from './types';
+import { describe, expect, test } from 'vitest';
+import { LLMError, PROVIDER_KINDS, selectLanguageModel } from './index';
 
-describe('selectProvider', () => {
-  it('prefers vscode-lm when provided in config', () => {
-    const fake = { id: 'vscode-lm' as const, stream: async function* () { /* empty */ } };
-    const provider = selectProvider({ config: { vscodeLmProvider: fake }, env: {} });
-    expect(provider.id).toBe('vscode-lm');
+describe('selectLanguageModel', () => {
+  test('exposes the expected provider kinds', () => {
+    expect([...PROVIDER_KINDS]).toEqual(['anthropic', 'openai', 'google', 'openrouter', 'ollama']);
   });
 
-  it('falls back to anthropic when key is present', () => {
-    const provider = selectProvider({ env: { ANTHROPIC_API_KEY: 'sk-test' } });
-    expect(provider.id).toBe('anthropic');
+  test('anthropic resolves without network', () => {
+    const model = selectLanguageModel({
+      kind: 'anthropic',
+      modelId: 'claude-opus-4-7',
+      apiKey: 'sk-ant-test',
+    });
+    expect(model).toBeDefined();
+    expect(typeof model).toBe('object');
   });
 
-  it('falls through to ollama when no keys are present', () => {
-    const provider = selectProvider({ env: {} });
-    expect(provider.id).toBe('ollama');
+  test('openai resolves without network', () => {
+    const model = selectLanguageModel({
+      kind: 'openai',
+      modelId: 'gpt-4o-mini',
+      apiKey: 'sk-test',
+    });
+    expect(model).toBeDefined();
   });
 
-  it('throws when the order excludes everything configured', () => {
-    expect(() => selectProvider({ order: ['anthropic'], env: {} })).toThrow(LLMError);
+  test('google resolves without network', () => {
+    const model = selectLanguageModel({
+      kind: 'google',
+      modelId: 'gemini-1.5-pro',
+      apiKey: 'AIza-test',
+    });
+    expect(model).toBeDefined();
+  });
+
+  test('openrouter resolves via OpenAI-compatible base URL (no new SDK)', () => {
+    const model = selectLanguageModel({
+      kind: 'openrouter',
+      modelId: 'anthropic/claude-opus-4-7',
+      apiKey: 'sk-or-test',
+    });
+    expect(model).toBeDefined();
+  });
+
+  test('ollama resolves with no api key and default base URL', () => {
+    const model = selectLanguageModel({
+      kind: 'ollama',
+      modelId: 'llama3.1',
+    });
+    expect(model).toBeDefined();
+  });
+
+  test('ollama accepts a custom base URL', () => {
+    const model = selectLanguageModel({
+      kind: 'ollama',
+      modelId: 'llama3.1',
+      baseUrl: 'http://192.168.0.10:11434/v1',
+    });
+    expect(model).toBeDefined();
+  });
+
+  test('anthropic/openai/google/openrouter all require apiKey', () => {
+    for (const kind of ['anthropic', 'openai', 'google', 'openrouter'] as const) {
+      expect(() => selectLanguageModel({ kind, modelId: 'x' })).toThrow(LLMError);
+    }
+  });
+
+  test('unsupported kind throws LLMError', () => {
+    expect(() =>
+      // @ts-expect-error — testing runtime guard
+      selectLanguageModel({ kind: 'palm', modelId: 'x' }),
+    ).toThrow(LLMError);
   });
 });

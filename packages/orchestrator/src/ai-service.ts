@@ -1,9 +1,7 @@
-import { createAnthropic } from '@ai-sdk/anthropic';
-import { createGoogleGenerativeAI } from '@ai-sdk/google';
-import { createOpenAI } from '@ai-sdk/openai';
-import { generateText, tool, type LanguageModel, type ModelMessage, type ToolSet } from 'ai';
+import { generateText, tool, type ModelMessage, type ToolSet } from 'ai';
 import { z } from 'zod';
-import { buildAgentSystemPrompt, type AgentTeamHandle } from '@ujima/framework';
+import { buildAgentSystemPrompt, type AgentTeamHandle, type ProviderKind } from '@ujima/framework';
+import { selectLanguageModel } from '@ujima/llm';
 import type { Message } from '@ujima/shared';
 import type { RepositoryReader } from './services/repository-reader.js';
 import type { TeamStore } from './services/team-store.js';
@@ -18,6 +16,29 @@ const GenericToolInvocationSchema = z.object({
   input: z.record(z.string(), z.unknown()).default({}),
 });
 
+const SUPPORTED_PROVIDER_KINDS: ReadonlySet<ProviderKind> = new Set([
+  'anthropic',
+  'openai',
+  'google',
+  'openrouter',
+  'ollama',
+]);
+
+function resolveProviderKind(
+  providerName: string,
+  declared: ProviderKind | undefined,
+): ProviderKind {
+  if (declared) return declared;
+  // Back-compat: fall back to the team's provider map key when `kind` isn't
+  // declared on `ProviderConfig`. Only works for the three legacy names.
+  if (providerName === 'openai' || providerName === 'anthropic' || providerName === 'google') {
+    return providerName;
+  }
+  throw new Error(
+    `Provider "${providerName}" has no \`kind\` declared. Add \`kind: 'anthropic'|'openai'|'google'|'openrouter'|'ollama'\` to the provider config.`,
+  );
+}
+
 function toModelMessages(messages: Message[]): ModelMessage[] {
   return messages.map((message) => ({
     role:
@@ -30,21 +51,10 @@ function toModelMessages(messages: Message[]): ModelMessage[] {
   }));
 }
 
-function resolveModel(providerName: string, apiKey: string, modelId: string): LanguageModel {
-  if (providerName === 'openai') {
-    return createOpenAI({ apiKey }).responses(modelId as never);
-  }
-
-  if (providerName === 'anthropic') {
-    return createAnthropic({ apiKey }).messages(modelId as never);
-  }
-
-  if (providerName === 'google') {
-    return createGoogleGenerativeAI({ apiKey }).languageModel(modelId as never);
-  }
-
-  throw new Error(`Unsupported provider "${providerName}"`);
-}
+// Resolver now delegates to the canonical `@ujima/llm` surface so every
+// AI-SDK-driven code path (this `/api/runs` service, the upcoming
+// agent-runtime `ai-sdk-loop`, the conflict referee, the task promoter)
+// agrees on the provider kind → model wiring.
 
 export interface GenerateRunReplyInput {
   organizationId: string;
@@ -104,7 +114,16 @@ export class AiService {
       throw new Error(`Provider key missing for "${role.provider}"`);
     }
 
-    const model = resolveModel(role.provider, apiKey, modelId);
+    const kind = resolveProviderKind(role.provider, provider.kind);
+    if (!SUPPORTED_PROVIDER_KINDS.has(kind)) {
+      throw new Error(`Unsupported provider kind "${kind}"`);
+    }
+    const model = selectLanguageModel({
+      kind,
+      modelId,
+      apiKey,
+      baseUrl: provider.baseUrl,
+    });
 
     const toolDefs = Object.fromEntries(
       role.tools.map((toolId) => [toolId, this.buildToolDefinition(input, toolId, team)]),
