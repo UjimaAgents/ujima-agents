@@ -59,6 +59,7 @@ const ROLE_CONFIG_FIELDS = [
 const MEMBER_CONFIG_FIELDS = ['name', 'kind', 'roleName'] as const;
 const CHANNEL_CONFIG_FIELDS = ['name', 'kind', 'topic'] as const;
 const PROVIDER_CONFIG_FIELDS = ['kind', 'defaultModel', 'baseUrl', 'models'] as const;
+const CONFIG_PATH_SETTING_KEY = 'config_sync.path';
 
 function channelId(channel: { id?: string; name: string }): string {
   return channel.id ?? channel.name;
@@ -104,18 +105,20 @@ export class ConfigSyncService {
     configPath: string,
     organizationId?: string,
   ): Promise<ReconcileTeamConfigResult> {
+    const resolvedConfigPath = resolve(configPath);
     const team = await loadAgentTeamFromFile(configPath);
     return this.reconcileTeamConfig({
       team,
       organizationId,
-      configPath: resolve(configPath),
+      configPath: resolvedConfigPath,
     });
   }
 
   reconcileTeamConfig(input: ReconcileTeamConfigInput): ReconcileTeamConfigResult {
-    const existingOrganization = input.organizationId
-      ? this.repo.getOrganization(input.organizationId)
-      : this.repo.getLatestOrganization();
+    const existingOrganization = this.resolveTargetOrganization(
+      input.organizationId,
+      input.configPath,
+    );
     const organizationId = existingOrganization?.id ?? randomUUID();
 
     const organization = OrganizationSchema.parse({
@@ -135,7 +138,7 @@ export class ConfigSyncService {
 
     const existingMembers = this.repo.listMembers(organizationId);
     const existingMembersById = new Map(existingMembers.map((member) => [member.id, member]));
-    const existingChannels = this.repo.listChannels(organizationId).data;
+    const existingChannels = this.listAllChannels(organizationId);
     const existingChannelsById = new Map(existingChannels.map((channel) => [channel.id, channel]));
     const ownership = this.repo.listConfigFieldOwnership(organizationId);
     const configManagedMemberIds = ownershipEntityIds(ownership, 'member');
@@ -269,6 +272,13 @@ export class ConfigSyncService {
       stats.providersRetired += 1;
     }
 
+    if (input.configPath) {
+      // Persist the config-file -> organization binding so a later save or
+      // daemon restart reconciles the same org instead of whichever row most
+      // recently updated the organizations table.
+      this.repo.saveWorkspaceSetting(organizationId, CONFIG_PATH_SETTING_KEY, input.configPath);
+    }
+
     this.teamStore.setTeam(input.team);
 
     this.repo.saveAuditEvent(
@@ -291,9 +301,46 @@ export class ConfigSyncService {
     return {
       organization,
       members: this.repo.listMembers(organizationId),
-      channels: this.repo.listChannels(organizationId).data,
+      channels: this.listAllChannels(organizationId),
       team: summarizeTeam(input.team),
       stats,
     };
+  }
+
+  private resolveTargetOrganization(
+    explicitOrganizationId?: string,
+    configPath?: string,
+  ): Organization | null {
+    if (explicitOrganizationId) {
+      return this.repo.getOrganization(explicitOrganizationId);
+    }
+
+    if (configPath) {
+      const boundOrganizationId = this.repo.findOrganizationIdByWorkspaceSetting(
+        CONFIG_PATH_SETTING_KEY,
+        configPath,
+      );
+      if (boundOrganizationId) {
+        return this.repo.getOrganization(boundOrganizationId);
+      }
+    }
+
+    return this.repo.getLatestOrganization();
+  }
+
+  private listAllChannels(organizationId: string): Channel[] {
+    const channels: Channel[] = [];
+    let cursor: string | undefined;
+
+    do {
+      const page = this.repo.listChannels(organizationId, cursor, 100);
+      channels.push(...page.data);
+      cursor = page.nextCursor;
+      if (!page.hasMore) {
+        break;
+      }
+    } while (cursor);
+
+    return channels;
   }
 }

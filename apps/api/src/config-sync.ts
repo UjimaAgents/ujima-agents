@@ -44,6 +44,7 @@ export async function startTeamConfigWatcher(options: {
 }): Promise<TeamConfigWatcher> {
   const logger = options.logger.child({ component: 'config-sync' });
   const syncService = new ConfigSyncService(options.repo, options.teamStore);
+  let boundOrganizationId: string | undefined;
 
   const runSync = async (): Promise<void> => {
     const configPath = resolveTeamConfigPath();
@@ -53,7 +54,11 @@ export async function startTeamConfigWatcher(options: {
     }
 
     try {
-      const result = await syncService.loadAndReconcileFromFile(configPath);
+      const result = await syncService.loadAndReconcileFromFile(
+        configPath,
+        boundOrganizationId,
+      );
+      boundOrganizationId = result.organization.id;
       logger.info('team config reconciled', {
         configPath,
         organizationId: result.organization.id,

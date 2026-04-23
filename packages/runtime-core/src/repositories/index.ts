@@ -47,11 +47,14 @@ import type { SecretStore } from '../secret-store.js';
 import { createInMemorySecretStore } from '../secret-store.js';
 import {
   deleteProviderCredential as removeProviderCredential,
+  findOrganizationIdByWorkspaceSetting as readOrganizationIdByWorkspaceSetting,
+  getWorkspaceSetting as readWorkspaceSetting,
   getLatestOrganization as readLatestOrganization,
   getOrganization as readOrganization,
   getProviderCredential as readProviderCredential,
   listOrganizations as readOrganizations,
   listProviderCredentials as readProviderCredentials,
+  saveWorkspaceSetting as writeWorkspaceSetting,
   saveOrganization as writeOrganization,
   saveProviderCredential as writeProviderCredential,
 } from './organization.js';
@@ -84,6 +87,12 @@ export class Repository {
   listOrganizations = (): Organization[] => readOrganizations(this.db);
   saveOrganization = (organization: Organization): Organization =>
     writeOrganization(this.db, organization);
+  saveWorkspaceSetting = (organizationId: string, key: string, value: string): void =>
+    writeWorkspaceSetting(this.db, organizationId, key, value);
+  getWorkspaceSetting = (organizationId: string, key: string): string | null =>
+    readWorkspaceSetting(this.db, organizationId, key);
+  findOrganizationIdByWorkspaceSetting = (key: string, value: string): string | null =>
+    readOrganizationIdByWorkspaceSetting(this.db, key, value);
   saveProviderCredential = (
     organizationId: string,
     providerName: string,
