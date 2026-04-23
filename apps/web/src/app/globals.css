@@ -1,8 +1,14 @@
 @import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
 
 :root {
   --background: #ffffff;
   --foreground: #171717;
+}
+
+.dark {
+  --background: #09090b;
+  --foreground: #f4f4f5;
 }
 
 @theme inline {
@@ -12,15 +18,96 @@
   --font-mono: "SFMono-Regular", "Consolas", "Liberation Mono", monospace;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+}
+
+body,
+section,
+article,
+header,
+footer,
+div,
+a,
+button {
+  transition:
+    background-color 180ms ease,
+    border-color 180ms ease,
+    color 180ms ease,
+    box-shadow 180ms ease;
+}
+
+.tech-grid {
+  position: relative;
+}
+
+.tech-grid::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  background-image:
+    linear-gradient(to right, rgba(99, 102, 241, 0.08) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(99, 102, 241, 0.06) 1px, transparent 1px);
+  background-size: 22px 22px;
+  opacity: 0.55;
+}
+
+.dark .tech-grid::before {
+  background-image:
+    linear-gradient(to right, rgba(139, 92, 246, 0.16) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(56, 189, 248, 0.1) 1px, transparent 1px);
+  opacity: 0.8;
+}
+
+.surface-panel {
+  background: #ffffff;
+}
+
+.surface-subpanel {
+  background: #fafafa;
+}
+
+.surface-hero {
+  background:
+    radial-gradient(circle at top left, rgba(99, 102, 241, 0.1), transparent 28%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.95), rgba(244, 244, 245, 0.92));
+}
+
+.surface-visual {
+  background: #f5f7fb;
+}
+
+.dark .surface-panel {
+  background:
+    linear-gradient(180deg, rgba(17, 24, 39, 0.92), rgba(8, 12, 24, 0.94));
+  border-color: rgba(255, 255, 255, 0.12);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.02),
+    0 24px 60px rgba(0, 0, 0, 0.32);
+}
+
+.dark .surface-subpanel {
+  background:
+    linear-gradient(180deg, rgba(10, 14, 29, 0.96), rgba(7, 10, 21, 0.96));
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+.dark .surface-hero {
+  background:
+    radial-gradient(circle at top left, rgba(99, 102, 241, 0.2), transparent 28%),
+    linear-gradient(180deg, rgba(14, 19, 37, 0.96), rgba(6, 9, 20, 0.98));
+  border-color: rgba(255, 255, 255, 0.12);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.03),
+    0 24px 80px rgba(0, 0, 0, 0.38);
+}
+
+.dark .surface-visual {
+  background:
+    linear-gradient(180deg, rgba(12, 16, 33, 0.96), rgba(8, 12, 25, 0.98));
+  border-color: rgba(255, 255, 255, 0.12);
 }
