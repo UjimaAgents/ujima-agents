@@ -177,6 +177,8 @@ export class ConfigSyncService {
       if (!configManagedMemberIds.has(member.id)) continue;
       if (activeAgentIds.has(member.id)) continue;
 
+      // Reconcile never deletes config-managed agents; retiring preserves the
+      // historical references that runs, messages, and audits already hold.
       this.repo.saveMember({
         ...member,
         retiredAt: member.retiredAt ?? now,
@@ -230,6 +232,8 @@ export class ConfigSyncService {
       if (!configManagedChannelIds.has(channel.id)) continue;
       if (activeChannelIds.has(channel.id)) continue;
 
+      // Archive instead of delete so the channel's history remains readable
+      // even after config stops declaring it.
       this.repo.saveChannel({
         ...channel,
         archivedAt: channel.archivedAt ?? now,
