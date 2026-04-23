@@ -85,6 +85,8 @@ export async function startTeamConfigWatcher(options: {
       if (timer) {
         clearTimeout(timer);
       }
+      // Editors often emit multiple fs events for a single save. Debouncing
+      // keeps the reconcile loop from reloading the same config repeatedly.
       timer = setTimeout(() => {
         void runSync();
       }, 50);
