@@ -5,7 +5,7 @@ import type {
   LLMProvider,
   LLMStreamDelta,
   LLMToolSpec,
-} from '@ujima/llm';
+} from '@ujima/llm/legacy';
 import type { MCPConnection, ToolInfo } from '@ujima/mcp-client';
 import type { PermissionMiddleware } from '@ujima/permissions';
 import type { AuditLog } from '@ujima/context-store';

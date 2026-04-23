@@ -3,7 +3,7 @@ import type { AgentDef, TaskDef, TeamDef, UjimaEvent } from '@ujima/shared';
 import { openDb, type UjimaDb } from '@ujima/context-store';
 import { createLocalEventBus, type EventBus } from '@ujima/event-bus';
 import { createPermissionMiddleware } from '@ujima/permissions';
-import { createMockProvider, textTurn, toolTurn, type LLMProvider } from '@ujima/llm';
+import { createMockProvider, textTurn, toolTurn, type LLMProvider } from '@ujima/llm/legacy';
 import { runTask, topoSortWaves } from './run-task';
 import { ORCHESTRATOR_EVENT_CHANNEL } from './types';
 import { makeFakeMCPConnection } from './test-helpers';

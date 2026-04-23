@@ -11,7 +11,7 @@ import {
   Repository,
 } from '@ujima/runtime-core';
 import type { AgentDef, MCPDef, TeamDef } from '@ujima/shared';
-import type { LLMProvider } from '@ujima/llm';
+import type { LLMProvider } from '@ujima/llm/legacy';
 import {
   createApiServices,
   createTeamStore,

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createRuntimeHost } from './runtime-host';
 import { createBufferLogger } from './logger';
-import type { LLMProvider } from '@ujima/llm';
+import type { LLMProvider } from '@ujima/llm/legacy';
 
 function stubProvider(): LLMProvider {
   throw new Error('no provider configured');

@@ -19,7 +19,7 @@ import {
   selectProvider,
   textTurn,
   type LLMProvider,
-} from '@ujima/llm';
+} from '@ujima/llm/legacy';
 import { runTask, type SessionHandle } from '@ujima/orchestrator';
 import type { SessionController } from './session-controller';
 import { createVscodeLmProvider } from './vscode-lm-provider';
