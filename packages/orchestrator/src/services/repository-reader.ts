@@ -2,6 +2,7 @@ import type {
   ApprovalRequest,
   AuditEvent,
   Channel,
+  ConfigFieldOwnership,
   ConversationThread,
   Member,
   Message,
@@ -106,6 +107,17 @@ export interface ApiRepository extends ConversationRepository {
   ): void;
   deleteProviderCredential(organizationId: string, providerName: string): void;
   listProviderCredentials(organizationId: string): Record<string, boolean>;
+  saveConfigFieldOwnership(ownership: ConfigFieldOwnership): ConfigFieldOwnership;
+  getConfigFieldOwnership(
+    organizationId: string,
+    entityType: ConfigFieldOwnership['entityType'],
+    entityId: string,
+    fieldName: string,
+  ): ConfigFieldOwnership | null;
+  listConfigFieldOwnership(
+    organizationId: string,
+    entityType?: ConfigFieldOwnership['entityType'],
+  ): ConfigFieldOwnership[];
   saveMember(member: Member): Member;
   getBootstrapSnapshot(): BootstrapSnapshot;
 }

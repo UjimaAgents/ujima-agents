@@ -206,6 +206,10 @@ export function normalizeAgentTeamConfig(config: unknown): NormalizedAgentTeamCo
   };
 }
 
+export function validateAgentTeamConfig(config: unknown): NormalizedAgentTeamConfig {
+  return normalizeAgentTeamConfig(config);
+}
+
 export function AgentTeam(config: AgentTeamConfig | Record<string, unknown>): AgentTeamHandle {
   const normalized = normalizeAgentTeamConfig(config);
 

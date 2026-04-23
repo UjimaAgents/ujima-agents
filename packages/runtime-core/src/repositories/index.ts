@@ -3,6 +3,7 @@ import type {
   ApprovalRequest,
   AuditEvent,
   Channel,
+  ConfigFieldOwnership,
   ConversationThread,
   Member,
   Message,
@@ -27,6 +28,11 @@ import {
   setChannelMembers as writeChannelMembers,
   type PaginatedChannels,
 } from './channels.js';
+import {
+  getConfigFieldOwnership as readConfigFieldOwnership,
+  listConfigFieldOwnership as readConfigFieldOwnershipList,
+  saveConfigFieldOwnership as writeConfigFieldOwnership,
+} from './config-ownership.js';
 import {
   getMember as readMember,
   listMembers as readMembers,
@@ -100,6 +106,20 @@ export class Repository {
     if (!keyRef) return null;
     return this.secrets.read(keyRef);
   };
+
+  saveConfigFieldOwnership = (ownership: ConfigFieldOwnership): ConfigFieldOwnership =>
+    writeConfigFieldOwnership(this.db, ownership);
+  getConfigFieldOwnership = (
+    organizationId: string,
+    entityType: ConfigFieldOwnership['entityType'],
+    entityId: string,
+    fieldName: string,
+  ): ConfigFieldOwnership | null =>
+    readConfigFieldOwnership(this.db, organizationId, entityType, entityId, fieldName);
+  listConfigFieldOwnership = (
+    organizationId: string,
+    entityType?: ConfigFieldOwnership['entityType'],
+  ): ConfigFieldOwnership[] => readConfigFieldOwnershipList(this.db, organizationId, entityType);
 
   saveMember = (member: Member): Member => writeMember(this.db, member);
   getMember = (organizationId: string, memberId: string): Member | null =>
