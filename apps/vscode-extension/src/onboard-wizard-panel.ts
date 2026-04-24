@@ -15,7 +15,7 @@ import {
   listRegistry,
   type PermissionPreset,
 } from '@ujima/mcp-client';
-import { createMockProvider, selectProvider, textTurn, type LLMProvider } from '@ujima/llm';
+import { createMockProvider, selectProvider, textTurn, type LLMProvider } from '@ujima/llm/legacy';
 import { detectAvailableModels } from './model-detection';
 import { createVscodeLmProvider } from './vscode-lm-provider';
 import type { SessionController } from './session-controller';

@@ -320,6 +320,26 @@ const MIGRATIONS: { id: string; up: string }[] = [
         ON provider_bindings(organization_id, provider);
     `,
   },
+  {
+    id: '005_config_reconcile',
+    up: `
+      ALTER TABLE members ADD COLUMN retired_at TEXT;
+      ALTER TABLE channels ADD COLUMN archived_at TEXT;
+
+      CREATE TABLE IF NOT EXISTS config_field_ownership (
+        organization_id          TEXT NOT NULL,
+        entity_type              TEXT NOT NULL,
+        entity_id                TEXT NOT NULL,
+        field_name               TEXT NOT NULL,
+        owner                    TEXT NOT NULL DEFAULT 'dashboard',
+        allow_dashboard_override INTEGER NOT NULL DEFAULT 0,
+        updated_at               TEXT NOT NULL,
+        PRIMARY KEY (organization_id, entity_type, entity_id, field_name)
+      );
+      CREATE INDEX IF NOT EXISTS idx_config_field_ownership_org
+        ON config_field_ownership(organization_id, entity_type, entity_id);
+    `,
+  },
 ];
 
 export interface DbOptions {

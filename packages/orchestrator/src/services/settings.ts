@@ -196,7 +196,25 @@ export class SettingsService {
       throw new Error(`Organization not found: ${input.organizationId}`);
     }
 
+    if (
+      input.organizationName !== undefined &&
+      this.isConfigOwnedField(input.organizationId, 'organization', input.organizationId, 'name')
+    ) {
+      throw new Error('Organization name is managed by config and cannot be edited here');
+    }
+
     if (input.organizationChart) {
+      if (
+        this.isConfigOwnedField(
+          input.organizationId,
+          'organization',
+          input.organizationId,
+          'organizationChart',
+        )
+      ) {
+        throw new Error('Organization chart is managed by config and cannot be edited here');
+      }
+
       const members = this.repo.listMembers(input.organizationId);
       const owner = members.find((m) => m.kind === 'human' && m.roleName === 'owner');
       if (!owner) {
@@ -232,5 +250,20 @@ export class SettingsService {
     if (!this.repo.getOrganization(organizationId)) {
       throw new Error(`Organization not found: ${organizationId}`);
     }
+  }
+
+  private isConfigOwnedField(
+    organizationId: string,
+    entityType: Parameters<ApiRepository['getConfigFieldOwnership']>[1],
+    entityId: string,
+    fieldName: string,
+  ): boolean {
+    const ownership = this.repo.getConfigFieldOwnership(
+      organizationId,
+      entityType,
+      entityId,
+      fieldName,
+    );
+    return ownership?.owner === 'config' && !ownership.allowDashboardOverride;
   }
 }

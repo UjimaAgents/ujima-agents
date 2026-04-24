@@ -24,6 +24,7 @@ export type { GenerateRunReplyInput } from './ai-service.js';
 export {
   ApprovalService,
   BootstrapService,
+  ConfigSyncService,
   ConversationService,
   OnboardingService,
   RunService,
@@ -58,6 +59,9 @@ export type {
   PaginatedRuns,
   PermissionContextBuilder,
   RealtimeService,
+  ReconcileTeamConfigInput,
+  ReconcileTeamConfigResult,
+  ReconcileTeamConfigStats,
   RepositoryReader,
   ResumeRun,
   TaskPromotionInput,

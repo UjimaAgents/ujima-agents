@@ -6,7 +6,7 @@ import type {
   LLMStreamDelta,
   LLMStreamInput,
   LLMToolSpec,
-} from '@ujima/llm';
+} from '@ujima/llm/legacy';
 
 export interface VscodeLmProviderOptions {
   vendor?: string;
