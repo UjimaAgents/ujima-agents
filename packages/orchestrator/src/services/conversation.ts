@@ -10,7 +10,6 @@ import {
 } from '@ujima/shared';
 import type { RealtimeService } from './context.js';
 import type { ConversationRepository } from './repository-reader.js';
-import { requireOrganizationWorkspaceRoot } from './workspace-root.js';
 
 export class ConversationService {
   constructor(
@@ -72,7 +71,7 @@ export class ConversationService {
     content: string;
     mentions?: string[];
   }) {
-    requireOrganizationWorkspaceRoot(this.repo, input.organizationId);
+    this.requireOrganization(input.organizationId);
 
     const sender = this.repo.getMember(input.organizationId, input.senderId);
     if (!sender) {
@@ -115,7 +114,7 @@ export class ConversationService {
     content: string;
     mentions?: string[];
   }) {
-    requireOrganizationWorkspaceRoot(this.repo, input.organizationId);
+    this.requireOrganization(input.organizationId);
 
     const sender = this.repo.getMember(input.organizationId, input.senderId);
     if (!sender) {

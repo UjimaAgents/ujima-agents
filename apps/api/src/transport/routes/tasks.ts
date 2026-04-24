@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
+import type { Repository } from '@ujima/runtime-core';
 import { ERR_NO_WORKSPACE_ROOT, NoWorkspaceRootError, type RuntimeHost } from '@ujima/runtime-core';
 import {
   ApiErrorSchema,
@@ -15,9 +16,14 @@ import { z } from 'zod';
 import {
   type TaskPromoterService,
 } from '@ujima/orchestrator';
+import {
+  assertReadyWorkspaceRoot,
+  isWorkspaceRootNotReadyError,
+} from './workspace-root.js';
 
 export interface TaskRoutesOptions {
   host: RuntimeHost;
+  repo: Repository;
   taskPromoter: TaskPromoterService;
 }
 
@@ -28,7 +34,7 @@ const TaskAgentKillParamsSchema = z.object({
 });
 
 export function registerTaskRoutes(_app: FastifyInstance, options: TaskRoutesOptions): void {
-  const { host, taskPromoter } = options;
+  const { host, repo, taskPromoter } = options;
   const app = _app.withTypeProvider<ZodTypeProvider>();
 
   app.get('/tasks', {
@@ -140,9 +146,10 @@ export function registerTaskRoutes(_app: FastifyInstance, options: TaskRoutesOpt
     },
   }, async (req, reply) => {
     try {
+      assertReadyWorkspaceRoot(repo, req.body.organizationId);
       return await taskPromoter.promote(req.body);
     } catch (err) {
-      if (isWorkspaceRootRequiredError(err)) {
+      if (isWorkspaceRootNotReadyError(err)) {
         const message = err instanceof Error ? err.message : String(err);
         return reply.code(409).send({ code: ERR_NO_WORKSPACE_ROOT, message });
       }
@@ -173,8 +180,4 @@ function toTaskDto(t: {
 
 function replyError(reply: FastifyReply, status: number, code: string, message: string): FastifyReply {
   return reply.status(status).send({ code, message });
-}
-
-function isWorkspaceRootRequiredError(err: unknown): boolean {
-  return !!err && typeof err === 'object' && (err as { code?: string }).code === ERR_NO_WORKSPACE_ROOT;
 }

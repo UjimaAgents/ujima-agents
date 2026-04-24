@@ -2,7 +2,6 @@ import { randomUUID } from 'node:crypto';
 import type { AuditEvent } from '@ujima/shared';
 import type { ApiRepository } from './repository-reader.js';
 import type { RunService } from './run.js';
-import { requireOrganizationWorkspaceRoot } from './workspace-root.js';
 
 export interface TaskPromotionInput {
   organizationId: string;
@@ -30,12 +29,8 @@ export class TaskPromoterService {
   ) {}
 
   async promote(input: TaskPromotionInput): Promise<TaskPromotionResult> {
-    try {
-      requireOrganizationWorkspaceRoot(this.repo, input.organizationId);
-    } catch (error) {
-      if (!(error instanceof Error) || !error.message.startsWith('Organization not found')) {
-        throw error;
-      }
+    const organization = this.repo.getOrganization(input.organizationId);
+    if (!organization) {
       const audit = this.writeAudit(input, null, 'blocked', 'organization not found');
       throw Object.assign(new Error(`Organization not found: ${input.organizationId}`), {
         auditEventId: audit.id,
