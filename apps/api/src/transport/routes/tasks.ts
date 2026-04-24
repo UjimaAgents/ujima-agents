@@ -99,7 +99,11 @@ export function registerTaskRoutes(_app: FastifyInstance, options: TaskRoutesOpt
         }),
       };
     } catch (err) {
-      if (err instanceof NoWorkspaceRootError || (err instanceof Error && err.message.includes(ERR_NO_WORKSPACE_ROOT))) {
+      if (
+        err instanceof NoWorkspaceRootError ||
+        isWorkspaceRootNotReadyError(err) ||
+        (err instanceof Error && err.message.includes(ERR_NO_WORKSPACE_ROOT))
+      ) {
         return replyError(reply, 409, ERR_NO_WORKSPACE_ROOT, err instanceof Error ? err.message : String(err));
       }
       return replyError(reply, 500, 'ERR_INTERNAL', err instanceof Error ? err.message : String(err));
