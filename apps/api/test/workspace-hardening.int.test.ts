@@ -450,6 +450,32 @@ describe('workspace path hardening', () => {
     });
   });
 
+  it('does not rewrite ordinary slash-containing shell args as filesystem paths', async () => {
+    const fixture = await createToolFixture();
+
+    fixture.tools.allowRun(fixture.organizationId, 'run-shell-slash-arg');
+
+    const result = await fixture.tools.invoke({
+      organizationId: fixture.organizationId,
+      runId: 'run-shell-slash-arg',
+      memberId: 'frontend-alice',
+      toolCallId: 'tc-shell-slash-arg',
+      toolId: 'shell',
+      action: 'execute',
+      resourceType: 'shell',
+      input: {
+        command: 'sh',
+        args: ['-c', 'printf "%s" "$1"', '_', 'feature/foo'],
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.output).toMatchObject({
+      status: 'completed',
+      result: { stdout: 'feature/foo' },
+    });
+  });
+
   it('preserves the requested leaf path when writing a new file', async () => {
     const fixture = await createToolFixture();
 
