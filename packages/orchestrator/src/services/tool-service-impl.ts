@@ -341,6 +341,17 @@ const SHELL_PATH_FLAGS = new Set([
   '--path',
 ]);
 
+const SHELL_POSITIONAL_PATH_COMMANDS = new Set([
+  'cat',
+  'cp',
+  'ls',
+  'mkdir',
+  'mv',
+  'rm',
+  'tee',
+  'touch',
+]);
+
 async function sanitizeShellArgs(
   command: string,
   args: string[],
@@ -349,6 +360,7 @@ async function sanitizeShellArgs(
 ): Promise<string[]> {
   const sanitized: string[] = [];
   let expectPathFor: string | null = null;
+  let positionalIndex = 0;
 
   for (const arg of args) {
     if (expectPathFor) {
@@ -369,12 +381,16 @@ async function sanitizeShellArgs(
       continue;
     }
 
-    if (looksLikePathArg(command, arg)) {
+    if (looksLikePathArg(command, arg, positionalIndex)) {
       sanitized.push(await resolveShellPathArg(arg, cwd, resolver));
+      positionalIndex += 1;
       continue;
     }
 
     sanitized.push(arg);
+    if (!arg.startsWith('-')) {
+      positionalIndex += 1;
+    }
   }
 
   return sanitized;
@@ -388,18 +404,17 @@ function splitInlinePathFlag(arg: string): { flag: string; value: string } | nul
   return { flag, value };
 }
 
-function looksLikePathArg(command: string, arg: string): boolean {
+function looksLikePathArg(command: string, arg: string, positionalIndex: number): boolean {
   if (!arg || arg === '-') return false;
   if (arg.includes('://')) return false;
   if (arg.startsWith('-')) return false;
-  if (arg === '.' || arg === '..') return true;
-  if (arg.startsWith('/') || arg.startsWith('./') || arg.startsWith('../') || arg.startsWith('~/')) {
+  if (command === 'cd' && positionalIndex === 0) {
     return true;
   }
-  if (/^[A-Za-z]:[\\/]/.test(arg)) {
+  if (SHELL_POSITIONAL_PATH_COMMANDS.has(command)) {
     return true;
   }
-  return command === 'cd';
+  return looksExplicitlyPathLike(arg);
 }
 
 async function resolveShellPathArg(
@@ -408,4 +423,12 @@ async function resolveShellPathArg(
   resolver: Awaited<ReturnType<typeof createMemberPathResolver>>,
 ): Promise<string> {
   return resolver.resolve(resolve(cwd, requested));
+}
+
+function looksExplicitlyPathLike(arg: string): boolean {
+  if (arg === '.' || arg === '..') return true;
+  if (arg.startsWith('/') || arg.startsWith('./') || arg.startsWith('../') || arg.startsWith('~/')) {
+    return true;
+  }
+  return /^[A-Za-z]:[\\/]/.test(arg);
 }

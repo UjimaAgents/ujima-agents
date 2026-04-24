@@ -375,8 +375,10 @@ export async function sanitizeMcpArgs(
     return shouldResolveMcpValue(keyHint, value) ? resolver.resolve(value) : value;
   }
   if (Array.isArray(value)) {
-    const itemHint = shouldTreatArrayElementsAsPathy(keyHint) ? `${keyHint}:item` : keyHint;
-    return Promise.all(value.map((item) => sanitizeMcpArgs(item, resolver, itemHint)));
+    if (!shouldTreatArrayElementsAsPathy(keyHint)) {
+      return Promise.all(value.map((item) => sanitizeMcpArgs(item, resolver, '')));
+    }
+    return Promise.all(value.map((item) => sanitizeMcpArgs(item, resolver, `${keyHint}:item`)));
   }
   if (!value || typeof value !== 'object') {
     return value;
@@ -394,27 +396,34 @@ export async function sanitizeMcpArgs(
 function shouldResolveMcpValue(keyHint: string, value: string): boolean {
   if (!value || value === '-') return false;
   if (value.includes('://')) return false;
-
-  const keyLooksPathy = /(path|file|cwd|dir|directory|root|workspace|output|input|target|dest|args?)/i.test(
-    keyHint,
-  );
-  const valueLooksPathy =
-    value === '.' ||
-    value === '..' ||
-    value.startsWith('/') ||
-    value.startsWith('./') ||
-    value.startsWith('../') ||
-    value.startsWith('~/') ||
-    value.includes('/') ||
-    value.includes('\\');
-
-  return keyLooksPathy && valueLooksPathy;
+  return isExplicitMcpPathKey(keyHint);
 }
 
 function shouldTreatArrayElementsAsPathy(keyHint: string): boolean {
-  return /(path|file|cwd|dir|directory|root|workspace|output|input|target|dest|args?)/i.test(
-    keyHint,
+  return isExplicitMcpPathKey(keyHint) && /(paths|files)$/i.test(stripMcpArrayItemSuffix(keyHint));
+}
+
+function isExplicitMcpPathKey(keyHint: string): boolean {
+  const normalized = stripMcpArrayItemSuffix(keyHint).toLowerCase();
+  return (
+    normalized === 'cwd' ||
+    normalized === 'dir' ||
+    normalized === 'directory' ||
+    normalized === 'file' ||
+    normalized === 'files' ||
+    normalized === 'path' ||
+    normalized === 'paths' ||
+    normalized.endsWith('filepath') ||
+    normalized.endsWith('filepaths') ||
+    normalized.endsWith('path') ||
+    normalized.endsWith('paths') ||
+    normalized.endsWith('rootpath') ||
+    normalized.endsWith('workspacepath')
   );
+}
+
+function stripMcpArrayItemSuffix(keyHint: string): string {
+  return keyHint.endsWith(':item') ? keyHint.slice(0, -':item'.length) : keyHint;
 }
 
 function errMessage(err: unknown): string {
