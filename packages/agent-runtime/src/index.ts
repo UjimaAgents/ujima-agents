@@ -7,6 +7,12 @@ export type { HydrateDeps } from './hydrate';
 export { runToolLoop, captureBrowserState } from './tool-loop';
 export type { ToolLoopInputs, ToolLoopOutcome, BrowserStateSnapshot } from './tool-loop';
 
+export { runAiSdkLoop } from './ai-sdk-loop';
+export type { AiSdkLoopInputs, AiSdkLoopOutcome } from './ai-sdk-loop';
+
+export type { OrchestratorEngine } from './engine';
+export { ORCHESTRATOR_ENGINES, resolveOrchestratorEngine } from './engine';
+
 export { matchesEscalation } from './escalation';
 export type { EscalationMatch } from './escalation';
 

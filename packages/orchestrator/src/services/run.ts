@@ -44,6 +44,10 @@ export class RunService {
       throw new Error(`Member "${input.agentId}" is not an agent`);
     }
 
+    if (member.retiredAt) {
+      throw new Error(`Member "${input.agentId}" is retired`);
+    }
+
     const run = RunStateSchema.parse({
       id: randomUUID(),
       organizationId: input.organizationId,
@@ -125,6 +129,10 @@ export class RunService {
     const member = this.repo.getMember(run.organizationId, run.agentId);
     if (!member) {
       throw new Error(`Member not found: ${run.agentId}`);
+    }
+
+    if (member.retiredAt) {
+      return this.failRun(run, `Agent retired: ${run.agentId}`);
     }
 
     const role = team.getRole(member.roleName);

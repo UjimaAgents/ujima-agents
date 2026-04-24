@@ -14,7 +14,7 @@ import type { PermissionMiddleware } from '@ujima/permissions';
 import { createPermissionMiddleware } from '@ujima/permissions';
 import type { MCPPool, MCPConnection } from '@ujima/mcp-client';
 import { createMCPPool } from '@ujima/mcp-client';
-import type { LLMProvider } from '@ujima/llm';
+import type { LLMProvider } from '@ujima/llm/legacy';
 import type { GateResolver } from '@ujima/agent-runtime';
 import type { RunTaskInputs, SessionHandle } from '@ujima/orchestrator';
 import { runTask, ORCHESTRATOR_EVENT_CHANNEL } from '@ujima/orchestrator';

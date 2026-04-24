@@ -11,7 +11,7 @@ import {
   Repository,
 } from '@ujima/runtime-core';
 import type { AgentDef, MCPDef, TeamDef } from '@ujima/shared';
-import type { LLMProvider } from '@ujima/llm';
+import type { LLMProvider } from '@ujima/llm/legacy';
 import {
   createApiServices,
   createTeamStore,
@@ -20,6 +20,7 @@ import {
 import { createTransport } from './transport/server.js';
 import { ensureBearerToken } from './transport/token.js';
 import { DEFAULT_BIND_HOST, DEFAULT_BIND_PORT } from '@ujima/api-schema';
+import { startTeamConfigWatcher } from './config-sync.js';
 
 const STARTUP_SPLASH = `
    █  █   █ █ █▀▄▀█ █▀█
@@ -119,6 +120,11 @@ async function main(): Promise<void> {
   const secretStore = createFileSecretStore({ homeDir });
   const repository = new Repository(host.db.raw, secretStore);
   const teamStore = createTeamStore();
+  const teamConfigWatcher = await startTeamConfigWatcher({
+    repo: repository,
+    teamStore,
+    logger,
+  });
 
   // Map the orchestrator's tool-invocation shape into the permissions
   // middleware's agent-scoped shape. The `AgentDef` here is synthesised
@@ -205,6 +211,7 @@ async function main(): Promise<void> {
       logger.info('runtime: signal received', { signal });
       try {
         await transport.close();
+        teamConfigWatcher.close();
         await host.shutdown({ drainMs: 10_000 });
         clearDirtyFlag(homeDir);
       } catch (err) {

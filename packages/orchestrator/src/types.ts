@@ -9,7 +9,7 @@ import type {
 import type { EventBus } from '@ujima/event-bus';
 import type { PermissionMiddleware } from '@ujima/permissions';
 import type { MCPConnection } from '@ujima/mcp-client';
-import type { LLMProvider } from '@ujima/llm';
+import type { LLMProvider } from '@ujima/llm/legacy';
 import type { AgentRunResult, GateResolver } from '@ujima/agent-runtime';
 
 export interface OrchestratorDeps {

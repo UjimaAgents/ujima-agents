@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { readFile } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 import { AgentTeam, type AgentTeamHandle } from './team.js';
 import type { AgentTeamConfig } from './schemas.js';
@@ -13,7 +13,8 @@ export async function loadAgentTeamConfigFromFile(filePath: string): Promise<unk
   }
 
   const moduleUrl = pathToFileURL(filePath).href;
-  const loaded = await import(moduleUrl);
+  const fileStat = await stat(filePath);
+  const loaded = await import(`${moduleUrl}?t=${fileStat.mtimeMs}`);
   return loaded.default ?? loaded.team ?? loaded.config ?? loaded.agentTeam ?? loaded;
 }
 
