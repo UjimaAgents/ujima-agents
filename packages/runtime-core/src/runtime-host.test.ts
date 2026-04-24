@@ -104,5 +104,21 @@ describe('createRuntimeHost', () => {
       cwd: await resolver.resolve('apps/web'),
       inputPath: await resolver.resolve('apps/web/index.ts'),
     });
+
+    await expect(
+      sanitizeMcpArgs(
+        { args: ['../../etc/passwd'] },
+        resolver,
+      ),
+    ).rejects.toMatchObject({ code: 'ERR_PATH_ESCAPE' });
+
+    await expect(
+      sanitizeMcpArgs(
+        { args: ['apps/web/index.ts'] },
+        resolver,
+      ),
+    ).resolves.toEqual({
+      args: [await resolver.resolve('apps/web/index.ts')],
+    });
   });
 });

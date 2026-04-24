@@ -331,12 +331,6 @@ export class ToolServiceImpl implements ToolService {
 
 const SHELL_PATH_FLAGS = new Set([
   '-C',
-  '-c',
-  '-d',
-  '-f',
-  '-i',
-  '-o',
-  '-p',
   '--config',
   '--cwd',
   '--directory',

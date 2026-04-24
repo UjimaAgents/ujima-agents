@@ -164,24 +164,27 @@ async function createPathResolver(opts: {
     scopePaths,
     async resolve(requested: string): Promise<string> {
       const candidate = isAbsolute(requested) ? requested : resolve(realRoot, requested);
-      const realCandidate = await realpathOrParent(candidate);
-      if (!withinRoot(realRoot, realCandidate)) {
+      const resolved = await resolveCandidatePath(candidate);
+      if (!withinRoot(realRoot, resolved.boundaryPath)) {
         throw new PathEscapeError({
           requested,
-          resolved: realCandidate,
+          resolved: resolved.boundaryPath,
           root: realRoot,
           scopePaths,
         });
       }
-      if (scopePaths.length > 0 && !scopePaths.some((scope) => withinRoot(scope, realCandidate))) {
+      if (
+        scopePaths.length > 0 &&
+        !scopePaths.some((scope) => withinRoot(scope, resolved.boundaryPath))
+      ) {
         throw new PathEscapeError({
           requested,
-          resolved: realCandidate,
+          resolved: resolved.boundaryPath,
           root: realRoot,
           scopePaths,
         });
       }
-      return realCandidate;
+      return resolved.targetPath;
     },
   };
 }
@@ -206,6 +209,23 @@ async function realpathOrParent(path: string): Promise<string> {
       return path;
     }
     return realpathOrParent(parent);
+  }
+}
+
+async function resolveCandidatePath(
+  path: string,
+): Promise<{ targetPath: string; boundaryPath: string }> {
+  try {
+    const real = await realpath(path);
+    return { targetPath: real, boundaryPath: real };
+  } catch (error) {
+    if (!isEnoent(error)) {
+      throw error;
+    }
+    return {
+      targetPath: path,
+      boundaryPath: await realpathOrParent(path),
+    };
   }
 }
 
