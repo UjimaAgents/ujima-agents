@@ -396,7 +396,7 @@ function looksLikePathArg(command: string, arg: string): boolean {
   if (arg.startsWith('/') || arg.startsWith('./') || arg.startsWith('../') || arg.startsWith('~/')) {
     return true;
   }
-  if (arg.includes('/') || arg.includes('\\')) {
+  if (/^[A-Za-z]:[\\/]/.test(arg)) {
     return true;
   }
   return command === 'cd';
@@ -407,16 +407,5 @@ async function resolveShellPathArg(
   cwd: string,
   resolver: Awaited<ReturnType<typeof createMemberPathResolver>>,
 ): Promise<string> {
-  if (requested === '.' || requested === '..') {
-    return resolver.resolve(resolve(cwd, requested));
-  }
-  if (
-    requested.startsWith('./') ||
-    requested.startsWith('../') ||
-    requested.includes('/') ||
-    requested.includes('\\')
-  ) {
-    return resolver.resolve(resolve(cwd, requested));
-  }
   return resolver.resolve(resolve(cwd, requested));
 }

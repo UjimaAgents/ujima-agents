@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import { realpath } from 'node:fs/promises';
-import { isAbsolute, resolve, sep } from 'node:path';
+import { isAbsolute, relative, resolve, sep } from 'node:path';
 import type { AgentTeamHandle } from '@ujima/framework';
 import type { Organization, WorkspaceMember } from '@ujima/shared';
 import type { ApiRepository } from './repository-reader.js';
@@ -162,11 +162,16 @@ async function createPathResolver(opts: {
     throw new Error(`PathResolver root must be absolute, got "${opts.root}"`);
   }
 
+  const declaredRoot = resolve(opts.root);
   const realRoot = await realpath(opts.root);
   const scopePaths: string[] = [];
   const scopeBoundaryPaths: string[] = [];
   for (const scopePath of opts.scopePaths ?? []) {
-    const candidate = isAbsolute(scopePath) ? scopePath : resolve(realRoot, scopePath);
+    const candidate = remapCandidateToRealRoot(
+      isAbsolute(scopePath) ? scopePath : resolve(realRoot, scopePath),
+      declaredRoot,
+      realRoot,
+    );
     const resolvedScope = await resolveCandidatePath(candidate);
     if (
       !withinRoot(realRoot, resolvedScope.targetPath) ||
@@ -182,7 +187,11 @@ async function createPathResolver(opts: {
     root: realRoot,
     scopePaths,
     async resolve(requested: string): Promise<string> {
-      const candidate = isAbsolute(requested) ? requested : resolve(realRoot, requested);
+      const candidate = remapCandidateToRealRoot(
+        isAbsolute(requested) ? requested : resolve(realRoot, requested),
+        declaredRoot,
+        realRoot,
+      );
       const resolved = await resolveCandidatePath(candidate);
       if (
         !withinRoot(realRoot, resolved.targetPath) ||
@@ -213,6 +222,16 @@ async function createPathResolver(opts: {
       return resolved.targetPath;
     },
   };
+}
+
+function remapCandidateToRealRoot(candidate: string, declaredRoot: string, realRoot: string): string {
+  if (withinRoot(realRoot, candidate)) {
+    return candidate;
+  }
+  if (!withinRoot(declaredRoot, candidate)) {
+    return candidate;
+  }
+  return resolve(realRoot, relative(declaredRoot, candidate));
 }
 
 function withinRoot(root: string, candidate: string): boolean {

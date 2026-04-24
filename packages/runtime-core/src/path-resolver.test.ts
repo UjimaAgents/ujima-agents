@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll } from 'vitest';
-import { mkdtemp, writeFile, mkdir, symlink } from 'node:fs/promises';
+import { mkdtemp, writeFile, mkdir, symlink, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createPathResolver, PathEscapeError } from './path-resolver';
@@ -24,8 +24,9 @@ describe('PathResolver', () => {
 
   it('resolves a not-yet-created path under its parent', async () => {
     const r = await createPathResolver({ root });
+    const canonicalRoot = await realpath(root);
     const resolved = await r.resolve(join(root, 'new', 'file.ts'));
-    expect(resolved.startsWith(r.root)).toBe(true);
+    expect(resolved).toBe(join(canonicalRoot, 'new', 'file.ts'));
   });
 
   it('rejects ../ escape', async () => {
@@ -53,5 +54,14 @@ describe('PathResolver', () => {
     const r = await createPathResolver({ root, scopePaths: ['src'] });
     await expect(r.resolve(join(root, 'src', 'a.ts'))).resolves.toContain('src');
     await expect(r.resolve(join(root, 'other.ts'))).rejects.toBeInstanceOf(PathEscapeError);
+  });
+
+  it('preserves missing scope boundaries instead of broadening to the parent subtree', async () => {
+    const r = await createPathResolver({ root, scopePaths: ['src/generated'] });
+    const canonicalRoot = await realpath(root);
+    await expect(r.resolve(join(root, 'src', 'generated', 'new.ts'))).resolves.toBe(
+      join(canonicalRoot, 'src', 'generated', 'new.ts'),
+    );
+    await expect(r.resolve(join(root, 'src', 'a.ts'))).rejects.toBeInstanceOf(PathEscapeError);
   });
 });

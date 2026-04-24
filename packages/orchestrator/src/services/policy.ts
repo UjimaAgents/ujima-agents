@@ -45,7 +45,7 @@ export function checkToolPolicy(
       };
     }
 
-    if (!role.workspaceScopes.some((scope) => pathWithinScope(scope, resourcePath))) {
+    if (!role.workspaceScopes.some((scope) => pathWithinScope(team.workspace.root, scope, resourcePath))) {
       return {
         allowed: false,
         requiresApproval: false,
@@ -60,13 +60,13 @@ export function checkToolPolicy(
   };
 }
 
-function pathWithinScope(scope: string, resourcePath: string): boolean {
-  const normalizedScope = canonicalizeForComparison(scope);
-  const normalizedResource = canonicalizeForComparison(resourcePath);
+function pathWithinScope(workspaceRoot: string, scope: string, resourcePath: string): boolean {
+  const normalizedScope = canonicalizeForComparison(scope, workspaceRoot);
+  const normalizedResource = canonicalizeForComparison(resourcePath, workspaceRoot);
   return isPathInsideRoot(normalizedScope, normalizedResource);
 }
 
-function canonicalizeForComparison(path: string): string {
-  const resolved = resolve(path);
+function canonicalizeForComparison(path: string, workspaceRoot: string): string {
+  const resolved = resolve(workspaceRoot, path);
   return existsSync(resolved) ? realpathSync(resolved) : resolved;
 }
