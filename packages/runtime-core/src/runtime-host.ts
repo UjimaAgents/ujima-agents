@@ -277,10 +277,14 @@ export async function createRuntimeHost(deps: RuntimeHostDeps, config: RuntimeHo
     opts?: { agentId?: string; scopePaths?: string[] },
   ): Promise<MCPConnection> {
     const ws = workspaces.requireReady(workspaceId);
+    const workspaceRoot = ws.root_path;
+    if (!workspaceRoot) {
+      throw new Error(`workspace "${workspaceId}" is not ready: root_path is not set`);
+    }
     const def = await deps.resolveMCPDef(workspaceId, mcpId);
     const connection = await pool.get(def, opts);
     const resolver = await createPathResolver({
-      root: ws.root_path!,
+      root: workspaceRoot,
       scopePaths: opts?.scopePaths,
     });
     return {
@@ -371,7 +375,8 @@ export async function sanitizeMcpArgs(
     return shouldResolveMcpValue(keyHint, value) ? resolver.resolve(value) : value;
   }
   if (Array.isArray(value)) {
-    return Promise.all(value.map((item) => sanitizeMcpArgs(item, resolver, keyHint)));
+    const itemHint = shouldTreatArrayElementsAsPathy(keyHint) ? `${keyHint}:item` : keyHint;
+    return Promise.all(value.map((item) => sanitizeMcpArgs(item, resolver, itemHint)));
   }
   if (!value || typeof value !== 'object') {
     return value;
@@ -390,7 +395,7 @@ function shouldResolveMcpValue(keyHint: string, value: string): boolean {
   if (!value || value === '-') return false;
   if (value.includes('://')) return false;
 
-  const keyLooksPathy = /(path|file|cwd|dir|directory|root|workspace|output|input|target|dest)/i.test(
+  const keyLooksPathy = /(path|file|cwd|dir|directory|root|workspace|output|input|target|dest|args?)/i.test(
     keyHint,
   );
   const valueLooksPathy =
@@ -404,6 +409,12 @@ function shouldResolveMcpValue(keyHint: string, value: string): boolean {
     value.includes('\\');
 
   return keyLooksPathy && valueLooksPathy;
+}
+
+function shouldTreatArrayElementsAsPathy(keyHint: string): boolean {
+  return /(path|file|cwd|dir|directory|root|workspace|output|input|target|dest|args?)/i.test(
+    keyHint,
+  );
 }
 
 function errMessage(err: unknown): string {

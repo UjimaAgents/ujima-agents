@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
@@ -422,6 +422,57 @@ describe('workspace path hardening', () => {
         },
       }),
     ).rejects.toMatchObject({ code: 'ERR_PATH_ESCAPE' });
+  });
+
+  it('allows shell -c command strings without treating them as filesystem paths', async () => {
+    const fixture = await createToolFixture();
+
+    fixture.tools.allowRun(fixture.organizationId, 'run-shell-c');
+
+    const result = await fixture.tools.invoke({
+      organizationId: fixture.organizationId,
+      runId: 'run-shell-c',
+      memberId: 'frontend-alice',
+      toolCallId: 'tc-shell-c',
+      toolId: 'shell',
+      action: 'execute',
+      resourceType: 'shell',
+      input: {
+        command: 'sh',
+        args: ['-c', 'printf ok'],
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.output).toMatchObject({
+      status: 'completed',
+      result: { stdout: 'ok' },
+    });
+  });
+
+  it('preserves the requested leaf path when writing a new file', async () => {
+    const fixture = await createToolFixture();
+
+    fixture.tools.allowRun(fixture.organizationId, 'run-new-file');
+
+    const writeResult = await fixture.tools.invoke({
+      organizationId: fixture.organizationId,
+      runId: 'run-new-file',
+      memberId: 'frontend-alice',
+      toolCallId: 'tc-new-file',
+      toolId: 'filesystem',
+      action: 'write',
+      resourceType: 'file',
+      resourcePath: 'apps/web/new-file.ts',
+      input: {
+        content: 'export const created = true;\n',
+      },
+    });
+
+    expect(writeResult.ok).toBe(true);
+    expect(await readFile(join(fixture.workspaceRoot, 'apps', 'web', 'new-file.ts'), 'utf8')).toBe(
+      'export const created = true;\n',
+    );
   });
 
   it('backfills workspace_members scope rows for existing members on first resolver use', async () => {
