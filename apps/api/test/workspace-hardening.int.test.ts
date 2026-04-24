@@ -476,6 +476,33 @@ describe('workspace path hardening', () => {
     });
   });
 
+  it('resolves positional file operands for file-oriented shell commands relative to cwd', async () => {
+    const fixture = await createToolFixture();
+
+    fixture.tools.allowRun(fixture.organizationId, 'run-shell-relative-file');
+
+    const result = await fixture.tools.invoke({
+      organizationId: fixture.organizationId,
+      runId: 'run-shell-relative-file',
+      memberId: 'frontend-alice',
+      toolCallId: 'tc-shell-relative-file',
+      toolId: 'shell',
+      action: 'execute',
+      resourceType: 'shell',
+      input: {
+        command: 'cat',
+        args: ['index.ts'],
+        cwd: 'apps/web',
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.output).toMatchObject({
+      status: 'completed',
+      result: { stdout: 'export const ok = true;\n' },
+    });
+  });
+
   it('preserves the requested leaf path when writing a new file', async () => {
     const fixture = await createToolFixture();
 

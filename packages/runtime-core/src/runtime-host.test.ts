@@ -107,18 +107,28 @@ describe('createRuntimeHost', () => {
 
     await expect(
       sanitizeMcpArgs(
-        { args: ['../../etc/passwd'] },
+        { paths: ['../../etc/passwd'] },
         resolver,
       ),
     ).rejects.toMatchObject({ code: 'ERR_PATH_ESCAPE' });
 
     await expect(
       sanitizeMcpArgs(
-        { args: ['apps/web/index.ts'] },
+        { filePaths: ['apps/web/index.ts'] },
         resolver,
       ),
     ).resolves.toEqual({
-      args: [await resolver.resolve('apps/web/index.ts')],
+      filePaths: [await resolver.resolve('apps/web/index.ts')],
+    });
+
+    await expect(
+      sanitizeMcpArgs(
+        { args: ['feature/foo'], branchName: 'feature/bar' },
+        resolver,
+      ),
+    ).resolves.toEqual({
+      args: ['feature/foo'],
+      branchName: 'feature/bar',
     });
   });
 });
