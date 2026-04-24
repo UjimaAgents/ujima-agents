@@ -199,14 +199,25 @@ export function createTransport(opts: TransportOptions): Transport {
       const realtime = new RealtimeService(io, opts.apiServices.repo);
       const services = opts.apiServices.buildServices(realtime);
       
-      registerConversationRoutes(api, { conversations: services.conversations });
-      registerRunRoutes(api, { runs: services.runs, approvals: services.approvals });
+      registerConversationRoutes(api, {
+        repo: opts.apiServices.repo,
+        conversations: services.conversations,
+      });
+      registerRunRoutes(api, {
+        repo: opts.apiServices.repo,
+        runs: services.runs,
+        approvals: services.approvals,
+      });
       registerOnboardingRoutes(api, {
         bootstrap: services.bootstrap,
         onboarding: services.onboarding,
       });
-      registerSettingsRoutes(api, { settings: services.settings });
-      registerTaskRoutes(api, { host, taskPromoter: services.taskPromoter });
+      registerSettingsRoutes(api, { repo: opts.apiServices.repo, settings: services.settings });
+      registerTaskRoutes(api, {
+        host,
+        repo: opts.apiServices.repo,
+        taskPromoter: services.taskPromoter,
+      });
     }
   }, { prefix: '/api' });
 

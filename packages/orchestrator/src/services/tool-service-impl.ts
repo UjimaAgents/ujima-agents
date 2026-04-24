@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { AgentTeamHandle } from '@ujima/framework';
+import { resolve } from 'node:path';
 import {
   SocketEventNames,
   memberRoom,
@@ -315,7 +316,7 @@ export class ToolServiceImpl implements ToolService {
     const rawArgs = Array.isArray(input.args)
       ? input.args.filter((arg): arg is string => typeof arg === 'string')
       : [];
-    const args = await sanitizeShellArgs(command, rawArgs, resolver);
+    const args = await sanitizeShellArgs(command, rawArgs, resolvedCwd, resolver);
 
     return {
       ...invocation,
@@ -343,6 +344,7 @@ const SHELL_PATH_FLAGS = new Set([
 async function sanitizeShellArgs(
   command: string,
   args: string[],
+  cwd: string,
   resolver: Awaited<ReturnType<typeof createMemberPathResolver>>,
 ): Promise<string[]> {
   const sanitized: string[] = [];
@@ -350,7 +352,7 @@ async function sanitizeShellArgs(
 
   for (const arg of args) {
     if (expectPathFor) {
-      sanitized.push(await resolver.resolve(arg));
+      sanitized.push(await resolveShellPathArg(arg, cwd, resolver));
       expectPathFor = null;
       continue;
     }
@@ -363,12 +365,12 @@ async function sanitizeShellArgs(
 
     const inlineFlag = splitInlinePathFlag(arg);
     if (inlineFlag) {
-      sanitized.push(`${inlineFlag.flag}=${await resolver.resolve(inlineFlag.value)}`);
+      sanitized.push(`${inlineFlag.flag}=${await resolveShellPathArg(inlineFlag.value, cwd, resolver)}`);
       continue;
     }
 
     if (looksLikePathArg(command, arg)) {
-      sanitized.push(await resolver.resolve(arg));
+      sanitized.push(await resolveShellPathArg(arg, cwd, resolver));
       continue;
     }
 
@@ -398,4 +400,23 @@ function looksLikePathArg(command: string, arg: string): boolean {
     return true;
   }
   return command === 'cd';
+}
+
+async function resolveShellPathArg(
+  requested: string,
+  cwd: string,
+  resolver: Awaited<ReturnType<typeof createMemberPathResolver>>,
+): Promise<string> {
+  if (requested === '.' || requested === '..') {
+    return resolver.resolve(resolve(cwd, requested));
+  }
+  if (
+    requested.startsWith('./') ||
+    requested.startsWith('../') ||
+    requested.includes('/') ||
+    requested.includes('\\')
+  ) {
+    return resolver.resolve(resolve(cwd, requested));
+  }
+  return resolver.resolve(resolve(cwd, requested));
 }

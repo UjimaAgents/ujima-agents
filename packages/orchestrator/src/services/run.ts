@@ -16,7 +16,6 @@ import type { ConversationService } from './conversation.js';
 import type { ApiRepository } from './repository-reader.js';
 import type { TeamStore } from './team-store.js';
 import type { ToolService } from './tool-service.js';
-import { requireOrganizationWorkspaceRoot } from './workspace-root.js';
 
 export interface CreateRunInput {
   organizationId: string;
@@ -36,7 +35,6 @@ export class RunService {
   ) {}
 
   async createRun(input: CreateRunInput): Promise<RunState> {
-    requireOrganizationWorkspaceRoot(this.repo, input.organizationId);
     const member = this.repo.getMember(input.organizationId, input.agentId);
     if (!member) {
       throw new Error(`Member not found: ${input.agentId}`);

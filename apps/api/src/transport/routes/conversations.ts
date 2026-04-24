@@ -2,10 +2,14 @@ import type { FastifyInstance, FastifyReply } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { createPaginatedSchema, ChannelSchema, IdSchema, MessageSchema, PaginationQuerySchema } from '@ujima/shared';
 import { ApiErrorSchema, MessageCreateSchema, OrganizationQuerySchema } from '@ujima/api-schema';
+import type { Repository } from '@ujima/runtime-core';
 import type { ConversationService } from '@ujima/orchestrator';
 import { z } from 'zod';
-
-const ERR_NO_WORKSPACE_ROOT = 'ERR_NO_WORKSPACE_ROOT';
+import {
+  ERR_NO_WORKSPACE_ROOT,
+  assertReadyWorkspaceRoot,
+  isWorkspaceRootNotReadyError,
+} from './workspace-root.js';
 
 const ThreadIdParamsSchema = z.object({ threadId: IdSchema });
 const ListChannelsQuerySchema = OrganizationQuerySchema.merge(PaginationQuerySchema);
@@ -13,6 +17,7 @@ const ListChannelsResponseSchema = createPaginatedSchema(ChannelSchema);
 const ListMessagesResponseSchema = createPaginatedSchema(MessageSchema);
 
 export interface ConversationRoutesOptions {
+  repo: Repository;
   conversations: ConversationService;
 }
 
@@ -20,7 +25,7 @@ export function registerConversationRoutes(
   _app: FastifyInstance,
   options: ConversationRoutesOptions,
 ): void {
-  const { conversations } = options;
+  const { repo, conversations } = options;
   const app = _app.withTypeProvider<ZodTypeProvider>();
 
   app.get('/channels', {
@@ -85,10 +90,11 @@ export function registerConversationRoutes(
     },
   }, async (req, reply) => {
     try {
+      assertReadyWorkspaceRoot(repo, req.body.organizationId);
       return conversations.sendMessage(req.body);
     } catch (err) {
       const message = errMessage(err);
-      if (isWorkspaceRootRequiredError(err)) {
+      if (isWorkspaceRootNotReadyError(err)) {
         return reply.code(409).send({ code: ERR_NO_WORKSPACE_ROOT, message });
       }
       const status =
@@ -112,8 +118,4 @@ function replyError(reply: FastifyReply, status: number, message: string): Fasti
 
 function errMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
-}
-
-function isWorkspaceRootRequiredError(err: unknown): boolean {
-  return !!err && typeof err === 'object' && (err as { code?: string }).code === ERR_NO_WORKSPACE_ROOT;
 }

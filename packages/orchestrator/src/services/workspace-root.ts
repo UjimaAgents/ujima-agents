@@ -31,6 +31,13 @@ export function requireOrganizationWorkspaceRoot(
   repo: Pick<ApiRepository, 'getOrganization'>,
   organizationId: string,
 ): Organization {
+  return getOrganizationWithWorkspaceRoot(repo, organizationId);
+}
+
+export function getOrganizationWithWorkspaceRoot(
+  repo: Pick<ApiRepository, 'getOrganization'>,
+  organizationId: string,
+): Organization {
   const organization = repo.getOrganization(organizationId);
   if (!organization) {
     throw new Error(`Organization not found: ${organizationId}`);
@@ -43,13 +50,20 @@ export function requireOrganizationWorkspaceRoot(
       'root_path is not set - complete onboarding first',
     );
   }
-  if (!existsSync(root)) {
+  return organization;
+}
+
+export function requireExistingOrganizationWorkspaceRoot(
+  repo: Pick<ApiRepository, 'getOrganization'>,
+  organizationId: string,
+): Organization {
+  const organization = getOrganizationWithWorkspaceRoot(repo, organizationId);
+  if (!existsSync(organization.workspace.root)) {
     throw new WorkspaceRootRequiredError(
       organizationId,
-      `workspace root "${root}" does not exist on disk`,
+      `workspace root "${organization.workspace.root}" does not exist on disk`,
     );
   }
-
   return organization;
 }
 
@@ -150,13 +164,18 @@ async function createPathResolver(opts: {
 
   const realRoot = await realpath(opts.root);
   const scopePaths: string[] = [];
+  const scopeBoundaryPaths: string[] = [];
   for (const scopePath of opts.scopePaths ?? []) {
     const candidate = isAbsolute(scopePath) ? scopePath : resolve(realRoot, scopePath);
-    const realScope = await realpathOrParent(candidate);
-    if (!withinRoot(realRoot, realScope)) {
+    const resolvedScope = await resolveCandidatePath(candidate);
+    if (
+      !withinRoot(realRoot, resolvedScope.targetPath) ||
+      !withinRoot(realRoot, resolvedScope.boundaryPath)
+    ) {
       throw new Error(`scope path "${scopePath}" is outside workspace root "${realRoot}"`);
     }
-    scopePaths.push(realScope);
+    scopePaths.push(resolvedScope.targetPath);
+    scopeBoundaryPaths.push(resolvedScope.boundaryPath);
   }
 
   return {
@@ -165,7 +184,10 @@ async function createPathResolver(opts: {
     async resolve(requested: string): Promise<string> {
       const candidate = isAbsolute(requested) ? requested : resolve(realRoot, requested);
       const resolved = await resolveCandidatePath(candidate);
-      if (!withinRoot(realRoot, resolved.boundaryPath)) {
+      if (
+        !withinRoot(realRoot, resolved.targetPath) ||
+        !withinRoot(realRoot, resolved.boundaryPath)
+      ) {
         throw new PathEscapeError({
           requested,
           resolved: resolved.boundaryPath,
@@ -175,7 +197,11 @@ async function createPathResolver(opts: {
       }
       if (
         scopePaths.length > 0 &&
-        !scopePaths.some((scope) => withinRoot(scope, resolved.boundaryPath))
+        !scopePaths.some(
+          (scope, index) =>
+            withinRoot(scope, resolved.targetPath) &&
+            withinRoot(scopeBoundaryPaths[index] ?? scope, resolved.boundaryPath),
+        )
       ) {
         throw new PathEscapeError({
           requested,

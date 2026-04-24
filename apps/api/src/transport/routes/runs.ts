@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
+import type { Repository } from '@ujima/runtime-core';
 import { ApprovalRequestSchema, MessageSchema, RunStateSchema, createPaginatedSchema, IdSchema } from '@ujima/shared';
 import {
   ApprovalListQuerySchema,
@@ -10,8 +11,11 @@ import {
 } from '@ujima/api-schema';
 import type { ApprovalService, RunService } from '@ujima/orchestrator';
 import { z } from 'zod';
-
-const ERR_NO_WORKSPACE_ROOT = 'ERR_NO_WORKSPACE_ROOT';
+import {
+  ERR_NO_WORKSPACE_ROOT,
+  assertReadyWorkspaceRoot,
+  isWorkspaceRootNotReadyError,
+} from './workspace-root.js';
 
 const RunIdParamsSchema = z.object({ runId: IdSchema });
 const ApprovalIdParamsSchema = z.object({ approvalId: IdSchema });
@@ -24,6 +28,7 @@ const RunDetailResponseSchema = z.object({
 });
 
 export interface RunRoutesOptions {
+  repo: Repository;
   runs: RunService;
   approvals: ApprovalService;
 }
@@ -32,7 +37,7 @@ export function registerRunRoutes(
   _app: FastifyInstance,
   options: RunRoutesOptions,
 ): void {
-  const { runs, approvals } = options;
+  const { repo, runs, approvals } = options;
   const app = _app.withTypeProvider<ZodTypeProvider>();
 
   app.get('/runs', {
@@ -112,10 +117,11 @@ export function registerRunRoutes(
     },
   }, async (req, reply) => {
     try {
+      assertReadyWorkspaceRoot(repo, req.body.organizationId);
       return await runs.createRun(req.body);
     } catch (err) {
       const message = errMessage(err);
-      if (isWorkspaceRootRequiredError(err)) {
+      if (isWorkspaceRootNotReadyError(err)) {
         return reply.code(409).send({ code: ERR_NO_WORKSPACE_ROOT, message });
       }
       const status =
@@ -159,6 +165,7 @@ export function registerRunRoutes(
     },
   }, async (req, reply) => {
     try {
+      assertReadyWorkspaceRoot(repo, req.body.organizationId);
       return await approvals.resolveApproval({
         organizationId: req.body.organizationId,
         approvalId: req.params.approvalId,
@@ -167,7 +174,7 @@ export function registerRunRoutes(
       });
     } catch (err) {
       const message = errMessage(err);
-      if (isWorkspaceRootRequiredError(err)) {
+      if (isWorkspaceRootNotReadyError(err)) {
         return reply.code(409).send({ code: ERR_NO_WORKSPACE_ROOT, message });
       }
       return reply
@@ -192,8 +199,4 @@ function replyError(reply: FastifyReply, status: number, message: string): Fasti
 
 function errMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
-}
-
-function isWorkspaceRootRequiredError(err: unknown): boolean {
-  return !!err && typeof err === 'object' && (err as { code?: string }).code === ERR_NO_WORKSPACE_ROOT;
 }
