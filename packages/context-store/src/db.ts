@@ -1,7 +1,11 @@
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import Database from 'better-sqlite3';
-
+let DatabaseConstructor: any;
+if (typeof process !== 'undefined' && process.versions && process.versions.bun) {
+  DatabaseConstructor = require('bun:sqlite').Database;
+} else {
+  DatabaseConstructor = require('better-sqlite3');
+}
 interface StatementHandle {
   all(...params: unknown[]): unknown[];
   get(...params: unknown[]): unknown;
@@ -331,7 +335,7 @@ export function openDatabase(options: DbOptions): DbHandle {
     mkdirSync(dirname(options.dbPath), { recursive: true });
   }
 
-  const db = new Database(options.dbPath) as unknown as DbHandle;
+  const db = new DatabaseConstructor(options.dbPath) as unknown as DbHandle;
 
   db.exec('PRAGMA journal_mode = WAL');
   db.exec('PRAGMA synchronous = NORMAL');
