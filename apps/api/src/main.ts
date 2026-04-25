@@ -2,7 +2,6 @@
 import { mkdirSync, writeFileSync, unlinkSync, existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import { execSync } from 'node:child_process';
 import chalk from 'chalk';
 import {
   createFileSecretStore,
@@ -60,15 +59,6 @@ function wasDirtyShutdown(homeDir: string): boolean {
 
 async function main(): Promise<void> {
   const port = Number.parseInt(process.env.UJIMA_PORT ?? String(DEFAULT_BIND_PORT), 10);
-  try {
-    const pids = execSync(`lsof -t -i:${port}`).toString().trim().split('\n');
-    for (const pid of pids) {
-      if (pid) process.kill(Number(pid), 'SIGKILL');
-    }
-  } catch (error) {
-    void error;
-  }
-
   const homeDir = resolveHomeDir();
   mkdirSync(homeDir, { recursive: true });
   const logger = createJsonLogger({
