@@ -9,6 +9,7 @@ import type {
   Message,
   Organization,
   RunState,
+  WorkspaceMember,
 } from '@ujima/shared';
 import {
   getApproval as readApproval,
@@ -39,6 +40,11 @@ import {
   listMembers as readMembers,
   saveMember as writeMember,
 } from './members.js';
+import {
+  getWorkspaceMember as readWorkspaceMember,
+  listWorkspaceMembers as readWorkspaceMembers,
+  saveWorkspaceMember as writeWorkspaceMember,
+} from './workspace-members.js';
 import {
   listMessages as readMessages,
   saveMessage as writeMessage,
@@ -132,6 +138,14 @@ export class Repository {
   ): ConfigFieldOwnership[] => readConfigFieldOwnershipList(this.db, organizationId, entityType);
 
   saveMember = (member: Member): Member => writeMember(this.db, member);
+  saveWorkspaceMember = (workspaceMember: WorkspaceMember): WorkspaceMember =>
+    writeWorkspaceMember(this.db, workspaceMember);
+  getWorkspaceMember = (
+    organizationId: string,
+    memberId: string,
+  ): WorkspaceMember | null => readWorkspaceMember(this.db, organizationId, memberId);
+  listWorkspaceMembers = (organizationId: string): WorkspaceMember[] =>
+    readWorkspaceMembers(this.db, organizationId);
   getMember = (organizationId: string, memberId: string): Member | null =>
     readMember(this.db, organizationId, memberId);
   listMembers = (organizationId: string): Member[] => readMembers(this.db, organizationId);

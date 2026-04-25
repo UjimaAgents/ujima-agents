@@ -183,7 +183,10 @@ export function runTask(deps: OrchestratorDeps, input: RunTaskInputs): SessionHa
         const memberResults: SpawnResult[] = await Promise.all(
           waveAgents.map(async (agent: AgentDef): Promise<SpawnResult> => {
             try {
-              const mcp = await deps.getMCPConnection(agent.mcp, { agentId: agent.id });
+              const mcp = await deps.getMCPConnection(agent.mcp, {
+                agentId: agent.id,
+                scopePaths: readAgentWorkspaceScopes(agent),
+              });
               const ctrl = new AbortController();
               perAgentControllers.set(agent.id, ctrl);
               sessionController.signal.addEventListener('abort', () => ctrl.abort(), { once: true });
@@ -310,6 +313,15 @@ export function runTask(deps: OrchestratorDeps, input: RunTaskInputs): SessionHa
       approvalsHandle.stop();
     }
   }
+}
+
+function readAgentWorkspaceScopes(agent: AgentDef): string[] | undefined {
+  const candidate = (agent as AgentDef & { workspace_scopes?: unknown }).workspace_scopes;
+  if (!Array.isArray(candidate)) {
+    return undefined;
+  }
+  const scopes = candidate.filter((value): value is string => typeof value === 'string');
+  return scopes.length > 0 ? scopes : undefined;
 }
 
 function collectApprovalChannels(agents: AgentDef[]): string[] {

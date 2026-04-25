@@ -70,6 +70,8 @@ export class TaskPromoterService {
       if (member && member.kind === 'agent' && !member.retiredAt) return member.id;
       return null;
     }
+    // Retired agents stay in storage for audit/history, so promotion has to
+    // treat `retiredAt` as the active-membership boundary.
     const agents = this.repo
       .listMembers(input.organizationId)
       .filter((m) => m.kind === 'agent' && !m.retiredAt);

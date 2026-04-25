@@ -177,6 +177,8 @@ export class ConversationService {
     if (!channel) {
       throw new Error(`Channel not found: ${channelId}`);
     }
+    // Config reconcile archives dropped channels instead of deleting them so
+    // history remains readable, but new user traffic must still be rejected.
     if (channel.archivedAt) {
       throw new Error(`Channel is archived: ${channelId}`);
     }

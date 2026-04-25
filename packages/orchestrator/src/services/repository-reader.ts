@@ -8,6 +8,7 @@ import type {
   Message,
   Organization,
   RunState,
+  WorkspaceMember,
 } from '@ujima/shared';
 
 export interface BootstrapSnapshot {
@@ -44,6 +45,8 @@ export interface PaginatedRuns {
  */
 export interface RepositoryReader {
   getOrganization(organizationId: string): Organization | null;
+  getWorkspaceMember(organizationId: string, memberId: string): WorkspaceMember | null;
+  listWorkspaceMembers(organizationId: string): WorkspaceMember[];
   getMember(organizationId: string, memberId: string): Member | null;
   listMembers(organizationId: string): Member[];
   listMessages(organizationId: string, threadId: string): PaginatedMessages;
@@ -123,5 +126,6 @@ export interface ApiRepository extends ConversationRepository {
     entityType?: ConfigFieldOwnership['entityType'],
   ): ConfigFieldOwnership[];
   saveMember(member: Member): Member;
+  saveWorkspaceMember(workspaceMember: WorkspaceMember): WorkspaceMember;
   getBootstrapSnapshot(): BootstrapSnapshot;
 }
