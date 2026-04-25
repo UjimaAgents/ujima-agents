@@ -3,6 +3,7 @@ import { MemberSchema, type Organization, type Member, type Channel } from '@uji
 import type { ApiRepository } from './repository-reader.js';
 import type { TeamStore } from './team-store.js';
 import { listProviderStatuses, validateProviderKeys, type ProviderStatus } from './team.js';
+import { upsertWorkspaceMemberScopes } from './workspace-root.js';
 
 export interface TeamSettingsResponse {
   name: string;
@@ -174,7 +175,15 @@ export class SettingsService {
       kind: input.kind,
       roleName: input.roleName,
     });
-    return this.repo.saveMember(member);
+    const saved = this.repo.saveMember(member);
+    const role = this.teamStore.getTeam()?.getRole(input.roleName);
+    upsertWorkspaceMemberScopes(
+      this.repo,
+      input.organizationId,
+      saved.id,
+      role?.workspaceScopes ?? [],
+    );
+    return saved;
   }
 
   getOrganizationSettings(organizationId: string): OrganizationSettingsResponse {

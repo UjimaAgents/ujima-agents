@@ -1,3 +1,5 @@
+import { existsSync, realpathSync } from 'node:fs';
+import { resolve } from 'node:path';
 import type { AgentTeamHandle } from '@ujima/framework';
 import type { ToolAction } from '@ujima/shared';
 import { assertWorkspaceBoundary, isPathInsideRoot } from '@ujima/shared/workspace';
@@ -43,7 +45,7 @@ export function checkToolPolicy(
       };
     }
 
-    if (!role.workspaceScopes.some((scope) => isPathInsideRoot(scope, resourcePath))) {
+    if (!role.workspaceScopes.some((scope) => pathWithinScope(team.workspace.root, scope, resourcePath))) {
       return {
         allowed: false,
         requiresApproval: false,
@@ -56,4 +58,15 @@ export function checkToolPolicy(
     allowed: true,
     requiresApproval: action !== 'read',
   };
+}
+
+function pathWithinScope(workspaceRoot: string, scope: string, resourcePath: string): boolean {
+  const normalizedScope = canonicalizeForComparison(scope, workspaceRoot);
+  const normalizedResource = canonicalizeForComparison(resourcePath, workspaceRoot);
+  return isPathInsideRoot(normalizedScope, normalizedResource);
+}
+
+function canonicalizeForComparison(path: string, workspaceRoot: string): string {
+  const resolved = resolve(workspaceRoot, path);
+  return existsSync(resolved) ? realpathSync(resolved) : resolved;
 }

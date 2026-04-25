@@ -5,6 +5,7 @@ import type { OrchestratorTool } from './types.js';
 export const ShellSchema = z.object({
   command: z.string().min(1),
   args: z.array(z.string()).default([]),
+  cwd: z.string().min(1).optional(),
 });
 
 export const shellTool: OrchestratorTool<typeof ShellSchema> = {
@@ -13,13 +14,17 @@ export const shellTool: OrchestratorTool<typeof ShellSchema> = {
   toInvocation: (args) => ({
     action: 'execute',
     resourceType: 'shell',
-    input: { command: args.command, args: args.args },
+    resourcePath: args.cwd,
+    input: { command: args.command, args: args.args, cwd: args.cwd },
   }),
   execute: async ({ invocation, team }) => {
     const command = invocation.input?.command as string | undefined;
     const args = Array.isArray(invocation.input?.args)
       ? invocation.input.args.filter((arg): arg is string => typeof arg === 'string')
       : [];
+    const cwd = typeof invocation.input?.cwd === 'string'
+      ? invocation.input.cwd
+      : team.workspace.root;
 
     if (typeof command !== 'string') {
       throw new Error("Input 'command' must be a string");
@@ -27,7 +32,7 @@ export const shellTool: OrchestratorTool<typeof ShellSchema> = {
 
     return new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
       const child = spawn(command, args, {
-        cwd: team.workspace.root,
+        cwd,
         shell: false,
       });
 

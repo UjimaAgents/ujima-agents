@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
+import type { Repository } from '@ujima/runtime-core';
 import { ApprovalRequestSchema, MessageSchema, RunStateSchema, createPaginatedSchema, IdSchema } from '@ujima/shared';
 import {
   ApprovalListQuerySchema,
@@ -10,6 +11,11 @@ import {
 } from '@ujima/api-schema';
 import type { ApprovalService, RunService } from '@ujima/orchestrator';
 import { z } from 'zod';
+import {
+  ERR_NO_WORKSPACE_ROOT,
+  assertReadyWorkspaceRoot,
+  isWorkspaceRootNotReadyError,
+} from './workspace-root.js';
 
 const RunIdParamsSchema = z.object({ runId: IdSchema });
 const ApprovalIdParamsSchema = z.object({ approvalId: IdSchema });
@@ -22,6 +28,7 @@ const RunDetailResponseSchema = z.object({
 });
 
 export interface RunRoutesOptions {
+  repo: Repository;
   runs: RunService;
   approvals: ApprovalService;
 }
@@ -30,7 +37,7 @@ export function registerRunRoutes(
   _app: FastifyInstance,
   options: RunRoutesOptions,
 ): void {
-  const { runs, approvals } = options;
+  const { repo, runs, approvals } = options;
   const app = _app.withTypeProvider<ZodTypeProvider>();
 
   app.get('/runs', {
@@ -103,15 +110,20 @@ export function registerRunRoutes(
       response: {
         200: RunStateSchema,
         400: ApiErrorSchema,
+        409: ApiErrorSchema,
         404: ApiErrorSchema,
         503: ApiErrorSchema,
       },
     },
   }, async (req, reply) => {
     try {
+      assertReadyWorkspaceRoot(repo, req.body.organizationId);
       return await runs.createRun(req.body);
     } catch (err) {
       const message = errMessage(err);
+      if (isWorkspaceRootNotReadyError(err)) {
+        return reply.code(409).send({ code: ERR_NO_WORKSPACE_ROOT, message });
+      }
       const status =
         message.startsWith('Member not found') || message.startsWith('Organization not found')
           ? 404
@@ -147,11 +159,13 @@ export function registerRunRoutes(
       response: {
         200: ApprovalRequestSchema,
         400: ApiErrorSchema,
+        409: ApiErrorSchema,
         404: ApiErrorSchema,
       },
     },
   }, async (req, reply) => {
     try {
+      assertReadyWorkspaceRoot(repo, req.body.organizationId);
       return await approvals.resolveApproval({
         organizationId: req.body.organizationId,
         approvalId: req.params.approvalId,
@@ -160,6 +174,9 @@ export function registerRunRoutes(
       });
     } catch (err) {
       const message = errMessage(err);
+      if (isWorkspaceRootNotReadyError(err)) {
+        return reply.code(409).send({ code: ERR_NO_WORKSPACE_ROOT, message });
+      }
       return reply
         .code(message.startsWith('Approval not found') ? 404 : 400)
         .send({ code: message.startsWith('Approval not found') ? 'ERR_NOT_FOUND' : 'ERR_BAD_REQUEST', message });
