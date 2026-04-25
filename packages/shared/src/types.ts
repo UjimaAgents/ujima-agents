@@ -21,6 +21,7 @@ export const AgentDef = z.object({
   persona: z.string(),
   model: z.string(),
   mcp: z.string(),
+  workspace_scopes: z.array(z.string()).optional(),
   permissions: AgentPermissions,
   communication: z
     .object({

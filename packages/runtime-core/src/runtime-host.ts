@@ -23,6 +23,7 @@ import type { Logger } from './logger';
 import { noopLogger } from './logger';
 import type { WorkspaceStore } from './workspaces';
 import { createWorkspaceStore } from './workspaces';
+import { createPathResolver } from './path-resolver';
 
 export interface StartTaskInput {
   workspaceId: string;
@@ -113,7 +114,11 @@ export interface RuntimeHost {
   listAgents(): RunningAgent[];
   getSession(sessionId: string): { sessionId: string; tasks: RunningTask[] } | undefined;
   subscribeEvents(filter: EventFilter, handler: (event: UjimaEvent) => void): EventSubscription;
-  getMCPConnection(workspaceId: string, mcpId: string, opts?: { agentId?: string }): Promise<MCPConnection>;
+  getMCPConnection(
+    workspaceId: string,
+    mcpId: string,
+    opts?: { agentId?: string; scopePaths?: string[] },
+  ): Promise<MCPConnection>;
   shutdown(opts?: { drainMs?: number }): Promise<void>;
 }
 
@@ -266,9 +271,30 @@ export async function createRuntimeHost(deps: RuntimeHostDeps, config: RuntimeHo
     return { unsubscribe: unsub };
   }
 
-  async function getMCPConnection(workspaceId: string, mcpId: string, opts?: { agentId?: string }): Promise<MCPConnection> {
+  async function getMCPConnection(
+    workspaceId: string,
+    mcpId: string,
+    opts?: { agentId?: string; scopePaths?: string[] },
+  ): Promise<MCPConnection> {
+    const ws = workspaces.requireReady(workspaceId);
+    const workspaceRoot = ws.root_path;
+    if (!workspaceRoot) {
+      throw new Error(`workspace "${workspaceId}" is not ready: root_path is not set`);
+    }
     const def = await deps.resolveMCPDef(workspaceId, mcpId);
-    return pool.get(def, opts);
+    const connection = await pool.get(def, opts);
+    const resolver = await createPathResolver({
+      root: workspaceRoot,
+      scopePaths: opts?.scopePaths,
+    });
+    return {
+      ...connection,
+      async callTool(ctx, toolName, args) {
+        // MCP servers are external processes, so normalize any path-bearing
+        // arguments before they cross that boundary.
+        return connection.callTool(ctx, toolName, await sanitizeMcpArgs(args, resolver));
+      },
+    };
   }
 
   async function shutdown(opts?: { drainMs?: number }): Promise<void> {
@@ -338,6 +364,66 @@ export async function createRuntimeHost(deps: RuntimeHostDeps, config: RuntimeHo
     getMCPConnection,
     shutdown,
   };
+}
+
+export async function sanitizeMcpArgs(
+  value: unknown,
+  resolver: Awaited<ReturnType<typeof createPathResolver>>,
+  keyHint = '',
+): Promise<unknown> {
+  if (typeof value === 'string') {
+    return shouldResolveMcpValue(keyHint, value) ? resolver.resolve(value) : value;
+  }
+  if (Array.isArray(value)) {
+    if (!shouldTreatArrayElementsAsPathy(keyHint)) {
+      return Promise.all(value.map((item) => sanitizeMcpArgs(item, resolver, '')));
+    }
+    return Promise.all(value.map((item) => sanitizeMcpArgs(item, resolver, `${keyHint}:item`)));
+  }
+  if (!value || typeof value !== 'object') {
+    return value;
+  }
+
+  const entries = await Promise.all(
+    Object.entries(value).map(async ([key, nestedValue]) => [
+      key,
+      await sanitizeMcpArgs(nestedValue, resolver, key),
+    ] as const),
+  );
+  return Object.fromEntries(entries);
+}
+
+function shouldResolveMcpValue(keyHint: string, value: string): boolean {
+  if (!value || value === '-') return false;
+  if (value.includes('://')) return false;
+  return isExplicitMcpPathKey(keyHint);
+}
+
+function shouldTreatArrayElementsAsPathy(keyHint: string): boolean {
+  return isExplicitMcpPathKey(keyHint) && /(paths|files)$/i.test(stripMcpArrayItemSuffix(keyHint));
+}
+
+function isExplicitMcpPathKey(keyHint: string): boolean {
+  const normalized = stripMcpArrayItemSuffix(keyHint).toLowerCase();
+  return (
+    normalized === 'cwd' ||
+    normalized === 'dir' ||
+    normalized === 'directory' ||
+    normalized === 'file' ||
+    normalized === 'files' ||
+    normalized === 'path' ||
+    normalized === 'paths' ||
+    normalized.endsWith('filepath') ||
+    normalized.endsWith('filepaths') ||
+    normalized.endsWith('path') ||
+    normalized.endsWith('paths') ||
+    normalized.endsWith('rootpath') ||
+    normalized.endsWith('workspacepath')
+  );
+}
+
+function stripMcpArrayItemSuffix(keyHint: string): string {
+  return keyHint.endsWith(':item') ? keyHint.slice(0, -':item'.length) : keyHint;
 }
 
 function errMessage(err: unknown): string {

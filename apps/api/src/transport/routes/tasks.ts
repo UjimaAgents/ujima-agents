@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
+import type { Repository } from '@ujima/runtime-core';
 import { ERR_NO_WORKSPACE_ROOT, NoWorkspaceRootError, type RuntimeHost } from '@ujima/runtime-core';
 import {
   ApiErrorSchema,
@@ -12,10 +13,17 @@ import {
   TaskPromotionResponseSchema,
 } from '@ujima/api-schema';
 import { z } from 'zod';
-import type { TaskPromoterService } from '@ujima/orchestrator';
+import {
+  type TaskPromoterService,
+} from '@ujima/orchestrator';
+import {
+  assertReadyWorkspaceRoot,
+  isWorkspaceRootNotReadyError,
+} from './workspace-root.js';
 
 export interface TaskRoutesOptions {
   host: RuntimeHost;
+  repo: Repository;
   taskPromoter: TaskPromoterService;
 }
 
@@ -26,7 +34,7 @@ const TaskAgentKillParamsSchema = z.object({
 });
 
 export function registerTaskRoutes(_app: FastifyInstance, options: TaskRoutesOptions): void {
-  const { host, taskPromoter } = options;
+  const { host, repo, taskPromoter } = options;
   const app = _app.withTypeProvider<ZodTypeProvider>();
 
   app.get('/tasks', {
@@ -91,7 +99,11 @@ export function registerTaskRoutes(_app: FastifyInstance, options: TaskRoutesOpt
         }),
       };
     } catch (err) {
-      if (err instanceof NoWorkspaceRootError || (err instanceof Error && err.message.includes(ERR_NO_WORKSPACE_ROOT))) {
+      if (
+        err instanceof NoWorkspaceRootError ||
+        isWorkspaceRootNotReadyError(err) ||
+        (err instanceof Error && err.message.includes(ERR_NO_WORKSPACE_ROOT))
+      ) {
         return replyError(reply, 409, ERR_NO_WORKSPACE_ROOT, err instanceof Error ? err.message : String(err));
       }
       return replyError(reply, 500, 'ERR_INTERNAL', err instanceof Error ? err.message : String(err));
@@ -132,13 +144,19 @@ export function registerTaskRoutes(_app: FastifyInstance, options: TaskRoutesOpt
       response: {
         200: TaskPromotionResponseSchema,
         400: ApiErrorSchema,
+        409: ApiErrorSchema,
         404: ApiErrorSchema,
       },
     },
   }, async (req, reply) => {
     try {
+      assertReadyWorkspaceRoot(repo, req.body.organizationId);
       return await taskPromoter.promote(req.body);
     } catch (err) {
+      if (isWorkspaceRootNotReadyError(err)) {
+        const message = err instanceof Error ? err.message : String(err);
+        return reply.code(409).send({ code: ERR_NO_WORKSPACE_ROOT, message });
+      }
       const message = err instanceof Error ? err.message : String(err);
       const code = message.startsWith('Organization not found') ? 404 : 400;
       return reply.code(code).send({ code: code === 404 ? 'ERR_NOT_FOUND' : 'ERR_BAD_REQUEST', message });

@@ -1,5 +1,5 @@
 import { realpath } from 'node:fs/promises';
-import { isAbsolute, resolve, sep } from 'node:path';
+import { isAbsolute, relative, resolve, sep } from 'node:path';
 
 export const ERR_PATH_ESCAPE = 'ERR_PATH_ESCAPE';
 
@@ -60,32 +60,76 @@ export async function createPathResolver(opts: PathResolveOptions): Promise<Path
   if (!isAbsolute(opts.root)) {
     throw new Error(`PathResolver root must be absolute, got "${opts.root}"`);
   }
+  const declaredRoot = resolve(opts.root);
   const realRoot = await realpath(opts.root);
   const scopePaths: string[] = [];
+  const scopeBoundaryPaths: string[] = [];
   for (const sp of opts.scopePaths ?? []) {
-    const candidate = isAbsolute(sp) ? sp : resolve(realRoot, sp);
-    const real = await realpathOrParent(candidate);
-    if (!withinRoot(realRoot, real)) {
+    const candidate = remapCandidateToRealRoot(
+      isAbsolute(sp) ? sp : resolve(realRoot, sp),
+      declaredRoot,
+      realRoot,
+    );
+    const resolvedScope = await resolveCandidatePath(candidate);
+    if (
+      !withinRoot(realRoot, resolvedScope.targetPath) ||
+      !withinRoot(realRoot, resolvedScope.boundaryPath)
+    ) {
       throw new Error(`scope path "${sp}" is outside workspace root "${realRoot}"`);
     }
-    scopePaths.push(real);
+    scopePaths.push(resolvedScope.targetPath);
+    scopeBoundaryPaths.push(resolvedScope.boundaryPath);
   }
 
   return {
     root: realRoot,
     scopePaths,
     async resolve(requested: string): Promise<string> {
-      const candidate = isAbsolute(requested) ? requested : resolve(realRoot, requested);
-      const real = await realpathOrParent(candidate);
-      if (!withinRoot(realRoot, real)) {
-        throw new PathEscapeError({ requested, resolved: real, root: realRoot, scopePaths });
+      const candidate = remapCandidateToRealRoot(
+        isAbsolute(requested) ? requested : resolve(realRoot, requested),
+        declaredRoot,
+        realRoot,
+      );
+      const resolved = await resolveCandidatePath(candidate);
+      if (
+        !withinRoot(realRoot, resolved.targetPath) ||
+        !withinRoot(realRoot, resolved.boundaryPath)
+      ) {
+        throw new PathEscapeError({
+          requested,
+          resolved: resolved.boundaryPath,
+          root: realRoot,
+          scopePaths,
+        });
       }
-      if (scopePaths.length > 0 && !scopePaths.some((sp) => withinRoot(sp, real))) {
-        throw new PathEscapeError({ requested, resolved: real, root: realRoot, scopePaths });
+      if (
+        scopePaths.length > 0 &&
+        !scopePaths.some(
+          (sp, index) =>
+            withinRoot(sp, resolved.targetPath) &&
+            withinRoot(scopeBoundaryPaths[index] ?? sp, resolved.boundaryPath),
+        )
+      ) {
+        throw new PathEscapeError({
+          requested,
+          resolved: resolved.boundaryPath,
+          root: realRoot,
+          scopePaths,
+        });
       }
-      return real;
+      return resolved.targetPath;
     },
   };
+}
+
+function remapCandidateToRealRoot(candidate: string, declaredRoot: string, realRoot: string): string {
+  if (withinRoot(realRoot, candidate)) {
+    return candidate;
+  }
+  if (!withinRoot(declaredRoot, candidate)) {
+    return candidate;
+  }
+  return resolve(realRoot, relative(declaredRoot, candidate));
 }
 
 function withinRoot(root: string, path: string): boolean {
@@ -104,6 +148,21 @@ async function realpathOrParent(path: string): Promise<string> {
     const parent = dirnameStrict(path);
     if (parent === path) return path;
     return realpathOrParent(parent);
+  }
+}
+
+async function resolveCandidatePath(
+  path: string,
+): Promise<{ targetPath: string; boundaryPath: string }> {
+  try {
+    const real = await realpath(path);
+    return { targetPath: real, boundaryPath: real };
+  } catch (err) {
+    if (!isEnoent(err)) throw err;
+    return {
+      targetPath: path,
+      boundaryPath: await realpathOrParent(path),
+    };
   }
 }
 

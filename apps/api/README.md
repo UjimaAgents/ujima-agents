@@ -81,8 +81,34 @@ config-managed org state.
   providers without deleting user-generated state.
 - Removing an agent from config sets `members.retired_at`; removing a channel
   from config sets `channels.archived_at`.
+- Archived config-managed channels reject new messages, and retired
+  config-managed agents cannot be assigned new runs or task promotions.
 - Config-owned fields are tracked with per-field ownership metadata so future
   dashboard edits can reject writes to code-owned settings.
+
+## Workspace Boundary Enforcement
+
+Workspace-root hardening is now enforced at both the REST surface and the
+daemon's internal filesystem boundaries.
+
+- Any task, member, channel, run, approval-resume, or organization mutation
+  before an organization's workspace root exists returns
+  `ERR_NO_WORKSPACE_ROOT` with HTTP `409`.
+- Filesystem reads and writes are resolved through a realpath-aware resolver,
+  so `..` traversal and symlink escapes are rejected with `ERR_PATH_ESCAPE`
+  and HTTP `403` semantics in daemon/tool flows.
+- `workspace_members.role_scope_paths` is the runtime allowlist for
+  member-scoped filesystem access. Role-scoped members can only touch paths
+  inside those subtrees.
+- Shell execution is scoped the same way as filesystem access: both `cwd` and
+  path-like arguments are normalized through the member's workspace resolver
+  before spawn.
+- MCP calls also sanitize path-bearing arguments before crossing into external
+  tool processes. Org-mode flows use member scope paths; legacy task/runtime
+  flows fall back to workspace-root enforcement unless narrower agent scopes
+  are available.
+- Onboarding and config sync seed `workspace_members` rows for known members,
+  and missing rows are lazily backfilled on first scoped-path resolution.
 
 ## Dependencies
 

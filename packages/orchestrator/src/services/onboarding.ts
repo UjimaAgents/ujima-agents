@@ -12,6 +12,7 @@ import { loadAgentTeam, type AgentTeamHandle } from '@ujima/framework';
 import type { ApiRepository } from './repository-reader.js';
 import type { TeamStore } from './team-store.js';
 import { summarizeTeam, validateProviderKeys, type TeamSummary } from './team.js';
+import { upsertWorkspaceMemberScopes } from './workspace-root.js';
 
 export interface OnboardingInlineTeam {
   name?: string;
@@ -150,6 +151,13 @@ export class OnboardingService {
 
     for (const member of members) {
       this.repo.saveMember(member);
+      const role = team.getRole(member.roleName);
+      upsertWorkspaceMemberScopes(
+        this.repo,
+        organizationId,
+        member.id,
+        role?.workspaceScopes ?? [],
+      );
     }
 
     const channels: Channel[] = team.channels.map((config) =>
