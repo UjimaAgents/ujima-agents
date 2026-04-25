@@ -16,7 +16,7 @@ export interface OrchestratorDeps {
   resolveAgent: (agentId: string) => Promise<AgentDef | undefined> | AgentDef | undefined;
   getMCPConnection: (
     mcpId: string,
-    opts?: { agentId?: string },
+    opts?: { agentId?: string; scopePaths?: string[] },
   ) => Promise<MCPConnection> | MCPConnection;
   getProvider: (agent: AgentDef) => LLMProvider;
   eventBus: EventBus;

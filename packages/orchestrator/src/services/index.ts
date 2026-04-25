@@ -50,6 +50,12 @@ export type {
 } from './settings.js';
 export { TaskPromoterService } from './task-promoter.js';
 export type { TaskPromotionInput, TaskPromotionResult } from './task-promoter.js';
+export {
+  ERR_NO_WORKSPACE_ROOT,
+  WorkspaceRootRequiredError,
+  isWorkspaceRootRequiredError,
+  requireOrganizationWorkspaceRoot,
+} from './workspace-root.js';
 export type {
   ApiRepository,
   BootstrapSnapshot,

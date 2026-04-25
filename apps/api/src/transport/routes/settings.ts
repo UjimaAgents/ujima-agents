@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { AgentTeamConfigSchema } from '@ujima/framework';
+import type { Repository } from '@ujima/runtime-core';
 import { IdSchema, MemberSchema } from '@ujima/shared';
 import {
   AddMemberRequestSchema,
@@ -16,6 +17,11 @@ import {
 } from '@ujima/api-schema';
 import type { SettingsService } from '@ujima/orchestrator';
 import { z } from 'zod';
+import {
+  ERR_NO_WORKSPACE_ROOT,
+  assertReadyWorkspaceRoot,
+  isWorkspaceRootNotReadyError,
+} from './workspace-root.js';
 
 const OrgIdParamsSchema = z.object({ orgId: IdSchema });
 const ProviderTestParamsSchema = z.object({ providerName: z.string().min(1) });
@@ -28,6 +34,7 @@ const ProviderTestResultSchema = z.object({
 });
 
 export interface SettingsRoutesOptions {
+  repo: Repository;
   settings: SettingsService;
 }
 
@@ -35,7 +42,7 @@ export function registerSettingsRoutes(
   _app: FastifyInstance,
   options: SettingsRoutesOptions,
 ): void {
-  const { settings } = options;
+  const { repo, settings } = options;
   const app = _app.withTypeProvider<ZodTypeProvider>();
 
   app.get('/settings/team', {
@@ -84,17 +91,22 @@ export function registerSettingsRoutes(
       response: {
         200: ProviderSecretsUpsertResponseSchema,
         400: ApiErrorSchema,
+        409: ApiErrorSchema,
         404: ApiErrorSchema,
         503: ApiErrorSchema,
       },
     },
   }, async (req, reply) => {
     try {
+      assertReadyWorkspaceRoot(repo, req.body.organizationId);
       return {
         providers: settings.upsertProviders(req.body.organizationId, req.body.providerKeys),
       };
     } catch (err) {
       const message = errMessage(err);
+      if (isWorkspaceRootNotReadyError(err)) {
+        return reply.code(409).send({ code: ERR_NO_WORKSPACE_ROOT, message });
+      }
       const code = message.startsWith('Organization not found')
         ? 404
         : message.startsWith('Unknown provider keys')
@@ -113,17 +125,22 @@ export function registerSettingsRoutes(
       response: {
         200: ProviderSecretsUpsertResponseSchema,
         400: ApiErrorSchema,
+        409: ApiErrorSchema,
         404: ApiErrorSchema,
         503: ApiErrorSchema,
       },
     },
   }, async (req, reply) => {
     try {
+      assertReadyWorkspaceRoot(repo, req.query.organizationId);
       return {
         providers: settings.deleteProvider(req.query.organizationId, req.params.providerName),
       };
     } catch (err) {
       const message = errMessage(err);
+      if (isWorkspaceRootNotReadyError(err)) {
+        return reply.code(409).send({ code: ERR_NO_WORKSPACE_ROOT, message });
+      }
       return replyError(reply, message.startsWith('Organization not found') ? 404 : 503, message);
     }
   });
@@ -157,14 +174,19 @@ export function registerSettingsRoutes(
       response: {
         200: OrganizationSettingsResponseSchema,
         400: ApiErrorSchema,
+        409: ApiErrorSchema,
         404: ApiErrorSchema,
       },
     },
   }, async (req, reply) => {
     try {
+      assertReadyWorkspaceRoot(repo, req.body.organizationId);
       return settings.updateOrganizationSettings(req.body);
     } catch (err) {
       const message = errMessage(err);
+      if (isWorkspaceRootNotReadyError(err)) {
+        return reply.code(409).send({ code: ERR_NO_WORKSPACE_ROOT, message });
+      }
       return replyError(reply, message.startsWith('Organization not found') ? 404 : 400, message);
     }
   });
@@ -217,11 +239,13 @@ export function registerSettingsRoutes(
       response: {
         200: MemberSchema,
         400: ApiErrorSchema,
+        409: ApiErrorSchema,
         404: ApiErrorSchema,
       },
     },
   }, async (req, reply) => {
     try {
+      assertReadyWorkspaceRoot(repo, req.params.orgId);
       return settings.addMember({
         organizationId: req.params.orgId,
         name: req.body.name,
@@ -230,6 +254,9 @@ export function registerSettingsRoutes(
       });
     } catch (err) {
       const message = errMessage(err);
+      if (isWorkspaceRootNotReadyError(err)) {
+        return reply.code(409).send({ code: ERR_NO_WORKSPACE_ROOT, message });
+      }
       return replyError(reply, message.startsWith('Organization not found') ? 404 : 400, message);
     }
   });
