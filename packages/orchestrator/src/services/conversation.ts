@@ -93,9 +93,7 @@ export class ConversationService {
       return channels.filter((channel) => channel.memberIds.includes(member.id));
     }
 
-    return channels.filter(
-      (channel) => channel.kind !== 'self' || channel.memberIds.includes(member.id),
-    );
+    return channels.filter((channel) => this.canMemberAccessChannel(channel, member.id));
   }
 
   listMessages(organizationId: string, threadId: string, cursor?: string, limit?: number) {
@@ -214,7 +212,7 @@ export class ConversationService {
     }
 
     const channel = input.channelId
-      ? this.requireActiveChannel(input.organizationId, input.channelId)
+      ? this.requireWritableChannel(input.organizationId, input.channelId, sender.id)
       : null;
 
     this.repo.ensureThread({
@@ -593,10 +591,18 @@ export class ConversationService {
     memberId: string,
   ): Channel {
     const channel = this.requireActiveChannel(organizationId, channelId);
-    if (channel.kind === 'self' && !channel.memberIds.includes(memberId)) {
+    if (!this.canMemberAccessChannel(channel, memberId)) {
       throw new Error(`Channel not found: ${channelId}`);
     }
     return channel;
+  }
+
+  private requireWritableChannel(
+    organizationId: string,
+    channelId: string,
+    memberId: string,
+  ): Channel {
+    return this.requireReadableChannel(organizationId, channelId, memberId);
   }
 
   private requireActiveChannel(organizationId: string, channelId: string) {
@@ -610,6 +616,15 @@ export class ConversationService {
       throw new Error(`Channel is archived: ${channelId}`);
     }
     return channel;
+  }
+
+  private canMemberAccessChannel(channel: Channel, memberId: string): boolean {
+    // Self channels and DMs are the only private channel kinds in the current
+    // substrate. Everything else stays org-visible by default.
+    if (channel.kind === 'self' || channel.kind === 'dm') {
+      return channel.memberIds.includes(memberId);
+    }
+    return true;
   }
 }
 

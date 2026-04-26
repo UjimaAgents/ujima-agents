@@ -181,7 +181,9 @@ export function searchChannelMessages(
   } = {},
 ): PaginatedMessages {
   const limit = options.limit ?? 50;
-  const params: (string | number)[] = [organizationId, channelId, queryText];
+  const terms = normalizeSearchTerms(queryText);
+  const safeFtsQuery = buildSafeFtsQuery(terms);
+  const params: (string | number)[] = [organizationId, channelId, safeFtsQuery];
   let innerQuery = `
     SELECT m.*
       FROM messages_fts f
@@ -203,13 +205,19 @@ export function searchChannelMessages(
   innerQuery += ' ORDER BY m.created_at DESC, m.id DESC LIMIT ?';
   params.push(limit + 1);
 
-  const query = `SELECT * FROM (${innerQuery}) ORDER BY created_at ASC, id ASC`;
-  const rows = db.prepare(query).all(...params) as Row[];
-  const hasMore = rows.length > limit;
-  if (hasMore) rows.shift();
-  const data = rows.map(rowToMessage);
-  const head = hasMore ? data[0] : undefined;
-  return { data, hasMore, nextCursor: head?.createdAt };
+  try {
+    const query = `SELECT * FROM (${innerQuery}) ORDER BY created_at ASC, id ASC`;
+    const rows = db.prepare(query).all(...params) as Row[];
+    const hasMore = rows.length > limit;
+    if (hasMore) rows.shift();
+    const data = rows.map(rowToMessage);
+    const head = hasMore ? data[0] : undefined;
+    return { data, hasMore, nextCursor: head?.createdAt };
+  } catch {
+    // User-entered search text can contain broken FTS syntax like unmatched
+    // quotes. Fall back to substring search instead of surfacing an SQL error.
+    return searchChannelMessagesBySubstring(db, organizationId, channelId, terms, options);
+  }
 }
 
 export function deleteMessages(
@@ -241,4 +249,62 @@ function rowToMessage(row: Row): Message {
     editedAt: optionalRowString(row, 'edited_at'),
     deletedAt: optionalRowString(row, 'deleted_at'),
   });
+}
+
+function normalizeSearchTerms(queryText: string): string[] {
+  const terms = queryText
+    .trim()
+    .split(/\s+/)
+    .map((term) => term.trim())
+    .filter(Boolean);
+  return terms.length > 0 ? terms : [queryText.trim()];
+}
+
+function buildSafeFtsQuery(terms: string[]): string {
+  return terms.map((term) => `"${term.replaceAll('"', '""')}"`).join(' AND ');
+}
+
+function searchChannelMessagesBySubstring(
+  db: DbHandle,
+  organizationId: string,
+  channelId: string,
+  terms: string[],
+  options: {
+    cursor?: string;
+    since?: string;
+    limit?: number;
+  },
+): PaginatedMessages {
+  const limit = options.limit ?? 50;
+  const params: (string | number)[] = [organizationId, channelId];
+  let innerQuery = 'SELECT * FROM messages WHERE organization_id = ? AND channel_id = ?';
+
+  for (const term of terms) {
+    innerQuery += " AND lower(content) LIKE ? ESCAPE '\\'";
+    params.push(`%${escapeLikePattern(term.toLowerCase())}%`);
+  }
+
+  if (options.since) {
+    innerQuery += ' AND created_at >= ?';
+    params.push(options.since);
+  }
+  if (options.cursor) {
+    innerQuery += ' AND created_at < ?';
+    params.push(options.cursor);
+  }
+
+  innerQuery += ' ORDER BY created_at DESC, id DESC LIMIT ?';
+  params.push(limit + 1);
+
+  const query = `SELECT * FROM (${innerQuery}) ORDER BY created_at ASC, id ASC`;
+  const rows = db.prepare(query).all(...params) as Row[];
+  const hasMore = rows.length > limit;
+  if (hasMore) rows.shift();
+  const data = rows.map(rowToMessage);
+  const head = hasMore ? data[0] : undefined;
+  return { data, hasMore, nextCursor: head?.createdAt };
+}
+
+function escapeLikePattern(value: string): string {
+  return value.replaceAll('\\', '\\\\').replaceAll('%', '\\%').replaceAll('_', '\\_');
 }
