@@ -42,7 +42,9 @@ export const channelPostTool: OrchestratorTool<typeof ChannelPostSchema> = {
   toInvocation: (args) => ({
     action: 'message',
     resourceType: 'message',
-    resourcePath: args.channel_id,
+    // Channel ids are not filesystem paths — never pass them as
+    // `resourcePath`, or `assertWorkspaceBoundary` will reject `general`,
+    // `dm:…`, etc. Channel-scoped policy lives on the IAM matrix instead.
     permissionMcpId: 'channels',
     permissionToolName: 'post',
     input: args,
@@ -67,7 +69,7 @@ export const channelReplyTool: OrchestratorTool<typeof ChannelReplySchema> = {
   toInvocation: (args) => ({
     action: 'message',
     resourceType: 'message',
-    resourcePath: args.message_id,
+    // Message ids are not filesystem paths — see channelPostTool.
     permissionMcpId: 'channels',
     permissionToolName: 'reply',
     input: args,
@@ -110,7 +112,8 @@ export const channelListTool: OrchestratorTool<typeof ChannelListSchema> = {
   id: 'channel.list',
   schema: ChannelListSchema,
   toInvocation: (args) => ({
-    action: 'message',
+    // List is a read; tag the audit row accordingly.
+    action: 'read',
     resourceType: 'message',
     permissionMcpId: 'channels',
     permissionToolName: 'list',
@@ -128,9 +131,10 @@ export const channelReadTool: OrchestratorTool<typeof ChannelReadSchema> = {
   id: 'channel.read',
   schema: ChannelReadSchema,
   toInvocation: (args) => ({
-    action: 'message',
+    // Read is a read; tag the audit row accordingly. Channel ids are not
+    // filesystem paths — see channelPostTool.
+    action: 'read',
     resourceType: 'message',
-    resourcePath: args.channel_id,
     permissionMcpId: 'channels',
     permissionToolName: 'read',
     input: args,
