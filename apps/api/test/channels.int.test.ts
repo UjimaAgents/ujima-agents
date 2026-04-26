@@ -40,19 +40,21 @@ async function waitFor(assertion: () => void | Promise<void>, timeoutMs = 1_000)
   }
 }
 
-async function createFixture(options: { agentNames?: string[] } = {}) {
-  const archiveRoot = await mkdtemp(join(tmpdir(), 'ujima-e3-archive-'));
+async function createFixture(
+  options: { agentNames?: string[]; archiveRoot?: string; organizationName?: string } = {},
+) {
+  const archiveRoot = options.archiveRoot ?? (await mkdtemp(join(tmpdir(), 'ujima-e3-archive-')));
   const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
   const teamStore = createTeamStore();
   const onboarding = new OnboardingService(repo, teamStore);
   const settings = new SettingsService(repo, teamStore);
   const result = await onboarding.onboard({
-    organizationName: 'E3 Org',
+    organizationName: options.organizationName ?? 'E3 Org',
     ownerName: 'Owner',
     workspaceRoot: archiveRoot,
     providerKeys: {},
     team: {
-      name: 'E3 Org',
+      name: options.organizationName ?? 'E3 Org',
       channels: [
         { name: 'general', kind: 'general', topic: 'General' },
         { name: 'frontend', kind: 'group', topic: 'Frontend' },
@@ -289,6 +291,119 @@ describe('E3 channels and mentions', () => {
       limit: 10,
     });
     expect(search.data.some((message) => message.content.includes('archived needle'))).toBe(true);
+  });
+
+  it('searches live channel messages through FTS', async () => {
+    const fixture = await createFixture({ agentNames: ['frontend-alice'] });
+    tempDirs.push(fixture.archiveRoot);
+    const realtime = createRealtimeCollector();
+    const conversations = new ConversationService(fixture.repo, realtime);
+
+    fixture.repo.ensureThread({
+      id: 'general',
+      organizationId: fixture.organizationId,
+      channelId: 'general',
+      title: 'general',
+      memberIds: [fixture.ownerId, 'frontend-alice'],
+      createdAt: new Date().toISOString(),
+    });
+
+    conversations.postToChannel({
+      organizationId: fixture.organizationId,
+      senderId: fixture.ownerId,
+      channelId: 'general',
+      body: 'release search needle',
+    });
+
+    const search = await conversations.readChannel({
+      organizationId: fixture.organizationId,
+      memberId: fixture.ownerId,
+      channelId: 'general',
+      query: 'needle',
+      limit: 10,
+    });
+
+    expect(search.data.map((message) => message.content)).toContain('release search needle');
+  });
+
+  it('keeps retained archives isolated by organization even when channel ids match', async () => {
+    const sharedArchiveRoot = await mkdtemp(join(tmpdir(), 'ujima-e3-shared-archive-'));
+    tempDirs.push(sharedArchiveRoot);
+
+    const first = await createFixture({
+      archiveRoot: sharedArchiveRoot,
+      organizationName: 'Org One',
+    });
+    const second = await createFixture({
+      archiveRoot: sharedArchiveRoot,
+      organizationName: 'Org Two',
+    });
+
+    const firstRetention = new ChannelRetentionService(first.repo, sharedArchiveRoot);
+    const secondRetention = new ChannelRetentionService(second.repo, sharedArchiveRoot);
+
+    first.repo.ensureThread({
+      id: 'general',
+      organizationId: first.organizationId,
+      channelId: 'general',
+      title: 'general',
+      memberIds: [first.ownerId],
+      createdAt: new Date().toISOString(),
+    });
+    second.repo.ensureThread({
+      id: 'general',
+      organizationId: second.organizationId,
+      channelId: 'general',
+      title: 'general',
+      memberIds: [second.ownerId],
+      createdAt: new Date().toISOString(),
+    });
+
+    first.repo.saveMessage(
+      MessageSchema.parse({
+        id: randomUUID(),
+        organizationId: first.organizationId,
+        threadId: 'general',
+        channelId: 'general',
+        senderId: first.ownerId,
+        senderKind: 'human',
+        kind: 'human',
+        content: 'org-one-only needle',
+        createdAt: new Date(Date.now() - 100 * 24 * 60 * 60 * 1000).toISOString(),
+      }),
+    );
+    second.repo.saveMessage(
+      MessageSchema.parse({
+        id: randomUUID(),
+        organizationId: second.organizationId,
+        threadId: 'general',
+        channelId: 'general',
+        senderId: second.ownerId,
+        senderKind: 'human',
+        kind: 'human',
+        content: 'org-two-only needle',
+        createdAt: new Date(Date.now() - 100 * 24 * 60 * 60 * 1000).toISOString(),
+      }),
+    );
+
+    await firstRetention.archiveExpiredMessages(first.organizationId, new Date());
+    await secondRetention.archiveExpiredMessages(second.organizationId, new Date());
+
+    const firstSearch = await firstRetention.searchChannelMessages({
+      organizationId: first.organizationId,
+      channelId: 'general',
+      query: 'needle',
+      limit: 10,
+    });
+    const secondSearch = await secondRetention.searchChannelMessages({
+      organizationId: second.organizationId,
+      channelId: 'general',
+      query: 'needle',
+      limit: 10,
+    });
+
+    expect(firstSearch.data.map((message) => message.content)).toEqual(['org-one-only needle']);
+    expect(secondSearch.data.map((message) => message.content)).toEqual(['org-two-only needle']);
   });
 
   it('edits and deletes with tombstones while preserving immutable tool-call cards', async () => {

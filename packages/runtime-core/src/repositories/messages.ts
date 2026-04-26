@@ -188,7 +188,7 @@ export function searchChannelMessages(
       JOIN messages m ON m.rowid = f.rowid
      WHERE m.organization_id = ?
        AND m.channel_id = ?
-       AND f.messages_fts MATCH ?
+       AND messages_fts MATCH ?
   `;
 
   if (options.since) {

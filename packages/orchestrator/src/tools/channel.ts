@@ -154,6 +154,9 @@ export const selfNoteTool: OrchestratorTool<typeof SelfNoteSchema> = {
   toInvocation: (args) => ({
     action: 'message',
     resourceType: 'message',
+    // Self notes are the agent's private scratchpad. They intentionally bypass
+    // policy gating so an agent can always think, even if broader channel
+    // access is restricted.
     bypassPermission: true,
     input: args,
   }),

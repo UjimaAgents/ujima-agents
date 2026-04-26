@@ -31,7 +31,7 @@ export class ChannelRetentionService implements ArchivedChannelMessageStore {
 
       for (const message of expired) {
         const mentions = this.repo.listMessageMentions(message.id);
-        await this.appendArchivedRecord(channel.id, {
+        await this.appendArchivedRecord(organizationId, channel.id, {
           message,
           mentions,
         });
@@ -51,7 +51,7 @@ export class ChannelRetentionService implements ArchivedChannelMessageStore {
     since?: string;
     limit?: number;
   }): Promise<PaginatedMessages> {
-    const records = await this.loadArchivedRecords(input.channelId);
+    const records = await this.loadArchivedRecords(input.organizationId, input.channelId);
     const data = paginateArchivedMessages(records, input);
     return data;
   }
@@ -64,7 +64,7 @@ export class ChannelRetentionService implements ArchivedChannelMessageStore {
     since?: string;
     limit?: number;
   }): Promise<PaginatedMessages> {
-    const records = await this.loadArchivedRecords(input.channelId);
+    const records = await this.loadArchivedRecords(input.organizationId, input.channelId);
     const filtered = records.filter((record) => matchesQuery(record.message.content, input.query));
     return paginateArchivedMessages(filtered, input);
   }
@@ -90,24 +90,33 @@ export class ChannelRetentionService implements ArchivedChannelMessageStore {
   }
 
   private async appendArchivedRecord(
+    organizationId: string,
     channelId: string,
     record: ArchivedMessageRecord,
   ): Promise<void> {
     const month = record.message.createdAt.slice(0, 7);
-    const channelDir = join(this.archiveRoot, 'archives', 'channels', channelId);
+    // Channel ids like "general" are reused across organizations, so the
+    // archive layout must be org-scoped to avoid cross-org history leakage.
+    const channelDir = join(this.archiveRoot, 'archives', 'channels', organizationId, channelId);
     await mkdir(channelDir, { recursive: true });
     const jsonlPath = join(channelDir, `${month}.jsonl`);
     const indexPath = join(channelDir, `${month}.index.json`);
 
     await appendFile(jsonlPath, `${JSON.stringify(record)}\n`, 'utf8');
 
+    // The JSONL file is the durable append-only archive. The sidecar index keeps
+    // archived reads simple for now so channel.read(query=...) can continue to
+    // work without having to stream and parse every monthly log on each query.
     const existing = await readJsonArray<ArchivedMessageRecord>(indexPath);
     existing.push(record);
     await writeFile(indexPath, `${JSON.stringify(existing, null, 2)}\n`, 'utf8');
   }
 
-  private async loadArchivedRecords(channelId: string): Promise<ArchivedMessageRecord[]> {
-    const channelDir = join(this.archiveRoot, 'archives', 'channels', channelId);
+  private async loadArchivedRecords(
+    organizationId: string,
+    channelId: string,
+  ): Promise<ArchivedMessageRecord[]> {
+    const channelDir = join(this.archiveRoot, 'archives', 'channels', organizationId, channelId);
     try {
       const entries = (await readdir(channelDir))
         .filter((entry) => entry.endsWith('.index.json'))
@@ -142,10 +151,12 @@ function paginateArchivedMessages(
   const limit = input.limit ?? 50;
   let messages = records.map((record) => record.message);
   if (input.since) {
-    messages = messages.filter((message) => message.createdAt >= input.since!);
+    const since = input.since;
+    messages = messages.filter((message) => message.createdAt >= since);
   }
   if (input.cursor) {
-    messages = messages.filter((message) => message.createdAt < input.cursor!);
+    const cursor = input.cursor;
+    messages = messages.filter((message) => message.createdAt < cursor);
   }
   messages = messages.sort((left, right) => left.createdAt.localeCompare(right.createdAt));
   const hasMore = messages.length > limit;
