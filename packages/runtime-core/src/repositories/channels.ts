@@ -1,5 +1,5 @@
 import type { SqliteDbHandle as DbHandle } from '@ujima/context-store';
-import { ChannelSchema, type Channel } from '@ujima/shared';
+import { ChannelSchema, type Channel, type ChannelKind } from '@ujima/shared';
 import { now, rowString } from './common.js';
 
 type Row = Record<string, unknown>;
@@ -8,6 +8,19 @@ export interface PaginatedChannels {
   data: Channel[];
   nextCursor?: string;
   hasMore: boolean;
+}
+
+export interface ListChannelsOptions {
+  cursor?: string;
+  limit?: number;
+  /**
+   * Channel kinds to exclude at the SQL layer. Filtering must happen here
+   * (not after pagination) so `hasMore` / `nextCursor` are computed against
+   * the same result set the caller actually sees. Otherwise — once a `self`
+   * or `dm` channel exists — the cursor can land on a hidden row and the
+   * caller skips visible channels on the next page.
+   */
+  excludeKinds?: readonly ChannelKind[];
 }
 
 export function saveChannel(db: DbHandle, channel: Channel): Channel {
@@ -70,9 +83,16 @@ export function listChannels(
   organizationId: string,
   cursor?: string,
   limit = 50,
+  excludeKinds: readonly ChannelKind[] = [],
 ): PaginatedChannels {
   const params: (string | number)[] = [organizationId];
   let query = 'SELECT * FROM channels WHERE organization_id = ?';
+
+  if (excludeKinds.length > 0) {
+    const placeholders = excludeKinds.map(() => '?').join(', ');
+    query += ` AND kind NOT IN (${placeholders})`;
+    params.push(...excludeKinds);
+  }
 
   if (cursor) {
     query += ' AND created_at < ?';

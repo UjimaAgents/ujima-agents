@@ -239,3 +239,86 @@ test('searchChannelMessages tolerates unmatched quotes in user search text', () 
   const results = repo.searchChannelMessages(orgId, 'general', 'needle"', { limit: 10 });
   expect(results.data.map((message) => message.content)).toContain('quoted needle here');
 });
+
+// Regression for two listChannels() bugs:
+//   (A) Pagination drift — filtering self/dm in JS *after* paging meant
+//       hasMore/nextCursor were computed against the unfiltered set, so once
+//       hidden channels existed the cursor could point at a hidden row and
+//       skip visible ones.
+//   (B) DM leak — only `self` was being filtered, so `dm` channels surfaced
+//       in BootstrapService and SettingsService payloads (callers without a
+//       member identity could see private 2-member conversations).
+// `saveChannel` stamps `created_at` with `Date.now()` ISO precision. Two
+// adjacent saves can land on the same millisecond — and SQLite gives no
+// guaranteed tiebreaker for same-timestamp rows under `ORDER BY created_at
+// DESC`. Use a 2ms gap so insert order maps deterministically to sort order.
+async function saveChannelAt(
+  repo: Repository,
+  channel: Parameters<Repository['saveChannel']>[0],
+): Promise<void> {
+  repo.saveChannel(channel);
+  await new Promise((resolve) => setTimeout(resolve, 2));
+}
+
+test('listChannels excludes hidden kinds at the SQL layer (no pagination drift)', async () => {
+  const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
+  const orgId = randomUUID();
+  repo.saveOrganization(
+    OrganizationSchema.parse({
+      id: orgId,
+      name: 'Pagination Org',
+      workspace: { root: '/tmp/pagination-org', roleScopes: {} },
+    }),
+  );
+
+  // Insert order (oldest → newest): general, frontend, self_alex, dm_alex_quinn, backend.
+  // `ORDER BY created_at DESC` → backend, dm_alex_quinn, self_alex, frontend, general.
+  // After excluding self/dm at the SQL layer → backend, frontend, general.
+  await saveChannelAt(repo, { id: 'general', organizationId: orgId, name: 'general', kind: 'general', topic: '', memberIds: [] });
+  await saveChannelAt(repo, { id: 'frontend', organizationId: orgId, name: 'frontend', kind: 'group', topic: '', memberIds: [] });
+  await saveChannelAt(repo, { id: 'self_alex', organizationId: orgId, name: 'self_alex', kind: 'self', topic: '', memberIds: ['alex'] });
+  await saveChannelAt(repo, { id: 'dm_alex_quinn', organizationId: orgId, name: 'dm_alex_quinn', kind: 'dm', topic: '', memberIds: ['alex', 'quinn'] });
+  await saveChannelAt(repo, { id: 'backend', organizationId: orgId, name: 'backend', kind: 'group', topic: '', memberIds: [] });
+
+  // limit=2 must return exactly two visible rows and signal hasMore=true (one
+  // more visible row remains). Pre-fix the limit-2 query returned
+  // backend+dm_alex_quinn, drop dm_alex_quinn post-filter, and reported a
+  // cursor pointing at a hidden row — skipping `self_alex` then revealing
+  // `frontend` on page 2 instead of `frontend, general`.
+  const page1 = repo.listChannels(orgId, undefined, 2, ['self', 'dm']);
+  expect(page1.data.map((c) => c.id)).toEqual(['backend', 'frontend']);
+  expect(page1.hasMore).toBe(true);
+  expect(page1.nextCursor).toBeDefined();
+
+  const page2 = repo.listChannels(orgId, page1.nextCursor, 2, ['self', 'dm']);
+  expect(page2.data.map((c) => c.id)).toEqual(['general']);
+  expect(page2.hasMore).toBe(false);
+
+  // Sanity: nothing across both pages is a self/dm channel.
+  const allReturned = [...page1.data, ...page2.data];
+  expect(allReturned.every((c) => c.kind !== 'self' && c.kind !== 'dm')).toBe(true);
+});
+
+test('bootstrap snapshot drops self and dm channels', async () => {
+  const { getBootstrapSnapshot } = await import('./bootstrap.js');
+  const db = openDatabase({ dbPath: ':memory:' });
+  const repo = new Repository(db);
+  const orgId = randomUUID();
+
+  repo.saveOrganization(
+    OrganizationSchema.parse({
+      id: orgId,
+      name: 'Snapshot Org',
+      workspace: { root: '/tmp/snapshot-org', roleScopes: {} },
+    }),
+  );
+  repo.saveChannel({ id: 'general', organizationId: orgId, name: 'general', kind: 'general', topic: '', memberIds: [] });
+  repo.saveChannel({ id: 'self_alex', organizationId: orgId, name: 'self_alex', kind: 'self', topic: '', memberIds: ['alex'] });
+  repo.saveChannel({ id: 'dm_alex_quinn', organizationId: orgId, name: 'dm_alex_quinn', kind: 'dm', topic: '', memberIds: ['alex', 'quinn'] });
+
+  const snapshot = getBootstrapSnapshot(db);
+  const visibleIds = snapshot.channels.map((c) => c.id);
+  expect(visibleIds).toContain('general');
+  expect(visibleIds).not.toContain('self_alex');
+  expect(visibleIds).not.toContain('dm_alex_quinn');
+});
