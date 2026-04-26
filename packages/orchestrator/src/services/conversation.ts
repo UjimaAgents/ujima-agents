@@ -454,6 +454,10 @@ export class ConversationService {
         continue;
       }
 
+      // Mention fan-out is what wakes dormant agents back into the org loop.
+      // We keep the limiter here, before realtime emission and before the
+      // follow-up run callback, so both delivery paths agree on whether a wake
+      // should happen for this member.
       if (!this.consumeMentionFanoutQuota(message.organizationId, member.id)) {
         this.publishMentionThrottledSystemMessage(message.organizationId, member.id, message.senderId);
         continue;
@@ -546,6 +550,9 @@ export class ConversationService {
       byHandle.set(normalizeMentionHandle(member.name), member.id);
     }
 
+    // We merge explicit mention ids from tool inputs with parsed @handles from
+    // the message body so typed intent stays consistent no matter how the
+    // message was authored.
     const mentionIds = new Set<string>(message.mentions);
     const parsedHandles = extractMentionHandles(message.content);
     for (const handle of parsedHandles) {
