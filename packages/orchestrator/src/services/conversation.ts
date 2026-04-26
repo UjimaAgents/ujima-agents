@@ -257,9 +257,21 @@ export class ConversationService {
     mentions?: string[];
   }) {
     const channel = this.requireActiveChannel(input.organizationId, input.channelId);
-    const threadId = input.replyTo
-      ? this.requireMessage(input.organizationId, input.replyTo).threadId
-      : channel.id;
+    let threadId = channel.id;
+    if (input.replyTo) {
+      const parent = this.requireMessage(input.organizationId, input.replyTo);
+      // Reject cross-channel replies: a reply must live in the same channel
+      // as its parent message. Otherwise the resulting message would render
+      // in `input.channelId` while threading under a different channel's
+      // conversation — corrupting channel history and leaking replies across
+      // channel boundaries.
+      if (parent.channelId !== channel.id) {
+        throw new Error(
+          `Cannot reply across channels: parent message ${parent.id} belongs to channel ${parent.channelId}, not ${channel.id}`,
+        );
+      }
+      threadId = parent.threadId;
+    }
     return this.sendMessage({
       organizationId: input.organizationId,
       threadId,

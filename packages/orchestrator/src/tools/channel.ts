@@ -45,8 +45,14 @@ export const channelPostTool: OrchestratorTool<typeof ChannelPostSchema> = {
     // Channel ids are not filesystem paths — never pass them as
     // `resourcePath`, or `assertWorkspaceBoundary` will reject `general`,
     // `dm:…`, etc. Channel-scoped policy lives on the IAM matrix instead.
+    //
+    // `permissionMcpId: 'channels'` groups all channel.* tools under one
+    // pseudo-MCP for the IAM matrix. `permissionToolName` is intentionally
+    // NOT overridden: the permissions middleware checks `toolName` against
+    // `allowed_tools`, which contains the full ids (`channel.post`, …) — a
+    // short name like `'post'` would always be rejected before
+    // checkToolPolicy runs.
     permissionMcpId: 'channels',
-    permissionToolName: 'post',
     input: args,
   }),
   execute: ({ invocation, conversations }) =>
@@ -69,9 +75,9 @@ export const channelReplyTool: OrchestratorTool<typeof ChannelReplySchema> = {
   toInvocation: (args) => ({
     action: 'message',
     resourceType: 'message',
-    // Message ids are not filesystem paths — see channelPostTool.
+    // Message ids are not filesystem paths — see channelPostTool. Same
+    // rationale for not overriding permissionToolName.
     permissionMcpId: 'channels',
-    permissionToolName: 'reply',
     input: args,
   }),
   execute: ({ invocation, conversations }) =>
@@ -92,8 +98,8 @@ export const channelDmTool: OrchestratorTool<typeof ChannelDmSchema> = {
   toInvocation: (args) => ({
     action: 'message',
     resourceType: 'message',
+    // See channelPostTool — keep permissionToolName as the full tool id.
     permissionMcpId: 'channels',
-    permissionToolName: 'dm',
     input: args,
   }),
   execute: ({ invocation, conversations }) =>
@@ -115,8 +121,8 @@ export const channelListTool: OrchestratorTool<typeof ChannelListSchema> = {
     // List is a read; tag the audit row accordingly.
     action: 'read',
     resourceType: 'message',
+    // See channelPostTool — keep permissionToolName as the full tool id.
     permissionMcpId: 'channels',
-    permissionToolName: 'list',
     input: args,
   }),
   execute: ({ invocation, conversations }) =>
@@ -132,11 +138,11 @@ export const channelReadTool: OrchestratorTool<typeof ChannelReadSchema> = {
   schema: ChannelReadSchema,
   toInvocation: (args) => ({
     // Read is a read; tag the audit row accordingly. Channel ids are not
-    // filesystem paths — see channelPostTool.
+    // filesystem paths — see channelPostTool. Same rationale for not
+    // overriding permissionToolName.
     action: 'read',
     resourceType: 'message',
     permissionMcpId: 'channels',
-    permissionToolName: 'read',
     input: args,
   }),
   execute: ({ invocation, conversations }) =>
