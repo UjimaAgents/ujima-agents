@@ -22,6 +22,14 @@ export function checkToolPolicy(
     return { allowed: false, requiresApproval: false, reason: `Unknown role: ${roleName}` };
   }
 
+  // self.note is the agent's private scratchpad. Per the channels-as-substrate
+  // principle, an agent must always be able to think to itself — even if its
+  // role doesn't explicitly list `self.note` in `tools`. Always allowed,
+  // never approval-gated.
+  if (toolId === 'self.note') {
+    return { allowed: true, requiresApproval: false };
+  }
+
   if (!role.tools.includes(toolId)) {
     return {
       allowed: false,
@@ -31,6 +39,16 @@ export function checkToolPolicy(
   }
 
   if (toolId === 'message') {
+    return { allowed: true, requiresApproval: false };
+  }
+
+  // channel.* tools (post / reply / dm / list / read) operate on the
+  // messaging substrate — channel ids and message ids are NOT filesystem
+  // paths, so workspace-boundary and per-role scope checks don't apply.
+  // Posting/DMing is also not approval-gated by default; the IAM matrix
+  // (handled by the @ujima/permissions middleware one layer up) is the
+  // place to add finer-grained gating like `junior-qa → channel.dm(senior-*)`.
+  if (toolId.startsWith('channel.')) {
     return { allowed: true, requiresApproval: false };
   }
 

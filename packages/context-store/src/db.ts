@@ -1,6 +1,6 @@
 import { mkdirSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { dirname } from 'node:path';
-import Database from 'better-sqlite3';
 
 interface StatementHandle {
   all(...params: unknown[]): unknown[];
@@ -13,6 +13,28 @@ export interface DbHandle {
   exec(sql: string): void;
   pragma(sql: string): unknown;
   close(): void;
+}
+
+type SqliteDatabaseCtor = new (path: string) => DbHandle;
+
+// Resolve the SQLite driver lazily so the import surface stays clean for
+// both runtimes:
+//   * bun → `bun:sqlite` (native, fast)
+//   * node → `better-sqlite3`
+// `createRequire(__filename)` keeps it synchronous (no top-level await) and
+// avoids the `require()`/`any` lint hits that the previous shim took.
+// `__filename` is used instead of `import.meta.url` because this package
+// emits CommonJS (no `"type": "module"` on its package.json).
+const requireSqlite = createRequire(__filename);
+let cachedConstructor: SqliteDatabaseCtor | undefined;
+
+function resolveDatabaseConstructor(): SqliteDatabaseCtor {
+  if (cachedConstructor) return cachedConstructor;
+  const isBun = typeof process !== 'undefined' && Boolean(process.versions?.bun);
+  cachedConstructor = isBun
+    ? (requireSqlite('bun:sqlite') as { Database: SqliteDatabaseCtor }).Database
+    : (requireSqlite('better-sqlite3') as SqliteDatabaseCtor);
+  return cachedConstructor;
 }
 
 const MIGRATIONS: { id: string; up: string }[] = [
@@ -394,7 +416,8 @@ export function openDatabase(options: DbOptions): DbHandle {
     mkdirSync(dirname(options.dbPath), { recursive: true });
   }
 
-  const db = new Database(options.dbPath) as unknown as DbHandle;
+  const Database = resolveDatabaseConstructor();
+  const db = new Database(options.dbPath);
 
   db.exec('PRAGMA journal_mode = WAL');
   db.exec('PRAGMA synchronous = NORMAL');
