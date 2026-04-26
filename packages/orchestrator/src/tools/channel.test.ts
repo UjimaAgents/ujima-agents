@@ -22,7 +22,9 @@ describe('channel.* tools — toInvocation()', () => {
     });
     expect(inv.resourcePath).toBeUndefined();
     expect(inv.permissionMcpId).toBe('channels');
-    expect(inv.permissionToolName).toBe('post');
+    // permissionToolName intentionally NOT overridden — see the regression
+    // assertions below for the full rationale.
+    expect(inv.permissionToolName).toBeUndefined();
     expect(inv.action).toBe('message');
   });
 
@@ -58,6 +60,28 @@ describe('channel.* tools — toInvocation()', () => {
     expect(inv.action).toBe('read');
     expect(inv.resourcePath).toBeUndefined();
   });
+
+  // Regression: previously each channel.* tool overrode `permissionToolName`
+  // to a short name (`post`, `reply`, `dm`, `list`, `read`). The permissions
+  // middleware checks `toolName` against the role's `allowed_tools`, which
+  // contains the full ids (`channel.post`, …), so every channel call was
+  // denied before checkToolPolicy could even run. The fix is to NOT override
+  // permissionToolName so it falls through to the full tool id.
+  it.each([
+    ['channel.post', channelPostTool, { channel_id: 'general', body: 'hi', mentions: [] }],
+    ['channel.reply', channelReplyTool, { message_id: 'msg_1', body: 'hi', mentions: [] }],
+    ['channel.dm', channelDmTool, { member_id: 'alex', body: 'hi', mentions: [] }],
+    ['channel.list', channelListTool, { scope: 'mine' as const }],
+    ['channel.read', channelReadTool, { channel_id: 'general', limit: 50 }],
+  ])(
+    '%s does not override permissionToolName (so it matches `allowed_tools` full ids)',
+    (_id, tool, args) => {
+      const inv = tool.toInvocation(args as never);
+      expect(inv.permissionToolName).toBeUndefined();
+      // Still grouped under the `channels` pseudo-MCP for IAM-matrix policy.
+      expect(inv.permissionMcpId).toBe('channels');
+    },
+  );
 
   it('self.note keeps its bypassPermission flag', () => {
     const inv = selfNoteTool.toInvocation({ body: 'thinking…' });
