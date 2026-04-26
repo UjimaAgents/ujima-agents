@@ -78,7 +78,10 @@ function buildInitialOrganizationChart(
 }
 
 function visibleChannels(channels: Channel[]): Channel[] {
-  return channels.filter((channel) => channel.kind !== 'self');
+  // Hide both `self` (private agent scratchpads) and `dm` (private 2-member
+  // conversations) from the onboarding response. Member-scoped DM access
+  // goes through `listVisibleChannels` (channel.list tool path).
+  return channels.filter((channel) => channel.kind !== 'self' && channel.kind !== 'dm');
 }
 
 export class OnboardingService {
@@ -220,7 +223,9 @@ export class OnboardingService {
     return {
       organization,
       members,
-      channels: visibleChannels(this.repo.listChannels(organizationId).data),
+      channels: visibleChannels(
+        this.repo.listChannels(organizationId, undefined, undefined, ['self', 'dm']).data,
+      ),
       team: summarizeTeam(team),
     };
   }

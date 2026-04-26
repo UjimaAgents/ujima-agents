@@ -95,8 +95,18 @@ function validateOrganizationChart(
   }
 }
 
+// Hide private channel kinds from settings/onboarding payloads:
+//   - `self` — agent private scratchpads
+//   - `dm`   — private 2-member conversations
+// Both must be reached via member-scoped `listVisibleChannels` (the
+// channel.list tool path), never via global settings/snapshot endpoints.
+//
+// This helper is now a defence-in-depth pass — `repo.listChannels(...,
+// ['self', 'dm'])` already filters at the SQL layer below, so the helper's
+// job is to keep the payload safe even if a future caller swaps to a
+// pre-filtered call accidentally.
 function visibleChannels(channels: Channel[]): Channel[] {
-  return channels.filter((channel) => channel.kind !== 'self');
+  return channels.filter((channel) => channel.kind !== 'self' && channel.kind !== 'dm');
 }
 
 export class SettingsService {
@@ -205,7 +215,9 @@ export class SettingsService {
     return {
       organization,
       members: this.repo.listMembers(organizationId),
-      channels: visibleChannels(this.repo.listChannels(organizationId).data),
+      channels: visibleChannels(
+        this.repo.listChannels(organizationId, undefined, undefined, ['self', 'dm']).data,
+      ),
     };
   }
 
@@ -255,7 +267,9 @@ export class SettingsService {
     return {
       organization: updated,
       members: this.repo.listMembers(input.organizationId),
-      channels: visibleChannels(this.repo.listChannels(input.organizationId).data),
+      channels: visibleChannels(
+        this.repo.listChannels(input.organizationId, undefined, undefined, ['self', 'dm']).data,
+      ),
     };
   }
 

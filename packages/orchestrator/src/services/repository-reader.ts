@@ -2,6 +2,7 @@ import type {
   ApprovalRequest,
   AuditEvent,
   Channel,
+  ChannelKind,
   ConfigFieldOwnership,
   ConversationThread,
   Member,
@@ -65,6 +66,7 @@ export interface ConversationRepository extends RepositoryReader {
     organizationId: string,
     cursor?: string,
     limit?: number,
+    excludeKinds?: readonly ChannelKind[],
   ): PaginatedChannels;
   saveChannel(channel: Channel): Channel;
   setChannelMembers(channelId: string, memberIds: string[]): void;

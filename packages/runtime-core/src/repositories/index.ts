@@ -3,6 +3,7 @@ import type {
   ApprovalRequest,
   AuditEvent,
   Channel,
+  ChannelKind,
   ConfigFieldOwnership,
   ConversationThread,
   Member,
@@ -170,7 +171,8 @@ export class Repository {
     organizationId: string,
     cursor?: string,
     limit?: number,
-  ): PaginatedChannels => readChannels(this.db, organizationId, cursor, limit);
+    excludeKinds?: readonly ChannelKind[],
+  ): PaginatedChannels => readChannels(this.db, organizationId, cursor, limit, excludeKinds);
   setChannelMembers = (channelId: string, memberIds: string[]): void =>
     writeChannelMembers(this.db, channelId, memberIds);
 

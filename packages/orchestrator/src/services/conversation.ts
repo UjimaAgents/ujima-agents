@@ -70,11 +70,18 @@ export class ConversationService {
 
   listChannels(organizationId: string, cursor?: string, limit?: number) {
     this.requireOrganization(organizationId);
-    const page = this.repo.listChannels(organizationId, cursor, limit);
-    return {
-      ...page,
-      data: page.data.filter((channel) => channel.kind !== 'self'),
-    };
+    // Filter `self` AND `dm` at the SQL layer.
+    //
+    // - `self` channels are private agent scratchpads — never surface here.
+    // - `dm` channels are private 2-member conversations — they must be
+    //   reached via the member-scoped `listVisibleChannels` path
+    //   (channel.list tool), never via the public `/api/channels` endpoint.
+    //
+    // SQL-side filtering is also load-bearing for pagination: post-filtering
+    // would let `hasMore` / `nextCursor` drift relative to the rows the
+    // caller actually receives, so once a hidden channel exists, the cursor
+    // can land on a hidden row and skip visible channels on the next page.
+    return this.repo.listChannels(organizationId, cursor, limit, ['self', 'dm']);
   }
 
   listVisibleChannels(input: {
