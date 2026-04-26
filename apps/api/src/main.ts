@@ -190,10 +190,11 @@ async function main(): Promise<void> {
 
   console.log(chalk.cyan(STARTUP_SPLASH));
   console.log(`   ${chalk.green('✓')} ${chalk.bold('System Ready')}`);
-  console.log(`   ${chalk.gray('↳')} ${chalk.white('API:')}         ${chalk.cyan.underline(transport.url)}`);
-  console.log(`   ${chalk.gray('↳')} ${chalk.white('Health:')}      ${chalk.dim(transport.url + '/health')}`);
-  console.log(`   ${chalk.gray('↳')} ${chalk.white('Events:')}      ${chalk.dim(transport.url + '/events')}`);
-  console.log(`   ${chalk.gray('↳')} ${chalk.white('Docs:')}        ${chalk.cyan(transport.url + '/docs')}\n`);
+  const displayUrl = transport.url.replace('127.0.0.1', 'localhost');
+  console.log(`   ${chalk.gray('↳')} ${chalk.white('API:')}         ${chalk.cyan.underline(displayUrl)}`);
+  console.log(`   ${chalk.gray('↳')} ${chalk.white('Health:')}      ${chalk.dim(displayUrl + '/health')}`);
+  console.log(`   ${chalk.gray('↳')} ${chalk.white('Events:')}      ${chalk.dim(displayUrl + '/events')}`);
+  console.log(`   ${chalk.gray('↳')} ${chalk.white('Docs:')}        ${chalk.cyan(displayUrl + '/docs')}\n`);
 
   logger.info('runtime: ready', {
     homeDir,
