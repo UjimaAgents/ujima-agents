@@ -340,6 +340,49 @@ const MIGRATIONS: { id: string; up: string }[] = [
         ON config_field_ownership(organization_id, entity_type, entity_id);
     `,
   },
+  {
+    id: '006_channels_v2',
+    up: `
+      ALTER TABLE channels ADD COLUMN parent_message_id TEXT;
+      ALTER TABLE messages ADD COLUMN parent_message_id TEXT;
+      ALTER TABLE messages ADD COLUMN edited_at TEXT;
+      ALTER TABLE messages ADD COLUMN deleted_at TEXT;
+
+      CREATE TABLE IF NOT EXISTS message_mentions (
+        id          TEXT PRIMARY KEY,
+        message_id  TEXT NOT NULL,
+        member_id   TEXT NOT NULL,
+        kind        TEXT NOT NULL DEFAULT 'mention',
+        created_at  TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_message_mentions_message
+        ON message_mentions(message_id, created_at);
+      CREATE INDEX IF NOT EXISTS idx_message_mentions_member
+        ON message_mentions(member_id, created_at);
+
+      CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+        body,
+        content='messages',
+        content_rowid='rowid'
+      );
+
+      INSERT INTO messages_fts(rowid, body)
+      SELECT rowid, content FROM messages;
+
+      CREATE TRIGGER IF NOT EXISTS messages_fts_ai AFTER INSERT ON messages BEGIN
+        INSERT INTO messages_fts(rowid, body) VALUES (new.rowid, new.content);
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS messages_fts_ad AFTER DELETE ON messages BEGIN
+        INSERT INTO messages_fts(messages_fts, rowid, body) VALUES('delete', old.rowid, old.content);
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS messages_fts_au AFTER UPDATE ON messages BEGIN
+        INSERT INTO messages_fts(messages_fts, rowid, body) VALUES('delete', old.rowid, old.content);
+        INSERT INTO messages_fts(rowid, body) VALUES (new.rowid, new.content);
+      END;
+    `,
+  },
 ];
 
 export interface DbOptions {

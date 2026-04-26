@@ -21,9 +21,11 @@ export {
 
 export { AiService } from './ai-service.js';
 export type { GenerateRunReplyInput } from './ai-service.js';
+export { ALWAYS_AVAILABLE_AGENT_TOOLS } from './tools/index.js';
 export {
   ApprovalService,
   BootstrapService,
+  ChannelRetentionService,
   ConfigSyncService,
   ConversationService,
   OnboardingService,

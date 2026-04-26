@@ -12,6 +12,7 @@ import {
   type Organization,
 } from '@ujima/shared';
 import type { ApiRepository } from './repository-reader.js';
+import { ensureMemberSelfChannel } from './member-channels.js';
 import type { TeamStore } from './team-store.js';
 import { summarizeTeam, type TeamSummary } from './team.js';
 import { upsertWorkspaceMemberScopes } from './workspace-root.js';
@@ -60,6 +61,10 @@ const ROLE_CONFIG_FIELDS = [
 const MEMBER_CONFIG_FIELDS = ['name', 'kind', 'roleName'] as const;
 const CHANNEL_CONFIG_FIELDS = ['name', 'kind', 'topic'] as const;
 const PROVIDER_CONFIG_FIELDS = ['kind', 'defaultModel', 'baseUrl', 'models'] as const;
+
+function visibleChannels(channels: Channel[]): Channel[] {
+  return channels.filter((channel) => channel.kind !== 'self');
+}
 const CONFIG_PATH_SETTING_KEY = 'config_sync.path';
 
 function channelId(channel: { id?: string; name: string }): string {
@@ -179,6 +184,10 @@ export class ConfigSyncService {
         agent.name,
         role?.workspaceScopes ?? [],
       );
+      ensureMemberSelfChannel(this.repo, organizationId, {
+        id: agent.name,
+        name: agent.name,
+      });
       markConfigOwnership(this.repo, organizationId, 'member', agent.name, MEMBER_CONFIG_FIELDS);
       stats.membersUpserted += 1;
     }
@@ -309,7 +318,7 @@ export class ConfigSyncService {
     return {
       organization,
       members: this.repo.listMembers(organizationId),
-      channels: this.repo.listAllChannels(organizationId),
+      channels: visibleChannels(this.repo.listAllChannels(organizationId)),
       team: summarizeTeam(input.team),
       stats,
     };
