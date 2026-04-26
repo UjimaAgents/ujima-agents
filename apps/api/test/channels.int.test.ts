@@ -167,6 +167,53 @@ describe('E3 channels and mentions', () => {
     expect(dmMessages).toHaveLength(2);
   });
 
+  it('keeps DMs private to their participants in list, read, and post paths', async () => {
+    const fixture = await createFixture({ agentNames: ['frontend-alice', 'frontend-bob'] });
+    tempDirs.push(fixture.archiveRoot);
+    const realtime = createRealtimeCollector();
+    const conversations = new ConversationService(fixture.repo, realtime);
+
+    const dm = conversations.sendDirectMessage({
+      organizationId: fixture.organizationId,
+      senderId: 'frontend-alice',
+      recipientId: 'frontend-bob',
+      content: 'private dm',
+    });
+    const dmChannelId = dm.channelId!;
+
+    const ownerVisible = conversations.listVisibleChannels({
+      organizationId: fixture.organizationId,
+      memberId: fixture.ownerId,
+      scope: 'all',
+    });
+    const aliceVisible = conversations.listVisibleChannels({
+      organizationId: fixture.organizationId,
+      memberId: 'frontend-alice',
+      scope: 'all',
+    });
+
+    expect(ownerVisible.some((channel) => channel.id === dmChannelId)).toBe(false);
+    expect(aliceVisible.some((channel) => channel.id === dmChannelId)).toBe(true);
+
+    await expect(
+      conversations.readChannel({
+        organizationId: fixture.organizationId,
+        memberId: fixture.ownerId,
+        channelId: dmChannelId,
+        limit: 10,
+      }),
+    ).rejects.toThrow(/channel not found/i);
+
+    expect(() =>
+      conversations.postToChannel({
+        organizationId: fixture.organizationId,
+        senderId: fixture.ownerId,
+        channelId: dmChannelId,
+        body: 'should not land',
+      }),
+    ).toThrow(/channel not found/i);
+  });
+
   it('fans out mentions, wakes only the mentioned agent, and replies in the same channel', async () => {
     const fixture = await createFixture({ agentNames: ['frontend-alice', 'frontend-bob'] });
     tempDirs.push(fixture.archiveRoot);

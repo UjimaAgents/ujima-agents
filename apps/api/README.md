@@ -100,6 +100,8 @@ typed mentions, and archive-backed history search.
   `channel.list`, `channel.read`) run inside the orchestrator and are policy
   checked through the `channels` pseudo-tool surface. `channel.dm` lazily
   creates a DM on first send and reuses it afterward.
+- DMs are private to their participants. Non-members cannot enumerate them,
+  read them, or post into them through the channel tool surface.
 - `channel.list({ scope: 'all' })` excludes other members' self-channels.
   Self-channels stay private to their owner outside audit/admin access.
 - Message posting now records typed `message_mentions` rows and parses

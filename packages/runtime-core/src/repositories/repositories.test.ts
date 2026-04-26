@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { expect, test } from 'vitest';
-import { OrganizationSchema } from '@ujima/shared';
+import { MessageSchema, OrganizationSchema } from '@ujima/shared';
 import { openDatabase } from '@ujima/context-store';
 import type { SecretStore } from '../secret-store.js';
 import { Repository } from './index.js';
@@ -191,4 +191,51 @@ test('listOrganizations returns every saved organization', () => {
 
   const ids = repo.listOrganizations().map((o) => o.id).sort();
   expect(ids).toEqual([first.id, second.id].sort());
+});
+
+test('searchChannelMessages tolerates unmatched quotes in user search text', () => {
+  const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
+  const orgId = randomUUID();
+  const now = new Date().toISOString();
+
+  repo.saveOrganization(
+    OrganizationSchema.parse({
+      id: orgId,
+      name: 'Search Org',
+      workspace: { root: '/tmp/search-org', roleScopes: {} },
+    }),
+  );
+  repo.saveChannel({
+    id: 'general',
+    organizationId: orgId,
+    name: 'general',
+    kind: 'general',
+    topic: '',
+    memberIds: [],
+  });
+  repo.ensureThread({
+    id: 'general',
+    organizationId: orgId,
+    channelId: 'general',
+    title: 'general',
+    memberIds: [],
+    createdAt: now,
+  });
+  repo.saveMessage(
+    MessageSchema.parse({
+      id: randomUUID(),
+      organizationId: orgId,
+      threadId: 'general',
+      channelId: 'general',
+      senderId: 'user',
+      senderKind: 'human',
+      kind: 'human',
+      content: 'quoted needle here',
+      mentions: [],
+      createdAt: now,
+    }),
+  );
+
+  const results = repo.searchChannelMessages(orgId, 'general', 'needle"', { limit: 10 });
+  expect(results.data.map((message) => message.content)).toContain('quoted needle here');
 });
