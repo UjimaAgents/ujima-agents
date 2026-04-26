@@ -122,9 +122,9 @@ export function LandingPage() {
           </nav>
           <div className="flex items-center gap-2">
             <ThemeToggle />
-            <a href="#" className="rounded-lg border border-zinc-200 px-3 py-2 text-xs text-zinc-700 hover:bg-zinc-100 dark:border-white/10 dark:text-zinc-300 dark:hover:bg-white/5">
+            <Link href="/sign-in" className="rounded-lg border border-zinc-200 px-3 py-2 text-xs text-zinc-700 hover:bg-zinc-100 dark:border-white/10 dark:text-zinc-300 dark:hover:bg-white/5">
               Sign in
-            </a>
+            </Link>
             <Link href="/onboarding" className="rounded-lg bg-blue-500 px-3 py-2 text-xs font-medium text-white hover:bg-blue-400">
               Get Started
             </Link>
@@ -369,7 +369,10 @@ export function LandingPage() {
               <Link href="/onboarding" className="rounded-xl bg-white px-4 py-2.5 text-sm font-medium text-zinc-950 hover:bg-zinc-200">
                 Get Started Free
               </Link>
-              <a href="#" className="rounded-xl border border-white/20 bg-white/5 px-4 py-2.5 text-sm font-medium text-white hover:bg-white/10">
+                <Link href="/sign-in" className="rounded-xl border border-white/20 bg-white/5 px-4 py-2.5 text-sm font-medium text-white hover:bg-white/10">
+                  Sign in
+                </Link>
+                <a href="#" className="rounded-xl border border-white/20 bg-white/5 px-4 py-2.5 text-sm font-medium text-white hover:bg-white/10">
                 Read the Docs
               </a>
             </div>

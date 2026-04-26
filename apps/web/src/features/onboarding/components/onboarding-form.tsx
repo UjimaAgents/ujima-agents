@@ -20,6 +20,7 @@ import {
   Users,
   X,
 } from "lucide-react";
+import { formatProviderLabel } from "../api-contract";
 import type { OnboardingDraft, OnboardingStep, OnboardingStepId, TeamTabId } from "../types";
 
 interface OnboardingFormProps {
@@ -32,8 +33,13 @@ interface OnboardingFormProps {
   onTeamTabChange: (tabId: TeamTabId) => void;
   onBack: () => void;
   onNext: () => void;
+  onSubmit: () => void;
   canGoBack: boolean;
   isLastStep: boolean;
+  isSubmitting: boolean;
+  submitError: string | null;
+  apiStatusMessage: string | null;
+  backendReady: boolean;
 }
 
 type DraftField = keyof OnboardingDraft | "teamConfig";
@@ -63,18 +69,6 @@ function validateStep(stepId: OnboardingStepId, draft: OnboardingDraft, activeTe
   if (stepId === "owner" || stepId === "review") {
     if (!draft.ownerName.trim()) {
       errors.ownerName = "Enter the full name for the first owner.";
-    }
-
-    if (!draft.ownerEmail.trim()) {
-      errors.ownerEmail = "Enter the owner email address.";
-    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(draft.ownerEmail)) {
-      errors.ownerEmail = "Enter a valid email address.";
-    }
-
-    if (!draft.ownerPassword.trim()) {
-      errors.ownerPassword = "Enter a password for the owner account.";
-    } else if (draft.ownerPassword.length < 8) {
-      errors.ownerPassword = "Password must be at least 8 characters.";
     }
   }
 
@@ -110,7 +104,7 @@ function getValidationMessage(stepId: OnboardingStepId, errors: DraftErrors): st
   }
 
   if (stepId === "owner") {
-    return "Complete the owner name, email, and password fields before continuing.";
+    return "Complete the owner name before continuing.";
   }
 
   if (stepId === "team") {
@@ -149,7 +143,7 @@ function OwnerPreviewCard() {
       </div>
       <p className="mt-6 text-sm font-semibold text-zinc-900 dark:text-zinc-100">Owner permissions</p>
       <p className="mt-3 text-sm leading-6 text-zinc-600 dark:text-zinc-300">
-        Owners can manage agents, policies, approvals, and workspace settings.
+        The onboarding API currently creates the first owner from the full name field and stores the person as the initial human member.
       </p>
     </div>
   );
@@ -189,15 +183,12 @@ function validateTeamTab(tabId: TeamTabId, draft: OnboardingDraft): string | nul
     const hasValidRoles = draft.roles.every(
       (role) =>
         role.name.trim() &&
-        role.title.trim() &&
-        role.instructions.trim() &&
         role.llm.trim() &&
-        role.model.trim() &&
         role.channelIds.length > 0,
     );
 
     if (!hasValidRoles || draft.roles.length === 0) {
-      return "Complete the role name, LLM, model, and channel setup before continuing.";
+      return "Complete the role name, provider, and channel setup before continuing.";
     }
   }
 
@@ -205,12 +196,12 @@ function validateTeamTab(tabId: TeamTabId, draft: OnboardingDraft): string | nul
     return "Complete all channel names and descriptions before continuing.";
   }
 
-  if (tabId === "org-chart" && draft.organizationReports.some((report) => !report.subjectName.trim() || !report.managerName.trim())) {
+  if (tabId === "org-chart" && draft.organizationReports.some((report) => !report.subjectName.trim())) {
     return "Complete all organization chart mappings before continuing.";
   }
 
-  if (tabId === "providers" && draft.providers.some((provider) => !provider.name.trim() || !provider.apiKeyRef.trim())) {
-    return "Complete the provider names and API key references before continuing.";
+  if (tabId === "providers" && draft.providers.some((provider) => !provider.name.trim() || !provider.apiKey.trim())) {
+    return "Complete the provider names and API keys before continuing.";
   }
 
   return null;
@@ -658,49 +649,27 @@ function StepFields({
               />
             </FieldShell>
 
-            <FieldShell
-              label="Email"
-              htmlFor="ownerEmail"
-              hint=""
-              error={showError("ownerEmail") ? errors.ownerEmail : undefined}
-            >
+            <FieldShell label="Email" htmlFor="ownerEmail" hint="Optional UI field. The current onboarding API does not accept owner email yet.">
               <input
                 id="ownerEmail"
                 type="email"
-                className={`w-full rounded-lg border bg-white px-4 py-2.5 text-sm text-zinc-900 outline-none transition placeholder:text-zinc-400 focus:border-violet-500 dark:bg-zinc-950 dark:text-zinc-100 ${
-                  showError("ownerEmail")
-                    ? "border-red-300 focus:border-red-500 dark:border-red-500/60"
-                    : "border-zinc-200 dark:border-zinc-700"
-                }`}
+                className="w-full rounded-lg border border-zinc-200 bg-white px-4 py-2.5 text-sm text-zinc-900 outline-none transition placeholder:text-zinc-400 focus:border-violet-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
                 value={draft.ownerEmail}
-                onBlur={() => onFieldBlur("ownerEmail")}
                 onChange={(event) => onDraftChange(updateField(draft, "ownerEmail", event.target.value))}
                 placeholder="alex@acme.com"
-                aria-invalid={showError("ownerEmail")}
               />
             </FieldShell>
 
             <div>
-              <FieldShell
-                label="Password"
-                htmlFor="ownerPassword"
-                hint=""
-                error={showError("ownerPassword") ? errors.ownerPassword : undefined}
-              >
+              <FieldShell label="Password" htmlFor="ownerPassword" hint="Optional UI field. The current onboarding API does not accept owner password yet.">
                 <div className="relative">
                   <input
                     id="ownerPassword"
                     type={showOwnerPassword ? "text" : "password"}
-                    className={`w-full rounded-lg border bg-white px-4 py-2.5 pr-11 text-sm text-zinc-900 outline-none transition placeholder:text-zinc-400 focus:border-violet-500 dark:bg-zinc-950 dark:text-zinc-100 ${
-                      showError("ownerPassword")
-                        ? "border-red-300 focus:border-red-500 dark:border-red-500/60"
-                        : "border-zinc-200 dark:border-zinc-700"
-                    }`}
+                    className="w-full rounded-lg border border-zinc-200 bg-white px-4 py-2.5 pr-11 text-sm text-zinc-900 outline-none transition placeholder:text-zinc-400 focus:border-violet-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
                     value={draft.ownerPassword}
-                    onBlur={() => onFieldBlur("ownerPassword")}
                     onChange={(event) => onDraftChange(updateField(draft, "ownerPassword", event.target.value))}
                     placeholder="••••••••"
-                    aria-invalid={showError("ownerPassword")}
                   />
                   <button
                     type="button"
@@ -966,18 +935,18 @@ function StepFields({
         ) : null}
 
         {activeTeamTab === "providers" ? (
-          <TeamConfigCard title="Providers" description="OpenAI and Anthropic are included by default, and you can add more providers as needed.">
+          <TeamConfigCard title="Providers" description="These values are submitted as providerKeys to the API, so enter real provider names and API keys.">
             <div className="space-y-4">
               <div className="flex items-start justify-between gap-4">
                 <p className="text-sm text-zinc-500 dark:text-zinc-400">
-                  Configure provider names and API key references used by the team.
+                  Configure provider names and live API keys used by your team roles.
                 </p>
                 <button
                   type="button"
                   onClick={() =>
                     onDraftChange({
                       ...draft,
-                      providers: [...draft.providers, { id: createId("provider"), name: "", apiKeyRef: "" }],
+                      providers: [...draft.providers, { id: createId("provider"), name: "", apiKey: "" }],
                     })
                   }
                   className="inline-flex items-center gap-2 rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-violet-700"
@@ -1001,20 +970,21 @@ function StepFields({
                         })
                       }
                       className="w-[220px] shrink-0 rounded-lg border border-zinc-200 bg-white px-4 py-2.5 text-sm outline-none transition focus:border-violet-500 dark:border-zinc-700 dark:bg-zinc-950"
-                      placeholder="OpenAI"
+                      placeholder="openai"
                     />
                     <input
-                      value={provider.apiKeyRef}
+                      type="password"
+                      value={provider.apiKey}
                       onChange={(event) =>
                         onDraftChange({
                           ...draft,
                           providers: draft.providers.map((item, itemIndex) =>
-                            itemIndex === index ? { ...item, apiKeyRef: event.target.value } : item,
+                            itemIndex === index ? { ...item, apiKey: event.target.value } : item,
                           ),
                         })
                       }
                       className="min-w-0 flex-1 rounded-lg border border-zinc-200 bg-white px-4 py-2.5 text-sm outline-none transition focus:border-violet-500 dark:border-zinc-700 dark:bg-zinc-950"
-                      placeholder="OPENAI_API_KEY"
+                      placeholder={provider.name ? `${formatProviderLabel(provider.name)} API key` : "Provider API key"}
                     />
                   </div>
                 ))}
@@ -1290,8 +1260,13 @@ export function OnboardingForm({
   onTeamTabChange,
   onBack,
   onNext,
+  onSubmit,
   canGoBack,
   isLastStep,
+  isSubmitting,
+  submitError,
+  apiStatusMessage,
+  backendReady,
 }: OnboardingFormProps) {
   const [touchedFields, setTouchedFields] = useState<Partial<Record<DraftField, boolean>>>({});
   const [attemptedSubmit, setAttemptedSubmit] = useState(false);
@@ -1346,6 +1321,11 @@ export function OnboardingForm({
     setAttemptedSubmit(true);
 
     if (!isStepValid) {
+      return;
+    }
+
+    if (isLastStep) {
+      onSubmit();
       return;
     }
 
@@ -1434,14 +1414,14 @@ export function OnboardingForm({
             <button
               type="button"
               onClick={handleContinue}
-              aria-disabled={!isStepValid}
+              aria-disabled={!isStepValid || isSubmitting || backendReady}
               className={`inline-flex items-center justify-center gap-2 rounded-lg px-5 py-2.5 text-sm font-medium text-white transition ${
-                isStepValid
+                isStepValid && !isSubmitting && !backendReady
                   ? "bg-violet-600 hover:bg-violet-700"
                   : "bg-violet-300 hover:bg-violet-300 dark:bg-violet-500/50 dark:hover:bg-violet-500/50"
               }`}
             >
-              Create organization
+              {backendReady ? "Organization created" : isSubmitting ? "Creating organization..." : "Create organization"}
               <ArrowRight className="h-4 w-4" />
             </button>
           </div>
@@ -1450,14 +1430,14 @@ export function OnboardingForm({
             <button
               type="button"
               onClick={handleContinue}
-              aria-disabled={!isStepValid}
+              aria-disabled={!isStepValid || isSubmitting}
               className={`inline-flex items-center justify-center gap-2 rounded-lg px-5 py-2.5 text-sm font-medium text-white transition ${
-                isStepValid
+                isStepValid && !isSubmitting
                   ? "bg-violet-600 hover:bg-violet-700"
                   : "bg-violet-300 hover:bg-violet-300 dark:bg-violet-500/50 dark:hover:bg-violet-500/50"
               }`}
             >
-              Continue
+              {isSubmitting ? "Submitting..." : "Continue"}
               <ArrowRight className="h-4 w-4" />
             </button>
             <p className="text-sm text-zinc-500 dark:text-zinc-400">
@@ -1470,6 +1450,15 @@ export function OnboardingForm({
             <AlertCircle className="h-4 w-4" />
             {validationMessage}
           </p>
+        ) : null}
+        {submitError ? (
+          <p className="mt-3 flex items-center gap-2 text-sm text-red-600 dark:text-red-400" role="alert">
+            <AlertCircle className="h-4 w-4" />
+            {submitError}
+          </p>
+        ) : null}
+        {apiStatusMessage && !submitError ? (
+          <p className="mt-3 text-sm text-emerald-600 dark:text-emerald-400">{apiStatusMessage}</p>
         ) : null}
       </div>
     </section>
