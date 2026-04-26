@@ -32,12 +32,13 @@ export interface TeamReportDraft {
 export interface TeamPoliciesDraft {
   requireApprovalForWrites: boolean;
   requireApprovalForShell: boolean;
+  workspaceBoundaryMode: "hard";
 }
 
 export interface TeamProviderDraft {
   id: string;
   name: string;
-  apiKeyRef: string;
+  apiKey: string;
 }
 
 export interface OnboardingDraft {
@@ -167,11 +168,12 @@ export const INITIAL_DRAFT: OnboardingDraft = {
     { id: "report-pm", subjectName: "product-manager", managerName: "Owner" },
   ],
   providers: [
-    { id: "provider-openai", name: "OpenAI", apiKeyRef: "OPENAI_API_KEY" },
-    { id: "provider-anthropic", name: "Anthropic", apiKeyRef: "ANTHROPIC_API_KEY" },
+    { id: "provider-openai", name: "openai", apiKey: "" },
+    { id: "provider-anthropic", name: "anthropic", apiKey: "" },
   ],
   policies: {
     requireApprovalForWrites: true,
     requireApprovalForShell: true,
+    workspaceBoundaryMode: "hard",
   },
 };

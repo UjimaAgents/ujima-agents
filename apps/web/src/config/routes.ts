@@ -11,6 +11,11 @@ export const APP_ROUTES: AppRoute[] = [
     description: "Agentic command center and quick starts.",
   },
   {
+    href: "/sign-in",
+    label: "Sign in",
+    description: "Restore a local dashboard session.",
+  },
+  {
     href: "/onboarding",
     label: "Onboarding",
     description: "Organization and team setup wizard.",
