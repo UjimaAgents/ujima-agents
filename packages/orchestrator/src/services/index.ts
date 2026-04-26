@@ -2,6 +2,7 @@ import type { PermissionMiddleware } from '@ujima/permissions';
 import { AiService } from '../ai-service.js';
 import { ApprovalService } from './approval.js';
 import { BootstrapService } from './bootstrap.js';
+import { ChannelRetentionService } from './channel-retention.js';
 import type { ApiServiceContext } from './context.js';
 import { ConversationService } from './conversation.js';
 import { OnboardingService } from './onboarding.js';
@@ -27,6 +28,7 @@ export type {
 } from './approval.js';
 export { BootstrapService } from './bootstrap.js';
 export type { BootstrapResponse } from './bootstrap.js';
+export { ChannelRetentionService } from './channel-retention.js';
 export { ConfigSyncService } from './config-sync.js';
 export type {
   ReconcileTeamConfigInput,
@@ -85,12 +87,14 @@ export interface ApiServicesContext extends ApiServiceContext {
   permissions: PermissionMiddleware;
   buildPermissionContext: PermissionContextBuilder;
   repo: ApiRepository;
+  archiveRoot?: string;
 }
 
 export interface ApiServices {
   ai: AiService;
   tools: ToolService;
   conversations: ConversationService;
+  retention: ChannelRetentionService;
   runs: RunService;
   approvals: ApprovalService;
   bootstrap: BootstrapService;
@@ -100,7 +104,25 @@ export interface ApiServices {
 }
 
 export function createApiServices(context: ApiServicesContext): ApiServices {
-  const conversations = new ConversationService(context.repo, context.realtime);
+  const retention = new ChannelRetentionService(
+    context.repo,
+    context.archiveRoot ?? process.env.UJIMA_HOME ?? process.cwd(),
+  );
+
+  let wakeMember: (input: {
+    organizationId: string;
+    memberId: string;
+    threadId: string;
+    channelId?: string;
+    messageId: string;
+    byMemberId: string;
+    reason: string;
+  }) => Promise<void> | void = () => undefined;
+
+  const conversations = new ConversationService(context.repo, context.realtime, {
+    archiveStore: retention,
+    onMemberAlerted: (input) => wakeMember(input),
+  });
 
   // Late-bound resume callback — runs is constructed below and plugged in.
   let resumeRun: (organizationId: string, runId: string) => Promise<unknown> | unknown = () => {
@@ -140,6 +162,14 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     tools,
   );
   resumeRun = (orgId, runId) => runs.resumeAfterApproval(orgId, runId);
+  wakeMember = async (input) => {
+    await runs.createRun({
+      organizationId: input.organizationId,
+      agentId: input.memberId,
+      threadId: input.threadId,
+      summary: `Mentioned by ${input.byMemberId} via ${input.reason} on message ${input.messageId}`,
+    });
+  };
 
   const bootstrap = new BootstrapService(context.repo, context.teamStore);
   const onboarding = new OnboardingService(context.repo, context.teamStore);
@@ -150,6 +180,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     ai,
     tools,
     conversations,
+    retention,
     runs,
     approvals: approvalsImpl,
     bootstrap,

@@ -14,6 +14,15 @@ export interface ToolExecutionContext {
 export interface OrchestratorTool<TArgs extends z.ZodTypeAny = z.ZodTypeAny> {
   id: string;
   schema: z.ZodTypeAny;
-  toInvocation: (args: z.infer<TArgs>) => Pick<ToolInvocationInput, 'action' | 'resourceType' | 'resourcePath' | 'input'>;
+  toInvocation: (args: z.infer<TArgs>) => Pick<
+    ToolInvocationInput,
+    | 'action'
+    | 'resourceType'
+    | 'resourcePath'
+    | 'input'
+    | 'permissionMcpId'
+    | 'permissionToolName'
+    | 'bypassPermission'
+  >;
   execute: (context: ToolExecutionContext) => Promise<unknown> | unknown;
 }

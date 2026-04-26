@@ -6,7 +6,7 @@ import type { Message } from '@ujima/shared';
 import type { RepositoryReader } from './services/repository-reader.js';
 import type { TeamStore } from './services/team-store.js';
 import type { ToolService } from './services/tool-service.js';
-import { ORCHESTRATOR_TOOLS } from './tools/index.js';
+import { ALWAYS_AVAILABLE_AGENT_TOOLS, ORCHESTRATOR_TOOLS } from './tools/index.js';
 
 
 const GenericToolInvocationSchema = z.object({
@@ -125,8 +125,9 @@ export class AiService {
       baseUrl: provider.baseUrl,
     });
 
+    const toolIds = [...new Set([...role.tools, ...ALWAYS_AVAILABLE_AGENT_TOOLS])];
     const toolDefs = Object.fromEntries(
-      role.tools.map((toolId) => [toolId, this.buildToolDefinition(input, toolId, team)]),
+      toolIds.map((toolId) => [toolId, this.buildToolDefinition(input, toolId, team)]),
     ) as ToolSet;
 
     const system = buildAgentSystemPrompt(
@@ -145,7 +146,7 @@ export class AiService {
     );
 
     const messages = toModelMessages(
-      this.repo.listMessages(input.organizationId, input.threadId).data,
+      this.repo.listMessages(input.organizationId, input.threadId).data.slice(-20),
     );
     if (input.summary) {
       messages.push({

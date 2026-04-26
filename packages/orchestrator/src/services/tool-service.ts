@@ -12,6 +12,9 @@ export interface ToolInvocationInput {
   resourceType: ResourceType;
   resourcePath?: string;
   input: Record<string, unknown>;
+  permissionMcpId?: string;
+  permissionToolName?: string;
+  bypassPermission?: boolean;
 }
 
 export interface ToolInvocationResult {
@@ -37,6 +40,9 @@ export function createPermissionGatedToolService(
 ): ToolService {
   return {
     async invoke(input) {
+      if (input.bypassPermission) {
+        return inner.invoke(input);
+      }
       const context = await buildContext(input);
       const decision = await permissions.check(context);
 

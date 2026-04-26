@@ -3,6 +3,7 @@ import { MemberSchema, type Organization, type Member, type Channel } from '@uji
 import type { ApiRepository } from './repository-reader.js';
 import type { TeamStore } from './team-store.js';
 import { listProviderStatuses, validateProviderKeys, type ProviderStatus } from './team.js';
+import { addMemberToDefaultChannels, ensureMemberSelfChannel } from './member-channels.js';
 import { upsertWorkspaceMemberScopes } from './workspace-root.js';
 
 export interface TeamSettingsResponse {
@@ -94,6 +95,10 @@ function validateOrganizationChart(
   }
 }
 
+function visibleChannels(channels: Channel[]): Channel[] {
+  return channels.filter((channel) => channel.kind !== 'self');
+}
+
 export class SettingsService {
   constructor(
     private readonly repo: ApiRepository,
@@ -183,6 +188,11 @@ export class SettingsService {
       saved.id,
       role?.workspaceScopes ?? [],
     );
+    ensureMemberSelfChannel(this.repo, input.organizationId, saved);
+    const team = this.teamStore.getTeam();
+    if (team) {
+      addMemberToDefaultChannels(this.repo, team, input.organizationId, saved);
+    }
     return saved;
   }
 
@@ -195,7 +205,7 @@ export class SettingsService {
     return {
       organization,
       members: this.repo.listMembers(organizationId),
-      channels: this.repo.listChannels(organizationId).data,
+      channels: visibleChannels(this.repo.listChannels(organizationId).data),
     };
   }
 
@@ -245,7 +255,7 @@ export class SettingsService {
     return {
       organization: updated,
       members: this.repo.listMembers(input.organizationId),
-      channels: this.repo.listChannels(input.organizationId).data,
+      channels: visibleChannels(this.repo.listChannels(input.organizationId).data),
     };
   }
 

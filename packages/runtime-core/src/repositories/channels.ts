@@ -15,12 +15,13 @@ export function saveChannel(db: DbHandle, channel: Channel): Channel {
   const timestamp = now();
 
   db.prepare(
-    `INSERT INTO channels (id, organization_id, name, kind, topic, created_at, updated_at, archived_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO channels (id, organization_id, name, kind, topic, created_at, updated_at, parent_message_id, archived_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
        name = excluded.name,
        kind = excluded.kind,
        topic = excluded.topic,
+       parent_message_id = excluded.parent_message_id,
        archived_at = excluded.archived_at,
        updated_at = excluded.updated_at`,
   ).run(
@@ -31,6 +32,7 @@ export function saveChannel(db: DbHandle, channel: Channel): Channel {
     payload.topic ?? '',
     timestamp,
     timestamp,
+    payload.parentMessageId ?? null,
     payload.archivedAt ?? null,
   );
 
@@ -57,6 +59,7 @@ export function getChannel(
     kind: rowString(row, 'kind'),
     topic: rowString(row, 'topic'),
     memberIds: listChannelMemberIds(db, rowString(row, 'id')),
+    parentMessageId: typeof row.parent_message_id === 'string' ? row.parent_message_id : undefined,
     createdAt: typeof row.created_at === 'string' ? row.created_at : undefined,
     archivedAt: typeof row.archived_at === 'string' ? row.archived_at : undefined,
   });
@@ -94,6 +97,7 @@ export function listChannels(
       kind: rowString(row, 'kind'),
       topic: rowString(row, 'topic'),
       memberIds: listChannelMemberIds(db, rowString(row, 'id')),
+      parentMessageId: typeof row.parent_message_id === 'string' ? row.parent_message_id : undefined,
       createdAt: typeof row.created_at === 'string' ? row.created_at : undefined,
       archivedAt: typeof row.archived_at === 'string' ? row.archived_at : undefined,
     }),
@@ -118,6 +122,7 @@ export function listAllChannels(db: DbHandle, organizationId: string): Channel[]
       kind: rowString(row, 'kind'),
       topic: rowString(row, 'topic'),
       memberIds: listChannelMemberIds(db, rowString(row, 'id')),
+      parentMessageId: typeof row.parent_message_id === 'string' ? row.parent_message_id : undefined,
       createdAt: typeof row.created_at === 'string' ? row.created_at : undefined,
       archivedAt: typeof row.archived_at === 'string' ? row.archived_at : undefined,
     }),

@@ -7,6 +7,7 @@ import type {
   ConversationThread,
   Member,
   Message,
+  MessageMention,
   Organization,
   RunState,
   WorkspaceMember,
@@ -46,8 +47,18 @@ import {
   saveWorkspaceMember as writeWorkspaceMember,
 } from './workspace-members.js';
 import {
+  deleteMessageMentions as removeMessageMentions,
+  listMessageMentions as readMessageMentions,
+  replaceMessageMentions as writeMessageMentions,
+} from './message-mentions.js';
+import {
+  deleteMessages as removeMessages,
+  getMessage as readMessage,
   listMessages as readMessages,
+  listChannelMessages as readChannelMessages,
   saveMessage as writeMessage,
+  searchChannelMessages as searchMessagesByChannel,
+  updateMessage as writeMessageUpdate,
   type PaginatedMessages,
 } from './messages.js';
 import type { SecretStore } from '../secret-store.js';
@@ -173,12 +184,36 @@ export class Repository {
     writeThreadMembers(this.db, threadId, memberIds);
 
   saveMessage = (message: Message): Message => writeMessage(this.db, message);
+  updateMessage = (message: Message): Message => writeMessageUpdate(this.db, message);
+  getMessage = (organizationId: string, messageId: string): Message | null =>
+    readMessage(this.db, organizationId, messageId);
   listMessages = (
     organizationId: string,
     threadId: string,
     cursor?: string,
     limit?: number,
   ): PaginatedMessages => readMessages(this.db, organizationId, threadId, cursor, limit);
+  listChannelMessages = (
+    organizationId: string,
+    channelId: string,
+    options?: { cursor?: string; since?: string; limit?: number },
+  ): PaginatedMessages => readChannelMessages(this.db, organizationId, channelId, options);
+  searchChannelMessages = (
+    organizationId: string,
+    channelId: string,
+    query: string,
+    options?: { cursor?: string; since?: string; limit?: number },
+  ): PaginatedMessages => searchMessagesByChannel(this.db, organizationId, channelId, query, options);
+  replaceMessageMentions = (
+    messageId: string,
+    mentions: MessageMention[],
+  ): MessageMention[] => writeMessageMentions(this.db, messageId, mentions);
+  listMessageMentions = (messageId: string): MessageMention[] =>
+    readMessageMentions(this.db, messageId);
+  deleteMessageMentions = (messageId: string): void =>
+    removeMessageMentions(this.db, messageId);
+  deleteMessages = (organizationId: string, messageIds: string[]): void =>
+    removeMessages(this.db, organizationId, messageIds);
 
   saveRun = (run: RunState): RunState => writeRun(this.db, run);
   getRun = (organizationId: string, runId: string): RunState | null =>
