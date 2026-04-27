@@ -169,6 +169,18 @@ function resolveProviderKind(input: string): string {
 
 function buildOnboardingPayload(draft: OnboardingDraft) {
   const roleNames = new Set(draft.roles.map((role) => role.name.trim()).filter(Boolean));
+  // The owner appears in the org-chart manager picker via `ownerLabel`
+  // (`draft.ownerName.trim() || "Owner"`). Treat that label — and the
+  // literal "Owner"/"owner" sentinels used by the seed draft — as
+  // legitimate manager references; the daemon resolves them to the
+  // owner member's id during onboarding. Without this, every "X reports
+  // to <owner>" line was silently dropped before submission.
+  const ownerLabelRaw = draft.ownerName.trim();
+  const isOwnerManagerLabel = (value: string): boolean => {
+    if (!value) return false;
+    if (ownerLabelRaw && value === ownerLabelRaw) return true;
+    return value === "Owner" || value === "owner";
+  };
 
   return {
     organizationName: draft.organizationName.trim(),
@@ -223,12 +235,15 @@ function buildOnboardingPayload(draft: OnboardingDraft) {
       organizationChart: {
         reportsTo: Object.fromEntries(
           draft.organizationReports
-            .filter(
-              (report) =>
-                roleNames.has(report.subjectName.trim()) &&
-                roleNames.has(report.managerName.trim()) &&
-                report.subjectName.trim() !== report.managerName.trim(),
-            )
+            .filter((report) => {
+              const subject = report.subjectName.trim();
+              const manager = report.managerName.trim();
+              if (!roleNames.has(subject)) return false;
+              if (subject === manager) return false;
+              // Manager must be either another role OR the owner; the daemon
+              // resolves the owner label to the owner member's id.
+              return roleNames.has(manager) || isOwnerManagerLabel(manager);
+            })
             .map((report) => [report.subjectName.trim(), report.managerName.trim()] as const),
         ),
       },
