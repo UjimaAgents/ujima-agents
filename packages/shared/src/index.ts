@@ -14,3 +14,4 @@ export * from './governance.js';
 export * from './governance-policy.js';
 export * from './org-schemas.js';
 export * from './socket-events.js';
+export * from './cursor.js';

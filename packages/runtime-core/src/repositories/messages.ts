@@ -1,6 +1,7 @@
 import type { SqliteDbHandle as DbHandle } from '@ujima/context-store';
 import { MessageSchema, type Message } from '@ujima/shared';
 import { parseJsonArray, parseJsonArrayRaw, rowString, optionalRowString } from './common.js';
+import { cursorWhereClause, decodeCursor, encodeCursor } from '@ujima/shared';
 
 type Row = Record<string, unknown>;
 
@@ -108,15 +109,17 @@ export function listMessages(
   const params: (string | number)[] = [organizationId, threadId];
   let innerQuery = 'SELECT * FROM messages WHERE organization_id = ? AND thread_id = ?';
 
-  if (cursor) {
-    innerQuery += ' AND created_at < ?';
-    params.push(cursor);
+  const decoded = decodeCursor(cursor);
+  if (decoded) {
+    const { sql, params: cursorParams } = cursorWhereClause(decoded, 'created_at', 'id');
+    innerQuery += ` AND ${sql}`;
+    params.push(...cursorParams);
   }
 
-  innerQuery += ' ORDER BY created_at DESC LIMIT ?';
+  innerQuery += ' ORDER BY created_at DESC, id DESC LIMIT ?';
   params.push(limit + 1);
 
-  const query = `SELECT * FROM (${innerQuery}) ORDER BY created_at ASC`;
+  const query = `SELECT * FROM (${innerQuery}) ORDER BY created_at ASC, id ASC`;
   const rows = db.prepare(query).all(...params) as Row[];
 
   const hasMore = rows.length > limit;
@@ -129,7 +132,7 @@ export function listMessages(
   );
 
   const head = hasMore ? data[0] : undefined;
-  const nextCursor = head?.createdAt;
+  const nextCursor = head ? encodeCursor(head.createdAt, head.id) : undefined;
 
   return { data, hasMore, nextCursor };
 }
@@ -152,9 +155,11 @@ export function listChannelMessages(
     innerQuery += ' AND created_at >= ?';
     params.push(options.since);
   }
-  if (options.cursor) {
-    innerQuery += ' AND created_at < ?';
-    params.push(options.cursor);
+  const decoded = decodeCursor(options.cursor);
+  if (decoded) {
+    const { sql, params: cursorParams } = cursorWhereClause(decoded, 'created_at', 'id');
+    innerQuery += ` AND ${sql}`;
+    params.push(...cursorParams);
   }
 
   innerQuery += ' ORDER BY created_at DESC, id DESC LIMIT ?';
@@ -166,7 +171,7 @@ export function listChannelMessages(
   if (hasMore) rows.shift();
   const data = rows.map(rowToMessage);
   const head = hasMore ? data[0] : undefined;
-  return { data, hasMore, nextCursor: head?.createdAt };
+  return { data, hasMore, nextCursor: head ? encodeCursor(head.createdAt, head.id) : undefined };
 }
 
 export function searchChannelMessages(
@@ -197,9 +202,11 @@ export function searchChannelMessages(
     innerQuery += ' AND m.created_at >= ?';
     params.push(options.since);
   }
-  if (options.cursor) {
-    innerQuery += ' AND m.created_at < ?';
-    params.push(options.cursor);
+  const decoded = decodeCursor(options.cursor);
+  if (decoded) {
+    const { sql, params: cursorParams } = cursorWhereClause(decoded, 'm.created_at', 'm.id');
+    innerQuery += ` AND ${sql}`;
+    params.push(...cursorParams);
   }
 
   innerQuery += ' ORDER BY m.created_at DESC, m.id DESC LIMIT ?';
@@ -212,7 +219,11 @@ export function searchChannelMessages(
     if (hasMore) rows.shift();
     const data = rows.map(rowToMessage);
     const head = hasMore ? data[0] : undefined;
-    return { data, hasMore, nextCursor: head?.createdAt };
+    return {
+      data,
+      hasMore,
+      nextCursor: head ? encodeCursor(head.createdAt, head.id) : undefined,
+    };
   } catch {
     // User-entered search text can contain broken FTS syntax like unmatched
     // quotes. Fall back to substring search instead of surfacing an SQL error.
@@ -288,9 +299,11 @@ function searchChannelMessagesBySubstring(
     innerQuery += ' AND created_at >= ?';
     params.push(options.since);
   }
-  if (options.cursor) {
-    innerQuery += ' AND created_at < ?';
-    params.push(options.cursor);
+  const decoded = decodeCursor(options.cursor);
+  if (decoded) {
+    const { sql, params: cursorParams } = cursorWhereClause(decoded, 'created_at', 'id');
+    innerQuery += ` AND ${sql}`;
+    params.push(...cursorParams);
   }
 
   innerQuery += ' ORDER BY created_at DESC, id DESC LIMIT ?';
@@ -302,7 +315,7 @@ function searchChannelMessagesBySubstring(
   if (hasMore) rows.shift();
   const data = rows.map(rowToMessage);
   const head = hasMore ? data[0] : undefined;
-  return { data, hasMore, nextCursor: head?.createdAt };
+  return { data, hasMore, nextCursor: head ? encodeCursor(head.createdAt, head.id) : undefined };
 }
 
 function escapeLikePattern(value: string): string {
