@@ -23,13 +23,17 @@ export const ORCHESTRATOR_TOOLS = {
   message: messageTool,
 } as unknown as Record<string, OrchestratorTool>;
 
-export const ALWAYS_AVAILABLE_AGENT_TOOLS = Object.freeze([
-  'channel.post',
-  'channel.reply',
-  'channel.dm',
-  'channel.list',
-  'channel.read',
-  'self.note',
-]);
+// Tools an agent always has access to, regardless of its role's `tools`
+// allowlist.
+//
+// `self.note` is the only entry: per the "agent must always be able to
+// think to itself" invariant (mirrored in checkToolPolicy + the
+// `bypassPermission` flag on selfNoteTool), the self-note scratchpad is
+// unconditional. `channel.*` tools were previously here too — that
+// silently bypassed the role allowlist (a role that intentionally omits
+// `channel.dm` would still get it merged into both the model's tool
+// palette and the IAM matrix `allowed_tools`). Roles must opt in to
+// channel tools explicitly via their `tools: [...]` declaration.
+export const ALWAYS_AVAILABLE_AGENT_TOOLS = Object.freeze(['self.note'] as const);
 
 export type { OrchestratorTool, ToolExecutionContext } from './types.js';

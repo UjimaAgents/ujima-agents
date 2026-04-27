@@ -471,6 +471,25 @@ export class ConversationService {
         continue;
       }
 
+      // Mention fan-out must not leak across channel boundaries.
+      //
+      // - `self` channels are private agent scratchpads; no fan-out at all.
+      //   Even an `@mention` in the owner's own self-channel never wakes
+      //   another agent.
+      // - Any channel with an explicit member roster (DMs always have one,
+      //   group/task-run usually do) only delivers mentions to enrolled
+      //   members. Without this check, an `@mention` inside a DM could wake
+      //   an arbitrary agent and hand them the private DM thread via
+      //   `onMemberAlerted`/`generateRunReply`.
+      // - Channels with an empty roster (open public channels) keep the
+      //   broad fan-out behaviour.
+      if (channel) {
+        if (channel.kind === 'self') continue;
+        if (channel.memberIds.length > 0 && !channel.memberIds.includes(member.id)) {
+          continue;
+        }
+      }
+
       // Mention fan-out is what wakes dormant agents back into the org loop.
       // We keep the limiter here, before realtime emission and before the
       // follow-up run callback, so both delivery paths agree on whether a wake
