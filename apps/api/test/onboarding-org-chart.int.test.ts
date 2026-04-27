@@ -135,6 +135,34 @@ describe('OnboardingService.onboard — owner-targeting org-chart edges', () => 
     expect(reportsTo['frontend-engineer']).toBe('product-manager');
   });
 
+  // Regression: the previous fix only matched the current
+  // `input.ownerName` (or the literal "Owner"/"owner"), so renaming the
+  // owner after configuring an org-chart row left the row pointing at
+  // the *old* display name and the daemon dropped the edge. The web
+  // form now persists the stable `@owner` sentinel for owner-targeting
+  // selections — renames are inert.
+  it("resolves the '@owner' sentinel even after the owner is renamed", async () => {
+    const { service, workspaceRoot } = await setup();
+    const result = await service.onboard({
+      organizationName: 'Acme',
+      // The user originally configured the row pointing at "Caleb", then
+      // changed the owner display name to "Lin" before submitting. The
+      // sentinel form survives that rename intact.
+      ownerName: 'Lin',
+      ownerEmail: 'lin@example.com',
+      ownerPassword: 'correct horse battery staple',
+      workspaceRoot,
+      providerKeys: { openai: 'sk-test' },
+      team: teamWithReports({
+        'product-manager': '@owner',
+      }),
+    });
+
+    const owner = result.members.find((m) => m.kind === 'human');
+    expect(owner?.name).toBe('Lin');
+    expect(result.organization.organizationChart.reportsTo['product-manager']).toBe(owner!.id);
+  });
+
   it('still rejects unknown manager refs that are neither agents nor the owner', async () => {
     const { service, workspaceRoot } = await setup();
     await expect(

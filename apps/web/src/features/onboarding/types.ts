@@ -1,6 +1,19 @@
 export type OnboardingStepId = "organization" | "owner" | "team" | "review";
 export type TeamTabId = "agents" | "channels" | "org-chart" | "policies" | "providers";
 
+/**
+ * Stable sentinel stored in `TeamReportDraft.managerName` when a row reports
+ * to the owner. Decoupling the stored value from the owner's display name
+ * means renaming the owner mid-wizard does not silently drop previously
+ * configured "X reports to <owner>" edges. The daemon recognises this
+ * literal in `OnboardingService.onboard` and resolves it to the owner
+ * member's id.
+ *
+ * The `@` prefix guarantees the sentinel can never collide with a role
+ * name (role names match `[a-z][a-z0-9-]*`).
+ */
+export const OWNER_MANAGER_SENTINEL = "@owner";
+
 export interface OnboardingStep {
   id: OnboardingStepId;
   title: string;
@@ -164,7 +177,7 @@ export const INITIAL_DRAFT: OnboardingDraft = {
     { id: "report-senior", subjectName: "senior-engineer", managerName: "product-manager" },
     { id: "report-junior", subjectName: "junior-engineer", managerName: "product-manager" },
     { id: "report-reviewer", subjectName: "reviewer", managerName: "product-manager" },
-    { id: "report-pm", subjectName: "product-manager", managerName: "Owner" },
+    { id: "report-pm", subjectName: "product-manager", managerName: OWNER_MANAGER_SENTINEL },
   ],
   providers: [
     { id: "provider-openai", name: "OpenAI", apiKeyRef: "OPENAI_API_KEY" },
