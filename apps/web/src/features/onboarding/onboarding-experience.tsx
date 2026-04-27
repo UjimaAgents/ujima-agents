@@ -7,7 +7,14 @@ import { Home, Sparkles } from "lucide-react";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { OnboardingForm } from "./components/onboarding-form";
 import { OnboardingStepper } from "./components/onboarding-stepper";
-import { INITIAL_DRAFT, ONBOARDING_STEPS, type OnboardingDraft, type OnboardingStepId, type TeamTabId } from "./types";
+import {
+  INITIAL_DRAFT,
+  ONBOARDING_STEPS,
+  OWNER_MANAGER_SENTINEL,
+  type OnboardingDraft,
+  type OnboardingStepId,
+  type TeamTabId,
+} from "./types";
 
 const TEAM_TABS: TeamTabId[] = ["agents", "channels", "org-chart", "policies", "providers"];
 const ONBOARDING_STORAGE_KEY = "ujima-web-onboarding-session-v1";
@@ -169,6 +176,20 @@ function resolveProviderKind(input: string): string {
 
 function buildOnboardingPayload(draft: OnboardingDraft) {
   const roleNames = new Set(draft.roles.map((role) => role.name.trim()).filter(Boolean));
+  // The owner-targeting form value persists as the stable
+  // `OWNER_MANAGER_SENTINEL` (`@owner`) so renaming the owner mid-wizard
+  // doesn't silently drop previously configured edges. Older
+  // localStorage drafts may still carry the literal owner display name
+  // or the seed's `"Owner"` label — accept both as a back-compat path
+  // so users don't lose existing rows on first load after this change.
+  // The daemon resolves all of these to the owner member's id.
+  const ownerLabelRaw = draft.ownerName.trim();
+  const isOwnerManagerLabel = (value: string): boolean => {
+    if (!value) return false;
+    if (value === OWNER_MANAGER_SENTINEL) return true;
+    if (ownerLabelRaw && value === ownerLabelRaw) return true;
+    return value === "Owner" || value === "owner";
+  };
 
   return {
     organizationName: draft.organizationName.trim(),
@@ -223,12 +244,15 @@ function buildOnboardingPayload(draft: OnboardingDraft) {
       organizationChart: {
         reportsTo: Object.fromEntries(
           draft.organizationReports
-            .filter(
-              (report) =>
-                roleNames.has(report.subjectName.trim()) &&
-                roleNames.has(report.managerName.trim()) &&
-                report.subjectName.trim() !== report.managerName.trim(),
-            )
+            .filter((report) => {
+              const subject = report.subjectName.trim();
+              const manager = report.managerName.trim();
+              if (!roleNames.has(subject)) return false;
+              if (subject === manager) return false;
+              // Manager must be either another role OR the owner; the daemon
+              // resolves the owner label to the owner member's id.
+              return roleNames.has(manager) || isOwnerManagerLabel(manager);
+            })
             .map((report) => [report.subjectName.trim(), report.managerName.trim()] as const),
         ),
       },

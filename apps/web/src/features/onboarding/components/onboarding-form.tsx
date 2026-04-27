@@ -20,7 +20,7 @@ import {
   Users,
   X,
 } from "lucide-react";
-import type { OnboardingDraft, OnboardingStep, OnboardingStepId, TeamTabId } from "../types";
+import { OWNER_MANAGER_SENTINEL, type OnboardingDraft, type OnboardingStep, type OnboardingStepId, type TeamTabId } from "../types";
 
 interface OnboardingFormProps {
   step: OnboardingStep;
@@ -426,7 +426,9 @@ function StepFields({
           {
             id: createId("report"),
             subjectName: newRole.name,
-            managerName: draft.roles.some((role) => role.name === "product-manager") ? "product-manager" : ownerLabel,
+            managerName: draft.roles.some((role) => role.name === "product-manager")
+              ? "product-manager"
+              : OWNER_MANAGER_SENTINEL,
           },
         ],
       });
@@ -477,7 +479,11 @@ function StepFields({
     }
 
     const fallbackManager =
-      role.name === "product-manager" ? ownerLabel : draft.roles.some((item) => item.name === "product-manager" && item.id !== roleId) ? "product-manager" : ownerLabel;
+      role.name === "product-manager"
+        ? OWNER_MANAGER_SENTINEL
+        : draft.roles.some((item) => item.name === "product-manager" && item.id !== roleId)
+          ? "product-manager"
+          : OWNER_MANAGER_SENTINEL;
 
     onDraftChange({
       ...draft,
@@ -557,7 +563,12 @@ function StepFields({
       existingReport ?? {
         id: createId("report"),
         subjectName: role.name,
-        managerName: role.name === "product-manager" ? ownerLabel : draft.roles.some((item) => item.name === "product-manager") ? "product-manager" : ownerLabel,
+        managerName:
+          role.name === "product-manager"
+            ? OWNER_MANAGER_SENTINEL
+            : draft.roles.some((item) => item.name === "product-manager")
+              ? "product-manager"
+              : OWNER_MANAGER_SENTINEL,
       }
     );
   });
@@ -913,11 +924,18 @@ function StepFields({
                     }
                     className="min-w-0 flex-1 rounded-lg border border-zinc-200 bg-white px-4 py-2.5 text-sm outline-none transition focus:border-violet-500 dark:border-zinc-700 dark:bg-zinc-950"
                   >
-                    {[...draft.roles.map((role) => role.name), ownerLabel]
-                      .filter((option) => option !== report.subjectName)
+                    {[
+                      // Role refs use the role name as both value and label.
+                      ...draft.roles.map((role) => ({ value: role.name, label: role.name })),
+                      // Owner ref persists the stable sentinel so a later
+                      // owner rename keeps existing edges intact; the
+                      // dropdown still renders the current friendly label.
+                      { value: OWNER_MANAGER_SENTINEL, label: ownerLabel },
+                    ]
+                      .filter((option) => option.value !== report.subjectName)
                       .map((option) => (
-                        <option key={option} value={option}>
-                          {option}
+                        <option key={option.value} value={option.value}>
+                          {option.label}
                         </option>
                       ))}
                   </select>
