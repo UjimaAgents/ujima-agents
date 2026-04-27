@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 export * from './conversations.js';
+export * from './auth.js';
 export * from './onboarding.js';
 export * from './runs.js';
 export * from './settings.js';

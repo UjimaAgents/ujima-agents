@@ -1,6 +1,8 @@
 import type { SqliteDbHandle as DbHandle } from '@ujima/context-store';
 import type {
   ApprovalRequest,
+  AuthSession,
+  AuthUser,
   AuditEvent,
   Channel,
   ChannelKind,
@@ -13,6 +15,19 @@ import type {
   RunState,
   WorkspaceMember,
 } from '@ujima/shared';
+import {
+  findAuthUsersByEmail as readAuthUsersByEmail,
+  getAuthSessionByTokenHash as readAuthSessionByTokenHash,
+  getAuthUserById as readAuthUserById,
+  getAuthUserByMember as readAuthUserByMember,
+  getAuthUserCredentials as readAuthUserCredentials,
+  revokeAuthSession as writeAuthSessionRevoke,
+  saveAuthSession as writeAuthSession,
+  saveAuthUser as writeAuthUser,
+  touchAuthSession as writeAuthSessionTouch,
+  type StoredAuthSession,
+  type StoredAuthUser,
+} from './auth.js';
 import {
   getApproval as readApproval,
   listPendingApprovals as readPendingApprovals,
@@ -152,6 +167,26 @@ export class Repository {
   saveMember = (member: Member): Member => writeMember(this.db, member);
   saveWorkspaceMember = (workspaceMember: WorkspaceMember): WorkspaceMember =>
     writeWorkspaceMember(this.db, workspaceMember);
+  saveAuthUser = (input: StoredAuthUser): AuthUser =>
+    writeAuthUser(this.db, input);
+  getAuthUserById = (userId: string): AuthUser | null =>
+    readAuthUserById(this.db, userId);
+  getAuthUserByMember = (organizationId: string, memberId: string): AuthUser | null =>
+    readAuthUserByMember(this.db, organizationId, memberId);
+  getAuthUserCredentials = (
+    organizationId: string,
+    emailNormalized: string,
+  ): StoredAuthUser | null => readAuthUserCredentials(this.db, organizationId, emailNormalized);
+  findAuthUsersByEmail = (emailNormalized: string): StoredAuthUser[] =>
+    readAuthUsersByEmail(this.db, emailNormalized);
+  saveAuthSession = (input: StoredAuthSession): AuthSession =>
+    writeAuthSession(this.db, input);
+  getAuthSessionByTokenHash = (sessionTokenHash: string): StoredAuthSession | null =>
+    readAuthSessionByTokenHash(this.db, sessionTokenHash);
+  revokeAuthSession = (sessionId: string, revokedAt?: string): AuthSession | null =>
+    writeAuthSessionRevoke(this.db, sessionId, revokedAt);
+  touchAuthSession = (sessionId: string, lastSeenAt?: string): AuthSession | null =>
+    writeAuthSessionTouch(this.db, sessionId, lastSeenAt);
   getWorkspaceMember = (
     organizationId: string,
     memberId: string,
@@ -247,4 +282,6 @@ export type {
   PaginatedChannels,
   PaginatedMessages,
   PaginatedRuns,
+  StoredAuthSession,
+  StoredAuthUser,
 };
