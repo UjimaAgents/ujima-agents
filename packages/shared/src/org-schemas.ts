@@ -54,6 +54,9 @@ export type RunStatus = z.infer<typeof RunStatusSchema>;
 export const MessageKindSchema = z.enum(['human', 'agent', 'system']);
 export type MessageKind = z.infer<typeof MessageKindSchema>;
 
+export const MessageMentionKindSchema = z.enum(['mention', 'assignment', 'fyi']);
+export type MessageMentionKind = z.infer<typeof MessageMentionKindSchema>;
+
 export const PresenceStateSchema = z.enum(['online', 'offline', 'busy', 'away']);
 export type PresenceState = z.infer<typeof PresenceStateSchema>;
 
@@ -110,6 +113,7 @@ export const ChannelSchema = z.object({
   kind: ChannelKindSchema,
   topic: z.string().default(''),
   memberIds: z.array(IdSchema).default([]),
+  parentMessageId: IdSchema.optional(),
   createdAt: TimestampSchema.optional(),
   archivedAt: TimestampSchema.optional(),
 });
@@ -150,6 +154,7 @@ export const MessageSchema = z.object({
   organizationId: IdSchema,
   threadId: IdSchema,
   channelId: IdSchema.optional(),
+  parentMessageId: IdSchema.optional(),
   senderId: IdSchema,
   senderKind: MemberKindSchema,
   kind: MessageKindSchema.default('human'),
@@ -157,8 +162,19 @@ export const MessageSchema = z.object({
   mentions: z.array(IdSchema).default([]),
   toolCalls: z.array(MessageToolCallSchema).default([]),
   createdAt: TimestampSchema,
+  editedAt: TimestampSchema.optional(),
+  deletedAt: TimestampSchema.optional(),
 });
 export type Message = z.infer<typeof MessageSchema>;
+
+export const MessageMentionSchema = z.object({
+  id: IdSchema,
+  messageId: IdSchema,
+  memberId: IdSchema,
+  kind: MessageMentionKindSchema.default('mention'),
+  createdAt: TimestampSchema.optional(),
+});
+export type MessageMention = z.infer<typeof MessageMentionSchema>;
 
 export const ProviderBindingSchema = z.object({
   provider: z.string().min(1),

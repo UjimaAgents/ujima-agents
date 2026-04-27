@@ -12,6 +12,7 @@ import { loadAgentTeam, type AgentTeamHandle } from '@ujima/framework';
 import type { ApiRepository } from './repository-reader.js';
 import type { TeamStore } from './team-store.js';
 import { summarizeTeam, validateProviderKeys, type TeamSummary } from './team.js';
+import { addMemberToDefaultChannels, ensureMemberSelfChannel } from './member-channels.js';
 import { upsertWorkspaceMemberScopes } from './workspace-root.js';
 
 export interface OnboardingInlineTeam {
@@ -74,6 +75,13 @@ function buildInitialOrganizationChart(
   }
 
   return { reportsTo };
+}
+
+function visibleChannels(channels: Channel[]): Channel[] {
+  // Hide both `self` (private agent scratchpads) and `dm` (private 2-member
+  // conversations) from the onboarding response. Member-scoped DM access
+  // goes through `listVisibleChannels` (channel.list tool path).
+  return channels.filter((channel) => channel.kind !== 'self' && channel.kind !== 'dm');
 }
 
 export class OnboardingService {
@@ -158,6 +166,7 @@ export class OnboardingService {
         member.id,
         role?.workspaceScopes ?? [],
       );
+      ensureMemberSelfChannel(this.repo, organizationId, member);
     }
 
     const channels: Channel[] = team.channels.map((config) =>
@@ -205,12 +214,18 @@ export class OnboardingService {
       this.repo.setChannelMembers(id, [...ids]);
     }
 
+    for (const member of members) {
+      addMemberToDefaultChannels(this.repo, team, organizationId, member);
+    }
+
     this.teamStore.setTeam(team);
 
     return {
       organization,
       members,
-      channels: this.repo.listChannels(organizationId).data,
+      channels: visibleChannels(
+        this.repo.listChannels(organizationId, undefined, undefined, ['self', 'dm']).data,
+      ),
       team: summarizeTeam(team),
     };
   }
