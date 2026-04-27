@@ -26,6 +26,15 @@ describe('encodeCursor / decodeCursor', () => {
     const cursor = encodeCursor('2026-04-27T08:00:00.000Z', id);
     expect(decodeCursor(cursor)?.id).toBe(id);
   });
+
+  it('round-trips ids that themselves contain pipes', () => {
+    const id = 'ops|infra';
+    const cursor = encodeCursor('2026-04-27T08:00:00.000Z', id);
+    expect(decodeCursor(cursor)).toEqual({
+      timestamp: '2026-04-27T08:00:00.000Z',
+      id,
+    });
+  });
 });
 
 describe('cursorWhereClause', () => {
