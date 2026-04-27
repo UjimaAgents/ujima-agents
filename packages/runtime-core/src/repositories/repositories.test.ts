@@ -474,3 +474,38 @@ test('listChannels returns descending pages without overlap across three pages',
   expect(allIds).toEqual(['ch-5', 'ch-4', 'ch-3', 'ch-2', 'ch-1']);
   expect(new Set(allIds).size).toBe(allIds.length);
 });
+
+test('listChannels paginates correctly when the boundary id contains a pipe', () => {
+  const db = openDatabase({ dbPath: ':memory:' });
+  const repo = new Repository(db);
+  const orgId = randomUUID();
+  repo.saveOrganization(
+    OrganizationSchema.parse({
+      id: orgId,
+      name: 'Pipe Cursor Org',
+      workspace: { root: '/tmp/pipe-cursor-org', roleScopes: {} },
+    }),
+  );
+
+  const rows = [
+    ['zeta', '2026-04-27T08:00:03.000Z'],
+    ['ops|infra', '2026-04-27T08:00:02.000Z'],
+    ['alpha', '2026-04-27T08:00:01.000Z'],
+  ] as const;
+
+  for (const [id, createdAt] of rows) {
+    db.prepare(
+      `INSERT INTO channels (id, organization_id, name, kind, topic, created_at, updated_at, parent_message_id, archived_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(id, orgId, id, 'group', '', createdAt, createdAt, null, null);
+  }
+
+  const page1 = repo.listChannels(orgId, undefined, 2);
+  expect(page1.data.map((channel) => channel.id)).toEqual(['zeta', 'ops|infra']);
+  expect(page1.hasMore).toBe(true);
+  expect(page1.nextCursor).toBeDefined();
+
+  const page2 = repo.listChannels(orgId, page1.nextCursor, 2);
+  expect(page2.data.map((channel) => channel.id)).toEqual(['alpha']);
+  expect(page2.hasMore).toBe(false);
+});
