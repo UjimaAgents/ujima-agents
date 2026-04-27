@@ -322,3 +322,109 @@ test('bootstrap snapshot drops self and dm channels', async () => {
   expect(visibleIds).not.toContain('self_alex');
   expect(visibleIds).not.toContain('dm_alex_quinn');
 });
+
+// Regression: paginators used to cursor only on `created_at`, so two rows
+// sharing the same millisecond timestamp could be split across the page
+// boundary and the second one would be skipped forever (the cursor pointed
+// past it). Composite cursor `${created_at}|${id}` fixes the boundary.
+test('listChannelMessages preserves rows that share the same created_at across page boundaries', () => {
+  const db = openDatabase({ dbPath: ':memory:' });
+  const repo = new Repository(db);
+  const orgId = randomUUID();
+
+  repo.saveOrganization(
+    OrganizationSchema.parse({
+      id: orgId,
+      name: 'Cursor Org',
+      workspace: { root: '/tmp/cursor-org', roleScopes: {} },
+    }),
+  );
+  repo.saveChannel({
+    id: 'general',
+    organizationId: orgId,
+    name: 'general',
+    kind: 'general',
+    topic: '',
+    memberIds: [],
+  });
+  repo.ensureThread({
+    id: 'general',
+    organizationId: orgId,
+    channelId: 'general',
+    title: 'general',
+    memberIds: [],
+    createdAt: '2026-04-27T08:00:00.000Z',
+  });
+
+  // Three messages, three distinct ids, one shared millisecond. Pre-fix,
+  // paging with limit=2 returned msg-c+msg-b on page 1, then a cursor that
+  // dropped msg-a entirely (cursor `2026-04-27T08:00:00.000Z` excluded ALL
+  // rows with `created_at = '2026-04-27T08:00:00.000Z'`).
+  for (const id of ['msg-a', 'msg-b', 'msg-c']) {
+    repo.saveMessage(
+      MessageSchema.parse({
+        id,
+        organizationId: orgId,
+        threadId: 'general',
+        channelId: 'general',
+        senderId: 'user',
+        senderKind: 'human',
+        kind: 'human',
+        content: id,
+        mentions: [],
+        createdAt: '2026-04-27T08:00:00.000Z',
+      }),
+    );
+  }
+
+  const page1 = repo.listChannelMessages(orgId, 'general', { limit: 2 });
+  expect(page1.data).toHaveLength(2);
+  expect(page1.hasMore).toBe(true);
+  expect(page1.nextCursor).toBeDefined();
+
+  const page2 = repo.listChannelMessages(orgId, 'general', {
+    limit: 2,
+    cursor: page1.nextCursor,
+  });
+  expect(page2.data).toHaveLength(1);
+  expect(page2.hasMore).toBe(false);
+
+  const allIds = [...page1.data.map((m) => m.id), ...page2.data.map((m) => m.id)].sort();
+  expect(allIds).toEqual(['msg-a', 'msg-b', 'msg-c']);
+});
+
+test('listChannels preserves channels that share the same created_at across page boundaries', () => {
+  const db = openDatabase({ dbPath: ':memory:' });
+  const repo = new Repository(db);
+  const orgId = randomUUID();
+  repo.saveOrganization(
+    OrganizationSchema.parse({
+      id: orgId,
+      name: 'Cursor Channels Org',
+      workspace: { root: '/tmp/cursor-channels-org', roleScopes: {} },
+    }),
+  );
+
+  // Three group channels saved in the same tight loop — high probability
+  // that all three land on the same millisecond. We force the issue by
+  // bypassing saveChannel and writing the row with an explicit timestamp.
+  // (saveChannel uses `now()` internally, but we want the assertion to be
+  // deterministic, not probabilistic.)
+  for (const id of ['ch-a', 'ch-b', 'ch-c']) {
+    db.prepare(
+      `INSERT INTO channels (id, organization_id, name, kind, topic, created_at, updated_at, parent_message_id, archived_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(id, orgId, id, 'group', '', '2026-04-27T08:00:00.000Z', '2026-04-27T08:00:00.000Z', null, null);
+  }
+
+  const page1 = repo.listChannels(orgId, undefined, 2);
+  expect(page1.data).toHaveLength(2);
+  expect(page1.hasMore).toBe(true);
+
+  const page2 = repo.listChannels(orgId, page1.nextCursor, 2);
+  expect(page2.data).toHaveLength(1);
+  expect(page2.hasMore).toBe(false);
+
+  const allIds = [...page1.data.map((c) => c.id), ...page2.data.map((c) => c.id)].sort();
+  expect(allIds).toEqual(['ch-a', 'ch-b', 'ch-c']);
+});

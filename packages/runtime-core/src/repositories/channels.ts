@@ -1,6 +1,7 @@
 import type { SqliteDbHandle as DbHandle } from '@ujima/context-store';
 import { ChannelSchema, type Channel, type ChannelKind } from '@ujima/shared';
 import { now, rowString } from './common.js';
+import { cursorWhereClause, decodeCursor, encodeCursor } from '@ujima/shared';
 
 type Row = Record<string, unknown>;
 
@@ -94,12 +95,14 @@ export function listChannels(
     params.push(...excludeKinds);
   }
 
-  if (cursor) {
-    query += ' AND created_at < ?';
-    params.push(cursor);
+  const decoded = decodeCursor(cursor);
+  if (decoded) {
+    const { sql, params: cursorParams } = cursorWhereClause(decoded, 'created_at', 'id');
+    query += ` AND ${sql}`;
+    params.push(...cursorParams);
   }
 
-  query += ' ORDER BY created_at DESC LIMIT ?';
+  query += ' ORDER BY created_at DESC, id DESC LIMIT ?';
   params.push(limit + 1);
 
   const rows = db.prepare(query).all(...params) as Row[];
@@ -124,7 +127,7 @@ export function listChannels(
   );
 
   const tail = hasMore ? data[data.length - 1] : undefined;
-  const nextCursor = tail?.createdAt;
+  const nextCursor = tail?.createdAt && tail.id ? encodeCursor(tail.createdAt, tail.id) : undefined;
 
   return { data, hasMore, nextCursor };
 }

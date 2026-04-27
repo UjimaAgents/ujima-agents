@@ -603,4 +603,79 @@ describe('E3 channels and mentions', () => {
     expect(deleted.toolCalls).toEqual(message.toolCalls);
     expect(fixture.repo.getMessage(fixture.organizationId, message.id)?.toolCalls).toEqual(message.toolCalls);
   });
+
+  // Regression: ChannelRetentionService used to build archive paths with
+  // `path.join(archiveRoot, 'archives', 'channels', orgId, channelId)`
+  // without sanitization. `IdSchema` only requires a non-empty string, so
+  // a config-supplied channel id like `../../../tmp/pwn` would let
+  // appendFile/readdir operate on attacker-chosen filesystem locations
+  // outside `archiveRoot`. The fix sanitizes each segment AND asserts the
+  // resolved path stays under `<archiveRoot>/archives/channels/`.
+  it('rejects archive operations whose channel id contains path-separator characters', async () => {
+    const fixture = await createFixture({ agentNames: ['frontend-alice'] });
+    tempDirs.push(fixture.archiveRoot);
+    const retention = new ChannelRetentionService(fixture.repo, fixture.archiveRoot);
+
+    const malicious = ['../escape', '..', '.hidden', 'foo/bar', 'foo\\bar'];
+
+    for (const channelId of malicious) {
+      // Read paths swallow the rejection and return an empty page (a
+      // malformed read shouldn't 500 the daemon).
+      const empty = await retention.listChannelMessages({
+        organizationId: fixture.organizationId,
+        channelId,
+        limit: 10,
+      });
+      expect(empty.data).toEqual([]);
+      expect(empty.hasMore).toBe(false);
+
+      const search = await retention.searchChannelMessages({
+        organizationId: fixture.organizationId,
+        channelId,
+        query: 'anything',
+        limit: 10,
+      });
+      expect(search.data).toEqual([]);
+    }
+
+    // The archive write path doesn't take a caller-supplied channel id
+    // directly — it iterates `repo.listAllChannels`. We plant an evil
+    // channel + thread + expired message in the DB to trigger the write
+    // path and confirm the sanitizer throws (instead of silently writing
+    // outside `<archiveRoot>/archives/channels/`).
+    const evilChannelId = '../../tmp/pwn-' + randomUUID();
+    fixture.repo.saveChannel({
+      id: evilChannelId,
+      organizationId: fixture.organizationId,
+      name: 'evil',
+      kind: 'general',
+      topic: '',
+      memberIds: [],
+    });
+    fixture.repo.ensureThread({
+      id: evilChannelId,
+      organizationId: fixture.organizationId,
+      channelId: evilChannelId,
+      title: 'evil-thread',
+      memberIds: [],
+      createdAt: new Date(Date.now() - 100 * 24 * 60 * 60 * 1000).toISOString(),
+    });
+    fixture.repo.saveMessage(
+      MessageSchema.parse({
+        id: randomUUID(),
+        organizationId: fixture.organizationId,
+        threadId: evilChannelId,
+        channelId: evilChannelId,
+        senderId: fixture.ownerId,
+        senderKind: 'human',
+        kind: 'human',
+        content: 'should never reach disk outside archiveRoot',
+        createdAt: new Date(Date.now() - 100 * 24 * 60 * 60 * 1000).toISOString(),
+      }),
+    );
+
+    await expect(
+      retention.archiveExpiredMessages(fixture.organizationId),
+    ).rejects.toThrow(/illegal path separator|cannot start with|archive path escape/i);
+  });
 });
