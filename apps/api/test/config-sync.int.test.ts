@@ -425,4 +425,57 @@ describe('team config reconcile', () => {
     const retiredAgent = repo.getMember(first.organization.id, 'frontend-alice');
     expect(retiredAgent?.retiredAt).toBeTruthy();
   });
+
+  // Regression: visibleChannels() in config-sync used to drop only `self`
+  // channels, leaking `dm` channels into the reconcile response payload.
+  // The reconcile result is consumed by the dashboard / CLI / UI shells with
+  // no caller-scoped visibility filter, so any private 2-member DM that
+  // exists in the DB would have been exposed to whoever held the daemon
+  // token. Both `self` and `dm` must be filtered, matching the rule used in
+  // bootstrap/settings/onboarding and the SQL-side filter on listChannels.
+  it('reconcile response strips both self and dm channels', async () => {
+    const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
+    const teamStore = createTeamStore();
+    const syncService = new ConfigSyncService(repo, teamStore);
+    const dir = await mkdtemp(join(tmpdir(), 'ujima-config-sync-leak-'));
+    tempDirs.push(dir);
+    const configPath = join(dir, 'ujima.config.js');
+
+    await writeConfigFile(configPath, teamConfig());
+    const first = await syncService.loadAndReconcileFromFile(configPath);
+
+    // Persist a self-channel + a DM directly into the org. These are runtime
+    // artefacts (member-spawn / first-DM-send), not config-managed rows, so
+    // they survive subsequent reconciles.
+    repo.saveChannel({
+      id: 'self_pm',
+      organizationId: first.organization.id,
+      name: 'self_pm',
+      kind: 'self',
+      topic: '',
+      memberIds: ['pm'],
+    });
+    repo.saveChannel({
+      id: 'dm_pm_alice',
+      organizationId: first.organization.id,
+      name: 'dm_pm_alice',
+      kind: 'dm',
+      topic: '',
+      memberIds: ['pm', 'frontend-alice'],
+    });
+
+    // Sanity: the rows really are in the DB.
+    expect(repo.getChannel(first.organization.id, 'self_pm')?.kind).toBe('self');
+    expect(repo.getChannel(first.organization.id, 'dm_pm_alice')?.kind).toBe('dm');
+
+    // Re-reconcile (config unchanged). Pre-fix, `result.channels` carried
+    // `dm_pm_alice`; `self_pm` was already filtered.
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 25));
+    const second = await syncService.loadAndReconcileFromFile(configPath, first.organization.id);
+    const ids = second.channels.map((channel) => channel.id);
+    expect(ids).toContain('general');
+    expect(ids).toContain('triage');
+    expect(ids).not.toContain('self_pm');
+    expect(ids).not.toContain('dm_pm_alice');
+  });
 });
