@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Home, Sparkles } from "lucide-react";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { OnboardingForm } from "./components/onboarding-form";
@@ -144,6 +145,102 @@ function readPersistedSession(): PersistedOnboardingState {
   }
 }
 
+function normalizeProviderName(input: string): string {
+  return input.trim().toLowerCase().replace(/\s+/g, "-");
+}
+
+function resolveProviderKind(input: string): string {
+  const normalized = normalizeProviderName(input);
+  if (
+    normalized === "anthropic" ||
+    normalized === "openai" ||
+    normalized === "google" ||
+    normalized === "openrouter" ||
+    normalized === "ollama"
+  ) {
+    return normalized;
+  }
+
+  // The onboarding UI can offer model vendors that aren't first-class daemon
+  // providers yet. Route them through OpenRouter so the payload stays valid
+  // instead of failing before the user can finish setup.
+  return "openrouter";
+}
+
+function buildOnboardingPayload(draft: OnboardingDraft) {
+  const roleNames = new Set(draft.roles.map((role) => role.name.trim()).filter(Boolean));
+
+  return {
+    organizationName: draft.organizationName.trim(),
+    ownerName: draft.ownerName.trim(),
+    ownerEmail: draft.ownerEmail.trim(),
+    ownerPassword: draft.ownerPassword,
+    workspaceRoot: draft.workspaceRoot.trim(),
+    providerKeys: Object.fromEntries(
+      draft.providers
+        .map((provider) => [resolveProviderKind(provider.name), provider.apiKeyRef.trim()] as const)
+        .filter((entry) => entry[0] && entry[1]),
+    ),
+    team: {
+      name: draft.organizationName.trim(),
+      channels: draft.channels.map((channel) => ({
+        id: channel.name.trim(),
+        name: channel.name.trim(),
+        kind: channel.name.trim() === "general" ? "general" : "group",
+        topic: channel.description.trim(),
+      })),
+      roles: draft.roles.map((role) => ({
+        id: role.name.trim(),
+        name: role.name.trim(),
+        title: role.title.trim(),
+        instructions: role.instructions.trim(),
+        provider: resolveProviderKind(role.llm),
+        model: role.model.trim(),
+        workspaceScopes: ["."],
+        channels: role.channelIds
+          .map((channelId) => draft.channels.find((channel) => channel.id === channelId)?.name.trim() ?? "")
+          .filter(Boolean),
+      })),
+      agents: draft.roles.map((role) => ({
+        name: role.name.trim(),
+        roleName: role.name.trim(),
+        personalityName: "direct",
+      })),
+      providers: Object.fromEntries(
+        draft.providers
+          .map((provider) => {
+            const resolvedKind = resolveProviderKind(provider.name);
+            return [
+              resolvedKind,
+              {
+                kind: resolvedKind,
+                apiKeyRef: provider.apiKeyRef.trim(),
+              },
+            ] as const;
+          })
+          .filter((entry) => entry[0]),
+      ),
+      organizationChart: {
+        reportsTo: Object.fromEntries(
+          draft.organizationReports
+            .filter(
+              (report) =>
+                roleNames.has(report.subjectName.trim()) &&
+                roleNames.has(report.managerName.trim()) &&
+                report.subjectName.trim() !== report.managerName.trim(),
+            )
+            .map((report) => [report.subjectName.trim(), report.managerName.trim()] as const),
+        ),
+      },
+      policies: {
+        requireApprovalForWrites: draft.policies.requireApprovalForWrites,
+        requireApprovalForShell: draft.policies.requireApprovalForShell,
+        workspaceBoundaryMode: "hard",
+      },
+    },
+  };
+}
+
 function isOrganizationStepComplete(draft: OnboardingDraft) {
   return Boolean(draft.organizationName.trim() && draft.workspaceRoot.trim());
 }
@@ -168,8 +265,11 @@ function isTeamStepComplete(draft: OnboardingDraft) {
 }
 
 export function OnboardingExperience() {
+  const router = useRouter();
   const isHydrated = useSyncExternalStore(subscribe, () => true, () => false);
   const [session, setSession] = useState<PersistedOnboardingState>(() => readPersistedSession());
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const { activeStep, activeTeamTab, draft } = session;
 
   useEffect(() => {
@@ -241,6 +341,31 @@ export function OnboardingExperience() {
     setSession((current) => ({ ...current, activeStep: stepId }));
   };
 
+  const handleSubmit = async (currentDraft: OnboardingDraft) => {
+    setSubmitError(null);
+    setIsSubmitting(true);
+
+    try {
+      const response = await fetch("/api/onboarding", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(buildOnboardingPayload(currentDraft)),
+      });
+      const body = (await response.json().catch(() => ({}))) as { message?: string };
+
+      if (!response.ok) {
+        setSubmitError(body.message ?? "Unable to complete onboarding right now.");
+        return;
+      }
+
+      window.localStorage.removeItem(ONBOARDING_STORAGE_KEY);
+      router.replace("/workspace");
+      router.refresh();
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   if (!isHydrated) {
     return null;
   }
@@ -292,6 +417,9 @@ export function OnboardingExperience() {
               onTeamTabChange={(nextTab) => setSession((current) => ({ ...current, activeTeamTab: nextTab }))}
               onBack={handleBack}
               onNext={handleNext}
+              onSubmit={handleSubmit}
+              isSubmitting={isSubmitting}
+              submitError={submitError}
             />
           </div>
         </div>
