@@ -1,5 +1,7 @@
 import type {
   ApprovalRequest,
+  AuthSession,
+  AuthUser,
   AuditEvent,
   Channel,
   ChannelKind,
@@ -38,6 +40,17 @@ export interface PaginatedRuns {
   data: RunState[];
   nextCursor?: string;
   hasMore: boolean;
+}
+
+export interface StoredAuthUser {
+  user: AuthUser;
+  passwordHash: string;
+  emailNormalized: string;
+}
+
+export interface StoredAuthSession {
+  session: AuthSession;
+  sessionTokenHash: string;
 }
 
 /**
@@ -147,5 +160,17 @@ export interface ApiRepository extends ConversationRepository {
   ): ConfigFieldOwnership[];
   saveMember(member: Member): Member;
   saveWorkspaceMember(workspaceMember: WorkspaceMember): WorkspaceMember;
+  saveAuthUser(input: StoredAuthUser): AuthUser;
+  getAuthUserById(userId: string): AuthUser | null;
+  getAuthUserByMember(organizationId: string, memberId: string): AuthUser | null;
+  getAuthUserCredentials(
+    organizationId: string,
+    emailNormalized: string,
+  ): StoredAuthUser | null;
+  findAuthUsersByEmail(emailNormalized: string): StoredAuthUser[];
+  saveAuthSession(input: StoredAuthSession): AuthSession;
+  getAuthSessionByTokenHash(sessionTokenHash: string): StoredAuthSession | null;
+  revokeAuthSession(sessionId: string, revokedAt?: string): AuthSession | null;
+  touchAuthSession(sessionId: string, lastSeenAt?: string): AuthSession | null;
   getBootstrapSnapshot(): BootstrapSnapshot;
 }

@@ -1,9 +1,11 @@
+import type { AuthState } from './auth.js';
 import type { BootstrapSnapshot, ApiRepository } from './repository-reader.js';
 import type { TeamStore } from './team-store.js';
+import type { TeamSummary } from './team.js';
+import type { AuthService } from './auth.js';
 import {
   listProviderStatuses,
   summarizeTeam,
-  type TeamSummary,
 } from './team.js';
 
 export interface BootstrapResponse {
@@ -16,15 +18,17 @@ export interface BootstrapResponse {
   channels: BootstrapSnapshot['channels'];
   pendingApprovals: BootstrapSnapshot['pendingApprovals'];
   activeRuns: BootstrapSnapshot['activeRuns'];
+  auth: AuthState;
 }
 
 export class BootstrapService {
   constructor(
     private readonly repo: ApiRepository,
     private readonly teamStore: TeamStore,
+    private readonly auth: AuthService,
   ) {}
 
-  getBootstrap(): BootstrapResponse {
+  getBootstrap(input: { sessionToken?: string | null } = {}): BootstrapResponse {
     const snapshot = this.repo.getBootstrapSnapshot();
     const team = this.teamStore.getTeam();
 
@@ -40,6 +44,7 @@ export class BootstrapService {
       channels: snapshot.channels,
       pendingApprovals: snapshot.pendingApprovals,
       activeRuns: snapshot.activeRuns,
+      auth: this.auth.getAuthState(input.sessionToken),
     };
   }
 }

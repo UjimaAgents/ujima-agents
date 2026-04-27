@@ -30,6 +30,8 @@ Ujima is a local-first control plane for running AI software teams. Setup and co
 
 **Skills** — agents can be equipped with open-source `SKILL.md` capabilities from the community, loaded directly into their context.
 
+**Owner Sessions** — onboarding now creates the first owner credentials and a durable session, so returning to the web UI restores your signed-in workspace instead of dropping you back into registration-only state.
+
 ---
 
 ## Quick Start

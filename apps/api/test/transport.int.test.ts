@@ -47,6 +47,7 @@ describe('transport (in-process)', () => {
             conversations: {},
             runs: {},
             approvals: {},
+            auth: {},
             bootstrap: {},
             onboarding: {},
             settings: {},
