@@ -1,6 +1,7 @@
 import type { PermissionMiddleware } from '@ujima/permissions';
 import { AiService } from '../ai-service.js';
 import { ApprovalService } from './approval.js';
+import { AuthService } from './auth.js';
 import { BootstrapService } from './bootstrap.js';
 import { ChannelRetentionService } from './channel-retention.js';
 import type { ApiServiceContext } from './context.js';
@@ -26,6 +27,13 @@ export type {
   ApprovalResolveInput,
   ResumeRun,
 } from './approval.js';
+export { AuthService } from './auth.js';
+export type {
+  AuthState,
+  AuthenticatedSession,
+  LoginInput,
+  RegisterOwnerAuthInput,
+} from './auth.js';
 export { BootstrapService } from './bootstrap.js';
 export type { BootstrapResponse } from './bootstrap.js';
 export { ChannelRetentionService } from './channel-retention.js';
@@ -97,6 +105,7 @@ export interface ApiServices {
   retention: ChannelRetentionService;
   runs: RunService;
   approvals: ApprovalService;
+  auth: AuthService;
   bootstrap: BootstrapService;
   onboarding: OnboardingService;
   settings: SettingsService;
@@ -171,7 +180,8 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     });
   };
 
-  const bootstrap = new BootstrapService(context.repo, context.teamStore);
+  const auth = new AuthService(context.repo);
+  const bootstrap = new BootstrapService(context.repo, context.teamStore, auth);
   const onboarding = new OnboardingService(context.repo, context.teamStore);
   const settings = new SettingsService(context.repo, context.teamStore);
   const taskPromoter = new TaskPromoterService(context.repo, runs);
@@ -183,6 +193,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     retention,
     runs,
     approvals: approvalsImpl,
+    auth,
     bootstrap,
     onboarding,
     settings,

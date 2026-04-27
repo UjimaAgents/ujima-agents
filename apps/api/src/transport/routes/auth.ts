@@ -1,0 +1,93 @@
+import type { FastifyInstance, FastifyReply } from 'fastify';
+import type { ZodTypeProvider } from 'fastify-type-provider-zod';
+import {
+  ApiErrorSchema,
+  AuthLoginRequestSchema,
+  AuthLogoutResponseSchema,
+  AuthSessionResponseSchema,
+  SessionAuthStateSchema,
+} from '@ujima/api-schema';
+import type { AuthService } from '@ujima/orchestrator';
+import { readSessionToken } from '../session-token.js';
+
+export interface AuthRoutesOptions {
+  auth: AuthService;
+}
+
+export function registerAuthRoutes(
+  _app: FastifyInstance,
+  options: AuthRoutesOptions,
+): void {
+  const { auth } = options;
+  const app = _app.withTypeProvider<ZodTypeProvider>();
+
+  app.get('/auth/session', {
+    schema: {
+      description: 'Resolve the current authenticated user session, if any',
+      tags: ['Onboarding'],
+      response: {
+        200: SessionAuthStateSchema,
+      },
+    },
+  }, async (req) => {
+    return auth.getAuthState(readSessionToken(req));
+  });
+
+  app.post('/auth/login', {
+    schema: {
+      description: 'Authenticate a user and issue a durable session token',
+      tags: ['Onboarding'],
+      body: AuthLoginRequestSchema,
+      response: {
+        200: AuthSessionResponseSchema,
+        400: ApiErrorSchema,
+        401: ApiErrorSchema,
+      },
+    },
+  }, async (req, reply) => {
+    try {
+      const session = auth.login(req.body);
+      return {
+        auth: {
+          authenticated: true as const,
+          user: session.user,
+          member: session.member,
+          session: session.session,
+        },
+        sessionToken: session.sessionToken,
+      };
+    } catch (err) {
+      const message = errMessage(err);
+      if (/invalid email or password/i.test(message)) {
+        return unauthorized(reply, message);
+      }
+      return badRequest(reply, message);
+    }
+  });
+
+  app.post('/auth/logout', {
+    schema: {
+      description: 'Revoke the current session token',
+      tags: ['Onboarding'],
+      response: {
+        200: AuthLogoutResponseSchema,
+      },
+    },
+  }, async (req) => {
+    return {
+      loggedOut: auth.logout(readSessionToken(req)),
+    };
+  });
+}
+
+function badRequest(reply: FastifyReply, message: string): FastifyReply {
+  return reply.code(400).send({ code: 'ERR_BAD_REQUEST', message });
+}
+
+function unauthorized(reply: FastifyReply, message: string): FastifyReply {
+  return reply.code(401).send({ code: 'ERR_UNAUTHORIZED', message });
+}
+
+function errMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}

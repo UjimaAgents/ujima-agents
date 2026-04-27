@@ -106,6 +106,28 @@ export const WorkspaceMemberSchema = z.object({
 });
 export type WorkspaceMember = z.infer<typeof WorkspaceMemberSchema>;
 
+export const AuthUserSchema = z.object({
+  id: IdSchema,
+  organizationId: IdSchema,
+  memberId: IdSchema,
+  email: z.string().email(),
+  createdAt: TimestampSchema.optional(),
+  updatedAt: TimestampSchema.optional(),
+});
+export type AuthUser = z.infer<typeof AuthUserSchema>;
+
+export const AuthSessionSchema = z.object({
+  id: IdSchema,
+  userId: IdSchema,
+  organizationId: IdSchema,
+  memberId: IdSchema,
+  createdAt: TimestampSchema.optional(),
+  expiresAt: TimestampSchema,
+  lastSeenAt: TimestampSchema.optional(),
+  revokedAt: TimestampSchema.optional(),
+});
+export type AuthSession = z.infer<typeof AuthSessionSchema>;
+
 export const ChannelSchema = z.object({
   id: IdSchema,
   organizationId: IdSchema.optional(),

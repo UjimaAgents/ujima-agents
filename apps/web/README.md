@@ -15,6 +15,14 @@ The web app will provide:
 
 This is the primary browser UI, but it is not the source of truth. It consumes the local API for onboarding, messaging, approvals, and realtime runs.
 
+The web server now owns the human auth bridge:
+
+- onboarding creates the first owner credentials and immediately starts a session
+- `/login` restores access with email + password after onboarding is complete
+- the browser keeps only an `HttpOnly` session cookie
+- the Next server reads the daemon bearer token locally and proxies auth/bootstrap calls to `apps/api`
+- `/workspace` is the signed-in destination, while `/onboarding` and `/login` gate based on daemon bootstrap state
+
 ## Install
 
 From the monorepo root:
@@ -54,7 +62,7 @@ Organization -> Owner account -> Team configuration -> Review & create.
   - `OnboardingRequest`
   - `OnboardingResponse`
   - `BootstrapResponse`
-- [ ] Add an API base helper in `src/features/onboarding/api/client.ts` that applies bearer auth and normalizes API errors.
+- [x] Add a server-side API bridge that keeps bearer auth on the Next server and forwards owner sessions via `HttpOnly` cookie.
 
 ### 3) State and validation model
 
@@ -62,8 +70,8 @@ Organization -> Owner account -> Team configuration -> Review & create.
   - `organizationName`
   - `workspaceRoot`
   - `ownerName`
-  - `ownerEmail` (UI-only for now)
-  - `ownerPassword` (UI-only for now)
+  - `ownerEmail`
+  - `ownerPassword`
   - `providerKeys`
   - `team` (roles, agents, channels, providers, organizationChart, policies)
 - [ ] Create `src/features/onboarding/model/schema.ts` with step validators (zod).
@@ -89,7 +97,7 @@ Organization -> Owner account -> Team configuration -> Review & create.
   - workspace boundary explainer card
 - [ ] Create `src/features/onboarding/components/StepOwnerAccount.tsx`:
   - owner full name (maps to API `ownerName`)
-  - email/password fields as UI-only placeholders until auth APIs exist
+  - email/password fields that seed the first durable owner session
 - [ ] Create `src/features/onboarding/components/StepTeamConfiguration.tsx`:
   - preset-first configuration of roles/agents/channels/policies
   - optional advanced editor toggle for raw team object
@@ -103,14 +111,14 @@ Organization -> Owner account -> Team configuration -> Review & create.
 
 - [ ] Create `src/features/onboarding/model/toApiPayload.ts`:
   - map draft to `OnboardingRequest`
-  - exclude UI-only owner fields (`ownerEmail`, `ownerPassword`) from request body
+- [x] include owner auth fields in the request body and map role drafts into initial team + agent definitions
 - [ ] Create `src/features/onboarding/hooks/useOnboardingSubmit.ts`:
   - call `POST /api/onboarding`
   - map API errors (`ERR_BAD_REQUEST`) into inline field/section errors
   - disable duplicate submits while pending
 - [ ] On success:
   - clear `onboarding:draft:v1`
-  - redirect to main app
+  - redirect to `/workspace` with the new owner session already active
 
 ### 7) Suggested baseline file scaffold
 
@@ -139,6 +147,6 @@ Organization -> Owner account -> Team configuration -> Review & create.
 
 - [ ] The wizard visually matches the four core steps shown in the target design.
 - [ ] The app never shows onboarding if bootstrap reports `ready`.
-- [ ] The onboarding submit is a single `POST /api/onboarding` call.
+- [ ] The onboarding submit is a single `POST /api/onboarding` call through the server-side auth bridge.
 - [ ] Team summary and review are generated from the same draft state used for submit.
 - [ ] API validation failures are actionable and displayed inline.

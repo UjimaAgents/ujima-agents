@@ -4,6 +4,7 @@ import { Server as SocketIOServer, type Socket } from 'socket.io';
 import type { Repository, RuntimeHost, Logger } from '@ujima/runtime-core';
 import type {
   ApprovalService,
+  AuthService,
   BootstrapService,
   ConversationService,
   OnboardingService,
@@ -27,6 +28,7 @@ import swaggerUi from '@fastify/swagger-ui';
 import { jsonSchemaTransform, serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { RealtimeService } from './realtime.js';
 import { registerConversationRoutes } from './routes/conversations.js';
+import { registerAuthRoutes } from './routes/auth.js';
 import { registerOnboardingRoutes } from './routes/onboarding.js';
 import { registerRunRoutes } from './routes/runs.js';
 import { registerSettingsRoutes } from './routes/settings.js';
@@ -56,6 +58,7 @@ export interface TransportOptions {
       conversations: ConversationService;
       runs: RunService;
       approvals: ApprovalService;
+      auth: AuthService;
       bootstrap: BootstrapService;
       onboarding: OnboardingService;
       settings: SettingsService;
@@ -208,7 +211,9 @@ export function createTransport(opts: TransportOptions): Transport {
         runs: services.runs,
         approvals: services.approvals,
       });
+      registerAuthRoutes(api, { auth: services.auth });
       registerOnboardingRoutes(api, {
+        auth: services.auth,
         bootstrap: services.bootstrap,
         onboarding: services.onboarding,
       });

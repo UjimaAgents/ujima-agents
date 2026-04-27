@@ -86,6 +86,27 @@ config-managed org state.
 - Config-owned fields are tracked with per-field ownership metadata so future
   dashboard edits can reject writes to code-owned settings.
 
+## Owner Auth Flow
+
+The daemon now supports owner credentials and durable DB-backed web sessions in
+addition to the existing machine bearer token used by CLI and local service
+clients.
+
+- `POST /api/onboarding` now accepts `ownerEmail` and `ownerPassword`, creates
+  the first owner auth user, and issues an initial session token alongside the
+  org bootstrap payload.
+- `POST /api/auth/login` validates owner credentials and issues a new durable
+  session token.
+- `GET /api/auth/session` resolves the current session state from the
+  `x-ujima-session` header and returns authenticated owner/member data when the
+  session is valid.
+- `POST /api/auth/logout` revokes the current session token.
+- `GET /api/bootstrap` now includes an `auth` block so browser clients can make
+  one startup call and learn both org readiness and current sign-in state.
+- Session tokens are stored as SHA-256 hashes in SQLite. Expired sessions are
+  revoked on read, and the browser-facing web app never receives the daemon's
+  machine bearer token.
+
 ## Messaging Substrate
 
 The org messaging layer now supports persistent channels, DMs, self-channels,
