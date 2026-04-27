@@ -428,3 +428,49 @@ test('listChannels preserves channels that share the same created_at across page
   const allIds = [...page1.data.map((c) => c.id), ...page2.data.map((c) => c.id)].sort();
   expect(allIds).toEqual(['ch-a', 'ch-b', 'ch-c']);
 });
+
+test('listChannels returns descending pages without overlap across three pages', () => {
+  const db = openDatabase({ dbPath: ':memory:' });
+  const repo = new Repository(db);
+  const orgId = randomUUID();
+  repo.saveOrganization(
+    OrganizationSchema.parse({
+      id: orgId,
+      name: 'Three Page Org',
+      workspace: { root: '/tmp/three-page-org', roleScopes: {} },
+    }),
+  );
+
+  const createdAt = [
+    '2026-04-27T08:00:05.000Z',
+    '2026-04-27T08:00:04.000Z',
+    '2026-04-27T08:00:03.000Z',
+    '2026-04-27T08:00:02.000Z',
+    '2026-04-27T08:00:01.000Z',
+  ];
+
+  for (const [index, id] of ['ch-5', 'ch-4', 'ch-3', 'ch-2', 'ch-1'].entries()) {
+    db.prepare(
+      `INSERT INTO channels (id, organization_id, name, kind, topic, created_at, updated_at, parent_message_id, archived_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(id, orgId, id, 'group', '', createdAt[index], createdAt[index], null, null);
+  }
+
+  const page1 = repo.listChannels(orgId, undefined, 2);
+  expect(page1.data.map((channel) => channel.id)).toEqual(['ch-5', 'ch-4']);
+  expect(page1.hasMore).toBe(true);
+  expect(page1.nextCursor).toBeDefined();
+
+  const page2 = repo.listChannels(orgId, page1.nextCursor, 2);
+  expect(page2.data.map((channel) => channel.id)).toEqual(['ch-3', 'ch-2']);
+  expect(page2.hasMore).toBe(true);
+  expect(page2.nextCursor).toBeDefined();
+
+  const page3 = repo.listChannels(orgId, page2.nextCursor, 2);
+  expect(page3.data.map((channel) => channel.id)).toEqual(['ch-1']);
+  expect(page3.hasMore).toBe(false);
+
+  const allIds = [...page1.data, ...page2.data, ...page3.data].map((channel) => channel.id);
+  expect(allIds).toEqual(['ch-5', 'ch-4', 'ch-3', 'ch-2', 'ch-1']);
+  expect(new Set(allIds).size).toBe(allIds.length);
+});

@@ -109,6 +109,10 @@ export function listChannels(
 
   const hasMore = rows.length > limit;
   if (hasMore) {
+    // Rows stay in DESC order end-to-end, so the extra `(limit + 1)` item is
+    // the oldest row in the fetched window. Dropping the tail preserves the
+    // requested page slice, and the next cursor should point at the oldest row
+    // that remains in this page.
     rows.pop();
   }
 
