@@ -678,4 +678,106 @@ describe('E3 channels and mentions', () => {
       retention.archiveExpiredMessages(fixture.organizationId),
     ).rejects.toThrow(/illegal path separator|cannot start with|archive path escape/i);
   });
+
+  // Regression: mergePaginatedMessages used to emit `nextCursor =
+  // data[0].createdAt` and sort the merged live+archived stream by
+  // timestamp only. Two messages sharing the same millisecond — one live,
+  // one archived — could fall on opposite sides of the page boundary, and
+  // the bare-timestamp cursor would skip whichever landed on the boundary
+  // row's id-tail. Composite `${createdAt}|${id}` cursors + (createdAt, id)
+  // sort fix the gap, mirroring the SQL paginators.
+  it('readChannel page boundary across live + archived messages preserves same-millisecond rows', async () => {
+    const fixture = await createFixture({ agentNames: ['frontend-alice'] });
+    tempDirs.push(fixture.archiveRoot);
+    const realtime = createRealtimeCollector();
+
+    const sharedTs = '2026-04-27T08:00:00.000Z';
+
+    fixture.repo.ensureThread({
+      id: 'general',
+      organizationId: fixture.organizationId,
+      channelId: 'general',
+      title: 'general',
+      memberIds: [fixture.ownerId],
+      createdAt: sharedTs,
+    });
+
+    // Two live messages on the same millisecond.
+    const liveA = MessageSchema.parse({
+      id: 'msg-live-a',
+      organizationId: fixture.organizationId,
+      threadId: 'general',
+      channelId: 'general',
+      senderId: fixture.ownerId,
+      senderKind: 'human',
+      kind: 'human',
+      content: 'live a',
+      mentions: [],
+      createdAt: sharedTs,
+    });
+    const liveB = MessageSchema.parse({
+      id: 'msg-live-b',
+      organizationId: fixture.organizationId,
+      threadId: 'general',
+      channelId: 'general',
+      senderId: fixture.ownerId,
+      senderKind: 'human',
+      kind: 'human',
+      content: 'live b',
+      mentions: [],
+      createdAt: sharedTs,
+    });
+    fixture.repo.saveMessage(liveA);
+    fixture.repo.saveMessage(liveB);
+
+    // One archived message on the same millisecond — surfaced by a tiny
+    // stub archive store so this test stays focused on the merger.
+    const archivedC = MessageSchema.parse({
+      id: 'msg-archived-c',
+      organizationId: fixture.organizationId,
+      threadId: 'general',
+      channelId: 'general',
+      senderId: fixture.ownerId,
+      senderKind: 'human',
+      kind: 'human',
+      content: 'archived c',
+      mentions: [],
+      createdAt: sharedTs,
+    });
+    const archiveStore = {
+      async listChannelMessages() {
+        return { data: [archivedC], hasMore: false, nextCursor: undefined };
+      },
+      async searchChannelMessages() {
+        return { data: [archivedC], hasMore: false, nextCursor: undefined };
+      },
+    };
+
+    const conversations = new ConversationService(fixture.repo, realtime, {
+      archiveStore,
+    });
+
+    const page1 = await conversations.readChannel({
+      organizationId: fixture.organizationId,
+      memberId: fixture.ownerId,
+      channelId: 'general',
+      limit: 2,
+    });
+    expect(page1.data).toHaveLength(2);
+    expect(page1.hasMore).toBe(true);
+    expect(page1.nextCursor).toBeDefined();
+    // Composite cursor format — `${createdAt}|${id}`.
+    expect(page1.nextCursor).toMatch(/\|/);
+
+    const page2 = await conversations.readChannel({
+      organizationId: fixture.organizationId,
+      memberId: fixture.ownerId,
+      channelId: 'general',
+      limit: 2,
+      cursor: page1.nextCursor,
+    });
+
+    const allIds = [...page1.data.map((m) => m.id), ...page2.data.map((m) => m.id)].sort();
+    expect(allIds).toEqual(['msg-archived-c', 'msg-live-a', 'msg-live-b']);
+  });
 });
