@@ -12,6 +12,7 @@ import {
 import type { AgentDef, MCPDef, TeamDef } from '@ujima/shared';
 import type { LLMProvider } from '@ujima/llm/legacy';
 import {
+  ALWAYS_AVAILABLE_AGENT_TOOLS,
   createApiServices,
   createTeamStore,
   type PermissionContextBuilder,
@@ -137,17 +138,17 @@ async function main(): Promise<void> {
         name: agentConfig?.name ?? input.memberId,
         persona: agentConfig?.personalityName ?? '',
         model: role?.model ?? '',
-        mcp: input.toolId,
+        mcp: input.permissionMcpId ?? input.toolId,
         permissions: {
-          allowed_tools: role?.tools ?? [],
+          allowed_tools: [...new Set([...(role?.tools ?? []), ...ALWAYS_AVAILABLE_AGENT_TOOLS])],
           blocked_tools: [],
           rate_limit: { calls_per_minute: 30, max_session_tokens: 100_000 },
         },
         communication: { publishes: [], subscribes: [] },
         escalation: { conditions: [], escalate_to: 'human' },
       },
-      mcp: { id: input.toolId },
-      toolName: input.toolId,
+      mcp: { id: input.permissionMcpId ?? input.toolId },
+      toolName: input.permissionToolName ?? input.toolId,
       args: input.input,
       taskId: input.runId,
       sessionId: input.runId,
@@ -166,6 +167,7 @@ async function main(): Promise<void> {
       repo: repository,
       buildServices: (realtime) =>
         createApiServices({
+          archiveRoot: homeDir,
           teamStore,
           repo: repository,
           realtime,

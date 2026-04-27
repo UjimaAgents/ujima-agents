@@ -1,6 +1,7 @@
 import type { SqliteDbHandle as DbHandle } from '@ujima/context-store';
 import { RunStateSchema, type RunState } from '@ujima/shared';
 import { optionalRowString, rowString } from './common.js';
+import { cursorWhereClause, decodeCursor, encodeCursor } from '@ujima/shared';
 
 type Row = Record<string, unknown>;
 
@@ -71,12 +72,14 @@ export function listRuns(
   const params: (string | number)[] = [organizationId];
   let query = 'SELECT * FROM runs WHERE organization_id = ?';
 
-  if (cursor) {
-    query += ' AND started_at < ?';
-    params.push(cursor);
+  const decoded = decodeCursor(cursor);
+  if (decoded) {
+    const { sql, params: cursorParams } = cursorWhereClause(decoded, 'started_at', 'id');
+    query += ` AND ${sql}`;
+    params.push(...cursorParams);
   }
 
-  query += ' ORDER BY started_at DESC LIMIT ?';
+  query += ' ORDER BY started_at DESC, id DESC LIMIT ?';
   params.push(limit + 1);
 
   const rows = db.prepare(query).all(...params) as Row[];
@@ -88,7 +91,7 @@ export function listRuns(
 
   const data = rows.map(rowToRun);
   const tail = hasMore ? data[data.length - 1] : undefined;
-  const nextCursor = tail?.startedAt;
+  const nextCursor = tail ? encodeCursor(tail.startedAt, tail.id) : undefined;
 
   return { data, hasMore, nextCursor };
 }

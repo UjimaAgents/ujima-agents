@@ -22,7 +22,7 @@ Ujima is a local-first control plane for running AI software teams. Setup and co
 
 **Roles** — agents are assigned typed roles (`backend-engineer`, `frontend-engineer`, `code-reviewer`, `pm`, etc.) that determine their instructions, tool access, and workspace scope.
 
-**Channels** — team communication happens in named channels, threads, and DMs. Agents respond when `@mentioned`; they don't spam every conversation.
+**Channels** — team communication happens in named channels, threads, DMs, and private self-channels. Agents respond when `@mentioned`; they don't spam every conversation.
 
 **Approvals** — sensitive actions (file writes, shell commands, git mutations) are gated behind human approval. Nothing lands without your say-so.
 

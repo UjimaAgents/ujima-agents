@@ -2,7 +2,7 @@ import { beforeEach, afterEach, describe, expect, it } from 'vitest';
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { loadAgentTeam } from '@ujima/framework';
+import { loadAgentTeam, type AgentTeamHandle } from '@ujima/framework';
 import { checkToolPolicy } from './policy.js';
 
 describe('checkToolPolicy', () => {
@@ -71,5 +71,145 @@ describe('checkToolPolicy', () => {
         join(workspaceRoot, 'apps', 'api'),
       ),
     ).toMatchObject({ allowed: false });
+  });
+
+  // Regression coverage for two bugs in the channel-tool surface:
+  //   1. checkToolPolicy was forcing channel.* writes through the approval
+  //      gate (`requiresApproval: action !== 'read'`), pausing every run on
+  //      the first message. Only the legacy `message` toolId was exempt.
+  //   2. channel.post / .reply / .dm / .read were passing channel/message
+  //      ids as `resourcePath`, so workspace-boundary + per-role scope checks
+  //      rejected them as "outside allowed scopes" for narrow roles like
+  //      `frontend-engineer` (scope `apps/web`).
+  describe('channel.* tools', () => {
+    function buildTeam(): AgentTeamHandle {
+      return loadAgentTeam({
+        name: 'Channel Org',
+        workspace: { root: workspaceRoot },
+        providers: {
+          openai: { kind: 'openai', defaultModel: 'gpt-5.4', models: ['gpt-5.4'] },
+        },
+        roles: [
+          {
+            name: 'frontend-engineer',
+            title: 'Frontend Engineer',
+            instructions: 'Stay in apps/web.',
+            provider: 'openai',
+            model: 'gpt-5.4',
+            workspaceScopes: ['apps/web'], // narrow scope — channel ids must NOT be path-checked
+            tools: [
+              'filesystem',
+              'channel.post',
+              'channel.reply',
+              'channel.dm',
+              'channel.list',
+              'channel.read',
+            ],
+            channels: ['general'],
+          },
+        ],
+        agents: [],
+        channels: [{ name: 'general', kind: 'general', topic: 'General' }],
+      } as Record<string, unknown>);
+    }
+
+    it('channel.post is allowed without approval (messaging is the substrate)', () => {
+      const team = buildTeam();
+      // Pre-fix: this returned `{ requiresApproval: true }` and paused the run.
+      expect(
+        checkToolPolicy(team, 'frontend-engineer', 'channel.post', 'message'),
+      ).toEqual({ allowed: true, requiresApproval: false });
+    });
+
+    it('channel.reply / channel.dm are allowed without approval', () => {
+      const team = buildTeam();
+      expect(
+        checkToolPolicy(team, 'frontend-engineer', 'channel.reply', 'message'),
+      ).toEqual({ allowed: true, requiresApproval: false });
+      expect(
+        checkToolPolicy(team, 'frontend-engineer', 'channel.dm', 'message'),
+      ).toEqual({ allowed: true, requiresApproval: false });
+    });
+
+    it('channel.list / channel.read are allowed (read action)', () => {
+      const team = buildTeam();
+      expect(
+        checkToolPolicy(team, 'frontend-engineer', 'channel.list', 'read'),
+      ).toEqual({ allowed: true, requiresApproval: false });
+      expect(
+        checkToolPolicy(team, 'frontend-engineer', 'channel.read', 'read'),
+      ).toEqual({ allowed: true, requiresApproval: false });
+    });
+
+    it('channel ids are not run through the workspace-boundary check', () => {
+      const team = buildTeam();
+      // Pre-fix: passing `general` (or `dm:alex`) as resourcePath triggered
+      // assertWorkspaceBoundary, which resolved it against workspaceRoot and
+      // either rejected for escape or for being outside `apps/web`.
+      expect(
+        checkToolPolicy(team, 'frontend-engineer', 'channel.post', 'message', 'general'),
+      ).toEqual({ allowed: true, requiresApproval: false });
+      expect(
+        checkToolPolicy(team, 'frontend-engineer', 'channel.dm', 'message', 'dm:alex'),
+      ).toEqual({ allowed: true, requiresApproval: false });
+    });
+
+    it('channel.* tools still respect the role.tools allowlist', () => {
+      const team = loadAgentTeam({
+        name: 'Channel Org',
+        workspace: { root: workspaceRoot },
+        providers: {
+          openai: { kind: 'openai', defaultModel: 'gpt-5.4', models: ['gpt-5.4'] },
+        },
+        roles: [
+          {
+            name: 'silent-role',
+            title: 'Silent',
+            instructions: 'No channel access.',
+            provider: 'openai',
+            model: 'gpt-5.4',
+            workspaceScopes: ['apps/web'],
+            tools: ['filesystem'], // explicitly no channel.*
+            channels: ['general'],
+          },
+        ],
+        agents: [],
+        channels: [{ name: 'general', kind: 'general', topic: 'General' }],
+      } as Record<string, unknown>);
+
+      expect(
+        checkToolPolicy(team, 'silent-role', 'channel.post', 'message'),
+      ).toMatchObject({ allowed: false, reason: expect.stringContaining('cannot use tool') });
+    });
+
+    it('self.note is always allowed even when the role does not list it', () => {
+      // Per the channels-as-substrate principle: an agent must be able to
+      // think to itself even if its role omits self.note from `tools`.
+      const team = loadAgentTeam({
+        name: 'Quiet Org',
+        workspace: { root: workspaceRoot },
+        providers: {
+          openai: { kind: 'openai', defaultModel: 'gpt-5.4', models: ['gpt-5.4'] },
+        },
+        roles: [
+          {
+            name: 'silent-role',
+            title: 'Silent',
+            instructions: 'No declared tools beyond filesystem.',
+            provider: 'openai',
+            model: 'gpt-5.4',
+            workspaceScopes: ['apps/web'],
+            tools: ['filesystem'],
+            channels: ['general'],
+          },
+        ],
+        agents: [],
+        channels: [{ name: 'general', kind: 'general', topic: 'General' }],
+      } as Record<string, unknown>);
+
+      expect(
+        checkToolPolicy(team, 'silent-role', 'self.note', 'message'),
+      ).toEqual({ allowed: true, requiresApproval: false });
+    });
   });
 });

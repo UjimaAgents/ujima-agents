@@ -86,6 +86,39 @@ config-managed org state.
 - Config-owned fields are tracked with per-field ownership metadata so future
   dashboard edits can reject writes to code-owned settings.
 
+## Messaging Substrate
+
+The org messaging layer now supports persistent channels, DMs, self-channels,
+typed mentions, and archive-backed history search.
+
+- Every member gets a private `self` channel at spawn time. `self.note` writes
+  there directly and is always allowed, even when broader channel permissions
+  are restricted.
+- New agent members are auto-added to `#general` and their role channel so they
+  appear in the shared org conversation graph immediately.
+- Native channel tools (`channel.post`, `channel.reply`, `channel.dm`,
+  `channel.list`, `channel.read`) run inside the orchestrator and are policy
+  checked through the `channels` pseudo-tool surface. `channel.dm` lazily
+  creates a DM on first send and reuses it afterward.
+- DMs are private to their participants. Non-members cannot enumerate them,
+  read them, or post into them through the channel tool surface.
+- `channel.list({ scope: 'all' })` excludes other members' self-channels.
+  Self-channels stay private to their owner outside audit/admin access.
+- Message posting now records typed `message_mentions` rows and parses
+  `@display_name` handles. Mentioned agent members receive `member.alerted`
+  realtime events and can wake to reply in the same channel.
+- Self-mentions are suppressed, and mention fan-out is throttled to 10 alerts
+  per minute per agent per org. When throttled, the runtime emits a
+  `member.alert_throttled` system message in `#general`.
+- Message edits and deletes are append-only tombstones via `edited_at` and
+  `deleted_at`. Immutable tool-call payloads are preserved even if the prose is
+  edited later.
+- `general`, `group`, and `task-run` channels default to 90-day retention.
+  Expired rows are archived to
+  `$UJIMA_HOME/archives/channels/<organization_id>/<channel_id>/<YYYY-MM>.jsonl`,
+  and `channel.read(query=...)` still searches archived content through the
+  sidecar archive index.
+
 ## Workspace Boundary Enforcement
 
 Workspace-root hardening is now enforced at both the REST surface and the

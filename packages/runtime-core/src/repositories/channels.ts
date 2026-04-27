@@ -1,6 +1,7 @@
 import type { SqliteDbHandle as DbHandle } from '@ujima/context-store';
-import { ChannelSchema, type Channel } from '@ujima/shared';
+import { ChannelSchema, type Channel, type ChannelKind } from '@ujima/shared';
 import { now, rowString } from './common.js';
+import { cursorWhereClause, decodeCursor, encodeCursor } from '@ujima/shared';
 
 type Row = Record<string, unknown>;
 
@@ -10,17 +11,31 @@ export interface PaginatedChannels {
   hasMore: boolean;
 }
 
+export interface ListChannelsOptions {
+  cursor?: string;
+  limit?: number;
+  /**
+   * Channel kinds to exclude at the SQL layer. Filtering must happen here
+   * (not after pagination) so `hasMore` / `nextCursor` are computed against
+   * the same result set the caller actually sees. Otherwise — once a `self`
+   * or `dm` channel exists — the cursor can land on a hidden row and the
+   * caller skips visible channels on the next page.
+   */
+  excludeKinds?: readonly ChannelKind[];
+}
+
 export function saveChannel(db: DbHandle, channel: Channel): Channel {
   const payload = ChannelSchema.parse(channel);
   const timestamp = now();
 
   db.prepare(
-    `INSERT INTO channels (id, organization_id, name, kind, topic, created_at, updated_at, archived_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO channels (id, organization_id, name, kind, topic, created_at, updated_at, parent_message_id, archived_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
        name = excluded.name,
        kind = excluded.kind,
        topic = excluded.topic,
+       parent_message_id = excluded.parent_message_id,
        archived_at = excluded.archived_at,
        updated_at = excluded.updated_at`,
   ).run(
@@ -31,6 +46,7 @@ export function saveChannel(db: DbHandle, channel: Channel): Channel {
     payload.topic ?? '',
     timestamp,
     timestamp,
+    payload.parentMessageId ?? null,
     payload.archivedAt ?? null,
   );
 
@@ -57,6 +73,7 @@ export function getChannel(
     kind: rowString(row, 'kind'),
     topic: rowString(row, 'topic'),
     memberIds: listChannelMemberIds(db, rowString(row, 'id')),
+    parentMessageId: typeof row.parent_message_id === 'string' ? row.parent_message_id : undefined,
     createdAt: typeof row.created_at === 'string' ? row.created_at : undefined,
     archivedAt: typeof row.archived_at === 'string' ? row.archived_at : undefined,
   });
@@ -67,22 +84,35 @@ export function listChannels(
   organizationId: string,
   cursor?: string,
   limit = 50,
+  excludeKinds: readonly ChannelKind[] = [],
 ): PaginatedChannels {
   const params: (string | number)[] = [organizationId];
   let query = 'SELECT * FROM channels WHERE organization_id = ?';
 
-  if (cursor) {
-    query += ' AND created_at < ?';
-    params.push(cursor);
+  if (excludeKinds.length > 0) {
+    const placeholders = excludeKinds.map(() => '?').join(', ');
+    query += ` AND kind NOT IN (${placeholders})`;
+    params.push(...excludeKinds);
   }
 
-  query += ' ORDER BY created_at DESC LIMIT ?';
+  const decoded = decodeCursor(cursor);
+  if (decoded) {
+    const { sql, params: cursorParams } = cursorWhereClause(decoded, 'created_at', 'id');
+    query += ` AND ${sql}`;
+    params.push(...cursorParams);
+  }
+
+  query += ' ORDER BY created_at DESC, id DESC LIMIT ?';
   params.push(limit + 1);
 
   const rows = db.prepare(query).all(...params) as Row[];
 
   const hasMore = rows.length > limit;
   if (hasMore) {
+    // Rows stay in DESC order end-to-end, so the extra `(limit + 1)` item is
+    // the oldest row in the fetched window. Dropping the tail preserves the
+    // requested page slice, and the next cursor should point at the oldest row
+    // that remains in this page.
     rows.pop();
   }
 
@@ -94,13 +124,14 @@ export function listChannels(
       kind: rowString(row, 'kind'),
       topic: rowString(row, 'topic'),
       memberIds: listChannelMemberIds(db, rowString(row, 'id')),
+      parentMessageId: typeof row.parent_message_id === 'string' ? row.parent_message_id : undefined,
       createdAt: typeof row.created_at === 'string' ? row.created_at : undefined,
       archivedAt: typeof row.archived_at === 'string' ? row.archived_at : undefined,
     }),
   );
 
   const tail = hasMore ? data[data.length - 1] : undefined;
-  const nextCursor = tail?.createdAt;
+  const nextCursor = tail?.createdAt && tail.id ? encodeCursor(tail.createdAt, tail.id) : undefined;
 
   return { data, hasMore, nextCursor };
 }
@@ -118,6 +149,7 @@ export function listAllChannels(db: DbHandle, organizationId: string): Channel[]
       kind: rowString(row, 'kind'),
       topic: rowString(row, 'topic'),
       memberIds: listChannelMemberIds(db, rowString(row, 'id')),
+      parentMessageId: typeof row.parent_message_id === 'string' ? row.parent_message_id : undefined,
       createdAt: typeof row.created_at === 'string' ? row.created_at : undefined,
       archivedAt: typeof row.archived_at === 'string' ? row.archived_at : undefined,
     }),
