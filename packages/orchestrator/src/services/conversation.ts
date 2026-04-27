@@ -4,6 +4,7 @@ import {
   MessageSchema,
   SocketEventNames,
   channelRoom,
+  encodeCursor,
   memberRoom,
   orgRoom,
   threadRoom,
@@ -671,9 +672,14 @@ function mergePaginatedMessages(
   archived: PaginatedMessages,
   limit: number,
 ): PaginatedMessages {
-  const combined = [...live.data, ...archived.data].sort((left, right) =>
-    left.createdAt.localeCompare(right.createdAt),
-  );
+  // Sort by (createdAt, id) so same-millisecond rows have a deterministic
+  // order — same invariant the SQL paginators use. Otherwise the page
+  // boundary can split a same-millisecond cluster and `nextCursor` would
+  // skip the row that lands after the slice.
+  const combined = [...live.data, ...archived.data].sort((left, right) => {
+    const byTime = left.createdAt.localeCompare(right.createdAt);
+    return byTime !== 0 ? byTime : left.id.localeCompare(right.id);
+  });
   const unique: Message[] = [];
   const seen = new Set<string>();
   for (const message of combined) {
@@ -683,7 +689,11 @@ function mergePaginatedMessages(
   }
   const hasMore = unique.length > limit || live.hasMore || archived.hasMore;
   const data = hasMore ? unique.slice(-limit) : unique;
-  const nextCursor = hasMore && data[0] ? data[0].createdAt : undefined;
+  // Composite cursor `${createdAt}|${id}` matches the SQL paginators so
+  // the next page can resume past a same-millisecond boundary without
+  // dropping rows.
+  const head = hasMore && data[0] ? data[0] : undefined;
+  const nextCursor = head ? encodeCursor(head.createdAt, head.id) : undefined;
   return { data, hasMore, nextCursor };
 }
 
