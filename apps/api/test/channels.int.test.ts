@@ -253,6 +253,100 @@ describe('E3 channels and mentions', () => {
     expect(realtime.events.some((event) => event.event === 'member.alerted')).toBe(true);
   });
 
+  // Regression: mention fan-out used to wake any mentioned agent regardless
+  // of whether they were a member of the channel where the message was
+  // posted. Inside a DM that meant `@frontend-charlie` (not a participant)
+  // would be woken and handed the private DM thread via onMemberAlerted —
+  // a clear leak of a private 2-person conversation.
+  it('does not wake non-participant agents from a mention inside a DM', async () => {
+    const fixture = await createFixture({
+      agentNames: ['frontend-alice', 'frontend-bob', 'frontend-charlie'],
+    });
+    tempDirs.push(fixture.archiveRoot);
+    const realtime = createRealtimeCollector();
+    const alerted: string[] = [];
+    const conversations = new ConversationService(fixture.repo, realtime, {
+      onMemberAlerted: async (input) => {
+        alerted.push(input.memberId);
+      },
+    });
+
+    // Alice opens a DM with Bob (membership: alice + bob).
+    const dm = conversations.sendDirectMessage({
+      organizationId: fixture.organizationId,
+      senderId: 'frontend-alice',
+      recipientId: 'frontend-bob',
+      content: 'opening dm',
+    });
+    const dmChannelId = dm.channelId!;
+
+    // Alice posts inside that DM and `@mentions` Charlie — who is NOT a
+    // participant. Pre-fix, Charlie would have been alerted and the
+    // onMemberAlerted callback would have handed her the DM channel id +
+    // thread, leaking the conversation.
+    conversations.postToChannel({
+      organizationId: fixture.organizationId,
+      senderId: 'frontend-alice',
+      channelId: dmChannelId,
+      body: '@frontend-charlie come look',
+    });
+
+    // Give the async fan-out a tick to complete (or fail to complete).
+    await delay(50);
+
+    expect(alerted).not.toContain('frontend-charlie');
+    expect(
+      realtime.events.some(
+        (event) =>
+          event.event === 'member.alerted' && event.payload.memberId === 'frontend-charlie',
+      ),
+    ).toBe(false);
+
+    // Sanity: a same-channel mention to Bob (who IS a participant) still
+    // works — we didn't accidentally suppress all DM mentions.
+    conversations.postToChannel({
+      organizationId: fixture.organizationId,
+      senderId: 'frontend-alice',
+      channelId: dmChannelId,
+      body: '@frontend-bob ping',
+    });
+    await delay(50);
+    expect(alerted).toContain('frontend-bob');
+  });
+
+  // Regression: a mention inside an agent's self-channel must never wake
+  // anyone — self-channels are private scratchpads.
+  it('does not wake anyone from a mention inside a self channel', async () => {
+    const fixture = await createFixture({ agentNames: ['frontend-alice', 'frontend-bob'] });
+    tempDirs.push(fixture.archiveRoot);
+    const realtime = createRealtimeCollector();
+    const alerted: string[] = [];
+    const conversations = new ConversationService(fixture.repo, realtime, {
+      onMemberAlerted: async (input) => {
+        alerted.push(input.memberId);
+      },
+    });
+
+    const aliceSelf = conversations
+      .listVisibleChannels({
+        organizationId: fixture.organizationId,
+        memberId: 'frontend-alice',
+        scope: 'all',
+      })
+      .find((channel) => channel.kind === 'self');
+    expect(aliceSelf).toBeDefined();
+
+    conversations.postToChannel({
+      organizationId: fixture.organizationId,
+      senderId: 'frontend-alice',
+      channelId: aliceSelf!.id,
+      body: '@frontend-bob shouldnt be alerted from my notes',
+    });
+    await delay(50);
+
+    expect(alerted).toEqual([]);
+  });
+
   it('throttles the 11th mention in 60 seconds and posts a system message to general', async () => {
     const fixture = await createFixture({ agentNames: ['frontend-alice'] });
     tempDirs.push(fixture.archiveRoot);

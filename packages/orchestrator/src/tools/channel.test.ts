@@ -7,6 +7,7 @@ import {
   channelReplyTool,
   selfNoteTool,
 } from './channel.js';
+import { ALWAYS_AVAILABLE_AGENT_TOOLS } from './index.js';
 
 // These assertions guard the second regression: channel/message ids are NOT
 // filesystem paths. If `toInvocation` ever re-introduces `resourcePath`, the
@@ -88,4 +89,24 @@ describe('channel.* tools — toInvocation()', () => {
     expect(inv.bypassPermission).toBe(true);
     expect(inv.resourcePath).toBeUndefined();
   });
+});
+
+// Regression: ALWAYS_AVAILABLE_AGENT_TOOLS used to include all five
+// channel.* tools alongside self.note. Both AiService and the runtime
+// permission-context builder union this list into every role's allowlist
+// and into the AI SDK toolset, which silently bypassed the role's `tools`
+// declaration for channel access. Only `self.note` is meant to be
+// unconditional (the "agent must always be able to think to itself"
+// invariant — also enforced by checkToolPolicy + bypassPermission).
+describe('ALWAYS_AVAILABLE_AGENT_TOOLS', () => {
+  it('contains exactly self.note (no channel.* leaks past the role allowlist)', () => {
+    expect([...ALWAYS_AVAILABLE_AGENT_TOOLS]).toEqual(['self.note']);
+  });
+
+  it.each(['channel.post', 'channel.reply', 'channel.dm', 'channel.list', 'channel.read'])(
+    'does not include %s',
+    (toolId) => {
+      expect([...ALWAYS_AVAILABLE_AGENT_TOOLS]).not.toContain(toolId);
+    },
+  );
 });
