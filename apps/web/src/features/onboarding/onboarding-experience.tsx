@@ -7,7 +7,14 @@ import { Home, Sparkles } from "lucide-react";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { OnboardingForm } from "./components/onboarding-form";
 import { OnboardingStepper } from "./components/onboarding-stepper";
-import { INITIAL_DRAFT, ONBOARDING_STEPS, type OnboardingDraft, type OnboardingStepId, type TeamTabId } from "./types";
+import {
+  INITIAL_DRAFT,
+  ONBOARDING_STEPS,
+  OWNER_MANAGER_SENTINEL,
+  type OnboardingDraft,
+  type OnboardingStepId,
+  type TeamTabId,
+} from "./types";
 
 const TEAM_TABS: TeamTabId[] = ["agents", "channels", "org-chart", "policies", "providers"];
 const ONBOARDING_STORAGE_KEY = "ujima-web-onboarding-session-v1";
@@ -169,15 +176,17 @@ function resolveProviderKind(input: string): string {
 
 function buildOnboardingPayload(draft: OnboardingDraft) {
   const roleNames = new Set(draft.roles.map((role) => role.name.trim()).filter(Boolean));
-  // The owner appears in the org-chart manager picker via `ownerLabel`
-  // (`draft.ownerName.trim() || "Owner"`). Treat that label — and the
-  // literal "Owner"/"owner" sentinels used by the seed draft — as
-  // legitimate manager references; the daemon resolves them to the
-  // owner member's id during onboarding. Without this, every "X reports
-  // to <owner>" line was silently dropped before submission.
+  // The owner-targeting form value persists as the stable
+  // `OWNER_MANAGER_SENTINEL` (`@owner`) so renaming the owner mid-wizard
+  // doesn't silently drop previously configured edges. Older
+  // localStorage drafts may still carry the literal owner display name
+  // or the seed's `"Owner"` label — accept both as a back-compat path
+  // so users don't lose existing rows on first load after this change.
+  // The daemon resolves all of these to the owner member's id.
   const ownerLabelRaw = draft.ownerName.trim();
   const isOwnerManagerLabel = (value: string): boolean => {
     if (!value) return false;
+    if (value === OWNER_MANAGER_SENTINEL) return true;
     if (ownerLabelRaw && value === ownerLabelRaw) return true;
     return value === "Owner" || value === "owner";
   };

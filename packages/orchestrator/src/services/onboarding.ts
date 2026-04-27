@@ -100,8 +100,15 @@ export class OnboardingService {
     // back in with the value resolved to `ownerId`.
     const ownerId = randomUUID();
     const ownerNameTrimmed = input.ownerName.trim();
+    // Accepted owner-manager refs in the inbound chart, in priority order:
+    //   * `@owner`             — the stable sentinel emitted by the web
+    //                            onboarding form. Survives owner renames.
+    //   * `<input.ownerName>`  — legacy form (display-name string).
+    //   * `Owner` / `owner`    — legacy seed-draft labels.
+    // All resolve to the owner member's id below.
     const isOwnerRef = (ref: string): boolean => {
       if (!ref) return false;
+      if (ref === '@owner') return true;
       if (ownerNameTrimmed && ref === ownerNameTrimmed) return true;
       return ref === 'Owner' || ref === 'owner';
     };
