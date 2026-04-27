@@ -428,11 +428,21 @@ export class ConversationService {
     if (existing.senderId !== input.editorId) {
       throw new Error(`Message "${input.messageId}" cannot be edited by "${input.editorId}"`);
     }
+    const explicitMentionIds = this.inferExplicitMentionIds(input.organizationId, existing);
+    const typedMentions = this.resolveMentionRecords({
+      organizationId: input.organizationId,
+      messageId: existing.id,
+      content: input.content,
+      createdAt: existing.createdAt,
+      explicitMentionIds,
+    });
     const updated = this.repo.updateMessage({
       ...existing,
       content: input.content,
+      mentions: uniqueMentionIds(typedMentions),
       editedAt: new Date().toISOString(),
     });
+    this.repo.replaceMessageMentions(existing.id, typedMentions);
     return updated;
   }
 
@@ -580,34 +590,75 @@ export class ConversationService {
   }
 
   private resolveMessageMentions(organizationId: string, message: Message): MessageMention[] {
+    return this.resolveMentionRecords({
+      organizationId,
+      messageId: message.id,
+      content: message.content,
+      createdAt: message.createdAt,
+      explicitMentionIds: message.mentions,
+    });
+  }
+
+  private resolveMentionRecords(input: {
+    organizationId: string;
+    messageId: string;
+    content: string;
+    createdAt: string;
+    explicitMentionIds?: string[];
+  }): MessageMention[] {
+    const mentionIds = this.resolveMentionIds(
+      input.organizationId,
+      input.content,
+      input.explicitMentionIds ?? [],
+    );
+    return mentionIds.map((memberId) =>
+      MessageMentionSchema.parse({
+        id: randomUUID(),
+        messageId: input.messageId,
+        memberId,
+        kind: 'mention',
+        createdAt: input.createdAt,
+      }),
+    );
+  }
+
+  private resolveMentionIds(
+    organizationId: string,
+    content: string,
+    explicitMentionIds: string[],
+  ): string[] {
+    const byHandle = this.listMentionHandleMap(organizationId);
+
+    // We merge explicit mention ids from tool inputs with parsed @handles from
+    // the message body so typed intent stays consistent no matter how the
+    // message was authored.
+    const mentionIds = new Set<string>(explicitMentionIds);
+    for (const handle of extractMentionHandles(content)) {
+      const memberId = byHandle.get(normalizeMentionHandle(handle));
+      if (memberId) {
+        mentionIds.add(memberId);
+      }
+    }
+    return [...mentionIds];
+  }
+
+  private inferExplicitMentionIds(organizationId: string, message: Message): string[] {
+    // Older message rows only persist the flattened mention id set. On edit we
+    // preserve ids that were not already implied by the old body, then merge
+    // them with handles parsed from the new body to keep stored metadata in
+    // sync without introducing new alert fan-out.
+    const parsedFromBody = new Set(this.resolveMentionIds(organizationId, message.content, []));
+    return message.mentions.filter((memberId) => !parsedFromBody.has(memberId));
+  }
+
+  private listMentionHandleMap(organizationId: string): Map<string, string> {
     const members = this.repo.listMembers(organizationId);
     const byHandle = new Map<string, string>();
     for (const member of members) {
       byHandle.set(normalizeMentionHandle(member.id), member.id);
       byHandle.set(normalizeMentionHandle(member.name), member.id);
     }
-
-    // We merge explicit mention ids from tool inputs with parsed @handles from
-    // the message body so typed intent stays consistent no matter how the
-    // message was authored.
-    const mentionIds = new Set<string>(message.mentions);
-    const parsedHandles = extractMentionHandles(message.content);
-    for (const handle of parsedHandles) {
-      const memberId = byHandle.get(normalizeMentionHandle(handle));
-      if (memberId) {
-        mentionIds.add(memberId);
-      }
-    }
-
-    return [...mentionIds].map((memberId) =>
-      MessageMentionSchema.parse({
-        id: randomUUID(),
-        messageId: message.id,
-        memberId,
-        kind: 'mention',
-        createdAt: message.createdAt,
-      }),
-    );
+    return byHandle;
   }
 
   private requireOrganization(organizationId: string) {

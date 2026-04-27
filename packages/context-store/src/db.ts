@@ -382,6 +382,24 @@ const MIGRATIONS: { id: string; up: string }[] = [
       CREATE INDEX IF NOT EXISTS idx_message_mentions_member
         ON message_mentions(member_id, created_at);
 
+      -- Preserve mention metadata for rows written before message_mentions
+      -- existed by backfilling from the legacy JSON messages.mentions array.
+      INSERT INTO message_mentions (id, message_id, member_id, kind, created_at)
+      SELECT
+        m.id || ':' || CAST(j.key AS TEXT),
+        m.id,
+        CAST(j.value AS TEXT),
+        'mention',
+        m.created_at
+      FROM messages m
+      JOIN json_each(CASE WHEN json_valid(m.mentions) THEN m.mentions ELSE '[]' END) j
+      WHERE j.type = 'text'
+        AND NOT EXISTS (
+          SELECT 1
+          FROM message_mentions mm
+          WHERE mm.message_id = m.id
+        );
+
       CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
         body,
         content='messages',

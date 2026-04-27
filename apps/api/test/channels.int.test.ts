@@ -547,6 +547,47 @@ describe('E3 channels and mentions', () => {
     expect(secondSearch.data.map((message) => message.content)).toEqual(['org-two-only needle']);
   });
 
+  it('recomputes typed mentions when a message body is edited', async () => {
+    const fixture = await createFixture({ agentNames: ['frontend-alice', 'frontend-bob'] });
+    tempDirs.push(fixture.archiveRoot);
+    const realtime = createRealtimeCollector();
+    const conversations = new ConversationService(fixture.repo, realtime);
+
+    fixture.repo.ensureThread({
+      id: 'general',
+      organizationId: fixture.organizationId,
+      channelId: 'general',
+      title: 'general',
+      memberIds: [fixture.ownerId, 'frontend-alice', 'frontend-bob'],
+      createdAt: new Date().toISOString(),
+    });
+
+    const message = conversations.postToChannel({
+      organizationId: fixture.organizationId,
+      senderId: fixture.ownerId,
+      channelId: 'general',
+      body: '@frontend-alice first draft',
+    });
+    expect(fixture.repo.listMessageMentions(message.id).map((mention) => mention.memberId)).toEqual([
+      'frontend-alice',
+    ]);
+
+    const edited = conversations.editMessage({
+      organizationId: fixture.organizationId,
+      messageId: message.id,
+      editorId: fixture.ownerId,
+      content: '@frontend-bob revised draft',
+    });
+
+    expect(edited.mentions).toEqual(['frontend-bob']);
+    expect(fixture.repo.getMessage(fixture.organizationId, message.id)?.mentions).toEqual([
+      'frontend-bob',
+    ]);
+    expect(fixture.repo.listMessageMentions(message.id).map((mention) => mention.memberId)).toEqual([
+      'frontend-bob',
+    ]);
+  });
+
   it('edits and deletes with tombstones while preserving immutable tool-call cards', async () => {
     const fixture = await createFixture({ agentNames: ['frontend-alice'] });
     tempDirs.push(fixture.archiveRoot);
