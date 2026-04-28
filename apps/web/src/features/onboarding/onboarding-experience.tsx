@@ -1,5 +1,6 @@
 "use client";
 
+import type { ApiError } from "@ujima/api-schema";
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -267,10 +268,14 @@ export function OnboardingExperience() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify(buildOnboardingRequest(currentDraft)),
       });
-      const body = (await response.json().catch(() => ({}))) as { message?: string };
+      const body = (await response.json().catch(() => null)) as ApiError | null;
 
       if (!response.ok) {
-        setSubmitError(body.message ?? "Unable to complete onboarding right now.");
+        setSubmitError(
+          body && typeof body === "object" && "message" in body && typeof body.message === "string"
+            ? body.message
+            : "Unable to complete onboarding right now.",
+        );
         return;
       }
 

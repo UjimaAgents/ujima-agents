@@ -24,19 +24,29 @@ export interface FileSecretStoreOptions {
 const SECRET_FILE_MODE = 0o600;
 const SECRET_DIR_MODE = 0o700;
 const WORLD_READABLE_MASK = 0o077;
+const ENFORCE_POSIX_SECRET_MODES = process.platform !== 'win32';
+
+function assertPrivateMode(path: string, kind: 'directory' | 'file'): void {
+  if (!ENFORCE_POSIX_SECRET_MODES) {
+    return;
+  }
+
+  const stats = statSync(path);
+  if ((stats.mode & WORLD_READABLE_MASK) !== 0) {
+    const recommendedMode = kind === 'directory' ? '700' : '600';
+    throw new Error(
+      `secret store: ${kind} "${path}" is world- or group-readable. Refusing to operate. ` +
+        `Run: chmod ${recommendedMode} "${path}"`,
+    );
+  }
+}
 
 export function createFileSecretStore(opts: FileSecretStoreOptions): SecretStore {
   const dir = resolve(opts.homeDir, opts.subDir ?? 'secrets');
   mkdirSync(dir, { recursive: true, mode: SECRET_DIR_MODE });
 
   try {
-    const dirStats = statSync(dir);
-    if ((dirStats.mode & WORLD_READABLE_MASK) !== 0) {
-      throw new Error(
-        `secret store: directory "${dir}" is world- or group-readable. Refusing to operate. ` +
-          `Run: chmod 700 "${dir}"`,
-      );
-    }
+    assertPrivateMode(dir, 'directory');
   } catch (err) {
     if ((err as { code?: string }).code !== 'ENOENT') throw err;
   }
@@ -55,21 +65,17 @@ export function createFileSecretStore(opts: FileSecretStoreOptions): SecretStore
       const keyRef = randomUUID();
       const filePath = resolveKeyRef(keyRef);
       writeFileSync(filePath, value, { encoding: 'utf8', mode: SECRET_FILE_MODE });
-      // writeFileSync honors mode only on file creation; chmod is a belt-and-braces
-      // fixup in case umask interferes.
-      chmodSync(filePath, SECRET_FILE_MODE);
+      if (ENFORCE_POSIX_SECRET_MODES) {
+        // writeFileSync honors mode only on file creation; chmod is a
+        // belt-and-braces fixup in case umask interferes.
+        chmodSync(filePath, SECRET_FILE_MODE);
+      }
       return keyRef;
     },
     read(keyRef: string): string | null {
       const filePath = resolveKeyRef(keyRef);
       if (!existsSync(filePath)) return null;
-      const stats = statSync(filePath);
-      if ((stats.mode & WORLD_READABLE_MASK) !== 0) {
-        throw new Error(
-          `secret store: file "${filePath}" is world- or group-readable. Refusing to read. ` +
-            `Run: chmod 600 "${filePath}"`,
-        );
-      }
+      assertPrivateMode(filePath, 'file');
       return readFileSync(filePath, 'utf8');
     },
     delete(keyRef: string): void {

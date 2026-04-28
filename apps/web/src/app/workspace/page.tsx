@@ -1,5 +1,4 @@
 import { redirect } from "next/navigation";
-import { LogoutButton } from "@/components/logout-button";
 import { getServerBootstrap } from "@/server/ujima-daemon";
 
 export default async function WorkspacePage() {
@@ -19,22 +18,17 @@ export default async function WorkspacePage() {
   return (
     <main className="space-y-6">
       <section className="overflow-hidden rounded-[28px] border border-zinc-200 bg-white shadow-[0_18px_60px_rgba(15,23,42,0.06)] dark:border-zinc-800 dark:bg-zinc-950">
-        <div className="grid gap-8 px-6 py-7 md:grid-cols-[1.5fr_0.5fr] md:px-8">
+        <div className="px-6 py-7 md:px-8">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.22em] text-violet-700 dark:text-violet-300">
-              Session active
+              Workspace overview
             </p>
             <h1 className="mt-4 text-4xl font-semibold tracking-[-0.04em] text-zinc-950 dark:text-zinc-50">
               {bootstrap.organization?.name}
             </h1>
             <p className="mt-4 max-w-2xl text-sm leading-7 text-zinc-600 dark:text-zinc-300">
-              Signed in as {bootstrap.auth.user.email} ({bootstrap.auth.member.name}). The daemon now restores your
-              owner session across refreshes and browser restarts while keeping the machine bearer token on the server.
+              Review the current organization snapshot, team composition, and provider readiness from one place.
             </p>
-          </div>
-
-          <div className="flex items-start justify-end">
-            <LogoutButton />
           </div>
         </div>
       </section>
