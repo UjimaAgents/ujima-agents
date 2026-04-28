@@ -7,6 +7,7 @@ const PROVIDER_NAME_MAP: Record<string, string> = {
   google: "google",
   openrouter: "openrouter",
   ollama: "ollama",
+  mistral: "openrouter",
 };
 
 function normalizeToken(value: string) {
@@ -15,7 +16,7 @@ function normalizeToken(value: string) {
 
 export function normalizeProviderName(value: string) {
   const normalized = normalizeToken(value);
-  return PROVIDER_NAME_MAP[normalized] ?? normalized;
+  return PROVIDER_NAME_MAP[normalized] ?? "openrouter";
 }
 
 export function formatProviderLabel(value: string) {

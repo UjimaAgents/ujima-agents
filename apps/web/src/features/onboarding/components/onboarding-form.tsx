@@ -212,7 +212,10 @@ function validateTeamTab(tabId: TeamTabId, draft: OnboardingDraft): string | nul
     return "Complete all channel names and descriptions before continuing.";
   }
 
-  if (tabId === "org-chart" && draft.organizationReports.some((report) => !report.subjectName.trim())) {
+  if (
+    tabId === "org-chart" &&
+    draft.organizationReports.some((report) => !report.subjectName.trim() || !report.managerName.trim())
+  ) {
     return "Complete all organization chart mappings before continuing.";
   }
 
