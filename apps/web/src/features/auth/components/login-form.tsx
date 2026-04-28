@@ -1,6 +1,6 @@
 "use client";
 
-import type { ApiError, LoginResponse } from "@ujima/api-schema";
+import type { ApiError, AuthSessionResponse } from "@ujima/api-schema";
 import Link from "next/link";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
@@ -31,7 +31,7 @@ export function LoginForm({ organizationId }: LoginFormProps) {
         }),
       });
 
-      const body = (await response.json().catch(() => null)) as ApiError | LoginResponse | null;
+      const body = (await response.json().catch(() => null)) as ApiError | AuthSessionResponse | null;
       if (!response.ok) {
         setError(
           body && typeof body === "object" && "message" in body && typeof body.message === "string"

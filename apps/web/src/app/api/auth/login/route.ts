@@ -2,6 +2,7 @@ import type { AuthLoginRequest } from "@ujima/api-schema";
 import { NextResponse } from "next/server";
 import {
   hasObjectProperty,
+  hasSessionToken,
   parseApiError,
   stripSessionToken,
   upstreamUnavailable,
@@ -40,8 +41,7 @@ export async function POST(request: Request) {
     }
 
     if (
-      !hasObjectProperty(body, "sessionToken") ||
-      typeof body.sessionToken !== "string" ||
+      !hasSessionToken(body) ||
       !hasObjectProperty(body, "auth") ||
       !hasObjectProperty(body.auth, "session") ||
       !hasObjectProperty(body.auth.session, "expiresAt") ||
