@@ -1,5 +1,5 @@
-import { SignInPage } from "@/features/auth/components/sign-in-page";
+import { redirect } from "next/navigation";
 
 export default function SignIn() {
-  return <SignInPage />;
+  redirect("/login");
 }

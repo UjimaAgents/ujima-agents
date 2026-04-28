@@ -1,5 +1,6 @@
 "use client";
 
+import { CircleUserRound } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { APP_ROUTES } from "@/config/routes";
@@ -9,10 +10,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const isLandingPage = pathname === "/";
   const isOnboardingPage = pathname.startsWith("/onboarding");
-  const isSignInPage = pathname.startsWith("/sign-in");
   const isLoginPage = pathname.startsWith("/login");
 
-  if (isLandingPage || isOnboardingPage || isSignInPage || isLoginPage) {
+  if (isLandingPage || isOnboardingPage || isLoginPage) {
     return <div className="min-h-screen bg-zinc-50 text-zinc-950 dark:bg-[#040712] dark:text-zinc-100">{children}</div>;
   }
 
@@ -43,6 +43,18 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 );
               })}
             </nav>
+            <Link
+              href="/profile"
+              aria-label="Open profile"
+              title="Profile"
+              className={`inline-flex h-9 w-9 items-center justify-center rounded-lg border transition ${
+                pathname === "/profile"
+                  ? "border-violet-600 bg-violet-600 text-white"
+                  : "border-zinc-200 bg-zinc-50 text-zinc-600 hover:bg-zinc-200 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
+              }`}
+            >
+              <CircleUserRound className="h-4 w-4" />
+            </Link>
             <ThemeToggle />
           </div>
         </div>
