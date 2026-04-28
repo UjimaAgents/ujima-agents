@@ -171,7 +171,9 @@ function isTeamStepComplete(draft: OnboardingDraft) {
     (role) => role.name.trim() && role.llm.trim() && role.channelIds.length > 0,
   );
   const hasChannels = draft.channels.every((channel) => channel.name.trim() && channel.description.trim());
-  const hasReports = draft.organizationReports.every((report) => report.subjectName.trim());
+  const hasReports = draft.organizationReports.every(
+    (report) => report.subjectName.trim() && report.managerName.trim(),
+  );
   const hasProviders = draft.providers.every((provider) => provider.name.trim() && provider.apiKey.trim());
 
   return hasRoles && hasChannels && hasReports && hasProviders;
