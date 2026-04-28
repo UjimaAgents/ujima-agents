@@ -5,6 +5,7 @@ export * from './auth.js';
 export * from './onboarding.js';
 export * from './runs.js';
 export * from './settings.js';
+export * from './task-sessions.js';
 export * from './additive/requests.js';
 
 export const API_VERSION = 'v1';

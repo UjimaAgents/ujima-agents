@@ -462,6 +462,41 @@ const MIGRATIONS: { id: string; up: string }[] = [
         ON auth_sessions(expires_at);
     `,
   },
+  {
+    id: '008_task_sessions',
+    up: `
+      -- Phase 1 of the unified task shell. A task_session is the parent
+      -- aggregate above per-agent RunState rows: one session per piece of
+      -- work, one task-run channel pinned to it, multiple worker runs
+      -- linked back via runs.task_session_id (added in a follow-up
+      -- migration when the worker loop lands).
+      CREATE TABLE IF NOT EXISTS task_sessions (
+        id              TEXT PRIMARY KEY,
+        organization_id TEXT NOT NULL,
+        slug            TEXT NOT NULL,
+        channel_id      TEXT NOT NULL,
+        requested_by    TEXT NOT NULL,
+        execution_mode  TEXT NOT NULL DEFAULT 'concurrent',
+        status          TEXT NOT NULL DEFAULT 'queued',
+        prompt          TEXT NOT NULL DEFAULT '',
+        summary         TEXT NOT NULL DEFAULT '',
+        team_member_ids TEXT NOT NULL DEFAULT '[]',
+        origin_channel_id TEXT,
+        origin_message_id TEXT,
+        promotion_metadata TEXT NOT NULL DEFAULT '{}',
+        supervisor_turn_count INTEGER NOT NULL DEFAULT 0,
+        created_at      TEXT NOT NULL,
+        updated_at      TEXT NOT NULL,
+        completed_at    TEXT,
+        UNIQUE (organization_id, slug),
+        UNIQUE (channel_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_task_sessions_org_status
+        ON task_sessions(organization_id, status, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_task_sessions_org_created
+        ON task_sessions(organization_id, created_at DESC, id DESC);
+    `,
+  },
 ];
 
 export interface DbOptions {

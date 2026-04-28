@@ -13,6 +13,8 @@ import type {
   MessageMention,
   Organization,
   RunState,
+  TaskSession,
+  TaskSessionStatus,
   WorkspaceMember,
 } from '@ujima/shared';
 import {
@@ -98,6 +100,15 @@ import {
   saveRun as writeRun,
   type PaginatedRuns,
 } from './runs.js';
+import {
+  getTaskSession as readTaskSession,
+  getTaskSessionByChannel as readTaskSessionByChannel,
+  getTaskSessionBySlug as readTaskSessionBySlug,
+  listTaskSessions as readTaskSessions,
+  saveTaskSession as writeTaskSession,
+  updateTaskSessionStatus as writeTaskSessionStatus,
+  type PaginatedTaskSessions,
+} from './task-sessions.js';
 import {
   ensureThread as ensureThreadRecord,
   getThread as readThread,
@@ -257,6 +268,26 @@ export class Repository {
     readRun(this.db, organizationId, runId);
   listRuns = (organizationId: string, cursor?: string, limit?: number): PaginatedRuns =>
     readRuns(this.db, organizationId, cursor, limit);
+
+  saveTaskSession = (session: TaskSession): TaskSession =>
+    writeTaskSession(this.db, session);
+  getTaskSession = (organizationId: string, taskSessionId: string): TaskSession | null =>
+    readTaskSession(this.db, organizationId, taskSessionId);
+  getTaskSessionBySlug = (organizationId: string, slug: string): TaskSession | null =>
+    readTaskSessionBySlug(this.db, organizationId, slug);
+  getTaskSessionByChannel = (organizationId: string, channelId: string): TaskSession | null =>
+    readTaskSessionByChannel(this.db, organizationId, channelId);
+  listTaskSessions = (
+    organizationId: string,
+    options?: { cursor?: string; limit?: number; status?: TaskSessionStatus },
+  ): PaginatedTaskSessions => readTaskSessions(this.db, organizationId, options);
+  updateTaskSessionStatus = (
+    organizationId: string,
+    taskSessionId: string,
+    status: TaskSessionStatus,
+    options?: { summary?: string; completedAt?: string },
+  ): TaskSession | null =>
+    writeTaskSessionStatus(this.db, organizationId, taskSessionId, status, options);
 
   saveApproval = (approval: ApprovalRequest): ApprovalRequest =>
     writeApproval(this.db, approval);

@@ -12,8 +12,16 @@ import type {
   MessageMention,
   Organization,
   RunState,
+  TaskSession,
+  TaskSessionStatus,
   WorkspaceMember,
 } from '@ujima/shared';
+
+export interface PaginatedTaskSessions {
+  data: TaskSession[];
+  nextCursor?: string;
+  hasMore: boolean;
+}
 
 export interface BootstrapSnapshot {
   organization: Organization | null;
@@ -123,6 +131,20 @@ export interface ApiRepository extends ConversationRepository {
     cursor?: string,
     limit?: number,
   ): PaginatedRuns;
+  saveTaskSession(session: TaskSession): TaskSession;
+  getTaskSession(organizationId: string, taskSessionId: string): TaskSession | null;
+  getTaskSessionBySlug(organizationId: string, slug: string): TaskSession | null;
+  getTaskSessionByChannel(organizationId: string, channelId: string): TaskSession | null;
+  listTaskSessions(
+    organizationId: string,
+    options?: { cursor?: string; limit?: number; status?: TaskSessionStatus },
+  ): PaginatedTaskSessions;
+  updateTaskSessionStatus(
+    organizationId: string,
+    taskSessionId: string,
+    status: TaskSessionStatus,
+    options?: { summary?: string; completedAt?: string },
+  ): TaskSession | null;
   saveApproval(approval: ApprovalRequest): ApprovalRequest;
   getApproval(organizationId: string, approvalId: string): ApprovalRequest | null;
   resolveApproval(

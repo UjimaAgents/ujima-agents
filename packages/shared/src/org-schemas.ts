@@ -51,6 +51,16 @@ export const RunStatusSchema = z.enum([
 ]);
 export type RunStatus = z.infer<typeof RunStatusSchema>;
 
+// Task sessions reuse the same status alphabet as runs — a session is the
+// parent aggregate over its workers, but its lifecycle states map 1:1
+// onto the run vocabulary so dashboards / activity streams don't need a
+// second enum.
+export const TaskSessionStatusSchema = RunStatusSchema;
+export type TaskSessionStatus = z.infer<typeof TaskSessionStatusSchema>;
+
+export const TaskExecutionModeSchema = z.enum(['concurrent', 'slim']);
+export type TaskExecutionMode = z.infer<typeof TaskExecutionModeSchema>;
+
 export const MessageKindSchema = z.enum(['human', 'agent', 'system']);
 export type MessageKind = z.infer<typeof MessageKindSchema>;
 
@@ -256,6 +266,125 @@ export const RunStateSchema = z.object({
   endedAt: TimestampSchema.optional(),
 });
 export type RunState = z.infer<typeof RunStateSchema>;
+
+// -----------------------------------------------------------------------
+// Task session aggregate (Phase 1 of the unified task shell)
+// -----------------------------------------------------------------------
+//
+// A `TaskSession` is the parent record for a piece of work. Each session
+// owns:
+//   * exactly one `task-run` channel (1:1 with `channel_id`)
+//   * a deterministic `slug` (unique within the org)
+//   * a team of member ids who actually do the work
+//   * an `origin` reference back to the channel/message that prompted
+//     the session, when applicable (slash command, promoter decision)
+// `RunState` rows become per-agent worker children that link back to a
+// session (added in Phase 2 when the worker loop lands).
+
+export const TaskSessionOriginSchema = z.object({
+  channelId: IdSchema.optional(),
+  messageId: IdSchema.optional(),
+});
+export type TaskSessionOrigin = z.infer<typeof TaskSessionOriginSchema>;
+
+export const TaskSessionSchema = z.object({
+  id: IdSchema,
+  organizationId: IdSchema,
+  slug: z.string().min(1),
+  channelId: IdSchema,
+  requestedBy: IdSchema,
+  executionMode: TaskExecutionModeSchema.default('concurrent'),
+  status: TaskSessionStatusSchema.default('queued'),
+  prompt: z.string().default(''),
+  summary: z.string().default(''),
+  teamMemberIds: z.array(IdSchema).default([]),
+  origin: TaskSessionOriginSchema.default({}),
+  promotionMetadata: z.record(z.string(), z.unknown()).default({}),
+  supervisorTurnCount: z.number().int().min(0).default(0),
+  createdAt: TimestampSchema,
+  updatedAt: TimestampSchema,
+  completedAt: TimestampSchema.optional(),
+});
+export type TaskSession = z.infer<typeof TaskSessionSchema>;
+
+// -----------------------------------------------------------------------
+// Generic message card primitive (Phase 1)
+// -----------------------------------------------------------------------
+//
+// A `MessageCard` is the typed payload that backs every system-message
+// affordance: approvals, promotion confirmations, join notices, task
+// completion / failure summaries, inline tool-call cards. It rides on
+// the existing immutable `messages.tool_calls` JSON column (renamed
+// conceptually here — the schema column stays compatible) so we don't
+// need a parallel storage path. Concrete card kinds extend the
+// discriminated union as features land.
+
+const MessageCardCommon = {
+  cardId: IdSchema,
+  // Optional run/task linkage so dashboards can navigate from a card to
+  // its source aggregate without re-querying.
+  runId: IdSchema.optional(),
+  taskSessionId: IdSchema.optional(),
+};
+
+export const TaskJoinCardSchema = z.object({
+  ...MessageCardCommon,
+  kind: z.literal('task.join'),
+  memberIds: z.array(IdSchema).default([]),
+});
+
+export const TaskOriginLinkCardSchema = z.object({
+  ...MessageCardCommon,
+  kind: z.literal('task.origin-link'),
+  taskChannelId: IdSchema,
+  taskSlug: z.string().min(1),
+});
+
+export const TaskSummaryCardSchema = z.object({
+  ...MessageCardCommon,
+  kind: z.literal('task.summary'),
+  outcome: z.enum(['completed', 'failed', 'cancelled']),
+  summary: z.string().default(''),
+});
+
+export const ApprovalCardSchema = z.object({
+  ...MessageCardCommon,
+  kind: z.literal('approval'),
+  approvalId: IdSchema,
+  status: OrgApprovalStatusSchema,
+  resourceType: ResourceTypeSchema,
+  resourcePath: z.string().min(1),
+  action: ToolActionSchema,
+  reason: z.string().default(''),
+});
+
+export const PromotionConfirmCardSchema = z.object({
+  ...MessageCardCommon,
+  kind: z.literal('task.promotion-confirm'),
+  decision: z.enum(['promote', 'confirm']),
+  team: z.array(IdSchema).default([]),
+  rationale: z.string().default(''),
+});
+
+export const ToolCallCardSchema = z.object({
+  ...MessageCardCommon,
+  kind: z.literal('tool.call'),
+  toolCallId: IdSchema,
+  toolName: z.string().min(1),
+  args: z.record(z.string(), z.unknown()).default({}),
+  result: z.unknown().optional(),
+  isError: z.boolean().default(false),
+});
+
+export const MessageCardSchema = z.discriminatedUnion('kind', [
+  TaskJoinCardSchema,
+  TaskOriginLinkCardSchema,
+  TaskSummaryCardSchema,
+  ApprovalCardSchema,
+  PromotionConfirmCardSchema,
+  ToolCallCardSchema,
+]);
+export type MessageCard = z.infer<typeof MessageCardSchema>;
 
 export const ToolCallSchema = z.object({
   toolCallId: IdSchema,

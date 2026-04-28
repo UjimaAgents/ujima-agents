@@ -11,6 +11,7 @@ import type {
   RunService,
   SettingsService,
   TaskPromoterService,
+  TaskSessionService,
 } from '@ujima/orchestrator';
 import type { UjimaEvent } from '@ujima/shared';
 import {
@@ -33,6 +34,7 @@ import { registerOnboardingRoutes } from './routes/onboarding.js';
 import { registerRunRoutes } from './routes/runs.js';
 import { registerSettingsRoutes } from './routes/settings.js';
 import { registerTaskRoutes } from './routes/tasks.js';
+import { registerTaskSessionRoutes } from './routes/task-sessions.js';
 import { registerWorkspaceRoutes } from './routes/workspaces.js';
 import { registerAgentRoutes } from './routes/agents.js';
 
@@ -63,6 +65,7 @@ export interface TransportOptions {
       onboarding: OnboardingService;
       settings: SettingsService;
       taskPromoter: TaskPromoterService;
+      taskSessions: TaskSessionService;
     };
   };
 }
@@ -222,6 +225,9 @@ export function createTransport(opts: TransportOptions): Transport {
         host,
         repo: opts.apiServices.repo,
         taskPromoter: services.taskPromoter,
+      });
+      registerTaskSessionRoutes(api, {
+        taskSessions: services.taskSessions,
       });
     }
   }, { prefix: '/api' });

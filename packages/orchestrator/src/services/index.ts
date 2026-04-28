@@ -11,6 +11,7 @@ import type { ApiRepository } from './repository-reader.js';
 import { RunService } from './run.js';
 import { SettingsService } from './settings.js';
 import { TaskPromoterService } from './task-promoter.js';
+import { TaskSessionService } from './task-session.js';
 import {
   createPermissionGatedToolService,
   type PermissionContextBuilder,
@@ -59,6 +60,8 @@ export type {
   UpdateOrganizationInput,
 } from './settings.js';
 export { TaskPromoterService } from './task-promoter.js';
+export { TaskSessionService } from './task-session.js';
+export type { CreateTaskSessionInput, TaskSessionDetail } from './task-session.js';
 export type { TaskPromotionInput, TaskPromotionResult } from './task-promoter.js';
 export {
   ERR_NO_WORKSPACE_ROOT,
@@ -73,6 +76,7 @@ export type {
   PaginatedChannels,
   PaginatedMessages,
   PaginatedRuns,
+  PaginatedTaskSessions,
   RepositoryReader,
 } from './repository-reader.js';
 export {
@@ -110,6 +114,7 @@ export interface ApiServices {
   onboarding: OnboardingService;
   settings: SettingsService;
   taskPromoter: TaskPromoterService;
+  taskSessions: TaskSessionService;
 }
 
 export function createApiServices(context: ApiServicesContext): ApiServices {
@@ -185,6 +190,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   const onboarding = new OnboardingService(context.repo, context.teamStore);
   const settings = new SettingsService(context.repo, context.teamStore);
   const taskPromoter = new TaskPromoterService(context.repo, runs);
+  const taskSessions = new TaskSessionService(context.repo, conversations);
 
   return {
     ai,
@@ -198,5 +204,6 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     onboarding,
     settings,
     taskPromoter,
+    taskSessions,
   };
 }
