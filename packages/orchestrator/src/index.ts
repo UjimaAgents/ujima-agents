@@ -21,9 +21,12 @@ export {
 
 export { AiService } from './ai-service.js';
 export type { GenerateRunReplyInput } from './ai-service.js';
+export { ALWAYS_AVAILABLE_AGENT_TOOLS } from './tools/index.js';
 export {
   ApprovalService,
+  AuthService,
   BootstrapService,
+  ChannelRetentionService,
   ConfigSyncService,
   ConversationService,
   OnboardingService,
@@ -47,6 +50,8 @@ export type {
   ApiServices,
   ApiServicesContext,
   ApiServiceContext,
+  AuthState,
+  AuthenticatedSession,
   ApprovalRequester,
   ApprovalRequestInput,
   ApprovalResolveInput,
@@ -68,11 +73,13 @@ export type {
   ReconcileTeamConfigStats,
   RepositoryReader,
   ResumeRun,
+  RegisterOwnerAuthInput,
   TaskPromotionInput,
   TaskPromotionResult,
   TeamSettingsResponse,
   TeamStore,
   TeamSummary,
+  LoginInput,
   ToolInvocationInput,
   ToolInvocationResult,
   ToolService,

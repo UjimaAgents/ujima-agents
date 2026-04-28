@@ -1,11 +1,15 @@
 import type {
   ApprovalRequest,
+  AuthSession,
+  AuthUser,
   AuditEvent,
   Channel,
+  ChannelKind,
   ConfigFieldOwnership,
   ConversationThread,
   Member,
   Message,
+  MessageMention,
   Organization,
   RunState,
   WorkspaceMember,
@@ -38,6 +42,17 @@ export interface PaginatedRuns {
   hasMore: boolean;
 }
 
+export interface StoredAuthUser {
+  user: AuthUser;
+  passwordHash: string;
+  emailNormalized: string;
+}
+
+export interface StoredAuthSession {
+  session: AuthSession;
+  sessionTokenHash: string;
+}
+
 /**
  * Narrow read surface that `AiService` needs. `@ujima/runtime-core`'s
  * `Repository` class satisfies this shape structurally, avoiding a
@@ -64,18 +79,35 @@ export interface ConversationRepository extends RepositoryReader {
     organizationId: string,
     cursor?: string,
     limit?: number,
+    excludeKinds?: readonly ChannelKind[],
   ): PaginatedChannels;
   saveChannel(channel: Channel): Channel;
   setChannelMembers(channelId: string, memberIds: string[]): void;
   getThread(organizationId: string, threadId: string): ConversationThread | null;
   ensureThread(thread: ConversationThread): ConversationThread;
+  getMessage(organizationId: string, messageId: string): Message | null;
   listMessages(
     organizationId: string,
     threadId: string,
     cursor?: string,
     limit?: number,
   ): PaginatedMessages;
+  listChannelMessages(
+    organizationId: string,
+    channelId: string,
+    options?: { cursor?: string; since?: string; limit?: number },
+  ): PaginatedMessages;
+  searchChannelMessages(
+    organizationId: string,
+    channelId: string,
+    query: string,
+    options?: { cursor?: string; since?: string; limit?: number },
+  ): PaginatedMessages;
   saveMessage(message: Message): Message;
+  updateMessage(message: Message): Message;
+  replaceMessageMentions(messageId: string, mentions: MessageMention[]): MessageMention[];
+  listMessageMentions(messageId: string): MessageMention[];
+  deleteMessageMentions(messageId: string): void;
   getRun(organizationId: string, runId: string): RunState | null;
 }
 
@@ -101,6 +133,7 @@ export interface ApiRepository extends ConversationRepository {
   ): ApprovalRequest | null;
   listPendingApprovals(organizationId: string): ApprovalRequest[];
   saveAuditEvent(event: AuditEvent): AuditEvent;
+  deleteMessages(organizationId: string, messageIds: string[]): void;
   saveOrganization(organization: Organization): Organization;
   getLatestOrganization(): Organization | null;
   listOrganizations(): Organization[];
@@ -127,5 +160,17 @@ export interface ApiRepository extends ConversationRepository {
   ): ConfigFieldOwnership[];
   saveMember(member: Member): Member;
   saveWorkspaceMember(workspaceMember: WorkspaceMember): WorkspaceMember;
+  saveAuthUser(input: StoredAuthUser): AuthUser;
+  getAuthUserById(userId: string): AuthUser | null;
+  getAuthUserByMember(organizationId: string, memberId: string): AuthUser | null;
+  getAuthUserCredentials(
+    organizationId: string,
+    emailNormalized: string,
+  ): StoredAuthUser | null;
+  findAuthUsersByEmail(emailNormalized: string): StoredAuthUser[];
+  saveAuthSession(input: StoredAuthSession): AuthSession;
+  getAuthSessionByTokenHash(sessionTokenHash: string): StoredAuthSession | null;
+  revokeAuthSession(sessionId: string, revokedAt?: string): AuthSession | null;
+  touchAuthSession(sessionId: string, lastSeenAt?: string): AuthSession | null;
   getBootstrapSnapshot(): BootstrapSnapshot;
 }

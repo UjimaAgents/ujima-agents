@@ -1,11 +1,7 @@
 import { mkdirSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { dirname } from 'node:path';
-let DatabaseConstructor: any;
-if (typeof process !== 'undefined' && process.versions && process.versions.bun) {
-  DatabaseConstructor = require('bun:sqlite').Database;
-} else {
-  DatabaseConstructor = require('better-sqlite3');
-}
+
 interface StatementHandle {
   all(...params: unknown[]): unknown[];
   get(...params: unknown[]): unknown;
@@ -17,6 +13,28 @@ export interface DbHandle {
   exec(sql: string): void;
   pragma(sql: string): unknown;
   close(): void;
+}
+
+type SqliteDatabaseCtor = new (path: string) => DbHandle;
+
+// Resolve the SQLite driver lazily so the import surface stays clean for
+// both runtimes:
+//   * bun → `bun:sqlite` (native, fast)
+//   * node → `better-sqlite3`
+// `createRequire(__filename)` keeps it synchronous (no top-level await) and
+// avoids the `require()`/`any` lint hits that the previous shim took.
+// `__filename` is used instead of `import.meta.url` because this package
+// emits CommonJS (no `"type": "module"` on its package.json).
+const requireSqlite = createRequire(__filename);
+let cachedConstructor: SqliteDatabaseCtor | undefined;
+
+function resolveDatabaseConstructor(): SqliteDatabaseCtor {
+  if (cachedConstructor) return cachedConstructor;
+  const isBun = typeof process !== 'undefined' && Boolean(process.versions?.bun);
+  cachedConstructor = isBun
+    ? (requireSqlite('bun:sqlite') as { Database: SqliteDatabaseCtor }).Database
+    : (requireSqlite('better-sqlite3') as SqliteDatabaseCtor);
+  return cachedConstructor;
 }
 
 const MIGRATIONS: { id: string; up: string }[] = [
@@ -344,6 +362,106 @@ const MIGRATIONS: { id: string; up: string }[] = [
         ON config_field_ownership(organization_id, entity_type, entity_id);
     `,
   },
+  {
+    id: '006_channels_v2',
+    up: `
+      ALTER TABLE channels ADD COLUMN parent_message_id TEXT;
+      ALTER TABLE messages ADD COLUMN parent_message_id TEXT;
+      ALTER TABLE messages ADD COLUMN edited_at TEXT;
+      ALTER TABLE messages ADD COLUMN deleted_at TEXT;
+
+      CREATE TABLE IF NOT EXISTS message_mentions (
+        id          TEXT PRIMARY KEY,
+        message_id  TEXT NOT NULL,
+        member_id   TEXT NOT NULL,
+        kind        TEXT NOT NULL DEFAULT 'mention',
+        created_at  TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_message_mentions_message
+        ON message_mentions(message_id, created_at);
+      CREATE INDEX IF NOT EXISTS idx_message_mentions_member
+        ON message_mentions(member_id, created_at);
+
+      -- Preserve mention metadata for rows written before message_mentions
+      -- existed by backfilling from the legacy JSON messages.mentions array.
+      INSERT INTO message_mentions (id, message_id, member_id, kind, created_at)
+      SELECT
+        m.id || ':' || CAST(j.key AS TEXT),
+        m.id,
+        CAST(j.value AS TEXT),
+        'mention',
+        m.created_at
+      FROM messages m
+      JOIN json_each(CASE WHEN json_valid(m.mentions) THEN m.mentions ELSE '[]' END) j
+      WHERE j.type = 'text'
+        AND NOT EXISTS (
+          SELECT 1
+          FROM message_mentions mm
+          WHERE mm.message_id = m.id
+        );
+
+      CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+        body,
+        content='messages',
+        content_rowid='rowid'
+      );
+
+      INSERT INTO messages_fts(rowid, body)
+      SELECT rowid, content FROM messages;
+
+      CREATE TRIGGER IF NOT EXISTS messages_fts_ai AFTER INSERT ON messages BEGIN
+        INSERT INTO messages_fts(rowid, body) VALUES (new.rowid, new.content);
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS messages_fts_ad AFTER DELETE ON messages BEGIN
+        INSERT INTO messages_fts(messages_fts, rowid, body) VALUES('delete', old.rowid, old.content);
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS messages_fts_au AFTER UPDATE ON messages BEGIN
+        INSERT INTO messages_fts(messages_fts, rowid, body) VALUES('delete', old.rowid, old.content);
+        INSERT INTO messages_fts(rowid, body) VALUES (new.rowid, new.content);
+      END;
+    `,
+  },
+  {
+    id: '007_auth',
+    up: `
+      CREATE TABLE IF NOT EXISTS auth_users (
+        id                TEXT PRIMARY KEY,
+        organization_id   TEXT NOT NULL,
+        member_id         TEXT NOT NULL,
+        email             TEXT NOT NULL,
+        email_normalized  TEXT NOT NULL,
+        password_hash     TEXT NOT NULL,
+        created_at        TEXT NOT NULL,
+        updated_at        TEXT NOT NULL,
+        UNIQUE (organization_id, member_id),
+        UNIQUE (organization_id, email_normalized)
+      );
+      CREATE INDEX IF NOT EXISTS idx_auth_users_email
+        ON auth_users(email_normalized);
+      CREATE INDEX IF NOT EXISTS idx_auth_users_member
+        ON auth_users(organization_id, member_id);
+
+      CREATE TABLE IF NOT EXISTS auth_sessions (
+        id                  TEXT PRIMARY KEY,
+        user_id             TEXT NOT NULL,
+        organization_id     TEXT NOT NULL,
+        member_id           TEXT NOT NULL,
+        session_token_hash  TEXT NOT NULL UNIQUE,
+        created_at          TEXT NOT NULL,
+        expires_at          TEXT NOT NULL,
+        last_seen_at        TEXT NOT NULL,
+        revoked_at          TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_auth_sessions_user
+        ON auth_sessions(user_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_auth_sessions_member
+        ON auth_sessions(organization_id, member_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_auth_sessions_expires
+        ON auth_sessions(expires_at);
+    `,
+  },
 ];
 
 export interface DbOptions {
@@ -355,7 +473,8 @@ export function openDatabase(options: DbOptions): DbHandle {
     mkdirSync(dirname(options.dbPath), { recursive: true });
   }
 
-  const db = new DatabaseConstructor(options.dbPath) as unknown as DbHandle;
+  const Database = resolveDatabaseConstructor();
+  const db = new Database(options.dbPath);
 
   db.exec('PRAGMA journal_mode = WAL');
   db.exec('PRAGMA synchronous = NORMAL');
