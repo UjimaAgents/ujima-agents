@@ -46,3 +46,9 @@ export function hasObjectProperty<K extends string>(
 ): value is Record<K, unknown> {
   return isObject(value) && key in value;
 }
+
+export function hasSessionToken(
+  value: unknown,
+): value is Record<"sessionToken", string> {
+  return hasObjectProperty(value, "sessionToken") && typeof value.sessionToken === "string";
+}
