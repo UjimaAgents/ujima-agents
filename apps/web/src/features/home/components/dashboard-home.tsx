@@ -101,7 +101,7 @@ export function DashboardHome({ session }: { session: UjimaWebSession }) {
               onClick={() => {
                 clearWebSession();
                 window.localStorage.removeItem(ONBOARDING_STORAGE_KEY);
-                router.push("/sign-in");
+                router.push("/login");
               }}
               className="inline-flex items-center gap-2 rounded-lg border border-zinc-200 px-3 py-2 text-xs font-medium text-zinc-700 transition hover:bg-zinc-100 dark:border-white/10 dark:text-zinc-200 dark:hover:bg-white/10"
             >

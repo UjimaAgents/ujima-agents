@@ -12,6 +12,7 @@ import { loadAgentTeam, type AgentTeamHandle } from '@ujima/framework';
 import type { ApiRepository } from './repository-reader.js';
 import type { TeamStore } from './team-store.js';
 import { summarizeTeam, validateProviderKeys, type TeamSummary } from './team.js';
+import { addMemberToDefaultChannels, ensureMemberSelfChannel } from './member-channels.js';
 import { upsertWorkspaceMemberScopes } from './workspace-root.js';
 
 export interface OnboardingInlineTeam {
@@ -76,6 +77,13 @@ function buildInitialOrganizationChart(
   return { reportsTo };
 }
 
+function visibleChannels(channels: Channel[]): Channel[] {
+  // Hide both `self` (private agent scratchpads) and `dm` (private 2-member
+  // conversations) from the onboarding response. Member-scoped DM access
+  // goes through `listVisibleChannels` (channel.list tool path).
+  return channels.filter((channel) => channel.kind !== 'self' && channel.kind !== 'dm');
+}
+
 export class OnboardingService {
   constructor(
     private readonly repo: ApiRepository,
@@ -83,6 +91,52 @@ export class OnboardingService {
   ) {}
 
   async onboard(input: OnboardingInput): Promise<OnboardingResult> {
+    // The org-chart can reference the owner as a manager via either the
+    // owner's display name or the literal "Owner"/"owner" sentinels (used
+    // by the web seed draft). The framework's `createOrganizationChart`
+    // only resolves agent refs and would throw on an owner ref, so we
+    // pre-allocate `ownerId`, split owner-targeting entries off, hand
+    // only agent-only edges to `loadAgentTeam`, then merge owner edges
+    // back in with the value resolved to `ownerId`.
+    const ownerId = randomUUID();
+    const ownerNameTrimmed = input.ownerName.trim();
+    // Accepted owner-manager refs in the inbound chart, in priority order:
+    //   * `@owner`             — the stable sentinel emitted by the web
+    //                            onboarding form. Survives owner renames.
+    //   * `<input.ownerName>`  — legacy form (display-name string).
+    //   * `Owner` / `owner`    — legacy seed-draft labels.
+    // All resolve to the owner member's id below.
+    const isOwnerRef = (ref: string): boolean => {
+      if (!ref) return false;
+      if (ref === '@owner') return true;
+      if (ownerNameTrimmed && ref === ownerNameTrimmed) return true;
+      return ref === 'Owner' || ref === 'owner';
+    };
+
+    const inboundReports = input.team.organizationChart?.reportsTo ?? {};
+    const agentOnlyReports: Record<string, string> = {};
+    const ownerTargetingReports: Record<string, string> = {};
+    // `input.team.agents` is typed `unknown[]` on this loose API surface;
+    // narrow inline before reading `name`.
+    const agentNames = new Set(
+      ((input.team.agents ?? []) as { name?: unknown }[])
+        .map((agent) => (typeof agent?.name === 'string' ? agent.name : ''))
+        .filter((name) => name.length > 0),
+    );
+    for (const [child, parent] of Object.entries(inboundReports)) {
+      // Agent name on the manager side wins over an owner-label collision —
+      // role names are first-class refs; the owner sentinel is the fallback.
+      if (agentNames.has(parent)) {
+        agentOnlyReports[child] = parent;
+      } else if (isOwnerRef(parent)) {
+        ownerTargetingReports[child] = ownerId;
+      } else {
+        // Unknown ref — let the framework throw the descriptive error
+        // it already produces for unresolved agent refs.
+        agentOnlyReports[child] = parent;
+      }
+    }
+
     const team: AgentTeamHandle = loadAgentTeam({
       name: input.team.name ?? input.organizationName,
       workspace: { root: resolve(input.workspaceRoot) },
@@ -90,7 +144,7 @@ export class OnboardingService {
       roles: input.team.roles ?? [],
       channels: input.team.channels ?? [],
       providers: input.team.providers ?? {},
-      organizationChart: input.team.organizationChart ?? { reportsTo: {} },
+      organizationChart: { reportsTo: agentOnlyReports },
       policies: input.team.policies,
     } as Record<string, unknown>);
 
@@ -105,11 +159,17 @@ export class OnboardingService {
       throw new Error(`Missing provider keys: ${missingProviders.join(', ')}`);
     }
 
-    const ownerId = randomUUID();
     const organizationId = randomUUID();
+    // Owner-targeting edges win over the framework's normalised set —
+    // they are what the user explicitly configured. Fall back to the
+    // built-in chart only when the user supplied nothing at all.
+    const mergedReportsTo = {
+      ...team.organizationChart.reportsTo,
+      ...ownerTargetingReports,
+    };
     const organizationChart =
-      Object.keys(team.organizationChart.reportsTo).length > 0
-        ? team.organizationChart
+      Object.keys(mergedReportsTo).length > 0
+        ? { reportsTo: mergedReportsTo }
         : buildInitialOrganizationChart(ownerId, team.agents);
 
     const organization = OrganizationSchema.parse({
@@ -158,6 +218,7 @@ export class OnboardingService {
         member.id,
         role?.workspaceScopes ?? [],
       );
+      ensureMemberSelfChannel(this.repo, organizationId, member);
     }
 
     const channels: Channel[] = team.channels.map((config) =>
@@ -205,12 +266,18 @@ export class OnboardingService {
       this.repo.setChannelMembers(id, [...ids]);
     }
 
+    for (const member of members) {
+      addMemberToDefaultChannels(this.repo, team, organizationId, member);
+    }
+
     this.teamStore.setTeam(team);
 
     return {
       organization,
       members,
-      channels: this.repo.listChannels(organizationId).data,
+      channels: visibleChannels(
+        this.repo.listChannels(organizationId, undefined, undefined, ['self', 'dm']).data,
+      ),
       team: summarizeTeam(team),
     };
   }

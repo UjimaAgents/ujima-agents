@@ -1,16 +1,20 @@
 "use client";
 
-import type { BootstrapResponse, OnboardingResponse } from "@ujima/api-schema";
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Home, Sparkles } from "lucide-react";
 import { ThemeToggle } from "@/components/theme-toggle";
-import { writeWebSession } from "@/features/auth/web-session";
 import { buildOnboardingRequest } from "./api-contract";
 import { OnboardingForm } from "./components/onboarding-form";
 import { OnboardingStepper } from "./components/onboarding-stepper";
-import { INITIAL_DRAFT, ONBOARDING_STEPS, type OnboardingDraft, type OnboardingStepId, type TeamTabId } from "./types";
+import {
+  INITIAL_DRAFT,
+  ONBOARDING_STEPS,
+  type OnboardingDraft,
+  type OnboardingStepId,
+  type TeamTabId,
+} from "./types";
 
 const TEAM_TABS: TeamTabId[] = ["agents", "channels", "org-chart", "policies", "providers"];
 const ONBOARDING_STORAGE_KEY = "ujima-web-onboarding-session-v1";
@@ -19,13 +23,6 @@ interface PersistedOnboardingState {
   activeStep: OnboardingStepId;
   activeTeamTab: TeamTabId;
   draft: OnboardingDraft;
-}
-
-interface CompletionState {
-  organizationId: string;
-  organizationName: string;
-  ownerName: string;
-  countdown: number;
 }
 
 function subscribe() {
@@ -161,7 +158,11 @@ function isOrganizationStepComplete(draft: OnboardingDraft) {
 }
 
 function isOwnerStepComplete(draft: OnboardingDraft) {
-  return Boolean(draft.ownerName.trim());
+  return Boolean(
+    draft.ownerName.trim() &&
+      /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(draft.ownerEmail.trim()) &&
+      draft.ownerPassword.trim().length >= 8,
+  );
 }
 
 function isTeamStepComplete(draft: OnboardingDraft) {
@@ -179,12 +180,8 @@ export function OnboardingExperience() {
   const router = useRouter();
   const isHydrated = useSyncExternalStore(subscribe, () => true, () => false);
   const [session, setSession] = useState<PersistedOnboardingState>(() => readPersistedSession());
-  const [bootstrap, setBootstrap] = useState<BootstrapResponse | null>(null);
-  const [bootstrapError, setBootstrapError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
-  const [submitResult, setSubmitResult] = useState<OnboardingResponse | null>(null);
-  const [completionState, setCompletionState] = useState<CompletionState | null>(null);
   const { activeStep, activeTeamTab, draft } = session;
 
   useEffect(() => {
@@ -192,85 +189,8 @@ export function OnboardingExperience() {
       return;
     }
 
-    if (completionState) {
-      window.localStorage.removeItem(ONBOARDING_STORAGE_KEY);
-      return;
-    }
-
     window.localStorage.setItem(ONBOARDING_STORAGE_KEY, JSON.stringify(session));
-  }, [completionState, isHydrated, session]);
-
-  useEffect(() => {
-    let ignore = false;
-
-    async function loadBootstrap() {
-      try {
-        const response = await fetch("/api/bootstrap", { cache: "no-store" });
-        const payload = (await response.json()) as BootstrapResponse | { message?: string };
-
-        if (!response.ok) {
-          throw new Error("message" in payload && typeof payload.message === "string" ? payload.message : "Unable to load onboarding bootstrap state.");
-        }
-
-        if (!ignore) {
-          setBootstrap(payload as BootstrapResponse);
-          setBootstrapError(null);
-        }
-      } catch (error) {
-        if (!ignore) {
-          setBootstrapError(error instanceof Error ? error.message : "Unable to load onboarding bootstrap state.");
-        }
-      }
-    }
-
-    void loadBootstrap();
-
-    return () => {
-      ignore = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!bootstrap || bootstrap.onboardingStatus !== "ready") {
-      return;
-    }
-
-    if (typeof window !== "undefined") {
-      window.localStorage.removeItem(ONBOARDING_STORAGE_KEY);
-    }
-  }, [bootstrap]);
-
-  useEffect(() => {
-    if (!completionState) {
-      return;
-    }
-
-    if (completionState.countdown <= 0) {
-      writeWebSession({
-        organizationId: completionState.organizationId,
-        organizationName: completionState.organizationName,
-        ownerName: completionState.ownerName,
-        loggedInAt: new Date().toISOString(),
-      });
-      router.push("/");
-      return;
-    }
-
-    const timeoutId = window.setTimeout(() => {
-      setCompletionState((current) =>
-        current
-          ? {
-              ...current,
-              countdown: current.countdown - 1,
-            }
-          : current,
-      );
-    }, 1000);
-
-    return () => {
-      window.clearTimeout(timeoutId);
-    };
-  }, [completionState, router]);
+  }, [isHydrated, session]);
 
   const stepIndex = useMemo(
     () => ONBOARDING_STEPS.findIndex((step) => step.id === activeStep),
@@ -333,63 +253,36 @@ export function OnboardingExperience() {
     setSession((current) => ({ ...current, activeStep: stepId }));
   };
 
-  const handleSubmit = async () => {
+  const handleSubmit = async (currentDraft: OnboardingDraft) => {
     if (isSubmitting) {
       return;
     }
 
-    setIsSubmitting(true);
     setSubmitError(null);
+    setIsSubmitting(true);
 
     try {
       const response = await fetch("/api/onboarding", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(buildOnboardingRequest(draft)),
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(buildOnboardingRequest(currentDraft)),
       });
-      const payload = (await response.json()) as OnboardingResponse | { message?: string };
+      const body = (await response.json().catch(() => ({}))) as { message?: string };
 
       if (!response.ok) {
-        throw new Error("message" in payload && typeof payload.message === "string" ? payload.message : "Unable to complete onboarding.");
+        setSubmitError(body.message ?? "Unable to complete onboarding right now.");
+        return;
       }
 
-      const result = payload as OnboardingResponse;
-      setSubmitResult(result);
-      setBootstrap((current) => ({
-        serviceReady: true,
-        onboardingStatus: "ready",
-        organization: result.organization,
-        team: {
-          ...result.team,
-          organizationChart: current?.team?.organizationChart,
-        },
-        providers: current?.providers ?? [],
-        members: result.members,
-        channels: result.channels,
-        pendingApprovals: current?.pendingApprovals ?? [],
-        activeRuns: current?.activeRuns ?? [],
-      }));
-      setSession(getDefaultSession());
       window.localStorage.removeItem(ONBOARDING_STORAGE_KEY);
-      setCompletionState({
-        organizationId: result.organization.id,
-        organizationName: result.organization.name,
-        ownerName: draft.ownerName.trim(),
-        countdown: 3,
-      });
+      router.replace("/workspace");
+      router.refresh();
     } catch (error) {
-      setSubmitError(error instanceof Error ? error.message : "Unable to complete onboarding.");
+      setSubmitError(error instanceof Error ? error.message : "Unable to complete onboarding right now.");
     } finally {
       setIsSubmitting(false);
     }
   };
-
-  const apiStatusMessage = submitResult
-    ? `Created ${submitResult.organization.name} in the API.`
-    : bootstrapError;
-
   if (!isHydrated) {
     return null;
   }
@@ -444,29 +337,10 @@ export function OnboardingExperience() {
               onSubmit={handleSubmit}
               isSubmitting={isSubmitting}
               submitError={submitError}
-              apiStatusMessage={apiStatusMessage}
-              backendReady={Boolean(submitResult)}
             />
           </div>
         </div>
       </div>
-      {completionState ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/55 px-4">
-          <div className="w-full max-w-lg rounded-[28px] border border-zinc-200 bg-white p-8 text-center shadow-[0_24px_80px_rgba(15,23,42,0.28)] dark:border-zinc-800 dark:bg-zinc-950">
-            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-emerald-100 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-300">
-              <Sparkles className="h-6 w-6" />
-            </div>
-            <h2 className="mt-5 text-2xl font-semibold text-zinc-950 dark:text-zinc-50">Organization created successfully</h2>
-            <p className="mt-3 text-sm leading-6 text-zinc-600 dark:text-zinc-300">
-              {completionState.organizationName} is ready. Your onboarding draft has been cleared, and you&apos;ll be logged in as{" "}
-              <span className="font-medium text-zinc-900 dark:text-zinc-100">{completionState.ownerName || "Owner"}</span>.
-            </p>
-            <div className="mt-6 rounded-2xl bg-zinc-50 px-4 py-3 text-sm text-zinc-600 dark:bg-zinc-900 dark:text-zinc-300">
-              Redirecting to home in <span className="font-semibold text-zinc-950 dark:text-zinc-50">{completionState.countdown}</span>s
-            </div>
-          </div>
-        </div>
-      ) : null}
     </main>
   );
 }

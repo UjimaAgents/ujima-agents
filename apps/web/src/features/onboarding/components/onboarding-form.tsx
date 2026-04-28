@@ -21,7 +21,13 @@ import {
   X,
 } from "lucide-react";
 import { formatProviderLabel } from "../api-contract";
-import type { OnboardingDraft, OnboardingStep, OnboardingStepId, TeamTabId } from "../types";
+import {
+  OWNER_MANAGER_SENTINEL,
+  type OnboardingDraft,
+  type OnboardingStep,
+  type OnboardingStepId,
+  type TeamTabId,
+} from "../types";
 
 interface OnboardingFormProps {
   step: OnboardingStep;
@@ -33,13 +39,11 @@ interface OnboardingFormProps {
   onTeamTabChange: (tabId: TeamTabId) => void;
   onBack: () => void;
   onNext: () => void;
-  onSubmit: () => void;
+  onSubmit: (draft: OnboardingDraft) => Promise<void> | void;
   canGoBack: boolean;
   isLastStep: boolean;
   isSubmitting: boolean;
   submitError: string | null;
-  apiStatusMessage: string | null;
-  backendReady: boolean;
 }
 
 type DraftField = keyof OnboardingDraft | "teamConfig";
@@ -69,6 +73,18 @@ function validateStep(stepId: OnboardingStepId, draft: OnboardingDraft, activeTe
   if (stepId === "owner" || stepId === "review") {
     if (!draft.ownerName.trim()) {
       errors.ownerName = "Enter the full name for the first owner.";
+    }
+
+    if (!draft.ownerEmail.trim()) {
+      errors.ownerEmail = "Enter the owner email address.";
+    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(draft.ownerEmail.trim())) {
+      errors.ownerEmail = "Enter a valid owner email address.";
+    }
+
+    if (!draft.ownerPassword.trim()) {
+      errors.ownerPassword = "Enter the owner password.";
+    } else if (draft.ownerPassword.trim().length < 8) {
+      errors.ownerPassword = "Use at least 8 characters for the owner password.";
     }
   }
 
@@ -104,7 +120,7 @@ function getValidationMessage(stepId: OnboardingStepId, errors: DraftErrors): st
   }
 
   if (stepId === "owner") {
-    return "Complete the owner name before continuing.";
+    return "Complete the owner account details before continuing.";
   }
 
   if (stepId === "team") {
@@ -414,7 +430,9 @@ function StepFields({
           {
             id: createId("report"),
             subjectName: newRole.name,
-            managerName: draft.roles.some((role) => role.name === "product-manager") ? "product-manager" : ownerLabel,
+            managerName: draft.roles.some((role) => role.name === "product-manager")
+              ? "product-manager"
+              : OWNER_MANAGER_SENTINEL,
           },
         ],
       });
@@ -465,7 +483,11 @@ function StepFields({
     }
 
     const fallbackManager =
-      role.name === "product-manager" ? ownerLabel : draft.roles.some((item) => item.name === "product-manager" && item.id !== roleId) ? "product-manager" : ownerLabel;
+      role.name === "product-manager"
+        ? OWNER_MANAGER_SENTINEL
+        : draft.roles.some((item) => item.name === "product-manager" && item.id !== roleId)
+          ? "product-manager"
+          : OWNER_MANAGER_SENTINEL;
 
     onDraftChange({
       ...draft,
@@ -545,7 +567,12 @@ function StepFields({
       existingReport ?? {
         id: createId("report"),
         subjectName: role.name,
-        managerName: role.name === "product-manager" ? ownerLabel : draft.roles.some((item) => item.name === "product-manager") ? "product-manager" : ownerLabel,
+        managerName:
+          role.name === "product-manager"
+            ? OWNER_MANAGER_SENTINEL
+            : draft.roles.some((item) => item.name === "product-manager")
+              ? "product-manager"
+              : OWNER_MANAGER_SENTINEL,
       }
     );
   });
@@ -649,27 +676,49 @@ function StepFields({
               />
             </FieldShell>
 
-            <FieldShell label="Email" htmlFor="ownerEmail" hint="Optional UI field. The current onboarding API does not accept owner email yet.">
+            <FieldShell
+              label="Email"
+              htmlFor="ownerEmail"
+              hint="Used for the owner login after onboarding completes."
+              error={showError("ownerEmail") ? errors.ownerEmail : undefined}
+            >
               <input
                 id="ownerEmail"
                 type="email"
-                className="w-full rounded-lg border border-zinc-200 bg-white px-4 py-2.5 text-sm text-zinc-900 outline-none transition placeholder:text-zinc-400 focus:border-violet-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                className={`w-full rounded-lg border bg-white px-4 py-2.5 text-sm text-zinc-900 outline-none transition placeholder:text-zinc-400 focus:border-violet-500 dark:bg-zinc-950 dark:text-zinc-100 ${
+                  showError("ownerEmail")
+                    ? "border-red-300 focus:border-red-500 dark:border-red-500/60"
+                    : "border-zinc-200 dark:border-zinc-700"
+                }`}
                 value={draft.ownerEmail}
+                onBlur={() => onFieldBlur("ownerEmail")}
                 onChange={(event) => onDraftChange(updateField(draft, "ownerEmail", event.target.value))}
                 placeholder="alex@acme.com"
+                aria-invalid={showError("ownerEmail")}
               />
             </FieldShell>
 
             <div>
-              <FieldShell label="Password" htmlFor="ownerPassword" hint="Optional UI field. The current onboarding API does not accept owner password yet.">
+              <FieldShell
+                label="Password"
+                htmlFor="ownerPassword"
+                hint="Minimum 8 characters. This becomes the owner login password."
+                error={showError("ownerPassword") ? errors.ownerPassword : undefined}
+              >
                 <div className="relative">
                   <input
                     id="ownerPassword"
                     type={showOwnerPassword ? "text" : "password"}
-                    className="w-full rounded-lg border border-zinc-200 bg-white px-4 py-2.5 pr-11 text-sm text-zinc-900 outline-none transition placeholder:text-zinc-400 focus:border-violet-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                    className={`w-full rounded-lg border bg-white px-4 py-2.5 pr-11 text-sm text-zinc-900 outline-none transition placeholder:text-zinc-400 focus:border-violet-500 dark:bg-zinc-950 dark:text-zinc-100 ${
+                      showError("ownerPassword")
+                        ? "border-red-300 focus:border-red-500 dark:border-red-500/60"
+                        : "border-zinc-200 dark:border-zinc-700"
+                    }`}
                     value={draft.ownerPassword}
+                    onBlur={() => onFieldBlur("ownerPassword")}
                     onChange={(event) => onDraftChange(updateField(draft, "ownerPassword", event.target.value))}
                     placeholder="••••••••"
+                    aria-invalid={showError("ownerPassword")}
                   />
                   <button
                     type="button"
@@ -879,11 +928,18 @@ function StepFields({
                     }
                     className="min-w-0 flex-1 rounded-lg border border-zinc-200 bg-white px-4 py-2.5 text-sm outline-none transition focus:border-violet-500 dark:border-zinc-700 dark:bg-zinc-950"
                   >
-                    {[...draft.roles.map((role) => role.name), ownerLabel]
-                      .filter((option) => option !== report.subjectName)
+                    {[
+                      // Role refs use the role name as both value and label.
+                      ...draft.roles.map((role) => ({ value: role.name, label: role.name })),
+                      // Owner ref persists the stable sentinel so a later
+                      // owner rename keeps existing edges intact; the
+                      // dropdown still renders the current friendly label.
+                      { value: OWNER_MANAGER_SENTINEL, label: ownerLabel },
+                    ]
+                      .filter((option) => option.value !== report.subjectName)
                       .map((option) => (
-                        <option key={option} value={option}>
-                          {option}
+                        <option key={option.value} value={option.value}>
+                          {option.label}
                         </option>
                       ))}
                   </select>
@@ -1265,8 +1321,6 @@ export function OnboardingForm({
   isLastStep,
   isSubmitting,
   submitError,
-  apiStatusMessage,
-  backendReady,
 }: OnboardingFormProps) {
   const [touchedFields, setTouchedFields] = useState<Partial<Record<DraftField, boolean>>>({});
   const [attemptedSubmit, setAttemptedSubmit] = useState(false);
@@ -1325,7 +1379,7 @@ export function OnboardingForm({
     }
 
     if (isLastStep) {
-      onSubmit();
+      void onSubmit(draft);
       return;
     }
 
@@ -1405,7 +1459,7 @@ export function OnboardingForm({
             <button
               type="button"
               onClick={onBack}
-              disabled={!canGoBack}
+              disabled={!canGoBack || isSubmitting}
               className="inline-flex items-center gap-2 rounded-lg border border-zinc-200 px-4 py-2.5 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-900"
             >
               <ArrowLeft className="h-4 w-4" />
@@ -1414,14 +1468,15 @@ export function OnboardingForm({
             <button
               type="button"
               onClick={handleContinue}
-              aria-disabled={!isStepValid || isSubmitting || backendReady}
+              disabled={!isStepValid || isSubmitting}
+              aria-disabled={!isStepValid || isSubmitting}
               className={`inline-flex items-center justify-center gap-2 rounded-lg px-5 py-2.5 text-sm font-medium text-white transition ${
-                isStepValid && !isSubmitting && !backendReady
-                  ? "bg-violet-600 hover:bg-violet-700"
+                isStepValid
+                  ? "bg-violet-600 hover:bg-violet-700 disabled:bg-violet-400 disabled:hover:bg-violet-400"
                   : "bg-violet-300 hover:bg-violet-300 dark:bg-violet-500/50 dark:hover:bg-violet-500/50"
               }`}
             >
-              {backendReady ? "Organization created" : isSubmitting ? "Creating organization..." : "Create organization"}
+              {isSubmitting ? "Creating organization..." : "Create organization"}
               <ArrowRight className="h-4 w-4" />
             </button>
           </div>
@@ -1430,14 +1485,15 @@ export function OnboardingForm({
             <button
               type="button"
               onClick={handleContinue}
+              disabled={!isStepValid || isSubmitting}
               aria-disabled={!isStepValid || isSubmitting}
               className={`inline-flex items-center justify-center gap-2 rounded-lg px-5 py-2.5 text-sm font-medium text-white transition ${
-                isStepValid && !isSubmitting
-                  ? "bg-violet-600 hover:bg-violet-700"
+                isStepValid
+                  ? "bg-violet-600 hover:bg-violet-700 disabled:bg-violet-400 disabled:hover:bg-violet-400"
                   : "bg-violet-300 hover:bg-violet-300 dark:bg-violet-500/50 dark:hover:bg-violet-500/50"
               }`}
             >
-              {isSubmitting ? "Submitting..." : "Continue"}
+              {isSubmitting ? "Working..." : "Continue"}
               <ArrowRight className="h-4 w-4" />
             </button>
             <p className="text-sm text-zinc-500 dark:text-zinc-400">
@@ -1456,9 +1512,6 @@ export function OnboardingForm({
             <AlertCircle className="h-4 w-4" />
             {submitError}
           </p>
-        ) : null}
-        {apiStatusMessage && !submitError ? (
-          <p className="mt-3 text-sm text-emerald-600 dark:text-emerald-400">{apiStatusMessage}</p>
         ) : null}
       </div>
     </section>

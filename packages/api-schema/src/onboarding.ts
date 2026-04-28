@@ -1,5 +1,7 @@
 import {
   ApprovalRequestSchema,
+  AuthSessionSchema,
+  AuthUserSchema,
   ChannelSchema,
   IdSchema,
   MemberSchema,
@@ -8,6 +10,7 @@ import {
 } from '@ujima/shared';
 import { AgentTeamConfigSchema } from '@ujima/framework';
 import { z } from 'zod';
+import { SessionAuthStateSchema } from './auth.js';
 
 const WorkspaceRootSchema = z.string().min(1);
 
@@ -25,6 +28,8 @@ export type InlineTeamConfig = z.infer<typeof InlineTeamConfigSchema>;
 export const OnboardingRequestSchema = z.object({
   organizationName: z.string().min(1),
   ownerName: z.string().min(1),
+  ownerEmail: z.string().email(),
+  ownerPassword: z.string().min(8),
   workspaceRoot: WorkspaceRootSchema,
   providerKeys: z.record(z.string().min(1)).default({}),
   team: InlineTeamConfigSchema,
@@ -45,6 +50,13 @@ export const OnboardingResponseSchema = z.object({
   members: z.array(MemberSchema),
   channels: z.array(ChannelSchema),
   team: TeamSummarySchema,
+  auth: SessionAuthStateSchema.extend({
+    authenticated: z.literal(true),
+    user: AuthUserSchema,
+    member: MemberSchema,
+    session: AuthSessionSchema,
+  }),
+  sessionToken: z.string().min(1),
 });
 export type OnboardingResponse = z.infer<typeof OnboardingResponseSchema>;
 
@@ -62,5 +74,6 @@ export const BootstrapResponseSchema = z.object({
   channels: z.array(ChannelSchema),
   pendingApprovals: z.array(ApprovalRequestSchema),
   activeRuns: z.array(RunStateSchema),
+  auth: SessionAuthStateSchema,
 });
 export type BootstrapResponse = z.infer<typeof BootstrapResponseSchema>;

@@ -45,7 +45,12 @@ export function getBootstrapSnapshot(db: DbHandle): BootstrapSnapshot {
   return {
     organization,
     members: listMembers(db, organization.id),
-    channels: listChannels(db, organization.id).data,
+    // Bootstrap snapshot is consumed by clients that don't have a member
+    // identity yet (it's the very first response on connect). Hide private
+    // channel kinds — `self` (agent scratchpads) and `dm` (private 2-member
+    // conversations) — at the SQL level so they never enter the snapshot.
+    // Member-scoped DM access goes through `listVisibleChannels` instead.
+    channels: listChannels(db, organization.id, undefined, undefined, ['self', 'dm']).data,
     pendingApprovals: listPendingApprovals(db, organization.id),
     activeRuns,
     providerCredentials: listProviderCredentials(db, organization.id),

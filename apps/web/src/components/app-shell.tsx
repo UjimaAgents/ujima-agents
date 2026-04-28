@@ -10,8 +10,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const isLandingPage = pathname === "/";
   const isOnboardingPage = pathname.startsWith("/onboarding");
   const isSignInPage = pathname.startsWith("/sign-in");
+  const isLoginPage = pathname.startsWith("/login");
 
-  if (isLandingPage || isOnboardingPage || isSignInPage) {
+  if (isLandingPage || isOnboardingPage || isSignInPage || isLoginPage) {
     return <div className="min-h-screen bg-zinc-50 text-zinc-950 dark:bg-[#040712] dark:text-zinc-100">{children}</div>;
   }
 

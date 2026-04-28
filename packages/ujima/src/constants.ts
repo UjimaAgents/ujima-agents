@@ -26,6 +26,54 @@ export const DEFAULT_TOOL_CATALOG: Record<string, ToolCapability> = {
     pathScopes: [],
     requiresApproval: false,
   },
+  'channel.post': {
+    id: 'channel.post',
+    name: 'Channel Post',
+    description: 'Post to a channel or reply to an existing channel message.',
+    actions: ['message'],
+    pathScopes: [],
+    requiresApproval: false,
+  },
+  'channel.reply': {
+    id: 'channel.reply',
+    name: 'Channel Reply',
+    description: 'Reply to a message inside its existing thread.',
+    actions: ['message'],
+    pathScopes: [],
+    requiresApproval: false,
+  },
+  'channel.dm': {
+    id: 'channel.dm',
+    name: 'Channel DM',
+    description: 'Send a direct message, lazily creating the DM channel when needed.',
+    actions: ['message'],
+    pathScopes: [],
+    requiresApproval: false,
+  },
+  'channel.list': {
+    id: 'channel.list',
+    name: 'Channel List',
+    description: 'List visible channels in the organization.',
+    actions: ['message'],
+    pathScopes: [],
+    requiresApproval: false,
+  },
+  'channel.read': {
+    id: 'channel.read',
+    name: 'Channel Read',
+    description: 'Read recent or searched messages from a channel.',
+    actions: ['message'],
+    pathScopes: [],
+    requiresApproval: false,
+  },
+  'self.note': {
+    id: 'self.note',
+    name: 'Self Note',
+    description: 'Write a private note into the member self-channel.',
+    actions: ['message'],
+    pathScopes: [],
+    requiresApproval: false,
+  },
   mcp: {
     id: 'mcp',
     name: 'MCP',
@@ -36,6 +84,19 @@ export const DEFAULT_TOOL_CATALOG: Record<string, ToolCapability> = {
   },
 };
 
+const DEFAULT_AGENT_TOOLS = [
+  'filesystem',
+  'shell',
+  'message',
+  'channel.post',
+  'channel.reply',
+  'channel.dm',
+  'channel.list',
+  'channel.read',
+  'self.note',
+  'mcp',
+] as const;
+
 export const ROLE_PRESETS: Record<string, RolePreset> = {
   frontendEngineer: {
     name: 'frontend-engineer',
@@ -44,7 +105,7 @@ export const ROLE_PRESETS: Record<string, RolePreset> = {
     instructions:
       "Act like the product's frontend owner. Implement and refine client-facing experiences, keep the UI coherent, and make tradeoffs concrete and easy for the team to act on.",
     workspaceScopes: ['apps/web'],
-    tools: ['filesystem', 'shell', 'message', 'mcp'],
+    tools: [...DEFAULT_AGENT_TOOLS],
     channels: ['general'],
     skills: [],
   },
@@ -55,7 +116,7 @@ export const ROLE_PRESETS: Record<string, RolePreset> = {
     instructions:
       'Act like the backend owner on the team. Design pragmatic service changes, keep APIs small, and prefer direct end-to-end implementation over abstractions.',
     workspaceScopes: ['apps/api', 'packages'],
-    tools: ['filesystem', 'shell', 'message', 'mcp'],
+    tools: [...DEFAULT_AGENT_TOOLS],
     channels: ['general'],
     skills: [],
   },
@@ -66,7 +127,7 @@ export const ROLE_PRESETS: Record<string, RolePreset> = {
     instructions:
       'Act like the product lead for the org. Clarify requirements, tighten scope, and keep the team aligned on concrete user outcomes and decision-ready next steps.',
     workspaceScopes: ['.'],
-    tools: ['filesystem', 'shell', 'message', 'mcp'],
+    tools: [...DEFAULT_AGENT_TOOLS],
     channels: ['general'],
     skills: [],
   },
@@ -77,7 +138,7 @@ export const ROLE_PRESETS: Record<string, RolePreset> = {
     instructions:
       'Act like a senior peer reviewer inside the org. Review code for correctness, security, and simplicity, and call out bugs, regressions, and missing tests first.',
     workspaceScopes: ['.'],
-    tools: ['filesystem', 'shell', 'message', 'mcp'],
+    tools: [...DEFAULT_AGENT_TOOLS],
     channels: ['general'],
     skills: [],
   },
@@ -88,7 +149,7 @@ export const ROLE_PRESETS: Record<string, RolePreset> = {
     instructions:
       'Act like the engineering manager for the org. Track progress, unblock the team, keep changes shippable, and make decisions from the workspace state instead of guesswork.',
     workspaceScopes: ['.'],
-    tools: ['filesystem', 'shell', 'message', 'mcp'],
+    tools: [...DEFAULT_AGENT_TOOLS],
     channels: ['general'],
     skills: [],
   },
@@ -99,7 +160,7 @@ export const ROLE_PRESETS: Record<string, RolePreset> = {
     instructions:
       "Act like the org's QA owner. Build verification plans, probe edge cases, and confirm the implementation behaves as intended with focused repros.",
     workspaceScopes: ['.'],
-    tools: ['filesystem', 'shell', 'message', 'mcp'],
+    tools: [...DEFAULT_AGENT_TOOLS],
     channels: ['general'],
     skills: [],
   },

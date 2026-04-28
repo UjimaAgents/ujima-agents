@@ -5,6 +5,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { openDatabase } from '@ujima/context-store';
 import { loadAgentTeam } from '@ujima/framework';
 import {
+  ALWAYS_AVAILABLE_AGENT_TOOLS,
   ConversationService,
   OnboardingService,
   ToolServiceImpl,
@@ -150,17 +151,17 @@ describe('workspace-root REST gating', () => {
           name: agentConfig?.name ?? input.memberId,
           persona: agentConfig?.personalityName ?? '',
           model: role?.model ?? '',
-          mcp: input.toolId,
+          mcp: input.permissionMcpId ?? input.toolId,
           permissions: {
-            allowed_tools: role?.tools ?? [],
+            allowed_tools: [...new Set([...(role?.tools ?? []), ...ALWAYS_AVAILABLE_AGENT_TOOLS])],
             blocked_tools: [],
             rate_limit: { calls_per_minute: 30, max_session_tokens: 100_000 },
           },
           communication: { publishes: [], subscribes: [] },
           escalation: { conditions: [], escalate_to: 'human' },
         },
-        mcp: { id: input.toolId },
-        toolName: input.toolId,
+        mcp: { id: input.permissionMcpId ?? input.toolId },
+        toolName: input.permissionToolName ?? input.toolId,
         args: input.input,
         taskId: input.runId,
         sessionId: input.runId,

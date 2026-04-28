@@ -1,5 +1,5 @@
 import type { OnboardingRequest } from "@ujima/api-schema";
-import type { OnboardingDraft } from "./types";
+import { OWNER_MANAGER_SENTINEL, type OnboardingDraft } from "./types";
 
 const PROVIDER_NAME_MAP: Record<string, string> = {
   anthropic: "anthropic",
@@ -36,7 +36,7 @@ function toRoleTitle(name: string) {
 
 export function buildOnboardingRequest(draft: OnboardingDraft): OnboardingRequest {
   const channelsById = new Map(draft.channels.map((channel) => [channel.id, channel]));
-  const ownerManagerLabels = new Set(["owner", normalizeToken(draft.ownerName)]);
+  const ownerManagerLabels = new Set([OWNER_MANAGER_SENTINEL, "owner", normalizeToken(draft.ownerName)]);
   const providerEntries = draft.providers
     .map((provider) => {
       const name = normalizeProviderName(provider.name);
@@ -84,17 +84,19 @@ export function buildOnboardingRequest(draft: OnboardingDraft): OnboardingReques
           return false;
         }
 
-        if (!managerName || ownerManagerLabels.has(normalizeToken(managerName))) {
+        if (!managerName || managerName === subjectName) {
           return false;
         }
 
-        return validAgentNames.has(managerName) && managerName !== subjectName;
+        return validAgentNames.has(managerName) || ownerManagerLabels.has(normalizeToken(managerName));
       }),
   );
 
   return {
     organizationName: draft.organizationName.trim(),
     ownerName: draft.ownerName.trim(),
+    ownerEmail: draft.ownerEmail.trim(),
+    ownerPassword: draft.ownerPassword,
     workspaceRoot: draft.workspaceRoot.trim(),
     providerKeys: Object.fromEntries(
       providerEntries

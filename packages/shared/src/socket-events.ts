@@ -42,6 +42,8 @@ export const SocketEventNames = Object.freeze({
   runUpdated: 'run:updated',
   runCompleted: 'run:completed',
   memberUpdated: 'member:updated',
+  memberAlerted: 'member.alerted',
+  channelArchived: 'channel.archived',
   toolCalled: 'tool:called',
   toolResult: 'tool:result',
 });
@@ -100,6 +102,16 @@ export const MemberUpdatedEventSchema = z.object({
 });
 export type MemberUpdatedEvent = z.infer<typeof MemberUpdatedEventSchema>;
 
+export const MemberAlertedEventSchema = z.object({
+  organizationId: IdSchema,
+  memberId: IdSchema,
+  channelId: IdSchema.optional(),
+  messageId: IdSchema,
+  byMemberId: IdSchema,
+  reason: z.string().min(1),
+});
+export type MemberAlertedEvent = z.infer<typeof MemberAlertedEventSchema>;
+
 export const ChannelUpdatedEventSchema = z.object({
   organizationId: IdSchema,
   channel: ChannelSchema,
@@ -133,6 +145,8 @@ export const SocketEventSchemas = Object.freeze({
   [SocketEventNames.runUpdated]: RunEventSchema,
   [SocketEventNames.runCompleted]: RunEventSchema,
   [SocketEventNames.memberUpdated]: MemberUpdatedEventSchema,
+  [SocketEventNames.memberAlerted]: MemberAlertedEventSchema,
+  [SocketEventNames.channelArchived]: ChannelUpdatedEventSchema,
   [SocketEventNames.toolCalled]: ToolCalledEventSchema,
   [SocketEventNames.toolResult]: ToolResultEventSchema,
 });
