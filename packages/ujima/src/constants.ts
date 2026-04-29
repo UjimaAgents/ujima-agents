@@ -1,4 +1,5 @@
-import type { PersonalityPreset, RolePreset } from './schemas.js';
+import { ROLE_PRESETS } from './roles/index.js';
+import type { PersonalityPreset } from './schemas.js';
 import type { ToolCapability } from '@ujima/shared';
 
 export const DEFAULT_TOOL_CATALOG: Record<string, ToolCapability> = {
@@ -84,88 +85,6 @@ export const DEFAULT_TOOL_CATALOG: Record<string, ToolCapability> = {
   },
 };
 
-const DEFAULT_AGENT_TOOLS = [
-  'filesystem',
-  'shell',
-  'message',
-  'channel.post',
-  'channel.reply',
-  'channel.dm',
-  'channel.list',
-  'channel.read',
-  'self.note',
-  'mcp',
-] as const;
-
-export const ROLE_PRESETS: Record<string, RolePreset> = {
-  frontendEngineer: {
-    name: 'frontend-engineer',
-    title: 'Frontend Engineer',
-    description: 'Builds UI surfaces, client workflows, and interaction polish.',
-    instructions:
-      "Act like the product's frontend owner. Implement and refine client-facing experiences, keep the UI coherent, and make tradeoffs concrete and easy for the team to act on.",
-    workspaceScopes: ['apps/web'],
-    tools: [...DEFAULT_AGENT_TOOLS],
-    channels: ['general'],
-    skills: [],
-  },
-  backendEngineer: {
-    name: 'backend-engineer',
-    title: 'Backend Engineer',
-    description: 'Owns local services, data flow, and backend integration work.',
-    instructions:
-      'Act like the backend owner on the team. Design pragmatic service changes, keep APIs small, and prefer direct end-to-end implementation over abstractions.',
-    workspaceScopes: ['apps/api', 'packages'],
-    tools: [...DEFAULT_AGENT_TOOLS],
-    channels: ['general'],
-    skills: [],
-  },
-  pm: {
-    name: 'pm',
-    title: 'Product Manager',
-    description: 'Shapes scope, sequencing, and product clarity.',
-    instructions:
-      'Act like the product lead for the org. Clarify requirements, tighten scope, and keep the team aligned on concrete user outcomes and decision-ready next steps.',
-    workspaceScopes: ['.'],
-    tools: [...DEFAULT_AGENT_TOOLS],
-    channels: ['general'],
-    skills: [],
-  },
-  codeReviewer: {
-    name: 'code-reviewer',
-    title: 'Code Reviewer',
-    description: 'Reviews diffs, flags risk, and keeps implementation lean.',
-    instructions:
-      'Act like a senior peer reviewer inside the org. Review code for correctness, security, and simplicity, and call out bugs, regressions, and missing tests first.',
-    workspaceScopes: ['.'],
-    tools: [...DEFAULT_AGENT_TOOLS],
-    channels: ['general'],
-    skills: [],
-  },
-  engineeringManager: {
-    name: 'engineering-manager',
-    title: 'Engineering Manager',
-    description: 'Coordinates execution, tradeoffs, and delivery sequencing.',
-    instructions:
-      'Act like the engineering manager for the org. Track progress, unblock the team, keep changes shippable, and make decisions from the workspace state instead of guesswork.',
-    workspaceScopes: ['.'],
-    tools: [...DEFAULT_AGENT_TOOLS],
-    channels: ['general'],
-    skills: [],
-  },
-  qaEngineer: {
-    name: 'qa-engineer',
-    title: 'QA Engineer',
-    description: 'Checks behavior, edge cases, and validation paths.',
-    instructions:
-      "Act like the org's QA owner. Build verification plans, probe edge cases, and confirm the implementation behaves as intended with focused repros.",
-    workspaceScopes: ['.'],
-    tools: [...DEFAULT_AGENT_TOOLS],
-    channels: ['general'],
-    skills: [],
-  },
-};
-
 export const PERSONALITY_PRESETS: Record<string, PersonalityPreset> = {
   direct: {
     name: 'direct',
@@ -210,3 +129,5 @@ export const PERSONALITY_PRESETS: Record<string, PersonalityPreset> = {
       'Choose the smallest implementation that solves the problem. Avoid unnecessary abstraction and keep decisions grounded in current constraints.',
   },
 };
+
+export { ROLE_PRESETS };
