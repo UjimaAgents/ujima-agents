@@ -33,7 +33,7 @@ describe('client-sdk', () => {
 
   it('calls the role catalog endpoints', async () => {
     const seen: string[] = [];
-    const stub: typeof fetch = async (url, init) => {
+    const stub: typeof fetch = async (url, _init) => {
       seen.push(new URL(String(url)).pathname);
       if (String(url).endsWith('/roles/presets')) {
         return new Response(JSON.stringify({ presets: [] }), {
