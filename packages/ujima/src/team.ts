@@ -9,11 +9,11 @@ import {
   normalizeRoleScopes,
   normalizeWorkspaceRoot,
 } from '@ujima/shared/workspace';
-import { DEFAULT_TOOL_CATALOG, ROLE_PRESETS } from './constants.js';
+import { DEFAULT_TOOL_CATALOG } from './constants.js';
 import { createAgent, normalizeAgents, type AgentConfig } from './agents.js';
 import { normalizeProviders } from './providers.js';
 import { createOrganizationChart } from './organization-chart.js';
-import { listRolePresets, normalizeRoles } from './roles.js';
+import { listStarterRolePresets, normalizeRoles } from './roles.js';
 import {
   AgentTeamConfigSchema,
   PolicySchema,
@@ -123,7 +123,7 @@ export function createStarterAgentTeamConfig({
   roleScopes?: Record<string, string[]>;
 } = {}): NormalizedAgentTeamConfig {
   const root = normalizeWorkspaceRoot(workspaceRoot ?? '.');
-  const starterRoles = listRolePresets().map((preset) =>
+  const starterRoles = listStarterRolePresets().map((preset) =>
     RoleConfigSchema.parse({
       ...preset,
       id: preset.name,
@@ -132,7 +132,7 @@ export function createStarterAgentTeamConfig({
   );
 
   const defaultRoleScopes = Object.fromEntries(
-    Object.values(ROLE_PRESETS).map((preset) => [preset.name, preset.workspaceScopes]),
+    starterRoles.map((preset) => [preset.name, preset.workspaceScopes]),
   ) as Record<string, string[]>;
   const normalizedAgents = normalizeAgents(
     agents ?? starterRoles.map((role) => createAgent(role.name, role.name)),
@@ -244,5 +244,3 @@ export function AgentTeam(config: AgentTeamConfig | Record<string, unknown>): Ag
 
   return handle;
 }
-
-export { listRolePresets };

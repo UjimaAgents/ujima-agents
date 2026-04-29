@@ -17,6 +17,7 @@ export {
 export {
   AgentTeamConfigSchema,
   RoleConfigSchema,
+  RolePresetSchema,
   AgentConfigSchema,
   ChannelConfigSchema,
   PolicySchema,
@@ -46,7 +47,15 @@ export {
   definePersonality,
 } from './personality.js';
 
-export { listRolePresets, getRolePreset, createRoleFromPreset, defineRole, normalizeRoles } from './roles.js';
+export {
+  listRolePresets,
+  listStarterRolePresets,
+  listRoleIndustries,
+  getRolePreset,
+  createRoleFromPreset,
+  defineRole,
+  normalizeRoles,
+} from './roles.js';
 
 export { defineProvider, normalizeProviders } from './providers.js';
 

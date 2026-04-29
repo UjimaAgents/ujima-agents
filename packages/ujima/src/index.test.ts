@@ -10,6 +10,7 @@ import {
   defineProvider,
   defineTool,
   loadAgentTeam,
+  listRolePresets,
   validateAgentTeamConfig,
 } from './index.js';
 
@@ -31,8 +32,17 @@ test('starter config includes the preset team shape', () => {
   expect(config.agents.map((agent) => agent.name)).toContain('pm');
   expect(config.organizationChart.reportsTo['frontend-engineer']).toBe('pm');
   expect(config.roles.map((role) => role.name)).toContain('frontend-engineer');
+  expect(config.roles.map((role) => role.name)).not.toContain('engineering-frontend-developer');
   expect(config.workspace.root).toBe('/tmp/ujima-org');
   expect(config.workspace.roleScopes['frontend-engineer']?.[0]).toBe('/tmp/ujima-org/apps/web');
+});
+
+test('role catalog mirrors the upstream industry folders', () => {
+  const names = listRolePresets().map((role) => role.name);
+
+  expect(names).toContain('engineering-frontend-developer');
+  expect(names).toContain('product-manager');
+  expect(names).toContain('support-support-responder');
 });
 
 test('framework helpers normalize roles, tools, and providers', () => {

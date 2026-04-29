@@ -1,5 +1,5 @@
 import { resolveWorkspacePath } from '@ujima/shared/workspace';
-import { ROLE_PRESETS } from './constants.js';
+import { ROLE_INDUSTRY_PRESETS, ROLE_PRESETS, STARTER_ROLE_PRESET_KEYS } from './roles/index.js';
 import { RoleConfigSchema, type RoleConfig, type RolePreset } from './schemas.js';
 import { getSkillInstructions } from './skills.js';
 
@@ -15,8 +15,33 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 
+export interface RoleIndustryPreset extends RolePreset {
+  industry: string;
+  key: string;
+}
+
+export interface RoleIndustryCatalog {
+  industry: string;
+  presets: RoleIndustryPreset[];
+}
+
 export function listRolePresets(): RolePreset[] {
   return Object.values(ROLE_PRESETS).map((preset) => ({ ...preset }));
+}
+
+export function listStarterRolePresets(): RolePreset[] {
+  return STARTER_ROLE_PRESET_KEYS.map((key) => ({ ...ROLE_PRESETS[key] }));
+}
+
+export function listRoleIndustries(): RoleIndustryCatalog[] {
+  return Object.entries(ROLE_INDUSTRY_PRESETS).map(([industry, presets]) => ({
+    industry,
+    presets: Object.entries(presets).map(([key, preset]) => ({
+      industry,
+      key,
+      ...preset,
+    })),
+  }));
 }
 
 export function getRolePreset(name: string): RolePreset | undefined {
