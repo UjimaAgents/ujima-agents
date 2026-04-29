@@ -31,6 +31,7 @@ import { registerConversationRoutes } from './routes/conversations.js';
 import { registerAuthRoutes } from './routes/auth.js';
 import { registerOnboardingRoutes } from './routes/onboarding.js';
 import { registerRunRoutes } from './routes/runs.js';
+import { registerRoleRoutes } from './routes/roles.js';
 import { registerSettingsRoutes } from './routes/settings.js';
 import { registerTaskRoutes } from './routes/tasks.js';
 import { registerWorkspaceRoutes } from './routes/workspaces.js';
@@ -114,6 +115,7 @@ export function createTransport(opts: TransportOptions): Transport {
         { name: 'Conversations' },
         { name: 'Onboarding' },
         { name: 'Runs' },
+        { name: 'Roles' },
         { name: 'Settings' },
         { name: 'System' },
         { name: 'Tasks' },
@@ -196,6 +198,7 @@ export function createTransport(opts: TransportOptions): Transport {
     // Core Entities
     registerWorkspaceRoutes(api, host);
     registerAgentRoutes(api, host);
+    registerRoleRoutes(api);
 
     // Orchestrator Services
     if (opts.apiServices) {

@@ -96,6 +96,31 @@ describe('transport (in-process)', () => {
     expect(h.pid).toBe(process.pid);
   });
 
+  it('serves the role catalog endpoints', async () => {
+    const headers = { authorization: `Bearer ${TOKEN}` };
+
+    const presetsRes = await fetch(`${baseUrl}/api/roles/presets`, { headers });
+    expect(presetsRes.status).toBe(200);
+    const presets = (await presetsRes.json()) as { presets: Array<{ key: string; industry: string }> };
+    expect(presets.presets.some((preset) => preset.key === 'frontendEngineer')).toBe(true);
+
+    const industriesRes = await fetch(`${baseUrl}/api/roles/industries`, { headers });
+    expect(industriesRes.status).toBe(200);
+    const industries = (await industriesRes.json()) as {
+      industries: Array<{ industry: string; presets: Array<{ key: string }> }>;
+    };
+    expect(industries.industries.some((group) => group.industry === 'engineering')).toBe(true);
+
+    const engineeringRes = await fetch(`${baseUrl}/api/roles/industries/engineering`, { headers });
+    expect(engineeringRes.status).toBe(200);
+    const engineering = (await engineeringRes.json()) as {
+      industry: string;
+      presets: Array<{ key: string }>;
+    };
+    expect(engineering.industry).toBe('engineering');
+    expect(engineering.presets.some((preset) => preset.key === 'frontendEngineer')).toBe(true);
+  });
+
   it('creates, lists, fetches, updates, and removes workspaces', async () => {
     const client = createClient({ baseUrl, token: TOKEN });
     const created = await client.workspaces.create({ label: 'demo', root_path: '/tmp/demo' });
