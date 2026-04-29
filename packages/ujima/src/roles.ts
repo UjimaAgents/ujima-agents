@@ -15,15 +15,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 
-export type RoleIndustryPreset = {
+export interface RoleIndustryPreset extends RolePreset {
   industry: string;
   key: string;
-} & RolePreset;
+}
 
-export type RoleIndustryCatalog = {
+export interface RoleIndustryCatalog {
   industry: string;
   presets: RoleIndustryPreset[];
-};
+}
 
 export function listRolePresets(): RolePreset[] {
   return Object.values(ROLE_PRESETS).map((preset) => ({ ...preset }));
