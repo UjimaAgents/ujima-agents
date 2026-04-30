@@ -1,16 +1,17 @@
 "use client";
 
+import type { ApiError } from "@ujima/api-schema";
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Home, Sparkles } from "lucide-react";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { buildOnboardingRequest } from "./api-contract";
 import { OnboardingForm } from "./components/onboarding-form";
 import { OnboardingStepper } from "./components/onboarding-stepper";
 import {
   INITIAL_DRAFT,
   ONBOARDING_STEPS,
-  OWNER_MANAGER_SENTINEL,
   type OnboardingDraft,
   type OnboardingStepId,
   type TeamTabId,
@@ -100,9 +101,9 @@ function normalizeDraft(raw: unknown): OnboardingDraft {
           return {
             id: typeof (item as { id?: unknown }).id === "string" ? (item as { id: string }).id : `provider-restored-${index}`,
             name: typeof (item as { name?: unknown }).name === "string" ? (item as { name: string }).name : "",
-            apiKeyRef:
-              typeof (item as { apiKeyRef?: unknown }).apiKeyRef === "string"
-                ? (item as { apiKeyRef: string }).apiKeyRef
+            apiKey:
+              typeof (item as { apiKey?: unknown }).apiKey === "string"
+                ? (item as { apiKey: string }).apiKey
                 : "",
           };
         })
@@ -116,6 +117,7 @@ function normalizeDraft(raw: unknown): OnboardingDraft {
         typeof source.policies?.requireApprovalForShell === "boolean"
           ? source.policies.requireApprovalForShell
           : INITIAL_DRAFT.policies.requireApprovalForShell,
+      workspaceBoundaryMode: "hard",
     },
   };
 }
@@ -152,119 +154,6 @@ function readPersistedSession(): PersistedOnboardingState {
   }
 }
 
-function normalizeProviderName(input: string): string {
-  return input.trim().toLowerCase().replace(/\s+/g, "-");
-}
-
-function resolveProviderKind(input: string): string {
-  const normalized = normalizeProviderName(input);
-  if (
-    normalized === "anthropic" ||
-    normalized === "openai" ||
-    normalized === "google" ||
-    normalized === "openrouter" ||
-    normalized === "ollama"
-  ) {
-    return normalized;
-  }
-
-  // The onboarding UI can offer model vendors that aren't first-class daemon
-  // providers yet. Route them through OpenRouter so the payload stays valid
-  // instead of failing before the user can finish setup.
-  return "openrouter";
-}
-
-function buildOnboardingPayload(draft: OnboardingDraft) {
-  const roleNames = new Set(draft.roles.map((role) => role.name.trim()).filter(Boolean));
-  // The owner-targeting form value persists as the stable
-  // `OWNER_MANAGER_SENTINEL` (`@owner`) so renaming the owner mid-wizard
-  // doesn't silently drop previously configured edges. Older
-  // localStorage drafts may still carry the literal owner display name
-  // or the seed's `"Owner"` label — accept both as a back-compat path
-  // so users don't lose existing rows on first load after this change.
-  // The daemon resolves all of these to the owner member's id.
-  const ownerLabelRaw = draft.ownerName.trim();
-  const isOwnerManagerLabel = (value: string): boolean => {
-    if (!value) return false;
-    if (value === OWNER_MANAGER_SENTINEL) return true;
-    if (ownerLabelRaw && value === ownerLabelRaw) return true;
-    return value === "Owner" || value === "owner";
-  };
-
-  return {
-    organizationName: draft.organizationName.trim(),
-    ownerName: draft.ownerName.trim(),
-    ownerEmail: draft.ownerEmail.trim(),
-    ownerPassword: draft.ownerPassword,
-    workspaceRoot: draft.workspaceRoot.trim(),
-    providerKeys: Object.fromEntries(
-      draft.providers
-        .map((provider) => [resolveProviderKind(provider.name), provider.apiKeyRef.trim()] as const)
-        .filter((entry) => entry[0] && entry[1]),
-    ),
-    team: {
-      name: draft.organizationName.trim(),
-      channels: draft.channels.map((channel) => ({
-        id: channel.name.trim(),
-        name: channel.name.trim(),
-        kind: channel.name.trim() === "general" ? "general" : "group",
-        topic: channel.description.trim(),
-      })),
-      roles: draft.roles.map((role) => ({
-        id: role.name.trim(),
-        name: role.name.trim(),
-        title: role.title.trim(),
-        instructions: role.instructions.trim(),
-        provider: resolveProviderKind(role.llm),
-        model: role.model.trim(),
-        workspaceScopes: ["."],
-        channels: role.channelIds
-          .map((channelId) => draft.channels.find((channel) => channel.id === channelId)?.name.trim() ?? "")
-          .filter(Boolean),
-      })),
-      agents: draft.roles.map((role) => ({
-        name: role.name.trim(),
-        roleName: role.name.trim(),
-        personalityName: "direct",
-      })),
-      providers: Object.fromEntries(
-        draft.providers
-          .map((provider) => {
-            const resolvedKind = resolveProviderKind(provider.name);
-            return [
-              resolvedKind,
-              {
-                kind: resolvedKind,
-                apiKeyRef: provider.apiKeyRef.trim(),
-              },
-            ] as const;
-          })
-          .filter((entry) => entry[0]),
-      ),
-      organizationChart: {
-        reportsTo: Object.fromEntries(
-          draft.organizationReports
-            .filter((report) => {
-              const subject = report.subjectName.trim();
-              const manager = report.managerName.trim();
-              if (!roleNames.has(subject)) return false;
-              if (subject === manager) return false;
-              // Manager must be either another role OR the owner; the daemon
-              // resolves the owner label to the owner member's id.
-              return roleNames.has(manager) || isOwnerManagerLabel(manager);
-            })
-            .map((report) => [report.subjectName.trim(), report.managerName.trim()] as const),
-        ),
-      },
-      policies: {
-        requireApprovalForWrites: draft.policies.requireApprovalForWrites,
-        requireApprovalForShell: draft.policies.requireApprovalForShell,
-        workspaceBoundaryMode: "hard",
-      },
-    },
-  };
-}
-
 function isOrganizationStepComplete(draft: OnboardingDraft) {
   return Boolean(draft.organizationName.trim() && draft.workspaceRoot.trim());
 }
@@ -272,18 +161,20 @@ function isOrganizationStepComplete(draft: OnboardingDraft) {
 function isOwnerStepComplete(draft: OnboardingDraft) {
   return Boolean(
     draft.ownerName.trim() &&
-      /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(draft.ownerEmail) &&
+      /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(draft.ownerEmail.trim()) &&
       draft.ownerPassword.trim().length >= 8,
   );
 }
 
 function isTeamStepComplete(draft: OnboardingDraft) {
   const hasRoles = draft.roles.every(
-    (role) => role.name.trim() && role.title.trim() && role.instructions.trim() && role.llm.trim() && role.model.trim() && role.channelIds.length > 0,
+    (role) => role.name.trim() && role.llm.trim() && role.channelIds.length > 0,
   );
   const hasChannels = draft.channels.every((channel) => channel.name.trim() && channel.description.trim());
-  const hasReports = draft.organizationReports.every((report) => report.subjectName.trim() && report.managerName.trim());
-  const hasProviders = draft.providers.every((provider) => provider.name.trim() && provider.apiKeyRef.trim());
+  const hasReports = draft.organizationReports.every(
+    (report) => report.subjectName.trim() && report.managerName.trim(),
+  );
+  const hasProviders = draft.providers.every((provider) => provider.name.trim() && provider.apiKey.trim());
 
   return hasRoles && hasChannels && hasReports && hasProviders;
 }
@@ -366,6 +257,10 @@ export function OnboardingExperience() {
   };
 
   const handleSubmit = async (currentDraft: OnboardingDraft) => {
+    if (isSubmitting) {
+      return;
+    }
+
     setSubmitError(null);
     setIsSubmitting(true);
 
@@ -373,23 +268,28 @@ export function OnboardingExperience() {
       const response = await fetch("/api/onboarding", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(buildOnboardingPayload(currentDraft)),
+        body: JSON.stringify(buildOnboardingRequest(currentDraft)),
       });
-      const body = (await response.json().catch(() => ({}))) as { message?: string };
+      const body = (await response.json().catch(() => null)) as ApiError | null;
 
       if (!response.ok) {
-        setSubmitError(body.message ?? "Unable to complete onboarding right now.");
+        setSubmitError(
+          body && typeof body === "object" && "message" in body && typeof body.message === "string"
+            ? body.message
+            : "Unable to complete onboarding right now.",
+        );
         return;
       }
 
       window.localStorage.removeItem(ONBOARDING_STORAGE_KEY);
       router.replace("/workspace");
       router.refresh();
+    } catch (error) {
+      setSubmitError(error instanceof Error ? error.message : "Unable to complete onboarding right now.");
     } finally {
       setIsSubmitting(false);
     }
   };
-
   if (!isHydrated) {
     return null;
   }

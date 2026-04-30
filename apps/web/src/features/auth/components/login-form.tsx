@@ -1,14 +1,15 @@
 "use client";
 
+import type { ApiError, AuthSessionResponse } from "@ujima/api-schema";
+import Link from "next/link";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
 interface LoginFormProps {
   organizationId: string;
-  organizationName: string;
 }
 
-export function LoginForm({ organizationId, organizationName }: LoginFormProps) {
+export function LoginForm({ organizationId }: LoginFormProps) {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -30,9 +31,13 @@ export function LoginForm({ organizationId, organizationName }: LoginFormProps) 
         }),
       });
 
-      const body = (await response.json().catch(() => ({}))) as { message?: string };
+      const body = (await response.json().catch(() => null)) as ApiError | AuthSessionResponse | null;
       if (!response.ok) {
-        setError(body.message ?? "Unable to sign in right now.");
+        setError(
+          body && typeof body === "object" && "message" in body && typeof body.message === "string"
+            ? body.message
+            : "Unable to sign in right now.",
+        );
         return;
       }
 
@@ -46,15 +51,9 @@ export function LoginForm({ organizationId, organizationName }: LoginFormProps) 
       onSubmit={handleSubmit}
       className="mx-auto w-full max-w-md rounded-[28px] border border-zinc-200 bg-white p-8 shadow-[0_20px_80px_rgba(15,23,42,0.08)] dark:border-zinc-800 dark:bg-zinc-950"
     >
-      <p className="text-xs font-semibold uppercase tracking-[0.24em] text-violet-600 dark:text-violet-300">
-        Owner sign-in
-      </p>
       <h1 className="mt-4 text-3xl font-semibold tracking-[-0.03em] text-zinc-950 dark:text-zinc-50">
-        Continue into {organizationName}
+        Sign in
       </h1>
-      <p className="mt-3 text-sm leading-6 text-zinc-500 dark:text-zinc-400">
-        Your onboarding state is already registered. Sign in with the owner credentials created during setup.
-      </p>
 
       <div className="mt-8 space-y-5">
         <label className="block">
@@ -96,6 +95,15 @@ export function LoginForm({ organizationId, organizationName }: LoginFormProps) 
       >
         {isPending ? "Signing in..." : "Sign in"}
       </button>
+
+      <div className="mt-4 text-center">
+        <Link
+          href="/onboarding"
+          className="text-sm font-medium text-violet-600 transition hover:text-violet-700 dark:text-violet-300 dark:hover:text-violet-200"
+        >
+          Don&apos;t have an account? Sign up
+        </Link>
+      </div>
     </form>
   );
 }

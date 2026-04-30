@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { cookies } from "next/headers";
-import type { BootstrapResponse, SessionAuthState } from "./ujima-types";
+import type { BootstrapResponse, SessionAuthState } from "@ujima/api-schema";
 
 export const WEB_SESSION_COOKIE = "ujima_web_session";
 const DEFAULT_DAEMON_PORT = process.env.UJIMA_PORT ?? "7511";
