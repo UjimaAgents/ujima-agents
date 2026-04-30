@@ -27,7 +27,7 @@ export function registerOauthRoutes(_app: FastifyInstance): void {
     pkceStore.set(state, codeVerifier);
     setTimeout(() => pkceStore.delete(state), 10 * 60 * 1000);
 
-    const redirectUri = `${req.protocol}://${req.hostname}/api/auth/openai/callback`;
+    const redirectUri = `${req.protocol}://${req.headers.host}/api/auth/openai/callback`;
 
     const authUrl = new URL(OAUTH_AUTHORIZE_URL);
     authUrl.searchParams.set('response_type', 'code');
@@ -66,7 +66,7 @@ export function registerOauthRoutes(_app: FastifyInstance): void {
     pkceStore.delete(state);
 
     try {
-      const redirectUri = `${req.protocol}://${req.hostname}/api/auth/openai/callback`;
+      const redirectUri = `${req.protocol}://${req.headers.host}/api/auth/openai/callback`;
       
       const tokenResponse = await fetch(OAUTH_TOKEN_URL, {
         method: 'POST',
