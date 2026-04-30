@@ -396,12 +396,13 @@ function StepFields({
 
   const openRoleEditor = (roleId?: string) => {
     if (!roleId) {
+      const defaultProvider = draft.providers[0]?.name || "OpenAI";
       setRoleEditor({
         mode: "create",
         roleId: null,
         name: "",
-        llm: "Anthropic",
-        model: "claude-3-5-sonnet",
+        llm: defaultProvider,
+        model: defaultProvider === "Anthropic" ? "claude-3-5-sonnet" : "gpt-4o",
         channelIds: draft.channels.slice(0, 1).map((channel) => channel.id),
       });
       return;
