@@ -28,6 +28,8 @@ coverage
 # environment and secrets
 .env
 .env.*
+.ujima-dev-home/
+
 *.pem
 *.key
 *.crt
