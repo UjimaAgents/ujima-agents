@@ -23,6 +23,7 @@ import {
 import { formatProviderLabel } from "../api-contract";
 import {
   OWNER_MANAGER_SENTINEL,
+  defaultModelForProvider,
   type OnboardingDraft,
   type OnboardingStep,
   type OnboardingStepId,
@@ -402,7 +403,7 @@ function StepFields({
         roleId: null,
         name: "",
         llm: defaultProvider,
-        model: defaultProvider === "Anthropic" ? "claude-3-5-sonnet" : "gpt-4o",
+        model: defaultModelForProvider(defaultProvider),
         channelIds: draft.channels.slice(0, 1).map((channel) => channel.id),
       });
       return;
@@ -1051,7 +1052,8 @@ function StepFields({
 
                         let newRoles = draft.roles;
                         if (isFirst) {
-                          newRoles = draft.roles.map((role) => ({ ...role, llm: newName }));
+                          const model = defaultModelForProvider(newName);
+                          newRoles = draft.roles.map((role) => ({ ...role, llm: newName, model }));
                         }
 
                         onDraftChange({
@@ -1124,7 +1126,10 @@ function StepFields({
                   <select
                     id="roleLlm"
                     value={roleEditor.llm}
-                    onChange={(event) => setRoleEditor({ ...roleEditor, llm: event.target.value })}
+                    onChange={(event) => {
+                      const llm = event.target.value;
+                      setRoleEditor({ ...roleEditor, llm, model: defaultModelForProvider(llm) });
+                    }}
                     className="w-full rounded-lg border border-zinc-200 bg-white px-4 py-2.5 text-sm outline-none transition focus:border-violet-500 dark:border-zinc-700 dark:bg-zinc-950"
                   >
                     {LLM_OPTIONS.map((option) => (
@@ -1140,7 +1145,7 @@ function StepFields({
                     value={roleEditor.model}
                     onChange={(event) => setRoleEditor({ ...roleEditor, model: event.target.value })}
                     className="w-full rounded-lg border border-zinc-200 bg-white px-4 py-2.5 text-sm outline-none transition focus:border-violet-500 dark:border-zinc-700 dark:bg-zinc-950"
-                    placeholder="claude-3-5-sonnet"
+                    placeholder={defaultModelForProvider(roleEditor.llm)}
                   />
                 </FieldShell>
               </div>

@@ -74,6 +74,26 @@ export interface FlowWidgetSpec {
   bestLibrary: string;
 }
 
+function normalizeProviderToken(value: string) {
+  return value.trim().toLowerCase().replace(/[\s_]+/g, "-");
+}
+
+const DEFAULT_MODEL_BY_PROVIDER: Record<string, string> = {
+  anthropic: "claude-3-5-sonnet",
+  openai: "gpt-4o",
+  google: "gemini-1.5-pro",
+  mistral: "mistral-large-latest",
+  deepseek: "deepseek-chat",
+  xai: "grok-2-latest",
+  kimi: "moonshot-v1-8k",
+  "zhipu-ai": "glm-4-plus",
+  "openai-codex": "gpt-4o",
+};
+
+export function defaultModelForProvider(provider: string): string {
+  return DEFAULT_MODEL_BY_PROVIDER[normalizeProviderToken(provider)] ?? "gpt-4o";
+}
+
 export const ONBOARDING_STEPS: OnboardingStep[] = [
   {
     id: "organization",
@@ -137,7 +157,7 @@ export const INITIAL_DRAFT: OnboardingDraft = {
       title: "Senior Engineer",
       instructions: "Lead architecture, code quality, and complex implementation.",
       llm: "OpenAI",
-      model: "gpt-4o",
+      model: defaultModelForProvider("OpenAI"),
       channelIds: ["channel-engineering", "channel-reviews", "channel-general"],
     },
     {
@@ -146,7 +166,7 @@ export const INITIAL_DRAFT: OnboardingDraft = {
       title: "Software Engineer",
       instructions: "Implement features, fix bugs, and write tests.",
       llm: "OpenAI",
-      model: "gpt-4o",
+      model: defaultModelForProvider("OpenAI"),
       channelIds: ["channel-engineering", "channel-general"],
     },
     {
@@ -155,7 +175,7 @@ export const INITIAL_DRAFT: OnboardingDraft = {
       title: "Code Reviewer",
       instructions: "Review changes and enforce quality standards.",
       llm: "OpenAI",
-      model: "gpt-4o",
+      model: defaultModelForProvider("OpenAI"),
       channelIds: ["channel-reviews", "channel-general"],
     },
     {
@@ -164,7 +184,7 @@ export const INITIAL_DRAFT: OnboardingDraft = {
       title: "Product Manager",
       instructions: "Define requirements, priorities, and product direction.",
       llm: "OpenAI",
-      model: "gpt-4o",
+      model: defaultModelForProvider("OpenAI"),
       channelIds: ["channel-product", "channel-general"],
     },
   ],

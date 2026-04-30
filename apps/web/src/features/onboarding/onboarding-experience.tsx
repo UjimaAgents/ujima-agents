@@ -12,6 +12,7 @@ import { OnboardingStepper } from "./components/onboarding-stepper";
 import {
   INITIAL_DRAFT,
   ONBOARDING_STEPS,
+  defaultModelForProvider,
   type OnboardingDraft,
   type OnboardingStepId,
   type TeamTabId,
@@ -19,6 +20,7 @@ import {
 
 const TEAM_TABS: TeamTabId[] = ["agents", "channels", "org-chart", "policies", "providers"];
 const ONBOARDING_STORAGE_KEY = "ujima-web-onboarding-session-v1";
+const SEED_ROLE_IDS = new Set(INITIAL_DRAFT.roles.map((role) => role.id));
 
 interface PersistedOnboardingState {
   activeStep: OnboardingStepId;
@@ -27,7 +29,7 @@ interface PersistedOnboardingState {
 }
 
 function subscribe() {
-  return () => {};
+  return () => undefined;
 }
 
 function isStepId(value: unknown): value is OnboardingStepId {
@@ -50,16 +52,24 @@ function normalizeDraft(raw: unknown): OnboardingDraft {
     roles: Array.isArray(source.roles)
       ? source.roles.map((role, index) => {
           const item = typeof role === "object" && role !== null ? role : {};
+          const id = typeof (item as { id?: unknown }).id === "string" ? (item as { id: string }).id : `role-restored-${index}`;
+          const llm = typeof (item as { llm?: unknown }).llm === "string" ? (item as { llm: string }).llm : "";
+          const model = typeof (item as { model?: unknown }).model === "string" ? (item as { model: string }).model : "";
+          const repairedModel =
+            SEED_ROLE_IDS.has(id) && model === "gpt-4o" && defaultModelForProvider(llm) !== "gpt-4o"
+              ? defaultModelForProvider(llm)
+              : model;
+
           return {
-            id: typeof (item as { id?: unknown }).id === "string" ? (item as { id: string }).id : `role-restored-${index}`,
+            id,
             name: typeof (item as { name?: unknown }).name === "string" ? (item as { name: string }).name : "",
             title: typeof (item as { title?: unknown }).title === "string" ? (item as { title: string }).title : "",
             instructions:
               typeof (item as { instructions?: unknown }).instructions === "string"
                 ? (item as { instructions: string }).instructions
                 : "",
-            llm: typeof (item as { llm?: unknown }).llm === "string" ? (item as { llm: string }).llm : "",
-            model: typeof (item as { model?: unknown }).model === "string" ? (item as { model: string }).model : "",
+            llm,
+            model: repairedModel,
             channelIds: Array.isArray((item as { channelIds?: unknown }).channelIds)
               ? ((item as { channelIds: unknown[] }).channelIds.filter((channelId): channelId is string => typeof channelId === "string"))
               : [],
