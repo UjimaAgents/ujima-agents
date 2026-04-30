@@ -186,6 +186,11 @@ export function createTransport(opts: TransportOptions): Transport {
 
   io.on('connection', (socket) => onSocketConnection(socket, host));
 
+  // Public APIs (No Auth Required)
+  fastify.register(async (api) => {
+    registerOauthRoutes(api);
+  }, { prefix: '/api' });
+
   // Data API (Authenticated)
   fastify.register(async (api) => {
     api.addHook('onRequest', async (req, reply) => {
@@ -200,7 +205,6 @@ export function createTransport(opts: TransportOptions): Transport {
     registerWorkspaceRoutes(api, host);
     registerAgentRoutes(api, host);
     registerRoleRoutes(api);
-    registerOauthRoutes(api);
 
     // Orchestrator Services
     if (opts.apiServices) {
