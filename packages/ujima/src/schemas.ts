@@ -14,6 +14,12 @@ export const ProviderKindSchema = z.enum([
   'google',
   'openrouter',
   'ollama',
+  'deepseek',
+  'xai',
+  'mistral',
+  'kimi',
+  'zhipu',
+  'openai-codex',
 ]);
 export type ProviderKind = z.infer<typeof ProviderKindSchema>;
 

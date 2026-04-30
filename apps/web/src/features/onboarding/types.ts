@@ -181,8 +181,7 @@ export const INITIAL_DRAFT: OnboardingDraft = {
     { id: "report-pm", subjectName: "product-manager", managerName: OWNER_MANAGER_SENTINEL },
   ],
   providers: [
-    { id: "provider-openai", name: "openai", apiKey: "" },
-    { id: "provider-anthropic", name: "anthropic", apiKey: "" },
+    { id: "provider-default", name: "openai", apiKey: "" },
   ],
   policies: {
     requireApprovalForWrites: true,

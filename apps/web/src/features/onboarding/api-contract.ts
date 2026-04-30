@@ -7,7 +7,12 @@ const PROVIDER_NAME_MAP: Record<string, string> = {
   google: "google",
   openrouter: "openrouter",
   ollama: "ollama",
-  mistral: "openrouter",
+  deepseek: "deepseek",
+  xai: "xai",
+  mistral: "mistral",
+  kimi: "kimi",
+  zhipu: "zhipu",
+  "openai-codex": "openai-codex",
 };
 
 function normalizeToken(value: string) {
