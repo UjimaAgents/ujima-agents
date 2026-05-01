@@ -159,6 +159,12 @@ export interface ApiRepository extends ConversationRepository {
   ): ApprovalRequest | null;
   listPendingApprovals(organizationId: string): ApprovalRequest[];
   saveAuditEvent(event: AuditEvent): AuditEvent;
+  /**
+   * Run a synchronous DB transaction. The callback must complete
+   * synchronously — async work belongs after the commit. See
+   * `Repository.transaction` for the underlying contract.
+   */
+  transaction<T>(fn: () => T): T;
   saveSpirit(spirit: Spirit): Spirit;
   getSpirit(organizationId: string, spiritId: string): Spirit | null;
   getSpiritByTriple(

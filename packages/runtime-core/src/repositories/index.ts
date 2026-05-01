@@ -322,6 +322,34 @@ export class Repository {
 
   saveAuditEvent = (event: AuditEvent): AuditEvent => writeAuditEvent(this.db, event);
 
+  /**
+   * Execute `fn` inside a synchronous DB transaction. Commits on
+   * normal return, rolls back on throw. The callback must run
+   * synchronously — bun:sqlite / better-sqlite3 don't support async
+   * statement queues so awaiting inside the transaction would either
+   * suspend it (better-sqlite3) or escape it (bun:sqlite). Async work
+   * (network, LLM calls, message publishing) belongs after the commit.
+   *
+   * Nested transactions are NOT supported — the SQLite drivers raise
+   * "cannot start a transaction within a transaction". Callers should
+   * compose the entire write at the top of the chain.
+   */
+  transaction = <T>(fn: () => T): T => {
+    this.db.exec('BEGIN');
+    try {
+      const result = fn();
+      this.db.exec('COMMIT');
+      return result;
+    } catch (err) {
+      try {
+        this.db.exec('ROLLBACK');
+      } catch {
+        // best-effort rollback — surface the original error
+      }
+      throw err;
+    }
+  };
+
   saveSpirit = (spirit: Spirit): Spirit => writeSpirit(this.db, spirit);
   getSpirit = (organizationId: string, spiritId: string): Spirit | null =>
     readSpirit(this.db, organizationId, spiritId);

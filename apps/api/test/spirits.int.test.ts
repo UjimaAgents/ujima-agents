@@ -21,6 +21,7 @@ import {
   ToolServiceImpl,
   createTeamStore,
   pickProviderModel,
+  taskRunChannelId,
   type ApiRepository,
   type ApprovalRequester,
   type ModelResolver,
@@ -595,7 +596,7 @@ describe('SupervisorService — Phase 2.C', () => {
     await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
   });
 
-  it('returns null when no active spirit (idle agents take the regular wake path)', async () => {
+  it('returns no-active-spirit when no active spirit (caller falls through to regular wake path)', async () => {
     const fixture = await createFixture();
     tempDirs.push(fixture.archiveRoot);
 
@@ -607,7 +608,7 @@ describe('SupervisorService — Phase 2.C', () => {
       byMemberId: fixture.ownerId,
       reason: 'mention',
     });
-    expect(outcome).toBeNull();
+    expect(outcome.kind).toBe('no-active-spirit');
   });
 
   it('answers DM/@mention through cheaper-tier model + increments supervisor_turn_count', async () => {
@@ -644,7 +645,7 @@ describe('SupervisorService — Phase 2.C', () => {
       body: '@frontend-alice quick status?',
     });
 
-    const outcome = await fixture.supervisor.handleAlert({
+    const dispatch = await fixture.supervisor.handleAlert({
       organizationId: fixture.organizationId,
       memberId: 'frontend-alice',
       messageId: askMessage.id,
@@ -653,11 +654,12 @@ describe('SupervisorService — Phase 2.C', () => {
       byMemberId: fixture.ownerId,
       reason: 'mention',
     });
-    expect(outcome).not.toBeNull();
-    expect(outcome!.fallback).toBe(false);
-    expect(outcome!.message.content).toContain('rolling out the auth bits');
-    expect(outcome!.message.channelId).toBe(general.id);
-    expect(outcome!.message.parentMessageId).toBe(askMessage.id);
+    expect(dispatch.kind).toBe('replied');
+    if (dispatch.kind !== 'replied') throw new Error('expected replied');
+    expect(dispatch.outcome.fallback).toBe(false);
+    expect(dispatch.outcome.message.content).toContain('rolling out the auth bits');
+    expect(dispatch.outcome.message.channelId).toBe(general.id);
+    expect(dispatch.outcome.message.parentMessageId).toBe(askMessage.id);
 
     const refreshed = fixture.repo.getTaskSession(fixture.organizationId, session.id)!;
     expect(refreshed.supervisorTurnCount).toBe(1);
@@ -709,10 +711,11 @@ describe('SupervisorService — Phase 2.C', () => {
       outcomes.push(r);
     }
 
-    expect(outcomes.slice(0, 3).every((o) => o && !o.fallback)).toBe(true);
-    expect(outcomes[3]?.fallback).toBe(true);
-    expect(outcomes[3]?.reason).toBe('cap-reached');
-    expect(outcomes[3]?.message.content).toMatch(/Supervisor turn cap reached/);
+    const replied = outcomes.map((o) => (o.kind === 'replied' ? o.outcome : null));
+    expect(replied.slice(0, 3).every((r) => r !== null && !r.fallback)).toBe(true);
+    expect(replied[3]?.fallback).toBe(true);
+    expect(replied[3]?.reason).toBe('cap-reached');
+    expect(replied[3]?.message.content).toMatch(/Supervisor turn cap reached/);
   });
 
   // -------------------------------------------------------------------
@@ -801,8 +804,10 @@ describe('SupervisorService — Phase 2.C', () => {
     });
 
     const [resultA, resultB] = await Promise.all([promiseA, promiseB]);
-    expect(resultA?.fallback).toBe(false);
-    expect(resultB?.fallback).toBe(false);
+    expect(resultA.kind).toBe('replied');
+    expect(resultB.kind).toBe('replied');
+    if (resultA.kind === 'replied') expect(resultA.outcome.fallback).toBe(false);
+    if (resultB.kind === 'replied') expect(resultB.outcome.fallback).toBe(false);
 
     // The mutex contract: A must complete before B starts.
     expect(order).toEqual(['start:A', 'end:A', 'start:B', 'end:B']);
@@ -878,5 +883,290 @@ describe('SupervisorService — Phase 2.C', () => {
         role: 'worker',
       }),
     ).toBe('opus');
+  });
+
+  // -------------------------------------------------------------------
+  // NEW (audit fix #3): debounced alerts must NOT fall through to wake
+  // -------------------------------------------------------------------
+  it('debounced handleAlert returns kind=debounced (caller must NOT spawn a fallback run)', async () => {
+    // Use a real debounce window so the second alert lands inside it.
+    const archiveRoot = await mkdtemp(join(tmpdir(), 'ujima-debounce-'));
+    tempDirs.push(archiveRoot);
+    const db = openDatabase({ dbPath: ':memory:' });
+    const repo = new Repository(db);
+    const teamStore = createTeamStore();
+    const onboarding = new OnboardingService(repo, teamStore);
+    await onboarding.onboard({
+      organizationName: 'Debounce Org',
+      ownerName: 'Owner',
+      workspaceRoot: archiveRoot,
+      providerKeys: { local: 'k' },
+      team: {
+        channels: [{ name: 'general', kind: 'general', topic: '' }],
+        roles: [
+          {
+            name: 'r',
+            title: 'R',
+            instructions: 'i',
+            workspaceScopes: [],
+            tools: [],
+            channels: ['general'],
+            provider: 'local',
+            model: 'm',
+          },
+        ],
+        providers: { local: { kind: 'openai', defaultModel: 'm' } },
+        agents: [{ name: 'agent-x', roleName: 'r', personalityName: 'direct' }],
+      },
+    });
+    const owner = repo.listMembers(repo.getLatestOrganization()!.id).find((m) => m.kind === 'human')!;
+    const conversations = new ConversationService(repo, noopRealtime());
+    const registry = new ActiveSpiritRegistry();
+    const stubTools: ToolService = {
+      invoke: async () => ({ ok: true, output: { status: 'completed' } }),
+      allowRun: () => undefined,
+    };
+    const spirits = new SpiritService(teamStore, repo, noopRealtime(), stubTools, {
+      modelResolver: () => makeTextOnlyModel('reply'),
+      registry,
+    });
+    const supervisor = new SupervisorService(
+      repo,
+      noopRealtime(),
+      conversations,
+      spirits,
+      registry,
+      { debounceMs: 5_000, turnCapPerSession: 10 },
+    );
+    const taskSessions = new TaskSessionService(repo, conversations, spirits);
+
+    const { session } = taskSessions.create({
+      organizationId: owner.organizationId,
+      requestedBy: owner.id,
+      prompt: 'p',
+      team: ['agent-x'],
+    });
+    const sp = spirits.spawn({
+      organizationId: owner.organizationId,
+      taskSessionId: session.id,
+      memberId: 'agent-x',
+    });
+    spirits.updateStatus(owner.organizationId, sp.id, 'running');
+
+    const general = repo.getChannel(owner.organizationId, 'general')!;
+    const m1 = conversations.postToChannel({
+      organizationId: owner.organizationId,
+      senderId: owner.id,
+      channelId: general.id,
+      body: '@agent-x first',
+    });
+
+    const first = await supervisor.handleAlert({
+      organizationId: owner.organizationId,
+      memberId: 'agent-x',
+      messageId: m1.id,
+      channelId: general.id,
+      threadId: m1.threadId,
+      byMemberId: owner.id,
+      reason: 'mention',
+    });
+    expect(first.kind).toBe('replied');
+
+    // Second alert immediately lands inside the 5s debounce window.
+    const m2 = conversations.postToChannel({
+      organizationId: owner.organizationId,
+      senderId: owner.id,
+      channelId: general.id,
+      body: '@agent-x second',
+    });
+    const second = await supervisor.handleAlert({
+      organizationId: owner.organizationId,
+      memberId: 'agent-x',
+      messageId: m2.id,
+      channelId: general.id,
+      threadId: m2.threadId,
+      byMemberId: owner.id,
+      reason: 'mention',
+    });
+
+    // The fix: debounced alerts return their own kind, distinct from
+    // no-active-spirit, so wakeMember can short-circuit instead of
+    // spawning a duplicate run.
+    expect(second.kind).toBe('debounced');
+  });
+});
+
+// =====================================================================
+// Audit fix regressions for TaskSessionService.create
+// =====================================================================
+
+describe('TaskSessionService.create — audit fix regressions', () => {
+  const tempDirs: string[] = [];
+  afterEach(async () => {
+    await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+  });
+
+  // -------------------------------------------------------------------
+  // NEW (audit fix #1): channel/thread ids are namespaced by org so two
+  // orgs with the same slug do not corrupt each other's task-run state.
+  // -------------------------------------------------------------------
+  it('two organisations with the same slug produce distinct, non-colliding channel ids', async () => {
+    const archiveRoot = await mkdtemp(join(tmpdir(), 'ujima-cross-org-'));
+    tempDirs.push(archiveRoot);
+    const db = openDatabase({ dbPath: ':memory:' });
+    const repo = new Repository(db);
+    const teamStore = createTeamStore();
+
+    // Two completely independent organisations on the same DB.
+    const onboardOrg = async (name: string, agentName: string): Promise<string> => {
+      const onboarding = new OnboardingService(repo, teamStore);
+      await onboarding.onboard({
+        organizationName: name,
+        ownerName: `${name} Owner`,
+        workspaceRoot: archiveRoot,
+        providerKeys: { local: 'k' },
+        team: {
+          channels: [{ name: 'general', kind: 'general', topic: '' }],
+          roles: [
+            {
+              name: 'eng',
+              title: 'Eng',
+              instructions: 'i',
+              workspaceScopes: [],
+              tools: [],
+              channels: ['general'],
+              provider: 'local',
+              model: 'm',
+            },
+          ],
+          providers: { local: { kind: 'openai', defaultModel: 'm' } },
+          agents: [{ name: agentName, roleName: 'eng', personalityName: 'direct' }],
+        },
+      });
+      return repo.listOrganizations().find((o) => o.name === name)!.id;
+    };
+
+    const orgA = await onboardOrg('Org A', 'a-agent');
+    const orgB = await onboardOrg('Org B', 'b-agent');
+    const ownerA = repo.listMembers(orgA).find((m) => m.kind === 'human')!.id;
+    const ownerB = repo.listMembers(orgB).find((m) => m.kind === 'human')!.id;
+
+    const conversations = new ConversationService(repo, noopRealtime());
+    const taskSessions = new TaskSessionService(repo, conversations);
+
+    const { session: sessionA } = taskSessions.create({
+      organizationId: orgA,
+      requestedBy: ownerA,
+      prompt: 'shared prompt',
+      team: ['a-agent'],
+      slug: 'shared-slug',
+    });
+    const { session: sessionB } = taskSessions.create({
+      organizationId: orgB,
+      requestedBy: ownerB,
+      prompt: 'shared prompt',
+      team: ['b-agent'],
+      slug: 'shared-slug',
+    });
+
+    // Both sessions share the slug but the channel ids are disjoint
+    // (the org id is baked in).
+    expect(sessionA.slug).toBe('shared-slug');
+    expect(sessionB.slug).toBe('shared-slug');
+    expect(sessionA.channelId).toBe(taskRunChannelId(orgA, 'shared-slug'));
+    expect(sessionB.channelId).toBe(taskRunChannelId(orgB, 'shared-slug'));
+    expect(sessionA.channelId).not.toBe(sessionB.channelId);
+
+    // Each org sees only its own task-run channel — the prior bug
+    // would have had the second create overwrite the first.
+    const channelA = repo.getChannel(orgA, sessionA.channelId)!;
+    const channelB = repo.getChannel(orgB, sessionB.channelId)!;
+    expect(channelA.organizationId).toBe(orgA);
+    expect(channelB.organizationId).toBe(orgB);
+    expect(channelA.memberIds.sort()).toEqual([ownerA, 'a-agent'].sort());
+    expect(channelB.memberIds.sort()).toEqual([ownerB, 'b-agent'].sort());
+
+    // Cross-org lookups by id must MISS — the channel only exists in
+    // its own org's row. (saveChannel filters by `organization_id` AND
+    // `id`, so the namespaced id on top of the org filter is double
+    // protection against a leak.)
+    expect(repo.getChannel(orgA, sessionB.channelId)).toBeNull();
+    expect(repo.getChannel(orgB, sessionA.channelId)).toBeNull();
+  });
+
+  // -------------------------------------------------------------------
+  // NEW (audit fix #2): create runs in a transaction; on failure
+  // mid-flight no orphan channels/threads remain.
+  // -------------------------------------------------------------------
+  it('atomic create — a failure inside the transaction leaves no orphan channels/threads', async () => {
+    const archiveRoot = await mkdtemp(join(tmpdir(), 'ujima-atomic-'));
+    tempDirs.push(archiveRoot);
+    const db = openDatabase({ dbPath: ':memory:' });
+    const repo = new Repository(db);
+    const teamStore = createTeamStore();
+    const onboarding = new OnboardingService(repo, teamStore);
+    await onboarding.onboard({
+      organizationName: 'Atomic Org',
+      ownerName: 'Owner',
+      workspaceRoot: archiveRoot,
+      providerKeys: { local: 'k' },
+      team: {
+        channels: [{ name: 'general', kind: 'general', topic: '' }],
+        roles: [
+          {
+            name: 'eng',
+            title: 'Eng',
+            instructions: 'i',
+            workspaceScopes: [],
+            tools: [],
+            channels: ['general'],
+            provider: 'local',
+            model: 'm',
+          },
+        ],
+        providers: { local: { kind: 'openai', defaultModel: 'm' } },
+        agents: [{ name: 'agent-x', roleName: 'eng', personalityName: 'direct' }],
+      },
+    });
+    const owner = repo.listMembers(repo.getLatestOrganization()!.id).find((m) => m.kind === 'human')!;
+
+    // Wrap repo so saveTaskSession throws — simulates a UNIQUE collision
+    // race past allocateSlug. Every other write in the tx body should
+    // ROLLBACK as a result.
+    const orgId = owner.organizationId;
+    const wrappedRepo: ApiRepository = new Proxy(repo, {
+      get(target, prop) {
+        if (prop === 'saveTaskSession') {
+          return () => {
+            throw new Error('simulated UNIQUE collision');
+          };
+        }
+        const value = Reflect.get(target, prop);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    }) as ApiRepository;
+
+    const conversations = new ConversationService(wrappedRepo, noopRealtime());
+    const taskSessions = new TaskSessionService(wrappedRepo, conversations);
+
+    expect(() =>
+      taskSessions.create({
+        organizationId: orgId,
+        requestedBy: owner.id,
+        prompt: 'will fail',
+        team: ['agent-x'],
+        slug: 'doomed',
+      }),
+    ).toThrow(/simulated UNIQUE collision/);
+
+    // The whole point of the transaction: the channel and thread that
+    // saveChannel/ensureThread wrote inside the tx must have rolled
+    // back. The org should now look exactly as it did before the
+    // failed create — no orphan task-run row, no orphan thread, no
+    // members table debris.
+    expect(repo.getChannel(orgId, taskRunChannelId(orgId, 'doomed'))).toBeNull();
+    expect(repo.getThread(orgId, taskRunChannelId(orgId, 'doomed'))).toBeNull();
+    expect(repo.getTaskSessionBySlug(orgId, 'doomed')).toBeNull();
+    expect(repo.listAllChannels(orgId).some((c) => c.kind === 'task-run')).toBe(false);
   });
 });

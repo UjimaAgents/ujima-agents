@@ -64,12 +64,13 @@ export type {
   UpdateOrganizationInput,
 } from './settings.js';
 export { TaskPromoterService } from './task-promoter.js';
-export { TaskSessionService } from './task-session.js';
+export { TaskSessionService, taskRunChannelId } from './task-session.js';
 export type { CreateTaskSessionInput, TaskSessionDetail } from './task-session.js';
 export type { TaskPromotionInput, TaskPromotionResult } from './task-promoter.js';
 export { SupervisorService } from './supervisor.js';
 export type {
   SupervisorAlertInput,
+  SupervisorDispatchResult,
   SupervisorReplyOutcome,
   SupervisorServiceOptions,
 } from './supervisor.js';
@@ -240,11 +241,13 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   );
 
   // Wake routing — replaces the simple `runs.createRun` fan-out.
-  // If the alerted member has a live worker, the alert goes through
-  // the supervisor (lazy, cheap, capped). Otherwise we fall through
-  // to the regular run loop the way Phase 1 did.
+  // The dispatch result is a discriminated union; only
+  // `no-active-spirit` falls through to the regular run loop. A
+  // `debounced` result means the supervisor intentionally suppressed
+  // the alert (second mention in a 2s burst) — falling through there
+  // would spawn a duplicate run that defeats the debounce.
   wakeMember = async (input) => {
-    const supervisorOutcome = await supervisor.handleAlert({
+    const dispatch = await supervisor.handleAlert({
       organizationId: input.organizationId,
       memberId: input.memberId,
       channelId: input.channelId,
@@ -253,7 +256,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
       byMemberId: input.byMemberId,
       reason: input.reason,
     });
-    if (supervisorOutcome) {
+    if (dispatch.kind !== 'no-active-spirit') {
       return;
     }
     await runs.createRun({

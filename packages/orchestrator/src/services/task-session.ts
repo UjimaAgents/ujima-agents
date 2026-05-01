@@ -70,11 +70,14 @@ export class TaskSessionService {
   /**
    * Create a TaskSession + matching task-run channel + join system message
    * + optional origin link-back. Atomic from the caller's perspective:
-   * either everything below the service line landed, or the call threw
-   * and nothing should have persisted (the SQLite work is small enough
-   * that we don't wrap it in an explicit transaction yet — Phase 2 may
-   * tighten this when the worker loop adds run-row persistence to the
-   * same call).
+   * the entire DB write set (channel, channel members, thread, session,
+   * join message, optional origin link-back message) runs inside one
+   * `repo.transaction()`. If any step throws, ROLLBACK leaves the org's
+   * task-run state untouched — no orphan channels, no half-created
+   * sessions, no pinned messages with a missing parent.
+   *
+   * Realtime emits fire after the commit so consumers never see events
+   * for state that may roll back.
    */
   create(input: CreateTaskSessionInput): TaskSessionDetail {
     this.requireOrganization(input.organizationId);
@@ -108,38 +111,21 @@ export class TaskSessionService {
     });
 
     const slug = this.allocateSlug(input.organizationId, input.slug ?? input.prompt);
-    const channelId = `task:${slug}`;
+    // Channel ids are global primary keys in the `channels` table, but
+    // task-run slugs are only unique per organisation (the
+    // `task_sessions` UNIQUE is `(organization_id, slug)`). Without the
+    // org prefix, two orgs that pick the same slug would collide on the
+    // channel PK and `saveChannel`'s ON CONFLICT(id) would silently
+    // overwrite the earlier org's task-run row. Namespacing the id by
+    // organisation makes a global collision impossible.
+    const channelId = taskRunChannelId(input.organizationId, slug);
     const sessionId = randomUUID();
     const now = new Date().toISOString();
 
-    // 1. Create the task-run channel pinned to this session.
     const channelMemberIds = Array.from(
       new Set([requester.id, ...teamMembers.map((m) => m.id)]),
     );
-    this.repo.saveChannel(
-      ChannelSchema.parse({
-        id: channelId,
-        organizationId: input.organizationId,
-        name: `#${slug}`,
-        kind: 'task-run',
-        topic: input.prompt.slice(0, 240),
-        memberIds: channelMemberIds,
-        createdAt: now,
-      }),
-    );
-    this.repo.setChannelMembers(channelId, channelMemberIds);
-    this.repo.ensureThread({
-      id: channelId,
-      organizationId: input.organizationId,
-      channelId,
-      title: `#${slug}`,
-      memberIds: channelMemberIds,
-      createdAt: now,
-    });
 
-    // 2. Persist the session row. `channel_id` is unique, so rerunning
-    //    `create` with the same slug after a crash is rejected by the
-    //    DB — callers must regenerate.
     const session = TaskSessionSchema.parse({
       id: sessionId,
       organizationId: input.organizationId,
@@ -160,9 +146,46 @@ export class TaskSessionService {
       createdAt: now,
       updatedAt: now,
     });
-    this.repo.saveTaskSession(session);
 
-    // 3. Post the "joined" system message in the new task-run channel.
+    // Atomic write block — channel + members + thread + session are
+    // ALL committed or NONE. The audit flagged the prior code for
+    // leaving orphan channels/threads when the session insert later
+    // raced on the slug UNIQUE; ROLLBACK eliminates that path.
+    //
+    // Messages (`task.join` + optional origin link-back) are published
+    // AFTER the commit. They're idempotent in the recovery sense — if
+    // the daemon dies between commit and publish, the channel still
+    // exists with valid session backing and we lose only the join card
+    // (a cosmetic, not a structural, loss). Putting them inside the tx
+    // would require duplicating ConversationService.publishMessage's
+    // mention-resolve / realtime-emit work — too much surface for too
+    // little gain.
+    this.repo.transaction(() => {
+      this.repo.saveChannel(
+        ChannelSchema.parse({
+          id: channelId,
+          organizationId: input.organizationId,
+          name: `#${slug}`,
+          kind: 'task-run',
+          topic: input.prompt.slice(0, 240),
+          memberIds: channelMemberIds,
+          createdAt: now,
+        }),
+      );
+      this.repo.setChannelMembers(channelId, channelMemberIds);
+      this.repo.ensureThread({
+        id: channelId,
+        organizationId: input.organizationId,
+        channelId,
+        title: `#${slug}`,
+        memberIds: channelMemberIds,
+        createdAt: now,
+      });
+      this.repo.saveTaskSession(session);
+    });
+
+    // Post-commit messages. Use publishMessage so the realtime path
+    // and mention-resolve plumbing match the rest of the substrate.
     const joinCard: MessageCard = {
       kind: 'task.join',
       cardId: randomUUID(),
@@ -181,9 +204,6 @@ export class TaskSessionService {
       card: joinCard,
     });
 
-    // 4. Optional origin link-back. Posts a system message in the
-    //    originating channel that points at the new task-run channel,
-    //    so the ambient conversation surfaces the work.
     if (input.origin?.channelId && input.origin.channelId !== channelId) {
       const originChannel = this.repo.getChannel(input.organizationId, input.origin.channelId);
       if (originChannel) {
@@ -350,6 +370,17 @@ export class TaskSessionService {
       throw new Error(`Organization not found: ${organizationId}`);
     }
   }
+}
+
+/**
+ * Compose the global PK for a task-run channel. The `channels.id`
+ * column is a global primary key, but slugs are only unique per
+ * organisation — without the org prefix two orgs choosing the same
+ * slug would collide on the channel PK and corrupt each other's
+ * task-run state. Exported so test fixtures can assert the shape.
+ */
+export function taskRunChannelId(organizationId: string, slug: string): string {
+  return `task:${organizationId}:${slug}`;
 }
 
 function sluggify(value: string): string {

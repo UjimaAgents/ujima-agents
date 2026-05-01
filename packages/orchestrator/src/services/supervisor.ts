@@ -62,6 +62,30 @@ export interface SupervisorReplyOutcome {
   reason: string;
 }
 
+/**
+ * Discriminated result of a `handleAlert` dispatch. Three terminal
+ * states the caller (createApiServices.wakeMember) cares about:
+ *
+ *   * `replied`           — supervisor turn fired and posted a reply
+ *   * `no-active-spirit`  — no live worker for this member; caller may
+ *                            fall through to the regular wake path
+ *   * `debounced`         — alert suppressed by the per-member 2s
+ *                            debounce window. Caller MUST NOT fall
+ *                            through — that would spawn a duplicate
+ *                            run for the second mention in a burst.
+ *   * `cap-blocked`       — supervisor cap reached for the session;
+ *                            included for completeness even though
+ *                            the cap path also publishes a fallback
+ *                            message via the `replied` channel
+ *                            (this state is reserved for future
+ *                            use; current cap path returns `replied`
+ *                            with `fallback=true`).
+ */
+export type SupervisorDispatchResult =
+  | { kind: 'replied'; outcome: SupervisorReplyOutcome }
+  | { kind: 'no-active-spirit' }
+  | { kind: 'debounced' };
+
 export class SupervisorService {
   private readonly debounceMs: number;
   private readonly turnCapPerSession: number;
@@ -81,23 +105,33 @@ export class SupervisorService {
   }
 
   /**
-   * Returns a `SupervisorReplyOutcome` when a supervisor turn fired,
-   * `null` when the alert should fall through to the regular wake
-   * path (no live worker for this member).
+   * Dispatch a `member.alerted` event. The caller (wakeMember in
+   * createApiServices) uses the result kind to decide whether to fall
+   * through to the regular run loop:
+   *
+   *   * `no-active-spirit` → fall through (idle agent, normal wake)
+   *   * `debounced`        → DO NOT fall through (suppressed in window)
+   *   * `replied`          → DO NOT fall through (supervisor handled it)
    */
-  async handleAlert(input: SupervisorAlertInput): Promise<SupervisorReplyOutcome | null> {
+  async handleAlert(input: SupervisorAlertInput): Promise<SupervisorDispatchResult> {
     const active = this.registry.getActiveForMember(input.organizationId, input.memberId);
     if (active.length === 0) {
-      return null;
+      return { kind: 'no-active-spirit' };
     }
     // Pick the most-recently-touched live spirit. The registry returns
     // entries in insertion order; for the production hot path (one
     // supervisor per active worker) this is fine.
     const target = active[0];
-    if (!target) return null;
+    if (!target) {
+      return { kind: 'no-active-spirit' };
+    }
 
     if (this.shouldDebounce(input.organizationId, input.memberId)) {
-      return null;
+      // Suppressed by the 2s window. The caller MUST treat this as
+      // "handled" — falling through to runs.createRun would spawn a
+      // duplicate run for the second mention in a chatty burst, which
+      // is exactly what the debounce exists to prevent.
+      return { kind: 'debounced' };
     }
 
     const mutexKey = this.mutexKey(input.organizationId, input.memberId);
@@ -118,7 +152,8 @@ export class SupervisorService {
         }
       }),
     );
-    return next;
+    const outcome = await next;
+    return { kind: 'replied', outcome };
   }
 
   // ------------------------------------------------------------------
