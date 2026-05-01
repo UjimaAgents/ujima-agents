@@ -497,6 +497,63 @@ const MIGRATIONS: { id: string; up: string }[] = [
         ON task_sessions(organization_id, created_at DESC, id DESC);
     `,
   },
+  {
+    id: '009_spirits',
+    up: `
+      -- Phase 2.A — spirits table.
+      --
+      -- A "spirit" is the per-{task_session_id, member_id, role} runtime
+      -- instance that drives an agent through a task session. The two
+      -- roles split distinct concerns:
+      --   role='worker'      — multi-turn loop that owns the work
+      --   role='supervisor'  — lazy DM/@mention answerer on a cheaper
+      --                        tier with a strict tool allowlist
+      --
+      -- Spirits are sticky to the (session, member, role) triple — re-
+      -- spawning the same combination resumes the existing row instead
+      -- of creating a duplicate. UNIQUE enforces the invariant at the
+      -- DB layer so two parallel start() calls can't race past each
+      -- other.
+      CREATE TABLE IF NOT EXISTS spirits (
+        id              TEXT PRIMARY KEY,
+        organization_id TEXT NOT NULL,
+        task_session_id TEXT NOT NULL,
+        member_id       TEXT NOT NULL,
+        role            TEXT NOT NULL DEFAULT 'worker',
+        run_id          TEXT,
+        status          TEXT NOT NULL DEFAULT 'queued',
+        iteration       INTEGER NOT NULL DEFAULT 0,
+        tokens_used     INTEGER NOT NULL DEFAULT 0,
+        last_message_id TEXT,
+        last_error      TEXT,
+        created_at      TEXT NOT NULL,
+        updated_at      TEXT NOT NULL,
+        ended_at        TEXT,
+        UNIQUE (task_session_id, member_id, role)
+      );
+      CREATE INDEX IF NOT EXISTS idx_spirits_org_status
+        ON spirits(organization_id, status, updated_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_spirits_session
+        ON spirits(task_session_id, role);
+      CREATE INDEX IF NOT EXISTS idx_spirits_member
+        ON spirits(member_id, status);
+    `,
+  },
+  {
+    id: '010_supervisor_todos',
+    up: `
+      -- Phase 2.B — extend the existing todos table (introduced in
+      -- migration 004_additive_ports) with a task_session_id pointer
+      -- so the supervisor.todo.* tools can scope reads/writes to the
+      -- active task without leaking across sessions.
+      --
+      -- Pre-existing todos rows continue to work with NULL — the
+      -- supervisor surface only writes scoped rows, but legacy
+      -- callers of the table aren't affected.
+      ALTER TABLE todos ADD COLUMN task_session_id TEXT;
+      CREATE INDEX IF NOT EXISTS idx_todos_task_session ON todos(task_session_id);
+    `,
+  },
 ];
 
 export interface DbOptions {

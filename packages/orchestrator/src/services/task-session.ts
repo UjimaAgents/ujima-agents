@@ -4,12 +4,14 @@ import {
   MessageSchema,
   TaskSessionSchema,
   type MessageCard,
+  type Spirit,
   type TaskExecutionMode,
   type TaskSession,
   type TaskSessionStatus,
 } from '@ujima/shared';
 import type { ConversationService } from './conversation.js';
 import type { ApiRepository, PaginatedTaskSessions } from './repository-reader.js';
+import type { SpiritService } from './spirit.js';
 
 // -----------------------------------------------------------------------
 // TaskSessionService — Phase 1 of the unified task shell.
@@ -57,6 +59,12 @@ export class TaskSessionService {
   constructor(
     private readonly repo: ApiRepository,
     private readonly conversations: ConversationService,
+    /**
+     * Phase 2 wiring. Optional so existing call sites (and Phase 1
+     * tests) that don't care about the spirit layer can keep
+     * constructing a TaskSessionService with two args.
+     */
+    private readonly spirits?: SpiritService,
   ) {}
 
   /**
@@ -205,6 +213,65 @@ export class TaskSessionService {
   get(organizationId: string, taskSessionId: string): TaskSession | null {
     this.requireOrganization(organizationId);
     return this.repo.getTaskSession(organizationId, taskSessionId);
+  }
+
+  /**
+   * Phase 2 entry point. Provisions a Worker row per agent on the team
+   * (idempotent — re-calling is a no-op past the first time per
+   * triple) and optionally drives one initial turn per worker. The
+   * default behaviour is `provisionOnly`, leaving the actual run kick
+   * off to the caller (route handler, supervisor, CLI). Tests pass
+   * `runFirstTurn: true` to exercise the full path in one call.
+   */
+  async start(
+    organizationId: string,
+    taskSessionId: string,
+    options: { runFirstTurn?: boolean } = {},
+  ): Promise<{ session: TaskSession; spirits: Spirit[] }> {
+    this.requireOrganization(organizationId);
+    if (!this.spirits) {
+      throw new Error('SpiritService is not wired into this TaskSessionService');
+    }
+    const session = this.repo.getTaskSession(organizationId, taskSessionId);
+    if (!session) {
+      throw new Error(`Task session not found: ${taskSessionId}`);
+    }
+    const spawned: Spirit[] = [];
+    for (const memberId of session.teamMemberIds) {
+      const spirit = this.spirits.spawn({
+        organizationId,
+        taskSessionId,
+        memberId,
+      });
+      spawned.push(spirit);
+    }
+
+    // Bump the session row to `running` once at least one spirit
+    // exists. The supervisor/promoter layer above can still flip it
+    // back to `waiting_for_approval` etc on its own cadence.
+    if (spawned.length > 0 && session.status === 'queued') {
+      this.repo.saveTaskSession({
+        ...session,
+        status: 'running',
+        updatedAt: new Date().toISOString(),
+      });
+    }
+
+    if (options.runFirstTurn) {
+      // Run spirits sequentially in tests so assertions stay
+      // deterministic. Production drives this via the real run loop
+      // and can choose its own concurrency.
+      for (const spirit of spawned) {
+        await this.spirits.run({
+          organizationId,
+          taskSessionId,
+          memberId: spirit.memberId,
+        });
+      }
+    }
+
+    const refreshed = this.repo.getTaskSession(organizationId, taskSessionId) ?? session;
+    return { session: refreshed, spirits: spawned };
   }
 
   list(

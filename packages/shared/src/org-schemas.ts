@@ -399,3 +399,70 @@ export const ToolResultSchema = z.object({
   isError: z.boolean().default(false),
 });
 export type ToolResult = z.infer<typeof ToolResultSchema>;
+
+// -----------------------------------------------------------------------
+// Spirit (Phase 2 of the unified task shell)
+// -----------------------------------------------------------------------
+//
+// A `Spirit` is the per-{task_session_id, member_id, role} runtime
+// instance that drives an agent through a task session.
+//
+//   * role='worker'      — the multi-turn AI SDK loop that owns the work.
+//   * role='supervisor'  — the lazy, low-cost DM/@mention answerer. Runs
+//                          a single turn on a cheaper-tier model and exits.
+//
+// Spirit rows are sticky to the (session, member, role) triple: the same
+// row is reused across starts/resumes/restarts. Tokens + iteration count
+// accumulate; status tracks lifecycle. The "spirit" name is deliberate —
+// it's the runtime presence of the agent on a specific task, distinct
+// from the persistent `members` row that owns the agent's identity.
+
+export const SpiritRoleSchema = z.enum(['worker', 'supervisor']);
+export type SpiritRole = z.infer<typeof SpiritRoleSchema>;
+
+export const SpiritStatusSchema = RunStatusSchema;
+export type SpiritStatus = z.infer<typeof SpiritStatusSchema>;
+
+export const SpiritSchema = z.object({
+  id: IdSchema,
+  organizationId: IdSchema,
+  taskSessionId: IdSchema,
+  memberId: IdSchema,
+  role: SpiritRoleSchema.default('worker'),
+  runId: IdSchema.optional(),
+  status: SpiritStatusSchema.default('queued'),
+  iteration: z.number().int().min(0).default(0),
+  tokensUsed: z.number().int().min(0).default(0),
+  lastMessageId: IdSchema.optional(),
+  lastError: z.string().optional(),
+  createdAt: TimestampSchema,
+  updatedAt: TimestampSchema,
+  endedAt: TimestampSchema.optional(),
+});
+export type Spirit = z.infer<typeof SpiritSchema>;
+
+// -----------------------------------------------------------------------
+// Todo (Phase 2 — supervisor.todo.* tools)
+// -----------------------------------------------------------------------
+//
+// The `todos` table predates the task shell (migration 004), but it only
+// becomes user-facing in Phase 2 via the supervisor.todo.* tool family.
+// Adding `taskSessionId` lets a supervisor scope its add/check/list to
+// the active task without leaking todos across sessions.
+
+export const TodoStatusSchema = z.enum(['pending', 'in_progress', 'completed', 'cancelled']);
+export type TodoStatus = z.infer<typeof TodoStatusSchema>;
+
+export const TodoSchema = z.object({
+  id: IdSchema,
+  organizationId: IdSchema,
+  taskSessionId: IdSchema.optional(),
+  runId: IdSchema.optional(),
+  memberId: IdSchema,
+  title: z.string().min(1),
+  status: TodoStatusSchema.default('pending'),
+  notes: z.string().default(''),
+  createdAt: TimestampSchema,
+  updatedAt: TimestampSchema,
+});
+export type Todo = z.infer<typeof TodoSchema>;

@@ -30,6 +30,15 @@ export function checkToolPolicy(
     return { allowed: true, requiresApproval: false };
   }
 
+  // Supervisor-only tools (`supervisor.todo.*`) bypass the role allowlist
+  // because the supervisor isn't a role — it's a runtime mode the
+  // SupervisorService injects on a per-turn basis (see SUPERVISOR_ALLOWED_TOOLS).
+  // Gating happens upstream by the SupervisorService restricting which tools
+  // make it into the model's palette.
+  if (toolId.startsWith('supervisor.')) {
+    return { allowed: true, requiresApproval: false };
+  }
+
   if (!role.tools.includes(toolId)) {
     return {
       allowed: false,

@@ -1,5 +1,6 @@
 import type { PermissionMiddleware } from '@ujima/permissions';
 import { AiService } from '../ai-service.js';
+import { ActiveSpiritRegistry } from './active-spirit-registry.js';
 import { ApprovalService } from './approval.js';
 import { AuthService } from './auth.js';
 import { BootstrapService } from './bootstrap.js';
@@ -10,6 +11,9 @@ import { OnboardingService } from './onboarding.js';
 import type { ApiRepository } from './repository-reader.js';
 import { RunService } from './run.js';
 import { SettingsService } from './settings.js';
+import { SpiritService, type ModelResolver } from './spirit.js';
+import { SupervisorService } from './supervisor.js';
+import { SupervisorTodoService } from './supervisor-todo.js';
 import { TaskPromoterService } from './task-promoter.js';
 import { TaskSessionService } from './task-session.js';
 import {
@@ -63,6 +67,29 @@ export { TaskPromoterService } from './task-promoter.js';
 export { TaskSessionService } from './task-session.js';
 export type { CreateTaskSessionInput, TaskSessionDetail } from './task-session.js';
 export type { TaskPromotionInput, TaskPromotionResult } from './task-promoter.js';
+export { SupervisorService } from './supervisor.js';
+export type {
+  SupervisorAlertInput,
+  SupervisorReplyOutcome,
+  SupervisorServiceOptions,
+} from './supervisor.js';
+export { SupervisorTodoService } from './supervisor-todo.js';
+export type {
+  SupervisorTodoAddInput,
+  SupervisorTodoCheckInput,
+  SupervisorTodoListInput,
+} from './supervisor-todo.js';
+export { ActiveSpiritRegistry, isAliveStatus } from './active-spirit-registry.js';
+export type { ActiveSpiritEntry } from './active-spirit-registry.js';
+export { SpiritService, pickProviderModel } from './spirit.js';
+export type {
+  ModelResolver,
+  ModelResolverInput,
+  RunSpiritInput,
+  RunSpiritOutcome,
+  SpawnSpiritInput,
+  SpiritServiceOptions,
+} from './spirit.js';
 export {
   ERR_NO_WORKSPACE_ROOT,
   WorkspaceRootRequiredError,
@@ -100,6 +127,12 @@ export interface ApiServicesContext extends ApiServiceContext {
   buildPermissionContext: PermissionContextBuilder;
   repo: ApiRepository;
   archiveRoot?: string;
+  /**
+   * Phase 2: optional model resolver override. Tests pass a mock that
+   * returns a `MockLanguageModelV3`; production leaves it unset and
+   * the SpiritService walks the team config + provider credentials.
+   */
+  spiritModelResolver?: ModelResolver;
 }
 
 export interface ApiServices {
@@ -115,6 +148,10 @@ export interface ApiServices {
   settings: SettingsService;
   taskPromoter: TaskPromoterService;
   taskSessions: TaskSessionService;
+  spirits: SpiritService;
+  supervisor: SupervisorService;
+  supervisorTodos: SupervisorTodoService;
+  activeSpirits: ActiveSpiritRegistry;
 }
 
 export function createApiServices(context: ApiServicesContext): ApiServices {
@@ -151,12 +188,15 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     requestApproval: (input) => approvalsImpl.requestApproval(input),
   };
 
+  const supervisorTodos = new SupervisorTodoService(context.repo);
+
   const innerTools = new ToolServiceImpl(
     context.teamStore,
     context.repo,
     approvalRequester,
     conversations,
     context.realtime,
+    supervisorTodos,
   );
 
   const tools = createPermissionGatedToolService(
@@ -176,7 +216,46 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     tools,
   );
   resumeRun = (orgId, runId) => runs.resumeAfterApproval(orgId, runId);
+
+  // Phase 2.C.1 — single shared in-memory registry. SpiritService writes
+  // (spawn/retire/complete); SupervisorService reads on every alert.
+  const activeSpirits = new ActiveSpiritRegistry();
+
+  const spirits = new SpiritService(
+    context.teamStore,
+    context.repo,
+    context.realtime,
+    tools,
+    {
+      modelResolver: context.spiritModelResolver,
+      registry: activeSpirits,
+    },
+  );
+  const supervisor = new SupervisorService(
+    context.repo,
+    context.realtime,
+    conversations,
+    spirits,
+    activeSpirits,
+  );
+
+  // Wake routing — replaces the simple `runs.createRun` fan-out.
+  // If the alerted member has a live worker, the alert goes through
+  // the supervisor (lazy, cheap, capped). Otherwise we fall through
+  // to the regular run loop the way Phase 1 did.
   wakeMember = async (input) => {
+    const supervisorOutcome = await supervisor.handleAlert({
+      organizationId: input.organizationId,
+      memberId: input.memberId,
+      channelId: input.channelId,
+      messageId: input.messageId,
+      threadId: input.threadId,
+      byMemberId: input.byMemberId,
+      reason: input.reason,
+    });
+    if (supervisorOutcome) {
+      return;
+    }
     await runs.createRun({
       organizationId: input.organizationId,
       agentId: input.memberId,
@@ -190,7 +269,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   const onboarding = new OnboardingService(context.repo, context.teamStore);
   const settings = new SettingsService(context.repo, context.teamStore);
   const taskPromoter = new TaskPromoterService(context.repo, runs);
-  const taskSessions = new TaskSessionService(context.repo, conversations);
+  const taskSessions = new TaskSessionService(context.repo, conversations, spirits);
 
   return {
     ai,
@@ -205,5 +284,9 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     settings,
     taskPromoter,
     taskSessions,
+    spirits,
+    supervisor,
+    supervisorTodos,
+    activeSpirits,
   };
 }

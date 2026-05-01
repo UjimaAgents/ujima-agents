@@ -15,6 +15,12 @@ export interface ToolInvocationInput {
   permissionMcpId?: string;
   permissionToolName?: string;
   bypassPermission?: boolean;
+  // Phase 2: spirit worker / supervisor context. The active task
+  // session id propagates through every tool call originated by a
+  // worker or supervisor turn so scoped tools (`supervisor.todo.*`)
+  // can read/write against the right aggregate without the model
+  // having to thread it through args.
+  taskSessionId?: string;
 }
 
 export interface ToolInvocationResult {

@@ -1,9 +1,11 @@
 import { z } from 'zod';
 import {
   IdSchema,
+  SpiritSchema,
   TaskExecutionModeSchema,
   TaskSessionSchema,
   TaskSessionStatusSchema,
+  TodoSchema,
 } from '@ujima/shared';
 
 // HTTP shapes for the unified task shell (Phase 1).
@@ -48,3 +50,29 @@ export const CreateTaskSessionResponseSchema = z.object({
   session: TaskSessionSchema,
 });
 export type CreateTaskSessionResponse = z.infer<typeof CreateTaskSessionResponseSchema>;
+
+// Phase 2 — start the workers attached to a task session. The default
+// behaviour is `provisionOnly` (queue + Worker rows materialised). The
+// optional `runFirstTurn` flag is mostly for tests; production drives
+// per-turn execution through the run loop / supervisor wakeups.
+export const StartTaskSessionRequestSchema = z.object({
+  organizationId: IdSchema,
+  runFirstTurn: z.boolean().optional(),
+});
+export type StartTaskSessionRequest = z.infer<typeof StartTaskSessionRequestSchema>;
+
+export const StartTaskSessionResponseSchema = z.object({
+  session: TaskSessionSchema,
+  spirits: z.array(SpiritSchema),
+});
+export type StartTaskSessionResponse = z.infer<typeof StartTaskSessionResponseSchema>;
+
+export const TaskSessionSpiritsResponseSchema = z.object({
+  spirits: z.array(SpiritSchema),
+});
+export type TaskSessionSpiritsResponse = z.infer<typeof TaskSessionSpiritsResponseSchema>;
+
+export const TaskSessionTodosResponseSchema = z.object({
+  todos: z.array(TodoSchema),
+});
+export type TaskSessionTodosResponse = z.infer<typeof TaskSessionTodosResponseSchema>;

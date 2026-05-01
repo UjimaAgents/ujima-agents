@@ -3,6 +3,7 @@ import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest }
 import { Server as SocketIOServer, type Socket } from 'socket.io';
 import type { Repository, RuntimeHost, Logger } from '@ujima/runtime-core';
 import type {
+  ActiveSpiritRegistry,
   ApprovalService,
   AuthService,
   BootstrapService,
@@ -10,6 +11,9 @@ import type {
   OnboardingService,
   RunService,
   SettingsService,
+  SpiritService,
+  SupervisorService,
+  SupervisorTodoService,
   TaskPromoterService,
   TaskSessionService,
 } from '@ujima/orchestrator';
@@ -66,6 +70,10 @@ export interface TransportOptions {
       settings: SettingsService;
       taskPromoter: TaskPromoterService;
       taskSessions: TaskSessionService;
+      spirits: SpiritService;
+      supervisor: SupervisorService;
+      supervisorTodos: SupervisorTodoService;
+      activeSpirits: ActiveSpiritRegistry;
     };
   };
 }
@@ -228,6 +236,7 @@ export function createTransport(opts: TransportOptions): Transport {
       });
       registerTaskSessionRoutes(api, {
         taskSessions: services.taskSessions,
+        repo: opts.apiServices.repo,
       });
     }
   }, { prefix: '/api' });

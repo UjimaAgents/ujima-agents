@@ -5,12 +5,16 @@ import {
   ApiErrorSchema,
   CreateTaskSessionRequestSchema,
   CreateTaskSessionResponseSchema,
+  StartTaskSessionRequestSchema,
+  StartTaskSessionResponseSchema,
   TaskSessionDetailQuerySchema,
   TaskSessionListQuerySchema,
   TaskSessionListResponseSchema,
+  TaskSessionSpiritsResponseSchema,
+  TaskSessionTodosResponseSchema,
 } from '@ujima/api-schema';
-import { TaskSessionSchema } from '@ujima/shared';
-import type { TaskSessionService } from '@ujima/orchestrator';
+import { TaskSessionSchema, TodoStatusSchema } from '@ujima/shared';
+import type { ApiRepository, TaskSessionService } from '@ujima/orchestrator';
 
 // Routes for the unified task shell (Phase 1). Mounted under `/api`
 // in server.ts, so the public paths are `/api/task-sessions/*`.
@@ -22,15 +26,29 @@ import type { TaskSessionService } from '@ujima/orchestrator';
 
 export interface TaskSessionRoutesOptions {
   taskSessions: TaskSessionService;
+  /**
+   * Phase 2 — repo handle for the workers/todos read endpoints. The
+   * routes file shouldn't grow into a service shim, so reads go
+   * straight to the repo (the same pattern bootstrap.ts uses).
+   */
+  repo: ApiRepository;
 }
 
 const TaskSessionIdParamsSchema = z.object({ id: z.string().min(1) });
+
+const TaskSessionScopedQuerySchema = z.object({
+  organizationId: z.string().min(1),
+});
+
+const TaskSessionTodosQuerySchema = TaskSessionScopedQuerySchema.extend({
+  status: TodoStatusSchema.optional(),
+});
 
 export function registerTaskSessionRoutes(
   fastify: FastifyInstance,
   options: TaskSessionRoutesOptions,
 ): void {
-  const { taskSessions } = options;
+  const { taskSessions, repo } = options;
   const app = fastify.withTypeProvider<ZodTypeProvider>();
 
   app.post('/task-sessions', {
@@ -121,6 +139,83 @@ export function registerTaskSessionRoutes(
       }
       return replyError(reply, 400, 'ERR_BAD_REQUEST', message);
     }
+  });
+
+  app.post('/task-sessions/:id/start', {
+    schema: {
+      description:
+        'Provision spirit worker instances for the task session, optionally driving one initial turn',
+      tags: ['Task Sessions'],
+      params: TaskSessionIdParamsSchema,
+      body: StartTaskSessionRequestSchema,
+      response: {
+        200: StartTaskSessionResponseSchema,
+        404: ApiErrorSchema,
+        409: ApiErrorSchema,
+      },
+    },
+  }, async (req, reply) => {
+    try {
+      const result = await taskSessions.start(req.body.organizationId, req.params.id, {
+        runFirstTurn: req.body.runFirstTurn,
+      });
+      return result;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (
+        message.startsWith('Organization not found') ||
+        message.startsWith('Task session not found') ||
+        message.startsWith('Member not found')
+      ) {
+        return replyError(reply, 404, 'ERR_NOT_FOUND', message);
+      }
+      if (message.includes('not wired') || message.includes('not an agent') || message.includes('retired')) {
+        return replyError(reply, 409, 'ERR_CONFLICT', message);
+      }
+      return replyError(reply, 400, 'ERR_BAD_REQUEST', message);
+    }
+  });
+
+  app.get('/task-sessions/:id/spirits', {
+    schema: {
+      description: 'List spirits attached to a task session',
+      tags: ['Task Sessions'],
+      params: TaskSessionIdParamsSchema,
+      querystring: TaskSessionScopedQuerySchema,
+      response: {
+        200: TaskSessionSpiritsResponseSchema,
+        404: ApiErrorSchema,
+      },
+    },
+  }, async (req, reply) => {
+    const session = repo.getTaskSession(req.query.organizationId, req.params.id);
+    if (!session) {
+      return replyError(reply, 404, 'ERR_NOT_FOUND', `task session "${req.params.id}" not found`);
+    }
+    const spirits = repo.listSpiritsForSession(req.query.organizationId, req.params.id);
+    return { spirits };
+  });
+
+  app.get('/task-sessions/:id/todos', {
+    schema: {
+      description: 'List supervisor todos scoped to a task session',
+      tags: ['Task Sessions'],
+      params: TaskSessionIdParamsSchema,
+      querystring: TaskSessionTodosQuerySchema,
+      response: {
+        200: TaskSessionTodosResponseSchema,
+        404: ApiErrorSchema,
+      },
+    },
+  }, async (req, reply) => {
+    const session = repo.getTaskSession(req.query.organizationId, req.params.id);
+    if (!session) {
+      return replyError(reply, 404, 'ERR_NOT_FOUND', `task session "${req.params.id}" not found`);
+    }
+    const todos = repo.listTodosForSession(req.query.organizationId, req.params.id, {
+      status: req.query.status,
+    });
+    return { todos };
   });
 }
 

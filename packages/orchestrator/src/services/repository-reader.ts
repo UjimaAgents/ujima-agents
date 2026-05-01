@@ -12,8 +12,12 @@ import type {
   MessageMention,
   Organization,
   RunState,
+  Spirit,
+  SpiritRole,
   TaskSession,
   TaskSessionStatus,
+  Todo,
+  TodoStatus,
   WorkspaceMember,
 } from '@ujima/shared';
 
@@ -155,6 +159,29 @@ export interface ApiRepository extends ConversationRepository {
   ): ApprovalRequest | null;
   listPendingApprovals(organizationId: string): ApprovalRequest[];
   saveAuditEvent(event: AuditEvent): AuditEvent;
+  saveSpirit(spirit: Spirit): Spirit;
+  getSpirit(organizationId: string, spiritId: string): Spirit | null;
+  getSpiritByTriple(
+    organizationId: string,
+    taskSessionId: string,
+    memberId: string,
+    role: SpiritRole,
+  ): Spirit | null;
+  listSpiritsForSession(organizationId: string, taskSessionId: string): Spirit[];
+  listActiveSpiritsForMember(organizationId: string, memberId: string): Spirit[];
+  saveTodo(todo: Todo): Todo;
+  getTodo(organizationId: string, todoId: string): Todo | null;
+  listTodosForSession(
+    organizationId: string,
+    taskSessionId: string,
+    options?: { status?: TodoStatus; memberId?: string },
+  ): Todo[];
+  updateTodoStatus(
+    organizationId: string,
+    todoId: string,
+    status: TodoStatus,
+    options?: { notes?: string },
+  ): Todo | null;
   deleteMessages(organizationId: string, messageIds: string[]): void;
   saveOrganization(organization: Organization): Organization;
   getLatestOrganization(): Organization | null;

@@ -13,8 +13,12 @@ import type {
   MessageMention,
   Organization,
   RunState,
+  Spirit,
+  SpiritRole,
   TaskSession,
   TaskSessionStatus,
+  Todo,
+  TodoStatus,
   WorkspaceMember,
 } from '@ujima/shared';
 import {
@@ -110,11 +114,24 @@ import {
   type PaginatedTaskSessions,
 } from './task-sessions.js';
 import {
+  getTodo as readTodo,
+  listTodosForSession as readTodosForSession,
+  saveTodo as writeTodo,
+  updateTodoStatus as writeTodoStatus,
+} from './todos.js';
+import {
   ensureThread as ensureThreadRecord,
   getThread as readThread,
   saveThread as writeThread,
   setThreadMembers as writeThreadMembers,
 } from './threads.js';
+import {
+  getSpirit as readSpirit,
+  getSpiritByTriple as readSpiritByTriple,
+  listActiveSpiritsForMember as readActiveSpiritsForMember,
+  listSpiritsForSession as readSpiritsForSession,
+  saveSpirit as writeSpirit,
+} from './spirits.js';
 
 export class Repository {
   private readonly secrets: SecretStore;
@@ -304,6 +321,35 @@ export class Repository {
     readPendingApprovals(this.db, organizationId);
 
   saveAuditEvent = (event: AuditEvent): AuditEvent => writeAuditEvent(this.db, event);
+
+  saveSpirit = (spirit: Spirit): Spirit => writeSpirit(this.db, spirit);
+  getSpirit = (organizationId: string, spiritId: string): Spirit | null =>
+    readSpirit(this.db, organizationId, spiritId);
+  getSpiritByTriple = (
+    organizationId: string,
+    taskSessionId: string,
+    memberId: string,
+    role: SpiritRole,
+  ): Spirit | null => readSpiritByTriple(this.db, organizationId, taskSessionId, memberId, role);
+  listSpiritsForSession = (organizationId: string, taskSessionId: string): Spirit[] =>
+    readSpiritsForSession(this.db, organizationId, taskSessionId);
+  listActiveSpiritsForMember = (organizationId: string, memberId: string): Spirit[] =>
+    readActiveSpiritsForMember(this.db, organizationId, memberId);
+
+  saveTodo = (todo: Todo): Todo => writeTodo(this.db, todo);
+  getTodo = (organizationId: string, todoId: string): Todo | null =>
+    readTodo(this.db, organizationId, todoId);
+  listTodosForSession = (
+    organizationId: string,
+    taskSessionId: string,
+    options?: { status?: TodoStatus; memberId?: string },
+  ): Todo[] => readTodosForSession(this.db, organizationId, taskSessionId, options);
+  updateTodoStatus = (
+    organizationId: string,
+    todoId: string,
+    status: TodoStatus,
+    options?: { notes?: string },
+  ): Todo | null => writeTodoStatus(this.db, organizationId, todoId, status, options);
 
   getBootstrapSnapshot = (): BootstrapSnapshot => readBootstrapSnapshot(this.db);
 }
