@@ -180,7 +180,7 @@ export function WorkspaceSidebar({
           </div>
           <div className="flex flex-col items-start overflow-hidden">
             <span className="truncate text-sm font-medium text-zinc-900 dark:text-zinc-50">
-              {bootstrap.auth.user?.name || "Admin"}
+              {bootstrap.auth.member?.name || "Admin"}
             </span>
           </div>
       <Settings className="ml-auto h-4 w-4 text-zinc-400" />

@@ -1049,7 +1049,7 @@ function StepFields({
               </div>
 
               <div className="space-y-4">
-                {draft.roles.map((role) => (
+                {draft.roles.map((role, index) => (
                   <article key={role.id} className="rounded-2xl border border-zinc-200 bg-white px-4 py-4 shadow-[0_1px_3px_rgba(15,23,42,0.04)] dark:border-zinc-800 dark:bg-zinc-950">
                     <div className="flex items-start justify-between gap-4">
                       <div className="flex min-w-0 gap-4">
