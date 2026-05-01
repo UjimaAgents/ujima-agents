@@ -1,6 +1,8 @@
 import type { OnboardingRequest } from "@ujima/api-schema";
 import { OWNER_MANAGER_SENTINEL, type OnboardingDraft } from "./types";
 
+export const MIN_TEAM_AGENTS = 2;
+
 const PROVIDER_NAME_MAP: Record<string, string> = {
   anthropic: "anthropic",
   openai: "openai",
@@ -43,6 +45,10 @@ function toRoleTitle(name: string) {
 export function buildOnboardingRequest(draft: OnboardingDraft): OnboardingRequest {
   const channelsById = new Map(draft.channels.map((channel) => [channel.id, channel]));
   const ownerManagerLabels = new Set([OWNER_MANAGER_SENTINEL, "owner", normalizeToken(draft.ownerName)]);
+  const agentNameByRoleName = new Map(
+    draft.roles.map((role) => [role.name.trim(), role.agentName.trim() || role.name.trim()] as const),
+  );
+  const validAgentNames = new Set(draft.roles.map((role) => role.agentName.trim() || role.name.trim()));
   const providerEntries = draft.providers
     .map((provider) => {
       const name = normalizeProviderName(provider.name);
@@ -74,17 +80,20 @@ export function buildOnboardingRequest(draft: OnboardingDraft): OnboardingReques
     };
   });
 
-  const agents = roles.map((role) => ({
+  const agents = draft.roles.map((role) => ({
     kind: "agent" as const,
-    name: role.name,
-    roleName: role.name,
+    name: role.agentName.trim() || role.name,
+    roleName: role.name.trim(),
     personalityName: "direct",
   }));
 
-  const validAgentNames = new Set(agents.map((agent) => agent.name));
+  const resolveAgentName = (value: string) => {
+    const normalized = value.trim();
+    return validAgentNames.has(normalized) ? normalized : agentNameByRoleName.get(normalized) ?? normalized;
+  };
   const reportsTo = Object.fromEntries(
     draft.organizationReports
-      .map((report) => [report.subjectName.trim(), report.managerName.trim()] as const)
+      .map((report) => [resolveAgentName(report.subjectName), resolveAgentName(report.managerName)] as const)
       .filter(([subjectName, managerName]) => {
         if (!validAgentNames.has(subjectName)) {
           return false;

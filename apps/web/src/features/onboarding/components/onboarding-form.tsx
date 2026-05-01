@@ -13,6 +13,7 @@ import {
   MoreHorizontal,
   PencilLine,
   Plus,
+  Search,
   Server,
   ShieldCheck,
   Sparkles,
@@ -20,13 +21,16 @@ import {
   Users,
   X,
 } from "lucide-react";
-import { formatProviderLabel } from "../api-contract";
+import { formatProviderLabel, MIN_TEAM_AGENTS } from "../api-contract";
+import { AGENT_NAME_SUGGESTIONS, getSuggestedAgentName } from "../agent-name-suggestions";
+import { Avatar } from "../../workspace/components/chat/primitives";
 import {
   OWNER_MANAGER_SENTINEL,
   defaultModelForProvider,
   type OnboardingDraft,
   type OnboardingStep,
   type OnboardingStepId,
+  type RolePresetTemplate,
   type TeamTabId,
 } from "../types";
 
@@ -35,6 +39,7 @@ interface OnboardingFormProps {
   stepIndex: number;
   totalSteps: number;
   draft: OnboardingDraft;
+  suggestedRoles: RolePresetTemplate[];
   onDraftChange: (next: OnboardingDraft) => void;
   activeTeamTab: TeamTabId;
   onTeamTabChange: (tabId: TeamTabId) => void;
@@ -187,25 +192,56 @@ function createId(prefix: string) {
   return `${prefix}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-function toTitleCase(value: string) {
+function getRoleTemplate(templateName: string, suggestedRoles: RolePresetTemplate[]) {
+  return suggestedRoles.find((template) => template.name === templateName);
+}
+
+function getTemplateChannelIds(template: RolePresetTemplate, draft: OnboardingDraft) {
+  const channelIds = template.channels
+    .map((channelName) => draft.channels.find((channel) => channel.name === channelName)?.id)
+    .filter((channelId): channelId is string => Boolean(channelId));
+
+  return channelIds.length > 0 ? channelIds : draft.channels.slice(0, 1).map((channel) => channel.id);
+}
+
+function getNextSuggestedTemplate(suggestedRoles: RolePresetTemplate[], draft: OnboardingDraft) {
+  return suggestedRoles.find((template) => !draft.roles.some((role) => role.name === template.name)) ?? suggestedRoles[0];
+}
+
+function matchesSuggestedRole(template: RolePresetTemplate, query: string) {
+  const haystack = `${template.title} ${template.name} ${template.description} ${template.instructions} ${template.channels.join(" ")}`.toLowerCase();
+  return haystack.includes(query);
+}
+
+function formatIndustryLabel(value: string) {
   return value
-    .split("-")
+    .split(/[-_\s]+/)
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
 }
 
 function validateTeamTab(tabId: TeamTabId, draft: OnboardingDraft): string | null {
+  if (draft.roles.length < MIN_TEAM_AGENTS) {
+    return `Add at least ${MIN_TEAM_AGENTS} agents before continuing.`;
+  }
+
   if (tabId === "agents") {
-    const hasValidRoles = draft.roles.every(
-      (role) =>
-        role.name.trim() &&
-        role.llm.trim() &&
-        role.channelIds.length > 0,
-    );
+    const agentNames = new Set<string>();
+    const hasValidRoles = draft.roles.every((role) => {
+      const roleName = role.name.trim();
+      const agentName = role.agentName.trim();
+
+      if (!roleName || !agentName || !role.llm.trim() || role.channelIds.length === 0 || agentNames.has(agentName)) {
+        return false;
+      }
+
+      agentNames.add(agentName);
+      return true;
+    });
 
     if (!hasValidRoles || draft.roles.length === 0) {
-      return "Complete the role name, provider, and channel setup before continuing.";
+      return `Complete at least ${MIN_TEAM_AGENTS} agents with names, role templates, provider, and channel setup before continuing.`;
     }
   }
 
@@ -275,17 +311,22 @@ function ReviewSection({
 function TeamConfigCard({
   title,
   description,
+  actions,
   children,
 }: {
   title: string;
   description: string;
+  actions?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
     <div className="space-y-4 rounded-[24px] border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950">
-      <div>
-        <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">{title}</p>
-        <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">{description}</p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">{title}</p>
+          <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">{description}</p>
+        </div>
+        {actions ? <div className="shrink-0">{actions}</div> : null}
       </div>
       {children}
     </div>
@@ -329,6 +370,7 @@ function ModalShell({
 function StepFields({
   stepId,
   draft,
+  suggestedRoles,
   onDraftChange,
   errors,
   showError,
@@ -344,6 +386,7 @@ function StepFields({
 }: {
   stepId: OnboardingStepId;
   draft: OnboardingDraft;
+  suggestedRoles: RolePresetTemplate[];
   onDraftChange: (next: OnboardingDraft) => void;
   errors: DraftErrors;
   showError: (field: DraftField) => boolean;
@@ -361,7 +404,11 @@ function StepFields({
   const [roleEditor, setRoleEditor] = useState<{
     mode: "create" | "edit";
     roleId: string | null;
+    templateName: string;
     name: string;
+    agentName: string;
+    title: string;
+    instructions: string;
     llm: string;
     model: string;
     channelIds: string[];
@@ -372,8 +419,60 @@ function StepFields({
     name: string;
     description: string;
   } | null>(null);
+  const [roleSearch, setRoleSearch] = useState("");
+  const [activeRoleIndustry, setActiveRoleIndustry] = useState("all");
 
   const ownerLabel = draft.ownerName.trim() || "Owner";
+  const starterRoleTemplates: RolePresetTemplate[] =
+    suggestedRoles.length > 0
+      ? suggestedRoles
+      : draft.roles.map((role) => ({
+          name: role.name,
+          title: role.title,
+          description: role.instructions,
+          instructions: role.instructions,
+          channels: draft.channels
+            .filter((channel) => role.channelIds.includes(channel.id))
+            .map((channel) => channel.name),
+          industry: "general",
+          key: role.name,
+        }));
+  const roleIndustries = useMemo(() => {
+    const ordered = new Map<string, RolePresetTemplate[]>();
+
+    for (const template of starterRoleTemplates) {
+      const industry = template.industry || "general";
+      const bucket = ordered.get(industry);
+
+      if (bucket) {
+        bucket.push(template);
+      } else {
+        ordered.set(industry, [template]);
+      }
+    }
+
+    return Array.from(ordered.entries())
+      .filter(([industry]) => industry !== "general")
+      .map(([industry, templates]) => ({ industry, templates }));
+  }, [starterRoleTemplates]);
+  const resolvedActiveRoleIndustry =
+    activeRoleIndustry === "all" || roleIndustries.some((group) => group.industry === activeRoleIndustry)
+      ? activeRoleIndustry
+      : roleIndustries[0]?.industry ?? "all";
+  const defaultSuggestedTemplate = getNextSuggestedTemplate(starterRoleTemplates, draft);
+  const filteredSuggestedRoles = useMemo(() => {
+    const query = roleSearch.trim().toLowerCase();
+    const byIndustry =
+      resolvedActiveRoleIndustry === "all"
+        ? starterRoleTemplates
+        : starterRoleTemplates.filter((template) => template.industry === resolvedActiveRoleIndustry);
+
+    if (!query) {
+      return byIndustry;
+    }
+
+    return byIndustry.filter((template) => matchesSuggestedRole(template, query));
+  }, [resolvedActiveRoleIndustry, roleSearch, starterRoleTemplates]);
 
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
@@ -395,16 +494,26 @@ function StepFields({
     return () => window.removeEventListener("message", handleMessage);
   }, [draft, onDraftChange]);
 
-  const openRoleEditor = (roleId?: string) => {
+  const openRoleEditor = (roleId?: string, templateName?: string) => {
     if (!roleId) {
       const defaultProvider = draft.providers[0]?.name || "OpenAI";
+      const template = getRoleTemplate(templateName ?? defaultSuggestedTemplate?.name ?? starterRoleTemplates[0]?.name ?? "", starterRoleTemplates);
+
+      if (!template) {
+        return;
+      }
+
       setRoleEditor({
         mode: "create",
         roleId: null,
-        name: "",
+        templateName: template.name,
+        name: template.name,
+        agentName: getSuggestedAgentName(),
+        title: template.title,
+        instructions: template.instructions,
         llm: defaultProvider,
         model: defaultModelForProvider(defaultProvider),
-        channelIds: draft.channels.slice(0, 1).map((channel) => channel.id),
+        channelIds: getTemplateChannelIds(template, draft),
       });
       return;
     }
@@ -418,11 +527,37 @@ function StepFields({
     setRoleEditor({
       mode: "edit",
       roleId: role.id,
+      templateName: getRoleTemplate(role.name, starterRoleTemplates)?.name ?? role.name,
       name: role.name,
+      agentName: role.agentName,
+      title: role.title,
+      instructions: role.instructions,
       llm: role.llm,
       model: role.model,
       channelIds: role.channelIds,
     });
+  };
+
+  const updateRoleEditorTemplate = (templateName: string) => {
+    const template = getRoleTemplate(templateName, starterRoleTemplates);
+
+    if (!template) {
+      return;
+    }
+
+    setRoleEditor((current) =>
+      current
+        ? {
+            ...current,
+            templateName: template.name,
+            name: template.name,
+            title: template.title,
+            instructions: template.instructions,
+            channelIds: getTemplateChannelIds(template, draft),
+            agentName: current.agentName || template.title,
+          }
+        : current,
+    );
   };
 
   const saveRoleEditor = () => {
@@ -431,8 +566,9 @@ function StepFields({
     }
 
     const trimmedName = roleEditor.name.trim();
+    const trimmedAgentName = roleEditor.agentName.trim();
 
-    if (!trimmedName) {
+    if (!trimmedName || !trimmedAgentName) {
       return;
     }
 
@@ -440,8 +576,9 @@ function StepFields({
       const newRole = {
         id: createId("role"),
         name: trimmedName,
-        title: toTitleCase(trimmedName),
-        instructions: `Operate as the ${toTitleCase(trimmedName)} role.`,
+        agentName: trimmedAgentName,
+        title: roleEditor.title,
+        instructions: roleEditor.instructions,
         llm: roleEditor.llm,
         model: roleEditor.model,
         channelIds: roleEditor.channelIds,
@@ -454,10 +591,12 @@ function StepFields({
           ...draft.organizationReports,
           {
             id: createId("report"),
-            subjectName: newRole.name,
-            managerName: draft.roles.some((role) => role.name === "product-manager")
-              ? "product-manager"
-              : OWNER_MANAGER_SENTINEL,
+            subjectName: newRole.agentName,
+            managerName:
+              draft.roles.find((role) => role.name === "engineering-manager")?.agentName.trim() ||
+              draft.roles.find((role) => role.name === "pm")?.agentName.trim() ||
+              draft.roles.find((role) => role.name === "product-manager")?.agentName.trim() ||
+              OWNER_MANAGER_SENTINEL,
           },
         ],
       });
@@ -478,7 +617,9 @@ function StepFields({
           ? {
               ...role,
               name: trimmedName,
-              title: toTitleCase(trimmedName),
+              agentName: trimmedAgentName,
+              title: roleEditor.title,
+              instructions: roleEditor.instructions,
               llm: roleEditor.llm,
               model: roleEditor.model,
               channelIds: roleEditor.channelIds,
@@ -487,8 +628,8 @@ function StepFields({
       ),
       organizationReports: draft.organizationReports.map((report) => ({
         ...report,
-        subjectName: report.subjectName === existingRole.name ? trimmedName : report.subjectName,
-        managerName: report.managerName === existingRole.name ? trimmedName : report.managerName,
+        subjectName: report.subjectName === existingRole.agentName ? trimmedAgentName : report.subjectName,
+        managerName: report.managerName === existingRole.agentName ? trimmedAgentName : report.managerName,
       })),
     });
     setRoleEditor(null);
@@ -508,20 +649,21 @@ function StepFields({
     }
 
     const fallbackManager =
-      role.name === "product-manager"
+      role.name === "engineering-manager" || role.name === "pm" || role.name === "product-manager"
         ? OWNER_MANAGER_SENTINEL
-        : draft.roles.some((item) => item.name === "product-manager" && item.id !== roleId)
-          ? "product-manager"
-          : OWNER_MANAGER_SENTINEL;
+        : draft.roles.find((item) => item.name === "engineering-manager" && item.id !== roleId)?.agentName.trim() ||
+          draft.roles.find((item) => item.name === "pm" && item.id !== roleId)?.agentName.trim() ||
+          draft.roles.find((item) => item.name === "product-manager" && item.id !== roleId)?.agentName.trim() ||
+          OWNER_MANAGER_SENTINEL;
 
     onDraftChange({
       ...draft,
       roles: draft.roles.filter((item) => item.id !== roleId),
       organizationReports: draft.organizationReports
-        .filter((report) => report.subjectName !== role.name)
+        .filter((report) => report.subjectName !== role.agentName)
         .map((report) => ({
           ...report,
-          managerName: report.managerName === role.name ? fallbackManager : report.managerName,
+          managerName: report.managerName === role.agentName ? fallbackManager : report.managerName,
         })),
     });
     setRoleMenuId(null);
@@ -587,17 +729,18 @@ function StepFields({
   };
 
   const reportRows = draft.roles.map((role) => {
-    const existingReport = draft.organizationReports.find((report) => report.subjectName === role.name);
+    const existingReport = draft.organizationReports.find((report) => report.subjectName === role.agentName);
     return (
       existingReport ?? {
         id: createId("report"),
-        subjectName: role.name,
+        subjectName: role.agentName,
         managerName:
-          role.name === "product-manager"
+          role.name === "engineering-manager" || role.name === "pm" || role.name === "product-manager"
             ? OWNER_MANAGER_SENTINEL
-            : draft.roles.some((item) => item.name === "product-manager")
-              ? "product-manager"
-              : OWNER_MANAGER_SENTINEL,
+            : draft.roles.find((item) => item.name === "engineering-manager")?.agentName.trim() ||
+              draft.roles.find((item) => item.name === "pm")?.agentName.trim() ||
+              draft.roles.find((item) => item.name === "product-manager")?.agentName.trim() ||
+              OWNER_MANAGER_SENTINEL,
       }
     );
   });
@@ -796,20 +939,113 @@ function StepFields({
         </div>
 
         {activeTeamTab === "agents" ? (
-          <TeamConfigCard title="Roles (agents)" description="Define the roles and capabilities in your team.">
+          <TeamConfigCard
+            title="Suggested roles"
+            description={`Choose a starting role and add at least ${MIN_TEAM_AGENTS} agents.`}
+            actions={
+              <button
+                type="button"
+                onClick={() => openRoleEditor()}
+                className="inline-flex items-center gap-2 rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-violet-700"
+              >
+                <Plus className="h-4 w-4" />
+                Add role
+              </button>
+            }
+          >
             <div className="space-y-4">
-              <div className="flex items-start justify-between gap-4">
-                <p className="text-sm text-zinc-500 dark:text-zinc-400">
-                  Manage the default roles, update their LLM and model, and decide which channels each role should use.
-                </p>
-                <button
-                  type="button"
-                  onClick={() => openRoleEditor()}
-                  className="inline-flex items-center gap-2 rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-violet-700"
-                >
-                  <Plus className="h-4 w-4" />
-                  Add role
-                </button>
+              <div className="rounded-[28px] border border-zinc-200 bg-zinc-50/70 dark:border-zinc-800 dark:bg-zinc-900/30">
+                <div className="sticky top-0 z-10 border-b border-zinc-200 bg-zinc-50/95 px-4 py-4 backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/90">
+                  <div className="flex flex-nowrap gap-2 overflow-x-auto pb-1">
+                    <button
+                      type="button"
+                      onClick={() => setActiveRoleIndustry("all")}
+                      className={`shrink-0 rounded-full border px-3 py-1.5 text-xs font-medium transition ${
+                        activeRoleIndustry === "all"
+                          ? "border-violet-600 bg-violet-600 text-white"
+                          : "border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300 dark:hover:bg-zinc-900"
+                      }`}
+                    >
+                      All
+                    </button>
+                    {roleIndustries.map((group) => {
+                      const isActive = group.industry === activeRoleIndustry;
+
+                      return (
+                        <button
+                          key={group.industry}
+                          type="button"
+                          onClick={() => setActiveRoleIndustry(group.industry)}
+                          className={`shrink-0 rounded-full border px-3 py-1.5 text-xs font-medium transition ${
+                            isActive
+                              ? "border-violet-600 bg-violet-600 text-white"
+                              : "border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300 dark:hover:bg-zinc-900"
+                          }`}
+                        >
+                          {formatIndustryLabel(group.industry)}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <div className="mt-4 flex items-center gap-3">
+                    <div className="relative min-w-0 flex-1">
+                      <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
+                      <input
+                        value={roleSearch}
+                        onChange={(event) => setRoleSearch(event.target.value)}
+                        placeholder="Search roles, channels, or descriptions"
+                        className="w-full rounded-xl border border-zinc-200 bg-white py-2.5 pl-9 pr-3 text-sm outline-none transition placeholder:text-zinc-400 focus:border-violet-500 dark:border-zinc-700 dark:bg-zinc-950"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setRoleSearch("")}
+                      className="rounded-xl border border-zinc-200 bg-white px-3 py-2.5 text-sm font-medium text-zinc-600 transition hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300 dark:hover:bg-zinc-900"
+                    >
+                      Clear
+                    </button>
+                  </div>
+                  <div className="mt-3 flex items-center justify-between text-xs text-zinc-500 dark:text-zinc-400">
+                    <span>
+                      Showing {filteredSuggestedRoles.length} of {starterRoleTemplates.length} suggested roles
+                    </span>
+                  </div>
+                </div>
+
+                <div className="max-h-[420px] overflow-y-auto px-4 py-4">
+                  {filteredSuggestedRoles.length > 0 ? (
+                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                      {filteredSuggestedRoles.map((template) => (
+                        <button
+                          key={template.name}
+                          type="button"
+                          onClick={() => openRoleEditor(undefined, template.name)}
+                          className="rounded-2xl border border-zinc-200 bg-white p-4 text-left transition hover:border-violet-300 hover:bg-violet-50 dark:border-zinc-800 dark:bg-zinc-950 dark:hover:border-violet-500/40 dark:hover:bg-violet-500/10"
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">{template.title}</p>
+                              <p className="mt-1 text-sm leading-6 text-zinc-500 dark:text-zinc-400">{template.description}</p>
+                            </div>
+                          </div>
+                          <div className="mt-4 flex flex-wrap gap-2">
+                            <span className="rounded-full bg-zinc-100 px-2.5 py-1 text-[11px] font-medium text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400">
+                              {formatIndustryLabel(template.industry)}
+                            </span>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="flex min-h-[160px] items-center justify-center rounded-2xl border border-dashed border-zinc-200 bg-white px-6 py-10 text-center dark:border-zinc-800 dark:bg-zinc-950">
+                      <div>
+                        <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">No suggested roles match</p>
+                        <p className="mt-2 text-sm text-zinc-500 dark:text-zinc-400">Try a different search or clear the filter to browse the full catalog.</p>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
 
               <div className="space-y-4">
@@ -817,34 +1053,33 @@ function StepFields({
                   <article key={role.id} className="rounded-2xl border border-zinc-200 bg-white px-4 py-4 shadow-[0_1px_3px_rgba(15,23,42,0.04)] dark:border-zinc-800 dark:bg-zinc-950">
                     <div className="flex items-start justify-between gap-4">
                       <div className="flex min-w-0 gap-4">
-                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-violet-600 text-xs font-semibold text-white">
-                          {role.name.slice(0, 2).toUpperCase()}
-                        </div>
+                        <Avatar name={role.agentName} colorIndex={index} />
                         <div className="min-w-0">
                           <div className="flex flex-wrap items-center gap-2">
-                            <p className="text-base font-semibold text-zinc-900 dark:text-zinc-100">{role.name}</p>
+                            <p className="text-base font-semibold text-zinc-900 dark:text-zinc-100">{role.agentName}</p>
                             <span className="rounded-full bg-violet-50 px-2.5 py-1 text-xs font-medium text-violet-700 dark:bg-violet-500/10 dark:text-violet-300">
                               {role.title}
                             </span>
                           </div>
+                          <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">Role template: {role.name}</p>
                           <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-300">{role.instructions}</p>
-                          <div className="mt-3 flex flex-wrap items-center gap-4 text-xs text-zinc-500 dark:text-zinc-400">
-                            <span className="inline-flex items-center gap-1.5">
-                              <Bot className="h-3.5 w-3.5" />
-                              {role.model}
-                            </span>
-                            <span className="inline-flex items-center gap-1.5">
-                              <Server className="h-3.5 w-3.5" />
-                              {role.llm}
-                            </span>
-                            <span className="inline-flex items-center gap-1.5">
-                              <MessageSquare className="h-3.5 w-3.5" />
-                              {role.channelIds.length} channels
-                            </span>
-                            <span className="inline-flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400">
-                              <span className="h-2 w-2 rounded-full bg-emerald-500" />
-                              Active
-                            </span>
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            {role.channelIds.map((channelId) => {
+                              const channelName = draft.channels.find((channel) => channel.id === channelId)?.name;
+
+                              if (!channelName) {
+                                return null;
+                              }
+
+                              return (
+                                <span
+                                  key={`${role.id}-${channelId}`}
+                                  className="rounded-full bg-zinc-100 px-2.5 py-1 text-[11px] font-medium text-zinc-600 dark:bg-zinc-900 dark:text-zinc-300"
+                                >
+                                  {channelName}
+                                </span>
+                              );
+                            })}
                           </div>
                         </div>
                       </div>
@@ -854,7 +1089,7 @@ function StepFields({
                           type="button"
                           onClick={() => setRoleMenuId((current) => (current === role.id ? null : role.id))}
                           className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-900 dark:hover:text-zinc-200"
-                          aria-label={`Open actions for ${role.name}`}
+                          aria-label={`Open actions for ${role.agentName}`}
                         >
                           <MoreHorizontal className="h-4 w-4" />
                         </button>
@@ -954,8 +1189,7 @@ function StepFields({
                     className="min-w-0 flex-1 rounded-lg border border-zinc-200 bg-white px-4 py-2.5 text-sm outline-none transition focus:border-violet-500 dark:border-zinc-700 dark:bg-zinc-950"
                   >
                     {[
-                      // Role refs use the role name as both value and label.
-                      ...draft.roles.map((role) => ({ value: role.name, label: role.name })),
+                      ...draft.roles.map((role) => ({ value: role.agentName, label: `${role.agentName} (${role.name})` })),
                       // Owner ref persists the stable sentinel so a later
                       // owner rename keeps existing edges intact; the
                       // dropdown still renders the current friendly label.
@@ -1107,18 +1341,39 @@ function StepFields({
         {roleEditor ? (
           <ModalShell
             title={roleEditor.mode === "create" ? "Add role" : "Edit role"}
-            description="Update the role name, LLM, model, and channel access."
+            description="Choose a suggested role, add an agent name, then tweak provider and channels."
             onClose={() => setRoleEditor(null)}
           >
             <div className="space-y-5">
-              <FieldShell label="Role name" htmlFor="roleName" hint="">
-                <input
-                  id="roleName"
-                  value={roleEditor.name}
-                  onChange={(event) => setRoleEditor({ ...roleEditor, name: event.target.value })}
+              <FieldShell label="Role template" htmlFor="roleTemplate" hint="Pick the starter role shape first.">
+                <select
+                  id="roleTemplate"
+                  value={roleEditor.templateName}
+                  onChange={(event) => updateRoleEditorTemplate(event.target.value)}
                   className="w-full rounded-lg border border-zinc-200 bg-white px-4 py-2.5 text-sm outline-none transition focus:border-violet-500 dark:border-zinc-700 dark:bg-zinc-950"
-                  placeholder="senior-engineer"
+                >
+                  {starterRoleTemplates.map((template) => (
+                    <option key={template.name} value={template.name}>
+                      {template.title}
+                    </option>
+                  ))}
+                </select>
+              </FieldShell>
+
+              <FieldShell label="Agent name" htmlFor="agentName" hint="">
+                <input
+                  id="agentName"
+                  list="agentNameSuggestions"
+                  value={roleEditor.agentName}
+                  onChange={(event) => setRoleEditor({ ...roleEditor, agentName: event.target.value })}
+                  className="w-full rounded-lg border border-zinc-200 bg-white px-4 py-2.5 text-sm outline-none transition focus:border-violet-500 dark:border-zinc-700 dark:bg-zinc-950"
+                  placeholder="Frontend Engineer"
                 />
+                <datalist id="agentNameSuggestions">
+                  {AGENT_NAME_SUGGESTIONS.map((name) => (
+                    <option key={name} value={name} />
+                  ))}
+                </datalist>
               </FieldShell>
 
               <div className="grid gap-4 md:grid-cols-2">
@@ -1259,7 +1514,7 @@ function StepFields({
                 <Users className="h-4 w-4 text-zinc-400" />
                 Agents
               </span>
-              <span className="font-semibold text-zinc-900 dark:text-zinc-100">{draft.organizationReports.length}</span>
+              <span className="font-semibold text-zinc-900 dark:text-zinc-100">{draft.roles.length}</span>
             </div>
             <div className="flex items-center justify-between text-zinc-600 dark:text-zinc-300">
               <span className="inline-flex items-center gap-2">
@@ -1311,12 +1566,11 @@ function StepFields({
           <div className="space-y-4">
             {draft.roles.map((role, index) => (
               <div key={`${role.name}-${index}`} className="flex items-start gap-3">
-                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-violet-600 text-[11px] font-semibold text-white">
-                  {role.name.slice(0, 2).toUpperCase()}
-                </div>
+                <Avatar name={role.agentName} colorIndex={index} size="sm" />
                 <div>
-                  <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">{role.name}</p>
+                  <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">{role.agentName}</p>
                   <p className="text-xs text-zinc-500 dark:text-zinc-400">{role.title}</p>
+                  <p className="text-xs text-zinc-500 dark:text-zinc-400">Role template: {role.name}</p>
                 </div>
               </div>
             ))}
@@ -1369,6 +1623,7 @@ export function OnboardingForm({
   stepIndex,
   totalSteps,
   draft,
+  suggestedRoles,
   onDraftChange,
   activeTeamTab,
   onTeamTabChange,
@@ -1498,6 +1753,7 @@ export function OnboardingForm({
         <StepFields
           stepId={step.id}
           draft={draft}
+          suggestedRoles={suggestedRoles}
           onDraftChange={onDraftChange}
           errors={stepErrors}
           showError={shouldShowError}

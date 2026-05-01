@@ -23,6 +23,7 @@ export interface OnboardingStep {
 export interface TeamRoleDraft {
   id: string;
   name: string;
+  agentName: string;
   title: string;
   instructions: string;
   llm: string;
@@ -74,6 +75,16 @@ export interface FlowWidgetSpec {
   bestLibrary: string;
 }
 
+export interface RolePresetTemplate {
+  name: string;
+  title: string;
+  description: string;
+  instructions: string;
+  channels: string[];
+  industry: string;
+  key: string;
+}
+
 function normalizeProviderToken(value: string) {
   return value.trim().toLowerCase().replace(/[\s_]+/g, "-");
 }
@@ -92,6 +103,14 @@ const DEFAULT_MODEL_BY_PROVIDER: Record<string, string> = {
 
 export function defaultModelForProvider(provider: string): string {
   return DEFAULT_MODEL_BY_PROVIDER[normalizeProviderToken(provider)] ?? "gpt-4o";
+}
+
+export function buildStarterDraft(): OnboardingDraft {
+  return {
+    ...INITIAL_DRAFT,
+    roles: [],
+    organizationReports: [],
+  };
 }
 
 export const ONBOARDING_STEPS: OnboardingStep[] = [
@@ -154,6 +173,7 @@ export const INITIAL_DRAFT: OnboardingDraft = {
     {
       id: "role-senior-engineer",
       name: "senior-engineer",
+      agentName: "Senior Engineer",
       title: "Senior Engineer",
       instructions: "Lead architecture, code quality, and complex implementation.",
       llm: "OpenAI",
@@ -163,6 +183,7 @@ export const INITIAL_DRAFT: OnboardingDraft = {
     {
       id: "role-junior-engineer",
       name: "junior-engineer",
+      agentName: "Software Engineer",
       title: "Software Engineer",
       instructions: "Implement features, fix bugs, and write tests.",
       llm: "OpenAI",
@@ -172,6 +193,7 @@ export const INITIAL_DRAFT: OnboardingDraft = {
     {
       id: "role-reviewer",
       name: "reviewer",
+      agentName: "Code Reviewer",
       title: "Code Reviewer",
       instructions: "Review changes and enforce quality standards.",
       llm: "OpenAI",
@@ -181,6 +203,7 @@ export const INITIAL_DRAFT: OnboardingDraft = {
     {
       id: "role-product-manager",
       name: "product-manager",
+      agentName: "Product Manager",
       title: "Product Manager",
       instructions: "Define requirements, priorities, and product direction.",
       llm: "OpenAI",
