@@ -36,6 +36,7 @@ import { registerSettingsRoutes } from './routes/settings.js';
 import { registerTaskRoutes } from './routes/tasks.js';
 import { registerWorkspaceRoutes } from './routes/workspaces.js';
 import { registerAgentRoutes } from './routes/agents.js';
+import { registerOauthRoutes } from './routes/oauth.js';
 
 const WS_QUEUE_CAP = 256;
 const STARTED_AT = Date.now();
@@ -184,6 +185,11 @@ export function createTransport(opts: TransportOptions): Transport {
   });
 
   io.on('connection', (socket) => onSocketConnection(socket, host));
+
+  // Public APIs (No Auth Required)
+  fastify.register(async (api) => {
+    registerOauthRoutes(api);
+  }, { prefix: '/api' });
 
   // Data API (Authenticated)
   fastify.register(async (api) => {

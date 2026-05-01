@@ -67,6 +67,55 @@ export function selectLanguageModel(input: SelectLanguageModelInput): LanguageMo
     }).chat(input.modelId);
   }
 
+  if (input.kind === 'deepseek') {
+    if (!input.apiKey) throw new LLMError('not_configured', 'deepseek provider requires apiKey');
+    return createOpenAI({
+      apiKey: input.apiKey,
+      baseURL: input.baseUrl ?? 'https://api.deepseek.com/v1',
+    }).chat(input.modelId);
+  }
+
+  if (input.kind === 'xai') {
+    if (!input.apiKey) throw new LLMError('not_configured', 'xai provider requires apiKey');
+    return createOpenAI({
+      apiKey: input.apiKey,
+      baseURL: input.baseUrl ?? 'https://api.x.ai/v1',
+    }).chat(input.modelId);
+  }
+
+  if (input.kind === 'mistral') {
+    if (!input.apiKey) throw new LLMError('not_configured', 'mistral provider requires apiKey');
+    return createOpenAI({
+      apiKey: input.apiKey,
+      baseURL: input.baseUrl ?? 'https://api.mistral.ai/v1',
+    }).chat(input.modelId);
+  }
+
+  if (input.kind === 'kimi') {
+    if (!input.apiKey) throw new LLMError('not_configured', 'kimi provider requires apiKey');
+    return createOpenAI({
+      apiKey: input.apiKey,
+      baseURL: input.baseUrl ?? 'https://api.moonshot.ai/v1',
+    }).chat(input.modelId);
+  }
+
+  if (input.kind === 'zhipu') {
+    if (!input.apiKey) throw new LLMError('not_configured', 'zhipu provider requires apiKey');
+    return createOpenAI({
+      apiKey: input.apiKey,
+      baseURL: input.baseUrl ?? 'https://open.bigmodel.cn/api/paas/v4',
+    }).chat(input.modelId);
+  }
+
+  if (input.kind === 'openai-codex') {
+    // Uses OpenAI Codex OAuth subscription token as API key
+    if (!input.apiKey) throw new LLMError('not_configured', 'openai-codex provider requires apiKey (OAuth token)');
+    return createOpenAI({
+      apiKey: input.apiKey,
+      baseURL: input.baseUrl ?? 'https://api.openai.com/v1',
+    }).chat(input.modelId);
+  }
+
   const exhaustive: never = input.kind;
   throw new LLMError('unsupported_kind', `unreachable: ${String(exhaustive)}`);
 }

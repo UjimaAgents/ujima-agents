@@ -7,11 +7,16 @@ const PROVIDER_NAME_MAP: Record<string, string> = {
   google: "google",
   openrouter: "openrouter",
   ollama: "ollama",
-  mistral: "openrouter",
+  deepseek: "deepseek",
+  xai: "xai",
+  mistral: "mistral",
+  kimi: "kimi",
+  "zhipu-ai": "zhipu",
+  "openai-codex": "openai-codex",
 };
 
 function normalizeToken(value: string) {
-  return value.trim().toLowerCase().replace(/\s+/g, "").replace(/_/g, "-");
+  return value.trim().toLowerCase().replace(/[\s_]+/g, "-");
 }
 
 export function normalizeProviderName(value: string) {

@@ -10,14 +10,31 @@
  * - `openrouter` — OpenAI-compatible; uses `@ai-sdk/openai` with `baseURL`.
  * - `ollama` — OpenAI-compatible; uses `@ai-sdk/openai` against a local host.
  */
-export type ProviderKind = 'anthropic' | 'openai' | 'google' | 'openrouter' | 'ollama';
+export type ProviderKind =
+  | "anthropic"
+  | "openai"
+  | "google"
+  | "openrouter"
+  | "ollama"
+  | "deepseek"
+  | "xai"
+  | "mistral"
+  | "kimi"
+  | "zhipu"
+  | "openai-codex";
 
 export const PROVIDER_KINDS = [
-  'anthropic',
-  'openai',
-  'google',
-  'openrouter',
-  'ollama',
+  "anthropic",
+  "openai",
+  "google",
+  "openrouter",
+  "ollama",
+  "deepseek",
+  "xai",
+  "mistral",
+  "kimi",
+  "zhipu",
+  "openai-codex",
 ] as const satisfies readonly ProviderKind[];
 
 export class LLMError extends Error {

@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState, useEffect } from "react";
 import {
   AlertCircle,
   ArrowLeft,
@@ -23,6 +23,7 @@ import {
 import { formatProviderLabel } from "../api-contract";
 import {
   OWNER_MANAGER_SENTINEL,
+  defaultModelForProvider,
   type OnboardingDraft,
   type OnboardingStep,
   type OnboardingStepId,
@@ -180,7 +181,7 @@ const ONBOARDING_STEP_NEXT_LABELS: Record<OnboardingStepId, string> = {
   review: "Complete",
 };
 
-const LLM_OPTIONS = ["Anthropic", "OpenAI", "Google", "Mistral"] as const;
+const LLM_OPTIONS = ["Anthropic", "OpenAI", "Google", "Mistral", "DeepSeek", "xAI", "Kimi", "Zhipu AI", "OpenAI Codex"] as const;
 
 function createId(prefix: string) {
   return `${prefix}-${Math.random().toString(36).slice(2, 10)}`;
@@ -374,14 +375,35 @@ function StepFields({
 
   const ownerLabel = draft.ownerName.trim() || "Owner";
 
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      if (event.data?.type === "OAUTH_SUCCESS") {
+        const token = event.data.token;
+        if (token) {
+          onDraftChange({
+            ...draft,
+            providers: draft.providers.map((p) =>
+              p.name === "OpenAI Codex" ? { ...p, apiKey: token } : p,
+            ),
+          });
+        } else if (event.data.error) {
+          alert("OAuth Error: " + event.data.error);
+        }
+      }
+    };
+    window.addEventListener("message", handleMessage);
+    return () => window.removeEventListener("message", handleMessage);
+  }, [draft, onDraftChange]);
+
   const openRoleEditor = (roleId?: string) => {
     if (!roleId) {
+      const defaultProvider = draft.providers[0]?.name || "OpenAI";
       setRoleEditor({
         mode: "create",
         roleId: null,
         name: "",
-        llm: "Anthropic",
-        model: "claude-3-5-sonnet",
+        llm: defaultProvider,
+        model: defaultModelForProvider(defaultProvider),
         channelIds: draft.channels.slice(0, 1).map((channel) => channel.id),
       });
       return;
@@ -1018,33 +1040,63 @@ function StepFields({
               <div className="space-y-3">
                 {draft.providers.map((provider, index) => (
                   <div key={provider.id} className="flex flex-nowrap items-center gap-3">
-                    <input
+                    <select
                       value={provider.name}
-                      onChange={(event) =>
+                      onChange={(event) => {
+                        const newName = event.target.value;
+                        const isFirst = index === 0;
+
+                        const newProviders = draft.providers.map((item, itemIndex) =>
+                          itemIndex === index ? { ...item, name: newName } : item,
+                        );
+
+                        let newRoles = draft.roles;
+                        if (isFirst) {
+                          const model = defaultModelForProvider(newName);
+                          newRoles = draft.roles.map((role) => ({ ...role, llm: newName, model }));
+                        }
+
                         onDraftChange({
                           ...draft,
-                          providers: draft.providers.map((item, itemIndex) =>
-                            itemIndex === index ? { ...item, name: event.target.value } : item,
-                          ),
-                        })
-                      }
+                          providers: newProviders,
+                          roles: newRoles,
+                        });
+                      }}
                       className="w-[220px] shrink-0 rounded-lg border border-zinc-200 bg-white px-4 py-2.5 text-sm outline-none transition focus:border-violet-500 dark:border-zinc-700 dark:bg-zinc-950"
-                      placeholder="openai"
-                    />
-                    <input
-                      type="password"
-                      value={provider.apiKey}
-                      onChange={(event) =>
-                        onDraftChange({
-                          ...draft,
-                          providers: draft.providers.map((item, itemIndex) =>
-                            itemIndex === index ? { ...item, apiKey: event.target.value } : item,
-                          ),
-                        })
-                      }
-                      className="min-w-0 flex-1 rounded-lg border border-zinc-200 bg-white px-4 py-2.5 text-sm outline-none transition focus:border-violet-500 dark:border-zinc-700 dark:bg-zinc-950"
-                      placeholder={provider.name ? `${formatProviderLabel(provider.name)} API key` : "Provider API key"}
-                    />
+                    >
+                      <option value="" disabled>Select provider</option>
+                      {LLM_OPTIONS.map((opt) => (
+                        <option key={opt} value={opt}>
+                          {opt}
+                        </option>
+                      ))}
+                    </select>
+                    {provider.name === "OpenAI Codex" ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          window.open("/api/auth/openai/login", "oauth_popup", "width=500,height=600");
+                        }}
+                        className="min-w-0 flex-1 rounded-lg bg-[#10a37f] px-4 py-2.5 text-sm font-medium text-white transition hover:bg-[#0e906f]"
+                      >
+                        {provider.apiKey ? "Signed in with OpenAI" : "Sign in with OpenAI"}
+                      </button>
+                    ) : (
+                      <input
+                        type="password"
+                        value={provider.apiKey}
+                        onChange={(event) =>
+                          onDraftChange({
+                            ...draft,
+                            providers: draft.providers.map((item, itemIndex) =>
+                              itemIndex === index ? { ...item, apiKey: event.target.value } : item,
+                            ),
+                          })
+                        }
+                        className="min-w-0 flex-1 rounded-lg border border-zinc-200 bg-white px-4 py-2.5 text-sm outline-none transition focus:border-violet-500 dark:border-zinc-700 dark:bg-zinc-950"
+                        placeholder={provider.name ? `${formatProviderLabel(provider.name)} API key` : "Provider API key"}
+                      />
+                    )}
                   </div>
                 ))}
               </div>
@@ -1074,7 +1126,10 @@ function StepFields({
                   <select
                     id="roleLlm"
                     value={roleEditor.llm}
-                    onChange={(event) => setRoleEditor({ ...roleEditor, llm: event.target.value })}
+                    onChange={(event) => {
+                      const llm = event.target.value;
+                      setRoleEditor({ ...roleEditor, llm, model: defaultModelForProvider(llm) });
+                    }}
                     className="w-full rounded-lg border border-zinc-200 bg-white px-4 py-2.5 text-sm outline-none transition focus:border-violet-500 dark:border-zinc-700 dark:bg-zinc-950"
                   >
                     {LLM_OPTIONS.map((option) => (
@@ -1090,7 +1145,7 @@ function StepFields({
                     value={roleEditor.model}
                     onChange={(event) => setRoleEditor({ ...roleEditor, model: event.target.value })}
                     className="w-full rounded-lg border border-zinc-200 bg-white px-4 py-2.5 text-sm outline-none transition focus:border-violet-500 dark:border-zinc-700 dark:bg-zinc-950"
-                    placeholder="claude-3-5-sonnet"
+                    placeholder={defaultModelForProvider(roleEditor.llm)}
                   />
                 </FieldShell>
               </div>
