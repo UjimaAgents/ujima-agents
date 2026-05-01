@@ -79,6 +79,8 @@ export function ChannelView({ bootstrap, conversation }: ChannelViewProps) {
           avatarColorIndex={Math.max(conversationMemberIndex, 0)}
           status={conversation.type === "agent" ? "active" : "active"}
           statusLabel={conversation.type === "agent" ? "online" : "Active"}
+          showDetails={showDetails}
+          onToggleDetails={() => setShowDetails(!showDetails)}
         />
         <ChatTabs
           tabs={tabs}

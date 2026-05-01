@@ -29,7 +29,7 @@ interface WorkspaceSidebarProps {
   selected: SelectedConversation;
   onSelect: (conv: SelectedConversation) => void;
   onCreateChannel: (name: string) => Promise<SelectedConversation | null>;
-  onCreateAgent: (input: { name: string; roleName: string; channelIds: string[] }) => Promise<SelectedConversation | null>;
+  onCreateAgent: (input: { name: string; roleName: string; channelIds: string[]; llm: string; model: string }) => Promise<SelectedConversation | null>;
 }
 
 export function WorkspaceSidebar({

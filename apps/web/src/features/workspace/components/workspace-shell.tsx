@@ -101,7 +101,7 @@ export function WorkspaceShell({
   );
 
   const handleCreateAgent = useCallback(
-    async (input: { name: string; roleName: string; channelIds: string[] }) => {
+    async (input: { name: string; roleName: string; channelIds: string[]; llm: string; model: string }) => {
       const trimmed = input.name.trim();
       if (!trimmed) return null;
 
@@ -115,6 +115,8 @@ export function WorkspaceShell({
           kind: "agent",
           roleName: input.roleName.trim() || trimmed,
           channelIds: input.channelIds,
+          llm: input.llm,
+          model: input.model,
         }),
       });
       if (!response.ok) return null;

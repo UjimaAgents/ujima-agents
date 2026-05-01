@@ -11,6 +11,8 @@ const AddMemberRequestSchema = z.object({
   kind: z.enum(["human", "agent"]),
   roleName: z.string().min(1),
   channelIds: z.array(z.string().min(1)).default([]),
+  llm: z.string().optional(),
+  model: z.string().optional(),
 });
 
 export async function POST(request: Request, { params }: { params: Promise<{ orgId: string }> }) {

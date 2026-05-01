@@ -1,4 +1,4 @@
-import { Hash, MoreHorizontal, Users } from "lucide-react";
+import { Hash, PanelRight, Users } from "lucide-react";
 import { Avatar, StatusBadge, type StatusVariant } from "./primitives";
 
 export interface ChatHeaderProps {
@@ -18,6 +18,9 @@ export interface ChatHeaderProps {
   contextValue?: string;
   /** Slot for extra actions on the right */
   actions?: React.ReactNode;
+  /** Controls details sidebar visibility */
+  showDetails?: boolean;
+  onToggleDetails?: () => void;
 }
 
 export function ChatHeader({
@@ -30,6 +33,8 @@ export function ChatHeader({
   contextLabel,
   contextValue,
   actions,
+  showDetails,
+  onToggleDetails,
 }: ChatHeaderProps) {
   return (
     <header className="flex h-12 shrink-0 items-center justify-between border-b border-zinc-200 px-4 dark:border-zinc-800">
@@ -76,9 +81,14 @@ export function ChatHeader({
           </div>
         )}
         {actions}
-        <button className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300">
-          <MoreHorizontal className="h-4 w-4" />
-        </button>
+        {onToggleDetails && (
+          <button 
+            onClick={onToggleDetails}
+            className={`p-1.5 rounded-md transition-colors ${showDetails ? 'bg-zinc-100 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100' : 'text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300'}`}
+          >
+            <PanelRight className="h-4 w-4" />
+          </button>
+        )}
       </div>
     </header>
   );
