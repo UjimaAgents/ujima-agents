@@ -8,21 +8,26 @@ import {
   OrganizationChartSchema,
   RunStateSchema,
 } from '@ujima/shared';
-import { AgentTeamConfigSchema } from '@ujima/framework';
 import { z } from 'zod';
 import { SessionAuthStateSchema } from './auth.js';
 
 const WorkspaceRootSchema = z.string().min(1);
 
-const InlineTeamConfigSchema = AgentTeamConfigSchema.pick({
-  name: true,
-  agents: true,
-  roles: true,
-  channels: true,
-  providers: true,
-  organizationChart: true,
-  policies: true,
-}).partial();
+const InlineTeamConfigSchema = z.object({
+  name: z.string().optional(),
+  agents: z.array(z.unknown()).optional(),
+  roles: z.array(z.unknown()).optional(),
+  channels: z.array(z.unknown()).optional(),
+  providers: z.record(z.object({ models: z.array(z.unknown()) })).optional(),
+  organizationChart: OrganizationChartSchema.optional(),
+  policies: z
+    .object({
+      requireApprovalForWrites: z.boolean(),
+      requireApprovalForShell: z.boolean(),
+      workspaceBoundaryMode: z.literal('hard'),
+    })
+    .optional(),
+});
 export type InlineTeamConfig = z.infer<typeof InlineTeamConfigSchema>;
 
 export const OnboardingRequestSchema = z.object({

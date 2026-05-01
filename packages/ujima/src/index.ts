@@ -59,6 +59,12 @@ export {
 
 export { defineProvider, normalizeProviders } from './providers.js';
 
+export {
+  MODEL_OPTIONS_BY_PROVIDER,
+  defaultModelForProvider,
+  getModelOptionsForProvider,
+} from './model-catalog.js';
+
 export { defineTool, listDefaultToolNames, normalizeTools } from './tools.js';
 
 export { createOrganizationChart } from './organization-chart.js';

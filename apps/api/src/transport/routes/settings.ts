@@ -1,10 +1,10 @@
+import { randomUUID } from 'node:crypto';
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { AgentTeamConfigSchema } from '@ujima/framework';
 import type { Repository } from '@ujima/runtime-core';
-import { IdSchema, MemberSchema } from '@ujima/shared';
+import { ChannelSchema, IdSchema, MemberSchema } from '@ujima/shared';
 import {
-  AddMemberRequestSchema,
   ApiErrorSchema,
   ListOrganizationsResponseSchema,
   OrganizationQuerySchema,
@@ -27,6 +27,16 @@ const OrgIdParamsSchema = z.object({ orgId: IdSchema });
 const ProviderTestParamsSchema = z.object({ providerName: z.string().min(1) });
 const TeamSettingsResponseSchema = AgentTeamConfigSchema.omit({ providers: true });
 const ProviderStatusesResponseSchema = z.array(ProviderStatusSchema);
+const AddMemberRequestSchema = z.object({
+  name: z.string().min(1),
+  kind: z.enum(['human', 'agent']),
+  roleName: z.string().min(1),
+  channelIds: z.array(IdSchema).default([]),
+});
+const CreateChannelRequestSchema = z.object({
+  name: z.string().min(1),
+  topic: z.string().optional(),
+});
 const ProviderTestResultSchema = z.object({
   provider: z.string(),
   ok: z.boolean(),
@@ -246,12 +256,55 @@ export function registerSettingsRoutes(
   }, async (req, reply) => {
     try {
       assertReadyWorkspaceRoot(repo, req.params.orgId);
-      return settings.addMember({
+      const member = settings.addMember({
         organizationId: req.params.orgId,
         name: req.body.name,
         kind: req.body.kind,
         roleName: req.body.roleName,
       });
+      for (const channelId of req.body.channelIds) {
+        const channel = repo.getChannel(req.params.orgId, channelId);
+        if (!channel) continue;
+        const memberIds = new Set(channel.memberIds);
+        memberIds.add(member.id);
+        repo.setChannelMembers(channelId, [...memberIds].sort());
+      }
+      return member;
+    } catch (err) {
+      const message = errMessage(err);
+      if (isWorkspaceRootNotReadyError(err)) {
+        return reply.code(409).send({ code: ERR_NO_WORKSPACE_ROOT, message });
+      }
+      return replyError(reply, message.startsWith('Organization not found') ? 404 : 400, message);
+    }
+  });
+
+  app.post('/orgs/:orgId/channels', {
+    schema: {
+      description: 'Add a channel to an organization',
+      tags: ['Settings'],
+      params: OrgIdParamsSchema,
+      body: CreateChannelRequestSchema,
+      response: {
+        200: ChannelSchema,
+        400: ApiErrorSchema,
+        409: ApiErrorSchema,
+        404: ApiErrorSchema,
+      },
+    },
+  }, async (req, reply) => {
+    try {
+      assertReadyWorkspaceRoot(repo, req.params.orgId);
+      return repo.saveChannel(
+        ChannelSchema.parse({
+          id: randomUUID(),
+          organizationId: req.params.orgId,
+          name: req.body.name.trim(),
+          kind: 'group',
+          topic: req.body.topic ?? '',
+          memberIds: [],
+        }),
+      );
     } catch (err) {
       const message = errMessage(err);
       if (isWorkspaceRootNotReadyError(err)) {

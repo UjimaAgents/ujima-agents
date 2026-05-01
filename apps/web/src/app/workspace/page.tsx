@@ -36,7 +36,7 @@ export default async function WorkspacePage({
   searchParams?: Record<string, string | string[] | undefined>;
 }) {
   const bootstrap = await getServerBootstrap();
-  const rolePresets = await getServerRolePresets();
+  const rolePresets = await getServerRolePresets().catch(() => []);
 
   if (bootstrap.onboardingStatus === "pending") {
     redirect("/onboarding");

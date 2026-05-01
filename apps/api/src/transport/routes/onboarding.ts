@@ -41,7 +41,13 @@ export function registerOnboardingRoutes(
     },
   }, async (req, reply) => {
     try {
-      const result = await onboarding.onboard(req.body);
+      const result = await onboarding.onboard({
+        ...req.body,
+        team: {
+          ...req.body.team,
+          organizationChart: req.body.team.organizationChart ?? { reportsTo: {} },
+        },
+      });
       const owner = result.members.find(
         (member) => member.kind === 'human' && member.roleName === 'owner',
       );

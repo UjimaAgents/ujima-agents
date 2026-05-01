@@ -1,3 +1,5 @@
+import { defaultModelForProvider } from "@ujima/api-schema";
+
 export type OnboardingStepId = "organization" | "owner" | "team" | "review";
 export type TeamTabId = "agents" | "channels" | "org-chart" | "policies" | "providers";
 
@@ -84,26 +86,7 @@ export interface RolePresetTemplate {
   industry: string;
   key: string;
 }
-
-function normalizeProviderToken(value: string) {
-  return value.trim().toLowerCase().replace(/[\s_]+/g, "-");
-}
-
-const DEFAULT_MODEL_BY_PROVIDER: Record<string, string> = {
-  anthropic: "claude-3-5-sonnet",
-  openai: "gpt-4o",
-  google: "gemini-1.5-pro",
-  mistral: "mistral-large-latest",
-  deepseek: "deepseek-chat",
-  xai: "grok-2-latest",
-  kimi: "moonshot-v1-8k",
-  "zhipu-ai": "glm-4-plus",
-  "openai-codex": "gpt-4o",
-};
-
-export function defaultModelForProvider(provider: string): string {
-  return DEFAULT_MODEL_BY_PROVIDER[normalizeProviderToken(provider)] ?? "gpt-4o";
-}
+export { defaultModelForProvider, getModelOptionsForProvider, type ProviderModelOption } from "@ujima/api-schema";
 
 export function buildStarterDraft(): OnboardingDraft {
   return {
@@ -178,7 +161,7 @@ export const INITIAL_DRAFT: OnboardingDraft = {
       instructions: "Lead architecture, code quality, and complex implementation.",
       llm: "OpenAI",
       model: defaultModelForProvider("OpenAI"),
-      channelIds: ["channel-engineering", "channel-reviews", "channel-general"],
+      channelIds: ["channel-general"],
     },
     {
       id: "role-junior-engineer",
@@ -188,7 +171,7 @@ export const INITIAL_DRAFT: OnboardingDraft = {
       instructions: "Implement features, fix bugs, and write tests.",
       llm: "OpenAI",
       model: defaultModelForProvider("OpenAI"),
-      channelIds: ["channel-engineering", "channel-general"],
+      channelIds: ["channel-general"],
     },
     {
       id: "role-reviewer",
@@ -198,7 +181,7 @@ export const INITIAL_DRAFT: OnboardingDraft = {
       instructions: "Review changes and enforce quality standards.",
       llm: "OpenAI",
       model: defaultModelForProvider("OpenAI"),
-      channelIds: ["channel-reviews", "channel-general"],
+      channelIds: ["channel-general"],
     },
     {
       id: "role-product-manager",
@@ -208,14 +191,11 @@ export const INITIAL_DRAFT: OnboardingDraft = {
       instructions: "Define requirements, priorities, and product direction.",
       llm: "OpenAI",
       model: defaultModelForProvider("OpenAI"),
-      channelIds: ["channel-product", "channel-general"],
+      channelIds: ["channel-general"],
     },
   ],
   channels: [
     { id: "channel-general", name: "general", description: "General discussions and updates" },
-    { id: "channel-engineering", name: "engineering", description: "Engineering and implementation" },
-    { id: "channel-reviews", name: "reviews", description: "Code reviews and quality" },
-    { id: "channel-product", name: "product", description: "Product planning and updates" },
   ],
   organizationReports: [
     { id: "report-senior", subjectName: "senior-engineer", managerName: "product-manager" },

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { MemberSchema, type Organization, type Member, type Channel } from '@ujima/shared';
+import { ChannelSchema, MemberSchema, type Organization, type Member, type Channel } from '@ujima/shared';
 import type { ApiRepository } from './repository-reader.js';
 import type { TeamStore } from './team-store.js';
 import { listProviderStatuses, validateProviderKeys, type ProviderStatus } from './team.js';
@@ -34,6 +34,13 @@ export interface AddMemberInput {
   name: string;
   kind: 'human' | 'agent';
   roleName: string;
+  channelIds?: string[];
+}
+
+export interface CreateChannelInput {
+  organizationId: string;
+  name: string;
+  topic?: string;
 }
 
 export interface ProviderTestResult {
@@ -203,7 +210,28 @@ export class SettingsService {
     if (team) {
       addMemberToDefaultChannels(this.repo, team, input.organizationId, saved);
     }
+    for (const channelId of input.channelIds ?? []) {
+      const channel = this.repo.getChannel(input.organizationId, channelId);
+      if (!channel) continue;
+      const memberIds = new Set(channel.memberIds);
+      memberIds.add(saved.id);
+      this.repo.setChannelMembers(channelId, [...memberIds].sort());
+    }
     return saved;
+  }
+
+  addChannel(input: CreateChannelInput): Channel {
+    this.requireOrganization(input.organizationId);
+    return this.repo.saveChannel(
+      ChannelSchema.parse({
+        id: randomUUID(),
+        organizationId: input.organizationId,
+        name: input.name,
+        kind: 'group',
+        topic: input.topic ?? '',
+        memberIds: [],
+      }),
+    );
   }
 
   getOrganizationSettings(organizationId: string): OrganizationSettingsResponse {

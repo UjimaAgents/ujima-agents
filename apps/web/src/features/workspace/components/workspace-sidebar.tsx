@@ -13,22 +13,48 @@ import { Modal } from "./modal";
 import type { BootstrapResponse } from "@ujima/api-schema";
 import type { SelectedConversation } from "../types";
 import { useState, useMemo } from "react";
+import { Select } from "@/components/ui/select";
 import type { RolePresetTemplate } from "../../onboarding/types";
+import { defaultModelForProvider, getModelOptionsForProvider } from "../../onboarding/types";
 import { getSuggestedAgentName } from "../../onboarding/agent-name-suggestions";
 import { Sparkles, Bot, ArrowRight, Search as SearchIcon } from "lucide-react";
+
+const PROVIDER_OPTIONS = [
+  { value: "anthropic", label: "Anthropic" },
+  { value: "openai", label: "OpenAI" },
+  { value: "google", label: "Google" },
+  { value: "mistral", label: "Mistral" },
+  { value: "deepseek", label: "DeepSeek" },
+  { value: "xai", label: "xAI" },
+  { value: "kimi", label: "Kimi" },
+  { value: "zhipu-ai", label: "Zhipu AI" },
+  { value: "openai-codex", label: "OpenAI Codex" },
+] as const;
+
+function normalizeProviderToken(value: string) {
+  return value.trim().toLowerCase().replace(/[\s_]+/g, "-");
+}
 
 interface WorkspaceSidebarProps {
   bootstrap: BootstrapResponse;
   rolePresets: RolePresetTemplate[];
+  channels: BootstrapResponse["channels"];
+  members: BootstrapResponse["members"];
   selected: SelectedConversation;
   onSelect: (conv: SelectedConversation) => void;
+  onCreateChannel: (name: string) => Promise<SelectedConversation | null>;
+  onCreateAgent: (input: { name: string; roleName: string; channelIds: string[] }) => Promise<SelectedConversation | null>;
 }
 
 export function WorkspaceSidebar({
   bootstrap,
   rolePresets,
+  channels,
+  members,
   selected,
   onSelect,
+  onCreateChannel,
+  onCreateAgent,
 }: WorkspaceSidebarProps) {
   const [isChannelModalOpen, setIsChannelModalOpen] = useState(false);
   const [isAgentModalOpen, setIsAgentModalOpen] = useState(false);
@@ -38,22 +64,30 @@ export function WorkspaceSidebar({
   const [agentSearch, setAgentSearch] = useState("");
   const [selectedTemplate, setSelectedTemplate] = useState<RolePresetTemplate | null>(null);
   const [customAgentName, setCustomAgentName] = useState("");
-  const [selectedLlm, setSelectedLlm] = useState(bootstrap.providers.find(p => p.hasKey)?.name || "");
-  const [selectedChannels, setSelectedChannels] = useState<string[]>([]);
-  
-  // New Provider State
-  const [isAddingNewProvider, setIsAddingNewProvider] = useState(false);
-  const [newProviderName, setNewProviderName] = useState("OpenAI");
-  const [newProviderKey, setNewProviderKey] = useState("");
+  const initialProvider = normalizeProviderToken(
+    bootstrap.providers.find((provider) => provider.hasKey)?.name ?? "openai",
+  );
+  const [selectedLlm, setSelectedLlm] = useState(initialProvider);
+  const [selectedModel, setSelectedModel] = useState(defaultModelForProvider(initialProvider));
+  const [isSavingChannel, setIsSavingChannel] = useState(false);
+  const [isSavingAgent, setIsSavingAgent] = useState(false);
 
-  const LLM_OPTIONS = ["Anthropic", "OpenAI", "Google", "Mistral", "DeepSeek", "xAI", "Kimi", "Zhipu AI", "OpenAI Codex"] as const;
-  
-  const visibleChannels = bootstrap.channels.filter(
+  const primaryChannel = useMemo(
+    () =>
+      channels.find(
+        (channel) => channel.name === "general" && channel.kind !== "self" && channel.kind !== "dm",
+      ) ??
+      channels.find((channel) => channel.kind !== "self" && channel.kind !== "dm") ??
+      null,
+    [channels],
+  );
+  const visibleChannels = channels.filter(
     (channel) => channel.kind !== "self" && channel.kind !== "dm",
   );
-  const agentMembers = bootstrap.members.filter(
+  const agentMembers = members.filter(
     (member) => member.kind === "agent",
   );
+  const modelOptions = useMemo(() => getModelOptionsForProvider(selectedLlm), [selectedLlm]);
 
   const filteredRolePresets = useMemo(() => {
     const query = agentSearch.trim().toLowerCase();
@@ -107,9 +141,10 @@ export function WorkspaceSidebar({
         <div className="mb-5">
           <div className="flex items-center justify-between px-2 text-[10px] font-bold uppercase tracking-widest text-zinc-500 dark:text-zinc-500">
             <span>Channels</span>
-            <button 
+            <button
+              type="button"
               onClick={() => setIsChannelModalOpen(true)}
-              className="rounded p-0.5 transition hover:bg-zinc-100 dark:hover:bg-zinc-900"
+              className="rounded p-0.5 opacity-40"
             >
               <Plus className="h-3 w-3" />
             </button>
@@ -139,9 +174,10 @@ export function WorkspaceSidebar({
         <div className="mb-5">
           <div className="flex items-center justify-between px-2 text-[10px] font-bold uppercase tracking-widest text-zinc-500 dark:text-zinc-500">
             <span>Agents</span>
-            <button 
+            <button
+              type="button"
               onClick={() => setIsAgentModalOpen(true)}
-              className="rounded p-0.5 transition hover:bg-zinc-100 dark:hover:bg-zinc-900"
+              className="rounded p-0.5 opacity-40"
             >
               <Plus className="h-3 w-3" />
             </button>
@@ -226,12 +262,16 @@ export function WorkspaceSidebar({
               Cancel
             </button>
             <button 
-              disabled={!newChannelName}
-              onClick={() => {
-                // Here we would call the API
-                console.log("Creating channel:", newChannelName);
+              disabled={!newChannelName || isSavingChannel}
+              onClick={async () => {
+                setIsSavingChannel(true);
+                const created = await onCreateChannel(newChannelName);
                 setIsChannelModalOpen(false);
                 setNewChannelName("");
+                setIsSavingChannel(false);
+                if (created) {
+                  onSelect(created);
+                }
               }}
               className="rounded-xl bg-violet-600 px-6 py-2 text-sm font-bold text-white shadow-lg shadow-violet-500/20 hover:bg-violet-700 transition-all disabled:opacity-50 disabled:shadow-none"
             >
@@ -248,6 +288,8 @@ export function WorkspaceSidebar({
           setAgentSearch("");
           setSelectedTemplate(null);
           setCustomAgentName("");
+          setSelectedLlm(initialProvider);
+          setSelectedModel(defaultModelForProvider(initialProvider));
         }} 
         title={selectedTemplate ? `Configure ${selectedTemplate.title}` : "Add New Agent"}
       >
@@ -277,6 +319,8 @@ export function WorkspaceSidebar({
                     key: "custom",
                   });
                   setCustomAgentName(getSuggestedAgentName());
+                  setSelectedLlm(initialProvider);
+                  setSelectedModel(defaultModelForProvider(initialProvider));
                 }}
                 className="w-full group flex items-start gap-3 rounded-xl border border-dashed border-zinc-300 bg-zinc-50/50 p-3 text-left transition hover:border-violet-300 hover:bg-violet-50 dark:border-zinc-700 dark:bg-zinc-900/30 dark:hover:bg-violet-500/5"
               >
@@ -334,87 +378,57 @@ export function WorkspaceSidebar({
                 />
               </div>
 
-              <div>
-                <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-1.5 block">LLM Provider</label>
-                <select 
-                  value={isAddingNewProvider ? "new" : selectedLlm}
-                  onChange={(e) => {
-                    if (e.target.value === "new") {
-                      setIsAddingNewProvider(true);
-                      setSelectedLlm("");
-                    } else {
-                      setIsAddingNewProvider(false);
-                      setSelectedLlm(e.target.value);
-                    }
-                  }}
-                  className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-2.5 text-sm focus:border-violet-500 focus:outline-none dark:border-zinc-800 dark:bg-zinc-900/50"
-                >
-                  {bootstrap.providers.filter(p => p.hasKey).length > 0 ? (
-                    <optgroup label="Configured Providers">
-                      {bootstrap.providers.filter(p => p.hasKey).map(p => (
-                        <option key={p.name} value={p.name}>{p.name}</option>
-                      ))}
-                    </optgroup>
-                  ) : (
-                    <option value="" disabled>No providers configured</option>
-                  )}
-                  <optgroup label="Other">
-                    <option value="new">+ Add new provider...</option>
-                  </optgroup>
-                </select>
-              </div>
-
-              {isAddingNewProvider && (
-                <div className="space-y-4 p-4 rounded-xl border border-violet-100 bg-violet-50/50 dark:border-violet-500/10 dark:bg-violet-500/5 animate-in slide-in-from-top-2 duration-200">
-                  <div>
-                    <label className="text-[10px] font-bold text-violet-600 dark:text-violet-400 uppercase tracking-widest mb-1.5 block">Provider Type</label>
-                    <select
-                      value={newProviderName}
-                      onChange={(e) => setNewProviderName(e.target.value)}
-                      className="w-full rounded-xl border border-zinc-200 bg-white px-4 py-2 text-sm focus:border-violet-500 focus:outline-none dark:border-zinc-800 dark:bg-zinc-950"
-                    >
-                      {LLM_OPTIONS.map(opt => (
-                        <option key={opt} value={opt}>{opt}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-bold text-violet-600 dark:text-violet-400 uppercase tracking-widest mb-1.5 block">API Key</label>
-                    <input
-                      type="password"
-                      placeholder={`Enter ${newProviderName} API Key`}
-                      value={newProviderKey}
-                      onChange={(e) => setNewProviderKey(e.target.value)}
-                      className="w-full rounded-xl border border-zinc-200 bg-white px-4 py-2 text-sm focus:border-violet-500 focus:outline-none dark:border-zinc-800 dark:bg-zinc-950"
-                    />
-                  </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <div>
+                  <label className="mb-1.5 block text-[10px] font-bold uppercase tracking-widest text-zinc-500">
+                    LLM Provider
+                  </label>
+                  <Select
+                    value={selectedLlm}
+                    onChange={(event) => {
+                      const provider = event.target.value;
+                      setSelectedLlm(provider);
+                      setSelectedModel(defaultModelForProvider(provider));
+                    }}
+                    className="w-full"
+                    placeholder="Select provider"
+                    options={PROVIDER_OPTIONS.map((option) => ({
+                      value: option.value,
+                      label: option.label,
+                    }))}
+                  />
                 </div>
-              )}
+                <div>
+                  <label className="mb-1.5 block text-[10px] font-bold uppercase tracking-widest text-zinc-500">
+                    Model
+                  </label>
+                  <Select
+                    value={selectedModel}
+                    onChange={(event) => setSelectedModel(event.target.value)}
+                    className="w-full"
+                    placeholder="Select model"
+                    options={modelOptions.map((option) => ({
+                      value: option.value,
+                      label: option.label,
+                    }))}
+                  />
+                </div>
+              </div>
 
               <div>
                 <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-1.5 block">Channels</label>
-                <div className="flex flex-wrap gap-2 max-h-[100px] overflow-y-auto p-1">
-                  {visibleChannels.map((channel) => {
-                    const isSelected = selectedChannels.includes(channel.id);
-                    return (
-                      <button
-                        key={channel.id}
-                        onClick={() => {
-                          setSelectedChannels(prev => 
-                            isSelected ? prev.filter(id => id !== channel.id) : [...prev, channel.id]
-                          );
-                        }}
-                        className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-all ${
-                          isSelected
-                            ? "border-violet-500 bg-violet-600 text-white shadow-md shadow-violet-500/20"
-                            : "border-zinc-200 bg-zinc-50 text-zinc-600 hover:border-zinc-300 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400"
-                        }`}
-                      >
-                        <Hash className="h-3 w-3" />
-                        {channel.name}
-                      </button>
-                    );
-                  })}
+                <div className="mt-3">
+                  <label className="flex items-center gap-3 rounded-xl border border-zinc-200 px-4 py-3 text-sm dark:border-zinc-800">
+                    <input
+                      type="checkbox"
+                      checked
+                      disabled
+                      className="h-4 w-4 rounded border-zinc-300 text-violet-600 focus:ring-violet-500"
+                    />
+                    <span className="text-zinc-700 dark:text-zinc-200">
+                      {primaryChannel?.name ?? "general"}
+                    </span>
+                  </label>
                 </div>
               </div>
             </div>
@@ -427,21 +441,25 @@ export function WorkspaceSidebar({
                 Back
               </button>
               <button 
-                onClick={() => {
-                  console.log("Creating Agent:", { 
-                    template: selectedTemplate, 
-                    name: customAgentName, 
-                    llm: isAddingNewProvider ? newProviderName : selectedLlm,
-                    newApiKey: isAddingNewProvider ? newProviderKey : undefined,
-                    channels: selectedChannels 
+                onClick={async () => {
+                  setIsSavingAgent(true);
+                  const created = await onCreateAgent({
+                    name: customAgentName,
+                    roleName: selectedTemplate?.name ?? "agent",
+                    channelIds: primaryChannel ? [primaryChannel.id] : [],
                   });
                   setIsAgentModalOpen(false);
+                  setAgentSearch("");
                   setSelectedTemplate(null);
-                  setSelectedChannels([]);
-                  setIsAddingNewProvider(false);
-                  setNewProviderKey("");
+                  setCustomAgentName("");
+                  setSelectedLlm(initialProvider);
+                  setSelectedModel(defaultModelForProvider(initialProvider));
+                  setIsSavingAgent(false);
+                  if (created) {
+                    onSelect(created);
+                  }
                 }}
-                disabled={isAddingNewProvider && !newProviderKey.trim()}
+                disabled={isSavingAgent}
                 className="flex-[2] rounded-xl bg-violet-600 px-6 py-2.5 text-sm font-bold text-white shadow-lg shadow-violet-500/20 hover:bg-violet-700 transition-all disabled:opacity-50 disabled:shadow-none"
               >
                 Create Agent

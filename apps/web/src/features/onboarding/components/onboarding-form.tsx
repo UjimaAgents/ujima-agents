@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, useEffect } from "react";
+import { useMemo, useState, useEffect } from "react";
 import {
   AlertCircle,
   ArrowLeft,
@@ -24,9 +24,11 @@ import {
 import { formatProviderLabel, MIN_TEAM_AGENTS } from "../api-contract";
 import { AGENT_NAME_SUGGESTIONS, getSuggestedAgentName } from "../agent-name-suggestions";
 import { Avatar } from "../../workspace/components/chat/primitives";
+import { Select } from "@/components/ui/select";
 import {
   OWNER_MANAGER_SENTINEL,
   defaultModelForProvider,
+  getModelOptionsForProvider,
   type OnboardingDraft,
   type OnboardingStep,
   type OnboardingStepId,
@@ -138,17 +140,19 @@ function getValidationMessage(stepId: OnboardingStepId, errors: DraftErrors): st
 
 function OrganizationPreviewCard() {
   return (
-    <div className="rounded-2xl bg-violet-50 p-6 dark:bg-violet-500/10">
-      <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-white text-violet-600 shadow-sm dark:bg-zinc-900 dark:text-violet-300">
+    <div className="flex flex-col sm:flex-row sm:items-center gap-5 rounded-2xl bg-violet-50 p-6 dark:bg-violet-500/10">
+      <div className="flex shrink-0 h-11 w-11 items-center justify-center rounded-xl bg-white text-violet-600 shadow-sm dark:bg-zinc-900 dark:text-violet-300">
         <FolderKanban className="h-5 w-5" />
       </div>
-      <p className="mt-6 text-sm font-semibold text-zinc-900 dark:text-zinc-100">Workspace boundary</p>
-      <p className="mt-3 text-sm leading-6 text-zinc-600 dark:text-zinc-300">
-        All agents will operate within the configured workspace boundary for maximum safety.
-      </p>
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Workspace boundary</p>
+        <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-300">
+          All agents will operate within the configured workspace boundary for maximum safety.
+        </p>
+      </div>
       <button
         type="button"
-        className="mt-6 inline-flex items-center gap-2 text-sm font-medium text-violet-700 hover:text-violet-800 dark:text-violet-300 dark:hover:text-violet-200"
+        className="shrink-0 inline-flex items-center gap-2 text-sm font-medium text-violet-700 hover:text-violet-800 dark:text-violet-300 dark:hover:text-violet-200"
       >
         Learn more
         <ArrowRight className="h-4 w-4" />
@@ -159,14 +163,16 @@ function OrganizationPreviewCard() {
 
 function OwnerPreviewCard() {
   return (
-    <div className="rounded-2xl bg-violet-50 p-6 dark:bg-violet-500/10">
-      <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-white text-violet-600 shadow-sm dark:bg-zinc-900 dark:text-violet-300">
+    <div className="flex flex-col sm:flex-row sm:items-center gap-5 rounded-2xl bg-violet-50 p-6 dark:bg-violet-500/10">
+      <div className="flex shrink-0 h-11 w-11 items-center justify-center rounded-xl bg-white text-violet-600 shadow-sm dark:bg-zinc-900 dark:text-violet-300">
         <ShieldCheck className="h-5 w-5" />
       </div>
-      <p className="mt-6 text-sm font-semibold text-zinc-900 dark:text-zinc-100">Owner permissions</p>
-      <p className="mt-3 text-sm leading-6 text-zinc-600 dark:text-zinc-300">
-        The onboarding API currently creates the first owner from the full name field and stores the person as the initial human member.
-      </p>
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Owner permissions</p>
+        <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-300">
+          The onboarding API currently creates the first owner from the full name field and stores the person as the initial human member.
+        </p>
+      </div>
     </div>
   );
 }
@@ -196,12 +202,10 @@ function getRoleTemplate(templateName: string, suggestedRoles: RolePresetTemplat
   return suggestedRoles.find((template) => template.name === templateName);
 }
 
-function getTemplateChannelIds(template: RolePresetTemplate, draft: OnboardingDraft) {
-  const channelIds = template.channels
-    .map((channelName) => draft.channels.find((channel) => channel.name === channelName)?.id)
-    .filter((channelId): channelId is string => Boolean(channelId));
-
-  return channelIds.length > 0 ? channelIds : draft.channels.slice(0, 1).map((channel) => channel.id);
+function getGeneralChannelIds(draft: OnboardingDraft) {
+  return [draft.channels.find((channel) => channel.name === "general")?.id ?? draft.channels[0]?.id].filter(
+    (channelId): channelId is string => Boolean(channelId),
+  );
 }
 
 function getNextSuggestedTemplate(suggestedRoles: RolePresetTemplate[], draft: OnboardingDraft) {
@@ -375,10 +379,6 @@ function StepFields({
   errors,
   showError,
   onFieldBlur,
-  onWorkspaceBrowse,
-  directoryInputRef,
-  onDirectoryInputChange,
-  folderPickerNote,
   showOwnerPassword,
   onToggleOwnerPassword,
   activeTeamTab,
@@ -391,10 +391,6 @@ function StepFields({
   errors: DraftErrors;
   showError: (field: DraftField) => boolean;
   onFieldBlur: (field: DraftField) => void;
-  onWorkspaceBrowse: () => void;
-  directoryInputRef: React.RefObject<HTMLInputElement | null>;
-  onDirectoryInputChange: (event: React.ChangeEvent<HTMLInputElement>) => void;
-  folderPickerNote: string;
   showOwnerPassword: boolean;
   onToggleOwnerPassword: () => void;
   activeTeamTab: TeamTabId;
@@ -460,6 +456,19 @@ function StepFields({
       ? activeRoleIndustry
       : roleIndustries[0]?.industry ?? "all";
   const defaultSuggestedTemplate = getNextSuggestedTemplate(starterRoleTemplates, draft);
+  const roleModelOptions = useMemo(() => {
+    if (!roleEditor) {
+      return [];
+    }
+
+    const options = getModelOptionsForProvider(roleEditor.llm);
+
+    if (roleEditor.model && !options.some((option) => option.value === roleEditor.model)) {
+      return [{ value: roleEditor.model, label: roleEditor.model }, ...options];
+    }
+
+    return Array.from(options);
+  }, [roleEditor]);
   const filteredSuggestedRoles = useMemo(() => {
     const query = roleSearch.trim().toLowerCase();
     const byIndustry =
@@ -513,7 +522,7 @@ function StepFields({
         instructions: template.instructions,
         llm: defaultProvider,
         model: defaultModelForProvider(defaultProvider),
-        channelIds: getTemplateChannelIds(template, draft),
+        channelIds: getGeneralChannelIds(draft),
       });
       return;
     }
@@ -530,12 +539,12 @@ function StepFields({
       templateName: getRoleTemplate(role.name, starterRoleTemplates)?.name ?? role.name,
       name: role.name,
       agentName: role.agentName,
-      title: role.title,
-      instructions: role.instructions,
-      llm: role.llm,
-      model: role.model,
-      channelIds: role.channelIds,
-    });
+        title: role.title,
+        instructions: role.instructions,
+        llm: role.llm,
+        model: role.model,
+        channelIds: getGeneralChannelIds(draft),
+      });
   };
 
   const updateRoleEditorTemplate = (templateName: string) => {
@@ -553,7 +562,7 @@ function StepFields({
             name: template.name,
             title: template.title,
             instructions: template.instructions,
-            channelIds: getTemplateChannelIds(template, draft),
+            channelIds: getGeneralChannelIds(draft),
             agentName: current.agentName || template.title,
           }
         : current,
@@ -748,8 +757,7 @@ function StepFields({
   if (stepId === "organization") {
     return (
       <div className="rounded-[24px] border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950">
-        <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Organization details</p>
-        <div className="mt-6 grid gap-8 lg:grid-cols-[minmax(0,1fr),220px]">
+        <div className="flex flex-col gap-8">
           <div className="space-y-6">
             <FieldShell
               label="Organization name"
@@ -775,39 +783,22 @@ function StepFields({
             <FieldShell
               label="Workspace root"
               htmlFor="workspaceRoot"
-              hint="Local path where the workspace will be created."
+              hint="Enter the absolute local path where the workspace will be created (e.g. /Users/name/projects/acme)"
               error={showError("workspaceRoot") ? errors.workspaceRoot : undefined}
             >
-              <div className="flex gap-3">
-                <input
-                  id="workspaceRoot"
-                  className={`min-w-0 flex-1 rounded-lg border bg-white px-4 py-2.5 text-sm text-zinc-900 outline-none transition placeholder:text-zinc-400 focus:border-violet-500 dark:bg-zinc-950 dark:text-zinc-100 ${
-                    showError("workspaceRoot")
-                      ? "border-red-300 focus:border-red-500 dark:border-red-500/60"
-                      : "border-zinc-200 dark:border-zinc-700"
-                  }`}
-                  value={draft.workspaceRoot}
-                  onBlur={() => onFieldBlur("workspaceRoot")}
-                  onChange={(event) => onDraftChange(updateField(draft, "workspaceRoot", event.target.value))}
-                  placeholder="C:\\Users\\USER\\Desktop\\projects\\my-workspace"
-                  aria-invalid={showError("workspaceRoot")}
-                />
-                <button
-                  type="button"
-                  onClick={onWorkspaceBrowse}
-                  className="shrink-0 rounded-lg border border-zinc-200 px-4 py-2.5 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-900"
-                >
-                  Browse
-                </button>
-              </div>
               <input
-                ref={directoryInputRef}
-                type="file"
-                className="hidden"
-                onChange={onDirectoryInputChange}
-                {...({ webkitdirectory: "", directory: "" } as Record<string, string>)}
+                id="workspaceRoot"
+                className={`w-full rounded-lg border bg-white px-4 py-2.5 text-sm text-zinc-900 outline-none transition placeholder:text-zinc-400 focus:border-violet-500 dark:bg-zinc-950 dark:text-zinc-100 ${
+                  showError("workspaceRoot")
+                    ? "border-red-300 focus:border-red-500 dark:border-red-500/60"
+                    : "border-zinc-200 dark:border-zinc-700"
+                }`}
+                value={draft.workspaceRoot}
+                onBlur={() => onFieldBlur("workspaceRoot")}
+                onChange={(event) => onDraftChange(updateField(draft, "workspaceRoot", event.target.value))}
+                placeholder="/Users/admin/projects/my-workspace"
+                aria-invalid={showError("workspaceRoot")}
               />
-              <p className="mt-2 text-xs leading-5 text-zinc-500 dark:text-zinc-400">{folderPickerNote}</p>
             </FieldShell>
           </div>
 
@@ -821,7 +812,7 @@ function StepFields({
     return (
       <div className="rounded-[24px] border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950">
         <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Owner details</p>
-        <div className="mt-6 grid gap-8 lg:grid-cols-[minmax(0,1fr),220px]">
+        <div className="mt-6 flex flex-col gap-8">
           <div className="space-y-6">
             <FieldShell
               label="Full name"
@@ -1062,7 +1053,9 @@ function StepFields({
                             </span>
                           </div>
                           <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">Role template: {role.name}</p>
-                          <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-300">{role.instructions}</p>
+                          <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-300">
+                            {role.instructions.length > 150 ? `${role.instructions.slice(0, 150).trim()}...` : role.instructions}
+                          </p>
                           <div className="mt-3 flex flex-wrap gap-2">
                             {role.channelIds.map((channelId) => {
                               const channelName = draft.channels.find((channel) => channel.id === channelId)?.name;
@@ -1176,7 +1169,7 @@ function StepFields({
                     {report.subjectName}
                   </div>
                   <div className="flex w-10 shrink-0 items-center justify-center text-sm text-zinc-400">→</div>
-                  <select
+                  <Select
                     value={report.managerName}
                     onChange={(event) =>
                       onDraftChange({
@@ -1186,22 +1179,12 @@ function StepFields({
                         ),
                       })
                     }
-                    className="min-w-0 flex-1 rounded-lg border border-zinc-200 bg-white px-4 py-2.5 text-sm outline-none transition focus:border-violet-500 dark:border-zinc-700 dark:bg-zinc-950"
-                  >
-                    {[
+                    className="min-w-0 flex-1"
+                    options={[
                       ...draft.roles.map((role) => ({ value: role.agentName, label: `${role.agentName} (${role.name})` })),
-                      // Owner ref persists the stable sentinel so a later
-                      // owner rename keeps existing edges intact; the
-                      // dropdown still renders the current friendly label.
                       { value: OWNER_MANAGER_SENTINEL, label: ownerLabel },
-                    ]
-                      .filter((option) => option.value !== report.subjectName)
-                      .map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                  </select>
+                    ].filter((option) => option.value !== report.subjectName)}
+                  />
                 </div>
               ))}
             </div>
@@ -1274,7 +1257,7 @@ function StepFields({
               <div className="space-y-3">
                 {draft.providers.map((provider, index) => (
                   <div key={provider.id} className="flex flex-nowrap items-center gap-3">
-                    <select
+                    <Select
                       value={provider.name}
                       onChange={(event) => {
                         const newName = event.target.value;
@@ -1296,15 +1279,10 @@ function StepFields({
                           roles: newRoles,
                         });
                       }}
-                      className="w-[220px] shrink-0 rounded-lg border border-zinc-200 bg-white px-4 py-2.5 text-sm outline-none transition focus:border-violet-500 dark:border-zinc-700 dark:bg-zinc-950"
-                    >
-                      <option value="" disabled>Select provider</option>
-                      {LLM_OPTIONS.map((opt) => (
-                        <option key={opt} value={opt}>
-                          {opt}
-                        </option>
-                      ))}
-                    </select>
+                      className="w-[220px] shrink-0"
+                      placeholder="Select provider"
+                      options={LLM_OPTIONS.map((opt) => ({ value: opt, label: opt }))}
+                    />
                     {provider.name === "OpenAI Codex" ? (
                       <button
                         type="button"
@@ -1341,23 +1319,21 @@ function StepFields({
         {roleEditor ? (
           <ModalShell
             title={roleEditor.mode === "create" ? "Add role" : "Edit role"}
-            description="Choose a suggested role, add an agent name, then tweak provider and channels."
+            description="Choose a suggested role, add an agent name, then pick a provider and model."
             onClose={() => setRoleEditor(null)}
           >
             <div className="space-y-5">
               <FieldShell label="Role template" htmlFor="roleTemplate" hint="Pick the starter role shape first.">
-                <select
+                <Select
                   id="roleTemplate"
                   value={roleEditor.templateName}
                   onChange={(event) => updateRoleEditorTemplate(event.target.value)}
-                  className="w-full rounded-lg border border-zinc-200 bg-white px-4 py-2.5 text-sm outline-none transition focus:border-violet-500 dark:border-zinc-700 dark:bg-zinc-950"
-                >
-                  {starterRoleTemplates.map((template) => (
-                    <option key={template.name} value={template.name}>
-                      {template.title}
-                    </option>
-                  ))}
-                </select>
+                  className="w-full"
+                  options={starterRoleTemplates.map((template) => ({
+                    value: template.name,
+                    label: template.title,
+                  }))}
+                />
               </FieldShell>
 
               <FieldShell label="Agent name" htmlFor="agentName" hint="">
@@ -1378,54 +1354,41 @@ function StepFields({
 
               <div className="grid gap-4 md:grid-cols-2">
                 <FieldShell label="LLM provider" htmlFor="roleLlm" hint="">
-                  <select
+                  <Select
                     id="roleLlm"
                     value={roleEditor.llm}
                     onChange={(event) => {
                       const llm = event.target.value;
                       setRoleEditor({ ...roleEditor, llm, model: defaultModelForProvider(llm) });
-                    }}
-                    className="w-full rounded-lg border border-zinc-200 bg-white px-4 py-2.5 text-sm outline-none transition focus:border-violet-500 dark:border-zinc-700 dark:bg-zinc-950"
-                  >
-                    {LLM_OPTIONS.map((option) => (
-                      <option key={option} value={option}>
-                        {option}
-                      </option>
-                    ))}
-                  </select>
+                      }}
+                    className="w-full"
+                    options={LLM_OPTIONS.map((option) => ({ value: option, label: option }))}
+                  />
                 </FieldShell>
                 <FieldShell label="Model" htmlFor="roleModel" hint="">
-                  <input
+                  <Select
                     id="roleModel"
                     value={roleEditor.model}
                     onChange={(event) => setRoleEditor({ ...roleEditor, model: event.target.value })}
-                    className="w-full rounded-lg border border-zinc-200 bg-white px-4 py-2.5 text-sm outline-none transition focus:border-violet-500 dark:border-zinc-700 dark:bg-zinc-950"
-                    placeholder={defaultModelForProvider(roleEditor.llm)}
+                    className="w-full"
+                    placeholder="Select model"
+                    options={roleModelOptions}
                   />
                 </FieldShell>
               </div>
 
               <div>
                 <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Channels</p>
-                <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                  {draft.channels.map((channel) => (
-                    <label key={channel.id} className="flex items-center gap-3 rounded-xl border border-zinc-200 px-4 py-3 text-sm dark:border-zinc-800">
-                      <input
-                        type="checkbox"
-                        checked={roleEditor.channelIds.includes(channel.id)}
-                        onChange={(event) =>
-                          setRoleEditor({
-                            ...roleEditor,
-                            channelIds: event.target.checked
-                              ? [...roleEditor.channelIds, channel.id]
-                              : roleEditor.channelIds.filter((item) => item !== channel.id),
-                          })
-                        }
-                        className="h-4 w-4 rounded border-zinc-300 text-violet-600 focus:ring-violet-500"
-                      />
-                      <span className="text-zinc-700 dark:text-zinc-200">{channel.name}</span>
-                    </label>
-                  ))}
+                <div className="mt-3">
+                  <label className="flex items-center gap-3 rounded-xl border border-zinc-200 px-4 py-3 text-sm dark:border-zinc-800">
+                    <input
+                      type="checkbox"
+                      checked
+                      disabled
+                      className="h-4 w-4 rounded border-zinc-300 text-violet-600 focus:ring-violet-500"
+                    />
+                    <span className="text-zinc-700 dark:text-zinc-200">general</span>
+                  </label>
                 </div>
               </div>
 
@@ -1638,7 +1601,6 @@ export function OnboardingForm({
   const [touchedFields, setTouchedFields] = useState<Partial<Record<DraftField, boolean>>>({});
   const [attemptedSubmit, setAttemptedSubmit] = useState(false);
   const [showOwnerPassword, setShowOwnerPassword] = useState(false);
-  const directoryInputRef = useRef<HTMLInputElement>(null);
 
   const stepMeta = {
     organization: {
@@ -1666,8 +1628,6 @@ export function OnboardingForm({
   const stepErrors = useMemo(() => validateStep(step.id, draft, activeTeamTab), [activeTeamTab, draft, step.id]);
   const isStepValid = Object.keys(stepErrors).length === 0;
   const validationMessage = getValidationMessage(step.id, stepErrors);
-  const folderPickerNote =
-    "Browse to choose a folder from your computer. Some browsers only expose the folder name, so you can still paste the full path manually if needed.";
   const activeTeamTabIndex = TEAM_TABS.findIndex((tab) => tab.id === activeTeamTab);
   const nextLabel =
     step.id === "team"
@@ -1699,49 +1659,6 @@ export function OnboardingForm({
     onNext();
   };
 
-  const handleWorkspaceBrowse = async () => {
-    markFieldTouched("workspaceRoot");
-
-    if (typeof window !== "undefined" && "showDirectoryPicker" in window) {
-      const picker = (
-        window as Window & {
-          showDirectoryPicker?: () => Promise<FileSystemDirectoryHandle>;
-        }
-      ).showDirectoryPicker;
-
-      if (picker) {
-        try {
-          const selectedDirectory = await picker();
-          onDraftChange(updateField(draft, "workspaceRoot", selectedDirectory.name));
-          return;
-        } catch (error) {
-          if (error instanceof DOMException && error.name === "AbortError") {
-            return;
-          }
-        }
-      }
-    }
-
-    directoryInputRef.current?.click();
-  };
-
-  const handleDirectoryInputChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const [firstFile] = Array.from(event.target.files ?? []);
-
-    if (!firstFile) {
-      return;
-    }
-
-    const relativePath = (firstFile as File & { webkitRelativePath?: string }).webkitRelativePath;
-    const folderName = relativePath?.split("/")[0];
-
-    if (folderName) {
-      onDraftChange(updateField(draft, "workspaceRoot", folderName));
-    }
-
-    event.target.value = "";
-  };
-
   return (
     <section className="bg-white px-6 py-6 dark:bg-zinc-950 md:px-8 md:py-7">
       <div>
@@ -1758,10 +1675,6 @@ export function OnboardingForm({
           errors={stepErrors}
           showError={shouldShowError}
           onFieldBlur={markFieldTouched}
-          onWorkspaceBrowse={handleWorkspaceBrowse}
-          directoryInputRef={directoryInputRef}
-          onDirectoryInputChange={handleDirectoryInputChange}
-          folderPickerNote={folderPickerNote}
           showOwnerPassword={showOwnerPassword}
           onToggleOwnerPassword={() => setShowOwnerPassword((current) => !current)}
           activeTeamTab={activeTeamTab}

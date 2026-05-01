@@ -60,10 +60,7 @@ function normalizeDraft(raw: unknown, baseline: OnboardingDraft): OnboardingDraf
               : fallbackRole?.id ?? `role-restored-${index}`;
           const llm = typeof (item as { llm?: unknown }).llm === "string" ? (item as { llm: string }).llm : fallbackRole?.llm ?? "";
           const model = typeof (item as { model?: unknown }).model === "string" ? (item as { model: string }).model : fallbackRole?.model ?? "";
-          const repairedModel =
-            seedRoleIds.has(id) && model === "gpt-4o" && defaultModelForProvider(llm) !== "gpt-4o"
-              ? defaultModelForProvider(llm)
-              : model;
+          const repairedModel = seedRoleIds.has(id) && model !== defaultModelForProvider(llm) ? defaultModelForProvider(llm) : model;
 
           return {
             id,

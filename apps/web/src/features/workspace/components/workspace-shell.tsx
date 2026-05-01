@@ -10,6 +10,9 @@ import type { SelectedConversation } from "../types";
 
 import type { RolePresetTemplate } from "../../onboarding/types";
 
+type WorkspaceChannel = BootstrapResponse["channels"][number];
+type WorkspaceMember = BootstrapResponse["members"][number];
+
 export function WorkspaceShell({ 
   bootstrap,
   rolePresets,
@@ -22,23 +25,25 @@ export function WorkspaceShell({
   const router = useRouter();
   const searchParams = useSearchParams();
   const [sidebarWidth, setSidebarWidth] = useState(25);
+  const [channels, setChannels] = useState<WorkspaceChannel[]>(bootstrap.channels);
+  const [members, setMembers] = useState<WorkspaceMember[]>(bootstrap.members);
 
   const defaultConversation = useMemo(() => {
     if (initialConversation) return initialConversation;
     const generalChannel =
-      bootstrap.channels.find((c) => c.name === "general") ??
-      bootstrap.channels[0];
+      channels.find((c) => c.name === "general") ??
+      channels[0];
     return {
       type: "channel" as const,
       id: generalChannel?.id ?? "general",
       name: generalChannel?.name ?? "general",
     };
-  }, [bootstrap.channels, initialConversation]);
+  }, [channels, initialConversation]);
 
   const resolveUrlConversation = useCallback(() => {
     const agentValue = searchParams.get("agent");
     if (agentValue) {
-      const agent = bootstrap.members.find(
+      const agent = members.find(
         (member) =>
           member.kind === "agent" &&
           (member.name === agentValue || member.id === agentValue),
@@ -50,7 +55,7 @@ export function WorkspaceShell({
 
     const channelValue = searchParams.get("channel");
     if (channelValue) {
-      const channel = bootstrap.channels.find(
+      const channel = channels.find(
         (item) => item.name === channelValue || item.id === channelValue,
       );
       if (channel) {
@@ -59,7 +64,7 @@ export function WorkspaceShell({
     }
 
     return defaultConversation;
-  }, [bootstrap.channels, bootstrap.members, defaultConversation, searchParams]);
+  }, [channels, defaultConversation, members, searchParams]);
 
   const selected = useMemo(() => resolveUrlConversation(), [resolveUrlConversation]);
 
@@ -74,6 +79,53 @@ export function WorkspaceShell({
     [router],
   );
 
+  const handleCreateChannel = useCallback(
+    async (name: string) => {
+      const trimmed = name.trim();
+      if (!trimmed) return null;
+
+      const orgId = bootstrap.organization?.id;
+      if (!orgId) return null;
+
+      const response = await fetch(`/api/orgs/${encodeURIComponent(orgId)}/channels`, {
+        method: "POST",
+        body: JSON.stringify({ name: trimmed }),
+      });
+      if (!response.ok) return null;
+
+      const channel = (await response.json()) as WorkspaceChannel;
+      setChannels((current) => [...current, channel]);
+      return { type: "channel" as const, id: channel.id, name: channel.name };
+    },
+    [bootstrap.organization?.id],
+  );
+
+  const handleCreateAgent = useCallback(
+    async (input: { name: string; roleName: string; channelIds: string[] }) => {
+      const trimmed = input.name.trim();
+      if (!trimmed) return null;
+
+      const orgId = bootstrap.organization?.id;
+      if (!orgId) return null;
+
+      const response = await fetch(`/api/orgs/${encodeURIComponent(orgId)}/members`, {
+        method: "POST",
+        body: JSON.stringify({
+          name: trimmed,
+          kind: "agent",
+          roleName: input.roleName.trim() || trimmed,
+          channelIds: input.channelIds,
+        }),
+      });
+      if (!response.ok) return null;
+
+      const member = (await response.json()) as WorkspaceMember;
+      setMembers((current) => [...current, member]);
+      return { type: "agent" as const, id: member.id, name: member.name };
+    },
+    [bootstrap.organization?.id],
+  );
+
   return (
     <div className="flex h-screen overflow-hidden bg-zinc-50 dark:bg-[#040712]">
       <div
@@ -83,8 +135,12 @@ export function WorkspaceShell({
         <WorkspaceSidebar
           bootstrap={bootstrap}
           rolePresets={rolePresets}
+          channels={channels}
+          members={members}
           selected={selected}
           onSelect={handleSelect}
+          onCreateChannel={handleCreateChannel}
+          onCreateAgent={handleCreateAgent}
         />
       </div>
       <DragHandle onResize={setSidebarWidth} />

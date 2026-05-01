@@ -63,6 +63,9 @@ export function ChannelView({ bootstrap, conversation }: ChannelViewProps) {
   const [detailsTab, setDetailsTab] = useState("Reasoning trace");
 
   const isAgent = conversation.type === "agent";
+  const conversationMemberIndex = bootstrap.members.findIndex(
+    (member) => member.name === conversation.name,
+  );
   const tabs = isAgent ? AGENT_TABS : CHANNEL_TABS;
 
   return (
@@ -72,9 +75,10 @@ export function ChannelView({ bootstrap, conversation }: ChannelViewProps) {
         <ChatHeader
           title={conversation.name}
           type={conversation.type === "agent" ? "dm" : "channel"}
+          avatarName={isAgent ? conversation.name : undefined}
+          avatarColorIndex={Math.max(conversationMemberIndex, 0)}
           status={conversation.type === "agent" ? "active" : "active"}
           statusLabel={conversation.type === "agent" ? "online" : "Active"}
-          members={bootstrap.members}
         />
         <ChatTabs
           tabs={tabs}
