@@ -13,27 +13,13 @@ import { Modal } from "./modal";
 import type { BootstrapResponse } from "@ujima/api-schema";
 import type { SelectedConversation } from "../types";
 import { useState, useMemo } from "react";
-import { Select } from "@/components/ui/select";
+import { ChannelScopeRow, TextInput } from "@/components/ui/form-fields";
+import { ProviderModelFields } from "@/components/ui/provider-model-fields";
 import type { RolePresetTemplate } from "../../onboarding/types";
-import { defaultModelForProvider, getModelOptionsForProvider } from "../../onboarding/types";
+import { defaultModelForProvider } from "../../onboarding/types";
 import { getSuggestedAgentName } from "../../onboarding/agent-name-suggestions";
+import { providerValueFromToken } from "../../onboarding/provider-catalog";
 import { Sparkles, Bot, ArrowRight, Search as SearchIcon } from "lucide-react";
-
-const PROVIDER_OPTIONS = [
-  { value: "anthropic", label: "Anthropic" },
-  { value: "openai", label: "OpenAI" },
-  { value: "google", label: "Google" },
-  { value: "mistral", label: "Mistral" },
-  { value: "deepseek", label: "DeepSeek" },
-  { value: "xai", label: "xAI" },
-  { value: "kimi", label: "Kimi" },
-  { value: "zhipu-ai", label: "Zhipu AI" },
-  { value: "openai-codex", label: "OpenAI Codex" },
-] as const;
-
-function normalizeProviderToken(value: string) {
-  return value.trim().toLowerCase().replace(/[\s_]+/g, "-");
-}
 
 interface WorkspaceSidebarProps {
   bootstrap: BootstrapResponse;
@@ -64,7 +50,7 @@ export function WorkspaceSidebar({
   const [agentSearch, setAgentSearch] = useState("");
   const [selectedTemplate, setSelectedTemplate] = useState<RolePresetTemplate | null>(null);
   const [customAgentName, setCustomAgentName] = useState("");
-  const initialProvider = normalizeProviderToken(
+  const initialProvider = providerValueFromToken(
     bootstrap.providers.find((provider) => provider.hasKey)?.name ?? "openai",
   );
   const [selectedLlm, setSelectedLlm] = useState(initialProvider);
@@ -87,7 +73,6 @@ export function WorkspaceSidebar({
   const agentMembers = members.filter(
     (member) => member.kind === "agent",
   );
-  const modelOptions = useMemo(() => getModelOptionsForProvider(selectedLlm), [selectedLlm]);
 
   const filteredRolePresets = useMemo(() => {
     const query = agentSearch.trim().toLowerCase();
@@ -124,10 +109,10 @@ export function WorkspaceSidebar({
       <div className="relative z-10 px-4 py-1.5">
         <div className="group relative">
           <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400 group-focus-within:text-violet-500" />
-          <input
+          <TextInput
             type="text"
             placeholder="Search"
-            className="h-8 w-full rounded-lg border border-zinc-200 bg-zinc-50/50 pl-9 pr-8 text-xs transition focus:border-violet-500 focus:outline-none focus:ring-1 focus:ring-violet-500 dark:border-zinc-800 dark:bg-zinc-900/50 dark:focus:border-violet-500"
+            className="h-8 pl-9 pr-8 text-xs bg-zinc-50/50 focus:ring-1 focus:ring-violet-500 dark:bg-zinc-900/50"
           />
           <kbd className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded border border-zinc-200 bg-white px-1.5 py-0.5 text-[10px] font-medium text-zinc-400 dark:border-zinc-700 dark:bg-zinc-800">
             ⌘K
@@ -139,16 +124,7 @@ export function WorkspaceSidebar({
       <div className="relative z-10 flex-1 overflow-y-auto px-2 py-3">
         {/* Channels */}
         <div className="mb-5">
-          <div className="flex items-center justify-between px-2 text-[10px] font-bold uppercase tracking-widest text-zinc-500 dark:text-zinc-500">
-            <span>Channels</span>
-            <button
-              type="button"
-              onClick={() => setIsChannelModalOpen(true)}
-              className="rounded p-0.5 opacity-40"
-            >
-              <Plus className="h-3 w-3" />
-            </button>
-          </div>
+          <SidebarSectionHeader title="Channels" onAdd={() => setIsChannelModalOpen(true)} />
           <div className="mt-1.5 space-y-0.5">
             {visibleChannels.map((channel) => (
               <SidebarItem
@@ -172,16 +148,7 @@ export function WorkspaceSidebar({
 
         {/* Agents */}
         <div className="mb-5">
-          <div className="flex items-center justify-between px-2 text-[10px] font-bold uppercase tracking-widest text-zinc-500 dark:text-zinc-500">
-            <span>Agents</span>
-            <button
-              type="button"
-              onClick={() => setIsAgentModalOpen(true)}
-              className="rounded p-0.5 opacity-40"
-            >
-              <Plus className="h-3 w-3" />
-            </button>
-          </div>
+          <SidebarSectionHeader title="Agents" onAdd={() => setIsAgentModalOpen(true)} />
           <div className="mt-1.5 space-y-0.5">
             {agentMembers.map((agent, idx) => (
               <SidebarItem
@@ -240,13 +207,13 @@ export function WorkspaceSidebar({
               <div className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400">
                 <Hash className="h-4 w-4" />
               </div>
-              <input 
+              <TextInput
                 autoFocus
                 type="text" 
                 placeholder="e.g. marketing-plan"
                 value={newChannelName}
                 onChange={(e) => setNewChannelName(e.target.value.toLowerCase().replace(/\s+/g, '-'))}
-                className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-10 py-3 text-sm focus:border-violet-500 focus:bg-white focus:outline-none focus:ring-1 focus:ring-violet-500 transition-all dark:border-zinc-800 dark:bg-zinc-900/50 dark:focus:border-violet-500 dark:focus:bg-black"
+                className="px-10 py-3 bg-zinc-50 dark:bg-zinc-900/50 dark:focus:bg-black"
               />
             </div>
             <p className="mt-2 text-xs text-zinc-400 leading-relaxed">
@@ -297,12 +264,12 @@ export function WorkspaceSidebar({
           <div className="space-y-4">
             <div className="relative">
               <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
-              <input 
+              <TextInput
                 type="text"
                 placeholder="Search roles (e.g. Developer, QA...)"
                 value={agentSearch}
                 onChange={(e) => setAgentSearch(e.target.value)}
-                className="w-full rounded-xl border border-zinc-200 bg-zinc-50 pl-10 pr-4 py-2.5 text-sm focus:border-violet-500 focus:outline-none transition-all dark:border-zinc-800 dark:bg-zinc-900/50"
+                className="pl-10 pr-4 py-2.5 bg-zinc-50 dark:bg-zinc-900/50"
               />
             </div>
             
@@ -367,68 +334,32 @@ export function WorkspaceSidebar({
               </div>
             </div>
 
-            <div className="space-y-4">
-              <div>
-                <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-1.5 block">Agent Name</label>
-                <input 
-                  type="text"
-                  value={customAgentName}
-                  onChange={(e) => setCustomAgentName(e.target.value)}
-                  className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-2.5 text-sm focus:border-violet-500 focus:outline-none dark:border-zinc-800 dark:bg-zinc-900/50"
-                />
-              </div>
+              <div className="space-y-4">
+                <div>
+                  <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-1.5 block">Agent Name</label>
+                  <TextInput
+                    type="text"
+                    value={customAgentName}
+                    onChange={(e) => setCustomAgentName(e.target.value)}
+                    className="bg-zinc-50 dark:bg-zinc-900/50"
+                  />
+                </div>
 
-              <div className="grid gap-4 md:grid-cols-2">
-                <div>
-                  <label className="mb-1.5 block text-[10px] font-bold uppercase tracking-widest text-zinc-500">
-                    LLM Provider
-                  </label>
-                  <Select
-                    value={selectedLlm}
-                    onChange={(event) => {
-                      const provider = event.target.value;
-                      setSelectedLlm(provider);
-                      setSelectedModel(defaultModelForProvider(provider));
-                    }}
-                    className="w-full"
-                    placeholder="Select provider"
-                    options={PROVIDER_OPTIONS.map((option) => ({
-                      value: option.value,
-                      label: option.label,
-                    }))}
-                  />
-                </div>
-                <div>
-                  <label className="mb-1.5 block text-[10px] font-bold uppercase tracking-widest text-zinc-500">
-                    Model
-                  </label>
-                  <Select
-                    value={selectedModel}
-                    onChange={(event) => setSelectedModel(event.target.value)}
-                    className="w-full"
-                    placeholder="Select model"
-                    options={modelOptions.map((option) => ({
-                      value: option.value,
-                      label: option.label,
-                    }))}
-                  />
-                </div>
-              </div>
+                <ProviderModelFields
+                  provider={selectedLlm}
+                  model={selectedModel}
+                  onProviderChange={setSelectedLlm}
+                  onModelChange={setSelectedModel}
+                  providerLabel="LLM provider"
+                  modelLabel="Model"
+                  providerId="agentProvider"
+                  modelId="agentModel"
+                />
 
               <div>
                 <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-1.5 block">Channels</label>
                 <div className="mt-3">
-                  <label className="flex items-center gap-3 rounded-xl border border-zinc-200 px-4 py-3 text-sm dark:border-zinc-800">
-                    <input
-                      type="checkbox"
-                      checked
-                      disabled
-                      className="h-4 w-4 rounded border-zinc-300 text-violet-600 focus:ring-violet-500"
-                    />
-                    <span className="text-zinc-700 dark:text-zinc-200">
-                      {primaryChannel?.name ?? "general"}
-                    </span>
-                  </label>
+                  <ChannelScopeRow label={primaryChannel?.name ?? "general"} />
                 </div>
               </div>
             </div>
@@ -511,5 +442,22 @@ function SidebarItem({
         <div className="h-2 w-2 rounded-full bg-zinc-300 dark:bg-zinc-700" />
       )}
     </button>
+  );
+}
+
+function SidebarSectionHeader({
+  title,
+  onAdd,
+}: {
+  title: string;
+  onAdd: () => void;
+}) {
+  return (
+    <div className="flex items-center justify-between px-2 text-[10px] font-bold uppercase tracking-widest text-zinc-500 dark:text-zinc-500">
+      <span>{title}</span>
+      <button type="button" onClick={onAdd} className="rounded p-0.5 opacity-40">
+        <Plus className="h-3 w-3" />
+      </button>
+    </div>
   );
 }

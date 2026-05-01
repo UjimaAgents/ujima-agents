@@ -1,3 +1,4 @@
+"use client";
 import { useMemo, useState, useEffect } from "react";
 import {
   AlertCircle,
@@ -25,16 +26,18 @@ import { formatProviderLabel, MIN_TEAM_AGENTS } from "../api-contract";
 import { AGENT_NAME_SUGGESTIONS, getSuggestedAgentName } from "../agent-name-suggestions";
 import { Avatar } from "../../workspace/components/chat/primitives";
 import { Select } from "@/components/ui/select";
+import { ChannelScopeRow, FieldShell, TextArea, TextInput } from "@/components/ui/form-fields";
+import { ProviderModelFields } from "@/components/ui/provider-model-fields";
 import {
   OWNER_MANAGER_SENTINEL,
   defaultModelForProvider,
-  getModelOptionsForProvider,
   type OnboardingDraft,
   type OnboardingStep,
   type OnboardingStepId,
   type RolePresetTemplate,
   type TeamTabId,
 } from "../types";
+import { PROVIDER_OPTIONS } from "../provider-catalog";
 
 interface OnboardingFormProps {
   step: OnboardingStep;
@@ -192,8 +195,6 @@ const ONBOARDING_STEP_NEXT_LABELS: Record<OnboardingStepId, string> = {
   review: "Complete",
 };
 
-const LLM_OPTIONS = ["Anthropic", "OpenAI", "Google", "Mistral", "DeepSeek", "xAI", "Kimi", "Zhipu AI", "OpenAI Codex"] as const;
-
 function createId(prefix: string) {
   return `${prefix}-${Math.random().toString(36).slice(2, 10)}`;
 }
@@ -265,36 +266,6 @@ function validateTeamTab(tabId: TeamTabId, draft: OnboardingDraft): string | nul
   }
 
   return null;
-}
-
-function FieldShell({
-  label,
-  htmlFor,
-  hint,
-  error,
-  children,
-}: {
-  label: string;
-  htmlFor: string;
-  hint: string;
-  error?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="block">
-      <label className="text-sm font-semibold text-zinc-900 dark:text-zinc-100" htmlFor={htmlFor}>
-        {label}
-      </label>
-      {hint ? <span className="mt-1 block text-xs leading-5 text-zinc-500 dark:text-zinc-400">{hint}</span> : null}
-      <div className="mt-3">{children}</div>
-      {error ? (
-        <p className="mt-2 flex items-center gap-2 text-xs font-medium text-red-600 dark:text-red-400" role="alert">
-          <AlertCircle className="h-3.5 w-3.5" />
-          {error}
-        </p>
-      ) : null}
-    </div>
-  );
 }
 
 function ReviewSection({
@@ -456,19 +427,6 @@ function StepFields({
       ? activeRoleIndustry
       : roleIndustries[0]?.industry ?? "all";
   const defaultSuggestedTemplate = getNextSuggestedTemplate(starterRoleTemplates, draft);
-  const roleModelOptions = useMemo(() => {
-    if (!roleEditor) {
-      return [];
-    }
-
-    const options = getModelOptionsForProvider(roleEditor.llm);
-
-    if (roleEditor.model && !options.some((option) => option.value === roleEditor.model)) {
-      return [{ value: roleEditor.model, label: roleEditor.model }, ...options];
-    }
-
-    return Array.from(options);
-  }, [roleEditor]);
   const filteredSuggestedRoles = useMemo(() => {
     const query = roleSearch.trim().toLowerCase();
     const byIndustry =
@@ -765,13 +723,9 @@ function StepFields({
               hint=""
               error={showError("organizationName") ? errors.organizationName : undefined}
             >
-              <input
+              <TextInput
                 id="organizationName"
-                className={`w-full rounded-lg border bg-white px-4 py-2.5 text-sm text-zinc-900 outline-none transition placeholder:text-zinc-400 focus:border-violet-500 dark:bg-zinc-950 dark:text-zinc-100 ${
-                  showError("organizationName")
-                    ? "border-red-300 focus:border-red-500 dark:border-red-500/60"
-                    : "border-zinc-200 dark:border-zinc-700"
-                }`}
+                error={showError("organizationName")}
                 value={draft.organizationName}
                 onBlur={() => onFieldBlur("organizationName")}
                 onChange={(event) => onDraftChange(updateField(draft, "organizationName", event.target.value))}
@@ -786,13 +740,9 @@ function StepFields({
               hint="Enter the absolute local path where the workspace will be created (e.g. /Users/name/projects/acme)"
               error={showError("workspaceRoot") ? errors.workspaceRoot : undefined}
             >
-              <input
+              <TextInput
                 id="workspaceRoot"
-                className={`w-full rounded-lg border bg-white px-4 py-2.5 text-sm text-zinc-900 outline-none transition placeholder:text-zinc-400 focus:border-violet-500 dark:bg-zinc-950 dark:text-zinc-100 ${
-                  showError("workspaceRoot")
-                    ? "border-red-300 focus:border-red-500 dark:border-red-500/60"
-                    : "border-zinc-200 dark:border-zinc-700"
-                }`}
+                error={showError("workspaceRoot")}
                 value={draft.workspaceRoot}
                 onBlur={() => onFieldBlur("workspaceRoot")}
                 onChange={(event) => onDraftChange(updateField(draft, "workspaceRoot", event.target.value))}
@@ -820,13 +770,9 @@ function StepFields({
               hint=""
               error={showError("ownerName") ? errors.ownerName : undefined}
             >
-              <input
+              <TextInput
                 id="ownerName"
-                className={`w-full rounded-lg border bg-white px-4 py-2.5 text-sm text-zinc-900 outline-none transition placeholder:text-zinc-400 focus:border-violet-500 dark:bg-zinc-950 dark:text-zinc-100 ${
-                  showError("ownerName")
-                    ? "border-red-300 focus:border-red-500 dark:border-red-500/60"
-                    : "border-zinc-200 dark:border-zinc-700"
-                }`}
+                error={showError("ownerName")}
                 value={draft.ownerName}
                 onBlur={() => onFieldBlur("ownerName")}
                 onChange={(event) => onDraftChange(updateField(draft, "ownerName", event.target.value))}
@@ -841,14 +787,10 @@ function StepFields({
               hint="Used for the owner login after onboarding completes."
               error={showError("ownerEmail") ? errors.ownerEmail : undefined}
             >
-              <input
+              <TextInput
                 id="ownerEmail"
                 type="email"
-                className={`w-full rounded-lg border bg-white px-4 py-2.5 text-sm text-zinc-900 outline-none transition placeholder:text-zinc-400 focus:border-violet-500 dark:bg-zinc-950 dark:text-zinc-100 ${
-                  showError("ownerEmail")
-                    ? "border-red-300 focus:border-red-500 dark:border-red-500/60"
-                    : "border-zinc-200 dark:border-zinc-700"
-                }`}
+                error={showError("ownerEmail")}
                 value={draft.ownerEmail}
                 onBlur={() => onFieldBlur("ownerEmail")}
                 onChange={(event) => onDraftChange(updateField(draft, "ownerEmail", event.target.value))}
@@ -865,14 +807,11 @@ function StepFields({
                 error={showError("ownerPassword") ? errors.ownerPassword : undefined}
               >
                 <div className="relative">
-                  <input
+                  <TextInput
                     id="ownerPassword"
                     type={showOwnerPassword ? "text" : "password"}
-                    className={`w-full rounded-lg border bg-white px-4 py-2.5 pr-11 text-sm text-zinc-900 outline-none transition placeholder:text-zinc-400 focus:border-violet-500 dark:bg-zinc-950 dark:text-zinc-100 ${
-                      showError("ownerPassword")
-                        ? "border-red-300 focus:border-red-500 dark:border-red-500/60"
-                        : "border-zinc-200 dark:border-zinc-700"
-                    }`}
+                    error={showError("ownerPassword")}
+                    className="pr-11"
                     value={draft.ownerPassword}
                     onBlur={() => onFieldBlur("ownerPassword")}
                     onChange={(event) => onDraftChange(updateField(draft, "ownerPassword", event.target.value))}
@@ -982,11 +921,11 @@ function StepFields({
                   <div className="mt-4 flex items-center gap-3">
                     <div className="relative min-w-0 flex-1">
                       <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
-                      <input
+                      <TextInput
                         value={roleSearch}
                         onChange={(event) => setRoleSearch(event.target.value)}
                         placeholder="Search roles, channels, or descriptions"
-                        className="w-full rounded-xl border border-zinc-200 bg-white py-2.5 pl-9 pr-3 text-sm outline-none transition placeholder:text-zinc-400 focus:border-violet-500 dark:border-zinc-700 dark:bg-zinc-950"
+                        className="pl-9 pr-3"
                       />
                     </div>
                     <button
@@ -1281,7 +1220,7 @@ function StepFields({
                       }}
                       className="w-[220px] shrink-0"
                       placeholder="Select provider"
-                      options={LLM_OPTIONS.map((opt) => ({ value: opt, label: opt }))}
+                      options={PROVIDER_OPTIONS.map((opt) => ({ value: opt.value, label: opt.label }))}
                     />
                     {provider.name === "OpenAI Codex" ? (
                       <button
@@ -1294,7 +1233,7 @@ function StepFields({
                         {provider.apiKey ? "Signed in with OpenAI" : "Sign in with OpenAI"}
                       </button>
                     ) : (
-                      <input
+                      <TextInput
                         type="password"
                         value={provider.apiKey}
                         onChange={(event) =>
@@ -1305,7 +1244,7 @@ function StepFields({
                             ),
                           })
                         }
-                        className="min-w-0 flex-1 rounded-lg border border-zinc-200 bg-white px-4 py-2.5 text-sm outline-none transition focus:border-violet-500 dark:border-zinc-700 dark:bg-zinc-950"
+                        className="min-w-0 flex-1"
                         placeholder={provider.name ? `${formatProviderLabel(provider.name)} API key` : "Provider API key"}
                       />
                     )}
@@ -1337,12 +1276,11 @@ function StepFields({
               </FieldShell>
 
               <FieldShell label="Agent name" htmlFor="agentName" hint="">
-                <input
+                <TextInput
                   id="agentName"
                   list="agentNameSuggestions"
                   value={roleEditor.agentName}
                   onChange={(event) => setRoleEditor({ ...roleEditor, agentName: event.target.value })}
-                  className="w-full rounded-lg border border-zinc-200 bg-white px-4 py-2.5 text-sm outline-none transition focus:border-violet-500 dark:border-zinc-700 dark:bg-zinc-950"
                   placeholder="Frontend Engineer"
                 />
                 <datalist id="agentNameSuggestions">
@@ -1352,43 +1290,21 @@ function StepFields({
                 </datalist>
               </FieldShell>
 
-              <div className="grid gap-4 md:grid-cols-2">
-                <FieldShell label="LLM provider" htmlFor="roleLlm" hint="">
-                  <Select
-                    id="roleLlm"
-                    value={roleEditor.llm}
-                    onChange={(event) => {
-                      const llm = event.target.value;
-                      setRoleEditor({ ...roleEditor, llm, model: defaultModelForProvider(llm) });
-                      }}
-                    className="w-full"
-                    options={LLM_OPTIONS.map((option) => ({ value: option, label: option }))}
-                  />
-                </FieldShell>
-                <FieldShell label="Model" htmlFor="roleModel" hint="">
-                  <Select
-                    id="roleModel"
-                    value={roleEditor.model}
-                    onChange={(event) => setRoleEditor({ ...roleEditor, model: event.target.value })}
-                    className="w-full"
-                    placeholder="Select model"
-                    options={roleModelOptions}
-                  />
-                </FieldShell>
-              </div>
+              <ProviderModelFields
+                provider={roleEditor.llm}
+                model={roleEditor.model}
+                onProviderChange={(llm) => setRoleEditor({ ...roleEditor, llm })}
+                onModelChange={(model) => setRoleEditor({ ...roleEditor, model })}
+                providerLabel="LLM provider"
+                modelLabel="Model"
+                providerId="roleLlm"
+                modelId="roleModel"
+              />
 
               <div>
                 <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Channels</p>
                 <div className="mt-3">
-                  <label className="flex items-center gap-3 rounded-xl border border-zinc-200 px-4 py-3 text-sm dark:border-zinc-800">
-                    <input
-                      type="checkbox"
-                      checked
-                      disabled
-                      className="h-4 w-4 rounded border-zinc-300 text-violet-600 focus:ring-violet-500"
-                    />
-                    <span className="text-zinc-700 dark:text-zinc-200">general</span>
-                  </label>
+                  <ChannelScopeRow label="general" />
                 </div>
               </div>
 
@@ -1420,20 +1336,18 @@ function StepFields({
           >
             <div className="space-y-5">
               <FieldShell label="Channel name" htmlFor="channelName" hint="">
-                <input
+                <TextInput
                   id="channelName"
                   value={channelEditor.name}
                   onChange={(event) => setChannelEditor({ ...channelEditor, name: event.target.value })}
-                  className="w-full rounded-lg border border-zinc-200 bg-white px-4 py-2.5 text-sm outline-none transition focus:border-violet-500 dark:border-zinc-700 dark:bg-zinc-950"
                   placeholder="general"
                 />
               </FieldShell>
               <FieldShell label="Description" htmlFor="channelDescription" hint="">
-                <textarea
+                <TextArea
                   id="channelDescription"
                   value={channelEditor.description}
                   onChange={(event) => setChannelEditor({ ...channelEditor, description: event.target.value })}
-                  className="min-h-24 w-full rounded-lg border border-zinc-200 bg-white px-4 py-3 text-sm outline-none transition focus:border-violet-500 dark:border-zinc-700 dark:bg-zinc-950"
                   placeholder="General discussions and updates"
                 />
               </FieldShell>
