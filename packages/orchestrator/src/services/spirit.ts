@@ -591,7 +591,25 @@ export class SpiritService {
         lastMessageId = message.id;
       }
 
-      totalTokens = (usage?.inputTokens ?? 0) + (usage?.outputTokens ?? 0);
+      // Prefer the provider-supplied `totalTokens` over our own
+      // input+output sum. Some providers (and the V3 mock used in
+      // tests) return non-numeric fields on `inputTokens` /
+      // `outputTokens` that wouldn't sum to a number — and even when
+      // they're flat, the sum can drift from `totalTokens` because
+      // it ignores reasoning/cached tokens that the provider counts.
+      // Falling back to the sum preserves behaviour when the provider
+      // omits `totalTokens`. Coercing through `Number()` defends
+      // against accidental non-numeric leaks reaching SpiritSchema's
+      // `z.number().int().min(0)` validator.
+      const usageInput = Number(usage?.inputTokens ?? 0) || 0;
+      const usageOutput = Number(usage?.outputTokens ?? 0) || 0;
+      const usageTotal = Number(usage?.totalTokens ?? 0);
+      totalTokens = Number.isFinite(usageTotal) && usageTotal > 0
+        ? usageTotal
+        : usageInput + usageOutput;
+      if (!Number.isFinite(totalTokens) || totalTokens < 0) {
+        totalTokens = 0;
+      }
       const completed: Spirit = SpiritSchema.parse({
         ...running,
         iteration: running.iteration + totalTurns,

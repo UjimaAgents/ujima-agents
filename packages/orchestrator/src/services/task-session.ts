@@ -290,6 +290,18 @@ export class TaskSessionService {
       throw new Error(`Task session not found: ${taskSessionId}`);
     }
 
+    // Reject terminal sessions. A completed/failed/cancelled session
+    // is logically done — spawning new spirits attached to it would
+    // resurrect work the system already accounted for as finished
+    // and silently duplicate execution. start() is idempotent only
+    // for live (queued / running / waiting_for_approval) sessions.
+    // Callers that want to re-run should `create()` a new session.
+    if (TERMINAL_TASK_STATUSES.has(session.status)) {
+      throw new Error(
+        `Cannot start task session "${taskSessionId}" — status is "${session.status}" (terminal). Create a new session to retry.`,
+      );
+    }
+
     // Pre-validate every team member BEFORE spawning anything. spawn()
     // does the same checks itself, but each spawn writes a Spirit row,
     // a Run row, and an in-memory registry entry. Without pre-flight
@@ -480,6 +492,17 @@ export class TaskSessionService {
  * exhaust).
  */
 const SLUG_ATTEMPT_LIMIT = 8;
+
+/**
+ * Statuses where a task session is considered finished — start() will
+ * refuse to spawn new spirits attached to one. Live statuses
+ * (queued / running / waiting_for_approval) remain re-runnable.
+ */
+const TERMINAL_TASK_STATUSES: ReadonlySet<TaskSessionStatus> = new Set<TaskSessionStatus>([
+  'completed',
+  'failed',
+  'cancelled',
+]);
 
 /**
  * Detect SQLite/better-sqlite3 UNIQUE-constraint violations. The

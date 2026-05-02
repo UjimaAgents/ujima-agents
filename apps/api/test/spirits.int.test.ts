@@ -2305,6 +2305,90 @@ describe('TaskSessionService.create — audit fix regressions', () => {
   });
 
   // -------------------------------------------------------------------
+  // NEW (audit fix): completion's tokensUsed accounting is robust to
+  // any usage shape — the V3-style nested usage from MockLanguageModelV3
+  // and the flat usage AI SDK normalises to both work; non-numeric
+  // leaks coerce to 0 instead of failing SpiritSchema.parse.
+  // -------------------------------------------------------------------
+  it('completion handles V3-shape usage and never poisons SpiritSchema with a non-number', async () => {
+    // Run the multi-turn loop end-to-end with the V3-mock model and
+    // assert the spirit reaches `completed` with a finite tokensUsed.
+    // Pre-fix this could blow up SpiritSchema.parse if the AI SDK
+    // surfaced anything other than flat numbers from the V3 usage.
+    const fixture = await createFixture({
+      staticModel: makeStreamingModel([
+        { type: 'text-start', id: '1' },
+        { type: 'text-delta', id: '1', delta: 'Done.' },
+        { type: 'text-end', id: '1' },
+        {
+          type: 'finish',
+          usage: v3Usage(123, 45),
+          finishReason: { unified: 'stop' as const, raw: 'stop' },
+        },
+      ]),
+    });
+    tempDirs.push(fixture.archiveRoot);
+
+    const { session } = fixture.taskSessions.create({
+      organizationId: fixture.organizationId,
+      requestedBy: fixture.ownerId,
+      prompt: 'usage shape test',
+      team: ['frontend-alice'],
+    });
+
+    const outcome = await fixture.spirits.run({
+      organizationId: fixture.organizationId,
+      taskSessionId: session.id,
+      memberId: 'frontend-alice',
+    });
+
+    // SpiritSchema enforces tokensUsed: z.number().int().min(0), so
+    // a non-number would have failed the parse and thrown — meaning
+    // a clean .completed status is the test of "we coerced safely".
+    expect(outcome.spirit.status).toBe('completed');
+    expect(Number.isFinite(outcome.spirit.tokensUsed)).toBe(true);
+    expect(outcome.spirit.tokensUsed).toBeGreaterThanOrEqual(0);
+    expect(Number.isInteger(outcome.spirit.tokensUsed)).toBe(true);
+  });
+
+  // -------------------------------------------------------------------
+  // NEW (audit fix): start() refuses terminal sessions. A retry on
+  // a completed/failed/cancelled session must throw, not silently
+  // spawn fresh spirits attached to finished work.
+  // -------------------------------------------------------------------
+  it('start() rejects terminal sessions (completed / failed / cancelled)', async () => {
+    const fixture = await createFixture();
+    tempDirs.push(fixture.archiveRoot);
+
+    for (const status of ['completed', 'failed', 'cancelled'] as const) {
+      const { session } = fixture.taskSessions.create({
+        organizationId: fixture.organizationId,
+        requestedBy: fixture.ownerId,
+        prompt: `${status} retry test`,
+        team: ['frontend-alice'],
+        slug: `${status}-retry`,
+      });
+      // Force the session into a terminal state by writing through
+      // the repo. updateStatus() goes through the normal status
+      // alphabet so we use it as the production path would.
+      fixture.taskSessions.updateStatus(fixture.organizationId, session.id, status, {
+        summary: `${status} for test`,
+        completedAt: new Date().toISOString(),
+      });
+
+      await expect(
+        fixture.taskSessions.start(fixture.organizationId, session.id),
+      ).rejects.toThrow(/terminal/i);
+
+      // No spirits spawned after the rejection.
+      expect(fixture.spirits.list(fixture.organizationId, session.id)).toHaveLength(0);
+      // Status untouched.
+      const refreshed = fixture.repo.getTaskSession(fixture.organizationId, session.id)!;
+      expect(refreshed.status).toBe(status);
+    }
+  });
+
+  // -------------------------------------------------------------------
   // NEW (audit fix): pre-existing spirit's registry rank is preserved
   // when a later spawn in start() fails. spawnTracked() must NOT
   // bump `registeredAt` for existing spirits, because the bump

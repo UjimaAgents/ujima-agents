@@ -169,7 +169,12 @@ export function registerTaskSessionRoutes(
       ) {
         return replyError(reply, 404, 'ERR_NOT_FOUND', message);
       }
-      if (message.includes('not wired') || message.includes('not an agent') || message.includes('retired')) {
+      if (
+        message.includes('not wired') ||
+        message.includes('not an agent') ||
+        message.includes('retired') ||
+        message.includes('terminal')
+      ) {
         return replyError(reply, 409, 'ERR_CONFLICT', message);
       }
       return replyError(reply, 400, 'ERR_BAD_REQUEST', message);
