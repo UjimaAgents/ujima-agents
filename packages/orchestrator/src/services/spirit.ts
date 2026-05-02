@@ -211,6 +211,29 @@ export class SpiritService {
    * Idempotent — same triple returns the existing row.
    */
   spawn(input: SpawnSpiritInput): Spirit {
+    return this.spawnTracked(input).spirit;
+  }
+
+  /**
+   * Same as `spawn` but tells the caller whether this invocation
+   * created the Spirit row (`created: true`) or returned a pre-existing
+   * one (`created: false`).
+   *
+   * Required by atomic-flow callers like `TaskSessionService.start()`,
+   * which rolls back DB writes on failure and needs to distinguish:
+   *
+   *   * Newly-created spirits whose Spirit/Run rows were rolled back —
+   *     their registry entries should be removed too.
+   *   * Pre-existing spirits whose DB rows survived the rollback —
+   *     their registry entries must stay, otherwise the supervisor
+   *     gate goes blind to live work that pre-dated this start() call.
+   *
+   * Without this distinction, an idempotent retry that touches a mix
+   * of fresh and existing spirits will, on a later failure in the
+   * batch, wrongly evict the existing spirits' registry entries even
+   * though their DB rows are still valid (the audit's stated bug).
+   */
+  spawnTracked(input: SpawnSpiritInput): { spirit: Spirit; created: boolean } {
     this.requireOrganization(input.organizationId);
     const role = input.role ?? 'worker';
     const session = this.repo.getTaskSession(input.organizationId, input.taskSessionId);
@@ -240,7 +263,7 @@ export class SpiritService {
     );
     if (existing) {
       this.registry.register(existing);
-      return existing;
+      return { spirit: existing, created: false };
     }
 
     const now = new Date().toISOString();
@@ -272,7 +295,7 @@ export class SpiritService {
     this.repo.saveSpirit(spirit);
     this.registry.register(spirit);
     this.emit(SocketEventNames.spiritStarted, spirit);
-    return spirit;
+    return { spirit, created: true };
   }
 
   /** @deprecated Use `spawn`. Retained for the Phase 2.A test surface. */

@@ -312,21 +312,28 @@ export class TaskSessionService {
     // Wrap the spawn loop + status flip in a SQL transaction so a
     // mid-loop failure rolls the persisted Spirit/Run rows back to
     // their pre-call state. The in-memory ActiveSpiritRegistry is
-    // not rollback-aware on its own, so we track the spirits we
-    // registered and explicitly unregister them on tx failure. The
+    // not rollback-aware on its own, so we track the spirits this
+    // call CREATED (not the ones it found pre-existing) and unregister
+    // only those on failure. Pre-existing spirits' DB rows survive
+    // the rollback — touching their registry entries would blind the
+    // supervisor gate to live work that pre-dated this call. The
     // realtime emits inside spawn() already fired before any rollback
     // — consumers of `spirit:started` are expected to be best-effort
     // (same trade-off as TaskSessionService.create's join message).
     const spawned: Spirit[] = [];
+    const created: Spirit[] = [];
     try {
       this.repo.transaction(() => {
         for (const memberId of session.teamMemberIds) {
-          const spirit = spirits.spawn({
+          const result = spirits.spawnTracked({
             organizationId,
             taskSessionId,
             memberId,
           });
-          spawned.push(spirit);
+          spawned.push(result.spirit);
+          if (result.created) {
+            created.push(result.spirit);
+          }
         }
         // Bump the session row to `running` once at least one spirit
         // exists. The supervisor/promoter layer above can still flip it
@@ -340,11 +347,12 @@ export class TaskSessionService {
         }
       });
     } catch (err) {
-      // SQL writes have rolled back. Mirror that on the in-memory
-      // registry so the supervisor gate doesn't see ghost workers
-      // for rolled-back rows.
+      // SQL writes have rolled back. Mirror that on the registry —
+      // but ONLY for spirits this call created. Pre-existing spirits
+      // weren't written by this transaction; their registry entries
+      // are still source-of-truth-correct.
       const registry = spirits.getActiveRegistry();
-      for (const spirit of spawned) {
+      for (const spirit of created) {
         registry.unregister(spirit.organizationId, spirit.memberId, spirit.id);
       }
       throw err;

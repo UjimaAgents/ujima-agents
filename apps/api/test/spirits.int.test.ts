@@ -1820,17 +1820,19 @@ describe('TaskSessionService.create — audit fix regressions', () => {
     // Simulate the TOCTOU window the audit flagged: the member is
     // alive at pre-flight but is retired before its spawn() call
     // executes. We can't easily race a real retirement inside the
-    // synchronous tx body, so we Proxy the spirits service to make
-    // the second spawn() throw — which exercises the same rollback
-    // path the real race would hit.
-    const realSpawn = fixture.spirits.spawn.bind(fixture.spirits);
+    // synchronous tx body, so we monkey-patch the spirits service
+    // to make the second spawn throw — which exercises the same
+    // rollback path the real race would hit. start() goes through
+    // spawnTracked() (the audit-fixed variant that returns
+    // {spirit, created}), so we patch that one.
+    const realSpawnTracked = fixture.spirits.spawnTracked.bind(fixture.spirits);
     let spawnsObserved = 0;
-    fixture.spirits.spawn = (input) => {
+    fixture.spirits.spawnTracked = (input) => {
       spawnsObserved += 1;
       if (input.memberId === 'frontend-bob') {
         throw new Error('simulated retirement race during spawn');
       }
-      return realSpawn(input);
+      return realSpawnTracked(input);
     };
 
     await expect(
@@ -1839,7 +1841,8 @@ describe('TaskSessionService.create — audit fix regressions', () => {
 
     // Both members were attempted (we hit the failure on bob, but
     // alice already ran). Rollback must have undone alice's spirit,
-    // run row, AND her registry entry.
+    // run row, AND her registry entry — alice was newly created in
+    // this call, so the selective rollback removes her too.
     expect(spawnsObserved).toBe(2);
     expect(fixture.spirits.list(fixture.organizationId, session.id)).toHaveLength(0);
     expect(
@@ -1854,10 +1857,73 @@ describe('TaskSessionService.create — audit fix regressions', () => {
     expect(refreshed.status).toBe('queued');
 
     // Sanity: a second start() with a clean spirits service succeeds.
-    fixture.spirits.spawn = realSpawn;
+    fixture.spirits.spawnTracked = realSpawnTracked;
     const result = await fixture.taskSessions.start(fixture.organizationId, session.id);
     expect(result.spirits).toHaveLength(2);
     expect(result.session.status).toBe('running');
+  });
+
+  // -------------------------------------------------------------------
+  // NEW (audit fix): start() rollback unregisters ONLY spirits this
+  // call created. A pre-existing spirit (from a prior partial start
+  // or a different code path) keeps its registry entry intact.
+  // -------------------------------------------------------------------
+  it('start() rollback leaves pre-existing spirits in the registry untouched', async () => {
+    const fixture = await createFixture({
+      agentNames: ['frontend-alice', 'frontend-bob'],
+    });
+    tempDirs.push(fixture.archiveRoot);
+
+    const { session } = fixture.taskSessions.create({
+      organizationId: fixture.organizationId,
+      requestedBy: fixture.ownerId,
+      prompt: 'cooperate',
+      team: ['frontend-alice', 'frontend-bob'],
+    });
+
+    // Pre-create alice's spirit (e.g. from a prior partial start or
+    // an explicit spawn). She is now actively registered before this
+    // test's start() call ever runs.
+    const preExisting = fixture.spirits.spawn({
+      organizationId: fixture.organizationId,
+      taskSessionId: session.id,
+      memberId: 'frontend-alice',
+    });
+    expect(
+      fixture.registry.hasActiveForMember(fixture.organizationId, 'frontend-alice'),
+    ).toBe(true);
+    const preExistingDbRow = fixture.repo.getSpirit(fixture.organizationId, preExisting.id);
+    expect(preExistingDbRow).not.toBeNull();
+
+    // Now make bob's spawn fail. Pre-fix: rollback would unregister
+    // BOTH alice (returned by spawnTracked as `created: false`) and
+    // anything else, blinding the supervisor gate to the still-valid
+    // alice spirit. Post-fix: only newly-created spirits land in the
+    // `created` list, so alice survives the rollback.
+    const realSpawnTracked = fixture.spirits.spawnTracked.bind(fixture.spirits);
+    fixture.spirits.spawnTracked = (input) => {
+      if (input.memberId === 'frontend-bob') {
+        throw new Error('simulated bob-spawn failure');
+      }
+      return realSpawnTracked(input);
+    };
+
+    await expect(
+      fixture.taskSessions.start(fixture.organizationId, session.id),
+    ).rejects.toThrow(/simulated bob-spawn failure/);
+
+    // The critical assertion: alice's pre-existing registry entry
+    // and DB row both survive. Without the audit fix, the rollback
+    // loop would have unregistered her.
+    expect(
+      fixture.registry.hasActiveForMember(fixture.organizationId, 'frontend-alice'),
+    ).toBe(true);
+    expect(fixture.repo.getSpirit(fixture.organizationId, preExisting.id)).not.toBeNull();
+
+    // Bob never made it; nothing for him in either store.
+    expect(
+      fixture.registry.hasActiveForMember(fixture.organizationId, 'frontend-bob'),
+    ).toBe(false);
   });
 
   // -------------------------------------------------------------------
