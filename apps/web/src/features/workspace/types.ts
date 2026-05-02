@@ -4,3 +4,18 @@ export interface SelectedConversation {
   id: string;
   name: string;
 }
+
+export interface WorkspaceRoleInput {
+  id?: string;
+  name: string;
+  title: string;
+  description?: string;
+  instructions: string;
+  kind?: "agent";
+  provider?: string;
+  model?: string;
+  workspaceScopes?: string[];
+  tools?: string[];
+  channels?: string[];
+  skills?: string[];
+}

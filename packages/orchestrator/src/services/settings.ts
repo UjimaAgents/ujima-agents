@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { ChannelSchema, MemberSchema, type Organization, type Member, type Channel } from '@ujima/shared';
-import { normalizeProviderKey } from '@ujima/framework';
+import { createAgent, defineRole, normalizeProviderKey, type RoleConfig } from '@ujima/framework';
 import type { ApiRepository } from './repository-reader.js';
 import type { TeamStore } from './team-store.js';
 import { listProviderStatuses, validateProviderKeys, type ProviderStatus } from './team.js';
 import { addMemberToDefaultChannels, ensureMemberSelfChannel } from './member-channels.js';
 import { upsertWorkspaceMemberScopes } from './workspace-root.js';
+import { upsertDashboardTeamOverride } from './dashboard-team-overrides.js';
 
 export interface TeamSettingsResponse {
   name: string;
@@ -38,6 +39,7 @@ export interface AddMemberInput {
   channelIds?: string[];
   llm?: string;
   model?: string;
+  role?: RoleConfig;
 }
 
 export interface CreateChannelInput {
@@ -197,6 +199,13 @@ export class SettingsService {
 
   addMember(input: AddMemberInput): Member {
     this.requireOrganization(input.organizationId);
+    const role = input.role
+      ? defineRole({
+          ...input.role,
+          name: input.roleName,
+          id: input.role.id ?? input.roleName,
+        })
+      : undefined;
     const member = MemberSchema.parse({
       id: randomUUID(),
       organizationId: input.organizationId,
@@ -207,12 +216,16 @@ export class SettingsService {
       model: input.model,
     });
     const saved = this.repo.saveMember(member);
-    const role = this.teamStore.getTeam()?.getRole(input.roleName);
+    upsertDashboardTeamOverride(this.repo, input.organizationId, this.teamStore, {
+      role,
+      agent: createAgent(saved.id, saved.roleName),
+    });
+    const activeRole = this.teamStore.getTeam()?.getRole(input.roleName);
     upsertWorkspaceMemberScopes(
       this.repo,
       input.organizationId,
       saved.id,
-      role?.workspaceScopes ?? [],
+      activeRole?.workspaceScopes ?? [],
     );
     ensureMemberSelfChannel(this.repo, input.organizationId, saved);
     const team = this.teamStore.getTeam();

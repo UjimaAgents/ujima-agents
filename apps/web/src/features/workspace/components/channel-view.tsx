@@ -64,7 +64,7 @@ export function ChannelView({ bootstrap, conversation }: ChannelViewProps) {
 
   const isAgent = conversation.type === "agent";
   const conversationMemberIndex = bootstrap.members.findIndex(
-    (member) => member.name === conversation.name,
+    (member) => member.id === conversation.id,
   );
   const tabs = isAgent ? AGENT_TABS : CHANNEL_TABS;
 

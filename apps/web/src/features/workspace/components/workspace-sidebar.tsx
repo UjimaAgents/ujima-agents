@@ -11,9 +11,9 @@ import {
 import { Avatar } from "./chat/primitives";
 import { Modal } from "./modal";
 import type { BootstrapResponse } from "@ujima/api-schema";
-import type { SelectedConversation } from "../types";
+import type { SelectedConversation, WorkspaceRoleInput } from "../types";
 import { useState, useMemo } from "react";
-import { ChannelScopeRow, TextInput } from "@/components/ui/form-fields";
+import { ChannelScopeRow, TextArea, TextInput } from "@/components/ui/form-fields";
 import { ProviderModelFields } from "@/components/ui/provider-model-fields";
 import type { RolePresetTemplate } from "../../onboarding/types";
 import { defaultModelForProvider } from "../../onboarding/types";
@@ -28,7 +28,46 @@ interface WorkspaceSidebarProps {
   selected: SelectedConversation;
   onSelect: (conv: SelectedConversation) => void;
   onCreateChannel: (name: string) => Promise<SelectedConversation | null>;
-  onCreateAgent: (input: { name: string; roleName: string; channelIds: string[]; llm: string; model: string }) => Promise<SelectedConversation | null>;
+  onCreateAgent: (input: { name: string; roleName: string; channelIds: string[]; llm: string; model: string; role: WorkspaceRoleInput }) => Promise<SelectedConversation | null>;
+}
+
+function slugifyRoleName(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function roleFromTemplate(template: RolePresetTemplate): WorkspaceRoleInput {
+  return {
+    id: template.name,
+    name: template.name,
+    title: template.title,
+    description: template.description,
+    instructions: template.instructions,
+    kind: "agent",
+    workspaceScopes: template.workspaceScopes ?? [],
+    tools: template.tools ?? [],
+    channels: ["general"],
+    skills: template.skills ?? [],
+  };
+}
+
+function customRole(title: string, instructions: string): WorkspaceRoleInput {
+  const name = slugifyRoleName(title) || "custom-agent";
+  return {
+    id: name,
+    name,
+    title: title.trim(),
+    description: "",
+    instructions: instructions.trim(),
+    kind: "agent",
+    workspaceScopes: [],
+    tools: [],
+    channels: ["general"],
+    skills: [],
+  };
 }
 
 export function WorkspaceSidebar({
@@ -48,6 +87,9 @@ export function WorkspaceSidebar({
   // Agent Modal State
   const [agentSearch, setAgentSearch] = useState("");
   const [selectedTemplate, setSelectedTemplate] = useState<RolePresetTemplate | null>(null);
+  const [isCustomRole, setIsCustomRole] = useState(false);
+  const [customRoleTitle, setCustomRoleTitle] = useState("");
+  const [customRoleInstructions, setCustomRoleInstructions] = useState("");
   const [customAgentName, setCustomAgentName] = useState("");
   const initialProvider = bootstrap.providers.find((provider) => provider.hasKey)?.name ?? "openai";
   const [selectedLlm, setSelectedLlm] = useState(initialProvider);
@@ -251,13 +293,16 @@ export function WorkspaceSidebar({
           setIsAgentModalOpen(false);
           setAgentSearch("");
           setSelectedTemplate(null);
+          setIsCustomRole(false);
+          setCustomRoleTitle("");
+          setCustomRoleInstructions("");
           setCustomAgentName("");
           setSelectedLlm(initialProvider);
           setSelectedModel(defaultModelForProvider(initialProvider));
         }} 
-        title={selectedTemplate ? `Configure ${selectedTemplate.title}` : "Add New Agent"}
+        title={selectedTemplate || isCustomRole ? `Configure ${selectedTemplate?.title ?? "Custom Role"}` : "Add New Agent"}
       >
-        {!selectedTemplate ? (
+        {!selectedTemplate && !isCustomRole ? (
           <div className="space-y-4">
             <div className="relative">
               <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
@@ -269,6 +314,25 @@ export function WorkspaceSidebar({
                 className="pl-10 pr-4 py-2.5 bg-zinc-50 dark:bg-zinc-900/50"
               />
             </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                setIsCustomRole(true);
+                setCustomAgentName(getSuggestedAgentName());
+                setCustomRoleTitle("");
+                setCustomRoleInstructions("");
+              }}
+              className="w-full flex items-center gap-3 rounded-xl border border-dashed border-zinc-300 bg-zinc-50 p-3 text-left transition hover:border-violet-300 hover:bg-violet-50 dark:border-zinc-700 dark:bg-zinc-900/50 dark:hover:bg-violet-500/5"
+            >
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900">
+                <Plus className="h-5 w-5" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-bold text-zinc-900 dark:text-white">Custom role</p>
+                <p className="text-xs text-zinc-500 line-clamp-1">Create a role with its own instructions.</p>
+              </div>
+            </button>
             
             <div className="max-h-[350px] overflow-y-auto pr-1 space-y-2 custom-scrollbar">
               {filteredRolePresets.map((template) => (
@@ -299,12 +363,34 @@ export function WorkspaceSidebar({
                 <Sparkles className="h-6 w-6" />
               </div>
               <div>
-                <p className="text-sm font-bold text-violet-900 dark:text-violet-200">{selectedTemplate.title}</p>
-                <p className="text-xs text-violet-600 dark:text-violet-400">Assign a name and provider to your new agent.</p>
+                <p className="text-sm font-bold text-violet-900 dark:text-violet-200">{selectedTemplate?.title ?? "Custom role"}</p>
               </div>
             </div>
 
               <div className="space-y-4">
+                {isCustomRole ? (
+                  <>
+                    <div>
+                      <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-1.5 block">Role Title</label>
+                      <TextInput
+                        type="text"
+                        value={customRoleTitle}
+                        onChange={(e) => setCustomRoleTitle(e.target.value)}
+                        placeholder="e.g. Research Analyst"
+                        className="bg-zinc-50 dark:bg-zinc-900/50"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-1.5 block">Role Instructions</label>
+                      <TextArea
+                        value={customRoleInstructions}
+                        onChange={(e) => setCustomRoleInstructions(e.target.value)}
+                        placeholder="Describe what this agent should do."
+                        className="min-h-28 bg-zinc-50 dark:bg-zinc-900/50"
+                      />
+                    </div>
+                  </>
+                ) : null}
                 <div>
                   <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-1.5 block">Agent Name</label>
                   <TextInput
@@ -336,24 +422,36 @@ export function WorkspaceSidebar({
 
                 <div className="pt-2 flex gap-3">
               <button 
-                onClick={() => setSelectedTemplate(null)}
+                onClick={() => {
+                  setSelectedTemplate(null);
+                  setIsCustomRole(false);
+                  setCustomRoleTitle("");
+                  setCustomRoleInstructions("");
+                }}
                 className="flex-1 rounded-xl px-4 py-2.5 text-sm font-semibold text-zinc-600 hover:bg-zinc-100 transition-colors dark:text-zinc-400 dark:hover:bg-zinc-900"
               >
                 Back
               </button>
               <button 
                 onClick={async () => {
+                  const role = selectedTemplate
+                    ? roleFromTemplate(selectedTemplate)
+                    : customRole(customRoleTitle, customRoleInstructions);
                   setIsSavingAgent(true);
                   const created = await onCreateAgent({
                     name: customAgentName,
-                    roleName: selectedTemplate?.name ?? "agent",
+                    roleName: role.name,
                     channelIds: primaryChannel ? [primaryChannel.id] : [],
                     llm: selectedLlm,
                     model: selectedModel,
+                    role,
                   });
                   setIsAgentModalOpen(false);
                   setAgentSearch("");
                   setSelectedTemplate(null);
+                  setIsCustomRole(false);
+                  setCustomRoleTitle("");
+                  setCustomRoleInstructions("");
                   setCustomAgentName("");
                   setSelectedLlm(initialProvider);
                   setSelectedModel(defaultModelForProvider(initialProvider));
@@ -362,7 +460,7 @@ export function WorkspaceSidebar({
                     onSelect(created);
                   }
                 }}
-                disabled={isSavingAgent}
+                disabled={isSavingAgent || !customAgentName.trim() || (isCustomRole && (!customRoleTitle.trim() || !customRoleInstructions.trim()))}
                 className="flex-[2] rounded-xl bg-violet-600 px-6 py-2.5 text-sm font-bold text-white shadow-lg shadow-violet-500/20 hover:bg-violet-700 transition-all disabled:opacity-50 disabled:shadow-none"
               >
                 Create Agent

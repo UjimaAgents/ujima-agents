@@ -83,6 +83,9 @@ export interface RolePresetTemplate {
   description: string;
   instructions: string;
   channels: string[];
+  workspaceScopes?: string[];
+  tools?: string[];
+  skills?: string[];
   industry: string;
   key: string;
 }

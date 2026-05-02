@@ -9,20 +9,30 @@ function resolveSelectedConversation(
 ): SelectedConversation | undefined {
   if (!searchParams || !bootstrap) return;
 
-  const agentValue = typeof searchParams.agent === "string" ? searchParams.agent : undefined;
+  const agentValue =
+    typeof searchParams.agentId === "string"
+      ? searchParams.agentId
+      : typeof searchParams.agent === "string"
+        ? searchParams.agent
+        : undefined;
   if (agentValue) {
     const agent = bootstrap.members.find(
-      (member) => member.kind === "agent" && (member.name === agentValue || member.id === agentValue),
+      (member) => member.kind === "agent" && member.id === agentValue,
     );
     if (agent) {
       return { type: "agent", id: agent.id, name: agent.name };
     }
   }
 
-  const channelValue = typeof searchParams.channel === "string" ? searchParams.channel : undefined;
+  const channelValue =
+    typeof searchParams.channelId === "string"
+      ? searchParams.channelId
+      : typeof searchParams.channel === "string"
+        ? searchParams.channel
+        : undefined;
   if (channelValue) {
     const channel = bootstrap.channels.find(
-      (item) => item.name === channelValue || item.id === channelValue,
+      (item) => item.id === channelValue,
     );
     if (channel) {
       return { type: "channel", id: channel.id, name: channel.name };

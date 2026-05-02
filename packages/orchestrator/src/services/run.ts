@@ -17,6 +17,7 @@ import type { ConversationService } from './conversation.js';
 import type { ApiRepository } from './repository-reader.js';
 import type { TeamStore } from './team-store.js';
 import type { ToolService } from './tool-service.js';
+import { applyDashboardTeamOverrides } from './dashboard-team-overrides.js';
 
 export interface CreateRunInput {
   organizationId: string;
@@ -126,6 +127,7 @@ export class RunService {
   }
 
   private async advanceRun(run: RunState): Promise<RunState> {
+    applyDashboardTeamOverrides(this.repo, run.organizationId, this.teamStore);
     const team = this.requireTeam();
     const member = this.repo.getMember(run.organizationId, run.agentId);
     if (!member) {

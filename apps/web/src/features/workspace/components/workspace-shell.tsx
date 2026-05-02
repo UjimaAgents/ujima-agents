@@ -6,7 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { WorkspaceSidebar } from "./workspace-sidebar";
 import { ChannelView } from "./channel-view";
 import type { BootstrapResponse } from "@ujima/api-schema";
-import type { SelectedConversation } from "../types";
+import type { SelectedConversation, WorkspaceRoleInput } from "../types";
 
 import type { RolePresetTemplate } from "../../onboarding/types";
 
@@ -41,22 +41,22 @@ export function WorkspaceShell({
   }, [channels, initialConversation]);
 
   const resolveUrlConversation = useCallback(() => {
-    const agentValue = searchParams.get("agent");
+    const agentValue = searchParams.get("agentId") ?? searchParams.get("agent");
     if (agentValue) {
       const agent = members.find(
         (member) =>
           member.kind === "agent" &&
-          (member.name === agentValue || member.id === agentValue),
+          member.id === agentValue,
       );
       if (agent) {
         return { type: "agent" as const, id: agent.id, name: agent.name };
       }
     }
 
-    const channelValue = searchParams.get("channel");
+    const channelValue = searchParams.get("channelId") ?? searchParams.get("channel");
     if (channelValue) {
       const channel = channels.find(
-        (item) => item.name === channelValue || item.id === channelValue,
+        (item) => item.id === channelValue,
       );
       if (channel) {
         return { type: "channel" as const, id: channel.id, name: channel.name };
@@ -72,8 +72,8 @@ export function WorkspaceShell({
     (conversation: SelectedConversation) => {
       const param =
         conversation.type === "agent"
-          ? `agent=${encodeURIComponent(conversation.name)}`
-          : `channel=${encodeURIComponent(conversation.name)}`;
+          ? `agentId=${encodeURIComponent(conversation.id)}`
+          : `channelId=${encodeURIComponent(conversation.id)}`;
       router.replace(`/workspace?${param}`, { scroll: false });
     },
     [router],
@@ -101,7 +101,7 @@ export function WorkspaceShell({
   );
 
   const handleCreateAgent = useCallback(
-    async (input: { name: string; roleName: string; channelIds: string[]; llm: string; model: string }) => {
+    async (input: { name: string; roleName: string; channelIds: string[]; llm: string; model: string; role: WorkspaceRoleInput }) => {
       const trimmed = input.name.trim();
       if (!trimmed) return null;
 
@@ -117,6 +117,7 @@ export function WorkspaceShell({
           channelIds: input.channelIds,
           llm: input.llm,
           model: input.model,
+          role: input.role,
         }),
       });
       if (!response.ok) return null;

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
-import { AgentTeamConfigSchema } from '@ujima/framework';
+import { AgentTeamConfigSchema, RoleConfigSchema } from '@ujima/framework';
 import type { Repository } from '@ujima/runtime-core';
 import { ChannelSchema, IdSchema, MemberSchema } from '@ujima/shared';
 import {
@@ -34,6 +34,7 @@ const AddMemberRequestSchema = z.object({
   channelIds: z.array(IdSchema).default([]),
   llm: z.string().min(1).optional(),
   model: z.string().min(1).optional(),
+  role: RoleConfigSchema.optional(),
 });
 const CreateChannelRequestSchema = z.object({
   name: z.string().min(1),
@@ -263,16 +264,11 @@ export function registerSettingsRoutes(
         name: req.body.name,
         kind: req.body.kind,
         roleName: req.body.roleName,
+        channelIds: req.body.channelIds,
         llm: req.body.llm,
         model: req.body.model,
+        role: req.body.role,
       });
-      for (const channelId of req.body.channelIds) {
-        const channel = repo.getChannel(req.params.orgId, channelId);
-        if (!channel) continue;
-        const memberIds = new Set(channel.memberIds);
-        memberIds.add(member.id);
-        repo.setChannelMembers(channelId, [...memberIds].sort());
-      }
       return member;
     } catch (err) {
       const message = errMessage(err);
