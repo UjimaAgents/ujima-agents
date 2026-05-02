@@ -129,11 +129,19 @@ export class SupervisorService {
       return { kind: 'no-active-spirit' };
     }
 
-    if (this.shouldDebounce(input.organizationId, input.memberId)) {
-      // Suppressed by the 2s window. The caller MUST treat this as
-      // "handled" — falling through to runs.createRun would spawn a
-      // duplicate run for the second mention in a chatty burst, which
-      // is exactly what the debounce exists to prevent.
+    // Both the debounce window and the mutex are keyed by
+    // (org, member, taskSessionId) — NOT by member alone. A member
+    // can own live spirits in multiple sessions; collapsing the
+    // debounce/mutex by member would silently drop alerts targeting
+    // the second session (the audit's flagged regression). Per-
+    // session keys give each task its own burst-collapse window
+    // and serialisation domain, which is what the supervisor
+    // contract actually wants.
+    if (this.shouldDebounce(input.organizationId, input.memberId, target.taskSessionId)) {
+      // Suppressed by the 2s window for THIS session. The caller
+      // MUST treat this as "handled" — falling through to
+      // runs.createRun would spawn a duplicate run for the second
+      // mention in a chatty burst.
       return { kind: 'debounced' };
     }
 
@@ -150,9 +158,12 @@ export class SupervisorService {
     // up correctness on the failure path: a stamp is always honoured
     // even if the underlying turn later throws, which matches the
     // "burst-collapse" contract callers actually want.
-    this.lastAlertAt.set(this.debounceKey(input.organizationId, input.memberId), Date.now());
+    this.lastAlertAt.set(
+      this.debounceKey(input.organizationId, input.memberId, target.taskSessionId),
+      Date.now(),
+    );
 
-    const mutexKey = this.mutexKey(input.organizationId, input.memberId);
+    const mutexKey = this.mutexKey(input.organizationId, input.memberId, target.taskSessionId);
     const previous = this.mutexes.get(mutexKey) ?? Promise.resolve();
     const next = previous.then(() => this.runSupervisorTurn(target.taskSessionId, input));
     this.mutexes.set(
@@ -299,16 +310,16 @@ export class SupervisorService {
     return this.publishSupervisorReply(taskSessionId, input, body, true);
   }
 
-  private mutexKey(organizationId: string, memberId: string): string {
-    return `${organizationId}:${memberId}:supervisor`;
+  private mutexKey(organizationId: string, memberId: string, taskSessionId: string): string {
+    return `${organizationId}:${memberId}:${taskSessionId}:supervisor`;
   }
 
-  private debounceKey(organizationId: string, memberId: string): string {
-    return `${organizationId}:${memberId}`;
+  private debounceKey(organizationId: string, memberId: string, taskSessionId: string): string {
+    return `${organizationId}:${memberId}:${taskSessionId}`;
   }
 
-  private shouldDebounce(organizationId: string, memberId: string): boolean {
-    const last = this.lastAlertAt.get(this.debounceKey(organizationId, memberId));
+  private shouldDebounce(organizationId: string, memberId: string, taskSessionId: string): boolean {
+    const last = this.lastAlertAt.get(this.debounceKey(organizationId, memberId, taskSessionId));
     if (last === undefined) return false;
     return Date.now() - last < this.debounceMs;
   }

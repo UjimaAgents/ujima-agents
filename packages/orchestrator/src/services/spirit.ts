@@ -398,6 +398,18 @@ export class SpiritService {
    * `tool.call` MessageCards on `messages.tool_calls`.
    */
   async run(input: RunSpiritInput): Promise<RunSpiritOutcome> {
+    // Pre-flight: validate everything and resolve the model BEFORE
+    // spawn(). Pre-fix, spawn() committed a Spirit + Run row and
+    // registered the spirit, then code further down resolved the
+    // team/org/agent/role/provider and called modelResolver. If any
+    // of those threw (provider key missing, model id misconfigured,
+    // upstream LLM resolver error), the spirit was left `queued`
+    // (or `running` after the status flip below) with no actual
+    // turn ever starting — a ghost spirit that misroutes future
+    // alerts and leaves dirty state behind. Doing all the
+    // throw-prone work first means a failure here surfaces before
+    // any spirit row exists, leaving zero state to clean up.
+    const role = input.role ?? 'worker';
     const session = this.repo.getTaskSession(input.organizationId, input.taskSessionId);
     if (!session) {
       throw new Error(`Task session not found: ${input.taskSessionId}`);
@@ -406,14 +418,6 @@ export class SpiritService {
     if (!member) {
       throw new Error(`Member not found: ${input.memberId}`);
     }
-    const role = input.role ?? 'worker';
-    const spirit = this.spawn({
-      organizationId: input.organizationId,
-      taskSessionId: input.taskSessionId,
-      memberId: input.memberId,
-      role,
-    });
-
     const team = this.requireTeam();
     const organization = this.repo.getOrganization(input.organizationId);
     if (!organization) {
@@ -427,6 +431,59 @@ export class SpiritService {
     if (!teamRole) {
       throw new Error(`Role not found: ${agent.roleName}`);
     }
+
+    // Resolve the model before committing the spirit. If the
+    // provider/model resolver throws, no spirit row gets persisted
+    // and no registry entry is created.
+    const model = await Promise.resolve(
+      this.modelResolver({
+        organizationId: input.organizationId,
+        memberId: input.memberId,
+        role,
+      }),
+    );
+
+    // Build the per-turn user prompt: the task prompt + last 20 channel
+    // messages (oldest → newest) for situational context. Supervisors
+    // pass `extraPrompt` for the alert text on top. (Reads only — safe
+    // to do before spawn.)
+    const recent = this.repo
+      .listChannelMessages(input.organizationId, session.channelId, { limit: 20 })
+      .data
+      .slice()
+      .reverse();
+    const messages = this.toModelMessages(recent, member);
+    if (input.extraPrompt) {
+      messages.push({ role: 'user', content: input.extraPrompt });
+    } else {
+      messages.push({
+        role: 'user',
+        content: session.prompt || 'Continue the task.',
+      });
+    }
+
+    const system = buildAgentSystemPrompt(
+      team.workspace.root,
+      organization.name,
+      member.id,
+      session.channelId,
+      agent,
+      teamRole,
+      this.repo
+        .listMembers(input.organizationId)
+        .filter((current) => current.id !== member.id),
+      team.agents,
+      team.channels,
+      organization.organizationChart,
+    );
+
+    // All validation passed. Now commit the spirit.
+    const spirit = this.spawn({
+      organizationId: input.organizationId,
+      taskSessionId: input.taskSessionId,
+      memberId: input.memberId,
+      role,
+    });
 
     // Mark running. Both the Spirit row and the paired Run row carry
     // the same status alphabet so the dashboards keep working.
@@ -445,24 +502,6 @@ export class SpiritService {
     }
     this.emit(SocketEventNames.spiritUpdated, running);
 
-    // Build the per-turn user prompt: the task prompt + last 20 channel
-    // messages (oldest → newest) for situational context. Supervisors
-    // pass `extraPrompt` for the alert text on top.
-    const recent = this.repo
-      .listChannelMessages(input.organizationId, session.channelId, { limit: 20 })
-      .data
-      .slice()
-      .reverse();
-    const messages = this.toModelMessages(recent, member);
-    if (input.extraPrompt) {
-      messages.push({ role: 'user', content: input.extraPrompt });
-    } else {
-      messages.push({
-        role: 'user',
-        content: session.prompt || 'Continue the task.',
-      });
-    }
-
     const allowedToolIds = this.resolveToolAllowlist(teamRole.tools, role, input.toolAllowlist);
     const toolDefs = this.buildToolDefinitions(allowedToolIds, {
       organizationId: input.organizationId,
@@ -476,29 +515,6 @@ export class SpiritService {
       spiritRole: role,
       team,
     });
-
-    const system = buildAgentSystemPrompt(
-      team.workspace.root,
-      organization.name,
-      member.id,
-      session.channelId,
-      agent,
-      teamRole,
-      this.repo
-        .listMembers(input.organizationId)
-        .filter((current) => current.id !== member.id),
-      team.agents,
-      team.channels,
-      organization.organizationChart,
-    );
-
-    const model = await Promise.resolve(
-      this.modelResolver({
-        organizationId: input.organizationId,
-        memberId: input.memberId,
-        role,
-      }),
-    );
 
     const maxIterations = input.maxIterations ?? this.maxIterationsPerRun;
     let totalTurns = 0;

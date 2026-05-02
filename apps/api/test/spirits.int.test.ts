@@ -1997,6 +1997,251 @@ describe('TaskSessionService.create — audit fix regressions', () => {
   });
 
   // -------------------------------------------------------------------
+  // NEW (audit fix): supervisor debounce keyed by (member, session).
+  // A member with two live sessions can receive separate alerts on
+  // each within the debounce window — neither suppresses the other.
+  // -------------------------------------------------------------------
+  it('debounce is keyed per session — alerts for two live sessions of one member both fire', async () => {
+    // Use a long debounce so any cross-session leakage shows up
+    // immediately as a `debounced` result on the second call.
+    const archiveRoot = await mkdtemp(join(tmpdir(), 'ujima-debounce-cross-'));
+    tempDirs.push(archiveRoot);
+    const db = openDatabase({ dbPath: ':memory:' });
+    const repo = new Repository(db);
+    const teamStore = createTeamStore();
+    const onboarding = new OnboardingService(repo, teamStore);
+    await onboarding.onboard({
+      organizationName: 'Cross Debounce Org',
+      ownerName: 'Owner',
+      workspaceRoot: archiveRoot,
+      providerKeys: { local: 'k' },
+      team: {
+        channels: [{ name: 'general', kind: 'general', topic: '' }],
+        roles: [
+          {
+            name: 'eng',
+            title: 'Eng',
+            instructions: 'i',
+            workspaceScopes: [],
+            tools: [],
+            channels: ['general'],
+            provider: 'local',
+            model: 'm',
+          },
+        ],
+        providers: { local: { kind: 'openai', defaultModel: 'm' } },
+        agents: [{ name: 'agent-x', roleName: 'eng', personalityName: 'direct' }],
+      },
+    });
+    const owner = repo
+      .listMembers(repo.getLatestOrganization()!.id)
+      .find((m) => m.kind === 'human')!;
+    const conversations = new ConversationService(repo, noopRealtime());
+    const registry = new ActiveSpiritRegistry();
+    const spirits = new SpiritService(
+      teamStore,
+      repo,
+      noopRealtime(),
+      {
+        invoke: async () => ({ ok: true, output: { status: 'completed' } }),
+        allowRun: () => undefined,
+      },
+      {
+        modelResolver: () => makeTextOnlyModel('answer'),
+        registry,
+      },
+    );
+    const supervisor = new SupervisorService(
+      repo,
+      noopRealtime(),
+      conversations,
+      spirits,
+      registry,
+      // Long debounce — pre-fix the per-member key would suppress
+      // any second alert in the next ~minute regardless of session.
+      { debounceMs: 60_000, turnCapPerSession: 100 },
+    );
+    const taskSessions = new TaskSessionService(repo, conversations, spirits);
+
+    // Two sessions for the same member, with a small wait so the
+    // newer session sorts above the older one in the registry's
+    // newest-first ordering. Each gets its own active spirit.
+    const { session: sessionA } = taskSessions.create({
+      organizationId: owner.organizationId,
+      requestedBy: owner.id,
+      prompt: 'work A',
+      team: ['agent-x'],
+      slug: 'task-a',
+    });
+    const spiritA = spirits.spawn({
+      organizationId: owner.organizationId,
+      taskSessionId: sessionA.id,
+      memberId: 'agent-x',
+    });
+    spirits.updateStatus(owner.organizationId, spiritA.id, 'running');
+    await new Promise((r) => setTimeout(r, 5));
+    const { session: sessionB } = taskSessions.create({
+      organizationId: owner.organizationId,
+      requestedBy: owner.id,
+      prompt: 'work B',
+      team: ['agent-x'],
+      slug: 'task-b',
+    });
+    const spiritB = spirits.spawn({
+      organizationId: owner.organizationId,
+      taskSessionId: sessionB.id,
+      memberId: 'agent-x',
+    });
+    spirits.updateStatus(owner.organizationId, spiritB.id, 'running');
+
+    const general = repo.getChannel(owner.organizationId, 'general')!;
+
+    // 1) Alert routes to sessionB (newest-first ordering).
+    const askB = conversations.postToChannel({
+      organizationId: owner.organizationId,
+      senderId: owner.id,
+      channelId: general.id,
+      body: '@agent-x first ping (B)',
+    });
+    const dispatchB = await supervisor.handleAlert({
+      organizationId: owner.organizationId,
+      memberId: 'agent-x',
+      messageId: askB.id,
+      channelId: general.id,
+      threadId: askB.threadId,
+      byMemberId: owner.id,
+      reason: 'mention',
+    });
+    expect(dispatchB.kind).toBe('replied');
+
+    // 2) A second alert that should target sessionA. We have no
+    // direct way to "address" a session from handleAlert (the alert
+    // just identifies the member); the registry returns newest-first
+    // and sessionB is still the newest. So in practice the way a
+    // second-session alert reaches its session is via a fresh
+    // alert AFTER sessionB completes — but the deeper invariant
+    // we're testing is the keying itself: that the debounce stamp
+    // for sessionB doesn't suppress an alert that ends up routed to
+    // sessionA.
+    //
+    // To exercise the per-session key cleanly we retire sessionB's
+    // spirit so the next alert routes to sessionA. Pre-fix, the
+    // member-keyed debounce stamp from step 1 would suppress this
+    // alert (different session, same member, same window). Post-
+    // fix the (member, sessionId) key isolates the windows so the
+    // alert goes through.
+    spirits.retire(owner.organizationId, spiritB.id, 'test');
+
+    const askA = conversations.postToChannel({
+      organizationId: owner.organizationId,
+      senderId: owner.id,
+      channelId: general.id,
+      body: '@agent-x second ping (A)',
+    });
+    const dispatchA = await supervisor.handleAlert({
+      organizationId: owner.organizationId,
+      memberId: 'agent-x',
+      messageId: askA.id,
+      channelId: general.id,
+      threadId: askA.threadId,
+      byMemberId: owner.id,
+      reason: 'mention',
+    });
+    expect(dispatchA.kind).toBe('replied');
+    if (dispatchA.kind !== 'replied') return;
+    expect(dispatchA.outcome.taskSessionId).toBe(sessionA.id);
+
+    // Both sessions ticked once.
+    const refreshedA = repo.getTaskSession(owner.organizationId, sessionA.id)!;
+    const refreshedB = repo.getTaskSession(owner.organizationId, sessionB.id)!;
+    expect(refreshedA.supervisorTurnCount).toBe(1);
+    expect(refreshedB.supervisorTurnCount).toBe(1);
+  });
+
+  // -------------------------------------------------------------------
+  // NEW (audit fix): SpiritService.run() does not commit a spirit row
+  // when model resolution fails. Pre-fix, spawn() ran first and the
+  // ghost spirit lingered in the registry/DB.
+  // -------------------------------------------------------------------
+  it('SpiritService.run() leaves no spirit behind when modelResolver throws', async () => {
+    const archiveRoot = await mkdtemp(join(tmpdir(), 'ujima-run-validation-'));
+    tempDirs.push(archiveRoot);
+    const db = openDatabase({ dbPath: ':memory:' });
+    const repo = new Repository(db);
+    const teamStore = createTeamStore();
+    const onboarding = new OnboardingService(repo, teamStore);
+    await onboarding.onboard({
+      organizationName: 'Run Validation Org',
+      ownerName: 'Owner',
+      workspaceRoot: archiveRoot,
+      providerKeys: { local: 'k' },
+      team: {
+        channels: [{ name: 'general', kind: 'general', topic: '' }],
+        roles: [
+          {
+            name: 'eng',
+            title: 'Eng',
+            instructions: 'i',
+            workspaceScopes: [],
+            tools: [],
+            channels: ['general'],
+            provider: 'local',
+            model: 'm',
+          },
+        ],
+        providers: { local: { kind: 'openai', defaultModel: 'm' } },
+        agents: [{ name: 'agent-x', roleName: 'eng', personalityName: 'direct' }],
+      },
+    });
+    const owner = repo
+      .listMembers(repo.getLatestOrganization()!.id)
+      .find((m) => m.kind === 'human')!;
+    const conversations = new ConversationService(repo, noopRealtime());
+    const registry = new ActiveSpiritRegistry();
+    const spirits = new SpiritService(
+      teamStore,
+      repo,
+      noopRealtime(),
+      {
+        invoke: async () => ({ ok: true, output: { status: 'completed' } }),
+        allowRun: () => undefined,
+      },
+      {
+        // Resolver always throws — simulates a missing provider key,
+        // a misconfigured model id, an upstream network blip during
+        // model construction, etc.
+        modelResolver: () => {
+          throw new Error('simulated provider resolution failure');
+        },
+        registry,
+      },
+    );
+    const taskSessions = new TaskSessionService(repo, conversations, spirits);
+
+    const { session } = taskSessions.create({
+      organizationId: owner.organizationId,
+      requestedBy: owner.id,
+      prompt: 'p',
+      team: ['agent-x'],
+    });
+
+    await expect(
+      spirits.run({
+        organizationId: owner.organizationId,
+        taskSessionId: session.id,
+        memberId: 'agent-x',
+      }),
+    ).rejects.toThrow(/simulated provider resolution failure/);
+
+    // The critical assertions: NO spirit row exists, and the
+    // registry has no ghost entry. Pre-fix, spawn() had already
+    // run and committed both before the resolver was called.
+    expect(spirits.list(owner.organizationId, session.id)).toHaveLength(0);
+    expect(repo.getSpiritByTriple(owner.organizationId, session.id, 'agent-x', 'worker')).toBeNull();
+    expect(registry.hasActiveForMember(owner.organizationId, 'agent-x')).toBe(false);
+  });
+
+  // -------------------------------------------------------------------
   // NEW (audit fix): start() rollback unregisters ONLY spirits this
   // call created. A pre-existing spirit (from a prior partial start
   // or a different code path) keeps its registry entry intact.
