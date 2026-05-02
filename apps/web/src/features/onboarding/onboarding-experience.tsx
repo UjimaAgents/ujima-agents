@@ -13,6 +13,7 @@ import {
   INITIAL_DRAFT,
   ONBOARDING_STEPS,
   defaultModelForProvider,
+  getModelOptionsForProvider,
   type OnboardingDraft,
   type OnboardingStepId,
   type RolePresetTemplate,
@@ -42,7 +43,6 @@ function isTeamTabId(value: unknown): value is TeamTabId {
 
 function normalizeDraft(raw: unknown, baseline: OnboardingDraft): OnboardingDraft {
   const source = typeof raw === "object" && raw !== null ? (raw as Partial<OnboardingDraft>) : {};
-  const seedRoleIds = new Set(baseline.roles.map((role) => role.id));
 
   return {
     organizationName: typeof source.organizationName === "string" ? source.organizationName : baseline.organizationName,
@@ -60,7 +60,10 @@ function normalizeDraft(raw: unknown, baseline: OnboardingDraft): OnboardingDraf
               : fallbackRole?.id ?? `role-restored-${index}`;
           const llm = typeof (item as { llm?: unknown }).llm === "string" ? (item as { llm: string }).llm : fallbackRole?.llm ?? "";
           const model = typeof (item as { model?: unknown }).model === "string" ? (item as { model: string }).model : fallbackRole?.model ?? "";
-          const repairedModel = seedRoleIds.has(id) && model !== defaultModelForProvider(llm) ? defaultModelForProvider(llm) : model;
+          const modelOptions = getModelOptionsForProvider(llm);
+          const repairedModel = modelOptions.some((option) => option.value === model)
+            ? model
+            : defaultModelForProvider(llm);
 
           return {
             id,
@@ -87,7 +90,12 @@ function normalizeDraft(raw: unknown, baseline: OnboardingDraft): OnboardingDraf
               : fallbackRole?.channelIds ?? [],
           };
         })
-      : baseline.roles,
+      : baseline.roles.map((role) => ({
+          ...role,
+          model: getModelOptionsForProvider(role.llm).some((option) => option.value === role.model)
+            ? role.model
+            : defaultModelForProvider(role.llm),
+        })),
     channels: Array.isArray(source.channels)
       ? source.channels.map((channel, index) => {
           const item = typeof channel === "object" && channel !== null ? channel : {};

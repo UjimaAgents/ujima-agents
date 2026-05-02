@@ -497,12 +497,12 @@ function StepFields({
       templateName: getRoleTemplate(role.name, starterRoleTemplates)?.name ?? role.name,
       name: role.name,
       agentName: role.agentName,
-        title: role.title,
-        instructions: role.instructions,
-        llm: role.llm,
-        model: role.model,
-        channelIds: getGeneralChannelIds(draft),
-      });
+      title: role.title,
+      instructions: role.instructions,
+      llm: role.llm,
+      model: role.model,
+      channelIds: role.channelIds,
+    });
   };
 
   const updateRoleEditorTemplate = (templateName: string) => {
@@ -520,7 +520,7 @@ function StepFields({
             name: template.name,
             title: template.title,
             instructions: template.instructions,
-            channelIds: getGeneralChannelIds(draft),
+            channelIds: current.channelIds,
             agentName: current.agentName || template.title,
           }
         : current,
