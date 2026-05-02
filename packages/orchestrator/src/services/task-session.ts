@@ -96,10 +96,19 @@ export class TaskSessionService {
       );
     }
 
+    // Dedupe the team list before validation. A request with the
+    // same member id twice would otherwise persist duplicates into
+    // `task_sessions.team_member_ids` and cause `start()` to spawn
+    // / run that agent twice — duplicate messages, duplicate tool
+    // calls, duplicate counters. Dedup is preserved-order so the
+    // first occurrence wins and downstream behaviour stays
+    // deterministic.
+    const uniqueTeam = Array.from(new Set(input.team));
+
     // Validate the team set: every id must be a real, non-retired member
     // of the org. Avoids creating a session whose worker rows can never
     // run because the team points at deleted ids.
-    const teamMembers = input.team.map((memberId) => {
+    const teamMembers = uniqueTeam.map((memberId) => {
       const member = this.repo.getMember(input.organizationId, memberId);
       if (!member) {
         throw new Error(`Team member not found: ${memberId}`);

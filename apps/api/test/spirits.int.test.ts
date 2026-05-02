@@ -2305,6 +2305,156 @@ describe('TaskSessionService.create — audit fix regressions', () => {
   });
 
   // -------------------------------------------------------------------
+  // NEW (audit fix): pre-existing spirit's registry rank is preserved
+  // when a later spawn in start() fails. spawnTracked() must NOT
+  // bump `registeredAt` for existing spirits, because the bump
+  // outlives the SQL rollback and would mis-order the supervisor
+  // gate against newer sessions.
+  // -------------------------------------------------------------------
+  it("failed start() does not reshuffle a pre-existing spirit's registry order", async () => {
+    const fixture = await createFixture({
+      agentNames: ['frontend-alice', 'frontend-bob'],
+    });
+    tempDirs.push(fixture.archiveRoot);
+
+    // Two sessions for alice. Session A first, then session B.
+    // Without any registry bumps, B is the newest (highest
+    // registeredAt) and the supervisor would pick it.
+    const { session: sessionA } = fixture.taskSessions.create({
+      organizationId: fixture.organizationId,
+      requestedBy: fixture.ownerId,
+      prompt: 'A',
+      team: ['frontend-alice'],
+      slug: 'task-a',
+    });
+    const aliceA = fixture.spirits.spawn({
+      organizationId: fixture.organizationId,
+      taskSessionId: sessionA.id,
+      memberId: 'frontend-alice',
+    });
+    fixture.spirits.updateStatus(fixture.organizationId, aliceA.id, 'running');
+
+    await new Promise((r) => setTimeout(r, 5));
+
+    const { session: sessionB } = fixture.taskSessions.create({
+      organizationId: fixture.organizationId,
+      requestedBy: fixture.ownerId,
+      prompt: 'B',
+      team: ['frontend-alice', 'frontend-bob'],
+      slug: 'task-b',
+    });
+    const aliceB = fixture.spirits.spawn({
+      organizationId: fixture.organizationId,
+      taskSessionId: sessionB.id,
+      memberId: 'frontend-alice',
+    });
+    fixture.spirits.updateStatus(fixture.organizationId, aliceB.id, 'running');
+
+    // Sanity: B is currently first (newest) for alice.
+    let active = fixture.registry.getActiveForMember(
+      fixture.organizationId,
+      'frontend-alice',
+    );
+    expect(active[0]?.spiritId).toBe(aliceB.id);
+
+    // Now start sessionA again. spawnTracked will see alice's
+    // existing aliceA spirit and (pre-fix) bump its registeredAt,
+    // putting A ahead of B. Then bob's spawn fails inside start(),
+    // SQL rolls back, but the bumped counter survives. Post-fix,
+    // the bump never happens for existing spirits.
+    const realSpawnTracked = fixture.spirits.spawnTracked.bind(fixture.spirits);
+    fixture.spirits.spawnTracked = (input) => {
+      if (input.memberId === 'frontend-bob') {
+        throw new Error('simulated bob failure');
+      }
+      return realSpawnTracked(input);
+    };
+
+    // SessionA's team is just ['frontend-alice'], so to exercise the
+    // bug we need a session where alice is mixed with a failing
+    // member. We'll restart sessionB (which has both) to trigger
+    // the path: alice exists → spawnTracked returns existing
+    // (no bump under fix), bob throws → rollback.
+    await expect(
+      fixture.taskSessions.start(fixture.organizationId, sessionB.id),
+    ).rejects.toThrow(/simulated bob failure/);
+
+    // Critical: aliceB is still first. Pre-fix, aliceA's refreshed
+    // registeredAt would have made it newest after the failed start,
+    // and the supervisor would route to sessionA on the next mention.
+    active = fixture.registry.getActiveForMember(
+      fixture.organizationId,
+      'frontend-alice',
+    );
+    expect(active[0]?.spiritId).toBe(aliceB.id);
+    expect(active.map((e) => e.spiritId)).toEqual([aliceB.id, aliceA.id]);
+
+    // End-to-end: a fresh @mention still routes to sessionB.
+    fixture.spirits.spawnTracked = realSpawnTracked;
+    const general = fixture.repo.getChannel(fixture.organizationId, 'general')!;
+    const ask = fixture.conversations.postToChannel({
+      organizationId: fixture.organizationId,
+      senderId: fixture.ownerId,
+      channelId: general.id,
+      body: '@frontend-alice status?',
+    });
+    const dispatch = await fixture.supervisor.handleAlert({
+      organizationId: fixture.organizationId,
+      memberId: 'frontend-alice',
+      messageId: ask.id,
+      channelId: general.id,
+      threadId: ask.threadId,
+      byMemberId: fixture.ownerId,
+      reason: 'mention',
+    });
+    expect(dispatch.kind).toBe('replied');
+    if (dispatch.kind !== 'replied') return;
+    expect(dispatch.outcome.taskSessionId).toBe(sessionB.id);
+  });
+
+  // -------------------------------------------------------------------
+  // NEW (audit fix): duplicate team member ids in create() are deduped
+  // before persistence so start() doesn't spawn/run the same agent
+  // twice. Channel membership and the persisted teamMemberIds field
+  // both reflect a single instance of each member.
+  // -------------------------------------------------------------------
+  it('create() dedupes duplicate team member ids', async () => {
+    const fixture = await createFixture({
+      agentNames: ['frontend-alice', 'frontend-bob'],
+    });
+    tempDirs.push(fixture.archiveRoot);
+
+    // Caller passes alice twice and bob once. Pre-fix, the session
+    // row would persist ['frontend-alice', 'frontend-alice',
+    // 'frontend-bob'] and start() would spawn alice twice.
+    const { session, channel } = fixture.taskSessions.create({
+      organizationId: fixture.organizationId,
+      requestedBy: fixture.ownerId,
+      prompt: 'dedup test',
+      team: ['frontend-alice', 'frontend-alice', 'frontend-bob'],
+    });
+
+    // Persisted teamMemberIds is unique.
+    expect(session.teamMemberIds.sort()).toEqual(['frontend-alice', 'frontend-bob']);
+
+    // Channel membership was already deduped via the explicit
+    // `Array.from(new Set(...))` call in create() — confirm that
+    // still holds with the input-level dedupe.
+    expect(channel?.memberIds.sort()).toEqual(
+      [fixture.ownerId, 'frontend-alice', 'frontend-bob'].sort(),
+    );
+
+    // start() spawns one spirit per team member — exactly two,
+    // not three.
+    const result = await fixture.taskSessions.start(fixture.organizationId, session.id);
+    expect(result.spirits).toHaveLength(2);
+    expect(result.spirits.map((s) => s.memberId).sort()).toEqual([
+      'frontend-alice',
+      'frontend-bob',
+    ]);
+  });
+
+  // -------------------------------------------------------------------
   // NEW (audit fix): two creators racing the same slug both succeed —
   // one wins the original slug, the other gets a deterministic
   // suffix instead of an unhandled UNIQUE-violation.

@@ -274,7 +274,13 @@ export class SpiritService {
       role,
     );
     if (existing) {
-      this.registry.register(existing);
+      // Do NOT call `registry.register` here. Pre-existing spirits
+      // are already tracked by the registry (via the original
+      // spawn or via SpiritService.bootstrap()), and refreshing
+      // their `registeredAt` mid-transaction lets a later rollback
+      // leave the bumped counter behind — handleAlert would then
+      // route to the wrong session. Existing spirits keep whatever
+      // ordering rank they already had.
       return { spirit: existing, created: false };
     }
 
