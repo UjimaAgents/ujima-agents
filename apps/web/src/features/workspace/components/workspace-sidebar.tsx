@@ -18,7 +18,6 @@ import { ProviderModelFields } from "@/components/ui/provider-model-fields";
 import type { RolePresetTemplate } from "../../onboarding/types";
 import { defaultModelForProvider } from "../../onboarding/types";
 import { getSuggestedAgentName } from "../../onboarding/agent-name-suggestions";
-import { providerValueFromToken } from "../../onboarding/provider-catalog";
 import { Sparkles, Bot, ArrowRight, Search as SearchIcon } from "lucide-react";
 
 interface WorkspaceSidebarProps {
@@ -50,9 +49,7 @@ export function WorkspaceSidebar({
   const [agentSearch, setAgentSearch] = useState("");
   const [selectedTemplate, setSelectedTemplate] = useState<RolePresetTemplate | null>(null);
   const [customAgentName, setCustomAgentName] = useState("");
-  const initialProvider = providerValueFromToken(
-    bootstrap.providers.find((provider) => provider.hasKey)?.name ?? "openai",
-  );
+  const initialProvider = bootstrap.providers.find((provider) => provider.hasKey)?.name ?? "openai";
   const [selectedLlm, setSelectedLlm] = useState(initialProvider);
   const [selectedModel, setSelectedModel] = useState(defaultModelForProvider(initialProvider));
   const [isSavingChannel, setIsSavingChannel] = useState(false);
@@ -274,33 +271,6 @@ export function WorkspaceSidebar({
             </div>
             
             <div className="max-h-[350px] overflow-y-auto pr-1 space-y-2 custom-scrollbar">
-              <button
-                onClick={() => {
-                  setSelectedTemplate({
-                    name: "custom",
-                    title: "Custom Agent",
-                    description: "Define a unique role and instructions from scratch.",
-                    instructions: "",
-                    channels: [],
-                    industry: "custom",
-                    key: "custom",
-                  });
-                  setCustomAgentName(getSuggestedAgentName());
-                  setSelectedLlm(initialProvider);
-                  setSelectedModel(defaultModelForProvider(initialProvider));
-                }}
-                className="w-full group flex items-start gap-3 rounded-xl border border-dashed border-zinc-300 bg-zinc-50/50 p-3 text-left transition hover:border-violet-300 hover:bg-violet-50 dark:border-zinc-700 dark:bg-zinc-900/30 dark:hover:bg-violet-500/5"
-              >
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-zinc-200 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
-                  <Plus className="h-5 w-5" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-bold text-zinc-900 dark:text-white">Custom Agent</p>
-                  <p className="text-xs text-zinc-500 line-clamp-1">Define unique instructions and roles.</p>
-                </div>
-                <ArrowRight className="h-4 w-4 text-zinc-300 transition group-hover:text-violet-500 mt-1" />
-              </button>
-
               {filteredRolePresets.map((template) => (
                 <button
                   key={template.key}
@@ -364,7 +334,7 @@ export function WorkspaceSidebar({
               </div>
             </div>
 
-            <div className="pt-2 flex gap-3">
+                <div className="pt-2 flex gap-3">
               <button 
                 onClick={() => setSelectedTemplate(null)}
                 className="flex-1 rounded-xl px-4 py-2.5 text-sm font-semibold text-zinc-600 hover:bg-zinc-100 transition-colors dark:text-zinc-400 dark:hover:bg-zinc-900"

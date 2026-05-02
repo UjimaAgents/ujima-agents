@@ -22,7 +22,7 @@ import {
   Users,
   X,
 } from "lucide-react";
-import { formatProviderLabel, MIN_TEAM_AGENTS } from "../api-contract";
+import { MIN_TEAM_AGENTS } from "../api-contract";
 import { AGENT_NAME_SUGGESTIONS, getSuggestedAgentName } from "../agent-name-suggestions";
 import { Avatar } from "../../workspace/components/chat/primitives";
 import { Select } from "@/components/ui/select";
@@ -37,7 +37,7 @@ import {
   type RolePresetTemplate,
   type TeamTabId,
 } from "../types";
-import { PROVIDER_OPTIONS } from "../provider-catalog";
+import { PROVIDER_OPTIONS, providerLabelFromToken } from "../provider-catalog";
 
 interface OnboardingFormProps {
   step: OnboardingStep;
@@ -449,7 +449,7 @@ function StepFields({
           onDraftChange({
             ...draft,
             providers: draft.providers.map((p) =>
-              p.name === "OpenAI Codex" ? { ...p, apiKey: token } : p,
+              p.name === "openai-codex" ? { ...p, apiKey: token } : p,
             ),
           });
         } else if (event.data.error) {
@@ -463,7 +463,7 @@ function StepFields({
 
   const openRoleEditor = (roleId?: string, templateName?: string) => {
     if (!roleId) {
-      const defaultProvider = draft.providers[0]?.name || "OpenAI";
+    const defaultProvider = draft.providers[0]?.name || "openai";
       const template = getRoleTemplate(templateName ?? defaultSuggestedTemplate?.name ?? starterRoleTemplates[0]?.name ?? "", starterRoleTemplates);
 
       if (!template) {
@@ -1220,9 +1220,9 @@ function StepFields({
                       }}
                       className="w-[220px] shrink-0"
                       placeholder="Select provider"
-                      options={PROVIDER_OPTIONS.map((opt) => ({ value: opt.value, label: opt.label }))}
+                      options={PROVIDER_OPTIONS.map((opt) => ({ value: opt.token, label: opt.label }))}
                     />
-                    {provider.name === "OpenAI Codex" ? (
+                    {provider.name === "openai-codex" ? (
                       <button
                         type="button"
                         onClick={() => {
@@ -1232,10 +1232,10 @@ function StepFields({
                       >
                         {provider.apiKey ? "Signed in with OpenAI" : "Sign in with OpenAI"}
                       </button>
-                    ) : (
-                      <TextInput
-                        type="password"
-                        value={provider.apiKey}
+                      ) : (
+                        <TextInput
+                          type="password"
+                          value={provider.apiKey}
                         onChange={(event) =>
                           onDraftChange({
                             ...draft,
@@ -1243,11 +1243,11 @@ function StepFields({
                               itemIndex === index ? { ...item, apiKey: event.target.value } : item,
                             ),
                           })
-                        }
-                        className="min-w-0 flex-1"
-                        placeholder={provider.name ? `${formatProviderLabel(provider.name)} API key` : "Provider API key"}
-                      />
-                    )}
+                          }
+                          className="min-w-0 flex-1"
+                          placeholder={provider.name ? `${providerLabelFromToken(provider.name)} API key` : "Provider API key"}
+                        />
+                      )}
                   </div>
                 ))}
               </div>

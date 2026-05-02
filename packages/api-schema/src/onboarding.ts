@@ -18,7 +18,7 @@ const InlineTeamConfigSchema = z.object({
   agents: z.array(z.unknown()).optional(),
   roles: z.array(z.unknown()).optional(),
   channels: z.array(z.unknown()).optional(),
-  providers: z.record(z.object({ models: z.array(z.unknown()) })).optional(),
+  providers: z.record(z.object({ models: z.array(z.unknown()).optional() }).passthrough()).optional(),
   organizationChart: OrganizationChartSchema.optional(),
   policies: z
     .object({

@@ -1,6 +1,6 @@
 import { Select } from "@/components/ui/select";
 import { FieldShell } from "@/components/ui/form-fields";
-import { defaultModelForProvider, getModelOptionsForProvider } from "@ujima/api-schema";
+import { defaultModelForProvider, getModelOptionsForProvider } from "@ujima/shared";
 import { PROVIDER_OPTIONS } from "@/features/onboarding/provider-catalog";
 import { useMemo } from "react";
 
@@ -49,7 +49,7 @@ export function ProviderModelFields({
           className="w-full"
           placeholder="Select provider"
           options={PROVIDER_OPTIONS.map((option) => ({
-            value: option.value,
+            value: option.token,
             label: option.label,
           }))}
         />

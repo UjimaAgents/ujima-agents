@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Home, Sparkles } from "lucide-react";
+import { normalizeProviderName } from "./api-contract";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { MIN_TEAM_AGENTS, buildOnboardingRequest } from "./api-contract";
 import { OnboardingForm } from "./components/onboarding-form";
@@ -58,7 +59,8 @@ function normalizeDraft(raw: unknown, baseline: OnboardingDraft): OnboardingDraf
             typeof (item as { id?: unknown }).id === "string"
               ? (item as { id: string }).id
               : fallbackRole?.id ?? `role-restored-${index}`;
-          const llm = typeof (item as { llm?: unknown }).llm === "string" ? (item as { llm: string }).llm : fallbackRole?.llm ?? "";
+          const rawLlm = typeof (item as { llm?: unknown }).llm === "string" ? (item as { llm: string }).llm : "";
+          const llm = rawLlm.trim() ? normalizeProviderName(rawLlm) : fallbackRole?.llm ?? "";
           const model = typeof (item as { model?: unknown }).model === "string" ? (item as { model: string }).model : fallbackRole?.model ?? "";
           const modelOptions = getModelOptionsForProvider(llm);
           const repairedModel = modelOptions.some((option) => option.value === model)
@@ -92,6 +94,7 @@ function normalizeDraft(raw: unknown, baseline: OnboardingDraft): OnboardingDraf
         })
       : baseline.roles.map((role) => ({
           ...role,
+          llm: normalizeProviderName(role.llm),
           model: getModelOptionsForProvider(role.llm).some((option) => option.value === role.model)
             ? role.model
             : defaultModelForProvider(role.llm),
@@ -130,7 +133,11 @@ function normalizeDraft(raw: unknown, baseline: OnboardingDraft): OnboardingDraf
           const item = typeof provider === "object" && provider !== null ? provider : {};
           return {
             id: typeof (item as { id?: unknown }).id === "string" ? (item as { id: string }).id : `provider-restored-${index}`,
-            name: typeof (item as { name?: unknown }).name === "string" ? (item as { name: string }).name : "",
+            name:
+              typeof (item as { name?: unknown }).name === "string" &&
+              (item as { name: string }).name.trim()
+                ? normalizeProviderName((item as { name: string }).name)
+                : "",
             apiKey:
               typeof (item as { apiKey?: unknown }).apiKey === "string"
                 ? (item as { apiKey: string }).apiKey
