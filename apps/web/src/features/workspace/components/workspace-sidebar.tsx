@@ -378,6 +378,8 @@ export function WorkspaceSidebar({
                     name: customAgentName,
                     roleName: selectedTemplate?.name ?? "agent",
                     channelIds: primaryChannel ? [primaryChannel.id] : [],
+                    llm: selectedLlm,
+                    model: selectedModel,
                   });
                   setIsAgentModalOpen(false);
                   setAgentSearch("");

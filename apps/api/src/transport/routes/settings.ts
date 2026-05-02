@@ -32,6 +32,8 @@ const AddMemberRequestSchema = z.object({
   kind: z.enum(['human', 'agent']),
   roleName: z.string().min(1),
   channelIds: z.array(IdSchema).default([]),
+  llm: z.string().min(1).optional(),
+  model: z.string().min(1).optional(),
 });
 const CreateChannelRequestSchema = z.object({
   name: z.string().min(1),
@@ -261,6 +263,8 @@ export function registerSettingsRoutes(
         name: req.body.name,
         kind: req.body.kind,
         roleName: req.body.roleName,
+        llm: req.body.llm,
+        model: req.body.model,
       });
       for (const channelId of req.body.channelIds) {
         const channel = repo.getChannel(req.params.orgId, channelId);

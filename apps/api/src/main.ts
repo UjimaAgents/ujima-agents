@@ -125,19 +125,19 @@ async function main(): Promise<void> {
   // gate on.
   const buildPermissionContext: PermissionContextBuilder = (input) => {
     const team = teamStore.getTeam();
-    const member = repository.getMember(input.organizationId, input.memberId);
-    const role = team && member ? team.getRole(member.roleName) : undefined;
-    const agentConfig = team
-      ? (team.getAgent(input.memberId) ??
+      const member = repository.getMember(input.organizationId, input.memberId);
+      const role = team && member ? team.getRole(member.roleName) : undefined;
+      const agentConfig = team
+        ? (team.getAgent(input.memberId) ??
         (member ? team.getAgent(member.name) : undefined))
-      : undefined;
+        : undefined;
 
     return {
       agent: {
         id: input.memberId,
         name: agentConfig?.name ?? input.memberId,
         persona: agentConfig?.personalityName ?? '',
-        model: role?.model ?? '',
+        model: member?.model ?? role?.model ?? '',
         mcp: input.permissionMcpId ?? input.toolId,
         permissions: {
           allowed_tools: [...new Set([...(role?.tools ?? []), ...ALWAYS_AVAILABLE_AGENT_TOOLS])],

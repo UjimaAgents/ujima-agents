@@ -35,6 +35,8 @@ export interface AddMemberInput {
   kind: 'human' | 'agent';
   roleName: string;
   channelIds?: string[];
+  llm?: string;
+  model?: string;
 }
 
 export interface CreateChannelInput {
@@ -196,6 +198,8 @@ export class SettingsService {
       name: input.name,
       kind: input.kind,
       roleName: input.roleName,
+      llm: input.llm,
+      model: input.model,
     });
     const saved = this.repo.saveMember(member);
     const role = this.teamStore.getTeam()?.getRole(input.roleName);

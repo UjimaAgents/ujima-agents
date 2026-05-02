@@ -424,6 +424,13 @@ const MIGRATIONS: { id: string; up: string }[] = [
     `,
   },
   {
+    id: '007_member_llm_model',
+    up: `
+      ALTER TABLE members ADD COLUMN llm TEXT;
+      ALTER TABLE members ADD COLUMN model TEXT;
+    `,
+  },
+  {
     id: '007_auth',
     up: `
       CREATE TABLE IF NOT EXISTS auth_users (

@@ -145,7 +145,7 @@ export class RunService {
       return this.failRun(run, `Agent not found: ${member.id}`);
     }
 
-    const providerName = role.provider;
+    const providerName = member.llm ?? role.provider;
     if (providerName && !this.repo.getProviderCredential(run.organizationId, providerName)) {
       return this.failRun(run, `Provider key missing for "${providerName}"`);
     }
