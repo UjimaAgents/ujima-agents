@@ -9,7 +9,9 @@ import {
   ChatMessageList,
   ChatInput,
   DetailsSidebar,
+  ChatMessage,
   type ChatTab,
+  type ChatMessageData,
 } from "./chat";
 import type { BootstrapResponse } from "@ujima/api-schema";
 import type { SelectedConversation } from "../types";
@@ -61,12 +63,55 @@ export function ChannelView({ bootstrap, conversation }: ChannelViewProps) {
   const [showDetails, setShowDetails] = useState(false);
   const [detailsWidth, setDetailsWidth] = useState(25);
   const [detailsTab, setDetailsTab] = useState("Reasoning trace");
+  const [messages, setMessages] = useState<ChatMessageData[]>([]);
 
   const isAgent = conversation.type === "agent";
   const conversationMemberIndex = bootstrap.members.findIndex(
     (member) => member.id === conversation.id,
   );
   const tabs = isAgent ? AGENT_TABS : CHANNEL_TABS;
+  const sender = bootstrap.auth.member;
+
+  const sendMessage = async (content: string) => {
+    if (!bootstrap.organization?.id || !sender) {
+      throw new Error("Sign in before sending messages.");
+    }
+
+    const response = await fetch("/api/messages", {
+      method: "POST",
+      body: JSON.stringify({
+        organizationId: bootstrap.organization.id,
+        threadId: conversation.id,
+        channelId:
+          conversation.type === "channel" ? conversation.id : undefined,
+        senderId: sender.id,
+        content,
+      }),
+    });
+    const body = await response.json().catch(() => null);
+
+    if (!response.ok) {
+      throw new Error(
+        body &&
+          typeof body === "object" &&
+          "message" in body &&
+          typeof body.message === "string"
+          ? body.message
+          : "Unable to send message.",
+      );
+    }
+
+    setMessages((current) => [
+      ...current,
+      {
+        id: typeof body?.id === "string" ? body.id : crypto.randomUUID(),
+        role: sender.roleName,
+        name: sender.name,
+        time: "now",
+        content,
+      },
+    ]);
+  };
 
   return (
     <div className="flex flex-1 overflow-hidden bg-white dark:bg-[#09090b]">
@@ -88,7 +133,13 @@ export function ChannelView({ bootstrap, conversation }: ChannelViewProps) {
           onTabChange={setActiveTab}
         />
         <ChatMessageList>
-          <EmptyChat conversation={conversation} />
+          {messages.length > 0 ? (
+            messages.map((message) => (
+              <ChatMessage key={message.id} message={message} />
+            ))
+          ) : (
+            <EmptyChat conversation={conversation} />
+          )}
         </ChatMessageList>
         <ChatInput
           placeholder={
@@ -96,6 +147,7 @@ export function ChannelView({ bootstrap, conversation }: ChannelViewProps) {
               ? `Message @${conversation.name}...`
               : `Message #${conversation.name} or @agent...`
           }
+          onSend={sendMessage}
         />
       </div>
 

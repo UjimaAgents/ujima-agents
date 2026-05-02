@@ -15,17 +15,35 @@ interface DashboardTeamOverrides {
   agents: AgentConfig[];
 }
 
-function readOverrides(repo: ApiRepository, organizationId: string): DashboardTeamOverrides {
+function mergeRoleOverride(baseRole: RoleConfig | undefined, role: RoleConfig): RoleConfig {
+  return defineRole({
+    ...baseRole,
+    ...role,
+    id: role.id ?? baseRole?.id ?? role.name,
+    name: role.name,
+    provider: role.provider ?? baseRole?.provider,
+    model: role.model ?? baseRole?.model,
+  });
+}
+
+function readOverrides(
+  repo: ApiRepository,
+  organizationId: string,
+  teamStore: TeamStore,
+): DashboardTeamOverrides {
   const value = repo.getWorkspaceSetting(organizationId, DASHBOARD_TEAM_OVERRIDES_KEY);
   if (!value) return { roles: [], agents: [] };
 
   try {
+    const team = teamStore.getTeam();
     const members = new Map(
       repo.listMembers(organizationId).map((member) => [member.id, member] as const),
     );
     const parsed = JSON.parse(value) as Partial<DashboardTeamOverrides>;
     return {
-      roles: Array.isArray(parsed.roles) ? parsed.roles.map((role) => defineRole(role)) : [],
+      roles: Array.isArray(parsed.roles)
+        ? parsed.roles.map((role) => mergeRoleOverride(team?.getRole(role.name), defineRole(role)))
+        : [],
       agents: Array.isArray(parsed.agents)
         ? parsed.agents
             .map((agent) => createAgent(agent.name, agent.roleName, agent.personalityName ?? 'direct'))
@@ -67,7 +85,7 @@ export function applyDashboardTeamOverrides(
   organizationId: string,
   teamStore: TeamStore,
 ): void {
-  applyOverrides(teamStore, readOverrides(repo, organizationId));
+  applyOverrides(teamStore, readOverrides(repo, organizationId, teamStore));
 }
 
 export function upsertDashboardTeamOverride(
@@ -76,10 +94,14 @@ export function upsertDashboardTeamOverride(
   teamStore: TeamStore,
   input: { role?: RoleConfig; agent: AgentConfig },
 ): void {
-  const overrides = readOverrides(repo, organizationId);
+  const overrides = readOverrides(repo, organizationId, teamStore);
   const nextOverrides = {
     roles: input.role
-      ? upsertBy(overrides.roles, defineRole(input.role), (role) => role.name)
+      ? upsertBy(
+          overrides.roles,
+          mergeRoleOverride(teamStore.getTeam()?.getRole(input.role.name), defineRole(input.role)),
+          (role) => role.name,
+        )
       : overrides.roles,
     agents: upsertBy(
       overrides.agents,

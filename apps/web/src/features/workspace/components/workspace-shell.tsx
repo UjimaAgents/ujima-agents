@@ -13,11 +13,11 @@ import type { RolePresetTemplate } from "../../onboarding/types";
 type WorkspaceChannel = BootstrapResponse["channels"][number];
 type WorkspaceMember = BootstrapResponse["members"][number];
 
-export function WorkspaceShell({ 
+export function WorkspaceShell({
   bootstrap,
   rolePresets,
   initialConversation,
-}: { 
+}: {
   bootstrap: BootstrapResponse;
   rolePresets: RolePresetTemplate[];
   initialConversation?: SelectedConversation;
@@ -25,14 +25,15 @@ export function WorkspaceShell({
   const router = useRouter();
   const searchParams = useSearchParams();
   const [sidebarWidth, setSidebarWidth] = useState(25);
-  const [channels, setChannels] = useState<WorkspaceChannel[]>(bootstrap.channels);
+  const [channels, setChannels] = useState<WorkspaceChannel[]>(
+    bootstrap.channels,
+  );
   const [members, setMembers] = useState<WorkspaceMember[]>(bootstrap.members);
 
   const defaultConversation = useMemo(() => {
     if (initialConversation) return initialConversation;
     const generalChannel =
-      channels.find((c) => c.name === "general") ??
-      channels[0];
+      channels.find((c) => c.name === "general") ?? channels[0];
     return {
       type: "channel" as const,
       id: generalChannel?.id ?? "general",
@@ -44,20 +45,17 @@ export function WorkspaceShell({
     const agentValue = searchParams.get("agentId") ?? searchParams.get("agent");
     if (agentValue) {
       const agent = members.find(
-        (member) =>
-          member.kind === "agent" &&
-          member.id === agentValue,
+        (member) => member.kind === "agent" && member.id === agentValue,
       );
       if (agent) {
         return { type: "agent" as const, id: agent.id, name: agent.name };
       }
     }
 
-    const channelValue = searchParams.get("channelId") ?? searchParams.get("channel");
+    const channelValue =
+      searchParams.get("channelId") ?? searchParams.get("channel");
     if (channelValue) {
-      const channel = channels.find(
-        (item) => item.id === channelValue,
-      );
+      const channel = channels.find((item) => item.id === channelValue);
       if (channel) {
         return { type: "channel" as const, id: channel.id, name: channel.name };
       }
@@ -66,7 +64,10 @@ export function WorkspaceShell({
     return defaultConversation;
   }, [channels, defaultConversation, members, searchParams]);
 
-  const selected = useMemo(() => resolveUrlConversation(), [resolveUrlConversation]);
+  const selected = useMemo(
+    () => resolveUrlConversation(),
+    [resolveUrlConversation],
+  );
 
   const handleSelect = useCallback(
     (conversation: SelectedConversation) => {
@@ -87,13 +88,26 @@ export function WorkspaceShell({
       const orgId = bootstrap.organization?.id;
       if (!orgId) return null;
 
-      const response = await fetch(`/api/orgs/${encodeURIComponent(orgId)}/channels`, {
-        method: "POST",
-        body: JSON.stringify({ name: trimmed }),
-      });
-      if (!response.ok) return null;
+      const response = await fetch(
+        `/api/orgs/${encodeURIComponent(orgId)}/channels`,
+        {
+          method: "POST",
+          body: JSON.stringify({ name: trimmed }),
+        },
+      );
+      const body = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(
+          body &&
+            typeof body === "object" &&
+            "message" in body &&
+            typeof body.message === "string"
+            ? body.message
+            : "Unable to create channel.",
+        );
+      }
 
-      const channel = (await response.json()) as WorkspaceChannel;
+      const channel = body as WorkspaceChannel;
       setChannels((current) => [...current, channel]);
       return { type: "channel" as const, id: channel.id, name: channel.name };
     },
@@ -101,28 +115,48 @@ export function WorkspaceShell({
   );
 
   const handleCreateAgent = useCallback(
-    async (input: { name: string; roleName: string; channelIds: string[]; llm: string; model: string; role: WorkspaceRoleInput }) => {
+    async (input: {
+      name: string;
+      roleName: string;
+      channelIds: string[];
+      llm: string;
+      model: string;
+      role: WorkspaceRoleInput;
+    }) => {
       const trimmed = input.name.trim();
       if (!trimmed) return null;
 
       const orgId = bootstrap.organization?.id;
       if (!orgId) return null;
 
-      const response = await fetch(`/api/orgs/${encodeURIComponent(orgId)}/members`, {
-        method: "POST",
-        body: JSON.stringify({
-          name: trimmed,
-          kind: "agent",
-          roleName: input.roleName.trim() || trimmed,
-          channelIds: input.channelIds,
-          llm: input.llm,
-          model: input.model,
-          role: input.role,
-        }),
-      });
-      if (!response.ok) return null;
+      const response = await fetch(
+        `/api/orgs/${encodeURIComponent(orgId)}/members`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            name: trimmed,
+            kind: "agent",
+            roleName: input.roleName.trim() || trimmed,
+            channelIds: input.channelIds,
+            llm: input.llm,
+            model: input.model,
+            role: input.role,
+          }),
+        },
+      );
+      const body = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(
+          body &&
+            typeof body === "object" &&
+            "message" in body &&
+            typeof body.message === "string"
+            ? body.message
+            : "Unable to create agent.",
+        );
+      }
 
-      const member = (await response.json()) as WorkspaceMember;
+      const member = body as WorkspaceMember;
       setMembers((current) => [...current, member]);
       return { type: "agent" as const, id: member.id, name: member.name };
     },
@@ -148,10 +182,7 @@ export function WorkspaceShell({
       </div>
       <DragHandle onResize={setSidebarWidth} />
       <main className="flex-1 flex flex-col min-w-0 overflow-hidden h-full">
-        <ChannelView
-          bootstrap={bootstrap}
-          conversation={selected}
-        />
+        <ChannelView bootstrap={bootstrap} conversation={selected} />
       </main>
     </div>
   );

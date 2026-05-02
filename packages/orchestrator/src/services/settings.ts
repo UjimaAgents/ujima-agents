@@ -199,12 +199,20 @@ export class SettingsService {
 
   addMember(input: AddMemberInput): Member {
     this.requireOrganization(input.organizationId);
+    const team = this.requireTeam();
+    const existingRole = team.getRole(input.roleName);
+    if (input.kind === 'agent' && !input.role && !existingRole) {
+      throw new Error(`Role "${input.roleName}" not found`);
+    }
     const role = input.role
       ? defineRole({
-          ...input.role,
-          name: input.roleName,
-          id: input.role.id ?? input.roleName,
-        })
+          ...existingRole,
+        ...input.role,
+        name: input.roleName,
+        id: input.role.id ?? existingRole?.id ?? input.roleName,
+        provider: input.role.provider ?? existingRole?.provider,
+        model: input.role.model ?? existingRole?.model,
+      })
       : undefined;
     const member = MemberSchema.parse({
       id: randomUUID(),
@@ -230,7 +238,6 @@ export class SettingsService {
       activeRole?.workspaceScopes ?? [],
     );
     ensureMemberSelfChannel(this.repo, input.organizationId, saved);
-    const team = this.teamStore.getTeam();
     if (team) {
       addMemberToDefaultChannels(this.repo, team, input.organizationId, saved);
     }
