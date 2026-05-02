@@ -7,6 +7,7 @@ import { WorkspaceSidebar } from "./workspace-sidebar";
 import { ChannelView } from "./channel-view";
 import type { BootstrapResponse } from "@ujima/api-schema";
 import type { SelectedConversation, WorkspaceRoleInput } from "../types";
+import { resolveSelectedConversationFromSearchParams } from "../conversation-routing";
 
 import type { RolePresetTemplate } from "../../onboarding/types";
 
@@ -42,27 +43,14 @@ export function WorkspaceShell({
   }, [channels, initialConversation]);
 
   const resolveUrlConversation = useCallback(() => {
-    const agentValue = searchParams.get("agentId") ?? searchParams.get("agent");
-    if (agentValue) {
-      const agent = members.find(
-        (member) => member.kind === "agent" && member.id === agentValue,
-      );
-      if (agent) {
-        return { type: "agent" as const, id: agent.id, name: agent.name };
-      }
-    }
-
-    const channelValue =
-      searchParams.get("channelId") ?? searchParams.get("channel");
-    if (channelValue) {
-      const channel = channels.find((item) => item.id === channelValue);
-      if (channel) {
-        return { type: "channel" as const, id: channel.id, name: channel.name };
-      }
-    }
-
-    return defaultConversation;
-  }, [channels, defaultConversation, members, searchParams]);
+    return (
+      resolveSelectedConversationFromSearchParams(searchParams, {
+        ...bootstrap,
+        members,
+        channels,
+      }) ?? defaultConversation
+    );
+  }, [bootstrap, channels, defaultConversation, members, searchParams]);
 
   const selected = useMemo(
     () => resolveUrlConversation(),
