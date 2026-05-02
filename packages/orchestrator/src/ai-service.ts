@@ -1,6 +1,6 @@
 import { generateText, tool, type ModelMessage, type ToolSet } from 'ai';
 import { z } from 'zod';
-import { buildAgentSystemPrompt, type AgentTeamHandle, type ProviderKind } from '@ujima/framework';
+import { buildAgentSystemPrompt, normalizeProviderKey, type AgentTeamHandle, type ProviderKind } from '@ujima/framework';
 import { selectLanguageModel } from '@ujima/llm';
 import type { Message } from '@ujima/shared';
 import type { RepositoryReader } from './services/repository-reader.js';
@@ -95,7 +95,7 @@ export class AiService {
       throw new Error(`Role not found: ${agent.roleName}`);
     }
 
-    const providerName = member.llm ?? role.provider;
+    const providerName = normalizeProviderKey(member.llm ?? role.provider ?? '');
     if (!providerName) {
       throw new Error(`Agent "${member.id}" is missing a provider`);
     }

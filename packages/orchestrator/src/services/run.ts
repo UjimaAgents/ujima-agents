@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { normalizeProviderKey } from '@ujima/framework';
 import {
   MessageSchema,
   RunStateSchema,
@@ -145,7 +146,7 @@ export class RunService {
       return this.failRun(run, `Agent not found: ${member.id}`);
     }
 
-    const providerName = member.llm ?? role.provider;
+    const providerName = normalizeProviderKey(member.llm ?? role.provider ?? '');
     if (providerName && !this.repo.getProviderCredential(run.organizationId, providerName)) {
       return this.failRun(run, `Provider key missing for "${providerName}"`);
     }

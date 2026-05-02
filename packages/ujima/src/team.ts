@@ -13,11 +13,10 @@ import { DEFAULT_TOOL_CATALOG } from './constants.js';
 import { createAgent, normalizeAgents, type AgentConfig } from './agents.js';
 import { normalizeProviders } from './providers.js';
 import { createOrganizationChart } from './organization-chart.js';
-import { listStarterRolePresets, normalizeRoles } from './roles.js';
+import { defineRole, listStarterRolePresets, normalizeRoles } from './roles.js';
 import {
   AgentTeamConfigSchema,
   PolicySchema,
-  RoleConfigSchema,
   type AgentTeamConfig,
   type ChannelConfig,
   type ProviderConfig,
@@ -124,7 +123,7 @@ export function createStarterAgentTeamConfig({
 } = {}): NormalizedAgentTeamConfig {
   const root = normalizeWorkspaceRoot(workspaceRoot ?? '.');
   const starterRoles = listStarterRolePresets().map((preset) =>
-    RoleConfigSchema.parse({
+    defineRole({
       ...preset,
       id: preset.name,
       kind: 'agent',

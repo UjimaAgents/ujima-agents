@@ -1,8 +1,15 @@
 import type { SqliteDbHandle as DbHandle } from '@ujima/context-store';
+import { normalizeProviderKey } from '@ujima/framework';
 import { OrganizationSchema, type Organization } from '@ujima/shared';
 import { now, parseJsonObject, rowString } from './common.js';
 
 type Row = Record<string, unknown>;
+
+function providerRows(db: DbHandle, organizationId: string): Row[] {
+  return db
+    .prepare('SELECT provider_name, key_ref FROM provider_credentials WHERE organization_id = ?')
+    .all(organizationId) as Row[];
+}
 
 export function getOrganization(db: DbHandle, organizationId: string): Organization | null {
   const row = db
@@ -84,24 +91,29 @@ export function saveProviderCredential(
   providerName: string,
   keyRef: string,
 ): void {
+  const normalizedName = normalizeProviderKey(providerName);
+  for (const row of providerRows(db, organizationId)) {
+    if (normalizeProviderKey(rowString(row, 'provider_name')) !== normalizedName) continue;
+    db.prepare('DELETE FROM provider_credentials WHERE organization_id = ? AND provider_name = ?')
+      .run(organizationId, rowString(row, 'provider_name'));
+  }
+
   db.prepare(
     `INSERT INTO provider_credentials (organization_id, provider_name, key_ref, updated_at)
      VALUES (?, ?, ?, ?)
      ON CONFLICT(organization_id, provider_name) DO UPDATE SET
        key_ref = excluded.key_ref,
        updated_at = excluded.updated_at`,
-  ).run(organizationId, providerName, keyRef, now());
+  ).run(organizationId, normalizedName, keyRef, now());
 }
 
 export function listProviderCredentials(
   db: DbHandle,
   organizationId: string,
 ): Record<string, boolean> {
-  const rows = db
-    .prepare('SELECT provider_name FROM provider_credentials WHERE organization_id = ?')
-    .all(organizationId) as { provider_name: string }[];
+  const rows = providerRows(db, organizationId);
 
-  return Object.fromEntries(rows.map((row) => [row.provider_name, true]));
+  return Object.fromEntries(rows.map((row) => [normalizeProviderKey(rowString(row, 'provider_name')), true]));
 }
 
 export function getProviderCredential(
@@ -109,11 +121,10 @@ export function getProviderCredential(
   organizationId: string,
   providerName: string,
 ): string | null {
-  const row = db
-    .prepare(
-      'SELECT key_ref FROM provider_credentials WHERE organization_id = ? AND provider_name = ?',
-    )
-    .get(organizationId, providerName) as Row | null;
+  const normalizedName = normalizeProviderKey(providerName);
+  const row = providerRows(db, organizationId).find(
+    (entry) => normalizeProviderKey(rowString(entry, 'provider_name')) === normalizedName,
+  );
 
   return row ? rowString(row, 'key_ref') : null;
 }
@@ -123,9 +134,12 @@ export function deleteProviderCredential(
   organizationId: string,
   providerName: string,
 ): void {
-  db.prepare(
-    'DELETE FROM provider_credentials WHERE organization_id = ? AND provider_name = ?',
-  ).run(organizationId, providerName);
+  const normalizedName = normalizeProviderKey(providerName);
+  for (const row of providerRows(db, organizationId)) {
+    if (normalizeProviderKey(rowString(row, 'provider_name')) !== normalizedName) continue;
+    db.prepare('DELETE FROM provider_credentials WHERE organization_id = ? AND provider_name = ?')
+      .run(organizationId, rowString(row, 'provider_name'));
+  }
 }
 
 export function saveWorkspaceSetting(

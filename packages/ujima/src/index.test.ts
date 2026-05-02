@@ -138,6 +138,38 @@ test('AgentTeam normalizes and validates the team config', () => {
   expect(team.getChannel('general')?.kind).toBe('general');
 });
 
+test('AgentTeam normalizes provider keys before lookup', () => {
+  const team = AgentTeam({
+    name: 'Ujima Demo',
+    workspace: {
+      root: '/tmp/ujima-org',
+      roleScopes: {},
+    },
+    organizationChart: { reportsTo: {} },
+    agents: [createAgent('pm', 'pm', 'direct')],
+    providers: {
+      OpenAI: {
+        defaultModel: 'gpt-5.4',
+        models: ['gpt-5.4'],
+      },
+    },
+    roles: [
+      {
+        name: 'pm',
+        title: 'Product Manager',
+        instructions: ROLE_PRESETS.pm?.instructions ?? '',
+        provider: 'OpenAI',
+        workspaceScopes: ['.'],
+        tools: ['filesystem'],
+        channels: ['general'],
+      },
+    ],
+  });
+
+  expect(team.getProvider('openai')?.defaultModel).toBe('gpt-5.4');
+  expect(team.getRole('pm')?.provider).toBe('openai');
+});
+
 test('loadAgentTeam returns a ready-to-use handle', () => {
   const team = loadAgentTeam({
     name: 'Ujima Demo',

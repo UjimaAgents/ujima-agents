@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { ChannelSchema, MemberSchema, type Organization, type Member, type Channel } from '@ujima/shared';
+import { normalizeProviderKey } from '@ujima/framework';
 import type { ApiRepository } from './repository-reader.js';
 import type { TeamStore } from './team-store.js';
 import { listProviderStatuses, validateProviderKeys, type ProviderStatus } from './team.js';
@@ -150,13 +151,16 @@ export class SettingsService {
   ): ProviderStatus[] {
     const team = this.requireTeam();
     this.requireOrganization(organizationId);
+    const normalizedProviderKeys = Object.fromEntries(
+      Object.entries(providerKeys).map(([name, apiKey]) => [normalizeProviderKey(name), apiKey]),
+    );
 
-    const { unknownProviders } = validateProviderKeys(team, providerKeys);
+    const { unknownProviders } = validateProviderKeys(team, normalizedProviderKeys);
     if (unknownProviders.length > 0) {
       throw new Error(`Unknown provider keys: ${unknownProviders.join(', ')}`);
     }
 
-    for (const [providerName, apiKey] of Object.entries(providerKeys)) {
+    for (const [providerName, apiKey] of Object.entries(normalizedProviderKeys)) {
       this.repo.saveProviderCredential(organizationId, providerName, apiKey);
     }
 
@@ -166,24 +170,25 @@ export class SettingsService {
   deleteProvider(organizationId: string, providerName: string): ProviderStatus[] {
     this.requireTeam();
     this.requireOrganization(organizationId);
-    this.repo.deleteProviderCredential(organizationId, providerName);
+    this.repo.deleteProviderCredential(organizationId, normalizeProviderKey(providerName));
     return this.listProviders(organizationId);
   }
 
   testProvider(organizationId: string, providerName: string): ProviderTestResult {
     const team = this.requireTeam();
     this.requireOrganization(organizationId);
+    const providerKey = normalizeProviderKey(providerName);
 
-    if (!team.providers[providerName]) {
-      return { provider: providerName, ok: false, message: `Unknown provider "${providerName}"` };
+    if (!team.providers[providerKey]) {
+      return { provider: providerKey, ok: false, message: `Unknown provider "${providerKey}"` };
     }
 
-    const key = this.repo.getProviderCredential(organizationId, providerName);
+    const key = this.repo.getProviderCredential(organizationId, providerKey);
     if (!key || key.trim() === '') {
-      return { provider: providerName, ok: false, message: 'No API key configured' };
+      return { provider: providerKey, ok: false, message: 'No API key configured' };
     }
 
-    return { provider: providerName, ok: true, message: 'Key present' };
+    return { provider: providerKey, ok: true, message: 'Key present' };
   }
 
   listOrganizations(): Organization[] {
@@ -198,7 +203,7 @@ export class SettingsService {
       name: input.name,
       kind: input.kind,
       roleName: input.roleName,
-      llm: input.llm,
+      llm: input.llm ? normalizeProviderKey(input.llm) : undefined,
       model: input.model,
     });
     const saved = this.repo.saveMember(member);

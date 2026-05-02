@@ -13,5 +13,11 @@ export * from './personas.js';
 export * from './governance.js';
 export * from './governance-policy.js';
 export * from './org-schemas.js';
+export {
+  MODEL_OPTIONS_BY_PROVIDER,
+  defaultModelForProvider,
+  getModelOptionsForProvider,
+} from './model-catalog.js';
+export type { ProviderModelOption } from './model-catalog.js';
 export * from './socket-events.js';
 export * from './cursor.js';

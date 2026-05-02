@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
+import { normalizeProviderKey } from '@ujima/framework';
 import {
   ChannelSchema,
   MemberSchema,
@@ -148,9 +149,12 @@ export class OnboardingService {
       policies: input.team.policies,
     } as Record<string, unknown>);
 
+    const normalizedProviderKeys = Object.fromEntries(
+      Object.entries(input.providerKeys).map(([name, apiKey]) => [normalizeProviderKey(name), apiKey]),
+    );
     const { unknownProviders, missingProviders } = validateProviderKeys(
       team,
-      input.providerKeys,
+      normalizedProviderKeys,
     );
     if (unknownProviders.length > 0) {
       throw new Error(`Unknown provider keys: ${unknownProviders.join(', ')}`);
@@ -180,7 +184,7 @@ export class OnboardingService {
     });
     this.repo.saveOrganization(organization);
 
-    for (const [providerName, apiKey] of Object.entries(input.providerKeys)) {
+    for (const [providerName, apiKey] of Object.entries(normalizedProviderKeys)) {
       this.repo.saveProviderCredential(organizationId, providerName, apiKey);
     }
 
