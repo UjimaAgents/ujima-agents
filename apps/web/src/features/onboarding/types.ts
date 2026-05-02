@@ -1,3 +1,5 @@
+import { defaultModelForProvider } from "@ujima/shared";
+
 export type OnboardingStepId = "organization" | "owner" | "team" | "review";
 export type TeamTabId = "agents" | "channels" | "org-chart" | "policies" | "providers";
 
@@ -23,6 +25,7 @@ export interface OnboardingStep {
 export interface TeamRoleDraft {
   id: string;
   name: string;
+  agentName: string;
   title: string;
   instructions: string;
   llm: string;
@@ -74,24 +77,26 @@ export interface FlowWidgetSpec {
   bestLibrary: string;
 }
 
-function normalizeProviderToken(value: string) {
-  return value.trim().toLowerCase().replace(/[\s_]+/g, "-");
+export interface RolePresetTemplate {
+  name: string;
+  title: string;
+  description: string;
+  instructions: string;
+  channels: string[];
+  workspaceScopes?: string[];
+  tools?: string[];
+  skills?: string[];
+  industry: string;
+  key: string;
 }
+export { defaultModelForProvider, getModelOptionsForProvider } from "@ujima/shared";
 
-const DEFAULT_MODEL_BY_PROVIDER: Record<string, string> = {
-  anthropic: "claude-3-5-sonnet",
-  openai: "gpt-4o",
-  google: "gemini-1.5-pro",
-  mistral: "mistral-large-latest",
-  deepseek: "deepseek-chat",
-  xai: "grok-2-latest",
-  kimi: "moonshot-v1-8k",
-  "zhipu-ai": "glm-4-plus",
-  "openai-codex": "gpt-4o",
-};
-
-export function defaultModelForProvider(provider: string): string {
-  return DEFAULT_MODEL_BY_PROVIDER[normalizeProviderToken(provider)] ?? "gpt-4o";
+export function buildStarterDraft(): OnboardingDraft {
+  return {
+    ...INITIAL_DRAFT,
+    roles: [],
+    organizationReports: [],
+  };
 }
 
 export const ONBOARDING_STEPS: OnboardingStep[] = [
@@ -154,45 +159,46 @@ export const INITIAL_DRAFT: OnboardingDraft = {
     {
       id: "role-senior-engineer",
       name: "senior-engineer",
+      agentName: "Senior Engineer",
       title: "Senior Engineer",
       instructions: "Lead architecture, code quality, and complex implementation.",
-      llm: "OpenAI",
-      model: defaultModelForProvider("OpenAI"),
-      channelIds: ["channel-engineering", "channel-reviews", "channel-general"],
+      llm: "openai",
+      model: defaultModelForProvider("openai"),
+      channelIds: ["channel-general"],
     },
     {
       id: "role-junior-engineer",
       name: "junior-engineer",
+      agentName: "Software Engineer",
       title: "Software Engineer",
       instructions: "Implement features, fix bugs, and write tests.",
-      llm: "OpenAI",
-      model: defaultModelForProvider("OpenAI"),
-      channelIds: ["channel-engineering", "channel-general"],
+      llm: "openai",
+      model: defaultModelForProvider("openai"),
+      channelIds: ["channel-general"],
     },
     {
       id: "role-reviewer",
       name: "reviewer",
+      agentName: "Code Reviewer",
       title: "Code Reviewer",
       instructions: "Review changes and enforce quality standards.",
-      llm: "OpenAI",
-      model: defaultModelForProvider("OpenAI"),
-      channelIds: ["channel-reviews", "channel-general"],
+      llm: "openai",
+      model: defaultModelForProvider("openai"),
+      channelIds: ["channel-general"],
     },
     {
       id: "role-product-manager",
       name: "product-manager",
+      agentName: "Product Manager",
       title: "Product Manager",
       instructions: "Define requirements, priorities, and product direction.",
-      llm: "OpenAI",
-      model: defaultModelForProvider("OpenAI"),
-      channelIds: ["channel-product", "channel-general"],
+      llm: "openai",
+      model: defaultModelForProvider("openai"),
+      channelIds: ["channel-general"],
     },
   ],
   channels: [
     { id: "channel-general", name: "general", description: "General discussions and updates" },
-    { id: "channel-engineering", name: "engineering", description: "Engineering and implementation" },
-    { id: "channel-reviews", name: "reviews", description: "Code reviews and quality" },
-    { id: "channel-product", name: "product", description: "Product planning and updates" },
   ],
   organizationReports: [
     { id: "report-senior", subjectName: "senior-engineer", managerName: "product-manager" },
@@ -201,7 +207,7 @@ export const INITIAL_DRAFT: OnboardingDraft = {
     { id: "report-pm", subjectName: "product-manager", managerName: OWNER_MANAGER_SENTINEL },
   ],
   providers: [
-    { id: "provider-default", name: "OpenAI", apiKey: "" },
+    { id: "provider-default", name: "openai", apiKey: "" },
   ],
   policies: {
     requireApprovalForWrites: true,

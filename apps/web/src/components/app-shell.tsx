@@ -11,8 +11,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const isLandingPage = pathname === "/";
   const isOnboardingPage = pathname.startsWith("/onboarding");
   const isLoginPage = pathname.startsWith("/login");
+  const isWorkspacePage = pathname.startsWith("/workspace");
 
-  if (isLandingPage || isOnboardingPage || isLoginPage) {
+  if (isLandingPage || isOnboardingPage || isLoginPage || isWorkspacePage) {
     return <div className="min-h-screen bg-zinc-50 text-zinc-950 dark:bg-[#040712] dark:text-zinc-100">{children}</div>;
   }
 

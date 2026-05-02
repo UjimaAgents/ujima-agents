@@ -6,6 +6,7 @@ export * from './onboarding.js';
 export * from './runs.js';
 export * from './settings.js';
 export * from './additive/requests.js';
+export { MODEL_OPTIONS_BY_PROVIDER, defaultModelForProvider, getModelOptionsForProvider } from './model-catalog.js';
 
 export const API_VERSION = 'v1';
 

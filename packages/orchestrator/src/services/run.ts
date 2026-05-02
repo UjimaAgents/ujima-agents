@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { normalizeProviderKey } from '@ujima/framework';
 import {
   MessageSchema,
   RunStateSchema,
@@ -16,6 +17,7 @@ import type { ConversationService } from './conversation.js';
 import type { ApiRepository } from './repository-reader.js';
 import type { TeamStore } from './team-store.js';
 import type { ToolService } from './tool-service.js';
+import { applyDashboardTeamOverrides } from './dashboard-team-overrides.js';
 
 export interface CreateRunInput {
   organizationId: string;
@@ -125,6 +127,7 @@ export class RunService {
   }
 
   private async advanceRun(run: RunState): Promise<RunState> {
+    applyDashboardTeamOverrides(this.repo, run.organizationId, this.teamStore);
     const team = this.requireTeam();
     const member = this.repo.getMember(run.organizationId, run.agentId);
     if (!member) {
@@ -145,7 +148,7 @@ export class RunService {
       return this.failRun(run, `Agent not found: ${member.id}`);
     }
 
-    const providerName = role.provider;
+    const providerName = normalizeProviderKey(member.llm ?? role.provider ?? '');
     if (providerName && !this.repo.getProviderCredential(run.organizationId, providerName)) {
       return this.failRun(run, `Provider key missing for "${providerName}"`);
     }

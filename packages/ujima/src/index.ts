@@ -57,7 +57,14 @@ export {
   normalizeRoles,
 } from './roles.js';
 
-export { defineProvider, normalizeProviders } from './providers.js';
+export { defineProvider, normalizeProviderKey, normalizeProviders } from './providers.js';
+
+export {
+  MODEL_OPTIONS_BY_PROVIDER,
+  defaultModelForProvider,
+  getModelOptionsForProvider,
+  type ProviderModelOption,
+} from './model-catalog.js';
 
 export { defineTool, listDefaultToolNames, normalizeTools } from './tools.js';
 

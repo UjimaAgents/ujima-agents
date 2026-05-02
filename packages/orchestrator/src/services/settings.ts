@@ -1,10 +1,12 @@
 import { randomUUID } from 'node:crypto';
-import { MemberSchema, type Organization, type Member, type Channel } from '@ujima/shared';
+import { ChannelSchema, MemberSchema, type Organization, type Member, type Channel } from '@ujima/shared';
+import { createAgent, defineRole, normalizeProviderKey, type RoleConfig } from '@ujima/framework';
 import type { ApiRepository } from './repository-reader.js';
 import type { TeamStore } from './team-store.js';
 import { listProviderStatuses, validateProviderKeys, type ProviderStatus } from './team.js';
 import { addMemberToDefaultChannels, ensureMemberSelfChannel } from './member-channels.js';
 import { upsertWorkspaceMemberScopes } from './workspace-root.js';
+import { upsertDashboardTeamOverride } from './dashboard-team-overrides.js';
 
 export interface TeamSettingsResponse {
   name: string;
@@ -34,6 +36,16 @@ export interface AddMemberInput {
   name: string;
   kind: 'human' | 'agent';
   roleName: string;
+  channelIds?: string[];
+  llm?: string;
+  model?: string;
+  role?: RoleConfig;
+}
+
+export interface CreateChannelInput {
+  organizationId: string;
+  name: string;
+  topic?: string;
 }
 
 export interface ProviderTestResult {
@@ -141,13 +153,16 @@ export class SettingsService {
   ): ProviderStatus[] {
     const team = this.requireTeam();
     this.requireOrganization(organizationId);
+    const normalizedProviderKeys = Object.fromEntries(
+      Object.entries(providerKeys).map(([name, apiKey]) => [normalizeProviderKey(name), apiKey]),
+    );
 
-    const { unknownProviders } = validateProviderKeys(team, providerKeys);
+    const { unknownProviders } = validateProviderKeys(team, normalizedProviderKeys);
     if (unknownProviders.length > 0) {
       throw new Error(`Unknown provider keys: ${unknownProviders.join(', ')}`);
     }
 
-    for (const [providerName, apiKey] of Object.entries(providerKeys)) {
+    for (const [providerName, apiKey] of Object.entries(normalizedProviderKeys)) {
       this.repo.saveProviderCredential(organizationId, providerName, apiKey);
     }
 
@@ -157,24 +172,25 @@ export class SettingsService {
   deleteProvider(organizationId: string, providerName: string): ProviderStatus[] {
     this.requireTeam();
     this.requireOrganization(organizationId);
-    this.repo.deleteProviderCredential(organizationId, providerName);
+    this.repo.deleteProviderCredential(organizationId, normalizeProviderKey(providerName));
     return this.listProviders(organizationId);
   }
 
   testProvider(organizationId: string, providerName: string): ProviderTestResult {
     const team = this.requireTeam();
     this.requireOrganization(organizationId);
+    const providerKey = normalizeProviderKey(providerName);
 
-    if (!team.providers[providerName]) {
-      return { provider: providerName, ok: false, message: `Unknown provider "${providerName}"` };
+    if (!team.providers[providerKey]) {
+      return { provider: providerKey, ok: false, message: `Unknown provider "${providerKey}"` };
     }
 
-    const key = this.repo.getProviderCredential(organizationId, providerName);
+    const key = this.repo.getProviderCredential(organizationId, providerKey);
     if (!key || key.trim() === '') {
-      return { provider: providerName, ok: false, message: 'No API key configured' };
+      return { provider: providerKey, ok: false, message: 'No API key configured' };
     }
 
-    return { provider: providerName, ok: true, message: 'Key present' };
+    return { provider: providerKey, ok: true, message: 'Key present' };
   }
 
   listOrganizations(): Organization[] {
@@ -183,27 +199,70 @@ export class SettingsService {
 
   addMember(input: AddMemberInput): Member {
     this.requireOrganization(input.organizationId);
+    const team = this.requireTeam();
+    const existingRole = team.getRole(input.roleName);
+    if (input.kind === 'agent' && !input.role && !existingRole) {
+      throw new Error(`Role "${input.roleName}" not found`);
+    }
+    const role = input.role
+      ? defineRole({
+          ...existingRole,
+        ...input.role,
+        name: input.roleName,
+        id: input.role.id ?? existingRole?.id ?? input.roleName,
+        provider: input.role.provider ?? existingRole?.provider,
+        model: input.role.model ?? existingRole?.model,
+      })
+      : undefined;
     const member = MemberSchema.parse({
       id: randomUUID(),
       organizationId: input.organizationId,
       name: input.name,
       kind: input.kind,
       roleName: input.roleName,
+      llm: input.llm ? normalizeProviderKey(input.llm) : undefined,
+      model: input.model,
     });
     const saved = this.repo.saveMember(member);
-    const role = this.teamStore.getTeam()?.getRole(input.roleName);
+    if (input.kind === 'agent') {
+      upsertDashboardTeamOverride(this.repo, input.organizationId, this.teamStore, {
+        role,
+        agent: createAgent(saved.id, saved.roleName),
+      });
+    }
+    const activeRole = this.teamStore.getTeam()?.getRole(input.roleName);
     upsertWorkspaceMemberScopes(
       this.repo,
       input.organizationId,
       saved.id,
-      role?.workspaceScopes ?? [],
+      activeRole?.workspaceScopes ?? [],
     );
     ensureMemberSelfChannel(this.repo, input.organizationId, saved);
-    const team = this.teamStore.getTeam();
     if (team) {
       addMemberToDefaultChannels(this.repo, team, input.organizationId, saved);
     }
+    for (const channelId of input.channelIds ?? []) {
+      const channel = this.repo.getChannel(input.organizationId, channelId);
+      if (!channel) continue;
+      const memberIds = new Set(channel.memberIds);
+      memberIds.add(saved.id);
+      this.repo.setChannelMembers(channelId, [...memberIds].sort());
+    }
     return saved;
+  }
+
+  addChannel(input: CreateChannelInput): Channel {
+    this.requireOrganization(input.organizationId);
+    return this.repo.saveChannel(
+      ChannelSchema.parse({
+        id: randomUUID(),
+        organizationId: input.organizationId,
+        name: input.name,
+        kind: 'group',
+        topic: input.topic ?? '',
+        memberIds: [],
+      }),
+    );
   }
 
   getOrganizationSettings(organizationId: string): OrganizationSettingsResponse {

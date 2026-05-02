@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { cookies } from "next/headers";
 import type { BootstrapResponse, SessionAuthState } from "@ujima/api-schema";
+import type { RolePresetTemplate } from "@/features/onboarding/types";
 
 export const WEB_SESSION_COOKIE = "ujima_web_session";
 const DEFAULT_DAEMON_PORT = process.env.UJIMA_PORT ?? "7511";
@@ -121,4 +122,9 @@ export async function getServerBootstrap(): Promise<BootstrapResponse> {
 
 export async function getServerAuthState(): Promise<SessionAuthState> {
   return daemonJson<SessionAuthState>("/api/auth/session", {}, await getSessionTokenFromCookie());
+}
+
+export async function getServerRolePresets(): Promise<RolePresetTemplate[]> {
+  const response = await daemonJson<{ presets: RolePresetTemplate[] }>("/api/roles/presets");
+  return response.presets;
 }

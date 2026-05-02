@@ -91,6 +91,8 @@ export const MemberSchema = z.object({
   name: z.string().min(1),
   kind: MemberKindSchema,
   roleName: z.string().min(1),
+  llm: z.string().min(1).optional(),
+  model: z.string().min(1).optional(),
   presence: PresenceStateSchema.default('offline'),
   createdAt: TimestampSchema.optional(),
   retiredAt: TimestampSchema.optional(),

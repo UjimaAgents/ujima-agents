@@ -2,6 +2,7 @@ import { resolveWorkspacePath } from '@ujima/shared/workspace';
 import { ROLE_INDUSTRY_PRESETS, ROLE_PRESETS, STARTER_ROLE_PRESET_KEYS } from './roles/index.js';
 import { RoleConfigSchema, type RoleConfig, type RolePreset } from './schemas.js';
 import { getSkillInstructions } from './skills.js';
+import { normalizeProviderKey } from './providers.js';
 
 function toTitle(name: string): string {
   return name
@@ -77,7 +78,10 @@ export function defineRole(role: unknown): RoleConfig {
     kind: typeof input.kind === 'string' ? input.kind : 'agent',
   });
 
-  return parsed;
+  return {
+    ...parsed,
+    provider: parsed.provider ? normalizeProviderKey(parsed.provider) : undefined,
+  };
 }
 
 export function normalizeRoles(roles: unknown[] = [], workspaceRoot: string): RoleConfig[] {

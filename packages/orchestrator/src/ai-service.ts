@@ -1,6 +1,6 @@
 import { generateText, tool, type ModelMessage, type ToolSet } from 'ai';
 import { z } from 'zod';
-import { buildAgentSystemPrompt, type AgentTeamHandle, type ProviderKind } from '@ujima/framework';
+import { buildAgentSystemPrompt, normalizeProviderKey, type AgentTeamHandle, type ProviderKind } from '@ujima/framework';
 import { selectLanguageModel } from '@ujima/llm';
 import type { Message } from '@ujima/shared';
 import type { RepositoryReader } from './services/repository-reader.js';
@@ -95,26 +95,27 @@ export class AiService {
       throw new Error(`Role not found: ${agent.roleName}`);
     }
 
-    if (!role.provider) {
-      throw new Error(`Role "${role.name}" is missing a provider`);
+    const providerName = normalizeProviderKey(member.llm ?? role.provider ?? '');
+    if (!providerName) {
+      throw new Error(`Agent "${member.id}" is missing a provider`);
     }
 
-    const provider = team.getProvider(role.provider);
+    const provider = team.getProvider(providerName);
     if (!provider) {
-      throw new Error(`Provider not found: ${role.provider}`);
+      throw new Error(`Provider not found: ${providerName}`);
     }
 
-    const modelId = role.model ?? provider.defaultModel;
+    const modelId = member.model ?? role.model ?? provider.defaultModel;
     if (!modelId) {
-      throw new Error(`Role "${role.name}" is missing a model`);
+      throw new Error(`Agent "${member.id}" is missing a model`);
     }
 
-    const apiKey = this.repo.getProviderCredential(input.organizationId, role.provider);
+    const apiKey = this.repo.getProviderCredential(input.organizationId, providerName);
     if (!apiKey) {
-      throw new Error(`Provider key missing for "${role.provider}"`);
+      throw new Error(`Provider key missing for "${providerName}"`);
     }
 
-    const kind = resolveProviderKind(role.provider, provider.kind);
+    const kind = resolveProviderKind(providerName, provider.kind);
     if (!SUPPORTED_PROVIDER_KINDS.has(kind)) {
       throw new Error(`Unsupported provider kind "${kind}"`);
     }
