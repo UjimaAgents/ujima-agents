@@ -165,16 +165,28 @@ export class SpiritService {
    * Recover the in-memory registry from persisted state. Call this once
    * at daemon boot so spirits that survived a crash still gate the
    * supervisor properly.
+   *
+   * Ordering invariant: `getActiveForMember` returns spirits sorted
+   * newest-first by `registeredAt` (a monotonic counter assigned at
+   * register time). The DB query returns rows newest-first by
+   * `updated_at DESC`, so we have to register them in REVERSE order
+   * here — otherwise the newest DB spirit would receive the lowest
+   * counter and a fresh `@mention` after restart would get routed to
+   * the oldest live spirit (the audit's flagged regression). Walking
+   * oldest → newest preserves the runtime ordering the supervisor
+   * gate relies on.
    */
   bootstrap(organizationId: string): void {
-    // The DB query is the authoritative recovery path. We walk it once
-    // per org to seed the registry; after that registration is driven
-    // by spawn/retire/complete on the hot path.
     const members = this.repo.listMembers(organizationId);
     for (const member of members) {
       if (member.kind !== 'agent') continue;
       const active = this.repo.listActiveSpiritsForMember(organizationId, member.id);
-      for (const spirit of active) {
+      // `listActiveSpiritsForMember` is `updated_at DESC`. Register
+      // in reverse so the newest spirit ends up with the highest
+      // monotonic `registeredAt` and `getActiveForMember` returns
+      // it first. Build the reversed slice once so the loop body
+      // doesn't need a non-null assertion on the indexed access.
+      for (const spirit of active.slice().reverse()) {
         this.registry.register(spirit);
       }
     }

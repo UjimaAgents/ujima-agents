@@ -1206,6 +1206,139 @@ describe('TaskSessionService.create — audit fix regressions', () => {
     expect(dispatch.kind).toBe('replied');
   });
 
+  // -------------------------------------------------------------------
+  // NEW (audit fix): bootstrap preserves newest-first ordering even
+  // when the DB returned the active spirits newest-first by
+  // updated_at. The registry must order by its own monotonic counter,
+  // so we have to walk the DB result in reverse.
+  // -------------------------------------------------------------------
+  it('bootstrap preserves newest-first ordering after restart for a multi-session member', async () => {
+    const archiveRoot = await mkdtemp(join(tmpdir(), 'ujima-bootstrap-order-'));
+    tempDirs.push(archiveRoot);
+    const db = openDatabase({ dbPath: ':memory:' });
+    const repo = new Repository(db);
+    const teamStore = createTeamStore();
+    const onboarding = new OnboardingService(repo, teamStore);
+    await onboarding.onboard({
+      organizationName: 'Restart Order Org',
+      ownerName: 'Owner',
+      workspaceRoot: archiveRoot,
+      providerKeys: { local: 'k' },
+      team: {
+        channels: [{ name: 'general', kind: 'general', topic: '' }],
+        roles: [
+          {
+            name: 'eng',
+            title: 'Eng',
+            instructions: 'i',
+            workspaceScopes: [],
+            tools: [],
+            channels: ['general'],
+            provider: 'local',
+            model: 'm',
+          },
+        ],
+        providers: { local: { kind: 'openai', defaultModel: 'm' } },
+        agents: [{ name: 'agent-x', roleName: 'eng', personalityName: 'direct' }],
+      },
+    });
+    const owner = repo
+      .listMembers(repo.getLatestOrganization()!.id)
+      .find((m) => m.kind === 'human')!;
+    const conversations = new ConversationService(repo, noopRealtime());
+    const stubTools: ToolService = {
+      invoke: async () => ({ ok: true, output: { status: 'completed' } }),
+      allowRun: () => undefined,
+    };
+    const preRegistry = new ActiveSpiritRegistry();
+    const preSpirits = new SpiritService(teamStore, repo, noopRealtime(), stubTools, {
+      modelResolver: () => makeTextOnlyModel('x'),
+      registry: preRegistry,
+    });
+    const taskSessions = new TaskSessionService(repo, conversations, preSpirits);
+
+    // Two sessions for the same member, spawned in time order. The
+    // small wait makes the spirits' DB `updated_at` strictly
+    // increasing so `listActiveSpiritsForMember` orders deterministically.
+    const { session: oldSession } = taskSessions.create({
+      organizationId: owner.organizationId,
+      requestedBy: owner.id,
+      prompt: 'old',
+      team: ['agent-x'],
+      slug: 'old-session',
+    });
+    const oldSpirit = preSpirits.spawn({
+      organizationId: owner.organizationId,
+      taskSessionId: oldSession.id,
+      memberId: 'agent-x',
+    });
+    await new Promise((r) => setTimeout(r, 5));
+    const { session: newSession } = taskSessions.create({
+      organizationId: owner.organizationId,
+      requestedBy: owner.id,
+      prompt: 'new',
+      team: ['agent-x'],
+      slug: 'new-session',
+    });
+    const newSpirit = preSpirits.spawn({
+      organizationId: owner.organizationId,
+      taskSessionId: newSession.id,
+      memberId: 'agent-x',
+    });
+
+    // DB invariant: newest first.
+    const dbActive = repo.listActiveSpiritsForMember(owner.organizationId, 'agent-x');
+    expect(dbActive.map((s) => s.id)).toEqual([newSpirit.id, oldSpirit.id]);
+
+    // "Restart": fresh registry, fresh service, same DB. Pre-fix the
+    // bootstrap loop would assign the lowest counter to the NEWEST
+    // spirit (by walking newest-first), inverting runtime ordering.
+    const postRegistry = new ActiveSpiritRegistry();
+    const postSpirits = new SpiritService(teamStore, repo, noopRealtime(), stubTools, {
+      modelResolver: () => makeTextOnlyModel('x'),
+      registry: postRegistry,
+    });
+    postSpirits.bootstrapAll();
+
+    const recovered = postRegistry.getActiveForMember(owner.organizationId, 'agent-x');
+    expect(recovered.map((e) => e.spiritId)).toEqual([newSpirit.id, oldSpirit.id]);
+    expect(recovered[0]?.taskSessionId).toBe(newSession.id);
+
+    // End-to-end: a fresh @mention after restart routes to the NEW
+    // session, not the old one. Pre-fix this assertion would fail
+    // because handleAlert picks active[0] which would have been
+    // oldSpirit.
+    const postSupervisor = new SupervisorService(
+      repo,
+      noopRealtime(),
+      conversations,
+      postSpirits,
+      postRegistry,
+      { debounceMs: 0, turnCapPerSession: 5 },
+    );
+    const general = repo.getChannel(owner.organizationId, 'general')!;
+    const ask = conversations.postToChannel({
+      organizationId: owner.organizationId,
+      senderId: owner.id,
+      channelId: general.id,
+      body: '@agent-x post-restart status?',
+    });
+    const dispatch = await postSupervisor.handleAlert({
+      organizationId: owner.organizationId,
+      memberId: 'agent-x',
+      messageId: ask.id,
+      channelId: general.id,
+      threadId: ask.threadId,
+      byMemberId: owner.id,
+      reason: 'mention',
+    });
+    expect(dispatch.kind).toBe('replied');
+    const refreshedNew = repo.getTaskSession(owner.organizationId, newSession.id)!;
+    const refreshedOld = repo.getTaskSession(owner.organizationId, oldSession.id)!;
+    expect(refreshedNew.supervisorTurnCount).toBe(1);
+    expect(refreshedOld.supervisorTurnCount).toBe(0);
+  });
+
   it('createApiServices wiring auto-hydrates the registry on construction', async () => {
     // Audit fix #1 also requires the production wiring to call
     // `bootstrapAll()` for us. This test exercises the wiring exactly
