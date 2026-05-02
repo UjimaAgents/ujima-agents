@@ -21,6 +21,15 @@ export interface ToolInvocationInput {
   // can read/write against the right aggregate without the model
   // having to thread it through args.
   taskSessionId?: string;
+  /**
+   * Spirit role that originated this invocation. The supervisor.*
+   * tool family is only callable from `'supervisor'` mode — a
+   * worker turn with `supervisor.todo.add` in its role allowlist
+   * still gets denied by `checkToolPolicy`. Set by `SpiritService`
+   * when it builds tool definitions; absent on every other
+   * invocation path (which is treated the same as `'worker'`).
+   */
+  spiritRole?: 'worker' | 'supervisor';
 }
 
 export interface ToolInvocationResult {

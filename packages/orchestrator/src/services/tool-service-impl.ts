@@ -67,12 +67,23 @@ export class ToolServiceImpl implements ToolService {
     // Phase 2.C.2 — runtime supervisor allowlist enforcement.
     //
     // SpiritService restricts the model palette when role==='supervisor',
-    // but a malicious or misconfigured tool could still tag a non-allowlisted
-    // tool id with `permissionMcpId: 'supervisor'`. Reject it here so the
-    // single source of truth (SUPERVISOR_TOOL_ALLOWLIST) enforces both the
-    // model-visible surface AND the post-dispatch invocation.
+    // but a forged or out-of-band invocation could still try to drive a
+    // non-allowlisted tool from supervisor mode. Reject anything that
+    // either:
+    //   (a) is tagged spiritRole='supervisor' but is not in the
+    //       allowlist — covers a supervisor turn somehow reaching a
+    //       forbidden tool (filesystem, shell, etc.), and
+    //   (b) is tagged permissionMcpId='supervisor' but is not in the
+    //       allowlist — covers a tool that hardcodes the supervisor
+    //       MCP id without being on the canonical list.
+    //
+    // (a) is the stronger signal. (b) is kept as defence in depth so a
+    // mis-registered tool is still rejected even when no spirit role
+    // tag is present.
+    const supervisorTagged =
+      invocation.spiritRole === 'supervisor' || invocation.permissionMcpId === 'supervisor';
     if (
-      invocation.permissionMcpId === 'supervisor' &&
+      supervisorTagged &&
       !SUPERVISOR_TOOL_ALLOWLIST.includes(
         invocation.toolId as (typeof SUPERVISOR_TOOL_ALLOWLIST)[number],
       )
@@ -153,6 +164,7 @@ export class ToolServiceImpl implements ToolService {
       preparedInvocation.toolId,
       preparedInvocation.action,
       preparedInvocation.resourcePath,
+      { spiritRole: preparedInvocation.spiritRole },
     );
 
     if (!policy.allowed) {

@@ -256,6 +256,35 @@ export class TaskSessionService {
     if (!session) {
       throw new Error(`Task session not found: ${taskSessionId}`);
     }
+
+    // Pre-validate every team member BEFORE spawning anything. spawn()
+    // does the same checks itself, but each spawn writes a Spirit row,
+    // a Run row, and an in-memory registry entry. Without pre-flight
+    // a member that was retired AFTER the session was created (e.g.
+    // by config-sync) would fail mid-loop and leave earlier members
+    // half-spawned: the API surfaces the error but the session is in
+    // an inconsistent state and can't be cleanly retried.
+    //
+    // Caveat: this is not TOCTOU-tight on its own — a member could
+    // race a retirement between the pre-flight and the spawn. The
+    // remaining race is acceptable because the spawn() code path
+    // re-validates and the fix here covers the common case (members
+    // already in a bad state at start time). A SQL transaction could
+    // tighten it further but spawn() also writes the in-memory
+    // registry which is non-transactional, so the value is limited.
+    for (const memberId of session.teamMemberIds) {
+      const member = this.repo.getMember(organizationId, memberId);
+      if (!member) {
+        throw new Error(`Team member not found: ${memberId}`);
+      }
+      if (member.kind !== 'agent') {
+        throw new Error(`Member "${memberId}" is not an agent`);
+      }
+      if (member.retiredAt) {
+        throw new Error(`Cannot start task session — member "${memberId}" is retired`);
+      }
+    }
+
     const spawned: Spirit[] = [];
     for (const memberId of session.teamMemberIds) {
       const spirit = this.spirits.spawn({

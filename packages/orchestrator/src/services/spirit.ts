@@ -435,6 +435,10 @@ export class SpiritService {
       memberId: input.memberId,
       threadId: session.channelId,
       taskSessionId: input.taskSessionId,
+      // Tag every tool invocation with the spirit role so the policy
+      // layer can enforce supervisor-only tools regardless of what
+      // the role's allowlist happens to declare.
+      spiritRole: role,
       team,
     });
 
@@ -615,6 +619,7 @@ export class SpiritService {
       memberId: string;
       threadId: string;
       taskSessionId: string;
+      spiritRole: 'worker' | 'supervisor';
       team: AgentTeamHandle;
     },
   ): ToolSet {
@@ -641,6 +646,7 @@ export class SpiritService {
               memberId: ctx.memberId,
               threadId: ctx.threadId,
               taskSessionId: ctx.taskSessionId,
+              spiritRole: ctx.spiritRole,
               toolCallId,
               toolId,
               ...invocationData,

@@ -30,6 +30,8 @@ import {
   type ToolService,
 } from '@ujima/orchestrator';
 import { createPermissionMiddleware } from '@ujima/permissions';
+import { AgentTeam } from '@ujima/framework';
+import { ChannelSchema, MemberSchema, OrganizationSchema } from '@ujima/shared';
 import { MessageCardSchema } from '@ujima/shared';
 
 // ---------------------------------------------------------------------
@@ -1489,6 +1491,240 @@ describe('TaskSessionService.create — audit fix regressions', () => {
     // exactly once.
     const refreshed = repo.getTaskSession(owner.organizationId, session.id)!;
     expect(refreshed.supervisorTurnCount).toBe(1);
+  });
+
+  // -------------------------------------------------------------------
+   // NEW (audit fix): supervisor.todo.* is rejected from worker turns
+   // even when the role's tool allowlist names them.
+   // -------------------------------------------------------------------
+  it('worker turn cannot call supervisor.todo.* even when the role lists them in `tools`', async () => {
+    // Role config carries `supervisor.todo.add` in `tools`. Pre-fix,
+    // checkToolPolicy unconditionally allowed the supervisor.* family
+    // and a regular worker invocation slipped through. Post-fix, the
+    // bypass is gated on `spiritRole === 'supervisor'`, so a worker
+    // invocation (no spiritRole tag, or spiritRole='worker') is
+    // refused even when the role explicitly names the tool.
+    //
+    // We bypass `OnboardingService` here because that path goes
+    // through `loadAgentTeam`'s starter-tools catalog and doesn't
+    // forward a custom `tools` map. To reproduce the misconfiguration
+    // the audit flagged ("an admin lists supervisor.todo.* on a
+    // worker role"), we build the team handle directly with a
+    // catalog that includes those tool ids.
+    const archiveRoot = await mkdtemp(join(tmpdir(), 'ujima-supervisor-gate-'));
+    tempDirs.push(archiveRoot);
+    const db = openDatabase({ dbPath: ':memory:' });
+    const repo = new Repository(db);
+    const teamStore = createTeamStore();
+
+    const team = AgentTeam({
+      name: 'Gate Org',
+      workspace: { root: archiveRoot, roleScopes: {} },
+      tools: {
+        'supervisor.todo.add': {
+          id: 'supervisor.todo.add',
+          name: 'supervisor.todo.add',
+          description: 'Supervisor add (test catalog entry)',
+          actions: ['message'],
+          pathScopes: [],
+          requiresApproval: false,
+        },
+        'supervisor.todo.list': {
+          id: 'supervisor.todo.list',
+          name: 'supervisor.todo.list',
+          description: 'Supervisor list (test catalog entry)',
+          actions: ['read'],
+          pathScopes: [],
+          requiresApproval: false,
+        },
+      },
+      providers: { local: { kind: 'openai', defaultModel: 'm' } },
+      roles: [
+        {
+          name: 'naughty-eng',
+          title: 'Naughty Eng',
+          instructions: 'i',
+          // The exploit surface: role allowlist contains supervisor.todo.*.
+          tools: ['supervisor.todo.add', 'supervisor.todo.list'],
+          channels: ['general'],
+          provider: 'local',
+          model: 'm',
+        },
+      ],
+      channels: [{ name: 'general', kind: 'general', topic: '' }],
+      agents: [{ name: 'naughty-x', roleName: 'naughty-eng', personalityName: 'direct' }],
+    });
+    teamStore.setTeam(team);
+
+    // Persist the org + members directly so the repo reads succeed.
+    const orgId = 'gate-org';
+    repo.saveOrganization(
+      OrganizationSchema.parse({
+        id: orgId,
+        name: 'Gate Org',
+        workspace: { root: archiveRoot, roleScopes: {} },
+        organizationChart: { reportsTo: {} },
+      }),
+    );
+    repo.saveMember(
+      MemberSchema.parse({
+        id: 'owner-1',
+        organizationId: orgId,
+        name: 'Owner',
+        kind: 'human',
+        roleName: 'owner',
+        presence: 'offline',
+        createdAt: new Date().toISOString(),
+      }),
+    );
+    repo.saveMember(
+      MemberSchema.parse({
+        id: 'naughty-x',
+        organizationId: orgId,
+        name: 'naughty-x',
+        kind: 'agent',
+        roleName: 'naughty-eng',
+        presence: 'offline',
+        createdAt: new Date().toISOString(),
+      }),
+    );
+    repo.saveChannel(
+      ChannelSchema.parse({
+        id: 'general',
+        organizationId: orgId,
+        name: 'general',
+        kind: 'general',
+        topic: '',
+        memberIds: ['owner-1', 'naughty-x'],
+      }),
+    );
+    repo.setChannelMembers('general', ['owner-1', 'naughty-x']);
+
+    const conversations = new ConversationService(repo, noopRealtime());
+    const supervisorTodos = new SupervisorTodoService(repo);
+    const approvalRequester: ApprovalRequester = {
+      requestApproval: () => ({ id: 'fake-approval-id' }),
+    };
+    const tools = new ToolServiceImpl(
+      teamStore,
+      repo,
+      approvalRequester,
+      conversations,
+      noopRealtime(),
+      supervisorTodos,
+    );
+    const taskSessions = new TaskSessionService(repo, conversations);
+
+    const { session } = taskSessions.create({
+      organizationId: orgId,
+      requestedBy: 'owner-1',
+      prompt: 'p',
+      team: ['naughty-x'],
+    });
+    const owner = { id: 'owner-1', organizationId: orgId };
+
+    // Worker-mode invocation — no spiritRole, mimicking what a
+    // worker turn (or a misuse path) would emit. The role allowlist
+    // permits supervisor.todo.add but the policy gate must refuse.
+    const workerCall = await tools.invoke({
+      organizationId: owner.organizationId,
+      runId: 'r',
+      memberId: 'naughty-x',
+      threadId: session.channelId,
+      toolCallId: 'tc-1',
+      toolId: 'supervisor.todo.add',
+      action: 'message',
+      resourceType: 'message',
+      input: { body: 'should not land' },
+      permissionMcpId: 'supervisor',
+      taskSessionId: session.id,
+      // spiritRole intentionally omitted — i.e. `worker` semantics.
+    });
+    expect(workerCall.ok).toBe(false);
+    expect(workerCall.error).toMatch(/supervisor-only|SUPERVISOR_TOOL_ALLOWLIST/);
+
+    // Even an explicit spiritRole='worker' tag is refused.
+    const explicitWorkerCall = await tools.invoke({
+      organizationId: owner.organizationId,
+      runId: 'r',
+      memberId: 'naughty-x',
+      threadId: session.channelId,
+      toolCallId: 'tc-2',
+      toolId: 'supervisor.todo.add',
+      action: 'message',
+      resourceType: 'message',
+      input: { body: 'still should not land' },
+      permissionMcpId: 'supervisor',
+      taskSessionId: session.id,
+      spiritRole: 'worker',
+    });
+    expect(explicitWorkerCall.ok).toBe(false);
+
+    // No todos were written.
+    expect(supervisorTodos.list({ organizationId: owner.organizationId, taskSessionId: session.id }))
+      .toHaveLength(0);
+
+    // Sanity: the supervisor path still works for the same tool.
+    const supervisorCall = await tools.invoke({
+      organizationId: owner.organizationId,
+      runId: 'r',
+      memberId: 'naughty-x',
+      threadId: session.channelId,
+      toolCallId: 'tc-3',
+      toolId: 'supervisor.todo.add',
+      action: 'message',
+      resourceType: 'message',
+      input: { body: 'legit supervisor jot' },
+      permissionMcpId: 'supervisor',
+      taskSessionId: session.id,
+      spiritRole: 'supervisor',
+    });
+    expect(supervisorCall.ok).toBe(true);
+    expect(
+      supervisorTodos.list({ organizationId: owner.organizationId, taskSessionId: session.id }),
+    ).toHaveLength(1);
+  });
+
+  // -------------------------------------------------------------------
+  // NEW (audit fix): start() pre-validates the entire team. A retired
+  // member surfaces an error WITHOUT spawning any spirits, leaving the
+  // session cleanly retriable.
+  // -------------------------------------------------------------------
+  it('start() pre-validates the team — a retired member fails without spawning anything', async () => {
+    const fixture = await createFixture({
+      agentNames: ['frontend-alice', 'frontend-bob'],
+    });
+    tempDirs.push(fixture.archiveRoot);
+
+    const { session } = fixture.taskSessions.create({
+      organizationId: fixture.organizationId,
+      requestedBy: fixture.ownerId,
+      prompt: 'cooperate',
+      team: ['frontend-alice', 'frontend-bob'],
+    });
+
+    // Retire the second member AFTER the session was created — the
+    // exact scenario the audit called out. Pre-fix, the loop would
+    // spawn alice (success), then throw on bob, leaving a half-started
+    // session with alice's spirit + run rows persisted and registered.
+    const bob = fixture.repo.getMember(fixture.organizationId, 'frontend-bob')!;
+    fixture.repo.saveMember({ ...bob, retiredAt: new Date().toISOString() });
+
+    await expect(
+      fixture.taskSessions.start(fixture.organizationId, session.id),
+    ).rejects.toThrow(/retired/);
+
+    // No spirits, no runs, registry empty for either member, session
+    // status untouched. The whole start() call is now all-or-nothing.
+    expect(fixture.spirits.list(fixture.organizationId, session.id)).toHaveLength(0);
+    expect(
+      fixture.registry.hasActiveForMember(fixture.organizationId, 'frontend-alice'),
+    ).toBe(false);
+    expect(
+      fixture.registry.hasActiveForMember(fixture.organizationId, 'frontend-bob'),
+    ).toBe(false);
+    const refreshed = fixture.repo.getTaskSession(fixture.organizationId, session.id)!;
+    expect(refreshed.status).toBe('queued');
   });
 
   it('atomic create — a failure inside the transaction leaves no orphan channels/threads', async () => {
