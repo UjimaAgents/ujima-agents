@@ -35,6 +35,17 @@ describe('database migrations', () => {
         archived_at TEXT
       );
 
+      CREATE TABLE members (
+        id TEXT PRIMARY KEY,
+        organization_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        role_name TEXT NOT NULL,
+        presence TEXT NOT NULL DEFAULT 'offline',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
       CREATE TABLE messages (
         id TEXT PRIMARY KEY,
         organization_id TEXT NOT NULL,
