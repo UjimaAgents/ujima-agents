@@ -16,6 +16,7 @@ export function checkToolPolicy(
   toolId: string,
   action: ToolAction,
   resourcePath?: string,
+  options: { spiritRole?: 'worker' | 'supervisor' } = {},
 ): PolicyResult {
   const role = team.getRole(roleName);
   if (!role) {
@@ -28,6 +29,31 @@ export function checkToolPolicy(
   // never approval-gated.
   if (toolId === 'self.note') {
     return { allowed: true, requiresApproval: false };
+  }
+
+  // Supervisor-only tools (`supervisor.todo.*`) are gated on TWO axes:
+  //   1. The invocation must be tagged `spiritRole === 'supervisor'`
+  //      by SpiritService — the only legitimate caller.
+  //   2. The tool id must be in SUPERVISOR_TOOL_ALLOWLIST (enforced
+  //      downstream in ToolServiceImpl).
+  //
+  // Without the role-tag check, a worker role configured with
+  // `tools: ['supervisor.todo.add']` could mutate scoped state outside
+  // the supervisor path — the audit's stated leak. We refuse the
+  // bypass when the invocation came from a worker turn, and the
+  // normal role-allowlist check below then rejects it. Importantly,
+  // this stays restrictive even when the role does list the tool
+  // explicitly: the supervisor.* family is structurally not a worker
+  // surface.
+  if (toolId.startsWith('supervisor.')) {
+    if (options.spiritRole === 'supervisor') {
+      return { allowed: true, requiresApproval: false };
+    }
+    return {
+      allowed: false,
+      requiresApproval: false,
+      reason: `Tool "${toolId}" is supervisor-only — invocation spiritRole is "${options.spiritRole ?? 'worker'}"`,
+    };
   }
 
   if (!role.tools.includes(toolId)) {

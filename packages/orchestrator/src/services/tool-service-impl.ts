@@ -11,8 +11,9 @@ import type { RealtimeService } from './context.js';
 import type { ConversationService } from './conversation.js';
 import { checkToolPolicy } from './policy.js';
 import type { ApiRepository } from './repository-reader.js';
+import type { SupervisorTodoService } from './supervisor-todo.js';
 import type { TeamStore } from './team-store.js';
-import { ORCHESTRATOR_TOOLS } from '../tools/index.js';
+import { ORCHESTRATOR_TOOLS, SUPERVISOR_TOOL_ALLOWLIST } from '../tools/index.js';
 import type {
   ToolInvocationInput,
   ToolInvocationResult,
@@ -45,6 +46,12 @@ export class ToolServiceImpl implements ToolService {
     private readonly approvals: ApprovalRequester,
     private readonly conversations: ConversationService,
     private readonly realtime: RealtimeService,
+    /**
+     * Phase 2.B — optional supervisor.todo.* backing service. Tools tagged
+     * `permissionMcpId: 'supervisor'` go through here. Optional so the
+     * pre-Phase-2 wiring still constructs.
+     */
+    private readonly supervisorTodos?: SupervisorTodoService,
   ) {}
 
   allowRun(organizationId: string, runId: string): void {
@@ -55,6 +62,53 @@ export class ToolServiceImpl implements ToolService {
     const member = this.repo.getMember(invocation.organizationId, invocation.memberId);
     if (!member) {
       throw new Error(`Member not found: ${invocation.memberId}`);
+    }
+
+    // Phase 2.C.2 — runtime supervisor allowlist enforcement.
+    //
+    // SpiritService restricts the model palette when role==='supervisor',
+    // but a forged or out-of-band invocation could still try to drive a
+    // non-allowlisted tool from supervisor mode. Reject anything that
+    // either:
+    //   (a) is tagged spiritRole='supervisor' but is not in the
+    //       allowlist — covers a supervisor turn somehow reaching a
+    //       forbidden tool (filesystem, shell, etc.), and
+    //   (b) is tagged permissionMcpId='supervisor' but is not in the
+    //       allowlist — covers a tool that hardcodes the supervisor
+    //       MCP id without being on the canonical list.
+    //
+    // (a) is the stronger signal. (b) is kept as defence in depth so a
+    // mis-registered tool is still rejected even when no spirit role
+    // tag is present.
+    const supervisorTagged =
+      invocation.spiritRole === 'supervisor' || invocation.permissionMcpId === 'supervisor';
+    if (
+      supervisorTagged &&
+      !SUPERVISOR_TOOL_ALLOWLIST.includes(
+        invocation.toolId as (typeof SUPERVISOR_TOOL_ALLOWLIST)[number],
+      )
+    ) {
+      const reason = `Tool "${invocation.toolId}" is not in SUPERVISOR_TOOL_ALLOWLIST`;
+      this.audit(invocation, 'blocked', { reason });
+      this.realtime.emit(
+        SocketEventNames.toolResult,
+        {
+          organizationId: invocation.organizationId,
+          runId: invocation.runId,
+          agentId: invocation.memberId,
+          toolResult: {
+            toolCallId: invocation.toolCallId,
+            result: { error: reason, code: 'ERR_SUPERVISOR_ALLOWLIST' },
+            isError: true,
+          },
+        },
+        [runRoom(invocation.runId), memberRoom(invocation.memberId)],
+      );
+      return {
+        ok: false,
+        error: reason,
+        output: { status: 'blocked', reason, code: 'ERR_SUPERVISOR_ALLOWLIST' },
+      };
     }
 
     const rooms = [runRoom(invocation.runId), memberRoom(invocation.memberId)];
@@ -110,6 +164,7 @@ export class ToolServiceImpl implements ToolService {
       preparedInvocation.toolId,
       preparedInvocation.action,
       preparedInvocation.resourcePath,
+      { spiritRole: preparedInvocation.spiritRole },
     );
 
     if (!policy.allowed) {
@@ -225,6 +280,7 @@ export class ToolServiceImpl implements ToolService {
         team: this.requireTeam(),
         repo: this.repo,
         conversations: this.conversations,
+        supervisorTodos: this.supervisorTodos,
       });
     }
 

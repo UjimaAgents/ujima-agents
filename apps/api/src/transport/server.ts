@@ -3,6 +3,7 @@ import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest }
 import { Server as SocketIOServer, type Socket } from 'socket.io';
 import type { Repository, RuntimeHost, Logger } from '@ujima/runtime-core';
 import type {
+  ActiveSpiritRegistry,
   ApprovalService,
   AuthService,
   BootstrapService,
@@ -10,7 +11,11 @@ import type {
   OnboardingService,
   RunService,
   SettingsService,
+  SpiritService,
+  SupervisorService,
+  SupervisorTodoService,
   TaskPromoterService,
+  TaskSessionService,
 } from '@ujima/orchestrator';
 import type { UjimaEvent } from '@ujima/shared';
 import {
@@ -34,6 +39,7 @@ import { registerRunRoutes } from './routes/runs.js';
 import { registerRoleRoutes } from './routes/roles.js';
 import { registerSettingsRoutes } from './routes/settings.js';
 import { registerTaskRoutes } from './routes/tasks.js';
+import { registerTaskSessionRoutes } from './routes/task-sessions.js';
 import { registerWorkspaceRoutes } from './routes/workspaces.js';
 import { registerAgentRoutes } from './routes/agents.js';
 import { registerOauthRoutes } from './routes/oauth.js';
@@ -65,6 +71,11 @@ export interface TransportOptions {
       onboarding: OnboardingService;
       settings: SettingsService;
       taskPromoter: TaskPromoterService;
+      taskSessions: TaskSessionService;
+      spirits: SpiritService;
+      supervisor: SupervisorService;
+      supervisorTodos: SupervisorTodoService;
+      activeSpirits: ActiveSpiritRegistry;
     };
   };
 }
@@ -231,6 +242,10 @@ export function createTransport(opts: TransportOptions): Transport {
         host,
         repo: opts.apiServices.repo,
         taskPromoter: services.taskPromoter,
+      });
+      registerTaskSessionRoutes(api, {
+        taskSessions: services.taskSessions,
+        repo: opts.apiServices.repo,
       });
     }
   }, { prefix: '/api' });

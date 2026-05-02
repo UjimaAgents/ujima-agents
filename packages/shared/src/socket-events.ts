@@ -7,6 +7,7 @@ import {
   MessageSchema,
   PresenceStateSchema,
   RunStateSchema,
+  SpiritSchema,
   ToolCallSchema,
   ToolResultSchema,
 } from './org-schemas.js';
@@ -46,6 +47,11 @@ export const SocketEventNames = Object.freeze({
   channelArchived: 'channel.archived',
   toolCalled: 'tool:called',
   toolResult: 'tool:result',
+  spiritStarted: 'spirit:started',
+  spiritUpdated: 'spirit:updated',
+  spiritCompleted: 'spirit:completed',
+  spiritRetired: 'spirit:retired',
+  supervisorReplied: 'supervisor:replied',
 });
 
 export type SocketEventName = (typeof SocketEventNames)[keyof typeof SocketEventNames];
@@ -134,6 +140,21 @@ export const ToolResultEventSchema = z.object({
 });
 export type ToolResultEvent = z.infer<typeof ToolResultEventSchema>;
 
+export const SpiritEventSchema = z.object({
+  organizationId: IdSchema,
+  spirit: SpiritSchema,
+});
+export type SpiritEvent = z.infer<typeof SpiritEventSchema>;
+
+export const SupervisorRepliedEventSchema = z.object({
+  organizationId: IdSchema,
+  taskSessionId: IdSchema,
+  memberId: IdSchema,
+  message: MessageSchema,
+  reason: z.string().min(1),
+});
+export type SupervisorRepliedEvent = z.infer<typeof SupervisorRepliedEventSchema>;
+
 export const SocketEventSchemas = Object.freeze({
   [SocketEventNames.channelMessage]: ChannelMessageEventSchema,
   [SocketEventNames.channelPresence]: ChannelPresenceEventSchema,
@@ -149,4 +170,9 @@ export const SocketEventSchemas = Object.freeze({
   [SocketEventNames.channelArchived]: ChannelUpdatedEventSchema,
   [SocketEventNames.toolCalled]: ToolCalledEventSchema,
   [SocketEventNames.toolResult]: ToolResultEventSchema,
+  [SocketEventNames.spiritStarted]: SpiritEventSchema,
+  [SocketEventNames.spiritUpdated]: SpiritEventSchema,
+  [SocketEventNames.spiritCompleted]: SpiritEventSchema,
+  [SocketEventNames.spiritRetired]: SpiritEventSchema,
+  [SocketEventNames.supervisorReplied]: SupervisorRepliedEventSchema,
 });
