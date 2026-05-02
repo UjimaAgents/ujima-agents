@@ -232,6 +232,14 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
       registry: activeSpirits,
     },
   );
+  // Hydrate the in-memory registry from persisted spirits BEFORE
+  // SupervisorService is wired and able to receive alerts. Without
+  // this, a daemon restart would see an empty registry, and
+  // `handleAlert` would return `no-active-spirit` for already-running
+  // work — falling through to the regular wake path and spawning
+  // duplicate runs for active tasks until something in this process
+  // re-spawns the spirit.
+  spirits.bootstrapAll();
   const supervisor = new SupervisorService(
     context.repo,
     context.realtime,

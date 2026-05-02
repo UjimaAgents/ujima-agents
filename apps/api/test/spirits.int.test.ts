@@ -19,6 +19,7 @@ import {
   SupervisorTodoService,
   TaskSessionService,
   ToolServiceImpl,
+  createApiServices,
   createTeamStore,
   pickProviderModel,
   taskRunChannelId,
@@ -28,6 +29,7 @@ import {
   type RealtimeService,
   type ToolService,
 } from '@ujima/orchestrator';
+import { createPermissionMiddleware } from '@ujima/permissions';
 import { MessageCardSchema } from '@ujima/shared';
 
 // ---------------------------------------------------------------------
@@ -1098,6 +1100,397 @@ describe('TaskSessionService.create — audit fix regressions', () => {
   // NEW (audit fix #2): create runs in a transaction; on failure
   // mid-flight no orphan channels/threads remain.
   // -------------------------------------------------------------------
+  it('bootstrapAll() hydrates the registry from persisted spirits — restart-safe', async () => {
+    // Simulates a daemon restart. We persist active spirits with the
+    // first SpiritService, throw away its in-memory registry, then
+    // construct a fresh service with a fresh registry on the same DB
+    // and assert the gate is correct after `bootstrapAll()`.
+    const archiveRoot = await mkdtemp(join(tmpdir(), 'ujima-bootstrap-'));
+    tempDirs.push(archiveRoot);
+    const db = openDatabase({ dbPath: ':memory:' });
+    const repo = new Repository(db);
+    const teamStore = createTeamStore();
+    const onboarding = new OnboardingService(repo, teamStore);
+    await onboarding.onboard({
+      organizationName: 'Restart Org',
+      ownerName: 'Owner',
+      workspaceRoot: archiveRoot,
+      providerKeys: { local: 'k' },
+      team: {
+        channels: [{ name: 'general', kind: 'general', topic: '' }],
+        roles: [
+          {
+            name: 'eng',
+            title: 'Eng',
+            instructions: 'i',
+            workspaceScopes: [],
+            tools: [],
+            channels: ['general'],
+            provider: 'local',
+            model: 'm',
+          },
+        ],
+        providers: { local: { kind: 'openai', defaultModel: 'm' } },
+        agents: [{ name: 'agent-x', roleName: 'eng', personalityName: 'direct' }],
+      },
+    });
+    const owner = repo.listMembers(repo.getLatestOrganization()!.id).find((m) => m.kind === 'human')!;
+    const conversations = new ConversationService(repo, noopRealtime());
+    const stubTools: ToolService = {
+      invoke: async () => ({ ok: true, output: { status: 'completed' } }),
+      allowRun: () => undefined,
+    };
+
+    // Phase 1 — pre-restart: spawn a spirit. Persisted on disk; the
+    // first registry tracks it.
+    const preRegistry = new ActiveSpiritRegistry();
+    const preSpirits = new SpiritService(teamStore, repo, noopRealtime(), stubTools, {
+      modelResolver: () => makeTextOnlyModel('x'),
+      registry: preRegistry,
+    });
+    const taskSessions = new TaskSessionService(repo, conversations, preSpirits);
+    const { session } = taskSessions.create({
+      organizationId: owner.organizationId,
+      requestedBy: owner.id,
+      prompt: 'p',
+      team: ['agent-x'],
+    });
+    preSpirits.spawn({
+      organizationId: owner.organizationId,
+      taskSessionId: session.id,
+      memberId: 'agent-x',
+    });
+    expect(preRegistry.hasActiveForMember(owner.organizationId, 'agent-x')).toBe(true);
+
+    // Phase 2 — "restart": fresh registry, fresh service, same DB.
+    // Without bootstrapAll() the gate would be empty for a still-
+    // running spirit and the supervisor would misroute fresh alerts
+    // to the regular wake path.
+    const postRegistry = new ActiveSpiritRegistry();
+    const postSpirits = new SpiritService(teamStore, repo, noopRealtime(), stubTools, {
+      modelResolver: () => makeTextOnlyModel('x'),
+      registry: postRegistry,
+    });
+    expect(postRegistry.hasActiveForMember(owner.organizationId, 'agent-x')).toBe(false);
+    postSpirits.bootstrapAll();
+    expect(postRegistry.hasActiveForMember(owner.organizationId, 'agent-x')).toBe(true);
+
+    // Sanity: the SupervisorService wired against the post-restart
+    // registry now sees the alert as active, not as a fall-through.
+    const postSupervisor = new SupervisorService(
+      repo,
+      noopRealtime(),
+      conversations,
+      postSpirits,
+      postRegistry,
+      { debounceMs: 0, turnCapPerSession: 5 },
+    );
+    const general = repo.getChannel(owner.organizationId, 'general')!;
+    const ask = conversations.postToChannel({
+      organizationId: owner.organizationId,
+      senderId: owner.id,
+      channelId: general.id,
+      body: '@agent-x post-restart ping',
+    });
+    const dispatch = await postSupervisor.handleAlert({
+      organizationId: owner.organizationId,
+      memberId: 'agent-x',
+      messageId: ask.id,
+      channelId: general.id,
+      threadId: ask.threadId,
+      byMemberId: owner.id,
+      reason: 'mention',
+    });
+    expect(dispatch.kind).toBe('replied');
+  });
+
+  it('createApiServices wiring auto-hydrates the registry on construction', async () => {
+    // Audit fix #1 also requires the production wiring to call
+    // `bootstrapAll()` for us. This test exercises the wiring exactly
+    // the way the daemon's main.ts does — and asserts the registry
+    // is populated by the time createApiServices returns.
+    const archiveRoot = await mkdtemp(join(tmpdir(), 'ujima-wiring-'));
+    tempDirs.push(archiveRoot);
+    const db = openDatabase({ dbPath: ':memory:' });
+    const repo = new Repository(db);
+    const teamStore = createTeamStore();
+    const onboarding = new OnboardingService(repo, teamStore);
+    await onboarding.onboard({
+      organizationName: 'Wiring Org',
+      ownerName: 'Owner',
+      workspaceRoot: archiveRoot,
+      providerKeys: { local: 'k' },
+      team: {
+        channels: [{ name: 'general', kind: 'general', topic: '' }],
+        roles: [
+          {
+            name: 'eng',
+            title: 'Eng',
+            instructions: 'i',
+            workspaceScopes: [],
+            tools: [],
+            channels: ['general'],
+            provider: 'local',
+            model: 'm',
+          },
+        ],
+        providers: { local: { kind: 'openai', defaultModel: 'm' } },
+        agents: [{ name: 'agent-x', roleName: 'eng', personalityName: 'direct' }],
+      },
+    });
+    const owner = repo.listMembers(repo.getLatestOrganization()!.id).find((m) => m.kind === 'human')!;
+
+    // Persist an active spirit BEFORE constructing services.
+    const preRegistry = new ActiveSpiritRegistry();
+    const preSpirits = new SpiritService(teamStore, repo, noopRealtime(), {
+      invoke: async () => ({ ok: true }),
+      allowRun: () => undefined,
+    }, {
+      registry: preRegistry,
+      modelResolver: () => makeTextOnlyModel('x'),
+    });
+    const conversations1 = new ConversationService(repo, noopRealtime());
+    const taskSessions1 = new TaskSessionService(repo, conversations1, preSpirits);
+    const { session } = taskSessions1.create({
+      organizationId: owner.organizationId,
+      requestedBy: owner.id,
+      prompt: 'p',
+      team: ['agent-x'],
+    });
+    preSpirits.spawn({
+      organizationId: owner.organizationId,
+      taskSessionId: session.id,
+      memberId: 'agent-x',
+    });
+
+    // Now build services as production does. The wiring should hydrate
+    // its own (fresh) registry from the existing spirit row.
+    const services = createApiServices({
+      teamStore,
+      repo,
+      realtime: noopRealtime(),
+      permissions: createPermissionMiddleware({}),
+      buildPermissionContext: (input) => ({
+        agent: {
+          id: input.memberId,
+          name: input.memberId,
+          persona: '',
+          model: '',
+          mcp: input.permissionMcpId ?? input.toolId,
+          permissions: {
+            allowed_tools: [],
+            blocked_tools: [],
+            rate_limit: { calls_per_minute: 60, max_session_tokens: 100_000 },
+          },
+          communication: { publishes: [], subscribes: [] },
+          escalation: { conditions: [], escalate_to: 'human' },
+        },
+        mcp: { id: input.permissionMcpId ?? input.toolId },
+        toolName: input.permissionToolName ?? input.toolId,
+        args: input.input,
+        taskId: input.runId,
+        sessionId: input.runId,
+      }),
+      spiritModelResolver: () => makeTextOnlyModel('x'),
+    });
+
+    // The newly-wired services own a fresh registry, but bootstrapAll()
+    // should have just been invoked. So the spirit is visible without
+    // any further work.
+    expect(services.activeSpirits.hasActiveForMember(owner.organizationId, 'agent-x')).toBe(true);
+  });
+
+  it('multi-session: supervisor picks the NEWEST active spirit, not the oldest', async () => {
+    // A member may participate in multiple concurrent sessions. The
+    // earlier registry returned entries in insertion order, so a fresh
+    // @mention always answered against the OLDEST live spirit and
+    // incremented the wrong session's supervisorTurnCount. Newest-
+    // first ordering picks the session the user most recently asked
+    // about.
+    const fixture = await createFixture({
+      staticModel: makeTextOnlyModel('answering newest'),
+    });
+    tempDirs.push(fixture.archiveRoot);
+
+    const { session: oldSession } = fixture.taskSessions.create({
+      organizationId: fixture.organizationId,
+      requestedBy: fixture.ownerId,
+      prompt: 'old',
+      team: ['frontend-alice'],
+      slug: 'old-session',
+    });
+    const { session: newSession } = fixture.taskSessions.create({
+      organizationId: fixture.organizationId,
+      requestedBy: fixture.ownerId,
+      prompt: 'new',
+      team: ['frontend-alice'],
+      slug: 'new-session',
+    });
+
+    const oldSpirit = fixture.spirits.spawn({
+      organizationId: fixture.organizationId,
+      taskSessionId: oldSession.id,
+      memberId: 'frontend-alice',
+    });
+    fixture.spirits.updateStatus(fixture.organizationId, oldSpirit.id, 'running');
+    const newSpirit = fixture.spirits.spawn({
+      organizationId: fixture.organizationId,
+      taskSessionId: newSession.id,
+      memberId: 'frontend-alice',
+    });
+    fixture.spirits.updateStatus(fixture.organizationId, newSpirit.id, 'running');
+
+    expect(
+      fixture.registry.getActiveForMember(fixture.organizationId, 'frontend-alice').length,
+    ).toBe(2);
+
+    const general = fixture.repo.getChannel(fixture.organizationId, 'general')!;
+    const ask = fixture.conversations.postToChannel({
+      organizationId: fixture.organizationId,
+      senderId: fixture.ownerId,
+      channelId: general.id,
+      body: '@frontend-alice status?',
+    });
+
+    const dispatch = await fixture.supervisor.handleAlert({
+      organizationId: fixture.organizationId,
+      memberId: 'frontend-alice',
+      messageId: ask.id,
+      channelId: general.id,
+      threadId: ask.threadId,
+      byMemberId: fixture.ownerId,
+      reason: 'mention',
+    });
+
+    expect(dispatch.kind).toBe('replied');
+    if (dispatch.kind !== 'replied') return;
+
+    // The supervisor counter on the NEW session should have ticked,
+    // not the old one. Pre-fix this assertion would fail because the
+    // registry returned the old spirit first.
+    const refreshedNew = fixture.repo.getTaskSession(fixture.organizationId, newSession.id)!;
+    const refreshedOld = fixture.repo.getTaskSession(fixture.organizationId, oldSession.id)!;
+    expect(refreshedNew.supervisorTurnCount).toBe(1);
+    expect(refreshedOld.supervisorTurnCount).toBe(0);
+  });
+
+  it('concurrent burst: only ONE alert in a same-tick burst executes; the rest are debounced', async () => {
+    // Pre-fix bug: the debounce window was stamped INSIDE the queued
+    // mutex callback, so a burst of N alerts arriving before the
+    // first callback ran all passed `shouldDebounce` (no stamp yet),
+    // all queued, and all executed — the burst-collapse contract was
+    // a noop under load. Stamping at schedule time fixes it.
+    const archiveRoot = await mkdtemp(join(tmpdir(), 'ujima-burst-'));
+    tempDirs.push(archiveRoot);
+    const db = openDatabase({ dbPath: ':memory:' });
+    const repo = new Repository(db);
+    const teamStore = createTeamStore();
+    const onboarding = new OnboardingService(repo, teamStore);
+    await onboarding.onboard({
+      organizationName: 'Burst Org',
+      ownerName: 'Owner',
+      workspaceRoot: archiveRoot,
+      providerKeys: { local: 'k' },
+      team: {
+        channels: [{ name: 'general', kind: 'general', topic: '' }],
+        roles: [
+          {
+            name: 'eng',
+            title: 'Eng',
+            instructions: 'i',
+            workspaceScopes: [],
+            tools: [],
+            channels: ['general'],
+            provider: 'local',
+            model: 'm',
+          },
+        ],
+        providers: { local: { kind: 'openai', defaultModel: 'm' } },
+        agents: [{ name: 'agent-x', roleName: 'eng', personalityName: 'direct' }],
+      },
+    });
+    const owner = repo
+      .listMembers(repo.getLatestOrganization()!.id)
+      .find((m) => m.kind === 'human')!;
+    const conversations = new ConversationService(repo, noopRealtime());
+    const registry = new ActiveSpiritRegistry();
+    const spirits = new SpiritService(
+      teamStore,
+      repo,
+      noopRealtime(),
+      {
+        invoke: async () => ({ ok: true, output: { status: 'completed' } }),
+        allowRun: () => undefined,
+      },
+      {
+        modelResolver: () => makeTextOnlyModel('answer'),
+        registry,
+      },
+    );
+    const supervisor = new SupervisorService(
+      repo,
+      noopRealtime(),
+      conversations,
+      spirits,
+      registry,
+      // Very long debounce so any "leaked" execution would clearly
+      // show as a `replied` instead of `debounced`.
+      { debounceMs: 60_000, turnCapPerSession: 100 },
+    );
+    const taskSessions = new TaskSessionService(repo, conversations, spirits);
+
+    const { session } = taskSessions.create({
+      organizationId: owner.organizationId,
+      requestedBy: owner.id,
+      prompt: 'p',
+      team: ['agent-x'],
+    });
+    const sp = spirits.spawn({
+      organizationId: owner.organizationId,
+      taskSessionId: session.id,
+      memberId: 'agent-x',
+    });
+    spirits.updateStatus(owner.organizationId, sp.id, 'running');
+
+    const general = repo.getChannel(owner.organizationId, 'general')!;
+    // Three messages posted synchronously, three handleAlert calls
+    // fired before any of their internal awaits resolve. Pre-fix,
+    // all three would pass the gate and execute. Post-fix, only the
+    // first one stamps the window and runs; the other two are
+    // debounced.
+    const messages = [0, 1, 2].map((i) =>
+      conversations.postToChannel({
+        organizationId: owner.organizationId,
+        senderId: owner.id,
+        channelId: general.id,
+        body: `@agent-x burst ${i}`,
+      }),
+    );
+    const promises = messages.map((m) =>
+      supervisor.handleAlert({
+        organizationId: owner.organizationId,
+        memberId: 'agent-x',
+        messageId: m.id,
+        channelId: general.id,
+        threadId: m.threadId,
+        byMemberId: owner.id,
+        reason: 'mention',
+      }),
+    );
+    const results = await Promise.all(promises);
+    const replied = results.filter((r) => r.kind === 'replied').length;
+    const debounced = results.filter((r) => r.kind === 'debounced').length;
+
+    // Exactly one reply, two debounced — the burst-collapse contract.
+    expect(replied).toBe(1);
+    expect(debounced).toBe(2);
+
+    // The supervisor counter on the session should have ticked
+    // exactly once.
+    const refreshed = repo.getTaskSession(owner.organizationId, session.id)!;
+    expect(refreshed.supervisorTurnCount).toBe(1);
+  });
+
   it('atomic create — a failure inside the transaction leaves no orphan channels/threads', async () => {
     const archiveRoot = await mkdtemp(join(tmpdir(), 'ujima-atomic-'));
     tempDirs.push(archiveRoot);

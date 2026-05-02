@@ -28,11 +28,31 @@ export interface ActiveSpiritEntry {
   organizationId: string;
   taskSessionId: string;
   memberId: string;
+  /**
+   * Monotonic per-process sequence number set on every `register()`
+   * (including re-registers from queued → running transitions). The
+   * supervisor gate uses this to pick the most-recently-touched
+   * spirit when a member is in multiple sessions — answering against
+   * the oldest would be a misroute.
+   *
+   * Intentionally NOT a wall-clock timestamp: combining `Date.now()`
+   * with a sub-ms counter overflows `Number.MAX_SAFE_INTEGER` (Date.now
+   * is ~1.75e12 today; multiplying by 1e6 to make room for the counter
+   * lands at ~1.75e18 > MAX_SAFE_INTEGER ≈ 9e15) and silently loses
+   * the counter contribution. A plain monotonic int is enough for
+   * "newest registered first" within one process.
+   */
+  registeredAt: number;
 }
 
 function memberKey(organizationId: string, memberId: string): string {
   return `${organizationId}:${memberId}`;
 }
+
+// Monotonic per-process counter. Reset only on process restart, which
+// is fine because registry contents don't survive a restart anyway —
+// `SpiritService.bootstrapAll()` rehydrates from the DB at boot.
+let registrationCounter = 0;
 
 export class ActiveSpiritRegistry {
   private readonly entries = new Map<string, Map<string, ActiveSpiritEntry>>();
@@ -40,18 +60,21 @@ export class ActiveSpiritRegistry {
   /**
    * Mark a spirit as active. Only worker-role spirits should land here —
    * supervisors are short-lived per-turn objects and don't wake their
-   * own kind. Re-registering an existing spirit id is idempotent.
+   * own kind. Re-registering an existing spirit id refreshes its
+   * `registeredAt` stamp so `getActiveForMember` can pick the newest.
    */
   register(spirit: Spirit): void {
     if (spirit.role !== 'worker') return;
     if (!isAliveStatus(spirit.status)) return;
     const key = memberKey(spirit.organizationId, spirit.memberId);
     const bucket = this.entries.get(key) ?? new Map<string, ActiveSpiritEntry>();
+    registrationCounter += 1;
     bucket.set(spirit.id, {
       spiritId: spirit.id,
       organizationId: spirit.organizationId,
       taskSessionId: spirit.taskSessionId,
       memberId: spirit.memberId,
+      registeredAt: registrationCounter,
     });
     this.entries.set(key, bucket);
   }
@@ -68,12 +91,16 @@ export class ActiveSpiritRegistry {
   }
 
   /**
-   * Lookup all active worker spirits for a given member. Empty list →
-   * the supervisor gate falls through to the regular wake path.
+   * Lookup active worker spirits for a member, **newest first**.
+   * Empty list → the supervisor gate falls through to the regular
+   * wake path. The newest-first ordering matches user expectations:
+   * a member's most recently touched task is the one a fresh
+   * @mention is asking about.
    */
   getActiveForMember(organizationId: string, memberId: string): ActiveSpiritEntry[] {
     const bucket = this.entries.get(memberKey(organizationId, memberId));
-    return bucket ? [...bucket.values()] : [];
+    if (!bucket) return [];
+    return [...bucket.values()].sort((a, b) => b.registeredAt - a.registeredAt);
   }
 
   /** Convenience for the common "is anything alive for this member?" check. */

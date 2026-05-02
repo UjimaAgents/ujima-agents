@@ -180,6 +180,24 @@ export class SpiritService {
     }
   }
 
+  /**
+   * Walk every organisation in the repo and bootstrap each. The
+   * production wiring calls this from `createApiServices` so a daemon
+   * restart hydrates the registry before any `member.alerted` event
+   * can be processed. Without it, `SupervisorService.handleAlert`
+   * would read an empty registry and route alerts to the regular
+   * wake path — spawning duplicate runs for already-running tasks.
+   *
+   * Cheap by design: one DB scan per org × member, all synchronous.
+   * For the single-tenant phase this is one org with a handful of
+   * agents.
+   */
+  bootstrapAll(): void {
+    for (const org of this.repo.listOrganizations()) {
+      this.bootstrap(org.id);
+    }
+  }
+
   /** Test/observability hook for the registry. */
   getActiveRegistry(): ActiveSpiritRegistry {
     return this.registry;

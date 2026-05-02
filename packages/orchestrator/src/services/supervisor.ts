@@ -118,9 +118,12 @@ export class SupervisorService {
     if (active.length === 0) {
       return { kind: 'no-active-spirit' };
     }
-    // Pick the most-recently-touched live spirit. The registry returns
-    // entries in insertion order; for the production hot path (one
-    // supervisor per active worker) this is fine.
+    // The registry returns active spirits newest-first by
+    // `registeredAt`. A member can be on multiple sessions; the most
+    // recently touched one is the right answer for a fresh
+    // @mention/DM. Routing to the oldest spirit would increment the
+    // wrong session's supervisor counter and reply against a stale
+    // task context.
     const target = active[0];
     if (!target) {
       return { kind: 'no-active-spirit' };
@@ -134,16 +137,24 @@ export class SupervisorService {
       return { kind: 'debounced' };
     }
 
+    // Stamp the debounce window NOW, synchronously, before the alert
+    // is queued behind the mutex. JavaScript is single-threaded so a
+    // peer call landing in the next microtask sees this stamp during
+    // its own `shouldDebounce` check and is correctly suppressed.
+    //
+    // The earlier "stamp inside the mutex callback" pattern was racy:
+    // a burst of N alerts arriving before the first callback ran
+    // would all pass `shouldDebounce` (no stamp yet), all queue, and
+    // all execute — exactly the work the debounce is supposed to
+    // collapse. Stamping at schedule time fixes that without giving
+    // up correctness on the failure path: a stamp is always honoured
+    // even if the underlying turn later throws, which matches the
+    // "burst-collapse" contract callers actually want.
+    this.lastAlertAt.set(this.debounceKey(input.organizationId, input.memberId), Date.now());
+
     const mutexKey = this.mutexKey(input.organizationId, input.memberId);
     const previous = this.mutexes.get(mutexKey) ?? Promise.resolve();
-    const next = previous.then(() => {
-      // Stamp the debounce window only when this entry actually starts
-      // executing. Stamping at schedule time would let the second
-      // request bypass the gate while the first is still queued behind
-      // the mutex.
-      this.lastAlertAt.set(this.debounceKey(input.organizationId, input.memberId), Date.now());
-      return this.runSupervisorTurn(target.taskSessionId, input);
-    });
+    const next = previous.then(() => this.runSupervisorTurn(target.taskSessionId, input));
     this.mutexes.set(
       mutexKey,
       next.catch(() => undefined).finally(() => {
