@@ -216,10 +216,12 @@ export class SettingsService {
       model: input.model,
     });
     const saved = this.repo.saveMember(member);
-    upsertDashboardTeamOverride(this.repo, input.organizationId, this.teamStore, {
-      role,
-      agent: createAgent(saved.id, saved.roleName),
-    });
+    if (input.kind === 'agent') {
+      upsertDashboardTeamOverride(this.repo, input.organizationId, this.teamStore, {
+        role,
+        agent: createAgent(saved.id, saved.roleName),
+      });
+    }
     const activeRole = this.teamStore.getTeam()?.getRole(input.roleName);
     upsertWorkspaceMemberScopes(
       this.repo,

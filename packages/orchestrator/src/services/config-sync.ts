@@ -15,6 +15,7 @@ import type { ApiRepository } from './repository-reader.js';
 import { ensureMemberSelfChannel } from './member-channels.js';
 import type { TeamStore } from './team-store.js';
 import { summarizeTeam, type TeamSummary } from './team.js';
+import { applyDashboardTeamOverrides } from './dashboard-team-overrides.js';
 import { upsertWorkspaceMemberScopes } from './workspace-root.js';
 
 export interface ReconcileTeamConfigInput {
@@ -301,6 +302,7 @@ export class ConfigSyncService {
     }
 
     this.teamStore.setTeam(input.team);
+    applyDashboardTeamOverrides(this.repo, organizationId, this.teamStore);
 
     this.repo.saveAuditEvent(
       AuditEventSchema.parse({

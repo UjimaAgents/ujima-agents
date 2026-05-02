@@ -20,11 +20,19 @@ function readOverrides(repo: ApiRepository, organizationId: string): DashboardTe
   if (!value) return { roles: [], agents: [] };
 
   try {
+    const members = new Map(
+      repo.listMembers(organizationId).map((member) => [member.id, member] as const),
+    );
     const parsed = JSON.parse(value) as Partial<DashboardTeamOverrides>;
     return {
       roles: Array.isArray(parsed.roles) ? parsed.roles.map((role) => defineRole(role)) : [],
       agents: Array.isArray(parsed.agents)
-        ? parsed.agents.map((agent) => createAgent(agent.name, agent.roleName, agent.personalityName ?? 'direct'))
+        ? parsed.agents
+            .map((agent) => createAgent(agent.name, agent.roleName, agent.personalityName ?? 'direct'))
+            .filter((agent) => {
+              const member = members.get(agent.name);
+              return !member || (member.kind === 'agent' && !member.retiredAt);
+            })
         : [],
     };
   } catch {
