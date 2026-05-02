@@ -110,15 +110,6 @@ export class TaskSessionService {
       return member;
     });
 
-    const slug = this.allocateSlug(input.organizationId, input.slug ?? input.prompt);
-    // Channel ids are global primary keys in the `channels` table, but
-    // task-run slugs are only unique per organisation (the
-    // `task_sessions` UNIQUE is `(organization_id, slug)`). Without the
-    // org prefix, two orgs that pick the same slug would collide on the
-    // channel PK and `saveChannel`'s ON CONFLICT(id) would silently
-    // overwrite the earlier org's task-run row. Namespacing the id by
-    // organisation makes a global collision impossible.
-    const channelId = taskRunChannelId(input.organizationId, slug);
     const sessionId = randomUUID();
     const now = new Date().toISOString();
 
@@ -126,31 +117,20 @@ export class TaskSessionService {
       new Set([requester.id, ...teamMembers.map((m) => m.id)]),
     );
 
-    const session = TaskSessionSchema.parse({
-      id: sessionId,
-      organizationId: input.organizationId,
-      slug,
-      channelId,
-      requestedBy: requester.id,
-      executionMode: input.executionMode ?? 'concurrent',
-      status: 'queued',
-      prompt: input.prompt,
-      summary: '',
-      teamMemberIds: teamMembers.map((m) => m.id),
-      origin: {
-        channelId: input.origin?.channelId,
-        messageId: input.origin?.messageId,
-      },
-      promotionMetadata: input.promotionMetadata ?? {},
-      supervisorTurnCount: 0,
-      createdAt: now,
-      updatedAt: now,
-    });
-
     // Atomic write block — channel + members + thread + session are
     // ALL committed or NONE. The audit flagged the prior code for
     // leaving orphan channels/threads when the session insert later
     // raced on the slug UNIQUE; ROLLBACK eliminates that path.
+    //
+    // Slug collision retry — `allocateSlug` is an optimistic probe
+    // that closes the common case, but two concurrent `create()`
+    // calls in the same org can both pick the same candidate slug
+    // and both reach the transaction. Whichever loses the race hits
+    // SQLite's UNIQUE-violation on `task_sessions(organization_id,
+    // slug)` (or the channel PK, which is `task:${org}:${slug}`).
+    // We catch it, walk the next suffix, and retry. The probe is
+    // still worth keeping — it makes the first attempt succeed for
+    // every non-racing call.
     //
     // Messages (`task.join` + optional origin link-back) are published
     // AFTER the commit. They're idempotent in the recovery sense — if
@@ -160,9 +140,36 @@ export class TaskSessionService {
     // would require duplicating ConversationService.publishMessage's
     // mention-resolve / realtime-emit work — too much surface for too
     // little gain.
-    this.repo.transaction(() => {
-      this.repo.saveChannel(
-        ChannelSchema.parse({
+    let slug = '';
+    let channelId = '';
+    let session: TaskSession | undefined;
+    let lastError: unknown;
+    const slugBasis = input.slug ?? input.prompt;
+    for (let attempt = 0; attempt < SLUG_ATTEMPT_LIMIT; attempt += 1) {
+      slug = this.allocateSlug(input.organizationId, slugBasis, attempt);
+      channelId = taskRunChannelId(input.organizationId, slug);
+      session = TaskSessionSchema.parse({
+        id: sessionId,
+        organizationId: input.organizationId,
+        slug,
+        channelId,
+        requestedBy: requester.id,
+        executionMode: input.executionMode ?? 'concurrent',
+        status: 'queued',
+        prompt: input.prompt,
+        summary: '',
+        teamMemberIds: teamMembers.map((m) => m.id),
+        origin: {
+          channelId: input.origin?.channelId,
+          messageId: input.origin?.messageId,
+        },
+        promotionMetadata: input.promotionMetadata ?? {},
+        supervisorTurnCount: 0,
+        createdAt: now,
+        updatedAt: now,
+      });
+      try {
+        const channelToSave = ChannelSchema.parse({
           id: channelId,
           organizationId: input.organizationId,
           name: `#${slug}`,
@@ -170,19 +177,35 @@ export class TaskSessionService {
           topic: input.prompt.slice(0, 240),
           memberIds: channelMemberIds,
           createdAt: now,
-        }),
-      );
-      this.repo.setChannelMembers(channelId, channelMemberIds);
-      this.repo.ensureThread({
-        id: channelId,
-        organizationId: input.organizationId,
-        channelId,
-        title: `#${slug}`,
-        memberIds: channelMemberIds,
-        createdAt: now,
-      });
-      this.repo.saveTaskSession(session);
-    });
+        });
+        this.repo.transaction(() => {
+          this.repo.saveChannel(channelToSave);
+          this.repo.setChannelMembers(channelId, channelMemberIds);
+          this.repo.ensureThread({
+            id: channelId,
+            organizationId: input.organizationId,
+            channelId,
+            title: `#${slug}`,
+            memberIds: channelMemberIds,
+            createdAt: now,
+          });
+          // saveTaskSession enforces UNIQUE(organization_id, slug)
+          // and UNIQUE(channel_id) at commit. A racing creator wins
+          // here and we throw → ROLLBACK undoes the channel/thread
+          // writes, the catch loops with a new suffix.
+          this.repo.saveTaskSession(session as TaskSession);
+        });
+        lastError = undefined;
+        break;
+      } catch (err) {
+        lastError = err;
+        if (!isUniqueViolation(err)) throw err;
+        // Continue with the next suffix attempt.
+      }
+    }
+    if (lastError !== undefined || !session) {
+      throw lastError ?? new Error('failed to allocate a unique slug for task session');
+    }
 
     // Post-commit messages. Use publishMessage so the realtime path
     // and mention-resolve plumbing match the rest of the substrate.
@@ -249,7 +272,8 @@ export class TaskSessionService {
     options: { runFirstTurn?: boolean } = {},
   ): Promise<{ session: TaskSession; spirits: Spirit[] }> {
     this.requireOrganization(organizationId);
-    if (!this.spirits) {
+    const spirits = this.spirits;
+    if (!spirits) {
       throw new Error('SpiritService is not wired into this TaskSessionService');
     }
     const session = this.repo.getTaskSession(organizationId, taskSessionId);
@@ -285,25 +309,45 @@ export class TaskSessionService {
       }
     }
 
+    // Wrap the spawn loop + status flip in a SQL transaction so a
+    // mid-loop failure rolls the persisted Spirit/Run rows back to
+    // their pre-call state. The in-memory ActiveSpiritRegistry is
+    // not rollback-aware on its own, so we track the spirits we
+    // registered and explicitly unregister them on tx failure. The
+    // realtime emits inside spawn() already fired before any rollback
+    // — consumers of `spirit:started` are expected to be best-effort
+    // (same trade-off as TaskSessionService.create's join message).
     const spawned: Spirit[] = [];
-    for (const memberId of session.teamMemberIds) {
-      const spirit = this.spirits.spawn({
-        organizationId,
-        taskSessionId,
-        memberId,
+    try {
+      this.repo.transaction(() => {
+        for (const memberId of session.teamMemberIds) {
+          const spirit = spirits.spawn({
+            organizationId,
+            taskSessionId,
+            memberId,
+          });
+          spawned.push(spirit);
+        }
+        // Bump the session row to `running` once at least one spirit
+        // exists. The supervisor/promoter layer above can still flip it
+        // back to `waiting_for_approval` etc on its own cadence.
+        if (spawned.length > 0 && session.status === 'queued') {
+          this.repo.saveTaskSession({
+            ...session,
+            status: 'running',
+            updatedAt: new Date().toISOString(),
+          });
+        }
       });
-      spawned.push(spirit);
-    }
-
-    // Bump the session row to `running` once at least one spirit
-    // exists. The supervisor/promoter layer above can still flip it
-    // back to `waiting_for_approval` etc on its own cadence.
-    if (spawned.length > 0 && session.status === 'queued') {
-      this.repo.saveTaskSession({
-        ...session,
-        status: 'running',
-        updatedAt: new Date().toISOString(),
-      });
+    } catch (err) {
+      // SQL writes have rolled back. Mirror that on the in-memory
+      // registry so the supervisor gate doesn't see ghost workers
+      // for rolled-back rows.
+      const registry = spirits.getActiveRegistry();
+      for (const spirit of spawned) {
+        registry.unregister(spirit.organizationId, spirit.memberId, spirit.id);
+      }
+      throw err;
     }
 
     if (options.runFirstTurn) {
@@ -311,7 +355,7 @@ export class TaskSessionService {
       // deterministic. Production drives this via the real run loop
       // and can choose its own concurrency.
       for (const spirit of spawned) {
-        await this.spirits.run({
+        await spirits.run({
           organizationId,
           taskSessionId,
           memberId: spirit.memberId,
@@ -378,20 +422,30 @@ export class TaskSessionService {
     this.conversations.publishMessage(message, []);
   }
 
-  private allocateSlug(organizationId: string, basis: string): string {
+  /**
+   * Pick a candidate slug for a given attempt index. The probe against
+   * `getTaskSessionBySlug` closes the common case; the actual UNIQUE
+   * collision retry happens at the transaction layer in `create()`,
+   * so this method is allowed to optimistically return a candidate
+   * even when a concurrent creator hasn't committed yet.
+   *
+   * Attempt schedule:
+   *   0       → bare slug
+   *   1       → 4-char random suffix
+   *   2       → 6-char random suffix
+   *   3       → 8-char random suffix
+   *   4..N-1  → 12-char UUID-derived suffix (always-fresh entropy)
+   */
+  private allocateSlug(organizationId: string, basis: string, attempt: number): string {
     const base = sluggify(basis) || 'task';
-    // Try the base slug first; on collision, append progressively longer
-    // random suffixes until we land on a free name. The probability of
-    // hitting a unique-violation past 4 chars is astronomically small.
-    for (const suffixLen of [0, 4, 6, 8]) {
-      const suffix = suffixLen === 0 ? '' : `-${randomShortId(suffixLen)}`;
-      const candidate = `${base}${suffix}`.slice(0, 64);
+    if (attempt === 0) {
+      const candidate = base.slice(0, 64);
       if (!this.repo.getTaskSessionBySlug(organizationId, candidate)) {
         return candidate;
       }
     }
-    // Final fallback: full UUID suffix.
-    return `${base}-${randomUUID().slice(0, 12)}`.slice(0, 64);
+    const suffixLen = attempt === 1 ? 4 : attempt === 2 ? 6 : attempt === 3 ? 8 : 12;
+    return `${base}-${randomShortId(suffixLen)}`.slice(0, 64);
   }
 
   private requireOrganization(organizationId: string): void {
@@ -399,6 +453,29 @@ export class TaskSessionService {
       throw new Error(`Organization not found: ${organizationId}`);
     }
   }
+}
+
+/**
+ * Maximum number of slug attempts before `create()` gives up. Each
+ * attempt is a fresh transaction with a different candidate suffix.
+ * 8 is well past the practical collision rate for 12-char hex suffixes
+ * (which would require ≥ 2^48 concurrent same-org creators to plausibly
+ * exhaust).
+ */
+const SLUG_ATTEMPT_LIMIT = 8;
+
+/**
+ * Detect SQLite/better-sqlite3 UNIQUE-constraint violations. The
+ * `task_sessions` UNIQUE on (organization_id, slug) and the channels
+ * PK both surface as `SqliteError` with a message containing
+ * "UNIQUE constraint failed". The `code` field is more reliable when
+ * present.
+ */
+function isUniqueViolation(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const code = (err as { code?: string }).code;
+  if (typeof code === 'string' && code.startsWith('SQLITE_CONSTRAINT')) return true;
+  return /UNIQUE constraint failed/i.test(err.message);
 }
 
 /**

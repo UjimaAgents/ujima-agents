@@ -1798,4 +1798,115 @@ describe('TaskSessionService.create — audit fix regressions', () => {
     expect(repo.getTaskSessionBySlug(orgId, 'doomed')).toBeNull();
     expect(repo.listAllChannels(orgId).some((c) => c.kind === 'task-run')).toBe(false);
   });
+
+  // -------------------------------------------------------------------
+  // NEW (audit fix): start() spawn loop is atomic — a mid-loop spawn
+  // failure (member retired AFTER pre-flight) rolls back earlier
+  // spirits/runs and leaves the registry empty.
+  // -------------------------------------------------------------------
+  it('start() rolls back earlier spirits when a later spawn fails (mid-loop atomicity)', async () => {
+    const fixture = await createFixture({
+      agentNames: ['frontend-alice', 'frontend-bob'],
+    });
+    tempDirs.push(fixture.archiveRoot);
+
+    const { session } = fixture.taskSessions.create({
+      organizationId: fixture.organizationId,
+      requestedBy: fixture.ownerId,
+      prompt: 'cooperate',
+      team: ['frontend-alice', 'frontend-bob'],
+    });
+
+    // Simulate the TOCTOU window the audit flagged: the member is
+    // alive at pre-flight but is retired before its spawn() call
+    // executes. We can't easily race a real retirement inside the
+    // synchronous tx body, so we Proxy the spirits service to make
+    // the second spawn() throw — which exercises the same rollback
+    // path the real race would hit.
+    const realSpawn = fixture.spirits.spawn.bind(fixture.spirits);
+    let spawnsObserved = 0;
+    fixture.spirits.spawn = (input) => {
+      spawnsObserved += 1;
+      if (input.memberId === 'frontend-bob') {
+        throw new Error('simulated retirement race during spawn');
+      }
+      return realSpawn(input);
+    };
+
+    await expect(
+      fixture.taskSessions.start(fixture.organizationId, session.id),
+    ).rejects.toThrow(/simulated retirement race/);
+
+    // Both members were attempted (we hit the failure on bob, but
+    // alice already ran). Rollback must have undone alice's spirit,
+    // run row, AND her registry entry.
+    expect(spawnsObserved).toBe(2);
+    expect(fixture.spirits.list(fixture.organizationId, session.id)).toHaveLength(0);
+    expect(
+      fixture.registry.hasActiveForMember(fixture.organizationId, 'frontend-alice'),
+    ).toBe(false);
+    expect(
+      fixture.registry.hasActiveForMember(fixture.organizationId, 'frontend-bob'),
+    ).toBe(false);
+
+    // Session status untouched — still queued, fully retriable.
+    const refreshed = fixture.repo.getTaskSession(fixture.organizationId, session.id)!;
+    expect(refreshed.status).toBe('queued');
+
+    // Sanity: a second start() with a clean spirits service succeeds.
+    fixture.spirits.spawn = realSpawn;
+    const result = await fixture.taskSessions.start(fixture.organizationId, session.id);
+    expect(result.spirits).toHaveLength(2);
+    expect(result.session.status).toBe('running');
+  });
+
+  // -------------------------------------------------------------------
+  // NEW (audit fix): two creators racing the same slug both succeed —
+  // one wins the original slug, the other gets a deterministic
+  // suffix instead of an unhandled UNIQUE-violation.
+  // -------------------------------------------------------------------
+  it('concurrent same-slug create()s both succeed; loser gets a suffixed slug', async () => {
+    const fixture = await createFixture();
+    tempDirs.push(fixture.archiveRoot);
+
+    // Pre-seed a row at the target slug to simulate the "racing
+    // creator already committed" half of the race. The next
+    // create() with the same slug must observe the UNIQUE violation
+    // inside its transaction and retry with a suffix instead of
+    // bubbling SqliteError.
+    const first = fixture.taskSessions.create({
+      organizationId: fixture.organizationId,
+      requestedBy: fixture.ownerId,
+      prompt: 'parallel work',
+      team: ['frontend-alice'],
+      slug: 'parallel',
+    });
+    expect(first.session.slug).toBe('parallel');
+
+    // Second create() with the same explicit slug — pre-fix this
+    // would throw with "UNIQUE constraint failed" because
+    // allocateSlug's optimistic probe couldn't see in-flight
+    // transactions of a peer creator. Post-fix the transaction
+    // catches the violation and retries with the next suffix.
+    const second = fixture.taskSessions.create({
+      organizationId: fixture.organizationId,
+      requestedBy: fixture.ownerId,
+      prompt: 'parallel work',
+      team: ['frontend-alice'],
+      slug: 'parallel',
+    });
+    expect(second.session.slug).not.toBe('parallel');
+    expect(second.session.slug.startsWith('parallel-')).toBe(true);
+
+    // Both task-run channels exist with non-colliding ids.
+    expect(first.session.channelId).not.toBe(second.session.channelId);
+    expect(fixture.repo.getChannel(fixture.organizationId, first.session.channelId)).not.toBeNull();
+    expect(fixture.repo.getChannel(fixture.organizationId, second.session.channelId)).not.toBeNull();
+
+    // The loser used the org-namespaced channel id helper too —
+    // proves we didn't accidentally cross orgs.
+    expect(second.session.channelId).toBe(
+      taskRunChannelId(fixture.organizationId, second.session.slug),
+    );
+  });
 });
