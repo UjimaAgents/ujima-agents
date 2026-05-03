@@ -183,6 +183,13 @@ export class RunService {
         summary: run.summary,
       });
 
+      const pendingApprovalExists = this.repo
+        .listPendingApprovals(run.organizationId)
+        .some((approval) => approval.runId === run.id);
+      if (pendingApprovalExists) {
+        return this.waitForApproval(running, 'Waiting for approval');
+      }
+
       const statuses = [
         ...result.toolResults,
         ...result.steps.flatMap((step) => step.toolResults),

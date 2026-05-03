@@ -6,6 +6,7 @@ import type { BootstrapResponse } from "@ujima/api-schema";
 import type { SelectedConversation } from "../types";
 import { useConversationSync } from "../use-conversation-sync";
 import { DragHandle } from "./workspace-shell";
+import { getDirectMessageThreadId } from "../conversation-transport";
 import {
   ChatHeader,
   ChatTabs,
@@ -29,6 +30,7 @@ const CHANNEL_TABS: ChatTab[] = [
 
 const AGENT_TABS: ChatTab[] = [
   { id: "conversation", label: "Conversation" },
+  { id: "approvals", label: "Approvals" },
   { id: "tasks", label: "Tasks" },
   { id: "activity", label: "Activity" },
 ];
@@ -89,6 +91,26 @@ export function ChannelView({
   const bottomRef = useRef<HTMLDivElement>(null);
   const previousFeedSignal = useRef("");
   const feed = useConversationSync(bootstrap, conversation);
+  const currentThreadId = useMemo(() => {
+    const senderId = bootstrap.auth.member?.id;
+    if (!senderId) return undefined;
+    if (conversation.type === "agent") {
+      return getDirectMessageThreadId(senderId, conversation.id);
+    }
+    return conversation.id;
+  }, [bootstrap.auth.member?.id, conversation.id, conversation.type]);
+
+  const pendingThreadApprovals = useMemo(
+    () =>
+      feed.approvals.filter((approval) => {
+        if (approval.status !== "pending") return false;
+        if (!approval.runId) return false;
+        const run = feed.runs.find((r) => r.id === approval.runId);
+        if (!run?.threadId || !currentThreadId) return false;
+        return run.threadId === currentThreadId;
+      }),
+    [currentThreadId, feed.approvals, feed.runs],
+  );
   const activeTab = useWorkspaceStore((state) => state.activeTab);
   const showDetails = useWorkspaceStore((state) => state.showDetails);
   const detailsWidth = useWorkspaceStore((state) => state.detailsWidth);
@@ -238,7 +260,8 @@ export function ChannelView({
   }, []);
 
   useLayoutEffect(() => {
-    const signal = `${feed.messages.length}:${feed.approvals.length}:${feed.runs.length}:${feed.activity.length}:${feed.loading ? 1 : 0}`;
+    const pendingKey = pendingThreadApprovals.map((a) => a.id).join(",");
+    const signal = `${feed.messages.length}:${feed.approvals.length}:${feed.runs.length}:${feed.activity.length}:${feed.loading ? 1 : 0}:${pendingKey}`;
     if (!previousFeedSignal.current) {
       previousFeedSignal.current = signal;
       if (feed.messages.length > 0) {
@@ -251,7 +274,7 @@ export function ChannelView({
     if (isAtBottom) {
       scrollToLatest("smooth");
     }
-  }, [feed.activity.length, feed.approvals.length, feed.loading, feed.messages.length, feed.runs.length, isAtBottom, scrollToLatest]);
+  }, [feed.activity.length, feed.approvals.length, feed.loading, feed.messages.length, feed.runs.length, isAtBottom, pendingThreadApprovals, scrollToLatest]);
 
   useLayoutEffect(() => {
     if (!tabIds.has(activeTab)) {
@@ -320,14 +343,25 @@ export function ChannelView({
                       )}
                     />
                   ))}
-                  {typingLabel && (
+                  {pendingThreadApprovals.length > 0 ? (
+                    <div className="space-y-2 px-3 py-2">
+                      {pendingThreadApprovals.map((approval) => (
+                        <ApprovalCard
+                          key={approval.id}
+                          data={approval}
+                          resolving={!!resolvingApprovals[approval.id]}
+                          onResolve={(resolution) => resolveApproval(approval.id, resolution)}
+                        />
+                      ))}
+                    </div>
+                  ) : typingLabel ? (
                     <TypingIndicator
                       label={typingLabel}
                       name={typingMember?.name ?? conversation.name}
                       colorIndex={typingColorIndex}
                       names={typingMembers.map((member) => member.name)}
                     />
-                  )}
+                  ) : null}
                 </>
               ) : (
                 <EmptyChat conversation={conversation} />

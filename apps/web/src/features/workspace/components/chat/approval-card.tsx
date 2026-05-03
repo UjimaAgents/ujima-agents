@@ -1,13 +1,16 @@
-import { AlertCircle } from "lucide-react";
+import {AlertCircle} from "lucide-react";
 
 export interface ApprovalCardData {
   id: string;
+  runId?: string;
   title: string;
   description: string;
+  /** Human-readable shell line + cwd when applicable */
+  commandPreview?: string;
   status: "pending" | "approved" | "rejected";
   requestedBy: string;
   approvalsNeeded: number;
-  reviewers?: { color: string }[];
+  reviewers?: {color: string}[];
 }
 
 export function ApprovalCard({
@@ -32,10 +35,11 @@ export function ApprovalCard({
               {data.title}
             </p>
             <p className="text-[10px] text-zinc-500">{data.description}</p>
-            <p className="text-[10px] text-zinc-400">
-              Requested by {data.requestedBy} · {data.approvalsNeeded} approvals
-              needed
-            </p>
+            {data.commandPreview ? (
+              <pre className="mt-1.5 max-h-28 overflow-y-auto rounded-lg border border-amber-200/80 bg-white/80 px-2 py-1.5 text-[10px] font-mono leading-relaxed text-zinc-800 whitespace-pre-wrap dark:border-amber-500/20 dark:bg-zinc-950/80 dark:text-zinc-200">
+                {data.commandPreview}
+              </pre>
+            ) : null}
           </div>
         </div>
         <div className="flex items-center gap-2">

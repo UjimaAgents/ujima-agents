@@ -511,16 +511,75 @@ function messageToActivity(message: Message): ActivityEvent {
   };
 }
 
+function parseScopeFromReason(reason: string): string | null {
+  const match = reason.match(/(?:^|;)scope=([^;]+)/);
+  if (!match?.[1]) return null;
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    return match[1];
+  }
+}
+
+/**
+ * Matches `ToolServiceImpl.buildApprovalScope` for shell:
+ * `shell:${cwd}:${command}:${JSON.stringify(args)}`
+ */
+function parseShellScope(scope: string): { cwd: string; command: string; args: string[] } | null {
+  if (!scope.startsWith("shell:")) return null;
+  const withoutPrefix = scope.slice("shell:".length);
+  const jsonStart = withoutPrefix.indexOf("[");
+  if (jsonStart <= 0) return null;
+  const jsonPart = withoutPrefix.slice(jsonStart);
+  let args: string[] = [];
+  try {
+    const parsed = JSON.parse(jsonPart) as unknown;
+    args = Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === "string") : [];
+  } catch {
+    args = [];
+  }
+  const beforeJson = withoutPrefix.slice(0, jsonStart - 1);
+  const lastColon = beforeJson.lastIndexOf(":");
+  if (lastColon === -1) return null;
+  const cwd = beforeJson.slice(0, lastColon);
+  const command = beforeJson.slice(lastColon + 1);
+  return { cwd, command, args };
+}
+
+function formatShellCommandPreview(parsed: { cwd: string; command: string; args: string[] }): string {
+  const words = [parsed.command, ...parsed.args].filter(Boolean);
+  const line = `$ ${words.join(" ")}`;
+  return `${line}\nDirectory: ${parsed.cwd}`;
+}
+
 function approvalToCard(
   approval: ApprovalRequest,
   state: { members: Member[] },
 ): ApprovalCardData {
   const requestedBy =
     state.members.find((member) => member.id === approval.requestedBy)?.name ?? approval.requestedBy;
+
+  const scopeDecoded = parseScopeFromReason(approval.reason);
+  let title =
+    approval.status === "pending" ? "Approval requested" : `Approval ${approval.status}`;
+  let description = `${approval.action} ${approval.resourcePath}`;
+  let commandPreview: string | undefined;
+
+  if (approval.resourceType === "shell" && scopeDecoded) {
+    const parsed = parseShellScope(scopeDecoded);
+    if (parsed) {
+      title = approval.status === "pending" ? "Shell command" : title;
+      description = "The agent wants to run:";
+      commandPreview = formatShellCommandPreview(parsed);
+    }
+  }
+
   return {
     id: approval.id,
-    title: approval.status === "pending" ? "Approval requested" : `Approval ${approval.status}`,
-    description: `${approval.action} ${approval.resourcePath}`,
+    runId: approval.runId,
+    title,
+    description,
+    commandPreview,
     status: approval.status,
     requestedBy,
     approvalsNeeded: 1,
