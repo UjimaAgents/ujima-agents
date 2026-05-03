@@ -122,7 +122,7 @@ async function waitForBackgroundJob(runId: string, jobId: string): Promise<Backg
     return initial;
   }
 
-  return await new Promise<BackgroundJobSnapshot | null>((resolve) => {
+  return await new Promise<BackgroundJobSnapshot | null>((resolve, reject) => {
     const timer = setInterval(() => {
       const snapshot = currentSnapshot();
       if (!snapshot) {

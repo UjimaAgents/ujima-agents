@@ -6,6 +6,7 @@ import {
   RunStateSchema,
   SocketEventNames,
   SpiritSchema,
+  TaskSessionSchema,
   channelRoom,
   memberRoom,
   orgRoom,
@@ -32,6 +33,7 @@ import {
   SUPERVISOR_TOOL_ALLOWLIST,
 } from '../tools/index.js';
 import { ActiveSpiritRegistry, isAliveStatus } from './active-spirit-registry.js';
+import type { ConversationService } from './conversation.js';
 import type { RealtimeService } from './context.js';
 import type { ApiRepository } from './repository-reader.js';
 import type { TeamStore } from './team-store.js';
@@ -93,6 +95,12 @@ export interface SpiritServiceOptions {
    * `SpiritService` + `SupervisorService` is the production pattern.
    */
   registry?: ActiveSpiritRegistry;
+  /**
+   * Optional message publisher for task-session completion/failure
+   * summaries. When omitted, SpiritService falls back to direct
+   * repo/realtime writes for system messages.
+   */
+  conversations?: ConversationService;
 }
 
 export interface SpawnSpiritInput {
@@ -130,6 +138,7 @@ export class SpiritService {
   private readonly temperature: number;
   private readonly modelResolver: ModelResolver;
   private readonly registry: ActiveSpiritRegistry;
+  private readonly conversations?: ConversationService;
 
   constructor(
     private readonly teamStore: TeamStore,
@@ -143,6 +152,7 @@ export class SpiritService {
     this.temperature = options.temperature ?? DEFAULT_SPIRIT_TEMPERATURE;
     this.modelResolver = options.modelResolver ?? this.defaultModelResolver();
     this.registry = options.registry ?? new ActiveSpiritRegistry();
+    this.conversations = options.conversations;
   }
 
   /**
@@ -376,6 +386,7 @@ export class SpiritService {
       }
     }
     this.emit(SocketEventNames.spiritRetired, retired);
+    this.maybeFinalizeTaskSession(retired.organizationId, retired.taskSessionId, reason);
     return retired;
   }
 
@@ -618,6 +629,11 @@ export class SpiritService {
         }
       }
       this.emit(SocketEventNames.spiritCompleted, completed);
+      this.maybeFinalizeTaskSession(
+        completed.organizationId,
+        completed.taskSessionId,
+        lastText || undefined,
+      );
 
       return {
         spirit: completed,
@@ -677,6 +693,7 @@ export class SpiritService {
         }
       }
       this.emit(SocketEventNames.spiritCompleted, failed);
+      this.maybeFinalizeTaskSession(failed.organizationId, failed.taskSessionId, message);
       throw err;
     }
   }
@@ -861,6 +878,184 @@ export class SpiritService {
     );
   }
 
+  private maybeFinalizeTaskSession(
+    organizationId: string,
+    taskSessionId: string,
+    preferredSummary?: string,
+  ): void {
+    const session = this.repo.getTaskSession(organizationId, taskSessionId);
+    if (!session || TERMINAL_TASK_SESSION_STATUSES.has(session.status)) {
+      return;
+    }
+
+    const workers = this.repo
+      .listSpiritsForSession(organizationId, taskSessionId)
+      .filter((spirit) => spirit.role === 'worker');
+    if (workers.length === 0) {
+      return;
+    }
+    if (workers.some((spirit) => LIVE_SPIRIT_STATUSES.has(spirit.status))) {
+      return;
+    }
+
+    // Task sessions close only when every worker spirit is terminal. That lets
+    // the public task-run channel act as the canonical end-of-run surface even
+    // though the actual execution happened inside private worker spirits.
+    const outcome = deriveTaskSessionOutcome(workers);
+    const completedAt = new Date().toISOString();
+    const summary = this.buildTaskSessionSummary(organizationId, session, workers, preferredSummary);
+    const updated = this.repo.updateTaskSessionStatus(organizationId, taskSessionId, outcome, {
+      summary,
+      completedAt,
+    });
+    if (!updated) {
+      return;
+    }
+
+    this.publishTaskSummaryMessages(
+      TaskSessionSchema.parse(updated),
+      outcome,
+      summary,
+    );
+  }
+
+  private buildTaskSessionSummary(
+    organizationId: string,
+    session: { slug: string; summary: string },
+    workers: Spirit[],
+    preferredSummary?: string,
+  ): string {
+    const trimmedPreferred = preferredSummary?.trim();
+    if (trimmedPreferred) {
+      return trimmedPreferred;
+    }
+
+    const latestWithMessage = workers
+      .slice()
+      .reverse()
+      .find((spirit) => spirit.lastMessageId && this.repo.getMessage(organizationId, spirit.lastMessageId));
+    if (latestWithMessage?.lastMessageId) {
+      const latestMessage = this.repo.getMessage(organizationId, latestWithMessage.lastMessageId);
+      const content = latestMessage?.content.trim();
+      if (content) {
+        return content;
+      }
+    }
+
+    const failed = workers.find((spirit) => spirit.status === 'failed');
+    if (failed?.lastError) {
+      return failed.lastError;
+    }
+
+    const completedNames = workers
+      .filter((spirit) => spirit.status === 'completed')
+      .map((spirit) => this.repo.getMember(organizationId, spirit.memberId)?.name ?? spirit.memberId);
+    if (completedNames.length > 0) {
+      return `Completed by ${completedNames.join(', ')}`;
+    }
+
+    return session.summary.trim() || `Task #${session.slug} finished`;
+  }
+
+  private publishTaskSummaryMessages(
+    session: {
+      id: string;
+      organizationId: string;
+      channelId: string;
+      slug: string;
+      origin: { channelId?: string };
+    },
+    outcome: 'completed' | 'failed' | 'cancelled',
+    summary: string,
+  ): void {
+    const card: MessageCard = {
+      kind: 'task.summary',
+      cardId: randomUUID(),
+      taskSessionId: session.id,
+      taskChannelId: session.channelId,
+      taskSlug: session.slug,
+      outcome,
+      summary,
+    };
+
+    const statusVerb =
+      outcome === 'completed' ? 'completed' : outcome === 'failed' ? 'failed' : 'cancelled';
+
+    this.publishSystemCardMessage({
+      organizationId: session.organizationId,
+      threadId: session.channelId,
+      channelId: session.channelId,
+      content: `Task #${session.slug} ${statusVerb}: ${summary}`,
+      card,
+    });
+
+    const general = this.repo
+      .listAllChannels(session.organizationId)
+      .find((channel) => channel.kind === 'general' || channel.id === 'general' || channel.name === 'general');
+    const linkbackChannelIds = new Set<string>();
+    if (general && general.id !== session.channelId) {
+      linkbackChannelIds.add(general.id);
+    }
+    if (session.origin.channelId && session.origin.channelId !== session.channelId) {
+      linkbackChannelIds.add(session.origin.channelId);
+    }
+
+    for (const channelId of linkbackChannelIds) {
+      this.publishSystemCardMessage({
+        organizationId: session.organizationId,
+        threadId: channelId,
+        channelId,
+        content: `Task #${session.slug} ${statusVerb} — see #${session.slug}`,
+        card,
+      });
+    }
+  }
+
+  private publishSystemCardMessage(input: {
+    organizationId: string;
+    threadId: string;
+    channelId: string;
+    content: string;
+    card: MessageCard;
+  }): void {
+    const message = MessageSchema.parse({
+      id: randomUUID(),
+      organizationId: input.organizationId,
+      threadId: input.threadId,
+      channelId: input.channelId,
+      senderId: 'system',
+      senderKind: 'human',
+      kind: 'system',
+      content: input.content,
+      mentions: [],
+      toolCalls: [
+        {
+          toolCallId: input.card.cardId,
+          toolName: `card.${input.card.kind}`,
+          args: input.card as unknown as Record<string, unknown>,
+          isError: false,
+        },
+      ],
+      createdAt: new Date().toISOString(),
+    });
+
+    if (this.conversations) {
+      this.conversations.publishMessage(message, []);
+      return;
+    }
+
+    this.repo.saveMessage(message);
+    this.realtime.emit(
+      SocketEventNames.channelMessage,
+      {
+        organizationId: input.organizationId,
+        channelId: input.channelId,
+        message,
+      },
+      [orgRoom(input.organizationId), channelRoom(input.channelId)],
+    );
+  }
+
   private defaultModelResolver(): ModelResolver {
     return ({ organizationId, memberId, role }) => {
       const team = requireTeam(this.teamStore);
@@ -883,6 +1078,21 @@ export class SpiritService {
 }
 
 export { defaultResolveModelId as _defaultResolveModelId } from '../utils/to-model-messages.js';
+
+const LIVE_SPIRIT_STATUSES = new Set(['queued', 'running', 'waiting_for_approval']);
+const TERMINAL_TASK_SESSION_STATUSES = new Set(['completed', 'failed', 'cancelled']);
+
+function deriveTaskSessionOutcome(
+  workers: readonly Spirit[],
+): 'completed' | 'failed' | 'cancelled' {
+  if (workers.some((spirit) => spirit.status === 'failed')) {
+    return 'failed';
+  }
+  if (workers.every((spirit) => spirit.status === 'completed')) {
+    return 'completed';
+  }
+  return 'cancelled';
+}
 
 /**
  * Cheaper-tier provider selection helper. Exported so the

@@ -58,7 +58,7 @@ export type RunStatus = z.infer<typeof RunStatusSchema>;
 export const TaskSessionStatusSchema = RunStatusSchema;
 export type TaskSessionStatus = z.infer<typeof TaskSessionStatusSchema>;
 
-export const TaskExecutionModeSchema = z.enum(['concurrent']);
+export const TaskExecutionModeSchema = z.enum(['concurrent', 'slim']);
 export type TaskExecutionMode = z.infer<typeof TaskExecutionModeSchema>;
 
 export const MessageKindSchema = z.enum(['human', 'agent', 'system']);
@@ -402,6 +402,8 @@ export const TaskSummaryCardSchema = z.object({
   kind: z.literal('task.summary'),
   outcome: z.enum(['completed', 'failed', 'cancelled']),
   summary: z.string().default(''),
+  taskChannelId: IdSchema.optional(),
+  taskSlug: z.string().min(1).optional(),
 });
 
 export const ApprovalCardSchema = z.object({

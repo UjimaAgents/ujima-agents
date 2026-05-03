@@ -125,7 +125,7 @@ unixDescribe('shellTool background termination', () => {
       team: { workspace: { root: process.cwd() } } as never,
       repo: {} as never,
       conversations: {} as never,
-    });
+    }) as Promise<{ status: string; stdout: string }>;
 
     const race = await Promise.race([
       waitPromise.then(() => 'resolved'),
@@ -134,7 +134,7 @@ unixDescribe('shellTool background termination', () => {
 
     expect(race).toBe('pending');
 
-    const snapshot = (await waitPromise) as { status: string; stdout: string };
+    const snapshot = await waitPromise;
     expect(snapshot.status).toBe('exited');
     expect(snapshot.stdout).toBe('ready');
   });

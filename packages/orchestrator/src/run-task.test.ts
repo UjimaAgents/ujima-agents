@@ -571,6 +571,140 @@ describe('orchestrator runTask — manual mode + concurrent execution', () => {
     ).toThrow();
   });
 
+  it('slim mode checkpoints completed stages and resumes from the last completed stage', async () => {
+    const mcp = makeFakeMCPConnection({
+      id: 'figma',
+      tools: [
+        { name: 'create_frame', description: '', inputSchema: { type: 'object', properties: {} } },
+        { name: 'inspect_frame', description: '', inputSchema: { type: 'object', properties: {} } },
+      ],
+    });
+    const permissions = createPermissionMiddleware({ audit: db.audit, agentState: db.agentState });
+
+    const firstHandle: ReturnType<typeof runTask> = runTask(
+      {
+        resolveAgent: (id) =>
+          id === 'sr-designer' ? srDesigner : id === 'jr-designer' ? jrDesigner : undefined,
+        getMCPConnection: () => mcp,
+        getModel: (agent) => createLanguageModelFromLegacyProvider(getOrThrow(firstProviders, agent.id), 'mock'),
+        eventBus: bus,
+        context: db.context,
+        audit: db.audit,
+        permissions,
+        agentState: db.agentState,
+        approvals: db.approvals,
+        onStream: (event) => {
+          const payload = event.payload as { wave?: number } | undefined;
+          if (event.type === 'wave_started' && payload?.wave === 1) {
+            queueMicrotask(() => firstHandle.killSession());
+          }
+        },
+      },
+      {
+        task: { ...task, execution_mode: 'slim' },
+        team,
+        sessionId: 'sess-slim-1',
+        sequence: ['sr-designer', 'jr-designer'],
+      },
+    );
+    let jrResumePrompt = '';
+    let srRestartCalls = 0;
+
+    const firstProviders = new Map<string, LLMProvider>([
+      [
+        'sr-designer',
+        createMockProvider({
+          script: [textTurn('Frame created at /designs/card.fig')],
+        }),
+      ],
+      [
+        'jr-designer',
+        {
+          id: 'mock',
+          async *stream({ abortSignal }) {
+            await new Promise<void>((_, reject) => {
+              if (abortSignal?.aborted) {
+                reject(new Error('aborted'));
+                return;
+              }
+              abortSignal?.addEventListener('abort', () => reject(new Error('aborted')), {
+                once: true,
+              });
+            });
+            yield { type: 'finish', reason: 'end_turn' };
+          },
+        },
+      ],
+    ]);
+
+    const firstResult = await firstHandle.result;
+    expect(firstResult.status).toBe('paused');
+
+    const stage0 = await db.context.get<{
+      stage: number;
+      agentId: string;
+      result: { finalText: string };
+    }>('task:task-profile:slim:checkpoint:0');
+    expect(stage0?.stage).toBe(0);
+    expect(stage0?.agentId).toBe('sr-designer');
+    expect(stage0?.result.finalText).toContain('/designs/card.fig');
+
+    const resumeProviders = new Map<string, LLMProvider>([
+      [
+        'sr-designer',
+        {
+          id: 'mock',
+          async *stream() {
+            srRestartCalls += 1;
+            yield { type: 'text', text: 'should not run' };
+            yield { type: 'finish', reason: 'end_turn' };
+          },
+        },
+      ],
+      [
+        'jr-designer',
+        {
+          id: 'mock',
+          async *stream({ messages }) {
+            const userMsg = messages.find((message) => message.role === 'user');
+            if (userMsg && typeof userMsg.content === 'string') {
+              jrResumePrompt = userMsg.content;
+            }
+            yield { type: 'text', text: 'Reviewed the card.' };
+            yield { type: 'finish', reason: 'end_turn' };
+          },
+        },
+      ],
+    ]);
+
+    const secondHandle = runTask(
+      {
+        resolveAgent: (id) =>
+          id === 'sr-designer' ? srDesigner : id === 'jr-designer' ? jrDesigner : undefined,
+        getMCPConnection: () => mcp,
+        getModel: (agent) => createLanguageModelFromLegacyProvider(getOrThrow(resumeProviders, agent.id), 'mock'),
+        eventBus: bus,
+        context: db.context,
+        audit: db.audit,
+        permissions,
+        agentState: db.agentState,
+        approvals: db.approvals,
+      },
+      {
+        task: { ...task, execution_mode: 'slim' },
+        team,
+        sessionId: 'sess-slim-2',
+        sequence: ['sr-designer', 'jr-designer'],
+      },
+    );
+
+    const secondResult = await secondHandle.result;
+    expect(secondResult.status).toBe('completed');
+    expect(srRestartCalls).toBe(0);
+    expect(jrResumePrompt).toContain('[Output from sr-designer]');
+    expect(jrResumePrompt).toContain('Frame created at /designs/card.fig');
+  });
+
   it('converts review_required into an approval record and approval_requested event', async () => {
     const mcp = makeFakeMCPConnection({ id: 'figma' });
     const permissions = createPermissionMiddleware({ audit: db.audit });

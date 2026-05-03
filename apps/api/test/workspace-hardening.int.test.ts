@@ -16,7 +16,7 @@ import {
 } from '@ujima/orchestrator';
 import { Repository, createBufferLogger, createRuntimeHost, type RuntimeHost } from '@ujima/runtime-core';
 import { MemberSchema, OrganizationSchema, type AgentDef, type MCPDef, type TeamDef } from '@ujima/shared';
-import type { LLMProvider } from '@ujima/llm/legacy';
+import type { LanguageModel } from 'ai';
 import { createTransport, type Transport } from '../src/transport/server';
 
 /** POSIX-only assumptions (`sh`, `cat`) or symlink privileges differ on Windows. */
@@ -24,9 +24,7 @@ const skipIfWin32 = process.platform === 'win32';
 
 const TOKEN = 'b'.repeat(64);
 
-function stubProvider(): LLMProvider {
-  throw new Error('no provider configured');
-}
+const stubLanguageModel = {} as unknown as LanguageModel;
 
 function createNoopRealtime() {
   return {
@@ -92,7 +90,7 @@ describe('workspace-root REST gating', () => {
         resolveMCPDef: async (_workspaceId, id) => {
           throw new Error(`no mcp ${id}`);
         },
-        getProvider: stubProvider,
+        getModel: () => stubLanguageModel,
       },
       {},
     );

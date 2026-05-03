@@ -16,16 +16,12 @@ import {
 
 export function runTask(deps: OrchestratorDeps, input: RunTaskInputs): SessionHandle {
   const { task, team, sessionId } = input;
-
-  if (task.execution_mode !== 'concurrent') {
-    throw new Error(
-      `orchestrator: only 'concurrent' execution is wired for MVP (got '${task.execution_mode}')`,
-    );
+  if (task.execution_mode !== 'concurrent' && task.execution_mode !== 'slim') {
+    throw new Error(`Unsupported execution mode: ${String(task.execution_mode)}`);
   }
 
   const sessionController = new AbortController();
   const perAgentControllers = new Map<string, AbortController>();
-  let concurrentHandle: ConcurrentRunHandle | undefined;
   let agentDefs: AgentDef[] = [];
 
   const result = execute();
@@ -132,142 +128,32 @@ export function runTask(deps: OrchestratorDeps, input: RunTaskInputs): SessionHa
     }
 
     try {
-      type SpawnResult =
-        | { ok: true; member: AgentRunInputs }
-        | { ok: false; agent: AgentDef; reason: string };
+      const executionState = {
+        completedOutputs: new Map<string, string>(),
+        completedBrowserState: new Map<string, string>(),
+      };
 
-      const assignmentByAgent = new Map(assignments.map((a) => [a.agentId, a]));
-      const waves =
-        assignments.length > 0
-          ? topoSortWaves(assignments)
-          : [agentDefs.map((a) => a.id)];
-
-      const agentResults: AgentRunResult[] = [];
-      const completedOutputs = new Map<string, string>();
-      const completedBrowserState = new Map<string, string>();
-
-      for (let waveIdx = 0; waveIdx < waves.length; waveIdx++) {
-        const waveIds = waves[waveIdx];
-        if (!waveIds) continue;
-        if (sessionController.signal.aborted) break;
-
-        await deps.eventBus.publish(ORCHESTRATOR_EVENT_CHANNEL, {
-          event_id: `wave_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-          type: 'wave_started',
-          publisher: 'orchestrator',
-          timestamp: new Date().toISOString(),
-          task_id: task.task_id,
-          session_id: sessionId,
-          payload: {
-            kind: 'wave_started',
-            wave: waveIdx,
-            totalWaves: waves.length,
-            agents: waveIds,
-          },
-        });
-        if (deps.onStream) {
-          deps.onStream({
-            event_id: `wave_${waveIdx}`,
-            type: 'wave_started',
-            publisher: 'orchestrator',
-            timestamp: new Date().toISOString(),
-            task_id: task.task_id,
-            payload: { wave: waveIdx, totalWaves: waves.length, agents: waveIds },
-          });
-        }
-
-        const waveAgents = waveIds
-          .map((id: string) => agentDefs.find((a: AgentDef) => a.id === id))
-          .filter((a): a is AgentDef => !!a);
-
-        const memberResults: SpawnResult[] = await Promise.all(
-          waveAgents.map(async (agent: AgentDef): Promise<SpawnResult> => {
-            try {
-              const mcp = await deps.getMCPConnection(agent.mcp, {
-                agentId: agent.id,
-                scopePaths: readAgentWorkspaceScopes(agent),
-              });
-              const ctrl = new AbortController();
-              perAgentControllers.set(agent.id, ctrl);
-              sessionController.signal.addEventListener('abort', () => ctrl.abort(), { once: true });
-
-              let prompt = subpromptByAgent.get(agent.id) ?? task.prompt;
-              const assignment = assignmentByAgent.get(agent.id);
-              if (assignment?.dependsOn) {
-                const predecessorBlocks: string[] = [];
-                for (const depId of assignment.dependsOn) {
-                  const output = completedOutputs.get(depId);
-                  if (output) predecessorBlocks.push(`[Output from ${depId}]:\n${output}`);
-                  const browser = completedBrowserState.get(depId);
-                  if (browser) predecessorBlocks.push(`[Browser state left by ${depId}]:\n${browser}`);
-                }
-                const predecessorContext = predecessorBlocks.join('\n\n');
-                if (predecessorContext) {
-                  prompt = `${predecessorContext}\n\n---\n\n${prompt}`;
-                }
-              }
-
-              const taskForAgent: TaskDef = { ...task, prompt };
-              const member: AgentRunInputs = {
-                agent,
-                task: taskForAgent,
-                sessionId,
-                spawnReason: 'initial',
-                model: deps.getModel(agent),
-                mcp,
-                permissions: deps.permissions,
-                eventBus: deps.eventBus,
-                context: deps.context,
-                audit: deps.audit,
-                agentState: deps.agentState,
-                approvals: deps.approvals,
-                abortSignal: ctrl.signal,
-                onStream: deps.onStream,
-                gateResolver: deps.gateResolver,
-              };
-              return { ok: true, member };
-            } catch (err) {
-              const reason = err instanceof Error ? err.message : String(err);
-              return { ok: false, agent, reason };
-            }
-          }),
-        );
-
-        const spawnFailed: AgentRunResult[] = memberResults
-          .filter((r): r is Extract<SpawnResult, { ok: false }> => !r.ok)
-          .map((r) => ({
-            agentId: r.agent.id,
-            taskId: task.task_id,
-            sessionId,
-            exitReason: 'error',
-            toolCalls: 0,
-            iterations: 0,
-            tokensUsed: 0,
-            finalText: '',
-            error: `spawn failed: ${r.reason}`,
-          }));
-
-        const members: AgentRunInputs[] = memberResults
-          .filter((r): r is Extract<SpawnResult, { ok: true }> => r.ok)
-          .map((r) => r.member);
-
-        let waveResults: AgentRunResult[];
-        if (members.length === 0) {
-          waveResults = spawnFailed;
-        } else {
-          concurrentHandle = runConcurrent({ members, sessionAbortSignal: sessionController.signal });
-          const live = await concurrentHandle.results;
-          waveResults = [...spawnFailed, ...live];
-        }
-
-        for (const r of waveResults) {
-          if (r.finalText) completedOutputs.set(r.agentId, r.finalText);
-          if (r.browserState) {
-            completedBrowserState.set(r.agentId, formatBrowserState(r.browserState));
-          }
-        }
-        agentResults.push(...waveResults);
-      }
+      const agentResults =
+        task.execution_mode === 'slim'
+          ? await runSlimTask({
+              deps,
+              input,
+              agentDefs,
+              sessionController,
+              perAgentControllers,
+              subpromptByAgent,
+              executionState,
+            })
+          : await runConcurrentTask({
+              deps,
+              input,
+              agentDefs,
+              assignments,
+              sessionController,
+              perAgentControllers,
+              subpromptByAgent,
+              executionState,
+            });
 
       const status: TaskStatus = deriveStatus(agentResults, sessionController.signal.aborted);
       const synth = await synthesizeTask({
@@ -331,6 +217,380 @@ function collectApprovalChannels(agents: AgentDef[]): string[] {
     set.add(`agent:${agent.id}`);
   }
   return [...set];
+}
+
+interface ExecutionState {
+  completedOutputs: Map<string, string>;
+  completedBrowserState: Map<string, string>;
+}
+
+type SpawnResult =
+  | { ok: true; member: AgentRunInputs }
+  | { ok: false; agent: AgentDef; reason: string };
+
+async function runConcurrentTask(input: {
+  deps: OrchestratorDeps;
+  input: RunTaskInputs;
+  agentDefs: AgentDef[];
+  assignments: PlanAssignment[];
+  sessionController: AbortController;
+  perAgentControllers: Map<string, AbortController>;
+  subpromptByAgent: Map<string, string>;
+  executionState: ExecutionState;
+}): Promise<AgentRunResult[]> {
+  const { deps, input: runInput, agentDefs, assignments, sessionController, executionState } = input;
+  const assignmentByAgent = new Map(assignments.map((assignment) => [assignment.agentId, assignment]));
+  const waves =
+    assignments.length > 0
+      ? topoSortWaves(assignments)
+      : [agentDefs.map((agent) => agent.id)];
+
+  const agentResults: AgentRunResult[] = [];
+
+  for (let waveIdx = 0; waveIdx < waves.length; waveIdx += 1) {
+    const waveIds = waves[waveIdx];
+    if (!waveIds || sessionController.signal.aborted) {
+      continue;
+    }
+
+    await publishWaveStarted(
+      deps,
+      runInput,
+      waveIdx,
+      waves.length,
+      waveIds,
+    );
+
+    const waveAgents = waveIds
+      .map((id) => agentDefs.find((agent) => agent.id === id))
+      .filter((agent): agent is AgentDef => Boolean(agent));
+
+    const memberResults = await Promise.all(
+      waveAgents.map((agent) =>
+        spawnAgentRun({
+          deps,
+          agent,
+          task: runInput.task,
+          sessionId: runInput.sessionId,
+          sessionController,
+          perAgentControllers: input.perAgentControllers,
+          subprompt: input.subpromptByAgent.get(agent.id),
+          dependsOn: assignmentByAgent.get(agent.id)?.dependsOn,
+          executionState,
+        }),
+      ),
+    );
+
+    const spawnFailed = memberResults
+      .filter((result): result is Extract<SpawnResult, { ok: false }> => !result.ok)
+      .map((result) => failedSpawnResult(runInput, result.agent, result.reason));
+
+    const members = memberResults
+      .filter((result): result is Extract<SpawnResult, { ok: true }> => result.ok)
+      .map((result) => result.member);
+
+    let waveResults: AgentRunResult[];
+    if (members.length === 0) {
+      waveResults = spawnFailed;
+    } else {
+      const handle: ConcurrentRunHandle = runConcurrent({
+        members,
+        sessionAbortSignal: sessionController.signal,
+      });
+      const live = await handle.results;
+      waveResults = [...spawnFailed, ...live];
+    }
+
+    recordCompletedStageOutputs(executionState, waveResults);
+    agentResults.push(...waveResults);
+  }
+
+  return agentResults;
+}
+
+async function runSlimTask(input: {
+  deps: OrchestratorDeps;
+  input: RunTaskInputs;
+  agentDefs: AgentDef[];
+  sessionController: AbortController;
+  perAgentControllers: Map<string, AbortController>;
+  subpromptByAgent: Map<string, string>;
+  executionState: ExecutionState;
+}): Promise<AgentRunResult[]> {
+  const {
+    deps,
+    input: runInput,
+    agentDefs,
+    sessionController,
+    perAgentControllers,
+    subpromptByAgent,
+    executionState,
+  } = input;
+
+  const sequence = resolveSlimSequence(agentDefs, runInput.sequence);
+  const agentResults: AgentRunResult[] = [];
+
+  for (let stageIdx = 0; stageIdx < sequence.length; stageIdx += 1) {
+    const agentId = sequence[stageIdx];
+    if (!agentId) {
+      continue;
+    }
+    const checkpoint = await readSlimCheckpoint(deps, runInput.task.task_id, stageIdx);
+    if (checkpoint) {
+      // Slim mode resumes by replaying persisted stage outputs back into the
+      // in-memory execution state, so later stages see the same predecessor
+      // context they would have seen during the original run.
+      agentResults.push(checkpoint.result);
+      if (checkpoint.result.finalText) {
+        executionState.completedOutputs.set(checkpoint.result.agentId, checkpoint.result.finalText);
+      }
+      if (checkpoint.browserState) {
+        executionState.completedBrowserState.set(checkpoint.result.agentId, checkpoint.browserState);
+      }
+      continue;
+    }
+
+    if (sessionController.signal.aborted) {
+      break;
+    }
+
+    await publishWaveStarted(deps, runInput, stageIdx, sequence.length, [agentId]);
+
+    const agent = agentDefs.find((candidate) => candidate.id === agentId);
+    if (!agent) {
+      agentResults.push(
+        failedSpawnResult(runInput, { id: agentId } as AgentDef, `unknown agent in slim sequence: ${agentId}`),
+      );
+      break;
+    }
+
+    const spawned = await spawnAgentRun({
+      deps,
+      agent,
+      task: runInput.task,
+      sessionId: runInput.sessionId,
+      sessionController,
+      perAgentControllers,
+      subprompt: subpromptByAgent.get(agent.id),
+      executionState,
+    });
+    if (!spawned.ok) {
+      agentResults.push(failedSpawnResult(runInput, agent, spawned.reason));
+      break;
+    }
+
+    const handle = runConcurrent({
+      members: [spawned.member],
+      sessionAbortSignal: sessionController.signal,
+    });
+    const [result] = await handle.results;
+    if (!result) {
+      break;
+    }
+
+    agentResults.push(result);
+    recordCompletedStageOutputs(executionState, [result]);
+
+    if (result.exitReason === 'completed') {
+      await writeSlimCheckpoint(deps, runInput.task.task_id, stageIdx, result, executionState);
+    } else {
+      break;
+    }
+  }
+
+  return agentResults;
+}
+
+async function publishWaveStarted(
+  deps: OrchestratorDeps,
+  input: RunTaskInputs,
+  waveIdx: number,
+  totalWaves: number,
+  agentIds: string[],
+): Promise<void> {
+  await deps.eventBus.publish(ORCHESTRATOR_EVENT_CHANNEL, {
+    event_id: `wave_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    type: 'wave_started',
+    publisher: 'orchestrator',
+    timestamp: new Date().toISOString(),
+    task_id: input.task.task_id,
+    session_id: input.sessionId,
+    payload: {
+      kind: 'wave_started',
+      wave: waveIdx,
+      totalWaves,
+      agents: agentIds,
+    },
+  });
+  if (deps.onStream) {
+    deps.onStream({
+      event_id: `wave_${waveIdx}`,
+      type: 'wave_started',
+      publisher: 'orchestrator',
+      timestamp: new Date().toISOString(),
+      task_id: input.task.task_id,
+      payload: { wave: waveIdx, totalWaves, agents: agentIds },
+    });
+  }
+}
+
+async function spawnAgentRun(input: {
+  deps: OrchestratorDeps;
+  agent: AgentDef;
+  task: TaskDef;
+  sessionId: string;
+  sessionController: AbortController;
+  perAgentControllers: Map<string, AbortController>;
+  subprompt?: string;
+  dependsOn?: string[];
+  executionState: ExecutionState;
+}): Promise<SpawnResult> {
+  try {
+    const mcp = await input.deps.getMCPConnection(input.agent.mcp, {
+      agentId: input.agent.id,
+      scopePaths: readAgentWorkspaceScopes(input.agent),
+    });
+    const ctrl = new AbortController();
+    input.perAgentControllers.set(input.agent.id, ctrl);
+    if (input.sessionController.signal.aborted) {
+      ctrl.abort();
+    } else {
+      input.sessionController.signal.addEventListener('abort', () => ctrl.abort(), { once: true });
+    }
+
+    let prompt = input.subprompt ?? input.task.prompt;
+    if (input.dependsOn && input.dependsOn.length > 0) {
+      prompt = applyPredecessorContext(prompt, input.dependsOn, input.executionState);
+    } else if (input.executionState.completedOutputs.size > 0 || input.executionState.completedBrowserState.size > 0) {
+      prompt = applyPredecessorContext(
+        prompt,
+        [...new Set([
+          ...input.executionState.completedOutputs.keys(),
+          ...input.executionState.completedBrowserState.keys(),
+        ])],
+        input.executionState,
+      );
+    }
+
+    const taskForAgent: TaskDef = { ...input.task, prompt };
+    const member: AgentRunInputs = {
+      agent: input.agent,
+      task: taskForAgent,
+      sessionId: input.sessionId,
+      spawnReason: 'initial',
+      model: input.deps.getModel(input.agent),
+      mcp,
+      permissions: input.deps.permissions,
+      eventBus: input.deps.eventBus,
+      context: input.deps.context,
+      audit: input.deps.audit,
+      agentState: input.deps.agentState,
+      approvals: input.deps.approvals,
+      taskState: input.deps.taskState,
+      abortSignal: ctrl.signal,
+      onStream: input.deps.onStream,
+      gateResolver: input.deps.gateResolver,
+    };
+    return { ok: true, member };
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    return { ok: false, agent: input.agent, reason };
+  }
+}
+
+function applyPredecessorContext(
+  prompt: string,
+  dependsOn: readonly string[],
+  executionState: ExecutionState,
+): string {
+  const predecessorBlocks: string[] = [];
+  for (const depId of dependsOn) {
+    const output = executionState.completedOutputs.get(depId);
+    if (output) predecessorBlocks.push(`[Output from ${depId}]:\n${output}`);
+    const browser = executionState.completedBrowserState.get(depId);
+    if (browser) predecessorBlocks.push(`[Browser state left by ${depId}]:\n${browser}`);
+  }
+  const predecessorContext = predecessorBlocks.join('\n\n');
+  if (!predecessorContext) {
+    return prompt;
+  }
+  return `${predecessorContext}\n\n---\n\n${prompt}`;
+}
+
+function recordCompletedStageOutputs(
+  executionState: ExecutionState,
+  results: readonly AgentRunResult[],
+): void {
+  for (const result of results) {
+    if (result.finalText) {
+      executionState.completedOutputs.set(result.agentId, result.finalText);
+    }
+    if (result.browserState) {
+      executionState.completedBrowserState.set(result.agentId, formatBrowserState(result.browserState));
+    }
+  }
+}
+
+function failedSpawnResult(
+  input: RunTaskInputs,
+  agent: { id: string },
+  reason: string,
+): AgentRunResult {
+  return {
+    agentId: agent.id,
+    taskId: input.task.task_id,
+    sessionId: input.sessionId,
+    exitReason: 'error',
+    toolCalls: 0,
+    iterations: 0,
+    tokensUsed: 0,
+    finalText: '',
+    error: `spawn failed: ${reason}`,
+  };
+}
+
+function resolveSlimSequence(agentDefs: AgentDef[], requested?: readonly string[]): string[] {
+  const available = new Set(agentDefs.map((agent) => agent.id));
+  if (!requested || requested.length === 0) {
+    return agentDefs.map((agent) => agent.id);
+  }
+  const sequence = requested.filter((agentId, index) => requested.indexOf(agentId) === index);
+  const valid = sequence.filter((agentId) => available.has(agentId));
+  return valid.length > 0 ? valid : agentDefs.map((agent) => agent.id);
+}
+
+interface SlimCheckpointRecord {
+  stage: number;
+  agentId: string;
+  result: AgentRunResult;
+  browserState?: string;
+}
+
+async function readSlimCheckpoint(
+  deps: OrchestratorDeps,
+  taskId: string,
+  stage: number,
+): Promise<SlimCheckpointRecord | undefined> {
+  return deps.context.get<SlimCheckpointRecord>(slimCheckpointKey(taskId, stage));
+}
+
+async function writeSlimCheckpoint(
+  deps: OrchestratorDeps,
+  taskId: string,
+  stage: number,
+  result: AgentRunResult,
+  executionState: ExecutionState,
+): Promise<void> {
+  await deps.context.put(slimCheckpointKey(taskId, stage), {
+    stage,
+    agentId: result.agentId,
+    result,
+    browserState: executionState.completedBrowserState.get(result.agentId),
+  } satisfies SlimCheckpointRecord);
+}
+
+function slimCheckpointKey(taskId: string, stage: number): string {
+  return `task:${taskId}:slim:checkpoint:${stage}`;
 }
 
 async function runPlanner(

@@ -23,7 +23,7 @@ import { SettingsService } from './settings.js';
 import { SpiritService, type ModelResolver } from './spirit.js';
 import { SupervisorService } from './supervisor.js';
 import { SupervisorTodoService } from './supervisor-todo.js';
-import { TaskPromoterService } from './task-promoter.js';
+import { TaskPromoterService, type TaskPromotionEvaluator } from './task-promoter.js';
 import { TaskSessionService } from './task-session.js';
 import {
   createPermissionGatedToolService,
@@ -87,6 +87,7 @@ export { TaskPromoterService } from './task-promoter.js';
 export { TaskSessionService, taskRunChannelId } from './task-session.js';
 export type { CreateTaskSessionInput, TaskSessionDetail } from './task-session.js';
 export type { TaskPromotionInput, TaskPromotionResult } from './task-promoter.js';
+export type { TaskPromotionDecision, TaskPromotionEvaluator } from './task-promoter.js';
 export { SupervisorService } from './supervisor.js';
 export type {
   SupervisorAlertInput,
@@ -154,6 +155,7 @@ export interface ApiServicesContext extends ApiServiceContext {
    * the SpiritService walks the team config + provider credentials.
    */
   spiritModelResolver?: ModelResolver;
+  taskPromoterEvaluator?: TaskPromotionEvaluator;
 }
 
 export interface ApiServices {
@@ -390,6 +392,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     context.realtime,
     tools,
     {
+      conversations,
       modelResolver: context.spiritModelResolver,
       registry: activeSpirits,
     },
@@ -431,8 +434,13 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   const bootstrap = new BootstrapService(context.repo, context.teamStore, auth);
   const onboarding = new OnboardingService(context.repo, context.teamStore);
   const settings = new SettingsService(context.repo, context.teamStore);
-  const taskPromoter = new TaskPromoterService(context.repo, runs);
   const taskSessions = new TaskSessionService(context.repo, conversations, spirits);
+  const taskPromoter = new TaskPromoterService(context.repo, runs, {
+    teamStore: context.teamStore,
+    taskSessions,
+    conversations,
+    evaluator: context.taskPromoterEvaluator,
+  });
 
   return {
     ai,

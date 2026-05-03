@@ -36,6 +36,7 @@ export interface RunTaskInputs {
   task: TaskDef;
   team: TeamDef;
   sessionId: string;
+  sequence?: string[];
 }
 
 export interface RunTaskResult {
