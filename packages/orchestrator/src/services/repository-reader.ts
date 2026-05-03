@@ -164,6 +164,7 @@ export interface ApiRepository extends ConversationRepository {
     resourceType: ApprovalRequest['resourceType'];
     resourcePath: string;
     action: ApprovalRequest['action'];
+    approvalScope: string;
   }): boolean;
   saveAuditEvent(event: AuditEvent): AuditEvent;
   /**

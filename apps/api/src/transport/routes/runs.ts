@@ -167,7 +167,7 @@ export function registerRunRoutes(
     try {
       assertReadyWorkspaceRoot(repo, req.body.organizationId);
       const status =
-        req.body.resolution === 'reject' ? 'rejected' : req.body.status;
+        req.body.resolution === 'reject' ? 'rejected' : 'approved';
       return await approvals.resolveApproval({
         organizationId: req.body.organizationId,
         approvalId: req.params.approvalId,

@@ -18,14 +18,6 @@ const GenericToolInvocationSchema = z.object({
   input: z.record(z.string(), z.unknown()).default({}),
 });
 
-const SUPPORTED_PROVIDER_KINDS: ReadonlySet<ProviderKind> = new Set([
-  'anthropic',
-  'openai',
-  'google',
-  'openrouter',
-  'ollama',
-]);
-
 function resolveProviderKind(
   providerName: string,
   declared: ProviderKind | undefined,
@@ -37,7 +29,7 @@ function resolveProviderKind(
     return providerName;
   }
   throw new Error(
-    `Provider "${providerName}" has no \`kind\` declared. Add \`kind: 'anthropic'|'openai'|'google'|'openrouter'|'ollama'\` to the provider config.`,
+    `Provider "${providerName}" has no \`kind\` declared. Add \`kind\` to the provider config.`,
   );
 }
 
@@ -118,9 +110,6 @@ export class AiService {
     }
 
     const kind = resolveProviderKind(providerName, provider.kind);
-    if (!SUPPORTED_PROVIDER_KINDS.has(kind)) {
-      throw new Error(`Unsupported provider kind "${kind}"`);
-    }
     const model = selectLanguageModel({
       kind,
       modelId,

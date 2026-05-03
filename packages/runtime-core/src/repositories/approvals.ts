@@ -114,6 +114,7 @@ export function hasApprovalGrant(
     resourceType: ApprovalRequest['resourceType'];
     resourcePath: string;
     action: ApprovalRequest['action'];
+    approvalScope: string;
   },
 ): boolean {
   const row = db
@@ -126,7 +127,7 @@ export function hasApprovalGrant(
          AND resource_path = ?
          AND action = ?
          AND status = 'approved'
-         AND reason LIKE 'grant:always_allow:%'
+         AND reason LIKE ?
        ORDER BY resolved_at DESC
        LIMIT 1`,
     )
@@ -136,6 +137,7 @@ export function hasApprovalGrant(
       input.resourceType,
       input.resourcePath,
       input.action,
+      `grant:always_allow:scope=${encodeURIComponent(input.approvalScope)};%`,
     ) as Row | null;
   return !!row;
 }

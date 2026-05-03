@@ -229,8 +229,10 @@ export class ToolServiceImpl implements ToolService {
         resourceType: preparedInvocation.resourceType,
         resourcePath: preparedInvocation.resourcePath ?? "",
         action: preparedInvocation.action,
+        approvalScope: this.buildApprovalScope(preparedInvocation),
       })
     ) {
+      const approvalScope = this.buildApprovalScope(preparedInvocation);
       const approval = this.approvals.requestApproval({
         organizationId: preparedInvocation.organizationId,
         runId: preparedInvocation.runId,
@@ -238,7 +240,7 @@ export class ToolServiceImpl implements ToolService {
         resourceType: preparedInvocation.resourceType,
         resourcePath: preparedInvocation.resourcePath ?? "",
         action: preparedInvocation.action,
-        reason: "Tool action requires approval",
+        reason: `Tool action requires approval;scope=${encodeURIComponent(approvalScope)}`,
       });
 
       this.audit(preparedInvocation, "ok", {
@@ -398,6 +400,19 @@ export class ToolServiceImpl implements ToolService {
       rooms.push(threadRoom(run.threadId));
     }
     return rooms;
+  }
+
+  private buildApprovalScope(invocation: ToolInvocationInput): string {
+    if (invocation.toolId === "shell") {
+      const input = invocation.input ?? {};
+      const command = typeof input.command === "string" ? input.command.trim() : "";
+      const args = Array.isArray(input.args)
+        ? input.args.filter((arg): arg is string => typeof arg === "string")
+        : [];
+      const cwd = typeof input.cwd === "string" ? input.cwd : invocation.resourcePath ?? "";
+      return `shell:${cwd}:${command}:${JSON.stringify(args)}`;
+    }
+    return `${invocation.toolId}:${invocation.action}:${invocation.resourcePath ?? ""}`;
   }
 
   private async prepareInvocation(

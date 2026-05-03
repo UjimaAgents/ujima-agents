@@ -129,6 +129,10 @@ function shouldForwardEvent(
       const body = payload as { channelId?: string };
       return typeof body.channelId === "string" && input.channelIds.includes(body.channelId);
     }
+    case SocketEventNames.channelPresence: {
+      const body = payload as { channelId?: string };
+      return typeof body.channelId === "string" && input.channelIds.includes(body.channelId);
+    }
     case SocketEventNames.threadMessage: {
       const body = payload as { threadId?: string };
       return typeof body.threadId === "string" && threadIds.has(body.threadId);

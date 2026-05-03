@@ -326,6 +326,7 @@ export class Repository {
     resourceType: ApprovalRequest['resourceType'];
     resourcePath: string;
     action: ApprovalRequest['action'];
+    approvalScope: string;
   }): boolean => readApprovalGrant(this.db, input);
 
   saveAuditEvent = (event: AuditEvent): AuditEvent => writeAuditEvent(this.db, event);

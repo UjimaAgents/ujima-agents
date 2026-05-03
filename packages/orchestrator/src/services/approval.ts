@@ -72,9 +72,15 @@ export class ApprovalService {
   }
 
   async resolveApproval(input: ApprovalResolveInput): Promise<ApprovalRequest> {
+    const existing = this.repo.getApproval(input.organizationId, input.approvalId);
+    const scopeMatch = existing?.reason.match(/(?:^|;)scope=([^;]+)/);
+    const approvalScope = scopeMatch?.[1];
+    const canPersistGrant =
+      input.resolution === 'allow_always' &&
+      !!approvalScope;
     const effectiveReason =
-      input.resolution === 'allow_always'
-        ? `grant:always_allow:${input.reason ?? ''}`
+      canPersistGrant
+        ? `grant:always_allow:scope=${approvalScope};note=${input.reason ?? ''}`
         : input.reason;
     const approval = this.repo.resolveApproval(
       input.organizationId,
