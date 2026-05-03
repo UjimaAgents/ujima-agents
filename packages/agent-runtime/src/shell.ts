@@ -92,9 +92,6 @@ async function execute(inputs: AgentRunInputs, controller: AbortController): Pro
   };
 
   try {
-    console.log(`\n🚀 [Agent Run Start] "${agent.name}"`);
-    console.log(`   Task: ${task.task_id} | Session: ${sessionId}`);
-    
     const bundle = inputs.hydration ?? (await hydrate({
       agent,
       task,

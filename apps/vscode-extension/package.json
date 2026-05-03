@@ -243,6 +243,7 @@
     "clean": "rm -rf dist webview .turbo *.tsbuildinfo *.vsix"
   },
   "dependencies": {
+    "@ai-sdk/provider": "^3.0.8",
     "@ujima/agent-runtime": "workspace:*",
     "@ujima/context-store": "workspace:*",
     "@ujima/event-bus": "workspace:*",
@@ -252,6 +253,7 @@
     "@ujima/permissions": "workspace:*",
     "@ujima/runtime-core": "workspace:*",
     "@ujima/shared": "workspace:*",
+    "ai": "^6.0.168",
     "better-sqlite3": "^12.9.0"
   },
   "devDependencies": {

@@ -1,6 +1,7 @@
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createOpenAI } from '@ai-sdk/openai';
+import type { LanguageModelV3 } from '@ai-sdk/provider';
 import { defaultSettingsMiddleware, wrapLanguageModel, type LanguageModel } from 'ai';
 import { LLMError, PROVIDER_KINDS, type ProviderKind } from './types.js';
 
@@ -18,9 +19,9 @@ const DEFAULT_REASONING_SETTINGS = defaultSettingsMiddleware({
 
 function withDefaultReasoning(model: LanguageModel): LanguageModel {
   return wrapLanguageModel({
-    model: model as any,
+    model: model as LanguageModelV3,
     middleware: DEFAULT_REASONING_SETTINGS,
-  });
+  }) as LanguageModel;
 }
 
 export interface SelectLanguageModelInput {

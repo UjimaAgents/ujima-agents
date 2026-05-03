@@ -79,8 +79,39 @@ function genEventId(prefix: string): string {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function truncateToolContent(content: unknown, _maxChars: number): unknown {
-  return content;
+function truncateToolContent(content: unknown, maxChars: number): unknown {
+  if (maxChars <= 0) {
+    return '[tool output truncated]';
+  }
+
+  if (typeof content === 'string') {
+    return truncateText(content, maxChars);
+  }
+
+  const serialized = safeStringify(content);
+  if (serialized.length <= maxChars) {
+    return content;
+  }
+
+  return {
+    truncated: true,
+    summary: `Tool output exceeded ${maxChars} chars and was truncated.`,
+    preview: truncateText(serialized, maxChars),
+  };
+}
+
+function truncateText(value: string, maxChars: number): string {
+  if (value.length <= maxChars) return value;
+  const omitted = value.length - maxChars;
+  return `${value.slice(0, maxChars)}\n...[truncated ${omitted} chars]`;
+}
+
+function safeStringify(value: unknown): string {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
 }
 
 export async function runAiSdkLoop(input: AiSdkLoopInputs): Promise<AiSdkLoopOutcome> {
@@ -135,7 +166,6 @@ export async function runAiSdkLoop(input: AiSdkLoopInputs): Promise<AiSdkLoopOut
       execute: async (rawArgs: Record<string, unknown>, { toolCallId }): Promise<unknown> => {
         toolCalls++;
         const args = rawArgs ?? {};
-        console.log(`\n[Agent Tool Call] ${info.name}:`, JSON.stringify(args, null, 2));
         stream('agent_tool_call', { id: toolCallId, name: info.name, arguments: args });
 
         // --- Permission pre-hook (E0.1.4) -----------------------------------
@@ -338,7 +368,6 @@ export async function runAiSdkLoop(input: AiSdkLoopInputs): Promise<AiSdkLoopOut
               durationMs: duration,
               gateResolved: gated ? 'approve' : undefined,
             });
-            console.log(`[Agent Tool Result] ${toolName}:`, typeof result.content === 'string' ? result.content.slice(0, 200) + (result.content.length > 200 ? '...' : '') : result.content);
             if (result.isError) {
               return { error: truncateToolContent(result.content, maxToolResultChars) };
             }
@@ -346,7 +375,6 @@ export async function runAiSdkLoop(input: AiSdkLoopInputs): Promise<AiSdkLoopOut
           } catch (err) {
             const duration = Date.now() - start;
             const message = err instanceof Error ? err.message : String(err);
-            console.error(`[Agent Tool Error] ${toolName}:`, message);
             await audit.write({
               event_id: genEventId('tc'),
               event_type: 'tool_call',
@@ -397,11 +425,9 @@ export async function runAiSdkLoop(input: AiSdkLoopInputs): Promise<AiSdkLoopOut
     // would miss the finish frame.
     for await (const part of result.fullStream) {
       if (part.type === 'text-delta') {
-        process.stdout.write(part.text); // Live stream thoughts to terminal
         stream('agent_thought_delta', { text: part.text });
       }
     }
-    console.log('\n'); // New line after thought finishes
 
     const [finalText, usage, finishReason] = await Promise.all([
       result.text,
@@ -477,7 +503,6 @@ export async function runAiSdkLoop(input: AiSdkLoopInputs): Promise<AiSdkLoopOut
       };
     }
 
-    console.log(`[Agent Finished] Exit Reason: ${finishReason || 'completed'}`);
     stream('agent_finished', {
       exitReason: 'completed',
       finalText,
