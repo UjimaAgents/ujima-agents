@@ -561,6 +561,7 @@ export class ConversationService {
         organizationId: message.organizationId,
         memberId: member.id,
         channelId: channel?.id,
+        threadId: message.threadId,
         messageId: message.id,
         byMemberId: message.senderId,
         reason,
