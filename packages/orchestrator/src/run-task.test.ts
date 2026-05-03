@@ -3,7 +3,9 @@ import type { AgentDef, TaskDef, TeamDef, UjimaEvent } from '@ujima/shared';
 import { openDb, type UjimaDb } from '@ujima/context-store';
 import { createLocalEventBus, type EventBus } from '@ujima/event-bus';
 import { createPermissionMiddleware } from '@ujima/permissions';
+import { createLanguageModelFromLegacyProvider } from '@ujima/agent-runtime';
 import { createMockProvider, textTurn, toolTurn, type LLMProvider } from '@ujima/llm/legacy';
+import type { LanguageModel } from 'ai';
 import { runTask, topoSortWaves } from './run-task';
 import { ORCHESTRATOR_EVENT_CHANNEL } from './types';
 import { makeFakeMCPConnection } from './test-helpers';
@@ -12,6 +14,10 @@ function getOrThrow<K, V>(map: Map<K, V>, key: K): V {
   const v = map.get(key);
   if (v === undefined) throw new Error(`missing key: ${String(key)}`);
   return v;
+}
+
+function lm(opts: Parameters<typeof createMockProvider>[0]): LanguageModel {
+  return createLanguageModelFromLegacyProvider(createMockProvider(opts), 'mock');
 }
 
 const srDesigner: AgentDef = {
@@ -102,16 +108,16 @@ describe('orchestrator runTask — manual mode + concurrent execution', () => {
       orchestratorEvents.push(e);
     });
 
-    const providers = new Map<string, LLMProvider>([
+    const models = new Map<string, LanguageModel>([
       [
         'sr-designer',
-        ((...args) => ({} as any))({
+        lm({
           script: [toolTurn('s1', 'create_frame', { name: 'card' }), textTurn('ok')],
         }),
       ],
       [
         'jr-designer',
-        ((...args) => ({} as any))({
+        lm({
           script: [toolTurn('j1', 'inspect_frame', { id: 'card' }), textTurn('reviewed')],
         }),
       ],
@@ -121,7 +127,7 @@ describe('orchestrator runTask — manual mode + concurrent execution', () => {
       {
         resolveAgent: (id) => (id === 'sr-designer' ? srDesigner : id === 'jr-designer' ? jrDesigner : undefined),
         getMCPConnection: () => mcp,
-        getModel: (agent: any): any => getOrThrow(providers, agent.id),
+        getModel: (agent: AgentDef) => getOrThrow(models, agent.id),
         eventBus: bus,
         context: db.context,
         audit: db.audit,
@@ -164,7 +170,7 @@ describe('orchestrator runTask — manual mode + concurrent execution', () => {
       {
         resolveAgent: (id) => (id === 'sr-designer' ? srDesigner : undefined),
         getMCPConnection: () => mcp,
-        getModel: () => ((...args) => ({} as any))({ script: [textTurn('ok')] }),
+        getModel: () => lm({ script: [textTurn('ok')] }),
         eventBus: bus,
         context: db.context,
         audit: db.audit,
@@ -195,7 +201,7 @@ describe('orchestrator runTask — manual mode + concurrent execution', () => {
         resolveAgent: (id) =>
           id === 'sr-designer' ? srDesigner : id === 'db-agent' ? dbAgent : undefined,
         getMCPConnection: (mcpId) => mcpByAgent(mcpId),
-        getModel: () => ((...args) => ({} as any))({ script: [textTurn('done')] }),
+        getModel: () => lm({ script: [textTurn('done')] }),
         eventBus: bus,
         context: db.context,
         audit: db.audit,
@@ -220,7 +226,7 @@ describe('orchestrator runTask — manual mode + concurrent execution', () => {
     const mcp = makeFakeMCPConnection({ id: 'figma' });
     const permissions = createPermissionMiddleware({ audit: db.audit });
 
-    const slowProvider: LLMProvider = {
+    const _slowProvider: LLMProvider = {
       id: 'mock',
       async *stream({ abortSignal }) {
         await new Promise<void>((_, reject) => {
@@ -234,16 +240,16 @@ describe('orchestrator runTask — manual mode + concurrent execution', () => {
       },
     };
 
-    const providers = new Map<string, LLMProvider>([
-      ['sr-designer', ({} as any)],
-      ['jr-designer', ((...args) => ({} as any))({ script: [textTurn('fast-done')] })],
+    const models = new Map<string, LanguageModel>([
+      ['sr-designer', createLanguageModelFromLegacyProvider(_slowProvider, 'mock')],
+      ['jr-designer', lm({ script: [textTurn('fast-done')] })],
     ]);
 
     const handle = runTask(
       {
         resolveAgent: (id) => (id === 'sr-designer' ? srDesigner : id === 'jr-designer' ? jrDesigner : undefined),
         getMCPConnection: () => mcp,
-        getModel: (agent: any): any => getOrThrow(providers, agent.id),
+        getModel: (agent: AgentDef) => getOrThrow(models, agent.id),
         eventBus: bus,
         context: db.context,
         audit: db.audit,
@@ -268,7 +274,7 @@ describe('orchestrator runTask — manual mode + concurrent execution', () => {
     const mcp = makeFakeMCPConnection({ id: 'figma' });
     const permissions = createPermissionMiddleware({ audit: db.audit });
 
-    const slowProvider: LLMProvider = {
+    const _slowProvider: LLMProvider = {
       id: 'mock',
       async *stream({ abortSignal }) {
         await new Promise<void>((_, reject) => {
@@ -282,11 +288,13 @@ describe('orchestrator runTask — manual mode + concurrent execution', () => {
       },
     };
 
+    const slowLm = createLanguageModelFromLegacyProvider(_slowProvider, 'mock');
+
     const handle = runTask(
       {
         resolveAgent: (id) => (id === 'sr-designer' ? srDesigner : id === 'jr-designer' ? jrDesigner : undefined),
         getMCPConnection: () => mcp,
-        getModel: () => ({} as any),
+        getModel: () => slowLm,
         eventBus: bus,
         context: db.context,
         audit: db.audit,
@@ -311,7 +319,7 @@ describe('orchestrator runTask — manual mode + concurrent execution', () => {
         getMCPConnection: async () => {
           throw new Error('MCP spawn failed: ENOENT');
         },
-        getModel: () => ((...args) => ({} as any))({ script: [textTurn('ok')] }),
+        getModel: () => lm({ script: [textTurn('ok')] }),
         eventBus: bus,
         context: db.context,
         audit: db.audit,
@@ -339,16 +347,16 @@ describe('orchestrator runTask — manual mode + concurrent execution', () => {
       },
     };
 
-    const providers = new Map<string, LLMProvider>([
-      ['sr-designer', crashingProvider],
-      ['jr-designer', ((...args) => ({} as any))({ script: [textTurn('jr ok')] })],
+    const models = new Map<string, LanguageModel>([
+      ['sr-designer', createLanguageModelFromLegacyProvider(crashingProvider, 'mock')],
+      ['jr-designer', lm({ script: [textTurn('jr ok')] })],
     ]);
 
     const handle = runTask(
       {
         resolveAgent: (id) => (id === 'sr-designer' ? srDesigner : id === 'jr-designer' ? jrDesigner : undefined),
         getMCPConnection: () => mcp,
-        getModel: (agent: any): any => getOrThrow(providers, agent.id),
+        getModel: (agent: AgentDef) => getOrThrow(models, agent.id),
         eventBus: bus,
         context: db.context,
         audit: db.audit,
@@ -373,7 +381,7 @@ describe('orchestrator runTask — manual mode + concurrent execution', () => {
       {
         resolveAgent: () => undefined,
         getMCPConnection: () => makeFakeMCPConnection({}),
-        getModel: () => ((...args) => ({} as any))({ script: [textTurn('ok')] }),
+        getModel: () => lm({ script: [textTurn('ok')] }),
         eventBus: bus,
         context: db.context,
         audit: db.audit,
@@ -402,7 +410,7 @@ describe('orchestrator runTask — manual mode + concurrent execution', () => {
     });
     const permissions = createPermissionMiddleware({ audit: db.audit, agentState: db.agentState });
 
-    const plannerProvider = ((...args) => ({} as any))({
+    const plannerProvider = createMockProvider({
       script: [
         textTurn(
           JSON.stringify({
@@ -413,31 +421,32 @@ describe('orchestrator runTask — manual mode + concurrent execution', () => {
         ),
       ],
     });
-    const srProvider = ((...args) => ({} as any))({
+    const srProvider = createMockProvider({
       script: [toolTurn('s1', 'create_frame', { name: 'card' }), textTurn('done')],
     });
-    const jrProvider = ((...args) => ({} as any))({
+    const jrProvider = createMockProvider({
       script: [textTurn('should not run')],
     });
 
-    const providerByAgent = new Map<string, LLMProvider>([
-      ['sr-designer', srProvider],
-      ['jr-designer', jrProvider],
+    const plannerModel = createLanguageModelFromLegacyProvider(plannerProvider, 'mock');
+    const modelByAgent = new Map<string, LanguageModel>([
+      ['sr-designer', createLanguageModelFromLegacyProvider(srProvider, 'mock')],
+      ['jr-designer', createLanguageModelFromLegacyProvider(jrProvider, 'mock')],
     ]);
     let plannerCalls = 0;
-    const getModel = (agent: AgentDef): LLMProvider => {
+    const _getModel = (agent: AgentDef): LanguageModel => {
       if (plannerCalls === 0) {
         plannerCalls++;
-        return plannerProvider;
+        return plannerModel;
       }
-      return getOrThrow(providerByAgent, agent.id);
+      return getOrThrow(modelByAgent, agent.id);
     };
 
     const handle = runTask(
       {
         resolveAgent: (id) => (id === 'sr-designer' ? srDesigner : id === 'jr-designer' ? jrDesigner : undefined),
         getMCPConnection: () => mcp,
-        getModel: (() => ({} as any)) as any,
+        getModel: _getModel,
         eventBus: bus,
         context: db.context,
         audit: db.audit,
@@ -464,7 +473,7 @@ describe('orchestrator runTask — manual mode + concurrent execution', () => {
     });
     const permissions = createPermissionMiddleware({ audit: db.audit, agentState: db.agentState });
 
-    const plannerProvider = ((...args) => ({} as any))({
+    const plannerProvider = createMockProvider({
       script: [
         textTurn(
           JSON.stringify({
@@ -481,9 +490,16 @@ describe('orchestrator runTask — manual mode + concurrent execution', () => {
     const jrStartedAt: number[] = [];
     let jrReceivedPrompt = '';
 
-    const srProvider = ((...args) => ({} as any))({
+    const srBase = createMockProvider({
       script: [toolTurn('s1', 'create_frame', { name: 'card' }), textTurn('Frame created at /designs/card.fig')],
     });
+    const srWrapper: LLMProvider = {
+      id: 'mock',
+      async *stream(input) {
+        yield* srBase.stream(input);
+        srFinishedAt.push(Date.now());
+      },
+    };
     const jrProvider: LLMProvider = {
       id: 'mock',
       async *stream({ messages }) {
@@ -495,36 +511,25 @@ describe('orchestrator runTask — manual mode + concurrent execution', () => {
       },
     };
 
-    const providerByAgent = new Map<string, LLMProvider>([
-      ['sr-designer', srProvider],
-      ['jr-designer', jrProvider],
+    const plannerModel = createLanguageModelFromLegacyProvider(plannerProvider, 'mock');
+    const modelByAgent = new Map<string, LanguageModel>([
+      ['sr-designer', createLanguageModelFromLegacyProvider(srWrapper, 'mock')],
+      ['jr-designer', createLanguageModelFromLegacyProvider(jrProvider, 'mock')],
     ]);
     let plannerCalls = 0;
-    const getModel = (agent: AgentDef): LLMProvider => {
+    const _getModel = (agent: AgentDef): LanguageModel => {
       if (plannerCalls === 0) {
         plannerCalls++;
-        return plannerProvider;
+        return plannerModel;
       }
-      const p = providerByAgent.get(agent.id);
-      if (!p) throw new Error(`no provider for ${agent.id}`);
-      if (agent.id === 'sr-designer') {
-        const orig = p;
-        return {
-          id: 'mock',
-          async *stream(input) {
-            yield* orig.stream(input);
-            srFinishedAt.push(Date.now());
-          },
-        };
-      }
-      return p;
+      return getOrThrow(modelByAgent, agent.id);
     };
 
     const handle = runTask(
       {
         resolveAgent: (id) => (id === 'sr-designer' ? srDesigner : id === 'jr-designer' ? jrDesigner : undefined),
         getMCPConnection: () => mcp,
-        getModel: (() => ({} as any)) as any,
+        getModel: _getModel,
         eventBus: bus,
         context: db.context,
         audit: db.audit,
@@ -553,7 +558,7 @@ describe('orchestrator runTask — manual mode + concurrent execution', () => {
         {
           resolveAgent: (id) => (id === 'sr-designer' ? srDesigner : undefined),
           getMCPConnection: () => makeFakeMCPConnection({}),
-          getModel: () => ((...args) => ({} as any))({ script: [textTurn('ok')] }),
+          getModel: () => lm({ script: [textTurn('ok')] }),
           eventBus: bus,
           context: db.context,
           audit: db.audit,
@@ -575,14 +580,11 @@ describe('orchestrator runTask — manual mode + concurrent execution', () => {
       orchestratorEvents.push(e);
     });
 
-    const providers = new Map<string, LLMProvider>([
-      [
-        'sr-designer',
-        ((...args) => ({} as any))({ script: [textTurn('all done for Sr')] }),
-      ],
+    const models = new Map<string, LanguageModel>([
+      ['sr-designer', lm({ script: [textTurn('all done for Sr')] })],
       [
         'jr-designer',
-        ((...args) => ({} as any))({
+        lm({
           script: [textTurn('This frame requires approval from senior before shipping.')],
         }),
       ],
@@ -592,7 +594,7 @@ describe('orchestrator runTask — manual mode + concurrent execution', () => {
       {
         resolveAgent: (id) => (id === 'sr-designer' ? srDesigner : id === 'jr-designer' ? jrDesigner : undefined),
         getMCPConnection: () => mcp,
-        getModel: (agent: any): any => getOrThrow(providers, agent.id),
+        getModel: (agent: AgentDef) => getOrThrow(models, agent.id),
         eventBus: bus,
         context: db.context,
         audit: db.audit,

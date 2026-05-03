@@ -238,7 +238,8 @@ describe('ConversationService @all mentions', () => {
     repo.getMember = (_orgId, id) => members.find(m => m.id === id) ?? null;
     
     // Add member to channel
-    const channel = repo.getChannel('org-1', 'general')!;
+    const channel = repo.getChannel('org-1', 'general');
+    if (!channel) throw new Error('expected general channel');
     channel.memberIds.push(quinnMason.id);
 
     const message = service.sendMessage({

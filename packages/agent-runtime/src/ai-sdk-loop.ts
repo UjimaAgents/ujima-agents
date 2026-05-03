@@ -75,6 +75,41 @@ class LoopExit extends Error {
   }
 }
 
+function isAbortError(err: unknown): boolean {
+  return err instanceof Error && err.name === 'AbortError';
+}
+
+function raceWithAbortSignal<T>(inner: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+  if (!signal) return inner;
+  if (signal.aborted) {
+    const e = new Error('Aborted');
+    e.name = 'AbortError';
+    return Promise.reject(e);
+  }
+  return Promise.race([
+    inner,
+    new Promise<never>((_, reject) => {
+      const onAbort = () => {
+        const e = new Error('Aborted');
+        e.name = 'AbortError';
+        reject(e);
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
+    }),
+  ]);
+}
+
+function loopExitFrom(err: unknown): LoopExit | undefined {
+  if (err instanceof LoopExit) return err;
+  let cur: unknown = err;
+  for (let i = 0; i < 6 && cur instanceof Error; i++) {
+    const c = (cur as Error & { cause?: unknown }).cause;
+    if (c instanceof LoopExit) return c;
+    cur = c;
+  }
+  return undefined;
+}
+
 function genEventId(prefix: string): string {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -222,23 +257,29 @@ export async function runAiSdkLoop(input: AiSdkLoopInputs): Promise<AiSdkLoopOut
 
             let gateDecision: GateDecision;
             try {
-              gateDecision = await gateResolver.awaitDecision({
-                agentId: agent.id,
-                taskId,
-                sessionId,
-                toolCallId,
-                toolName: info.name,
-                mcpId: mcp.id,
-                mcpName: mcp.def.name,
-                args,
-                gate:
-                  decision.gate ??
-                  (decision.code === 'requires_input' ? 'input' : 'approval'),
-                code: decision.code as 'requires_approval' | 'requires_input',
-                reason: decision.reason,
+              gateDecision = await raceWithAbortSignal(
+                gateResolver.awaitDecision({
+                  agentId: agent.id,
+                  taskId,
+                  sessionId,
+                  toolCallId,
+                  toolName: info.name,
+                  mcpId: mcp.id,
+                  mcpName: mcp.def.name,
+                  args,
+                  gate:
+                    decision.gate ??
+                    (decision.code === 'requires_input' ? 'input' : 'approval'),
+                  code: decision.code as 'requires_approval' | 'requires_input',
+                  reason: decision.reason,
+                  abortSignal,
+                }),
                 abortSignal,
-              });
+              );
             } catch (err) {
+              if (isAbortError(err)) {
+                throw new LoopExit({ exitReason: 'killed' });
+              }
               const message = err instanceof Error ? err.message : String(err);
               stream('agent_tool_result', {
                 id: toolCallId,
@@ -424,6 +465,9 @@ export async function runAiSdkLoop(input: AiSdkLoopInputs): Promise<AiSdkLoopOut
     // part fires (which carries usage). textStream closes on text-end and
     // would miss the finish frame.
     for await (const part of result.fullStream) {
+      if (part.type === 'error') {
+        throw part.error;
+      }
       if (part.type === 'text-delta') {
         stream('agent_thought_delta', { text: part.text });
       }
@@ -523,11 +567,12 @@ export async function runAiSdkLoop(input: AiSdkLoopInputs): Promise<AiSdkLoopOut
       },
     };
   } catch (err) {
-    if (err instanceof LoopExit) {
-      forcedExit = err.outcome;
+    const loopExit = loopExitFrom(err);
+    if (loopExit) {
+      forcedExit = loopExit.outcome;
       return {
-        exitReason: err.outcome.exitReason ?? 'error',
-        error: err.outcome.error,
+        exitReason: loopExit.outcome.exitReason ?? 'error',
+        error: loopExit.outcome.error,
         toolCalls,
         iterations: 1,
         tokensUsed: 0,

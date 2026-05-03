@@ -261,7 +261,7 @@ describe('workspace-root REST gating', () => {
         method: 'POST',
         body: {
           organizationId,
-          status: 'approved',
+          resolution: 'allow_once',
         },
       },
     ];

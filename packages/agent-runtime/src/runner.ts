@@ -2,7 +2,6 @@ import { openDb } from '@ujima/context-store';
 import { createLocalEventBus } from '@ujima/event-bus';
 import { createPermissionMiddleware } from '@ujima/permissions';
 import { createMCPPool } from '@ujima/mcp-client';
-import { selectProvider } from '@ujima/llm/legacy';
 import { selectLanguageModel, type ProviderKind } from '@ujima/llm';
 import type { AgentDef, MCPDef, TaskDef } from '@ujima/shared';
 import { runAgent } from './shell';
@@ -47,7 +46,7 @@ function readAiSdkConfigFromEnv(env: NodeJS.ProcessEnv): RunnerConfig['llm'] | u
 }
 
 export async function runInRunner(config: RunnerConfig): Promise<AgentRunResult> {
-  const engine = resolveOrchestratorEngine(config.engine ?? process.env.UJIMA_ORCHESTRATOR_ENGINE);
+  resolveOrchestratorEngine(config.engine ?? process.env.UJIMA_ORCHESTRATOR_ENGINE);
   const db = openDb({ dbPath: config.dbPath });
   const bus = createLocalEventBus({ audit: db.audit, pendingEvents: db.pendingEvents });
   const permissions = createPermissionMiddleware({ audit: db.audit, agentState: db.agentState });

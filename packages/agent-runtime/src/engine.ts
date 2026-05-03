@@ -10,8 +10,13 @@ export type OrchestratorEngine = (typeof ORCHESTRATOR_ENGINES)[number];
 
 const DEFAULT_ENGINE: OrchestratorEngine = 'ai-sdk';
 
-export function resolveOrchestratorEngine(
-  input: string | undefined,
-): OrchestratorEngine {
-  return DEFAULT_ENGINE;
+export function resolveOrchestratorEngine(input: string | undefined): OrchestratorEngine {
+  const trimmed = input?.trim();
+  if (trimmed === undefined || trimmed === '') {
+    return DEFAULT_ENGINE;
+  }
+  if ((ORCHESTRATOR_ENGINES as readonly string[]).includes(trimmed)) {
+    return trimmed as OrchestratorEngine;
+  }
+  throw new Error(`Invalid orchestrator engine: ${input}`);
 }

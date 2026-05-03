@@ -5,6 +5,7 @@ import { createLocalEventBus, type EventBus } from '@ujima/event-bus';
 import { createPermissionMiddleware } from '@ujima/permissions';
 import { createMockProvider, textTurn, toolTurn } from '@ujima/llm/legacy';
 import { runAgent } from './shell';
+import { createLanguageModelFromLegacyProvider } from './legacy-llm-language-model';
 import { makeFakeMCPConnection } from './test-helpers';
 
 const baseAgent: AgentDef = {
@@ -44,7 +45,7 @@ describe('runAgent — single-agent end-to-end', () => {
   });
 
   it('runs a tool loop, logs audit entries, and publishes agent_exited', async () => {
-    const provider = createMockProvider({
+    const _provider = createMockProvider({
       script: [toolTurn('call_1', 'echo', { msg: 'hi' }, 'calling echo'), textTurn('all done')],
     });
     const mcp = makeFakeMCPConnection({ id: 'figma' });
@@ -60,7 +61,7 @@ describe('runAgent — single-agent end-to-end', () => {
       task,
       sessionId: 's1',
       spawnReason: 'initial',
-      model: {} as any,
+      model: createLanguageModelFromLegacyProvider(_provider, 'mock'),
       mcp,
       permissions,
       eventBus: bus,
@@ -90,11 +91,25 @@ describe('runAgent — single-agent end-to-end', () => {
 
   it('blocks disallowed tools and feeds the denial back to the LLM', async () => {
     const onCall = vi.fn();
-    const provider = createMockProvider({
+    const _provider = createMockProvider({
       script: [toolTurn('c1', 'delete_file', { path: '/etc' }), textTurn('ok I stopped')],
       onCall,
     });
-    const mcp = makeFakeMCPConnection({ id: 'figma' });
+    const mcp = makeFakeMCPConnection({
+      id: 'figma',
+      tools: [
+        {
+          name: 'echo',
+          description: 'echo a message',
+          inputSchema: { type: 'object', properties: { msg: { type: 'string' } } },
+        },
+        {
+          name: 'delete_file',
+          description: 'delete a file',
+          inputSchema: { type: 'object', properties: { path: { type: 'string' } } },
+        },
+      ],
+    });
     const permissions = createPermissionMiddleware({ audit: db.audit });
 
     const handle = runAgent({
@@ -102,7 +117,7 @@ describe('runAgent — single-agent end-to-end', () => {
       task,
       sessionId: 's1',
       spawnReason: 'initial',
-      model: {} as any,
+      model: createLanguageModelFromLegacyProvider(_provider, 'mock'),
       mcp,
       permissions,
       eventBus: bus,
@@ -117,11 +132,12 @@ describe('runAgent — single-agent end-to-end', () => {
     const permChecks = await db.audit.query({ eventType: 'permission_check' });
     expect(permChecks.some((r) => !r.allowed)).toBe(true);
     const toolCalls = await db.audit.query({ eventType: 'tool_call' });
-    expect(toolCalls).toHaveLength(0);
+    expect(toolCalls).toHaveLength(1);
+    expect(toolCalls[0]?.allowed).toBe(false);
   });
 
   it('exits with escalated when the assistant text matches an escalation condition', async () => {
-    const provider = createMockProvider({
+    const _provider = createMockProvider({
       script: [textTurn('This requires approval from a senior designer before shipping.')],
     });
     const mcp = makeFakeMCPConnection({ id: 'figma' });
@@ -139,7 +155,7 @@ describe('runAgent — single-agent end-to-end', () => {
       task,
       sessionId: 's1',
       spawnReason: 'initial',
-      model: {} as any,
+      model: createLanguageModelFromLegacyProvider(_provider, 'mock'),
       mcp,
       permissions,
       eventBus: bus,
@@ -154,7 +170,7 @@ describe('runAgent — single-agent end-to-end', () => {
   });
 
   it('propagates kill signal via handle.kill()', async () => {
-    const provider = {
+    const _provider = {
       id: 'mock' as const,
       async *stream({ abortSignal }: { abortSignal?: AbortSignal }) {
         await new Promise<void>((_, reject) => {
@@ -175,7 +191,7 @@ describe('runAgent — single-agent end-to-end', () => {
       task,
       sessionId: 's1',
       spawnReason: 'initial',
-      model: {} as any,
+      model: createLanguageModelFromLegacyProvider(_provider, 'mock'),
       mcp,
       permissions,
       eventBus: bus,

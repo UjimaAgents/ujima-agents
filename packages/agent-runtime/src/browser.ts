@@ -1,5 +1,3 @@
-import type { UjimaEvent } from '@ujima/shared';
-
 export interface BrowserStateSnapshot {
   url?: string;
   title?: string;
@@ -8,7 +6,12 @@ export interface BrowserStateSnapshot {
   mcpId?: string;
 }
 
-type ContentPart = { type?: string; text?: string; mimeType?: string; data?: string };
+interface ContentPart {
+  type?: string;
+  text?: string;
+  mimeType?: string;
+  data?: string;
+}
 
 function isContentPartArray(value: unknown): value is ContentPart[] {
   return Array.isArray(value) && value.every((p) => p !== null && typeof p === 'object');

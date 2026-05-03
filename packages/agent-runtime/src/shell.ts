@@ -1,5 +1,4 @@
 import type { UjimaEvent } from '@ujima/shared';
-import type { LLMMessage } from '@ujima/llm/legacy';
 import { hydrate } from './hydrate';
 import { runAiSdkLoop } from './ai-sdk-loop';
 import type { AgentRunInputs, AgentRunResult, ExitReason } from './types';
@@ -54,7 +53,6 @@ async function execute(inputs: AgentRunInputs, controller: AbortController): Pro
     approvals,
     maxToolIterations = DEFAULT_MAX_ITERATIONS,
     heartbeatIntervalMs = DEFAULT_HEARTBEAT_MS,
-    abortSignal,
     onEvent,
     onStream,
     gateResolver,
@@ -114,7 +112,7 @@ async function execute(inputs: AgentRunInputs, controller: AbortController): Pro
       systemPrompt: bundle.systemPrompt,
       userPrompt: bundle.taskPrompt,
       maxIterations: maxToolIterations,
-      abortSignal,
+      abortSignal: controller.signal,
       emitEvent: emit,
       onStream,
       gateResolver,

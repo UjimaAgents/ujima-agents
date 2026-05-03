@@ -10,6 +10,8 @@ export type { BrowserStateSnapshot } from './browser';
 export { runAiSdkLoop } from './ai-sdk-loop';
 export type { AiSdkLoopInputs, AiSdkLoopOutcome } from './ai-sdk-loop';
 
+export { createLanguageModelFromLegacyProvider } from './legacy-llm-language-model';
+
 export type { OrchestratorEngine } from './engine';
 export { ORCHESTRATOR_ENGINES, resolveOrchestratorEngine } from './engine';
 
