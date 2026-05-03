@@ -86,12 +86,14 @@ export type ChannelPresenceEvent = z.infer<typeof ChannelPresenceEventSchema>;
 
 export const ApprovalRequestedEventSchema = z.object({
   organizationId: IdSchema,
+  threadId: IdSchema.optional(),
   approval: ApprovalRequestSchema,
 });
 export type ApprovalRequestedEvent = z.infer<typeof ApprovalRequestedEventSchema>;
 
 export const ApprovalResolvedEventSchema = z.object({
   organizationId: IdSchema,
+  threadId: IdSchema.optional(),
   approval: ApprovalRequestSchema,
 });
 export type ApprovalResolvedEvent = z.infer<typeof ApprovalResolvedEventSchema>;
@@ -127,6 +129,7 @@ export type ChannelUpdatedEvent = z.infer<typeof ChannelUpdatedEventSchema>;
 export const ToolCalledEventSchema = z.object({
   organizationId: IdSchema,
   runId: IdSchema,
+  threadId: IdSchema.optional(),
   agentId: IdSchema,
   toolCall: ToolCallSchema,
 });
@@ -135,6 +138,7 @@ export type ToolCalledEvent = z.infer<typeof ToolCalledEventSchema>;
 export const ToolResultEventSchema = z.object({
   organizationId: IdSchema,
   runId: IdSchema,
+  threadId: IdSchema.optional(),
   agentId: IdSchema,
   toolResult: ToolResultSchema,
 });

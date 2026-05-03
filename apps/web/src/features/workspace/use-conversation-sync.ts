@@ -248,10 +248,8 @@ export function useConversationSync(
         removeMessage(tempId);
         throw new Error("Unexpected message response.");
       }
-
-      receiveMessage(tempId, parsed.data, (message) => messageToChatMessage(message, storeMembers), messageToActivity);
     },
-    [addPendingMessage, bootstrap.auth.member, conversation.id, conversation.type, removeMessage, receiveMessage, storeMembers, transport],
+    [addPendingMessage, bootstrap.auth.member, conversation.id, conversation.type, removeMessage, transport],
   );
 
   useEffect(() => {
@@ -389,10 +387,12 @@ function handleStreamEvent(
       const run = parseRunPayload(envelope.payload);
       if (!run) return;
       actions.upsertRun(run, runToActivity);
-      actions.setMemberActivity(
-        run.agentId,
-        run.status === "completed" ? "online" : "working",
-      );
+      if (run.status === "completed") {
+        const member = actions.storeMembers.find((m) => m.id === run.agentId);
+        actions.setMemberActivity(run.agentId, presenceToActivityState(member?.presence));
+      } else {
+        actions.setMemberActivity(run.agentId, "working");
+      }
       return;
     }
     case "member:updated": {

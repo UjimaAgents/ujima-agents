@@ -45,6 +45,9 @@ export interface AiSdkLoopInputs {
   temperature?: number;
 }
 
+import type { BrowserStateSnapshot } from './tool-loop';
+import { captureBrowserState } from './tool-loop';
+
 export interface AiSdkLoopOutcome {
   exitReason: 'completed' | 'escalated' | 'rate_limit_tripped' | 'killed' | 'error';
   escalationReason?: string;
@@ -53,6 +56,7 @@ export interface AiSdkLoopOutcome {
   iterations: number;
   tokensUsed: number;
   finalText: string;
+  browserState?: BrowserStateSnapshot;
   /**
    * AI SDK `usage` breakdown for cost-meter wiring (E0.1.5). Zero when the
    * provider doesn't surface usage.
@@ -76,10 +80,8 @@ function genEventId(prefix: string): string {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function truncateToolContent(content: unknown, maxChars: number): string {
-  const serialized = typeof content === 'string' ? content : JSON.stringify(content);
-  if (serialized.length <= maxChars) return serialized;
-  return `${serialized.slice(0, maxChars)}\n\n[… truncated ${serialized.length - maxChars} chars]`;
+function truncateToolContent(content: unknown, _maxChars: number): unknown {
+  return content;
 }
 
 export async function runAiSdkLoop(input: AiSdkLoopInputs): Promise<AiSdkLoopOutcome> {
@@ -305,6 +307,15 @@ export async function runAiSdkLoop(input: AiSdkLoopInputs): Promise<AiSdkLoopOut
               finalArgs,
             );
             const duration = Date.now() - start;
+            if (!result.isError) {
+              browserState = captureBrowserState(
+                toolName,
+                finalArgs,
+                result.content,
+                browserState,
+                mcp.id,
+              );
+            }
             await audit.write({
               event_id: genEventId('tc'),
               event_type: 'tool_call',
@@ -412,6 +423,7 @@ export async function runAiSdkLoop(input: AiSdkLoopInputs): Promise<AiSdkLoopOut
         iterations: 1,
         tokensUsed,
         finalText,
+        browserState,
         usage: {
           inputTokens: usage?.inputTokens ?? 0,
           outputTokens: usage?.outputTokens ?? 0,
@@ -451,6 +463,7 @@ export async function runAiSdkLoop(input: AiSdkLoopInputs): Promise<AiSdkLoopOut
         iterations: 1,
         tokensUsed,
         finalText,
+        browserState,
         usage: {
           inputTokens: usage?.inputTokens ?? 0,
           outputTokens: usage?.outputTokens ?? 0,
@@ -471,6 +484,7 @@ export async function runAiSdkLoop(input: AiSdkLoopInputs): Promise<AiSdkLoopOut
       iterations: 1,
       tokensUsed,
       finalText,
+      browserState,
       usage: {
         inputTokens: usage?.inputTokens ?? 0,
         outputTokens: usage?.outputTokens ?? 0,
@@ -487,6 +501,7 @@ export async function runAiSdkLoop(input: AiSdkLoopInputs): Promise<AiSdkLoopOut
         iterations: 1,
         tokensUsed: 0,
         finalText: '',
+        browserState,
         usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
       };
     }
@@ -499,6 +514,7 @@ export async function runAiSdkLoop(input: AiSdkLoopInputs): Promise<AiSdkLoopOut
       iterations: 1,
       tokensUsed: 0,
       finalText: '',
+      browserState,
       usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
     };
   }

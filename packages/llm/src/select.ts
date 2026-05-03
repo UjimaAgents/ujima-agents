@@ -1,11 +1,27 @@
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createOpenAI } from '@ai-sdk/openai';
-import type { LanguageModel } from 'ai';
+import { defaultSettingsMiddleware, wrapLanguageModel, type LanguageModel } from 'ai';
 import { LLMError, PROVIDER_KINDS, type ProviderKind } from './types.js';
 
 const DEFAULT_OLLAMA_BASE_URL = 'http://127.0.0.1:11434/v1';
 const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
+
+const DEFAULT_REASONING_SETTINGS = defaultSettingsMiddleware({
+  settings: {
+    providerOptions: {
+      openai: { reasoningEffort: 'medium' },
+      anthropic: { effort: 'medium' },
+    },
+  },
+});
+
+function withDefaultReasoning(model: LanguageModel): LanguageModel {
+  return wrapLanguageModel({
+    model,
+    middleware: DEFAULT_REASONING_SETTINGS,
+  });
+}
 
 export interface SelectLanguageModelInput {
   /** Provider kind. See {@link ProviderKind}. */
@@ -37,83 +53,83 @@ export function selectLanguageModel(input: SelectLanguageModelInput): LanguageMo
 
   if (input.kind === 'anthropic') {
     if (!input.apiKey) throw new LLMError('not_configured', 'anthropic provider requires apiKey');
-    return createAnthropic({ apiKey: input.apiKey }).messages(input.modelId);
+    return withDefaultReasoning(createAnthropic({ apiKey: input.apiKey }).messages(input.modelId));
   }
 
   if (input.kind === 'openai') {
     if (!input.apiKey) throw new LLMError('not_configured', 'openai provider requires apiKey');
-    return createOpenAI({ apiKey: input.apiKey }).responses(input.modelId);
+    return withDefaultReasoning(createOpenAI({ apiKey: input.apiKey }).responses(input.modelId));
   }
 
   if (input.kind === 'google') {
     if (!input.apiKey) throw new LLMError('not_configured', 'google provider requires apiKey');
-    return createGoogleGenerativeAI({ apiKey: input.apiKey }).languageModel(input.modelId);
+    return withDefaultReasoning(createGoogleGenerativeAI({ apiKey: input.apiKey }).languageModel(input.modelId));
   }
 
   if (input.kind === 'openrouter') {
     if (!input.apiKey) throw new LLMError('not_configured', 'openrouter provider requires apiKey');
-    return createOpenAI({
+    return withDefaultReasoning(createOpenAI({
       apiKey: input.apiKey,
       baseURL: input.baseUrl ?? OPENROUTER_BASE_URL,
-    }).chat(input.modelId);
+    }).chat(input.modelId));
   }
 
   if (input.kind === 'ollama') {
     // Ollama exposes an OpenAI-compatible endpoint at /v1; key is irrelevant
     // but the SDK requires a non-empty string.
-    return createOpenAI({
+    return withDefaultReasoning(createOpenAI({
       apiKey: input.apiKey ?? 'ollama',
       baseURL: input.baseUrl ?? DEFAULT_OLLAMA_BASE_URL,
-    }).chat(input.modelId);
+    }).chat(input.modelId));
   }
 
   if (input.kind === 'deepseek') {
     if (!input.apiKey) throw new LLMError('not_configured', 'deepseek provider requires apiKey');
-    return createOpenAI({
+    return withDefaultReasoning(createOpenAI({
       apiKey: input.apiKey,
       baseURL: input.baseUrl ?? 'https://api.deepseek.com/v1',
-    }).chat(input.modelId);
+    }).chat(input.modelId));
   }
 
   if (input.kind === 'xai') {
     if (!input.apiKey) throw new LLMError('not_configured', 'xai provider requires apiKey');
-    return createOpenAI({
+    return withDefaultReasoning(createOpenAI({
       apiKey: input.apiKey,
       baseURL: input.baseUrl ?? 'https://api.x.ai/v1',
-    }).chat(input.modelId);
+    }).chat(input.modelId));
   }
 
   if (input.kind === 'mistral') {
     if (!input.apiKey) throw new LLMError('not_configured', 'mistral provider requires apiKey');
-    return createOpenAI({
+    return withDefaultReasoning(createOpenAI({
       apiKey: input.apiKey,
       baseURL: input.baseUrl ?? 'https://api.mistral.ai/v1',
-    }).chat(input.modelId);
+    }).chat(input.modelId));
   }
 
   if (input.kind === 'kimi') {
     if (!input.apiKey) throw new LLMError('not_configured', 'kimi provider requires apiKey');
-    return createOpenAI({
+    return withDefaultReasoning(createOpenAI({
       apiKey: input.apiKey,
       baseURL: input.baseUrl ?? 'https://api.moonshot.ai/v1',
-    }).chat(input.modelId);
+    }).chat(input.modelId));
   }
 
   if (input.kind === 'zhipu') {
     if (!input.apiKey) throw new LLMError('not_configured', 'zhipu provider requires apiKey');
-    return createOpenAI({
+    return withDefaultReasoning(createOpenAI({
       apiKey: input.apiKey,
       baseURL: input.baseUrl ?? 'https://open.bigmodel.cn/api/paas/v4',
-    }).chat(input.modelId);
+    }).chat(input.modelId));
   }
 
   if (input.kind === 'openai-codex') {
     // Uses OpenAI Codex OAuth subscription token as API key
     if (!input.apiKey) throw new LLMError('not_configured', 'openai-codex provider requires apiKey (OAuth token)');
-    return createOpenAI({
+    return withDefaultReasoning(createOpenAI({
       apiKey: input.apiKey,
       baseURL: input.baseUrl ?? 'https://api.openai.com/v1',
-    }).chat(input.modelId);
+    }).chat(input.modelId));
   }
 
   const exhaustive: never = input.kind;

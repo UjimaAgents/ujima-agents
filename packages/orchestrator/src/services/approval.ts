@@ -63,7 +63,7 @@ export class ApprovalService {
     }
     this.realtime.emit(
       SocketEventNames.approvalRequested,
-      { organizationId: input.organizationId, approval },
+      { organizationId: input.organizationId, threadId: run?.threadId, approval },
       rooms,
     );
 
@@ -89,7 +89,7 @@ export class ApprovalService {
     }
     this.realtime.emit(
       SocketEventNames.approvalResolved,
-      { organizationId: input.organizationId, approval },
+      { organizationId: input.organizationId, threadId: run?.threadId, approval },
       rooms,
     );
 

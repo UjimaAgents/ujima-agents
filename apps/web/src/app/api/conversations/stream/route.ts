@@ -78,6 +78,9 @@ export async function GET(request: Request) {
           const schema = SocketEventSchemas[eventName];
           const parsed = schema.safeParse(payload);
           if (!parsed.success) return;
+          if (!shouldForwardEvent(eventName, parsed.data, { threadId, channelIds })) {
+            return;
+          }
           send({ type: "socket", event: eventName, payload: parsed.data });
         });
       }
@@ -109,4 +112,56 @@ export async function GET(request: Request) {
       connection: "keep-alive",
     },
   });
+}
+
+function shouldForwardEvent(
+  eventName: SocketEventName,
+  payload: unknown,
+  input: {
+    threadId: string;
+    channelIds: string[];
+  },
+): boolean {
+  const threadIds = new Set([input.threadId]);
+
+  switch (eventName) {
+    case SocketEventNames.channelMessage: {
+      const body = payload as { channelId?: string };
+      return typeof body.channelId === "string" && input.channelIds.includes(body.channelId);
+    }
+    case SocketEventNames.threadMessage: {
+      const body = payload as { threadId?: string };
+      return typeof body.threadId === "string" && threadIds.has(body.threadId);
+    }
+    case SocketEventNames.dmMessage: {
+      const body = payload as { message?: { threadId?: string } };
+      return typeof body.message?.threadId === "string" && threadIds.has(body.message.threadId);
+    }
+    case SocketEventNames.approvalRequested:
+    case SocketEventNames.approvalResolved: {
+      const body = payload as { threadId?: string };
+      return typeof body.threadId === "string" && threadIds.has(body.threadId);
+    }
+    case SocketEventNames.runStarted:
+    case SocketEventNames.runUpdated:
+    case SocketEventNames.runCompleted: {
+      const body = payload as { run?: { threadId?: string } };
+      return typeof body.run?.threadId === "string" && threadIds.has(body.run.threadId);
+    }
+    case SocketEventNames.toolCalled:
+    case SocketEventNames.toolResult: {
+      const body = payload as { threadId?: string };
+      return typeof body.threadId === "string" && threadIds.has(body.threadId);
+    }
+    case SocketEventNames.memberAlerted: {
+      const body = payload as { threadId?: string };
+      return typeof body.threadId === "string" && threadIds.has(body.threadId);
+    }
+    case SocketEventNames.supervisorReplied: {
+      const body = payload as { message?: { threadId?: string } };
+      return typeof body.message?.threadId === "string" && threadIds.has(body.message.threadId);
+    }
+    default:
+      return false;
+  }
 }

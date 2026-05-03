@@ -187,16 +187,26 @@ export class AiService {
         description: team.tools[toolId]?.description,
         inputSchema: t.schema,
         execute: async (args, { toolCallId }) => {
-          const invocationData = t.toInvocation(args);
-          return this.tools.invoke({
-            organizationId: input.organizationId,
-            runId: input.runId,
-            memberId: input.agentId,
-            threadId: input.threadId,
-            toolCallId,
-            toolId,
-            ...invocationData,
-          });
+          try {
+            const invocationData = t.toInvocation(args);
+            const result = await this.tools.invoke({
+              organizationId: input.organizationId,
+              runId: input.runId,
+              memberId: input.agentId,
+              threadId: input.threadId,
+              toolCallId,
+              toolId,
+              ...invocationData,
+            });
+            if (!result.ok) {
+              return { error: result.error ?? 'tool invocation failed' };
+            }
+            return result.output ?? { ok: true };
+          } catch (error) {
+            return {
+              error: error instanceof Error ? error.message : String(error),
+            };
+          }
         },
       });
     }
@@ -205,19 +215,30 @@ export class AiService {
     return tool({
       description: team.tools[toolId]?.description,
       inputSchema: GenericToolInvocationSchema,
-      execute: async (args, { toolCallId }) =>
-        this.tools.invoke({
-          organizationId: input.organizationId,
-          runId: input.runId,
-          memberId: input.agentId,
-          threadId: input.threadId,
-          toolCallId,
-          toolId,
-          action: args.action,
-          resourceType: args.resourceType,
-          resourcePath: args.resourcePath,
-          input: args.input,
-        }),
+      execute: async (args, { toolCallId }) => {
+        try {
+          const result = await this.tools.invoke({
+            organizationId: input.organizationId,
+            runId: input.runId,
+            memberId: input.agentId,
+            threadId: input.threadId,
+            toolCallId,
+            toolId,
+            action: args.action,
+            resourceType: args.resourceType,
+            resourcePath: args.resourcePath,
+            input: args.input,
+          });
+          if (!result.ok) {
+            return { error: result.error ?? 'tool invocation failed' };
+          }
+          return result.output ?? { ok: true };
+        } catch (error) {
+          return {
+            error: error instanceof Error ? error.message : String(error),
+          };
+        }
+      },
     });
   }
 }

@@ -710,17 +710,6 @@ async function resolveGate(input: {
   }
 }
 
-function truncateToolContent(content: unknown, maxChars: number): unknown {
-  if (typeof content === 'string') {
-    return content.length > maxChars ? `${content.slice(0, maxChars)}\n… [truncated ${content.length - maxChars} chars]` : content;
-  }
-  let serialized: string;
-  try {
-    serialized = JSON.stringify(content);
-  } catch {
-    return content;
-  }
-  if (serialized.length <= maxChars) return content;
-  const head = serialized.slice(0, maxChars);
-  return `${head}\n… [truncated ${serialized.length - maxChars} chars of tool output — retry with a narrower query or fewer results]`;
+function truncateToolContent(content: unknown, _maxChars: number): unknown {
+  return content;
 }

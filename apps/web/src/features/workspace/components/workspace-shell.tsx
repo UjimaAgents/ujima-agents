@@ -279,7 +279,7 @@ export function WorkspaceShell({
               agents: [
                 ...current.agents.filter((agent) => agent.name !== input.previousName),
                 {
-                  name: member.name,
+                  name: member.id,
                   roleName: input.roleName,
                   personalityName: input.personalityName,
                   kind: "agent",

@@ -235,7 +235,10 @@ export class SupervisorService {
     const sourceMessage = this.repo.getMessage(input.organizationId, input.messageId);
     const body = sourceMessage?.content ?? '';
     return [
-      'You are answering a quick supervisor question — give a one-paragraph status update.',
+      'You are answering a quick supervisor question or carrying out a direct action request.',
+      'Be proactive. If the request asks you to post to a channel, send a DM, or reply in-thread, use the matching tool immediately instead of describing the action.',
+      'Use channel.post for channel posts, channel.dm for direct messages, and channel.reply for thread replies.',
+      'If the request is only asking for status, give a short one-paragraph update.',
       '',
       `Reason: ${input.reason}`,
       `From: ${input.byMemberId}`,

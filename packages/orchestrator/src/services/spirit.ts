@@ -712,25 +712,31 @@ export class SpiritService {
       entries.map(([toolId, definition]) => [
         toModelToolName(toolId),
         tool({
-          description: ctx.team.tools[toolId]?.description ?? `${toolId} tool`,
-          inputSchema: definition.schema,
-          execute: async (rawArgs, { toolCallId }) => {
-            const invocationData = definition.toInvocation(rawArgs);
-            const result = await this.tools.invoke({
-              organizationId: ctx.organizationId,
-              runId: ctx.runId,
-              memberId: ctx.memberId,
-              threadId: ctx.threadId,
-              taskSessionId: ctx.taskSessionId,
-              spiritRole: ctx.spiritRole,
-              toolCallId,
-              toolId,
-              ...invocationData,
-            });
-            if (!result.ok) {
-              return { error: result.error ?? 'tool invocation failed' };
+        description: ctx.team.tools[toolId]?.description ?? `${toolId} tool`,
+        inputSchema: definition.schema,
+        execute: async (rawArgs, { toolCallId }) => {
+            try {
+              const invocationData = definition.toInvocation(rawArgs);
+              const result = await this.tools.invoke({
+                organizationId: ctx.organizationId,
+                runId: ctx.runId,
+                memberId: ctx.memberId,
+                threadId: ctx.threadId,
+                taskSessionId: ctx.taskSessionId,
+                spiritRole: ctx.spiritRole,
+                toolCallId,
+                toolId,
+                ...invocationData,
+              });
+              if (!result.ok) {
+                return { error: result.error ?? 'tool invocation failed' };
+              }
+              return result.output ?? { ok: true };
+            } catch (error) {
+              return {
+                error: error instanceof Error ? error.message : String(error),
+              };
             }
-            return result.output ?? { ok: true };
           },
         }),
       ]),

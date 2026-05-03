@@ -158,12 +158,7 @@ async function execute(inputs: AgentRunInputs, controller: AbortController): Pro
             emitEvent: emit,
             onStream,
             gateResolver,
-          }).then((o) => ({
-            ...o,
-            // ai-sdk loop doesn't surface browser-state yet; legacy caller
-            // reads `browserState` on the outcome, so expose an undefined.
-            browserState: undefined as undefined,
-          }))
+          })
         : activeProvider
         ? await runToolLoop({
             agent,

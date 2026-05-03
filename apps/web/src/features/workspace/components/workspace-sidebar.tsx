@@ -997,7 +997,7 @@ function AgentEditorModal({
               setSaving(true);
               try {
                 const updated = await onUpdateAgent({
-                  previousName: draft.originalName,
+                  previousName: draft.memberId,
                   previousRoleName: draft.originalRoleName,
                   memberId: draft.memberId,
                   name: draft.name.trim(),

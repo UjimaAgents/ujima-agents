@@ -110,6 +110,7 @@ export class ToolServiceImpl implements ToolService {
         {
           organizationId: invocation.organizationId,
           runId: invocation.runId,
+          threadId,
           agentId: invocation.memberId,
           toolResult: {
             toolCallId: invocation.toolCallId,
@@ -171,6 +172,7 @@ export class ToolServiceImpl implements ToolService {
       {
         organizationId: invocation.organizationId,
         runId: invocation.runId,
+        threadId: invocation.threadId ?? this.repo.getRun(invocation.organizationId, invocation.runId)?.threadId,
         agentId: invocation.memberId,
         toolCall: {
           toolCallId: preparedInvocation.toolCallId,
@@ -192,12 +194,15 @@ export class ToolServiceImpl implements ToolService {
 
     if (!policy.allowed) {
       this.audit(preparedInvocation, "blocked", { reason: policy.reason });
+      const run = this.repo.getRun(preparedInvocation.organizationId, preparedInvocation.runId);
+      const threadId = preparedInvocation.threadId ?? run?.threadId;
 
       this.realtime.emit(
         SocketEventNames.toolResult,
         {
           organizationId: invocation.organizationId,
           runId: preparedInvocation.runId,
+          threadId,
           agentId: preparedInvocation.memberId,
           toolResult: {
             toolCallId: preparedInvocation.toolCallId,
@@ -239,6 +244,7 @@ export class ToolServiceImpl implements ToolService {
         {
           organizationId: preparedInvocation.organizationId,
           runId: preparedInvocation.runId,
+          threadId: preparedInvocation.threadId,
           agentId: preparedInvocation.memberId,
           toolResult: {
             toolCallId: preparedInvocation.toolCallId,
@@ -259,12 +265,15 @@ export class ToolServiceImpl implements ToolService {
     try {
       const result = await this.executeTool(preparedInvocation);
       this.audit(preparedInvocation, "ok", { status: "completed" });
+      const run = this.repo.getRun(preparedInvocation.organizationId, preparedInvocation.runId);
+      const threadId = preparedInvocation.threadId ?? run?.threadId;
 
       this.realtime.emit(
         SocketEventNames.toolResult,
         {
           organizationId: preparedInvocation.organizationId,
           runId: preparedInvocation.runId,
+          threadId,
           agentId: preparedInvocation.memberId,
           toolResult: {
             toolCallId: preparedInvocation.toolCallId,
@@ -282,12 +291,15 @@ export class ToolServiceImpl implements ToolService {
         error: message,
         code: isPathEscapeError(error) ? ERR_PATH_ESCAPE : undefined,
       });
+      const run = this.repo.getRun(preparedInvocation.organizationId, preparedInvocation.runId);
+      const threadId = preparedInvocation.threadId ?? run?.threadId;
 
       this.realtime.emit(
         SocketEventNames.toolResult,
         {
           organizationId: preparedInvocation.organizationId,
           runId: preparedInvocation.runId,
+          threadId,
           agentId: preparedInvocation.memberId,
           toolResult: {
             toolCallId: preparedInvocation.toolCallId,
