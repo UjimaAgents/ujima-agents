@@ -5,12 +5,17 @@ import { Avatar, TagBadge, type TagVariant } from "./primitives";
 export interface ChatMessageData {
   id: string;
   senderId?: string;
+  parentMessageId?: string;
   role: string;
   name: string;
   time: string;
   content: string;
   createdAt?: string;
   mentionNames?: string[];
+  replyPreview?: {
+    name: string;
+    content: string;
+  };
   detail?: string;
   tag?: { label: string; variant: TagVariant };
   status?: "success" | "warning";
@@ -48,6 +53,16 @@ export function ChatMessage({
             <TagBadge variant={message.tag.variant} label={message.tag.label} />
           )}
         </div>
+        {message.replyPreview && (
+          <div className="mt-1 rounded-md border-l-2 border-zinc-300 bg-zinc-100/70 px-2 py-1 dark:border-zinc-700 dark:bg-zinc-900/70">
+            <p className="truncate text-[10px] font-semibold text-zinc-700 dark:text-zinc-300">
+              Replying to {message.replyPreview.name}
+            </p>
+            <p className="truncate text-[10px] text-zinc-500 dark:text-zinc-400">
+              {message.replyPreview.content}
+            </p>
+          </div>
+        )}
         <p className="mt-0.5 text-xs font-normal leading-relaxed whitespace-pre-wrap text-zinc-900 dark:text-white">
           {renderMessageContent(message.content, message.mentionNames ?? [])}
         </p>

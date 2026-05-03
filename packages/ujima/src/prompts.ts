@@ -5,6 +5,13 @@ import type { AgentConfig, RoleConfig } from './schemas.js';
 
 export { SHARED_AGENT_SYSTEM_PROMPT } from '@ujima/shared';
 
+export const MESSAGE_TOOL_USAGE_GUIDANCE = [
+  'Default to a normal plain-text reply for conversational responses.',
+  'Use message/channel tools only for explicit side effects: posting to another channel, sending a DM, or posting an in-thread relay on request.',
+  'Never do both for one response: either send via tool or answer in plain text, not both.',
+  'If you used a message/channel tool to send the response, keep any remaining assistant text empty.',
+] as const;
+
 function listTools(role: RoleConfig): string {
   return role.tools.length ? role.tools.join(', ') : 'none';
 }
@@ -133,7 +140,7 @@ export function buildAgentSystemPrompt(
     'Direct message recipient IDs:',
     formatDirectMessageTargets(currentMemberId, members),
     'Use destination: thread for the current conversation, channel for a channel post, and dm for a direct recipient.',
-    'If the request asks you to act, use the relevant tool immediately instead of describing the action. For channel posts use channel.post, for direct messages use channel.dm, and for in-thread replies use channel.reply.',
+    ...MESSAGE_TOOL_USAGE_GUIDANCE,
     'If the message is a greeting, check-in, or casual question, reply briefly instead of staying silent.',
     '',
     `Workspace root: ${workspaceRoot}`,

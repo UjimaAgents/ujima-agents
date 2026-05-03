@@ -78,7 +78,7 @@ export async function GET(request: Request) {
           const schema = SocketEventSchemas[eventName];
           const parsed = schema.safeParse(payload);
           if (!parsed.success) return;
-          if (!shouldForwardEvent(eventName, parsed.data, { threadId, channelIds })) {
+          if (!shouldForwardEvent(eventName, parsed.data, { threadId, channelIds, memberIds })) {
             return;
           }
           send({ type: "socket", event: eventName, payload: parsed.data });
@@ -120,6 +120,7 @@ function shouldForwardEvent(
   input: {
     threadId: string;
     channelIds: string[];
+    memberIds: string[];
   },
 ): boolean {
   const threadIds = new Set([input.threadId]);
@@ -160,6 +161,11 @@ function shouldForwardEvent(
     case SocketEventNames.memberAlerted: {
       const body = payload as { threadId?: string };
       return typeof body.threadId === "string" && threadIds.has(body.threadId);
+    }
+    case SocketEventNames.memberUpdated: {
+      const body = payload as { member?: { id?: string } };
+      if (typeof body.member?.id !== "string") return false;
+      return input.memberIds.length === 0 || input.memberIds.includes(body.member.id);
     }
     case SocketEventNames.supervisorReplied: {
       const body = payload as { message?: { threadId?: string } };

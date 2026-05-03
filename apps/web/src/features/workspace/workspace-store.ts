@@ -139,7 +139,7 @@ export function sameConversation(
   left?: SelectedConversation,
   right?: SelectedConversation,
 ): boolean {
-  return !!left && !!right && left.type === right.type && left.id === right.id && left.name === right.name;
+  return !!left && !!right && left.type === right.type && left.id === right.id;
 }
 
 function sameItems<T extends { id: string }>(current: T[], incoming: T[]): boolean {
@@ -190,7 +190,14 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
     }),
   setSelectedConversation: (selectedConversation) =>
     set((state) => {
-      if (sameConversation(state.selectedConversation, selectedConversation)) return state;
+      if (!state.selectedConversation && !selectedConversation) return state;
+      if (sameConversation(state.selectedConversation, selectedConversation)) {
+        // Metadata update (e.g. rename) for same thread/agent: keep active tab.
+        if (state.selectedConversation?.name === selectedConversation?.name) {
+          return state;
+        }
+        return { selectedConversation };
+      }
       return { selectedConversation, activeTab: "conversation" };
     }),
   setChannels: (channels) =>

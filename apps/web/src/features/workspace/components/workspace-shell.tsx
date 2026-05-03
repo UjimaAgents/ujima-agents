@@ -107,7 +107,13 @@ export function WorkspaceShell({
   const resolvedSelected = selected ?? urlConversation;
 
   useEffect(() => {
-    if (!sameConversation(selected, urlConversation)) {
+    const sameIdentity = sameConversation(selected, urlConversation);
+    const nameChanged =
+      sameIdentity &&
+      !!selected &&
+      !!urlConversation &&
+      selected.name !== urlConversation.name;
+    if (!sameIdentity || nameChanged) {
       setSelectedConversation(urlConversation);
     }
   }, [selected, setSelectedConversation, urlConversation]);
@@ -274,9 +280,8 @@ export function WorkspaceShell({
       appendMember(member);
       setTeamSettingsState((current) =>
         current
-          ? {
-              ...current,
-              agents: [
+          ? (() => {
+              const nextAgents = [
                 ...current.agents.filter((agent) => agent.name !== input.previousAgentId),
                 {
                   name: member.id,
@@ -284,12 +289,32 @@ export function WorkspaceShell({
                   personalityName: input.personalityName,
                   kind: "agent",
                 },
-              ],
-              roles: [
-                ...current.roles.filter((role) => role.name !== input.previousRoleName),
+              ];
+              const previousRoleStillUsed = nextAgents.some(
+                (agent) =>
+                  agent.name !== member.id &&
+                  agent.roleName === input.previousRoleName,
+              );
+              const roles = [
+                ...current.roles.filter((role) => {
+                  if (role.name === input.roleName) return false;
+                  if (
+                    role.name === input.previousRoleName &&
+                    input.previousRoleName !== input.roleName &&
+                    !previousRoleStillUsed
+                  ) {
+                    return false;
+                  }
+                  return true;
+                }),
                 normalizeWorkspaceTeamRole(input.role),
-              ],
-            }
+              ];
+              return {
+                ...current,
+                agents: nextAgents,
+                roles,
+              };
+            })()
           : current,
       );
       return member;

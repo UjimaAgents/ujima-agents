@@ -6,8 +6,14 @@ export interface ProviderCatalogOption {
 export const PROVIDER_OPTIONS: readonly ProviderCatalogOption[] = [
   { label: "Anthropic", token: "anthropic" },
   { label: "OpenAI", token: "openai" },
+  { label: "OpenAI Codex", token: "openai-codex" },
   { label: "Google", token: "google" },
   { label: "OpenRouter", token: "openrouter" },
+  { label: "Mistral", token: "mistral" },
+  { label: "DeepSeek", token: "deepseek" },
+  { label: "xAI", token: "xai" },
+  { label: "Kimi", token: "kimi" },
+  { label: "Zhipu", token: "zhipu" },
   { label: "Ollama", token: "ollama" },
 ] as const;
 

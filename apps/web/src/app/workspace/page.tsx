@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import {
+  daemonBaseUrl,
   getServerBootstrap,
   getServerRolePresets,
   getServerTeamSettings,
@@ -12,7 +13,22 @@ export default async function WorkspacePage({
 }: {
   searchParams?: Promise<Record<string, string | string[] | undefined>> | Record<string, string | string[] | undefined>;
 }) {
-  const bootstrap = await getServerBootstrap();
+  const bootstrap = await getServerBootstrap().catch(() => null);
+  if (!bootstrap) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-zinc-50 px-6 dark:bg-[#09090b]">
+        <div className="max-w-xl rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
+          <h1 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
+            Workspace daemon is unavailable
+          </h1>
+          <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
+            Could not reach the local Ujima daemon at <code>{daemonBaseUrl()}</code>.
+            Start the daemon, then refresh this page.
+          </p>
+        </div>
+      </main>
+    );
+  }
   const rolePresets = await getServerRolePresets().catch(() => []);
   const teamSettings = await getServerTeamSettings().catch(() => null);
 

@@ -1,0 +1,1311 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<testsuites name="vitest tests" tests="424" failures="22" errors="0" time="13.47">
+    <testsuite name="apps/api/test/auth.int.test.ts" timestamp="2026-05-03T14:35:34.116Z" hostname="MacBook-Air.local" tests="2" failures="0" errors="0" skipped="0" time="0.817697667">
+        <testcase classname="apps/api/test/auth.int.test.ts" name="auth flow &gt; onboarding creates an owner session that bootstrap can restore" time="0.256759708">
+            <system-err>
+RESPONSE: {&quot;organization&quot;:{&quot;id&quot;:&quot;242b232a-0601-42fd-9a84-48a963e2b073&quot;,&quot;name&quot;:&quot;Auth Org&quot;},&quot;members&quot;:[{&quot;id&quot;:&quot;fbfd84c3-1b1b-4c71-b5fd-afc7089209ad&quot;,&quot;organizationId&quot;:&quot;242b232a-0601-42fd-9a84-48a963e2b073&quot;,&quot;name&quot;:&quot;Owner&quot;,&quot;kind&quot;:&quot;human&quot;,&quot;roleName&quot;:&quot;owner&quot;,&quot;presence&quot;:&quot;offline&quot;,&quot;createdAt&quot;:&quot;2026-05-03T14:35:27.712Z&quot;},{&quot;id&quot;:&quot;frontend-engineer&quot;,&quot;organizationId&quot;:&quot;242b232a-0601-42fd-9a84-48a963e2b073&quot;,&quot;name&quot;:&quot;frontend-engineer&quot;,&quot;kind&quot;:&quot;agent&quot;,&quot;roleName&quot;:&quot;frontend-engineer&quot;,&quot;presence&quot;:&quot;offline&quot;,&quot;createdAt&quot;:&quot;2026-05-03T14:35:27.713Z&quot;}],&quot;channels&quot;:[{&quot;id&quot;:&quot;general&quot;,&quot;organizationId&quot;:&quot;242b232a-0601-42fd-9a84-48a963e2b073&quot;,&quot;name&quot;:&quot;general&quot;,&quot;kind&quot;:&quot;general&quot;,&quot;topic&quot;:&quot;General&quot;,&quot;memberIds&quot;:[&quot;frontend-engineer&quot;],&quot;createdAt&quot;:&quot;2026-05-03T14:35:27.719Z&quot;}],&quot;team&quot;:{&quot;name&quot;:&quot;Auth Org&quot;,&quot;workspaceRoot&quot;:&quot;/var/folders/hp/nfth28kd1y52kt__wkdwgqn40000gn/T/ujima-auth-mduM4K&quot;,&quot;roles&quot;:[&quot;frontend-engineer&quot;],&quot;agents&quot;:[&quot;frontend-engineer&quot;],&quot;channels&quot;:[&quot;general&quot;]},&quot;auth&quot;:{&quot;authenticated&quot;:true,&quot;user&quot;:{&quot;id&quot;:&quot;bfebca1c-a5d0-477b-a271-7b76293063ca&quot;,&quot;organizationId&quot;:&quot;242b232a-0601-42fd-9a84-48a963e2b073&quot;,&quot;memberId&quot;:&quot;fbfd84c3-1b1b-4c71-b5fd-afc7089209ad&quot;,&quot;email&quot;:&quot;owner@example.com&quot;,&quot;createdAt&quot;:&quot;2026-05-03T14:35:27.728Z&quot;},&quot;member&quot;:{&quot;id&quot;:&quot;fbfd84c3-1b1b-4c71-b5fd-afc7089209ad&quot;,&quot;organizationId&quot;:&quot;242b232a-0601-42fd-9a84-48a963e2b073&quot;,&quot;name&quot;:&quot;Owner&quot;,&quot;kind&quot;:&quot;human&quot;,&quot;roleName&quot;:&quot;owner&quot;,&quot;presence&quot;:&quot;offline&quot;,&quot;createdAt&quot;:&quot;2026-05-03T14:35:27.712Z&quot;},&quot;session&quot;:{&quot;id&quot;:&quot;ceaf09ee-688e-4dad-be4a-62c4e1b3eb3a&quot;,&quot;userId&quot;:&quot;bfebca1c-a5d0-477b-a271-7b76293063ca&quot;,&quot;organizationId&quot;:&quot;242b232a-0601-42fd-9a84-48a963e2b073&quot;,&quot;memberId&quot;:&quot;fbfd84c3-1b1b-4c71-b5fd-afc7089209ad&quot;,&quot;createdAt&quot;:&quot;2026-05-03T14:35:27.847Z&quot;,&quot;expiresAt&quot;:&quot;2026-06-02T14:35:27.847Z&quot;,&quot;lastSeenAt&quot;:&quot;2026-05-03T14:35:27.847Z&quot;}},&quot;sessionToken&quot;:&quot;08bb77dc62dd609ba26c3b75b906e19d99b1eca3f9c9c113dccc450578f5e508&quot;}
+
+            </system-err>
+        </testcase>
+        <testcase classname="apps/api/test/auth.int.test.ts" name="auth flow &gt; supports login, invalid credentials, and logout" time="0.203824584">
+        </testcase>
+    </testsuite>
+    <testsuite name="apps/api/test/channels.int.test.ts" timestamp="2026-05-03T14:35:34.119Z" hostname="MacBook-Air.local" tests="14" failures="0" errors="0" skipped="0" time="0.994651792">
+        <testcase classname="apps/api/test/channels.int.test.ts" name="E3 channels and mentions &gt; creates self-channels on member spawn, auto-joins default channels, and hides other self channels from channel.list(all)" time="0.100358875">
+        </testcase>
+        <testcase classname="apps/api/test/channels.int.test.ts" name="E3 channels and mentions &gt; lazy-creates DM channels on first send and reuses them on second send" time="0.061145708">
+        </testcase>
+        <testcase classname="apps/api/test/channels.int.test.ts" name="E3 channels and mentions &gt; keeps DMs private to their participants in list, read, and post paths" time="0.034964625">
+        </testcase>
+        <testcase classname="apps/api/test/channels.int.test.ts" name="E3 channels and mentions &gt; fans out mentions, wakes only the mentioned agent, and replies in the same channel" time="0.113311375">
+        </testcase>
+        <testcase classname="apps/api/test/channels.int.test.ts" name="E3 channels and mentions &gt; does not wake non-participant agents from a mention inside a DM" time="0.247081083">
+        </testcase>
+        <testcase classname="apps/api/test/channels.int.test.ts" name="E3 channels and mentions &gt; does not wake anyone from a mention inside a self channel" time="0.077802042">
+        </testcase>
+        <testcase classname="apps/api/test/channels.int.test.ts" name="E3 channels and mentions &gt; throttles the 11th mention in 60 seconds and posts a system message to general" time="0.042722083">
+        </testcase>
+        <testcase classname="apps/api/test/channels.int.test.ts" name="E3 channels and mentions &gt; archives retained messages and channel.read search still finds archived rows" time="0.044064708">
+        </testcase>
+        <testcase classname="apps/api/test/channels.int.test.ts" name="E3 channels and mentions &gt; searches live channel messages through FTS" time="0.034816041">
+        </testcase>
+        <testcase classname="apps/api/test/channels.int.test.ts" name="E3 channels and mentions &gt; keeps retained archives isolated by organization even when channel ids match" time="0.082114208">
+        </testcase>
+        <testcase classname="apps/api/test/channels.int.test.ts" name="E3 channels and mentions &gt; recomputes typed mentions when a message body is edited" time="0.036657791">
+        </testcase>
+        <testcase classname="apps/api/test/channels.int.test.ts" name="E3 channels and mentions &gt; edits and deletes with tombstones while preserving immutable tool-call cards" time="0.028289333">
+        </testcase>
+        <testcase classname="apps/api/test/channels.int.test.ts" name="E3 channels and mentions &gt; rejects archive operations whose channel id contains path-separator characters" time="0.030573917">
+        </testcase>
+        <testcase classname="apps/api/test/channels.int.test.ts" name="E3 channels and mentions &gt; readChannel page boundary across live + archived messages preserves same-millisecond rows" time="0.057244792">
+        </testcase>
+    </testsuite>
+    <testsuite name="apps/api/test/config-sync.int.test.ts" timestamp="2026-05-03T14:35:34.130Z" hostname="MacBook-Air.local" tests="10" failures="0" errors="0" skipped="0" time="1.019820417">
+        <testcase classname="apps/api/test/config-sync.int.test.ts" name="team config reconcile &gt; reconciles config changes, retires dropped agents, and archives dropped channels" time="0.154767125">
+        </testcase>
+        <testcase classname="apps/api/test/config-sync.int.test.ts" name="team config reconcile &gt; rehydrates dashboard-created agents and ignores human override pollution on startup" time="0.22814375">
+        </testcase>
+        <testcase classname="apps/api/test/config-sync.int.test.ts" name="team config reconcile &gt; preserves provider and model when dashboard overrides an existing config role" time="0.055438167">
+        </testcase>
+        <testcase classname="apps/api/test/config-sync.int.test.ts" name="team config reconcile &gt; rejects new agent members when the role does not already exist and no role object is provided" time="0.029089">
+        </testcase>
+        <testcase classname="apps/api/test/config-sync.int.test.ts" name="team config reconcile &gt; rejects dashboard-style organization edits when the field is config owned" time="0.032608042">
+        </testcase>
+        <testcase classname="apps/api/test/config-sync.int.test.ts" name="team config reconcile &gt; reconciles a config file back into its bound organization instead of the latest org" time="0.105856167">
+        </testcase>
+        <testcase classname="apps/api/test/config-sync.int.test.ts" name="team config reconcile &gt; archives dropped config-managed channels even when they fall past the first page" time="0.143892416">
+        </testcase>
+        <testcase classname="apps/api/test/config-sync.int.test.ts" name="team config reconcile &gt; rejects new messages to archived config-managed channels" time="0.0932195">
+        </testcase>
+        <testcase classname="apps/api/test/config-sync.int.test.ts" name="team config reconcile &gt; rejects retired config agents from new runs and task promotion" time="0.089737042">
+        </testcase>
+        <testcase classname="apps/api/test/config-sync.int.test.ts" name="team config reconcile &gt; reconcile response strips both self and dm channels" time="0.083528459">
+        </testcase>
+    </testsuite>
+    <testsuite name="apps/api/test/conversation-cross-channel.int.test.ts" timestamp="2026-05-03T14:35:34.133Z" hostname="MacBook-Air.local" tests="3" failures="0" errors="0" skipped="0" time="0.109719042">
+        <testcase classname="apps/api/test/conversation-cross-channel.int.test.ts" name="ConversationService.postToChannel — reply_to is channel-scoped &gt; rejects a reply whose parent lives in a different channel" time="0.062179333">
+        </testcase>
+        <testcase classname="apps/api/test/conversation-cross-channel.int.test.ts" name="ConversationService.postToChannel — reply_to is channel-scoped &gt; allows a reply whose parent is in the same channel" time="0.022321958">
+        </testcase>
+        <testcase classname="apps/api/test/conversation-cross-channel.int.test.ts" name="ConversationService.postToChannel — reply_to is channel-scoped &gt; top-level posts (no reply_to) still work" time="0.0236035">
+        </testcase>
+    </testsuite>
+    <testsuite name="apps/api/test/daemon.int.test.ts" timestamp="2026-05-03T14:35:34.134Z" hostname="MacBook-Air.local" tests="2" failures="0" errors="0" skipped="0" time="3.8395785">
+        <testcase classname="apps/api/test/daemon.int.test.ts" name="ujima-runtime daemon &gt; starts, writes dirty flag, shuts down cleanly on SIGTERM, and clears flag" time="2.124150458">
+        </testcase>
+        <testcase classname="apps/api/test/daemon.int.test.ts" name="ujima-runtime daemon &gt; detects a prior dirty shutdown and logs a warning" time="1.712799792">
+        </testcase>
+    </testsuite>
+    <testsuite name="apps/api/test/onboarding-org-chart.int.test.ts" timestamp="2026-05-03T14:35:34.135Z" hostname="MacBook-Air.local" tests="5" failures="0" errors="0" skipped="0" time="0.200933458">
+        <testcase classname="apps/api/test/onboarding-org-chart.int.test.ts" name="OnboardingService.onboard — owner-targeting org-chart edges &gt; resolves the owner&apos;s display name in reportsTo to the owner member&apos;s id" time="0.090960709">
+        </testcase>
+        <testcase classname="apps/api/test/onboarding-org-chart.int.test.ts" name="OnboardingService.onboard — owner-targeting org-chart edges &gt; resolves the literal &apos;Owner&apos; sentinel from the web seed draft" time="0.023390625">
+        </testcase>
+        <testcase classname="apps/api/test/onboarding-org-chart.int.test.ts" name="OnboardingService.onboard — owner-targeting org-chart edges &gt; preserves agent-only edges alongside owner-targeting edges" time="0.022140625">
+        </testcase>
+        <testcase classname="apps/api/test/onboarding-org-chart.int.test.ts" name="OnboardingService.onboard — owner-targeting org-chart edges &gt; resolves the &apos;@owner&apos; sentinel even after the owner is renamed" time="0.03160975">
+        </testcase>
+        <testcase classname="apps/api/test/onboarding-org-chart.int.test.ts" name="OnboardingService.onboard — owner-targeting org-chart edges &gt; still rejects unknown manager refs that are neither agents nor the owner" time="0.030450416">
+        </testcase>
+    </testsuite>
+    <testsuite name="apps/api/test/spirits.int.test.ts" timestamp="2026-05-03T14:35:34.136Z" hostname="MacBook-Air.local" tests="33" failures="0" errors="0" skipped="0" time="1.895969958">
+        <testcase classname="apps/api/test/spirits.int.test.ts" name="SpiritService — Phase 2.A lifecycle &gt; spawn is idempotent per (session, member, role) triple and registers in ActiveSpiritRegistry" time="0.105431333">
+        </testcase>
+        <testcase classname="apps/api/test/spirits.int.test.ts" name="SpiritService — Phase 2.A lifecycle &gt; updateStatus moves a spirit to a non-alive status and unregisters it" time="0.129800167">
+        </testcase>
+        <testcase classname="apps/api/test/spirits.int.test.ts" name="SpiritService — Phase 2.A lifecycle &gt; retire flips status to cancelled, sets endedAt, unregisters, and cancels the paired RunState" time="0.128579541">
+        </testcase>
+        <testcase classname="apps/api/test/spirits.int.test.ts" name="SpiritService — Phase 2.A lifecycle &gt; bootstrap recovers active spirits into the registry from DB on cold start" time="0.034089292">
+        </testcase>
+        <testcase classname="apps/api/test/spirits.int.test.ts" name="SpiritService — Phase 2.A lifecycle &gt; multi-turn run drives streamText and persists agent messages with tool.call cards" time="0.205712417">
+        </testcase>
+        <testcase classname="apps/api/test/spirits.int.test.ts" name="SpiritService — Phase 2.A lifecycle &gt; TaskSessionService.start provisions one spirit per team member" time="0.048728166">
+        </testcase>
+        <testcase classname="apps/api/test/spirits.int.test.ts" name="supervisor.todo.* (Phase 2.B) &gt; add → list round-trip is scoped per task session via SupervisorTodoService" time="0.029639583">
+        </testcase>
+        <testcase classname="apps/api/test/spirits.int.test.ts" name="SupervisorService — Phase 2.C &gt; returns no-active-spirit when no active spirit (caller falls through to regular wake path)" time="0.042985125">
+        </testcase>
+        <testcase classname="apps/api/test/spirits.int.test.ts" name="SupervisorService — Phase 2.C &gt; answers DM/@mention through cheaper-tier model + increments supervisor_turn_count" time="0.048389709">
+        </testcase>
+        <testcase classname="apps/api/test/spirits.int.test.ts" name="SupervisorService — Phase 2.C &gt; caps supervisor turns per session and posts deterministic fallback after the cap" time="0.111807875">
+        </testcase>
+        <testcase classname="apps/api/test/spirits.int.test.ts" name="SupervisorService — Phase 2.C &gt; mutex serializes concurrent handleAlert calls for the same member" time="0.089218875">
+        </testcase>
+        <testcase classname="apps/api/test/spirits.int.test.ts" name="SupervisorService — Phase 2.C &gt; rejects a non-allowlisted tool call tagged supervisor (ToolServiceImpl enforces SUPERVISOR_TOOL_ALLOWLIST at runtime)" time="0.026859792">
+        </testcase>
+        <testcase classname="apps/api/test/spirits.int.test.ts" name="SupervisorService — Phase 2.C &gt; SUPERVISOR_TOOL_ALLOWLIST contains supervisor.todo.* and excludes filesystem/shell" time="0.0018055">
+        </testcase>
+        <testcase classname="apps/api/test/spirits.int.test.ts" name="SupervisorService — Phase 2.C &gt; pickProviderModel returns supervisorModel when available, falls back to defaultModel" time="0.000672834">
+        </testcase>
+        <testcase classname="apps/api/test/spirits.int.test.ts" name="SupervisorService — Phase 2.C &gt; debounced handleAlert returns kind=debounced (caller must NOT spawn a fallback run)" time="0.040823667">
+        </testcase>
+        <testcase classname="apps/api/test/spirits.int.test.ts" name="TaskSessionService.create — audit fix regressions &gt; two organisations with the same slug produce distinct, non-colliding channel ids" time="0.033742791">
+        </testcase>
+        <testcase classname="apps/api/test/spirits.int.test.ts" name="TaskSessionService.create — audit fix regressions &gt; bootstrapAll() hydrates the registry from persisted spirits — restart-safe" time="0.042757958">
+        </testcase>
+        <testcase classname="apps/api/test/spirits.int.test.ts" name="TaskSessionService.create — audit fix regressions &gt; bootstrap preserves newest-first ordering after restart for a multi-session member" time="0.055701959">
+        </testcase>
+        <testcase classname="apps/api/test/spirits.int.test.ts" name="TaskSessionService.create — audit fix regressions &gt; createApiServices wiring auto-hydrates the registry on construction" time="0.028077042">
+        </testcase>
+        <testcase classname="apps/api/test/spirits.int.test.ts" name="TaskSessionService.create — audit fix regressions &gt; multi-session: supervisor picks the NEWEST active spirit, not the oldest" time="0.059770083">
+        </testcase>
+        <testcase classname="apps/api/test/spirits.int.test.ts" name="TaskSessionService.create — audit fix regressions &gt; concurrent burst: only ONE alert in a same-tick burst executes; the rest are debounced" time="0.083707791">
+        </testcase>
+        <testcase classname="apps/api/test/spirits.int.test.ts" name="TaskSessionService.create — audit fix regressions &gt; worker turn cannot call supervisor.todo.* even when the role lists them in `tools`" time="0.028480375">
+        </testcase>
+        <testcase classname="apps/api/test/spirits.int.test.ts" name="TaskSessionService.create — audit fix regressions &gt; start() pre-validates the team — a retired member fails without spawning anything" time="0.032603625">
+        </testcase>
+        <testcase classname="apps/api/test/spirits.int.test.ts" name="TaskSessionService.create — audit fix regressions &gt; atomic create — a failure inside the transaction leaves no orphan channels/threads" time="0.03185075">
+        </testcase>
+        <testcase classname="apps/api/test/spirits.int.test.ts" name="TaskSessionService.create — audit fix regressions &gt; start() rolls back earlier spirits when a later spawn fails (mid-loop atomicity)" time="0.034402792">
+        </testcase>
+        <testcase classname="apps/api/test/spirits.int.test.ts" name="TaskSessionService.create — audit fix regressions &gt; debounce is keyed per session — alerts for two live sessions of one member both fire" time="0.074501209">
+        </testcase>
+        <testcase classname="apps/api/test/spirits.int.test.ts" name="TaskSessionService.create — audit fix regressions &gt; SpiritService.run() leaves no spirit behind when modelResolver throws" time="0.024665917">
+        </testcase>
+        <testcase classname="apps/api/test/spirits.int.test.ts" name="TaskSessionService.create — audit fix regressions &gt; start() rollback leaves pre-existing spirits in the registry untouched" time="0.06393225">
+        </testcase>
+        <testcase classname="apps/api/test/spirits.int.test.ts" name="TaskSessionService.create — audit fix regressions &gt; completion handles V3-shape usage and never poisons SpiritSchema with a non-number" time="0.054003333">
+        </testcase>
+        <testcase classname="apps/api/test/spirits.int.test.ts" name="TaskSessionService.create — audit fix regressions &gt; start() rejects terminal sessions (completed / failed / cancelled)" time="0.045534042">
+        </testcase>
+        <testcase classname="apps/api/test/spirits.int.test.ts" name="TaskSessionService.create — audit fix regressions &gt; failed start() does not reshuffle a pre-existing spirit&apos;s registry order" time="0.066848583">
+        </testcase>
+        <testcase classname="apps/api/test/spirits.int.test.ts" name="TaskSessionService.create — audit fix regressions &gt; create() dedupes duplicate team member ids" time="0.032650083">
+        </testcase>
+        <testcase classname="apps/api/test/spirits.int.test.ts" name="TaskSessionService.create — audit fix regressions &gt; concurrent same-slug create()s both succeed; loser gets a suffixed slug" time="0.054251166">
+        </testcase>
+    </testsuite>
+    <testsuite name="apps/api/test/task-sessions.int.test.ts" timestamp="2026-05-03T14:35:34.145Z" hostname="MacBook-Air.local" tests="6" failures="0" errors="0" skipped="0" time="0.293382">
+        <testcase classname="apps/api/test/task-sessions.int.test.ts" name="TaskSessionService — Phase 1 task shell &gt; creates a task-run channel + auto-joins members + posts a join system card" time="0.089520083">
+        </testcase>
+        <testcase classname="apps/api/test/task-sessions.int.test.ts" name="TaskSessionService — Phase 1 task shell &gt; rejects agent-originated task sessions (only humans can originate)" time="0.030814875">
+        </testcase>
+        <testcase classname="apps/api/test/task-sessions.int.test.ts" name="TaskSessionService — Phase 1 task shell &gt; posts an origin link-back card in the source channel when origin is supplied" time="0.045124709">
+        </testcase>
+        <testcase classname="apps/api/test/task-sessions.int.test.ts" name="TaskSessionService — Phase 1 task shell &gt; rejects retired team members and unknown ids before creating the channel" time="0.038968709">
+        </testcase>
+        <testcase classname="apps/api/test/task-sessions.int.test.ts" name="TaskSessionService — Phase 1 task shell &gt; list() returns sessions newest-first with pagination + status filter" time="0.055811458">
+        </testcase>
+        <testcase classname="apps/api/test/task-sessions.int.test.ts" name="TaskSessionService — Phase 1 task shell &gt; slug collision falls through to a suffixed slug instead of throwing" time="0.030682292">
+        </testcase>
+    </testsuite>
+    <testsuite name="apps/api/test/transport.int.test.ts" timestamp="2026-05-03T14:35:34.147Z" hostname="MacBook-Air.local" tests="11" failures="0" errors="0" skipped="0" time="0.806685417">
+        <testcase classname="apps/api/test/transport.int.test.ts" name="transport (in-process) &gt; refuses non-loopback bind without TLS" time="0.005990875">
+        </testcase>
+        <testcase classname="apps/api/test/transport.int.test.ts" name="transport (in-process) &gt; rejects requests without a bearer token" time="0.079393083">
+        </testcase>
+        <testcase classname="apps/api/test/transport.int.test.ts" name="transport (in-process) &gt; rejects requests with a wrong bearer token" time="0.007117459">
+        </testcase>
+        <testcase classname="apps/api/test/transport.int.test.ts" name="transport (in-process) &gt; returns health with a correct bearer token" time="0.009313416">
+        </testcase>
+        <testcase classname="apps/api/test/transport.int.test.ts" name="transport (in-process) &gt; serves the role catalog endpoints" time="0.209660667">
+        </testcase>
+        <testcase classname="apps/api/test/transport.int.test.ts" name="transport (in-process) &gt; creates, lists, fetches, updates, and removes workspaces" time="0.038553416">
+        </testcase>
+        <testcase classname="apps/api/test/transport.int.test.ts" name="transport (in-process) &gt; returns 409 ERR_NO_WORKSPACE_ROOT when starting a task on an unready workspace" time="0.004477959">
+        </testcase>
+        <testcase classname="apps/api/test/transport.int.test.ts" name="transport (in-process) &gt; returns empty lists for tasks and agents when idle" time="0.004035542">
+        </testcase>
+        <testcase classname="apps/api/test/transport.int.test.ts" name="transport (in-process) &gt; supports task lookup and kill endpoints" time="0.008542958">
+        </testcase>
+        <testcase classname="apps/api/test/transport.int.test.ts" name="transport (in-process) &gt; opens a WS subscription and receives a ready frame" time="0.06307025">
+        </testcase>
+        <testcase classname="apps/api/test/transport.int.test.ts" name="transport (in-process) &gt; rejects WS connection with a wrong token" time="0.052696291">
+        </testcase>
+    </testsuite>
+    <testsuite name="apps/api/test/workspace-hardening.int.test.ts" timestamp="2026-05-03T14:35:34.150Z" hostname="MacBook-Air.local" tests="10" failures="1" errors="0" skipped="0" time="1.001412375">
+        <testcase classname="apps/api/test/workspace-hardening.int.test.ts" name="workspace-root REST gating &gt; returns 409 ERR_NO_WORKSPACE_ROOT for org mutation routes before the workspace root exists" time="0.126027375">
+            <failure message="POST http://127.0.0.1:62415/api/approvals/approval-1/resolve: expected 500 to be 409 // Object.is equality" type="AssertionError">
+AssertionError: POST http://127.0.0.1:62415/api/approvals/approval-1/resolve: expected 500 to be 409 // Object.is equality
+
+- Expected
++ Received
+
+- 409
++ 500
+
+ ❯ test/workspace-hardening.int.test.ts:279:63
+            </failure>
+        </testcase>
+        <testcase classname="apps/api/test/workspace-hardening.int.test.ts" name="workspace path hardening &gt; rejects shell traversal attempts that escape the workspace root" time="0.073682542">
+        </testcase>
+        <testcase classname="apps/api/test/workspace-hardening.int.test.ts" name="workspace path hardening &gt; rejects filesystem access outside the member role scope" time="0.071024916">
+        </testcase>
+        <testcase classname="apps/api/test/workspace-hardening.int.test.ts" name="workspace path hardening &gt; rejects symlink escapes that point outside the workspace root" time="0.039219709">
+        </testcase>
+        <testcase classname="apps/api/test/workspace-hardening.int.test.ts" name="workspace path hardening &gt; rejects shell cwd values that escape the member role scope" time="0.043210875">
+        </testcase>
+        <testcase classname="apps/api/test/workspace-hardening.int.test.ts" name="workspace path hardening &gt; allows shell -c command strings without treating them as filesystem paths" time="0.085995458">
+        </testcase>
+        <testcase classname="apps/api/test/workspace-hardening.int.test.ts" name="workspace path hardening &gt; does not rewrite ordinary slash-containing shell args as filesystem paths" time="0.086116166">
+        </testcase>
+        <testcase classname="apps/api/test/workspace-hardening.int.test.ts" name="workspace path hardening &gt; resolves positional file operands for file-oriented shell commands relative to cwd" time="0.05168675">
+        </testcase>
+        <testcase classname="apps/api/test/workspace-hardening.int.test.ts" name="workspace path hardening &gt; preserves the requested leaf path when writing a new file" time="0.044759833">
+        </testcase>
+        <testcase classname="apps/api/test/workspace-hardening.int.test.ts" name="workspace path hardening &gt; backfills workspace_members scope rows for existing members on first resolver use" time="0.041448458">
+        </testcase>
+    </testsuite>
+    <testsuite name="packages/context-store/src/approvals.test.ts" timestamp="2026-05-03T14:35:34.160Z" hostname="MacBook-Air.local" tests="3" failures="0" errors="0" skipped="0" time="0.1383835">
+        <testcase classname="packages/context-store/src/approvals.test.ts" name="approval tracker &gt; proposes a pending approval" time="0.064333875">
+        </testcase>
+        <testcase classname="packages/context-store/src/approvals.test.ts" name="approval tracker &gt; decides approved and records decider + reason" time="0.031105458">
+        </testcase>
+        <testcase classname="packages/context-store/src/approvals.test.ts" name="approval tracker &gt; lists by task and filters by status" time="0.040305208">
+        </testcase>
+    </testsuite>
+    <testsuite name="packages/context-store/src/audit.test.ts" timestamp="2026-05-03T14:35:34.161Z" hostname="MacBook-Air.local" tests="3" failures="0" errors="0" skipped="0" time="0.099469417">
+        <testcase classname="packages/context-store/src/audit.test.ts" name="audit log &gt; writes and queries records" time="0.051059">
+        </testcase>
+        <testcase classname="packages/context-store/src/audit.test.ts" name="audit log &gt; filters by agent, session, event type" time="0.021052375">
+        </testcase>
+        <testcase classname="packages/context-store/src/audit.test.ts" name="audit log &gt; respects limit" time="0.02419175">
+        </testcase>
+    </testsuite>
+    <testsuite name="packages/context-store/src/context.test.ts" timestamp="2026-05-03T14:35:34.162Z" hostname="MacBook-Air.local" tests="7" failures="0" errors="0" skipped="0" time="0.192780875">
+        <testcase classname="packages/context-store/src/context.test.ts" name="context store &gt; put/get round-trips arbitrary JSON" time="0.053756416">
+        </testcase>
+        <testcase classname="packages/context-store/src/context.test.ts" name="context store &gt; returns undefined for missing key" time="0.022693">
+        </testcase>
+        <testcase classname="packages/context-store/src/context.test.ts" name="context store &gt; lists entries by prefix in order" time="0.016880958">
+        </testcase>
+        <testcase classname="packages/context-store/src/context.test.ts" name="context store &gt; delete removes keys" time="0.022142791">
+        </testcase>
+        <testcase classname="packages/context-store/src/context.test.ts" name="context store &gt; subscribe receives in-process updates" time="0.027221625">
+        </testcase>
+        <testcase classname="packages/context-store/src/context.test.ts" name="context store &gt; subscribe ignores non-prefix updates" time="0.027707292">
+        </testcase>
+        <testcase classname="packages/context-store/src/context.test.ts" name="context store &gt; handles concurrent writes without losing entries" time="0.019212125">
+        </testcase>
+    </testsuite>
+    <testsuite name="packages/context-store/src/db.test.ts" timestamp="2026-05-03T14:35:34.164Z" hostname="MacBook-Air.local" tests="1" failures="0" errors="0" skipped="0" time="0.049527375">
+        <testcase classname="packages/context-store/src/db.test.ts" name="database migrations &gt; backfills message_mentions from legacy messages.mentions during 006 upgrade" time="0.047971583">
+        </testcase>
+    </testsuite>
+    <testsuite name="packages/context-store/src/pending-events.test.ts" timestamp="2026-05-03T14:35:34.165Z" hostname="MacBook-Air.local" tests="2" failures="0" errors="0" skipped="0" time="0.084682917">
+        <testcase classname="packages/context-store/src/pending-events.test.ts" name="pending events &gt; stores and replays since a timestamp" time="0.045845333">
+        </testcase>
+        <testcase classname="packages/context-store/src/pending-events.test.ts" name="pending events &gt; purgeExpired removes only past entries" time="0.037069583">
+        </testcase>
+    </testsuite>
+    <testsuite name="packages/context-store/src/state.test.ts" timestamp="2026-05-03T14:35:34.166Z" hostname="MacBook-Air.local" tests="4" failures="0" errors="0" skipped="0" time="0.118735334">
+        <testcase classname="packages/context-store/src/state.test.ts" name="agent + task state &gt; upserts agent state and updates patches" time="0.045509166">
+        </testcase>
+        <testcase classname="packages/context-store/src/state.test.ts" name="agent + task state &gt; increments tokens and calls" time="0.030957792">
+        </testcase>
+        <testcase classname="packages/context-store/src/state.test.ts" name="agent + task state &gt; heartbeat updates last_heartbeat" time="0.020572041">
+        </testcase>
+        <testcase classname="packages/context-store/src/state.test.ts" name="agent + task state &gt; task lifecycle transitions" time="0.018626208">
+        </testcase>
+    </testsuite>
+    <testsuite name="packages/client-sdk/src/index.test.ts" timestamp="2026-05-03T14:35:34.167Z" hostname="MacBook-Air.local" tests="4" failures="0" errors="0" skipped="0" time="0.017302833">
+        <testcase classname="packages/client-sdk/src/index.test.ts" name="client-sdk &gt; trims trailing slashes from baseUrl" time="0.003104625">
+        </testcase>
+        <testcase classname="packages/client-sdk/src/index.test.ts" name="client-sdk &gt; maps non-ok fetch responses to UjimaApiError" time="0.009344791">
+        </testcase>
+        <testcase classname="packages/client-sdk/src/index.test.ts" name="client-sdk &gt; sends Bearer token on every request" time="0.001843208">
+        </testcase>
+        <testcase classname="packages/client-sdk/src/index.test.ts" name="client-sdk &gt; calls the role catalog endpoints" time="0.001307709">
+        </testcase>
+    </testsuite>
+    <testsuite name="packages/event-bus/src/index.test.ts" timestamp="2026-05-03T14:35:34.168Z" hostname="MacBook-Air.local" tests="10" failures="0" errors="0" skipped="0" time="0.265703375">
+        <testcase classname="packages/event-bus/src/index.test.ts" name="event bus &gt; delivers events to live subscribers" time="0.041341125">
+        </testcase>
+        <testcase classname="packages/event-bus/src/index.test.ts" name="event bus &gt; audits before delivering" time="0.027416209">
+        </testcase>
+        <testcase classname="packages/event-bus/src/index.test.ts" name="event bus &gt; replays events since timestamp" time="0.020128625">
+        </testcase>
+        <testcase classname="packages/event-bus/src/index.test.ts" name="event bus &gt; subscribe with replaySinceMs delivers historical events" time="0.023410125">
+        </testcase>
+        <testcase classname="packages/event-bus/src/index.test.ts" name="event bus &gt; unsubscribe stops delivery" time="0.020551417">
+        </testcase>
+        <testcase classname="packages/event-bus/src/index.test.ts" name="event bus &gt; audit row is persisted BEFORE subscribers observe the event" time="0.024514834">
+        </testcase>
+        <testcase classname="packages/event-bus/src/index.test.ts" name="event bus &gt; multiple subscribers all receive the event" time="0.019441375">
+        </testcase>
+        <testcase classname="packages/event-bus/src/index.test.ts" name="event bus &gt; replay returns empty when no pendingEvents store is wired" time="0.020610542">
+        </testcase>
+        <testcase classname="packages/event-bus/src/index.test.ts" name="event bus &gt; handler error does not bubble and does not break other subscribers" time="0.0371125">
+        </testcase>
+        <testcase classname="packages/event-bus/src/index.test.ts" name="event bus &gt; publisher field propagates to audit agent_id" time="0.027997209">
+        </testcase>
+    </testsuite>
+    <testsuite name="packages/mcp-client/src/connection.test.ts" timestamp="2026-05-03T14:35:34.170Z" hostname="MacBook-Air.local" tests="9" failures="0" errors="0" skipped="0" time="0.144950333">
+        <testcase classname="packages/mcp-client/src/connection.test.ts" name="MCP connection &gt; lists tools advertised by the server" time="0.038333375">
+        </testcase>
+        <testcase classname="packages/mcp-client/src/connection.test.ts" name="MCP connection &gt; calls a tool and returns its content" time="0.015936542">
+        </testcase>
+        <testcase classname="packages/mcp-client/src/connection.test.ts" name="MCP connection &gt; invokes onToolCall with agent tag, duration and result" time="0.009787">
+        </testcase>
+        <testcase classname="packages/mcp-client/src/connection.test.ts" name="MCP connection &gt; serializes concurrent tool calls through the queue" time="0.073587083">
+        </testcase>
+        <testcase classname="packages/mcp-client/src/connection.test.ts" name="MCP connection &gt; isOpen reflects close()" time="0.003448166">
+        </testcase>
+        <testcase classname="packages/mcp-client/src/connection.test.ts" name="isConnectionClosedError &gt; matches playwright closed-target messages" time="0.00057525">
+        </testcase>
+        <testcase classname="packages/mcp-client/src/connection.test.ts" name="isConnectionClosedError &gt; matches transport-level close messages" time="0.0004095">
+        </testcase>
+        <testcase classname="packages/mcp-client/src/connection.test.ts" name="isConnectionClosedError &gt; returns false for unrelated errors" time="0.000470375">
+        </testcase>
+        <testcase classname="packages/mcp-client/src/connection.test.ts" name="isConnectionClosedError &gt; handles string inputs" time="0.000381666">
+        </testcase>
+    </testsuite>
+    <testsuite name="packages/mcp-client/src/parse-config.test.ts" timestamp="2026-05-03T14:35:34.172Z" hostname="MacBook-Air.local" tests="5" failures="0" errors="0" skipped="0" time="0.020340334">
+        <testcase classname="packages/mcp-client/src/parse-config.test.ts" name="MCP config parser &gt; parses the Claude Desktop mcpServers format" time="0.013776">
+        </testcase>
+        <testcase classname="packages/mcp-client/src/parse-config.test.ts" name="MCP config parser &gt; accepts a bare servers-map object" time="0.000929792">
+        </testcase>
+        <testcase classname="packages/mcp-client/src/parse-config.test.ts" name="MCP config parser &gt; infers sse transport from /sse url suffix" time="0.000352417">
+        </testcase>
+        <testcase classname="packages/mcp-client/src/parse-config.test.ts" name="MCP config parser &gt; collects warnings for malformed entries and continues" time="0.0004075">
+        </testcase>
+        <testcase classname="packages/mcp-client/src/parse-config.test.ts" name="MCP config parser &gt; throws on non-JSON input" time="0.002669875">
+        </testcase>
+    </testsuite>
+    <testsuite name="packages/mcp-client/src/permission-presets.test.ts" timestamp="2026-05-03T14:35:34.174Z" hostname="MacBook-Air.local" tests="9" failures="0" errors="0" skipped="0" time="0.016298625">
+        <testcase classname="packages/mcp-client/src/permission-presets.test.ts" name="permission presets &gt; read_only allows get/search/list and blocks destructive + writes" time="0.007951375">
+        </testcase>
+        <testcase classname="packages/mcp-client/src/permission-presets.test.ts" name="permission presets &gt; read_write allows writes but blocks registry-flagged destructive tools" time="0.002099083">
+        </testcase>
+        <testcase classname="packages/mcp-client/src/permission-presets.test.ts" name="permission presets &gt; full allows every discovered tool including destructive" time="0.000348125">
+        </testcase>
+        <testcase classname="packages/mcp-client/src/permission-presets.test.ts" name="permission presets &gt; applies defaults without a discovered tool list" time="0.00064425">
+        </testcase>
+        <testcase classname="packages/mcp-client/src/permission-presets.test.ts" name="permission presets &gt; respects custom rate limit overrides" time="0.000344375">
+        </testcase>
+        <testcase classname="packages/mcp-client/src/permission-presets.test.ts" name="permission presets &gt; isDestructive reads from the registry flag" time="0.00044925">
+        </testcase>
+        <testcase classname="packages/mcp-client/src/permission-presets.test.ts" name="permission presets &gt; applyPreset works directly with a RegistryEntry" time="0.000354583">
+        </testcase>
+        <testcase classname="packages/mcp-client/src/permission-presets.test.ts" name="permission presets &gt; describePreset returns a human-readable summary for each preset" time="0.000360166">
+        </testcase>
+        <testcase classname="packages/mcp-client/src/permission-presets.test.ts" name="permission presets &gt; throws on unknown registry id" time="0.001498709">
+        </testcase>
+    </testsuite>
+    <testsuite name="packages/mcp-client/src/pool.test.ts" timestamp="2026-05-03T14:35:34.176Z" hostname="MacBook-Air.local" tests="3" failures="0" errors="0" skipped="0" time="0.050166042">
+        <testcase classname="packages/mcp-client/src/pool.test.ts" name="MCP connection pool &gt; returns the same connection for repeated get() calls" time="0.039261708">
+        </testcase>
+        <testcase classname="packages/mcp-client/src/pool.test.ts" name="MCP connection pool &gt; closeOne closes and removes a single connection" time="0.004695958">
+        </testcase>
+        <testcase classname="packages/mcp-client/src/pool.test.ts" name="MCP connection pool &gt; keys per-agent-isolated MCPs separately from the shared bucket" time="0.003326375">
+        </testcase>
+    </testsuite>
+    <testsuite name="packages/mcp-client/src/registry.test.ts" timestamp="2026-05-03T14:35:34.177Z" hostname="MacBook-Air.local" tests="16" failures="0" errors="0" skipped="0" time="0.018137833">
+        <testcase classname="packages/mcp-client/src/registry.test.ts" name="curated registry &gt; includes the Day-1 minimum: filesystem + sqlite" time="0.003393583">
+        </testcase>
+        <testcase classname="packages/mcp-client/src/registry.test.ts" name="curated registry &gt; also ships figma + playwright for Day-2" time="0.000447625">
+        </testcase>
+        <testcase classname="packages/mcp-client/src/registry.test.ts" name="curated registry &gt; search matches name, tags, or description" time="0.001807917">
+        </testcase>
+        <testcase classname="packages/mcp-client/src/registry.test.ts" name="curated registry &gt; findRegistryEntry returns entries by id" time="0.000445292">
+        </testcase>
+        <testcase classname="packages/mcp-client/src/registry.test.ts" name="curated registry &gt; instantiate substitutes arg placeholders" time="0.001170625">
+        </testcase>
+        <testcase classname="packages/mcp-client/src/registry.test.ts" name="curated registry &gt; instantiate merges env overrides and keeps transport" time="0.001572416">
+        </testcase>
+        <testcase classname="packages/mcp-client/src/registry.test.ts" name="curated registry &gt; figma entry requests the canonical FIGMA_API_KEY env var" time="0.000377042">
+        </testcase>
+        <testcase classname="packages/mcp-client/src/registry.test.ts" name="curated registry &gt; playwright entry uses @playwright/mcp and flags destructive tools" time="0.000691875">
+        </testcase>
+        <testcase classname="packages/mcp-client/src/registry.test.ts" name="curated registry &gt; figma entry flags destructive tools for permission presets" time="0.000357291">
+        </testcase>
+        <testcase classname="packages/mcp-client/src/registry.test.ts" name="curated registry &gt; throws on unknown ids" time="0.001433625">
+        </testcase>
+        <testcase classname="packages/mcp-client/src/registry.test.ts" name="curated registry &gt; ships git, github, postgres, notion, slack (v0.2 expansion)" time="0.000821167">
+        </testcase>
+        <testcase classname="packages/mcp-client/src/registry.test.ts" name="curated registry &gt; git is per-agent isolated and scoped to a repo" time="0.000562916">
+        </testcase>
+        <testcase classname="packages/mcp-client/src/registry.test.ts" name="curated registry &gt; github requests GITHUB_PERSONAL_ACCESS_TOKEN and flags mutating tools" time="0.00036575">
+        </testcase>
+        <testcase classname="packages/mcp-client/src/registry.test.ts" name="curated registry &gt; postgres takes a connection string and ships no destructive tools (read-only MCP)" time="0.0003605">
+        </testcase>
+        <testcase classname="packages/mcp-client/src/registry.test.ts" name="curated registry &gt; notion requests NOTION_API_KEY and flags write operations" time="0.000784292">
+        </testcase>
+        <testcase classname="packages/mcp-client/src/registry.test.ts" name="curated registry &gt; slack requires both SLACK_BOT_TOKEN and SLACK_TEAM_ID" time="0.000620375">
+        </testcase>
+    </testsuite>
+    <testsuite name="packages/permissions/src/index.test.ts" timestamp="2026-05-03T14:35:34.181Z" hostname="MacBook-Air.local" tests="27" failures="0" errors="0" skipped="0" time="0.980788458">
+        <testcase classname="packages/permissions/src/index.test.ts" name="permission middleware &gt; allows when no policies block" time="0.103464291">
+        </testcase>
+        <testcase classname="packages/permissions/src/index.test.ts" name="permission middleware &gt; blocks when tool is in agent blocked_tools" time="0.032926792">
+        </testcase>
+        <testcase classname="packages/permissions/src/index.test.ts" name="permission middleware &gt; blocks destructive patterns like rm -rf /" time="0.02867925">
+        </testcase>
+        <testcase classname="packages/permissions/src/index.test.ts" name="permission middleware &gt; MCP policy blocks tool even if agent allows" time="0.033118166">
+        </testcase>
+        <testcase classname="packages/permissions/src/index.test.ts" name="permission middleware &gt; session override pause blocks everything" time="0.051341917">
+        </testcase>
+        <testcase classname="packages/permissions/src/index.test.ts" name="permission middleware &gt; rate-limits when exceeding calls_per_minute" time="0.019666625">
+        </testcase>
+        <testcase classname="packages/permissions/src/index.test.ts" name="permission middleware &gt; enforces token cap from agent state" time="0.026923292">
+        </testcase>
+        <testcase classname="packages/permissions/src/index.test.ts" name="permission middleware &gt; platform default blocked tools take precedence" time="0.032040292">
+        </testcase>
+        <testcase classname="packages/permissions/src/index.test.ts" name="permission middleware &gt; writes an audit row for every check" time="0.033984375">
+        </testcase>
+        <testcase classname="packages/permissions/src/index.test.ts" name="permission middleware &gt; rate limit window rolls over after 60s — old calls no longer count" time="0.02631075">
+        </testcase>
+        <testcase classname="packages/permissions/src/index.test.ts" name="permission middleware &gt; session override blocked_tools denies only the listed tool" time="0.027688708">
+        </testcase>
+        <testcase classname="packages/permissions/src/index.test.ts" name="permission middleware &gt; MCP allowed_tools allowlist rejects tools not on the list" time="0.021192542">
+        </testcase>
+        <testcase classname="packages/permissions/src/index.test.ts" name="permission middleware &gt; agent allowed_tools with empty array means no allowlist (all pass)" time="0.024781041">
+        </testcase>
+        <testcase classname="packages/permissions/src/index.test.ts" name="permission middleware &gt; destructive pattern matches sql DROP TABLE case-insensitively" time="0.026370667">
+        </testcase>
+        <testcase classname="packages/permissions/src/index.test.ts" name="permission middleware &gt; audit row records block_reason when denied" time="0.080850583">
+        </testcase>
+        <testcase classname="packages/permissions/src/index.test.ts" name="permission middleware — governance policy layer &gt; platform always_deny blocks the tool regardless of agent def" time="0.030870167">
+        </testcase>
+        <testcase classname="packages/permissions/src/index.test.ts" name="permission middleware — governance policy layer &gt; agent deny rule in policy returns policy_deny code" time="0.09016375">
+        </testcase>
+        <testcase classname="packages/permissions/src/index.test.ts" name="permission middleware — governance policy layer &gt; require_approval returns requires_approval code with gate=&quot;approval&quot;" time="0.020236291">
+        </testcase>
+        <testcase classname="packages/permissions/src/index.test.ts" name="permission middleware — governance policy layer &gt; require_input returns requires_input code with gate=&quot;input&quot;" time="0.019772833">
+        </testcase>
+        <testcase classname="packages/permissions/src/index.test.ts" name="permission middleware — governance policy layer &gt; policy allow overrides agent.permissions.blocked_tools" time="0.02001625">
+        </testcase>
+        <testcase classname="packages/permissions/src/index.test.ts" name="permission middleware — governance policy layer &gt; policy allow does NOT bypass safety rails (destructive patterns)" time="0.022883">
+        </testcase>
+        <testcase classname="packages/permissions/src/index.test.ts" name="permission middleware — governance policy layer &gt; policy allow does NOT bypass rate limits" time="0.026541875">
+        </testcase>
+        <testcase classname="packages/permissions/src/index.test.ts" name="permission middleware — governance policy layer &gt; inherit state falls through to legacy checks" time="0.059039208">
+        </testcase>
+        <testcase classname="packages/permissions/src/index.test.ts" name="permission middleware — governance policy layer &gt; session override pause still beats governance allow" time="0.024947125">
+        </testcase>
+        <testcase classname="packages/permissions/src/index.test.ts" name="permission middleware — governance policy layer &gt; setGovernancePolicy updates policy at runtime" time="0.035901208">
+        </testcase>
+        <testcase classname="packages/permissions/src/index.test.ts" name="permission middleware — governance policy layer &gt; policy function resolver is called per check (dynamic policy)" time="0.020941125">
+        </testcase>
+        <testcase classname="packages/permissions/src/index.test.ts" name="permission middleware — governance policy layer &gt; require_approval writes an audit row with the policy reason" time="0.034681708">
+        </testcase>
+    </testsuite>
+    <testsuite name="packages/permissions/src/workspace-policy.test.ts" timestamp="2026-05-03T14:35:34.188Z" hostname="MacBook-Air.local" tests="6" failures="0" errors="0" skipped="0" time="0.018025625">
+        <testcase classname="packages/permissions/src/workspace-policy.test.ts" name="workspace policy store &gt; load() returns an empty policy when the file does not exist" time="0.005406625">
+        </testcase>
+        <testcase classname="packages/permissions/src/workspace-policy.test.ts" name="workspace policy store &gt; load() falls back to empty policy on malformed JSON without throwing" time="0.001351083">
+        </testcase>
+        <testcase classname="packages/permissions/src/workspace-policy.test.ts" name="workspace policy store &gt; save() round-trips through the adapter with a trailing newline" time="0.005184583">
+        </testcase>
+        <testcase classname="packages/permissions/src/workspace-policy.test.ts" name="workspace policy store &gt; mutate() applies a pure transform and persists" time="0.000702916">
+        </testcase>
+        <testcase classname="packages/permissions/src/workspace-policy.test.ts" name="workspace policy store &gt; onChange fires on load and save" time="0.001833334">
+        </testcase>
+        <testcase classname="packages/permissions/src/workspace-policy.test.ts" name="workspace policy store &gt; current() returns the in-memory cached policy between loads" time="0.000915917">
+        </testcase>
+    </testsuite>
+    <testsuite name="packages/api-schema/src/index.test.ts" timestamp="2026-05-03T14:35:34.190Z" hostname="MacBook-Air.local" tests="6" failures="0" errors="0" skipped="0" time="0.011522709">
+        <testcase classname="packages/api-schema/src/index.test.ts" name="api-schema &gt; parses a valid ApiError" time="0.003566">
+        </testcase>
+        <testcase classname="packages/api-schema/src/index.test.ts" name="api-schema &gt; rejects an ApiError with an unknown code" time="0.0026205">
+        </testcase>
+        <testcase classname="packages/api-schema/src/index.test.ts" name="api-schema &gt; accepts an empty CreateWorkspaceRequest" time="0.000332583">
+        </testcase>
+        <testcase classname="packages/api-schema/src/index.test.ts" name="api-schema &gt; requires workspace_id, session_id, team_id, prompt on StartTaskRequest" time="0.000924125">
+        </testcase>
+        <testcase classname="packages/api-schema/src/index.test.ts" name="api-schema &gt; discriminates WsFrame variants" time="0.001393291">
+        </testcase>
+        <testcase classname="packages/api-schema/src/index.test.ts" name="api-schema &gt; exposes bind defaults" time="0.000305125">
+        </testcase>
+    </testsuite>
+    <testsuite name="packages/runtime-core/src/config.test.ts" timestamp="2026-05-03T14:35:34.192Z" hostname="MacBook-Air.local" tests="2" failures="0" errors="0" skipped="0" time="0.01358">
+        <testcase classname="packages/runtime-core/src/config.test.ts" name="resolveTeamConfigPath prefers UJIMA_TEAM_CONFIG over workspace defaults" time="0.008930625">
+        </testcase>
+        <testcase classname="packages/runtime-core/src/config.test.ts" name="resolveTeamConfigPath falls back from ujima.config.ts to ujima.config.js" time="0.003132833">
+        </testcase>
+    </testsuite>
+    <testsuite name="packages/runtime-core/src/path-resolver.test.ts" timestamp="2026-05-03T14:35:34.192Z" hostname="MacBook-Air.local" tests="7" failures="0" errors="0" skipped="0" time="0.023603125">
+        <testcase classname="packages/runtime-core/src/path-resolver.test.ts" name="PathResolver &gt; resolves a path inside root" time="0.003549208">
+        </testcase>
+        <testcase classname="packages/runtime-core/src/path-resolver.test.ts" name="PathResolver &gt; resolves a not-yet-created path under its parent" time="0.003268042">
+        </testcase>
+        <testcase classname="packages/runtime-core/src/path-resolver.test.ts" name="PathResolver &gt; rejects ../ escape" time="0.002498625">
+        </testcase>
+        <testcase classname="packages/runtime-core/src/path-resolver.test.ts" name="PathResolver &gt; rejects absolute path outside root" time="0.000719875">
+        </testcase>
+        <testcase classname="packages/runtime-core/src/path-resolver.test.ts" name="PathResolver &gt; rejects symlink that points outside root" time="0.001138167">
+        </testcase>
+        <testcase classname="packages/runtime-core/src/path-resolver.test.ts" name="PathResolver &gt; enforces scope paths when provided" time="0.003153041">
+        </testcase>
+        <testcase classname="packages/runtime-core/src/path-resolver.test.ts" name="PathResolver &gt; preserves missing scope boundaries instead of broadening to the parent subtree" time="0.002615583">
+        </testcase>
+    </testsuite>
+    <testsuite name="packages/runtime-core/src/runtime-host.test.ts" timestamp="2026-05-03T14:35:34.194Z" hostname="MacBook-Air.local" tests="4" failures="0" errors="0" skipped="0" time="0.151865167">
+        <testcase classname="packages/runtime-core/src/runtime-host.test.ts" name="createRuntimeHost &gt; opens db at configured path and shuts down cleanly" time="0.054693667">
+        </testcase>
+        <testcase classname="packages/runtime-core/src/runtime-host.test.ts" name="createRuntimeHost &gt; rejects startTask when workspace row is missing" time="0.032886">
+        </testcase>
+        <testcase classname="packages/runtime-core/src/runtime-host.test.ts" name="createRuntimeHost &gt; refuses to start tasks after shutdown" time="0.036221">
+        </testcase>
+        <testcase classname="packages/runtime-core/src/runtime-host.test.ts" name="createRuntimeHost &gt; sanitizes MCP path args against optional agent scope paths" time="0.026096334">
+        </testcase>
+    </testsuite>
+    <testsuite name="packages/runtime-core/src/secret-store.test.ts" timestamp="2026-05-03T14:35:34.195Z" hostname="MacBook-Air.local" tests="1" failures="0" errors="0" skipped="0" time="0.007835584">
+        <testcase classname="packages/runtime-core/src/secret-store.test.ts" name="file secret store round-trips values from a temporary home dir" time="0.006228292">
+        </testcase>
+    </testsuite>
+    <testsuite name="packages/runtime-core/src/workspaces.test.ts" timestamp="2026-05-03T14:35:34.195Z" hostname="MacBook-Air.local" tests="5" failures="0" errors="0" skipped="0" time="0.170475625">
+        <testcase classname="packages/runtime-core/src/workspaces.test.ts" name="WorkspaceStore &gt; creates, reads, updates, removes workspaces" time="0.042963084">
+        </testcase>
+        <testcase classname="packages/runtime-core/src/workspaces.test.ts" name="WorkspaceStore &gt; list returns rows in creation order" time="0.026558125">
+        </testcase>
+        <testcase classname="packages/runtime-core/src/workspaces.test.ts" name="WorkspaceStore &gt; requireReady throws NoWorkspaceRootError when workspace is missing" time="0.03049075">
+        </testcase>
+        <testcase classname="packages/runtime-core/src/workspaces.test.ts" name="WorkspaceStore &gt; requireReady throws NoWorkspaceRootError when root_path is empty" time="0.027977792">
+        </testcase>
+        <testcase classname="packages/runtime-core/src/workspaces.test.ts" name="WorkspaceStore &gt; requireReady returns workspace when root_path is set" time="0.03846925">
+        </testcase>
+    </testsuite>
+    <testsuite name="packages/runtime-core/src/repositories/repositories.test.ts" timestamp="2026-05-03T14:35:34.197Z" hostname="MacBook-Air.local" tests="14" failures="0" errors="0" skipped="0" time="0.481565917">
+        <testcase classname="packages/runtime-core/src/repositories/repositories.test.ts" name="provider credentials stay scoped to their organization" time="0.063937416">
+        </testcase>
+        <testcase classname="packages/runtime-core/src/repositories/repositories.test.ts" name="members are isolated per organization and preserve role name" time="0.031144459">
+        </testcase>
+        <testcase classname="packages/runtime-core/src/repositories/repositories.test.ts" name="bootstrap snapshot returns empty shape when no organization exists" time="0.024831875">
+        </testcase>
+        <testcase classname="packages/runtime-core/src/repositories/repositories.test.ts" name="provider credentials round-trip through the secret store, not plaintext DB" time="0.021752583">
+        </testcase>
+        <testcase classname="packages/runtime-core/src/repositories/repositories.test.ts" name="overwriting a provider credential deletes the previous secret" time="0.027461375">
+        </testcase>
+        <testcase classname="packages/runtime-core/src/repositories/repositories.test.ts" name="deleteProviderCredential removes the stored secret and DB row" time="0.022050916">
+        </testcase>
+        <testcase classname="packages/runtime-core/src/repositories/repositories.test.ts" name="listOrganizations returns every saved organization" time="0.045602416">
+        </testcase>
+        <testcase classname="packages/runtime-core/src/repositories/repositories.test.ts" name="searchChannelMessages tolerates unmatched quotes in user search text" time="0.037669792">
+        </testcase>
+        <testcase classname="packages/runtime-core/src/repositories/repositories.test.ts" name="listChannels excludes hidden kinds at the SQL layer (no pagination drift)" time="0.045146333">
+        </testcase>
+        <testcase classname="packages/runtime-core/src/repositories/repositories.test.ts" name="bootstrap snapshot drops self and dm channels" time="0.023729083">
+        </testcase>
+        <testcase classname="packages/runtime-core/src/repositories/repositories.test.ts" name="listChannelMessages preserves rows that share the same created_at across page boundaries" time="0.028832167">
+        </testcase>
+        <testcase classname="packages/runtime-core/src/repositories/repositories.test.ts" name="listChannels preserves channels that share the same created_at across page boundaries" time="0.036018583">
+        </testcase>
+        <testcase classname="packages/runtime-core/src/repositories/repositories.test.ts" name="listChannels returns descending pages without overlap across three pages" time="0.041274167">
+        </testcase>
+        <testcase classname="packages/runtime-core/src/repositories/repositories.test.ts" name="listChannels paginates correctly when the boundary id contains a pipe" time="0.026667042">
+        </testcase>
+    </testsuite>
+    <testsuite name="packages/agent-runtime/src/ai-sdk-loop.test.ts" timestamp="2026-05-03T14:35:34.200Z" hostname="MacBook-Air.local" tests="3" failures="0" errors="0" skipped="0" time="0.172624666">
+        <testcase classname="packages/agent-runtime/src/ai-sdk-loop.test.ts" name="runAiSdkLoop &gt; completed: text turn with no tool calls captures usage + finalText" time="0.108213292">
+            <system-out>
+
+
+[Agent Finished] Exit Reason: stop
+
+            </system-out>
+        </testcase>
+        <testcase classname="packages/agent-runtime/src/ai-sdk-loop.test.ts" name="runAiSdkLoop &gt; permission pre-hook: denied tool returns structured error, loop still completes" time="0.025879459">
+            <system-out>
+
+[Agent Tool Call] write_file: {
+  &quot;path&quot;: &quot;/etc/passwd&quot;,
+  &quot;contents&quot;: &quot;owned&quot;
+}
+
+
+
+[Agent Finished] Exit Reason: stop
+
+            </system-out>
+        </testcase>
+        <testcase classname="packages/agent-runtime/src/ai-sdk-loop.test.ts" name="runAiSdkLoop &gt; approval gate: reject returns rejection text to the model; run still completes" time="0.03432475">
+            <system-out>
+
+[Agent Tool Call] write_file: {
+  &quot;path&quot;: &quot;src/index.ts&quot;
+}
+
+
+
+[Agent Finished] Exit Reason: stop
+
+            </system-out>
+        </testcase>
+    </testsuite>
+    <testsuite name="packages/agent-runtime/src/browser-state.test.ts" timestamp="2026-05-03T14:35:34.202Z" hostname="MacBook-Air.local" tests="6" failures="4" errors="0" skipped="0" time="0.024792083">
+        <testcase classname="packages/agent-runtime/src/browser-state.test.ts" name="captureBrowserState &gt; returns the previous snapshot for non-browser tools" time="0.003122583">
+        </testcase>
+        <testcase classname="packages/agent-runtime/src/browser-state.test.ts" name="captureBrowserState &gt; pulls URL from browser_navigate args" time="0.000518583">
+        </testcase>
+        <testcase classname="packages/agent-runtime/src/browser-state.test.ts" name="captureBrowserState &gt; pulls URL and title from snapshot text output" time="0.013291041">
+            <failure message="expected undefined to be &apos;https://example.org/foo&apos; // Object.is equality" type="AssertionError">
+AssertionError: expected undefined to be &apos;https://example.org/foo&apos; // Object.is equality
+
+- Expected: 
+&quot;https://example.org/foo&quot;
+
++ Received: 
+undefined
+
+ ❯ src/browser-state.test.ts:32:23
+            </failure>
+        </testcase>
+        <testcase classname="packages/agent-runtime/src/browser-state.test.ts" name="captureBrowserState &gt; records a screenshot reference when the tool returns an image part" time="0.003186208">
+            <failure message=".toMatch() expects to receive a string, but got undefined" type="TypeError">
+TypeError: .toMatch() expects to receive a string, but got undefined
+ ❯ src/browser-state.test.ts:48:33
+            </failure>
+        </testcase>
+        <testcase classname="packages/agent-runtime/src/browser-state.test.ts" name="captureBrowserState &gt; merges with a previous snapshot without wiping earlier fields" time="0.001710667">
+            <failure message="expected undefined to be &apos;Page A&apos; // Object.is equality" type="AssertionError">
+AssertionError: expected undefined to be &apos;Page A&apos; // Object.is equality
+
+- Expected: 
+&quot;Page A&quot;
+
++ Received: 
+undefined
+
+ ❯ src/browser-state.test.ts:67:27
+            </failure>
+        </testcase>
+        <testcase classname="packages/agent-runtime/src/browser-state.test.ts" name="captureBrowserState &gt; strips trailing punctuation from bare URLs in text" time="0.000713709">
+            <failure message="expected undefined to be &apos;https://example.test/path&apos; // Object.is equality" type="AssertionError">
+AssertionError: expected undefined to be &apos;https://example.test/path&apos; // Object.is equality
+
+- Expected: 
+&quot;https://example.test/path&quot;
+
++ Received: 
+undefined
+
+ ❯ src/browser-state.test.ts:73:23
+            </failure>
+        </testcase>
+    </testsuite>
+    <testsuite name="packages/agent-runtime/src/concurrent.test.ts" timestamp="2026-05-03T14:35:34.207Z" hostname="MacBook-Air.local" tests="2" failures="1" errors="0" skipped="0" time="0.199036667">
+        <testcase classname="packages/agent-runtime/src/concurrent.test.ts" name="runConcurrent — Sr + Jr on shared MCP &gt; runs two agents in parallel, shares a single MCP, and surfaces peer work to Jr mid-task" time="0.17040775">
+            <system-out>
+
+🚀 [Agent Run Start] &quot;Sr Designer&quot;
+   Task: task-demo | Session: sess-1
+
+🚀 [Agent Run Start] &quot;Jr Designer&quot;
+   Task: task-demo | Session: sess-1
+
+            </system-out>
+            <failure message="expected &apos;error&apos; to be &apos;completed&apos; // Object.is equality" type="AssertionError">
+AssertionError: expected &apos;error&apos; to be &apos;completed&apos; // Object.is equality
+
+Expected: &quot;completed&quot;
+Received: &quot;error&quot;
+
+ ❯ src/concurrent.test.ts:165:33
+            </failure>
+        </testcase>
+        <testcase classname="packages/agent-runtime/src/concurrent.test.ts" name="runConcurrent — Sr + Jr on shared MCP &gt; killAll aborts every member mid-flight" time="0.027054542">
+            <system-out>
+
+🚀 [Agent Run Start] &quot;Sr Designer&quot;
+   Task: task-demo | Session: sess-kill
+
+🚀 [Agent Run Start] &quot;Jr Designer&quot;
+   Task: task-demo | Session: sess-kill
+
+            </system-out>
+        </testcase>
+    </testsuite>
+    <testsuite name="packages/agent-runtime/src/engine.test.ts" timestamp="2026-05-03T14:35:34.217Z" hostname="MacBook-Air.local" tests="3" failures="1" errors="0" skipped="0" time="0.0174665">
+        <testcase classname="packages/agent-runtime/src/engine.test.ts" name="resolveOrchestratorEngine &gt; defaults to ai-sdk when undefined" time="0.003770708">
+        </testcase>
+        <testcase classname="packages/agent-runtime/src/engine.test.ts" name="resolveOrchestratorEngine &gt; accepts both documented engines" time="0.000401041">
+        </testcase>
+        <testcase classname="packages/agent-runtime/src/engine.test.ts" name="resolveOrchestratorEngine &gt; throws on an unknown engine" time="0.011504917">
+            <failure message="expected [Function] to throw an error" type="AssertionError">
+AssertionError: expected [Function] to throw an error
+
+- Expected: 
+null
+
++ Received: 
+undefined
+
+ ❯ src/engine.test.ts:21:56
+            </failure>
+        </testcase>
+    </testsuite>
+    <testsuite name="packages/agent-runtime/src/escalation.test.ts" timestamp="2026-05-03T14:35:34.219Z" hostname="MacBook-Air.local" tests="4" failures="0" errors="0" skipped="0" time="0.005466">
+        <testcase classname="packages/agent-runtime/src/escalation.test.ts" name="matchesEscalation &gt; returns no match when no conditions are defined" time="0.002480583">
+        </testcase>
+        <testcase classname="packages/agent-runtime/src/escalation.test.ts" name="matchesEscalation &gt; matches a keyword condition case-insensitively" time="0.000695542">
+        </testcase>
+        <testcase classname="packages/agent-runtime/src/escalation.test.ts" name="matchesEscalation &gt; supports regex conditions delimited with slashes" time="0.000326541">
+        </testcase>
+        <testcase classname="packages/agent-runtime/src/escalation.test.ts" name="matchesEscalation &gt; does not match unrelated text" time="0.000331083">
+        </testcase>
+    </testsuite>
+    <testsuite name="packages/agent-runtime/src/gate.test.ts" timestamp="2026-05-03T14:35:34.220Z" hostname="MacBook-Air.local" tests="4" failures="4" errors="0" skipped="0" time="0.170469166">
+        <testcase classname="packages/agent-runtime/src/gate.test.ts" name="runToolLoop — gate pause/resume &gt; pauses on require_approval, invokes MCP on approve" time="0.105054959">
+            <system-out>
+
+🚀 [Agent Run Start] &quot;Writer&quot;
+   Task: task-gate | Session: s1
+
+            </system-out>
+            <failure message="expected &apos;error&apos; to be &apos;completed&apos; // Object.is equality" type="AssertionError">
+AssertionError: expected &apos;error&apos; to be &apos;completed&apos; // Object.is equality
+
+Expected: &quot;completed&quot;
+Received: &quot;error&quot;
+
+ ❯ src/gate.test.ts:107:31
+            </failure>
+        </testcase>
+        <testcase classname="packages/agent-runtime/src/gate.test.ts" name="runToolLoop — gate pause/resume &gt; rejects without calling MCP; LLM sees rejection tool_result" time="0.021217917">
+            <system-out>
+
+🚀 [Agent Run Start] &quot;Writer&quot;
+   Task: task-gate | Session: s1
+
+            </system-out>
+            <failure message="expected &apos;error&apos; to be &apos;completed&apos; // Object.is equality" type="AssertionError">
+AssertionError: expected &apos;error&apos; to be &apos;completed&apos; // Object.is equality
+
+Expected: &quot;completed&quot;
+Received: &quot;error&quot;
+
+ ❯ src/gate.test.ts:155:31
+            </failure>
+        </testcase>
+        <testcase classname="packages/agent-runtime/src/gate.test.ts" name="runToolLoop — gate pause/resume &gt; passes edited args to MCP on require_input approve" time="0.021271917">
+            <system-out>
+
+🚀 [Agent Run Start] &quot;Writer&quot;
+   Task: task-gate | Session: s1
+
+            </system-out>
+            <failure message="expected &apos;error&apos; to be &apos;completed&apos; // Object.is equality" type="AssertionError">
+AssertionError: expected &apos;error&apos; to be &apos;completed&apos; // Object.is equality
+
+Expected: &quot;completed&quot;
+Received: &quot;error&quot;
+
+ ❯ src/gate.test.ts:206:31
+            </failure>
+        </testcase>
+        <testcase classname="packages/agent-runtime/src/gate.test.ts" name="runToolLoop — gate pause/resume &gt; abort during gate wait exits as killed without calling MCP" time="0.020647292">
+            <system-out>
+
+🚀 [Agent Run Start] &quot;Writer&quot;
+   Task: task-gate | Session: s1
+
+            </system-out>
+            <failure message="expected &apos;error&apos; to be &apos;killed&apos; // Object.is equality" type="AssertionError">
+AssertionError: expected &apos;error&apos; to be &apos;killed&apos; // Object.is equality
+
+Expected: &quot;killed&quot;
+Received: &quot;error&quot;
+
+ ❯ src/gate.test.ts:247:31
+            </failure>
+        </testcase>
+    </testsuite>
+    <testsuite name="packages/agent-runtime/src/hydrate.test.ts" timestamp="2026-05-03T14:35:34.233Z" hostname="MacBook-Air.local" tests="2" failures="0" errors="0" skipped="0" time="0.149851167">
+        <testcase classname="packages/agent-runtime/src/hydrate.test.ts" name="hydrate &gt; produces a system prompt containing persona, task, and recent events" time="0.11206375">
+        </testcase>
+        <testcase classname="packages/agent-runtime/src/hydrate.test.ts" name="hydrate &gt; pulls peer outputs for subscribed channels" time="0.0335835">
+        </testcase>
+    </testsuite>
+    <testsuite name="packages/agent-runtime/src/shell.test.ts" timestamp="2026-05-03T14:35:34.234Z" hostname="MacBook-Air.local" tests="4" failures="3" errors="0" skipped="0" time="0.229928708">
+        <testcase classname="packages/agent-runtime/src/shell.test.ts" name="runAgent — single-agent end-to-end &gt; runs a tool loop, logs audit entries, and publishes agent_exited" time="0.148711542">
+            <system-out>
+
+🚀 [Agent Run Start] &quot;Sr Designer&quot;
+   Task: task-demo | Session: s1
+
+            </system-out>
+            <failure message="expected &apos;error&apos; to be &apos;completed&apos; // Object.is equality" type="AssertionError">
+AssertionError: expected &apos;error&apos; to be &apos;completed&apos; // Object.is equality
+
+Expected: &quot;completed&quot;
+Received: &quot;error&quot;
+
+ ❯ src/shell.test.ts:74:31
+            </failure>
+        </testcase>
+        <testcase classname="packages/agent-runtime/src/shell.test.ts" name="runAgent — single-agent end-to-end &gt; blocks disallowed tools and feeds the denial back to the LLM" time="0.023065709">
+            <system-out>
+
+🚀 [Agent Run Start] &quot;Sr Designer&quot;
+   Task: task-demo | Session: s1
+
+            </system-out>
+            <failure message="expected &apos;error&apos; to be &apos;completed&apos; // Object.is equality" type="AssertionError">
+AssertionError: expected &apos;error&apos; to be &apos;completed&apos; // Object.is equality
+
+Expected: &quot;completed&quot;
+Received: &quot;error&quot;
+
+ ❯ src/shell.test.ts:114:31
+            </failure>
+        </testcase>
+        <testcase classname="packages/agent-runtime/src/shell.test.ts" name="runAgent — single-agent end-to-end &gt; exits with escalated when the assistant text matches an escalation condition" time="0.035923125">
+            <system-out>
+
+🚀 [Agent Run Start] &quot;Sr Designer&quot;
+   Task: task-demo | Session: s1
+
+            </system-out>
+            <failure message="expected &apos;error&apos; to be &apos;escalated&apos; // Object.is equality" type="AssertionError">
+AssertionError: expected &apos;error&apos; to be &apos;escalated&apos; // Object.is equality
+
+Expected: &quot;escalated&quot;
+Received: &quot;error&quot;
+
+ ❯ src/shell.test.ts:151:31
+            </failure>
+        </testcase>
+        <testcase classname="packages/agent-runtime/src/shell.test.ts" name="runAgent — single-agent end-to-end &gt; propagates kill signal via handle.kill()" time="0.020310834">
+            <system-out>
+
+🚀 [Agent Run Start] &quot;Sr Designer&quot;
+   Task: task-demo | Session: s1
+
+            </system-out>
+        </testcase>
+    </testsuite>
+    <testsuite name="packages/orchestrator/src/run-task.test.ts" timestamp="2026-05-03T14:35:34.266Z" hostname="MacBook-Air.local" tests="18" failures="8" errors="0" skipped="0" time="0.625069125">
+        <testcase classname="packages/orchestrator/src/run-task.test.ts" name="orchestrator runTask — manual mode + concurrent execution &gt; spawns every team agent concurrently and synthesizes a completed run" time="0.319909792">
+            <system-out>
+
+🚀 [Agent Run Start] &quot;Sr Designer&quot;
+   Task: task-profile | Session: sess-1
+
+🚀 [Agent Run Start] &quot;Jr Designer&quot;
+   Task: task-profile | Session: sess-1
+
+            </system-out>
+            <failure message="expected &apos;failed&apos; to be &apos;completed&apos; // Object.is equality" type="AssertionError">
+AssertionError: expected &apos;failed&apos; to be &apos;completed&apos; // Object.is equality
+
+Expected: &quot;completed&quot;
+Received: &quot;failed&quot;
+
+ ❯ src/run-task.test.ts:139:27
+            </failure>
+        </testcase>
+        <testcase classname="packages/orchestrator/src/run-task.test.ts" name="orchestrator runTask — manual mode + concurrent execution &gt; fails fast when the team references an unknown agent" time="0.03109475">
+        </testcase>
+        <testcase classname="packages/orchestrator/src/run-task.test.ts" name="orchestrator runTask — manual mode + concurrent execution &gt; groups agents by MCP across teams with multiple MCPs" time="0.025944916">
+            <system-out>
+
+🚀 [Agent Run Start] &quot;Sr Designer&quot;
+   Task: task-profile | Session: sess-mixed
+
+🚀 [Agent Run Start] &quot;DB Agent&quot;
+   Task: task-profile | Session: sess-mixed
+
+            </system-out>
+            <failure message="expected &apos;failed&apos; to be &apos;completed&apos; // Object.is equality" type="AssertionError">
+AssertionError: expected &apos;failed&apos; to be &apos;completed&apos; // Object.is equality
+
+Expected: &quot;completed&quot;
+Received: &quot;failed&quot;
+
+ ❯ src/run-task.test.ts:214:27
+            </failure>
+        </testcase>
+        <testcase classname="packages/orchestrator/src/run-task.test.ts" name="orchestrator runTask — manual mode + concurrent execution &gt; killAgent aborts only the targeted agent; the rest complete" time="0.022364375">
+            <system-out>
+
+🚀 [Agent Run Start] &quot;Sr Designer&quot;
+   Task: task-profile | Session: sess-kill-one
+
+🚀 [Agent Run Start] &quot;Jr Designer&quot;
+   Task: task-profile | Session: sess-kill-one
+
+            </system-out>
+            <failure message="expected &apos;error&apos; to be &apos;completed&apos; // Object.is equality" type="AssertionError">
+AssertionError: expected &apos;error&apos; to be &apos;completed&apos; // Object.is equality
+
+Expected: &quot;completed&quot;
+Received: &quot;error&quot;
+
+ ❯ src/run-task.test.ts:264:28
+            </failure>
+        </testcase>
+        <testcase classname="packages/orchestrator/src/run-task.test.ts" name="orchestrator runTask — manual mode + concurrent execution &gt; killSession aborts the whole run and marks it paused" time="0.022457042">
+            <system-out>
+
+🚀 [Agent Run Start] &quot;Sr Designer&quot;
+   Task: task-profile | Session: sess-kill-all
+
+🚀 [Agent Run Start] &quot;Jr Designer&quot;
+   Task: task-profile | Session: sess-kill-all
+
+            </system-out>
+            <failure message="expected &apos;failed&apos; to be &apos;paused&apos; // Object.is equality" type="AssertionError">
+AssertionError: expected &apos;failed&apos; to be &apos;paused&apos; // Object.is equality
+
+Expected: &quot;paused&quot;
+Received: &quot;failed&quot;
+
+ ❯ src/run-task.test.ts:302:27
+            </failure>
+        </testcase>
+        <testcase classname="packages/orchestrator/src/run-task.test.ts" name="orchestrator runTask — manual mode + concurrent execution &gt; fails the run when MCP connection cannot be acquired" time="0.025291">
+        </testcase>
+        <testcase classname="packages/orchestrator/src/run-task.test.ts" name="orchestrator runTask — manual mode + concurrent execution &gt; provider that throws marks only that agent failed, others complete" time="0.024311583">
+            <system-out>
+
+🚀 [Agent Run Start] &quot;Sr Designer&quot;
+   Task: task-profile | Session: sess-provider-crash
+
+🚀 [Agent Run Start] &quot;Jr Designer&quot;
+   Task: task-profile | Session: sess-provider-crash
+
+            </system-out>
+            <failure message="expected &apos;error&apos; to be &apos;completed&apos; // Object.is equality" type="AssertionError">
+AssertionError: expected &apos;error&apos; to be &apos;completed&apos; // Object.is equality
+
+Expected: &quot;completed&quot;
+Received: &quot;error&quot;
+
+ ❯ src/run-task.test.ts:367:28
+            </failure>
+        </testcase>
+        <testcase classname="packages/orchestrator/src/run-task.test.ts" name="orchestrator runTask — manual mode + concurrent execution &gt; empty team fails fast with a descriptive error" time="0.018123417">
+        </testcase>
+        <testcase classname="packages/orchestrator/src/run-task.test.ts" name="orchestrator runTask — manual mode + concurrent execution &gt; auto mode routes through the planner and only spawns selected agents" time="0.038777458">
+            <failure message="expected &apos;failed&apos; to be &apos;completed&apos; // Object.is equality" type="AssertionError">
+AssertionError: expected &apos;failed&apos; to be &apos;completed&apos; // Object.is equality
+
+Expected: &quot;completed&quot;
+Received: &quot;failed&quot;
+
+ ❯ src/run-task.test.ts:452:27
+            </failure>
+        </testcase>
+        <testcase classname="packages/orchestrator/src/run-task.test.ts" name="orchestrator runTask — manual mode + concurrent execution &gt; auto mode with dependsOn runs agents in waves and passes predecessor output" time="0.030940541">
+            <failure message="expected &apos;failed&apos; to be &apos;completed&apos; // Object.is equality" type="AssertionError">
+AssertionError: expected &apos;failed&apos; to be &apos;completed&apos; // Object.is equality
+
+Expected: &quot;completed&quot;
+Received: &quot;failed&quot;
+
+ ❯ src/run-task.test.ts:539:27
+            </failure>
+        </testcase>
+        <testcase classname="packages/orchestrator/src/run-task.test.ts" name="orchestrator runTask — manual mode + concurrent execution &gt; rejects slim execution mode until wiring lands" time="0.027479333">
+        </testcase>
+        <testcase classname="packages/orchestrator/src/run-task.test.ts" name="orchestrator runTask — manual mode + concurrent execution &gt; converts review_required into an approval record and approval_requested event" time="0.032229708">
+            <system-out>
+
+🚀 [Agent Run Start] &quot;Sr Designer&quot;
+   Task: task-profile | Session: sess-approval
+
+🚀 [Agent Run Start] &quot;Jr Designer&quot;
+   Task: task-profile | Session: sess-approval
+
+            </system-out>
+            <failure message="expected &apos;failed&apos; to be &apos;completed&apos; // Object.is equality" type="AssertionError">
+AssertionError: expected &apos;failed&apos; to be &apos;completed&apos; // Object.is equality
+
+Expected: &quot;completed&quot;
+Received: &quot;failed&quot;
+
+ ❯ src/run-task.test.ts:607:27
+            </failure>
+        </testcase>
+        <testcase classname="packages/orchestrator/src/run-task.test.ts" name="topoSortWaves &gt; puts agents with no deps in wave 0" time="0.000744958">
+        </testcase>
+        <testcase classname="packages/orchestrator/src/run-task.test.ts" name="topoSortWaves &gt; separates dependent agents into later waves" time="0.000402375">
+        </testcase>
+        <testcase classname="packages/orchestrator/src/run-task.test.ts" name="topoSortWaves &gt; groups parallel agents in the same wave" time="0.000322833">
+        </testcase>
+        <testcase classname="packages/orchestrator/src/run-task.test.ts" name="topoSortWaves &gt; handles mixed parallel + dependent waves (build-a-site pattern)" time="0.000254917">
+        </testcase>
+        <testcase classname="packages/orchestrator/src/run-task.test.ts" name="topoSortWaves &gt; breaks circular dependencies by forcing remaining into one wave" time="0.000858">
+        </testcase>
+        <testcase classname="packages/orchestrator/src/run-task.test.ts" name="topoSortWaves &gt; returns empty array for empty assignments" time="0.000197958">
+        </testcase>
+    </testsuite>
+    <testsuite name="packages/orchestrator/src/services/conversation.test.ts" timestamp="2026-05-03T14:35:34.287Z" hostname="MacBook-Air.local" tests="3" failures="0" errors="0" skipped="0" time="0.050133792">
+        <testcase classname="packages/orchestrator/src/services/conversation.test.ts" name="ConversationService @all mentions &gt; fans out @all to every member in the channel" time="0.025954292">
+        </testcase>
+        <testcase classname="packages/orchestrator/src/services/conversation.test.ts" name="ConversationService @all mentions &gt; alerts an agent recipient for direct messages" time="0.004395792">
+        </testcase>
+        <testcase classname="packages/orchestrator/src/services/conversation.test.ts" name="ConversationService @all mentions &gt; resolves multi-word mentions in message content" time="0.014845583">
+        </testcase>
+    </testsuite>
+    <testsuite name="packages/orchestrator/src/services/policy.test.ts" timestamp="2026-05-03T14:35:34.287Z" hostname="MacBook-Air.local" tests="9" failures="0" errors="0" skipped="0" time="0.186058167">
+        <testcase classname="packages/orchestrator/src/services/policy.test.ts" name="checkToolPolicy &gt; evaluates relative workspace scopes against the workspace root instead of process cwd" time="0.03198325">
+        </testcase>
+        <testcase classname="packages/orchestrator/src/services/policy.test.ts" name="checkToolPolicy &gt; filesystem access to soul.md &gt; allows a role scoped to apps/web to read soul.md there" time="0.02181175">
+        </testcase>
+        <testcase classname="packages/orchestrator/src/services/policy.test.ts" name="checkToolPolicy &gt; filesystem access to soul.md &gt; blocks a role without access to apps/web" time="0.031254875">
+        </testcase>
+        <testcase classname="packages/orchestrator/src/services/policy.test.ts" name="checkToolPolicy &gt; channel.* tools &gt; channel.post is allowed without approval (messaging is the substrate)" time="0.035267625">
+        </testcase>
+        <testcase classname="packages/orchestrator/src/services/policy.test.ts" name="checkToolPolicy &gt; channel.* tools &gt; channel.reply / channel.dm are allowed without approval" time="0.009928375">
+        </testcase>
+        <testcase classname="packages/orchestrator/src/services/policy.test.ts" name="checkToolPolicy &gt; channel.* tools &gt; channel.list / channel.read are allowed (read action)" time="0.008334708">
+        </testcase>
+        <testcase classname="packages/orchestrator/src/services/policy.test.ts" name="checkToolPolicy &gt; channel.* tools &gt; channel ids are not run through the workspace-boundary check" time="0.012454167">
+        </testcase>
+        <testcase classname="packages/orchestrator/src/services/policy.test.ts" name="checkToolPolicy &gt; channel.* tools &gt; channel.* tools still respect the role.tools allowlist" time="0.017417791">
+        </testcase>
+        <testcase classname="packages/orchestrator/src/services/policy.test.ts" name="checkToolPolicy &gt; channel.* tools &gt; self.note is always allowed even when the role does not list it" time="0.014398291">
+        </testcase>
+    </testsuite>
+    <testsuite name="packages/orchestrator/src/tools/channel.test.ts" timestamp="2026-05-03T14:35:34.291Z" hostname="MacBook-Air.local" tests="18" failures="0" errors="0" skipped="0" time="0.01253175">
+        <testcase classname="packages/orchestrator/src/tools/channel.test.ts" name="channel.* tools — toInvocation() &gt; channel.post does not emit resourcePath" time="0.002315542">
+        </testcase>
+        <testcase classname="packages/orchestrator/src/tools/channel.test.ts" name="channel.* tools — toInvocation() &gt; channel.post resolves a friendly channel name to the stored channel id" time="0.000681458">
+        </testcase>
+        <testcase classname="packages/orchestrator/src/tools/channel.test.ts" name="channel.* tools — toInvocation() &gt; channel.reply does not emit resourcePath" time="0.000289834">
+        </testcase>
+        <testcase classname="packages/orchestrator/src/tools/channel.test.ts" name="channel.* tools — toInvocation() &gt; channel.dm does not emit resourcePath" time="0.0002155">
+        </testcase>
+        <testcase classname="packages/orchestrator/src/tools/channel.test.ts" name="channel.* tools — toInvocation() &gt; channel.list is tagged as a read" time="0.00024925">
+        </testcase>
+        <testcase classname="packages/orchestrator/src/tools/channel.test.ts" name="channel.* tools — toInvocation() &gt; channel.read is tagged as a read and does not emit resourcePath" time="0.000286167">
+        </testcase>
+        <testcase classname="packages/orchestrator/src/tools/channel.test.ts" name="channel.* tools — toInvocation() &gt; channel.post does not override permissionToolName (so it matches `allowed_tools` full ids)" time="0.000291125">
+        </testcase>
+        <testcase classname="packages/orchestrator/src/tools/channel.test.ts" name="channel.* tools — toInvocation() &gt; channel.reply does not override permissionToolName (so it matches `allowed_tools` full ids)" time="0.000168292">
+        </testcase>
+        <testcase classname="packages/orchestrator/src/tools/channel.test.ts" name="channel.* tools — toInvocation() &gt; channel.dm does not override permissionToolName (so it matches `allowed_tools` full ids)" time="0.000174125">
+        </testcase>
+        <testcase classname="packages/orchestrator/src/tools/channel.test.ts" name="channel.* tools — toInvocation() &gt; channel.list does not override permissionToolName (so it matches `allowed_tools` full ids)" time="0.0001975">
+        </testcase>
+        <testcase classname="packages/orchestrator/src/tools/channel.test.ts" name="channel.* tools — toInvocation() &gt; channel.read does not override permissionToolName (so it matches `allowed_tools` full ids)" time="0.000200917">
+        </testcase>
+        <testcase classname="packages/orchestrator/src/tools/channel.test.ts" name="channel.* tools — toInvocation() &gt; self.note keeps its bypassPermission flag" time="0.000233125">
+        </testcase>
+        <testcase classname="packages/orchestrator/src/tools/channel.test.ts" name="ALWAYS_AVAILABLE_AGENT_TOOLS &gt; contains exactly self.note (no channel.* leaks past the role allowlist)" time="0.000970833">
+        </testcase>
+        <testcase classname="packages/orchestrator/src/tools/channel.test.ts" name="ALWAYS_AVAILABLE_AGENT_TOOLS &gt; does not include channel.post" time="0.001563042">
+        </testcase>
+        <testcase classname="packages/orchestrator/src/tools/channel.test.ts" name="ALWAYS_AVAILABLE_AGENT_TOOLS &gt; does not include channel.reply" time="0.000252542">
+        </testcase>
+        <testcase classname="packages/orchestrator/src/tools/channel.test.ts" name="ALWAYS_AVAILABLE_AGENT_TOOLS &gt; does not include channel.dm" time="0.000315625">
+        </testcase>
+        <testcase classname="packages/orchestrator/src/tools/channel.test.ts" name="ALWAYS_AVAILABLE_AGENT_TOOLS &gt; does not include channel.list" time="0.000363708">
+        </testcase>
+        <testcase classname="packages/orchestrator/src/tools/channel.test.ts" name="ALWAYS_AVAILABLE_AGENT_TOOLS &gt; does not include channel.read" time="0.000419375">
+        </testcase>
+    </testsuite>
+    <testsuite name="packages/orchestrator/src/tools/filesystem.test.ts" timestamp="2026-05-03T14:35:34.296Z" hostname="MacBook-Air.local" tests="2" failures="0" errors="0" skipped="0" time="0.043057709">
+        <testcase classname="packages/orchestrator/src/tools/filesystem.test.ts" name="filesystem tool &gt; reads soul.md when it exists" time="0.034589208">
+        </testcase>
+        <testcase classname="packages/orchestrator/src/tools/filesystem.test.ts" name="filesystem tool &gt; throws ENOENT when soul.md does not exist" time="0.006652833">
+        </testcase>
+    </testsuite>
+    <testsuite name="packages/llm/src/legacy-quarantine.test.ts" timestamp="2026-05-03T14:35:34.296Z" hostname="MacBook-Air.local" tests="2" failures="0" errors="0" skipped="0" time="0.006041792">
+        <testcase classname="packages/llm/src/legacy-quarantine.test.ts" name="E0.3.3 — legacy import guard &gt; every `@ujima/llm/legacy` import sits under the allowlist" time="0.002245916">
+        </testcase>
+        <testcase classname="packages/llm/src/legacy-quarantine.test.ts" name="E0.3.3 — legacy import guard &gt; nothing outside packages/llm/src/legacy/** imports from legacy submodules directly" time="0.002098084">
+        </testcase>
+    </testsuite>
+    <testsuite name="packages/llm/src/select.test.ts" timestamp="2026-05-03T14:35:34.297Z" hostname="MacBook-Air.local" tests="9" failures="0" errors="0" skipped="0" time="0.012049333">
+        <testcase classname="packages/llm/src/select.test.ts" name="selectLanguageModel &gt; exposes the expected provider kinds" time="0.002521666">
+        </testcase>
+        <testcase classname="packages/llm/src/select.test.ts" name="selectLanguageModel &gt; anthropic resolves without network" time="0.0013665">
+        </testcase>
+        <testcase classname="packages/llm/src/select.test.ts" name="selectLanguageModel &gt; openai resolves without network" time="0.00063175">
+        </testcase>
+        <testcase classname="packages/llm/src/select.test.ts" name="selectLanguageModel &gt; google resolves without network" time="0.000470625">
+        </testcase>
+        <testcase classname="packages/llm/src/select.test.ts" name="selectLanguageModel &gt; openrouter resolves via OpenAI-compatible base URL (no new SDK)" time="0.000373208">
+        </testcase>
+        <testcase classname="packages/llm/src/select.test.ts" name="selectLanguageModel &gt; ollama resolves with no api key and default base URL" time="0.000308625">
+        </testcase>
+        <testcase classname="packages/llm/src/select.test.ts" name="selectLanguageModel &gt; ollama accepts a custom base URL" time="0.000207917">
+        </testcase>
+        <testcase classname="packages/llm/src/select.test.ts" name="selectLanguageModel &gt; anthropic/openai/google/openrouter all require apiKey" time="0.00379">
+        </testcase>
+        <testcase classname="packages/llm/src/select.test.ts" name="selectLanguageModel &gt; unsupported kind throws LLMError" time="0.00025925">
+        </testcase>
+    </testsuite>
+    <testsuite name="packages/llm/src/legacy/anthropic.test.ts" timestamp="2026-05-03T14:35:34.300Z" hostname="MacBook-Air.local" tests="2" failures="0" errors="0" skipped="0" time="0.023156292">
+        <testcase classname="packages/llm/src/legacy/anthropic.test.ts" name="anthropic provider SSE parsing &gt; parses text and tool_use events" time="0.015247667">
+        </testcase>
+        <testcase classname="packages/llm/src/legacy/anthropic.test.ts" name="anthropic provider SSE parsing &gt; surfaces non-2xx responses as LLMError" time="0.005410583">
+        </testcase>
+    </testsuite>
+    <testsuite name="packages/llm/src/legacy/mock.test.ts" timestamp="2026-05-03T14:35:34.300Z" hostname="MacBook-Air.local" tests="3" failures="0" errors="0" skipped="0" time="0.013441459">
+        <testcase classname="packages/llm/src/legacy/mock.test.ts" name="mock LLM provider &gt; plays a single text turn" time="0.003000833">
+        </testcase>
+        <testcase classname="packages/llm/src/legacy/mock.test.ts" name="mock LLM provider &gt; advances turn index on each call and yields tool_use finish" time="0.008166875">
+        </testcase>
+        <testcase classname="packages/llm/src/legacy/mock.test.ts" name="mock LLM provider &gt; defaults to a finish delta when the script is exhausted" time="0.000302291">
+        </testcase>
+    </testsuite>
+    <testsuite name="packages/llm/src/legacy/ollama.test.ts" timestamp="2026-05-03T14:35:34.301Z" hostname="MacBook-Air.local" tests="5" failures="0" errors="0" skipped="0" time="0.021675375">
+        <testcase classname="packages/llm/src/legacy/ollama.test.ts" name="ollama provider NDJSON parsing &gt; parses text chunks and final done=true with usage" time="0.009287333">
+        </testcase>
+        <testcase classname="packages/llm/src/legacy/ollama.test.ts" name="ollama provider NDJSON parsing &gt; parses tool calls from a single chunk" time="0.002453583">
+        </testcase>
+        <testcase classname="packages/llm/src/legacy/ollama.test.ts" name="ollama provider NDJSON parsing &gt; generates synthetic id when tool call has no id" time="0.001081916">
+        </testcase>
+        <testcase classname="packages/llm/src/legacy/ollama.test.ts" name="ollama provider NDJSON parsing &gt; surfaces non-2xx responses as LLMError" time="0.005423708">
+        </testcase>
+        <testcase classname="packages/llm/src/legacy/ollama.test.ts" name="ollama provider NDJSON parsing &gt; yields finish even if stream ends without done=true" time="0.00107525">
+        </testcase>
+    </testsuite>
+    <testsuite name="packages/llm/src/legacy/openai-compat.test.ts" timestamp="2026-05-03T14:35:34.303Z" hostname="MacBook-Air.local" tests="5" failures="0" errors="0" skipped="0" time="0.029288125">
+        <testcase classname="packages/llm/src/legacy/openai-compat.test.ts" name="openai-compat provider SSE parsing &gt; parses text deltas and finish_reason=stop" time="0.008821709">
+        </testcase>
+        <testcase classname="packages/llm/src/legacy/openai-compat.test.ts" name="openai-compat provider SSE parsing &gt; parses streamed tool calls with split argument chunks" time="0.005968416">
+        </testcase>
+        <testcase classname="packages/llm/src/legacy/openai-compat.test.ts" name="openai-compat provider SSE parsing &gt; handles [DONE] sentinel" time="0.001002458">
+        </testcase>
+        <testcase classname="packages/llm/src/legacy/openai-compat.test.ts" name="openai-compat provider SSE parsing &gt; surfaces non-2xx responses as LLMError" time="0.008842333">
+        </testcase>
+        <testcase classname="packages/llm/src/legacy/openai-compat.test.ts" name="openai-compat provider SSE parsing &gt; throws on missing API key" time="0.000396333">
+        </testcase>
+    </testsuite>
+    <testsuite name="packages/llm/src/legacy/select.test.ts" timestamp="2026-05-03T14:35:34.304Z" hostname="MacBook-Air.local" tests="4" failures="0" errors="0" skipped="0" time="0.005374334">
+        <testcase classname="packages/llm/src/legacy/select.test.ts" name="selectProvider &gt; prefers vscode-lm when provided in config" time="0.00204425">
+        </testcase>
+        <testcase classname="packages/llm/src/legacy/select.test.ts" name="selectProvider &gt; falls back to anthropic when key is present" time="0.000359958">
+        </testcase>
+        <testcase classname="packages/llm/src/legacy/select.test.ts" name="selectProvider &gt; falls through to ollama when no keys are present" time="0.000760209">
+        </testcase>
+        <testcase classname="packages/llm/src/legacy/select.test.ts" name="selectProvider &gt; throws when the order excludes everything configured" time="0.000517667">
+        </testcase>
+    </testsuite>
+    <testsuite name="packages/shared/src/activity-stream.test.ts" timestamp="2026-05-03T14:35:34.306Z" hostname="MacBook-Air.local" tests="10" failures="0" errors="0" skipped="0" time="0.0168225">
+        <testcase classname="packages/shared/src/activity-stream.test.ts" name="activity-stream filter &gt; returns all events on empty filter" time="0.00507675">
+        </testcase>
+        <testcase classname="packages/shared/src/activity-stream.test.ts" name="activity-stream filter &gt; filters by publisher (agent)" time="0.000346333">
+        </testcase>
+        <testcase classname="packages/shared/src/activity-stream.test.ts" name="activity-stream filter &gt; filters by event type" time="0.000631458">
+        </testcase>
+        <testcase classname="packages/shared/src/activity-stream.test.ts" name="activity-stream filter &gt; filters by sinceMs" time="0.001729417">
+        </testcase>
+        <testcase classname="packages/shared/src/activity-stream.test.ts" name="activity-stream filter &gt; filters by free-text search (payload JSON included)" time="0.000713042">
+        </testcase>
+        <testcase classname="packages/shared/src/activity-stream.test.ts" name="activity-stream filter &gt; combines agent + type + search" time="0.000404167">
+        </testcase>
+        <testcase classname="packages/shared/src/activity-stream.test.ts" name="activity-stream filter &gt; uniqueAgents / uniqueTypes populate filter dropdowns" time="0.000571417">
+        </testcase>
+        <testcase classname="packages/shared/src/activity-stream.test.ts" name="activity-stream append &gt; dedupes on event_id and sorts by timestamp" time="0.000481958">
+        </testcase>
+        <testcase classname="packages/shared/src/activity-stream.test.ts" name="activity-stream append &gt; trims to max keeping most recent" time="0.000363167">
+        </testcase>
+        <testcase classname="packages/shared/src/activity-stream.test.ts" name="activity-stream append &gt; no-op when incoming is empty" time="0.003081417">
+        </testcase>
+    </testsuite>
+    <testsuite name="packages/shared/src/cursor.test.ts" timestamp="2026-05-03T14:35:34.314Z" hostname="MacBook-Air.local" tests="8" failures="0" errors="0" skipped="0" time="0.010003958">
+        <testcase classname="packages/shared/src/cursor.test.ts" name="encodeCursor / decodeCursor &gt; round-trips a (timestamp, id) pair" time="0.003404666">
+        </testcase>
+        <testcase classname="packages/shared/src/cursor.test.ts" name="encodeCursor / decodeCursor &gt; treats undefined input as undefined" time="0.000302625">
+        </testcase>
+        <testcase classname="packages/shared/src/cursor.test.ts" name="encodeCursor / decodeCursor &gt; parses a legacy single-column cursor (no pipe) for backward compat" time="0.000564041">
+        </testcase>
+        <testcase classname="packages/shared/src/cursor.test.ts" name="encodeCursor / decodeCursor &gt; keeps everything after the first pipe in the id (uuids contain hyphens not pipes)" time="0.00047275">
+        </testcase>
+        <testcase classname="packages/shared/src/cursor.test.ts" name="encodeCursor / decodeCursor &gt; round-trips ids that themselves contain pipes" time="0.000292792">
+        </testcase>
+        <testcase classname="packages/shared/src/cursor.test.ts" name="cursorWhereClause &gt; emits a composite predicate when both timestamp and id are present" time="0.000893625">
+        </testcase>
+        <testcase classname="packages/shared/src/cursor.test.ts" name="cursorWhereClause &gt; falls back to a single-column predicate when given a legacy cursor" time="0.000417541">
+        </testcase>
+        <testcase classname="packages/shared/src/cursor.test.ts" name="cursorWhereClause &gt; honours the column-name overrides (e.g. `m.created_at`, `started_at`)" time="0.000596">
+        </testcase>
+    </testsuite>
+    <testsuite name="packages/shared/src/governance-policy.test.ts" timestamp="2026-05-03T14:35:34.317Z" hostname="MacBook-Air.local" tests="20" failures="0" errors="0" skipped="0" time="0.047748292">
+        <testcase classname="packages/shared/src/governance-policy.test.ts" name="governance policy schema &gt; parses an empty policy object" time="0.005586917">
+        </testcase>
+        <testcase classname="packages/shared/src/governance-policy.test.ts" name="governance policy schema &gt; parses a fully-formed policy round-trip" time="0.002841958">
+        </testcase>
+        <testcase classname="packages/shared/src/governance-policy.test.ts" name="governance policy schema &gt; rejects unknown states" time="0.002701042">
+        </testcase>
+        <testcase classname="packages/shared/src/governance-policy.test.ts" name="matchRule &gt; exact mcp+tool matches" time="0.000358708">
+        </testcase>
+        <testcase classname="packages/shared/src/governance-policy.test.ts" name="matchRule &gt; wildcard mcp matches any mcp" time="0.000572333">
+        </testcase>
+        <testcase classname="packages/shared/src/governance-policy.test.ts" name="matchRule &gt; wildcard tool matches any tool on that mcp" time="0.000545833">
+        </testcase>
+        <testcase classname="packages/shared/src/governance-policy.test.ts" name="matchRule &gt; prefix glob matches tool prefix" time="0.0009195">
+        </testcase>
+        <testcase classname="packages/shared/src/governance-policy.test.ts" name="matchRule &gt; different mcp does not match" time="0.000340916">
+        </testcase>
+        <testcase classname="packages/shared/src/governance-policy.test.ts" name="evaluatePolicy precedence &gt; platform always_deny beats agent allow" time="0.001397125">
+        </testcase>
+        <testcase classname="packages/shared/src/governance-policy.test.ts" name="evaluatePolicy precedence &gt; agent rule beats platform default_require_approval" time="0.000315417">
+        </testcase>
+        <testcase classname="packages/shared/src/governance-policy.test.ts" name="evaluatePolicy precedence &gt; platform default_require_approval applies when no agent rule" time="0.00022625">
+        </testcase>
+        <testcase classname="packages/shared/src/governance-policy.test.ts" name="evaluatePolicy precedence &gt; exact agent rule beats wildcard agent rule" time="0.000303083">
+        </testcase>
+        <testcase classname="packages/shared/src/governance-policy.test.ts" name="evaluatePolicy precedence &gt; inherit rule falls through to platform default" time="0.000210875">
+        </testcase>
+        <testcase classname="packages/shared/src/governance-policy.test.ts" name="evaluatePolicy precedence &gt; empty policy returns inherit/default" time="0.000194125">
+        </testcase>
+        <testcase classname="packages/shared/src/governance-policy.test.ts" name="policy mutators &gt; setAgentRule replaces an existing rule for the same mcp+tool" time="0.00036275">
+        </testcase>
+        <testcase classname="packages/shared/src/governance-policy.test.ts" name="policy mutators &gt; removeAgentRule drops only that rule and clears the agent key when empty" time="0.000490333">
+        </testcase>
+        <testcase classname="packages/shared/src/governance-policy.test.ts" name="policy mutators &gt; clearAgent wipes all rules for an agent" time="0.000259625">
+        </testcase>
+        <testcase classname="packages/shared/src/governance-policy.test.ts" name="policy mutators &gt; removePlatformRule only affects the named bucket" time="0.000444792">
+        </testcase>
+        <testcase classname="packages/shared/src/governance-policy.test.ts" name="policy mutators &gt; mutators are pure — they return a new policy" time="0.000251916">
+        </testcase>
+        <testcase classname="packages/shared/src/governance-policy.test.ts" name="buildToolCatalog &gt; joins agents, mcps and tools into a flat sorted catalog" time="0.026540833">
+        </testcase>
+    </testsuite>
+    <testsuite name="packages/shared/src/governance.test.ts" timestamp="2026-05-03T14:35:34.321Z" hostname="MacBook-Air.local" tests="11" failures="0" errors="0" skipped="0" time="0.014104042">
+        <testcase classname="packages/shared/src/governance.test.ts" name="filterAuditRecords &gt; filters by agent" time="0.003184292">
+        </testcase>
+        <testcase classname="packages/shared/src/governance.test.ts" name="filterAuditRecords &gt; filters by tool" time="0.000414625">
+        </testcase>
+        <testcase classname="packages/shared/src/governance.test.ts" name="filterAuditRecords &gt; filters by event type" time="0.000288292">
+        </testcase>
+        <testcase classname="packages/shared/src/governance.test.ts" name="filterAuditRecords &gt; filters by allowed=false (blocked only)" time="0.000365125">
+        </testcase>
+        <testcase classname="packages/shared/src/governance.test.ts" name="filterAuditRecords &gt; search hits block_reason" time="0.000333083">
+        </testcase>
+        <testcase classname="packages/shared/src/governance.test.ts" name="audit unique helpers &gt; returns unique sorted agents/tools/types" time="0.001914458">
+        </testcase>
+        <testcase classname="packages/shared/src/governance.test.ts" name="audit export &gt; auditToJson round-trips" time="0.003039458">
+        </testcase>
+        <testcase classname="packages/shared/src/governance.test.ts" name="audit export &gt; auditToCsv escapes quotes + commas" time="0.000657334">
+        </testcase>
+        <testcase classname="packages/shared/src/governance.test.ts" name="rate aggregation &gt; callsPerMinute sums within 60s window" time="0.000339708">
+        </testcase>
+        <testcase classname="packages/shared/src/governance.test.ts" name="rate aggregation &gt; bucketSamples distributes by timestamp" time="0.0005655">
+        </testcase>
+        <testcase classname="packages/shared/src/governance.test.ts" name="summarizeSession &gt; counts tool calls and blocked calls" time="0.000406458">
+        </testcase>
+    </testsuite>
+    <testsuite name="packages/shared/src/index.test.ts" timestamp="2026-05-03T14:35:34.325Z" hostname="MacBook-Air.local" tests="2" failures="0" errors="0" skipped="0" time="0.007877917">
+        <testcase classname="packages/shared/src/index.test.ts" name="@ujima/shared smoke &gt; exports a version string" time="0.002718042">
+        </testcase>
+        <testcase classname="packages/shared/src/index.test.ts" name="@ujima/shared smoke &gt; validates an AgentDef" time="0.003170042">
+        </testcase>
+    </testsuite>
+    <testsuite name="packages/shared/src/personas.test.ts" timestamp="2026-05-03T14:35:34.326Z" hostname="MacBook-Air.local" tests="7" failures="0" errors="0" skipped="0" time="0.023120667">
+        <testcase classname="packages/shared/src/personas.test.ts" name="persona templates &gt; ships the 9 curated personas (Day-2 set plus QA pair, tech writer, security reviewer)" time="0.006854375">
+        </testcase>
+        <testcase classname="packages/shared/src/personas.test.ts" name="persona templates &gt; senior-qa reviews junior-qa; junior-qa escalates to senior-qa" time="0.001191041">
+        </testcase>
+        <testcase classname="packages/shared/src/personas.test.ts" name="persona templates &gt; tech-writer and security-reviewer are independent seniors with no juniors" time="0.000438625">
+        </testcase>
+        <testcase classname="packages/shared/src/personas.test.ts" name="persona templates &gt; senior templates declare reviews; juniors declare escalation to senior" time="0.000389833">
+        </testcase>
+        <testcase classname="packages/shared/src/personas.test.ts" name="persona templates &gt; persona blocks are non-empty and reference the role" time="0.001035708">
+        </testcase>
+        <testcase classname="packages/shared/src/personas.test.ts" name="persona templates &gt; assembleAgentFromTemplate produces a valid AgentDef" time="0.006322041">
+        </testcase>
+        <testcase classname="packages/shared/src/personas.test.ts" name="persona templates &gt; throws on unknown template id" time="0.00191375">
+        </testcase>
+    </testsuite>
+    <testsuite name="packages/ujima/src/index.test.ts" timestamp="2026-05-03T14:35:34.327Z" hostname="MacBook-Air.local" tests="8" failures="0" errors="0" skipped="0" time="0.034021375">
+        <testcase classname="packages/ujima/src/index.test.ts" name="starter config includes the preset team shape" time="0.016748417">
+        </testcase>
+        <testcase classname="packages/ujima/src/index.test.ts" name="role catalog mirrors the upstream industry folders" time="0.000830625">
+        </testcase>
+        <testcase classname="packages/ujima/src/index.test.ts" name="framework helpers normalize roles, tools, and providers" time="0.002273875">
+        </testcase>
+        <testcase classname="packages/ujima/src/index.test.ts" name="createOrganizationChart validates agent references" time="0.000593625">
+        </testcase>
+        <testcase classname="packages/ujima/src/index.test.ts" name="AgentTeam normalizes and validates the team config" time="0.0054535">
+        </testcase>
+        <testcase classname="packages/ujima/src/index.test.ts" name="AgentTeam normalizes provider keys before lookup" time="0.001721958">
+        </testcase>
+        <testcase classname="packages/ujima/src/index.test.ts" name="loadAgentTeam returns a ready-to-use handle" time="0.001438125">
+        </testcase>
+        <testcase classname="packages/ujima/src/index.test.ts" name="validateAgentTeamConfig rejects agents that reference unknown roles" time="0.001903458">
+        </testcase>
+    </testsuite>
+    <testsuite name="packages/ujima/src/providers.test.ts" timestamp="2026-05-03T14:35:34.329Z" hostname="MacBook-Air.local" tests="6" failures="0" errors="0" skipped="0" time="0.021093125">
+        <testcase classname="packages/ujima/src/providers.test.ts" name="ProviderKindSchema &gt; accepts every supported kind including openrouter" time="0.004652042">
+        </testcase>
+        <testcase classname="packages/ujima/src/providers.test.ts" name="ProviderKindSchema &gt; rejects unsupported kinds" time="0.003794917">
+        </testcase>
+        <testcase classname="packages/ujima/src/providers.test.ts" name="ProviderConfigSchema &gt; passes a minimal openrouter config" time="0.003355625">
+        </testcase>
+        <testcase classname="packages/ujima/src/providers.test.ts" name="ProviderConfigSchema &gt; accepts optional baseUrl (openrouter/ollama)" time="0.000423625">
+        </testcase>
+        <testcase classname="packages/ujima/src/providers.test.ts" name="ProviderConfigSchema &gt; back-compat: kind may be omitted (old configs)" time="0.001613708">
+        </testcase>
+        <testcase classname="packages/ujima/src/providers.test.ts" name="normalizeProviders &gt; round-trips an openrouter entry" time="0.002331042">
+        </testcase>
+    </testsuite>
+</testsuites>

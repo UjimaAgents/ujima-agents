@@ -269,9 +269,13 @@ export function useConversationSync(
 
   const currentError =
     error && error.conversationKey === conversationKey ? error.message : undefined;
+  const messagesWithReplyPreview = useMemo(
+    () => attachReplyPreviews(messages),
+    [messages],
+  );
 
   return {
-    messages,
+    messages: messagesWithReplyPreview,
     approvals,
     runs,
     activity,
@@ -281,6 +285,22 @@ export function useConversationSync(
     error: currentError,
     sendMessage,
   };
+}
+
+function attachReplyPreviews(messages: ChatMessageData[]): ChatMessageData[] {
+  const byId = new Map(messages.map((message) => [message.id, message]));
+  return messages.map((message) => {
+    if (!message.parentMessageId) return message;
+    const parent = byId.get(message.parentMessageId);
+    if (!parent) return message;
+    return {
+      ...message,
+      replyPreview: {
+        name: parent.name,
+        content: parent.content,
+      },
+    };
+  });
 }
 
 async function loadHistory(
@@ -450,6 +470,7 @@ function messageToChatMessage(message: Message, members: Member[]): ChatMessageD
   return {
     id: message.id,
     senderId: message.senderId,
+    parentMessageId: message.parentMessageId,
     role: sender?.roleName ?? message.senderKind,
     name: sender?.name ?? message.senderId,
     time: formatTime(message.createdAt),

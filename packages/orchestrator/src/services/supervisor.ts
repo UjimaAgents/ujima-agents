@@ -7,6 +7,7 @@ import {
   orgRoom,
   type Message,
 } from '@ujima/shared';
+import { MESSAGE_TOOL_USAGE_GUIDANCE } from '@ujima/framework';
 import type { ActiveSpiritRegistry } from './active-spirit-registry.js';
 import type { RealtimeService } from './context.js';
 import type { ConversationService } from './conversation.js';
@@ -236,8 +237,7 @@ export class SupervisorService {
     const body = sourceMessage?.content ?? '';
     return [
       'You are answering a quick supervisor question or carrying out a direct action request.',
-      'Be proactive. If the request asks you to post to a channel, send a DM, or reply in-thread, use the matching tool immediately instead of describing the action.',
-      'Use channel.post for channel posts, channel.dm for direct messages, and channel.reply for thread replies.',
+      ...MESSAGE_TOOL_USAGE_GUIDANCE,
       'If the request is only asking for status, give a short one-paragraph update.',
       '',
       `Reason: ${input.reason}`,
