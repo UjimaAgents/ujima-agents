@@ -18,6 +18,7 @@ import type { ApiRepository } from './repository-reader.js';
 import type { TeamStore } from './team-store.js';
 import type { ToolService } from './tool-service.js';
 import { applyDashboardTeamOverrides } from './dashboard-team-overrides.js';
+import { ToolApprovalRequiredError } from './tool-loop-result.js';
 
 export interface CreateRunInput {
   organizationId: string;
@@ -76,6 +77,9 @@ export class RunService {
     try {
       return await this.advanceRun(run);
     } catch (error) {
+      if (error instanceof ToolApprovalRequiredError) {
+        return this.waitForApproval(run, 'Waiting for approval');
+      }
       return this.failRun(run, (error as Error).message);
     }
   }
@@ -179,9 +183,10 @@ export class RunService {
         summary: run.summary,
       });
 
-      const statuses = result.toolResults.map(
-        (toolResult) => (toolResult.output as { status?: string } | undefined)?.status,
-      );
+      const statuses = [
+        ...result.toolResults,
+        ...result.steps.flatMap((step) => step.toolResults),
+      ].map((toolResult) => (toolResult.output as { status?: string } | undefined)?.status);
       if (statuses.includes('blocked')) {
         return this.failRun(running, 'Tool action blocked');
       }
@@ -191,7 +196,8 @@ export class RunService {
       }
 
       const text = result.text.trim();
-      if (text.length > 0 && run.threadId) {
+      const reply = text || 'Acknowledged.';
+      if (run.threadId) {
         this.conversations.publishMessage(
           MessageSchema.parse({
             id: randomUUID(),
@@ -201,14 +207,17 @@ export class RunService {
             senderId: run.agentId,
             senderKind: 'agent',
             kind: 'agent',
-            content: text,
+            content: reply,
             createdAt: new Date().toISOString(),
           }),
         );
       }
 
-      return this.completeRun(running, text || 'Run completed');
+      return this.completeRun(running, reply);
     } catch (error) {
+      if (error instanceof ToolApprovalRequiredError) {
+        return this.waitForApproval(running, 'Waiting for approval');
+      }
       return this.failRun(running, (error as Error).message);
     }
   }

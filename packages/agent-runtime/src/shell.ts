@@ -1,7 +1,6 @@
 import type { UjimaEvent } from '@ujima/shared';
 import type { LLMMessage } from '@ujima/llm/legacy';
 import { hydrate } from './hydrate';
-import { runToolLoop } from './tool-loop';
 import { runAiSdkLoop } from './ai-sdk-loop';
 import type { AgentRunInputs, AgentRunResult, ExitReason } from './types';
 
@@ -45,8 +44,6 @@ async function execute(inputs: AgentRunInputs, controller: AbortController): Pro
     agent,
     task,
     sessionId,
-    engine = 'legacy',
-    provider,
     model,
     mcp,
     permissions,
@@ -57,20 +54,17 @@ async function execute(inputs: AgentRunInputs, controller: AbortController): Pro
     approvals,
     maxToolIterations = DEFAULT_MAX_ITERATIONS,
     heartbeatIntervalMs = DEFAULT_HEARTBEAT_MS,
+    abortSignal,
     onEvent,
     onStream,
     gateResolver,
   } = inputs;
 
-  if (engine === 'ai-sdk' && !model) {
-    throw new Error("runAgent: engine='ai-sdk' requires `model` (AI SDK LanguageModel).");
-  }
-  if (engine === 'legacy' && !provider) {
-    throw new Error("runAgent: engine='legacy' requires `provider` (LLMProvider).");
+  if (!model) {
+    throw new Error("runAgent: requires `model` (AI SDK LanguageModel).");
   }
   // Narrow for the dispatch below — lint disallows non-null assertions.
   const activeModel = model;
-  const activeProvider = provider;
 
   await agentState.upsert(agent.id, { status: 'active', last_action: 'starting' });
   await audit.write({
@@ -98,6 +92,9 @@ async function execute(inputs: AgentRunInputs, controller: AbortController): Pro
   };
 
   try {
+    console.log(`\n🚀 [Agent Run Start] "${agent.name}"`);
+    console.log(`   Task: ${task.task_id} | Session: ${sessionId}`);
+    
     const bundle = inputs.hydration ?? (await hydrate({
       agent,
       task,
@@ -108,82 +105,23 @@ async function execute(inputs: AgentRunInputs, controller: AbortController): Pro
 
     const tools = await mcp.listTools();
 
-    let peerCursorMs = Date.now();
-    const refreshPeerContext = async (): Promise<LLMMessage | undefined> => {
-      const newEvents = (
-        await Promise.all(
-          agent.communication.subscribes.map((ch) => eventBus.replay(ch, peerCursorMs)),
-        )
-      )
-        .flat()
-        .filter((e) => e.publisher !== agent.id);
-      const newPeerEntries: { key: string; value: unknown }[] = [];
-      for (const channel of agent.communication.subscribes) {
-        const prefix = `task:${task.task_id}:${channel}`;
-        const rows = await context.list(prefix);
-        for (const row of rows) {
-          if (row.updatedAt > peerCursorMs) {
-            newPeerEntries.push({ key: row.key, value: row.value });
-          }
-        }
-      }
-      peerCursorMs = Date.now();
-      if (newEvents.length === 0 && newPeerEntries.length === 0) return undefined;
-
-      const lines: string[] = ['[ujima] Peer activity since your last turn:'];
-      for (const e of newEvents) {
-        lines.push(`- event ${e.type} from ${e.publisher}: ${JSON.stringify(e.payload).slice(0, 240)}`);
-      }
-      for (const p of newPeerEntries) {
-        lines.push(`- output ${p.key}: ${JSON.stringify(p.value).slice(0, 240)}`);
-      }
-      return { role: 'user', content: lines.join('\n') };
-    };
-
-    const outcome =
-      engine === 'ai-sdk' && activeModel
-        ? await runAiSdkLoop({
-            agent,
-            taskId: task.task_id,
-            sessionId,
-            model: activeModel,
-            mcp,
-            tools,
-            permissions,
-            audit,
-            systemPrompt: bundle.systemPrompt,
-            userPrompt: bundle.taskPrompt,
-            maxIterations: maxToolIterations,
-            abortSignal: controller.signal,
-            emitEvent: emit,
-            onStream,
-            gateResolver,
-          })
-        : activeProvider
-        ? await runToolLoop({
-            agent,
-            taskId: task.task_id,
-            sessionId,
-            provider: activeProvider,
-            mcp,
-            tools,
-            permissions,
-            audit,
-            systemPrompt: bundle.systemPrompt,
-            userPrompt: bundle.taskPrompt,
-            maxIterations: maxToolIterations,
-            abortSignal: controller.signal,
-            emitEvent: emit,
-            onStream,
-            refreshPeerContext,
-            gateResolver,
-          })
-        : (() => {
-            // Unreachable — the engine/model/provider invariant is asserted
-            // above. Kept as a typed exhaustive fallback instead of a non-null
-            // assertion so eslint's no-non-null-assertion rule stays happy.
-            throw new Error(`runAgent: engine='${engine}' without a usable model or provider`);
-          })();
+    const outcome = await runAiSdkLoop({
+      agent,
+      taskId: task.task_id,
+      sessionId,
+      model: activeModel,
+      mcp,
+      tools,
+      permissions,
+      audit,
+      systemPrompt: bundle.systemPrompt,
+      userPrompt: bundle.taskPrompt,
+      maxIterations: maxToolIterations,
+      abortSignal,
+      emitEvent: emit,
+      onStream,
+      gateResolver,
+    });
 
     const outputKey = `task:${task.task_id}:agent:${agent.id}:output`;
     await context.put(outputKey, {

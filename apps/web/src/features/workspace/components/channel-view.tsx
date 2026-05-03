@@ -84,6 +84,7 @@ export function ChannelView({
   onOpenAgentEditor,
 }: ChannelViewProps) {
   const [isAtBottom, setIsAtBottom] = useState(true);
+  const [resolvingApprovals, setResolvingApprovals] = useState<Record<string, boolean>>({});
   const listRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const previousFeedSignal = useRef("");
@@ -166,6 +167,47 @@ export function ChannelView({
   }, [bootstrap.auth.member?.id, members]);
   const headerSubtitle =
     feed.error ?? typingLabel ?? (feed.loading ? "Syncing live history from the backend…" : undefined);
+  const organizationId = bootstrap.organization?.id;
+
+  const resolveApproval = useCallback(
+    async (
+      approvalId: string,
+      resolution: "allow_once" | "allow_always" | "reject",
+    ) => {
+      if (!organizationId) {
+        throw new Error("Missing organization context for approval resolution.");
+      }
+      const status = resolution === "reject" ? "rejected" : "approved";
+      setResolvingApprovals((state) => ({ ...state, [approvalId]: true }));
+      try {
+        const response = await fetch(`/api/approvals/${approvalId}/resolve`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            organizationId,
+            status,
+            resolution,
+            reason: `Resolved from workspace (${resolution}).`,
+          }),
+        });
+        if (!response.ok) {
+          const body = await response.json().catch(() => null);
+          const message =
+            body && typeof body === "object" && "message" in body && typeof body.message === "string"
+              ? body.message
+              : "Unable to resolve approval.";
+          console.error(message);
+        }
+      } finally {
+        setResolvingApprovals((state) => {
+          const next = { ...state };
+          delete next[approvalId];
+          return next;
+        });
+      }
+    },
+    [organizationId],
+  );
 
   const tabCounts = useMemo(() => {
     const activeRuns = feed.runs.filter(
@@ -174,7 +216,7 @@ export function ChannelView({
         run.status === "running" ||
         run.status === "waiting_for_approval",
     ).length;
-    const pendingApprovals = feed.approvals.filter((approval) => approval.title.toLowerCase().includes("requested") || approval.title.toLowerCase().includes("pending")).length;
+    const pendingApprovals = feed.approvals.filter((approval) => approval.status === "pending").length;
     return {
       approvals: pendingApprovals,
       tasks: activeRuns,
@@ -298,7 +340,12 @@ export function ChannelView({
             <TabPanel>
               <div className="space-y-2">
                 {feed.approvals.map((approval) => (
-                  <ApprovalCard key={approval.id} data={approval} />
+                  <ApprovalCard
+                    key={approval.id}
+                    data={approval}
+                    resolving={!!resolvingApprovals[approval.id]}
+                    onResolve={(resolution) => resolveApproval(approval.id, resolution)}
+                  />
                 ))}
               </div>
             </TabPanel>

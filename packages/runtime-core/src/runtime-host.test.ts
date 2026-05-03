@@ -22,7 +22,7 @@ describe('createRuntimeHost', () => {
         loadAgent: async () => undefined,
         loadTeam: async () => undefined,
         resolveMCPDef: async (_w, id) => { throw new Error(`no mcp ${id}`); },
-        getProvider: stubProvider,
+        getModel: () => ({} as any),
       },
       {},
     );
@@ -41,7 +41,7 @@ describe('createRuntimeHost', () => {
         loadAgent: async () => undefined,
         loadTeam: async () => undefined,
         resolveMCPDef: async (_w, id) => { throw new Error(`no mcp ${id}`); },
-        getProvider: stubProvider,
+        getModel: () => ({} as any),
       },
       {},
     );
@@ -67,7 +67,7 @@ describe('createRuntimeHost', () => {
         loadAgent: async () => undefined,
         loadTeam: async () => undefined,
         resolveMCPDef: async (_w, id) => { throw new Error(`no mcp ${id}`); },
-        getProvider: stubProvider,
+        getModel: () => ({} as any),
       },
       {},
     );

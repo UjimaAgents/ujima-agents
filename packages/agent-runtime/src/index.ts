@@ -4,8 +4,8 @@ export type { AgentHandle } from './shell';
 export { hydrate } from './hydrate';
 export type { HydrateDeps } from './hydrate';
 
-export { runToolLoop, captureBrowserState } from './tool-loop';
-export type { ToolLoopInputs, ToolLoopOutcome, BrowserStateSnapshot } from './tool-loop';
+export { captureBrowserState } from './browser';
+export type { BrowserStateSnapshot } from './browser';
 
 export { runAiSdkLoop } from './ai-sdk-loop';
 export type { AiSdkLoopInputs, AiSdkLoopOutcome } from './ai-sdk-loop';

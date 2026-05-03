@@ -45,8 +45,7 @@ export interface AiSdkLoopInputs {
   temperature?: number;
 }
 
-import type { BrowserStateSnapshot } from './tool-loop';
-import { captureBrowserState } from './tool-loop';
+import { type BrowserStateSnapshot, captureBrowserState } from './browser';
 
 export interface AiSdkLoopOutcome {
   exitReason: 'completed' | 'escalated' | 'rate_limit_tripped' | 'killed' | 'error';
@@ -107,6 +106,7 @@ export async function runAiSdkLoop(input: AiSdkLoopInputs): Promise<AiSdkLoopOut
   } = input;
 
   let toolCalls = 0;
+  let browserState: BrowserStateSnapshot | undefined;
   let forcedExit: Partial<AiSdkLoopOutcome> | undefined;
 
   const stream = (type: string, payload: unknown): void => {
@@ -135,6 +135,7 @@ export async function runAiSdkLoop(input: AiSdkLoopInputs): Promise<AiSdkLoopOut
       execute: async (rawArgs: Record<string, unknown>, { toolCallId }): Promise<unknown> => {
         toolCalls++;
         const args = rawArgs ?? {};
+        console.log(`\n[Agent Tool Call] ${info.name}:`, JSON.stringify(args, null, 2));
         stream('agent_tool_call', { id: toolCallId, name: info.name, arguments: args });
 
         // --- Permission pre-hook (E0.1.4) -----------------------------------
@@ -337,6 +338,7 @@ export async function runAiSdkLoop(input: AiSdkLoopInputs): Promise<AiSdkLoopOut
               durationMs: duration,
               gateResolved: gated ? 'approve' : undefined,
             });
+            console.log(`[Agent Tool Result] ${toolName}:`, typeof result.content === 'string' ? result.content.slice(0, 200) + (result.content.length > 200 ? '...' : '') : result.content);
             if (result.isError) {
               return { error: truncateToolContent(result.content, maxToolResultChars) };
             }
@@ -344,6 +346,7 @@ export async function runAiSdkLoop(input: AiSdkLoopInputs): Promise<AiSdkLoopOut
           } catch (err) {
             const duration = Date.now() - start;
             const message = err instanceof Error ? err.message : String(err);
+            console.error(`[Agent Tool Error] ${toolName}:`, message);
             await audit.write({
               event_id: genEventId('tc'),
               event_type: 'tool_call',
@@ -394,9 +397,11 @@ export async function runAiSdkLoop(input: AiSdkLoopInputs): Promise<AiSdkLoopOut
     // would miss the finish frame.
     for await (const part of result.fullStream) {
       if (part.type === 'text-delta') {
+        process.stdout.write(part.text); // Live stream thoughts to terminal
         stream('agent_thought_delta', { text: part.text });
       }
     }
+    console.log('\n'); // New line after thought finishes
 
     const [finalText, usage, finishReason] = await Promise.all([
       result.text,
@@ -472,6 +477,7 @@ export async function runAiSdkLoop(input: AiSdkLoopInputs): Promise<AiSdkLoopOut
       };
     }
 
+    console.log(`[Agent Finished] Exit Reason: ${finishReason || 'completed'}`);
     stream('agent_finished', {
       exitReason: 'completed',
       finalText,

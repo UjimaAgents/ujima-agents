@@ -18,7 +18,7 @@ const DEFAULT_REASONING_SETTINGS = defaultSettingsMiddleware({
 
 function withDefaultReasoning(model: LanguageModel): LanguageModel {
   return wrapLanguageModel({
-    model,
+    model: model as any,
     middleware: DEFAULT_REASONING_SETTINGS,
   });
 }

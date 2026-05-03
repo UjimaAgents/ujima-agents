@@ -166,10 +166,13 @@ export function registerRunRoutes(
   }, async (req, reply) => {
     try {
       assertReadyWorkspaceRoot(repo, req.body.organizationId);
+      const status =
+        req.body.resolution === 'reject' ? 'rejected' : req.body.status;
       return await approvals.resolveApproval({
         organizationId: req.body.organizationId,
         approvalId: req.params.approvalId,
-        status: req.body.status,
+        status,
+        resolution: req.body.resolution,
         reason: req.body.reason,
       });
     } catch (err) {

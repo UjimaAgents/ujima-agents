@@ -65,7 +65,7 @@ interface WorkspaceSidebarProps {
     role: WorkspaceRoleInput;
   }) => Promise<SelectedConversation | null>;
   onUpdateAgent: (input: {
-    previousName: string;
+    previousAgentId: string;
     previousRoleName: string;
     memberId: string;
     name: string;
@@ -150,7 +150,7 @@ function buildAgentEditorDraft({
   const provider = role && "provider" in role ? role.provider : undefined;
   const model = role && "model" in role ? role.model : undefined;
   const personalityName =
-    teamSettings?.agents.find((item) => item.name === agent.name)?.personalityName ??
+    teamSettings?.agents.find((item) => item.name === agent.id)?.personalityName ??
     "direct";
 
   return {
@@ -997,7 +997,7 @@ function AgentEditorModal({
               setSaving(true);
               try {
                 const updated = await onUpdateAgent({
-                  previousName: draft.memberId,
+                  previousAgentId: draft.memberId,
                   previousRoleName: draft.originalRoleName,
                   memberId: draft.memberId,
                   name: draft.name.trim(),

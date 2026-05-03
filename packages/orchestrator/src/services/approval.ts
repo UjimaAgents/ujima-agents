@@ -26,6 +26,7 @@ export interface ApprovalResolveInput {
   organizationId: string;
   approvalId: string;
   status: 'approved' | 'rejected';
+  resolution?: 'allow_once' | 'allow_always' | 'reject';
   reason?: string;
 }
 
@@ -71,11 +72,15 @@ export class ApprovalService {
   }
 
   async resolveApproval(input: ApprovalResolveInput): Promise<ApprovalRequest> {
+    const effectiveReason =
+      input.resolution === 'allow_always'
+        ? `grant:always_allow:${input.reason ?? ''}`
+        : input.reason;
     const approval = this.repo.resolveApproval(
       input.organizationId,
       input.approvalId,
       input.status,
-      input.reason,
+      effectiveReason,
     );
 
     if (!approval) {

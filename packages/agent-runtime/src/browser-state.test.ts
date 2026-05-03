@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { captureBrowserState } from './tool-loop';
+import { captureBrowserState } from './browser';
 
 describe('captureBrowserState', () => {
   it('returns the previous snapshot for non-browser tools', () => {
-    const prev = { url: 'https://a.test' };
+    const prev = { url: 'https://google.com', observedAt: new Date().toISOString() };
     expect(captureBrowserState('notion_search', {}, [], prev, 'notion')).toBe(prev);
     expect(captureBrowserState('fs_read', { path: '/x' }, 'ok', undefined, 'fs')).toBeUndefined();
   });

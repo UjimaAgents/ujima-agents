@@ -1,4 +1,4 @@
-import { generateText, tool, type ModelMessage, type ToolSet } from 'ai';
+import { generateText, isLoopFinished, tool, type ModelMessage, type ToolSet } from 'ai';
 import { z } from 'zod';
 import { buildAgentSystemPrompt, normalizeProviderKey, type AgentTeamHandle, type ProviderKind } from '@ujima/framework';
 import { selectLanguageModel } from '@ujima/llm';
@@ -8,6 +8,7 @@ import type { TeamStore } from './services/team-store.js';
 import type { ToolService } from './services/tool-service.js';
 import { ALWAYS_AVAILABLE_AGENT_TOOLS, ORCHESTRATOR_TOOLS } from './tools/index.js';
 import { toModelToolName } from './tools/names.js';
+import { ToolApprovalRequiredError, toModelToolOutput } from './services/tool-loop-result.js';
 
 
 const GenericToolInvocationSchema = z.object({
@@ -162,6 +163,7 @@ export class AiService {
       system,
       messages,
       tools: toolDefs,
+      stopWhen: isLoopFinished(),
       maxOutputTokens: 1200,
       temperature: 0.2,
     });
@@ -198,11 +200,11 @@ export class AiService {
               toolId,
               ...invocationData,
             });
-            if (!result.ok) {
-              return { error: result.error ?? 'tool invocation failed' };
-            }
-            return result.output ?? { ok: true };
+            return toModelToolOutput(result);
           } catch (error) {
+            if (error instanceof ToolApprovalRequiredError) {
+              throw error;
+            }
             return {
               error: error instanceof Error ? error.message : String(error),
             };
@@ -229,11 +231,11 @@ export class AiService {
             resourcePath: args.resourcePath,
             input: args.input,
           });
-          if (!result.ok) {
-            return { error: result.error ?? 'tool invocation failed' };
-          }
-          return result.output ?? { ok: true };
+          return toModelToolOutput(result);
         } catch (error) {
+          if (error instanceof ToolApprovalRequiredError) {
+            throw error;
+          }
           return {
             error: error instanceof Error ? error.message : String(error),
           };

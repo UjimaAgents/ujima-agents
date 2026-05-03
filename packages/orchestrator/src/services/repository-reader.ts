@@ -158,6 +158,13 @@ export interface ApiRepository extends ConversationRepository {
     reason?: string,
   ): ApprovalRequest | null;
   listPendingApprovals(organizationId: string): ApprovalRequest[];
+  hasApprovalGrant(input: {
+    organizationId: string;
+    requestedBy: string;
+    resourceType: ApprovalRequest['resourceType'];
+    resourcePath: string;
+    action: ApprovalRequest['action'];
+  }): boolean;
   saveAuditEvent(event: AuditEvent): AuditEvent;
   /**
    * Run a synchronous DB transaction. The callback must complete

@@ -207,9 +207,9 @@ export function WorkspaceShell({
           ? {
               ...current,
               agents: [
-                ...current.agents.filter((agent) => agent.name !== member.name),
+                ...current.agents.filter((agent) => agent.name !== member.id),
                 {
-                  name: member.name,
+                  name: member.id,
                   roleName: input.roleName.trim() || member.roleName,
                   personalityName: input.role.personalityName ?? "direct",
                   kind: "agent",
@@ -229,7 +229,7 @@ export function WorkspaceShell({
 
   const handleUpdateAgent = useCallback(
     async (input: {
-      previousName: string;
+      previousAgentId: string;
       previousRoleName: string;
       memberId: string;
       name: string;
@@ -277,7 +277,7 @@ export function WorkspaceShell({
           ? {
               ...current,
               agents: [
-                ...current.agents.filter((agent) => agent.name !== input.previousName),
+                ...current.agents.filter((agent) => agent.name !== input.previousAgentId),
                 {
                   name: member.id,
                   roleName: input.roleName,

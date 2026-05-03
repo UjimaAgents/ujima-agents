@@ -222,7 +222,14 @@ export class ToolServiceImpl implements ToolService {
 
     if (
       policy.requiresApproval &&
-      !this.consumeApprovedRun(invocation.organizationId, invocation.runId)
+      !this.consumeApprovedRun(invocation.organizationId, invocation.runId) &&
+      !this.repo.hasApprovalGrant({
+        organizationId: preparedInvocation.organizationId,
+        requestedBy: preparedInvocation.memberId,
+        resourceType: preparedInvocation.resourceType,
+        resourcePath: preparedInvocation.resourcePath ?? "",
+        action: preparedInvocation.action,
+      })
     ) {
       const approval = this.approvals.requestApproval({
         organizationId: preparedInvocation.organizationId,

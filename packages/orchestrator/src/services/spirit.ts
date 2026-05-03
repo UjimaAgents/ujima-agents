@@ -36,6 +36,7 @@ import type { RealtimeService } from './context.js';
 import type { ApiRepository } from './repository-reader.js';
 import type { TeamStore } from './team-store.js';
 import type { ToolService } from './tool-service.js';
+import { ToolApprovalRequiredError, toModelToolOutput } from './tool-loop-result.js';
 
 // ----------------------------------------------------------------------
 // SpiritService — Phase 2.A.4
@@ -644,6 +645,33 @@ export class SpiritService {
         tokensUsed: totalTokens,
       };
     } catch (err) {
+      if (err instanceof ToolApprovalRequiredError) {
+        const waiting: Spirit = SpiritSchema.parse({
+          ...running,
+          status: 'waiting_for_approval',
+          updatedAt: new Date().toISOString(),
+        });
+        this.repo.saveSpirit(waiting);
+        if (spirit.runId) {
+          const run = this.repo.getRun(input.organizationId, spirit.runId);
+          if (run) {
+            this.repo.saveRun({
+              ...run,
+              status: 'waiting_for_approval',
+              step: 'waiting_for_approval',
+              summary: 'Waiting for approval',
+            });
+          }
+        }
+        this.emit(SocketEventNames.spiritUpdated, waiting);
+        return {
+          spirit: waiting,
+          finalText: lastText,
+          iterations: totalTurns,
+          toolCalls: totalToolCalls,
+          tokensUsed: totalTokens,
+        };
+      }
       const message = err instanceof Error ? err.message : String(err);
       const failed: Spirit = SpiritSchema.parse({
         ...running,
@@ -728,11 +756,11 @@ export class SpiritService {
                 toolId,
                 ...invocationData,
               });
-              if (!result.ok) {
-                return { error: result.error ?? 'tool invocation failed' };
-              }
-              return result.output ?? { ok: true };
+              return toModelToolOutput(result);
             } catch (error) {
+              if (error instanceof ToolApprovalRequiredError) {
+                throw error;
+              }
               return {
                 error: error instanceof Error ? error.message : String(error),
               };

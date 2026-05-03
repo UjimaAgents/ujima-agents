@@ -216,4 +216,46 @@ describe('ConversationService @all mentions', () => {
     expect(alerts).toEqual(['agent-1']);
     expect(emits.some((entry) => entry.event === SocketEventNames.memberAlerted)).toBe(true);
   });
+
+  it('resolves multi-word mentions in message content', async () => {
+    const { alerts, repo, service, thread } = createConversationFixture();
+    
+    // Add a member with a multi-word name
+    const quinnMason = MemberSchema.parse({
+      id: 'agent-quinn',
+      organizationId: 'org-1',
+      name: 'Quinn Mason',
+      kind: 'agent',
+      roleName: 'tester',
+      presence: 'online',
+    });
+    
+    const members = [
+      ...repo.listMembers('org-1'),
+      quinnMason,
+    ];
+    repo.listMembers = () => members;
+    repo.getMember = (_orgId, id) => members.find(m => m.id === id) ?? null;
+    
+    // Add member to channel
+    const channel = repo.getChannel('org-1', 'general')!;
+    channel.memberIds.push(quinnMason.id);
+
+    const message = service.sendMessage({
+      organizationId: 'org-1',
+      threadId: thread.id,
+      channelId: 'general',
+      senderId: 'human-1',
+      content: 'Hello @Quinn Mason and @Mia',
+    });
+
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(message.mentions).toContain('agent-quinn');
+    expect(message.mentions).toContain('agent-1');
+    expect(message.mentionNames).toContain('Quinn Mason');
+    expect(alerts).toContain('agent-quinn');
+
+    expect(alerts).toContain('agent-1');
+  });
 });

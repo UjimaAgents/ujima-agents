@@ -2,8 +2,6 @@ import { forwardRef, type ReactNode, type UIEventHandler } from "react";
 import { CheckCircle2, Loader2 } from "lucide-react";
 import { Avatar, TagBadge, type TagVariant } from "./primitives";
 
-const MENTION_RE = /(^|[^@\w])@([A-Za-z0-9][A-Za-z0-9._-]*)/g;
-
 export interface ChatMessageData {
   id: string;
   senderId?: string;
@@ -12,6 +10,7 @@ export interface ChatMessageData {
   time: string;
   content: string;
   createdAt?: string;
+  mentionNames?: string[];
   detail?: string;
   tag?: { label: string; variant: TagVariant };
   status?: "success" | "warning";
@@ -50,7 +49,7 @@ export function ChatMessage({
           )}
         </div>
         <p className="mt-0.5 text-xs font-normal leading-relaxed whitespace-pre-wrap text-zinc-900 dark:text-white">
-          {renderMessageContent(message.content)}
+          {renderMessageContent(message.content, message.mentionNames ?? [])}
         </p>
         {message.detail && (
           <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400 leading-relaxed">
@@ -74,36 +73,61 @@ export function ChatMessage({
   );
 }
 
-function renderMessageContent(content: string): ReactNode {
+function renderMessageContent(content: string, mentionNames: string[]): ReactNode {
   const nodes: ReactNode[] = [];
-  let lastIndex = 0;
+  const names = [...new Set(mentionNames.map((name) => name.trim()).filter(Boolean))]
+    .sort((left, right) => right.length - left.length);
 
-  for (const match of content.matchAll(MENTION_RE)) {
-    const index = match.index ?? 0;
-    const prefix = match[1] ?? "";
-    const handle = match[2] ?? "";
-    const mentionStart = index + prefix.length;
-    const mentionEnd = mentionStart + 1 + handle.length;
-
-    if (index > lastIndex) {
-      nodes.push(<span key={`text-${index}`}>{content.slice(lastIndex, index)}</span>);
-    }
-    if (prefix) {
-      nodes.push(<span key={`prefix-${index}`}>{prefix}</span>);
-    }
-    nodes.push(
-      <span key={`mention-${index}`} className="font-semibold text-zinc-900 dark:text-white">
-        @{handle}
-      </span>,
-    );
-    lastIndex = mentionEnd;
+  if (!content.includes("@")) {
+    return content;
   }
 
-  if (lastIndex < content.length) {
-    nodes.push(<span key={`tail-${lastIndex}`}>{content.slice(lastIndex)}</span>);
+  let index = 0;
+  while (index < content.length) {
+    const mentionIndex = content.indexOf("@", index);
+    if (mentionIndex === -1) {
+      nodes.push(<span key={`tail-${index}`}>{content.slice(index)}</span>);
+      break;
+    }
+
+    if (mentionIndex > index) {
+      nodes.push(<span key={`text-${mentionIndex}`}>{content.slice(index, mentionIndex)}</span>);
+    }
+
+    const matchedName = findMentionName(content, mentionIndex, names);
+    if (!matchedName) {
+      nodes.push(<span key={`at-${mentionIndex}`}>@</span>);
+      index = mentionIndex + 1;
+      continue;
+    }
+
+    nodes.push(
+      <span key={`mention-${mentionIndex}`} className="font-semibold text-zinc-900 dark:text-white">
+        @{content.slice(mentionIndex + 1, mentionIndex + 1 + matchedName.length)}
+      </span>,
+    );
+    index = mentionIndex + 1 + matchedName.length;
   }
 
   return nodes.length > 0 ? nodes : content;
+}
+
+function findMentionName(content: string, mentionIndex: number, names: string[]): string | null {
+  const remaining = content.slice(mentionIndex + 1).toLowerCase();
+  if (remaining.startsWith("all")) {
+    const nextChar = remaining[3];
+    if (!nextChar || !/\w/.test(nextChar)) {
+      return "all";
+    }
+  }
+  for (const name of names) {
+    if (!remaining.startsWith(name.toLowerCase())) continue;
+    const nextChar = remaining[name.length];
+    if (!nextChar || !/\w/.test(nextChar)) {
+      return name;
+    }
+  }
+  return null;
 }
 
 export const ChatMessageList = forwardRef<

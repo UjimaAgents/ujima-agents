@@ -102,7 +102,7 @@ export function useConversationSync(
     const currentConversationKey = `${transport.organizationId}:${transport.threadId}`;
     resetConversationFeed(currentConversationKey);
 
-    void loadHistory(transport.organizationId, transport.threadId, abortController.signal)
+      void loadHistory(transport.organizationId, transport.threadId, abortController.signal)
       .then((history) => {
         if (abortController.signal.aborted || currentConversationKey !== conversationKey) return;
         setError(undefined);
@@ -455,8 +455,43 @@ function messageToChatMessage(message: Message, members: Member[]): ChatMessageD
     time: formatTime(message.createdAt),
     content: message.content,
     createdAt: message.createdAt,
+    mentionNames:
+      message.mentionNames?.length
+        ? message.mentionNames
+        : resolveMentionNames(message.content, members),
     pending: false,
   };
+}
+
+function resolveMentionNames(content: string, members: Member[]): string[] {
+  const byName = [...members.map((member) => member.name), "all"]
+    .filter((name) => name.trim().length > 0)
+    .sort((left, right) => right.length - left.length);
+  const names = new Set<string>();
+  const lower = content.toLowerCase();
+  let index = 0;
+
+  while (index < content.length) {
+    const mentionIndex = content.indexOf("@", index);
+    if (mentionIndex === -1) break;
+    const remaining = lower.slice(mentionIndex + 1);
+    let matched = false;
+
+    for (const name of byName) {
+      if (!remaining.startsWith(name.toLowerCase())) continue;
+      const nextChar = remaining[name.length];
+      if (nextChar && /\w/.test(nextChar)) continue;
+      names.add(name);
+      index = mentionIndex + 1 + name.length;
+      matched = true;
+      break;
+    }
+
+    if (matched) continue;
+    index = mentionIndex + 1;
+  }
+
+  return [...names];
 }
 
 function messageToActivity(message: Message): ActivityEvent {
@@ -486,6 +521,7 @@ function approvalToCard(
     id: approval.id,
     title: approval.status === "pending" ? "Approval requested" : `Approval ${approval.status}`,
     description: `${approval.action} ${approval.resourcePath}`,
+    status: approval.status,
     requestedBy,
     approvalsNeeded: 1,
   };

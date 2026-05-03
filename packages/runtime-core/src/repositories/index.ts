@@ -36,6 +36,7 @@ import {
 } from './auth.js';
 import {
   getApproval as readApproval,
+  hasApprovalGrant as readApprovalGrant,
   listPendingApprovals as readPendingApprovals,
   resolveApproval as resolveApprovalRecord,
   saveApproval as writeApproval,
@@ -319,6 +320,13 @@ export class Repository {
     resolveApprovalRecord(this.db, organizationId, approvalId, status, reason);
   listPendingApprovals = (organizationId: string): ApprovalRequest[] =>
     readPendingApprovals(this.db, organizationId);
+  hasApprovalGrant = (input: {
+    organizationId: string;
+    requestedBy: string;
+    resourceType: ApprovalRequest['resourceType'];
+    resourcePath: string;
+    action: ApprovalRequest['action'];
+  }): boolean => readApprovalGrant(this.db, input);
 
   saveAuditEvent = (event: AuditEvent): AuditEvent => writeAuditEvent(this.db, event);
 

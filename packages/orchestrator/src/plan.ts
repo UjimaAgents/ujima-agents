@@ -1,5 +1,5 @@
 import type { AgentDef, TaskDef } from '@ujima/shared';
-import type { LLMMessage, LLMProvider } from '@ujima/llm/legacy';
+import { generateText, type LanguageModel } from 'ai';
 
 export interface PlanAssignment {
   agentId: string;
@@ -17,13 +17,12 @@ export interface PlanResult {
 export interface PlanInputs {
   task: TaskDef;
   agents: AgentDef[];
-  provider: LLMProvider;
-  model: string;
+  model: LanguageModel;
   abortSignal?: AbortSignal;
 }
 
 export async function planAssignments(input: PlanInputs): Promise<PlanResult> {
-  const { task, agents, provider, model, abortSignal } = input;
+  const { task, agents, model, abortSignal } = input;
   const warnings: string[] = [];
 
   const agentBrief = agents
@@ -64,15 +63,12 @@ export async function planAssignments(input: PlanInputs): Promise<PlanResult> {
     'Return the routing JSON now.',
   ].join('\n');
 
-  const messages: LLMMessage[] = [
-    { role: 'system', content: system },
-    { role: 'user', content: user },
-  ];
-
-  let rawText = '';
-  for await (const delta of provider.stream({ messages, model, abortSignal })) {
-    if (delta.type === 'text') rawText += delta.text;
-  }
+  const { text: rawText } = await generateText({
+    model,
+    system,
+    prompt: user,
+    abortSignal,
+  });
 
   const parsed = extractAssignments(rawText);
   if (!parsed) {

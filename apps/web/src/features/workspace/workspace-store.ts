@@ -249,6 +249,12 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
         : state.messages.filter(
             (item) => !(item.pending && item.name === nextMessage.name && item.content === nextMessage.content),
           );
+      if (withoutTemp.some((item) => item.id === nextMessage.id)) {
+        return {
+          messages: withoutTemp,
+          activity: appendActivity(state.activity, [toActivity(message)]),
+        };
+      }
       return {
         messages: mergeChatMessages(withoutTemp, [nextMessage]),
         activity: appendActivity(state.activity, [toActivity(message)]),

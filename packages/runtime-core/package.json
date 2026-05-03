@@ -22,6 +22,7 @@
     "@ujima/mcp-client": "workspace:*",
     "@ujima/orchestrator": "workspace:*",
     "@ujima/permissions": "workspace:*",
-    "@ujima/shared": "workspace:*"
+    "@ujima/shared": "workspace:*",
+    "ai": "^6.0.174"
   }
 }
