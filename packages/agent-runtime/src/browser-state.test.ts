@@ -45,7 +45,13 @@ describe('captureBrowserState', () => {
       undefined,
       'playwright',
     );
-    expect(snap?.screenshotRef).toMatch(/^inline-image:image\/png:/);
+    expect(snap?.screenshotRef).toMatch(/^screenshot-ref:image\/png:/);
+  });
+
+  it('pulls URL and title from plain string content', () => {
+    const content = 'Current page is https://example.org/bar - Example Bar';
+    const snap = captureBrowserState('browser_navigate', {}, content, undefined, 'playwright');
+    expect(snap?.url).toBe('https://example.org/bar');
   });
 
   it('merges with a previous snapshot without wiping earlier fields', () => {

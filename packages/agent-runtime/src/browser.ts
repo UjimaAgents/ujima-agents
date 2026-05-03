@@ -49,7 +49,10 @@ function applyContentParts(parts: ContentPart[], next: BrowserStateSnapshot): vo
       applyTextHeuristics(part.text, next);
     }
     if (part.type === 'image' && typeof part.mimeType === 'string' && typeof part.data === 'string') {
-      next.screenshotRef = `inline-image:${part.mimeType}:${part.data}`;
+      // Use a reference instead of bloating the state with raw base64 data.
+      // The full data is preserved in the tool audit logs.
+      const refId = Math.random().toString(36).slice(2, 10);
+      next.screenshotRef = `screenshot-ref:${part.mimeType}:${refId}`;
     }
   }
 }
@@ -94,6 +97,8 @@ export function captureBrowserState(
 
   if (isContentPartArray(content)) {
     applyContentParts(content, next);
+  } else if (typeof content === 'string') {
+    applyTextHeuristics(content, next);
   }
 
   return next;

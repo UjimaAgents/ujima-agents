@@ -74,13 +74,17 @@ export class ApprovalService {
   async resolveApproval(input: ApprovalResolveInput): Promise<ApprovalRequest> {
     const existing = this.repo.getApproval(input.organizationId, input.approvalId);
     const scopeMatch = existing?.reason.match(/(?:^|;)scope=([^;]+)/);
-    const approvalScope = scopeMatch?.[1];
+    // The scope in the reason is stored URL-encoded by ToolServiceImpl. We decode
+    // it here so we have the raw scope, then re-encode it when building the
+    // permanent grant reason string. This ensures consistency with how
+    // hasApprovalGrant searches for the record.
+    const rawScope = scopeMatch ? decodeURIComponent(scopeMatch[1]) : undefined;
     const canPersistGrant =
       input.resolution === 'allow_always' &&
-      !!approvalScope;
+      !!rawScope;
     const effectiveReason =
       canPersistGrant
-        ? `grant:always_allow:scope=${approvalScope};note=${input.reason ?? ''}`
+        ? `grant:always_allow:scope=${encodeURIComponent(rawScope!)};note=${input.reason ?? ''}`
         : input.reason;
     const approval = this.repo.resolveApproval(
       input.organizationId,
