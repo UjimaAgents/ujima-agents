@@ -170,7 +170,7 @@ export function WorkspaceShell({
       </div>
       <DragHandle onResize={setSidebarWidth} />
       <main className="flex-1 flex flex-col min-w-0 overflow-hidden h-full">
-        <ChannelView bootstrap={bootstrap} conversation={selected} />
+        <ChannelView bootstrap={bootstrap} conversation={selected} members={members} />
       </main>
     </div>
   );

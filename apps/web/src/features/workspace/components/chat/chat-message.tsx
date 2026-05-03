@@ -1,15 +1,19 @@
-import { CheckCircle2 } from "lucide-react";
+import { forwardRef, type ReactNode, type UIEventHandler } from "react";
+import { CheckCircle2, Loader2 } from "lucide-react";
 import { Avatar, TagBadge, type TagVariant } from "./primitives";
 
 export interface ChatMessageData {
   id: string;
+  senderId?: string;
   role: string;
   name: string;
   time: string;
   content: string;
+  createdAt?: string;
   detail?: string;
   tag?: { label: string; variant: TagVariant };
   status?: "success" | "warning";
+  pending?: boolean;
 }
 
 export function ChatMessage({
@@ -30,7 +34,7 @@ export function ChatMessage({
         active
           ? "bg-violet-50/50 ring-1 ring-violet-200 dark:bg-violet-500/5 dark:ring-violet-500/20"
           : "hover:bg-zinc-50 dark:hover:bg-zinc-900/50"
-      }`}
+      } ${message.pending ? "opacity-70" : ""}`}
     >
       <Avatar name={message.name} colorIndex={colorIndex} size="sm" />
       <div className="flex-1 min-w-0">
@@ -51,6 +55,12 @@ export function ChatMessage({
             {message.detail}
           </p>
         )}
+        {message.pending && (
+          <div className="mt-1 inline-flex items-center gap-1.5 rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-semibold text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+            <Loader2 className="h-3 w-3 animate-spin" />
+            Sending…
+          </div>
+        )}
       </div>
       {active && (
         <div className="absolute -left-0.5 top-1/2 -translate-y-1/2 h-8 w-0.5 rounded-full bg-violet-600" />
@@ -62,14 +72,21 @@ export function ChatMessage({
   );
 }
 
-export function ChatMessageList({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export const ChatMessageList = forwardRef<
+  HTMLDivElement,
+  {
+    children: ReactNode;
+    onScroll?: UIEventHandler<HTMLDivElement>;
+    className?: string;
+  }
+>(function ChatMessageList({ children, onScroll, className = "" }, ref) {
   return (
-    <div className="flex-1 overflow-y-auto px-4 py-4 space-y-2">
+    <div
+      ref={ref}
+      onScroll={onScroll}
+      className={`flex-1 overflow-y-auto px-4 py-4 space-y-2 ${className}`}
+    >
       {children}
     </div>
   );
-}
+});

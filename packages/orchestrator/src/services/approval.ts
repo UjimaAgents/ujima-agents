@@ -4,6 +4,7 @@ import {
   SocketEventNames,
   orgRoom,
   runRoom,
+  threadRoom,
   type ApprovalRequest,
   type ResourceType,
   type ToolAction,
@@ -55,10 +56,15 @@ export class ApprovalService {
     });
 
     this.repo.saveApproval(approval);
+    const rooms = [orgRoom(input.organizationId), runRoom(input.runId)];
+    const run = this.repo.getRun(input.organizationId, input.runId);
+    if (run?.threadId) {
+      rooms.push(threadRoom(run.threadId));
+    }
     this.realtime.emit(
       SocketEventNames.approvalRequested,
       { organizationId: input.organizationId, approval },
-      [orgRoom(input.organizationId), runRoom(input.runId)],
+      rooms,
     );
 
     return approval;
@@ -76,10 +82,15 @@ export class ApprovalService {
       throw new Error(`Approval not found: ${input.approvalId}`);
     }
 
+    const rooms = [orgRoom(input.organizationId), runRoom(approval.runId ?? approval.id)];
+    const run = approval.runId ? this.repo.getRun(input.organizationId, approval.runId) : null;
+    if (run?.threadId) {
+      rooms.push(threadRoom(run.threadId));
+    }
     this.realtime.emit(
       SocketEventNames.approvalResolved,
       { organizationId: input.organizationId, approval },
-      [orgRoom(input.organizationId), runRoom(approval.runId ?? approval.id)],
+      rooms,
     );
 
     if (approval.status === 'approved' && approval.runId) {

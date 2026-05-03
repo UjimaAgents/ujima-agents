@@ -5,6 +5,7 @@ import {
   SocketEventNames,
   memberRoom,
   runRoom,
+  threadRoom,
   type AuditStatus,
 } from '@ujima/shared';
 import type { RealtimeService } from './context.js';
@@ -57,7 +58,7 @@ export class ToolServiceImpl implements ToolService {
       throw new Error(`Member not found: ${invocation.memberId}`);
     }
 
-    const rooms = [runRoom(invocation.runId), memberRoom(invocation.memberId)];
+    const rooms = this.getRooms(invocation.organizationId, invocation.runId, invocation.memberId);
     const team = this.requireTeam();
     let preparedInvocation: ToolInvocationInput;
 
@@ -274,6 +275,15 @@ export class ToolServiceImpl implements ToolService {
       metadata: { ...invocation.input, ...metadata },
       createdAt: new Date().toISOString(),
     });
+  }
+
+  private getRooms(organizationId: string, runId: string, memberId: string): string[] {
+    const rooms = [runRoom(runId), memberRoom(memberId)];
+    const run = this.repo.getRun(organizationId, runId);
+    if (run?.threadId) {
+      rooms.push(threadRoom(run.threadId));
+    }
+    return rooms;
   }
 
   private async prepareInvocation(

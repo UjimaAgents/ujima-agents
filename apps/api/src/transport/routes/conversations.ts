@@ -78,7 +78,7 @@ export function registerConversationRoutes(
 
   app.post('/messages', {
     schema: {
-      description: 'Send a thread or channel message',
+      description: 'Send a thread, channel, or direct message',
       tags: ['Conversations'],
       body: MessageCreateSchema,
       response: {
@@ -91,6 +91,14 @@ export function registerConversationRoutes(
   }, async (req, reply) => {
     try {
       assertReadyWorkspaceRoot(repo, req.body.organizationId);
+      if ('recipientId' in req.body) {
+        return conversations.sendDirectMessage({
+          organizationId: req.body.organizationId,
+          senderId: req.body.senderId,
+          recipientId: req.body.recipientId,
+          content: req.body.content,
+        });
+      }
       return conversations.sendMessage(req.body);
     } catch (err) {
       const message = errMessage(err);
@@ -100,7 +108,8 @@ export function registerConversationRoutes(
       const status =
         message.startsWith('Organization not found') ||
         message.startsWith('Sender not found') ||
-        message.startsWith('Channel not found')
+        message.startsWith('Channel not found') ||
+        message.startsWith('Recipient not found')
           ? 404
           : 400;
       return replyError(reply, status, message);

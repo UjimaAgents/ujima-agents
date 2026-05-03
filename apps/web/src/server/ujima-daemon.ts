@@ -35,7 +35,7 @@ function resolveHomeDir(): string {
   return join(homedir(), ".ujima");
 }
 
-function readDaemonBearerToken(): string {
+export function readDaemonBearerToken(): string {
   const fromEnv = process.env.UJIMA_TOKEN;
   if (fromEnv && fromEnv.trim().length > 0) {
     return fromEnv.trim();

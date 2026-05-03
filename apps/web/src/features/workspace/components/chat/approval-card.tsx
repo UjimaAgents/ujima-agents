@@ -1,6 +1,7 @@
 import { AlertCircle } from "lucide-react";
 
 export interface ApprovalCardData {
+  id: string;
   title: string;
   description: string;
   requestedBy: string;

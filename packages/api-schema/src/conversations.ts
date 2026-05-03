@@ -6,13 +6,22 @@ export const OrganizationQuerySchema = z.object({
 });
 export type OrganizationQuery = z.infer<typeof OrganizationQuerySchema>;
 
-export const MessageCreateSchema = z.object({
+const ThreadMessageCreateSchema = z.object({
   organizationId: IdSchema,
   threadId: IdSchema,
   channelId: IdSchema.optional(),
   senderId: IdSchema,
   content: z.string().min(1),
-});
+}).strict();
+
+const DirectMessageCreateSchema = z.object({
+  organizationId: IdSchema,
+  recipientId: IdSchema,
+  senderId: IdSchema,
+  content: z.string().min(1),
+}).strict();
+
+export const MessageCreateSchema = z.union([ThreadMessageCreateSchema, DirectMessageCreateSchema]);
 export type MessageCreate = z.infer<typeof MessageCreateSchema>;
 
 export const SocketSubscribeSchema = z.object({

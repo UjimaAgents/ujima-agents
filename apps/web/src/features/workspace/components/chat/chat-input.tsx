@@ -6,9 +6,11 @@ import { Plus, Smile, Paperclip, Send } from "lucide-react";
 export function ChatInput({
   placeholder = "Type a message...",
   onSend,
+  statusHint,
 }: {
   placeholder?: string;
   onSend: (content: string) => Promise<void> | void;
+  statusHint?: string;
 }) {
   const [content, setContent] = useState("");
   const [isSending, setIsSending] = useState(false);
@@ -69,6 +71,14 @@ export function ChatInput({
               <Send className="h-3.5 w-3.5" />
             </button>
           </div>
+        </div>
+        <div className="mt-2 flex items-center justify-between gap-3 px-1 text-[10px] text-zinc-500 dark:text-zinc-400">
+          <span className="truncate">
+            {statusHint ?? "Enter to send, Shift+Enter for a new line."}
+          </span>
+          <span className="shrink-0 font-medium uppercase tracking-[0.16em]">
+            Live
+          </span>
         </div>
         {error ? (
           <p className="mt-2 text-xs text-red-600 dark:text-red-400">{error}</p>
