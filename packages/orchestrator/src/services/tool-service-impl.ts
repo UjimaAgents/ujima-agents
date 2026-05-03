@@ -97,6 +97,13 @@ export class ToolServiceImpl implements ToolService {
       )
     ) {
       const reason = `Tool "${invocation.toolId}" is not in SUPERVISOR_TOOL_ALLOWLIST`;
+      const run = this.repo.getRun(invocation.organizationId, invocation.runId);
+      const threadId = invocation.threadId ?? run?.threadId;
+      const rooms = [
+        runRoom(invocation.runId),
+        memberRoom(invocation.memberId),
+        ...(threadId ? [threadRoom(threadId)] : []),
+      ];
       this.audit(invocation, "blocked", { reason });
       this.realtime.emit(
         SocketEventNames.toolResult,
@@ -110,7 +117,7 @@ export class ToolServiceImpl implements ToolService {
             isError: true,
           },
         },
-        [runRoom(invocation.runId), memberRoom(invocation.memberId)],
+        rooms,
       );
       return {
         ok: false,

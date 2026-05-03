@@ -256,12 +256,17 @@ export function useConversationSync(
 
   useEffect(() => {
     if (conversation.type !== "agent") return;
-    const next = conversationActivityState({
-      loading,
-      activeRun: activeRun ? { status: activeRun.status } : undefined,
-      presence: selectedMember?.presence,
-    });
-    setMemberActivity(conversation.id, next);
+    if (loading) {
+      setMemberActivity(conversation.id, "loading");
+      return;
+    }
+    if (activeRun) {
+      setMemberActivity(conversation.id, "working");
+      return;
+    }
+    if (selectedMember?.presence) {
+      setMemberActivity(conversation.id, presenceToActivityState(selectedMember.presence));
+    }
   }, [activeRun, conversation.id, conversation.type, loading, selectedMember?.presence, setMemberActivity]);
 
   const currentError =

@@ -370,7 +370,14 @@ export class ConversationService {
     });
 
     const published = this.publishMessage(message);
-    void this.alertMember(published, recipient.id, channel, 'dm');
+    void this.alertMember(published, recipient.id, channel, 'dm').catch((error) => {
+      console.warn('DM alert failed', {
+        organizationId: input.organizationId,
+        messageId: published.id,
+        recipientId: recipient.id,
+        error,
+      });
+    });
     return published;
   }
 
