@@ -78,7 +78,7 @@ export class ApprovalService {
     // it here so we have the raw scope, then re-encode it when building the
     // permanent grant reason string. This ensures consistency with how
     // hasApprovalGrant searches for the record.
-    const rawScope = scopeMatch ? decodeURIComponent(scopeMatch[1]) : undefined;
+    const rawScope = scopeMatch && scopeMatch[1] ? decodeURIComponent(scopeMatch[1]) : undefined;
     const canPersistGrant =
       input.resolution === 'allow_always' &&
       !!rawScope;

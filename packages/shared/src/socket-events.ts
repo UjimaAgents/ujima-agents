@@ -114,6 +114,7 @@ export const MemberAlertedEventSchema = z.object({
   organizationId: IdSchema,
   memberId: IdSchema,
   channelId: IdSchema.optional(),
+  threadId: IdSchema.optional(),
   messageId: IdSchema,
   byMemberId: IdSchema,
   reason: z.string().min(1),

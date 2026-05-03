@@ -446,6 +446,13 @@ export class SettingsService {
   }
 }
 
-function visibleChannelsFromRepo(repo: ApiRepository, organizationId: string) {
-  return repo.listChannels(organizationId, undefined, undefined, ['self', 'dm']).data;
+function visibleChannelsFromRepo(repo: ApiRepository, organizationId: string): Channel[] {
+  const channels: Channel[] = [];
+  let cursor: string | undefined = undefined;
+  do {
+    const page = repo.listChannels(organizationId, cursor, 500, ['self', 'dm']);
+    channels.push(...page.data);
+    cursor = page.nextCursor;
+  } while (cursor);
+  return channels;
 }
