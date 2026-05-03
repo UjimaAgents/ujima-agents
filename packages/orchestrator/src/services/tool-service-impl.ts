@@ -1,38 +1,42 @@
-import { randomUUID } from 'node:crypto';
-import type { AgentTeamHandle } from '@ujima/framework';
-import { resolve } from 'node:path';
+import { randomUUID } from "node:crypto";
+import type { AgentTeamHandle } from "@ujima/framework";
+import { resolve } from "node:path";
 import {
   SocketEventNames,
   memberRoom,
   runRoom,
   threadRoom,
   type AuditStatus,
-} from '@ujima/shared';
-import type { RealtimeService } from './context.js';
-import type { ConversationService } from './conversation.js';
-import { checkToolPolicy } from './policy.js';
-import type { ApiRepository } from './repository-reader.js';
-import type { TeamStore } from './team-store.js';
-import { ORCHESTRATOR_TOOLS } from '../tools/index.js';
+} from "@ujima/shared";
+import type { RealtimeService } from "./context.js";
+import type { ConversationService } from "./conversation.js";
+import { checkToolPolicy } from "./policy.js";
+import type { ApiRepository } from "./repository-reader.js";
+import type { SupervisorTodoService } from "./supervisor-todo.js";
+import type { TeamStore } from "./team-store.js";
+import {
+  ORCHESTRATOR_TOOLS,
+  SUPERVISOR_TOOL_ALLOWLIST,
+} from "../tools/index.js";
 import type {
   ToolInvocationInput,
   ToolInvocationResult,
   ToolService,
-} from './tool-service.js';
+} from "./tool-service.js";
 import {
   ERR_PATH_ESCAPE,
   createMemberPathResolver,
   isPathEscapeError,
-} from './workspace-root.js';
+} from "./workspace-root.js";
 
 export interface ApprovalRequester {
   requestApproval(input: {
     organizationId: string;
     runId: string;
     requestedBy: string;
-    resourceType: ToolInvocationInput['resourceType'];
+    resourceType: ToolInvocationInput["resourceType"];
     resourcePath: string;
-    action: ToolInvocationInput['action'];
+    action: ToolInvocationInput["action"];
     reason: string;
   }): { id: string };
 }
@@ -46,6 +50,12 @@ export class ToolServiceImpl implements ToolService {
     private readonly approvals: ApprovalRequester,
     private readonly conversations: ConversationService,
     private readonly realtime: RealtimeService,
+    /**
+     * Phase 2.B — optional supervisor.todo.* backing service. Tools tagged
+     * `permissionMcpId: 'supervisor'` go through here. Optional so the
+     * pre-Phase-2 wiring still constructs.
+     */
+    private readonly supervisorTodos?: SupervisorTodoService,
   ) {}
 
   allowRun(organizationId: string, runId: string): void {
@@ -53,20 +63,79 @@ export class ToolServiceImpl implements ToolService {
   }
 
   async invoke(invocation: ToolInvocationInput): Promise<ToolInvocationResult> {
-    const member = this.repo.getMember(invocation.organizationId, invocation.memberId);
+    const member = this.repo.getMember(
+      invocation.organizationId,
+      invocation.memberId,
+    );
     if (!member) {
       throw new Error(`Member not found: ${invocation.memberId}`);
     }
 
-    const rooms = this.getRooms(invocation.organizationId, invocation.runId, invocation.memberId);
+    // Phase 2.C.2 — runtime supervisor allowlist enforcement.
+    //
+    // SpiritService restricts the model palette when role==='supervisor',
+    // but a forged or out-of-band invocation could still try to drive a
+    // non-allowlisted tool from supervisor mode. Reject anything that
+    // either:
+    //   (a) is tagged spiritRole='supervisor' but is not in the
+    //       allowlist — covers a supervisor turn somehow reaching a
+    //       forbidden tool (filesystem, shell, etc.), and
+    //   (b) is tagged permissionMcpId='supervisor' but is not in the
+    //       allowlist — covers a tool that hardcodes the supervisor
+    //       MCP id without being on the canonical list.
+    //
+    // (a) is the stronger signal. (b) is kept as defence in depth so a
+    // mis-registered tool is still rejected even when no spirit role
+    // tag is present.
+    const supervisorTagged =
+      invocation.spiritRole === "supervisor" ||
+      invocation.permissionMcpId === "supervisor";
+    if (
+      supervisorTagged &&
+      !SUPERVISOR_TOOL_ALLOWLIST.includes(
+        invocation.toolId as (typeof SUPERVISOR_TOOL_ALLOWLIST)[number],
+      )
+    ) {
+      const reason = `Tool "${invocation.toolId}" is not in SUPERVISOR_TOOL_ALLOWLIST`;
+      this.audit(invocation, "blocked", { reason });
+      this.realtime.emit(
+        SocketEventNames.toolResult,
+        {
+          organizationId: invocation.organizationId,
+          runId: invocation.runId,
+          agentId: invocation.memberId,
+          toolResult: {
+            toolCallId: invocation.toolCallId,
+            result: { error: reason, code: "ERR_SUPERVISOR_ALLOWLIST" },
+            isError: true,
+          },
+        },
+        [runRoom(invocation.runId), memberRoom(invocation.memberId)],
+      );
+      return {
+        ok: false,
+        error: reason,
+        output: { status: "blocked", reason, code: "ERR_SUPERVISOR_ALLOWLIST" },
+      };
+    }
+
+    const rooms = this.getRooms(
+      invocation.organizationId,
+      invocation.runId,
+      invocation.memberId,
+    );
     const team = this.requireTeam();
     let preparedInvocation: ToolInvocationInput;
 
     try {
-      preparedInvocation = await this.prepareInvocation(invocation, member.roleName, team);
+      preparedInvocation = await this.prepareInvocation(
+        invocation,
+        member.roleName,
+        team,
+      );
     } catch (error) {
       const message = (error as Error).message;
-      this.audit(invocation, 'blocked', {
+      this.audit(invocation, "blocked", {
         error: message,
         code: isPathEscapeError(error) ? ERR_PATH_ESCAPE : undefined,
       });
@@ -111,27 +180,32 @@ export class ToolServiceImpl implements ToolService {
       preparedInvocation.toolId,
       preparedInvocation.action,
       preparedInvocation.resourcePath,
+      { spiritRole: preparedInvocation.spiritRole },
     );
 
     if (!policy.allowed) {
-      this.audit(preparedInvocation, 'blocked', { reason: policy.reason });
+      this.audit(preparedInvocation, "blocked", { reason: policy.reason });
 
       this.realtime.emit(
         SocketEventNames.toolResult,
         {
-            organizationId: invocation.organizationId,
-            runId: preparedInvocation.runId,
-            agentId: preparedInvocation.memberId,
-            toolResult: {
-              toolCallId: preparedInvocation.toolCallId,
-              result: { error: policy.reason },
-              isError: true,
-            },
+          organizationId: invocation.organizationId,
+          runId: preparedInvocation.runId,
+          agentId: preparedInvocation.memberId,
+          toolResult: {
+            toolCallId: preparedInvocation.toolCallId,
+            result: { error: policy.reason },
+            isError: true,
+          },
         },
         rooms,
       );
 
-      return { ok: false, error: policy.reason, output: { status: 'blocked', reason: policy.reason } };
+      return {
+        ok: false,
+        error: policy.reason,
+        output: { status: "blocked", reason: policy.reason },
+      };
     }
 
     if (
@@ -143,38 +217,15 @@ export class ToolServiceImpl implements ToolService {
         runId: preparedInvocation.runId,
         requestedBy: preparedInvocation.memberId,
         resourceType: preparedInvocation.resourceType,
-        resourcePath: preparedInvocation.resourcePath ?? '',
+        resourcePath: preparedInvocation.resourcePath ?? "",
         action: preparedInvocation.action,
-        reason: 'Tool action requires approval',
+        reason: "Tool action requires approval",
       });
 
-      this.audit(preparedInvocation, 'ok', { approvalId: approval.id, status: 'pending_approval' });
-
-      this.realtime.emit(
-        SocketEventNames.toolResult,
-        {
-            organizationId: preparedInvocation.organizationId,
-            runId: preparedInvocation.runId,
-            agentId: preparedInvocation.memberId,
-            toolResult: {
-              toolCallId: preparedInvocation.toolCallId,
-              result: { status: 'waiting_for_approval' },
-              isError: false,
-            },
-        },
-        rooms,
-      );
-
-      return {
-        ok: false,
-        requiresApprovalId: approval.id,
-        output: { status: 'waiting_for_approval', approvalId: approval.id },
-      };
-    }
-
-    try {
-      const result = await this.executeTool(preparedInvocation);
-      this.audit(preparedInvocation, 'ok', { status: 'completed' });
+      this.audit(preparedInvocation, "ok", {
+        approvalId: approval.id,
+        status: "pending_approval",
+      });
 
       this.realtime.emit(
         SocketEventNames.toolResult,
@@ -182,15 +233,45 @@ export class ToolServiceImpl implements ToolService {
           organizationId: preparedInvocation.organizationId,
           runId: preparedInvocation.runId,
           agentId: preparedInvocation.memberId,
-          toolResult: { toolCallId: preparedInvocation.toolCallId, result, isError: false },
+          toolResult: {
+            toolCallId: preparedInvocation.toolCallId,
+            result: { status: "waiting_for_approval" },
+            isError: false,
+          },
         },
         rooms,
       );
 
-      return { ok: true, output: { status: 'completed', result } };
+      return {
+        ok: false,
+        requiresApprovalId: approval.id,
+        output: { status: "waiting_for_approval", approvalId: approval.id },
+      };
+    }
+
+    try {
+      const result = await this.executeTool(preparedInvocation);
+      this.audit(preparedInvocation, "ok", { status: "completed" });
+
+      this.realtime.emit(
+        SocketEventNames.toolResult,
+        {
+          organizationId: preparedInvocation.organizationId,
+          runId: preparedInvocation.runId,
+          agentId: preparedInvocation.memberId,
+          toolResult: {
+            toolCallId: preparedInvocation.toolCallId,
+            result,
+            isError: false,
+          },
+        },
+        rooms,
+      );
+
+      return { ok: true, output: { status: "completed", result } };
     } catch (error) {
       const message = (error as Error).message;
-      this.audit(preparedInvocation, 'error', {
+      this.audit(preparedInvocation, "error", {
         error: message,
         code: isPathEscapeError(error) ? ERR_PATH_ESCAPE : undefined,
       });
@@ -226,11 +307,14 @@ export class ToolServiceImpl implements ToolService {
         team: this.requireTeam(),
         repo: this.repo,
         conversations: this.conversations,
+        supervisorTodos: this.supervisorTodos,
       });
     }
 
-    if (invocation.toolId === 'mcp') {
-      throw new Error('MCP proxying is not yet implemented in the local runtime');
+    if (invocation.toolId === "mcp") {
+      throw new Error(
+        "MCP proxying is not yet implemented in the local runtime",
+      );
     }
 
     throw new Error(
@@ -241,7 +325,7 @@ export class ToolServiceImpl implements ToolService {
   private requireTeam(): AgentTeamHandle {
     const team = this.teamStore.getTeam();
     if (!team) {
-      throw new Error('Team config not loaded');
+      throw new Error("Team config not loaded");
     }
     return team;
   }
@@ -277,7 +361,11 @@ export class ToolServiceImpl implements ToolService {
     });
   }
 
-  private getRooms(organizationId: string, runId: string, memberId: string): string[] {
+  private getRooms(
+    organizationId: string,
+    runId: string,
+    memberId: string,
+  ): string[] {
     const rooms = [runRoom(runId), memberRoom(memberId)];
     const run = this.repo.getRun(organizationId, runId);
     if (run?.threadId) {
@@ -291,7 +379,7 @@ export class ToolServiceImpl implements ToolService {
     roleName: string,
     team: AgentTeamHandle,
   ): Promise<ToolInvocationInput> {
-    if (invocation.toolId !== 'filesystem' && invocation.toolId !== 'shell') {
+    if (invocation.toolId !== "filesystem" && invocation.toolId !== "shell") {
       return invocation;
     }
 
@@ -303,7 +391,7 @@ export class ToolServiceImpl implements ToolService {
       roleName,
     );
 
-    if (invocation.toolId === 'filesystem') {
+    if (invocation.toolId === "filesystem") {
       if (!invocation.resourcePath) {
         return invocation;
       }
@@ -314,19 +402,24 @@ export class ToolServiceImpl implements ToolService {
     }
 
     const input = invocation.input ?? {};
-    const command = typeof input.command === 'string' ? input.command : '';
+    const command = typeof input.command === "string" ? input.command : "";
     // Shell commands can operate on the current directory even when the model
     // doesn't pass an explicit path argument, so we scope both cwd and any
     // path-like args through the same member-bound resolver before spawn().
     const requestedCwd =
-      typeof input.cwd === 'string'
+      typeof input.cwd === "string"
         ? input.cwd
-        : invocation.resourcePath ?? resolver.scopePaths[0] ?? '.';
+        : (invocation.resourcePath ?? resolver.scopePaths[0] ?? ".");
     const resolvedCwd = await resolver.resolve(requestedCwd);
     const rawArgs = Array.isArray(input.args)
-      ? input.args.filter((arg): arg is string => typeof arg === 'string')
+      ? input.args.filter((arg): arg is string => typeof arg === "string")
       : [];
-    const args = await sanitizeShellArgs(command, rawArgs, resolvedCwd, resolver);
+    const args = await sanitizeShellArgs(
+      command,
+      rawArgs,
+      resolvedCwd,
+      resolver,
+    );
 
     return {
       ...invocation,
@@ -341,25 +434,25 @@ export class ToolServiceImpl implements ToolService {
 }
 
 const SHELL_PATH_FLAGS = new Set([
-  '-C',
-  '--config',
-  '--cwd',
-  '--directory',
-  '--file',
-  '--input',
-  '--output',
-  '--path',
+  "-C",
+  "--config",
+  "--cwd",
+  "--directory",
+  "--file",
+  "--input",
+  "--output",
+  "--path",
 ]);
 
 const SHELL_POSITIONAL_PATH_COMMANDS = new Set([
-  'cat',
-  'cp',
-  'ls',
-  'mkdir',
-  'mv',
-  'rm',
-  'tee',
-  'touch',
+  "cat",
+  "cp",
+  "ls",
+  "mkdir",
+  "mv",
+  "rm",
+  "tee",
+  "touch",
 ]);
 
 async function sanitizeShellArgs(
@@ -387,7 +480,9 @@ async function sanitizeShellArgs(
 
     const inlineFlag = splitInlinePathFlag(arg);
     if (inlineFlag) {
-      sanitized.push(`${inlineFlag.flag}=${await resolveShellPathArg(inlineFlag.value, cwd, resolver)}`);
+      sanitized.push(
+        `${inlineFlag.flag}=${await resolveShellPathArg(inlineFlag.value, cwd, resolver)}`,
+      );
       continue;
     }
 
@@ -398,7 +493,7 @@ async function sanitizeShellArgs(
     }
 
     sanitized.push(arg);
-    if (!arg.startsWith('-')) {
+    if (!arg.startsWith("-")) {
       positionalIndex += 1;
     }
   }
@@ -406,19 +501,29 @@ async function sanitizeShellArgs(
   return sanitized;
 }
 
-function splitInlinePathFlag(arg: string): { flag: string; value: string } | null {
-  const [flag, value] = arg.split('=', 2);
-  if (typeof flag !== 'string' || typeof value !== 'string' || !SHELL_PATH_FLAGS.has(flag)) {
+function splitInlinePathFlag(
+  arg: string,
+): { flag: string; value: string } | null {
+  const [flag, value] = arg.split("=", 2);
+  if (
+    typeof flag !== "string" ||
+    typeof value !== "string" ||
+    !SHELL_PATH_FLAGS.has(flag)
+  ) {
     return null;
   }
   return { flag, value };
 }
 
-function looksLikePathArg(command: string, arg: string, positionalIndex: number): boolean {
-  if (!arg || arg === '-') return false;
-  if (arg.includes('://')) return false;
-  if (arg.startsWith('-')) return false;
-  if (command === 'cd' && positionalIndex === 0) {
+function looksLikePathArg(
+  command: string,
+  arg: string,
+  positionalIndex: number,
+): boolean {
+  if (!arg || arg === "-") return false;
+  if (arg.includes("://")) return false;
+  if (arg.startsWith("-")) return false;
+  if (command === "cd" && positionalIndex === 0) {
     return true;
   }
   if (SHELL_POSITIONAL_PATH_COMMANDS.has(command)) {
@@ -436,8 +541,13 @@ async function resolveShellPathArg(
 }
 
 function looksExplicitlyPathLike(arg: string): boolean {
-  if (arg === '.' || arg === '..') return true;
-  if (arg.startsWith('/') || arg.startsWith('./') || arg.startsWith('../') || arg.startsWith('~/')) {
+  if (arg === "." || arg === "..") return true;
+  if (
+    arg.startsWith("/") ||
+    arg.startsWith("./") ||
+    arg.startsWith("../") ||
+    arg.startsWith("~/")
+  ) {
     return true;
   }
   return /^[A-Za-z]:[\\/]/.test(arg);

@@ -13,6 +13,12 @@ import type {
   MessageMention,
   Organization,
   RunState,
+  Spirit,
+  SpiritRole,
+  TaskSession,
+  TaskSessionStatus,
+  Todo,
+  TodoStatus,
   WorkspaceMember,
 } from '@ujima/shared';
 import {
@@ -99,11 +105,33 @@ import {
   type PaginatedRuns,
 } from './runs.js';
 import {
+  getTaskSession as readTaskSession,
+  getTaskSessionByChannel as readTaskSessionByChannel,
+  getTaskSessionBySlug as readTaskSessionBySlug,
+  listTaskSessions as readTaskSessions,
+  saveTaskSession as writeTaskSession,
+  updateTaskSessionStatus as writeTaskSessionStatus,
+  type PaginatedTaskSessions,
+} from './task-sessions.js';
+import {
+  getTodo as readTodo,
+  listTodosForSession as readTodosForSession,
+  saveTodo as writeTodo,
+  updateTodoStatus as writeTodoStatus,
+} from './todos.js';
+import {
   ensureThread as ensureThreadRecord,
   getThread as readThread,
   saveThread as writeThread,
   setThreadMembers as writeThreadMembers,
 } from './threads.js';
+import {
+  getSpirit as readSpirit,
+  getSpiritByTriple as readSpiritByTriple,
+  listActiveSpiritsForMember as readActiveSpiritsForMember,
+  listSpiritsForSession as readSpiritsForSession,
+  saveSpirit as writeSpirit,
+} from './spirits.js';
 
 export class Repository {
   private readonly secrets: SecretStore;
@@ -258,6 +286,26 @@ export class Repository {
   listRuns = (organizationId: string, cursor?: string, limit?: number): PaginatedRuns =>
     readRuns(this.db, organizationId, cursor, limit);
 
+  saveTaskSession = (session: TaskSession): TaskSession =>
+    writeTaskSession(this.db, session);
+  getTaskSession = (organizationId: string, taskSessionId: string): TaskSession | null =>
+    readTaskSession(this.db, organizationId, taskSessionId);
+  getTaskSessionBySlug = (organizationId: string, slug: string): TaskSession | null =>
+    readTaskSessionBySlug(this.db, organizationId, slug);
+  getTaskSessionByChannel = (organizationId: string, channelId: string): TaskSession | null =>
+    readTaskSessionByChannel(this.db, organizationId, channelId);
+  listTaskSessions = (
+    organizationId: string,
+    options?: { cursor?: string; limit?: number; status?: TaskSessionStatus },
+  ): PaginatedTaskSessions => readTaskSessions(this.db, organizationId, options);
+  updateTaskSessionStatus = (
+    organizationId: string,
+    taskSessionId: string,
+    status: TaskSessionStatus,
+    options?: { summary?: string; completedAt?: string },
+  ): TaskSession | null =>
+    writeTaskSessionStatus(this.db, organizationId, taskSessionId, status, options);
+
   saveApproval = (approval: ApprovalRequest): ApprovalRequest =>
     writeApproval(this.db, approval);
   getApproval = (organizationId: string, approvalId: string): ApprovalRequest | null =>
@@ -273,6 +321,63 @@ export class Repository {
     readPendingApprovals(this.db, organizationId);
 
   saveAuditEvent = (event: AuditEvent): AuditEvent => writeAuditEvent(this.db, event);
+
+  /**
+   * Execute `fn` inside a synchronous DB transaction. Commits on
+   * normal return, rolls back on throw. The callback must run
+   * synchronously — bun:sqlite / better-sqlite3 don't support async
+   * statement queues so awaiting inside the transaction would either
+   * suspend it (better-sqlite3) or escape it (bun:sqlite). Async work
+   * (network, LLM calls, message publishing) belongs after the commit.
+   *
+   * Nested transactions are NOT supported — the SQLite drivers raise
+   * "cannot start a transaction within a transaction". Callers should
+   * compose the entire write at the top of the chain.
+   */
+  transaction = <T>(fn: () => T): T => {
+    this.db.exec('BEGIN');
+    try {
+      const result = fn();
+      this.db.exec('COMMIT');
+      return result;
+    } catch (err) {
+      try {
+        this.db.exec('ROLLBACK');
+      } catch {
+        // best-effort rollback — surface the original error
+      }
+      throw err;
+    }
+  };
+
+  saveSpirit = (spirit: Spirit): Spirit => writeSpirit(this.db, spirit);
+  getSpirit = (organizationId: string, spiritId: string): Spirit | null =>
+    readSpirit(this.db, organizationId, spiritId);
+  getSpiritByTriple = (
+    organizationId: string,
+    taskSessionId: string,
+    memberId: string,
+    role: SpiritRole,
+  ): Spirit | null => readSpiritByTriple(this.db, organizationId, taskSessionId, memberId, role);
+  listSpiritsForSession = (organizationId: string, taskSessionId: string): Spirit[] =>
+    readSpiritsForSession(this.db, organizationId, taskSessionId);
+  listActiveSpiritsForMember = (organizationId: string, memberId: string): Spirit[] =>
+    readActiveSpiritsForMember(this.db, organizationId, memberId);
+
+  saveTodo = (todo: Todo): Todo => writeTodo(this.db, todo);
+  getTodo = (organizationId: string, todoId: string): Todo | null =>
+    readTodo(this.db, organizationId, todoId);
+  listTodosForSession = (
+    organizationId: string,
+    taskSessionId: string,
+    options?: { status?: TodoStatus; memberId?: string },
+  ): Todo[] => readTodosForSession(this.db, organizationId, taskSessionId, options);
+  updateTodoStatus = (
+    organizationId: string,
+    todoId: string,
+    status: TodoStatus,
+    options?: { notes?: string },
+  ): Todo | null => writeTodoStatus(this.db, organizationId, todoId, status, options);
 
   getBootstrapSnapshot = (): BootstrapSnapshot => readBootstrapSnapshot(this.db);
 }

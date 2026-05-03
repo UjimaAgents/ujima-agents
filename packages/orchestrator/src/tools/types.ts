@@ -2,6 +2,7 @@ import type { AgentTeamHandle } from '@ujima/framework';
 import type { z } from 'zod';
 import type { ConversationService } from '../services/conversation.js';
 import type { ApiRepository } from '../services/repository-reader.js';
+import type { SupervisorTodoService } from '../services/supervisor-todo.js';
 import type { ToolInvocationInput } from '../services/tool-service.js';
 
 export interface ToolExecutionContext {
@@ -9,6 +10,12 @@ export interface ToolExecutionContext {
   team: AgentTeamHandle;
   repo: ApiRepository;
   conversations: ConversationService;
+  /**
+   * Phase 2.B — supervisor.todo.* tools route through this service.
+   * Optional so tests / pre-Phase-2 contexts that don't construct
+   * a SupervisorTodoService still work.
+   */
+  supervisorTodos?: SupervisorTodoService;
 }
 
 export interface OrchestratorTool<TArgs extends z.ZodTypeAny = z.ZodTypeAny> {
