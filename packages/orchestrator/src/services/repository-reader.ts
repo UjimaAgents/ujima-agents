@@ -159,6 +159,7 @@ export interface ApiRepository extends ConversationRepository {
   ): ApprovalRequest | null;
   listPendingApprovals(organizationId: string): ApprovalRequest[];
   saveAuditEvent(event: AuditEvent): AuditEvent;
+  listAuditEvents(organizationId: string): AuditEvent[];
   /**
    * Run a synchronous DB transaction. The callback must complete
    * synchronously — async work belongs after the commit. See
@@ -173,6 +174,7 @@ export interface ApiRepository extends ConversationRepository {
     memberId: string,
     role: SpiritRole,
   ): Spirit | null;
+  getSpiritByRunId(organizationId: string, runId: string): Spirit | null;
   listSpiritsForSession(organizationId: string, taskSessionId: string): Spirit[];
   listActiveSpiritsForMember(organizationId: string, memberId: string): Spirit[];
   saveTodo(todo: Todo): Todo;

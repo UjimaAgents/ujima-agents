@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { createRuntimeHost, sanitizeMcpArgs } from './runtime-host';
 import { createBufferLogger } from './logger';
 import type { LLMProvider } from '@ujima/llm/legacy';
+import type { AgentDef } from '@ujima/shared';
 import { createPathResolver } from './path-resolver';
 
 function stubProvider(): LLMProvider {
@@ -77,6 +78,43 @@ describe('createRuntimeHost', () => {
     ).rejects.toThrow(/shutting down/);
   });
 
+  it('starts slim tasks from an ad hoc task-file team and preserves sequence order', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'ujima-host-'));
+    const root = await mkdtemp(join(tmpdir(), 'ujima-workspace-'));
+    const host = await createRuntimeHost(
+      {
+        homeDir: home,
+        loadAgent: async (_workspaceId, agentId) => makeAgent(agentId),
+        loadTeam: async () => undefined,
+        resolveMCPDef: async (_workspaceId, id) => { throw new Error(`no mcp ${id}`); },
+        getProvider: stubProvider,
+      },
+      {},
+    );
+    const workspace = host.workspaces.create({ id: 'ws-ad-hoc', root_path: root, label: 'demo' });
+
+    try {
+      const started = await host.startTask({
+        workspaceId: workspace.id,
+        sessionId: 'session-ad-hoc',
+        prompt: 'Review the landing page',
+        taskId: 'task-ad-hoc',
+        executionMode: 'slim',
+        agentIds: ['frontend-bob', 'frontend-alice'],
+        sequence: ['frontend-bob', 'frontend-alice'],
+      });
+
+      expect(started.team.team_id).toBe('task-ad-hoc');
+      expect(started.team.agents).toEqual(['frontend-bob', 'frontend-alice']);
+      expect(started.task.execution_mode).toBe('slim');
+
+      const result = await started.handle.result;
+      expect(result.agentResults[0]?.agentId).toBe('frontend-bob');
+    } finally {
+      await host.shutdown({ drainMs: 100 });
+    }
+  });
+
   it('sanitizes MCP path args against optional agent scope paths', async () => {
     const root = await mkdtemp(join(tmpdir(), 'ujima-host-scope-'));
     await mkdir(join(root, 'apps', 'web'), { recursive: true });
@@ -132,3 +170,29 @@ describe('createRuntimeHost', () => {
     });
   });
 });
+
+function makeAgent(agentId: string): AgentDef {
+  return {
+    id: agentId,
+    name: agentId,
+    persona: 'helpful',
+    model: 'mock-model',
+    mcp: 'workspace-tools',
+    permissions: {
+      allowed_tools: [],
+      blocked_tools: [],
+      rate_limit: {
+        calls_per_minute: 30,
+        max_session_tokens: 100_000,
+      },
+    },
+    communication: {
+      publishes: [],
+      subscribes: [],
+    },
+    escalation: {
+      conditions: [],
+      escalate_to: 'human',
+    },
+  };
+}

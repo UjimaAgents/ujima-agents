@@ -3,7 +3,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { createPaginatedSchema, ChannelSchema, IdSchema, MessageSchema, PaginationQuerySchema } from '@ujima/shared';
 import { ApiErrorSchema, MessageCreateSchema, OrganizationQuerySchema } from '@ujima/api-schema';
 import type { Repository } from '@ujima/runtime-core';
-import type { ConversationService } from '@ujima/orchestrator';
+import type { ConversationService, TaskPromoterService } from '@ujima/orchestrator';
 import { z } from 'zod';
 import {
   ERR_NO_WORKSPACE_ROOT,
@@ -19,13 +19,14 @@ const ListMessagesResponseSchema = createPaginatedSchema(MessageSchema);
 export interface ConversationRoutesOptions {
   repo: Repository;
   conversations: ConversationService;
+  taskPromoter?: TaskPromoterService;
 }
 
 export function registerConversationRoutes(
   _app: FastifyInstance,
   options: ConversationRoutesOptions,
 ): void {
-  const { repo, conversations } = options;
+  const { repo, conversations, taskPromoter } = options;
   const app = _app.withTypeProvider<ZodTypeProvider>();
 
   app.get('/channels', {
@@ -91,7 +92,21 @@ export function registerConversationRoutes(
   }, async (req, reply) => {
     try {
       assertReadyWorkspaceRoot(repo, req.body.organizationId);
-      return conversations.sendMessage(req.body);
+      const message = conversations.sendMessage(req.body);
+      if (taskPromoter && message.kind === 'human' && message.channelId) {
+        try {
+          await taskPromoter.handlePostedMessage({
+            organizationId: message.organizationId,
+            messageId: message.id,
+          });
+        } catch {
+          // Human traffic should never fail just because the promoter
+          // evaluator or auto-task path errored. The original message is
+          // already persisted and visible; promotion is a best-effort
+          // follow-up concern.
+        }
+      }
+      return message;
     } catch (err) {
       const message = errMessage(err);
       if (isWorkspaceRootNotReadyError(err)) {

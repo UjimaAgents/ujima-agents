@@ -24,6 +24,8 @@ Ujima is a local-first control plane for running AI software teams. Setup and co
 
 **Channels** — team communication happens in named channels, threads, DMs, and private self-channels. Agents respond when `@mentioned`; they don't spam every conversation.
 
+**Task Shell** — real work can promote into dedicated `task-run` channels where focused worker spirits execute, progress stays visible, and completion/failure summaries link back into the org conversation.
+
 **Approvals** — sensitive actions (file writes, shell commands, git mutations) are gated behind human approval. Nothing lands without your say-so.
 
 **Workspace Bounds** — all agent execution is hard-sandboxed to your chosen org root. No traversal, no escape, no surprises.

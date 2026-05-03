@@ -140,6 +140,34 @@ typed mentions, and archive-backed history search.
   and `channel.read(query=...)` still searches archived content through the
   sidecar archive index.
 
+## Task Shell
+
+Task work now lives inside the org messaging surface instead of a separate,
+opaque background runner.
+
+- Task sessions create dedicated `task-run` channels and stream turn-batched
+  agent activity there, including immutable inline tool-call payloads.
+- When the last spirit/worker in a task session finishes, the daemon posts a
+  structured completion or failure summary card in the task channel and sends
+  link-back summaries to `#general` and the origin channel when applicable.
+- Public human messages in `general` and `group` channels can be evaluated by
+  the task promoter. High-confidence requests auto-create task sessions;
+  medium-confidence requests post a confirmation card; low-confidence chatter is
+  skipped. Every promoter decision is audited as `audit.task_promoter`.
+- Explicit `/task run [team] <prompt>` messages remain the deterministic
+  fallback and create a task session directly without depending on the model
+  evaluator.
+- Legacy `POST /tasks` also accepts a structured `task_file` payload validated
+  by `TaskFileSchema`. That allows clients to submit parsed YAML task files,
+  ad hoc agent lists, slim execution mode, and stage sequence hints through the
+  existing runtime host without inventing a second checkpoint format.
+- `GET /api/runs/:id/detail` now returns task-shell aggregates:
+  `activeAgents`, token usage grouped by member, and tool usage grouped by tool
+  name, in addition to the base run state, approvals, and channel messages.
+- Slim execution mode checkpoints each completed stage under
+  `task:<task_id>:slim:checkpoint:<stage>` so a restart can resume from the
+  last completed stage instead of re-running the full sequence.
+
 ## Workspace Boundary Enforcement
 
 Workspace-root hardening is now enforced at both the REST surface and the

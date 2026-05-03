@@ -25,6 +25,22 @@ const RunDetailResponseSchema = z.object({
   run: RunStateSchema,
   approvals: z.array(ApprovalRequestSchema),
   messages: z.array(MessageSchema),
+  activeAgents: z.array(
+    z.object({
+      memberId: IdSchema,
+      statusLabel: z.string().min(1),
+    }),
+  ),
+  tokens: z.object({
+    perMemberId: z.record(IdSchema, z.number().int().nonnegative()),
+  }),
+  tools: z.record(
+    z.string(),
+    z.object({
+      count: z.number().int().nonnegative(),
+      pending: z.number().int().nonnegative(),
+    }),
+  ),
 });
 
 export interface RunRoutesOptions {

@@ -29,10 +29,12 @@ export interface StartTaskInput {
   workspaceId: string;
   sessionId: string;
   prompt: string;
-  teamId: string;
+  teamId?: string;
+  agentIds?: string[];
   taskId?: string;
   orchestratorMode?: 'auto' | 'manual';
   executionMode?: 'concurrent' | 'slim';
+  sequence?: string[];
   onStream?: (event: UjimaEvent) => void;
 }
 
@@ -142,8 +144,34 @@ export async function createRuntimeHost(deps: RuntimeHostDeps, config: RuntimeHo
   async function startTask(input: StartTaskInput): Promise<StartTaskResult> {
     if (shuttingDown) throw new Error('runtime is shutting down');
     const ws = workspaces.requireReady(input.workspaceId);
-    const team = await deps.loadTeam(ws.id, input.teamId);
-    if (!team) throw new Error(`team "${input.teamId}" not found in workspace ${ws.id}`);
+    const requestedAgentIds = Array.from(new Set(input.agentIds ?? []));
+
+    let team: TeamDef;
+    if (input.teamId) {
+      const loadedTeam = await deps.loadTeam(ws.id, input.teamId);
+      if (!loadedTeam) throw new Error(`team "${input.teamId}" not found in workspace ${ws.id}`);
+      if (requestedAgentIds.length > 0) {
+        const allowed = new Set(loadedTeam.agents);
+        const missing = requestedAgentIds.filter((agentId) => !allowed.has(agentId));
+        if (missing.length > 0) {
+          throw new Error(`team "${loadedTeam.team_id}" does not include agents: ${missing.join(', ')}`);
+        }
+        team = {
+          ...loadedTeam,
+          agents: requestedAgentIds,
+        };
+      } else {
+        team = loadedTeam;
+      }
+    } else if (requestedAgentIds.length > 0) {
+      team = {
+        team_id: input.taskId ?? `task_${Date.now().toString(36)}`,
+        name: 'Ad hoc Task Team',
+        agents: requestedAgentIds,
+      };
+    } else {
+      throw new Error('either teamId or agentIds is required to start a task');
+    }
 
     const agents: AgentDef[] = [];
     const missing: string[] = [];
@@ -165,7 +193,12 @@ export async function createRuntimeHost(deps: RuntimeHostDeps, config: RuntimeHo
     };
 
     const agentById = new Map(agents.map((a) => [a.id, a]));
-    const inputs: RunTaskInputs = { task, team, sessionId: input.sessionId };
+    const inputs: RunTaskInputs = {
+      task,
+      team,
+      sessionId: input.sessionId,
+      sequence: input.sequence,
+    };
     const handle = runTask(
       {
         resolveAgent: (id) => agentById.get(id),

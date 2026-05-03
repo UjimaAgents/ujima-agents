@@ -24,6 +24,20 @@ export interface CreateRunInput {
   summary?: string;
 }
 
+export interface RunDetailAggregate {
+  count: number;
+  pending: number;
+}
+
+export interface RunDetail {
+  run: RunState;
+  approvals: ReturnType<ApiRepository['listPendingApprovals']>;
+  messages: ReturnType<ApiRepository['listMessages']>['data'];
+  activeAgents: { memberId: string; statusLabel: string }[];
+  tokens: { perMemberId: Record<string, number> };
+  tools: Record<string, RunDetailAggregate>;
+}
+
 export class RunService {
   constructor(
     private readonly teamStore: TeamStore,
@@ -101,19 +115,65 @@ export class RunService {
     return this.repo.getRun(organizationId, runId);
   }
 
-  getRunDetail(organizationId: string, runId: string) {
+  getRunDetail(organizationId: string, runId: string): RunDetail | null {
     const run = this.repo.getRun(organizationId, runId);
     if (!run) return null;
 
+    const spirit = this.repo.getSpiritByRunId(organizationId, runId);
+    if (!spirit) {
+      const approvals = this.repo
+        .listPendingApprovals(organizationId)
+        .filter((approval) => approval.runId === runId);
+      const messages = run.threadId
+        ? this.repo.listMessages(organizationId, run.threadId).data
+        : [];
+
+      return {
+        run,
+        approvals,
+        messages,
+        activeAgents:
+          run.status === 'queued' || run.status === 'running' || run.status === 'waiting_for_approval'
+            ? [{ memberId: run.agentId, statusLabel: run.status }]
+            : [],
+        tokens: { perMemberId: { [run.agentId]: 0 } },
+        tools: aggregateToolUsage(messages),
+      };
+    }
+
+    const session = this.repo.getTaskSession(organizationId, spirit.taskSessionId);
+    const sessionSpirits = this.repo.listSpiritsForSession(organizationId, spirit.taskSessionId);
+    const runIds = new Set(sessionSpirits.map((current) => current.runId).filter(Boolean));
     const approvals = this.repo
       .listPendingApprovals(organizationId)
-      .filter((approval) => approval.runId === runId);
+      .filter((approval) => approval.runId && runIds.has(approval.runId));
+    const messages = session
+      ? this.repo.listChannelMessages(organizationId, session.channelId, { limit: 500 }).data
+      : run.threadId
+        ? this.repo.listMessages(organizationId, run.threadId).data
+        : [];
 
-    const messages = run.threadId
-      ? this.repo.listMessages(organizationId, run.threadId).data
-      : [];
+    const activeAgents = sessionSpirits
+      .filter((current) => LIVE_RUN_DETAIL_STATUSES.has(current.status))
+      .map((current) => ({
+        memberId: current.memberId,
+        statusLabel:
+          current.role === 'supervisor' ? `supervisor:${current.status}` : current.status,
+      }));
 
-    return { run, approvals, messages };
+    const perMemberId: Record<string, number> = {};
+    for (const current of sessionSpirits) {
+      perMemberId[current.memberId] = (perMemberId[current.memberId] ?? 0) + current.tokensUsed;
+    }
+
+    return {
+      run,
+      approvals,
+      messages,
+      activeAgents,
+      tokens: { perMemberId },
+      tools: aggregateToolUsage(messages),
+    };
   }
 
   private getRooms(run: RunState) {
@@ -266,4 +326,36 @@ export class RunService {
     }
     return team;
   }
+}
+
+const LIVE_RUN_DETAIL_STATUSES = new Set(['queued', 'running', 'waiting_for_approval']);
+
+function aggregateToolUsage(messages: readonly { toolCalls: readonly { toolName: string; result?: unknown }[] }[]) {
+  const tools: Record<string, RunDetailAggregate> = {};
+  for (const message of messages) {
+    for (const toolCall of message.toolCalls) {
+      const current = (tools[toolCall.toolName] ??= { count: 0, pending: 0 });
+      current.count += 1;
+      if (toolCallResultIsPending(toolCall.result)) {
+        current.pending += 1;
+      }
+    }
+  }
+  return tools;
+}
+
+function toolCallResultIsPending(result: unknown): boolean {
+  if (!result || typeof result !== 'object') {
+    return false;
+  }
+  const record = result as Record<string, unknown>;
+  if (record.status === 'waiting_for_approval') {
+    return true;
+  }
+  const nested = record.result;
+  return Boolean(
+    nested &&
+      typeof nested === 'object' &&
+      (nested as Record<string, unknown>).status === 'waiting_for_approval',
+  );
 }

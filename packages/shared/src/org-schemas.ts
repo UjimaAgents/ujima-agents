@@ -345,6 +345,8 @@ export const TaskSummaryCardSchema = z.object({
   kind: z.literal('task.summary'),
   outcome: z.enum(['completed', 'failed', 'cancelled']),
   summary: z.string().default(''),
+  taskChannelId: IdSchema.optional(),
+  taskSlug: z.string().min(1).optional(),
 });
 
 export const ApprovalCardSchema = z.object({
