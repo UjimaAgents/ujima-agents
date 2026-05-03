@@ -360,9 +360,7 @@ export class SettingsService {
     return {
       organization,
       members: this.repo.listMembers(organizationId),
-      channels: visibleChannels(
-        this.repo.listChannels(organizationId, undefined, undefined, ['self', 'dm']).data,
-      ),
+      channels: visibleChannels(visibleChannelsFromRepo(this.repo, organizationId)),
     };
   }
 
@@ -412,9 +410,7 @@ export class SettingsService {
     return {
       organization: updated,
       members: this.repo.listMembers(input.organizationId),
-      channels: visibleChannels(
-        this.repo.listChannels(input.organizationId, undefined, undefined, ['self', 'dm']).data,
-      ),
+      channels: visibleChannels(visibleChannelsFromRepo(this.repo, input.organizationId)),
     };
   }
 
@@ -446,7 +442,7 @@ export class SettingsService {
   }
 }
 
-function visibleChannelsFromRepo(repo: ApiRepository, organizationId: string): Channel[] {
+export function visibleChannelsFromRepo(repo: ApiRepository, organizationId: string): Channel[] {
   const channels: Channel[] = [];
   let cursor: string | undefined = undefined;
   do {

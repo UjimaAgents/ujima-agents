@@ -16,6 +16,7 @@ import { summarizeTeam, validateProviderKeys, type TeamSummary } from './team.js
 import { addMemberToDefaultChannels, ensureMemberSelfChannel } from './member-channels.js';
 import { upsertWorkspaceMemberScopes } from './workspace-root.js';
 import { persistTeamConfig } from './config-sync.js';
+import { visibleChannelsFromRepo } from './settings.js';
 
 export interface OnboardingInlineTeam {
   name?: string;
@@ -281,9 +282,7 @@ export class OnboardingService {
     return {
       organization,
       members,
-      channels: visibleChannels(
-        this.repo.listChannels(organizationId, undefined, undefined, ['self', 'dm']).data,
-      ),
+      channels: visibleChannels(visibleChannelsFromRepo(this.repo, organizationId)),
       team: summarizeTeam(team),
     };
   }

@@ -83,8 +83,8 @@ export class ApprovalService {
       input.resolution === 'allow_always' &&
       !!rawScope;
     const effectiveReason =
-      canPersistGrant
-        ? `grant:always_allow:scope=${encodeURIComponent(rawScope!)};note=${input.reason ?? ''}`
+      canPersistGrant && rawScope
+        ? `grant:always_allow:scope=${encodeURIComponent(rawScope)};note=${input.reason ?? ''}`
         : input.reason;
     const approval = this.repo.resolveApproval(
       input.organizationId,

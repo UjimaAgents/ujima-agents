@@ -152,6 +152,7 @@ export class ToolServiceImpl implements ToolService {
         {
           organizationId: invocation.organizationId,
           runId: invocation.runId,
+          threadId: invocation.threadId ?? this.repo.getRun(invocation.organizationId, invocation.runId)?.threadId,
           agentId: invocation.memberId,
           toolResult: {
             toolCallId: invocation.toolCallId,
@@ -248,12 +249,15 @@ export class ToolServiceImpl implements ToolService {
         status: "pending_approval",
       });
 
+      const run = this.repo.getRun(preparedInvocation.organizationId, preparedInvocation.runId);
+      const threadId = preparedInvocation.threadId ?? run?.threadId;
+
       this.realtime.emit(
         SocketEventNames.toolResult,
         {
           organizationId: preparedInvocation.organizationId,
           runId: preparedInvocation.runId,
-          threadId: preparedInvocation.threadId,
+          threadId,
           agentId: preparedInvocation.memberId,
           toolResult: {
             toolCallId: preparedInvocation.toolCallId,

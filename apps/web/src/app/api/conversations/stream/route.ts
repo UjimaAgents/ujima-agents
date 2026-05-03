@@ -9,6 +9,7 @@ import {
   daemonBaseUrl,
   getSessionTokenFromCookie,
   readDaemonBearerToken,
+  getServerAuthState,
 } from "@/server/ujima-daemon";
 
 export const runtime = "nodejs";
@@ -33,6 +34,21 @@ export async function GET(request: Request) {
     return NextResponse.json(
       { code: "ERR_BAD_REQUEST", message: "Invalid conversation stream request." },
       { status: 400 },
+    );
+  }
+
+  try {
+    const authState = await getServerAuthState();
+    if (!authState.authenticated || authState.user?.organizationId !== organizationId) {
+      return NextResponse.json(
+        { code: "ERR_FORBIDDEN", message: "Unauthorized for this organization." },
+        { status: 403 },
+      );
+    }
+  } catch {
+    return NextResponse.json(
+      { code: "ERR_UNAUTHORIZED", message: "Sign in before opening conversation streams." },
+      { status: 401 },
     );
   }
 

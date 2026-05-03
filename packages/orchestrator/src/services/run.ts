@@ -9,6 +9,7 @@ import {
   runRoom,
   threadRoom,
   type RunState,
+  type Message,
 } from '@ujima/shared';
 import type { AgentTeamHandle } from '@ujima/framework';
 import type { AiService } from '../ai-service.js';
@@ -119,9 +120,15 @@ export class RunService {
       .listPendingApprovals(organizationId)
       .filter((approval) => approval.runId === runId);
 
-    const messages = run.threadId
-      ? this.repo.listMessages(organizationId, run.threadId).data
-      : [];
+    const messages: Message[] = [];
+    if (run.threadId) {
+      let cursor: string | undefined = undefined;
+      do {
+        const page = this.repo.listMessages(organizationId, run.threadId, cursor, 100);
+        messages.push(...page.data);
+        cursor = page.nextCursor;
+      } while (cursor);
+    }
 
     return { run, approvals, messages };
   }
