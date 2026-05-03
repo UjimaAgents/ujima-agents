@@ -6,7 +6,7 @@ import { resolveSelectedConversationFromSearchParams } from "@/features/workspac
 export default async function WorkspacePage({
   searchParams,
 }: {
-  searchParams?: Record<string, string | string[] | undefined>;
+  searchParams?: Promise<Record<string, string | string[] | undefined>> | Record<string, string | string[] | undefined>;
 }) {
   const bootstrap = await getServerBootstrap();
   const rolePresets = await getServerRolePresets().catch(() => []);
@@ -24,8 +24,9 @@ export default async function WorkspacePage({
 
   const fallbackChannel =
     bootstrap.channels.find((c) => c.name === "general") ?? bootstrap.channels[0];
+  const resolvedSearchParams = await Promise.resolve(searchParams);
   const initialConversation =
-    resolveSelectedConversationFromSearchParams(searchParams, bootstrap) ??
+    resolveSelectedConversationFromSearchParams(resolvedSearchParams, bootstrap) ??
     (fallbackChannel
       ? {
           type: "channel" as const,

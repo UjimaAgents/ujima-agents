@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ChevronDown, MessageSquare } from "lucide-react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { MessageSquare } from "lucide-react";
 import type { BootstrapResponse } from "@ujima/api-schema";
 import type { SelectedConversation } from "../types";
 import { useConversationSync } from "../use-conversation-sync";
@@ -16,8 +16,9 @@ import {
   ApprovalCard,
   type ChatTab,
 } from "./chat";
-import { StatusBadge } from "./chat/primitives";
+import { Avatar, StatusBadge } from "./chat/primitives";
 import type { RunState } from "@ujima/shared";
+import { useWorkspaceStore } from "../workspace-store";
 
 const CHANNEL_TABS: ChatTab[] = [
   { id: "conversation", label: "Conversation" },
@@ -41,7 +42,7 @@ function EmptyChat({
 }) {
   const isAgent = conversation.type === "agent";
   return (
-    <div className="flex-1 flex flex-col items-center justify-center px-6">
+    <div className="flex h-full flex-col items-center justify-center px-6">
       <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-zinc-100 dark:bg-zinc-800">
         <MessageSquare className="h-7 w-7 text-zinc-400" />
       </div>
@@ -76,28 +77,23 @@ interface ChannelViewProps {
 }
 
 export function ChannelView({ bootstrap, conversation, members }: ChannelViewProps) {
-  const [activeTab, setActiveTab] = useState("conversation");
-  const [showDetails, setShowDetails] = useState(false);
-  const [detailsWidth, setDetailsWidth] = useState(25);
-  const [detailsTab, setDetailsTab] = useState("Reasoning trace");
   const [isAtBottom, setIsAtBottom] = useState(true);
-  const [unseenUpdates, setUnseenUpdates] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
+  const bottomRef = useRef<HTMLDivElement>(null);
   const previousFeedSignal = useRef("");
-  const feed = useConversationSync(bootstrap, conversation, members);
-
-  useEffect(() => {
-    setActiveTab("conversation");
-    setIsAtBottom(true);
-    setUnseenUpdates(0);
-    previousFeedSignal.current = "";
-    requestAnimationFrame(() => {
-      listRef.current?.scrollTo({ top: listRef.current.scrollHeight });
-    });
-  }, [conversation.id, conversation.type]);
+  const feed = useConversationSync(bootstrap, conversation);
+  const activeTab = useWorkspaceStore((state) => state.activeTab);
+  const showDetails = useWorkspaceStore((state) => state.showDetails);
+  const detailsWidth = useWorkspaceStore((state) => state.detailsWidth);
+  const detailsTab = useWorkspaceStore((state) => state.detailsTab);
+  const setActiveTab = useWorkspaceStore((state) => state.setActiveTab);
+  const setShowDetails = useWorkspaceStore((state) => state.setShowDetails);
+  const setDetailsWidth = useWorkspaceStore((state) => state.setDetailsWidth);
+  const setDetailsTab = useWorkspaceStore((state) => state.setDetailsTab);
 
   const isAgent = conversation.type === "agent";
   const tabs = isAgent ? AGENT_TABS : CHANNEL_TABS;
+  const tabIds = useMemo(() => new Set(tabs.map((tab) => tab.id)), [tabs]);
   const conversationColorIndex = Math.max(
     members.findIndex((member) => member.id === conversation.id),
     0,
@@ -121,8 +117,16 @@ export function ChannelView({ bootstrap, conversation, members }: ChannelViewPro
       ? `${conversation.name} is responding…`
       : `${memberName} is responding…`;
   }, [activeRun, conversation.name, isAgent, members]);
+  const typingMember = useMemo(
+    () => members.find((member) => member.id === activeRun?.agentId) ?? (isAgent ? members.find((member) => member.id === conversation.id) : undefined),
+    [activeRun?.agentId, conversation.id, isAgent, members],
+  );
+  const typingColorIndex = useMemo(
+    () => Math.max(members.findIndex((member) => member.id === typingMember?.id), 0),
+    [members, typingMember?.id],
+  );
   const headerSubtitle =
-    typingLabel ?? (feed.loading ? "Syncing live history from the backend…" : "Connected to the conversation stream.");
+    feed.error ?? typingLabel ?? (feed.loading ? "Syncing live history from the backend…" : undefined);
 
   const tabCounts = useMemo(() => {
     const activeRuns = feed.runs.filter(
@@ -141,10 +145,7 @@ export function ChannelView({ bootstrap, conversation, members }: ChannelViewPro
   }, [feed.activity.length, feed.approvals, feed.runs]);
 
   const scrollToLatest = useCallback((behavior: ScrollBehavior = "smooth") => {
-    listRef.current?.scrollTo({
-      top: listRef.current.scrollHeight,
-      behavior,
-    });
+    bottomRef.current?.scrollIntoView({ block: "end", behavior });
   }, []);
 
   const handleScroll = useCallback(() => {
@@ -153,28 +154,29 @@ export function ChannelView({ bootstrap, conversation, members }: ChannelViewPro
     const distanceFromBottom = list.scrollHeight - list.scrollTop - list.clientHeight;
     const atBottom = distanceFromBottom < 96;
     setIsAtBottom(atBottom);
-    if (atBottom) {
-      setUnseenUpdates(0);
-    }
   }, []);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const signal = `${feed.messages.length}:${feed.approvals.length}:${feed.runs.length}:${feed.activity.length}:${feed.loading ? 1 : 0}`;
     if (!previousFeedSignal.current) {
       previousFeedSignal.current = signal;
       if (feed.messages.length > 0) {
-        requestAnimationFrame(() => scrollToLatest("auto"));
+        scrollToLatest("auto");
       }
       return;
     }
     if (previousFeedSignal.current === signal) return;
     previousFeedSignal.current = signal;
     if (isAtBottom) {
-      requestAnimationFrame(() => scrollToLatest("smooth"));
-    } else {
-      setUnseenUpdates((count) => count + 1);
+      scrollToLatest("smooth");
     }
   }, [feed.activity.length, feed.approvals.length, feed.loading, feed.messages.length, feed.runs.length, isAtBottom, scrollToLatest]);
+
+  useLayoutEffect(() => {
+    if (!tabIds.has(activeTab)) {
+      setActiveTab("conversation");
+    }
+  }, [activeTab, setActiveTab, tabIds]);
 
   return (
     <div className="flex flex-1 overflow-hidden bg-white dark:bg-[#09090b]">
@@ -206,10 +208,10 @@ export function ChannelView({ bootstrap, conversation, members }: ChannelViewPro
             countVariant: tab.id === "approvals" && tabCounts.approvals > 0 ? "warning" : "default",
           }))}
           activeTab={activeTab}
-          onTabChange={setActiveTab}
+          onTabChange={(tab) => setActiveTab(tab as typeof activeTab)}
         />
         {activeTab === "conversation" ? (
-          <div className="relative flex-1 min-h-0">
+          <div className="relative flex flex-1 min-h-0 flex-col">
             <ChatMessageList ref={listRef} onScroll={handleScroll}>
               {feed.loading && feed.messages.length === 0 ? (
                 <ConversationSkeleton conversation={conversation} />
@@ -225,25 +227,19 @@ export function ChannelView({ bootstrap, conversation, members }: ChannelViewPro
                       )}
                     />
                   ))}
-                  {typingLabel && <TypingIndicator label={typingLabel} />}
+                  {typingLabel && (
+                    <TypingIndicator
+                      label={typingLabel}
+                      name={typingMember?.name ?? conversation.name}
+                      colorIndex={typingColorIndex}
+                    />
+                  )}
                 </>
               ) : (
                 <EmptyChat conversation={conversation} />
               )}
+              <div ref={bottomRef} className="h-px" />
             </ChatMessageList>
-            {!isAtBottom && unseenUpdates > 0 && (
-              <button
-                type="button"
-                onClick={() => {
-                  scrollToLatest();
-                  setUnseenUpdates(0);
-                }}
-                className="absolute bottom-4 right-4 inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white/95 px-3 py-2 text-[11px] font-semibold text-zinc-900 shadow-lg shadow-zinc-950/10 backdrop-blur hover:border-violet-300 hover:text-violet-700 dark:border-zinc-800 dark:bg-zinc-950/95 dark:text-zinc-100"
-              >
-                <ChevronDown className="h-3.5 w-3.5" />
-                {unseenUpdates} new update{unseenUpdates === 1 ? "" : "s"}
-              </button>
-            )}
           </div>
         ) : activeTab === "approvals" ? (
           feed.approvals.length > 0 ? (
@@ -290,7 +286,11 @@ export function ChannelView({ bootstrap, conversation, members }: ChannelViewPro
               ? `Message @${conversation.name}...`
               : `Message #${conversation.name} or @agent...`
           }
-          statusHint={typingLabel ?? (feed.loading ? "Syncing history…" : "Enter to send, Shift+Enter for a new line.")}
+          statusHint={
+            feed.error ??
+            typingLabel ??
+            (feed.loading ? "Syncing history…" : "Enter to send, Shift+Enter for a new line.")
+          }
           onSend={feed.sendMessage}
         />
       </div>
@@ -309,7 +309,7 @@ export function ChannelView({ bootstrap, conversation, members }: ChannelViewPro
               timeLabel="—"
               tabs={["Reasoning trace", "Changes", "Metadata"]}
               activeTab={detailsTab}
-              onTabChange={setDetailsTab}
+              onTabChange={(tab) => setDetailsTab(tab as typeof detailsTab)}
               onClose={() => setShowDetails(false)}
             >
               <p className="text-xs text-zinc-500">No trace data yet.</p>
@@ -398,6 +398,7 @@ function formatActivityTime(iso: string): string {
   return new Date(parsed).toLocaleTimeString([], {
     hour: "numeric",
     minute: "2-digit",
+    hour12: true,
   });
 }
 
@@ -432,10 +433,18 @@ function ConversationSkeleton({
   );
 }
 
-function TypingIndicator({ label }: { label: string }) {
+function TypingIndicator({
+  label,
+  name,
+  colorIndex,
+}: {
+  label: string;
+  name: string;
+  colorIndex: number;
+}) {
   return (
     <div className="flex items-center gap-3 px-3 py-2">
-      <div className="h-7 w-7 rounded-lg bg-violet-500/15 ring-1 ring-violet-500/20" />
+      <Avatar name={name} colorIndex={colorIndex} size="sm" />
       <div className="flex items-center gap-2 rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-[11px] font-medium text-violet-700 dark:border-violet-500/20 dark:bg-violet-500/10 dark:text-violet-300">
         <span className="inline-flex items-center gap-1.5">
           <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current [animation-delay:-0.2s]" />

@@ -2,6 +2,8 @@ import { forwardRef, type ReactNode, type UIEventHandler } from "react";
 import { CheckCircle2, Loader2 } from "lucide-react";
 import { Avatar, TagBadge, type TagVariant } from "./primitives";
 
+const MENTION_RE = /(^|[^@\w])@([A-Za-z0-9][A-Za-z0-9._-]*)/g;
+
 export interface ChatMessageData {
   id: string;
   senderId?: string;
@@ -47,8 +49,8 @@ export function ChatMessage({
             <TagBadge variant={message.tag.variant} label={message.tag.label} />
           )}
         </div>
-        <p className="mt-0.5 text-xs font-semibold text-zinc-900 dark:text-white">
-          {message.content}
+        <p className="mt-0.5 text-xs font-normal leading-relaxed whitespace-pre-wrap text-zinc-900 dark:text-white">
+          {renderMessageContent(message.content)}
         </p>
         {message.detail && (
           <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400 leading-relaxed">
@@ -72,6 +74,38 @@ export function ChatMessage({
   );
 }
 
+function renderMessageContent(content: string): ReactNode {
+  const nodes: ReactNode[] = [];
+  let lastIndex = 0;
+
+  for (const match of content.matchAll(MENTION_RE)) {
+    const index = match.index ?? 0;
+    const prefix = match[1] ?? "";
+    const handle = match[2] ?? "";
+    const mentionStart = index + prefix.length;
+    const mentionEnd = mentionStart + 1 + handle.length;
+
+    if (index > lastIndex) {
+      nodes.push(<span key={`text-${index}`}>{content.slice(lastIndex, index)}</span>);
+    }
+    if (prefix) {
+      nodes.push(<span key={`prefix-${index}`}>{prefix}</span>);
+    }
+    nodes.push(
+      <span key={`mention-${index}`} className="font-semibold text-zinc-900 dark:text-white">
+        @{handle}
+      </span>,
+    );
+    lastIndex = mentionEnd;
+  }
+
+  if (lastIndex < content.length) {
+    nodes.push(<span key={`tail-${lastIndex}`}>{content.slice(lastIndex)}</span>);
+  }
+
+  return nodes.length > 0 ? nodes : content;
+}
+
 export const ChatMessageList = forwardRef<
   HTMLDivElement,
   {
@@ -84,7 +118,7 @@ export const ChatMessageList = forwardRef<
     <div
       ref={ref}
       onScroll={onScroll}
-      className={`flex-1 overflow-y-auto px-4 py-4 space-y-2 ${className}`}
+      className={`h-full min-h-0 overflow-y-auto px-4 py-4 space-y-2 ${className}`}
     >
       {children}
     </div>

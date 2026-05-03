@@ -73,7 +73,11 @@ export class RunService {
       ],
     );
 
-    return this.advanceRun(run);
+    try {
+      return await this.advanceRun(run);
+    } catch (error) {
+      return this.failRun(run, (error as Error).message);
+    }
   }
 
   async resumeAfterApproval(organizationId: string, runId: string): Promise<RunState> {

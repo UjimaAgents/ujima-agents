@@ -15,6 +15,7 @@ import type { TeamStore } from './team-store.js';
 import { summarizeTeam, validateProviderKeys, type TeamSummary } from './team.js';
 import { addMemberToDefaultChannels, ensureMemberSelfChannel } from './member-channels.js';
 import { upsertWorkspaceMemberScopes } from './workspace-root.js';
+import { persistTeamConfig } from './config-sync.js';
 
 export interface OnboardingInlineTeam {
   name?: string;
@@ -275,6 +276,7 @@ export class OnboardingService {
     }
 
     this.teamStore.setTeam(team);
+    persistTeamConfig(this.repo, organizationId, team);
 
     return {
       organization,

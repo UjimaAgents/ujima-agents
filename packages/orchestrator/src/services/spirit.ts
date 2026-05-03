@@ -29,6 +29,7 @@ import {
   ORCHESTRATOR_TOOLS,
   SUPERVISOR_TOOL_ALLOWLIST,
 } from '../tools/index.js';
+import { toModelToolName } from '../tools/names.js';
 import type { OrchestratorTool } from '../tools/types.js';
 import { ActiveSpiritRegistry, isAliveStatus } from './active-spirit-registry.js';
 import type { RealtimeService } from './context.js';
@@ -709,7 +710,7 @@ export class SpiritService {
     // `Tool<never, never>` and breaks the assignment.
     return Object.fromEntries(
       entries.map(([toolId, definition]) => [
-        toolId,
+        toModelToolName(toolId),
         tool({
           description: ctx.team.tools[toolId]?.description ?? `${toolId} tool`,
           inputSchema: definition.schema,

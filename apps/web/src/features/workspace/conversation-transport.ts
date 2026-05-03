@@ -7,6 +7,7 @@ export interface ConversationTransport {
   organizationId: string;
   threadId: string;
   recipientId?: string;
+  channelIds: string[];
   threadIds: string[];
   memberIds: string[];
 }
@@ -22,6 +23,61 @@ export function getDirectMessageThreadId(senderId: string, recipientId: string):
   return `dm:${firstId}:${secondId}`;
 }
 
+export function buildConversationStreamParams(transport: ConversationTransport): URLSearchParams {
+  const params = new URLSearchParams({
+    organizationId: transport.organizationId,
+    threadId: transport.threadId,
+  });
+  for (const channelId of transport.channelIds) {
+    params.append("channelIds", channelId);
+  }
+  for (const memberId of transport.memberIds) {
+    params.append("memberIds", memberId);
+  }
+  for (const threadId of transport.threadIds) {
+    params.append("threadIds", threadId);
+  }
+  return params;
+}
+
+export function buildConversationMessagePayload(
+  transport: ConversationTransport,
+  conversationType: SelectedConversation["type"],
+  conversationId: string,
+  senderId: string,
+  content: string,
+):
+  | {
+      organizationId: string;
+      senderId: string;
+      recipientId: string;
+      content: string;
+    }
+  | {
+      organizationId: string;
+      senderId: string;
+      threadId: string;
+      channelId?: string;
+      content: string;
+    } {
+  if (transport.recipientId) {
+    return {
+      organizationId: transport.organizationId,
+      senderId,
+      recipientId: transport.recipientId,
+      content,
+    };
+  }
+
+  return {
+    organizationId: transport.organizationId,
+    senderId,
+    threadId: transport.threadId,
+    channelId: conversationType === "channel" ? conversationId : undefined,
+    content,
+  };
+}
+
 export function resolveConversationTransport(
   bootstrap: BootstrapResponse,
   conversation: SelectedConversation,
@@ -34,6 +90,7 @@ export function resolveConversationTransport(
     return {
       organizationId,
       threadId: conversation.id,
+      channelIds: [conversation.id],
       threadIds: [conversation.id],
       memberIds: [],
     };
@@ -44,6 +101,7 @@ export function resolveConversationTransport(
     organizationId,
     threadId,
     recipientId: conversation.id,
+    channelIds: [threadId],
     threadIds: [threadId],
     memberIds: [senderId, conversation.id],
   };

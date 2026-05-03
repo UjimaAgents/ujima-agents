@@ -5,7 +5,6 @@ import {
   SocketEventSchemas,
   type SocketEventName,
 } from "@ujima/shared";
-import { upstreamUnavailable } from "@/server/api-response";
 import {
   daemonBaseUrl,
   getSessionTokenFromCookie,
@@ -27,6 +26,7 @@ export async function GET(request: Request) {
   const url = new URL(request.url);
   const organizationId = url.searchParams.get("organizationId");
   const threadId = url.searchParams.get("threadId");
+  const channelIds = url.searchParams.getAll("channelIds").filter(Boolean);
   const memberIds = url.searchParams.getAll("memberIds").filter(Boolean);
 
   if (!organizationId || !threadId) {
@@ -41,21 +41,31 @@ export async function GET(request: Request) {
 
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
+      let closed = false;
       const send = (envelope: unknown) => {
+        if (closed) return;
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(envelope)}\n\n`));
+      };
+      const close = () => {
+        if (closed) return;
+        closed = true;
+        controller.close();
       };
 
       socket = io(daemonBaseUrl(), {
         path: "/events",
         transports: ["websocket"],
         auth: { token: readDaemonBearerToken() },
-        reconnection: false,
+        reconnection: true,
+        reconnectionAttempts: Infinity,
+        reconnectionDelay: 1000,
+        reconnectionDelayMax: 5000,
       });
 
       socket.on("connect", () => {
         socket?.emit("subscribe", {
           organizationId,
-          channelIds: [],
+          channelIds,
           threadIds: [threadId],
           memberIds,
           runIds: [],
@@ -74,16 +84,16 @@ export async function GET(request: Request) {
 
       socket.on("connect_error", (error) => {
         send({ type: "error", message: error instanceof Error ? error.message : String(error) });
-        controller.close();
       });
 
       socket.on("disconnect", () => {
-        controller.close();
+        // Keep the SSE bridge open so the socket can reconnect without the
+        // browser losing the conversation stream.
       });
 
       request.signal.addEventListener("abort", () => {
         socket?.disconnect();
-        controller.close();
+        close();
       });
     },
     cancel() {

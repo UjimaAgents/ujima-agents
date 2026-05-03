@@ -1,8 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useReducer, type Dispatch } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  appendEvents,
   ApprovalRequestSchema,
   MemberSchema,
   MessageSchema,
@@ -17,41 +16,13 @@ import type { BootstrapResponse } from "@ujima/api-schema";
 import type { ApprovalCardData, ChatMessageData } from "./components/chat";
 import type { SelectedConversation } from "./types";
 import {
+  buildConversationMessagePayload,
+  buildConversationStreamParams,
+  getDirectMessageThreadId,
   type ConversationStreamEnvelope,
-  resolveConversationTransport,
 } from "./conversation-transport";
-
-const MAX_ACTIVITY = 200;
-
-interface ConversationFeedState {
-  messages: ChatMessageData[];
-  approvals: ApprovalCardData[];
-  runs: RunState[];
-  activity: ActivityEvent[];
-  members: Member[];
-  loading: boolean;
-}
-
-type ConversationFeedAction =
-  | { type: "reset" }
-  | { type: "loading"; loading: boolean }
-  | { type: "sync-members"; members: Member[] }
-  | { type: "hydrate-messages"; messages: Message[] }
-  | { type: "pending-message"; message: ChatMessageData }
-  | { type: "receive-message"; tempId?: string; message: Message }
-  | { type: "remove-message"; id: string }
-  | { type: "upsert-approval"; approval: ApprovalRequest }
-  | { type: "upsert-run"; run: RunState }
-  | { type: "append-activity"; event: ActivityEvent };
-
-const EMPTY_STATE: ConversationFeedState = {
-  messages: [],
-  approvals: [],
-  runs: [],
-  activity: [],
-  members: [],
-  loading: true,
-};
+import { activityStateToStatus, conversationActivityState, type ActivityState } from "./activity-state";
+import { useWorkspaceStore } from "./workspace-store";
 
 export interface ConversationSyncResult {
   messages: ChatMessageData[];
@@ -64,87 +35,166 @@ export interface ConversationSyncResult {
     label: string;
   };
   loading: boolean;
+  error?: string;
   sendMessage(content: string): Promise<void>;
 }
 
 export function useConversationSync(
   bootstrap: BootstrapResponse,
   conversation: SelectedConversation,
-  members: Member[],
 ): ConversationSyncResult {
-  const transport = useMemo(
-    () => resolveConversationTransport(bootstrap, conversation),
-    [bootstrap, conversation],
-  );
-  const [state, dispatch] = useReducer(reducer, EMPTY_STATE);
+  const organizationId = bootstrap.organization?.id;
+  const senderId = bootstrap.auth.member?.id;
+  const transport = useMemo(() => {
+    if (!organizationId || !senderId) return null;
+    if (conversation.type === "channel") {
+      return {
+        organizationId,
+        threadId: conversation.id,
+        channelIds: [conversation.id],
+        threadIds: [conversation.id],
+        memberIds: [],
+      };
+    }
+
+    const threadId = getDirectMessageThreadId(senderId, conversation.id);
+    return {
+      organizationId,
+      threadId,
+      recipientId: conversation.id,
+      channelIds: [threadId],
+      threadIds: [threadId],
+      memberIds: [senderId, conversation.id],
+    };
+  }, [conversation.id, conversation.type, organizationId, senderId]);
+  const conversationKey = transport ? `${transport.organizationId}:${transport.threadId}` : undefined;
+  const messages = useWorkspaceStore((state) => state.messages);
+  const approvals = useWorkspaceStore((state) => state.approvals);
+  const runs = useWorkspaceStore((state) => state.runs);
+  const activity = useWorkspaceStore((state) => state.activity);
+  const loading = useWorkspaceStore((state) => state.loading);
+  const storeMembers = useWorkspaceStore((state) => state.members);
+  const memberActivity = useWorkspaceStore((state) => state.memberActivity);
+  const resetConversationFeed = useWorkspaceStore((state) => state.resetConversationFeed);
+  const setLoading = useWorkspaceStore((state) => state.setLoading);
+  const hydrateMessages = useWorkspaceStore((state) => state.hydrateMessages);
+  const addPendingMessage = useWorkspaceStore((state) => state.addPendingMessage);
+  const receiveMessage = useWorkspaceStore((state) => state.receiveMessage);
+  const removeMessage = useWorkspaceStore((state) => state.removeMessage);
+  const upsertApproval = useWorkspaceStore((state) => state.upsertApproval);
+  const upsertRun = useWorkspaceStore((state) => state.upsertRun);
+  const appendActivity = useWorkspaceStore((state) => state.appendActivity);
+  const appendMember = useWorkspaceStore((state) => state.appendMember);
+  const setMemberActivity = useWorkspaceStore((state) => state.setMemberActivity);
+  const [error, setError] = useState<{ conversationKey: string; message: string } | undefined>(undefined);
+  const storeMembersRef = useRef(storeMembers);
 
   useEffect(() => {
-    dispatch({ type: "sync-members", members });
-  }, [members]);
+    storeMembersRef.current = storeMembers;
+  }, [storeMembers]);
 
   useEffect(() => {
     if (!transport) {
-      dispatch({ type: "reset" });
       return;
     }
 
     const abortController = new AbortController();
-    dispatch({ type: "reset" });
+    const currentConversationKey = `${transport.organizationId}:${transport.threadId}`;
+    resetConversationFeed(currentConversationKey);
 
     void loadHistory(transport.organizationId, transport.threadId, abortController.signal)
-      .then((messages) => {
-        if (abortController.signal.aborted) return;
-        dispatch({ type: "hydrate-messages", messages });
-        dispatch({ type: "loading", loading: false });
+      .then((history) => {
+        if (abortController.signal.aborted || currentConversationKey !== conversationKey) return;
+        setError(undefined);
+        hydrateMessages(history, (message) => messageToChatMessage(message, storeMembersRef.current), messageToActivity);
+        setLoading(false);
       })
-      .catch(() => {
-        if (abortController.signal.aborted) return;
-        dispatch({ type: "loading", loading: false });
+      .catch((err) => {
+        if (abortController.signal.aborted || currentConversationKey !== conversationKey) return;
+        setLoading(false);
+        setError({
+          conversationKey: currentConversationKey,
+          message: err instanceof Error ? err.message : "Unable to load conversation history.",
+        });
       });
 
-    const params = new URLSearchParams({
-      organizationId: transport.organizationId,
-      threadId: transport.threadId,
-    });
-    for (const memberId of transport.memberIds) {
-      params.append("memberIds", memberId);
-    }
-    for (const threadId of transport.threadIds) {
-      params.append("threadIds", threadId);
-    }
-
+    const params = buildConversationStreamParams(transport);
     const source = new EventSource(`/api/conversations/stream?${params.toString()}`);
     source.onmessage = (event) => {
       const parsed = parseStreamEnvelope(event.data);
       if (!parsed) return;
-      if (parsed.type === "ready") return;
-      if (parsed.type === "error") {
-        dispatch({ type: "loading", loading: false });
+      if (parsed.type === "ready") {
+        setError(undefined);
         return;
       }
-      handleStreamEvent(parsed, dispatch);
+      if (parsed.type === "error") {
+        setLoading(false);
+        setError({ conversationKey: currentConversationKey, message: parsed.message });
+        if (conversation.type === "agent") setMemberActivity(conversation.id, "error");
+        return;
+      }
+      handleStreamEvent(parsed, {
+        appendActivity,
+        appendMember,
+        receiveMessage,
+        removeMessage,
+        setLoading,
+        setMemberActivity,
+        storeMembers: storeMembersRef.current,
+        upsertApproval,
+        upsertRun,
+      });
     };
     source.onerror = () => {
-      dispatch({ type: "loading", loading: false });
+      setLoading(false);
+      setError({ conversationKey: currentConversationKey, message: "Conversation stream disconnected." });
+      if (conversation.type === "agent") setMemberActivity(conversation.id, "error");
     };
 
     return () => {
       abortController.abort();
       source.close();
     };
-  }, [transport]);
+  }, [
+    appendActivity,
+    appendMember,
+    hydrateMessages,
+    receiveMessage,
+    removeMessage,
+    resetConversationFeed,
+    setLoading,
+    setMemberActivity,
+    transport,
+    conversationKey,
+    conversation.id,
+    conversation.type,
+    upsertApproval,
+    upsertRun,
+  ]);
 
   const selectedMember = useMemo(() => {
-    if (conversation.type !== "agent" && conversation.type !== "dm") {
-      return undefined;
-    }
-    return state.members.find((member) => member.id === conversation.id);
-  }, [conversation.id, conversation.type, state.members]);
+    if (conversation.type !== "agent") return undefined;
+    return storeMembers.find((member) => member.id === conversation.id);
+  }, [conversation.id, conversation.type, storeMembers]);
 
-  const status = useMemo(
-    () => memberPresenceToStatus(selectedMember?.presence),
-    [selectedMember?.presence],
+  const activeRun = useMemo(
+    () => [...runs].reverse().find((run) => ["queued", "running", "waiting_for_approval"].includes(run.status)),
+    [runs],
   );
+
+  const status = useMemo(() => {
+    if (conversation.type !== "agent") {
+      return { variant: "active" as const, label: "online" };
+    }
+    const activityState =
+      memberActivity[conversation.id] ??
+      conversationActivityState({
+        loading,
+        activeRun: activeRun ? { status: activeRun.status } : undefined,
+        presence: selectedMember?.presence,
+      });
+    return activityStateToStatus(activityState);
+  }, [activeRun, conversation.id, conversation.type, loading, memberActivity, selectedMember?.presence]);
 
   const sendMessage = useCallback(
     async (content: string) => {
@@ -155,44 +205,34 @@ export function useConversationSync(
       const sender = bootstrap.auth.member;
       const tempId = `temp:${crypto.randomUUID()}`;
       const now = new Date().toISOString();
-      dispatch({
-        type: "pending-message",
-        message: {
-          id: tempId,
-          senderId: sender.id,
-          role: sender.roleName,
-          name: sender.name,
-          time: "now",
-          content,
-          createdAt: now,
-          pending: true,
-          tag: { label: "Sending", variant: "default" },
-          detail: "Sending…",
-        },
+      addPendingMessage({
+        id: tempId,
+        senderId: sender.id,
+        role: sender.roleName,
+        name: sender.name,
+        time: "now",
+        content,
+        createdAt: now,
+        pending: true,
+        tag: { label: "Sending", variant: "default" },
+        detail: "Sending…",
       });
 
       const response = await fetch("/api/messages", {
         method: "POST",
         body: JSON.stringify(
-          transport.recipientId
-            ? {
-                organizationId: transport.organizationId,
-                senderId: sender.id,
-                recipientId: transport.recipientId,
-                content,
-              }
-            : {
-                organizationId: transport.organizationId,
-                senderId: sender.id,
-                threadId: transport.threadId,
-                channelId: conversation.type === "channel" ? conversation.id : undefined,
-                content,
-              },
+          buildConversationMessagePayload(
+            transport,
+            conversation.type,
+            conversation.id,
+            sender.id,
+            content,
+          ),
         ),
       });
       const body = await response.json().catch(() => null);
       if (!response.ok) {
-        dispatch({ type: "remove-message", id: tempId });
+        removeMessage(tempId);
         throw new Error(
           body &&
             typeof body === "object" &&
@@ -205,89 +245,39 @@ export function useConversationSync(
 
       const parsed = MessageSchema.safeParse(body);
       if (!parsed.success) {
-        dispatch({ type: "remove-message", id: tempId });
+        removeMessage(tempId);
         throw new Error("Unexpected message response.");
       }
 
-      dispatch({ type: "receive-message", tempId, message: parsed.data });
+      receiveMessage(tempId, parsed.data, (message) => messageToChatMessage(message, storeMembers), messageToActivity);
     },
-    [bootstrap.auth.member, conversation.id, conversation.type, transport],
+    [addPendingMessage, bootstrap.auth.member, conversation.id, conversation.type, removeMessage, receiveMessage, storeMembers, transport],
   );
 
+  useEffect(() => {
+    if (conversation.type !== "agent") return;
+    const next = conversationActivityState({
+      loading,
+      activeRun: activeRun ? { status: activeRun.status } : undefined,
+      presence: selectedMember?.presence,
+    });
+    setMemberActivity(conversation.id, next);
+  }, [activeRun, conversation.id, conversation.type, loading, selectedMember?.presence, setMemberActivity]);
+
+  const currentError =
+    error && error.conversationKey === conversationKey ? error.message : undefined;
+
   return {
-    messages: state.messages,
-    approvals: state.approvals,
-    runs: state.runs,
-    activity: state.activity,
+    messages,
+    approvals,
+    runs,
+    activity,
     selectedMember,
     status,
-    loading: state.loading,
+    loading,
+    error: currentError,
     sendMessage,
   };
-}
-
-function reducer(
-  state: ConversationFeedState,
-  action: ConversationFeedAction,
-): ConversationFeedState {
-  switch (action.type) {
-    case "reset":
-      return { ...EMPTY_STATE, members: state.members };
-    case "loading":
-      return { ...state, loading: action.loading };
-    case "sync-members":
-      return { ...state, members: mergeMembers(state.members, action.members) };
-    case "hydrate-messages": {
-      const hydrated = action.messages.map((message) => messageToChatMessage(message, state));
-      return {
-        ...state,
-        messages: mergeChatMessages(state.messages, hydrated),
-        activity: appendActivity(state.activity, action.messages.map(messageToActivity)),
-      };
-    }
-    case "pending-message":
-      return {
-        ...state,
-        messages: mergeChatMessages(state.messages, [action.message]),
-      };
-    case "receive-message": {
-      const message = messageToChatMessage(action.message, state);
-      const withoutTemp = action.tempId
-        ? state.messages.filter((item) => item.id !== action.tempId)
-        : state.messages.filter(
-            (item) =>
-              !(item.pending && item.name === message.name && item.content === message.content),
-          );
-      return {
-        ...state,
-        messages: mergeChatMessages(withoutTemp, [message]),
-        activity: appendActivity(state.activity, [messageToActivity(action.message)]),
-      };
-    }
-    case "remove-message":
-      return {
-        ...state,
-        messages: state.messages.filter((message) => message.id !== action.id),
-      };
-    case "upsert-approval": {
-      const approval = approvalToCard(action.approval, state);
-      return {
-        ...state,
-        approvals: mergeApprovals(state.approvals, [approval]),
-        activity: appendActivity(state.activity, [approvalToActivity(action.approval)]),
-      };
-    }
-    case "upsert-run":
-      return {
-        ...state,
-        runs: mergeRuns(state.runs, [action.run]),
-        activity: appendActivity(state.activity, [runToActivity(action.run)]),
-      };
-    case "append-activity":
-      return { ...state, activity: appendActivity(state.activity, [action.event]) };
-    default:
-      return state;
-  }
 }
 
 async function loadHistory(
@@ -295,20 +285,42 @@ async function loadHistory(
   threadId: string,
   signal: AbortSignal,
 ): Promise<Message[]> {
-  const response = await fetch(
-    `/api/conversations/history?organizationId=${encodeURIComponent(organizationId)}&threadId=${encodeURIComponent(threadId)}&limit=100`,
-    { signal },
-  );
-  const body = await response.json().catch(() => null);
-  if (!response.ok) {
-    if (response.status === 404) return [];
-    throw new Error("Unable to load conversation history.");
+  const messages: Message[] = [];
+  let cursor: string | undefined;
+
+  for (;;) {
+    const params = new URLSearchParams({
+      organizationId,
+      threadId,
+      limit: "100",
+    });
+    if (cursor) params.set("cursor", cursor);
+
+    const response = await fetch(`/api/conversations/history?${params.toString()}`, {
+      signal,
+    });
+    const body = await response.json().catch(() => null);
+
+    if (!response.ok) {
+      if (response.status === 404) return [];
+      throw new Error("Unable to load conversation history.");
+    }
+
+    if (body && Array.isArray(body.data)) {
+      messages.push(
+        ...body.data.flatMap((item: unknown) => {
+          const parsed = MessageSchema.safeParse(item);
+          return parsed.success ? [parsed.data] : [];
+        }),
+      );
+    }
+
+    if (!body?.hasMore || typeof body.nextCursor !== "string" || body.nextCursor === cursor) {
+      return messages;
+    }
+
+    cursor = body.nextCursor;
   }
-  if (!body || !Array.isArray(body.data)) return [];
-  return body.data.flatMap((item: unknown) => {
-    const parsed = MessageSchema.safeParse(item);
-    return parsed.success ? [parsed.data] : [];
-  });
 }
 
 function parseStreamEnvelope(value: string): ConversationStreamEnvelope | null {
@@ -323,7 +335,26 @@ function parseStreamEnvelope(value: string): ConversationStreamEnvelope | null {
 
 function handleStreamEvent(
   envelope: Exclude<ConversationStreamEnvelope, { type: "ready" } | { type: "error" }>,
-  dispatch: Dispatch<ConversationFeedAction>,
+  actions: {
+    appendActivity(event: ActivityEvent): void;
+    appendMember(member: Member): void;
+    receiveMessage(
+      tempId: string | undefined,
+      message: Message,
+      toMessage: (message: Message) => ChatMessageData,
+      toActivity: (message: Message) => ActivityEvent,
+    ): void;
+    removeMessage(id: string): void;
+    setLoading(loading: boolean): void;
+    setMemberActivity(memberId: string, activity: ActivityState): void;
+    storeMembers: Member[];
+    upsertApproval(
+      approval: ApprovalRequest,
+      toCard: (approval: ApprovalRequest, state: { members: Member[] }) => ApprovalCardData,
+      toActivity: (approval: ApprovalRequest) => ActivityEvent,
+    ): void;
+    upsertRun(run: RunState, toActivity: (run: RunState) => ActivityEvent): void;
+  },
 ): void {
   if (envelope.type !== "socket") return;
 
@@ -333,14 +364,18 @@ function handleStreamEvent(
     case "dm:message": {
       const message = parseMessagePayload(envelope.payload);
       if (!message) return;
-      dispatch({ type: "receive-message", message });
+      actions.receiveMessage(undefined, message, (value) => messageToChatMessage(value, actions.storeMembers), messageToActivity);
       return;
     }
     case "approval:requested":
     case "approval:resolved": {
       const approval = parseApprovalPayload(envelope.payload);
       if (!approval) return;
-      dispatch({ type: "upsert-approval", approval });
+      actions.upsertApproval(
+        approval,
+        (value, state) => approvalToCard(value, { members: state.members }),
+        approvalToActivity,
+      );
       return;
     }
     case "run:started":
@@ -348,73 +383,54 @@ function handleStreamEvent(
     case "run:completed": {
       const run = parseRunPayload(envelope.payload);
       if (!run) return;
-      dispatch({ type: "upsert-run", run });
+      actions.upsertRun(run, runToActivity);
+      actions.setMemberActivity(
+        run.agentId,
+        run.status === "completed" ? "online" : "working",
+      );
       return;
     }
     case "member:updated": {
       const member = parseMemberPayload(envelope.payload);
       if (!member) return;
-      dispatch({ type: "sync-members", members: [member] });
-      dispatch({ type: "append-activity", event: memberToActivity(member) });
+      actions.appendMember(member);
+      actions.appendActivity(memberToActivity(member));
       return;
     }
     case "channel:presence":
-      dispatch({ type: "append-activity", event: presenceToActivity(envelope.payload) });
+      actions.appendActivity(presenceToActivity(envelope.payload));
       return;
     case "tool:called":
     case "tool:result":
-      dispatch({ type: "append-activity", event: toolToActivity(envelope.event, envelope.payload) });
+      actions.appendActivity(toolToActivity(envelope.event, envelope.payload));
       return;
     default:
       return;
   }
 }
 
-function mergeChatMessages(
-  current: ChatMessageData[],
-  incoming: ChatMessageData[],
-): ChatMessageData[] {
-  const map = new Map<string, ChatMessageData>();
-  for (const message of [...current, ...incoming]) {
-    map.set(message.id, message);
-  }
-  return [...map.values()].sort(
-    (a, b) => Date.parse(a.createdAt ?? "") - Date.parse(b.createdAt ?? ""),
-  );
+function parseMessagePayload(payload: unknown): Message | null {
+  const parsed = MessageSchema.safeParse((payload as { message?: unknown })?.message);
+  return parsed.success ? parsed.data : null;
 }
 
-function mergeApprovals(
-  current: ApprovalCardData[],
-  incoming: ApprovalCardData[],
-): ApprovalCardData[] {
-  const map = new Map<string, ApprovalCardData>();
-  for (const item of current) map.set(item.id, item);
-  for (const item of incoming) map.set(item.id, item);
-  return [...map.values()];
+function parseApprovalPayload(payload: unknown): ApprovalRequest | null {
+  const parsed = ApprovalRequestSchema.safeParse((payload as { approval?: unknown })?.approval);
+  return parsed.success ? parsed.data : null;
 }
 
-function mergeRuns(current: RunState[], incoming: RunState[]): RunState[] {
-  const map = new Map<string, RunState>();
-  for (const run of current) map.set(run.id, run);
-  for (const run of incoming) map.set(run.id, run);
-  return [...map.values()].sort(
-    (a, b) => Date.parse(a.startedAt) - Date.parse(b.startedAt),
-  );
+function parseRunPayload(payload: unknown): RunState | null {
+  const parsed = RunStateSchema.safeParse((payload as { run?: unknown })?.run);
+  return parsed.success ? parsed.data : null;
 }
 
-function mergeMembers(current: Member[], incoming: Member[]): Member[] {
-  const map = new Map<string, Member>();
-  for (const member of current) map.set(member.id, member);
-  for (const member of incoming) map.set(member.id, member);
-  return [...map.values()];
+function parseMemberPayload(payload: unknown): Member | null {
+  const parsed = MemberSchema.safeParse((payload as { member?: unknown })?.member);
+  return parsed.success ? parsed.data : null;
 }
 
-function appendActivity(current: ActivityEvent[], incoming: ActivityEvent[]): ActivityEvent[] {
-  return appendEvents(current, incoming, { max: MAX_ACTIVITY });
-}
-
-function messageToChatMessage(message: Message, state: Pick<ConversationFeedState, "members">): ChatMessageData {
-  const sender = state.members.find((member) => member.id === message.senderId);
+function messageToChatMessage(message: Message, members: Member[]): ChatMessageData {
+  const sender = members.find((member) => member.id === message.senderId);
   return {
     id: message.id,
     senderId: message.senderId,
@@ -446,7 +462,7 @@ function messageToActivity(message: Message): ActivityEvent {
 
 function approvalToCard(
   approval: ApprovalRequest,
-  state: Pick<ConversationFeedState, "members">,
+  state: { members: Member[] },
 ): ApprovalCardData {
   const requestedBy =
     state.members.find((member) => member.id === approval.requestedBy)?.name ?? approval.requestedBy;
@@ -523,49 +539,12 @@ function memberToActivity(member: Member): ActivityEvent {
   };
 }
 
-function parseMessagePayload(payload: unknown): Message | null {
-  const parsed = MessageSchema.safeParse((payload as { message?: unknown })?.message);
-  return parsed.success ? parsed.data : null;
-}
-
-function parseApprovalPayload(payload: unknown): ApprovalRequest | null {
-  const parsed = ApprovalRequestSchema.safeParse((payload as { approval?: unknown })?.approval);
-  return parsed.success ? parsed.data : null;
-}
-
-function parseRunPayload(payload: unknown): RunState | null {
-  const parsed = RunStateSchema.safeParse((payload as { run?: unknown })?.run);
-  return parsed.success ? parsed.data : null;
-}
-
-function parseMemberPayload(payload: unknown): Member | null {
-  const parsed = MemberSchema.safeParse((payload as { member?: unknown })?.member);
-  return parsed.success ? parsed.data : null;
-}
-
 function formatTime(iso: string): string {
   const parsed = Date.parse(iso);
   if (Number.isNaN(parsed)) return "now";
   return new Date(parsed).toLocaleTimeString([], {
     hour: "numeric",
     minute: "2-digit",
+    hour12: true,
   });
-}
-
-function memberPresenceToStatus(presence?: string): {
-  variant: "active" | "idle" | "offline" | "error";
-  label: string;
-} {
-  switch (presence) {
-    case "online":
-      return { variant: "active", label: "online" };
-    case "busy":
-      return { variant: "idle", label: "busy" };
-    case "away":
-      return { variant: "idle", label: "away" };
-    case "offline":
-      return { variant: "offline", label: "offline" };
-    default:
-      return { variant: "active", label: "active" };
-  }
 }

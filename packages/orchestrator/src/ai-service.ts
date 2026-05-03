@@ -7,6 +7,7 @@ import type { RepositoryReader } from './services/repository-reader.js';
 import type { TeamStore } from './services/team-store.js';
 import type { ToolService } from './services/tool-service.js';
 import { ALWAYS_AVAILABLE_AGENT_TOOLS, ORCHESTRATOR_TOOLS } from './tools/index.js';
+import { toModelToolName } from './tools/names.js';
 
 
 const GenericToolInvocationSchema = z.object({
@@ -128,7 +129,7 @@ export class AiService {
 
     const toolIds = [...new Set([...role.tools, ...ALWAYS_AVAILABLE_AGENT_TOOLS])];
     const toolDefs = Object.fromEntries(
-      toolIds.map((toolId) => [toolId, this.buildToolDefinition(input, toolId, team)]),
+      toolIds.map((toolId) => [toModelToolName(toolId), this.buildToolDefinition(input, toolId, team)]),
     ) as ToolSet;
 
     const system = buildAgentSystemPrompt(

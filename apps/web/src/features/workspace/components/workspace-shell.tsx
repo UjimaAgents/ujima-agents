@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { GripVertical } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { WorkspaceSidebar } from "./workspace-sidebar";
@@ -8,6 +8,7 @@ import { ChannelView } from "./channel-view";
 import type { BootstrapResponse } from "@ujima/api-schema";
 import type { SelectedConversation, WorkspaceRoleInput } from "../types";
 import { resolveSelectedConversationFromSearchParams } from "../conversation-routing";
+import { sameConversation, useWorkspaceStore } from "../workspace-store";
 
 import type { RolePresetTemplate } from "../../onboarding/types";
 
@@ -25,11 +26,16 @@ export function WorkspaceShell({
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [sidebarWidth, setSidebarWidth] = useState(25);
-  const [channels, setChannels] = useState<WorkspaceChannel[]>(
-    bootstrap.channels,
-  );
-  const [members, setMembers] = useState<WorkspaceMember[]>(bootstrap.members);
+  const sidebarWidth = useWorkspaceStore((state) => state.sidebarWidth);
+  const selected = useWorkspaceStore((state) => state.selectedConversation);
+  const channels = useWorkspaceStore((state) => state.channels);
+  const members = useWorkspaceStore((state) => state.members);
+  const memberActivity = useWorkspaceStore((state) => state.memberActivity);
+  const setSidebarWidth = useWorkspaceStore((state) => state.setSidebarWidth);
+  const syncWorkspace = useWorkspaceStore((state) => state.syncWorkspace);
+  const setSelectedConversation = useWorkspaceStore((state) => state.setSelectedConversation);
+  const appendChannel = useWorkspaceStore((state) => state.appendChannel);
+  const appendMember = useWorkspaceStore((state) => state.appendMember);
 
   const defaultConversation = useMemo(() => {
     if (initialConversation) return initialConversation;
@@ -42,20 +48,30 @@ export function WorkspaceShell({
     };
   }, [channels, initialConversation]);
 
-  const resolveUrlConversation = useCallback(() => {
-    return (
+  useEffect(() => {
+    syncWorkspace({
+      channels: bootstrap.channels,
+      members: bootstrap.members,
+      selectedConversation: initialConversation ?? defaultConversation,
+    });
+  }, [bootstrap.channels, bootstrap.members, defaultConversation, initialConversation, syncWorkspace]);
+
+  const urlConversation = useMemo(
+    () =>
       resolveSelectedConversationFromSearchParams(searchParams, {
         ...bootstrap,
         members,
         channels,
-      }) ?? defaultConversation
-    );
-  }, [bootstrap, channels, defaultConversation, members, searchParams]);
-
-  const selected = useMemo(
-    () => resolveUrlConversation(),
-    [resolveUrlConversation],
+      }) ?? defaultConversation,
+    [bootstrap, channels, defaultConversation, members, searchParams],
   );
+  const resolvedSelected = selected ?? urlConversation;
+
+  useEffect(() => {
+    if (!sameConversation(selected, urlConversation)) {
+      setSelectedConversation(urlConversation);
+    }
+  }, [selected, setSelectedConversation, urlConversation]);
 
   const handleSelect = useCallback(
     (conversation: SelectedConversation) => {
@@ -63,9 +79,10 @@ export function WorkspaceShell({
         conversation.type === "agent"
           ? `agentId=${encodeURIComponent(conversation.id)}`
           : `channelId=${encodeURIComponent(conversation.id)}`;
+      setSelectedConversation(conversation);
       router.replace(`/workspace?${param}`, { scroll: false });
     },
-    [router],
+    [router, setSelectedConversation],
   );
 
   const handleCreateChannel = useCallback(
@@ -96,10 +113,10 @@ export function WorkspaceShell({
       }
 
       const channel = body as WorkspaceChannel;
-      setChannels((current) => [...current, channel]);
+      appendChannel(channel);
       return { type: "channel" as const, id: channel.id, name: channel.name };
     },
-    [bootstrap.organization?.id],
+    [appendChannel, bootstrap.organization?.id],
   );
 
   const handleCreateAgent = useCallback(
@@ -145,10 +162,10 @@ export function WorkspaceShell({
       }
 
       const member = body as WorkspaceMember;
-      setMembers((current) => [...current, member]);
+      appendMember(member);
       return { type: "agent" as const, id: member.id, name: member.name };
     },
-    [bootstrap.organization?.id],
+    [appendMember, bootstrap.organization?.id],
   );
 
   return (
@@ -162,7 +179,8 @@ export function WorkspaceShell({
           rolePresets={rolePresets}
           channels={channels}
           members={members}
-          selected={selected}
+          memberActivity={memberActivity}
+          selected={resolvedSelected}
           onSelect={handleSelect}
           onCreateChannel={handleCreateChannel}
           onCreateAgent={handleCreateAgent}
@@ -170,7 +188,12 @@ export function WorkspaceShell({
       </div>
       <DragHandle onResize={setSidebarWidth} />
       <main className="flex-1 flex flex-col min-w-0 overflow-hidden h-full">
-        <ChannelView bootstrap={bootstrap} conversation={selected} members={members} />
+        <ChannelView
+          key={`${resolvedSelected.type}:${resolvedSelected.id}`}
+          bootstrap={bootstrap}
+          conversation={resolvedSelected}
+          members={members}
+        />
       </main>
     </div>
   );

@@ -23,12 +23,15 @@ import type { RolePresetTemplate } from "../../onboarding/types";
 import { defaultModelForProvider } from "../../onboarding/types";
 import { getSuggestedAgentName } from "../../onboarding/agent-name-suggestions";
 import { Sparkles, Bot, ArrowRight, Search as SearchIcon } from "lucide-react";
+import { resolveMemberActivity } from "../workspace-store";
+import type { ActivityState } from "../activity-state";
 
 interface WorkspaceSidebarProps {
   bootstrap: BootstrapResponse;
   rolePresets: RolePresetTemplate[];
   channels: BootstrapResponse["channels"];
   members: BootstrapResponse["members"];
+  memberActivity: Record<string, ActivityState>;
   selected: SelectedConversation;
   onSelect: (conv: SelectedConversation) => void;
   onCreateChannel: (name: string) => Promise<SelectedConversation | null>;
@@ -86,6 +89,7 @@ export function WorkspaceSidebar({
   rolePresets,
   channels,
   members,
+  memberActivity,
   selected,
   onSelect,
   onCreateChannel,
@@ -221,7 +225,7 @@ export function WorkspaceSidebar({
                 icon={<Avatar name={agent.name} colorIndex={idx} size="xs" />}
                 label={agent.name}
                 active={selected.type === "agent" && selected.id === agent.id}
-                status={agent.presence === "online" ? "online" : "offline"}
+                status={resolveMemberActivity(agent, memberActivity)}
                 onClick={() =>
                   onSelect({
                     type: "agent",
@@ -575,7 +579,7 @@ function SidebarItem({
   icon: React.ReactNode;
   label: string;
   active?: boolean;
-  status?: "online" | "offline" | "active";
+  status?: ActivityState;
   onClick: () => void;
 }) {
   return (
@@ -597,11 +601,23 @@ function SidebarItem({
       >
         {label}
       </span>
+      {status === "loading" && (
+        <div className="h-2 w-2 animate-spin rounded-full border border-violet-500 border-t-transparent" />
+      )}
+      {status === "working" && (
+        <div className="h-2 w-2 animate-pulse rounded-full bg-violet-500" />
+      )}
       {status === "online" && (
         <div className="h-2 w-2 rounded-full bg-emerald-500" />
       )}
+      {status === "idle" && (
+        <div className="h-2 w-2 rounded-full bg-amber-500" />
+      )}
       {status === "offline" && (
         <div className="h-2 w-2 rounded-full bg-zinc-300 dark:bg-zinc-700" />
+      )}
+      {status === "error" && (
+        <div className="h-2 w-2 rounded-full bg-red-500" />
       )}
     </button>
   );

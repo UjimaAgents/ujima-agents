@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import {
+  ChannelSchema,
   MessageMentionSchema,
   MessageSchema,
   SocketEventNames,
@@ -175,7 +176,8 @@ export class ConversationService {
     const channel = message.channelId
       ? this.requireActiveChannel(message.organizationId, message.channelId)
       : null;
-    const resolvedMentions = typedMentions ?? this.resolveMessageMentions(message.organizationId, message);
+    const resolvedMentions =
+      typedMentions ?? this.resolveMessageMentions(message.organizationId, message, channel);
     const finalMessage = MessageSchema.parse({
       ...message,
       mentions: uniqueMentionIds(resolvedMentions),
@@ -303,7 +305,7 @@ export class ConversationService {
     });
   }
 
-  sendDirectMessage(input: {
+  async sendDirectMessage(input: {
     organizationId: string;
     senderId: string;
     recipientId: string;
@@ -335,20 +337,20 @@ export class ConversationService {
     const dmChannelName = [sender.name, recipient.name].sort().join(' / ');
     const now = new Date().toISOString();
 
-    this.repo.saveChannel({
+    const channel = this.repo.saveChannel(ChannelSchema.parse({
       id: channelId,
       organizationId: input.organizationId,
       name: dmChannelName,
       kind: 'dm',
       topic: '',
       memberIds: [sender.id, recipient.id],
-    });
+    }));
     this.repo.setChannelMembers(channelId, [sender.id, recipient.id]);
 
     this.repo.ensureThread({
-      id: channelId,
+      id: channel.id,
       organizationId: input.organizationId,
-      channelId,
+      channelId: channel.id,
       title: dmChannelName,
       memberIds: [sender.id, recipient.id],
       createdAt: now,
@@ -367,7 +369,9 @@ export class ConversationService {
       createdAt: now,
     });
 
-    return this.publishMessage(message);
+    const published = this.publishMessage(message);
+    await this.alertMember(published, recipient.id, channel, 'dm');
+    return published;
   }
 
   sendSelfNote(input: {
@@ -429,11 +433,13 @@ export class ConversationService {
       throw new Error(`Message "${input.messageId}" cannot be edited by "${input.editorId}"`);
     }
     const explicitMentionIds = this.inferExplicitMentionIds(input.organizationId, existing);
+    const channel = existing.channelId ? this.repo.getChannel(input.organizationId, existing.channelId) : null;
     const typedMentions = this.resolveMentionRecords({
       organizationId: input.organizationId,
       messageId: existing.id,
       content: input.content,
       createdAt: existing.createdAt,
+      channel,
       explicitMentionIds,
     });
     const updated = this.repo.updateMessage({
@@ -510,29 +516,43 @@ export class ConversationService {
         continue;
       }
 
-      this.realtime.emit(
-        SocketEventNames.memberAlerted,
-        {
-          organizationId: message.organizationId,
-          memberId: member.id,
-          channelId: channel?.id,
-          messageId: message.id,
-          byMemberId: message.senderId,
-          reason: mention.kind,
-        },
-        [memberRoom(member.id)],
-      );
+      await this.alertMember(message, member.id, channel, mention.kind);
+    }
+  }
 
-      await this.onMemberAlerted?.({
+  private async alertMember(
+    message: Message,
+    memberId: string,
+    channel: Channel | null,
+    reason: string,
+  ): Promise<void> {
+    const member = this.repo.getMember(message.organizationId, memberId);
+    if (!member || member.kind !== 'agent' || member.retiredAt) {
+      return;
+    }
+
+    this.realtime.emit(
+      SocketEventNames.memberAlerted,
+      {
         organizationId: message.organizationId,
         memberId: member.id,
         channelId: channel?.id,
-        threadId: message.threadId,
         messageId: message.id,
         byMemberId: message.senderId,
-        reason: mention.kind,
-      });
-    }
+        reason,
+      },
+      [memberRoom(member.id)],
+    );
+
+    await this.onMemberAlerted?.({
+      organizationId: message.organizationId,
+      memberId: member.id,
+      channelId: channel?.id,
+      threadId: message.threadId,
+      messageId: message.id,
+      byMemberId: message.senderId,
+      reason,
+    });
   }
 
   private publishMentionThrottledSystemMessage(
@@ -589,12 +609,17 @@ export class ConversationService {
     ];
   }
 
-  private resolveMessageMentions(organizationId: string, message: Message): MessageMention[] {
+  private resolveMessageMentions(
+    organizationId: string,
+    message: Message,
+    channel: Channel | null,
+  ): MessageMention[] {
     return this.resolveMentionRecords({
       organizationId,
       messageId: message.id,
       content: message.content,
       createdAt: message.createdAt,
+      channel,
       explicitMentionIds: message.mentions,
     });
   }
@@ -604,11 +629,13 @@ export class ConversationService {
     messageId: string;
     content: string;
     createdAt: string;
+    channel: Channel | null;
     explicitMentionIds?: string[];
   }): MessageMention[] {
     const mentionIds = this.resolveMentionIds(
       input.organizationId,
       input.content,
+      input.channel,
       input.explicitMentionIds ?? [],
     );
     return mentionIds.map((memberId) =>
@@ -625,6 +652,7 @@ export class ConversationService {
   private resolveMentionIds(
     organizationId: string,
     content: string,
+    channel: Channel | null,
     explicitMentionIds: string[],
   ): string[] {
     const byHandle = this.listMentionHandleMap(organizationId);
@@ -634,7 +662,15 @@ export class ConversationService {
     // message was authored.
     const mentionIds = new Set<string>(explicitMentionIds);
     for (const handle of extractMentionHandles(content)) {
-      const memberId = byHandle.get(normalizeMentionHandle(handle));
+      const normalizedHandle = normalizeMentionHandle(handle);
+      if (normalizedHandle === 'all') {
+        for (const memberId of this.resolveAllMentionIds(organizationId, channel)) {
+          mentionIds.add(memberId);
+        }
+        continue;
+      }
+
+      const memberId = byHandle.get(normalizedHandle);
       if (memberId) {
         mentionIds.add(memberId);
       }
@@ -647,8 +683,16 @@ export class ConversationService {
     // preserve ids that were not already implied by the old body, then merge
     // them with handles parsed from the new body to keep stored metadata in
     // sync without introducing new alert fan-out.
-    const parsedFromBody = new Set(this.resolveMentionIds(organizationId, message.content, []));
+    const channel = message.channelId ? this.repo.getChannel(organizationId, message.channelId) : null;
+    const parsedFromBody = new Set(this.resolveMentionIds(organizationId, message.content, channel, []));
     return message.mentions.filter((memberId) => !parsedFromBody.has(memberId));
+  }
+
+  private resolveAllMentionIds(organizationId: string, channel: Channel | null): string[] {
+    if (channel?.memberIds.length) {
+      return channel.memberIds;
+    }
+    return this.repo.listMembers(organizationId).map((member) => member.id);
   }
 
   private listMentionHandleMap(organizationId: string): Map<string, string> {

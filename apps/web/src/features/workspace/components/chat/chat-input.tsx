@@ -52,13 +52,13 @@ export function ChatInput({
           />
           <div className="flex items-center justify-between px-3 py-1.5 border-t border-zinc-200 dark:border-zinc-800">
             <div className="flex items-center gap-2">
-              <button className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300">
+              <button type="button" aria-label="Add content" className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300">
                 <Plus className="h-4 w-4" />
               </button>
-              <button className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300">
+              <button type="button" aria-label="Add reaction" className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300">
                 <Smile className="h-4 w-4" />
               </button>
-              <button className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300">
+              <button type="button" aria-label="Attach file" className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300">
                 <Paperclip className="h-4 w-4" />
               </button>
             </div>
@@ -66,6 +66,7 @@ export function ChatInput({
               type="button"
               disabled={!canSend}
               onClick={() => void send()}
+              aria-label="Send message"
               className="flex items-center justify-center h-7 w-7 rounded-lg bg-violet-600 text-white shadow-lg shadow-violet-500/20 hover:bg-violet-700 transition disabled:cursor-not-allowed disabled:opacity-50"
             >
               <Send className="h-3.5 w-3.5" />

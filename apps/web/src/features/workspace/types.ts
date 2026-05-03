@@ -1,6 +1,6 @@
 /** Represents the currently selected conversation in the workspace. */
 export interface SelectedConversation {
-  type: "channel" | "dm" | "agent";
+  type: "channel" | "agent";
   id: string;
   name: string;
 }
