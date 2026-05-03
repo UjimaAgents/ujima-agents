@@ -128,3 +128,29 @@ export async function getServerRolePresets(): Promise<RolePresetTemplate[]> {
   const response = await daemonJson<{ presets: RolePresetTemplate[] }>("/api/roles/presets");
   return response.presets;
 }
+
+export async function getServerTeamSettings(): Promise<{
+  name: string;
+  workspace: { root: string; roleScopes: Record<string, string[]> };
+  organizationChart: { reportsTo: Record<string, string> };
+  agents: Array<{ name: string; roleName: string; personalityName: string; kind: string }>;
+  roles: Array<{
+    id?: string;
+    name: string;
+    title: string;
+    description: string;
+    instructions: string;
+    kind: string;
+    provider?: string;
+    model?: string;
+    workspaceScopes: string[];
+    tools: string[];
+    channels: string[];
+    skills: string[];
+  }>;
+  channels: Array<{ id?: string; name: string; kind: string; topic: string; memberIds: string[] }>;
+  tools: Record<string, unknown>;
+  policies: unknown;
+}> {
+  return daemonJson("/api/settings/team", {}, await getSessionTokenFromCookie());
+}

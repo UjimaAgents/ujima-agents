@@ -12,6 +12,7 @@ export interface WorkspaceRoleInput {
   description?: string;
   instructions: string;
   kind?: "agent";
+  personalityName?: string;
   provider?: string;
   model?: string;
   workspaceScopes?: string[];

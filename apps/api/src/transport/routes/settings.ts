@@ -34,7 +34,13 @@ const AddMemberRequestSchema = z.object({
   channelIds: z.array(IdSchema).default([]),
   llm: z.string().min(1).optional(),
   model: z.string().min(1).optional(),
+  personalityName: z.string().min(1).optional(),
   role: RoleConfigSchema.optional(),
+});
+const UpdateMemberRequestSchema = AddMemberRequestSchema.omit({ kind: true }).extend({
+  name: z.string().min(1),
+  role: RoleConfigSchema,
+  personalityName: z.string().min(1),
 });
 const CreateChannelRequestSchema = z.object({
   name: z.string().min(1),
@@ -276,6 +282,42 @@ export function registerSettingsRoutes(
         return reply.code(409).send({ code: ERR_NO_WORKSPACE_ROOT, message });
       }
       return replyError(reply, message.startsWith('Organization not found') ? 404 : 400, message);
+    }
+  });
+
+  app.patch('/orgs/:orgId/members/:memberId', {
+    schema: {
+      description: 'Update an agent member',
+      tags: ['Settings'],
+      params: z.object({ orgId: IdSchema, memberId: IdSchema }),
+      body: UpdateMemberRequestSchema,
+      response: {
+        200: MemberSchema,
+        400: ApiErrorSchema,
+        404: ApiErrorSchema,
+        409: ApiErrorSchema,
+      },
+    },
+  }, async (req, reply) => {
+    try {
+      assertReadyWorkspaceRoot(repo, req.params.orgId);
+      return settings.updateMember({
+        organizationId: req.params.orgId,
+        memberId: req.params.memberId,
+        name: req.body.name,
+        roleName: req.body.roleName,
+        channelIds: req.body.channelIds,
+        llm: req.body.llm,
+        model: req.body.model,
+        personalityName: req.body.personalityName,
+        role: req.body.role,
+      });
+    } catch (err) {
+      const message = errMessage(err);
+      if (isWorkspaceRootNotReadyError(err)) {
+        return reply.code(409).send({ code: ERR_NO_WORKSPACE_ROOT, message });
+      }
+      return replyError(reply, message.startsWith('Member not found') ? 404 : 400, message);
     }
   });
 

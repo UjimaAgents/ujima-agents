@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { GripVertical } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { WorkspaceSidebar } from "./workspace-sidebar";
@@ -14,18 +14,57 @@ import type { RolePresetTemplate } from "../../onboarding/types";
 
 type WorkspaceChannel = BootstrapResponse["channels"][number];
 type WorkspaceMember = BootstrapResponse["members"][number];
+type WorkspaceTeamRole = {
+  id?: string;
+  name: string;
+  title: string;
+  description: string;
+  instructions: string;
+  kind: string;
+  provider?: string;
+  model?: string;
+  workspaceScopes: string[];
+  tools: string[];
+  channels: string[];
+  skills: string[];
+};
+type WorkspaceTeamSettings = {
+  agents: Array<{ name: string; roleName: string; personalityName: string; kind: string }>;
+  roles: WorkspaceTeamRole[];
+} | null;
+
+function normalizeWorkspaceTeamRole(role: WorkspaceRoleInput): WorkspaceTeamRole {
+  return {
+    id: role.id ?? role.name,
+    name: role.name,
+    title: role.title,
+    description: role.description ?? "",
+    instructions: role.instructions,
+    kind: role.kind ?? "agent",
+    provider: role.provider,
+    model: role.model,
+    workspaceScopes: role.workspaceScopes ?? [],
+    tools: role.tools ?? [],
+    channels: role.channels ?? [],
+    skills: role.skills ?? [],
+  };
+}
 
 export function WorkspaceShell({
   bootstrap,
   rolePresets,
+  teamSettings,
   initialConversation,
 }: {
   bootstrap: BootstrapResponse;
   rolePresets: RolePresetTemplate[];
+  teamSettings: WorkspaceTeamSettings;
   initialConversation?: SelectedConversation;
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const [teamSettingsState, setTeamSettingsState] = useState(teamSettings);
+  const [agentEditorTargetId, setAgentEditorTargetId] = useState<string | null>(null);
   const sidebarWidth = useWorkspaceStore((state) => state.sidebarWidth);
   const selected = useWorkspaceStore((state) => state.selectedConversation);
   const channels = useWorkspaceStore((state) => state.channels);
@@ -163,7 +202,97 @@ export function WorkspaceShell({
 
       const member = body as WorkspaceMember;
       appendMember(member);
+      setTeamSettingsState((current) =>
+        current
+          ? {
+              ...current,
+              agents: [
+                ...current.agents.filter((agent) => agent.name !== member.name),
+                {
+                  name: member.name,
+                  roleName: input.roleName.trim() || member.roleName,
+                  personalityName: input.role.personalityName ?? "direct",
+                  kind: "agent",
+                },
+              ],
+              roles: [
+                ...current.roles.filter((role) => role.name !== input.role.name),
+                normalizeWorkspaceTeamRole(input.role),
+              ],
+            }
+          : current,
+      );
       return { type: "agent" as const, id: member.id, name: member.name };
+    },
+    [appendMember, bootstrap.organization?.id],
+  );
+
+  const handleUpdateAgent = useCallback(
+    async (input: {
+      previousName: string;
+      previousRoleName: string;
+      memberId: string;
+      name: string;
+      roleName: string;
+      personalityName: string;
+      channelIds: string[];
+      llm: string;
+      model: string;
+      role: WorkspaceRoleInput;
+    }) => {
+      const orgId = bootstrap.organization?.id;
+      if (!orgId) return null;
+
+      const response = await fetch(
+        `/api/orgs/${encodeURIComponent(orgId)}/members/${encodeURIComponent(input.memberId)}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            name: input.name,
+            roleName: input.roleName,
+            personalityName: input.personalityName,
+            channelIds: input.channelIds,
+            llm: input.llm,
+            model: input.model,
+            role: input.role,
+          }),
+        },
+      );
+      const body = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(
+          body &&
+            typeof body === "object" &&
+            "message" in body &&
+            typeof body.message === "string"
+            ? body.message
+            : "Unable to update agent.",
+        );
+      }
+
+      const member = body as WorkspaceMember;
+      appendMember(member);
+      setTeamSettingsState((current) =>
+        current
+          ? {
+              ...current,
+              agents: [
+                ...current.agents.filter((agent) => agent.name !== input.previousName),
+                {
+                  name: member.name,
+                  roleName: input.roleName,
+                  personalityName: input.personalityName,
+                  kind: "agent",
+                },
+              ],
+              roles: [
+                ...current.roles.filter((role) => role.name !== input.previousRoleName),
+                normalizeWorkspaceTeamRole(input.role),
+              ],
+            }
+          : current,
+      );
+      return member;
     },
     [appendMember, bootstrap.organization?.id],
   );
@@ -177,6 +306,9 @@ export function WorkspaceShell({
         <WorkspaceSidebar
           bootstrap={bootstrap}
           rolePresets={rolePresets}
+          teamSettings={teamSettingsState}
+          agentEditorTargetId={agentEditorTargetId}
+          onAgentEditorHandled={() => setAgentEditorTargetId(null)}
           channels={channels}
           members={members}
           memberActivity={memberActivity}
@@ -184,6 +316,7 @@ export function WorkspaceShell({
           onSelect={handleSelect}
           onCreateChannel={handleCreateChannel}
           onCreateAgent={handleCreateAgent}
+          onUpdateAgent={handleUpdateAgent}
         />
       </div>
       <DragHandle onResize={setSidebarWidth} />
@@ -193,6 +326,11 @@ export function WorkspaceShell({
           bootstrap={bootstrap}
           conversation={resolvedSelected}
           members={members}
+          onOpenAgentEditor={() => {
+            if (resolvedSelected.type === "agent") {
+              setAgentEditorTargetId(resolvedSelected.id);
+            }
+          }}
         />
       </main>
     </div>

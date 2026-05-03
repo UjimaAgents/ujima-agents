@@ -21,7 +21,7 @@ import {
   getDirectMessageThreadId,
   type ConversationStreamEnvelope,
 } from "./conversation-transport";
-import { activityStateToStatus, conversationActivityState, type ActivityState } from "./activity-state";
+import { activityStateToStatus, conversationActivityState, presenceToActivityState, type ActivityState } from "./activity-state";
 import { useWorkspaceStore } from "./workspace-store";
 
 export interface ConversationSyncResult {
@@ -397,9 +397,14 @@ function handleStreamEvent(
       actions.appendActivity(memberToActivity(member));
       return;
     }
-    case "channel:presence":
+    case "channel:presence": {
+      const presence = parsePresencePayload(envelope.payload);
+      if (presence?.memberId) {
+        actions.setMemberActivity(presence.memberId, presenceToActivityState(presence.state));
+      }
       actions.appendActivity(presenceToActivity(envelope.payload));
       return;
+    }
     case "tool:called":
     case "tool:result":
       actions.appendActivity(toolToActivity(envelope.event, envelope.payload));
@@ -427,6 +432,12 @@ function parseRunPayload(payload: unknown): RunState | null {
 function parseMemberPayload(payload: unknown): Member | null {
   const parsed = MemberSchema.safeParse((payload as { member?: unknown })?.member);
   return parsed.success ? parsed.data : null;
+}
+
+function parsePresencePayload(payload: unknown): { memberId?: string; state?: string } | null {
+  const body = payload as { memberId?: unknown; state?: unknown };
+  if (typeof body.memberId !== "string" || typeof body.state !== "string") return null;
+  return { memberId: body.memberId, state: body.state };
 }
 
 function messageToChatMessage(message: Message, members: Member[]): ChatMessageData {

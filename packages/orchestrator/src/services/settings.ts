@@ -39,7 +39,20 @@ export interface AddMemberInput {
   channelIds?: string[];
   llm?: string;
   model?: string;
+  personalityName?: string;
   role?: RoleConfig;
+}
+
+export interface UpdateMemberInput {
+  organizationId: string;
+  memberId: string;
+  name: string;
+  roleName: string;
+  channelIds?: string[];
+  llm?: string;
+  model?: string;
+  personalityName: string;
+  role: RoleConfig;
 }
 
 export interface CreateChannelInput {
@@ -204,15 +217,15 @@ export class SettingsService {
     if (input.kind === 'agent' && !input.role && !existingRole) {
       throw new Error(`Role "${input.roleName}" not found`);
     }
-    const role = input.role
+    const role = input.role || existingRole
       ? defineRole({
           ...existingRole,
-        ...input.role,
-        name: input.roleName,
-        id: input.role.id ?? existingRole?.id ?? input.roleName,
-        provider: input.role.provider ?? existingRole?.provider,
-        model: input.role.model ?? existingRole?.model,
-      })
+          ...input.role,
+          name: input.roleName,
+          id: input.role?.id ?? existingRole?.id ?? input.roleName,
+          provider: input.role?.provider ?? existingRole?.provider,
+          model: input.role?.model ?? existingRole?.model,
+        })
       : undefined;
     const member = MemberSchema.parse({
       id: randomUUID(),
@@ -227,7 +240,7 @@ export class SettingsService {
     if (input.kind === 'agent') {
       upsertDashboardTeamOverride(this.repo, input.organizationId, this.teamStore, {
         role,
-        agent: createAgent(saved.id, saved.roleName),
+        agent: createAgent(saved.id, saved.roleName, input.personalityName ?? 'direct'),
       });
     }
     const activeRole = this.teamStore.getTeam()?.getRole(input.roleName);
@@ -248,6 +261,79 @@ export class SettingsService {
       memberIds.add(saved.id);
       this.repo.setChannelMembers(channelId, [...memberIds].sort());
     }
+    return saved;
+  }
+
+  updateMember(input: UpdateMemberInput): Member {
+    this.requireOrganization(input.organizationId);
+    const team = this.requireTeam();
+    const member = this.repo.getMember(input.organizationId, input.memberId);
+    if (!member) {
+      throw new Error(`Member not found: ${input.memberId}`);
+    }
+    if (member.kind !== 'agent') {
+      throw new Error('Only agents can be edited here');
+    }
+
+    const existingRole = team.getRole(member.roleName);
+    const nextRole = defineRole({
+      ...existingRole,
+      ...input.role,
+      id: input.role.id ?? existingRole?.id ?? input.roleName,
+      name: input.roleName,
+      kind: 'agent',
+      provider: input.role.provider ?? existingRole?.provider,
+      model: input.role.model ?? existingRole?.model,
+    });
+
+    const saved = this.repo.saveMember(
+      MemberSchema.parse({
+        ...member,
+        name: input.name,
+        roleName: input.roleName,
+        llm: input.llm ? normalizeProviderKey(input.llm) : undefined,
+        model: input.model,
+      }),
+    );
+
+    upsertDashboardTeamOverride(
+      this.repo,
+      input.organizationId,
+      this.teamStore,
+      {
+        role: nextRole,
+        agent: createAgent(saved.id, saved.roleName, input.personalityName),
+      },
+      {
+        previousAgentName: member.id,
+        previousRoleName: this.repo.listMembers(input.organizationId).some(
+          (item) => item.kind === 'agent' && item.id !== member.id && item.roleName === member.roleName,
+        )
+          ? undefined
+          : member.roleName,
+      },
+    );
+
+    upsertWorkspaceMemberScopes(
+      this.repo,
+      input.organizationId,
+      saved.id,
+      nextRole.workspaceScopes ?? [],
+    );
+
+    ensureMemberSelfChannel(this.repo, input.organizationId, saved);
+    const visibleChannels = visibleChannelsFromRepo(this.repo, input.organizationId);
+    const channelIds = new Set(input.channelIds ?? []);
+    for (const channel of visibleChannels) {
+      const memberIds = new Set(channel.memberIds);
+      if (channelIds.has(channel.id)) {
+        memberIds.add(saved.id);
+      } else {
+        memberIds.delete(saved.id);
+      }
+      this.repo.setChannelMembers(channel.id, [...memberIds].sort());
+    }
+
     return saved;
   }
 
@@ -358,4 +444,8 @@ export class SettingsService {
     );
     return ownership?.owner === 'config' && !ownership.allowDashboardOverride;
   }
+}
+
+function visibleChannelsFromRepo(repo: ApiRepository, organizationId: string) {
+  return repo.listChannels(organizationId, undefined, undefined, ['self', 'dm']).data;
 }

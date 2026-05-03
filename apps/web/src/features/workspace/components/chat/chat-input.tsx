@@ -1,21 +1,77 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Plus, Smile, Paperclip, Send } from "lucide-react";
+
+export interface MentionSuggestion {
+  id: string;
+  name: string;
+  detail?: string;
+}
+
+interface MentionTrigger {
+  start: number;
+  end: number;
+  query: string;
+}
+
+function findMentionTrigger(value: string, caret: number): MentionTrigger | null {
+  if (caret < 0) return null;
+  const uptoCaret = value.slice(0, caret);
+  const match = /(^|\s)@([^\s@]*)$/.exec(uptoCaret);
+  if (!match) return null;
+  const full = match[0];
+  const query = match[2] ?? "";
+  const start = uptoCaret.length - full.length + (match[1]?.length ?? 0);
+  return { start, end: caret, query };
+}
 
 export function ChatInput({
   placeholder = "Type a message...",
   onSend,
   statusHint,
+  mentionSuggestions = [],
 }: {
   placeholder?: string;
   onSend: (content: string) => Promise<void> | void;
   statusHint?: string;
+  mentionSuggestions?: MentionSuggestion[];
 }) {
   const [content, setContent] = useState("");
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [activeMentionIndex, setActiveMentionIndex] = useState(0);
+  const [cursorPosition, setCursorPosition] = useState(0);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const canSend = content.trim().length > 0 && !isSending;
+  const mentionTrigger = findMentionTrigger(content, cursorPosition);
+  const filteredMentionSuggestions = useMemo(() => {
+    if (!mentionTrigger) return [];
+    const query = mentionTrigger.query.trim().toLowerCase();
+    return mentionSuggestions.filter((suggestion) =>
+      query
+        ? suggestion.name.toLowerCase().includes(query)
+        : true,
+    );
+  }, [mentionSuggestions, mentionTrigger]);
+  const mentionMenuOpen =
+    !!mentionTrigger && filteredMentionSuggestions.length > 0;
+
+  const insertMention = (suggestion: MentionSuggestion) => {
+    if (!mentionTrigger) return;
+    const before = content.slice(0, mentionTrigger.start);
+    const after = content.slice(mentionTrigger.end);
+    const mentionValue = `@${suggestion.name} `;
+    const next = `${before}${mentionValue}${after}`;
+    const nextCaret = before.length + mentionValue.length;
+    setContent(next);
+    setCursorPosition(nextCaret);
+    setActiveMentionIndex(0);
+    requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(nextCaret, nextCaret);
+    });
+  };
 
   const send = async () => {
     const next = content.trim();
@@ -26,6 +82,7 @@ export function ChatInput({
     try {
       await onSend(next);
       setContent("");
+      setCursorPosition(0);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to send message.");
     } finally {
@@ -39,10 +96,58 @@ export function ChatInput({
         <div className="absolute inset-0 bg-gradient-to-r from-violet-500/10 to-indigo-500/10 rounded-xl blur-lg opacity-0 group-focus-within:opacity-100 transition-opacity" />
         <div className="relative flex flex-col rounded-xl border border-zinc-200 bg-zinc-50 focus-within:border-violet-500 focus-within:bg-white focus-within:ring-1 focus-within:ring-violet-500 transition-all dark:border-zinc-800 dark:bg-zinc-900/50 dark:focus-within:bg-[#09090b]">
           <textarea
+            ref={textareaRef}
             placeholder={placeholder}
             value={content}
-            onChange={(event) => setContent(event.target.value)}
+            onChange={(event) => {
+              setContent(event.target.value);
+              setCursorPosition(
+                event.target.selectionStart ?? event.target.value.length,
+              );
+              setActiveMentionIndex(0);
+            }}
+            onSelect={(event) => {
+              setCursorPosition(event.currentTarget.selectionStart ?? 0);
+            }}
+            onClick={(event) => {
+              setCursorPosition(event.currentTarget.selectionStart ?? 0);
+              setActiveMentionIndex(0);
+            }}
+            onKeyUp={(event) => {
+              setCursorPosition(event.currentTarget.selectionStart ?? 0);
+              setActiveMentionIndex(0);
+            }}
             onKeyDown={(event) => {
+              if (mentionMenuOpen) {
+                if (event.key === "ArrowDown") {
+                  event.preventDefault();
+                  setActiveMentionIndex((index) =>
+                    (index + 1) % filteredMentionSuggestions.length,
+                  );
+                  return;
+                }
+                if (event.key === "ArrowUp") {
+                  event.preventDefault();
+                  setActiveMentionIndex((index) =>
+                    (index - 1 + filteredMentionSuggestions.length) %
+                    filteredMentionSuggestions.length,
+                  );
+                  return;
+                }
+                if (event.key === "Enter" || event.key === "Tab") {
+                  event.preventDefault();
+                  insertMention(
+                    filteredMentionSuggestions[activeMentionIndex] ??
+                      filteredMentionSuggestions[0],
+                  );
+                  return;
+                }
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  setActiveMentionIndex(0);
+                  return;
+                }
+              }
               if (event.key === "Enter" && !event.shiftKey) {
                 event.preventDefault();
                 void send();
@@ -50,6 +155,32 @@ export function ChatInput({
             }}
             className="w-full bg-transparent px-3 py-2.5 text-xs focus:outline-none resize-none min-h-[56px]"
           />
+          {mentionMenuOpen ? (
+            <div className="mx-2 mt-1 max-h-44 overflow-y-auto rounded-lg border border-zinc-200 bg-white p-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-950">
+              {filteredMentionSuggestions.map((suggestion, index) => (
+                <button
+                  key={suggestion.id}
+                  type="button"
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                    insertMention(suggestion);
+                  }}
+                  className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs transition ${
+                    index === activeMentionIndex
+                      ? "bg-violet-50 text-violet-800 dark:bg-violet-500/15 dark:text-violet-200"
+                      : "text-zinc-700 hover:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-900"
+                  }`}
+                >
+                  <span className="font-semibold">@{suggestion.name}</span>
+                  {suggestion.detail ? (
+                    <span className="ml-2 truncate text-[10px] text-zinc-500 dark:text-zinc-400">
+                      {suggestion.detail}
+                    </span>
+                  ) : null}
+                </button>
+              ))}
+            </div>
+          ) : null}
           <div className="flex items-center justify-between px-3 py-1.5 border-t border-zinc-200 dark:border-zinc-800">
             <div className="flex items-center gap-2">
               <button type="button" aria-label="Add content" className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300">
@@ -73,12 +204,9 @@ export function ChatInput({
             </button>
           </div>
         </div>
-        <div className="mt-2 flex items-center justify-between gap-3 px-1 text-[10px] text-zinc-500 dark:text-zinc-400">
-          <span className="truncate">
+        <div className="mt-2 px-1 text-[10px] text-zinc-500 dark:text-zinc-400">
+          <span className="block truncate">
             {statusHint ?? "Enter to send, Shift+Enter for a new line."}
-          </span>
-          <span className="shrink-0 font-medium uppercase tracking-[0.16em]">
-            Live
           </span>
         </div>
         {error ? (

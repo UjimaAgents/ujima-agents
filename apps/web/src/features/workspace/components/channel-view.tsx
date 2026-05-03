@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { MessageSquare } from "lucide-react";
+import { MessageSquare, SquarePen } from "lucide-react";
 import type { BootstrapResponse } from "@ujima/api-schema";
 import type { SelectedConversation } from "../types";
 import { useConversationSync } from "../use-conversation-sync";
@@ -74,9 +74,15 @@ interface ChannelViewProps {
   bootstrap: BootstrapResponse;
   conversation: SelectedConversation;
   members: BootstrapResponse["members"];
+  onOpenAgentEditor?: () => void;
 }
 
-export function ChannelView({ bootstrap, conversation, members }: ChannelViewProps) {
+export function ChannelView({
+  bootstrap,
+  conversation,
+  members,
+  onOpenAgentEditor,
+}: ChannelViewProps) {
   const [isAtBottom, setIsAtBottom] = useState(true);
   const listRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -102,29 +108,62 @@ export function ChannelView({ bootstrap, conversation, members }: ChannelViewPro
     conversation.type === "channel"
       ? { variant: "active" as const, label: "Active" }
       : feed.status;
-  const activeRun = useMemo(
-    () => [...feed.runs].reverse().find((run) => ACTIVE_RUN_STATES.includes(run.status)),
+  const typingRuns = useMemo(
+    () => feed.runs.filter((run) => ACTIVE_RUN_STATES.includes(run.status)),
     [feed.runs],
   );
+  const typingMembers = useMemo(() => {
+    const seen = new Set<string>();
+    const resolved: typeof members = [];
+    for (const run of typingRuns) {
+      const member = members.find((item) => item.id === run.agentId);
+      if (!member || seen.has(member.id)) continue;
+      seen.add(member.id);
+      resolved.push(member);
+    }
+    return resolved;
+  }, [members, typingRuns]);
   const typingLabel = useMemo(() => {
-    if (!activeRun) return undefined;
+    if (!typingRuns.length) return undefined;
     const memberName =
-      members.find((member) => member.id === activeRun.agentId)?.name ?? activeRun.agentId;
-    if (activeRun.status === "waiting_for_approval") {
+      typingMembers[0]?.name ?? typingRuns[0]?.agentId ?? conversation.name;
+    if (typingRuns.length > 1) {
+      const visibleNames = typingMembers.slice(0, 3).map((member) => member.name);
+      const hiddenCount = typingRuns.length - visibleNames.length;
+      const tail = hiddenCount > 0 ? ` and ${hiddenCount} more` : "";
+      return `${visibleNames.join(", ")}${tail} are responding…`;
+    }
+    if (typingRuns[0].status === "waiting_for_approval") {
       return `${memberName} is waiting for approval…`;
     }
     return isAgent
       ? `${conversation.name} is responding…`
       : `${memberName} is responding…`;
-  }, [activeRun, conversation.name, isAgent, members]);
+  }, [conversation.name, isAgent, typingMembers, typingRuns]);
   const typingMember = useMemo(
-    () => members.find((member) => member.id === activeRun?.agentId) ?? (isAgent ? members.find((member) => member.id === conversation.id) : undefined),
-    [activeRun?.agentId, conversation.id, isAgent, members],
+    () =>
+      typingMembers[0] ??
+      (isAgent ? members.find((member) => member.id === conversation.id) : undefined),
+    [conversation.id, isAgent, members, typingMembers],
   );
   const typingColorIndex = useMemo(
     () => Math.max(members.findIndex((member) => member.id === typingMember?.id), 0),
     [members, typingMember?.id],
   );
+  const mentionSuggestions = useMemo(() => {
+    const currentMemberId = bootstrap.auth.member?.id;
+    return members
+      .filter((member) => member.id !== currentMemberId)
+      .sort((a, b) => {
+        if (a.kind === b.kind) return a.name.localeCompare(b.name);
+        return a.kind === "agent" ? -1 : 1;
+      })
+      .map((member) => ({
+        id: member.id,
+        name: member.name,
+        detail: member.roleName,
+      }));
+  }, [bootstrap.auth.member?.id, members]);
   const headerSubtitle =
     feed.error ?? typingLabel ?? (feed.loading ? "Syncing live history from the backend…" : undefined);
 
@@ -189,6 +228,18 @@ export function ChannelView({ bootstrap, conversation, members }: ChannelViewPro
           status={selectedStatus.variant}
           statusLabel={selectedStatus.label}
           subtitle={headerSubtitle}
+          actions={
+            isAgent ? (
+              <button
+                type="button"
+                onClick={onOpenAgentEditor}
+                className="inline-flex items-center gap-1.5 rounded-md border border-zinc-200 bg-zinc-50 px-2 py-1 text-[11px] font-semibold text-zinc-700 transition hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
+              >
+                <SquarePen className="h-3.5 w-3.5" />
+                Edit
+              </button>
+            ) : undefined
+          }
           showDetails={showDetails}
           onToggleDetails={() => setShowDetails(!showDetails)}
         />
@@ -232,6 +283,7 @@ export function ChannelView({ bootstrap, conversation, members }: ChannelViewPro
                       label={typingLabel}
                       name={typingMember?.name ?? conversation.name}
                       colorIndex={typingColorIndex}
+                      names={typingMembers.map((member) => member.name)}
                     />
                   )}
                 </>
@@ -291,6 +343,7 @@ export function ChannelView({ bootstrap, conversation, members }: ChannelViewPro
             typingLabel ??
             (feed.loading ? "Syncing history…" : "Enter to send, Shift+Enter for a new line.")
           }
+          mentionSuggestions={mentionSuggestions}
           onSend={feed.sendMessage}
         />
       </div>
@@ -437,14 +490,36 @@ function TypingIndicator({
   label,
   name,
   colorIndex,
+  names,
 }: {
   label: string;
   name: string;
   colorIndex: number;
+  names: string[];
 }) {
+  const visibleNames = names.slice(0, 3);
+  const overflowCount = Math.max(names.length - visibleNames.length, 0);
   return (
     <div className="flex items-center gap-3 px-3 py-2">
-      <Avatar name={name} colorIndex={colorIndex} size="sm" />
+      {names.length > 1 ? (
+        <div className="flex items-center -space-x-2">
+          {visibleNames.map((visibleName, index) => (
+            <Avatar
+              key={`${visibleName}:${index}`}
+              name={visibleName}
+              colorIndex={colorIndex + index}
+              size="sm"
+            />
+          ))}
+          {overflowCount > 0 ? (
+            <div className="flex h-7 w-7 items-center justify-center rounded-full border border-zinc-200 bg-white text-[10px] font-bold text-zinc-500 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
+              +{overflowCount}
+            </div>
+          ) : null}
+        </div>
+      ) : (
+        <Avatar name={name} colorIndex={colorIndex} size="sm" />
+      )}
       <div className="flex items-center gap-2 rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-[11px] font-medium text-violet-700 dark:border-violet-500/20 dark:bg-violet-500/10 dark:text-violet-300">
         <span className="inline-flex items-center gap-1.5">
           <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current [animation-delay:-0.2s]" />

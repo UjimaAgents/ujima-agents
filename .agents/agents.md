@@ -1,7 +1,9 @@
 ---
-description: Use when building or fixing agents, tools, or orchestration—not for unrelated work.
+description: Use when building or fixing agents, tools, or orchestration, not for unrelated work.
 alwaysApply: false
 ---
+
+For **runtime agent persona and tone** (what models feel like in chat), see `SOUL.md` in this folder.
 
 ## Agent building principles
 

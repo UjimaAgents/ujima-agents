@@ -26,7 +26,7 @@ export function Modal({ isOpen, onClose, title, children }: ModalProps) {
   if (!isOpen) return null;
 
   return createPortal(
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-[100] flex items-start justify-center overflow-y-auto p-4 py-6">
       {/* Backdrop */}
       <div 
         className="absolute inset-0 bg-zinc-950/40 backdrop-blur-sm transition-opacity animate-in fade-in duration-300" 
@@ -34,11 +34,11 @@ export function Modal({ isOpen, onClose, title, children }: ModalProps) {
       />
       
       {/* Modal Content */}
-      <div className="relative w-full max-w-md transform overflow-hidden rounded-2xl border border-zinc-200 bg-white p-6 shadow-2xl transition-all animate-in zoom-in-95 duration-300 dark:border-zinc-800 dark:bg-[#09090b]">
+      <div className="relative my-auto flex max-h-[calc(100vh-3rem)] w-full max-w-md transform flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white p-6 shadow-2xl transition-all animate-in zoom-in-95 duration-300 dark:border-zinc-800 dark:bg-[#09090b]">
         {/* Glow effect */}
         <div className="absolute -top-24 -left-24 h-48 w-48 rounded-full bg-violet-500/10 blur-[80px]" />
         
-        <div className="relative flex items-center justify-between mb-6">
+        <div className="relative mb-6 flex shrink-0 items-center justify-between">
           <h2 className="text-xl font-bold text-zinc-900 dark:text-white">{title}</h2>
           <button 
             onClick={onClose}
@@ -48,7 +48,7 @@ export function Modal({ isOpen, onClose, title, children }: ModalProps) {
           </button>
         </div>
         
-        <div className="relative">
+        <div className="relative min-h-0 flex-1 overflow-y-auto pr-1">
           {children}
         </div>
       </div>

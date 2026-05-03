@@ -305,7 +305,7 @@ export class ConversationService {
     });
   }
 
-  async sendDirectMessage(input: {
+  sendDirectMessage(input: {
     organizationId: string;
     senderId: string;
     recipientId: string;
@@ -370,7 +370,7 @@ export class ConversationService {
     });
 
     const published = this.publishMessage(message);
-    await this.alertMember(published, recipient.id, channel, 'dm');
+    void this.alertMember(published, recipient.id, channel, 'dm');
     return published;
   }
 
@@ -475,6 +475,7 @@ export class ConversationService {
     channel: Channel | null,
   ): Promise<void> {
     const seen = new Set<string>();
+    const fanout: Promise<void>[] = [];
     for (const mention of mentions) {
       if (seen.has(mention.memberId)) continue;
       seen.add(mention.memberId);
@@ -516,8 +517,9 @@ export class ConversationService {
         continue;
       }
 
-      await this.alertMember(message, member.id, channel, mention.kind);
+      fanout.push(this.alertMember(message, member.id, channel, mention.kind));
     }
+    await Promise.all(fanout);
   }
 
   private async alertMember(

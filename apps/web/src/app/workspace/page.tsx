@@ -1,5 +1,9 @@
 import { redirect } from "next/navigation";
-import { getServerBootstrap, getServerRolePresets } from "@/server/ujima-daemon";
+import {
+  getServerBootstrap,
+  getServerRolePresets,
+  getServerTeamSettings,
+} from "@/server/ujima-daemon";
 import { WorkspaceShell } from "@/features/workspace/components/workspace-shell";
 import { resolveSelectedConversationFromSearchParams } from "@/features/workspace/conversation-routing";
 
@@ -10,6 +14,7 @@ export default async function WorkspacePage({
 }) {
   const bootstrap = await getServerBootstrap();
   const rolePresets = await getServerRolePresets().catch(() => []);
+  const teamSettings = await getServerTeamSettings().catch(() => null);
 
   if (bootstrap.onboardingStatus === "pending") {
     redirect("/onboarding");
@@ -39,6 +44,7 @@ export default async function WorkspacePage({
     <WorkspaceShell
       bootstrap={bootstrap}
       rolePresets={rolePresets}
+      teamSettings={teamSettings}
       initialConversation={initialConversation}
     />
   );

@@ -93,21 +93,24 @@ export function upsertDashboardTeamOverride(
   organizationId: string,
   teamStore: TeamStore,
   input: { role?: RoleConfig; agent: AgentConfig },
+  options: { previousAgentName?: string; previousRoleName?: string } = {},
 ): void {
   const overrides = readOverrides(repo, organizationId, teamStore);
+  const roles = options.previousRoleName
+    ? overrides.roles.filter((role) => role.name !== options.previousRoleName)
+    : overrides.roles;
+  const agents = options.previousAgentName
+    ? overrides.agents.filter((agent) => agent.name !== options.previousAgentName)
+    : overrides.agents;
   const nextOverrides = {
     roles: input.role
       ? upsertBy(
-          overrides.roles,
+          roles,
           mergeRoleOverride(teamStore.getTeam()?.getRole(input.role.name), defineRole(input.role)),
           (role) => role.name,
         )
-      : overrides.roles,
-    agents: upsertBy(
-      overrides.agents,
-      createAgent(input.agent.name, input.agent.roleName, input.agent.personalityName ?? 'direct'),
-      (agent) => agent.name,
-    ),
+      : roles,
+    agents: upsertBy(agents, createAgent(input.agent.name, input.agent.roleName, input.agent.personalityName ?? 'direct'), (agent) => agent.name),
   };
 
   repo.saveWorkspaceSetting(
