@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { getServerBootstrap, getServerTeamSettings, daemonJson } from "@/server/ujima-daemon";
+import { getServerBootstrap, getServerTeamSettings, daemonJson, getSessionTokenFromCookie } from "@/server/ujima-daemon";
 import type { OrganizationSettingsResponse, ProviderStatus } from "@ujima/api-schema";
 import { OrganizationSettingsPage } from "@/features/settings/organization/components/organization-settings";
 import type { TeamSettingsData } from "@/features/settings/organization/components/organization-settings";
@@ -28,10 +28,13 @@ export default async function OrganizationSettingsRoute() {
     redirect("/login");
   }
 
+  const sessionToken = await getSessionTokenFromCookie();
   const orgId = bootstrap.organization?.id;
   const orgSettings = orgId
     ? await daemonJson<OrganizationSettingsResponse>(
         `/api/settings/organization?organizationId=${encodeURIComponent(orgId)}`,
+        {},
+        sessionToken,
       ).catch(() => null)
     : null;
 
@@ -46,6 +49,8 @@ export default async function OrganizationSettingsRoute() {
   const providers = orgId
     ? await daemonJson<ProviderStatus[]>(
         `/api/settings/providers?organizationId=${encodeURIComponent(orgId)}`,
+        {},
+        sessionToken,
       ).catch(() => [])
     : [];
 
