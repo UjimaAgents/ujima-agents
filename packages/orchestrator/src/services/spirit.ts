@@ -68,19 +68,6 @@ const SUPPORTED_PROVIDER_KINDS: ReadonlySet<ProviderKind> = new Set([
   'ollama',
 ]);
 
-function resolveProviderKind(
-  providerName: string,
-  declared: ProviderKind | undefined,
-): ProviderKind {
-  if (declared) return declared;
-  if (providerName === 'openai' || providerName === 'anthropic' || providerName === 'google') {
-    return providerName;
-  }
-  throw new Error(
-    `Provider "${providerName}" has no \`kind\` declared. Add \`kind\` to the provider config.`,
-  );
-}
-
 export interface ModelResolverInput {
   organizationId: string;
   memberId: string;
@@ -876,7 +863,7 @@ export class SpiritService {
       if (!apiKey) {
         throw new Error(`Provider key missing for "${teamRole.provider}"`);
       }
-      const kind = resolveProviderKind(teamRole.provider, provider.kind);
+      const kind = provider.kind;
       if (!SUPPORTED_PROVIDER_KINDS.has(kind)) {
         throw new Error(`Unsupported provider kind "${kind}"`);
       }

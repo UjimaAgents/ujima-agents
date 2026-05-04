@@ -64,9 +64,11 @@ function v3PromptToLlmMessages(prompt: LanguageModelV3CallOptions['prompt']): LL
         if (c.type === 'reasoning') parts.push({ type: 'text', text: c.text });
         if (c.type === 'tool-call') {
           const args =
-            c.input !== null && typeof c.input === 'object' && !Array.isArray(c.input)
-              ? (c.input as Record<string, unknown>)
-              : {};
+            typeof c.input === 'string'
+              ? (JSON.parse(c.input) as Record<string, unknown>)
+              : c.input !== null && typeof c.input === 'object' && !Array.isArray(c.input)
+                ? (c.input as Record<string, unknown>)
+                : {};
           parts.push({ type: 'tool_call', id: c.toolCallId, name: c.toolName, arguments: args });
         }
         if (c.type === 'tool-result') {

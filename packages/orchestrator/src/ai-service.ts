@@ -1,6 +1,6 @@
 import { generateText, isLoopFinished, tool, type ModelMessage, type ToolSet } from 'ai';
 import { z } from 'zod';
-import { buildAgentSystemPrompt, normalizeProviderKey, type AgentTeamHandle, type ProviderKind } from '@ujima/framework';
+import { buildAgentSystemPrompt, normalizeProviderKey, type AgentTeamHandle } from '@ujima/framework';
 import { selectLanguageModel } from '@ujima/llm';
 import type { Message } from '@ujima/shared';
 import type { RepositoryReader } from './services/repository-reader.js';
@@ -17,21 +17,6 @@ const GenericToolInvocationSchema = z.object({
   resourcePath: z.string().min(1).optional(),
   input: z.record(z.string(), z.unknown()).default({}),
 });
-
-function resolveProviderKind(
-  providerName: string,
-  declared: ProviderKind | undefined,
-): ProviderKind {
-  if (declared) return declared;
-  // Back-compat: fall back to the team's provider map key when `kind` isn't
-  // declared on `ProviderConfig`. Only works for the three legacy names.
-  if (providerName === 'openai' || providerName === 'anthropic' || providerName === 'google') {
-    return providerName;
-  }
-  throw new Error(
-    `Provider "${providerName}" has no \`kind\` declared. Add \`kind\` to the provider config.`,
-  );
-}
 
 function toModelMessages(messages: Message[]): ModelMessage[] {
   return messages.map((message) => ({
@@ -109,7 +94,7 @@ export class AiService {
       throw new Error(`Provider key missing for "${providerName}"`);
     }
 
-    const kind = resolveProviderKind(providerName, provider.kind);
+    const kind = provider.kind;
     const model = selectLanguageModel({
       kind,
       modelId,

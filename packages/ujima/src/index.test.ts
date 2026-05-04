@@ -47,6 +47,7 @@ test('role catalog mirrors the upstream industry folders', () => {
 
 test('framework helpers normalize roles, tools, and providers', () => {
   const provider = defineProvider({
+    kind: 'openai',
     defaultModel: 'gpt-5.4',
     models: ['gpt-5.4'],
   });
@@ -104,6 +105,7 @@ test('AgentTeam normalizes and validates the team config', () => {
     ],
     providers: {
       openai: {
+        kind: 'openai',
         defaultModel: 'gpt-5.4',
         models: ['gpt-5.4'],
       },
@@ -149,6 +151,7 @@ test('AgentTeam normalizes provider keys before lookup', () => {
     agents: [createAgent('pm', 'pm', 'direct')],
     providers: {
       OpenAI: {
+        kind: 'openai',
         defaultModel: 'gpt-5.4',
         models: ['gpt-5.4'],
       },
@@ -190,6 +193,7 @@ test('loadAgentTeam returns a ready-to-use handle', () => {
     ],
     providers: {
       openai: {
+        kind: 'openai',
         defaultModel: 'gpt-5.4',
         models: ['gpt-5.4'],
       },

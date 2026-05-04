@@ -24,12 +24,7 @@ export const ProviderKindSchema = z.enum([
 export type ProviderKind = z.infer<typeof ProviderKindSchema>;
 
 export const ProviderConfigSchema = z.object({
-  /**
-   * Resolver kind. Optional for back-compat with older configs that rely on
-   * the provider map key (`providers.anthropic`, `providers.openai`) as the
-   * kind. When omitted, callers fall back to the map key.
-   */
-  kind: ProviderKindSchema.optional(),
+  kind: ProviderKindSchema,
   apiKeyRef: z.string().min(1).optional(),
   defaultModel: z.string().min(1).optional(),
   /** Optional base URL override — used for `openrouter` and self-hosted `ollama`. */
