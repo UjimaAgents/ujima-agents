@@ -39,7 +39,7 @@ renderer.blockquote = function ({ text }: { text: string }) {
 };
 
 renderer.link = function ({ href, text }: { href: string; text: string }) {
-  return `<a href="${sanitizeUrl(href)}" class="text-violet-600 underline underline-offset-2 dark:text-violet-400" target="_blank" rel="noopener noreferrer">${h(text)}</a>`;
+  return `<a href="${h(sanitizeUrl(href))}" class="text-violet-600 underline underline-offset-2 dark:text-violet-400" target="_blank" rel="noopener noreferrer">${h(text)}</a>`;
 };
 
 renderer.image = function () {
@@ -74,8 +74,8 @@ export function Markdown({
   className?: string;
 }) {
   const html = useMemo(() => {
-    const text = buildMentionReplacements(content, mentionNames);
-    return marked.parse(text) as string;
+    const parsed = marked.parse(content) as string;
+    return buildMentionReplacements(parsed, mentionNames);
   }, [content, mentionNames]);
 
   return (
