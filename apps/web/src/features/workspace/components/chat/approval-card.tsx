@@ -1,4 +1,5 @@
 import {AlertCircle} from "lucide-react";
+import { MarkdownInline } from "../markdown";
 
 export interface ApprovalCardData {
   id: string;
@@ -34,7 +35,10 @@ export function ApprovalCard({
             <p className="text-xs font-bold text-zinc-900 dark:text-white">
               {data.title}
             </p>
-            <p className="text-[10px] text-zinc-500">{data.description}</p>
+            <MarkdownInline
+              content={data.description}
+              className="block text-[10px] text-zinc-500"
+            />
             {data.commandPreview ? (
               <pre className="mt-1.5 max-h-28 overflow-y-auto rounded-lg border border-amber-200/80 bg-white/80 px-2 py-1.5 text-[10px] font-mono leading-relaxed text-zinc-800 whitespace-pre-wrap dark:border-amber-500/20 dark:bg-zinc-950/80 dark:text-zinc-200">
                 {data.commandPreview}

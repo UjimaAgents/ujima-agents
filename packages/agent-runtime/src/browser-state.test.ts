@@ -70,6 +70,23 @@ describe('captureBrowserState', () => {
     expect(snap?.title).toBe('Structured Example');
   });
 
+  it('does not let later nested strings overwrite structured page metadata', () => {
+    const content = {
+      page: {
+        url: 'https://example.org/structured',
+        title: 'Structured Example',
+      },
+      logs: [
+        {
+          text: 'Error on https://evil.example - Wrong Title',
+        },
+      ],
+    };
+    const snap = captureBrowserState('browser_snapshot', {}, content, undefined, 'playwright');
+    expect(snap?.url).toBe('https://example.org/structured');
+    expect(snap?.title).toBe('Structured Example');
+  });
+
   it('merges with a previous snapshot without wiping earlier fields', () => {
     const first = captureBrowserState(
       'browser_navigate',

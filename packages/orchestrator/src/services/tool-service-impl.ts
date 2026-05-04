@@ -39,6 +39,7 @@ export interface ApprovalRequester {
     resourcePath: string;
     action: ToolInvocationInput["action"];
     reason: string;
+    approvalScope?: string;
   }): { id: string };
 }
 
@@ -243,6 +244,7 @@ export class ToolServiceImpl implements ToolService {
         resourcePath: preparedInvocation.resourcePath ?? "",
         action: preparedInvocation.action,
         reason: `Tool action requires approval;scope=${encodeURIComponent(approvalScope)}`,
+        approvalScope,
       });
 
       this.audit(preparedInvocation, "ok", {

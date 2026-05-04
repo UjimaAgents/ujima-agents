@@ -1,4 +1,5 @@
 import { createAnthropic } from '@ai-sdk/anthropic';
+import { createDeepSeek } from '@ai-sdk/deepseek';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createOpenAI } from '@ai-sdk/openai';
 import type { LanguageModelV3 } from '@ai-sdk/provider';
@@ -86,10 +87,10 @@ export function selectLanguageModel(input: SelectLanguageModelInput): LanguageMo
 
   if (input.kind === 'deepseek') {
     if (!input.apiKey) throw new LLMError('not_configured', 'deepseek provider requires apiKey');
-    return withDefaultReasoning(createOpenAI({
+    return createDeepSeek({
       apiKey: input.apiKey,
-      baseURL: input.baseUrl ?? 'https://api.deepseek.com/v1',
-    }).chat(input.modelId));
+      baseURL: input.baseUrl,
+    }).chat(input.modelId) as unknown as LanguageModel;
   }
 
   if (input.kind === 'xai') {

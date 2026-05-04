@@ -109,30 +109,40 @@ export function buildTeamHierarchySection(teammates: AgentDef[]): string {
   if (teammates.length === 0) return '';
 
   const lines = [`\n## Team (${teammates.length} teammate${teammates.length === 1 ? '' : 's'})`];
-
-  const managed = new Set(teammates.filter((t) => t.reports_to).map((t) => t.id));
-  const managers = teammates.filter((t) => !t.reports_to || !managed.has(t.id));
-  const reporters = teammates.filter((t) => t.reports_to);
-
   const byId = new Map(teammates.map((t) => [t.id, t]));
+  const children = new Map<string, AgentDef[]>();
+  for (const teammate of teammates) {
+    if (!teammate.reports_to || !byId.has(teammate.reports_to)) continue;
+    const list = children.get(teammate.reports_to) ?? [];
+    list.push(teammate);
+    children.set(teammate.reports_to, list);
+  }
 
-  for (const mgr of managers) {
-    const suffix = mgr.seniority ? ` (${mgr.seniority})` : '';
-    lines.push(`- **${mgr.name}** (${mgr.id})${suffix}: ${truncate(mgr.persona, 100)}`);
-    for (const r of reporters) {
-      if (r.reports_to === mgr.id) {
-        const rSuffix = r.seniority ? ` (${r.seniority})` : '';
-        lines.push(`  - **${r.name}** (${r.id})${rSuffix}: ${truncate(r.persona, 100)}`);
-      }
+  const visited = new Set<string>();
+
+  function render(teammate: AgentDef, depth: number): void {
+    if (visited.has(teammate.id)) return;
+    visited.add(teammate.id);
+
+    const indent = '  '.repeat(depth);
+    const suffix = teammate.seniority ? ` (${teammate.seniority})` : '';
+    lines.push(`${indent}- **${teammate.name}** (${teammate.id})${suffix}: ${truncate(teammate.persona, 100)}`);
+
+    for (const child of children.get(teammate.id) ?? []) {
+      render(child, depth + 1);
     }
   }
 
-  const unreferenced = reporters.filter((r) => r.reports_to && !byId.has(r.reports_to));
-  if (unreferenced.length > 0) {
-    lines.push('_Reports to agents outside this team:_');
-    for (const r of unreferenced) {
-      const rSuffix = r.seniority ? ` (${r.seniority})` : '';
-      lines.push(`- **${r.name}** (${r.id})${rSuffix} → reports to ${r.reports_to}`);
+  const roots = teammates.filter((t) => !t.reports_to || !byId.has(t.reports_to));
+  for (const root of roots) {
+    render(root, 0);
+  }
+
+  const unrendered = teammates.filter((t) => !visited.has(t.id));
+  if (unrendered.length > 0) {
+    lines.push('_Unlinked teammates:_');
+    for (const teammate of unrendered) {
+      render(teammate, 0);
     }
   }
 

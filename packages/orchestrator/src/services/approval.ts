@@ -20,6 +20,7 @@ export interface ApprovalRequestInput {
   resourcePath: string;
   action: ToolAction;
   reason: string;
+  approvalScope?: string;
 }
 
 export interface ApprovalResolveInput {
@@ -43,6 +44,22 @@ export class ApprovalService {
   ) {}
 
   requestApproval(input: ApprovalRequestInput): ApprovalRequest {
+    const existing = input.approvalScope
+      ? this.repo
+          .listPendingApprovals(input.organizationId)
+          .find(
+            (approval) =>
+              approval.runId === input.runId &&
+              approval.requestedBy === input.requestedBy &&
+              approval.resourceType === input.resourceType &&
+              approval.resourcePath === input.resourcePath &&
+              approval.action === input.action &&
+              decodeApprovalScope(approval.reason) === input.approvalScope,
+          )
+      : undefined;
+
+    if (existing) return existing;
+
     const approval = ApprovalRequestSchema.parse({
       id: randomUUID(),
       organizationId: input.organizationId,
@@ -86,27 +103,56 @@ export class ApprovalService {
       canPersistGrant && rawScope
         ? `grant:always_allow:scope=${encodeURIComponent(rawScope)};note=${input.reason ?? ''}`
         : input.reason;
-    const approval = this.repo.resolveApproval(
-      input.organizationId,
-      input.approvalId,
-      input.status,
-      effectiveReason,
-    );
+    const matchingPendingApprovals = existing && rawScope
+      ? this.repo
+          .listPendingApprovals(input.organizationId)
+          .filter(
+            (approval) =>
+              approval.runId === existing.runId &&
+              approval.requestedBy === existing.requestedBy &&
+              approval.resourceType === existing.resourceType &&
+              approval.resourcePath === existing.resourcePath &&
+              approval.action === existing.action &&
+              decodeApprovalScope(approval.reason) === rawScope,
+          )
+      : [];
 
+    const approvalIds = new Set<string>();
+    const approvals = [existing, ...matchingPendingApprovals].filter(
+      (approval): approval is ApprovalRequest =>
+        !!approval &&
+        approval.status === 'pending' &&
+        !approvalIds.has(approval.id) &&
+        (approvalIds.add(approval.id), true),
+    );
+    const resolvedApprovals = approvals
+      .map((approval) =>
+        this.repo.resolveApproval(
+          input.organizationId,
+          approval.id,
+          input.status,
+          effectiveReason,
+        ),
+      )
+      .filter((approval): approval is ApprovalRequest => !!approval);
+
+    const approval = resolvedApprovals[0];
     if (!approval) {
       throw new Error(`Approval not found: ${input.approvalId}`);
     }
 
-    const rooms = [orgRoom(input.organizationId), runRoom(approval.runId ?? approval.id)];
-    const run = approval.runId ? this.repo.getRun(input.organizationId, approval.runId) : null;
-    if (run?.threadId) {
-      rooms.push(threadRoom(run.threadId));
+    for (const resolved of resolvedApprovals) {
+      const rooms = [orgRoom(input.organizationId), runRoom(resolved.runId ?? resolved.id)];
+      const run = resolved.runId ? this.repo.getRun(input.organizationId, resolved.runId) : null;
+      if (run?.threadId) {
+        rooms.push(threadRoom(run.threadId));
+      }
+      this.realtime.emit(
+        SocketEventNames.approvalResolved,
+        { organizationId: input.organizationId, threadId: run?.threadId, approval: resolved },
+        rooms,
+      );
     }
-    this.realtime.emit(
-      SocketEventNames.approvalResolved,
-      { organizationId: input.organizationId, threadId: run?.threadId, approval },
-      rooms,
-    );
 
     if (approval.status === 'approved' && approval.runId) {
       await this.resumeRun(approval.organizationId, approval.runId);
@@ -118,4 +164,9 @@ export class ApprovalService {
   listPending(organizationId: string): ApprovalRequest[] {
     return this.repo.listPendingApprovals(organizationId);
   }
+}
+
+function decodeApprovalScope(reason: string): string | undefined {
+  const scopeMatch = reason.match(/(?:^|;)scope=([^;]+)/);
+  return scopeMatch?.[1] ? decodeURIComponent(scopeMatch[1]) : undefined;
 }

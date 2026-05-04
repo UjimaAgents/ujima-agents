@@ -42,9 +42,9 @@ function extractBareUrl(text: string): string | undefined {
 
 function applyTextHeuristics(text: string, next: BrowserStateSnapshot): void {
   const fromLines = parseUrlTitleFromText(text);
-  if (fromLines.url) next.url = fromLines.url;
-  if (fromLines.title) next.title = fromLines.title;
-  if (!fromLines.url) {
+  if (!next.url && fromLines.url) next.url = fromLines.url;
+  if (!next.title && fromLines.title) next.title = fromLines.title;
+  if (!fromLines.url && !next.url) {
     const bare = extractBareUrl(text);
     if (bare) next.url = bare;
   }

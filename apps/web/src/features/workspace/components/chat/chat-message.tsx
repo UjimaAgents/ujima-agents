@@ -2,7 +2,7 @@ import { useCallback, useRef, useState, forwardRef, type ReactNode, type UIEvent
 import { CheckCircle2, Loader2 } from "lucide-react";
 import { Avatar, TagBadge, type TagVariant } from "./primitives";
 import { MessageActions } from "../message-actions";
-import { Markdown } from "../markdown";
+import { Markdown, MarkdownInline } from "../markdown";
 
 export interface ChatMessageData {
   id: string;
@@ -102,9 +102,10 @@ export function ChatMessage({
               <p className="truncate text-[10px] font-semibold text-zinc-700 dark:text-zinc-300">
                 Replying to {message.replyPreview.name}
               </p>
-              <p className="truncate text-[10px] text-zinc-500 dark:text-zinc-400">
-                {message.replyPreview.content}
-              </p>
+              <MarkdownInline
+                content={message.replyPreview.content}
+                className="block truncate text-[10px] text-zinc-500 dark:text-zinc-400"
+              />
             </div>
           )}
           <Markdown

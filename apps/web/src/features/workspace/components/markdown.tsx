@@ -90,3 +90,27 @@ export function Markdown({
     />
   );
 }
+
+export function MarkdownInline({
+  content,
+  mentionNames = [],
+  className = "",
+}: {
+  content: string;
+  mentionNames?: string[];
+  className?: string;
+}) {
+  const html = useMemo(() => {
+    return marked.parseInline(content, {
+      gfm: true,
+      renderer: createRenderer(mentionNames),
+    }) as string;
+  }, [content, mentionNames]);
+
+  return (
+    <span
+      className={`break-words ${className}`}
+      dangerouslySetInnerHTML={{ __html: html }}
+    />
+  );
+}
