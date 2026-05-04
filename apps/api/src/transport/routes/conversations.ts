@@ -155,6 +155,7 @@ export function registerConversationRoutes(
     },
   }, async (req, reply) => {
     try {
+      assertReadyWorkspaceRoot(repo, req.body.organizationId);
       const authState = auth.getAuthState(readSessionToken(req));
       if (!authState.member) {
         return reply.code(401).send({ code: 'ERR_UNAUTHORIZED', message: 'Session required' });
@@ -162,7 +163,6 @@ export function registerConversationRoutes(
       if (authState.user?.organizationId !== req.body.organizationId) {
         return reply.code(403).send({ code: 'ERR_FORBIDDEN', message: 'Unauthorized for this organization.' });
       }
-      assertReadyWorkspaceRoot(repo, req.body.organizationId);
       const senderId = authState.member.id;
       if ('recipientId' in req.body) {
         return conversations.sendDirectMessage({

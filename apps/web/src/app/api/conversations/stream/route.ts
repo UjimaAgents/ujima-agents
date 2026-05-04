@@ -28,8 +28,6 @@ export async function GET(request: Request) {
   const url = new URL(request.url);
   const organizationId = url.searchParams.get("organizationId");
   const threadId = url.searchParams.get("threadId");
-  const channelIds = url.searchParams.getAll("channelIds").filter(Boolean);
-  const memberIds = url.searchParams.getAll("memberIds").filter(Boolean);
 
   if (!organizationId || !threadId) {
     return NextResponse.json(
@@ -38,12 +36,20 @@ export async function GET(request: Request) {
     );
   }
 
+  let authenticatedMemberId: string | undefined;
   try {
     const authState = await getServerAuthState();
     if (!authState.authenticated || authState.user?.organizationId !== organizationId) {
       return NextResponse.json(
         { code: "ERR_FORBIDDEN", message: "Unauthorized for this organization." },
         { status: 403 },
+      );
+    }
+    authenticatedMemberId = authState.member?.id;
+    if (!authenticatedMemberId) {
+      return NextResponse.json(
+        { code: "ERR_UNAUTHORIZED", message: "Sign in before opening conversation streams." },
+        { status: 401 },
       );
     }
 
@@ -66,6 +72,9 @@ export async function GET(request: Request) {
       { status: 401 },
     );
   }
+
+  const channelIds = [threadId];
+  const memberIds = resolveTrustedMemberIds(threadId, authenticatedMemberId);
 
   const encoder = new TextEncoder();
   let socket: ReturnType<typeof io> | null = null;
@@ -200,7 +209,7 @@ function shouldForwardEvent(
     case SocketEventNames.memberUpdated: {
       const body = payload as { member?: { id?: string } };
       if (typeof body.member?.id !== "string") return false;
-      return input.memberIds.length === 0 || input.memberIds.includes(body.member.id);
+      return input.memberIds.includes(body.member.id);
     }
     case SocketEventNames.supervisorReplied: {
       const body = payload as { message?: { threadId?: string } };
@@ -209,4 +218,14 @@ function shouldForwardEvent(
     default:
       return false;
   }
+}
+
+function resolveTrustedMemberIds(threadId: string, authenticatedMemberId: string): string[] {
+  const members = new Set<string>([authenticatedMemberId]);
+  if (threadId.startsWith("dm:")) {
+    const [_, firstId, secondId] = threadId.split(":", 3);
+    if (firstId) members.add(firstId);
+    if (secondId) members.add(secondId);
+  }
+  return [...members];
 }
