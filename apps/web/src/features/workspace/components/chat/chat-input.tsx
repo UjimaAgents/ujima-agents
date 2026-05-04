@@ -30,11 +30,13 @@ export function ChatInput({
   placeholder = "Type a message...",
   onSend,
   statusHint,
+  inlineError,
   mentionSuggestions = [],
 }: {
   placeholder?: string;
   onSend: (content: string) => Promise<void> | void;
   statusHint?: string;
+  inlineError?: string;
   mentionSuggestions?: MentionSuggestion[];
 }) {
   const [content, setContent] = useState("");
@@ -93,6 +95,11 @@ export function ChatInput({
   return (
     <div className="shrink-0 px-4 py-2 border-t border-zinc-200 dark:border-zinc-800">
       <div className="relative group">
+        {inlineError ? (
+          <p className="mb-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300">
+            {inlineError}
+          </p>
+        ) : null}
         <div className="absolute inset-0 bg-gradient-to-r from-violet-500/10 to-indigo-500/10 rounded-xl blur-lg opacity-0 group-focus-within:opacity-100 transition-opacity" />
         <div className="relative flex flex-col rounded-xl border border-zinc-200 bg-zinc-50 focus-within:border-violet-500 focus-within:bg-white focus-within:ring-1 focus-within:ring-violet-500 transition-all dark:border-zinc-800 dark:bg-zinc-900/50 dark:focus-within:bg-[#09090b]">
           <textarea

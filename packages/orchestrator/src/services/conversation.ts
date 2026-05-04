@@ -105,8 +105,18 @@ export class ConversationService {
     return channels.filter((channel) => this.canMemberAccessChannel(channel, member.id));
   }
 
-  listMessages(organizationId: string, threadId: string, cursor?: string, limit?: number) {
+  listMessages(
+    organizationId: string,
+    threadId: string,
+    cursor?: string,
+    limit?: number,
+    memberId?: string,
+  ) {
     this.requireOrganization(organizationId);
+
+    if (memberId) {
+      this.requireThreadAccess(organizationId, threadId, memberId);
+    }
 
     const thread = this.repo.getThread(organizationId, threadId);
     if (!thread) {
@@ -119,6 +129,26 @@ export class ConversationService {
       organizationId,
       channel,
     );
+  }
+
+  requireThreadAccess(organizationId: string, threadId: string, memberId: string): void {
+    const thread = this.repo.getThread(organizationId, threadId);
+    if (!thread) {
+      throw new Error(`Thread not found: ${threadId}`);
+    }
+
+    if (thread.memberIds.includes(memberId)) {
+      return;
+    }
+
+    if (thread.channelId) {
+      const channel = this.repo.getChannel(organizationId, thread.channelId);
+      if (channel && this.canMemberAccessChannel(channel, memberId)) {
+        return;
+      }
+    }
+
+    throw new Error('Forbidden: you do not have access to this thread');
   }
 
   async readChannel(input: {

@@ -138,7 +138,7 @@ export class AiService {
     );
 
     const messages = toModelMessages(
-      this.repo.listMessages(input.organizationId, input.threadId).data.slice(-20),
+      this.repo.listMessages(input.organizationId, input.threadId, undefined, 20).data,
     );
     if (input.summary) {
       messages.push({

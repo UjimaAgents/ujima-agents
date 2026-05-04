@@ -124,6 +124,14 @@ export async function getServerAuthState(): Promise<SessionAuthState> {
   return daemonJson<SessionAuthState>("/api/auth/session", {}, await getSessionTokenFromCookie());
 }
 
+export async function requireOrgAccess(organizationId: string): Promise<SessionAuthState> {
+  const authState = await getServerAuthState();
+  if (!authState.authenticated || authState.user?.organizationId !== organizationId) {
+    throw new DaemonRequestError(403, "ERR_FORBIDDEN", "Unauthorized for this organization.");
+  }
+  return authState;
+}
+
 export async function getServerRolePresets(): Promise<RolePresetTemplate[]> {
   const response = await daemonJson<{ presets: RolePresetTemplate[] }>("/api/roles/presets");
   return response.presets;

@@ -225,6 +225,7 @@ export function createTransport(opts: TransportOptions): Transport {
       registerConversationRoutes(api, {
         repo: opts.apiServices.repo,
         conversations: services.conversations,
+        auth: services.auth,
       });
       registerRunRoutes(api, {
         repo: opts.apiServices.repo,

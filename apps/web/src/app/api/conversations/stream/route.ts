@@ -7,6 +7,7 @@ import {
 } from "@ujima/shared";
 import {
   daemonBaseUrl,
+  daemonFetch,
   getSessionTokenFromCookie,
   readDaemonBearerToken,
   getServerAuthState,
@@ -42,6 +43,20 @@ export async function GET(request: Request) {
     if (!authState.authenticated || authState.user?.organizationId !== organizationId) {
       return NextResponse.json(
         { code: "ERR_FORBIDDEN", message: "Unauthorized for this organization." },
+        { status: 403 },
+      );
+    }
+
+    // Verify access to the requested thread
+    const params = new URLSearchParams({ organizationId });
+    const verifyResponse = await daemonFetch(
+      `/api/threads/${encodeURIComponent(threadId)}/verify?${params.toString()}`,
+      {},
+      sessionToken,
+    );
+    if (!verifyResponse.ok) {
+      return NextResponse.json(
+        { code: "ERR_FORBIDDEN", message: "Unauthorized for this thread." },
         { status: 403 },
       );
     }
@@ -175,6 +190,10 @@ function shouldForwardEvent(
       return typeof body.threadId === "string" && threadIds.has(body.threadId);
     }
     case SocketEventNames.memberAlerted: {
+      const body = payload as { threadId?: string };
+      return typeof body.threadId === "string" && threadIds.has(body.threadId);
+    }
+    case SocketEventNames.memberAlertFailed: {
       const body = payload as { threadId?: string };
       return typeof body.threadId === "string" && threadIds.has(body.threadId);
     }

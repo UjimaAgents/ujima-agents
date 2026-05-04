@@ -1,4 +1,12 @@
 import type { PermissionMiddleware } from '@ujima/permissions';
+import {
+  SocketEventNames,
+  channelRoom,
+  memberRoom,
+  orgRoom,
+  threadRoom,
+  type MemberAlertFailureStage,
+} from '@ujima/shared';
 import { AiService } from '../ai-service.js';
 import { ActiveSpiritRegistry } from './active-spirit-registry.js';
 import { ApprovalService } from './approval.js';
@@ -155,6 +163,112 @@ export interface ApiServices {
   activeSpirits: ActiveSpiritRegistry;
 }
 
+interface WakeMemberInput {
+  organizationId: string;
+  memberId: string;
+  threadId: string;
+  channelId?: string;
+  messageId: string;
+  byMemberId: string;
+  reason: string;
+}
+
+interface WakeMemberDeps {
+  supervisor: Pick<SupervisorService, 'handleAlert'>;
+  runs: Pick<RunService, 'createRun'>;
+  realtime: Pick<ApiServiceContext['realtime'], 'emit'>;
+}
+
+function errMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function emitMemberAlertFailed(
+  realtime: Pick<ApiServiceContext['realtime'], 'emit'>,
+  input: WakeMemberInput,
+  stage: MemberAlertFailureStage,
+  error: string,
+  runId?: string,
+): void {
+  const rooms = [
+    orgRoom(input.organizationId),
+    threadRoom(input.threadId),
+    memberRoom(input.memberId),
+    ...(input.channelId ? [channelRoom(input.channelId)] : []),
+  ];
+
+  realtime.emit(
+    SocketEventNames.memberAlertFailed,
+    {
+      organizationId: input.organizationId,
+      memberId: input.memberId,
+      channelId: input.channelId,
+      threadId: input.threadId,
+      messageId: input.messageId,
+      byMemberId: input.byMemberId,
+      reason: input.reason,
+      stage,
+      runId,
+      error,
+      occurredAt: new Date().toISOString(),
+    },
+    rooms,
+  );
+}
+
+export async function wakeMemberWithFailureEvents(
+  deps: WakeMemberDeps,
+  input: WakeMemberInput,
+): Promise<void> {
+  let dispatch: Awaited<ReturnType<SupervisorService['handleAlert']>>;
+  try {
+    dispatch = await deps.supervisor.handleAlert({
+      organizationId: input.organizationId,
+      memberId: input.memberId,
+      channelId: input.channelId,
+      messageId: input.messageId,
+      threadId: input.threadId,
+      byMemberId: input.byMemberId,
+      reason: input.reason,
+    });
+  } catch (error) {
+    emitMemberAlertFailed(
+      deps.realtime,
+      input,
+      'supervisor_dispatch',
+      errMessage(error),
+    );
+    return;
+  }
+
+  if (dispatch.kind !== 'no-active-spirit') {
+    return;
+  }
+
+  let run: Awaited<ReturnType<RunService['createRun']>>;
+  try {
+    run = await deps.runs.createRun({
+      organizationId: input.organizationId,
+      agentId: input.memberId,
+      threadId: input.threadId,
+      summary: `Mentioned by ${input.byMemberId} via ${input.reason} on message ${input.messageId}`,
+    });
+  } catch (error) {
+    emitMemberAlertFailed(deps.realtime, input, 'run_create', errMessage(error));
+    return;
+  }
+
+  if (run.status === 'failed') {
+    emitMemberAlertFailed(
+      deps.realtime,
+      input,
+      'run_failed',
+      run.summary || 'Run failed',
+      run.id,
+    );
+  }
+}
+
 export function createApiServices(context: ApiServicesContext): ApiServices {
   const retention = new ChannelRetentionService(
     context.repo,
@@ -255,24 +369,10 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   // the alert (second mention in a 2s burst) — falling through there
   // would spawn a duplicate run that defeats the debounce.
   wakeMember = async (input) => {
-    const dispatch = await supervisor.handleAlert({
-      organizationId: input.organizationId,
-      memberId: input.memberId,
-      channelId: input.channelId,
-      messageId: input.messageId,
-      threadId: input.threadId,
-      byMemberId: input.byMemberId,
-      reason: input.reason,
-    });
-    if (dispatch.kind !== 'no-active-spirit') {
-      return;
-    }
-    await runs.createRun({
-      organizationId: input.organizationId,
-      agentId: input.memberId,
-      threadId: input.threadId,
-      summary: `Mentioned by ${input.byMemberId} via ${input.reason} on message ${input.messageId}`,
-    });
+    await wakeMemberWithFailureEvents(
+      { supervisor, runs, realtime: context.realtime },
+      input,
+    );
   };
 
   const auth = new AuthService(context.repo);

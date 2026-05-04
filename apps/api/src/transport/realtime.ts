@@ -20,13 +20,21 @@ export class RealtimeService {
   ) {
     this.io.on('connection', (socket: Socket) => {
       socket.on('subscribe', (raw) => {
-        const payload = SocketSubscribeSchema.parse(raw);
-        this.subscribe(socket, payload.organizationId, payload);
+        try {
+          const payload = SocketSubscribeSchema.parse(raw);
+          this.subscribe(socket, payload.organizationId, payload);
+        } catch (err) {
+          socket.emit('error', { code: 'ERR_BAD_REQUEST', message: (err as Error).message });
+        }
       });
 
       socket.on('unsubscribe', (raw) => {
-        const payload = SocketSubscribeSchema.parse(raw);
-        this.unsubscribe(socket, payload.organizationId, payload);
+        try {
+          const payload = SocketSubscribeSchema.parse(raw);
+          this.unsubscribe(socket, payload.organizationId, payload);
+        } catch {
+          // Unsubscribe errors are generally safe to ignore
+        }
       });
     });
   }

@@ -76,7 +76,12 @@ export interface RepositoryReader {
   listWorkspaceMembers(organizationId: string): WorkspaceMember[];
   getMember(organizationId: string, memberId: string): Member | null;
   listMembers(organizationId: string): Member[];
-  listMessages(organizationId: string, threadId: string): PaginatedMessages;
+  listMessages(
+    organizationId: string,
+    threadId: string,
+    cursor?: string,
+    limit?: number,
+  ): PaginatedMessages;
   getProviderCredential(organizationId: string, providerName: string): string | null;
 }
 

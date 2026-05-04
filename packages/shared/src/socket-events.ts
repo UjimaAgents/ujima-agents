@@ -44,6 +44,7 @@ export const SocketEventNames = Object.freeze({
   runCompleted: 'run:completed',
   memberUpdated: 'member:updated',
   memberAlerted: 'member.alerted',
+  memberAlertFailed: 'member.alert_failed',
   channelArchived: 'channel.archived',
   toolCalled: 'tool:called',
   toolResult: 'tool:result',
@@ -121,6 +122,28 @@ export const MemberAlertedEventSchema = z.object({
 });
 export type MemberAlertedEvent = z.infer<typeof MemberAlertedEventSchema>;
 
+export const MemberAlertFailureStageSchema = z.enum([
+  'supervisor_dispatch',
+  'run_create',
+  'run_failed',
+]);
+export type MemberAlertFailureStage = z.infer<typeof MemberAlertFailureStageSchema>;
+
+export const MemberAlertFailedEventSchema = z.object({
+  organizationId: IdSchema,
+  memberId: IdSchema,
+  channelId: IdSchema.optional(),
+  threadId: IdSchema.optional(),
+  messageId: IdSchema,
+  byMemberId: IdSchema,
+  reason: z.string().min(1),
+  stage: MemberAlertFailureStageSchema,
+  runId: IdSchema.optional(),
+  error: z.string().min(1),
+  occurredAt: z.string().datetime({ offset: true }),
+});
+export type MemberAlertFailedEvent = z.infer<typeof MemberAlertFailedEventSchema>;
+
 export const ChannelUpdatedEventSchema = z.object({
   organizationId: IdSchema,
   channel: ChannelSchema,
@@ -172,6 +195,7 @@ export const SocketEventSchemas = Object.freeze({
   [SocketEventNames.runCompleted]: RunEventSchema,
   [SocketEventNames.memberUpdated]: MemberUpdatedEventSchema,
   [SocketEventNames.memberAlerted]: MemberAlertedEventSchema,
+  [SocketEventNames.memberAlertFailed]: MemberAlertFailedEventSchema,
   [SocketEventNames.channelArchived]: ChannelUpdatedEventSchema,
   [SocketEventNames.toolCalled]: ToolCalledEventSchema,
   [SocketEventNames.toolResult]: ToolResultEventSchema,

@@ -419,8 +419,8 @@ export function ChannelView({
               ? `Message @${conversation.name}...`
               : `Message #${conversation.name} or @agent...`
           }
+          inlineError={feed.error}
           statusHint={
-            feed.error ??
             typingLabel ??
             (feed.loading ? "Syncing history…" : "Enter to send, Shift+Enter for a new line.")
           }

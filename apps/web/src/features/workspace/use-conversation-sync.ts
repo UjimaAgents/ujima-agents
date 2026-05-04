@@ -18,7 +18,7 @@ import type { SelectedConversation } from "./types";
 import {
   buildConversationMessagePayload,
   buildConversationStreamParams,
-  getDirectMessageThreadId,
+  resolveConversationTransport,
   type ConversationStreamEnvelope,
 } from "./conversation-transport";
 import { activityStateToStatus, conversationActivityState, presenceToActivityState, type ActivityState } from "./activity-state";
@@ -43,30 +43,10 @@ export function useConversationSync(
   bootstrap: BootstrapResponse,
   conversation: SelectedConversation,
 ): ConversationSyncResult {
-  const organizationId = bootstrap.organization?.id;
-  const senderId = bootstrap.auth.member?.id;
-  const transport = useMemo(() => {
-    if (!organizationId || !senderId) return null;
-    if (conversation.type === "channel") {
-      return {
-        organizationId,
-        threadId: conversation.id,
-        channelIds: [conversation.id],
-        threadIds: [conversation.id],
-        memberIds: [],
-      };
-    }
-
-    const threadId = getDirectMessageThreadId(senderId, conversation.id);
-    return {
-      organizationId,
-      threadId,
-      recipientId: conversation.id,
-      channelIds: [threadId],
-      threadIds: [threadId],
-      memberIds: [senderId, conversation.id],
-    };
-  }, [conversation.id, conversation.type, organizationId, senderId]);
+  const transport = useMemo(() => resolveConversationTransport(bootstrap, conversation), [
+    bootstrap,
+    conversation,
+  ]);
   const conversationKey = transport ? `${transport.organizationId}:${transport.threadId}` : undefined;
   const messages = useWorkspaceStore((state) => state.messages);
   const approvals = useWorkspaceStore((state) => state.approvals);
@@ -102,7 +82,7 @@ export function useConversationSync(
     const currentConversationKey = `${transport.organizationId}:${transport.threadId}`;
     resetConversationFeed(currentConversationKey);
 
-      void loadHistory(transport.organizationId, transport.threadId, abortController.signal)
+    void loadHistory(transport.organizationId, transport.threadId, abortController.signal)
       .then((history) => {
         if (abortController.signal.aborted || currentConversationKey !== conversationKey) return;
         setError(undefined);
@@ -138,6 +118,12 @@ export function useConversationSync(
         appendMember,
         receiveMessage,
         removeMessage,
+        setConversationError: (message) =>
+          setError(
+            message
+              ? { conversationKey: currentConversationKey, message }
+              : undefined,
+          ),
         setLoading,
         setMemberActivity,
         storeMembers: storeMembersRef.current,
@@ -368,6 +354,7 @@ function handleStreamEvent(
       toActivity: (message: Message) => ActivityEvent,
     ): void;
     removeMessage(id: string): void;
+    setConversationError(message: string | undefined): void;
     setLoading(loading: boolean): void;
     setMemberActivity(memberId: string, activity: ActivityState): void;
     storeMembers: Member[];
@@ -388,6 +375,9 @@ function handleStreamEvent(
       const message = parseMessagePayload(envelope.payload);
       if (!message) return;
       actions.receiveMessage(undefined, message, (value) => messageToChatMessage(value, actions.storeMembers), messageToActivity);
+      if (message.senderKind === "agent") {
+        actions.setConversationError(undefined);
+      }
       return;
     }
     case "approval:requested":
@@ -407,12 +397,25 @@ function handleStreamEvent(
       const run = parseRunPayload(envelope.payload);
       if (!run) return;
       actions.upsertRun(run, runToActivity);
-      if (run.status === "completed") {
+      if (envelope.event === "run:started") {
+        actions.setConversationError(undefined);
+      }
+      if (run.status === "failed" || run.status === "cancelled") {
+        actions.setMemberActivity(run.agentId, "error");
+      } else if (run.status === "completed") {
         const member = actions.storeMembers.find((m) => m.id === run.agentId);
         actions.setMemberActivity(run.agentId, presenceToActivityState(member?.presence));
       } else {
         actions.setMemberActivity(run.agentId, "working");
       }
+      return;
+    }
+    case "member.alert_failed": {
+      const failure = parseMemberAlertFailedPayload(envelope.payload);
+      if (!failure) return;
+      actions.setConversationError(failure.error);
+      actions.setMemberActivity(failure.memberId, "error");
+      actions.appendActivity(memberAlertFailedToActivity(failure));
       return;
     }
     case "member:updated": {
@@ -463,6 +466,52 @@ function parsePresencePayload(payload: unknown): { memberId?: string; state?: st
   const body = payload as { memberId?: unknown; state?: unknown };
   if (typeof body.memberId !== "string" || typeof body.state !== "string") return null;
   return { memberId: body.memberId, state: body.state };
+}
+
+interface MemberAlertFailedPayload {
+  organizationId: string;
+  memberId: string;
+  channelId?: string;
+  threadId?: string;
+  messageId: string;
+  byMemberId: string;
+  reason: string;
+  stage: "supervisor_dispatch" | "run_create" | "run_failed";
+  runId?: string;
+  error: string;
+  occurredAt: string;
+}
+
+function parseMemberAlertFailedPayload(payload: unknown): MemberAlertFailedPayload | null {
+  const body = payload as Partial<MemberAlertFailedPayload>;
+  if (
+    typeof body.organizationId !== "string" ||
+    typeof body.memberId !== "string" ||
+    typeof body.messageId !== "string" ||
+    typeof body.byMemberId !== "string" ||
+    typeof body.reason !== "string" ||
+    typeof body.stage !== "string" ||
+    typeof body.error !== "string" ||
+    typeof body.occurredAt !== "string"
+  ) {
+    return null;
+  }
+  if (!["supervisor_dispatch", "run_create", "run_failed"].includes(body.stage)) {
+    return null;
+  }
+  return {
+    organizationId: body.organizationId,
+    memberId: body.memberId,
+    channelId: body.channelId,
+    threadId: body.threadId,
+    messageId: body.messageId,
+    byMemberId: body.byMemberId,
+    reason: body.reason,
+    stage: body.stage as MemberAlertFailedPayload["stage"],
+    runId: body.runId,
+    error: body.error,
+    occurredAt: body.occurredAt,
+  };
 }
 
 function messageToChatMessage(message: Message, members: Member[]): ChatMessageData {
@@ -668,6 +717,17 @@ function memberToActivity(member: Member): ActivityEvent {
     publisher: member.id,
     timestamp: member.createdAt ?? new Date().toISOString(),
     payload: member,
+  };
+}
+
+function memberAlertFailedToActivity(payload: MemberAlertFailedPayload): ActivityEvent {
+  return {
+    event_id: `member-alert-failed:${payload.memberId}:${payload.messageId}:${payload.stage}:${payload.occurredAt}`,
+    type: "member_alert_failed",
+    publisher: payload.memberId,
+    timestamp: payload.occurredAt,
+    task_id: payload.runId,
+    payload,
   };
 }
 
