@@ -250,8 +250,8 @@ describe('runConcurrent — Sr + Jr on shared MCP', () => {
     const results = await handle.results;
     const [a, b] = results;
     if (!a || !b) throw new Error('expected two results');
-    expect(a.exitReason).toBe('error');
-    expect(b.exitReason).toBe('error');
+    expect(a.exitReason).toBe('killed');
+    expect(b.exitReason).toBe('killed');
     expect(handle.handles.every((h) => !h.isRunning())).toBe(true);
   });
 });

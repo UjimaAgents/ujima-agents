@@ -210,6 +210,8 @@ export class ConfigSyncService {
           name: agent.name,
           kind: agent.kind,
           roleName: agent.roleName,
+          llm: existing?.llm,
+          model: existing?.model,
           presence: existing?.presence ?? 'offline',
           createdAt: existing?.createdAt ?? now,
           retiredAt: undefined,

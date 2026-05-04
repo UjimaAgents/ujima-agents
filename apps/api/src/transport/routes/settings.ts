@@ -15,13 +15,14 @@ import {
   ProviderSecretsUpsertSchema,
   ProviderStatusSchema,
 } from '@ujima/api-schema';
-import type { SettingsService } from '@ujima/orchestrator';
+import type { AuthService, SettingsService } from '@ujima/orchestrator';
 import { z } from 'zod';
 import {
   ERR_NO_WORKSPACE_ROOT,
   assertReadyWorkspaceRoot,
   isWorkspaceRootNotReadyError,
 } from './workspace-root.js';
+import { requireOrgSession } from './org-auth.js';
 
 const OrgIdParamsSchema = z.object({ orgId: IdSchema });
 const ProviderTestParamsSchema = z.object({ providerName: z.string().min(1) });
@@ -55,13 +56,14 @@ const ProviderTestResultSchema = z.object({
 export interface SettingsRoutesOptions {
   repo: Repository;
   settings: SettingsService;
+  auth: AuthService;
 }
 
 export function registerSettingsRoutes(
   _app: FastifyInstance,
   options: SettingsRoutesOptions,
 ): void {
-  const { repo, settings } = options;
+  const { repo, settings, auth } = options;
   const app = _app.withTypeProvider<ZodTypeProvider>();
 
   app.get('/settings/team', {
@@ -110,6 +112,8 @@ export function registerSettingsRoutes(
       response: {
         200: ProviderSecretsUpsertResponseSchema,
         400: ApiErrorSchema,
+        401: ApiErrorSchema,
+        403: ApiErrorSchema,
         409: ApiErrorSchema,
         404: ApiErrorSchema,
         503: ApiErrorSchema,
@@ -118,6 +122,8 @@ export function registerSettingsRoutes(
   }, async (req, reply) => {
     try {
       assertReadyWorkspaceRoot(repo, req.body.organizationId);
+      const forbidden = requireOrgSession(auth, req, reply, req.body.organizationId);
+      if (forbidden) return forbidden;
       return {
         providers: settings.upsertProviders(req.body.organizationId, req.body.providerKeys),
       };
@@ -144,6 +150,8 @@ export function registerSettingsRoutes(
       response: {
         200: ProviderSecretsUpsertResponseSchema,
         400: ApiErrorSchema,
+        401: ApiErrorSchema,
+        403: ApiErrorSchema,
         409: ApiErrorSchema,
         404: ApiErrorSchema,
         503: ApiErrorSchema,
@@ -152,6 +160,8 @@ export function registerSettingsRoutes(
   }, async (req, reply) => {
     try {
       assertReadyWorkspaceRoot(repo, req.query.organizationId);
+      const forbidden = requireOrgSession(auth, req, reply, req.query.organizationId);
+      if (forbidden) return forbidden;
       return {
         providers: settings.deleteProvider(req.query.organizationId, req.params.providerName),
       };
@@ -193,6 +203,8 @@ export function registerSettingsRoutes(
       response: {
         200: OrganizationSettingsResponseSchema,
         400: ApiErrorSchema,
+        401: ApiErrorSchema,
+        403: ApiErrorSchema,
         409: ApiErrorSchema,
         404: ApiErrorSchema,
       },
@@ -200,6 +212,8 @@ export function registerSettingsRoutes(
   }, async (req, reply) => {
     try {
       assertReadyWorkspaceRoot(repo, req.body.organizationId);
+      const forbidden = requireOrgSession(auth, req, reply, req.body.organizationId);
+      if (forbidden) return forbidden;
       return settings.updateOrganizationSettings(req.body);
     } catch (err) {
       const message = errMessage(err);
@@ -258,6 +272,8 @@ export function registerSettingsRoutes(
       response: {
         200: MemberSchema,
         400: ApiErrorSchema,
+        401: ApiErrorSchema,
+        403: ApiErrorSchema,
         409: ApiErrorSchema,
         404: ApiErrorSchema,
       },
@@ -265,6 +281,8 @@ export function registerSettingsRoutes(
   }, async (req, reply) => {
     try {
       assertReadyWorkspaceRoot(repo, req.params.orgId);
+      const forbidden = requireOrgSession(auth, req, reply, req.params.orgId);
+      if (forbidden) return forbidden;
       const member = settings.addMember({
         organizationId: req.params.orgId,
         name: req.body.name,
@@ -294,6 +312,8 @@ export function registerSettingsRoutes(
       response: {
         200: MemberSchema,
         400: ApiErrorSchema,
+        401: ApiErrorSchema,
+        403: ApiErrorSchema,
         404: ApiErrorSchema,
         409: ApiErrorSchema,
       },
@@ -301,6 +321,8 @@ export function registerSettingsRoutes(
   }, async (req, reply) => {
     try {
       assertReadyWorkspaceRoot(repo, req.params.orgId);
+      const forbidden = requireOrgSession(auth, req, reply, req.params.orgId);
+      if (forbidden) return forbidden;
       return settings.updateMember({
         organizationId: req.params.orgId,
         memberId: req.params.memberId,
@@ -330,6 +352,8 @@ export function registerSettingsRoutes(
       response: {
         200: ChannelSchema,
         400: ApiErrorSchema,
+        401: ApiErrorSchema,
+        403: ApiErrorSchema,
         409: ApiErrorSchema,
         404: ApiErrorSchema,
       },
@@ -337,6 +361,8 @@ export function registerSettingsRoutes(
   }, async (req, reply) => {
     try {
       assertReadyWorkspaceRoot(repo, req.params.orgId);
+      const forbidden = requireOrgSession(auth, req, reply, req.params.orgId);
+      if (forbidden) return forbidden;
       return repo.saveChannel(
         ChannelSchema.parse({
           id: randomUUID(),

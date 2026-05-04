@@ -126,7 +126,10 @@ export async function getServerAuthState(): Promise<SessionAuthState> {
 
 export async function requireOrgAccess(organizationId: string): Promise<SessionAuthState> {
   const authState = await getServerAuthState();
-  if (!authState.authenticated || authState.user?.organizationId !== organizationId) {
+  if (!authState.authenticated) {
+    throw new DaemonRequestError(401, "ERR_UNAUTHORIZED", "Session required");
+  }
+  if (authState.user?.organizationId !== organizationId) {
     throw new DaemonRequestError(403, "ERR_FORBIDDEN", "Unauthorized for this organization.");
   }
   return authState;

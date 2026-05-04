@@ -76,7 +76,13 @@ class LoopExit extends Error {
 }
 
 function isAbortError(err: unknown): boolean {
-  return err instanceof Error && err.name === 'AbortError';
+  if (err instanceof Error && err.name === 'AbortError') return true;
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    'name' in err &&
+    (err as { name?: unknown }).name === 'AbortError'
+  );
 }
 
 function raceWithAbortSignal<T>(inner: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
@@ -573,6 +579,17 @@ export async function runAiSdkLoop(input: AiSdkLoopInputs): Promise<AiSdkLoopOut
       return {
         exitReason: loopExit.outcome.exitReason ?? 'error',
         error: loopExit.outcome.error,
+        toolCalls,
+        iterations: 1,
+        tokensUsed: 0,
+        finalText: '',
+        browserState,
+        usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+      };
+    }
+    if (isAbortError(err) || abortSignal?.aborted) {
+      return {
+        exitReason: 'killed',
         toolCalls,
         iterations: 1,
         tokensUsed: 0,

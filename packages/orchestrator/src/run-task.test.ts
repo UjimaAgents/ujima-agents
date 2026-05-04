@@ -263,10 +263,10 @@ describe('orchestrator runTask — manual mode + concurrent execution', () => {
     setTimeout(() => handle.killAgent('sr-designer'), 15);
 
     const result = await handle.result;
-    expect(result.status).toBe('failed');
+    expect(result.status).toBe('paused');
     const sr = result.agentResults.find((r) => r.agentId === 'sr-designer');
     const jr = result.agentResults.find((r) => r.agentId === 'jr-designer');
-    expect(sr?.exitReason).toBe('error');
+    expect(sr?.exitReason).toBe('killed');
     expect(jr?.exitReason).toBe('completed');
   });
 
@@ -308,7 +308,7 @@ describe('orchestrator runTask — manual mode + concurrent execution', () => {
     setTimeout(() => handle.killSession(), 15);
     const result = await handle.result;
     expect(result.status).toBe('paused');
-    expect(result.agentResults.every((r) => r.exitReason === 'error')).toBe(true);
+    expect(result.agentResults.every((r) => r.exitReason === 'killed')).toBe(true);
   });
 
   it('fails the run when MCP connection cannot be acquired', async () => {

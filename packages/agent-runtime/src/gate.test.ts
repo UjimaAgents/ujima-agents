@@ -261,9 +261,7 @@ describe('runToolLoop — gate pause/resume', () => {
 
     setTimeout(() => handle.kill(), 20);
     const result = await handle.result;
-    // Kill during a human gate should never reach MCP; AI SDK may surface this as
-    // `killed` (LoopExit) or a wrapped `error` depending on streamText internals.
-    expect(result.exitReason === 'killed' || result.exitReason === 'error').toBe(true);
+    expect(result.exitReason).toBe('killed');
     expect(onCall).not.toHaveBeenCalled();
   });
 });

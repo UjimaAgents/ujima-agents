@@ -291,8 +291,8 @@ export class SettingsService {
         ...member,
         name: input.name,
         roleName: input.roleName,
-        llm: input.llm ? normalizeProviderKey(input.llm) : undefined,
-        model: input.model,
+        llm: input.llm !== undefined ? normalizeProviderKey(input.llm) : member.llm,
+        model: input.model !== undefined ? input.model : member.model,
       }),
     );
 

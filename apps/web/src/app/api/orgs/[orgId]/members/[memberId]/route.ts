@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { MemberSchema } from "@ujima/shared";
 import { parseApiError, upstreamUnavailable } from "@/server/api-response";
 import { daemonFetch, getSessionTokenFromCookie } from "@/server/ujima-daemon";
+import { requireProxyOrgAccess } from "@/server/route-guards";
 import { z } from "zod";
 
 export const dynamic = "force-dynamic";
@@ -43,6 +44,9 @@ export async function PATCH(
         { status: 400 },
       );
     }
+
+    const forbidden = await requireProxyOrgAccess(orgId);
+    if (forbidden) return forbidden;
 
     const response = await daemonFetch(
       `/api/orgs/${encodeURIComponent(orgId)}/members/${encodeURIComponent(memberId)}`,

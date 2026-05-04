@@ -270,6 +270,49 @@ describe('team config reconcile', () => {
     expect(hydratedStore.getTeam()?.getRole('frontend-engineer')?.model).toBe('gpt-5.4');
   });
 
+  it('preserves member provider and model when partial member updates omit them', async () => {
+    const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
+    const teamStore = createTeamStore();
+    const syncService = new ConfigSyncService(repo, teamStore);
+    const settings = new SettingsService(repo, teamStore);
+    const dir = await mkdtemp(join(tmpdir(), 'ujima-config-sync-'));
+    tempDirs.push(dir);
+    const configPath = join(dir, 'ujima.config.js');
+
+    await writeConfigFile(configPath, teamConfig());
+    const first = await syncService.loadAndReconcileFromFile(configPath);
+
+    const agent = settings.addMember({
+      organizationId: first.organization.id,
+      name: 'frontend-beta',
+      kind: 'agent',
+      roleName: 'frontend-engineer',
+      llm: 'openai',
+      model: 'gpt-5.4',
+    });
+
+    const updated = settings.updateMember({
+      organizationId: first.organization.id,
+      memberId: agent.id,
+      name: 'frontend-beta-renamed',
+      roleName: 'frontend-engineer',
+      personalityName: 'direct',
+      channelIds: ['general'],
+      role: {
+        name: 'frontend-engineer',
+        title: 'Frontend Engineer',
+        instructions: 'Build the product.',
+        workspaceScopes: ['apps/web'],
+        tools: ['filesystem', 'shell'],
+        channels: ['general'],
+        skills: [],
+      },
+    });
+
+    expect(updated.llm).toBe('openai');
+    expect(updated.model).toBe('gpt-5.4');
+  });
+
   it('rejects new agent members when the role does not already exist and no role object is provided', async () => {
     const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
     const teamStore = createTeamStore();

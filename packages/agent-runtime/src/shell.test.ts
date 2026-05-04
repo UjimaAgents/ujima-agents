@@ -202,7 +202,7 @@ describe('runAgent — single-agent end-to-end', () => {
 
     setTimeout(() => handle.kill(), 10);
     const result = await handle.result;
-    expect(result.exitReason).toBe('error');
+    expect(result.exitReason).toBe('killed');
     expect(handle.isRunning()).toBe(false);
   });
 });
