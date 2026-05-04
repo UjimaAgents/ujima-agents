@@ -1,34 +1,18 @@
-import { generateText, isLoopFinished, tool, type ModelMessage, type ToolSet } from 'ai';
-import { z } from 'zod';
-import { buildAgentSystemPrompt, normalizeProviderKey, type AgentTeamHandle } from '@ujima/framework';
-import { selectLanguageModel } from '@ujima/llm';
-import type { Message } from '@ujima/shared';
+import { generateText, isLoopFinished, type ToolSet } from 'ai';
+import { buildAgentSystemPrompt, normalizeProviderKey } from '@ujima/framework';
+import type { Message, SpiritRole } from '@ujima/shared';
+import { DEFAULT_SPIRIT_TEMPERATURE } from '@ujima/shared';
 import type { RepositoryReader } from './services/repository-reader.js';
 import type { TeamStore } from './services/team-store.js';
 import type { ToolService } from './services/tool-service.js';
-import { ALWAYS_AVAILABLE_AGENT_TOOLS, ORCHESTRATOR_TOOLS } from './tools/index.js';
-import { toModelToolName } from './tools/names.js';
-import { ToolApprovalRequiredError, toModelToolOutput } from './services/tool-loop-result.js';
+import { ALWAYS_AVAILABLE_AGENT_TOOLS } from './tools/index.js';
+import {
+  toModelMessages,
+  resolveSpiritModel,
+  buildToolDefinitions,
+} from './utils/to-model-messages.js';
+import { requireTeam } from './utils/require-team.js';
 
-
-const GenericToolInvocationSchema = z.object({
-  action: z.enum(['read', 'write', 'execute', 'mcp', 'message']),
-  resourceType: z.enum(['file', 'folder', 'shell', 'mcp', 'message']),
-  resourcePath: z.string().min(1).optional(),
-  input: z.record(z.string(), z.unknown()).default({}),
-});
-
-function toModelMessages(messages: Message[]): ModelMessage[] {
-  return messages.map((message) => ({
-    role:
-      message.kind === 'system'
-        ? 'system'
-        : message.senderKind === 'agent'
-          ? 'assistant'
-          : 'user',
-    content: message.content,
-  }));
-}
 
 // Resolver now delegates to the canonical `@ujima/llm` surface so every
 // AI-SDK-driven code path (this `/api/runs` service, the upcoming
@@ -53,7 +37,7 @@ export class AiService {
   async generateRunReply(
     input: GenerateRunReplyInput,
   ): Promise<Awaited<ReturnType<typeof generateText>>> {
-    const team = this.requireTeam();
+    const team = requireTeam(this.teamStore);
     const organization = this.repo.getOrganization(input.organizationId);
     if (!organization) {
       throw new Error(`Organization not found: ${input.organizationId}`);
@@ -68,44 +52,29 @@ export class AiService {
     if (!agent) {
       throw new Error(`Agent not found: ${member.id}`);
     }
-
     const role = team.getRole(agent.roleName);
     if (!role) {
       throw new Error(`Role not found: ${agent.roleName}`);
     }
 
-    const providerName = normalizeProviderKey(member.llm ?? role.provider ?? '');
-    if (!providerName) {
-      throw new Error(`Agent "${member.id}" is missing a provider`);
-    }
-
-    const provider = team.getProvider(providerName);
-    if (!provider) {
-      throw new Error(`Provider not found: ${providerName}`);
-    }
-
-    const modelId = member.model ?? role.model ?? provider.defaultModel;
-    if (!modelId) {
-      throw new Error(`Agent "${member.id}" is missing a model`);
-    }
-
-    const apiKey = this.repo.getProviderCredential(input.organizationId, providerName);
-    if (!apiKey) {
-      throw new Error(`Provider key missing for "${providerName}"`);
-    }
-
-    const kind = provider.kind;
-    const model = selectLanguageModel({
-      kind,
-      modelId,
-      apiKey,
-      baseUrl: provider.baseUrl,
+    const model = resolveSpiritModel({
+      organizationId: input.organizationId,
+      memberId: input.agentId,
+      role: 'worker' as SpiritRole,
+      member,
+      team,
+      getProviderCredential: (orgId, key) => this.repo.getProviderCredential(orgId, key),
+      resolveProviderName: (m, r) => normalizeProviderKey(m.llm ?? r.provider ?? ''),
+      resolveModelId: (r, p) => member.model ?? r.model ?? p.defaultModel,
     });
 
     const toolIds = [...new Set([...role.tools, ...ALWAYS_AVAILABLE_AGENT_TOOLS])];
-    const toolDefs = Object.fromEntries(
-      toolIds.map((toolId) => [toModelToolName(toolId), this.buildToolDefinition(input, toolId, team)]),
-    ) as ToolSet;
+    const toolDefs = buildToolDefinitions(toolIds, team, this.tools, {
+      organizationId: input.organizationId,
+      runId: input.runId,
+      memberId: input.agentId,
+      threadId: input.threadId,
+    }) as ToolSet;
 
     const system = buildAgentSystemPrompt(
       team.workspace.root,
@@ -139,82 +108,7 @@ export class AiService {
       tools: toolDefs,
       stopWhen: isLoopFinished(),
       maxOutputTokens: 1200,
-      temperature: 0.2,
-    });
-  }
-
-  private requireTeam() {
-    const team = this.teamStore.getTeam();
-    if (!team) {
-      throw new Error('Team config not loaded');
-    }
-
-    return team;
-  }
-
-  private buildToolDefinition(
-    input: GenerateRunReplyInput,
-    toolId: string,
-    team: AgentTeamHandle,
-  ) {
-    const t = ORCHESTRATOR_TOOLS[toolId];
-    if (t) {
-      return tool({
-        description: team.tools[toolId]?.description,
-        inputSchema: t.schema,
-        execute: async (args, { toolCallId }) => {
-          try {
-            const invocationData = t.toInvocation(args);
-            const result = await this.tools.invoke({
-              organizationId: input.organizationId,
-              runId: input.runId,
-              memberId: input.agentId,
-              threadId: input.threadId,
-              toolCallId,
-              toolId,
-              ...invocationData,
-            });
-            return toModelToolOutput(result);
-          } catch (error) {
-            if (error instanceof ToolApprovalRequiredError) {
-              throw error;
-            }
-            return {
-              error: error instanceof Error ? error.message : String(error),
-            };
-          }
-        },
-      });
-    }
-
-    // Fallback for tools not natively implemented via ORCHESTRATOR_TOOLS (e.g. mcp)
-    return tool({
-      description: team.tools[toolId]?.description,
-      inputSchema: GenericToolInvocationSchema,
-      execute: async (args, { toolCallId }) => {
-        try {
-          const result = await this.tools.invoke({
-            organizationId: input.organizationId,
-            runId: input.runId,
-            memberId: input.agentId,
-            threadId: input.threadId,
-            toolCallId,
-            toolId,
-            action: args.action,
-            resourceType: args.resourceType,
-            resourcePath: args.resourcePath,
-            input: args.input,
-          });
-          return toModelToolOutput(result);
-        } catch (error) {
-          if (error instanceof ToolApprovalRequiredError) {
-            throw error;
-          }
-          return {
-            error: error instanceof Error ? error.message : String(error),
-          };
-        }
-      },
+      temperature: DEFAULT_SPIRIT_TEMPERATURE,
     });
   }
 }

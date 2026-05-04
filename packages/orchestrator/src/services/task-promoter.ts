@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { AuditEvent } from '@ujima/shared';
+import { AGENT_KIND } from '@ujima/shared';
 import type { ApiRepository } from './repository-reader.js';
 import type { RunService } from './run.js';
 
@@ -67,14 +68,14 @@ export class TaskPromoterService {
   private resolveAssignee(input: TaskPromotionInput): string | null {
     if (input.assignedAgentId) {
       const member = this.repo.getMember(input.organizationId, input.assignedAgentId);
-      if (member && member.kind === 'agent' && !member.retiredAt) return member.id;
+      if (member && member.kind === AGENT_KIND && !member.retiredAt) return member.id;
       return null;
     }
     // Retired agents stay in storage for audit/history, so promotion has to
     // treat `retiredAt` as the active-membership boundary.
     const agents = this.repo
       .listMembers(input.organizationId)
-      .filter((m) => m.kind === 'agent' && !m.retiredAt);
+      .filter((m) => m.kind === AGENT_KIND && !m.retiredAt);
     return agents[0]?.id ?? null;
   }
 

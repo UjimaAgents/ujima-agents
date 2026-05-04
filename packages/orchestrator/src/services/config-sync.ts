@@ -10,6 +10,7 @@ import {
   type AgentTeamHandle,
 } from '@ujima/framework';
 import {
+  AGENT_KIND,
   AuditEventSchema,
   ChannelSchema,
   MemberSchema,
@@ -241,7 +242,7 @@ export class ConfigSyncService {
     }
 
     for (const member of existingMembers) {
-      if (member.kind !== 'agent') continue;
+      if (member.kind !== AGENT_KIND) continue;
       if (!configManagedMemberIds.has(member.id)) continue;
       if (activeAgentIds.has(member.id)) continue;
 
@@ -401,12 +402,12 @@ export class ConfigSyncService {
 
     const agents = this.repo
       .listMembers(organizationId)
-      .filter((member) => member.kind === 'agent' && !member.retiredAt)
+      .filter((member) => member.kind === AGENT_KIND && !member.retiredAt)
       .map((member) => ({
         name: member.id,
         roleName: member.roleName,
         personalityName: 'direct',
-        kind: 'agent',
+        kind: AGENT_KIND,
       }));
     if (agents.length === 0) return null;
     const agentIds = new Set(agents.map((agent) => agent.name));

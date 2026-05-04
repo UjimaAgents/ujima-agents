@@ -2,12 +2,11 @@ import { randomUUID } from 'node:crypto';
 import {
   stepCountIs,
   streamText,
-  tool,
   type LanguageModel,
-  type ModelMessage,
   type ToolSet,
 } from 'ai';
 import {
+  DEFAULT_SPIRIT_TEMPERATURE,
   MessageSchema,
   RunStateSchema,
   SocketEventNames,
@@ -21,22 +20,29 @@ import {
   type MessageCard,
   type MessageToolCall,
   type Spirit,
+  type SpiritRole,
+  AGENT_KIND,
 } from '@ujima/shared';
-import { buildAgentSystemPrompt, type AgentTeamHandle, type ProviderKind } from '@ujima/framework';
-import { selectLanguageModel } from '@ujima/llm';
+import { buildAgentSystemPrompt, type AgentTeamHandle } from '@ujima/framework';
+import { requireOrganization } from '../utils/require-organization.js';
+import { requireTeam } from '../utils/require-team.js';
+import {
+  toModelMessages,
+  resolveSpiritModel,
+  defaultResolveProviderName,
+  defaultResolveModelId,
+  buildToolDefinitions,
+} from '../utils/to-model-messages.js';
 import {
   ALWAYS_AVAILABLE_AGENT_TOOLS,
-  ORCHESTRATOR_TOOLS,
   SUPERVISOR_TOOL_ALLOWLIST,
 } from '../tools/index.js';
-import { toModelToolName } from '../tools/names.js';
-import type { OrchestratorTool } from '../tools/types.js';
 import { ActiveSpiritRegistry, isAliveStatus } from './active-spirit-registry.js';
 import type { RealtimeService } from './context.js';
 import type { ApiRepository } from './repository-reader.js';
 import type { TeamStore } from './team-store.js';
 import type { ToolService } from './tool-service.js';
-import { ToolApprovalRequiredError, toModelToolOutput } from './tool-loop-result.js';
+import { ToolApprovalRequiredError } from './tool-loop-result.js';
 
 // ----------------------------------------------------------------------
 // SpiritService — Phase 2.A.4
@@ -60,18 +66,10 @@ import { ToolApprovalRequiredError, toModelToolOutput } from './tool-loop-result
 // approval gate, and audit trail all apply.
 // ----------------------------------------------------------------------
 
-const SUPPORTED_PROVIDER_KINDS: ReadonlySet<ProviderKind> = new Set([
-  'anthropic',
-  'openai',
-  'google',
-  'openrouter',
-  'ollama',
-]);
-
 export interface ModelResolverInput {
   organizationId: string;
   memberId: string;
-  role: 'worker' | 'supervisor';
+  role: SpiritRole;
 }
 
 /**
@@ -104,7 +102,7 @@ export interface SpawnSpiritInput {
   organizationId: string;
   taskSessionId: string;
   memberId: string;
-  role?: 'worker' | 'supervisor';
+  role?: SpiritRole;
 }
 
 export interface RunSpiritInput {
@@ -118,7 +116,7 @@ export interface RunSpiritInput {
   /** Restrict the tool palette to a specific allowlist (supervisor mode). */
   toolAllowlist?: readonly string[];
   /** Force role on the spirit row. Default 'worker'. */
-  role?: 'worker' | 'supervisor';
+  role?: SpiritRole;
 }
 
 export interface RunSpiritOutcome {
@@ -145,7 +143,7 @@ export class SpiritService {
   ) {
     this.maxIterationsPerRun = options.maxIterationsPerRun ?? 12;
     this.maxOutputTokens = options.maxOutputTokens;
-    this.temperature = options.temperature ?? 0.2;
+    this.temperature = options.temperature ?? DEFAULT_SPIRIT_TEMPERATURE;
     this.modelResolver = options.modelResolver ?? this.defaultModelResolver();
     this.registry = options.registry ?? new ActiveSpiritRegistry();
   }
@@ -168,7 +166,7 @@ export class SpiritService {
   bootstrap(organizationId: string): void {
     const members = this.repo.listMembers(organizationId);
     for (const member of members) {
-      if (member.kind !== 'agent') continue;
+      if (member.kind !== AGENT_KIND) continue;
       const active = this.repo.listActiveSpiritsForMember(organizationId, member.id);
       // `listActiveSpiritsForMember` is `updated_at DESC`. Register
       // in reverse so the newest spirit ends up with the highest
@@ -235,7 +233,7 @@ export class SpiritService {
    * though their DB rows are still valid (the audit's stated bug).
    */
   spawnTracked(input: SpawnSpiritInput): { spirit: Spirit; created: boolean } {
-    this.requireOrganization(input.organizationId);
+    requireOrganization(this.repo, input.organizationId);
     const role = input.role ?? 'worker';
     const session = this.repo.getTaskSession(input.organizationId, input.taskSessionId);
     if (!session) {
@@ -245,7 +243,7 @@ export class SpiritService {
     if (!member) {
       throw new Error(`Member not found: ${input.memberId}`);
     }
-    if (member.kind !== 'agent') {
+    if (member.kind !== AGENT_KIND) {
       // Only agents do work. The originating human is on the channel
       // membership but doesn't get a spirit row.
       throw new Error(`Member "${input.memberId}" is not an agent`);
@@ -413,7 +411,7 @@ export class SpiritService {
     if (!member) {
       throw new Error(`Member not found: ${input.memberId}`);
     }
-    const team = this.requireTeam();
+    const team = requireTeam(this.teamStore);
     const organization = this.repo.getOrganization(input.organizationId);
     if (!organization) {
       throw new Error(`Organization not found: ${input.organizationId}`);
@@ -447,7 +445,7 @@ export class SpiritService {
       .data
       .slice()
       .reverse();
-    const messages = this.toModelMessages(recent, member);
+    const messages = toModelMessages(recent, member.id);
     if (input.extraPrompt) {
       messages.push({ role: 'user', content: input.extraPrompt });
     } else {
@@ -560,8 +558,8 @@ export class SpiritService {
           threadId: session.channelId,
           channelId: session.channelId,
           senderId: member.id,
-          senderKind: 'agent',
-          kind: 'agent',
+          senderKind: AGENT_KIND,
+          kind: AGENT_KIND,
           content: stepText || `[tool turn — ${stepToolCalls.length} call(s)]`,
           toolCalls,
           createdAt: new Date().toISOString(),
@@ -692,7 +690,7 @@ export class SpiritService {
 
   private resolveToolAllowlist(
     roleTools: readonly string[],
-    role: 'worker' | 'supervisor',
+    role: SpiritRole,
     override: readonly string[] | undefined,
   ): readonly string[] {
     if (override) return override;
@@ -710,52 +708,11 @@ export class SpiritService {
       memberId: string;
       threadId: string;
       taskSessionId: string;
-      spiritRole: 'worker' | 'supervisor';
+      spiritRole: SpiritRole;
       team: AgentTeamHandle;
     },
   ): ToolSet {
-    const entries: [string, OrchestratorTool][] = [];
-    for (const toolId of toolIds) {
-      const def = ORCHESTRATOR_TOOLS[toolId] as OrchestratorTool | undefined;
-      if (def) entries.push([toolId, def]);
-    }
-    // Inline `tool({...})` per iteration mirrors `AiService.buildToolDefinition`
-    // and keeps the `Tool<args, ...>` generic resolved per-iteration. A
-    // `Record<string, ReturnType<typeof tool>>` collapses the generic to
-    // `Tool<never, never>` and breaks the assignment.
-    return Object.fromEntries(
-      entries.map(([toolId, definition]) => [
-        toModelToolName(toolId),
-        tool({
-        description: ctx.team.tools[toolId]?.description ?? `${toolId} tool`,
-        inputSchema: definition.schema,
-        execute: async (rawArgs, { toolCallId }) => {
-            try {
-              const invocationData = definition.toInvocation(rawArgs);
-              const result = await this.tools.invoke({
-                organizationId: ctx.organizationId,
-                runId: ctx.runId,
-                memberId: ctx.memberId,
-                threadId: ctx.threadId,
-                taskSessionId: ctx.taskSessionId,
-                spiritRole: ctx.spiritRole,
-                toolCallId,
-                toolId,
-                ...invocationData,
-              });
-              return toModelToolOutput(result);
-            } catch (error) {
-              if (error instanceof ToolApprovalRequiredError) {
-                throw error;
-              }
-              return {
-                error: error instanceof Error ? error.message : String(error),
-              };
-            }
-          },
-        }),
-      ]),
-    ) as ToolSet;
+    return buildToolDefinitions(toolIds, ctx.team, this.tools, ctx);
   }
 
   private toMessageToolCalls(
@@ -795,32 +752,6 @@ export class SpiritService {
     });
   }
 
-  private toModelMessages(messages: Message[], self: Member): ModelMessage[] {
-    return messages.map((m) => ({
-      role:
-        m.kind === 'system'
-          ? 'system'
-          : m.senderId === self.id
-            ? 'assistant'
-            : 'user',
-      content: m.content,
-    }));
-  }
-
-  private requireTeam(): AgentTeamHandle {
-    const team = this.teamStore.getTeam();
-    if (!team) {
-      throw new Error('Team config not loaded');
-    }
-    return team;
-  }
-
-  private requireOrganization(organizationId: string): void {
-    if (!this.repo.getOrganization(organizationId)) {
-      throw new Error(`Organization not found: ${organizationId}`);
-    }
-  }
-
   private emit(event: string, spirit: Spirit): void {
     this.realtime.emit(
       event as Parameters<RealtimeService['emit']>[0],
@@ -835,47 +766,26 @@ export class SpiritService {
 
   private defaultModelResolver(): ModelResolver {
     return ({ organizationId, memberId, role }) => {
-      const team = this.requireTeam();
+      const team = requireTeam(this.teamStore);
       const member = this.repo.getMember(organizationId, memberId);
       if (!member) {
         throw new Error(`Member not found: ${memberId}`);
       }
-      const agent = team.getAgent(member.id) ?? team.getAgent(member.name);
-      if (!agent) {
-        throw new Error(`Agent not found: ${memberId}`);
-      }
-      const teamRole = team.getRole(agent.roleName);
-      if (!teamRole) {
-        throw new Error(`Role not found: ${agent.roleName}`);
-      }
-      if (!teamRole.provider) {
-        throw new Error(`Role "${teamRole.name}" is missing a provider`);
-      }
-      const provider = team.getProvider(teamRole.provider);
-      if (!provider) {
-        throw new Error(`Provider not found: ${teamRole.provider}`);
-      }
-      const modelId = pickProviderModel({ teamRole, provider, role });
-      if (!modelId) {
-        throw new Error(`Provider "${teamRole.provider}" has no model id`);
-      }
-      const apiKey = this.repo.getProviderCredential(organizationId, teamRole.provider);
-      if (!apiKey) {
-        throw new Error(`Provider key missing for "${teamRole.provider}"`);
-      }
-      const kind = provider.kind;
-      if (!SUPPORTED_PROVIDER_KINDS.has(kind)) {
-        throw new Error(`Unsupported provider kind "${kind}"`);
-      }
-      return selectLanguageModel({
-        kind,
-        modelId,
-        apiKey,
-        baseUrl: provider.baseUrl,
+      return resolveSpiritModel({
+        organizationId,
+        memberId,
+        role,
+        member,
+        team,
+        getProviderCredential: (orgId, key) => this.repo.getProviderCredential(orgId, key),
+        resolveProviderName: defaultResolveProviderName,
+        resolveModelId: defaultResolveModelId,
       });
     };
   }
 }
+
+export { defaultResolveModelId as _defaultResolveModelId } from '../utils/to-model-messages.js';
 
 /**
  * Cheaper-tier provider selection helper. Exported so the
@@ -890,14 +800,11 @@ export class SpiritService {
 export function pickProviderModel(input: {
   teamRole: { model?: string };
   provider: { defaultModel?: string };
-  role: 'worker' | 'supervisor';
+  role: SpiritRole;
 }): string | undefined {
-  const baseModel = input.teamRole.model ?? input.provider.defaultModel;
-  if (input.role !== 'supervisor') return baseModel;
-  const supervisorTier =
-    (input.provider as { supervisorModel?: string; supervisor_model?: string })
-      .supervisorModel ??
-    (input.provider as { supervisorModel?: string; supervisor_model?: string })
-      .supervisor_model;
-  return supervisorTier ?? baseModel;
+  return defaultResolveModelId(
+    input.teamRole,
+    input.provider as { defaultModel?: string; supervisorModel?: string; supervisor_model?: string },
+    input.role,
+  );
 }

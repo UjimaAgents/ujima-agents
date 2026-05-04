@@ -8,6 +8,7 @@ import {
 } from 'ai';
 import { z } from 'zod';
 import type { AgentDef, UjimaEvent } from '@ujima/shared';
+import { DEFAULT_SPIRIT_TEMPERATURE } from '@ujima/shared';
 import type { AuditLog } from '@ujima/context-store';
 import type { MCPConnection, ToolInfo } from '@ujima/mcp-client';
 import type { PermissionMiddleware } from '@ujima/permissions';
@@ -174,7 +175,7 @@ export async function runAiSdkLoop(input: AiSdkLoopInputs): Promise<AiSdkLoopOut
     onStream,
     gateResolver,
     maxOutputTokens,
-    temperature = 0.2,
+    temperature = DEFAULT_SPIRIT_TEMPERATURE,
   } = input;
 
   let toolCalls = 0;

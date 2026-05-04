@@ -72,6 +72,9 @@ export function AgentsTab({
         description: role?.description ?? "",
         instructions: role?.instructions ?? "",
         channelIds: memberChannelIds,
+        workspaceScopes: role?.workspaceScopes ?? [],
+        tools: role?.tools ?? [],
+        skills: role?.skills ?? [],
       },
     }));
     setMenuId(null);
@@ -100,12 +103,12 @@ export function AgentsTab({
             kind: "agent",
             provider: draft.llm.trim(),
             model: draft.model.trim(),
-            workspaceScopes: [],
-            tools: [],
+            workspaceScopes: draft.workspaceScopes,
+            tools: draft.tools,
             channels: draft.channelIds
               .map((channelId) => bootstrap.channels.find((channel) => channel.id === channelId)?.name)
               .filter((name): name is string => Boolean(name)),
-            skills: [],
+            skills: draft.skills,
           },
         }),
       });
@@ -338,4 +341,7 @@ interface AgentDraft {
   description: string;
   instructions: string;
   channelIds: string[];
+  workspaceScopes: string[];
+  tools: string[];
+  skills: string[];
 }

@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import {
+  AGENT_KIND,
   ChannelSchema,
   MessageMentionSchema,
   MessageSchema,
@@ -16,6 +17,7 @@ import {
 import type { RealtimeService } from './context.js';
 import { selfChannelId } from './member-channels.js';
 import type { ConversationRepository, PaginatedMessages } from './repository-reader.js';
+import { requireOrganization } from '../utils/require-organization.js';
 
 export interface ArchivedChannelMessageStore {
   listChannelMessages(input: {
@@ -71,7 +73,7 @@ export class ConversationService {
   }
 
   listChannels(organizationId: string, cursor?: string, limit?: number) {
-    this.requireOrganization(organizationId);
+    requireOrganization(this.repo, organizationId);
     // Filter `self` AND `dm` at the SQL layer.
     //
     // - `self` channels are private agent scratchpads — never surface here.
@@ -91,7 +93,7 @@ export class ConversationService {
     memberId: string;
     scope: 'mine' | 'all';
   }): Channel[] {
-    this.requireOrganization(input.organizationId);
+    requireOrganization(this.repo, input.organizationId);
     const member = this.repo.getMember(input.organizationId, input.memberId);
     if (!member) {
       throw new Error(`Member not found: ${input.memberId}`);
@@ -112,7 +114,7 @@ export class ConversationService {
     limit?: number,
     memberId?: string,
   ) {
-    this.requireOrganization(organizationId);
+    requireOrganization(this.repo, organizationId);
 
     if (memberId) {
       this.requireThreadAccess(organizationId, threadId, memberId);
@@ -160,7 +162,7 @@ export class ConversationService {
     cursor?: string;
     limit?: number;
   }): Promise<PaginatedMessages> {
-    this.requireOrganization(input.organizationId);
+    requireOrganization(this.repo, input.organizationId);
     const member = this.repo.getMember(input.organizationId, input.memberId);
     if (!member) {
       throw new Error(`Member not found: ${input.memberId}`);
@@ -259,7 +261,7 @@ export class ConversationService {
     mentions?: string[];
     parentMessageId?: string;
   }) {
-    this.requireOrganization(input.organizationId);
+    requireOrganization(this.repo, input.organizationId);
 
     const sender = this.repo.getMember(input.organizationId, input.senderId);
     if (!sender) {
@@ -285,7 +287,7 @@ export class ConversationService {
       const parent = this.requireMessage(input.organizationId, input.parentMessageId);
 
       const parentSender = this.repo.getMember(input.organizationId, parent.senderId);
-      if (parentSender?.kind === 'agent') {
+      if (parentSender?.kind === AGENT_KIND) {
         mentions.add(parent.senderId);
       }
 
@@ -373,7 +375,7 @@ export class ConversationService {
     mentions?: string[];
     parentMessageId?: string;
   }) {
-    this.requireOrganization(input.organizationId);
+    requireOrganization(this.repo, input.organizationId);
 
     const sender = this.repo.getMember(input.organizationId, input.senderId);
     if (!sender) {
@@ -457,7 +459,7 @@ export class ConversationService {
     memberId: string;
     body: string;
   }) {
-    this.requireOrganization(input.organizationId);
+    requireOrganization(this.repo, input.organizationId);
     const member = this.repo.getMember(input.organizationId, input.memberId);
     if (!member) {
       throw new Error(`Member not found: ${input.memberId}`);
@@ -563,7 +565,7 @@ export class ConversationService {
       }
 
       const member = this.repo.getMember(message.organizationId, mention.memberId);
-      if (!member || member.kind !== 'agent' || member.retiredAt) {
+      if (!member || member.kind !== AGENT_KIND || member.retiredAt) {
         continue;
       }
 
@@ -885,12 +887,6 @@ export class ConversationService {
       ...message,
       mentionNames: message.mentionNames ?? this.resolveMentionNames(organizationId, message.content, resolvedChannel),
     });
-  }
-
-  private requireOrganization(organizationId: string) {
-    if (!this.repo.getOrganization(organizationId)) {
-      throw new Error(`Organization not found: ${organizationId}`);
-    }
   }
 
   private requireMessage(organizationId: string, messageId: string): Message {

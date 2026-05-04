@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
 import { normalizeProviderKey } from '@ujima/framework';
 import {
+  AGENT_KIND,
   ChannelSchema,
   MemberSchema,
   OrganizationSchema,
@@ -207,7 +208,7 @@ export class OnboardingService {
           id: agent.name,
           organizationId,
           name: agent.name,
-          kind: 'agent',
+          kind: AGENT_KIND,
           roleName: agent.roleName,
           presence: 'offline',
           createdAt: new Date().toISOString(),
@@ -249,7 +250,7 @@ export class OnboardingService {
     const memberIdsByRole = new Map<string, string[]>();
 
     for (const member of members) {
-      if (member.kind !== 'agent') continue;
+      if (member.kind !== AGENT_KIND) continue;
       const ids = memberIdsByRole.get(member.roleName) ?? [];
       ids.push(member.id);
       memberIdsByRole.set(member.roleName, ids);

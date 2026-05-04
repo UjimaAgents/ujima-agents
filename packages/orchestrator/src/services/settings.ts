@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { ChannelSchema, MemberSchema, type Organization, type Member, type Channel } from '@ujima/shared';
+import { AGENT_KIND, ChannelSchema, MemberSchema, type Organization, type Member, type Channel } from '@ujima/shared';
 import { createAgent, defineRole, normalizeProviderKey, type RoleConfig } from '@ujima/framework';
 import type { ApiRepository } from './repository-reader.js';
 import type { TeamStore } from './team-store.js';
@@ -8,6 +8,8 @@ import { addMemberToDefaultChannels, ensureMemberSelfChannel } from './member-ch
 import { upsertWorkspaceMemberScopes } from './workspace-root.js';
 import { upsertDashboardTeamOverride } from './dashboard-team-overrides.js';
 import { persistTeamConfig } from './config-sync.js';
+import { requireTeam } from '../utils/require-team.js';
+import { requireOrganization } from '../utils/require-organization.js';
 
 export interface TeamSettingsResponse {
   name: string;
@@ -155,7 +157,7 @@ export class SettingsService {
   ) {}
 
   getTeamSettings(): TeamSettingsResponse {
-    const team = this.requireTeam();
+    const team = requireTeam(this.teamStore);
     return {
       name: team.config.name,
       workspace: team.workspace,
@@ -169,8 +171,8 @@ export class SettingsService {
   }
 
   listProviders(organizationId: string): ProviderStatus[] {
-    const team = this.requireTeam();
-    this.requireOrganization(organizationId);
+    const team = requireTeam(this.teamStore);
+    requireOrganization(this.repo, organizationId);
     return listProviderStatuses(team, this.repo.listProviderCredentials(organizationId));
   }
 
@@ -178,8 +180,8 @@ export class SettingsService {
     organizationId: string,
     providerKeys: Record<string, string>,
   ): ProviderStatus[] {
-    const team = this.requireTeam();
-    this.requireOrganization(organizationId);
+    const team = requireTeam(this.teamStore);
+    requireOrganization(this.repo, organizationId);
     const normalizedProviderKeys = Object.fromEntries(
       Object.entries(providerKeys).map(([name, apiKey]) => [normalizeProviderKey(name), apiKey]),
     );
@@ -197,15 +199,15 @@ export class SettingsService {
   }
 
   deleteProvider(organizationId: string, providerName: string): ProviderStatus[] {
-    this.requireTeam();
-    this.requireOrganization(organizationId);
+    requireTeam(this.teamStore);
+    requireOrganization(this.repo, organizationId);
     this.repo.deleteProviderCredential(organizationId, normalizeProviderKey(providerName));
     return this.listProviders(organizationId);
   }
 
   testProvider(organizationId: string, providerName: string): ProviderTestResult {
-    const team = this.requireTeam();
-    this.requireOrganization(organizationId);
+    const team = requireTeam(this.teamStore);
+    requireOrganization(this.repo, organizationId);
     const providerKey = normalizeProviderKey(providerName);
 
     if (!team.providers[providerKey]) {
@@ -225,10 +227,10 @@ export class SettingsService {
   }
 
   addMember(input: AddMemberInput): Member {
-    this.requireOrganization(input.organizationId);
-    const team = this.requireTeam();
+    requireOrganization(this.repo, input.organizationId);
+    const team = requireTeam(this.teamStore);
     const existingRole = team.getRole(input.roleName);
-    if (input.kind === 'agent' && !input.role && !existingRole) {
+    if (input.kind === AGENT_KIND && !input.role && !existingRole) {
       throw new Error(`Role "${input.roleName}" not found`);
     }
     const role = input.role || existingRole
@@ -251,7 +253,7 @@ export class SettingsService {
       model: input.model,
     });
     const saved = this.repo.saveMember(member);
-    if (input.kind === 'agent') {
+    if (input.kind === AGENT_KIND) {
       upsertDashboardTeamOverride(this.repo, input.organizationId, this.teamStore, {
         role,
         agent: createAgent(saved.id, saved.roleName, input.personalityName ?? 'direct'),
@@ -279,13 +281,13 @@ export class SettingsService {
   }
 
   updateMember(input: UpdateMemberInput): Member {
-    this.requireOrganization(input.organizationId);
-    const team = this.requireTeam();
+    requireOrganization(this.repo, input.organizationId);
+    const team = requireTeam(this.teamStore);
     const member = this.repo.getMember(input.organizationId, input.memberId);
     if (!member) {
       throw new Error(`Member not found: ${input.memberId}`);
     }
-    if (member.kind !== 'agent') {
+    if (member.kind !== AGENT_KIND) {
       throw new Error('Only agents can be edited here');
     }
 
@@ -295,7 +297,7 @@ export class SettingsService {
       ...input.role,
       id: input.role.id ?? existingRole?.id ?? input.roleName,
       name: input.roleName,
-      kind: 'agent',
+      kind: AGENT_KIND,
       provider: input.role.provider ?? existingRole?.provider,
       model: input.role.model ?? existingRole?.model,
     });
@@ -321,7 +323,7 @@ export class SettingsService {
       {
         previousAgentName: member.id,
         previousRoleName: this.repo.listMembers(input.organizationId).some(
-          (item) => item.kind === 'agent' && item.id !== member.id && item.roleName === member.roleName,
+          (item) => item.kind === AGENT_KIND && item.id !== member.id && item.roleName === member.roleName,
         )
           ? undefined
           : member.roleName,
@@ -352,7 +354,7 @@ export class SettingsService {
   }
 
   addChannel(input: CreateChannelInput): Channel {
-    this.requireOrganization(input.organizationId);
+    requireOrganization(this.repo, input.organizationId);
     return this.repo.saveChannel(
       ChannelSchema.parse({
         id: randomUUID(),
@@ -366,8 +368,8 @@ export class SettingsService {
   }
 
   updatePolicies(input: UpdatePoliciesInput): OrganizationSettingsResponse {
-    this.requireOrganization(input.organizationId);
-    const team = this.requireTeam();
+    requireOrganization(this.repo, input.organizationId);
+    const team = requireTeam(this.teamStore);
 
     if (input.requireApprovalForWrites !== undefined) {
       team.config.policies.requireApprovalForWrites = input.requireApprovalForWrites;
@@ -382,7 +384,7 @@ export class SettingsService {
   }
 
   updateChannel(input: UpdateChannelInput): Channel {
-    this.requireOrganization(input.organizationId);
+    requireOrganization(this.repo, input.organizationId);
     const existing = this.repo.getChannel(input.organizationId, input.channelId);
     if (!existing) {
       throw new Error(`Channel not found: ${input.channelId}`);
@@ -398,7 +400,7 @@ export class SettingsService {
   }
 
   deleteChannel(organizationId: string, channelId: string): void {
-    this.requireOrganization(organizationId);
+    requireOrganization(this.repo, organizationId);
     const existing = this.repo.getChannel(organizationId, channelId);
     if (!existing) {
       throw new Error(`Channel not found: ${channelId}`);
@@ -407,7 +409,7 @@ export class SettingsService {
   }
 
   getOrganizationSettings(organizationId: string): OrganizationSettingsResponse {
-    this.requireOrganization(organizationId);
+    requireOrganization(this.repo, organizationId);
     const organization = this.repo.getOrganization(organizationId);
     if (!organization) {
       throw new Error(`Organization not found: ${organizationId}`);
@@ -452,7 +454,7 @@ export class SettingsService {
         );
       }
       const memberIds = new Set(members.map((m) => m.id));
-      const agentIds = new Set(members.filter((m) => m.kind === 'agent').map((m) => m.id));
+      const agentIds = new Set(members.filter((m) => m.kind === AGENT_KIND).map((m) => m.id));
       validateOrganizationChart(input.organizationChart.reportsTo, memberIds, agentIds, owner.id);
     }
 
@@ -467,18 +469,6 @@ export class SettingsService {
       members: this.repo.listMembers(input.organizationId),
       channels: visibleChannels(visibleChannelsFromRepo(this.repo, input.organizationId)),
     };
-  }
-
-  private requireTeam() {
-    const team = this.teamStore.getTeam();
-    if (!team) throw new Error('Team config not loaded');
-    return team;
-  }
-
-  private requireOrganization(organizationId: string): void {
-    if (!this.repo.getOrganization(organizationId)) {
-      throw new Error(`Organization not found: ${organizationId}`);
-    }
   }
 
   private isConfigOwnedField(

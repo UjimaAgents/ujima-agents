@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import {
+  AGENT_KIND,
   MessageSchema,
   SocketEventNames,
   channelRoom,
@@ -273,8 +274,8 @@ export class SupervisorService {
       channelId,
       parentMessageId: sourceMessage?.id,
       senderId: input.memberId,
-      senderKind: 'agent',
-      kind: 'agent',
+      senderKind: AGENT_KIND,
+      kind: AGENT_KIND,
       content: body,
       createdAt: new Date().toISOString(),
     });

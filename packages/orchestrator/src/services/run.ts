@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { normalizeProviderKey } from '@ujima/framework';
 import {
+  AGENT_KIND,
   MessageSchema,
   RunStateSchema,
   SocketEventNames,
@@ -11,8 +12,8 @@ import {
   type RunState,
   type Message,
 } from '@ujima/shared';
-import type { AgentTeamHandle } from '@ujima/framework';
 import type { AiService } from '../ai-service.js';
+import { requireTeam } from '../utils/require-team.js';
 import type { RealtimeService } from './context.js';
 import type { ConversationService } from './conversation.js';
 import type { ApiRepository } from './repository-reader.js';
@@ -44,7 +45,7 @@ export class RunService {
       throw new Error(`Member not found: ${input.agentId}`);
     }
 
-    if (member.kind !== 'agent') {
+    if (member.kind !== AGENT_KIND) {
       throw new Error(`Member "${input.agentId}" is not an agent`);
     }
 
@@ -143,7 +144,7 @@ export class RunService {
 
   private async advanceRun(run: RunState): Promise<RunState> {
     applyDashboardTeamOverrides(this.repo, run.organizationId, this.teamStore);
-    const team = this.requireTeam();
+    const team = requireTeam(this.teamStore);
     const member = this.repo.getMember(run.organizationId, run.agentId);
     if (!member) {
       throw new Error(`Member not found: ${run.agentId}`);
@@ -219,8 +220,8 @@ export class RunService {
             threadId: run.threadId,
             channelId: this.repo.getThread(run.organizationId, run.threadId)?.channelId,
             senderId: run.agentId,
-            senderKind: 'agent',
-            kind: 'agent',
+            senderKind: AGENT_KIND,
+            kind: AGENT_KIND,
             content: reply,
             createdAt: new Date().toISOString(),
           }),
@@ -289,11 +290,4 @@ export class RunService {
     return failed;
   }
 
-  private requireTeam(): AgentTeamHandle {
-    const team = this.teamStore.getTeam();
-    if (!team) {
-      throw new Error('Team config not loaded');
-    }
-    return team;
-  }
 }

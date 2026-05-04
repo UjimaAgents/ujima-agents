@@ -10,6 +10,7 @@ import {
 } from "@ujima/shared";
 import type { RealtimeService } from "./context.js";
 import type { ConversationService } from "./conversation.js";
+import { requireTeam } from "../utils/require-team.js";
 import { checkToolPolicy } from "./policy.js";
 import type { ApiRepository } from "./repository-reader.js";
 import type { SupervisorTodoService } from "./supervisor-todo.js";
@@ -132,7 +133,7 @@ export class ToolServiceImpl implements ToolService {
       invocation.runId,
       invocation.memberId,
     );
-    const team = this.requireTeam();
+    const team = requireTeam(this.teamStore);
     let preparedInvocation: ToolInvocationInput;
 
     try {
@@ -336,7 +337,7 @@ export class ToolServiceImpl implements ToolService {
     if (tool) {
       return tool.execute({
         invocation,
-        team: this.requireTeam(),
+        team: requireTeam(this.teamStore),
         repo: this.repo,
         conversations: this.conversations,
         supervisorTodos: this.supervisorTodos,
@@ -352,14 +353,6 @@ export class ToolServiceImpl implements ToolService {
     throw new Error(
       `Tool "${invocation.toolId}" action "${invocation.action}" is not implemented`,
     );
-  }
-
-  private requireTeam(): AgentTeamHandle {
-    const team = this.teamStore.getTeam();
-    if (!team) {
-      throw new Error("Team config not loaded");
-    }
-    return team;
   }
 
   private consumeApprovedRun(organizationId: string, runId: string): boolean {

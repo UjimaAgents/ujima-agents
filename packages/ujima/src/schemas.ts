@@ -3,25 +3,14 @@ import {
   ChannelSchema,
   MemberKindSchema,
   OrganizationChartSchema,
+  PROVIDER_KINDS,
   RoleScopesSchema,
   ToolCapabilitySchema,
   WorkspaceConfigSchema,
 } from '@ujima/shared';
 
-export const ProviderKindSchema = z.enum([
-  'anthropic',
-  'openai',
-  'google',
-  'openrouter',
-  'ollama',
-  'deepseek',
-  'xai',
-  'mistral',
-  'kimi',
-  'zhipu',
-  'openai-codex',
-]);
-export type ProviderKind = z.infer<typeof ProviderKindSchema>;
+export const ProviderKindSchema = z.enum(PROVIDER_KINDS);
+export type ProviderKind = (typeof PROVIDER_KINDS)[number];
 
 export const ProviderConfigSchema = z.object({
   kind: ProviderKindSchema,

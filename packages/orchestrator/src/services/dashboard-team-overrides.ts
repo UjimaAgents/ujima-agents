@@ -5,6 +5,7 @@ import {
   type AgentConfig,
   type RoleConfig,
 } from '@ujima/framework';
+import { AGENT_KIND } from '@ujima/shared';
 import type { ApiRepository } from './repository-reader.js';
 import type { TeamStore } from './team-store.js';
 
@@ -49,7 +50,7 @@ function readOverrides(
             .map((agent) => createAgent(agent.name, agent.roleName, agent.personalityName ?? 'direct'))
             .filter((agent) => {
               const member = members.get(agent.name);
-              return !member || (member.kind === 'agent' && !member.retiredAt);
+              return !member || (member.kind === AGENT_KIND && !member.retiredAt);
             })
         : [],
     };
