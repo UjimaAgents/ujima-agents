@@ -8,14 +8,31 @@ import type {
   LanguageModelV3StreamResult,
   LanguageModelV3ToolCall,
   LanguageModelV3ToolResultPart,
+  LanguageModelV3Usage,
 } from '@ai-sdk/provider';
-import type { LLMContentPart, LLMMessage, LLMProvider, LLMToolSpec } from '@ujima/llm/legacy';
+import type { LLMContentPart, LLMMessage, LLMProvider, LLMToolSpec, LLMUsage } from '@ujima/llm/legacy';
 import type { LanguageModel } from 'ai';
 
-function emptyUsage(): LanguageModelV3GenerateResult['usage'] {
+function emptyUsage(): LanguageModelV3Usage {
   return {
     inputTokens: { total: undefined, noCache: undefined, cacheRead: undefined, cacheWrite: undefined },
     outputTokens: { total: undefined, text: undefined, reasoning: undefined },
+  };
+}
+
+function legacyUsageToV3(d: LLMUsage): LanguageModelV3Usage {
+  return {
+    inputTokens: {
+      total: d.inputTokens,
+      noCache: undefined,
+      cacheRead: undefined,
+      cacheWrite: undefined,
+    },
+    outputTokens: {
+      total: d.outputTokens,
+      text: undefined,
+      reasoning: undefined,
+    },
   };
 }
 
@@ -209,7 +226,7 @@ export function createLanguageModelFromLegacyProvider(legacy: LLMProvider, model
                       : ('stop' as const);
                 controller.enqueue({
                   type: 'finish',
-                  usage: emptyUsage(),
+                  usage: d.usage ? legacyUsageToV3(d.usage) : emptyUsage(),
                   finishReason: { unified, raw: d.reason },
                 });
               }

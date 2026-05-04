@@ -142,7 +142,15 @@ export class ConfigSyncService {
 
     const stored = this.repo.getWorkspaceSetting(organization.id, TEAM_CONFIG_SETTING_KEY);
     if (stored) {
-      const team = loadAgentTeam(JSON.parse(stored) as Record<string, unknown>);
+      const parsedStored = JSON.parse(stored) as Record<string, unknown>;
+      if (parsedStored.providers && typeof parsedStored.providers === 'object') {
+        for (const [providerName, providerConfig] of Object.entries(parsedStored.providers)) {
+          if (typeof providerConfig === 'object' && providerConfig && !('kind' in providerConfig)) {
+            (providerConfig as Record<string, unknown>).kind = providerName;
+          }
+        }
+      }
+      const team = loadAgentTeam(parsedStored);
       this.teamStore.setTeam(team);
       applyDashboardTeamOverrides(this.repo, organization.id, this.teamStore);
       return { organizationId: organization.id, inferred: false };
@@ -422,6 +430,7 @@ export class ConfigSyncService {
     const providerNames = Object.keys(this.repo.listProviderCredentials(organizationId)).map(normalizeProviderKey);
     const providerName = providerNames[0] ?? 'openai';
     const provider = {
+      kind: providerName,
       defaultModel: defaultModelForProvider(providerName),
       models: [],
     };
