@@ -19,6 +19,7 @@ const ChannelDmSchema = z.object({
   member_id: z.string().min(1),
   body: z.string().min(1),
   mentions: z.array(z.string().min(1)).default([]),
+  ignore: z.boolean().optional(),
 });
 
 const ChannelListSchema = z.object({
@@ -129,6 +130,7 @@ export const channelDmTool: OrchestratorTool<typeof ChannelDmSchema> = {
       senderId: invocation.memberId,
       recipientId: String(invocation.input.member_id),
       content: String(invocation.input.body),
+      ignore: invocation.input.ignore === true,
       mentions: Array.isArray(invocation.input.mentions)
         ? invocation.input.mentions.filter((value): value is string => typeof value === 'string')
         : [],

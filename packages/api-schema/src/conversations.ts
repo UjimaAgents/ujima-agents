@@ -20,6 +20,7 @@ const DirectMessageCreateSchema = z.object({
   recipientId: IdSchema,
   senderId: IdSchema,
   content: z.string().min(1),
+  ignore: z.boolean().optional(),
   parentMessageId: IdSchema.optional(),
 }).strict();
 

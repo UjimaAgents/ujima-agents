@@ -13,10 +13,6 @@ interface ContentPart {
   data?: string;
 }
 
-function isContentPartArray(value: unknown): value is ContentPart[] {
-  return Array.isArray(value) && value.every((p) => p !== null && typeof p === 'object');
-}
-
 function parseUrlTitleFromText(text: string): { url?: string; title?: string } {
   const out: { url?: string; title?: string } = {};
   const urlLine = text.match(/^\s*[-*]?\s*URL:\s*(\S+)/im);
@@ -58,17 +54,51 @@ function applyTextHeuristics(text: string, next: BrowserStateSnapshot): void {
   }
 }
 
-function applyContentParts(parts: ContentPart[], next: BrowserStateSnapshot): void {
-  for (const part of parts) {
-    if (part.type === 'text' && typeof part.text === 'string') {
-      applyTextHeuristics(part.text, next);
+function applyStructuredContent(
+  value: unknown,
+  next: BrowserStateSnapshot,
+  seen = new Set<object>(),
+): void {
+  if (typeof value === 'string') {
+    applyTextHeuristics(value, next);
+    return;
+  }
+
+  if (value === null || typeof value !== 'object') {
+    return;
+  }
+
+  if (seen.has(value)) {
+    return;
+  }
+  seen.add(value);
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      applyStructuredContent(item, next, seen);
     }
-    if (part.type === 'image' && typeof part.mimeType === 'string' && typeof part.data === 'string') {
-      // Use a reference instead of bloating the state with raw base64 data.
-      // The full data is preserved in the tool audit logs.
-      const refId = Math.random().toString(36).slice(2, 10);
-      next.screenshotRef = `screenshot-ref:${part.mimeType}:${refId}`;
+    return;
+  }
+
+  const part = value as ContentPart & Record<string, unknown>;
+
+  if (typeof part.url === 'string') next.url = part.url;
+  if (typeof part.title === 'string') next.title = part.title;
+  if (typeof part.screenshotRef === 'string') next.screenshotRef = part.screenshotRef;
+  if (typeof part.text === 'string') applyTextHeuristics(part.text, next);
+
+  if (part.type === 'image' && typeof part.mimeType === 'string' && typeof part.data === 'string') {
+    // Use a reference instead of bloating the state with raw base64 data.
+    // The full data is preserved in the tool audit logs.
+    const refId = Math.random().toString(36).slice(2, 10);
+    next.screenshotRef = `screenshot-ref:${part.mimeType}:${refId}`;
+  }
+
+  for (const [key, child] of Object.entries(part)) {
+    if (key === 'url' || key === 'title' || key === 'screenshotRef' || key === 'text' || key === 'mimeType' || key === 'data' || key === 'type') {
+      continue;
     }
+    applyStructuredContent(child, next, seen);
   }
 }
 
@@ -101,20 +131,9 @@ export function captureBrowserState(
     mcpId,
   };
 
-  if (typeof content === 'object' && content !== null) {
-    const c = content as Record<string, unknown>;
-    if (typeof c.url === 'string') next.url = c.url;
-    if (typeof c.title === 'string') next.title = c.title;
-    if (typeof c.screenshotRef === 'string') next.screenshotRef = c.screenshotRef;
-  }
+  applyStructuredContent(content, next);
 
   if (typeof args.url === 'string') next.url = args.url;
-
-  if (isContentPartArray(content)) {
-    applyContentParts(content, next);
-  } else if (typeof content === 'string') {
-    applyTextHeuristics(content, next);
-  }
 
   return next;
 }

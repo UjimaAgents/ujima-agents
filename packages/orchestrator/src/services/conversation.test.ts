@@ -217,6 +217,25 @@ describe('ConversationService @all mentions', () => {
     expect(emits.some((entry) => entry.event === SocketEventNames.memberAlerted)).toBe(true);
   });
 
+  it('skips alert fanout for ignored direct messages', async () => {
+    const { alerts, emits, savedMessages, service } = createConversationFixture();
+
+    const message = await service.sendDirectMessage({
+      organizationId: 'org-1',
+      senderId: 'human-1',
+      recipientId: 'agent-1',
+      content: 'private note',
+      ignore: true,
+    });
+
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(message.channelId).toMatch(/^dm:/);
+    expect(savedMessages).toHaveLength(1);
+    expect(alerts).toEqual([]);
+    expect(emits.some((entry) => entry.event === SocketEventNames.memberAlerted)).toBe(false);
+  });
+
   it('resolves multi-word mentions in message content', async () => {
     const { alerts, repo, service, thread } = createConversationFixture();
     

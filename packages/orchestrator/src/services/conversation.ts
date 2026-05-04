@@ -374,6 +374,7 @@ export class ConversationService {
     content: string;
     mentions?: string[];
     parentMessageId?: string;
+    ignore?: boolean;
   }) {
     requireOrganization(this.repo, input.organizationId);
 
@@ -443,14 +444,16 @@ export class ConversationService {
     });
 
     const published = this.publishMessage(message);
-    void this.alertMember(published, recipient.id, channel, 'dm').catch((error) => {
-      console.warn('DM alert failed', {
-        organizationId: input.organizationId,
-        messageId: published.id,
-        recipientId: recipient.id,
-        error,
+    if (!input.ignore) {
+      void this.alertMember(published, recipient.id, channel, 'dm').catch((error) => {
+        console.warn('DM alert failed', {
+          organizationId: input.organizationId,
+          messageId: published.id,
+          recipientId: recipient.id,
+          error,
+        });
       });
-    });
+    }
     return published;
   }
 

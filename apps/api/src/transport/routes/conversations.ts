@@ -181,6 +181,7 @@ export function registerConversationRoutes(
           recipientId: req.body.recipientId,
           content: req.body.content,
           parentMessageId: req.body.parentMessageId,
+          ignore: req.body.ignore,
         });
       }
       return conversations.sendMessage({

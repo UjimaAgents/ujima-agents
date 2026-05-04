@@ -55,6 +55,21 @@ describe('captureBrowserState', () => {
     expect(snap?.title).toBe('Example Bar');
   });
 
+  it('pulls URL and title from structured snapshot payloads', () => {
+    const content = {
+      page: {
+        url: 'https://example.org/structured',
+        title: 'Structured Example',
+      },
+      snapshot: {
+        text: 'Current page is https://example.org/structured - Structured Example',
+      },
+    };
+    const snap = captureBrowserState('browser_snapshot', {}, content, undefined, 'playwright');
+    expect(snap?.url).toBe('https://example.org/structured');
+    expect(snap?.title).toBe('Structured Example');
+  });
+
   it('merges with a previous snapshot without wiping earlier fields', () => {
     const first = captureBrowserState(
       'browser_navigate',
