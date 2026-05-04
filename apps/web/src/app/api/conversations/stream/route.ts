@@ -72,7 +72,6 @@ export async function GET(request: Request) {
     }
     const verified = parseVerifiedThreadAccess(verifyBody);
     if (verified) {
-      authenticatedMemberId = authState.member.id;
       verifiedChannelIds = verified.channelIds;
       verifiedMemberIds = verified.memberIds;
     }

@@ -179,6 +179,7 @@ export async function runAiSdkLoop(input: AiSdkLoopInputs): Promise<AiSdkLoopOut
   } = input;
 
   let toolCalls = 0;
+  let iterations = 0;
   let browserState: BrowserStateSnapshot | undefined;
   let forcedExit: Partial<AiSdkLoopOutcome> | undefined;
 
@@ -464,6 +465,9 @@ export async function runAiSdkLoop(input: AiSdkLoopInputs): Promise<AiSdkLoopOut
       tools: toolSet,
       stopWhen: stepCountIs(maxIterations),
       abortSignal,
+      onStepFinish: () => {
+        iterations++;
+      },
       ...(maxOutputTokens !== undefined ? { maxOutputTokens } : {}),
       temperature,
     });
@@ -502,7 +506,7 @@ export async function runAiSdkLoop(input: AiSdkLoopInputs): Promise<AiSdkLoopOut
         error: forcedExit.error,
         escalationReason: forcedExit.escalationReason,
         toolCalls,
-        iterations: 1,
+        iterations,
         tokensUsed,
         finalText,
         browserState,
@@ -542,7 +546,7 @@ export async function runAiSdkLoop(input: AiSdkLoopInputs): Promise<AiSdkLoopOut
         exitReason: 'escalated',
         escalationReason: escalation.condition,
         toolCalls,
-        iterations: 1,
+        iterations,
         tokensUsed,
         finalText,
         browserState,
@@ -563,7 +567,7 @@ export async function runAiSdkLoop(input: AiSdkLoopInputs): Promise<AiSdkLoopOut
     return {
       exitReason: 'completed',
       toolCalls,
-      iterations: 1,
+      iterations,
       tokensUsed,
       finalText,
       browserState,
@@ -581,7 +585,7 @@ export async function runAiSdkLoop(input: AiSdkLoopInputs): Promise<AiSdkLoopOut
         exitReason: loopExit.outcome.exitReason ?? 'error',
         error: loopExit.outcome.error,
         toolCalls,
-        iterations: 1,
+        iterations,
         tokensUsed: 0,
         finalText: '',
         browserState,
@@ -592,7 +596,7 @@ export async function runAiSdkLoop(input: AiSdkLoopInputs): Promise<AiSdkLoopOut
       return {
         exitReason: 'killed',
         toolCalls,
-        iterations: 1,
+        iterations,
         tokensUsed: 0,
         finalText: '',
         browserState,
@@ -605,7 +609,7 @@ export async function runAiSdkLoop(input: AiSdkLoopInputs): Promise<AiSdkLoopOut
       exitReason: 'error',
       error: message,
       toolCalls,
-      iterations: 1,
+      iterations,
       tokensUsed: 0,
       finalText: '',
       browserState,
