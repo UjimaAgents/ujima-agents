@@ -140,7 +140,7 @@ export async function getServerRolePresets(): Promise<RolePresetTemplate[]> {
   return response.presets;
 }
 
-export async function getServerTeamSettings(): Promise<{
+export async function getServerTeamSettings(organizationId?: string): Promise<{
   name: string;
   workspace: { root: string; roleScopes: Record<string, string[]> };
   organizationChart: { reportsTo: Record<string, string> };
@@ -163,5 +163,8 @@ export async function getServerTeamSettings(): Promise<{
   tools: Record<string, unknown>;
   policies: unknown;
 }> {
-  return daemonJson("/api/settings/team", {}, await getSessionTokenFromCookie());
+  const path = organizationId
+    ? `/api/settings/team?organizationId=${encodeURIComponent(organizationId)}`
+    : "/api/settings/team";
+  return daemonJson(path, {}, await getSessionTokenFromCookie());
 }

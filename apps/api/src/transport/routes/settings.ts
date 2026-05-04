@@ -73,16 +73,23 @@ export function registerSettingsRoutes(
     schema: {
       description: 'Get the current team configuration',
       tags: ['Settings'],
+      querystring: OrganizationQuerySchema,
       response: {
         200: TeamSettingsResponseSchema,
+        401: ApiErrorSchema,
+        403: ApiErrorSchema,
+        404: ApiErrorSchema,
         503: ApiErrorSchema,
       },
     },
-  }, async (_req, reply) => {
+  }, async (req, reply) => {
     try {
+      const forbidden = requireOrgSession(auth, req, reply, req.query.organizationId);
+      if (forbidden) return forbidden;
       return settings.getTeamSettings() as z.infer<typeof TeamSettingsResponseSchema>;
     } catch (err) {
-      return replyError(reply, 503, errMessage(err));
+      const message = errMessage(err);
+      return replyError(reply, message.startsWith('Organization not found') ? 404 : 503, message);
     }
   });
 
@@ -94,12 +101,16 @@ export function registerSettingsRoutes(
       response: {
         200: ProviderStatusesResponseSchema,
         400: ApiErrorSchema,
+        401: ApiErrorSchema,
+        403: ApiErrorSchema,
         404: ApiErrorSchema,
         503: ApiErrorSchema,
       },
     },
   }, async (req, reply) => {
     try {
+      const forbidden = requireOrgSession(auth, req, reply, req.query.organizationId);
+      if (forbidden) return forbidden;
       return settings.listProviders(req.query.organizationId);
     } catch (err) {
       const message = errMessage(err);
@@ -185,12 +196,16 @@ export function registerSettingsRoutes(
       response: {
         200: OrganizationSettingsResponseSchema,
         400: ApiErrorSchema,
+        401: ApiErrorSchema,
+        403: ApiErrorSchema,
         404: ApiErrorSchema,
         503: ApiErrorSchema,
       },
     },
   }, async (req, reply) => {
     try {
+      const forbidden = requireOrgSession(auth, req, reply, req.query.organizationId);
+      if (forbidden) return forbidden;
       return settings.getOrganizationSettings(req.query.organizationId);
     } catch (err) {
       const message = errMessage(err);
@@ -236,12 +251,16 @@ export function registerSettingsRoutes(
       response: {
         200: ProviderTestResultSchema,
         400: ApiErrorSchema,
+        401: ApiErrorSchema,
+        403: ApiErrorSchema,
         404: ApiErrorSchema,
         503: ApiErrorSchema,
       },
     },
   }, async (req, reply) => {
     try {
+      const forbidden = requireOrgSession(auth, req, reply, req.query.organizationId);
+      if (forbidden) return forbidden;
       return settings.testProvider(req.query.organizationId, req.params.providerName);
     } catch (err) {
       const message = errMessage(err);

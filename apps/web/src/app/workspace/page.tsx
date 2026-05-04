@@ -30,7 +30,7 @@ export default async function WorkspacePage({
     );
   }
   const rolePresets = await getServerRolePresets().catch(() => []);
-  const teamSettings = await getServerTeamSettings().catch(() => null);
+  const teamSettings = await getServerTeamSettings(bootstrap.organization?.id).catch(() => null);
 
   if (bootstrap.onboardingStatus === "pending") {
     redirect("/onboarding");

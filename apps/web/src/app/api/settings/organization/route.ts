@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { parseApiError, upstreamUnavailable } from "@/server/api-response";
 import { daemonFetch, getSessionTokenFromCookie } from "@/server/ujima-daemon";
+import { requireProxyOrgAccess } from "@/server/route-guards";
 
 export const dynamic = "force-dynamic";
 
@@ -14,6 +15,9 @@ export async function GET(request: Request) {
         { status: 400 },
       );
     }
+
+    const forbidden = await requireProxyOrgAccess(organizationId);
+    if (forbidden) return forbidden;
 
     const response = await daemonFetch(
       `/api/settings/organization?organizationId=${encodeURIComponent(organizationId)}`,
@@ -43,12 +47,16 @@ export async function GET(request: Request) {
 export async function PATCH(request: Request) {
   try {
     const payload = (await request.json().catch(() => null)) as unknown;
-    if (!payload || typeof payload !== "object") {
+    if (!payload || typeof payload !== "object" || typeof (payload as Record<string, unknown>).organizationId !== "string") {
       return NextResponse.json(
         { code: "ERR_BAD_REQUEST", message: "Invalid request." },
         { status: 400 },
       );
     }
+
+    const organizationId = (payload as Record<string, string>).organizationId;
+    const forbidden = await requireProxyOrgAccess(organizationId);
+    if (forbidden) return forbidden;
 
     const response = await daemonFetch(
       "/api/settings/organization",

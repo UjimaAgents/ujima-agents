@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { MessageSchema } from "@ujima/shared";
 import { parseApiError, upstreamUnavailable } from "@/server/api-response";
 import { daemonFetch, getSessionTokenFromCookie } from "@/server/ujima-daemon";
+import { requireProxyOrgAccess } from "@/server/route-guards";
 
 export const dynamic = "force-dynamic";
 
@@ -18,6 +19,9 @@ export async function GET(request: Request) {
         { status: 400 },
       );
     }
+
+    const forbidden = await requireProxyOrgAccess(organizationId);
+    if (forbidden) return forbidden;
 
     const params = new URLSearchParams({ organizationId, limit });
     if (cursor) params.set("cursor", cursor);

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { parseApiError, upstreamUnavailable } from "@/server/api-response";
 import { daemonFetch, getSessionTokenFromCookie } from "@/server/ujima-daemon";
+import { requireProxyOrgAccess } from "@/server/route-guards";
 
 export const dynamic = "force-dynamic";
 
@@ -14,6 +15,9 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ or
         { status: 400 },
       );
     }
+
+    const forbidden = await requireProxyOrgAccess(orgId);
+    if (forbidden) return forbidden;
 
     const response = await daemonFetch(
       `/api/orgs/${encodeURIComponent(orgId)}/policies`,

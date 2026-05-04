@@ -35,7 +35,7 @@ export default async function OrganizationSettingsRoute() {
       ).catch(() => null)
     : null;
 
-  const rawTeamSettings = await getServerTeamSettings().catch(() => null);
+  const rawTeamSettings = await getServerTeamSettings(orgId).catch(() => null);
   const teamSettings: TeamSettingsData | null = rawTeamSettings
     ? {
         ...rawTeamSettings,
