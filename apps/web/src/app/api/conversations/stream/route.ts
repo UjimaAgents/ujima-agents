@@ -37,6 +37,8 @@ export async function GET(request: Request) {
   }
 
   let authenticatedMemberId: string | undefined;
+  let verifiedChannelIds: string[] = [];
+  let verifiedMemberIds: string[] = [];
   try {
     const authState = await getServerAuthState();
     if (!authState.authenticated || authState.user?.organizationId !== organizationId) {
@@ -53,18 +55,26 @@ export async function GET(request: Request) {
       );
     }
 
-    // Verify access to the requested thread
+    // Verify access to the requested thread and use the daemon-derived
+    // membership for event visibility rather than caller-controlled params.
     const params = new URLSearchParams({ organizationId });
     const verifyResponse = await daemonFetch(
       `/api/threads/${encodeURIComponent(threadId)}/verify?${params.toString()}`,
       {},
       sessionToken,
     );
+    const verifyBody = await verifyResponse.json().catch(() => null);
     if (!verifyResponse.ok) {
       return NextResponse.json(
         { code: "ERR_FORBIDDEN", message: "Unauthorized for this thread." },
         { status: 403 },
       );
+    }
+    const verified = parseVerifiedThreadAccess(verifyBody);
+    if (verified) {
+      authenticatedMemberId = authState.member.id;
+      verifiedChannelIds = verified.channelIds;
+      verifiedMemberIds = verified.memberIds;
     }
   } catch {
     return NextResponse.json(
@@ -73,8 +83,10 @@ export async function GET(request: Request) {
     );
   }
 
-  const channelIds = [threadId];
-  const memberIds = resolveTrustedMemberIds(threadId, authenticatedMemberId);
+  const channelIds = verifiedChannelIds.length ? verifiedChannelIds : [threadId];
+  const memberIds = verifiedMemberIds.length
+    ? verifiedMemberIds
+    : resolveTrustedMemberIds(threadId, authenticatedMemberId);
 
   const encoder = new TextEncoder();
   let socket: ReturnType<typeof io> | null = null;
@@ -208,8 +220,7 @@ function shouldForwardEvent(
     }
     case SocketEventNames.memberUpdated: {
       const body = payload as { member?: { id?: string } };
-      if (typeof body.member?.id !== "string") return false;
-      return input.memberIds.includes(body.member.id);
+      return typeof body.member?.id === "string" && input.memberIds.includes(body.member.id);
     }
     case SocketEventNames.supervisorReplied: {
       const body = payload as { message?: { threadId?: string } };
@@ -220,10 +231,19 @@ function shouldForwardEvent(
   }
 }
 
+function parseVerifiedThreadAccess(value: unknown): { memberIds: string[]; channelIds: string[] } | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const record = value as Record<string, unknown>;
+  return {
+    memberIds: Array.isArray(record.memberIds) ? record.memberIds.filter((id): id is string => typeof id === "string") : [],
+    channelIds: Array.isArray(record.channelIds) ? record.channelIds.filter((id): id is string => typeof id === "string") : [],
+  };
+}
+
 function resolveTrustedMemberIds(threadId: string, authenticatedMemberId: string): string[] {
   const members = new Set<string>([authenticatedMemberId]);
   if (threadId.startsWith("dm:")) {
-    const [_, firstId, secondId] = threadId.split(":", 3);
+    const [, firstId, secondId] = threadId.split(":", 3);
     if (firstId) members.add(firstId);
     if (secondId) members.add(secondId);
   }

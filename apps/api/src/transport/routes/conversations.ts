@@ -69,7 +69,7 @@ export function registerConversationRoutes(
       params: ThreadIdParamsSchema,
       querystring: OrganizationQuerySchema,
       response: {
-        200: z.object({ ok: z.boolean() }),
+        200: z.object({ ok: z.boolean(), memberIds: z.array(IdSchema), channelIds: z.array(IdSchema) }),
         400: ApiErrorSchema,
         401: ApiErrorSchema,
         403: ApiErrorSchema,
@@ -90,7 +90,17 @@ export function registerConversationRoutes(
         req.params.threadId,
         authState.member.id,
       );
-      return { ok: true };
+      const thread = repo.getThread(req.query.organizationId, req.params.threadId);
+      const channel = thread?.channelId ? repo.getChannel(req.query.organizationId, thread.channelId) : null;
+      const channelMemberIds =
+        channel && channel.kind !== 'self' && channel.kind !== 'dm' && channel.memberIds.length === 0
+          ? repo.listMembers(req.query.organizationId).map((member) => member.id)
+          : channel?.memberIds ?? [];
+      return {
+        ok: true,
+        memberIds: [...new Set([...(thread?.memberIds ?? []), ...channelMemberIds])],
+        channelIds: channel ? [channel.id] : [],
+      };
     } catch (err) {
       const message = errMessage(err);
       if (message.startsWith('Forbidden')) {

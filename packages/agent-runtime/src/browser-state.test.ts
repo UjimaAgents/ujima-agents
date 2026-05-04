@@ -52,6 +52,7 @@ describe('captureBrowserState', () => {
     const content = 'Current page is https://example.org/bar - Example Bar';
     const snap = captureBrowserState('browser_navigate', {}, content, undefined, 'playwright');
     expect(snap?.url).toBe('https://example.org/bar');
+    expect(snap?.title).toBe('Example Bar');
   });
 
   it('merges with a previous snapshot without wiping earlier fields', () => {

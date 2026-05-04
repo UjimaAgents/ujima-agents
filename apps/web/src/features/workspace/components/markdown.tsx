@@ -14,43 +14,49 @@ function sanitizeUrl(href: unknown): string {
   return "";
 }
 
-const renderer = new marked.Renderer();
+function createRenderer(mentionNames: string[]) {
+  const renderer = new marked.Renderer();
 
-renderer.html = function () {
-  return "";
-};
+  renderer.html = function () {
+    return "";
+  };
 
-renderer.code = function ({ text, lang }: { text: string; lang?: string }) {
-  const language = lang ? `text-[10px] text-zinc-400 px-3 pt-2 pb-0 block` : "hidden";
-  return (
-    `<div class="my-2 overflow-hidden rounded-xl border border-zinc-200 bg-zinc-950 dark:border-zinc-800 dark:bg-black">` +
-    `<span class="${language}">${h(lang ?? "")}</span>` +
-    `<pre class="overflow-x-auto p-3 pt-1.5 text-xs leading-relaxed"><code class="text-zinc-100 dark:text-zinc-100">${h(text)}</code></pre>` +
-    `</div>`
-  );
-};
+  renderer.code = function ({ text, lang }: { text: string; lang?: string }) {
+    const language = lang ? `text-[10px] text-zinc-400 px-3 pt-2 pb-0 block` : "hidden";
+    return (
+      `<div class="my-2 overflow-hidden rounded-xl border border-zinc-200 bg-zinc-950 dark:border-zinc-800 dark:bg-black">` +
+      `<span class="${language}">${h(lang ?? "")}</span>` +
+      `<pre class="overflow-x-auto p-3 pt-1.5 text-xs leading-relaxed"><code class="text-zinc-100 dark:text-zinc-100">${h(text)}</code></pre>` +
+      `</div>`
+    );
+  };
 
-renderer.codespan = function ({ text }: { text: string }) {
-  return `<code class="rounded-md bg-zinc-100 px-1.5 py-0.5 text-[11px] font-medium text-violet-700 dark:bg-zinc-800 dark:text-violet-300">${h(text)}</code>`;
-};
+  renderer.codespan = function ({ text }: { text: string }) {
+    return `<code class="rounded-md bg-zinc-100 px-1.5 py-0.5 text-[11px] font-medium text-violet-700 dark:bg-zinc-800 dark:text-violet-300">${h(text)}</code>`;
+  };
 
-renderer.blockquote = function ({ text }: { text: string }) {
-  return `<blockquote class="my-1 border-l-2 border-zinc-300 pl-3 text-zinc-500 dark:border-zinc-600 dark:text-zinc-400">${h(text)}</blockquote>`;
-};
+  renderer.blockquote = function ({ tokens }: { tokens: unknown[] }) {
+    return `<blockquote class="my-1 border-l-2 border-zinc-300 pl-3 text-zinc-500 dark:border-zinc-600 dark:text-zinc-400">${this.parser.parse(tokens as never)}</blockquote>`;
+  };
 
-renderer.link = function ({ href, text }: { href: string; text: string }) {
-  return `<a href="${h(sanitizeUrl(href))}" class="text-violet-600 underline underline-offset-2 dark:text-violet-400" target="_blank" rel="noopener noreferrer">${h(text)}</a>`;
-};
+  renderer.link = function ({ href, tokens }: { href: string; tokens: unknown[] }) {
+    return `<a href="${h(sanitizeUrl(href))}" class="text-violet-600 underline underline-offset-2 dark:text-violet-400" target="_blank" rel="noopener noreferrer">${this.parser.parseInline(tokens as never)}</a>`;
+  };
 
-renderer.image = function () {
-  return "";
-};
+  renderer.image = function () {
+    return "";
+  };
 
-marked.use({ gfm: true, breaks: true, renderer });
+  renderer.text = function ({ text }: { text: string }) {
+    return highlightMentions(text, mentionNames);
+  };
 
-function buildMentionReplacements(text: string, mentionNames: string[]): string {
-  if (!mentionNames.length) return text;
-  let result = text;
+  return renderer;
+}
+
+function highlightMentions(text: string, mentionNames: string[]): string {
+  let result = h(text);
+  if (!mentionNames.length) return result;
   for (const name of mentionNames) {
     result = result.replace(
       new RegExp(`(?<!\\w)@(${escapeRegex(name)})(?=\\s|[^\\w]|$)`, 'g'),
@@ -74,8 +80,7 @@ export function Markdown({
   className?: string;
 }) {
   const html = useMemo(() => {
-    const parsed = marked.parse(content) as string;
-    return buildMentionReplacements(parsed, mentionNames);
+    return marked.parse(content, { gfm: true, breaks: true, renderer: createRenderer(mentionNames) }) as string;
   }, [content, mentionNames]);
 
   return (

@@ -43,6 +43,7 @@ const AddMemberRequestSchema = z.object({
 });
 const UpdateMemberRequestSchema = AddMemberRequestSchema.omit({ kind: true }).extend({
   name: z.string().min(1),
+  channelIds: z.array(IdSchema).optional(),
   role: RoleConfigSchema,
   personalityName: z.string().min(1),
 });
@@ -313,6 +314,7 @@ export function registerSettingsRoutes(
         channelIds: req.body.channelIds,
         llm: req.body.llm,
         model: req.body.model,
+        personalityName: req.body.personalityName,
         role: req.body.role,
       });
       return member;

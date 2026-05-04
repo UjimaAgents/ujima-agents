@@ -338,16 +338,18 @@ export class SettingsService {
     );
 
     ensureMemberSelfChannel(this.repo, input.organizationId, saved);
-    const visibleChannels = visibleChannelsFromRepo(this.repo, input.organizationId);
-    const channelIds = new Set(input.channelIds ?? []);
-    for (const channel of visibleChannels) {
-      const memberIds = new Set(channel.memberIds);
-      if (channelIds.has(channel.id)) {
-        memberIds.add(saved.id);
-      } else {
-        memberIds.delete(saved.id);
+    if (input.channelIds !== undefined) {
+      const visibleChannels = visibleChannelsFromRepo(this.repo, input.organizationId);
+      const channelIds = new Set(input.channelIds);
+      for (const channel of visibleChannels) {
+        const memberIds = new Set(channel.memberIds);
+        if (channelIds.has(channel.id)) {
+          memberIds.add(saved.id);
+        } else {
+          memberIds.delete(saved.id);
+        }
+        this.repo.setChannelMembers(channel.id, [...memberIds].sort());
       }
-      this.repo.setChannelMembers(channel.id, [...memberIds].sort());
     }
 
     return saved;

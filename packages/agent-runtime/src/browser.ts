@@ -26,6 +26,17 @@ function parseUrlTitleFromText(text: string): { url?: string; title?: string } {
   return out;
 }
 
+/** Try to extract a title from common browser snapshot formats like
+ * "Current page is https://example.com - Example Bar". */
+function extractTitleAfterUrl(text: string): string | undefined {
+  const m = text.match(/(?:current page|navigated to|page).*?https?:\/\/\S+\s*[-\u2013\u2014]\s*(.+)$/im);
+  if (m?.[1]) {
+    const t = m[1].trim();
+    if (t.length > 0 && t.length < 200) return t;
+  }
+  return undefined;
+}
+
 /** Bare https URL with trailing punctuation stripped (e.g. closing paren). */
 function extractBareUrl(text: string): string | undefined {
   const m = text.match(/https?:\/\/[^\s)>\]]+/);
@@ -40,6 +51,10 @@ function applyTextHeuristics(text: string, next: BrowserStateSnapshot): void {
   if (!fromLines.url) {
     const bare = extractBareUrl(text);
     if (bare) next.url = bare;
+  }
+  if (!next.title) {
+    const fallbackTitle = extractTitleAfterUrl(text);
+    if (fallbackTitle) next.title = fallbackTitle;
   }
 }
 

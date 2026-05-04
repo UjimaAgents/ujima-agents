@@ -1,6 +1,6 @@
 "use client";
 
-import { Plus, PencilLine, Trash2, MoreHorizontal } from "lucide-react";
+import { PencilLine, MoreHorizontal } from "lucide-react";
 import { useState } from "react";
 import { TextInput, FieldShell, TextArea } from "@/components/ui/form-fields";
 import { ProviderModelFields } from "@/components/ui/provider-model-fields";

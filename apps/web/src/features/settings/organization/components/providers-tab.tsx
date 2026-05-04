@@ -100,7 +100,7 @@ export function ProvidersTab({
       );
       const result = await response.json();
       setTestResult({ id: rowId, ok: result.ok, message: result.message });
-    } catch (err) {
+    } catch {
       setTestResult({ id: rowId, ok: false, message: "Test failed." });
     } finally {
       setTestingId(null);
@@ -133,9 +133,7 @@ export function ProvidersTab({
       </div>
 
       <div className="space-y-3">
-        {rows.map((row) => {
-          const testResultForRow = testResult?.id === row.id ? testResult : null;
-          return (
+        {rows.map((row) => (
             <div key={row.id} className="flex flex-nowrap items-center gap-3">
               <Select
                 value={row.name}
@@ -189,8 +187,7 @@ export function ProvidersTab({
                 <Trash2 className="h-4 w-4" />
               </button>
             </div>
-          );
-        })}
+        ))}
       </div>
 
       {testResult ? (

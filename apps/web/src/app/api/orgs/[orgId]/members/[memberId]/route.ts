@@ -11,7 +11,7 @@ const UpdateMemberRequestSchema = z.object({
   name: z.string().min(1),
   roleName: z.string().min(1),
   personalityName: z.string().min(1),
-  channelIds: z.array(z.string().min(1)).default([]),
+  channelIds: z.array(z.string().min(1)).optional(),
   llm: z.string().optional(),
   model: z.string().optional(),
   role: z.object({

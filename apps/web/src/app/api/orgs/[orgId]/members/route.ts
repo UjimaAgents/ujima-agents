@@ -14,6 +14,7 @@ const AddMemberRequestSchema = z.object({
   channelIds: z.array(z.string().min(1)).default([]),
   llm: z.string().optional(),
   model: z.string().optional(),
+  personalityName: z.string().optional(),
   role: z
     .object({
       id: z.string().min(1).optional(),

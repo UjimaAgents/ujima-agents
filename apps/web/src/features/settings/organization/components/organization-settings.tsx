@@ -11,7 +11,6 @@ import {
 import Link from "next/link";
 import { useState } from "react";
 import type { BootstrapResponse, OrganizationSettingsResponse, ProviderStatus } from "@ujima/api-schema";
-import type { RolePresetTemplate } from "@/features/onboarding/types";
 import { GeneralTab } from "./general-tab";
 import { AgentsTab } from "./agents-tab";
 import { ChannelsTab } from "./channels-tab";
@@ -73,7 +72,7 @@ export function OrganizationSettingsPage({
 }) {
   const [activeTab, setActiveTab] = useState<SettingsTabId>("general");
   const [orgSettingsState, setOrgSettingsState] = useState(orgSettings);
-  const [teamSettingsState, setTeamSettingsState] = useState(teamSettings);
+  const [teamSettingsState] = useState(teamSettings);
   const [providersState, setProvidersState] = useState(providers);
 
   const orgId = bootstrap.organization?.id ?? "";
