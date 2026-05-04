@@ -170,6 +170,7 @@ export function registerConversationRoutes(
           senderId,
           recipientId: req.body.recipientId,
           content: req.body.content,
+          parentMessageId: req.body.parentMessageId,
         });
       }
       return conversations.sendMessage({

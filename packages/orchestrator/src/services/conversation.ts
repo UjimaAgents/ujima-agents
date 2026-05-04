@@ -371,6 +371,7 @@ export class ConversationService {
     recipientId: string;
     content: string;
     mentions?: string[];
+    parentMessageId?: string;
   }) {
     this.requireOrganization(input.organizationId);
 
@@ -416,11 +417,21 @@ export class ConversationService {
       createdAt: now,
     });
 
+    let threadId = channelId;
+    let replyChannelId = channelId;
+
+    if (input.parentMessageId) {
+      const parent = this.requireMessage(input.organizationId, input.parentMessageId);
+      threadId = parent.threadId;
+      replyChannelId = parent.channelId ?? channelId;
+    }
+
     const message = MessageSchema.parse({
       id: randomUUID(),
       organizationId: input.organizationId,
-      threadId: channelId,
-      channelId,
+      threadId,
+      channelId: replyChannelId,
+      parentMessageId: input.parentMessageId,
       senderId: input.senderId,
       senderKind: sender.kind,
       kind: sender.kind,

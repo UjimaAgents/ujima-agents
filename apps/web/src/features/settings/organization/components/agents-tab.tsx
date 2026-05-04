@@ -57,6 +57,9 @@ export function AgentsTab({
 
   const startEdit = (member: Member) => {
     const role = teamSettings?.roles.find((r) => r.name === member.roleName);
+    const memberChannelIds = bootstrap.channels
+      .filter((channel) => channel.memberIds?.includes(member.id))
+      .map((channel) => channel.id);
     setAgentDrafts((prev) => ({
       ...prev,
       [member.id]: {
@@ -68,6 +71,7 @@ export function AgentsTab({
         title: role?.title ?? member.roleName,
         description: role?.description ?? "",
         instructions: role?.instructions ?? "",
+        channelIds: memberChannelIds,
       },
     }));
     setMenuId(null);
@@ -87,7 +91,7 @@ export function AgentsTab({
           personalityName: draft.personalityName.trim() || "direct",
           llm: draft.llm.trim(),
           model: draft.model.trim(),
-          channelIds: [],
+          channelIds: draft.channelIds,
           role: {
             name: draft.roleName.trim(),
             title: draft.title.trim() || draft.roleName.trim(),
@@ -98,7 +102,9 @@ export function AgentsTab({
             model: draft.model.trim(),
             workspaceScopes: [],
             tools: [],
-            channels: [],
+            channels: draft.channelIds
+              .map((channelId) => bootstrap.channels.find((channel) => channel.id === channelId)?.name)
+              .filter((name): name is string => Boolean(name)),
             skills: [],
           },
         }),
@@ -331,4 +337,5 @@ interface AgentDraft {
   title: string;
   description: string;
   instructions: string;
+  channelIds: string[];
 }

@@ -1,7 +1,19 @@
 import { useMemo } from "react";
 import { marked } from "marked";
 
+const SAFE_URL_PROTOCOLS = /^(https?:|mailto:)/i;
+
+function sanitizeUrl(href: unknown): string {
+  if (typeof href !== "string") return "";
+  if (SAFE_URL_PROTOCOLS.test(href)) return href;
+  return "";
+}
+
 const renderer = new marked.Renderer();
+
+renderer.html = function () {
+  return "";
+};
 
 renderer.code = function ({ text, lang }: { text: string; lang?: string }) {
   const language = lang ? `text-[10px] text-zinc-400 px-3 pt-2 pb-0 block` : "hidden";
@@ -22,7 +34,11 @@ renderer.blockquote = function ({ text }: { text: string }) {
 };
 
 renderer.link = function ({ href, text }: { href: string; text: string }) {
-  return `<a href="${href}" class="text-violet-600 underline underline-offset-2 dark:text-violet-400" target="_blank" rel="noopener noreferrer">${text}</a>`;
+  return `<a href="${sanitizeUrl(href)}" class="text-violet-600 underline underline-offset-2 dark:text-violet-400" target="_blank" rel="noopener noreferrer">${text}</a>`;
+};
+
+renderer.image = function () {
+  return "";
 };
 
 marked.use({ gfm: true, breaks: true, renderer });
