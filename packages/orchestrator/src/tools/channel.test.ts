@@ -29,6 +29,37 @@ describe('channel.* tools — toInvocation()', () => {
     expect(inv.action).toBe('message');
   });
 
+  it('channel.post resolves a friendly channel name to the stored channel id', async () => {
+    let receivedChannelId: string | undefined;
+    await channelPostTool.execute({
+      invocation: {
+        organizationId: 'org-1',
+        runId: 'run-1',
+        memberId: 'agent-1',
+        toolCallId: 'call-1',
+        toolId: 'channel.post',
+        action: 'message',
+        resourceType: 'message',
+        input: { channel_id: 'general', body: 'hi', mentions: [] },
+      } as never,
+      team: {
+        getChannel: (name: string) => (name === 'general' ? { id: 'channel-general' } : undefined),
+      } as never,
+      repo: {
+        getChannel: (_orgId: string, channelId: string) =>
+          channelId === 'channel-general' ? ({ id: 'channel-general' } as never) : null,
+        listAllChannels: () => [],
+      } as never,
+      conversations: {
+        postToChannel: (input: { channelId: string }) => {
+          receivedChannelId = input.channelId;
+          return input;
+        },
+      } as never,
+    });
+    expect(receivedChannelId).toBe('channel-general');
+  });
+
   it('channel.reply does not emit resourcePath', () => {
     const inv = channelReplyTool.toInvocation({
       message_id: 'msg_1',

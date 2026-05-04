@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { MemberSchema } from "@ujima/shared";
 import { parseApiError, upstreamUnavailable } from "@/server/api-response";
 import { daemonFetch, getSessionTokenFromCookie } from "@/server/ujima-daemon";
+import { requireProxyOrgAccess } from "@/server/route-guards";
 import { z } from "zod";
 
 export const dynamic = "force-dynamic";
@@ -13,6 +14,7 @@ const AddMemberRequestSchema = z.object({
   channelIds: z.array(z.string().min(1)).default([]),
   llm: z.string().optional(),
   model: z.string().optional(),
+  personalityName: z.string().optional(),
   role: z
     .object({
       id: z.string().min(1).optional(),
@@ -42,6 +44,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ org
         { status: 400 },
       );
     }
+
+    const forbidden = await requireProxyOrgAccess(orgId);
+    if (forbidden) return forbidden;
 
     const response = await daemonFetch(
       `/api/orgs/${encodeURIComponent(orgId)}/members`,

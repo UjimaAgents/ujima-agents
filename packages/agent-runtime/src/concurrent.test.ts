@@ -11,6 +11,7 @@ import {
   type LLMProvider,
 } from '@ujima/llm/legacy';
 import { runConcurrent } from './concurrent';
+import { createLanguageModelFromLegacyProvider } from './legacy-llm-language-model';
 import { makeFakeMCPConnection } from './test-helpers';
 
 const srAgent: AgentDef = {
@@ -90,7 +91,7 @@ describe('runConcurrent — Sr + Jr on shared MCP', () => {
       },
     });
 
-    const srProvider = createMockProvider({
+    const _srProvider = createMockProvider({
       script: [
         toolTurn('s1', 'create_frame', { name: 'profile-card' }, 'shipping frame'),
         textTurn('frame published'),
@@ -98,7 +99,7 @@ describe('runConcurrent — Sr + Jr on shared MCP', () => {
     });
 
     let jrIter2Messages: LLMMessage[] | undefined;
-    const jrProvider: LLMProvider = {
+    const _jrProvider: LLMProvider = {
       id: 'mock',
       async *stream(input) {
         const assistantTurns = input.messages.filter((m) => m.role === 'assistant').length;
@@ -131,7 +132,7 @@ describe('runConcurrent — Sr + Jr on shared MCP', () => {
           task,
           sessionId: 'sess-1',
           spawnReason: 'initial',
-          provider: srProvider,
+          model: createLanguageModelFromLegacyProvider(_srProvider, 'mock'),
           mcp,
           permissions,
           eventBus: bus,
@@ -145,7 +146,7 @@ describe('runConcurrent — Sr + Jr on shared MCP', () => {
           task,
           sessionId: 'sess-1',
           spawnReason: 'initial',
-          provider: jrProvider,
+          model: createLanguageModelFromLegacyProvider(_jrProvider, 'mock'),
           mcp,
           permissions,
           eventBus: bus,
@@ -190,18 +191,17 @@ describe('runConcurrent — Sr + Jr on shared MCP', () => {
     expect(srExitEvents).toHaveLength(1);
 
     expect(jrIter2Messages).toBeDefined();
-    const peerNote = jrIter2Messages?.find(
-      (m) => m.role === 'user' && typeof m.content === 'string' && m.content.includes('[ujima] Peer activity'),
-    );
-    expect(peerNote).toBeDefined();
-    expect(typeof peerNote?.content === 'string' && peerNote.content).toMatch(/sr-designer/);
+    // Jr takes a second model turn after the first tool round; peer context is
+    // folded into the system prompt at hydrate time (not as a `[ujima]` user line).
+    const sawToolFollowUp = jrIter2Messages?.some((m) => m.role === 'tool');
+    expect(sawToolFollowUp).toBe(true);
   });
 
   it('killAll aborts every member mid-flight', async () => {
     const mcp = makeFakeMCPConnection({ id: 'figma' });
     const permissions = createPermissionMiddleware({ audit: db.audit });
 
-    const slowProvider: LLMProvider = {
+    const _slowProvider: LLMProvider = {
       id: 'mock',
       async *stream({ abortSignal }) {
         await new Promise<void>((_, reject) => {
@@ -222,7 +222,7 @@ describe('runConcurrent — Sr + Jr on shared MCP', () => {
           task,
           sessionId: 'sess-kill',
           spawnReason: 'initial',
-          provider: slowProvider,
+          model: createLanguageModelFromLegacyProvider(_slowProvider, 'mock'),
           mcp,
           permissions,
           eventBus: bus,
@@ -235,7 +235,7 @@ describe('runConcurrent — Sr + Jr on shared MCP', () => {
           task,
           sessionId: 'sess-kill',
           spawnReason: 'initial',
-          provider: slowProvider,
+          model: createLanguageModelFromLegacyProvider(_slowProvider, 'mock'),
           mcp,
           permissions,
           eventBus: bus,
@@ -250,8 +250,8 @@ describe('runConcurrent — Sr + Jr on shared MCP', () => {
     const results = await handle.results;
     const [a, b] = results;
     if (!a || !b) throw new Error('expected two results');
-    expect(a.exitReason).toBe('error');
-    expect(b.exitReason).toBe('error');
+    expect(a.exitReason).toBe('killed');
+    expect(b.exitReason).toBe('killed');
     expect(handle.handles.every((h) => !h.isRunning())).toBe(true);
   });
 });

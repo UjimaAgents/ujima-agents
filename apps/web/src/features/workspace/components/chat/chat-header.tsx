@@ -13,6 +13,8 @@ export interface ChatHeaderProps {
   /** Online status */
   status?: StatusVariant;
   statusLabel?: string;
+  /** Secondary line under the title, such as live typing or sync state */
+  subtitle?: string;
   /** Optional right-side context label (e.g. workspace name) */
   contextLabel?: string;
   contextValue?: string;
@@ -30,6 +32,7 @@ export function ChatHeader({
   avatarColorIndex = 0,
   status = "active",
   statusLabel = "Active",
+  subtitle,
   contextLabel,
   contextValue,
   actions,
@@ -38,8 +41,8 @@ export function ChatHeader({
 }: ChatHeaderProps) {
   return (
     <header className="flex h-12 shrink-0 items-center justify-between border-b border-zinc-200 px-4 dark:border-zinc-800">
-      <div className="flex items-center gap-3">
-        <div className="flex items-center gap-2">
+      <div className="flex min-w-0 items-center gap-3">
+        <div className="flex min-w-0 items-center gap-2">
           {type === "channel" ? (
             <Hash className="h-4 w-4 text-zinc-400" />
           ) : type === "group" ? (
@@ -51,22 +54,31 @@ export function ChatHeader({
               size="xs"
             />
           )}
-          <h1 className="text-sm font-bold text-zinc-900 dark:text-white">
-            {title}
-          </h1>
-          {type === "channel" ? (
-            <StatusBadge variant={status} label={statusLabel} />
-          ) : (
-            <div
-              className={`h-2 w-2 rounded-full ${
-                status === "active"
-                  ? "bg-emerald-500"
-                  : status === "idle"
-                    ? "bg-amber-500"
-                    : "bg-zinc-300 dark:bg-zinc-700"
-              }`}
-              />
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <h1 className="truncate text-sm font-bold text-zinc-900 dark:text-white">
+                {title}
+              </h1>
+              {type === "channel" ? (
+                <StatusBadge variant={status} label={statusLabel} />
+              ) : (
+                <div
+                  className={`h-2 w-2 rounded-full ${
+                    status === "active"
+                      ? "bg-emerald-500"
+                      : status === "idle"
+                        ? "bg-amber-500"
+                        : "bg-zinc-300 dark:bg-zinc-700"
+                  }`}
+                />
+              )}
+            </div>
+            {subtitle && (
+              <p className="mt-0.5 truncate text-[10px] text-zinc-500 dark:text-zinc-400">
+                {subtitle}
+              </p>
             )}
+          </div>
         </div>
       </div>
       <div className="flex items-center gap-3">

@@ -35,7 +35,7 @@ function resolveHomeDir(): string {
   return join(homedir(), ".ujima");
 }
 
-function readDaemonBearerToken(): string {
+export function readDaemonBearerToken(): string {
   const fromEnv = process.env.UJIMA_TOKEN;
   if (fromEnv && fromEnv.trim().length > 0) {
     return fromEnv.trim();
@@ -124,7 +124,47 @@ export async function getServerAuthState(): Promise<SessionAuthState> {
   return daemonJson<SessionAuthState>("/api/auth/session", {}, await getSessionTokenFromCookie());
 }
 
+export async function requireOrgAccess(organizationId: string): Promise<SessionAuthState> {
+  const authState = await getServerAuthState();
+  if (!authState.authenticated) {
+    throw new DaemonRequestError(401, "ERR_UNAUTHORIZED", "Session required");
+  }
+  if (authState.user?.organizationId !== organizationId) {
+    throw new DaemonRequestError(403, "ERR_FORBIDDEN", "Unauthorized for this organization.");
+  }
+  return authState;
+}
+
 export async function getServerRolePresets(): Promise<RolePresetTemplate[]> {
   const response = await daemonJson<{ presets: RolePresetTemplate[] }>("/api/roles/presets");
   return response.presets;
+}
+
+export async function getServerTeamSettings(organizationId?: string): Promise<{
+  name: string;
+  workspace: { root: string; roleScopes: Record<string, string[]> };
+  organizationChart: { reportsTo: Record<string, string> };
+  agents: Array<{ name: string; roleName: string; personalityName: string; kind: string }>;
+  roles: Array<{
+    id?: string;
+    name: string;
+    title: string;
+    description: string;
+    instructions: string;
+    kind: string;
+    provider?: string;
+    model?: string;
+    workspaceScopes: string[];
+    tools: string[];
+    channels: string[];
+    skills: string[];
+  }>;
+  channels: Array<{ id?: string; name: string; kind: string; topic: string; memberIds: string[] }>;
+  tools: Record<string, unknown>;
+  policies: unknown;
+}> {
+  const path = organizationId
+    ? `/api/settings/team?organizationId=${encodeURIComponent(organizationId)}`
+    : "/api/settings/team";
+  return daemonJson(path, {}, await getSessionTokenFromCookie());
 }

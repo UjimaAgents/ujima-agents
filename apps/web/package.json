@@ -13,14 +13,17 @@
     "@ujima/api-schema": "workspace:*",
     "@ujima/shared": "workspace:*",
     "ai": "^6.0.168",
-    "zod": "^3.23.8",
     "lucide-react": "^1.8.0",
+    "marked": "^18.0.3",
     "next": "16.2.4",
     "next-themes": "^0.4.6",
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "react-resizable-panels": "^4.10.0",
-    "shadcn-ui": "^0.9.5"
+    "shadcn-ui": "^0.9.5",
+    "socket.io-client": "^4.8.3",
+    "zod": "^3.23.8",
+    "zustand": "^5.0.12"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

@@ -8,6 +8,7 @@ import {
   ChevronDown,
   Command,
 } from "lucide-react";
+import Link from "next/link";
 import { Avatar } from "./chat/primitives";
 import { Modal } from "./modal";
 import type { BootstrapResponse } from "@ujima/api-schema";
@@ -15,20 +16,44 @@ import type { SelectedConversation, WorkspaceRoleInput } from "../types";
 import { useState, useMemo } from "react";
 import {
   ChannelScopeRow,
+  FieldShell,
   TextArea,
   TextInput,
 } from "@/components/ui/form-fields";
 import { ProviderModelFields } from "@/components/ui/provider-model-fields";
+import { Select } from "@/components/ui/select";
 import type { RolePresetTemplate } from "../../onboarding/types";
 import { defaultModelForProvider } from "../../onboarding/types";
 import { getSuggestedAgentName } from "../../onboarding/agent-name-suggestions";
 import { Sparkles, Bot, ArrowRight, Search as SearchIcon } from "lucide-react";
+import { resolveMemberActivity } from "../workspace-store";
+import type { ActivityState } from "../activity-state";
 
 interface WorkspaceSidebarProps {
   bootstrap: BootstrapResponse;
   rolePresets: RolePresetTemplate[];
+  teamSettings: {
+    agents: Array<{ name: string; roleName: string; personalityName: string; kind: string }>;
+    roles: Array<{
+      id?: string;
+      name: string;
+      title: string;
+      description: string;
+      instructions: string;
+      kind: string;
+      provider?: string;
+      model?: string;
+      workspaceScopes: string[];
+      tools: string[];
+      channels: string[];
+      skills: string[];
+    }>;
+  } | null;
+  agentEditorTargetId?: string | null;
+  onAgentEditorHandled?: () => void;
   channels: BootstrapResponse["channels"];
   members: BootstrapResponse["members"];
+  memberActivity: Record<string, ActivityState>;
   selected: SelectedConversation;
   onSelect: (conv: SelectedConversation) => void;
   onCreateChannel: (name: string) => Promise<SelectedConversation | null>;
@@ -40,6 +65,18 @@ interface WorkspaceSidebarProps {
     model: string;
     role: WorkspaceRoleInput;
   }) => Promise<SelectedConversation | null>;
+  onUpdateAgent: (input: {
+    previousAgentId: string;
+    previousRoleName: string;
+    memberId: string;
+    name: string;
+    roleName: string;
+    personalityName: string;
+    channelIds: string[];
+    llm: string;
+    model: string;
+    role: WorkspaceRoleInput;
+  }) => Promise<BootstrapResponse["members"][number] | null>;
 }
 
 function slugifyRoleName(value: string) {
@@ -81,15 +118,102 @@ function customRole(title: string, instructions: string): WorkspaceRoleInput {
   };
 }
 
+type AgentEditorDraft = {
+  originalName: string;
+  originalRoleName: string;
+  memberId: string;
+  name: string;
+  roleName: string;
+  personalityName: string;
+  llm: string;
+  model: string;
+  title: string;
+  description: string;
+  instructions: string;
+  workspaceScopes: string[];
+  tools: string[];
+  channels: string[];
+  skills: string[];
+};
+
+function buildAgentEditorDraft({
+  agent,
+  teamSettings,
+  rolePresets,
+  channels,
+}: {
+  agent: BootstrapResponse["members"][number];
+  teamSettings: WorkspaceSidebarProps["teamSettings"];
+  rolePresets: RolePresetTemplate[];
+  channels: BootstrapResponse["channels"];
+}) {
+  const role =
+    teamSettings?.roles.find((item) => item.name === agent.roleName) ??
+    rolePresets.find((item) => item.name === agent.roleName);
+  const provider = role && "provider" in role ? role.provider : undefined;
+  const model = role && "model" in role ? role.model : undefined;
+  const personalityName =
+    teamSettings?.agents.find((item) => item.name === agent.id)?.personalityName ??
+    "direct";
+
+  return {
+    originalName: agent.name,
+    originalRoleName: agent.roleName,
+    memberId: agent.id,
+    name: agent.name,
+    roleName: agent.roleName,
+    personalityName,
+    llm: agent.llm ?? provider ?? "openai",
+    model:
+      agent.model ??
+      model ??
+      defaultModelForProvider(agent.llm ?? provider ?? "openai"),
+    title: role?.title ?? agent.roleName,
+    description: role?.description ?? "",
+    instructions: role?.instructions ?? "",
+    workspaceScopes: role?.workspaceScopes ?? [],
+    tools: role?.tools ?? [],
+    channels: (role?.channels ?? ["general"])
+      .map((channelName) => channels.find((channel) => channel.name === channelName)?.id)
+      .filter((id): id is string => Boolean(id)),
+    skills: role?.skills ?? [],
+  } satisfies AgentEditorDraft;
+}
+
+const PERSONALITY_OPTIONS = [
+  { value: "direct", label: "Direct" },
+  { value: "thoughtful", label: "Thoughtful" },
+  { value: "precise", label: "Precise" },
+  { value: "warm", label: "Warm" },
+  { value: "skeptical", label: "Skeptical" },
+  { value: "pragmatic", label: "Pragmatic" },
+] as const;
+
+function listCsvValues(value: string) {
+  return value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function joinCsvValues(values: string[]) {
+  return values.join(", ");
+}
+
 export function WorkspaceSidebar({
   bootstrap,
   rolePresets,
+  teamSettings,
+  agentEditorTargetId,
+  onAgentEditorHandled,
   channels,
   members,
+  memberActivity,
   selected,
   onSelect,
   onCreateChannel,
   onCreateAgent,
+  onUpdateAgent,
 }: WorkspaceSidebarProps) {
   const [isChannelModalOpen, setIsChannelModalOpen] = useState(false);
   const [isAgentModalOpen, setIsAgentModalOpen] = useState(false);
@@ -132,7 +256,6 @@ export function WorkspaceSidebar({
     (channel) => channel.kind !== "self" && channel.kind !== "dm",
   );
   const agentMembers = members.filter((member) => member.kind === "agent");
-
   const filteredRolePresets = useMemo(() => {
     const query = agentSearch.trim().toLowerCase();
     if (!query) return rolePresets;
@@ -221,7 +344,7 @@ export function WorkspaceSidebar({
                 icon={<Avatar name={agent.name} colorIndex={idx} size="xs" />}
                 label={agent.name}
                 active={selected.type === "agent" && selected.id === agent.id}
-                status={agent.presence === "online" ? "online" : "offline"}
+                status={resolveMemberActivity(agent, memberActivity)}
                 onClick={() =>
                   onSelect({
                     type: "agent",
@@ -237,7 +360,10 @@ export function WorkspaceSidebar({
 
       {/* User Footer */}
       <div className="border-t border-zinc-200 p-3 dark:border-zinc-800">
-        <button className="flex w-full items-center gap-3 rounded-xl p-2 transition hover:bg-zinc-100 dark:hover:bg-zinc-900 text-left">
+        <Link
+          href="/settings/organization"
+          className="flex w-full items-center gap-3 rounded-xl p-2 transition hover:bg-zinc-100 dark:hover:bg-zinc-900 text-left"
+        >
           <div className="relative shrink-0">
             <div className="h-9 w-9 rounded-full bg-gradient-to-tr from-violet-500 to-indigo-500 shadow-[0_2px_10px_rgba(99,102,241,0.2)]" />
             <div className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-white bg-emerald-500 dark:border-[#09090b]" />
@@ -248,7 +374,7 @@ export function WorkspaceSidebar({
             </span>
           </div>
           <Settings className="ml-auto h-4 w-4 text-zinc-400" />
-        </button>
+        </Link>
       </div>
 
       <Modal
@@ -331,6 +457,21 @@ export function WorkspaceSidebar({
           </div>
         </div>
       </Modal>
+
+      {agentEditorTargetId ? (
+        <AgentEditorModal
+          key={agentEditorTargetId}
+          agent={
+            agentMembers.find((item) => item.id === agentEditorTargetId) ?? null
+          }
+          teamSettings={teamSettings}
+          rolePresets={rolePresets}
+          visibleChannels={visibleChannels}
+          onClose={() => onAgentEditorHandled?.()}
+          onSelect={onSelect}
+          onUpdateAgent={onUpdateAgent}
+        />
+      ) : null}
 
       <Modal
         isOpen={isAgentModalOpen}
@@ -575,35 +716,54 @@ function SidebarItem({
   icon: React.ReactNode;
   label: string;
   active?: boolean;
-  status?: "online" | "offline" | "active";
-  onClick: () => void;
+  status?: ActivityState;
+  onClick?: () => void;
 }) {
   return (
-    <button
-      onClick={onClick}
-      className={`group flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-sm transition text-left ${
+    <div
+      className={`group flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-sm transition ${
         active
           ? "bg-violet-600/10 text-violet-700 dark:bg-violet-500/10 dark:text-violet-400"
           : "text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-900"
       }`}
     >
-      <div
-        className={`${active ? "text-violet-600 dark:text-violet-400" : "text-zinc-400 group-hover:text-zinc-900 dark:group-hover:text-zinc-100"}`}
+      <button
+        type="button"
+        onClick={onClick}
+        className="flex min-w-0 flex-1 items-center gap-2 text-left"
       >
-        {icon}
+        <div
+          className={`${active ? "text-violet-600 dark:text-violet-400" : "text-zinc-400 group-hover:text-zinc-900 dark:group-hover:text-zinc-100"}`}
+        >
+          {icon}
+        </div>
+        <span
+          className={`flex-1 truncate ${active ? "font-semibold" : "font-medium"}`}
+        >
+          {label}
+        </span>
+      </button>
+      <div className="flex items-center gap-1.5">
+        {status === "loading" && (
+          <div className="h-2 w-2 animate-spin rounded-full border border-violet-500 border-t-transparent" />
+        )}
+        {status === "working" && (
+          <div className="h-2 w-2 animate-pulse rounded-full bg-violet-500" />
+        )}
+        {status === "online" && (
+          <div className="h-2 w-2 rounded-full bg-emerald-500" />
+        )}
+        {status === "idle" && (
+          <div className="h-2 w-2 rounded-full bg-amber-500" />
+        )}
+        {status === "offline" && (
+          <div className="h-2 w-2 rounded-full bg-zinc-300 dark:bg-zinc-700" />
+        )}
+        {status === "error" && (
+          <div className="h-2 w-2 rounded-full bg-red-500" />
+        )}
       </div>
-      <span
-        className={`flex-1 truncate ${active ? "font-semibold" : "font-medium"}`}
-      >
-        {label}
-      </span>
-      {status === "online" && (
-        <div className="h-2 w-2 rounded-full bg-emerald-500" />
-      )}
-      {status === "offline" && (
-        <div className="h-2 w-2 rounded-full bg-zinc-300 dark:bg-zinc-700" />
-      )}
-    </button>
+    </div>
   );
 }
 
@@ -625,5 +785,272 @@ function SidebarSectionHeader({
         <Plus className="h-3 w-3" />
       </button>
     </div>
+  );
+}
+
+function AgentEditorModal({
+  agent,
+  teamSettings,
+  rolePresets,
+  visibleChannels,
+  onClose,
+  onSelect,
+  onUpdateAgent,
+}: {
+  agent: BootstrapResponse["members"][number] | null;
+  teamSettings: WorkspaceSidebarProps["teamSettings"];
+  rolePresets: RolePresetTemplate[];
+  visibleChannels: BootstrapResponse["channels"];
+  onClose: () => void;
+  onSelect: (conv: SelectedConversation) => void;
+  onUpdateAgent: WorkspaceSidebarProps["onUpdateAgent"];
+}) {
+  const [draft, setDraft] = useState<AgentEditorDraft | null>(() =>
+    agent ? buildAgentEditorDraft({ agent, teamSettings, rolePresets, channels: visibleChannels }) : null,
+  );
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  if (!agent || !draft) return null;
+
+  const patchDraft = (patch: Partial<AgentEditorDraft>) => {
+    setDraft((current) => (current ? { ...current, ...patch } : current));
+  };
+
+  const toggleChannel = (channelId: string) => {
+    setDraft((current) => {
+      if (!current) return current;
+      const channels = current.channels.includes(channelId)
+        ? current.channels.filter((id) => id !== channelId)
+        : [...current.channels, channelId];
+      return { ...current, channels };
+    });
+  };
+
+  return (
+    <Modal isOpen onClose={onClose} title="Edit Agent">
+      <div className="space-y-5">
+        <div className="flex items-center gap-4 rounded-2xl border border-zinc-200 bg-zinc-50 p-4 dark:border-zinc-800 dark:bg-zinc-900/50">
+          <Avatar name={draft.name} size="lg" />
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-bold text-zinc-900 dark:text-white">
+              {draft.name}
+            </p>
+            <p className="mt-0.5 truncate text-xs text-zinc-500 dark:text-zinc-400">
+              {draft.roleName} · {draft.personalityName}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() =>
+              onSelect({
+                type: "agent",
+                id: draft.memberId,
+                name: draft.name,
+              })
+            }
+            className="inline-flex items-center gap-2 rounded-xl border border-zinc-200 bg-white px-3 py-2 text-xs font-semibold text-zinc-700 transition hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200 dark:hover:bg-zinc-900"
+          >
+            Open chat
+          </button>
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-2">
+          <FieldShell label="Agent name" htmlFor="agentName">
+            <TextInput
+              id="agentName"
+              value={draft.name}
+              onChange={(event) => patchDraft({ name: event.target.value })}
+            />
+          </FieldShell>
+
+          <FieldShell label="Role name" htmlFor="agentRoleName">
+            <TextInput
+              id="agentRoleName"
+              value={draft.roleName}
+              onChange={(event) => patchDraft({ roleName: event.target.value })}
+            />
+          </FieldShell>
+        </div>
+
+        <FieldShell label="Personality" htmlFor="agentPersonality">
+          <Select
+            id="agentPersonality"
+            value={draft.personalityName}
+            onChange={(event) =>
+              patchDraft({ personalityName: event.target.value })
+            }
+            options={[...PERSONALITY_OPTIONS]}
+            placeholder="Select personality"
+          />
+        </FieldShell>
+
+        <ProviderModelFields
+          provider={draft.llm}
+          model={draft.model}
+          onProviderChange={(provider) =>
+            patchDraft({
+              llm: provider,
+              model: defaultModelForProvider(provider),
+            })
+          }
+          onModelChange={(model) => patchDraft({ model })}
+          providerLabel="LLM provider"
+          modelLabel="Model"
+          providerId="agentEditProvider"
+          modelId="agentEditModel"
+        />
+
+        <div className="grid gap-4 md:grid-cols-2">
+          <FieldShell label="Role title" htmlFor="agentRoleTitle">
+            <TextInput
+              id="agentRoleTitle"
+              value={draft.title}
+              onChange={(event) => patchDraft({ title: event.target.value })}
+            />
+          </FieldShell>
+
+          <FieldShell label="Role description" htmlFor="agentRoleDescription">
+            <TextInput
+              id="agentRoleDescription"
+              value={draft.description}
+              onChange={(event) => patchDraft({ description: event.target.value })}
+            />
+          </FieldShell>
+        </div>
+
+        <FieldShell label="Role instructions" htmlFor="agentInstructions">
+          <TextArea
+            id="agentInstructions"
+            className="min-h-28"
+            value={draft.instructions}
+            onChange={(event) => patchDraft({ instructions: event.target.value })}
+          />
+        </FieldShell>
+
+        <div className="grid gap-4">
+          <FieldShell
+            label="Workspace scopes"
+            htmlFor="agentWorkspaceScopes"
+            hint="Comma-separated paths"
+          >
+            <TextInput
+              id="agentWorkspaceScopes"
+              value={joinCsvValues(draft.workspaceScopes)}
+              onChange={(event) =>
+                patchDraft({ workspaceScopes: listCsvValues(event.target.value) })
+              }
+            />
+          </FieldShell>
+
+          <FieldShell label="Tools" htmlFor="agentTools" hint="Comma-separated tool names">
+            <TextInput
+              id="agentTools"
+              value={joinCsvValues(draft.tools)}
+              onChange={(event) => patchDraft({ tools: listCsvValues(event.target.value) })}
+            />
+          </FieldShell>
+
+          <FieldShell label="Skills" htmlFor="agentSkills" hint="Comma-separated skill names">
+            <TextInput
+              id="agentSkills"
+              value={joinCsvValues(draft.skills)}
+              onChange={(event) => patchDraft({ skills: listCsvValues(event.target.value) })}
+            />
+          </FieldShell>
+        </div>
+
+        <div>
+          <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+            Channels
+          </p>
+          <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+            Select where this agent can participate.
+          </p>
+          <div className="mt-3 grid gap-2">
+            {visibleChannels.map((channel) => (
+              <label
+                key={channel.id}
+                className="flex items-center gap-3 rounded-xl border border-zinc-200 px-4 py-3 text-sm dark:border-zinc-800"
+              >
+                <input
+                  type="checkbox"
+                  checked={draft.channels.includes(channel.id)}
+                  onChange={() => toggleChannel(channel.id)}
+                  className="h-4 w-4 rounded border-zinc-300 text-violet-600 focus:ring-violet-500"
+                />
+                <span className="font-medium text-zinc-700 dark:text-zinc-200">
+                  {channel.name}
+                </span>
+              </label>
+            ))}
+          </div>
+        </div>
+
+        {error ? <p className="text-xs text-red-600 dark:text-red-400">{error}</p> : null}
+
+        <div className="flex items-center justify-between gap-3 pt-1">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-xl px-4 py-2 text-sm font-semibold text-zinc-600 transition hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-900"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            disabled={saving}
+            onClick={async () => {
+              setError(null);
+              setSaving(true);
+              try {
+                const updated = await onUpdateAgent({
+                  previousAgentId: draft.memberId,
+                  previousRoleName: draft.originalRoleName,
+                  memberId: draft.memberId,
+                  name: draft.name.trim(),
+                  roleName: draft.roleName.trim(),
+                  personalityName: draft.personalityName.trim() || "direct",
+                  channelIds: draft.channels,
+                  llm: draft.llm.trim(),
+                  model: draft.model.trim(),
+                  role: {
+                    name: draft.roleName.trim(),
+                    title: draft.title.trim() || draft.roleName.trim(),
+                    description: draft.description.trim(),
+                    instructions: draft.instructions.trim(),
+                    kind: "agent",
+                    provider: draft.llm.trim(),
+                    model: draft.model.trim(),
+                    workspaceScopes: draft.workspaceScopes,
+                    tools: draft.tools,
+                    channels: draft.channels
+                      .map((channelId) => visibleChannels.find((channel) => channel.id === channelId)?.name)
+                      .filter((channelName): channelName is string => Boolean(channelName)),
+                    skills: draft.skills,
+                  },
+                });
+                if (!updated) throw new Error("Unable to update agent.");
+                onClose();
+                onSelect({
+                  type: "agent",
+                  id: updated.id,
+                  name: updated.name,
+                });
+              } catch (err) {
+                setError(
+                  err instanceof Error ? err.message : "Unable to update agent.",
+                );
+              } finally {
+                setSaving(false);
+              }
+            }}
+            className="rounded-xl bg-violet-600 px-6 py-2 text-sm font-bold text-white shadow-lg shadow-violet-500/20 transition hover:bg-violet-700 disabled:opacity-50 disabled:shadow-none"
+          >
+            Save changes
+          </button>
+        </div>
+      </div>
+    </Modal>
   );
 }

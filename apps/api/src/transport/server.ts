@@ -225,11 +225,13 @@ export function createTransport(opts: TransportOptions): Transport {
       registerConversationRoutes(api, {
         repo: opts.apiServices.repo,
         conversations: services.conversations,
+        auth: services.auth,
       });
       registerRunRoutes(api, {
         repo: opts.apiServices.repo,
         runs: services.runs,
         approvals: services.approvals,
+        auth: services.auth,
       });
       registerAuthRoutes(api, { auth: services.auth });
       registerOnboardingRoutes(api, {
@@ -237,7 +239,11 @@ export function createTransport(opts: TransportOptions): Transport {
         bootstrap: services.bootstrap,
         onboarding: services.onboarding,
       });
-      registerSettingsRoutes(api, { repo: opts.apiServices.repo, settings: services.settings });
+      registerSettingsRoutes(api, {
+        repo: opts.apiServices.repo,
+        settings: services.settings,
+        auth: services.auth,
+      });
       registerTaskRoutes(api, {
         host,
         repo: opts.apiServices.repo,

@@ -2,11 +2,12 @@ import { openDb } from '@ujima/context-store';
 import { createLocalEventBus } from '@ujima/event-bus';
 import { createPermissionMiddleware } from '@ujima/permissions';
 import { createMCPPool } from '@ujima/mcp-client';
-import { selectProvider } from '@ujima/llm/legacy';
 import { selectLanguageModel, type ProviderKind } from '@ujima/llm';
+import { selectProvider } from '@ujima/llm/legacy';
 import type { AgentDef, MCPDef, TaskDef } from '@ujima/shared';
 import { runAgent } from './shell';
 import { resolveOrchestratorEngine, type OrchestratorEngine } from './engine';
+import { createLanguageModelFromLegacyProvider } from './legacy-llm-language-model';
 import type { AgentRunResult, SpawnReason } from './types';
 
 export interface RunnerConfig {
@@ -61,31 +62,29 @@ export async function runInRunner(config: RunnerConfig): Promise<AgentRunResult>
   }
   const mcp = await pool.get(mcpDef);
 
-  const runInputs =
-    engine === 'ai-sdk'
-      ? (() => {
-          const llm = config.llm ?? readAiSdkConfigFromEnv(process.env);
-          if (!llm) {
-            throw new Error(
-              "runInRunner: engine='ai-sdk' requires `llm` config or UJIMA_LLM_KIND + UJIMA_LLM_MODEL_ID env vars.",
-            );
-          }
-          return {
-            engine: 'ai-sdk' as const,
-            model: selectLanguageModel(llm),
-          };
-        })()
-      : {
-          engine: 'legacy' as const,
-          provider: selectProvider(),
-        };
+  let model;
+  if (engine === 'legacy') {
+    const provider = selectProvider({ env: process.env });
+    model = createLanguageModelFromLegacyProvider(
+      provider,
+      config.llm?.modelId ?? process.env.UJIMA_LLM_MODEL_ID ?? 'legacy',
+    );
+  } else {
+    const llm = config.llm ?? readAiSdkConfigFromEnv(process.env);
+    if (!llm) {
+      throw new Error(
+        "runInRunner: requires `llm` config or UJIMA_LLM_KIND + UJIMA_LLM_MODEL_ID env vars when using `ai-sdk` engine.",
+      );
+    }
+    model = selectLanguageModel(llm);
+  }
 
   const handle = runAgent({
     agent: config.agent,
     task: config.task,
     sessionId: config.sessionId,
     spawnReason: config.spawnReason,
-    ...runInputs,
+    model,
     mcp,
     permissions,
     eventBus: bus,

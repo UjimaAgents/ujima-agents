@@ -1,7 +1,16 @@
 import { randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
-import { loadAgentTeamFromFile, type AgentTeamHandle } from '@ujima/framework';
 import {
+  createRoleFromPreset,
+  defaultModelForProvider,
+  defineRole,
+  loadAgentTeam,
+  loadAgentTeamFromFile,
+  normalizeProviderKey,
+  type AgentTeamHandle,
+} from '@ujima/framework';
+import {
+  AGENT_KIND,
   AuditEventSchema,
   ChannelSchema,
   MemberSchema,
@@ -71,6 +80,7 @@ function visibleChannels(channels: Channel[]): Channel[] {
   return channels.filter((channel) => channel.kind !== 'self' && channel.kind !== 'dm');
 }
 const CONFIG_PATH_SETTING_KEY = 'config_sync.path';
+export const TEAM_CONFIG_SETTING_KEY = 'team.config';
 
 function channelId(channel: { id?: string; name: string }): string {
   return channel.id ?? channel.name;
@@ -125,6 +135,38 @@ export class ConfigSyncService {
     });
   }
 
+  loadFromStoredConfig(organizationId?: string): { organizationId: string; inferred: boolean } | null {
+    const organization = organizationId
+      ? this.repo.getOrganization(organizationId)
+      : this.repo.getLatestOrganization();
+    if (!organization) return null;
+
+    const stored = this.repo.getWorkspaceSetting(organization.id, TEAM_CONFIG_SETTING_KEY);
+    if (stored) {
+      const parsedStored = JSON.parse(stored) as Record<string, unknown>;
+      if (parsedStored.providers && typeof parsedStored.providers === 'object') {
+        for (const [providerName, providerConfig] of Object.entries(parsedStored.providers)) {
+          if (typeof providerConfig === 'object' && providerConfig && !('kind' in providerConfig)) {
+            (providerConfig as Record<string, unknown>).kind = providerName;
+          }
+        }
+      }
+      const team = loadAgentTeam(parsedStored);
+      this.teamStore.setTeam(team);
+      applyDashboardTeamOverrides(this.repo, organization.id, this.teamStore);
+      return { organizationId: organization.id, inferred: false };
+    }
+
+    const inferred = this.inferTeamConfig(organization.id);
+    if (!inferred) return null;
+
+    const team = loadAgentTeam(inferred);
+    persistTeamConfig(this.repo, organization.id, team);
+    this.teamStore.setTeam(team);
+    applyDashboardTeamOverrides(this.repo, organization.id, this.teamStore);
+    return { organizationId: organization.id, inferred: true };
+  }
+
   reconcileTeamConfig(input: ReconcileTeamConfigInput): ReconcileTeamConfigResult {
     const existingOrganization = this.resolveTargetOrganization(
       input.organizationId,
@@ -177,6 +219,8 @@ export class ConfigSyncService {
           name: agent.name,
           kind: agent.kind,
           roleName: agent.roleName,
+          llm: existing?.llm,
+          model: existing?.model,
           presence: existing?.presence ?? 'offline',
           createdAt: existing?.createdAt ?? now,
           retiredAt: undefined,
@@ -198,7 +242,7 @@ export class ConfigSyncService {
     }
 
     for (const member of existingMembers) {
-      if (member.kind !== 'agent') continue;
+      if (member.kind !== AGENT_KIND) continue;
       if (!configManagedMemberIds.has(member.id)) continue;
       if (activeAgentIds.has(member.id)) continue;
 
@@ -302,6 +346,7 @@ export class ConfigSyncService {
     }
 
     this.teamStore.setTeam(input.team);
+    persistTeamConfig(this.repo, organizationId, input.team);
     applyDashboardTeamOverrides(this.repo, organizationId, this.teamStore);
 
     this.repo.saveAuditEvent(
@@ -350,4 +395,90 @@ export class ConfigSyncService {
 
     return this.repo.getLatestOrganization();
   }
+
+  private inferTeamConfig(organizationId: string): Record<string, unknown> | null {
+    const organization = this.repo.getOrganization(organizationId);
+    if (!organization) return null;
+
+    const agents = this.repo
+      .listMembers(organizationId)
+      .filter((member) => member.kind === AGENT_KIND && !member.retiredAt)
+      .map((member) => ({
+        name: member.id,
+        roleName: member.roleName,
+        personalityName: 'direct',
+        kind: AGENT_KIND,
+      }));
+    if (agents.length === 0) return null;
+    const agentIds = new Set(agents.map((agent) => agent.name));
+
+    const channels = this.repo
+      .listAllChannels(organizationId)
+      .filter((channel) => channel.kind !== 'self' && channel.kind !== 'dm' && !channel.archivedAt)
+      .map((channel) => ({
+        id: channel.id,
+        name: channel.name,
+        kind: channel.kind,
+        topic: channel.topic,
+        memberIds: channel.memberIds,
+      }));
+    const channelNames = new Set(channels.map((channel) => channel.name));
+    const fallbackChannels = channelNames.has('general')
+      ? ['general']
+      : channels[0]
+        ? [channels[0].name]
+        : [];
+    const providerNames = Object.keys(this.repo.listProviderCredentials(organizationId)).map(normalizeProviderKey);
+    const providerName = providerNames[0] ?? 'openai';
+    const provider = {
+      kind: providerName,
+      defaultModel: defaultModelForProvider(providerName),
+      models: [],
+    };
+
+    return {
+      name: organization.name,
+      workspace: organization.workspace,
+      organizationChart: {
+        reportsTo: Object.fromEntries(
+          Object.entries(organization.organizationChart.reportsTo).filter(
+            ([child, parent]) => agentIds.has(child) && agentIds.has(parent),
+          ),
+        ),
+      },
+      agents,
+      providers: { [providerName]: provider },
+      roles: [...new Set(agents.map((agent) => agent.roleName))].map((roleName) => {
+        try {
+          const role = createRoleFromPreset(roleName, {
+            provider: providerName,
+            model: defaultModelForProvider(providerName),
+          });
+          return {
+            ...role,
+            channels: role.channels.filter((channel) => channelNames.has(channel)),
+          };
+        } catch {
+          return defineRole({
+            name: roleName,
+            title: roleName,
+            description: roleName,
+            instructions: `Operate as ${roleName}.`,
+            provider: providerName,
+            model: defaultModelForProvider(providerName),
+            channels: fallbackChannels,
+          });
+        }
+      }),
+      channels,
+    };
+  }
+}
+
+export function persistTeamConfig(
+  repo: ApiRepository,
+  organizationId: string,
+  team: AgentTeamHandle,
+): void {
+  repo.saveWorkspaceSetting(organizationId, TEAM_CONFIG_SETTING_KEY, JSON.stringify(team.toJSON()));
 }

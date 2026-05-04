@@ -1,14 +1,28 @@
-import { AlertCircle } from "lucide-react";
+import {AlertCircle} from "lucide-react";
 
 export interface ApprovalCardData {
+  id: string;
+  runId?: string;
   title: string;
   description: string;
+  /** Human-readable shell line + cwd when applicable */
+  commandPreview?: string;
+  status: "pending" | "approved" | "rejected";
   requestedBy: string;
   approvalsNeeded: number;
-  reviewers?: { color: string }[];
+  reviewers?: {color: string}[];
 }
 
-export function ApprovalCard({ data }: { data: ApprovalCardData }) {
+export function ApprovalCard({
+  data,
+  resolving,
+  onResolve,
+}: {
+  data: ApprovalCardData;
+  resolving?: boolean;
+  onResolve?: (resolution: "allow_once" | "allow_always" | "reject") => void;
+}) {
+  const isPending = data.status === "pending";
   return (
     <div className="rounded-xl border border-amber-200 bg-amber-50/50 px-4 py-3 dark:border-amber-500/20 dark:bg-amber-500/5">
       <div className="flex items-center justify-between gap-3">
@@ -21,10 +35,11 @@ export function ApprovalCard({ data }: { data: ApprovalCardData }) {
               {data.title}
             </p>
             <p className="text-[10px] text-zinc-500">{data.description}</p>
-            <p className="text-[10px] text-zinc-400">
-              Requested by {data.requestedBy} · {data.approvalsNeeded} approvals
-              needed
-            </p>
+            {data.commandPreview ? (
+              <pre className="mt-1.5 max-h-28 overflow-y-auto rounded-lg border border-amber-200/80 bg-white/80 px-2 py-1.5 text-[10px] font-mono leading-relaxed text-zinc-800 whitespace-pre-wrap dark:border-amber-500/20 dark:bg-zinc-950/80 dark:text-zinc-200">
+                {data.commandPreview}
+              </pre>
+            ) : null}
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -38,9 +53,38 @@ export function ApprovalCard({ data }: { data: ApprovalCardData }) {
               ))}
             </div>
           )}
-          <button className="rounded-md bg-white px-3 py-1 text-[10px] font-bold text-zinc-900 shadow-sm border border-zinc-200 hover:bg-zinc-50 dark:bg-zinc-800 dark:border-zinc-700 dark:text-white">
-            Review
-          </button>
+          {isPending ? (
+            <>
+              <button
+                type="button"
+                disabled={resolving}
+                onClick={() => onResolve?.("reject")}
+                className="rounded-md bg-white px-3 py-1 text-[10px] font-bold text-zinc-900 shadow-sm border border-zinc-200 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-zinc-800 dark:border-zinc-700 dark:text-white"
+              >
+                Reject
+              </button>
+              <button
+                type="button"
+                disabled={resolving}
+                onClick={() => onResolve?.("allow_once")}
+                className="rounded-md bg-emerald-600 px-3 py-1 text-[10px] font-bold text-white shadow-sm border border-emerald-700 hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {resolving ? "Resolving..." : "Allow for now"}
+              </button>
+              <button
+                type="button"
+                disabled={resolving}
+                onClick={() => onResolve?.("allow_always")}
+                className="rounded-md bg-violet-600 px-3 py-1 text-[10px] font-bold text-white shadow-sm border border-violet-700 hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Always Allow
+              </button>
+            </>
+          ) : (
+            <span className="rounded-md bg-white px-3 py-1 text-[10px] font-bold text-zinc-900 shadow-sm border border-zinc-200 dark:bg-zinc-800 dark:border-zinc-700 dark:text-white">
+              {data.status}
+            </span>
+          )}
         </div>
       </div>
     </div>

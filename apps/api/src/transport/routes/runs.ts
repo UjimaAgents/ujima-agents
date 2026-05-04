@@ -9,13 +9,14 @@ import {
   RunCreateSchema,
   RunListQuerySchema,
 } from '@ujima/api-schema';
-import type { ApprovalService, RunService } from '@ujima/orchestrator';
+import type { ApprovalService, AuthService, RunService } from '@ujima/orchestrator';
 import { z } from 'zod';
 import {
   ERR_NO_WORKSPACE_ROOT,
   assertReadyWorkspaceRoot,
   isWorkspaceRootNotReadyError,
 } from './workspace-root.js';
+import { requireOrgSession } from './org-auth.js';
 
 const RunIdParamsSchema = z.object({ runId: IdSchema });
 const ApprovalIdParamsSchema = z.object({ approvalId: IdSchema });
@@ -31,13 +32,14 @@ export interface RunRoutesOptions {
   repo: Repository;
   runs: RunService;
   approvals: ApprovalService;
+  auth: AuthService;
 }
 
 export function registerRunRoutes(
   _app: FastifyInstance,
   options: RunRoutesOptions,
 ): void {
-  const { repo, runs, approvals } = options;
+  const { repo, runs, approvals, auth } = options;
   const app = _app.withTypeProvider<ZodTypeProvider>();
 
   app.get('/runs', {
@@ -110,6 +112,8 @@ export function registerRunRoutes(
       response: {
         200: RunStateSchema,
         400: ApiErrorSchema,
+        401: ApiErrorSchema,
+        403: ApiErrorSchema,
         409: ApiErrorSchema,
         404: ApiErrorSchema,
         503: ApiErrorSchema,
@@ -118,6 +122,8 @@ export function registerRunRoutes(
   }, async (req, reply) => {
     try {
       assertReadyWorkspaceRoot(repo, req.body.organizationId);
+      const forbidden = requireOrgSession(auth, req, reply, req.body.organizationId);
+      if (forbidden) return forbidden;
       return await runs.createRun(req.body);
     } catch (err) {
       const message = errMessage(err);
@@ -159,6 +165,8 @@ export function registerRunRoutes(
       response: {
         200: ApprovalRequestSchema,
         400: ApiErrorSchema,
+        401: ApiErrorSchema,
+        403: ApiErrorSchema,
         409: ApiErrorSchema,
         404: ApiErrorSchema,
       },
@@ -166,10 +174,15 @@ export function registerRunRoutes(
   }, async (req, reply) => {
     try {
       assertReadyWorkspaceRoot(repo, req.body.organizationId);
+      const forbidden = requireOrgSession(auth, req, reply, req.body.organizationId);
+      if (forbidden) return forbidden;
+      const status =
+        req.body.resolution === 'reject' ? 'rejected' : 'approved';
       return await approvals.resolveApproval({
         organizationId: req.body.organizationId,
         approvalId: req.params.approvalId,
-        status: req.body.status,
+        status,
+        resolution: req.body.resolution,
         reason: req.body.reason,
       });
     } catch (err) {

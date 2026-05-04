@@ -4,6 +4,7 @@ import {
   SocketEventNames,
   orgRoom,
   runRoom,
+  threadRoom,
   type ApprovalRequest,
   type ResourceType,
   type ToolAction,
@@ -25,6 +26,7 @@ export interface ApprovalResolveInput {
   organizationId: string;
   approvalId: string;
   status: 'approved' | 'rejected';
+  resolution?: 'allow_once' | 'allow_always' | 'reject';
   reason?: string;
 }
 
@@ -55,31 +57,55 @@ export class ApprovalService {
     });
 
     this.repo.saveApproval(approval);
+    const rooms = [orgRoom(input.organizationId), runRoom(input.runId)];
+    const run = this.repo.getRun(input.organizationId, input.runId);
+    if (run?.threadId) {
+      rooms.push(threadRoom(run.threadId));
+    }
     this.realtime.emit(
       SocketEventNames.approvalRequested,
-      { organizationId: input.organizationId, approval },
-      [orgRoom(input.organizationId), runRoom(input.runId)],
+      { organizationId: input.organizationId, threadId: run?.threadId, approval },
+      rooms,
     );
 
     return approval;
   }
 
   async resolveApproval(input: ApprovalResolveInput): Promise<ApprovalRequest> {
+    const existing = this.repo.getApproval(input.organizationId, input.approvalId);
+    const scopeMatch = existing?.reason.match(/(?:^|;)scope=([^;]+)/);
+    // The scope in the reason is stored URL-encoded by ToolServiceImpl. We decode
+    // it here so we have the raw scope, then re-encode it when building the
+    // permanent grant reason string. This ensures consistency with how
+    // hasApprovalGrant searches for the record.
+    const rawScope = scopeMatch && scopeMatch[1] ? decodeURIComponent(scopeMatch[1]) : undefined;
+    const canPersistGrant =
+      input.resolution === 'allow_always' &&
+      !!rawScope;
+    const effectiveReason =
+      canPersistGrant && rawScope
+        ? `grant:always_allow:scope=${encodeURIComponent(rawScope)};note=${input.reason ?? ''}`
+        : input.reason;
     const approval = this.repo.resolveApproval(
       input.organizationId,
       input.approvalId,
       input.status,
-      input.reason,
+      effectiveReason,
     );
 
     if (!approval) {
       throw new Error(`Approval not found: ${input.approvalId}`);
     }
 
+    const rooms = [orgRoom(input.organizationId), runRoom(approval.runId ?? approval.id)];
+    const run = approval.runId ? this.repo.getRun(input.organizationId, approval.runId) : null;
+    if (run?.threadId) {
+      rooms.push(threadRoom(run.threadId));
+    }
     this.realtime.emit(
       SocketEventNames.approvalResolved,
-      { organizationId: input.organizationId, approval },
-      [orgRoom(input.organizationId), runRoom(approval.runId ?? approval.id)],
+      { organizationId: input.organizationId, threadId: run?.threadId, approval },
+      rooms,
     );
 
     if (approval.status === 'approved' && approval.runId) {

@@ -10,7 +10,7 @@ import {
   Repository,
 } from '@ujima/runtime-core';
 import type { AgentDef, MCPDef, TeamDef } from '@ujima/shared';
-import type { LLMProvider } from '@ujima/llm/legacy';
+import type { LanguageModel } from 'ai';
 import {
   ALWAYS_AVAILABLE_AGENT_TOOLS,
   createApiServices,
@@ -97,8 +97,8 @@ async function main(): Promise<void> {
       resolveMCPDef: async (_wsId, mcpId): Promise<MCPDef> => {
         throw new Error(`runtime: no MCP resolver configured (requested "${mcpId}")`);
       },
-      getProvider: (agent: AgentDef): LLMProvider => {
-        throw new Error(`runtime: no provider configured for agent "${agent.id}"`);
+      getModel: (agent: AgentDef): LanguageModel => {
+        throw new Error(`runtime: no model configured for agent "${agent.id}"`);
       },
     },
     {},

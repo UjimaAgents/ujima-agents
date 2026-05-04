@@ -36,6 +36,7 @@ import {
 } from './auth.js';
 import {
   getApproval as readApproval,
+  hasApprovalGrant as readApprovalGrant,
   listPendingApprovals as readPendingApprovals,
   resolveApproval as resolveApprovalRecord,
   saveApproval as writeApproval,
@@ -46,6 +47,7 @@ import {
   type BootstrapSnapshot,
 } from './bootstrap.js';
 import {
+  deleteChannel as removeChannel,
   getChannel as readChannel,
   listAllChannels as readAllChannels,
   listChannels as readChannels,
@@ -238,6 +240,8 @@ export class Repository {
   ): PaginatedChannels => readChannels(this.db, organizationId, cursor, limit, excludeKinds);
   setChannelMembers = (channelId: string, memberIds: string[]): void =>
     writeChannelMembers(this.db, channelId, memberIds);
+  deleteChannel = (channelId: string): void =>
+    removeChannel(this.db, channelId);
 
   saveThread = (thread: ConversationThread): ConversationThread =>
     writeThread(this.db, thread);
@@ -319,6 +323,14 @@ export class Repository {
     resolveApprovalRecord(this.db, organizationId, approvalId, status, reason);
   listPendingApprovals = (organizationId: string): ApprovalRequest[] =>
     readPendingApprovals(this.db, organizationId);
+  hasApprovalGrant = (input: {
+    organizationId: string;
+    requestedBy: string;
+    resourceType: ApprovalRequest['resourceType'];
+    resourcePath: string;
+    action: ApprovalRequest['action'];
+    approvalScope: string;
+  }): boolean => readApprovalGrant(this.db, input);
 
   saveAuditEvent = (event: AuditEvent): AuditEvent => writeAuditEvent(this.db, event);
 

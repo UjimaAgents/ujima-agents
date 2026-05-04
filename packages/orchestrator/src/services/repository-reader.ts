@@ -76,7 +76,12 @@ export interface RepositoryReader {
   listWorkspaceMembers(organizationId: string): WorkspaceMember[];
   getMember(organizationId: string, memberId: string): Member | null;
   listMembers(organizationId: string): Member[];
-  listMessages(organizationId: string, threadId: string): PaginatedMessages;
+  listMessages(
+    organizationId: string,
+    threadId: string,
+    cursor?: string,
+    limit?: number,
+  ): PaginatedMessages;
   getProviderCredential(organizationId: string, providerName: string): string | null;
 }
 
@@ -95,6 +100,7 @@ export interface ConversationRepository extends RepositoryReader {
   ): PaginatedChannels;
   saveChannel(channel: Channel): Channel;
   setChannelMembers(channelId: string, memberIds: string[]): void;
+  deleteChannel(channelId: string): void;
   getThread(organizationId: string, threadId: string): ConversationThread | null;
   ensureThread(thread: ConversationThread): ConversationThread;
   getMessage(organizationId: string, messageId: string): Message | null;
@@ -158,6 +164,14 @@ export interface ApiRepository extends ConversationRepository {
     reason?: string,
   ): ApprovalRequest | null;
   listPendingApprovals(organizationId: string): ApprovalRequest[];
+  hasApprovalGrant(input: {
+    organizationId: string;
+    requestedBy: string;
+    resourceType: ApprovalRequest['resourceType'];
+    resourcePath: string;
+    action: ApprovalRequest['action'];
+    approvalScope: string;
+  }): boolean;
   saveAuditEvent(event: AuditEvent): AuditEvent;
   /**
    * Run a synchronous DB transaction. The callback must complete

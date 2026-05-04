@@ -30,7 +30,7 @@ export const DEFAULT_TOOL_CATALOG: Record<string, ToolCapability> = {
   'channel.post': {
     id: 'channel.post',
     name: 'Channel Post',
-    description: 'Post to a channel or reply to an existing channel message.',
+    description: 'Post a new message to a channel. Use channel.reply for replies in an existing thread. Write @mentions with display names, not raw ids.',
     actions: ['message'],
     pathScopes: [],
     requiresApproval: false,

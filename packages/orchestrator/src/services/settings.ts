@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { ChannelSchema, MemberSchema, type Organization, type Member, type Channel } from '@ujima/shared';
+import { AGENT_KIND, ChannelSchema, MemberSchema, type Organization, type Member, type Channel } from '@ujima/shared';
 import { createAgent, defineRole, normalizeProviderKey, type RoleConfig } from '@ujima/framework';
 import type { ApiRepository } from './repository-reader.js';
 import type { TeamStore } from './team-store.js';
@@ -7,6 +7,9 @@ import { listProviderStatuses, validateProviderKeys, type ProviderStatus } from 
 import { addMemberToDefaultChannels, ensureMemberSelfChannel } from './member-channels.js';
 import { upsertWorkspaceMemberScopes } from './workspace-root.js';
 import { upsertDashboardTeamOverride } from './dashboard-team-overrides.js';
+import { persistTeamConfig } from './config-sync.js';
+import { requireTeam } from '../utils/require-team.js';
+import { requireOrganization } from '../utils/require-organization.js';
 
 export interface TeamSettingsResponse {
   name: string;
@@ -39,12 +42,38 @@ export interface AddMemberInput {
   channelIds?: string[];
   llm?: string;
   model?: string;
+  personalityName?: string;
   role?: RoleConfig;
+}
+
+export interface UpdateMemberInput {
+  organizationId: string;
+  memberId: string;
+  name: string;
+  roleName: string;
+  channelIds?: string[];
+  llm?: string;
+  model?: string;
+  personalityName: string;
+  role: RoleConfig;
 }
 
 export interface CreateChannelInput {
   organizationId: string;
   name: string;
+  topic?: string;
+}
+
+export interface UpdatePoliciesInput {
+  organizationId: string;
+  requireApprovalForWrites?: boolean;
+  requireApprovalForShell?: boolean;
+}
+
+export interface UpdateChannelInput {
+  organizationId: string;
+  channelId: string;
+  name?: string;
   topic?: string;
 }
 
@@ -128,7 +157,7 @@ export class SettingsService {
   ) {}
 
   getTeamSettings(): TeamSettingsResponse {
-    const team = this.requireTeam();
+    const team = requireTeam(this.teamStore);
     return {
       name: team.config.name,
       workspace: team.workspace,
@@ -142,8 +171,8 @@ export class SettingsService {
   }
 
   listProviders(organizationId: string): ProviderStatus[] {
-    const team = this.requireTeam();
-    this.requireOrganization(organizationId);
+    const team = requireTeam(this.teamStore);
+    requireOrganization(this.repo, organizationId);
     return listProviderStatuses(team, this.repo.listProviderCredentials(organizationId));
   }
 
@@ -151,8 +180,8 @@ export class SettingsService {
     organizationId: string,
     providerKeys: Record<string, string>,
   ): ProviderStatus[] {
-    const team = this.requireTeam();
-    this.requireOrganization(organizationId);
+    const team = requireTeam(this.teamStore);
+    requireOrganization(this.repo, organizationId);
     const normalizedProviderKeys = Object.fromEntries(
       Object.entries(providerKeys).map(([name, apiKey]) => [normalizeProviderKey(name), apiKey]),
     );
@@ -170,15 +199,15 @@ export class SettingsService {
   }
 
   deleteProvider(organizationId: string, providerName: string): ProviderStatus[] {
-    this.requireTeam();
-    this.requireOrganization(organizationId);
+    requireTeam(this.teamStore);
+    requireOrganization(this.repo, organizationId);
     this.repo.deleteProviderCredential(organizationId, normalizeProviderKey(providerName));
     return this.listProviders(organizationId);
   }
 
   testProvider(organizationId: string, providerName: string): ProviderTestResult {
-    const team = this.requireTeam();
-    this.requireOrganization(organizationId);
+    const team = requireTeam(this.teamStore);
+    requireOrganization(this.repo, organizationId);
     const providerKey = normalizeProviderKey(providerName);
 
     if (!team.providers[providerKey]) {
@@ -198,21 +227,21 @@ export class SettingsService {
   }
 
   addMember(input: AddMemberInput): Member {
-    this.requireOrganization(input.organizationId);
-    const team = this.requireTeam();
+    requireOrganization(this.repo, input.organizationId);
+    const team = requireTeam(this.teamStore);
     const existingRole = team.getRole(input.roleName);
-    if (input.kind === 'agent' && !input.role && !existingRole) {
+    if (input.kind === AGENT_KIND && !input.role && !existingRole) {
       throw new Error(`Role "${input.roleName}" not found`);
     }
-    const role = input.role
+    const role = input.role || existingRole
       ? defineRole({
           ...existingRole,
-        ...input.role,
-        name: input.roleName,
-        id: input.role.id ?? existingRole?.id ?? input.roleName,
-        provider: input.role.provider ?? existingRole?.provider,
-        model: input.role.model ?? existingRole?.model,
-      })
+          ...input.role,
+          name: input.roleName,
+          id: input.role?.id ?? existingRole?.id ?? input.roleName,
+          provider: input.role?.provider ?? existingRole?.provider,
+          model: input.role?.model ?? existingRole?.model,
+        })
       : undefined;
     const member = MemberSchema.parse({
       id: randomUUID(),
@@ -224,10 +253,10 @@ export class SettingsService {
       model: input.model,
     });
     const saved = this.repo.saveMember(member);
-    if (input.kind === 'agent') {
+    if (input.kind === AGENT_KIND) {
       upsertDashboardTeamOverride(this.repo, input.organizationId, this.teamStore, {
         role,
-        agent: createAgent(saved.id, saved.roleName),
+        agent: createAgent(saved.id, saved.roleName, input.personalityName ?? 'direct'),
       });
     }
     const activeRole = this.teamStore.getTeam()?.getRole(input.roleName);
@@ -251,8 +280,83 @@ export class SettingsService {
     return saved;
   }
 
+  updateMember(input: UpdateMemberInput): Member {
+    requireOrganization(this.repo, input.organizationId);
+    const team = requireTeam(this.teamStore);
+    const member = this.repo.getMember(input.organizationId, input.memberId);
+    if (!member) {
+      throw new Error(`Member not found: ${input.memberId}`);
+    }
+    if (member.kind !== AGENT_KIND) {
+      throw new Error('Only agents can be edited here');
+    }
+
+    const existingRole = team.getRole(member.roleName);
+    const nextRole = defineRole({
+      ...existingRole,
+      ...input.role,
+      id: input.role.id ?? existingRole?.id ?? input.roleName,
+      name: input.roleName,
+      kind: AGENT_KIND,
+      provider: input.role.provider ?? existingRole?.provider,
+      model: input.role.model ?? existingRole?.model,
+    });
+
+    const saved = this.repo.saveMember(
+      MemberSchema.parse({
+        ...member,
+        name: input.name,
+        roleName: input.roleName,
+        llm: input.llm !== undefined ? normalizeProviderKey(input.llm) : member.llm,
+        model: input.model !== undefined ? input.model : member.model,
+      }),
+    );
+
+    upsertDashboardTeamOverride(
+      this.repo,
+      input.organizationId,
+      this.teamStore,
+      {
+        role: nextRole,
+        agent: createAgent(saved.id, saved.roleName, input.personalityName),
+      },
+      {
+        previousAgentName: member.id,
+        previousRoleName: this.repo.listMembers(input.organizationId).some(
+          (item) => item.kind === AGENT_KIND && item.id !== member.id && item.roleName === member.roleName,
+        )
+          ? undefined
+          : member.roleName,
+      },
+    );
+
+    upsertWorkspaceMemberScopes(
+      this.repo,
+      input.organizationId,
+      saved.id,
+      nextRole.workspaceScopes ?? [],
+    );
+
+    ensureMemberSelfChannel(this.repo, input.organizationId, saved);
+    if (input.channelIds !== undefined) {
+      const visibleChannels = visibleChannelsFromRepo(this.repo, input.organizationId);
+      const channelIds = new Set(input.channelIds);
+      for (const channel of visibleChannels) {
+        const memberIds = new Set(channel.memberIds);
+        if (channelIds.has(channel.id)) {
+          memberIds.add(saved.id);
+        } else {
+          memberIds.delete(saved.id);
+        }
+        this.repo.setChannelMembers(channel.id, [...memberIds].sort());
+      }
+    }
+
+    return saved;
+  }
+
   addChannel(input: CreateChannelInput): Channel {
-    this.requireOrganization(input.organizationId);
+    requireOrganization(this.repo, input.organizationId);
     return this.repo.saveChannel(
       ChannelSchema.parse({
         id: randomUUID(),
@@ -265,8 +369,49 @@ export class SettingsService {
     );
   }
 
+  updatePolicies(input: UpdatePoliciesInput): OrganizationSettingsResponse {
+    requireOrganization(this.repo, input.organizationId);
+    const team = requireTeam(this.teamStore);
+
+    if (input.requireApprovalForWrites !== undefined) {
+      team.config.policies.requireApprovalForWrites = input.requireApprovalForWrites;
+    }
+    if (input.requireApprovalForShell !== undefined) {
+      team.config.policies.requireApprovalForShell = input.requireApprovalForShell;
+    }
+
+    persistTeamConfig(this.repo, input.organizationId, team);
+
+    return this.getOrganizationSettings(input.organizationId);
+  }
+
+  updateChannel(input: UpdateChannelInput): Channel {
+    requireOrganization(this.repo, input.organizationId);
+    const existing = this.repo.getChannel(input.organizationId, input.channelId);
+    if (!existing) {
+      throw new Error(`Channel not found: ${input.channelId}`);
+    }
+
+    return this.repo.saveChannel(
+      ChannelSchema.parse({
+        ...existing,
+        name: input.name ?? existing.name,
+        topic: input.topic !== undefined ? input.topic : existing.topic,
+      }),
+    );
+  }
+
+  deleteChannel(organizationId: string, channelId: string): void {
+    requireOrganization(this.repo, organizationId);
+    const existing = this.repo.getChannel(organizationId, channelId);
+    if (!existing) {
+      throw new Error(`Channel not found: ${channelId}`);
+    }
+    this.repo.deleteChannel(channelId);
+  }
+
   getOrganizationSettings(organizationId: string): OrganizationSettingsResponse {
-    this.requireOrganization(organizationId);
+    requireOrganization(this.repo, organizationId);
     const organization = this.repo.getOrganization(organizationId);
     if (!organization) {
       throw new Error(`Organization not found: ${organizationId}`);
@@ -274,9 +419,7 @@ export class SettingsService {
     return {
       organization,
       members: this.repo.listMembers(organizationId),
-      channels: visibleChannels(
-        this.repo.listChannels(organizationId, undefined, undefined, ['self', 'dm']).data,
-      ),
+      channels: visibleChannels(visibleChannelsFromRepo(this.repo, organizationId)),
     };
   }
 
@@ -313,7 +456,7 @@ export class SettingsService {
         );
       }
       const memberIds = new Set(members.map((m) => m.id));
-      const agentIds = new Set(members.filter((m) => m.kind === 'agent').map((m) => m.id));
+      const agentIds = new Set(members.filter((m) => m.kind === AGENT_KIND).map((m) => m.id));
       validateOrganizationChart(input.organizationChart.reportsTo, memberIds, agentIds, owner.id);
     }
 
@@ -326,22 +469,8 @@ export class SettingsService {
     return {
       organization: updated,
       members: this.repo.listMembers(input.organizationId),
-      channels: visibleChannels(
-        this.repo.listChannels(input.organizationId, undefined, undefined, ['self', 'dm']).data,
-      ),
+      channels: visibleChannels(visibleChannelsFromRepo(this.repo, input.organizationId)),
     };
-  }
-
-  private requireTeam() {
-    const team = this.teamStore.getTeam();
-    if (!team) throw new Error('Team config not loaded');
-    return team;
-  }
-
-  private requireOrganization(organizationId: string): void {
-    if (!this.repo.getOrganization(organizationId)) {
-      throw new Error(`Organization not found: ${organizationId}`);
-    }
   }
 
   private isConfigOwnedField(
@@ -358,4 +487,15 @@ export class SettingsService {
     );
     return ownership?.owner === 'config' && !ownership.allowDashboardOverride;
   }
+}
+
+export function visibleChannelsFromRepo(repo: ApiRepository, organizationId: string): Channel[] {
+  const channels: Channel[] = [];
+  let cursor: string | undefined = undefined;
+  do {
+    const page = repo.listChannels(organizationId, cursor, 500, ['self', 'dm']);
+    channels.push(...page.data);
+    cursor = page.nextCursor;
+  } while (cursor);
+  return channels;
 }

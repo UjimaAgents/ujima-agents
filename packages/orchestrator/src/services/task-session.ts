@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import {
+  AGENT_KIND,
   ChannelSchema,
   MessageSchema,
   TaskSessionSchema,
@@ -12,6 +13,7 @@ import {
 import type { ConversationService } from './conversation.js';
 import type { ApiRepository, PaginatedTaskSessions } from './repository-reader.js';
 import type { SpiritService } from './spirit.js';
+import { requireOrganization } from '../utils/require-organization.js';
 
 // -----------------------------------------------------------------------
 // TaskSessionService — Phase 1 of the unified task shell.
@@ -80,7 +82,7 @@ export class TaskSessionService {
    * for state that may roll back.
    */
   create(input: CreateTaskSessionInput): TaskSessionDetail {
-    this.requireOrganization(input.organizationId);
+    requireOrganization(this.repo, input.organizationId);
 
     const requester = this.repo.getMember(input.organizationId, input.requestedBy);
     if (!requester) {
@@ -263,7 +265,7 @@ export class TaskSessionService {
   }
 
   get(organizationId: string, taskSessionId: string): TaskSession | null {
-    this.requireOrganization(organizationId);
+    requireOrganization(this.repo, organizationId);
     return this.repo.getTaskSession(organizationId, taskSessionId);
   }
 
@@ -280,7 +282,7 @@ export class TaskSessionService {
     taskSessionId: string,
     options: { runFirstTurn?: boolean } = {},
   ): Promise<{ session: TaskSession; spirits: Spirit[] }> {
-    this.requireOrganization(organizationId);
+    requireOrganization(this.repo, organizationId);
     const spirits = this.spirits;
     if (!spirits) {
       throw new Error('SpiritService is not wired into this TaskSessionService');
@@ -322,7 +324,7 @@ export class TaskSessionService {
       if (!member) {
         throw new Error(`Team member not found: ${memberId}`);
       }
-      if (member.kind !== 'agent') {
+      if (member.kind !== AGENT_KIND) {
         throw new Error(`Member "${memberId}" is not an agent`);
       }
       if (member.retiredAt) {
@@ -400,7 +402,7 @@ export class TaskSessionService {
     organizationId: string,
     options: { cursor?: string; limit?: number; status?: TaskSessionStatus } = {},
   ): PaginatedTaskSessions {
-    this.requireOrganization(organizationId);
+    requireOrganization(this.repo, organizationId);
     return this.repo.listTaskSessions(organizationId, options);
   }
 
@@ -410,7 +412,7 @@ export class TaskSessionService {
     status: TaskSessionStatus,
     options: { summary?: string; completedAt?: string } = {},
   ): TaskSession | null {
-    this.requireOrganization(organizationId);
+    requireOrganization(this.repo, organizationId);
     return this.repo.updateTaskSessionStatus(organizationId, taskSessionId, status, options);
   }
 
@@ -477,11 +479,6 @@ export class TaskSessionService {
     return `${base}-${randomShortId(suffixLen)}`.slice(0, 64);
   }
 
-  private requireOrganization(organizationId: string): void {
-    if (!this.repo.getOrganization(organizationId)) {
-      throw new Error(`Organization not found: ${organizationId}`);
-    }
-  }
 }
 
 /**

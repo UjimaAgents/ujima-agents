@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { normalizeProviderKey } from '@ujima/framework';
 import {
+  AGENT_KIND,
   MessageSchema,
   RunStateSchema,
   SocketEventNames,
@@ -9,15 +10,17 @@ import {
   runRoom,
   threadRoom,
   type RunState,
+  type Message,
 } from '@ujima/shared';
-import type { AgentTeamHandle } from '@ujima/framework';
 import type { AiService } from '../ai-service.js';
+import { requireTeam } from '../utils/require-team.js';
 import type { RealtimeService } from './context.js';
 import type { ConversationService } from './conversation.js';
 import type { ApiRepository } from './repository-reader.js';
 import type { TeamStore } from './team-store.js';
 import type { ToolService } from './tool-service.js';
 import { applyDashboardTeamOverrides } from './dashboard-team-overrides.js';
+import { ToolApprovalRequiredError } from './tool-loop-result.js';
 
 export interface CreateRunInput {
   organizationId: string;
@@ -42,7 +45,7 @@ export class RunService {
       throw new Error(`Member not found: ${input.agentId}`);
     }
 
-    if (member.kind !== 'agent') {
+    if (member.kind !== AGENT_KIND) {
       throw new Error(`Member "${input.agentId}" is not an agent`);
     }
 
@@ -73,7 +76,14 @@ export class RunService {
       ],
     );
 
-    return this.advanceRun(run);
+    try {
+      return await this.advanceRun(run);
+    } catch (error) {
+      if (error instanceof ToolApprovalRequiredError) {
+        return this.waitForApproval(run, 'Waiting for approval');
+      }
+      return this.failRun(run, (error as Error).message);
+    }
   }
 
   async resumeAfterApproval(organizationId: string, runId: string): Promise<RunState> {
@@ -111,9 +121,15 @@ export class RunService {
       .listPendingApprovals(organizationId)
       .filter((approval) => approval.runId === runId);
 
-    const messages = run.threadId
-      ? this.repo.listMessages(organizationId, run.threadId).data
-      : [];
+    const messages: Message[] = [];
+    if (run.threadId) {
+      let cursor: string | undefined = undefined;
+      do {
+        const page = this.repo.listMessages(organizationId, run.threadId, cursor, 100);
+        messages.push(...page.data);
+        cursor = page.nextCursor;
+      } while (cursor);
+    }
 
     return { run, approvals, messages };
   }
@@ -128,7 +144,7 @@ export class RunService {
 
   private async advanceRun(run: RunState): Promise<RunState> {
     applyDashboardTeamOverrides(this.repo, run.organizationId, this.teamStore);
-    const team = this.requireTeam();
+    const team = requireTeam(this.teamStore);
     const member = this.repo.getMember(run.organizationId, run.agentId);
     if (!member) {
       throw new Error(`Member not found: ${run.agentId}`);
@@ -175,9 +191,17 @@ export class RunService {
         summary: run.summary,
       });
 
-      const statuses = result.toolResults.map(
-        (toolResult) => (toolResult.output as { status?: string } | undefined)?.status,
-      );
+      const pendingApprovalExists = this.repo
+        .listPendingApprovals(run.organizationId)
+        .some((approval) => approval.runId === run.id);
+      if (pendingApprovalExists) {
+        return this.waitForApproval(running, 'Waiting for approval');
+      }
+
+      const statuses = [
+        ...result.toolResults,
+        ...result.steps.flatMap((step) => step.toolResults),
+      ].map((toolResult) => (toolResult.output as { status?: string } | undefined)?.status);
       if (statuses.includes('blocked')) {
         return this.failRun(running, 'Tool action blocked');
       }
@@ -187,7 +211,8 @@ export class RunService {
       }
 
       const text = result.text.trim();
-      if (text.length > 0 && run.threadId) {
+      const reply = text || 'Acknowledged.';
+      if (run.threadId) {
         this.conversations.publishMessage(
           MessageSchema.parse({
             id: randomUUID(),
@@ -195,16 +220,19 @@ export class RunService {
             threadId: run.threadId,
             channelId: this.repo.getThread(run.organizationId, run.threadId)?.channelId,
             senderId: run.agentId,
-            senderKind: 'agent',
-            kind: 'agent',
-            content: text,
+            senderKind: AGENT_KIND,
+            kind: AGENT_KIND,
+            content: reply,
             createdAt: new Date().toISOString(),
           }),
         );
       }
 
-      return this.completeRun(running, text || 'Run completed');
+      return this.completeRun(running, reply);
     } catch (error) {
+      if (error instanceof ToolApprovalRequiredError) {
+        return this.waitForApproval(running, 'Waiting for approval');
+      }
       return this.failRun(running, (error as Error).message);
     }
   }
@@ -262,11 +290,4 @@ export class RunService {
     return failed;
   }
 
-  private requireTeam(): AgentTeamHandle {
-    const team = this.teamStore.getTeam();
-    if (!team) {
-      throw new Error('Team config not loaded');
-    }
-    return team;
-  }
 }

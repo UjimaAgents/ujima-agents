@@ -194,6 +194,7 @@ export const MessageSchema = z.object({
   kind: MessageKindSchema.default('human'),
   content: z.string().min(1),
   mentions: z.array(IdSchema).default([]),
+  mentionNames: z.array(z.string().min(1)).optional(),
   toolCalls: z.array(MessageToolCallSchema).default([]),
   createdAt: TimestampSchema,
   editedAt: TimestampSchema.optional(),

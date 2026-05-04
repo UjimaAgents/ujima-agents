@@ -1,6 +1,6 @@
 /** Represents the currently selected conversation in the workspace. */
 export interface SelectedConversation {
-  type: "channel" | "dm" | "agent";
+  type: "channel" | "agent";
   id: string;
   name: string;
 }
@@ -12,6 +12,7 @@ export interface WorkspaceRoleInput {
   description?: string;
   instructions: string;
   kind?: "agent";
+  personalityName?: string;
   provider?: string;
   model?: string;
   workspaceScopes?: string[];

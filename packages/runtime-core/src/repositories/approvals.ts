@@ -105,3 +105,44 @@ export function listPendingApprovals(
 
   return rows.map(rowToApproval);
 }
+
+export function hasApprovalGrant(
+  db: DbHandle,
+  input: {
+    organizationId: string;
+    requestedBy: string;
+    resourceType: ApprovalRequest['resourceType'];
+    resourcePath: string;
+    action: ApprovalRequest['action'];
+    approvalScope: string;
+  },
+): boolean {
+  const escapedScope = encodeURIComponent(input.approvalScope)
+    .replace(/\\/g, '\\\\')
+    .replace(/%/g, '\\%')
+    .replace(/_/g, '\\_');
+
+  const row = db
+    .prepare(
+      `SELECT id
+       FROM approvals
+       WHERE organization_id = ?
+         AND requested_by = ?
+         AND resource_type = ?
+         AND resource_path = ?
+         AND action = ?
+         AND status = 'approved'
+         AND reason LIKE ? ESCAPE '\\'
+       ORDER BY resolved_at DESC
+       LIMIT 1`,
+    )
+    .get(
+      input.organizationId,
+      input.requestedBy,
+      input.resourceType,
+      input.resourcePath,
+      input.action,
+      `grant:always_allow:scope=${escapedScope};%`,
+    ) as Row | null;
+  return !!row;
+}

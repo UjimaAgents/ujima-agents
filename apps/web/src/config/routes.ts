@@ -10,4 +10,9 @@ export const APP_ROUTES: AppRoute[] = [
     label: "Workspace",
     description: "Organization dashboard and control plane.",
   },
+  {
+    href: "/settings/organization",
+    label: "Settings",
+    description: "Organization settings and configuration.",
+  },
 ];

@@ -6,22 +6,26 @@ import type { Repository } from '@ujima/runtime-core';
 import { ChannelSchema, IdSchema, MemberSchema } from '@ujima/shared';
 import {
   ApiErrorSchema,
+  ChannelOperationParamsSchema,
+  ChannelUpdateSchema,
   ListOrganizationsResponseSchema,
   OrganizationQuerySchema,
   OrganizationSettingsQuerySchema,
   OrganizationSettingsResponseSchema,
   OrganizationSettingsUpdateSchema,
+  PoliciesUpdateSchema,
   ProviderSecretsUpsertResponseSchema,
   ProviderSecretsUpsertSchema,
   ProviderStatusSchema,
 } from '@ujima/api-schema';
-import type { SettingsService } from '@ujima/orchestrator';
+import type { AuthService, SettingsService } from '@ujima/orchestrator';
 import { z } from 'zod';
 import {
   ERR_NO_WORKSPACE_ROOT,
   assertReadyWorkspaceRoot,
   isWorkspaceRootNotReadyError,
 } from './workspace-root.js';
+import { requireOrgSession } from './org-auth.js';
 
 const OrgIdParamsSchema = z.object({ orgId: IdSchema });
 const ProviderTestParamsSchema = z.object({ providerName: z.string().min(1) });
@@ -34,7 +38,14 @@ const AddMemberRequestSchema = z.object({
   channelIds: z.array(IdSchema).default([]),
   llm: z.string().min(1).optional(),
   model: z.string().min(1).optional(),
+  personalityName: z.string().min(1).optional(),
   role: RoleConfigSchema.optional(),
+});
+const UpdateMemberRequestSchema = AddMemberRequestSchema.omit({ kind: true }).extend({
+  name: z.string().min(1),
+  channelIds: z.array(IdSchema).optional(),
+  role: RoleConfigSchema,
+  personalityName: z.string().min(1),
 });
 const CreateChannelRequestSchema = z.object({
   name: z.string().min(1),
@@ -49,29 +60,37 @@ const ProviderTestResultSchema = z.object({
 export interface SettingsRoutesOptions {
   repo: Repository;
   settings: SettingsService;
+  auth: AuthService;
 }
 
 export function registerSettingsRoutes(
   _app: FastifyInstance,
   options: SettingsRoutesOptions,
 ): void {
-  const { repo, settings } = options;
+  const { repo, settings, auth } = options;
   const app = _app.withTypeProvider<ZodTypeProvider>();
 
   app.get('/settings/team', {
     schema: {
       description: 'Get the current team configuration',
       tags: ['Settings'],
+      querystring: OrganizationQuerySchema,
       response: {
         200: TeamSettingsResponseSchema,
+        401: ApiErrorSchema,
+        403: ApiErrorSchema,
+        404: ApiErrorSchema,
         503: ApiErrorSchema,
       },
     },
-  }, async (_req, reply) => {
+  }, async (req, reply) => {
     try {
+      const forbidden = requireOrgSession(auth, req, reply, req.query.organizationId);
+      if (forbidden) return forbidden;
       return settings.getTeamSettings() as z.infer<typeof TeamSettingsResponseSchema>;
     } catch (err) {
-      return replyError(reply, 503, errMessage(err));
+      const message = errMessage(err);
+      return replyError(reply, message.startsWith('Organization not found') ? 404 : 503, message);
     }
   });
 
@@ -83,12 +102,16 @@ export function registerSettingsRoutes(
       response: {
         200: ProviderStatusesResponseSchema,
         400: ApiErrorSchema,
+        401: ApiErrorSchema,
+        403: ApiErrorSchema,
         404: ApiErrorSchema,
         503: ApiErrorSchema,
       },
     },
   }, async (req, reply) => {
     try {
+      const forbidden = requireOrgSession(auth, req, reply, req.query.organizationId);
+      if (forbidden) return forbidden;
       return settings.listProviders(req.query.organizationId);
     } catch (err) {
       const message = errMessage(err);
@@ -104,6 +127,8 @@ export function registerSettingsRoutes(
       response: {
         200: ProviderSecretsUpsertResponseSchema,
         400: ApiErrorSchema,
+        401: ApiErrorSchema,
+        403: ApiErrorSchema,
         409: ApiErrorSchema,
         404: ApiErrorSchema,
         503: ApiErrorSchema,
@@ -112,6 +137,8 @@ export function registerSettingsRoutes(
   }, async (req, reply) => {
     try {
       assertReadyWorkspaceRoot(repo, req.body.organizationId);
+      const forbidden = requireOrgSession(auth, req, reply, req.body.organizationId);
+      if (forbidden) return forbidden;
       return {
         providers: settings.upsertProviders(req.body.organizationId, req.body.providerKeys),
       };
@@ -138,6 +165,8 @@ export function registerSettingsRoutes(
       response: {
         200: ProviderSecretsUpsertResponseSchema,
         400: ApiErrorSchema,
+        401: ApiErrorSchema,
+        403: ApiErrorSchema,
         409: ApiErrorSchema,
         404: ApiErrorSchema,
         503: ApiErrorSchema,
@@ -146,6 +175,8 @@ export function registerSettingsRoutes(
   }, async (req, reply) => {
     try {
       assertReadyWorkspaceRoot(repo, req.query.organizationId);
+      const forbidden = requireOrgSession(auth, req, reply, req.query.organizationId);
+      if (forbidden) return forbidden;
       return {
         providers: settings.deleteProvider(req.query.organizationId, req.params.providerName),
       };
@@ -166,12 +197,16 @@ export function registerSettingsRoutes(
       response: {
         200: OrganizationSettingsResponseSchema,
         400: ApiErrorSchema,
+        401: ApiErrorSchema,
+        403: ApiErrorSchema,
         404: ApiErrorSchema,
         503: ApiErrorSchema,
       },
     },
   }, async (req, reply) => {
     try {
+      const forbidden = requireOrgSession(auth, req, reply, req.query.organizationId);
+      if (forbidden) return forbidden;
       return settings.getOrganizationSettings(req.query.organizationId);
     } catch (err) {
       const message = errMessage(err);
@@ -187,6 +222,8 @@ export function registerSettingsRoutes(
       response: {
         200: OrganizationSettingsResponseSchema,
         400: ApiErrorSchema,
+        401: ApiErrorSchema,
+        403: ApiErrorSchema,
         409: ApiErrorSchema,
         404: ApiErrorSchema,
       },
@@ -194,6 +231,8 @@ export function registerSettingsRoutes(
   }, async (req, reply) => {
     try {
       assertReadyWorkspaceRoot(repo, req.body.organizationId);
+      const forbidden = requireOrgSession(auth, req, reply, req.body.organizationId);
+      if (forbidden) return forbidden;
       return settings.updateOrganizationSettings(req.body);
     } catch (err) {
       const message = errMessage(err);
@@ -213,12 +252,16 @@ export function registerSettingsRoutes(
       response: {
         200: ProviderTestResultSchema,
         400: ApiErrorSchema,
+        401: ApiErrorSchema,
+        403: ApiErrorSchema,
         404: ApiErrorSchema,
         503: ApiErrorSchema,
       },
     },
   }, async (req, reply) => {
     try {
+      const forbidden = requireOrgSession(auth, req, reply, req.query.organizationId);
+      if (forbidden) return forbidden;
       return settings.testProvider(req.query.organizationId, req.params.providerName);
     } catch (err) {
       const message = errMessage(err);
@@ -252,6 +295,8 @@ export function registerSettingsRoutes(
       response: {
         200: MemberSchema,
         400: ApiErrorSchema,
+        401: ApiErrorSchema,
+        403: ApiErrorSchema,
         409: ApiErrorSchema,
         404: ApiErrorSchema,
       },
@@ -259,6 +304,8 @@ export function registerSettingsRoutes(
   }, async (req, reply) => {
     try {
       assertReadyWorkspaceRoot(repo, req.params.orgId);
+      const forbidden = requireOrgSession(auth, req, reply, req.params.orgId);
+      if (forbidden) return forbidden;
       const member = settings.addMember({
         organizationId: req.params.orgId,
         name: req.body.name,
@@ -267,6 +314,7 @@ export function registerSettingsRoutes(
         channelIds: req.body.channelIds,
         llm: req.body.llm,
         model: req.body.model,
+        personalityName: req.body.personalityName,
         role: req.body.role,
       });
       return member;
@@ -279,6 +327,46 @@ export function registerSettingsRoutes(
     }
   });
 
+  app.patch('/orgs/:orgId/members/:memberId', {
+    schema: {
+      description: 'Update an agent member',
+      tags: ['Settings'],
+      params: z.object({ orgId: IdSchema, memberId: IdSchema }),
+      body: UpdateMemberRequestSchema,
+      response: {
+        200: MemberSchema,
+        400: ApiErrorSchema,
+        401: ApiErrorSchema,
+        403: ApiErrorSchema,
+        404: ApiErrorSchema,
+        409: ApiErrorSchema,
+      },
+    },
+  }, async (req, reply) => {
+    try {
+      assertReadyWorkspaceRoot(repo, req.params.orgId);
+      const forbidden = requireOrgSession(auth, req, reply, req.params.orgId);
+      if (forbidden) return forbidden;
+      return settings.updateMember({
+        organizationId: req.params.orgId,
+        memberId: req.params.memberId,
+        name: req.body.name,
+        roleName: req.body.roleName,
+        channelIds: req.body.channelIds,
+        llm: req.body.llm,
+        model: req.body.model,
+        personalityName: req.body.personalityName,
+        role: req.body.role,
+      });
+    } catch (err) {
+      const message = errMessage(err);
+      if (isWorkspaceRootNotReadyError(err)) {
+        return reply.code(409).send({ code: ERR_NO_WORKSPACE_ROOT, message });
+      }
+      return replyError(reply, message.startsWith('Member not found') ? 404 : 400, message);
+    }
+  });
+
   app.post('/orgs/:orgId/channels', {
     schema: {
       description: 'Add a channel to an organization',
@@ -288,6 +376,8 @@ export function registerSettingsRoutes(
       response: {
         200: ChannelSchema,
         400: ApiErrorSchema,
+        401: ApiErrorSchema,
+        403: ApiErrorSchema,
         409: ApiErrorSchema,
         404: ApiErrorSchema,
       },
@@ -295,6 +385,8 @@ export function registerSettingsRoutes(
   }, async (req, reply) => {
     try {
       assertReadyWorkspaceRoot(repo, req.params.orgId);
+      const forbidden = requireOrgSession(auth, req, reply, req.params.orgId);
+      if (forbidden) return forbidden;
       return repo.saveChannel(
         ChannelSchema.parse({
           id: randomUUID(),
@@ -311,6 +403,105 @@ export function registerSettingsRoutes(
         return reply.code(409).send({ code: ERR_NO_WORKSPACE_ROOT, message });
       }
       return replyError(reply, message.startsWith('Organization not found') ? 404 : 400, message);
+    }
+  });
+
+  app.patch('/orgs/:orgId/policies', {
+    schema: {
+      description: 'Update organization policies',
+      tags: ['Settings'],
+      params: OrgIdParamsSchema,
+      body: PoliciesUpdateSchema,
+      response: {
+        200: OrganizationSettingsResponseSchema,
+        400: ApiErrorSchema,
+        401: ApiErrorSchema,
+        403: ApiErrorSchema,
+        404: ApiErrorSchema,
+        409: ApiErrorSchema,
+      },
+    },
+  }, async (req, reply) => {
+    try {
+      assertReadyWorkspaceRoot(repo, req.params.orgId);
+      const forbidden = requireOrgSession(auth, req, reply, req.params.orgId);
+      if (forbidden) return forbidden;
+      return settings.updatePolicies({
+        organizationId: req.params.orgId,
+        requireApprovalForWrites: req.body.requireApprovalForWrites,
+        requireApprovalForShell: req.body.requireApprovalForShell,
+      });
+    } catch (err) {
+      const message = errMessage(err);
+      if (isWorkspaceRootNotReadyError(err)) {
+        return reply.code(409).send({ code: ERR_NO_WORKSPACE_ROOT, message });
+      }
+      return replyError(reply, message.startsWith('Organization not found') ? 404 : 400, message);
+    }
+  });
+
+  app.patch('/orgs/:orgId/channels/:channelId', {
+    schema: {
+      description: 'Update a channel',
+      tags: ['Settings'],
+      params: ChannelOperationParamsSchema,
+      body: ChannelUpdateSchema,
+      response: {
+        200: ChannelSchema,
+        400: ApiErrorSchema,
+        401: ApiErrorSchema,
+        403: ApiErrorSchema,
+        404: ApiErrorSchema,
+        409: ApiErrorSchema,
+      },
+    },
+  }, async (req, reply) => {
+    try {
+      assertReadyWorkspaceRoot(repo, req.params.orgId);
+      const forbidden = requireOrgSession(auth, req, reply, req.params.orgId);
+      if (forbidden) return forbidden;
+      return settings.updateChannel({
+        organizationId: req.params.orgId,
+        channelId: req.params.channelId,
+        name: req.body.name,
+        topic: req.body.topic,
+      });
+    } catch (err) {
+      const message = errMessage(err);
+      if (isWorkspaceRootNotReadyError(err)) {
+        return reply.code(409).send({ code: ERR_NO_WORKSPACE_ROOT, message });
+      }
+      return replyError(reply, message.startsWith('Channel not found') ? 404 : 400, message);
+    }
+  });
+
+  app.delete('/orgs/:orgId/channels/:channelId', {
+    schema: {
+      description: 'Delete a channel',
+      tags: ['Settings'],
+      params: ChannelOperationParamsSchema,
+      response: {
+        200: z.object({ success: z.literal(true) }),
+        400: ApiErrorSchema,
+        401: ApiErrorSchema,
+        403: ApiErrorSchema,
+        404: ApiErrorSchema,
+        409: ApiErrorSchema,
+      },
+    },
+  }, async (req, reply) => {
+    try {
+      assertReadyWorkspaceRoot(repo, req.params.orgId);
+      const forbidden = requireOrgSession(auth, req, reply, req.params.orgId);
+      if (forbidden) return forbidden;
+      settings.deleteChannel(req.params.orgId, req.params.channelId);
+      return { success: true as const };
+    } catch (err) {
+      const message = errMessage(err);
+      if (isWorkspaceRootNotReadyError(err)) {
+        return reply.code(409).send({ code: ERR_NO_WORKSPACE_ROOT, message });
+      }
+      return replyError(reply, message.startsWith('Channel not found') ? 404 : 400, message);
     }
   });
 }

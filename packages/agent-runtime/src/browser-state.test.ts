@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { captureBrowserState } from './tool-loop';
+import { captureBrowserState } from './browser';
 
 describe('captureBrowserState', () => {
   it('returns the previous snapshot for non-browser tools', () => {
-    const prev = { url: 'https://a.test' };
+    const prev = { url: 'https://google.com', observedAt: new Date().toISOString() };
     expect(captureBrowserState('notion_search', {}, [], prev, 'notion')).toBe(prev);
     expect(captureBrowserState('fs_read', { path: '/x' }, 'ok', undefined, 'fs')).toBeUndefined();
   });
@@ -45,7 +45,14 @@ describe('captureBrowserState', () => {
       undefined,
       'playwright',
     );
-    expect(snap?.screenshotRef).toMatch(/^inline-image:image\/png:/);
+    expect(snap?.screenshotRef).toMatch(/^screenshot-ref:image\/png:/);
+  });
+
+  it('pulls URL and title from plain string content', () => {
+    const content = 'Current page is https://example.org/bar - Example Bar';
+    const snap = captureBrowserState('browser_navigate', {}, content, undefined, 'playwright');
+    expect(snap?.url).toBe('https://example.org/bar');
+    expect(snap?.title).toBe('Example Bar');
   });
 
   it('merges with a previous snapshot without wiping earlier fields', () => {

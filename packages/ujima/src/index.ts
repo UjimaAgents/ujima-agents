@@ -38,7 +38,11 @@ export type {
   AgentTeamConfigInput,
 } from './schemas.js';
 
-export { buildAgentSystemPrompt, SHARED_AGENT_SYSTEM_PROMPT } from './prompts.js';
+export {
+  buildAgentSystemPrompt,
+  MESSAGE_TOOL_USAGE_GUIDANCE,
+  SHARED_AGENT_SYSTEM_PROMPT,
+} from './prompts.js';
 
 export {
   listPersonalityPresets,

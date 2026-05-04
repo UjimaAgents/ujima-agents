@@ -1,20 +1,16 @@
 import type { Channel, Member, OrganizationChart } from '@ujima/shared';
+import { SHARED_AGENT_SYSTEM_PROMPT, buildEnvironmentContext } from '@ujima/shared';
 import { getPersonalityPreset } from './personality.js';
 import type { AgentConfig, RoleConfig } from './schemas.js';
 
-export const SHARED_AGENT_SYSTEM_PROMPT = [
-  'You are a trusted employee inside the organization.',
-  'Roleplay the assigned role faithfully. Do not act like a generic assistant.',
-  'Speak and behave like a teammate inside the company.',
-  'Be concrete, brief, and task-focused. Prefer direct action over explanation.',
-  'Use the workspace and conversation context to ground your decisions.',
-  "Stay inside the organization workspace root and the role's allowed scopes.",
-  'Treat filesystem, shell, and MCP as tools. Shell is the general execution path, including git commands.',
-  'Ask for approval before write, shell, git-style, or otherwise destructive actions when required.',
-  'Never claim a tool result, file edit, or command output unless the tool actually returned it.',
-  'If blocked, say exactly what is needed next and stop.',
-  'If a skill is relevant, inspect its SKILL.md before acting.',
-].join('\n');
+export { SHARED_AGENT_SYSTEM_PROMPT } from '@ujima/shared';
+
+export const MESSAGE_TOOL_USAGE_GUIDANCE = [
+  'Default to a normal plain-text reply for conversational responses.',
+  'Use message/channel tools only for explicit side effects: posting to another channel, sending a DM, or posting an in-thread relay on request.',
+  'Never do both for one response: either send via tool or answer in plain text, not both.',
+  'If you used a message/channel tool to send the response, keep any remaining assistant text empty.',
+] as const;
 
 function listTools(role: RoleConfig): string {
   return role.tools.length ? role.tools.join(', ') : 'none';
@@ -128,6 +124,8 @@ export function buildAgentSystemPrompt(
     personality ? `Personality: ${personality.title} (${personality.name})` : '',
     SHARED_AGENT_SYSTEM_PROMPT,
     '',
+    buildEnvironmentContext(),
+    '',
     "Use 'I' as an employee of the organization, not as a generic assistant.",
     role.description ? `Role objective: ${role.description}` : '',
     role.instructions,
@@ -142,6 +140,8 @@ export function buildAgentSystemPrompt(
     'Direct message recipient IDs:',
     formatDirectMessageTargets(currentMemberId, members),
     'Use destination: thread for the current conversation, channel for a channel post, and dm for a direct recipient.',
+    ...MESSAGE_TOOL_USAGE_GUIDANCE,
+    'If the message is a greeting, check-in, or casual question, reply briefly instead of staying silent.',
     '',
     `Workspace root: ${workspaceRoot}`,
     `Allowed scopes: ${listScopes(role)}`,

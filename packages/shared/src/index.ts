@@ -1,4 +1,5 @@
 export const UJIMA_VERSION = '0.1.0-alpha.0';
+export * from './provider-kinds.js';
 export * from './types.js';
 export * from './messages.js';
 export {
@@ -21,3 +22,4 @@ export {
 export type { ProviderModelOption } from './model-catalog.js';
 export * from './socket-events.js';
 export * from './cursor.js';
+export { SHARED_AGENT_SYSTEM_PROMPT, buildEnvironmentContext } from './agent-prompt.js';

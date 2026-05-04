@@ -1,4 +1,4 @@
-import type { ResourceType, ToolAction } from '@ujima/shared';
+import type { ResourceType, ToolAction, SpiritRole } from '@ujima/shared';
 import type { PermissionMiddleware, PermissionCheckInput } from '@ujima/permissions';
 
 export interface ToolInvocationInput {
@@ -29,7 +29,7 @@ export interface ToolInvocationInput {
    * when it builds tool definitions; absent on every other
    * invocation path (which is treated the same as `'worker'`).
    */
-  spiritRole?: 'worker' | 'supervisor';
+  spiritRole?: SpiritRole;
 }
 
 export interface ToolInvocationResult {

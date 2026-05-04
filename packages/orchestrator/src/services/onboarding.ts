@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
 import { normalizeProviderKey } from '@ujima/framework';
 import {
+  AGENT_KIND,
   ChannelSchema,
   MemberSchema,
   OrganizationSchema,
@@ -15,6 +16,8 @@ import type { TeamStore } from './team-store.js';
 import { summarizeTeam, validateProviderKeys, type TeamSummary } from './team.js';
 import { addMemberToDefaultChannels, ensureMemberSelfChannel } from './member-channels.js';
 import { upsertWorkspaceMemberScopes } from './workspace-root.js';
+import { persistTeamConfig } from './config-sync.js';
+import { visibleChannelsFromRepo } from './settings.js';
 
 export interface OnboardingInlineTeam {
   name?: string;
@@ -205,7 +208,7 @@ export class OnboardingService {
           id: agent.name,
           organizationId,
           name: agent.name,
-          kind: 'agent',
+          kind: AGENT_KIND,
           roleName: agent.roleName,
           presence: 'offline',
           createdAt: new Date().toISOString(),
@@ -247,7 +250,7 @@ export class OnboardingService {
     const memberIdsByRole = new Map<string, string[]>();
 
     for (const member of members) {
-      if (member.kind !== 'agent') continue;
+      if (member.kind !== AGENT_KIND) continue;
       const ids = memberIdsByRole.get(member.roleName) ?? [];
       ids.push(member.id);
       memberIdsByRole.set(member.roleName, ids);
@@ -275,13 +278,12 @@ export class OnboardingService {
     }
 
     this.teamStore.setTeam(team);
+    persistTeamConfig(this.repo, organizationId, team);
 
     return {
       organization,
       members,
-      channels: visibleChannels(
-        this.repo.listChannels(organizationId, undefined, undefined, ['self', 'dm']).data,
-      ),
+      channels: visibleChannels(visibleChannelsFromRepo(this.repo, organizationId)),
       team: summarizeTeam(team),
     };
   }
