@@ -234,8 +234,10 @@ export function useConversationSync(
         removeMessage(tempId);
         throw new Error("Unexpected message response.");
       }
+
+      receiveMessage(tempId, parsed.data, (value) => messageToChatMessage(value, storeMembersRef.current), messageToActivity);
     },
-    [addPendingMessage, bootstrap.auth.member, conversation.id, conversation.type, removeMessage, transport],
+    [addPendingMessage, bootstrap.auth.member, conversation.id, conversation.type, receiveMessage, removeMessage, transport],
   );
 
   useEffect(() => {
@@ -410,6 +412,13 @@ function handleStreamEvent(
       }
       return;
     }
+    case "member.alerted": {
+      const alerted = parseMemberAlertedPayload(envelope.payload);
+      if (!alerted) return;
+      actions.setMemberActivity(alerted.memberId, "online");
+      actions.appendActivity(memberAlertedToActivity(alerted));
+      return;
+    }
     case "member.alert_failed": {
       const failure = parseMemberAlertFailedPayload(envelope.payload);
       if (!failure) return;
@@ -480,6 +489,38 @@ interface MemberAlertFailedPayload {
   runId?: string;
   error: string;
   occurredAt: string;
+}
+
+interface MemberAlertedPayload {
+  organizationId: string;
+  memberId: string;
+  channelId?: string;
+  threadId?: string;
+  messageId: string;
+  byMemberId: string;
+  reason: string;
+}
+
+function parseMemberAlertedPayload(payload: unknown): MemberAlertedPayload | null {
+  const body = payload as Partial<MemberAlertedPayload>;
+  if (
+    typeof body.organizationId !== "string" ||
+    typeof body.memberId !== "string" ||
+    typeof body.messageId !== "string" ||
+    typeof body.byMemberId !== "string" ||
+    typeof body.reason !== "string"
+  ) {
+    return null;
+  }
+  return {
+    organizationId: body.organizationId,
+    memberId: body.memberId,
+    channelId: body.channelId,
+    threadId: body.threadId,
+    messageId: body.messageId,
+    byMemberId: body.byMemberId,
+    reason: body.reason,
+  };
 }
 
 function parseMemberAlertFailedPayload(payload: unknown): MemberAlertFailedPayload | null {
@@ -717,6 +758,16 @@ function memberToActivity(member: Member): ActivityEvent {
     publisher: member.id,
     timestamp: member.createdAt ?? new Date().toISOString(),
     payload: member,
+  };
+}
+
+function memberAlertedToActivity(payload: MemberAlertedPayload): ActivityEvent {
+  return {
+    event_id: `member-alerted:${payload.memberId}:${payload.messageId}:${payload.reason}`,
+    type: "member_alerted",
+    publisher: payload.memberId,
+    timestamp: new Date().toISOString(),
+    payload,
   };
 }
 

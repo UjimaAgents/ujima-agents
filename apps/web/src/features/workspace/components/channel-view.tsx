@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { MessageSquare, SquarePen } from "lucide-react";
+import { SquarePen } from "lucide-react";
 import type { BootstrapResponse } from "@ujima/api-schema";
 import type { SelectedConversation } from "../types";
 import { useConversationSync } from "../use-conversation-sync";
@@ -17,9 +17,13 @@ import {
   ApprovalCard,
   type ChatTab,
 } from "./chat";
-import { Avatar, StatusBadge } from "./chat/primitives";
 import type { RunState } from "@ujima/shared";
 import { useWorkspaceStore } from "../workspace-store";
+import { EmptyChat } from "./empty-chat";
+import { TypingIndicator } from "./typing-indicator";
+import { RunCard } from "./run-card";
+import { ActivityRow } from "./activity-row";
+import { ConversationSkeleton } from "./conversation-skeleton";
 
 const CHANNEL_TABS: ChatTab[] = [
   { id: "conversation", label: "Conversation" },
@@ -34,37 +38,6 @@ const AGENT_TABS: ChatTab[] = [
   { id: "tasks", label: "Tasks" },
   { id: "activity", label: "Activity" },
 ];
-
-function EmptyChat({
-  conversation,
-  loading,
-}: {
-  conversation: SelectedConversation;
-  loading?: boolean;
-}) {
-  const isAgent = conversation.type === "agent";
-  return (
-    <div className="flex h-full flex-col items-center justify-center px-6">
-      <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-zinc-100 dark:bg-zinc-800">
-        <MessageSquare className="h-7 w-7 text-zinc-400" />
-      </div>
-      <h3 className="mt-4 text-sm font-semibold text-zinc-900 dark:text-white">
-        {loading
-          ? "Loading conversation…"
-          : isAgent
-            ? `Start a conversation with ${conversation.name}`
-            : `Welcome to #${conversation.name}`}
-      </h3>
-      <p className="mt-1 text-xs text-zinc-500 max-w-xs text-center">
-        {loading
-          ? "Pulling the latest thread history and live updates."
-          : isAgent
-            ? "Send a message or assign a task to get started."
-            : "This is the beginning of the channel. Send a message to start collaborating."}
-      </p>
-    </div>
-  );
-}
 
 const ACTIVE_RUN_STATES: RunState["status"][] = [
   "queued",
@@ -154,14 +127,14 @@ export function ChannelView({
       const visibleNames = typingMembers.slice(0, 3).map((member) => member.name);
       const hiddenCount = typingRuns.length - visibleNames.length;
       const tail = hiddenCount > 0 ? ` and ${hiddenCount} more` : "";
-      return `${visibleNames.join(", ")}${tail} are responding…`;
+      return `${visibleNames.join(", ")}${tail} are responding`;
     }
     if (typingRuns[0].status === "waiting_for_approval") {
-      return `${memberName} is waiting for approval…`;
+      return `${memberName} is waiting for approval`;
     }
     return isAgent
-      ? `${conversation.name} is responding…`
-      : `${memberName} is responding…`;
+      ? `${conversation.name} is responding`
+      : `${memberName} is responding`;
   }, [conversation.name, isAgent, typingMembers, typingRuns]);
   const typingMember = useMemo(
     () =>
@@ -468,146 +441,6 @@ function TabEmpty({ emptyLabel }: { emptyLabel: string }) {
     <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4">
       <div className="flex h-full items-center justify-center text-xs text-zinc-500">
         {emptyLabel}
-      </div>
-    </div>
-  );
-}
-
-function RunCard({ run }: { run: RunState }) {
-  return (
-    <div className="rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3 dark:border-zinc-800 dark:bg-zinc-900/50">
-      <div className="flex items-center justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-xs font-bold text-zinc-900 dark:text-white">
-            {run.summary || "Run"}
-          </p>
-          <p className="text-[10px] text-zinc-500">
-            {run.step || run.status} · {run.agentId}
-          </p>
-        </div>
-        <StatusBadge variant={runStatusVariant(run.status)} label={run.status} />
-      </div>
-    </div>
-  );
-}
-
-function ActivityRow({ event }: { event: { event_id: string; type: string; publisher: string; timestamp: string; task_id?: string; payload?: unknown } }) {
-  return (
-    <div className="rounded-xl border border-zinc-200 bg-white px-3 py-2 text-xs dark:border-zinc-800 dark:bg-zinc-950">
-      <div className="flex items-center justify-between gap-3">
-        <div className="min-w-0">
-          <p className="font-semibold text-zinc-900 dark:text-white">{event.type}</p>
-          <p className="text-[10px] text-zinc-500">
-            {event.publisher}
-            {event.task_id ? ` · ${event.task_id}` : ""}
-          </p>
-        </div>
-        <span className="text-[10px] text-zinc-400">
-          {formatActivityTime(event.timestamp)}
-        </span>
-      </div>
-    </div>
-  );
-}
-
-function runStatusVariant(status: RunState["status"]) {
-  switch (status) {
-    case "completed":
-      return "active" as const;
-    case "running":
-      return "active" as const;
-    case "waiting_for_approval":
-      return "idle" as const;
-    case "failed":
-    case "cancelled":
-      return "error" as const;
-    default:
-      return "idle" as const;
-  }
-}
-
-function formatActivityTime(iso: string): string {
-  const parsed = Date.parse(iso);
-  if (Number.isNaN(parsed)) return "now";
-  return new Date(parsed).toLocaleTimeString([], {
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: true,
-  });
-}
-
-function ConversationSkeleton({
-  conversation,
-}: {
-  conversation: SelectedConversation;
-}) {
-  return (
-    <div className="space-y-2">
-      {Array.from({ length: 3 }).map((_, index) => (
-        <div
-          key={index}
-          className={`flex gap-3 rounded-xl border border-zinc-200 px-3 py-3 dark:border-zinc-800 ${
-            index === 0 ? "bg-zinc-50 dark:bg-zinc-900/50" : "bg-white dark:bg-zinc-950"
-          }`}
-        >
-          <div className="h-7 w-7 animate-pulse rounded-lg bg-zinc-200 dark:bg-zinc-800" />
-          <div className="flex-1 space-y-2">
-            <div className="h-2.5 w-24 animate-pulse rounded-full bg-zinc-200 dark:bg-zinc-800" />
-            <div className="h-2.5 w-full max-w-[28rem] animate-pulse rounded-full bg-zinc-200 dark:bg-zinc-800" />
-            <div className="h-2.5 w-2/3 animate-pulse rounded-full bg-zinc-200 dark:bg-zinc-800" />
-          </div>
-        </div>
-      ))}
-      <div className="rounded-xl border border-dashed border-zinc-200 bg-zinc-50 px-4 py-3 text-[11px] text-zinc-500 dark:border-zinc-800 dark:bg-zinc-950">
-        {conversation.type === "agent"
-          ? `${conversation.name} will start appearing here as soon as the first message lands.`
-          : `Live updates for #${conversation.name} will appear here as the workspace activity starts flowing.`}
-      </div>
-    </div>
-  );
-}
-
-function TypingIndicator({
-  label,
-  name,
-  colorIndex,
-  names,
-}: {
-  label: string;
-  name: string;
-  colorIndex: number;
-  names: string[];
-}) {
-  const visibleNames = names.slice(0, 3);
-  const overflowCount = Math.max(names.length - visibleNames.length, 0);
-  return (
-    <div className="flex items-center gap-3 px-3 py-2">
-      {names.length > 1 ? (
-        <div className="flex items-center -space-x-2">
-          {visibleNames.map((visibleName, index) => (
-            <Avatar
-              key={`${visibleName}:${index}`}
-              name={visibleName}
-              colorIndex={colorIndex + index}
-              size="sm"
-            />
-          ))}
-          {overflowCount > 0 ? (
-            <div className="flex h-7 w-7 items-center justify-center rounded-full border border-zinc-200 bg-white text-[10px] font-bold text-zinc-500 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
-              +{overflowCount}
-            </div>
-          ) : null}
-        </div>
-      ) : (
-        <Avatar name={name} colorIndex={colorIndex} size="sm" />
-      )}
-      <div className="flex items-center gap-2 rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-[11px] font-medium text-violet-700 dark:border-violet-500/20 dark:bg-violet-500/10 dark:text-violet-300">
-        <span className="inline-flex items-center gap-1.5">
-          <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current [animation-delay:-0.2s]" />
-          <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current [animation-delay:-0.1s]" />
-          <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current" />
-        </span>
-        <span>{label}</span>
       </div>
     </div>
   );

@@ -247,7 +247,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
       ),
     })),
   addPendingMessage: (message) =>
-    set((state) => ({ messages: mergeChatMessages(state.messages, [message]) })),
+    set((state) => {
+      const alreadyPending = state.messages.some(
+        (m) => m.pending && m.senderId === message.senderId && m.content === message.content,
+      );
+      if (alreadyPending) return state;
+      return { messages: mergeChatMessages(state.messages, [message]) };
+    }),
   receiveMessage: (tempId, message, toMessage, toActivity) =>
     set((state) => {
       const nextMessage = toMessage(message);

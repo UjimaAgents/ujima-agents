@@ -74,7 +74,7 @@ export function ChatMessage({
         {message.pending && (
           <div className="mt-1 inline-flex items-center gap-1.5 rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-semibold text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
             <Loader2 className="h-3 w-3 animate-spin" />
-            Sending…
+            Sending
           </div>
         )}
       </div>
