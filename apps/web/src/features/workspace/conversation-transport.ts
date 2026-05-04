@@ -46,12 +46,14 @@ export function buildConversationMessagePayload(
   conversationId: string,
   senderId: string,
   content: string,
+  parentMessageId?: string,
 ):
   | {
       organizationId: string;
       senderId: string;
       recipientId: string;
       content: string;
+      parentMessageId?: string;
     }
   | {
       organizationId: string;
@@ -59,6 +61,7 @@ export function buildConversationMessagePayload(
       threadId: string;
       channelId?: string;
       content: string;
+      parentMessageId?: string;
     } {
   if (transport.recipientId) {
     return {
@@ -66,6 +69,7 @@ export function buildConversationMessagePayload(
       senderId,
       recipientId: transport.recipientId,
       content,
+      parentMessageId,
     };
   }
 
@@ -75,6 +79,7 @@ export function buildConversationMessagePayload(
     threadId: transport.threadId,
     channelId: conversationType === "channel" ? conversationId : undefined,
     content,
+    parentMessageId,
   };
 }
 

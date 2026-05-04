@@ -8,6 +8,7 @@ import {
   ChevronDown,
   Command,
 } from "lucide-react";
+import Link from "next/link";
 import { Avatar } from "./chat/primitives";
 import { Modal } from "./modal";
 import type { BootstrapResponse } from "@ujima/api-schema";
@@ -139,10 +140,12 @@ function buildAgentEditorDraft({
   agent,
   teamSettings,
   rolePresets,
+  channels,
 }: {
   agent: BootstrapResponse["members"][number];
   teamSettings: WorkspaceSidebarProps["teamSettings"];
   rolePresets: RolePresetTemplate[];
+  channels: BootstrapResponse["channels"];
 }) {
   const role =
     teamSettings?.roles.find((item) => item.name === agent.roleName) ??
@@ -170,7 +173,9 @@ function buildAgentEditorDraft({
     instructions: role?.instructions ?? "",
     workspaceScopes: role?.workspaceScopes ?? [],
     tools: role?.tools ?? [],
-    channels: role?.channels ?? ["general"],
+    channels: (role?.channels ?? ["general"])
+      .map((channelName) => channels.find((channel) => channel.name === channelName)?.id)
+      .filter((id): id is string => Boolean(id)),
     skills: role?.skills ?? [],
   } satisfies AgentEditorDraft;
 }
@@ -355,7 +360,10 @@ export function WorkspaceSidebar({
 
       {/* User Footer */}
       <div className="border-t border-zinc-200 p-3 dark:border-zinc-800">
-        <button className="flex w-full items-center gap-3 rounded-xl p-2 transition hover:bg-zinc-100 dark:hover:bg-zinc-900 text-left">
+        <Link
+          href="/settings/organization"
+          className="flex w-full items-center gap-3 rounded-xl p-2 transition hover:bg-zinc-100 dark:hover:bg-zinc-900 text-left"
+        >
           <div className="relative shrink-0">
             <div className="h-9 w-9 rounded-full bg-gradient-to-tr from-violet-500 to-indigo-500 shadow-[0_2px_10px_rgba(99,102,241,0.2)]" />
             <div className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-white bg-emerald-500 dark:border-[#09090b]" />
@@ -366,7 +374,7 @@ export function WorkspaceSidebar({
             </span>
           </div>
           <Settings className="ml-auto h-4 w-4 text-zinc-400" />
-        </button>
+        </Link>
       </div>
 
       <Modal
@@ -798,7 +806,7 @@ function AgentEditorModal({
   onUpdateAgent: WorkspaceSidebarProps["onUpdateAgent"];
 }) {
   const [draft, setDraft] = useState<AgentEditorDraft | null>(() =>
-    agent ? buildAgentEditorDraft({ agent, teamSettings, rolePresets }) : null,
+    agent ? buildAgentEditorDraft({ agent, teamSettings, rolePresets, channels: visibleChannels }) : null,
   );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);

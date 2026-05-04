@@ -6,11 +6,14 @@ import type { Repository } from '@ujima/runtime-core';
 import { ChannelSchema, IdSchema, MemberSchema } from '@ujima/shared';
 import {
   ApiErrorSchema,
+  ChannelOperationParamsSchema,
+  ChannelUpdateSchema,
   ListOrganizationsResponseSchema,
   OrganizationQuerySchema,
   OrganizationSettingsQuerySchema,
   OrganizationSettingsResponseSchema,
   OrganizationSettingsUpdateSchema,
+  PoliciesUpdateSchema,
   ProviderSecretsUpsertResponseSchema,
   ProviderSecretsUpsertSchema,
   ProviderStatusSchema,
@@ -379,6 +382,105 @@ export function registerSettingsRoutes(
         return reply.code(409).send({ code: ERR_NO_WORKSPACE_ROOT, message });
       }
       return replyError(reply, message.startsWith('Organization not found') ? 404 : 400, message);
+    }
+  });
+
+  app.patch('/orgs/:orgId/policies', {
+    schema: {
+      description: 'Update organization policies',
+      tags: ['Settings'],
+      params: OrgIdParamsSchema,
+      body: PoliciesUpdateSchema,
+      response: {
+        200: OrganizationSettingsResponseSchema,
+        400: ApiErrorSchema,
+        401: ApiErrorSchema,
+        403: ApiErrorSchema,
+        404: ApiErrorSchema,
+        409: ApiErrorSchema,
+      },
+    },
+  }, async (req, reply) => {
+    try {
+      assertReadyWorkspaceRoot(repo, req.params.orgId);
+      const forbidden = requireOrgSession(auth, req, reply, req.params.orgId);
+      if (forbidden) return forbidden;
+      return settings.updatePolicies({
+        organizationId: req.params.orgId,
+        requireApprovalForWrites: req.body.requireApprovalForWrites,
+        requireApprovalForShell: req.body.requireApprovalForShell,
+      });
+    } catch (err) {
+      const message = errMessage(err);
+      if (isWorkspaceRootNotReadyError(err)) {
+        return reply.code(409).send({ code: ERR_NO_WORKSPACE_ROOT, message });
+      }
+      return replyError(reply, message.startsWith('Organization not found') ? 404 : 400, message);
+    }
+  });
+
+  app.patch('/orgs/:orgId/channels/:channelId', {
+    schema: {
+      description: 'Update a channel',
+      tags: ['Settings'],
+      params: ChannelOperationParamsSchema,
+      body: ChannelUpdateSchema,
+      response: {
+        200: ChannelSchema,
+        400: ApiErrorSchema,
+        401: ApiErrorSchema,
+        403: ApiErrorSchema,
+        404: ApiErrorSchema,
+        409: ApiErrorSchema,
+      },
+    },
+  }, async (req, reply) => {
+    try {
+      assertReadyWorkspaceRoot(repo, req.params.orgId);
+      const forbidden = requireOrgSession(auth, req, reply, req.params.orgId);
+      if (forbidden) return forbidden;
+      return settings.updateChannel({
+        organizationId: req.params.orgId,
+        channelId: req.params.channelId,
+        name: req.body.name,
+        topic: req.body.topic,
+      });
+    } catch (err) {
+      const message = errMessage(err);
+      if (isWorkspaceRootNotReadyError(err)) {
+        return reply.code(409).send({ code: ERR_NO_WORKSPACE_ROOT, message });
+      }
+      return replyError(reply, message.startsWith('Channel not found') ? 404 : 400, message);
+    }
+  });
+
+  app.delete('/orgs/:orgId/channels/:channelId', {
+    schema: {
+      description: 'Delete a channel',
+      tags: ['Settings'],
+      params: ChannelOperationParamsSchema,
+      response: {
+        200: z.object({ success: z.literal(true) }),
+        400: ApiErrorSchema,
+        401: ApiErrorSchema,
+        403: ApiErrorSchema,
+        404: ApiErrorSchema,
+        409: ApiErrorSchema,
+      },
+    },
+  }, async (req, reply) => {
+    try {
+      assertReadyWorkspaceRoot(repo, req.params.orgId);
+      const forbidden = requireOrgSession(auth, req, reply, req.params.orgId);
+      if (forbidden) return forbidden;
+      settings.deleteChannel(req.params.orgId, req.params.channelId);
+      return { success: true as const };
+    } catch (err) {
+      const message = errMessage(err);
+      if (isWorkspaceRootNotReadyError(err)) {
+        return reply.code(409).send({ code: ERR_NO_WORKSPACE_ROOT, message });
+      }
+      return replyError(reply, message.startsWith('Channel not found') ? 404 : 400, message);
     }
   });
 }

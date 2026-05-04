@@ -36,7 +36,7 @@ export interface ConversationSyncResult {
   };
   loading: boolean;
   error?: string;
-  sendMessage(content: string): Promise<void>;
+  sendMessage(content: string, parentMessageId?: string): Promise<void>;
 }
 
 export function useConversationSync(
@@ -183,7 +183,7 @@ export function useConversationSync(
   }, [activeRun, conversation.id, conversation.type, loading, memberActivity, selectedMember?.presence]);
 
   const sendMessage = useCallback(
-    async (content: string) => {
+    async (content: string, parentMessageId?: string) => {
       if (!transport || !bootstrap.auth.member) {
         throw new Error("Sign in before sending messages.");
       }
@@ -199,6 +199,7 @@ export function useConversationSync(
         time: "now",
         content,
         createdAt: now,
+        parentMessageId,
         pending: true,
         tag: { label: "Sending", variant: "default" },
         detail: "Sending…",
@@ -213,6 +214,7 @@ export function useConversationSync(
             conversation.id,
             sender.id,
             content,
+            parentMessageId,
           ),
         ),
       });

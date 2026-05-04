@@ -7,6 +7,7 @@ import { listProviderStatuses, validateProviderKeys, type ProviderStatus } from 
 import { addMemberToDefaultChannels, ensureMemberSelfChannel } from './member-channels.js';
 import { upsertWorkspaceMemberScopes } from './workspace-root.js';
 import { upsertDashboardTeamOverride } from './dashboard-team-overrides.js';
+import { persistTeamConfig } from './config-sync.js';
 
 export interface TeamSettingsResponse {
   name: string;
@@ -58,6 +59,19 @@ export interface UpdateMemberInput {
 export interface CreateChannelInput {
   organizationId: string;
   name: string;
+  topic?: string;
+}
+
+export interface UpdatePoliciesInput {
+  organizationId: string;
+  requireApprovalForWrites?: boolean;
+  requireApprovalForShell?: boolean;
+}
+
+export interface UpdateChannelInput {
+  organizationId: string;
+  channelId: string;
+  name?: string;
   topic?: string;
 }
 
@@ -349,6 +363,47 @@ export class SettingsService {
         memberIds: [],
       }),
     );
+  }
+
+  updatePolicies(input: UpdatePoliciesInput): OrganizationSettingsResponse {
+    this.requireOrganization(input.organizationId);
+    const team = this.requireTeam();
+
+    if (input.requireApprovalForWrites !== undefined) {
+      team.config.policies.requireApprovalForWrites = input.requireApprovalForWrites;
+    }
+    if (input.requireApprovalForShell !== undefined) {
+      team.config.policies.requireApprovalForShell = input.requireApprovalForShell;
+    }
+
+    persistTeamConfig(this.repo, input.organizationId, team);
+
+    return this.getOrganizationSettings(input.organizationId);
+  }
+
+  updateChannel(input: UpdateChannelInput): Channel {
+    this.requireOrganization(input.organizationId);
+    const existing = this.repo.getChannel(input.organizationId, input.channelId);
+    if (!existing) {
+      throw new Error(`Channel not found: ${input.channelId}`);
+    }
+
+    return this.repo.saveChannel(
+      ChannelSchema.parse({
+        ...existing,
+        name: input.name ?? existing.name,
+        topic: input.topic !== undefined ? input.topic : existing.topic,
+      }),
+    );
+  }
+
+  deleteChannel(organizationId: string, channelId: string): void {
+    this.requireOrganization(organizationId);
+    const existing = this.repo.getChannel(organizationId, channelId);
+    if (!existing) {
+      throw new Error(`Channel not found: ${channelId}`);
+    }
+    this.repo.deleteChannel(channelId);
   }
 
   getOrganizationSettings(organizationId: string): OrganizationSettingsResponse {

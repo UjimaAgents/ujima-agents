@@ -47,6 +47,7 @@ import {
   type BootstrapSnapshot,
 } from './bootstrap.js';
 import {
+  deleteChannel as removeChannel,
   getChannel as readChannel,
   listAllChannels as readAllChannels,
   listChannels as readChannels,
@@ -239,6 +240,8 @@ export class Repository {
   ): PaginatedChannels => readChannels(this.db, organizationId, cursor, limit, excludeKinds);
   setChannelMembers = (channelId: string, memberIds: string[]): void =>
     writeChannelMembers(this.db, channelId, memberIds);
+  deleteChannel = (channelId: string): void =>
+    removeChannel(this.db, channelId);
 
   saveThread = (thread: ConversationThread): ConversationThread =>
     writeThread(this.db, thread);

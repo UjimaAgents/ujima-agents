@@ -3,7 +3,6 @@ import { ApprovalRequestSchema } from "@ujima/shared";
 import { ApprovalResolveSchema } from "@ujima/api-schema";
 import { parseApiError, upstreamUnavailable } from "@/server/api-response";
 import { daemonFetch, getSessionTokenFromCookie } from "@/server/ujima-daemon";
-import { requireProxyOrgAccess } from "@/server/route-guards";
 
 export const dynamic = "force-dynamic";
 
@@ -22,9 +21,6 @@ export async function POST(
         { status: 400 },
       );
     }
-
-    const forbidden = await requireProxyOrgAccess(parsed.data.organizationId);
-    if (forbidden) return forbidden;
 
     const response = await daemonFetch(
       `/api/approvals/${approvalId}/resolve`,

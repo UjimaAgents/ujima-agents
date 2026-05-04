@@ -236,16 +236,28 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   setLoading: (loading) =>
     set((state) => (state.loading === loading ? state : { loading })),
   hydrateMessages: (messages, toMessage, toActivity) =>
-    set((state) => ({
-      messages: mergeChatMessages(
-        state.messages,
-        messages.map((message) => toMessage(message)),
-      ),
-      activity: appendActivity(
-        state.activity,
-        messages.map((message) => toActivity(message)),
-      ),
-    })),
+    set((state) => {
+      const converted = messages.map((message) => toMessage(message));
+      const lookup = new Map(state.messages.map((m) => [m.id, m]));
+      for (const chat of converted) {
+        lookup.set(chat.id, chat);
+      }
+      for (const chat of converted) {
+        if (chat.parentMessageId && !chat.replyPreview) {
+          const parent = lookup.get(chat.parentMessageId);
+          if (parent) {
+            chat.replyPreview = { name: parent.name, content: parent.content };
+          }
+        }
+      }
+      return {
+        messages: mergeChatMessages(state.messages, converted),
+        activity: appendActivity(
+          state.activity,
+          messages.map((message) => toActivity(message)),
+        ),
+      };
+    }),
   addPendingMessage: (message) =>
     set((state) => {
       const alreadyPending = state.messages.some(
@@ -257,6 +269,12 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   receiveMessage: (tempId, message, toMessage, toActivity) =>
     set((state) => {
       const nextMessage = toMessage(message);
+      if (nextMessage.parentMessageId && !nextMessage.replyPreview) {
+        const parent = state.messages.find((m) => m.id === nextMessage.parentMessageId);
+        if (parent) {
+          nextMessage.replyPreview = { name: parent.name, content: parent.content };
+        }
+      }
       const withoutTemp = tempId
         ? state.messages.filter((item) => item.id !== tempId)
         : state.messages.filter(

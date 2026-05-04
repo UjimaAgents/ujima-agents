@@ -1,7 +1,8 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
-import { Plus, Smile, Paperclip, Send } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Plus, Smile, Paperclip, Send, X } from "lucide-react";
+import type { ChatMessageData } from "./chat-message";
 
 export interface MentionSuggestion {
   id: string;
@@ -32,12 +33,16 @@ export function ChatInput({
   statusHint,
   inlineError,
   mentionSuggestions = [],
+  replyTo,
+  onCancelReply,
 }: {
   placeholder?: string;
   onSend: (content: string) => Promise<void> | void;
   statusHint?: string;
   inlineError?: string;
   mentionSuggestions?: MentionSuggestion[];
+  replyTo?: ChatMessageData | null;
+  onCancelReply?: () => void;
 }) {
   const [content, setContent] = useState("");
   const [isSending, setIsSending] = useState(false);
@@ -45,6 +50,12 @@ export function ChatInput({
   const [activeMentionIndex, setActiveMentionIndex] = useState(0);
   const [cursorPosition, setCursorPosition] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    if (replyTo) {
+      requestAnimationFrame(() => textareaRef.current?.focus());
+    }
+  }, [replyTo]);
   const canSend = content.trim().length > 0 && !isSending;
   const mentionTrigger = findMentionTrigger(content, cursorPosition);
   const filteredMentionSuggestions = useMemo(() => {
@@ -102,6 +113,27 @@ export function ChatInput({
         ) : null}
         <div className="absolute inset-0 bg-gradient-to-r from-violet-500/10 to-indigo-500/10 rounded-xl blur-lg opacity-0 group-focus-within:opacity-100 transition-opacity" />
         <div className="relative flex flex-col rounded-xl border border-zinc-200 bg-zinc-50 focus-within:border-violet-500 focus-within:bg-white focus-within:ring-1 focus-within:ring-violet-500 transition-all dark:border-zinc-800 dark:bg-zinc-900/50 dark:focus-within:bg-[#09090b]">
+          {replyTo && (
+            <div className="flex items-center gap-2 rounded-t-xl border-b border-zinc-200 bg-violet-50/50 px-3 py-1.5 dark:border-zinc-800 dark:bg-violet-500/5">
+              <div className="flex-1 min-w-0">
+                <p className="truncate text-[10px] font-semibold text-violet-700 dark:text-violet-300">
+                  Replying to {replyTo.name}
+                </p>
+                <p className="truncate text-[10px] text-zinc-500 dark:text-zinc-400">
+                  {replyTo.content}
+                </p>
+              </div>
+              {onCancelReply && (
+                <button
+                  type="button"
+                  onClick={onCancelReply}
+                  className="shrink-0 rounded-md p-1 text-zinc-400 hover:bg-zinc-200/50 hover:text-zinc-600 dark:hover:bg-zinc-800 dark:hover:text-zinc-300"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+          )}
           <textarea
             ref={textareaRef}
             placeholder={placeholder}

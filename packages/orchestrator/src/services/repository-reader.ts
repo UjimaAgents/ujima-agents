@@ -100,6 +100,7 @@ export interface ConversationRepository extends RepositoryReader {
   ): PaginatedChannels;
   saveChannel(channel: Channel): Channel;
   setChannelMembers(channelId: string, memberIds: string[]): void;
+  deleteChannel(channelId: string): void;
   getThread(organizationId: string, threadId: string): ConversationThread | null;
   ensureThread(thread: ConversationThread): ConversationThread;
   getMessage(organizationId: string, messageId: string): Message | null;

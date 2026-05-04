@@ -16,6 +16,7 @@ import {
   ChatMessage,
   ApprovalCard,
   type ChatTab,
+  type ChatMessageData,
 } from "./chat";
 import type { RunState } from "@ujima/shared";
 import { useWorkspaceStore } from "../workspace-store";
@@ -60,6 +61,7 @@ export function ChannelView({
 }: ChannelViewProps) {
   const [isAtBottom, setIsAtBottom] = useState(true);
   const [resolvingApprovals, setResolvingApprovals] = useState<Record<string, boolean>>({});
+  const [replyTo, setReplyTo] = useState<ChatMessageData | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const previousFeedSignal = useRef("");
@@ -314,6 +316,7 @@ export function ChannelView({
                         members.findIndex((member) => member.id === message.senderId),
                         0,
                       )}
+                      onReply={setReplyTo}
                     />
                   ))}
                   {pendingThreadApprovals.length > 0 ? (
@@ -398,7 +401,13 @@ export function ChannelView({
             (feed.loading ? "Syncing history…" : "Enter to send, Shift+Enter for a new line.")
           }
           mentionSuggestions={mentionSuggestions}
-          onSend={feed.sendMessage}
+          replyTo={replyTo}
+          onCancelReply={() => setReplyTo(null)}
+          onSend={(content) => {
+            const promise = feed.sendMessage(content, replyTo?.id);
+            setReplyTo(null);
+            return promise;
+          }}
         />
       </div>
 

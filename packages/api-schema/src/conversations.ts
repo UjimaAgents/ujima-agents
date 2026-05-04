@@ -12,6 +12,7 @@ const ThreadMessageCreateSchema = z.object({
   channelId: IdSchema.optional(),
   senderId: IdSchema,
   content: z.string().min(1),
+  parentMessageId: IdSchema.optional(),
 }).strict();
 
 const DirectMessageCreateSchema = z.object({
@@ -19,6 +20,7 @@ const DirectMessageCreateSchema = z.object({
   recipientId: IdSchema,
   senderId: IdSchema,
   content: z.string().min(1),
+  parentMessageId: IdSchema.optional(),
 }).strict();
 
 export const MessageCreateSchema = z.union([ThreadMessageCreateSchema, DirectMessageCreateSchema]);

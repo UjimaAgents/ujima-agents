@@ -279,6 +279,21 @@ export class ConversationService {
       createdAt: new Date().toISOString(),
     });
 
+    const mentions = new Set<string>(input.mentions ?? []);
+
+    if (input.parentMessageId) {
+      const parent = this.requireMessage(input.organizationId, input.parentMessageId);
+
+      const parentSender = this.repo.getMember(input.organizationId, parent.senderId);
+      if (parentSender?.kind === 'agent') {
+        mentions.add(parent.senderId);
+      }
+
+      for (const mention of this.repo.listMessageMentions(parent.id)) {
+        mentions.add(mention.memberId);
+      }
+    }
+
     const message = MessageSchema.parse({
       id: randomUUID(),
       organizationId: input.organizationId,
@@ -289,7 +304,7 @@ export class ConversationService {
       senderKind: sender.kind,
       kind: sender.kind,
       content: input.content,
-      mentions: input.mentions ?? [],
+      mentions: [...mentions],
       createdAt: new Date().toISOString(),
     });
 
