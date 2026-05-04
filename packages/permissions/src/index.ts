@@ -250,6 +250,7 @@ export function createPermissionMiddleware(
           allowed: false,
           reason: `Input matches a destructive pattern and requires explicit approval`,
           code: 'destructive_pattern',
+          gate: 'approval',
         };
         await writeAudit(input, decision);
         return decision;

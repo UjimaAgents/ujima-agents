@@ -322,6 +322,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     innerTools,
     context.permissions,
     context.buildPermissionContext,
+    approvalRequester.requestApproval,
   );
 
   const ai = new AiService(context.teamStore, context.repo, tools);

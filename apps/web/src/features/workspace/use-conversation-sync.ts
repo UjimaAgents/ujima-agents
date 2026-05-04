@@ -634,6 +634,16 @@ function parseScopeFromReason(reason: string): string | null {
   }
 }
 
+function parseApprovalNote(reason: string): string | null {
+  const match = reason.match(/(?:^|[;:])note=([^;]+)/);
+  if (!match?.[1]) return null;
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    return match[1];
+  }
+}
+
 /**
  * Matches `ToolServiceImpl.buildApprovalScope` for shell:
  * `shell:${JSON.stringify({ cwd, command })}`
@@ -671,6 +681,7 @@ function approvalToCard(
     state.members.find((member) => member.id === approval.requestedBy)?.name ?? approval.requestedBy;
 
   const scopeDecoded = parseScopeFromReason(approval.reason);
+  const note = parseApprovalNote(approval.reason);
   let title =
     approval.status === "pending" ? "Approval requested" : `Approval ${approval.status}`;
   let description = `${approval.action} ${approval.resourcePath}`;
@@ -679,8 +690,8 @@ function approvalToCard(
   if (approval.resourceType === "shell" && scopeDecoded) {
     const parsed = parseShellScope(scopeDecoded);
     if (parsed) {
-      title = approval.status === "pending" ? "Shell command" : title;
-      description = "The agent wants to run:";
+      title = approval.status === "pending" ? (note ? "Destructive command" : "Shell command") : title;
+      description = note ? note : "The agent wants to run:";
       commandPreview = formatShellCommandPreview(parsed);
     }
   }

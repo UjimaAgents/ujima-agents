@@ -1,13 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import {
   ApprovalRequestSchema,
-  MessageSchema,
   SocketEventNames,
   orgRoom,
   runRoom,
   threadRoom,
   type ApprovalRequest,
-  type Message,
   type ResourceType,
   type ToolAction,
 } from '@ujima/shared';
@@ -17,6 +15,7 @@ import type { ApiRepository } from './repository-reader.js';
 export interface ApprovalRequestInput {
   organizationId: string;
   runId: string;
+  toolCallId: string;
   requestedBy: string;
   resourceType: ResourceType;
   resourcePath: string;
@@ -61,12 +60,23 @@ export class ApprovalService {
           )
       : undefined;
 
-    if (existing) return existing;
+    if (existing) {
+      if (!existing.toolCallId) {
+        const updated = ApprovalRequestSchema.parse({
+          ...existing,
+          toolCallId: input.toolCallId,
+        });
+        this.repo.saveApproval(updated);
+        return updated;
+      }
+      return existing;
+    }
 
     const approval = ApprovalRequestSchema.parse({
       id: randomUUID(),
       organizationId: input.organizationId,
       runId: input.runId,
+      toolCallId: input.toolCallId,
       requestedBy: input.requestedBy,
       resourceType: input.resourceType,
       resourcePath: input.resourcePath,
@@ -130,16 +140,26 @@ export class ApprovalService {
         !approvalIds.has(approval.id) &&
         (approvalIds.add(approval.id), true),
     );
-    const resolvedApprovals = approvals
-      .map((approval) =>
-        this.repo.resolveApproval(
-          input.organizationId,
-          approval.id,
-          input.status,
-          effectiveReason,
-        ),
-      )
-      .filter((approval): approval is ApprovalRequest => !!approval);
+    const resolvedApprovals =
+      input.status === 'rejected'
+        ? approvals.map((approval) =>
+            ApprovalRequestSchema.parse({
+              ...approval,
+              status: 'rejected',
+              reason: effectiveReason,
+              resolvedAt: new Date().toISOString(),
+            }),
+          )
+        : approvals
+            .map((approval) =>
+              this.repo.resolveApproval(
+                input.organizationId,
+                approval.id,
+                input.status,
+                effectiveReason,
+              ),
+            )
+            .filter((approval): approval is ApprovalRequest => !!approval);
 
     const approval = resolvedApprovals[0];
     if (!approval) {
@@ -147,8 +167,12 @@ export class ApprovalService {
     }
 
     for (const resolved of resolvedApprovals) {
-      const rooms = [orgRoom(input.organizationId), runRoom(resolved.runId ?? resolved.id)];
-      const run = resolved.runId ? this.repo.getRun(input.organizationId, resolved.runId) : null;
+      const runId = resolved.runId ?? approval.runId;
+      const rooms = [orgRoom(input.organizationId)];
+      if (runId) {
+        rooms.push(runRoom(runId));
+      }
+      const run = runId ? this.repo.getRun(input.organizationId, runId) : null;
       if (run?.threadId) {
         rooms.push(threadRoom(run.threadId));
       }
@@ -160,18 +184,36 @@ export class ApprovalService {
     }
 
     if (approval.status === 'rejected' && approval.runId) {
+      for (const resolved of resolvedApprovals) {
+        const run = resolved.runId ? this.repo.getRun(input.organizationId, resolved.runId) : null;
+        if (!run || !resolved.toolCallId) continue;
+        const threadId = run.threadId;
+        const rooms = [orgRoom(input.organizationId), runRoom(run.id)];
+        if (threadId) {
+          rooms.push(threadRoom(threadId));
+        }
+        this.realtime.emit(
+          SocketEventNames.toolResult,
+          {
+            organizationId: input.organizationId,
+            runId: run.id,
+            threadId,
+            agentId: resolved.requestedBy,
+            toolResult: {
+              toolCallId: resolved.toolCallId,
+              result: {
+                error: 'Approval rejected by user',
+                code: 'ERR_APPROVAL_REJECTED',
+              },
+              isError: true,
+            },
+          },
+          rooms,
+        );
+        this.repo.deleteApproval(input.organizationId, resolved.id);
+      }
       const run = this.repo.getRun(input.organizationId, approval.runId);
       if (run) {
-        const rejectionMessage = buildRejectionMessage(input.organizationId, approval, run.threadId);
-        if (rejectionMessage) {
-          this.repo.saveMessage(rejectionMessage);
-          this.realtime.emit(
-            SocketEventNames.threadMessage,
-            { organizationId: input.organizationId, threadId: rejectionMessage.threadId, message: rejectionMessage },
-            [orgRoom(input.organizationId), runRoom(run.id), threadRoom(rejectionMessage.threadId)],
-          );
-        }
-
         await this.resumeRun(approval.organizationId, approval.runId, false);
       }
     }
@@ -191,63 +233,4 @@ export class ApprovalService {
 function decodeApprovalScope(reason: string): string | undefined {
   const scopeMatch = reason.match(/(?:^|[;:])scope=([^;]+)/);
   return scopeMatch?.[1] ? decodeURIComponent(scopeMatch[1]) : undefined;
-}
-
-function buildRejectionMessage(
-  organizationId: string,
-  approval: ApprovalRequest,
-  threadId?: string,
-): Message | null {
-  if (!threadId) return null;
-
-  const scope = decodeApprovalScope(approval.reason);
-  const content = scope
-    ? formatApprovalRejection(scope, approval)
-    : `Approval rejected for ${approval.resourceType} ${approval.resourcePath}.`;
-
-  return MessageSchema.parse({
-    id: randomUUID(),
-    organizationId,
-    threadId,
-    senderId: 'system',
-    senderKind: 'human',
-    kind: 'system',
-    content,
-    createdAt: new Date().toISOString(),
-  });
-}
-
-function formatApprovalRejection(scope: string, approval: ApprovalRequest): string {
-  if (!scope.startsWith('shell:')) {
-    return `Approval rejected for ${approval.resourceType} ${approval.resourcePath}.`;
-  }
-
-  const parsed = parseShellScope(scope);
-  if (!parsed) {
-    return `Approval rejected for shell command in ${approval.resourcePath}.`;
-  }
-
-  return `Approval rejected. The command was not approved:\n$ ${parsed.command}\nDirectory: ${parsed.cwd}`;
-}
-
-function parseShellScope(scope: string): { cwd: string; command: string } | null {
-  const withoutPrefix = scope.slice('shell:'.length);
-  if (!withoutPrefix) return null;
-  try {
-    const parsed = JSON.parse(withoutPrefix) as unknown;
-    if (
-      !parsed ||
-      typeof parsed !== 'object' ||
-      typeof (parsed as { cwd?: unknown }).cwd !== 'string' ||
-      typeof (parsed as { command?: unknown }).command !== 'string'
-    ) {
-      return null;
-    }
-    return {
-      cwd: (parsed as { cwd: string }).cwd,
-      command: (parsed as { command: string }).command,
-    };
-  } catch {
-    return null;
-  }
 }

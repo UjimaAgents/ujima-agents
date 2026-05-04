@@ -36,6 +36,7 @@ import {
 } from './auth.js';
 import {
   getApproval as readApproval,
+  deleteApproval as deleteApprovalRecord,
   hasApprovalGrant as readApprovalGrant,
   listPendingApprovals as readPendingApprovals,
   resolveApproval as resolveApprovalRecord,
@@ -321,6 +322,8 @@ export class Repository {
     reason = '',
   ): ApprovalRequest | null =>
     resolveApprovalRecord(this.db, organizationId, approvalId, status, reason);
+  deleteApproval = (organizationId: string, approvalId: string): void =>
+    deleteApprovalRecord(this.db, organizationId, approvalId);
   listPendingApprovals = (organizationId: string): ApprovalRequest[] =>
     readPendingApprovals(this.db, organizationId);
   hasApprovalGrant = (input: {

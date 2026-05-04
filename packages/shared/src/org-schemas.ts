@@ -233,6 +233,7 @@ export const ApprovalRequestSchema = z.object({
   id: IdSchema,
   organizationId: IdSchema,
   runId: IdSchema.optional(),
+  toolCallId: IdSchema.optional(),
   requestedBy: IdSchema,
   resourceType: ResourceTypeSchema,
   resourcePath: z.string().min(1),

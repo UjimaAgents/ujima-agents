@@ -8,6 +8,7 @@ describe('ApprovalService', () => {
       id: 'ap-1',
       organizationId: 'org-1',
       runId: 'run-1',
+      toolCallId: 'tool-1',
       requestedBy: 'agent-1',
       resourceType: 'shell',
       resourcePath: '/workspace',
@@ -40,6 +41,7 @@ describe('ApprovalService', () => {
     const result = service.requestApproval({
       organizationId: 'org-1',
       runId: 'run-1',
+      toolCallId: 'tool-1',
       requestedBy: 'agent-1',
       resourceType: 'shell',
       resourcePath: '/workspace',
@@ -59,6 +61,7 @@ describe('ApprovalService', () => {
       id: string;
       organizationId: string;
       runId: string;
+      toolCallId: string;
       requestedBy: string;
       resourceType: string;
       resourcePath: string;
@@ -72,6 +75,7 @@ describe('ApprovalService', () => {
       id: 'ap-1',
       organizationId: 'org-1',
       runId: 'run-1',
+      toolCallId: 'tool-1',
       requestedBy: 'agent-1',
       resourceType: 'shell',
       resourcePath: '/workspace',
@@ -133,6 +137,7 @@ describe('ApprovalService', () => {
       id: 'ap-1',
       organizationId: 'org-1',
       runId: 'run-1',
+      toolCallId: 'tool-1',
       requestedBy: 'agent-1',
       resourceType: 'shell',
       resourcePath: '/workspace',
@@ -151,7 +156,6 @@ describe('ApprovalService', () => {
       summary: 'Waiting for approval',
       startedAt: '2026-05-04T00:00:00.000Z',
     };
-    const savedMessages: { content?: string }[] = [];
     let emitted = 0;
     let resumedAllowRun: boolean | undefined;
     const repo = {
@@ -165,10 +169,7 @@ describe('ApprovalService', () => {
         reason: reason ?? '',
         resolvedAt: '2026-05-04T00:01:00.000Z',
       }),
-      saveMessage: (message: unknown) => {
-        savedMessages.push(message as { content?: string });
-        return message as never;
-      },
+      deleteApproval: () => undefined,
     } as never;
 
     const service = new ApprovalService(
@@ -190,7 +191,6 @@ describe('ApprovalService', () => {
 
     expect(result.status).toBe('rejected');
     expect(resumedAllowRun).toBe(false);
-    expect(emitted).toBeGreaterThan(0);
-    expect(savedMessages[0]?.content ?? '').toContain('was not approved');
+    expect(emitted).toBe(2);
   });
 });

@@ -33,6 +33,7 @@ export interface ApprovalRequester {
   requestApproval(input: {
     organizationId: string;
     runId: string;
+    toolCallId: string;
     requestedBy: string;
     resourceType: ToolInvocationInput["resourceType"];
     resourcePath: string;
@@ -222,6 +223,8 @@ export class ToolServiceImpl implements ToolService {
       };
     }
 
+    const approvalScope = this.buildApprovalScope(preparedInvocation);
+
     if (
       policy.requiresApproval &&
       !this.consumeApprovedRun(invocation.organizationId, invocation.runId) &&
@@ -231,13 +234,13 @@ export class ToolServiceImpl implements ToolService {
         resourceType: preparedInvocation.resourceType,
         resourcePath: preparedInvocation.resourcePath ?? "",
         action: preparedInvocation.action,
-        approvalScope: this.buildApprovalScope(preparedInvocation),
+        approvalScope,
       })
     ) {
-      const approvalScope = this.buildApprovalScope(preparedInvocation);
       const approval = this.approvals.requestApproval({
         organizationId: preparedInvocation.organizationId,
         runId: preparedInvocation.runId,
+        toolCallId: preparedInvocation.toolCallId,
         requestedBy: preparedInvocation.memberId,
         resourceType: preparedInvocation.resourceType,
         resourcePath: preparedInvocation.resourcePath ?? "",

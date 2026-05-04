@@ -82,12 +82,19 @@ function applyStructuredContent(
 
   const part = value as ContentPart & Record<string, unknown>;
 
-  if (typeof part.url === 'string') next.url = part.url;
-  if (typeof part.title === 'string') next.title = part.title;
-  if (typeof part.screenshotRef === 'string') next.screenshotRef = part.screenshotRef;
+  if (typeof part.url === 'string' && !next.url) next.url = part.url;
+  if (typeof part.title === 'string' && !next.title) next.title = part.title;
+  if (typeof part.screenshotRef === 'string' && !next.screenshotRef) {
+    next.screenshotRef = part.screenshotRef;
+  }
   if (typeof part.text === 'string') applyTextHeuristics(part.text, next);
 
-  if (part.type === 'image' && typeof part.mimeType === 'string' && typeof part.data === 'string') {
+  if (
+    !next.screenshotRef &&
+    part.type === 'image' &&
+    typeof part.mimeType === 'string' &&
+    typeof part.data === 'string'
+  ) {
     // Use a reference instead of bloating the state with raw base64 data.
     // The full data is preserved in the tool audit logs.
     const refId = Math.random().toString(36).slice(2, 10);
@@ -126,7 +133,6 @@ export function captureBrowserState(
   if (!isBrowserTool) return current;
 
   const next: BrowserStateSnapshot = {
-    ...(current ?? {}),
     observedAt: new Date().toISOString(),
     mcpId,
   };
@@ -135,5 +141,8 @@ export function captureBrowserState(
 
   if (typeof args.url === 'string') next.url = args.url;
 
-  return next;
+  return {
+    ...current,
+    ...next,
+  };
 }
