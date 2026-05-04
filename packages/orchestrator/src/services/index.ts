@@ -291,7 +291,11 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   });
 
   // Late-bound resume callback — runs is constructed below and plugged in.
-  let resumeRun: (organizationId: string, runId: string) => Promise<unknown> | unknown = () => {
+  let resumeRun: (
+    organizationId: string,
+    runId: string,
+    allowRun?: boolean,
+  ) => Promise<unknown> | unknown = () => {
     throw new Error('resumeRun not wired');
   };
 
@@ -330,7 +334,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     ai,
     tools,
   );
-  resumeRun = (orgId, runId) => runs.resumeAfterApproval(orgId, runId);
+  resumeRun = (orgId, runId, allowRun = true) => runs.resumeAfterApproval(orgId, runId, allowRun);
 
   // Phase 2.C.1 — single shared in-memory registry. SpiritService writes
   // (spawn/retire/complete); SupervisorService reads on every alert.

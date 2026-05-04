@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import type { AgentTeamHandle } from "@ujima/framework";
-import { resolve } from "node:path";
 import {
   SocketEventNames,
   memberRoom,
@@ -404,12 +403,9 @@ export class ToolServiceImpl implements ToolService {
   private buildApprovalScope(invocation: ToolInvocationInput): string {
     if (invocation.toolId === "shell") {
       const input = invocation.input ?? {};
-      const command = typeof input.command === "string" ? input.command.trim() : "";
-      const args = Array.isArray(input.args)
-        ? input.args.filter((arg): arg is string => typeof arg === "string")
-        : [];
+      const command = typeof input.command === "string" ? input.command : "";
       const cwd = typeof input.cwd === "string" ? input.cwd : invocation.resourcePath ?? "";
-      return `shell:${cwd}:${command}:${JSON.stringify(args)}`;
+      return `shell:${JSON.stringify({ cwd, command })}`;
     }
     return `${invocation.toolId}:${invocation.action}:${invocation.resourcePath ?? ""}`;
   }
@@ -443,152 +439,20 @@ export class ToolServiceImpl implements ToolService {
 
     const input = invocation.input ?? {};
     const command = typeof input.command === "string" ? input.command : "";
-    // Shell commands can operate on the current directory even when the model
-    // doesn't pass an explicit path argument, so we scope both cwd and any
-    // path-like args through the same member-bound resolver before spawn().
     const requestedCwd =
       typeof input.cwd === "string"
         ? input.cwd
         : (invocation.resourcePath ?? resolver.scopePaths[0] ?? ".");
     const resolvedCwd = await resolver.resolve(requestedCwd);
-    const rawArgs = Array.isArray(input.args)
-      ? input.args.filter((arg): arg is string => typeof arg === "string")
-      : [];
-    const args = await sanitizeShellArgs(
-      command,
-      rawArgs,
-      resolvedCwd,
-      resolver,
-    );
 
     return {
       ...invocation,
       resourcePath: resolvedCwd,
       input: {
         ...input,
-        args,
         cwd: resolvedCwd,
+        command,
       },
     };
   }
-}
-
-const SHELL_PATH_FLAGS = new Set([
-  "-C",
-  "--config",
-  "--cwd",
-  "--directory",
-  "--file",
-  "--input",
-  "--output",
-  "--path",
-]);
-
-const SHELL_POSITIONAL_PATH_COMMANDS = new Set([
-  "cat",
-  "cp",
-  "ls",
-  "mkdir",
-  "mv",
-  "rm",
-  "tee",
-  "touch",
-]);
-
-async function sanitizeShellArgs(
-  command: string,
-  args: string[],
-  cwd: string,
-  resolver: Awaited<ReturnType<typeof createMemberPathResolver>>,
-): Promise<string[]> {
-  const sanitized: string[] = [];
-  let expectPathFor: string | null = null;
-  let positionalIndex = 0;
-
-  for (const arg of args) {
-    if (expectPathFor) {
-      sanitized.push(await resolveShellPathArg(arg, cwd, resolver));
-      expectPathFor = null;
-      continue;
-    }
-
-    if (SHELL_PATH_FLAGS.has(arg)) {
-      sanitized.push(arg);
-      expectPathFor = arg;
-      continue;
-    }
-
-    const inlineFlag = splitInlinePathFlag(arg);
-    if (inlineFlag) {
-      sanitized.push(
-        `${inlineFlag.flag}=${await resolveShellPathArg(inlineFlag.value, cwd, resolver)}`,
-      );
-      continue;
-    }
-
-    if (looksLikePathArg(command, arg, positionalIndex)) {
-      sanitized.push(await resolveShellPathArg(arg, cwd, resolver));
-      positionalIndex += 1;
-      continue;
-    }
-
-    sanitized.push(arg);
-    if (!arg.startsWith("-")) {
-      positionalIndex += 1;
-    }
-  }
-
-  return sanitized;
-}
-
-function splitInlinePathFlag(
-  arg: string,
-): { flag: string; value: string } | null {
-  const [flag, value] = arg.split("=", 2);
-  if (
-    typeof flag !== "string" ||
-    typeof value !== "string" ||
-    !SHELL_PATH_FLAGS.has(flag)
-  ) {
-    return null;
-  }
-  return { flag, value };
-}
-
-function looksLikePathArg(
-  command: string,
-  arg: string,
-  positionalIndex: number,
-): boolean {
-  if (!arg || arg === "-") return false;
-  if (arg.includes("://")) return false;
-  if (arg.startsWith("-")) return false;
-  if (command === "cd" && positionalIndex === 0) {
-    return true;
-  }
-  if (SHELL_POSITIONAL_PATH_COMMANDS.has(command)) {
-    return true;
-  }
-  return looksExplicitlyPathLike(arg);
-}
-
-async function resolveShellPathArg(
-  requested: string,
-  cwd: string,
-  resolver: Awaited<ReturnType<typeof createMemberPathResolver>>,
-): Promise<string> {
-  return resolver.resolve(resolve(cwd, requested));
-}
-
-function looksExplicitlyPathLike(arg: string): boolean {
-  if (arg === "." || arg === "..") return true;
-  if (
-    arg.startsWith("/") ||
-    arg.startsWith("./") ||
-    arg.startsWith("../") ||
-    arg.startsWith("~/")
-  ) {
-    return true;
-  }
-  return /^[A-Za-z]:[\\/]/.test(arg);
 }
