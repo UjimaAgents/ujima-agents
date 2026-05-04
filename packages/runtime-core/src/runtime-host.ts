@@ -32,7 +32,7 @@ export interface StartTaskInput {
   teamId: string;
   taskId?: string;
   orchestratorMode?: 'auto' | 'manual';
-  executionMode?: 'concurrent' | 'slim';
+  executionMode?: 'concurrent';
   onStream?: (event: UjimaEvent) => void;
 }
 

@@ -1,5 +1,5 @@
 import type { Channel, Member, OrganizationChart } from '@ujima/shared';
-import { SHARED_AGENT_SYSTEM_PROMPT, buildEnvironmentContext } from '@ujima/shared';
+import { SHARED_AGENT_SYSTEM_PROMPT, COLLABORATION_PROTOCOL, buildEnvironmentContext } from '@ujima/shared';
 import { getPersonalityPreset } from './personality.js';
 import type { AgentConfig, RoleConfig } from './schemas.js';
 
@@ -143,6 +143,8 @@ export function buildAgentSystemPrompt(
     'Use destination: thread for the current conversation, channel for a channel post, and dm for a direct recipient.',
     ...MESSAGE_TOOL_USAGE_GUIDANCE,
     'If the message is a greeting, check-in, or casual question, reply briefly instead of staying silent.',
+    '',
+    COLLABORATION_PROTOCOL,
     '',
     `Workspace root: ${workspaceRoot}`,
     `Allowed scopes: ${listScopes(role)}`,

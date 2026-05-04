@@ -22,4 +22,4 @@ export {
 export type { ProviderModelOption } from './model-catalog.js';
 export * from './socket-events.js';
 export * from './cursor.js';
-export { SHARED_AGENT_SYSTEM_PROMPT, buildEnvironmentContext } from './agent-prompt.js';
+export { SHARED_AGENT_SYSTEM_PROMPT, buildEnvironmentContext, COLLABORATION_PROTOCOL, buildTeamHierarchySection } from './agent-prompt.js';
