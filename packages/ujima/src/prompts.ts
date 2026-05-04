@@ -1,3 +1,4 @@
+import { readdirSync } from 'node:fs';
 import type { Channel, Member, OrganizationChart } from '@ujima/shared';
 import { SHARED_AGENT_SYSTEM_PROMPT, COLLABORATION_PROTOCOL, buildEnvironmentContext } from '@ujima/shared';
 import { getPersonalityPreset } from './personality.js';
@@ -23,6 +24,23 @@ function listScopes(role: RoleConfig): string {
 
 function listChannels(role: RoleConfig): string {
   return role.channels.length ? role.channels.join(', ') : 'none';
+}
+
+function formatWorkspaceLayout(workspaceRoot: string): string {
+  const entries = readdirSync(workspaceRoot, { withFileTypes: true });
+  const directories = entries
+    .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.'))
+    .map((entry) => entry.name)
+    .sort((left, right) => left.localeCompare(right));
+
+  if (directories.length === 0) return '';
+
+  return [
+    '## Workspace Layout',
+    'Top-level directories:',
+    ...directories.map((entry) => `- ${entry}`),
+    'Use these names first when choosing a shell cwd or repo path.',
+  ].join('\n');
 }
 
 function formatChannelTargets(channels: Channel[]): string {
@@ -148,6 +166,7 @@ export function buildAgentSystemPrompt(
     '',
     `Workspace root: ${workspaceRoot}`,
     `Allowed scopes: ${listScopes(role)}`,
+    formatWorkspaceLayout(workspaceRoot),
     `Available tools: ${listTools(role)}`,
     `Available channels: ${listChannels(role)}`,
   ]

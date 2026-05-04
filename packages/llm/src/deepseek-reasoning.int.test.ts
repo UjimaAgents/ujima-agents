@@ -1,7 +1,7 @@
 import { streamText } from 'ai';
 import { describe, expect, test } from 'vitest';
 import { selectLanguageModel } from './select';
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import { execSync } from 'child_process';
@@ -43,8 +43,8 @@ describe.each(DEEPSEEK_MODELS)('DeepSeek reasoning with @ai-sdk/deepseek (%s)', 
 
     for await (const part of result.fullStream) {
       if (part.type === 'error') { sawError = true; }
-      if (part.type === 'reasoning' || part.type === 'reasoning-delta') sawReasoning = true;
-      if (part.type === 'step-finish') turns++;
+      if (part.type === 'reasoning-start' || part.type === 'reasoning-delta' || part.type === 'reasoning-end') sawReasoning = true;
+      if (part.type === 'finish-step') turns++;
       if (part.type === 'text-delta') finalText += part.text;
     }
 
@@ -52,6 +52,6 @@ describe.each(DEEPSEEK_MODELS)('DeepSeek reasoning with @ai-sdk/deepseek (%s)', 
     expect(sawReasoning).toBe(true);
     expect(turns).toBeGreaterThanOrEqual(1);
     expect(finalText.length).toBeGreaterThan(0);
-    console.log(`[${modelId}] OK turns=${turns} reasoning=${sawReasoning} text=${finalText.slice(0, 80)}`);
+    console.info(`[${modelId}] OK turns=${turns} reasoning=${sawReasoning} text=${finalText.slice(0, 80)}`);
   }, 60_000);
 });
