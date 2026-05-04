@@ -1,6 +1,6 @@
 import { generateText, isLoopFinished, type ToolSet } from 'ai';
 import { buildAgentSystemPrompt, normalizeProviderKey } from '@ujima/framework';
-import type { Message, SpiritRole } from '@ujima/shared';
+import type { SpiritRole } from '@ujima/shared';
 import { DEFAULT_SPIRIT_TEMPERATURE } from '@ujima/shared';
 import type { RepositoryReader } from './services/repository-reader.js';
 import type { TeamStore } from './services/team-store.js';
