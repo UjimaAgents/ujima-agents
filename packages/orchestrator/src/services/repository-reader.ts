@@ -163,6 +163,7 @@ export interface ApiRepository extends ConversationRepository {
     status: 'approved' | 'rejected',
     reason?: string,
   ): ApprovalRequest | null;
+  deleteApproval(organizationId: string, approvalId: string): void;
   listPendingApprovals(organizationId: string): ApprovalRequest[];
   hasApprovalGrant(input: {
     organizationId: string;

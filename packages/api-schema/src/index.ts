@@ -72,7 +72,7 @@ export const StartTaskRequestSchema = z.object({
   prompt: z.string().min(1),
   task_id: z.string().optional(),
   orchestrator_mode: z.enum(['auto', 'manual']).optional(),
-  execution_mode: z.enum(['concurrent', 'slim']).optional(),
+  execution_mode: z.enum(['concurrent']).optional(),
 });
 export type StartTaskRequest = z.infer<typeof StartTaskRequestSchema>;
 

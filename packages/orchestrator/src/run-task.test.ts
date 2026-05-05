@@ -551,8 +551,8 @@ describe('orchestrator runTask — manual mode + concurrent execution', () => {
     expect(jrReceivedPrompt).toContain('Review the card.');
   });
 
-  it('rejects slim execution mode until wiring lands', () => {
-    const permissions = createPermissionMiddleware({ audit: db.audit });
+  it('rejects invalid execution mode (Zod validation)', () => {
+    const badTask = { ...task, execution_mode: 'invalid' as unknown as 'concurrent' };
     expect(() =>
       runTask(
         {
@@ -562,13 +562,13 @@ describe('orchestrator runTask — manual mode + concurrent execution', () => {
           eventBus: bus,
           context: db.context,
           audit: db.audit,
-          permissions,
+          permissions: createPermissionMiddleware({ audit: db.audit }),
           agentState: db.agentState,
           approvals: db.approvals,
         },
-        { task: { ...task, execution_mode: 'slim' }, team, sessionId: 'sess-slim' },
+        { task: badTask, team, sessionId: 'sess-invalid' },
       ),
-    ).toThrow(/only 'concurrent' execution/);
+    ).toThrow();
   });
 
   it('converts review_required into an approval record and approval_requested event', async () => {

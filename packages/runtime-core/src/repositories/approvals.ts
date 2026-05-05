@@ -9,6 +9,7 @@ function rowToApproval(row: Row): ApprovalRequest {
     id: rowString(row, 'id'),
     organizationId: rowString(row, 'organization_id'),
     runId: optionalRowString(row, 'run_id'),
+    toolCallId: optionalRowString(row, 'tool_call_id'),
     requestedBy: rowString(row, 'requested_by'),
     resourceType: rowString(row, 'resource_type'),
     resourcePath: rowString(row, 'resource_path'),
@@ -24,9 +25,10 @@ export function saveApproval(db: DbHandle, approval: ApprovalRequest): ApprovalR
   const payload = ApprovalRequestSchema.parse(approval);
 
   db.prepare(
-    `INSERT INTO approvals (id, organization_id, run_id, requested_by, resource_type, resource_path, action, status, reason, created_at, resolved_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO approvals (id, organization_id, run_id, tool_call_id, requested_by, resource_type, resource_path, action, status, reason, created_at, resolved_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
+       tool_call_id = excluded.tool_call_id,
        status = excluded.status,
        reason = excluded.reason,
        resolved_at = excluded.resolved_at`,
@@ -34,6 +36,7 @@ export function saveApproval(db: DbHandle, approval: ApprovalRequest): ApprovalR
     payload.id,
     payload.organizationId,
     payload.runId ?? null,
+    payload.toolCallId ?? null,
     payload.requestedBy,
     payload.resourceType,
     payload.resourcePath,
@@ -93,6 +96,17 @@ export function resolveApproval(
   return resolved;
 }
 
+export function deleteApproval(
+  db: DbHandle,
+  organizationId: string,
+  approvalId: string,
+): void {
+  db.prepare('DELETE FROM approvals WHERE organization_id = ? AND id = ?').run(
+    organizationId,
+    approvalId,
+  );
+}
+
 export function listPendingApprovals(
   db: DbHandle,
   organizationId: string,
@@ -143,6 +157,6 @@ export function hasApprovalGrant(
       input.resourcePath,
       input.action,
       `grant:always_allow:scope=${escapedScope};%`,
-    ) as Row | null;
+  ) as Row | null;
   return !!row;
 }

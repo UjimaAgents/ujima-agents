@@ -20,6 +20,16 @@ function emptyUsage(): LanguageModelV3Usage {
   };
 }
 
+function isAbortError(err: unknown): boolean {
+  return (
+    (err instanceof Error && err.name === 'AbortError') ||
+    (typeof err === 'object' &&
+      err !== null &&
+      'name' in err &&
+      (err as { name?: unknown }).name === 'AbortError')
+  );
+}
+
 function legacyUsageToV3(d: LLMUsage): LanguageModelV3Usage {
   return {
     inputTokens: {
@@ -232,6 +242,9 @@ export function createLanguageModelFromLegacyProvider(legacy: LLMProvider, model
               }
             }
           } catch (error) {
+            if (isAbortError(error) || options.abortSignal?.aborted) {
+              throw error;
+            }
             controller.error(error instanceof Error ? error : new Error(String(error)));
             return;
           }

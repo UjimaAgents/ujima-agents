@@ -561,6 +561,12 @@ const MIGRATIONS: { id: string; up: string }[] = [
       CREATE INDEX IF NOT EXISTS idx_todos_task_session ON todos(task_session_id);
     `,
   },
+  {
+    id: '011_approval_tool_call_id',
+    up: `
+      ALTER TABLE approvals ADD COLUMN tool_call_id TEXT;
+    `,
+  },
 ];
 
 export interface DbOptions {
@@ -596,6 +602,10 @@ function runMigrations(db: DbHandle): void {
 
   for (const m of MIGRATIONS) {
     if (applied.has(m.id)) continue;
+    if (m.id === '011_approval_tool_call_id' && hasColumn(db, 'approvals', 'tool_call_id')) {
+      insert.run(m.id, Date.now());
+      continue;
+    }
     db.exec('BEGIN');
     try {
       db.exec(m.up);
@@ -610,4 +620,9 @@ function runMigrations(db: DbHandle): void {
 
 export function nowMs(): number {
   return Date.now();
+}
+
+function hasColumn(db: DbHandle, table: string, column: string): boolean {
+  const rows = db.prepare(`PRAGMA table_info(${table})`).all() as { name?: unknown }[];
+  return rows.some((row) => row.name === column);
 }

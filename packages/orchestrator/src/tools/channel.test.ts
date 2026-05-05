@@ -78,6 +78,16 @@ describe('channel.* tools — toInvocation()', () => {
     expect(inv.resourcePath).toBeUndefined();
   });
 
+  it('channel.dm forwards ignore through to the invocation payload', () => {
+    const inv = channelDmTool.toInvocation({
+      member_id: 'alex',
+      body: 'hi',
+      mentions: [],
+      ignore: true,
+    });
+    expect(inv.input).toMatchObject({ ignore: true });
+  });
+
   it('channel.list is tagged as a read', () => {
     const inv = channelListTool.toInvocation({ scope: 'mine' });
     expect(inv.action).toBe('read');

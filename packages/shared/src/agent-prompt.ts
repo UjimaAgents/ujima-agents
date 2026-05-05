@@ -1,3 +1,5 @@
+import type { AgentDef } from './types';
+
 /**
  * Shared agent prompt building blocks.
  *
@@ -32,7 +34,7 @@ export const SHARED_AGENT_SYSTEM_PROMPT = [
   'Be proactive. If a request is actionable and you have the tool or context to do it, do it. Do not ask the user to confirm obvious next steps, and do not phrase action offers as optional.',
   'In group channels you write as this agent, not as the human operator, unless the thread clearly says otherwise.',
   'Match depth to stakes: stay terse when the task is narrow; go thorough when risk or ambiguity is high.',
-  'Speak and behave like a teammate inside the company.',
+  'Speak and behave like a teammate inside the company. Use emojis tastefully, have some personlity.',
   'Use the workspace and conversation context to ground your decisions.',
   "Stay inside the organization workspace root and the role's allowed scopes.",
   'Treat filesystem, shell, and MCP as tools. Shell is the general execution path, including git commands.',
@@ -41,6 +43,7 @@ export const SHARED_AGENT_SYSTEM_PROMPT = [
   'If blocked, say exactly what is needed next and stop.',
   'If a skill is relevant, inspect its SKILL.md before acting.',
   'Each run is a fresh context window: rely on this session\'s messages, files, team config, and tool output rather than assumed memory.',
+  'Never disclose what AI model or provider runs you. Refer to yourself only by your assigned agent name.',
 ].join('\n');
 
 // ---------------------------------------------------------------------------
@@ -66,5 +69,82 @@ export function buildEnvironmentContext(): string {
   if (process.env.USER) {
     lines.push(`- System User: ${process.env.USER}`);
   }
+  return lines.join('\n');
+}
+
+// ---------------------------------------------------------------------------
+// Collaboration protocol — teaches agents HOW to work together
+// ---------------------------------------------------------------------------
+
+/**
+ * Inter-agent collaboration protocol. Injected into both the conversational
+ * (spirit) and task-based (hydrate) system prompts so agents know the social
+ * protocol, not just the technical interface.
+ */
+export const COLLABORATION_PROTOCOL = [
+  '## Collaboration Protocols',
+  '- When your work produces output another agent needs, write it to the shared context store under a descriptive key so they can find it later.',
+  '- When blocked on information another agent might have, @mention them in the task channel with a specific question instead of guessing.',
+  '- Before starting work that overlaps with a teammate\'s domain, check their recent outputs in peer context and approved artifacts.',
+  '- If you discover something that affects the whole team, post a concise update to the relevant channel so all agents see it.',
+  '- Use self.note to record intermediate insights, decisions, and assumptions for your own reference across turns.',
+  '- When a teammate shares useful information mid-task, acknowledge it and build on it rather than repeating their work.',
+  '- Respect the org hierarchy: coordinate with your manager (reports_to) for decisions that cross team boundaries or need escalation.',
+].join('\n');
+
+// ---------------------------------------------------------------------------
+// Team hierarchy — org chart awareness for the task path
+// ---------------------------------------------------------------------------
+
+function truncate(s: string, n: number): string {
+  return s.length > n ? `${s.slice(0, n)}…` : s;
+}
+
+/**
+ * Build a team section with org-chart hierarchy from AgentDef fields.
+ * Used by the task-path prompt builder so agents see not just flat
+ * teammate lists but the reporting structure.
+ */
+export function buildTeamHierarchySection(teammates: AgentDef[]): string {
+  if (teammates.length === 0) return '';
+
+  const lines = [`\n## Team (${teammates.length} teammate${teammates.length === 1 ? '' : 's'})`];
+  const byId = new Map(teammates.map((t) => [t.id, t]));
+  const children = new Map<string, AgentDef[]>();
+  for (const teammate of teammates) {
+    if (!teammate.reports_to || !byId.has(teammate.reports_to)) continue;
+    const list = children.get(teammate.reports_to) ?? [];
+    list.push(teammate);
+    children.set(teammate.reports_to, list);
+  }
+
+  const visited = new Set<string>();
+
+  function render(teammate: AgentDef, depth: number): void {
+    if (visited.has(teammate.id)) return;
+    visited.add(teammate.id);
+
+    const indent = '  '.repeat(depth);
+    const suffix = teammate.seniority ? ` (${teammate.seniority})` : '';
+    lines.push(`${indent}- **${teammate.name}** (${teammate.id})${suffix}: ${truncate(teammate.persona, 100)}`);
+
+    for (const child of children.get(teammate.id) ?? []) {
+      render(child, depth + 1);
+    }
+  }
+
+  const roots = teammates.filter((t) => !t.reports_to || !byId.has(t.reports_to));
+  for (const root of roots) {
+    render(root, 0);
+  }
+
+  const unrendered = teammates.filter((t) => !visited.has(t.id));
+  if (unrendered.length > 0) {
+    lines.push('_Unlinked teammates:_');
+    for (const teammate of unrendered) {
+      render(teammate, 0);
+    }
+  }
+
   return lines.join('\n');
 }

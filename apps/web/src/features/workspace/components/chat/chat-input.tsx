@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Plus, Smile, Paperclip, Send, X } from "lucide-react";
 import type { ChatMessageData } from "./chat-message";
+import { MarkdownInline } from "../markdown";
 
 export interface MentionSuggestion {
   id: string;
@@ -119,9 +120,10 @@ export function ChatInput({
                 <p className="truncate text-[10px] font-semibold text-violet-700 dark:text-violet-300">
                   Replying to {replyTo.name}
                 </p>
-                <p className="truncate text-[10px] text-zinc-500 dark:text-zinc-400">
-                  {replyTo.content}
-                </p>
+                <MarkdownInline
+                  content={replyTo.content}
+                  className="block truncate text-[10px] text-zinc-500 dark:text-zinc-400"
+                />
               </div>
               {onCancelReply && (
                 <button

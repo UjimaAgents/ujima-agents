@@ -3,11 +3,9 @@ import { createLocalEventBus } from '@ujima/event-bus';
 import { createPermissionMiddleware } from '@ujima/permissions';
 import { createMCPPool } from '@ujima/mcp-client';
 import { selectLanguageModel, type ProviderKind } from '@ujima/llm';
-import { selectProvider } from '@ujima/llm/legacy';
 import type { AgentDef, MCPDef, TaskDef } from '@ujima/shared';
 import { runAgent } from './shell';
 import { resolveOrchestratorEngine, type OrchestratorEngine } from './engine';
-import { createLanguageModelFromLegacyProvider } from './legacy-llm-language-model';
 import type { AgentRunResult, SpawnReason } from './types';
 
 export interface RunnerConfig {
@@ -48,7 +46,9 @@ function readAiSdkConfigFromEnv(env: NodeJS.ProcessEnv): RunnerConfig['llm'] | u
 }
 
 export async function runInRunner(config: RunnerConfig): Promise<AgentRunResult> {
-  const engine = resolveOrchestratorEngine(config.engine ?? process.env.UJIMA_ORCHESTRATOR_ENGINE);
+  // Validate engine value (always ai-sdk); the assignment isn't used
+  // but validateOrchestratorEngine throws on invalid input.
+  void resolveOrchestratorEngine(config.engine ?? process.env.UJIMA_ORCHESTRATOR_ENGINE);
   const db = openDb({ dbPath: config.dbPath });
   const bus = createLocalEventBus({ audit: db.audit, pendingEvents: db.pendingEvents });
   const permissions = createPermissionMiddleware({ audit: db.audit, agentState: db.agentState });
@@ -62,22 +62,13 @@ export async function runInRunner(config: RunnerConfig): Promise<AgentRunResult>
   }
   const mcp = await pool.get(mcpDef);
 
-  let model;
-  if (engine === 'legacy') {
-    const provider = selectProvider({ env: process.env });
-    model = createLanguageModelFromLegacyProvider(
-      provider,
-      config.llm?.modelId ?? process.env.UJIMA_LLM_MODEL_ID ?? 'legacy',
+  const llm = config.llm ?? readAiSdkConfigFromEnv(process.env);
+  if (!llm) {
+    throw new Error(
+      "runInRunner: requires `llm` config or UJIMA_LLM_KIND + UJIMA_LLM_MODEL_ID env vars.",
     );
-  } else {
-    const llm = config.llm ?? readAiSdkConfigFromEnv(process.env);
-    if (!llm) {
-      throw new Error(
-        "runInRunner: requires `llm` config or UJIMA_LLM_KIND + UJIMA_LLM_MODEL_ID env vars when using `ai-sdk` engine.",
-      );
-    }
-    model = selectLanguageModel(llm);
   }
+  const model = selectLanguageModel(llm);
 
   const handle = runAgent({
     agent: config.agent,

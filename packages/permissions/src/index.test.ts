@@ -59,7 +59,7 @@ describe('permission middleware', () => {
     if (!d.allowed) expect(d.code).toBe('blocked_tool');
   });
 
-  it('blocks destructive patterns like rm -rf /', async () => {
+  it('flags destructive patterns as approval required', async () => {
     const d = await mw.check({
       agent: agent(),
       ...ctx,
@@ -67,7 +67,10 @@ describe('permission middleware', () => {
       args: { cmd: 'rm -rf /' },
     });
     expect(d.allowed).toBe(false);
-    if (!d.allowed) expect(d.code).toBe('destructive_pattern');
+    if (!d.allowed) {
+      expect(d.code).toBe('destructive_pattern');
+      expect(d.gate).toBe('approval');
+    }
   });
 
   it('MCP policy blocks tool even if agent allows', async () => {

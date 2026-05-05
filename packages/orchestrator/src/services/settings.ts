@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
-import { AGENT_KIND, ChannelSchema, MemberSchema, type Organization, type Member, type Channel } from '@ujima/shared';
-import { createAgent, defineRole, normalizeProviderKey, type RoleConfig } from '@ujima/framework';
+import { AGENT_KIND, ChannelSchema, MemberSchema, PROVIDER_KINDS, type Organization, type Member, type Channel } from '@ujima/shared';
+import { AgentTeam, createAgent, defineRole, normalizeProviderKey, type RoleConfig } from '@ujima/framework';
 import type { ApiRepository } from './repository-reader.js';
 import type { TeamStore } from './team-store.js';
-import { listProviderStatuses, validateProviderKeys, type ProviderStatus } from './team.js';
+import { listProviderStatuses, type ProviderStatus } from './team.js';
 import { addMemberToDefaultChannels, ensureMemberSelfChannel } from './member-channels.js';
 import { upsertWorkspaceMemberScopes } from './workspace-root.js';
 import { upsertDashboardTeamOverride } from './dashboard-team-overrides.js';
@@ -186,9 +186,31 @@ export class SettingsService {
       Object.entries(providerKeys).map(([name, apiKey]) => [normalizeProviderKey(name), apiKey]),
     );
 
-    const { unknownProviders } = validateProviderKeys(team, normalizedProviderKeys);
+    const knownProviderSet = new Set(PROVIDER_KINDS);
+
+    const unknownProviders: string[] = [];
+    const needsRegistration: string[] = [];
+    for (const providerName of Object.keys(normalizedProviderKeys)) {
+      if (!team.providers[providerName]) {
+        if (knownProviderSet.has(providerName as typeof PROVIDER_KINDS[number])) {
+          needsRegistration.push(providerName);
+        } else {
+          unknownProviders.push(providerName);
+        }
+      }
+    }
     if (unknownProviders.length > 0) {
       throw new Error(`Unknown provider keys: ${unknownProviders.join(', ')}`);
+    }
+
+    if (needsRegistration.length > 0) {
+      const config = team.toJSON();
+      for (const name of needsRegistration) {
+        config.providers[name] = { kind: name as typeof PROVIDER_KINDS[number], models: [] };
+      }
+      const updated = AgentTeam(config);
+      this.teamStore.setTeam(updated);
+      persistTeamConfig(this.repo, organizationId, updated);
     }
 
     for (const [providerName, apiKey] of Object.entries(normalizedProviderKeys)) {

@@ -1,5 +1,6 @@
+import { readdirSync } from 'node:fs';
 import type { Channel, Member, OrganizationChart } from '@ujima/shared';
-import { SHARED_AGENT_SYSTEM_PROMPT, buildEnvironmentContext } from '@ujima/shared';
+import { SHARED_AGENT_SYSTEM_PROMPT, COLLABORATION_PROTOCOL, buildEnvironmentContext } from '@ujima/shared';
 import { getPersonalityPreset } from './personality.js';
 import type { AgentConfig, RoleConfig } from './schemas.js';
 
@@ -8,6 +9,7 @@ export { SHARED_AGENT_SYSTEM_PROMPT } from '@ujima/shared';
 export const MESSAGE_TOOL_USAGE_GUIDANCE = [
   'Default to a normal plain-text reply for conversational responses.',
   'Use message/channel tools only for explicit side effects: posting to another channel, sending a DM, or posting an in-thread relay on request.',
+  'Use ignore: true on dm messages when you want a private acknowledgement without waking the recipient or posting public channel follow-up.',
   'Never do both for one response: either send via tool or answer in plain text, not both.',
   'If you used a message/channel tool to send the response, keep any remaining assistant text empty.',
 ] as const;
@@ -22,6 +24,23 @@ function listScopes(role: RoleConfig): string {
 
 function listChannels(role: RoleConfig): string {
   return role.channels.length ? role.channels.join(', ') : 'none';
+}
+
+function formatWorkspaceLayout(workspaceRoot: string): string {
+  const entries = readdirSync(workspaceRoot, { withFileTypes: true });
+  const directories = entries
+    .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.'))
+    .map((entry) => entry.name)
+    .sort((left, right) => left.localeCompare(right));
+
+  if (directories.length === 0) return '';
+
+  return [
+    '## Workspace Layout',
+    'Top-level directories:',
+    ...directories.map((entry) => `- ${entry}`),
+    'Use these names first when choosing a shell cwd or repo path.',
+  ].join('\n');
 }
 
 function formatChannelTargets(channels: Channel[]): string {
@@ -143,8 +162,11 @@ export function buildAgentSystemPrompt(
     ...MESSAGE_TOOL_USAGE_GUIDANCE,
     'If the message is a greeting, check-in, or casual question, reply briefly instead of staying silent.',
     '',
+    COLLABORATION_PROTOCOL,
+    '',
     `Workspace root: ${workspaceRoot}`,
     `Allowed scopes: ${listScopes(role)}`,
+    formatWorkspaceLayout(workspaceRoot),
     `Available tools: ${listTools(role)}`,
     `Available channels: ${listChannels(role)}`,
   ]

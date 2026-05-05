@@ -30,6 +30,9 @@ export interface CreateRunInput {
 }
 
 export class RunService {
+  private readonly deferredApprovalResumes = new Set<string>();
+  private readonly deferredApprovalStops = new Set<string>();
+
   constructor(
     private readonly teamStore: TeamStore,
     private readonly repo: ApiRepository,
@@ -86,17 +89,40 @@ export class RunService {
     }
   }
 
-  async resumeAfterApproval(organizationId: string, runId: string): Promise<RunState> {
+  async resumeAfterApproval(
+    organizationId: string,
+    runId: string,
+    allowRun = true,
+  ): Promise<RunState> {
     const run = this.repo.getRun(organizationId, runId);
     if (!run) {
       throw new Error(`Run not found: ${runId}`);
+    }
+
+    if (allowRun) {
+      this.tools.allowRun(organizationId, runId);
+    }
+
+    if (!allowRun) {
+      if (run.status === 'running') {
+        this.deferredApprovalStops.add(this.runKey(organizationId, runId));
+        return run;
+      }
+      if (run.status === 'waiting_for_approval') {
+        return this.failRun(run, 'Approval rejected by user');
+      }
+      return run;
+    }
+
+    if (run.status === 'running') {
+      this.deferredApprovalResumes.add(this.runKey(organizationId, runId));
+      return run;
     }
 
     if (run.status !== 'waiting_for_approval') {
       return run;
     }
 
-    this.tools.allowRun(organizationId, runId);
     return this.advanceRun({
       ...run,
       status: 'running',
@@ -143,6 +169,11 @@ export class RunService {
   }
 
   private async advanceRun(run: RunState): Promise<RunState> {
+    const currentRun = this.repo.getRun(run.organizationId, run.id);
+    if (currentRun && ['completed', 'failed', 'cancelled'].includes(currentRun.status)) {
+      return currentRun;
+    }
+
     applyDashboardTeamOverrides(this.repo, run.organizationId, this.teamStore);
     const team = requireTeam(this.teamStore);
     const member = this.repo.getMember(run.organizationId, run.agentId);
@@ -191,6 +222,19 @@ export class RunService {
         summary: run.summary,
       });
 
+      const latestRun = this.repo.getRun(run.organizationId, run.id);
+      if (latestRun && latestRun.status !== 'running') {
+        return latestRun;
+      }
+
+      if (this.consumeDeferredApprovalStop(run.organizationId, run.id)) {
+        return this.failRun(running, 'Approval rejected by user');
+      }
+
+      if (this.consumeDeferredApprovalResume(run.organizationId, run.id)) {
+        return this.advanceRun(running);
+      }
+
       const pendingApprovalExists = this.repo
         .listPendingApprovals(run.organizationId)
         .some((approval) => approval.runId === run.id);
@@ -231,6 +275,9 @@ export class RunService {
       return this.completeRun(running, reply);
     } catch (error) {
       if (error instanceof ToolApprovalRequiredError) {
+        if (this.consumeDeferredApprovalResume(run.organizationId, run.id)) {
+          return this.advanceRun(running);
+        }
         return this.waitForApproval(running, 'Waiting for approval');
       }
       return this.failRun(running, (error as Error).message);
@@ -290,4 +337,25 @@ export class RunService {
     return failed;
   }
 
+  private consumeDeferredApprovalResume(organizationId: string, runId: string): boolean {
+    const key = this.runKey(organizationId, runId);
+    if (!this.deferredApprovalResumes.has(key)) {
+      return false;
+    }
+    this.deferredApprovalResumes.delete(key);
+    return true;
+  }
+
+  private consumeDeferredApprovalStop(organizationId: string, runId: string): boolean {
+    const key = this.runKey(organizationId, runId);
+    if (!this.deferredApprovalStops.has(key)) {
+      return false;
+    }
+    this.deferredApprovalStops.delete(key);
+    return true;
+  }
+
+  private runKey(organizationId: string, runId: string): string {
+    return `${organizationId}:${runId}`;
+  }
 }

@@ -58,7 +58,7 @@ export type RunStatus = z.infer<typeof RunStatusSchema>;
 export const TaskSessionStatusSchema = RunStatusSchema;
 export type TaskSessionStatus = z.infer<typeof TaskSessionStatusSchema>;
 
-export const TaskExecutionModeSchema = z.enum(['concurrent', 'slim']);
+export const TaskExecutionModeSchema = z.enum(['concurrent']);
 export type TaskExecutionMode = z.infer<typeof TaskExecutionModeSchema>;
 
 export const MessageKindSchema = z.enum(['human', 'agent', 'system']);
@@ -233,6 +233,7 @@ export const ApprovalRequestSchema = z.object({
   id: IdSchema,
   organizationId: IdSchema,
   runId: IdSchema.optional(),
+  toolCallId: IdSchema.optional(),
   requestedBy: IdSchema,
   resourceType: ResourceTypeSchema,
   resourcePath: z.string().min(1),

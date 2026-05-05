@@ -1,5 +1,5 @@
 import type { AgentDef, TaskDef, UjimaEvent } from '@ujima/shared';
-import { SHARED_AGENT_SYSTEM_PROMPT, buildEnvironmentContext } from '@ujima/shared';
+import { SHARED_AGENT_SYSTEM_PROMPT, COLLABORATION_PROTOCOL, buildEnvironmentContext, buildTeamHierarchySection } from '@ujima/shared';
 import type { ContextEntry, ContextStore, ApprovalTracker } from '@ujima/context-store';
 import type { EventBus } from '@ujima/event-bus';
 import type { HydrationBundle } from './types';
@@ -161,15 +161,13 @@ function buildSystemPrompt(opts: {
     sections.push(identityLines.join('\n'));
   }
 
-  // ── Team: who the agent works with ──
+  // ── Team: who the agent works with (hierarchical org chart) ──
   if (teammates && teammates.length > 0) {
-    const teamLines = [`\n## Team (${teammates.length} teammate${teammates.length === 1 ? '' : 's'})`];
-    for (const t of teammates) {
-      const suffix = t.seniority ? ` (${t.seniority})` : '';
-      teamLines.push(`- **${t.name}** (${t.id})${suffix}: ${truncate(t.persona, 120)}`);
-    }
-    sections.push(teamLines.join('\n'));
+    sections.push(buildTeamHierarchySection(teammates));
   }
+
+  // ── Collaboration protocol: how to work with teammates ──
+  sections.push(`\n${COLLABORATION_PROTOCOL}`);
 
   // ── Task: what the agent is here to do ──
   const taskLines = [`\n## Task`];

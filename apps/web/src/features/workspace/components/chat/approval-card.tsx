@@ -1,4 +1,5 @@
-import {AlertCircle} from "lucide-react";
+import { ShieldAlert } from "lucide-react";
+import { MarkdownInline } from "../markdown";
 
 export interface ApprovalCardData {
   id: string;
@@ -23,20 +24,35 @@ export function ApprovalCard({
   onResolve?: (resolution: "allow_once" | "allow_always" | "reject") => void;
 }) {
   const isPending = data.status === "pending";
+  const statusLabel =
+    data.status === "approved"
+      ? "Approved"
+      : data.status === "rejected"
+        ? "Rejected"
+        : "Pending";
+  const statusTone =
+    data.status === "approved"
+      ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300"
+      : data.status === "rejected"
+        ? "bg-red-100 text-red-700 dark:bg-red-500/10 dark:text-red-300"
+        : "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300";
   return (
-    <div className="rounded-xl border border-amber-200 bg-amber-50/50 px-4 py-3 dark:border-amber-500/20 dark:bg-amber-500/5">
+    <div className="rounded-xl border border-zinc-200 bg-zinc-50/90 px-4 py-3 shadow-sm backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/60">
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border-2 border-amber-200 bg-white dark:border-amber-500/30 dark:bg-zinc-900">
-            <AlertCircle className="h-4 w-4 text-amber-600" />
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-violet-200 bg-violet-50 dark:border-violet-500/20 dark:bg-violet-500/10">
+            <ShieldAlert className="h-4 w-4 text-violet-600 dark:text-violet-300" />
           </div>
           <div>
-            <p className="text-xs font-bold text-zinc-900 dark:text-white">
+            <p className="text-xs font-semibold text-zinc-900 dark:text-zinc-100">
               {data.title}
             </p>
-            <p className="text-[10px] text-zinc-500">{data.description}</p>
+            <MarkdownInline
+              content={data.description}
+              className="mt-0.5 block text-[10px] text-zinc-500 dark:text-zinc-400"
+            />
             {data.commandPreview ? (
-              <pre className="mt-1.5 max-h-28 overflow-y-auto rounded-lg border border-amber-200/80 bg-white/80 px-2 py-1.5 text-[10px] font-mono leading-relaxed text-zinc-800 whitespace-pre-wrap dark:border-amber-500/20 dark:bg-zinc-950/80 dark:text-zinc-200">
+              <pre className="mt-1.5 max-h-28 overflow-y-auto rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-[10px] font-mono leading-relaxed whitespace-pre-wrap text-zinc-800 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-200">
                 {data.commandPreview}
               </pre>
             ) : null}
@@ -59,7 +75,7 @@ export function ApprovalCard({
                 type="button"
                 disabled={resolving}
                 onClick={() => onResolve?.("reject")}
-                className="rounded-md bg-white px-3 py-1 text-[10px] font-bold text-zinc-900 shadow-sm border border-zinc-200 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-zinc-800 dark:border-zinc-700 dark:text-white"
+                className="rounded-md border border-zinc-200 bg-transparent px-3 py-1 text-[10px] font-semibold text-zinc-700 hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-900"
               >
                 Reject
               </button>
@@ -67,7 +83,7 @@ export function ApprovalCard({
                 type="button"
                 disabled={resolving}
                 onClick={() => onResolve?.("allow_once")}
-                className="rounded-md bg-emerald-600 px-3 py-1 text-[10px] font-bold text-white shadow-sm border border-emerald-700 hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
+                className="rounded-md border border-violet-700 bg-violet-600 px-3 py-1 text-[10px] font-semibold text-white shadow-sm hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {resolving ? "Resolving..." : "Allow for now"}
               </button>
@@ -75,14 +91,14 @@ export function ApprovalCard({
                 type="button"
                 disabled={resolving}
                 onClick={() => onResolve?.("allow_always")}
-                className="rounded-md bg-violet-600 px-3 py-1 text-[10px] font-bold text-white shadow-sm border border-violet-700 hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-60"
+                className="rounded-md border border-violet-200 bg-violet-50 px-3 py-1 text-[10px] font-semibold text-violet-700 hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-violet-500/30 dark:bg-violet-500/10 dark:text-violet-300 dark:hover:bg-violet-500/15"
               >
                 Always Allow
               </button>
             </>
           ) : (
-            <span className="rounded-md bg-white px-3 py-1 text-[10px] font-bold text-zinc-900 shadow-sm border border-zinc-200 dark:bg-zinc-800 dark:border-zinc-700 dark:text-white">
-              {data.status}
+            <span className={`rounded-md px-3 py-1 text-[10px] font-semibold shadow-sm border ${statusTone}`}>
+              {statusLabel}
             </span>
           )}
         </div>

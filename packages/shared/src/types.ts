@@ -69,7 +69,7 @@ export const MCPDef = z.object({
 });
 export type MCPDef = z.infer<typeof MCPDef>;
 
-export const ExecutionMode = z.enum(['concurrent', 'slim']);
+export const ExecutionMode = z.enum(['concurrent']);
 export type ExecutionMode = z.infer<typeof ExecutionMode>;
 
 export const OrchestratorMode = z.enum(['manual', 'auto']);

@@ -7,6 +7,7 @@ export const MessageSchema = z.object({
   recipientId: z.string().min(1).optional(),
   content: z.string().min(1),
   mentions: z.array(z.string().min(1)).default([]),
+  ignore: z.boolean().optional(),
 });
 
 export const messageTool: OrchestratorTool<typeof MessageSchema> = {
@@ -73,6 +74,7 @@ export const messageTool: OrchestratorTool<typeof MessageSchema> = {
         senderId: invocation.memberId,
         recipientId,
         content,
+        ignore: invocation.input.ignore === true,
         mentions,
       });
     }
