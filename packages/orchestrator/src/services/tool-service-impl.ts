@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { resolve } from "node:path";
 import type { AgentTeamHandle } from "@ujima/framework";
 import {
   SocketEventNames,
@@ -447,15 +448,32 @@ export class ToolServiceImpl implements ToolService {
         ? input.cwd
         : (invocation.resourcePath ?? resolver.scopePaths[0] ?? ".");
     const resolvedCwd = await resolver.resolve(requestedCwd);
+    const args = Array.isArray(input.args) ? input.args : undefined;
+    const resolvePathOperands = command === "cat";
+    const resolvedArgs =
+      resolvePathOperands && args
+        ? await Promise.all(
+            args.map(async (arg) => {
+              if (typeof arg !== "string" || arg.startsWith("-")) return arg;
+              return await resolver.resolve(resolve(resolvedCwd, arg));
+            }),
+          )
+        : args;
+    const nextInput = {
+      ...input,
+      cwd: resolvedCwd,
+      command,
+      ...(resolvedArgs ? { args: resolvedArgs } : {}),
+    };
 
     return {
       ...invocation,
-      resourcePath: resolvedCwd,
-      input: {
-        ...input,
-        cwd: resolvedCwd,
-        command,
-      },
+      resourcePath:
+        resolvePathOperands
+          ? resolvedArgs?.find((arg) => typeof arg === "string" && !arg.startsWith("-")) ??
+            resolvedCwd
+          : resolvedCwd,
+      input: nextInput,
     };
   }
 }

@@ -25,6 +25,7 @@ import { TypingIndicator } from "./typing-indicator";
 import { RunCard } from "./run-card";
 import { ActivityRow } from "./activity-row";
 import { ConversationSkeleton } from "./conversation-skeleton";
+import { resolveWorkspaceApproval } from "../approval-resolution";
 
 const CHANNEL_TABS: ChatTab[] = [
   { id: "conversation", label: "Conversation" },
@@ -174,18 +175,12 @@ export function ChannelView({
       if (!organizationId) {
         throw new Error("Missing organization context for approval resolution.");
       }
-      const status = resolution === "reject" ? "rejected" : "approved";
       setResolvingApprovals((state) => ({ ...state, [approvalId]: true }));
       try {
-        const response = await fetch(`/api/approvals/${approvalId}/resolve`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            organizationId,
-            status,
-            resolution,
-            reason: `Resolved from workspace (${resolution}).`,
-          }),
+        const response = await resolveWorkspaceApproval({
+          organizationId,
+          approvalId,
+          resolution,
         });
         if (!response.ok) {
           const body = await response.json().catch(() => null);

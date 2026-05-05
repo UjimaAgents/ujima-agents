@@ -77,7 +77,7 @@ export function createPermissionGatedToolService(
       if (input.bypassPermission) {
         return inner.invoke(input);
       }
-      if (approvedRuns.has(runKey(input.organizationId, input.runId))) {
+      if (consumeApprovedRun(input.organizationId, input.runId)) {
         return inner.invoke(input);
       }
       const context = await buildContext(input);
@@ -120,6 +120,15 @@ export function createPermissionGatedToolService(
       inner.allowRun(organizationId, runId);
     },
   };
+
+  function consumeApprovedRun(organizationId: string, runId: string): boolean {
+    const key = runKey(organizationId, runId);
+    if (!approvedRuns.has(key)) {
+      return false;
+    }
+    approvedRuns.delete(key);
+    return true;
+  }
 }
 
 function buildShellApprovalScope(input: ToolInvocationInput): string {

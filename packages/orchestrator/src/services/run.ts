@@ -31,6 +31,7 @@ export interface CreateRunInput {
 
 export class RunService {
   private readonly deferredApprovalResumes = new Set<string>();
+  private readonly deferredApprovalStops = new Set<string>();
 
   constructor(
     private readonly teamStore: TeamStore,
@@ -100,6 +101,17 @@ export class RunService {
 
     if (allowRun) {
       this.tools.allowRun(organizationId, runId);
+    }
+
+    if (!allowRun) {
+      if (run.status === 'running') {
+        this.deferredApprovalStops.add(this.runKey(organizationId, runId));
+        return run;
+      }
+      if (run.status === 'waiting_for_approval') {
+        return this.failRun(run, 'Approval rejected by user');
+      }
+      return run;
     }
 
     if (run.status === 'running') {
@@ -215,6 +227,10 @@ export class RunService {
         return latestRun;
       }
 
+      if (this.consumeDeferredApprovalStop(run.organizationId, run.id)) {
+        return this.failRun(running, 'Approval rejected by user');
+      }
+
       if (this.consumeDeferredApprovalResume(run.organizationId, run.id)) {
         return this.advanceRun(running);
       }
@@ -327,6 +343,15 @@ export class RunService {
       return false;
     }
     this.deferredApprovalResumes.delete(key);
+    return true;
+  }
+
+  private consumeDeferredApprovalStop(organizationId: string, runId: string): boolean {
+    const key = this.runKey(organizationId, runId);
+    if (!this.deferredApprovalStops.has(key)) {
+      return false;
+    }
+    this.deferredApprovalStops.delete(key);
     return true;
   }
 

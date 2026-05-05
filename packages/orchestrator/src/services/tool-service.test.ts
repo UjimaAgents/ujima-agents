@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createPermissionGatedToolService, type ToolService } from './tool-service.js';
 
 describe('createPermissionGatedToolService', () => {
-  it('creates an approval for destructive commands and bypasses permission after allowRun', async () => {
+  it('creates an approval for destructive commands and bypasses permission once after allowRun', async () => {
     let innerCalls = 0;
     let approvals = 0;
     let lastApprovalScope = '';
@@ -104,6 +104,23 @@ describe('createPermissionGatedToolService', () => {
     });
 
     expect(second.ok).toBe(true);
+    expect(innerCalls).toBe(1);
+
+    const third = await tools.invoke({
+      organizationId: 'org-1',
+      runId: 'run-1',
+      memberId: 'agent-1',
+      toolCallId: 'tool-3',
+      toolId: 'shell',
+      action: 'execute',
+      resourceType: 'shell',
+      resourcePath: '/workspace',
+      input: { command: 'rm -rf /', cwd: '/workspace' },
+    });
+
+    expect(third.ok).toBe(false);
+    expect(third.requiresApprovalId).toBe('approval-2');
+    expect(approvals).toBe(2);
     expect(innerCalls).toBe(1);
   });
 });

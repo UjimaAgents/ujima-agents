@@ -18,6 +18,9 @@ export const shellTool: OrchestratorTool<typeof ShellSchema> = {
   }),
   execute: async ({ invocation, team }) => {
     const command = invocation.input?.command as string | undefined;
+    const args = Array.isArray(invocation.input?.args)
+      ? invocation.input.args.map((arg) => String(arg))
+      : [];
     const cwd = typeof invocation.input?.cwd === 'string'
       ? invocation.input.cwd
       : team.workspace.root;
@@ -27,10 +30,7 @@ export const shellTool: OrchestratorTool<typeof ShellSchema> = {
     }
 
     return new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
-      const child = spawn(command, {
-        cwd,
-        shell: true,
-      });
+      const child = spawn(command, args, { cwd });
 
       let stdout = '';
       let stderr = '';

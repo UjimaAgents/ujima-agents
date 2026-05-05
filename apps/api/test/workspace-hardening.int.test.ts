@@ -537,7 +537,7 @@ describe('workspace path hardening', () => {
         resourceType: 'shell',
         input: {
           command: 'cat',
-          args: ['../../etc/passwd'],
+          args: ['../../../etc/passwd'],
         },
       }),
     ).rejects.toMatchObject({ code: 'ERR_PATH_ESCAPE' });

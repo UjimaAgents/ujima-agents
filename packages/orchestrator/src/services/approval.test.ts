@@ -131,7 +131,7 @@ describe('ApprovalService', () => {
     expect(resumed).toBe(1);
   });
 
-  it('restarts a run on rejection without cancelling it', async () => {
+  it('stops a run on rejection and passes allowRun=false', async () => {
     const shellScope = 'shell:{"cwd":"/workspace","command":"git log --oneline -10"}';
     const approval = {
       id: 'ap-1',
@@ -177,6 +177,11 @@ describe('ApprovalService', () => {
       { emit: () => { emitted++; } } as never,
       async (_organizationId: string, _runId: string, allowRun?: boolean) => {
         resumedAllowRun = allowRun;
+        if (allowRun === false) {
+          run.status = 'failed';
+          run.step = 'failed';
+          run.summary = 'Approval rejected by user';
+        }
         return run;
       },
     );
@@ -191,6 +196,61 @@ describe('ApprovalService', () => {
 
     expect(result.status).toBe('rejected');
     expect(resumedAllowRun).toBe(false);
+    expect(run.status).toBe('failed');
+    expect(run.summary).toBe('Approval rejected by user');
     expect(emitted).toBe(2);
+  });
+
+  it('persists an allow_always grant with the encoded scope reason', async () => {
+    const shellScope = 'shell:{"cwd":"/workspace","command":"pwd"}';
+    const approval = {
+      id: 'ap-1',
+      organizationId: 'org-1',
+      runId: 'run-1',
+      toolCallId: 'tool-1',
+      requestedBy: 'agent-1',
+      resourceType: 'shell',
+      resourcePath: '/workspace',
+      action: 'execute',
+      status: 'pending',
+      reason: `Tool action requires approval;scope=${encodeURIComponent(shellScope)}`,
+      createdAt: '2026-05-04T00:00:00.000Z',
+      resolvedAt: undefined,
+    };
+    let capturedReason = '';
+    const repo = {
+      listPendingApprovals: () => [approval],
+      saveApproval: () => approval,
+      getRun: () => ({ threadId: 'thread-1' }),
+      getApproval: () => approval,
+      resolveApproval: (_orgId: string, _approvalId: string, status: 'approved' | 'rejected', reason?: string) => {
+        capturedReason = reason ?? '';
+        return {
+          ...approval,
+          status,
+          reason: reason ?? '',
+          resolvedAt: '2026-05-04T00:01:00.000Z',
+        };
+      },
+    } as never;
+
+    const service = new ApprovalService(
+      repo,
+      { emit: () => undefined } as never,
+      () => undefined,
+    );
+
+    const result = await service.resolveApproval({
+      organizationId: 'org-1',
+      approvalId: 'ap-1',
+      status: 'approved',
+      resolution: 'allow_always',
+      reason: 'Always allow this exact command.',
+    });
+
+    expect(result.status).toBe('approved');
+    expect(capturedReason).toBe(
+      `grant:always_allow:scope=${encodeURIComponent(shellScope)};note=Always allow this exact command.`,
+    );
   });
 });
