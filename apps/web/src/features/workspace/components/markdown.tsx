@@ -54,15 +54,32 @@ function createRenderer(mentionNames: string[]) {
   return renderer;
 }
 
-function highlightMentions(text: string, mentionNames: string[]): string {
-  let result = h(text);
-  if (!mentionNames.length) return result;
-  for (const name of mentionNames) {
-    result = result.replace(
-      new RegExp(`(?<!\\w)@(${escapeRegex(name)})(?=\\s|[^\\w]|$)`, 'g'),
-      `<span class="font-semibold text-zinc-900 dark:text-white">@$1</span>`,
-    );
+export function highlightMentions(text: string, mentionNames: string[]): string {
+  if (!mentionNames.length) return h(text);
+  const uniqueNames = [...new Set(mentionNames.filter((name) => name.length > 0))].sort(
+    (a, b) => b.length - a.length,
+  );
+  if (!uniqueNames.length) return h(text);
+  const mentionPattern = new RegExp(
+    `(^|[^@\\w])@(${uniqueNames.map((name) => escapeRegex(name)).join("|")})(?=\\s|[^\\w]|$)`,
+    "g",
+  );
+
+  let result = "";
+  let cursor = 0;
+  let match: RegExpExecArray | null;
+  while ((match = mentionPattern.exec(text))) {
+    const prefix = match[1] ?? "";
+    const name = match[2] ?? "";
+    const matchStart = match.index;
+    const mentionStart = matchStart + prefix.length;
+    const mentionEnd = mentionStart + 1 + name.length;
+    result += h(text.slice(cursor, matchStart));
+    result += h(prefix);
+    result += `<span class="font-semibold text-zinc-900 dark:text-white">@${h(name)}</span>`;
+    cursor = mentionEnd;
   }
+  result += h(text.slice(cursor));
   return result;
 }
 
