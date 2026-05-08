@@ -26,6 +26,7 @@ interface WorkspaceState {
   channels: WorkspaceChannel[];
   members: WorkspaceMember[];
   memberActivity: Record<string, ActivityState>;
+  conversationUnreadCounts: Record<string, number>;
   messages: ChatMessageData[];
   approvals: ApprovalCardData[];
   runs: RunState[];
@@ -40,6 +41,7 @@ interface WorkspaceState {
   syncWorkspace(input: {
     channels: WorkspaceChannel[];
     members: WorkspaceMember[];
+    conversationUnreadCounts?: Record<string, number>;
     selectedConversation?: SelectedConversation;
   }): void;
   setSelectedConversation(conversation?: SelectedConversation): void;
@@ -48,6 +50,8 @@ interface WorkspaceState {
   setMembers(members: WorkspaceMember[]): void;
   appendMember(member: WorkspaceMember): void;
   setMemberActivity(memberId: string, activity: ActivityState): void;
+  incrementConversationUnreadCount(conversationId: string, by?: number): void;
+  clearConversationUnreadCount(conversationId: string): void;
   resetConversationFeed(conversationKey: string): void;
   setLoading(loading: boolean): void;
   hydrateMessages(messages: Message[], toMessage: (message: Message) => ChatMessageData, toActivity: (message: Message) => ActivityEvent): void;
@@ -69,6 +73,7 @@ const EMPTY_ACTIVITY = {
   channels: [],
   members: [],
   memberActivity: {},
+  conversationUnreadCounts: {},
   messages: [],
   approvals: [],
   runs: [],
@@ -161,10 +166,14 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
     set((state) => (state.detailsWidth === detailsWidth ? state : { detailsWidth })),
   setDetailsTab: (detailsTab) =>
     set((state) => (state.detailsTab === detailsTab ? state : { detailsTab })),
-  syncWorkspace: ({ channels, members, selectedConversation }) =>
+  syncWorkspace: ({ channels, members, conversationUnreadCounts, selectedConversation }) =>
     set((state) => {
       const nextChannels = sameItems(state.channels, channels) ? state.channels : mergeChannels(state.channels, channels);
       const nextMembers = sameItems(state.members, members) ? state.members : mergeMembers(state.members, members);
+      const nextUnreadCounts =
+        conversationUnreadCounts && !sameRecord(state.conversationUnreadCounts, conversationUnreadCounts)
+          ? conversationUnreadCounts
+          : state.conversationUnreadCounts;
       const currentSelection = state.selectedConversation;
       const selectionExists =
         currentSelection &&
@@ -178,6 +187,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
       if (
         nextChannels === state.channels &&
         nextMembers === state.members &&
+        nextUnreadCounts === state.conversationUnreadCounts &&
         sameConversation(currentSelection, nextSelection)
       ) {
         return state;
@@ -185,6 +195,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
       return {
         channels: nextChannels,
         members: nextMembers,
+        conversationUnreadCounts: nextUnreadCounts,
         selectedConversation: nextSelection,
       };
     }),
@@ -220,6 +231,23 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
         ? state
         : { memberActivity: { ...state.memberActivity, [memberId]: activity } },
     ),
+  incrementConversationUnreadCount: (conversationId, by = 1) =>
+    set((state) => {
+      const nextCount = (state.conversationUnreadCounts[conversationId] ?? 0) + by;
+      return {
+        conversationUnreadCounts: {
+          ...state.conversationUnreadCounts,
+          [conversationId]: nextCount,
+        },
+      };
+    }),
+  clearConversationUnreadCount: (conversationId) =>
+    set((state) => {
+      if (!(conversationId in state.conversationUnreadCounts)) return state;
+      const next = { ...state.conversationUnreadCounts };
+      delete next[conversationId];
+      return { conversationUnreadCounts: next };
+    }),
   resetConversationFeed: (conversationKey) =>
     set((state) =>
       state.conversationKey === conversationKey && state.loading
@@ -259,13 +287,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
       };
     }),
   addPendingMessage: (message) =>
-    set((state) => {
-      const alreadyPending = state.messages.some(
-        (m) => m.pending && m.senderId === message.senderId && m.content === message.content,
-      );
-      if (alreadyPending) return state;
-      return { messages: mergeChatMessages(state.messages, [message]) };
-    }),
+    set((state) => ({ messages: [...state.messages, message] })),
   receiveMessage: (tempId, message, toMessage, toActivity) =>
     set((state) => {
       const nextMessage = toMessage(message);

@@ -1,8 +1,10 @@
-import { useCallback, useRef, useState, forwardRef, type ReactNode, type UIEventHandler } from "react";
+import { useCallback, useRef, useState, forwardRef, type MouseEvent, type ReactNode, type UIEventHandler } from "react";
 import { CheckCircle2, Loader2 } from "lucide-react";
+import { type AttachmentCategory } from "@ujima/shared";
 import { Avatar, TagBadge, type TagVariant } from "./primitives";
 import { MessageActions } from "../message-actions";
 import { Markdown, MarkdownInline } from "../markdown";
+import { AttachmentGrid } from "./attachment-grid";
 
 export interface ChatMessageData {
   id: string;
@@ -14,6 +16,13 @@ export interface ChatMessageData {
   content: string;
   createdAt?: string;
   mentionNames?: string[];
+  attachments?: {
+    id: string;
+    filename: string;
+    mimeType: string;
+    category: AttachmentCategory;
+    sizeBytes: number;
+  }[];
   replyPreview?: {
     name: string;
     content: string;
@@ -32,30 +41,32 @@ export function ChatMessage({
   onClick,
   colorIndex = 0,
   onReply,
+  organizationId,
 }: {
   message: ChatMessageData;
   active?: boolean;
   onClick?: () => void;
   colorIndex?: number;
   onReply?: (message: ChatMessageData) => void;
+  organizationId?: string;
 }) {
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const dragStart = useRef<{ x: number; y: number } | null>(null);
   const dragged = useRef(false);
 
-  const handleContextMenu = useCallback((event: React.MouseEvent) => {
+  const handleContextMenu = useCallback((event: MouseEvent) => {
     event.preventDefault();
     event.stopPropagation();
     setMenu({ x: event.clientX, y: event.clientY });
   }, []);
 
-  const handleMouseDown = useCallback((event: React.MouseEvent) => {
+  const handleMouseDown = useCallback((event: MouseEvent) => {
     dragStart.current = { x: event.clientX, y: event.clientY };
     dragged.current = false;
   }, []);
 
   const handleMouseMove = useCallback(
-    (event: React.MouseEvent) => {
+    (event: MouseEvent) => {
       if (!dragStart.current || !onReply) return;
       const dx = event.clientX - dragStart.current.x;
       if (dx > DRAG_THRESHOLD && !dragged.current) {
@@ -111,6 +122,10 @@ export function ChatMessage({
           <Markdown
             content={message.content}
             mentionNames={message.mentionNames}
+          />
+          <AttachmentGrid
+            attachments={message.attachments}
+            organizationId={organizationId ?? ""}
           />
           {message.detail && (
             <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400 leading-relaxed">

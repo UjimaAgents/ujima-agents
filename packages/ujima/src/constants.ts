@@ -22,7 +22,7 @@ export const DEFAULT_TOOL_CATALOG: Record<string, ToolCapability> = {
   message: {
     id: 'message',
     name: 'Message',
-    description: 'Send messages to channels, threads, and direct message recipients. Use ignore on DMs for silent acknowledgements.',
+    description: 'Send messages to channels, threads, and direct message recipients. Use ignore on DMs only for a private note, not for skipping a real reply.',
     actions: ['message'],
     pathScopes: [],
     requiresApproval: false,
@@ -46,7 +46,7 @@ export const DEFAULT_TOOL_CATALOG: Record<string, ToolCapability> = {
   'channel.dm': {
     id: 'channel.dm',
     name: 'Channel DM',
-    description: 'Send a direct message, lazily creating the DM channel when needed. Use ignore for a silent DM that skips wake fanout.',
+    description: 'Send a direct message, lazily creating the DM channel when needed. Use ignore for a private DM that skips wake fanout, not for deciding whether to reply.',
     actions: ['message'],
     pathScopes: [],
     requiresApproval: false,

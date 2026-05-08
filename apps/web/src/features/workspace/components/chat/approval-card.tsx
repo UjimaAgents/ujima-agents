@@ -4,11 +4,21 @@ import { MarkdownInline } from "../markdown";
 export interface ApprovalCardData {
   id: string;
   runId?: string;
+  /** Conversation thread that produced this approval (when known). */
+  threadId?: string;
+  /** Member id of the agent that requested approval (stable id for filtering). */
+  requestedByMemberId?: string;
   title: string;
   description: string;
   /** Human-readable shell line + cwd when applicable */
   commandPreview?: string;
+  shellScope?: {
+    cwd: string;
+    command: string;
+    args?: string[];
+  };
   status: "pending" | "approved" | "rejected";
+  /** Display name for the requesting agent */
   requestedBy: string;
   approvalsNeeded: number;
   reviewers?: {color: string}[];
@@ -21,7 +31,7 @@ export function ApprovalCard({
 }: {
   data: ApprovalCardData;
   resolving?: boolean;
-  onResolve?: (resolution: "allow_once" | "allow_always" | "reject") => void;
+  onResolve?: (resolution: "allow_once" | "allow_always" | "allow_family" | "reject") => void;
 }) {
   const isPending = data.status === "pending";
   const statusLabel =
@@ -95,6 +105,16 @@ export function ApprovalCard({
               >
                 Always Allow
               </button>
+              {data.shellScope ? (
+                <button
+                  type="button"
+                  disabled={resolving}
+                  onClick={() => onResolve?.("allow_family")}
+                  className="rounded-md border border-violet-200 bg-violet-50 px-3 py-1 text-[10px] font-semibold text-violet-700 hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-violet-500/30 dark:bg-violet-500/10 dark:text-violet-300 dark:hover:bg-violet-500/15"
+                >
+                  Always Allow {data.shellScope.command} Family
+                </button>
+              ) : null}
             </>
           ) : (
             <span className={`rounded-md px-3 py-1 text-[10px] font-semibold shadow-sm border ${statusTone}`}>

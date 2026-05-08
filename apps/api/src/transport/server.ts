@@ -30,8 +30,10 @@ import {
 import { z } from 'zod';
 import swagger from '@fastify/swagger';
 import swaggerUi from '@fastify/swagger-ui';
+import multipart from '@fastify/multipart';
 import { jsonSchemaTransform, serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { RealtimeService } from './realtime.js';
+import { registerAttachmentRoutes } from './routes/attachments.js';
 import { registerConversationRoutes } from './routes/conversations.js';
 import { registerAuthRoutes } from './routes/auth.js';
 import { registerOnboardingRoutes } from './routes/onboarding.js';
@@ -124,6 +126,7 @@ export function createTransport(opts: TransportOptions): Transport {
       },
       tags: [
         { name: 'Agents' },
+        { name: 'Attachments' },
         { name: 'Conversations' },
         { name: 'Onboarding' },
         { name: 'Runs' },
@@ -221,6 +224,14 @@ export function createTransport(opts: TransportOptions): Transport {
     if (opts.apiServices) {
       const realtime = new RealtimeService(io, opts.apiServices.repo);
       const services = opts.apiServices.buildServices(realtime);
+
+      api.register(multipart, {
+        limits: { fileSize: 25 * 1024 * 1024 },
+      });
+      registerAttachmentRoutes(api, {
+        repo: opts.apiServices.repo,
+        auth: services.auth,
+      });
       
       registerConversationRoutes(api, {
         repo: opts.apiServices.repo,

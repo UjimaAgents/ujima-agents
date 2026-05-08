@@ -6,13 +6,15 @@ import {
   MemberSchema,
   MessageSchema,
   RunStateSchema,
+  parseApprovalReasonValue,
+  parseShellScope,
   type ActivityEvent,
   type ApprovalRequest,
   type Member,
   type Message,
   type RunState,
 } from "@ujima/shared";
-import type { BootstrapResponse } from "@ujima/api-schema";
+import { BootstrapResponseSchema, type BootstrapResponse } from "@ujima/api-schema";
 import type { ApprovalCardData, ChatMessageData } from "./components/chat";
 import type { SelectedConversation } from "./types";
 import {
@@ -36,7 +38,7 @@ export interface ConversationSyncResult {
   };
   loading: boolean;
   error?: string;
-  sendMessage(content: string, parentMessageId?: string): Promise<void>;
+  sendMessage(content: string, parentMessageId?: string, attachmentIds?: string[]): Promise<void>;
 }
 
 export function useConversationSync(
@@ -82,11 +84,33 @@ export function useConversationSync(
     const currentConversationKey = `${transport.organizationId}:${transport.threadId}`;
     resetConversationFeed(currentConversationKey);
 
-    void loadHistory(transport.organizationId, transport.threadId, abortController.signal)
-      .then((history) => {
+    void Promise.all([
+      loadHistory(transport.organizationId, transport.threadId, abortController.signal),
+      loadBootstrap(abortController.signal),
+    ])
+      .then(([history, latestBootstrap]) => {
         if (abortController.signal.aborted || currentConversationKey !== conversationKey) return;
         setError(undefined);
         hydrateMessages(history, (message) => messageToChatMessage(message, storeMembersRef.current), messageToActivity);
+        const activeRuns = latestBootstrap?.activeRuns ?? bootstrap.activeRuns;
+        const pendingApprovals = latestBootstrap?.pendingApprovals ?? bootstrap.pendingApprovals;
+        for (const run of activeRuns.filter((item) => item.threadId === transport.threadId)) {
+          upsertRun(run, runToActivity);
+        }
+        for (const approval of pendingApprovals.filter((item) =>
+          shouldHydrateApproval(item, {
+            conversation,
+            currentThreadId: transport.threadId,
+            history,
+            runs: activeRuns,
+          }),
+        )) {
+          upsertApproval(
+            approval,
+            (value, state) => approvalToCard(value, { members: state.members }),
+            approvalToActivity,
+          );
+        }
         setLoading(false);
       })
       .catch((err) => {
@@ -144,6 +168,9 @@ export function useConversationSync(
   }, [
     appendActivity,
     appendMember,
+    bootstrap.activeRuns,
+    bootstrap.pendingApprovals,
+    conversation,
     hydrateMessages,
     receiveMessage,
     removeMessage,
@@ -183,7 +210,7 @@ export function useConversationSync(
   }, [activeRun, conversation.id, conversation.type, loading, memberActivity, selectedMember?.presence]);
 
   const sendMessage = useCallback(
-    async (content: string, parentMessageId?: string) => {
+    async (content: string, parentMessageId?: string, attachmentIds?: string[]) => {
       if (!transport || !bootstrap.auth.member) {
         throw new Error("Sign in before sending messages.");
       }
@@ -215,6 +242,7 @@ export function useConversationSync(
             sender.id,
             content,
             parentMessageId,
+            attachmentIds,
           ),
         ),
       });
@@ -336,6 +364,14 @@ async function loadHistory(
   }
 }
 
+async function loadBootstrap(signal: AbortSignal): Promise<BootstrapResponse | null> {
+  const response = await fetch("/api/bootstrap", { signal });
+  const body = await response.json().catch(() => null);
+  if (!response.ok) return null;
+  const parsed = BootstrapResponseSchema.safeParse(body);
+  return parsed.success ? parsed.data : null;
+}
+
 function parseStreamEnvelope(value: string): ConversationStreamEnvelope | null {
   try {
     const parsed = JSON.parse(value) as ConversationStreamEnvelope;
@@ -344,6 +380,52 @@ function parseStreamEnvelope(value: string): ConversationStreamEnvelope | null {
   } catch {
     return null;
   }
+}
+
+function shouldHydrateApproval(
+  approval: ApprovalRequest,
+  input: {
+    conversation: SelectedConversation;
+    currentThreadId: string;
+    history: Message[];
+    runs: RunState[];
+  },
+): boolean {
+  if (approval.status !== "pending") return false;
+
+  if (approval.threadId && approval.threadId !== input.currentThreadId) {
+    return false;
+  }
+
+  if (approval.threadId === input.currentThreadId) {
+    if (input.conversation.type === "agent" && approval.requestedBy !== input.conversation.id) {
+      return false;
+    }
+    return true;
+  }
+
+  const run = approval.runId
+    ? input.runs.find((item) => item.id === approval.runId)
+    : undefined;
+
+  if (run?.threadId === input.currentThreadId) {
+    if (input.conversation.type === "agent" && approval.requestedBy !== input.conversation.id) {
+      return false;
+    }
+    return true;
+  }
+
+  if (input.conversation.type !== "agent" || approval.requestedBy !== input.conversation.id) {
+    return false;
+  }
+
+  const relayContent = buildApprovalRelayMessage(approval);
+  return input.history.some(
+    (message) =>
+      message.threadId === input.currentThreadId &&
+      message.senderId === approval.requestedBy &&
+      message.content === relayContent,
+  );
 }
 
 function handleStreamEvent(
@@ -451,6 +533,10 @@ function handleStreamEvent(
     default:
       return;
   }
+}
+
+function buildApprovalRelayMessage(approval: ApprovalRequest): string {
+  return `Approval requested for ${approval.action} ${approval.resourcePath}.`;
 }
 
 function parseMessagePayload(payload: unknown): Message | null {
@@ -572,6 +658,13 @@ function messageToChatMessage(message: Message, members: Member[]): ChatMessageD
       message.mentionNames?.length
         ? message.mentionNames
         : resolveMentionNames(message.content, members),
+    attachments: message.attachments?.map((attachment) => ({
+      id: attachment.id,
+      filename: attachment.filename,
+      mimeType: attachment.mimeType,
+      category: attachment.category,
+      sizeBytes: attachment.sizeBytes,
+    })) ?? [],
     pending: false,
   };
 }
@@ -624,51 +717,6 @@ function messageToActivity(message: Message): ActivityEvent {
   };
 }
 
-function parseScopeFromReason(reason: string): string | null {
-  const match = reason.match(/(?:^|[;:])scope=([^;]+)/);
-  if (!match?.[1]) return null;
-  try {
-    return decodeURIComponent(match[1]);
-  } catch {
-    return match[1];
-  }
-}
-
-function parseApprovalNote(reason: string): string | null {
-  const match = reason.match(/(?:^|[;:])note=([^;]+)/);
-  if (!match?.[1]) return null;
-  try {
-    return decodeURIComponent(match[1]);
-  } catch {
-    return match[1];
-  }
-}
-
-/**
- * Matches `ToolServiceImpl.buildApprovalScope` for shell:
- * `shell:${JSON.stringify({ cwd, command })}`
- */
-function parseShellScope(scope: string): { cwd: string; command: string } | null {
-  if (!scope.startsWith("shell:")) return null;
-  try {
-    const parsed = JSON.parse(scope.slice("shell:".length)) as unknown;
-    if (
-      !parsed ||
-      typeof parsed !== "object" ||
-      typeof (parsed as { cwd?: unknown }).cwd !== "string" ||
-      typeof (parsed as { command?: unknown }).command !== "string"
-    ) {
-      return null;
-    }
-    return {
-      cwd: (parsed as { cwd: string }).cwd,
-      command: (parsed as { command: string }).command,
-    };
-  } catch {
-    return null;
-  }
-}
-
 function formatShellCommandPreview(parsed: { cwd: string; command: string }): string {
   return `$ ${parsed.command}\nDirectory: ${parsed.cwd}`;
 }
@@ -680,12 +728,13 @@ function approvalToCard(
   const requestedBy =
     state.members.find((member) => member.id === approval.requestedBy)?.name ?? approval.requestedBy;
 
-  const scopeDecoded = parseScopeFromReason(approval.reason);
-  const note = parseApprovalNote(approval.reason);
+  const scopeDecoded = parseApprovalReasonValue(approval.reason, "scope");
+  const note = parseApprovalReasonValue(approval.reason, "note");
   let title =
     approval.status === "pending" ? "Approval requested" : `Approval ${approval.status}`;
   let description = `${approval.action} ${approval.resourcePath}`;
   let commandPreview: string | undefined;
+  let shellScope: ApprovalCardData["shellScope"];
 
   if (approval.resourceType === "shell" && scopeDecoded) {
     const parsed = parseShellScope(scopeDecoded);
@@ -693,15 +742,19 @@ function approvalToCard(
       title = approval.status === "pending" ? (note ? "Destructive command" : "Shell command") : title;
       description = note ? note : "The agent wants to run:";
       commandPreview = formatShellCommandPreview(parsed);
+      shellScope = parsed;
     }
   }
 
   return {
     id: approval.id,
     runId: approval.runId,
+    threadId: approval.threadId,
+    requestedByMemberId: approval.requestedBy,
     title,
     description,
     commandPreview,
+    shellScope,
     status: approval.status,
     requestedBy,
     approvalsNeeded: 1,

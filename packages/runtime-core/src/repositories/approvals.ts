@@ -1,5 +1,5 @@
 import type { SqliteDbHandle as DbHandle } from '@ujima/context-store';
-import { ApprovalRequestSchema, type ApprovalRequest } from '@ujima/shared';
+import { ApprovalRequestSchema, parseShellScope, type ApprovalRequest } from '@ujima/shared';
 import { now, optionalRowString, rowString } from './common.js';
 
 type Row = Record<string, unknown>;
@@ -10,6 +10,7 @@ function rowToApproval(row: Row): ApprovalRequest {
     organizationId: rowString(row, 'organization_id'),
     runId: optionalRowString(row, 'run_id'),
     toolCallId: optionalRowString(row, 'tool_call_id'),
+    threadId: optionalRowString(row, 'thread_id'),
     requestedBy: rowString(row, 'requested_by'),
     resourceType: rowString(row, 'resource_type'),
     resourcePath: rowString(row, 'resource_path'),
@@ -25,10 +26,11 @@ export function saveApproval(db: DbHandle, approval: ApprovalRequest): ApprovalR
   const payload = ApprovalRequestSchema.parse(approval);
 
   db.prepare(
-    `INSERT INTO approvals (id, organization_id, run_id, tool_call_id, requested_by, resource_type, resource_path, action, status, reason, created_at, resolved_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO approvals (id, organization_id, run_id, tool_call_id, thread_id, requested_by, resource_type, resource_path, action, status, reason, created_at, resolved_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
        tool_call_id = excluded.tool_call_id,
+       thread_id = COALESCE(excluded.thread_id, approvals.thread_id),
        status = excluded.status,
        reason = excluded.reason,
        resolved_at = excluded.resolved_at`,
@@ -37,6 +39,7 @@ export function saveApproval(db: DbHandle, approval: ApprovalRequest): ApprovalR
     payload.organizationId,
     payload.runId ?? null,
     payload.toolCallId ?? null,
+    payload.threadId ?? null,
     payload.requestedBy,
     payload.resourceType,
     payload.resourcePath,
@@ -158,5 +161,61 @@ export function hasApprovalGrant(
       input.action,
       `grant:always_allow:scope=${escapedScope};%`,
   ) as Row | null;
-  return !!row;
+  if (row) return true;
+  if (!input.approvalScope.startsWith('shell:')) return false;
+
+  const shellRows = db
+    .prepare(
+      `SELECT reason
+       FROM approvals
+       WHERE organization_id = ?
+         AND requested_by = ?
+         AND resource_type = ?
+         AND resource_path = ?
+         AND action = ?
+         AND status = 'approved'
+         AND reason LIKE 'grant:always_allow:scope=shell%'
+       ORDER BY resolved_at DESC`,
+    )
+    .all(
+      input.organizationId,
+      input.requestedBy,
+      input.resourceType,
+      input.resourcePath,
+      input.action,
+    ) as Row[];
+
+  return shellRows.some((candidate) =>
+    shellScopesEquivalent(extractEncodedScope(rowString(candidate, 'reason')), input.approvalScope),
+  );
+}
+
+function extractEncodedScope(reason: string): string | undefined {
+  const match = reason.match(/(?:^|[;:])scope=([^;]+)/);
+  if (!match || !match[1]) return undefined;
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    return match[1];
+  }
+}
+
+function shellScopesEquivalent(storedScope: string | undefined, requestedScope: string): boolean {
+  if (!storedScope) return false;
+  if (storedScope === requestedScope) return true;
+
+  const stored = parseShellScope(storedScope);
+  const requested = parseShellScope(requestedScope);
+  if (!stored || !requested) return false;
+  if (stored.cwd !== requested.cwd || stored.command !== requested.command) return false;
+  if (!stored.args || !requested.args) return true;
+  return arraysEqual(stored.args, requested.args);
+}
+
+function arraysEqual(left: string[], right: string[]): boolean {
+  if (left.length !== right.length) return false;
+  for (let i = 0; i < left.length; i += 1) {
+    if (left[i] !== right[i]) return false;
+  }
+  return true;
 }

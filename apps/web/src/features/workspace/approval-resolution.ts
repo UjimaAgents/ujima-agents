@@ -1,7 +1,7 @@
 export interface ApprovalResolutionInput {
   organizationId: string;
   approvalId: string;
-  resolution: "allow_once" | "allow_always" | "reject";
+  resolution: "allow_once" | "allow_always" | "allow_family" | "reject";
   fetchImpl?: typeof fetch;
 }
 

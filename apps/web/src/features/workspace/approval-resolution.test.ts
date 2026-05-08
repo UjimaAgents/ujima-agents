@@ -43,4 +43,25 @@ describe("resolveWorkspaceApproval", () => {
       }),
     });
   });
+
+  it("sends an approved status for family decisions", async () => {
+    const fetchImpl = vi.fn(async () => new Response(null, { status: 200 }));
+
+    await resolveWorkspaceApproval({
+      organizationId: "org-1",
+      approvalId: "ap-1",
+      resolution: "allow_family",
+      fetchImpl: fetchImpl as typeof fetch,
+    });
+
+    expect(fetchImpl).toHaveBeenCalledWith("/api/approvals/ap-1/resolve", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        organizationId: "org-1",
+        resolution: "allow_family",
+        reason: "Resolved from workspace (allow_family).",
+      }),
+    });
+  });
 });

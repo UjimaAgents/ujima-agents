@@ -1,6 +1,7 @@
 import type { BootstrapResponse } from "@ujima/api-schema";
 import type { WsFrame } from "@ujima/api-schema";
 import type { SocketEventName } from "@ujima/shared";
+import { getDirectMessageThreadId } from "@ujima/shared";
 import type { SelectedConversation } from "./types";
 
 export interface ConversationTransport {
@@ -17,11 +18,6 @@ export type ConversationStreamEnvelope =
   | { type: "error"; message: string }
   | { type: "frame"; frame: WsFrame }
   | { type: "socket"; event: SocketEventName; payload: unknown };
-
-export function getDirectMessageThreadId(senderId: string, recipientId: string): string {
-  const [firstId, secondId] = [senderId, recipientId].sort();
-  return `dm:${firstId}:${secondId}`;
-}
 
 export function buildConversationStreamParams(transport: ConversationTransport): URLSearchParams {
   const params = new URLSearchParams({
@@ -47,12 +43,14 @@ export function buildConversationMessagePayload(
   senderId: string,
   content: string,
   parentMessageId?: string,
+  attachmentIds?: string[],
 ):
   | {
       organizationId: string;
       senderId: string;
       recipientId: string;
       content: string;
+      attachmentIds?: string[];
       parentMessageId?: string;
     }
   | {
@@ -61,6 +59,7 @@ export function buildConversationMessagePayload(
       threadId: string;
       channelId?: string;
       content: string;
+      attachmentIds?: string[];
       parentMessageId?: string;
     } {
   if (transport.recipientId) {
@@ -69,6 +68,7 @@ export function buildConversationMessagePayload(
       senderId,
       recipientId: transport.recipientId,
       content,
+      attachmentIds,
       parentMessageId,
     };
   }
@@ -79,6 +79,7 @@ export function buildConversationMessagePayload(
     threadId: transport.threadId,
     channelId: conversationType === "channel" ? conversationId : undefined,
     content,
+    attachmentIds,
     parentMessageId,
   };
 }

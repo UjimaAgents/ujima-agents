@@ -16,6 +16,7 @@ const ThreadIdParamsSchema = z.object({ threadId: IdSchema });
 const ListChannelsQuerySchema = OrganizationQuerySchema.merge(PaginationQuerySchema);
 const ListChannelsResponseSchema = createPaginatedSchema(ChannelSchema);
 const ListMessagesResponseSchema = createPaginatedSchema(MessageSchema);
+const ThreadReadResponseSchema = z.object({ ok: z.literal(true) });
 
 export interface ConversationRoutesOptions {
   repo: Repository;
@@ -149,6 +150,50 @@ export function registerConversationRoutes(
     }
   });
 
+  app.post('/threads/:threadId/read', {
+    schema: {
+      description: 'Mark a thread as read for the current member',
+      tags: ['Conversations'],
+      params: ThreadIdParamsSchema,
+      querystring: OrganizationQuerySchema,
+      response: {
+        200: ThreadReadResponseSchema,
+        400: ApiErrorSchema,
+        401: ApiErrorSchema,
+        403: ApiErrorSchema,
+        404: ApiErrorSchema,
+      },
+    },
+  }, async (req, reply) => {
+    try {
+      const authState = auth.getAuthState(readSessionToken(req));
+      if (!authState.member) {
+        return reply.code(401).send({ code: 'ERR_UNAUTHORIZED', message: 'Session required' });
+      }
+      if (authState.user?.organizationId !== req.query.organizationId) {
+        return reply.code(403).send({ code: 'ERR_FORBIDDEN', message: 'Unauthorized for this organization.' });
+      }
+      conversations.requireThreadAccess(
+        req.query.organizationId,
+        req.params.threadId,
+        authState.member.id,
+      );
+      repo.saveConversationRead(
+        req.query.organizationId,
+        authState.member.id,
+        req.params.threadId,
+        new Date().toISOString(),
+      );
+      return { ok: true as const };
+    } catch (err) {
+      const message = errMessage(err);
+      if (message.startsWith('Forbidden')) {
+        return reply.code(403).send({ code: 'ERR_FORBIDDEN', message });
+      }
+      return notFound(reply, message);
+    }
+  });
+
   app.post('/messages', {
     schema: {
       description: 'Send a thread, channel, or direct message',
@@ -180,6 +225,7 @@ export function registerConversationRoutes(
           senderId,
           recipientId: req.body.recipientId,
           content: req.body.content,
+          attachmentIds: req.body.attachmentIds,
           parentMessageId: req.body.parentMessageId,
           ignore: req.body.ignore,
         });

@@ -62,6 +62,11 @@ export {
 } from './roles.js';
 
 export { defineProvider, normalizeProviderKey, normalizeProviders } from './providers.js';
+export {
+  migrateAgentTeamConfig,
+  TEAM_CONFIG_VERSION,
+  upgradeLegacyDefaultRoleTools,
+} from './team-config-migrations.js';
 
 export {
   MODEL_OPTIONS_BY_PROVIDER,

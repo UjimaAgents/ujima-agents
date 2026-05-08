@@ -57,6 +57,17 @@ export type {
   ReconcileTeamConfigStats,
 } from './config-sync.js';
 export { ConversationService } from './conversation.js';
+export {
+  SELF_NOTE_COMPACTED_MARKER,
+  SELF_NOTE_SUMMARY_MARKER,
+  buildStructuredConversationSummary,
+  buildSelfNoteSummary,
+  formatTimestampedContent,
+  isMessageWithMarker,
+  isCompactedSelfNote,
+  isSelfSummaryNote,
+  toReadableEnglishTimestamp,
+} from './conversation-summary.js';
 export { OnboardingService } from './onboarding.js';
 export type {
   OnboardingInlineTeam,
@@ -177,6 +188,7 @@ interface WakeMemberDeps {
   supervisor: Pick<SupervisorService, 'handleAlert'>;
   runs: Pick<RunService, 'createRun'>;
   realtime: Pick<ApiServiceContext['realtime'], 'emit'>;
+  repo: Pick<ApiRepository, 'findActiveRunForMemberThread'>;
 }
 
 function errMessage(error: unknown): string {
@@ -245,6 +257,15 @@ export async function wakeMemberWithFailureEvents(
     return;
   }
 
+  const activeRun = deps.repo.findActiveRunForMemberThread(
+    input.organizationId,
+    input.memberId,
+    input.threadId,
+  );
+  if (activeRun) {
+    return;
+  }
+
   let run: Awaited<ReturnType<RunService['createRun']>>;
   try {
     run = await deps.runs.createRun({
@@ -295,12 +316,17 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     organizationId: string,
     runId: string,
     allowRun?: boolean,
+    approvalScope?: string,
   ) => Promise<unknown> | unknown = () => {
     throw new Error('resumeRun not wired');
   };
 
-  const approvalsImpl = new ApprovalService(context.repo, context.realtime, (orgId, runId) =>
-    resumeRun(orgId, runId),
+  const approvalsImpl = new ApprovalService(
+    context.repo,
+    context.realtime,
+    conversations,
+    (orgId, runId, allowRun, approvalScope) =>
+      resumeRun(orgId, runId, allowRun, approvalScope),
   );
 
   const approvalRequester: ApprovalRequester = {
@@ -335,7 +361,8 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     ai,
     tools,
   );
-  resumeRun = (orgId, runId, allowRun = true) => runs.resumeAfterApproval(orgId, runId, allowRun);
+  resumeRun = (orgId, runId, allowRun = true, approvalScope) =>
+    runs.resumeAfterApproval(orgId, runId, allowRun, approvalScope);
 
   // Phase 2.C.1 — single shared in-memory registry. SpiritService writes
   // (spawn/retire/complete); SupervisorService reads on every alert.
@@ -375,7 +402,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   // would spawn a duplicate run that defeats the debounce.
   wakeMember = async (input) => {
     await wakeMemberWithFailureEvents(
-      { supervisor, runs, realtime: context.realtime },
+      { supervisor, runs, realtime: context.realtime, repo: context.repo },
       input,
     );
   };

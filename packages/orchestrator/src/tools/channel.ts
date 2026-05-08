@@ -110,7 +110,7 @@ export const channelReplyTool: OrchestratorTool<typeof ChannelReplySchema> = {
       body: String(invocation.input.body),
       mentions: Array.isArray(invocation.input.mentions)
         ? invocation.input.mentions.filter((value): value is string => typeof value === 'string')
-        : [],
+      : [],
     }),
 };
 

@@ -16,9 +16,14 @@ export const RunListQuerySchema = z.object({
 });
 export type RunListQuery = z.infer<typeof RunListQuerySchema>;
 
+export const RunCancelSchema = z.object({
+  organizationId: IdSchema,
+});
+export type RunCancel = z.infer<typeof RunCancelSchema>;
+
 export const ApprovalResolveSchema = z.object({
   organizationId: IdSchema,
-  resolution: z.enum(['allow_once', 'allow_always', 'reject']),
+  resolution: z.enum(['allow_once', 'allow_always', 'allow_family', 'reject']),
   reason: z.string().optional(),
 });
 export type ApprovalResolve = z.infer<typeof ApprovalResolveSchema>;

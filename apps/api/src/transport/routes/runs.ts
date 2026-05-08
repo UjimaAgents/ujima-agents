@@ -6,6 +6,7 @@ import {
   ApprovalListQuerySchema,
   ApprovalResolveSchema,
   ApiErrorSchema,
+  RunCancelSchema,
   RunCreateSchema,
   RunListQuerySchema,
 } from '@ujima/api-schema';
@@ -135,6 +136,39 @@ export function registerRunRoutes(
           ? 404
           : 503;
       return replyError(reply, status, message);
+    }
+  });
+
+  app.post('/runs/:runId/cancel', {
+    schema: {
+      description: 'Cancel an in-flight or queued run',
+      tags: ['Runs'],
+      params: RunIdParamsSchema,
+      body: RunCancelSchema,
+      response: {
+        200: RunStateSchema,
+        400: ApiErrorSchema,
+        401: ApiErrorSchema,
+        403: ApiErrorSchema,
+        404: ApiErrorSchema,
+        503: ApiErrorSchema,
+      },
+    },
+  }, async (req, reply) => {
+    try {
+      assertReadyWorkspaceRoot(repo, req.body.organizationId);
+      const forbidden = requireOrgSession(auth, req, reply, req.body.organizationId);
+      if (forbidden) return forbidden;
+      return runs.cancelRun(req.body.organizationId, req.params.runId);
+    } catch (err) {
+      const message = errMessage(err);
+      if (isWorkspaceRootNotReadyError(err)) {
+        return reply.code(409).send({ code: ERR_NO_WORKSPACE_ROOT, message });
+      }
+      if (message.startsWith('Run not found')) {
+        return notFound(reply, message);
+      }
+      return replyError(reply, 400, message);
     }
   });
 

@@ -1,8 +1,11 @@
+import { readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import type { Message, SpiritRole } from "@ujima/shared";
 import { selectLanguageModel } from '@ujima/llm';
 import type { AgentTeamHandle } from '@ujima/framework';
 import { tool } from 'ai';
-import type { ModelMessage, LanguageModel, ToolSet } from "ai";
+import type { FilePart, ImagePart, LanguageModel, ModelMessage, TextPart, ToolSet, UserContent } from "ai";
 import { z } from 'zod';
 import type { ToolService } from '../services/tool-service.js';
 import type { OrchestratorTool } from '../tools/types.js';
@@ -22,8 +25,70 @@ export function toModelMessages(messages: Message[], selfId?: string): ModelMess
           : message.senderKind === "agent"
             ? ("assistant" as const)
             : ("user" as const),
-    content: message.content,
+    content:
+      message.kind === 'system'
+        ? message.content
+        : buildUserContent(message),
   } as ModelMessage));
+}
+
+function buildUserContent(message: Message): UserContent {
+  const attachments = (message as { attachments?: AttachmentLike[] }).attachments ?? [];
+  if (!attachments.length) {
+    return message.content;
+  }
+
+  const parts: (TextPart | ImagePart | FilePart)[] = [];
+  if (message.content.trim().length > 0) {
+    parts.push({ type: 'text', text: message.content });
+  }
+
+  for (const attachment of attachments) {
+    if (attachment.category === 'image') {
+      parts.push({
+        type: 'image',
+        image: readAttachmentFile(attachment.storagePath),
+        mediaType: attachment.mimeType,
+      } satisfies ImagePart);
+      continue;
+    }
+
+    if (attachment.category === 'document') {
+      parts.push({
+        type: 'file',
+        data: readAttachmentFile(attachment.storagePath),
+        filename: attachment.filename,
+        mediaType: attachment.mimeType,
+      } satisfies FilePart);
+      continue;
+    }
+
+    parts.push({
+      type: 'text',
+      text: `Attached file: ${attachment.filename} (${attachment.mimeType})`,
+    });
+  }
+
+  return parts.length > 0 ? parts : message.content;
+}
+
+function readAttachmentFile(storagePath: string): Buffer {
+  return readFileSync(join(resolveHomeDir(), 'attachments', storagePath));
+}
+
+interface AttachmentLike {
+  category: 'image' | 'document' | 'audio' | 'video' | 'archive' | 'other';
+  storagePath: string;
+  filename: string;
+  mimeType: string;
+}
+
+function resolveHomeDir(): string {
+  const fromEnv = process.env.UJIMA_HOME;
+  if (fromEnv && fromEnv.trim().length > 0) {
+    return fromEnv;
+  }
+  return join(homedir(), '.ujima');
 }
 
 // Fix #7: Shared model-resolution ladder.

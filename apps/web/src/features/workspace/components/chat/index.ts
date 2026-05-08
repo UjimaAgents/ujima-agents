@@ -9,6 +9,7 @@ export type { ChatTab } from "./chat-tabs";
 
 export { ChatMessage, ChatMessageList } from "./chat-message";
 export type { ChatMessageData } from "./chat-message";
+export { AttachmentGrid } from "./attachment-grid";
 
 export { ChatInput } from "./chat-input";
 

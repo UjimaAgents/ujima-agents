@@ -34,20 +34,15 @@ export const ORCHESTRATOR_TOOLS = {
 // Tools an agent always has access to, regardless of its role's `tools`
 // allowlist.
 //
-// `self.note` is the only entry: per the "agent must always be able to
-// think to itself" invariant (mirrored in checkToolPolicy + the
-// `bypassPermission` flag on selfNoteTool), the self-note scratchpad is
-// unconditional. `channel.*` tools were previously here too — that
-// silently bypassed the role allowlist (a role that intentionally omits
-// `channel.dm` would still get it merged into both the model's tool
-// palette and the IAM matrix `allowed_tools`). Roles must opt in to
-// channel tools explicitly via their `tools: [...]` declaration.
+// `self.note` is the only unconditional tool: the agent must always be
+// able to think to itself. Chat tools stay in the normal role bundle.
 export const ALWAYS_AVAILABLE_AGENT_TOOLS = Object.freeze(['self.note'] as const);
 
-// Supervisor's strict tool allowlist — read-only / annotation-only tools.
-// The supervisor turn never gets `filesystem`, `shell`, `message`, or any
-// MCP write. Channel reads + posting back to the requester + the three
-// `supervisor.todo.*` jot tools are the entire surface (E4.2.4).
+// Supervisor's strict tool allowlist — read-only / annotation-only tools
+// plus the same channel surface we let workers use.
+// The supervisor turn never gets `filesystem`, `shell`, or any MCP write.
+// Channel reads, channel replies/DMs, and the three `supervisor.todo.*` jot
+// tools are the entire surface (E4.2.4).
 //
 // The list is enforced in two complementary places:
 //   1. SpiritService.resolveToolAllowlist restricts what enters the model

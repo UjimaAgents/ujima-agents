@@ -16,8 +16,24 @@ import {
 } from '@ujima/shared';
 import type { RealtimeService } from './context.js';
 import { selfChannelId } from './member-channels.js';
-import type { ConversationRepository, PaginatedMessages } from './repository-reader.js';
+import {
+  SELF_NOTE_COMPACTED_MARKER,
+  buildSelfNoteSummary,
+  formatTimestampedContent,
+  isCompactedSelfNote,
+  isSelfSummaryNote,
+} from './conversation-summary.js';
+import type {
+  ConversationRepository,
+  PaginatedMessages,
+} from './repository-reader.js';
 import { requireOrganization } from '../utils/require-organization.js';
+
+const ATTACHMENT_FILE_LIMIT_BYTES = 25 * 1024 * 1024;
+const ATTACHMENT_MESSAGE_LIMIT_BYTES = 100 * 1024 * 1024;
+const SELF_NOTE_COMPACTION_TRIGGER = 50;
+const SELF_NOTE_COMPACTION_BATCH_SIZE = 35;
+const SELF_NOTE_RECENT_RAW_COUNT = 15;
 
 export interface ArchivedChannelMessageStore {
   listChannelMessages(input: {
@@ -218,7 +234,12 @@ export class ConversationService {
     );
   }
 
-  publishMessage(message: Message, typedMentions?: MessageMention[]) {
+  publishMessage(
+    message: Message,
+    typedMentions?: MessageMention[],
+    attachmentIds?: string[],
+    options?: { suppressDmAlerts?: boolean },
+  ) {
     const channel = message.channelId
       ? this.requireActiveChannel(message.organizationId, message.channelId)
       : null;
@@ -229,27 +250,45 @@ export class ConversationService {
       mentions: uniqueMentionIds(resolvedMentions),
       mentionNames: this.resolveMentionNames(message.organizationId, message.content, channel),
     });
+    const messageAttachments = (finalMessage as { attachments?: { id: string }[] }).attachments ?? [];
+    const linkedAttachmentIds = attachmentIds ?? messageAttachments.map((attachment) => attachment.id);
+    if (linkedAttachmentIds.length > 0) {
+      this.requireAttachments(finalMessage.organizationId, linkedAttachmentIds);
+    }
     this.repo.saveMessage(finalMessage);
     this.repo.replaceMessageMentions(finalMessage.id, resolvedMentions);
+    if (linkedAttachmentIds.length > 0) {
+      this.repo.linkAttachmentsToMessage(finalMessage.id, linkedAttachmentIds);
+    }
+    const emittedMessage =
+      linkedAttachmentIds.length > 0
+        ? MessageSchema.parse({
+            ...finalMessage,
+            attachments: this.repo.listMessageAttachments(finalMessage.id),
+          })
+        : finalMessage;
 
-    const rooms = this.getPublishRooms(finalMessage, channel);
+    const rooms = this.getPublishRooms(emittedMessage, channel);
 
     this.realtime.emit(
       channel?.kind === 'dm'
         ? SocketEventNames.dmMessage
-        : finalMessage.channelId
+        : emittedMessage.channelId
           ? SocketEventNames.channelMessage
           : SocketEventNames.threadMessage,
       channel?.kind === 'dm'
-        ? { organizationId: finalMessage.organizationId, message: finalMessage }
-        : finalMessage.channelId
-          ? { organizationId: finalMessage.organizationId, channelId: finalMessage.channelId, message: finalMessage }
-          : { organizationId: finalMessage.organizationId, threadId: finalMessage.threadId, message: finalMessage },
+        ? { organizationId: emittedMessage.organizationId, message: emittedMessage }
+        : emittedMessage.channelId
+          ? { organizationId: emittedMessage.organizationId, channelId: emittedMessage.channelId, message: emittedMessage }
+          : { organizationId: emittedMessage.organizationId, threadId: emittedMessage.threadId, message: emittedMessage },
       rooms,
     );
 
-    void this.alertMentionedMembers(finalMessage, resolvedMentions, channel);
-    return finalMessage;
+    void this.alertMentionedMembers(emittedMessage, resolvedMentions, channel);
+    if (!options?.suppressDmAlerts && !this.shouldSuppressDmWake(emittedMessage, channel)) {
+      void this.alertDirectMessageParticipants(emittedMessage, channel);
+    }
+    return emittedMessage;
   }
 
   sendMessage(input: {
@@ -260,6 +299,7 @@ export class ConversationService {
     content: string;
     mentions?: string[];
     parentMessageId?: string;
+    attachmentIds?: string[];
   }) {
     requireOrganization(this.repo, input.organizationId);
 
@@ -310,7 +350,7 @@ export class ConversationService {
       createdAt: new Date().toISOString(),
     });
 
-    return this.publishMessage(message);
+    return this.publishMessage(message, undefined, input.attachmentIds);
   }
 
   postToChannel(input: {
@@ -375,6 +415,7 @@ export class ConversationService {
     mentions?: string[];
     parentMessageId?: string;
     ignore?: boolean;
+    attachmentIds?: string[];
   }) {
     requireOrganization(this.repo, input.organizationId);
 
@@ -388,6 +429,7 @@ export class ConversationService {
         organizationId: input.organizationId,
         memberId: input.senderId,
         body: input.content,
+        attachmentIds: input.attachmentIds,
       });
     }
 
@@ -443,17 +485,12 @@ export class ConversationService {
       createdAt: now,
     });
 
-    const published = this.publishMessage(message);
-    if (!input.ignore) {
-      void this.alertMember(published, recipient.id, channel, 'dm').catch((error) => {
-        console.warn('DM alert failed', {
-          organizationId: input.organizationId,
-          messageId: published.id,
-          recipientId: recipient.id,
-          error,
-        });
-      });
-    }
+    const published = this.publishMessage(
+      message,
+      undefined,
+      input.attachmentIds,
+      input.ignore ? { suppressDmAlerts: true } : undefined,
+    );
     return published;
   }
 
@@ -461,6 +498,7 @@ export class ConversationService {
     organizationId: string;
     memberId: string;
     body: string;
+    attachmentIds?: string[];
   }) {
     requireOrganization(this.repo, input.organizationId);
     const member = this.repo.getMember(input.organizationId, input.memberId);
@@ -502,7 +540,9 @@ export class ConversationService {
       createdAt: new Date().toISOString(),
     });
 
-    return this.publishMessage(message, []);
+    const published = this.publishMessage(message, [], input.attachmentIds);
+    this.compactSelfNotesIfNeeded(input.organizationId, member.id, channelId);
+    return published;
   }
 
   editMessage(input: {
@@ -641,6 +681,34 @@ export class ConversationService {
     });
   }
 
+  private async alertDirectMessageParticipants(
+    message: Message,
+    channel: Channel | null,
+  ): Promise<void> {
+    if (!channel || channel.kind !== 'dm') return;
+    const recipients = channel.memberIds.filter((memberId) => memberId !== message.senderId);
+    await Promise.all(
+      recipients.map(async (recipientId) => {
+        try {
+          await this.alertMember(message, recipientId, channel, 'dm');
+        } catch (error) {
+          console.warn('DM participant alert failed', {
+            organizationId: message.organizationId,
+            messageId: message.id,
+            recipientId,
+            error,
+          });
+        }
+      }),
+    );
+  }
+
+  private shouldSuppressDmWake(message: Message, channel: Channel | null): boolean {
+    if (!channel || channel.kind !== 'dm') return false;
+    if (message.kind !== AGENT_KIND) return false;
+    return /^Acknowledged[.!?]?\s*$/i.test(message.content.trim());
+  }
+
   private publishMentionThrottledSystemMessage(
     organizationId: string,
     memberId: string,
@@ -682,6 +750,7 @@ export class ConversationService {
   private getPublishRooms(message: Message, channel: Channel | null): string[] {
     if (channel?.kind === 'dm' || channel?.kind === 'self') {
       return [
+        orgRoom(message.organizationId),
         channelRoom(channel.id),
         threadRoom(message.threadId),
         ...channel.memberIds.map(memberRoom),
@@ -874,6 +943,13 @@ export class ConversationService {
     organizationId: string,
     channel: Channel | null,
   ): PaginatedMessages {
+    if (channel?.kind === 'self') {
+      const visible = paginated.data.filter((message) => !isCompactedSelfNote(message));
+      return {
+        ...paginated,
+        data: visible.map((message) => this.decorateMessage(message, organizationId, channel)),
+      };
+    }
     return {
       ...paginated,
       data: paginated.data.map((message) => this.decorateMessage(message, organizationId, channel)),
@@ -886,10 +962,94 @@ export class ConversationService {
     channel: Channel | null,
   ): Message {
     const resolvedChannel = channel ?? (message.channelId ? this.repo.getChannel(organizationId, message.channelId) : null);
+    const content =
+      resolvedChannel?.kind === 'self'
+        ? formatTimestampedContent(message.content, message.createdAt)
+        : message.content;
     return MessageSchema.parse({
       ...message,
+      content,
       mentionNames: message.mentionNames ?? this.resolveMentionNames(organizationId, message.content, resolvedChannel),
     });
+  }
+
+  private compactSelfNotesIfNeeded(
+    organizationId: string,
+    memberId: string,
+    channelId: string,
+  ): void {
+    const all = this.listAllChannelMessages(organizationId, channelId);
+    const uncompacted = all.filter(
+      (message) => !isCompactedSelfNote(message) && !isSelfSummaryNote(message),
+    );
+    if (uncompacted.length <= SELF_NOTE_COMPACTION_TRIGGER) {
+      return;
+    }
+    const activeSummaries = all.filter((message) => isSelfSummaryNote(message));
+    const keepRawStart = Math.max(uncompacted.length - SELF_NOTE_RECENT_RAW_COUNT, 0);
+    const compactable = uncompacted.slice(0, keepRawStart).slice(0, SELF_NOTE_COMPACTION_BATCH_SIZE);
+    const sourcesToCompact = [...activeSummaries, ...compactable];
+    if (sourcesToCompact.length === 0) {
+      return;
+    }
+
+    const now = new Date().toISOString();
+    const summaryMessage = MessageSchema.parse({
+      id: randomUUID(),
+      organizationId,
+      threadId: channelId,
+      channelId,
+      senderId: memberId,
+      senderKind: AGENT_KIND,
+      kind: AGENT_KIND,
+      content: buildSelfNoteSummary(sourcesToCompact),
+      createdAt: now,
+    });
+    this.publishMessage(summaryMessage, []);
+
+    for (const source of sourcesToCompact) {
+      this.repo.updateMessage({
+        ...source,
+        content: `${SELF_NOTE_COMPACTED_MARKER} compactedInto=${summaryMessage.id}`,
+        editedAt: now,
+      });
+    }
+  }
+
+  private listAllChannelMessages(organizationId: string, channelId: string): Message[] {
+    const all: Message[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = this.repo.listChannelMessages(organizationId, channelId, {
+        cursor,
+        limit: 200,
+      });
+      all.push(...page.data);
+      cursor = page.nextCursor;
+      if (!page.hasMore) break;
+    } while (cursor);
+    return all.sort((left, right) => {
+      const byTime = left.createdAt.localeCompare(right.createdAt);
+      return byTime !== 0 ? byTime : left.id.localeCompare(right.id);
+    });
+  }
+
+  private requireAttachments(organizationId: string, attachmentIds: string[]): void {
+    let totalSize = 0;
+    for (const attachmentId of attachmentIds) {
+      const attachment = this.repo.getAttachment(organizationId, attachmentId);
+      if (!attachment) {
+        throw new Error(`Attachment not found: ${attachmentId}`);
+      }
+      if (attachment.sizeBytes > ATTACHMENT_FILE_LIMIT_BYTES) {
+        throw new Error(`Attachment exceeds the ${Math.round(ATTACHMENT_FILE_LIMIT_BYTES / (1024 * 1024))} MB limit: ${attachment.filename}`);
+      }
+      totalSize += attachment.sizeBytes;
+    }
+
+    if (totalSize > ATTACHMENT_MESSAGE_LIMIT_BYTES) {
+      throw new Error('Attachments exceed the 100 MB per-message limit');
+    }
   }
 
   private requireMessage(organizationId: string, messageId: string): Message {
@@ -972,8 +1132,6 @@ function mergePaginatedMessages(
   const nextCursor = head ? encodeCursor(head.createdAt, head.id) : undefined;
   return { data, hasMore, nextCursor };
 }
-
-
 
 function normalizeMentionHandle(value: string): string {
   return value.trim().toLowerCase();

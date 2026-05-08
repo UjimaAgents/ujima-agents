@@ -567,6 +567,88 @@ const MIGRATIONS: { id: string; up: string }[] = [
       ALTER TABLE approvals ADD COLUMN tool_call_id TEXT;
     `,
   },
+  {
+    id: '012_attachments',
+    up: `
+      CREATE TABLE IF NOT EXISTS attachments (
+        id              TEXT PRIMARY KEY,
+        organization_id TEXT NOT NULL,
+        filename        TEXT NOT NULL,
+        mime_type       TEXT NOT NULL,
+        category        TEXT NOT NULL,
+        size_bytes      INTEGER NOT NULL,
+        storage_path    TEXT NOT NULL,
+        uploaded_by     TEXT NOT NULL,
+        created_at      TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_attachments_org
+        ON attachments(organization_id, created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS message_attachments (
+        message_id    TEXT NOT NULL,
+        attachment_id TEXT NOT NULL,
+        sort_order    INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (message_id, attachment_id),
+        FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE,
+        FOREIGN KEY (attachment_id) REFERENCES attachments(id) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_message_attachments_message
+        ON message_attachments(message_id);
+      CREATE INDEX IF NOT EXISTS idx_message_attachments_attachment
+        ON message_attachments(attachment_id);
+    `,
+  },
+  {
+    id: '013_conversation_reads',
+    up: `
+      CREATE TABLE IF NOT EXISTS conversation_reads (
+        organization_id  TEXT NOT NULL,
+        member_id        TEXT NOT NULL,
+        thread_id        TEXT NOT NULL,
+        last_read_at     TEXT NOT NULL,
+        PRIMARY KEY (organization_id, member_id, thread_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_conversation_reads_member
+        ON conversation_reads(organization_id, member_id, thread_id);
+    `,
+  },
+  {
+    id: '014_run_steps',
+    up: `
+      CREATE TABLE IF NOT EXISTS run_steps (
+        id               TEXT PRIMARY KEY,
+        organization_id  TEXT NOT NULL,
+        run_id           TEXT NOT NULL,
+        thread_id        TEXT,
+        agent_id         TEXT NOT NULL,
+        tool_call_id     TEXT NOT NULL,
+        tool_id          TEXT NOT NULL,
+        action           TEXT NOT NULL,
+        resource_type    TEXT NOT NULL,
+        resource_path    TEXT NOT NULL DEFAULT '',
+        input            TEXT NOT NULL DEFAULT '{}',
+        output           TEXT,
+        status           TEXT NOT NULL DEFAULT 'ok',
+        created_at       TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_run_steps_run
+        ON run_steps(organization_id, run_id, created_at);
+    `,
+  },
+  {
+    id: '016_approval_thread_id',
+    up: `
+      ALTER TABLE approvals ADD COLUMN thread_id TEXT;
+      CREATE INDEX IF NOT EXISTS idx_approvals_thread
+        ON approvals(organization_id, thread_id, status);
+    `,
+  },
+  {
+    id: '017_drop_thread_dispositions',
+    up: `
+      DROP TABLE IF EXISTS thread_dispositions;
+    `,
+  },
 ];
 
 export interface DbOptions {
