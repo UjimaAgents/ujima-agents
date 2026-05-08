@@ -39,7 +39,7 @@ export function buildStructuredConversationSummary(input: {
   marker?: string;
   title: string;
   messages: Message[];
-  sections: Array<{ heading: string; bullets: string[] }>;
+  sections: { heading: string; bullets: string[] }[];
 }): string {
   const lines = input.messages.map(
     (message) => `- ${toReadableEnglishTimestamp(message.createdAt)}: ${oneLine(message.content)}`,

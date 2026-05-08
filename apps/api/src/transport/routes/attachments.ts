@@ -9,7 +9,6 @@ import { ApiErrorSchema } from '@ujima/api-schema';
 import {
   AttachmentSchema,
   IdSchema,
-  type Attachment,
   type AttachmentCategory,
 } from '@ujima/shared';
 import type { AuthService } from '@ujima/orchestrator';
@@ -74,6 +73,9 @@ export function registerAttachmentRoutes(
 
       if (!data) {
         return reply.code(400).send({ code: 'ERR_BAD_REQUEST', message: 'Invalid attachment upload request.' });
+      }
+      if (file.truncated) {
+        return reply.code(413).send({ code: 'ERR_BAD_REQUEST', message: 'Attachment exceeds the 25 MB limit.' });
       }
       if (data.length > FILE_LIMIT_BYTES) {
         return reply.code(413).send({ code: 'ERR_BAD_REQUEST', message: 'Attachment exceeds the 25 MB limit.' });
@@ -175,19 +177,20 @@ async function serveAttachment(
     .send(data);
 }
 
-type AttachmentUpload = {
+interface AttachmentUpload {
   type: 'file';
   fieldname: string;
   filename: string;
   mimetype: string;
+  truncated?: boolean;
   file: AsyncIterable<Buffer | string>;
-};
+}
 
-type AttachmentField = {
+interface AttachmentField {
   type: 'field';
   fieldname: string;
   value: string | Buffer | undefined;
-};
+}
 
 function isUploadTooLargeError(error: unknown): boolean {
   return error instanceof Error && error.message.includes('limit');

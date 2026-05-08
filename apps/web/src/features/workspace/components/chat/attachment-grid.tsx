@@ -121,14 +121,13 @@ function AttachmentCard({
   attachment: Attachment;
   organizationId: string;
 }) {
-  const Icon = getAttachmentIcon(attachment.category);
   const url = attachmentUrl(organizationId, attachment.id);
 
   if (attachment.category === "audio") {
     return (
       <div className="overflow-hidden rounded-lg border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-800 dark:bg-zinc-900/60">
         <div className="mb-2 flex items-center gap-2">
-          <Icon className="h-4 w-4 text-violet-600 dark:text-violet-300" />
+          <AttachmentIcon category={attachment.category} className="h-4 w-4 text-violet-600 dark:text-violet-300" />
           <div className="min-w-0">
             <p className="truncate text-xs font-semibold text-zinc-900 dark:text-zinc-100">
               {attachment.filename}
@@ -149,7 +148,7 @@ function AttachmentCard({
     return (
       <div className="overflow-hidden rounded-lg border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-800 dark:bg-zinc-900/60">
         <div className="mb-2 flex items-center gap-2">
-          <Icon className="h-4 w-4 text-violet-600 dark:text-violet-300" />
+          <AttachmentIcon category={attachment.category} className="h-4 w-4 text-violet-600 dark:text-violet-300" />
           <div className="min-w-0">
             <p className="truncate text-xs font-semibold text-zinc-900 dark:text-zinc-100">
               {attachment.filename}
@@ -170,12 +169,12 @@ function AttachmentCard({
     <a
       href={url}
       target="_blank"
-      rel="noreferrer"
-      className="flex items-center gap-3 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 transition hover:border-violet-500/40 hover:bg-white dark:border-zinc-800 dark:bg-zinc-900/60 dark:hover:bg-zinc-900"
-    >
-      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-violet-500/10 text-violet-600 dark:text-violet-300">
-        <Icon className="h-5 w-5" />
-      </div>
+    rel="noreferrer"
+    className="flex items-center gap-3 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 transition hover:border-violet-500/40 hover:bg-white dark:border-zinc-800 dark:bg-zinc-900/60 dark:hover:bg-zinc-900"
+  >
+    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-violet-500/10 text-violet-600 dark:text-violet-300">
+      <AttachmentIcon category={attachment.category} className="h-5 w-5" />
+    </div>
       <div className="min-w-0 flex-1">
         <p className="truncate text-xs font-semibold text-zinc-900 dark:text-zinc-100">
           {attachment.filename}
@@ -192,13 +191,19 @@ function attachmentUrl(organizationId: string, attachmentId: string, thumbnail =
   return `/api/attachments/${encodeURIComponent(attachmentId)}${thumbnail ? "/thumbnail" : ""}?organizationId=${encodeURIComponent(organizationId)}`;
 }
 
-function getAttachmentIcon(category: Attachment["category"]) {
-  if (category === "image") return FileImage;
-  if (category === "document") return FileText;
-  if (category === "audio") return FileAudio;
-  if (category === "video") return FileVideo;
-  if (category === "archive") return FileArchive;
-  return File;
+function AttachmentIcon({
+  category,
+  className,
+}: {
+  category: Attachment["category"];
+  className: string;
+}) {
+  if (category === "image") return <FileImage className={className} />;
+  if (category === "document") return <FileText className={className} />;
+  if (category === "audio") return <FileAudio className={className} />;
+  if (category === "video") return <FileVideo className={className} />;
+  if (category === "archive") return <FileArchive className={className} />;
+  return <File className={className} />;
 }
 
 function formatBytes(sizeBytes: number): string {

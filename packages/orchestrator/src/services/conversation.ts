@@ -987,7 +987,7 @@ export class ConversationService {
     }
     const activeSummaries = all.filter((message) => isSelfSummaryNote(message));
     const keepRawStart = Math.max(uncompacted.length - SELF_NOTE_RECENT_RAW_COUNT, 0);
-    const compactable = uncompacted.slice(0, keepRawStart).slice(-SELF_NOTE_COMPACTION_BATCH_SIZE);
+    const compactable = uncompacted.slice(0, keepRawStart).slice(0, SELF_NOTE_COMPACTION_BATCH_SIZE);
     const sourcesToCompact = [...activeSummaries, ...compactable];
     if (sourcesToCompact.length === 0) {
       return;

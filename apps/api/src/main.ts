@@ -179,13 +179,13 @@ async function main(): Promise<void> {
   });
   await transport.listen();
 
-  console.log(chalk.cyan(STARTUP_SPLASH));
-  console.log(`   ${chalk.green('✓')} ${chalk.bold('System Ready')}`);
+  console.info(chalk.cyan(STARTUP_SPLASH));
+  console.info(`   ${chalk.green('✓')} ${chalk.bold('System Ready')}`);
   const displayUrl = transport.url.replace('127.0.0.1', 'localhost');
-  console.log(`   ${chalk.gray('↳')} ${chalk.white('API:')}         ${chalk.cyan.underline(displayUrl)}`);
-  console.log(`   ${chalk.gray('↳')} ${chalk.white('Health:')}      ${chalk.dim(displayUrl + '/health')}`);
-  console.log(`   ${chalk.gray('↳')} ${chalk.white('Events:')}      ${chalk.dim(displayUrl + '/events')}`);
-  console.log(`   ${chalk.gray('↳')} ${chalk.white('Docs:')}        ${chalk.cyan(displayUrl + '/docs')}\n`);
+  console.info(`   ${chalk.gray('↳')} ${chalk.white('API:')}         ${chalk.cyan.underline(displayUrl)}`);
+  console.info(`   ${chalk.gray('↳')} ${chalk.white('Health:')}      ${chalk.dim(displayUrl + '/health')}`);
+  console.info(`   ${chalk.gray('↳')} ${chalk.white('Events:')}      ${chalk.dim(displayUrl + '/events')}`);
+  console.info(`   ${chalk.gray('↳')} ${chalk.white('Docs:')}        ${chalk.cyan(displayUrl + '/docs')}\n`);
 
   logger.info('runtime: ready', {
     homeDir,

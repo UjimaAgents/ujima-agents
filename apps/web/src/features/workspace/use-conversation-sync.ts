@@ -47,8 +47,7 @@ export function useConversationSync(
 ): ConversationSyncResult {
   const transport = useMemo(() => resolveConversationTransport(bootstrap, conversation), [
     bootstrap,
-    conversation.id,
-    conversation.type,
+    conversation,
   ]);
   const conversationKey = transport ? `${transport.organizationId}:${transport.threadId}` : undefined;
   const messages = useWorkspaceStore((state) => state.messages);

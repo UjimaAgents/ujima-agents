@@ -148,10 +148,18 @@ describe('createPermissionGatedToolService', () => {
             gate: 'approval',
           };
         },
-        async recordUsage() {},
-        setSessionOverride() {},
-        clearSessionOverride() {},
-        setGovernancePolicy() {},
+        async recordUsage() {
+          return undefined;
+        },
+        setSessionOverride() {
+          return undefined;
+        },
+        clearSessionOverride() {
+          return undefined;
+        },
+        setGovernancePolicy() {
+          return undefined;
+        },
         getGovernancePolicy() {
           return undefined as never;
         },

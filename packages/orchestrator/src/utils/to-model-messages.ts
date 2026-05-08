@@ -38,7 +38,7 @@ function buildUserContent(message: Message): UserContent {
     return message.content;
   }
 
-  const parts: Array<TextPart | ImagePart | FilePart> = [];
+  const parts: (TextPart | ImagePart | FilePart)[] = [];
   if (message.content.trim().length > 0) {
     parts.push({ type: 'text', text: message.content });
   }
@@ -76,12 +76,12 @@ function readAttachmentFile(storagePath: string): Buffer {
   return readFileSync(join(resolveHomeDir(), 'attachments', storagePath));
 }
 
-type AttachmentLike = {
+interface AttachmentLike {
   category: 'image' | 'document' | 'audio' | 'video' | 'archive' | 'other';
   storagePath: string;
   filename: string;
   mimeType: string;
-};
+}
 
 function resolveHomeDir(): string {
   const fromEnv = process.env.UJIMA_HOME;
