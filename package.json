@@ -42,7 +42,7 @@
     "vitest": "^2.0.5"
   },
   "dependencies": {
-    "@ai-sdk/deepseek": "3.0.0-beta.33",
+    "@ai-sdk/deepseek": "^1.0.15",
     "better-sqlite3": "^12.9.0"
   }
 }

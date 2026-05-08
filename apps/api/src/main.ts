@@ -110,6 +110,7 @@ async function main(): Promise<void> {
 
   const secretStore = createFileSecretStore({ homeDir });
   const repository = new Repository(host.db.raw, secretStore);
+  closeOrphanedActiveRuns(repository);
   const teamStore = createTeamStore();
   const teamConfigWatcher = await startTeamConfigWatcher({
     repo: repository,
@@ -228,6 +229,36 @@ async function main(): Promise<void> {
 
   const code = await exited;
   process.exit(code);
+}
+
+function closeOrphanedActiveRuns(repository: Repository): void {
+  const snapshot = repository.getBootstrapSnapshot();
+  if (!snapshot.organization) return;
+
+  const endedAt = new Date().toISOString();
+  for (const run of snapshot.activeRuns) {
+    repository.saveRun({
+      ...run,
+      status: 'failed',
+      step: 'failed',
+      summary: 'Runtime restarted before this run completed.',
+      endedAt,
+    });
+  }
+
+  const pendingApprovals = repository.listPendingApprovals(snapshot.organization.id);
+  for (const approval of pendingApprovals) {
+    const run = approval.runId
+      ? repository.getRun(snapshot.organization.id, approval.runId)
+      : null;
+    if (!run || isTerminalRunStatus(run.status)) {
+      repository.deleteApproval(snapshot.organization.id, approval.id);
+    }
+  }
+}
+
+function isTerminalRunStatus(status: string): boolean {
+  return status === 'completed' || status === 'failed' || status === 'cancelled';
 }
 
 function safeReadPid(path: string): number | undefined {

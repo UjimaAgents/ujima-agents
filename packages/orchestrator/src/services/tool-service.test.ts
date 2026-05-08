@@ -87,7 +87,7 @@ describe('createPermissionGatedToolService', () => {
     expect(first.ok).toBe(false);
     expect(first.requiresApprovalId).toBe('approval-1');
     expect(approvals).toBe(1);
-    expect(lastApprovalScope).toBe('shell:{"cwd":"/workspace","command":"rm -rf /"}');
+    expect(lastApprovalScope).toBe('shell:{"cwd":"/workspace","command":"rm","args":["-rf","/"]}');
     expect(innerCalls).toBe(0);
 
     tools.allowRun('org-1', 'run-1');
@@ -121,6 +121,81 @@ describe('createPermissionGatedToolService', () => {
     expect(third.ok).toBe(false);
     expect(third.requiresApprovalId).toBe('approval-2');
     expect(approvals).toBe(2);
+    expect(innerCalls).toBe(1);
+  });
+
+  it('does not spend a scoped approval on a different command', async () => {
+    let innerCalls = 0;
+
+    const inner: ToolService = {
+      async invoke() {
+        innerCalls++;
+        return { ok: true, output: { status: 'completed' } };
+      },
+      allowRun() {
+        return undefined;
+      },
+    };
+
+    const tools = createPermissionGatedToolService(
+      inner,
+      {
+        async check() {
+          return {
+            allowed: false,
+            reason: 'approval required',
+            code: 'requires_approval',
+            gate: 'approval',
+          };
+        },
+        async recordUsage() {},
+        setSessionOverride() {},
+        clearSessionOverride() {},
+        setGovernancePolicy() {},
+        getGovernancePolicy() {
+          return undefined as never;
+        },
+      },
+      async () => ({
+        agent: {} as never,
+        mcp: { id: 'fs' },
+        toolName: 'shell',
+        args: {},
+        taskId: 'task-1',
+        sessionId: 'session-1',
+      }),
+      () => ({ id: 'approval-1' }),
+    );
+
+    const approvedScope = 'shell:{"cwd":"/workspace","command":"git","args":["status"]}';
+    tools.allowRun('org-1', 'run-1', approvedScope);
+
+    const other = await tools.invoke({
+      organizationId: 'org-1',
+      runId: 'run-1',
+      memberId: 'agent-1',
+      toolCallId: 'tool-1',
+      toolId: 'shell',
+      action: 'execute',
+      resourceType: 'shell',
+      resourcePath: '/workspace',
+      input: { command: 'git log', cwd: '/workspace' },
+    });
+
+    const approved = await tools.invoke({
+      organizationId: 'org-1',
+      runId: 'run-1',
+      memberId: 'agent-1',
+      toolCallId: 'tool-2',
+      toolId: 'shell',
+      action: 'execute',
+      resourceType: 'shell',
+      resourcePath: '/workspace',
+      input: { command: 'git status', cwd: '/workspace' },
+    });
+
+    expect(other.ok).toBe(false);
+    expect(approved.ok).toBe(true);
     expect(innerCalls).toBe(1);
   });
 });

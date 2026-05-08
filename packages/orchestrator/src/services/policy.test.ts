@@ -294,5 +294,6 @@ describe('checkToolPolicy', () => {
         checkToolPolicy(team, 'silent-role', 'self.note', 'message'),
       ).toEqual({ allowed: true, requiresApproval: false });
     });
+
   });
 });

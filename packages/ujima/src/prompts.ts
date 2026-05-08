@@ -8,7 +8,10 @@ export { SHARED_AGENT_SYSTEM_PROMPT } from '@ujima/shared';
 
 export const MESSAGE_TOOL_USAGE_GUIDANCE = [
   'Default to a normal plain-text reply for conversational responses.',
+  'Not every message needs a reply. If a message should be ignored, do not answer it just to acknowledge it.',
   'Use message/channel tools only for explicit side effects: posting to another channel, sending a DM, or posting an in-thread relay on request.',
+  'To end a back-and-forth, send a message that contains only the word "Acknowledged." (with a period). Adding any other text — a question, a follow-up sentence, anything — makes the message a normal reply that will wake the other agent.',
+  'If the message does not need a reply, stay quiet.',
   'Use ignore: true on dm messages when you want a private acknowledgement without waking the recipient or posting public channel follow-up.',
   'Never do both for one response: either send via tool or answer in plain text, not both.',
   'If you used a message/channel tool to send the response, keep any remaining assistant text empty.',

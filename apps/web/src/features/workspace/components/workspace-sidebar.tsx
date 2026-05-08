@@ -54,6 +54,7 @@ interface WorkspaceSidebarProps {
   channels: BootstrapResponse["channels"];
   members: BootstrapResponse["members"];
   memberActivity: Record<string, ActivityState>;
+  conversationUnreadCounts: Record<string, number>;
   selected: SelectedConversation;
   onSelect: (conv: SelectedConversation) => void;
   onCreateChannel: (name: string) => Promise<SelectedConversation | null>;
@@ -209,6 +210,7 @@ export function WorkspaceSidebar({
   channels,
   members,
   memberActivity,
+  conversationUnreadCounts,
   selected,
   onSelect,
   onCreateChannel,
@@ -316,6 +318,7 @@ export function WorkspaceSidebar({
                 key={channel.id}
                 icon={<Hash className="h-4 w-4" />}
                 label={channel.name}
+                count={conversationUnreadCounts[channel.id]}
                 active={
                   selected.type === "channel" && selected.id === channel.id
                 }
@@ -343,6 +346,7 @@ export function WorkspaceSidebar({
                 key={agent.id}
                 icon={<Avatar name={agent.name} colorIndex={idx} size="xs" />}
                 label={agent.name}
+                count={conversationUnreadCounts[agent.id]}
                 active={selected.type === "agent" && selected.id === agent.id}
                 status={resolveMemberActivity(agent, memberActivity)}
                 onClick={() =>
@@ -709,12 +713,14 @@ export function WorkspaceSidebar({
 function SidebarItem({
   icon,
   label,
+  count,
   active,
   status,
   onClick,
 }: {
   icon: React.ReactNode;
   label: string;
+  count?: number;
   active?: boolean;
   status?: ActivityState;
   onClick?: () => void;
@@ -742,6 +748,11 @@ function SidebarItem({
         >
           {label}
         </span>
+        {count && count > 0 ? (
+          <span className="ml-1 rounded-full bg-violet-600 px-1.5 py-0.5 text-[10px] font-semibold text-white">
+            {count}
+          </span>
+        ) : null}
       </button>
       <div className="flex items-center gap-1.5">
         {status === "loading" && (

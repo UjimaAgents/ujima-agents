@@ -224,6 +224,38 @@ test('loadAgentTeam returns a ready-to-use handle', () => {
   expect(team.getAgent('frontend-alice')?.roleName).toBe('frontend-engineer');
 });
 
+test('legacy default role tools are migrated forward on load', () => {
+  const team = loadAgentTeam({
+    name: 'Ujima Demo',
+    workspace: {
+      root: '/tmp/ujima-org',
+      roleScopes: {},
+    },
+    organizationChart: { reportsTo: {} },
+    agents: [createAgent('pm', 'pm', 'direct')],
+    roles: [
+      {
+        name: 'pm',
+        title: 'Product Manager',
+        instructions: ROLE_PRESETS.pm?.instructions ?? '',
+        workspaceScopes: ['.'],
+        tools: ['filesystem'],
+        channels: ['general'],
+      },
+      {
+        name: 'frontend-engineer',
+        title: 'Frontend Engineer',
+        instructions: ROLE_PRESETS.frontendEngineer?.instructions ?? '',
+        workspaceScopes: ['apps/web'],
+        tools: ['filesystem', 'shell', 'message', 'channel.post', 'channel.reply', 'channel.dm', 'channel.list', 'channel.read', 'self.note', 'mcp'],
+        channels: ['general'],
+      },
+    ],
+  });
+
+  expect(team.config.configVersion).toBe(3);
+});
+
 test('validateAgentTeamConfig rejects agents that reference unknown roles', () => {
   expect(() =>
     validateAgentTeamConfig({

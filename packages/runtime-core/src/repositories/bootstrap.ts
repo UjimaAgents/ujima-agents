@@ -48,6 +48,7 @@ export function getBootstrapSnapshot(db: DbHandle): BootstrapSnapshot {
       run.status === 'running' ||
       run.status === 'waiting_for_approval',
   );
+  const activeRunIds = new Set(activeRuns.map((run) => run.id));
 
   const allChannels: Channel[] = [];
   let channelsCursor: string | undefined = undefined;
@@ -66,7 +67,9 @@ export function getBootstrapSnapshot(db: DbHandle): BootstrapSnapshot {
     // conversations) — at the SQL level so they never enter the snapshot.
     // Member-scoped DM access goes through `listVisibleChannels` instead.
     channels: allChannels,
-    pendingApprovals: listPendingApprovals(db, organization.id),
+    pendingApprovals: listPendingApprovals(db, organization.id).filter(
+      (approval) => !!approval.runId && activeRunIds.has(approval.runId),
+    ),
     activeRuns,
     providerCredentials: listProviderCredentials(db, organization.id),
   };

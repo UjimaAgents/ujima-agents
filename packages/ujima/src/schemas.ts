@@ -82,6 +82,7 @@ export const AgentTeamConfigSchema = z.object({
   name: z.string().min(1).default('Ujima Team'),
   workspace: WorkspaceConfigSchema.default({ root: '.', roleScopes: {} }),
   organizationChart: OrganizationChartSchema.default({ reportsTo: {} }),
+  configVersion: z.number().int().positive().default(1),
   agents: z.array(AgentConfigSchema).default([]),
   providers: z.record(ProviderConfigSchema).default({}),
   roles: z.array(RoleConfigSchema).min(1),

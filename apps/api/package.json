@@ -17,6 +17,7 @@
     "clean": "rm -rf dist .turbo *.tsbuildinfo"
   },
   "dependencies": {
+    "@fastify/multipart": "8.x",
     "@fastify/swagger": "^8.14.0",
     "@fastify/swagger-ui": "^1.10.0",
     "@ujima/agent-runtime": "workspace:*",

@@ -1,12 +1,11 @@
 "use client";
 
 import { useCallback, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { SquarePen } from "lucide-react";
+import { File, FileArchive, FileAudio, FileImage, FileText, FileVideo, SquarePen } from "lucide-react";
 import type { BootstrapResponse } from "@ujima/api-schema";
 import type { SelectedConversation } from "../types";
 import { useConversationSync } from "../use-conversation-sync";
 import { DragHandle } from "./workspace-shell";
-import { getDirectMessageThreadId } from "../conversation-transport";
 import {
   ChatHeader,
   ChatTabs,
@@ -19,6 +18,7 @@ import {
   type ChatMessageData,
 } from "./chat";
 import type { RunState } from "@ujima/shared";
+import { getDirectMessageThreadId } from "@ujima/shared";
 import { useWorkspaceStore } from "../workspace-store";
 import { EmptyChat } from "./empty-chat";
 import { TypingIndicator } from "./typing-indicator";
@@ -26,11 +26,12 @@ import { RunCard } from "./run-card";
 import { ActivityRow } from "./activity-row";
 import { ConversationSkeleton } from "./conversation-skeleton";
 import { resolveWorkspaceApproval } from "../approval-resolution";
+import { pendingApprovalVisibleInChannelView } from "../approval-thread-filter";
 
 const CHANNEL_TABS: ChatTab[] = [
   { id: "conversation", label: "Conversation" },
   { id: "approvals", label: "Approvals" },
-  { id: "files", label: "Files Changed" },
+  { id: "files", label: "Files" },
   { id: "activity", label: "Activity" },
 ];
 
@@ -78,14 +79,10 @@ export function ChannelView({
 
   const pendingThreadApprovals = useMemo(
     () =>
-      feed.approvals.filter((approval) => {
-        if (approval.status !== "pending") return false;
-        if (!approval.runId) return false;
-        const run = feed.runs.find((r) => r.id === approval.runId);
-        if (!run?.threadId || !currentThreadId) return false;
-        return run.threadId === currentThreadId;
-      }),
-    [currentThreadId, feed.approvals, feed.runs],
+      feed.approvals.filter((approval) =>
+        pendingApprovalVisibleInChannelView(approval, conversation, currentThreadId, feed.runs),
+      ),
+    [conversation, currentThreadId, feed.approvals, feed.runs],
   );
   const activeTab = useWorkspaceStore((state) => state.activeTab);
   const showDetails = useWorkspaceStore((state) => state.showDetails);
@@ -108,9 +105,25 @@ export function ChannelView({
       ? { variant: "active" as const, label: "Active" }
       : feed.status;
   const typingRuns = useMemo(
-    () => feed.runs.filter((run) => ACTIVE_RUN_STATES.includes(run.status)),
-    [feed.runs],
+    () =>
+      !currentThreadId
+        ? []
+        : feed.runs.filter(
+            (run) =>
+              ACTIVE_RUN_STATES.includes(run.status) && run.threadId === currentThreadId,
+          ),
+    [currentThreadId, feed.runs],
   );
+  const stoppableRunId = useMemo(() => {
+    const sorted = [...typingRuns].sort((a, b) => {
+      const pri = (r: RunState) =>
+        r.status === "running" ? 0 : r.status === "waiting_for_approval" ? 1 : 2;
+      const d = pri(a) - pri(b);
+      if (d !== 0) return d;
+      return (b.startedAt ?? "").localeCompare(a.startedAt ?? "");
+    });
+    return sorted[0]?.id;
+  }, [typingRuns]);
   const typingMembers = useMemo(() => {
     const seen = new Set<string>();
     const resolved: typeof members = [];
@@ -163,14 +176,13 @@ export function ChannelView({
         detail: member.roleName,
       }));
   }, [bootstrap.auth.member?.id, members]);
+  const organizationId = bootstrap.organization?.id;
   const headerSubtitle =
     feed.error ?? typingLabel ?? (feed.loading ? "Syncing live history from the backend…" : undefined);
-  const organizationId = bootstrap.organization?.id;
-
   const resolveApproval = useCallback(
     async (
       approvalId: string,
-      resolution: "allow_once" | "allow_always" | "reject",
+      resolution: "allow_once" | "allow_always" | "allow_family" | "reject",
     ) => {
       if (!organizationId) {
         throw new Error("Missing organization context for approval resolution.");
@@ -201,6 +213,28 @@ export function ChannelView({
     [organizationId],
   );
 
+  const stopAgentRun = useCallback(
+    async (runId: string) => {
+      if (!organizationId) {
+        throw new Error("Missing organization context.");
+      }
+      const response = await fetch(`/api/runs/${encodeURIComponent(runId)}/cancel`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ organizationId }),
+      });
+      const body = await response.json().catch(() => null);
+      if (!response.ok) {
+        const message =
+          body && typeof body === "object" && "message" in body && typeof body.message === "string"
+            ? body.message
+            : "Unable to stop the run.";
+        throw new Error(message);
+      }
+    },
+    [organizationId],
+  );
+
   const tabCounts = useMemo(() => {
     const activeRuns = feed.runs.filter(
       (run) =>
@@ -209,13 +243,26 @@ export function ChannelView({
         run.status === "waiting_for_approval",
     ).length;
     const pendingApprovals = feed.approvals.filter((approval) => approval.status === "pending").length;
+    const files = feed.messages.reduce((count, message) => count + (message.attachments?.length ?? 0), 0);
     return {
       approvals: pendingApprovals,
       tasks: activeRuns,
       activity: feed.activity.length,
-      files: 0,
+      files,
     };
-  }, [feed.activity.length, feed.approvals, feed.runs]);
+  }, [feed.activity.length, feed.approvals, feed.messages, feed.runs]);
+  const conversationAttachments = useMemo(
+    () =>
+      feed.messages.flatMap((message) =>
+        (message.attachments ?? []).map((attachment) => ({
+          ...attachment,
+          messageName: message.name,
+          messageTime: message.time,
+          messageId: message.id,
+        })),
+      ),
+    [feed.messages],
+  );
 
   const scrollToLatest = useCallback((behavior: ScrollBehavior = "smooth") => {
     bottomRef.current?.scrollIntoView({ block: "end", behavior });
@@ -307,6 +354,7 @@ export function ChannelView({
                     <ChatMessage
                       key={message.id}
                       message={message}
+                      organizationId={organizationId}
                       colorIndex={Math.max(
                         members.findIndex((member) => member.id === message.senderId),
                         0,
@@ -370,7 +418,38 @@ export function ChannelView({
             <TabEmpty emptyLabel="No active tasks yet." />
           )
         ) : activeTab === "files" ? (
-          <TabEmpty emptyLabel="No file changes for this conversation yet." />
+          conversationAttachments.length > 0 ? (
+            <TabPanel>
+              <div className="space-y-2">
+                {conversationAttachments.map((attachment) => {
+                  const Icon = getAttachmentIcon(attachment.category);
+                  return (
+                    <a
+                      key={attachment.id}
+                      href={`/api/attachments/${encodeURIComponent(attachment.id)}?organizationId=${encodeURIComponent(organizationId ?? "")}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="flex items-center gap-3 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 transition hover:border-violet-500/40 hover:bg-white dark:border-zinc-800 dark:bg-zinc-900/50 dark:hover:bg-zinc-900"
+                    >
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-violet-500/10 text-violet-600 dark:text-violet-300">
+                        <Icon className="h-5 w-5" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-xs font-semibold text-zinc-900 dark:text-zinc-100">
+                          {attachment.filename}
+                        </p>
+                        <p className="text-[10px] text-zinc-500 dark:text-zinc-400">
+                          {attachment.messageName} · {formatAttachmentSize(attachment.sizeBytes)}
+                        </p>
+                      </div>
+                    </a>
+                  );
+                })}
+              </div>
+            </TabPanel>
+          ) : (
+            <TabEmpty emptyLabel="No attachments yet." />
+          )
         ) : (
           feed.activity.length > 0 ? (
             <TabPanel>
@@ -385,6 +464,7 @@ export function ChannelView({
           )
         )}
         <ChatInput
+          organizationId={organizationId}
           placeholder={
             isAgent
               ? `Message @${conversation.name}...`
@@ -392,14 +472,20 @@ export function ChannelView({
           }
           inlineError={feed.error}
           statusHint={
-            typingLabel ??
-            (feed.loading ? "Syncing history…" : "Enter to send, Shift+Enter for a new line.")
+            [
+              typingLabel ?? (feed.loading ? "Syncing history…" : ""),
+              stoppableRunId ? "Empty box: red button or Enter stops the run." : "",
+            ]
+              .filter(Boolean)
+              .join(" ") || "Enter to send, Shift+Enter for a new line."
           }
           mentionSuggestions={mentionSuggestions}
           replyTo={replyTo}
           onCancelReply={() => setReplyTo(null)}
-          onSend={(content) => {
-            const promise = feed.sendMessage(content, replyTo?.id);
+          stoppableRunId={stoppableRunId}
+          onStopRun={stopAgentRun}
+          onSend={(content, attachmentIds) => {
+            const promise = feed.sendMessage(content, replyTo?.id, attachmentIds);
             setReplyTo(null);
             return promise;
           }}
@@ -448,4 +534,19 @@ function TabEmpty({ emptyLabel }: { emptyLabel: string }) {
       </div>
     </div>
   );
+}
+
+function getAttachmentIcon(category: string) {
+  if (category === "image") return FileImage;
+  if (category === "document") return FileText;
+  if (category === "audio") return FileAudio;
+  if (category === "video") return FileVideo;
+  if (category === "archive") return FileArchive;
+  return File;
+}
+
+function formatAttachmentSize(sizeBytes: number): string {
+  if (sizeBytes < 1024) return `${sizeBytes} B`;
+  if (sizeBytes < 1024 * 1024) return `${(sizeBytes / 1024).toFixed(1)} KB`;
+  return `${(sizeBytes / (1024 * 1024)).toFixed(1)} MB`;
 }

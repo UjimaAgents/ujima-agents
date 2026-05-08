@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { expect, test } from 'vitest';
-import { MessageSchema, OrganizationSchema } from '@ujima/shared';
+import { MessageSchema, OrganizationSchema, RunStateSchema, ApprovalRequestSchema } from '@ujima/shared';
 import { openDatabase } from '@ujima/context-store';
 import type { SecretStore } from '../secret-store.js';
 import { Repository } from './index.js';
@@ -238,6 +238,103 @@ test('searchChannelMessages tolerates unmatched quotes in user search text', () 
 
   const results = repo.searchChannelMessages(orgId, 'general', 'needle"', { limit: 10 });
   expect(results.data.map((message) => message.content)).toContain('quoted needle here');
+});
+
+test('hasApprovalGrant matches legacy shell scopes against canonical JSON scopes', () => {
+  const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
+  const orgId = randomUUID();
+  repo.saveOrganization(
+    OrganizationSchema.parse({
+      id: orgId,
+      name: 'Approval Org',
+      workspace: { root: '/tmp/approval-org', roleScopes: {} },
+    }),
+  );
+
+  const legacyScope = 'shell:/workspace:git:["status"]';
+  repo.saveApproval({
+    id: randomUUID(),
+    organizationId: orgId,
+    runId: randomUUID(),
+    toolCallId: randomUUID(),
+    requestedBy: 'agent-1',
+    resourceType: 'shell',
+    resourcePath: '/workspace',
+    action: 'execute',
+    status: 'approved',
+    reason: `grant:always_allow:scope=${encodeURIComponent(legacyScope)};note=legacy`,
+    createdAt: new Date().toISOString(),
+    resolvedAt: new Date().toISOString(),
+  });
+
+  const matches = repo.hasApprovalGrant({
+    organizationId: orgId,
+    requestedBy: 'agent-1',
+    resourceType: 'shell',
+    resourcePath: '/workspace',
+    action: 'execute',
+    approvalScope: 'shell:{"cwd":"/workspace","command":"git","args":["status"]}',
+  });
+  const mismatch = repo.hasApprovalGrant({
+    organizationId: orgId,
+    requestedBy: 'agent-1',
+    resourceType: 'shell',
+    resourcePath: '/workspace',
+    action: 'execute',
+    approvalScope: 'shell:{"cwd":"/workspace","command":"git","args":["log"]}',
+  });
+
+  expect(matches).toBe(true);
+  expect(mismatch).toBe(false);
+});
+
+test('listPendingApprovals enriches threadId from parent run when DB row has no thread_id', () => {
+  const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
+  const orgId = randomUUID();
+  const now = new Date().toISOString();
+  const runId = randomUUID();
+  const threadId = `thread-${randomUUID()}`;
+
+  repo.saveOrganization(
+    OrganizationSchema.parse({
+      id: orgId,
+      name: 'Thread Org',
+      workspace: { root: '/tmp/thread-org', roleScopes: {} },
+    }),
+  );
+
+  repo.saveRun(
+    RunStateSchema.parse({
+      id: runId,
+      organizationId: orgId,
+      agentId: 'agent-1',
+      threadId,
+      status: 'running',
+      step: 'running',
+      summary: 'busy',
+      startedAt: now,
+    }),
+  );
+
+  repo.saveApproval(
+    ApprovalRequestSchema.parse({
+      id: randomUUID(),
+      organizationId: orgId,
+      runId,
+      toolCallId: randomUUID(),
+      requestedBy: 'agent-1',
+      resourceType: 'shell',
+      resourcePath: '/tmp',
+      action: 'execute',
+      status: 'pending',
+      reason: 'scope=test',
+      createdAt: now,
+    }),
+  );
+
+  const pending = repo.listPendingApprovals(orgId);
+  expect(pending).toHaveLength(1);
+  expect(pending[0]?.threadId).toBe(threadId);
 });
 
 // Regression for two listChannels() bugs:
