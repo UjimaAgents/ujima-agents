@@ -129,16 +129,17 @@ export function useConversationSync(
 
     const abortController = new AbortController();
     const currentConversationKey = `${transport.organizationId}:${transport.threadId}`;
-    resetConversationFeed(currentConversationKey);
-
-    void loadConversationState(abortController.signal, currentConversationKey).catch((err) => {
-      if (abortController.signal.aborted || currentConversationKey !== conversationKey) return;
-      setLoading(false);
-      setError({
-        conversationKey: currentConversationKey,
-        message: err instanceof Error ? err.message : "Unable to load conversation history.",
+    const loadTimer = window.setTimeout(() => {
+      resetConversationFeed(currentConversationKey);
+      void loadConversationState(abortController.signal, currentConversationKey).catch((err) => {
+        if (abortController.signal.aborted || currentConversationKey !== conversationKey) return;
+        setLoading(false);
+        setError({
+          conversationKey: currentConversationKey,
+          message: err instanceof Error ? err.message : "Unable to load conversation history.",
+        });
       });
-    });
+    }, 0);
 
     const params = buildConversationStreamParams(transport);
     const source = new EventSource(`/api/conversations/stream?${params.toString()}`);
@@ -181,6 +182,7 @@ export function useConversationSync(
 
     return () => {
       abortController.abort();
+      window.clearTimeout(loadTimer);
       source.close();
     };
   }, [

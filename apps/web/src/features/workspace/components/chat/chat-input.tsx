@@ -187,7 +187,8 @@ export function ChatInput({
   const hasAttachments = attachments.length > 0;
   const hasDraft = content.trim().length > 0 || hasAttachments;
   const exactSlashCommand = hasAttachments ? null : getExactSlashCommand(content);
-  const slashQuery = clearConfirmation || hasAttachments ? null : getSlashQuery(content);
+  const canConfirmClear = clearConfirmation && exactSlashCommand === "clear";
+  const slashQuery = canConfirmClear || hasAttachments ? null : getSlashQuery(content);
   const slashMenuOptions = useMemo(() => {
     if (slashQuery === null) return SLASH_COMMANDS;
     return SLASH_COMMANDS.filter((option) => option.command.startsWith(slashQuery));
@@ -212,21 +213,10 @@ export function ChatInput({
   }, [mentionSuggestions, mentionTrigger]);
   const mentionMenuOpen =
     !!mentionTrigger && filteredMentionSuggestions.length > 0;
-
-  useEffect(() => {
-    if (!slashMenuOpen) {
-      setActiveSlashIndex(0);
-      return;
-    }
-    setActiveSlashIndex((index) => Math.min(index, Math.max(slashMenuOptions.length - 1, 0)));
-  }, [slashMenuOpen, slashMenuOptions.length]);
-
-  useEffect(() => {
-    if (!clearConfirmation) return;
-    if (exactSlashCommand !== "clear") {
-      setClearConfirmation(false);
-    }
-  }, [clearConfirmation, exactSlashCommand]);
+  const activeSlashSelection = Math.min(
+    activeSlashIndex,
+    Math.max(slashMenuOptions.length - 1, 0),
+  );
 
   const thumbnailUrl = (attachmentId: string) =>
     `/api/attachments/${encodeURIComponent(attachmentId)}/thumbnail?organizationId=${encodeURIComponent(organizationId ?? "")}`;
@@ -457,7 +447,7 @@ export function ChatInput({
 
   const runSlashCommand = async (command: ComposerCommand) => {
     if (isSending || isCommanding || uploading) return;
-    if (command === "clear" && !clearConfirmation) {
+    if (command === "clear" && !canConfirmClear) {
       setClearConfirmation(true);
       setError(null);
       setContent("/clear");
@@ -494,7 +484,7 @@ export function ChatInput({
       await stopRun();
       return;
     }
-    if (clearConfirmation) {
+    if (canConfirmClear) {
       await confirmClear();
       return;
     }
@@ -545,7 +535,7 @@ export function ChatInput({
             {inlineError}
           </p>
         ) : null}
-        {clearConfirmation ? (
+        {canConfirmClear ? (
           <div className="relative z-10 mb-2 rounded-xl border border-red-200 bg-red-50/90 px-4 py-3 shadow-sm backdrop-blur dark:border-red-500/30 dark:bg-red-500/10">
             <div className="flex items-center justify-between gap-3">
               <div>
@@ -647,7 +637,7 @@ export function ChatInput({
               setActiveMentionIndex(0);
             }}
             onKeyDown={(event) => {
-              if (clearConfirmation) {
+              if (canConfirmClear) {
                 if (event.key === "Escape") {
                   event.preventDefault();
                   setClearConfirmation(false);
@@ -682,7 +672,7 @@ export function ChatInput({
                 }
                 if (event.key === "Enter" && !event.shiftKey) {
                   event.preventDefault();
-                  const selected = slashMenuOptions[activeSlashIndex] ?? slashMenuOptions[0];
+                  const selected = slashMenuOptions[activeSlashSelection] ?? slashMenuOptions[0];
                   if (selected) {
                     void runSlashCommand(selected.command);
                   }
@@ -769,7 +759,7 @@ export function ChatInput({
                       void runSlashCommand(option.command);
                     }}
                     className={`flex w-full items-center gap-3 rounded-md px-2 py-2 text-left text-xs transition ${
-                      index === activeSlashIndex
+                      index === activeSlashSelection
                         ? "bg-violet-50 text-violet-900 dark:bg-violet-500/15 dark:text-violet-100"
                         : "text-zinc-700 hover:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-900"
                     }`}
@@ -915,13 +905,13 @@ export function ChatInput({
               disabled={
                 showStopInsteadOfSend
                   ? isStopping
-                  : isSending || isCommanding || uploading || (!hasDraft && !exactSlashCommand && !clearConfirmation)
+                  : isSending || isCommanding || uploading || (!hasDraft && !exactSlashCommand && !canConfirmClear)
               }
               onClick={() => void submitComposer()}
               aria-label={
                 showStopInsteadOfSend
                   ? "Stop agent run"
-                  : clearConfirmation
+                  : canConfirmClear
                     ? "Confirm clear conversation"
                     : exactSlashCommand === "clear"
                       ? "Clear conversation"
