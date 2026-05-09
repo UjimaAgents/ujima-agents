@@ -253,6 +253,25 @@ describe('ConversationService @all mentions', () => {
     expect(emits.some((entry) => entry.event === SocketEventNames.memberAlerted)).toBe(true);
   });
 
+  it('does not fan out @all from agent-authored messages', async () => {
+    const { alerts, savedMessages, savedMentions, service, thread } = createConversationFixture();
+
+    const message = service.sendMessage({
+      organizationId: 'org-1',
+      threadId: thread.id,
+      channelId: 'general',
+      senderId: 'agent-1',
+      content: 'Please review @all',
+    });
+
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(message.mentions).toHaveLength(0);
+    expect(savedMessages).toHaveLength(1);
+    expect(savedMentions).toHaveLength(0);
+    expect(alerts).toHaveLength(0);
+  });
+
   it('alerts an agent recipient for direct messages', async () => {
     const { alerts, emits, savedMessages, savedMentions, service } =
       createConversationFixture();
@@ -663,6 +682,30 @@ describe('ConversationService @all mentions', () => {
       limit: 1_000,
     });
     expect(visible.data.some((message) => message.content.includes('CONVERSATION_SUMMARY_V1'))).toBe(true);
+  });
+
+  it('does not re-trigger mention alerts when publishing a compaction summary', async () => {
+    const { alerts, service, thread } = createConversationFixture();
+
+    service.sendMessage({
+      organizationId: 'org-1',
+      threadId: thread.id,
+      channelId: 'general',
+      senderId: 'human-1',
+      content: 'Please review @all and @Mia',
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    alerts.splice(0, alerts.length);
+
+    service.archiveConversation({
+      organizationId: 'org-1',
+      threadId: thread.id,
+      memberId: 'human-1',
+      mode: 'summarize',
+    });
+
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(alerts).toHaveLength(0);
   });
 });
 

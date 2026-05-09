@@ -268,13 +268,14 @@ export class ConversationService {
     message: Message,
     typedMentions?: MessageMention[],
     attachmentIds?: string[],
-    options?: { suppressDmAlerts?: boolean; silent?: boolean },
+    options?: { suppressDmAlerts?: boolean; silent?: boolean; skipMentionResolution?: boolean },
   ) {
     const channel = message.channelId
       ? this.requireActiveChannel(message.organizationId, message.channelId)
       : null;
-    const resolvedMentions =
-      typedMentions ?? this.resolveMessageMentions(message.organizationId, message, channel);
+    const resolvedMentions = options?.skipMentionResolution
+      ? typedMentions ?? []
+      : typedMentions ?? this.resolveMessageMentions(message.organizationId, message, channel);
     const finalMessage = MessageSchema.parse({
       ...message,
       mentions: uniqueMentionIds(resolvedMentions),
@@ -641,6 +642,7 @@ export class ConversationService {
       content: input.content,
       createdAt: existing.createdAt,
       channel,
+      senderKind: existing.senderKind,
       explicitMentionIds,
     });
     const updated = this.repo.updateMessage({
@@ -853,6 +855,7 @@ export class ConversationService {
       content: message.content,
       createdAt: message.createdAt,
       channel,
+      senderKind: message.senderKind,
       explicitMentionIds: message.mentions,
     });
   }
@@ -863,12 +866,14 @@ export class ConversationService {
     content: string;
     createdAt: string;
     channel: Channel | null;
+    senderKind: string;
     explicitMentionIds?: string[];
   }): MessageMention[] {
     const mentionIds = this.resolveMentionIds(
       input.organizationId,
       input.content,
       input.channel,
+      input.senderKind,
       input.explicitMentionIds ?? [],
     );
     return mentionIds.map((memberId) =>
@@ -886,6 +891,7 @@ export class ConversationService {
     organizationId: string,
     content: string,
     channel: Channel | null,
+    senderKind: string,
     explicitMentionIds: string[],
   ): string[] {
     const byHandle = this.listMentionHandleMap(organizationId);
@@ -905,7 +911,7 @@ export class ConversationService {
 
 
       // Check for "@all" first as it's a special system handle
-      if (remaining.startsWith('all')) {
+      if (senderKind !== AGENT_KIND && remaining.startsWith('all')) {
         const nextChar = remaining[3];
         if (!nextChar || !/\w/.test(nextChar)) {
           for (const memberId of this.resolveAllMentionIds(organizationId, channel)) {
@@ -943,7 +949,9 @@ export class ConversationService {
     // them with handles parsed from the new body to keep stored metadata in
     // sync without introducing new alert fan-out.
     const channel = message.channelId ? this.repo.getChannel(organizationId, message.channelId) : null;
-    const parsedFromBody = new Set(this.resolveMentionIds(organizationId, message.content, channel, []));
+    const parsedFromBody = new Set(
+      this.resolveMentionIds(organizationId, message.content, channel, message.senderKind, []),
+    );
     return message.mentions.filter((memberId) => !parsedFromBody.has(memberId));
   }
 
@@ -1180,7 +1188,10 @@ export class ConversationService {
       createdAt: now,
     });
     if (input.publishSummary) {
-      this.publishMessage(summaryMessage, [], undefined, { suppressDmAlerts: true });
+      this.publishMessage(summaryMessage, [], undefined, {
+        suppressDmAlerts: true,
+        skipMentionResolution: true,
+      });
     } else {
       this.repo.saveMessage(summaryMessage);
     }
