@@ -69,7 +69,15 @@ function applyOverrides(teamStore: TeamStore, overrides: DashboardTeamOverrides)
   const team = teamStore.getTeam();
   if (!team) return;
 
-  const roles = overrides.roles.reduce(
+  const allowedChannelNames = new Set(team.channels.map((channel) => channel.name));
+  const sanitizedOverrideRoles = overrides.roles.map((role) =>
+    defineRole({
+      ...role,
+      channels: role.channels.filter((channelName) => allowedChannelNames.has(channelName)),
+    }),
+  );
+
+  const roles = sanitizedOverrideRoles.reduce(
     (current, role) => upsertBy(current, role, (item) => item.name),
     team.roles,
   );

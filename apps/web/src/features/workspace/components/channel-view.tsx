@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { buildReasoningTraceSteps } from "../reasoning-trace";
 import { SquarePen } from "lucide-react";
 import type { BootstrapResponse } from "@ujima/api-schema";
 import type { SelectedConversation } from "../types";
@@ -26,6 +27,7 @@ import { RunCard } from "./run-card";
 import { ActivityRow } from "./activity-row";
 import { ConversationSkeleton } from "./conversation-skeleton";
 import { resolveWorkspaceApproval } from "../approval-resolution";
+import { ReasoningTracePanel } from "./reasoning-trace-panel";
 
 const CHANNEL_TABS: ChatTab[] = [
   { id: "conversation", label: "Conversation" },
@@ -76,6 +78,23 @@ export function ChannelView({
     return conversation.id;
   }, [bootstrap.auth.member?.id, conversation.id, conversation.type]);
 
+  const reasoningTraceSteps = useMemo(() => {
+    if (!currentThreadId) return [];
+    return buildReasoningTraceSteps({
+      threadId: currentThreadId,
+      agentIdFilter: conversation.type === "agent" ? conversation.id : undefined,
+      conversationName: conversation.name,
+      conversationType: conversation.type,
+      members: members.map((member) => ({
+        id: member.id,
+        name: member.name,
+        kind: member.kind,
+      })),
+      activity: feed.activity,
+      runs: feed.runs,
+    });
+  }, [conversation.id, conversation.name, conversation.type, currentThreadId, feed.activity, feed.runs, members]);
+
   const pendingThreadApprovals = useMemo(
     () =>
       feed.approvals.filter((approval) => {
@@ -110,6 +129,10 @@ export function ChannelView({
   const typingRuns = useMemo(
     () => feed.runs.filter((run) => ACTIVE_RUN_STATES.includes(run.status)),
     [feed.runs],
+  );
+  const traceAutoScroll = useMemo(
+    () => typingRuns.length > 0 && detailsTab === "Reasoning trace",
+    [detailsTab, typingRuns.length],
   );
   const typingMembers = useMemo(() => {
     const seen = new Set<string>();
@@ -216,6 +239,33 @@ export function ChannelView({
       files: 0,
     };
   }, [feed.activity.length, feed.approvals, feed.runs]);
+
+  const blockedRunReasons = useMemo(() => {
+    const reasons = new Map<string, string>();
+    for (const event of feed.activity) {
+      if (event.type !== "tool_result") continue;
+      const body = event.payload as {
+        runId?: string;
+        toolResult?: { isError?: boolean; result?: unknown };
+      };
+      if (!body.runId || !body.toolResult?.isError) continue;
+      const result = body.toolResult.result as
+        | { error?: unknown; reason?: unknown }
+        | string
+        | undefined;
+      const reason =
+        typeof result === "string"
+          ? result
+          : typeof result?.error === "string"
+            ? result.error
+            : typeof result?.reason === "string"
+              ? result.reason
+              : undefined;
+      if (!reason || reasons.has(body.runId)) continue;
+      reasons.set(body.runId, reason);
+    }
+    return reasons;
+  }, [feed.activity]);
 
   const scrollToLatest = useCallback((behavior: ScrollBehavior = "smooth") => {
     bottomRef.current?.scrollIntoView({ block: "end", behavior });
@@ -362,7 +412,7 @@ export function ChannelView({
             <TabPanel>
               <div className="space-y-2">
                 {feed.runs.map((run) => (
-                  <RunCard key={run.id} run={run} />
+                  <RunCard key={run.id} run={run} blockedReason={blockedRunReasons.get(run.id)} />
                 ))}
               </div>
             </TabPanel>
@@ -423,7 +473,17 @@ export function ChannelView({
               onTabChange={(tab) => setDetailsTab(tab as typeof detailsTab)}
               onClose={() => setShowDetails(false)}
             >
-              <p className="text-xs text-zinc-500">No trace data yet.</p>
+              {detailsTab === "Reasoning trace" ? (
+                <ReasoningTracePanel steps={reasoningTraceSteps} autoScroll={traceAutoScroll} />
+              ) : detailsTab === "Changes" ? (
+                <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                  File-level diffs for this conversation are not wired up yet.
+                </p>
+              ) : (
+                <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                  No extra metadata for this view yet.
+                </p>
+              )}
             </DetailsSidebar>
           </div>
         </>

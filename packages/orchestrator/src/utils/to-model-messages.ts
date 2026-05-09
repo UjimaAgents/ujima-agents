@@ -11,8 +11,8 @@ import { toModelToolName } from '../tools/names.js';
 import { ToolApprovalRequiredError, toModelToolOutput } from '../services/tool-loop-result.js';
 
 export function toModelMessages(messages: Message[], selfId?: string): ModelMessage[] {
-  return messages.map((message) => ({
-    role:
+  return messages.map((message) => {
+    const role =
       message.kind === "system"
         ? ("system" as const)
         : selfId
@@ -21,9 +21,24 @@ export function toModelMessages(messages: Message[], selfId?: string): ModelMess
             : ("user" as const)
           : message.senderKind === "agent"
             ? ("assistant" as const)
-            : ("user" as const),
-    content: message.content,
-  } as ModelMessage));
+            : ("user" as const);
+
+    const reasoning = message.reasoningContent?.trim();
+    if (role === "assistant" && reasoning) {
+      return {
+        role: "assistant",
+        content: [
+          { type: "reasoning" as const, text: reasoning },
+          { type: "text" as const, text: message.content },
+        ],
+      } as ModelMessage;
+    }
+
+    return {
+      role,
+      content: message.content,
+    } as ModelMessage;
+  });
 }
 
 // Fix #7: Shared model-resolution ladder.

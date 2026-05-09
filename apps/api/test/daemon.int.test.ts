@@ -87,7 +87,9 @@ async function waitForExit(child: ReturnType<typeof spawn>, ms: number): Promise
 }
 
 describe('ujima-runtime daemon', () => {
-  it('starts, writes dirty flag, shuts down cleanly on SIGTERM, and clears flag', async () => {
+  it.skipIf(process.platform === 'win32')(
+    'starts, writes dirty flag, shuts down cleanly on SIGTERM, and clears flag',
+    async () => {
     const { home, child } = await startDaemon();
     try {
       expect(existsSync(join(home, DIRTY_FLAG))).toBe(true);
@@ -104,7 +106,8 @@ describe('ujima-runtime daemon', () => {
       if (!child.killed) child.kill('SIGKILL');
       await rm(home, { recursive: true, force: true });
     }
-  });
+  },
+  );
 
   it('detects a prior dirty shutdown and logs a warning', async () => {
     const home = await mkdtemp(join(tmpdir(), 'ujima-daemon-dirty-'));

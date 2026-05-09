@@ -1,4 +1,4 @@
-import { CheckCircle2, X } from "lucide-react";
+import { CheckCircle2, X, XCircle } from "lucide-react";
 import { Avatar } from "./primitives";
 
 /* ── Trace step (used in reasoning trace timeline) ─────────────────── */
@@ -8,7 +8,7 @@ export interface TraceStepData {
   detail: string;
   time: string;
   duration: string;
-  status: "success" | "running";
+  status: "success" | "running" | "failed";
   subtext?: string;
 }
 
@@ -18,7 +18,11 @@ export function TraceStep({ step }: { step: TraceStepData }) {
       <div className="absolute left-0 top-1 bottom-0 w-px bg-zinc-200 dark:bg-zinc-800" />
       <div
         className={`absolute left-[-3px] top-1 h-1.5 w-1.5 rounded-full ring-4 ring-zinc-50 dark:ring-[#09090b] ${
-          step.status === "success" ? "bg-emerald-500" : "bg-violet-500"
+          step.status === "success"
+            ? "bg-emerald-500"
+            : step.status === "failed"
+              ? "bg-red-500"
+              : "bg-violet-500"
         }`}
       />
       <div className="flex items-start justify-between gap-3">
@@ -29,6 +33,9 @@ export function TraceStep({ step }: { step: TraceStepData }) {
             </p>
             {step.status === "success" && (
               <CheckCircle2 className="h-3 w-3 text-emerald-500" />
+            )}
+            {step.status === "failed" && (
+              <XCircle className="h-3 w-3 text-red-500" />
             )}
           </div>
           <p className="text-[10px] text-zinc-500 dark:text-zinc-400">

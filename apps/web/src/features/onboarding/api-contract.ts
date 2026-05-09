@@ -123,6 +123,7 @@ export function buildOnboardingRequest(draft: OnboardingDraft): OnboardingReques
         providerEntries.map((provider) => [
           provider.name,
           {
+            kind: provider.name,
             models: [],
           },
         ]),

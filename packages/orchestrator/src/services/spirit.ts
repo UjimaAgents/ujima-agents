@@ -41,6 +41,7 @@ import type { ApiRepository } from './repository-reader.js';
 import type { TeamStore } from './team-store.js';
 import type { ToolService } from './tool-service.js';
 import { ToolApprovalRequiredError } from './tool-loop-result.js';
+import { extractReasoningChunk } from '../utils/extract-reasoning.js';
 
 // ----------------------------------------------------------------------
 // SpiritService — Phase 2.A.4
@@ -550,6 +551,7 @@ export class SpiritService {
         }
 
         const toolCalls = this.toMessageToolCalls(stepToolCalls, stepToolResults, spirit);
+        const reasoningContent = extractReasoningChunk(step);
         const message = MessageSchema.parse({
           id: randomUUID(),
           organizationId: input.organizationId,
@@ -560,6 +562,7 @@ export class SpiritService {
           kind: AGENT_KIND,
           content: stepText || `[tool turn — ${stepToolCalls.length} call(s)]`,
           toolCalls,
+          ...(reasoningContent ? { reasoningContent } : {}),
           createdAt: new Date().toISOString(),
         });
         this.repo.saveMessage(message);

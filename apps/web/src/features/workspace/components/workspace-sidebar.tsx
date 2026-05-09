@@ -200,6 +200,12 @@ function joinCsvValues(values: string[]) {
   return values.join(", ");
 }
 
+function uniqueSorted(values: string[]) {
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))].sort((a, b) =>
+    a.localeCompare(b),
+  );
+}
+
 export function WorkspaceSidebar({
   bootstrap,
   rolePresets,
@@ -811,10 +817,32 @@ function AgentEditorModal({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const availableTools = useMemo(() => {
+    if (!draft) return [];
+    return uniqueSorted([
+      ...rolePresets.flatMap((preset) => preset.tools ?? []),
+      ...(teamSettings?.roles.flatMap((role) => role.tools ?? []) ?? []),
+      ...draft.tools,
+    ]);
+  }, [draft, rolePresets, teamSettings?.roles]);
+
   if (!agent || !draft) return null;
 
   const patchDraft = (patch: Partial<AgentEditorDraft>) => {
     setDraft((current) => (current ? { ...current, ...patch } : current));
+  };
+
+  const toggleTool = (tool: string) => {
+    setDraft((current) => {
+      if (!current) return current;
+      const exists = current.tools.includes(tool);
+      return {
+        ...current,
+        tools: exists
+          ? current.tools.filter((item) => item !== tool)
+          : uniqueSorted([...current.tools, tool]),
+      };
+    });
   };
 
   const toggleChannel = (channelId: string) => {
@@ -943,12 +971,42 @@ function AgentEditorModal({
             />
           </FieldShell>
 
-          <FieldShell label="Tools" htmlFor="agentTools" hint="Comma-separated tool names">
-            <TextInput
-              id="agentTools"
-              value={joinCsvValues(draft.tools)}
-              onChange={(event) => patchDraft({ tools: listCsvValues(event.target.value) })}
-            />
+          <FieldShell label="Tools" htmlFor="agentTools" hint="Select available tools, or type custom values">
+            <div className="space-y-3">
+              <div className="flex flex-wrap gap-2">
+                {availableTools.length > 0 ? (
+                  availableTools.map((tool) => {
+                    const selected = draft.tools.includes(tool);
+                    return (
+                      <button
+                        key={tool}
+                        type="button"
+                        onClick={() => toggleTool(tool)}
+                        className={`rounded-full border px-3 py-1 text-xs font-semibold transition ${
+                          selected
+                            ? "border-violet-500 bg-violet-100 text-violet-700 dark:border-violet-400 dark:bg-violet-500/20 dark:text-violet-200"
+                            : "border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300 dark:hover:bg-zinc-900"
+                        }`}
+                        aria-pressed={selected}
+                      >
+                        {tool}
+                      </button>
+                    );
+                  })
+                ) : (
+                  <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                    No tools discovered from presets or team settings yet.
+                  </p>
+                )}
+              </div>
+              <TextInput
+                id="agentTools"
+                value={joinCsvValues(draft.tools)}
+                onChange={(event) =>
+                  patchDraft({ tools: uniqueSorted(listCsvValues(event.target.value)) })
+                }
+              />
+            </div>
           </FieldShell>
 
           <FieldShell label="Skills" htmlFor="agentSkills" hint="Comma-separated skill names">
