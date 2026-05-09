@@ -560,7 +560,7 @@ describe('ConversationService @all mentions', () => {
   });
 
   it('auto-compacts a conversation after 150 messages', async () => {
-    const { repo, service } = createConversationFixture();
+    const { emits, repo, service } = createConversationFixture();
     for (let i = 1; i <= 151; i += 1) {
       service.sendMessage({
         organizationId: 'org-1',
@@ -578,6 +578,28 @@ describe('ConversationService @all mentions', () => {
     expect(stored.data.some((message) => message.content.startsWith('[[CONVERSATION_COMPACTED_V1]]'))).toBe(
       true,
     );
+    expect(emits).toHaveLength(152);
+  });
+
+  it('folds earlier conversation summaries into later compactions', async () => {
+    const { repo, service } = createConversationFixture();
+    for (let i = 1; i <= 186; i += 1) {
+      service.sendMessage({
+        organizationId: 'org-1',
+        threadId: 'general',
+        channelId: 'general',
+        senderId: 'human-1',
+        content: `roll-${i}`,
+      });
+    }
+
+    const summaries = repo
+      .listMessages('org-1', 'general')
+      .data.filter((message) => message.content.startsWith('[[CONVERSATION_SUMMARY_V1]]'));
+
+    expect(summaries).toHaveLength(1);
+    expect(summaries[0]?.content).toContain('Compacted 36 earlier messages.');
+    expect(summaries[0]?.content).toContain('Compacted 35 earlier messages.');
   });
 
   it('archives and clears a conversation from the visible feed', async () => {

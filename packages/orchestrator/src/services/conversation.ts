@@ -1141,10 +1141,11 @@ export class ConversationService {
     );
     const keepRawStart = Math.max(uncompacted.length - input.keepRawCount, 0);
     const compactable = uncompacted.slice(0, keepRawStart).slice(0, input.batchSize);
-    const sourcesToCompact = [...activeSummaries, ...compactable];
-    if (sourcesToCompact.length === 0) {
+    const summarySources = [...activeSummaries, ...compactable];
+    if (summarySources.length === 0) {
       return { summaryMessage: null, compactedMessageIds: [] };
     }
+    const sourcesToCompact = [...summarySources];
 
     const now = new Date().toISOString();
     const summaryMessage = MessageSchema.parse({
@@ -1155,11 +1156,11 @@ export class ConversationService {
       senderId: 'system',
       senderKind: AGENT_KIND,
       kind: 'system',
-      content: input.buildSummary(compactable),
+      content: input.buildSummary(summarySources),
       createdAt: now,
     });
     if (input.publishSummary) {
-      this.publishMessage(summaryMessage, [], undefined, { silent: true, suppressDmAlerts: true });
+      this.publishMessage(summaryMessage, [], undefined, { suppressDmAlerts: true });
     } else {
       this.repo.saveMessage(summaryMessage);
     }

@@ -55,9 +55,12 @@ describe('conversation-summary', () => {
       makeMessage('Preference: short answers.', '2026-05-08T09:41:00.000Z'),
     ]);
     expect(summary.startsWith(SELF_NOTE_SUMMARY_MARKER)).toBe(true);
-    expect(summary).toContain('Current goals');
-    expect(summary).toContain('Decisions');
-    expect(summary).toContain('Important facts');
+    expect(summary).toContain('# Compacted 2 earlier self notes.');
+    expect(summary).toContain('> README-style compact summary. Keep this concise, skimmable, and focused on durable context.');
+    expect(summary).toContain('> It is okay to forget details that are not important.');
+    expect(summary).toContain('## Current goals');
+    expect(summary).toContain('## Decisions');
+    expect(summary).toContain('## Important facts');
   });
 
   it('builds general conversation summaries for non-self contexts', () => {
@@ -71,7 +74,9 @@ describe('conversation-summary', () => {
       ],
     });
     expect(summary).toContain('[[CONVERSATION_SUMMARY_V1]]');
-    expect(summary).toContain('Compacted support-thread conversation.');
+    expect(summary).toContain('# Compacted support-thread conversation.');
+    expect(summary).toContain('## Current goals');
+    expect(summary).toContain('## Decisions');
     expect(summary).toContain('Customer asked about invoice reconciliation.');
   });
 

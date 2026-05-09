@@ -5,6 +5,10 @@ export const SELF_NOTE_COMPACTED_MARKER = '[[SELF_NOTE_COMPACTED_V1]]';
 export const CONVERSATION_SUMMARY_MARKER = '[[CONVERSATION_SUMMARY_V1]]';
 export const CONVERSATION_COMPACTED_MARKER = '[[CONVERSATION_COMPACTED_V1]]';
 export const CONVERSATION_ARCHIVE_MARKER = '[[CONVERSATION_ARCHIVE_V1]]';
+const README_SUMMARY_GUIDANCE = [
+  '> README-style compact summary. Keep this concise, skimmable, and focused on durable context.',
+  '> It is okay to forget details that are not important.',
+] as const;
 
 export function formatTimestampedContent(content: string, createdAt: string): string {
   if (content.startsWith('[') && content.includes(' at ') && content.includes(']')) {
@@ -60,15 +64,17 @@ export function buildStructuredConversationSummary(input: {
     (message) => `- ${toReadableEnglishTimestamp(message.createdAt)}: ${oneLine(message.content)}`,
   );
   const out: string[] = [];
-  if (input.marker) out.push(`${input.marker} ${input.title}`);
-  else out.push(input.title);
+  if (input.marker) out.push(`${input.marker} # ${input.title}`);
+  else out.push(`# ${input.title}`);
+  out.push('');
+  out.push(...README_SUMMARY_GUIDANCE);
   out.push('');
   for (const section of input.sections) {
-    out.push(section.heading);
+    out.push(`## ${section.heading}`);
     for (const bullet of section.bullets) out.push(`- ${bullet}`);
     out.push('');
   }
-  out.push('Important facts', ...lines, '', 'Stale or superseded items', '- Source notes in this batch are marked as compacted.');
+  out.push('## Important facts', ...lines, '', '## Stale or superseded items', '- Source notes in this batch are marked as compacted.');
   return out.join('\n');
 }
 
