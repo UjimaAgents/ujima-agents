@@ -668,7 +668,7 @@ describe('ConversationService @all mentions', () => {
 
 describe('ConversationService channel thread bootstrap', () => {
   it('creates a missing thread when a visible channel is opened', async () => {
-    const { repo, service, organization, members, channels, threads } = createConversationFixture();
+    const { repo, service, organization, channels, threads } = createConversationFixture();
     const channel = ChannelSchema.parse({
       id: 'channel-engineering',
       organizationId: organization.id,
