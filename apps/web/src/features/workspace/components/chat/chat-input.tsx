@@ -42,6 +42,41 @@ interface MentionTrigger {
   query: string;
 }
 
+type ComposerCommand = "summarize" | "clear";
+
+const SLASH_COMMANDS: Array<{
+  command: ComposerCommand;
+  label: string;
+  description: string;
+}> = [
+  {
+    command: "summarize",
+    label: "/summarize",
+    description: "Compact the thread and keep the recent raw window.",
+  },
+  {
+    command: "clear",
+    label: "/clear",
+    description: "Archive the thread and empty the visible chat.",
+  },
+];
+
+export function getExactSlashCommand(value: string): ComposerCommand | null {
+  const trimmed = value.trim();
+  if (trimmed === "/summarize") return "summarize";
+  if (trimmed === "/clear") return "clear";
+  return null;
+}
+
+export function getSlashQuery(value: string): string | null {
+  const trimmed = value.trimStart();
+  if (!trimmed.startsWith("/")) return null;
+  const token = trimmed.split(/\s/, 1)[0] ?? "";
+  if (token.length !== trimmed.length) return null;
+  if (token.length <= 1) return "";
+  return token.slice(1).toLowerCase();
+}
+
 function findMentionTrigger(value: string, caret: number): MentionTrigger | null {
   if (caret < 0) return null;
   const uptoCaret = value.slice(0, caret);
@@ -56,6 +91,7 @@ function findMentionTrigger(value: string, caret: number): MentionTrigger | null
 export function ChatInput({
   placeholder = "Type a message...",
   onSend,
+  onCommand,
   statusHint,
   inlineError,
   mentionSuggestions = [],
@@ -68,6 +104,7 @@ export function ChatInput({
   placeholder?: string;
   organizationId?: string;
   onSend: (content: string, attachmentIds?: string[]) => Promise<void> | void;
+  onCommand: (command: ComposerCommand) => Promise<void> | void;
   statusHint?: string;
   inlineError?: string;
   mentionSuggestions?: MentionSuggestion[];
@@ -80,8 +117,11 @@ export function ChatInput({
   const [content, setContent] = useState("");
   const [isSending, setIsSending] = useState(false);
   const [isStopping, setIsStopping] = useState(false);
+  const [isCommanding, setIsCommanding] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeMentionIndex, setActiveMentionIndex] = useState(0);
+  const [activeSlashIndex, setActiveSlashIndex] = useState(0);
+  const [clearConfirmation, setClearConfirmation] = useState(false);
   const [selection, setSelection] = useState({ start: 0, end: 0 });
   const [attachments, setAttachments] = useState<UploadedAttachment[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -144,13 +184,22 @@ export function ChatInput({
       }
     };
   }, []);
-  const canSend = !isSending && !uploading && (content.trim().length > 0 || attachments.length > 0);
+  const hasAttachments = attachments.length > 0;
+  const hasDraft = content.trim().length > 0 || hasAttachments;
+  const exactSlashCommand = hasAttachments ? null : getExactSlashCommand(content);
+  const slashQuery = clearConfirmation || hasAttachments ? null : getSlashQuery(content);
+  const slashMenuOptions = useMemo(() => {
+    if (slashQuery === null) return SLASH_COMMANDS;
+    return SLASH_COMMANDS.filter((option) => option.command.startsWith(slashQuery));
+  }, [slashQuery]);
+  const slashMenuOpen = slashQuery !== null && slashMenuOptions.length > 0;
   const showStopInsteadOfSend =
     Boolean(stoppableRunId && onStopRun) &&
     content.trim().length === 0 &&
     attachments.length === 0 &&
     !uploading &&
-    !isSending;
+    !isSending &&
+    !isCommanding;
   const mentionTrigger = findMentionTrigger(content, selection.start);
   const filteredMentionSuggestions = useMemo(() => {
     if (!mentionTrigger) return [];
@@ -163,6 +212,21 @@ export function ChatInput({
   }, [mentionSuggestions, mentionTrigger]);
   const mentionMenuOpen =
     !!mentionTrigger && filteredMentionSuggestions.length > 0;
+
+  useEffect(() => {
+    if (!slashMenuOpen) {
+      setActiveSlashIndex(0);
+      return;
+    }
+    setActiveSlashIndex((index) => Math.min(index, Math.max(slashMenuOptions.length - 1, 0)));
+  }, [slashMenuOpen, slashMenuOptions.length]);
+
+  useEffect(() => {
+    if (!clearConfirmation) return;
+    if (exactSlashCommand !== "clear") {
+      setClearConfirmation(false);
+    }
+  }, [clearConfirmation, exactSlashCommand]);
 
   const thumbnailUrl = (attachmentId: string) =>
     `/api/attachments/${encodeURIComponent(attachmentId)}/thumbnail?organizationId=${encodeURIComponent(organizationId ?? "")}`;
@@ -391,6 +455,56 @@ export function ChatInput({
     }
   };
 
+  const runSlashCommand = async (command: ComposerCommand) => {
+    if (isSending || isCommanding || uploading) return;
+    if (command === "clear" && !clearConfirmation) {
+      setClearConfirmation(true);
+      setError(null);
+      setContent("/clear");
+      requestAnimationFrame(() => {
+        textareaRef.current?.focus();
+        textareaRef.current?.setSelectionRange(6, 6);
+      });
+      return;
+    }
+
+    setError(null);
+    setIsCommanding(true);
+    try {
+      await onCommand(command);
+      setContent("");
+      setSelection({ start: 0, end: 0 });
+      setAttachments([]);
+      setUploadProgress(0);
+      setClearConfirmation(false);
+      setEmojiMenuOpen(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to run command.");
+    } finally {
+      setIsCommanding(false);
+    }
+  };
+
+  const confirmClear = async () => {
+    await runSlashCommand("clear");
+  };
+
+  const submitComposer = async () => {
+    if (showStopInsteadOfSend) {
+      await stopRun();
+      return;
+    }
+    if (clearConfirmation) {
+      await confirmClear();
+      return;
+    }
+    if (exactSlashCommand) {
+      await runSlashCommand(exactSlashCommand);
+      return;
+    }
+    await send();
+  };
+
   const stopRun = async () => {
     if (!stoppableRunId || !onStopRun || isStopping) return;
     setError(null);
@@ -431,6 +545,44 @@ export function ChatInput({
             {inlineError}
           </p>
         ) : null}
+        {clearConfirmation ? (
+          <div className="relative z-10 mb-2 rounded-xl border border-red-200 bg-red-50/90 px-4 py-3 shadow-sm backdrop-blur dark:border-red-500/30 dark:bg-red-500/10">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-xs font-semibold text-red-800 dark:text-red-200">
+                  Archive and clear this conversation?
+                </p>
+                <p className="mt-0.5 text-[10px] leading-4 text-red-700/80 dark:text-red-200/80">
+                  This keeps a compact archive and empties the visible thread.
+                </p>
+              </div>
+              <div className="flex shrink-0 items-center gap-1.5">
+                <button
+                  type="button"
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                    setClearConfirmation(false);
+                    setContent("");
+                    setError(null);
+                  }}
+                  className="rounded-md border border-red-200 bg-white px-2 py-1 text-[10px] font-semibold text-red-700 transition hover:bg-red-100 dark:border-red-500/30 dark:bg-zinc-950 dark:text-red-200 dark:hover:bg-red-500/10"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                    void confirmClear();
+                  }}
+                  className="rounded-md bg-red-600 px-2 py-1 text-[10px] font-semibold text-white transition hover:bg-red-700"
+                >
+                  Clear
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
         <input
           ref={fileInputRef}
           type="file"
@@ -438,8 +590,8 @@ export function ChatInput({
           className="hidden"
           onChange={handleAttachmentInput}
         />
-        <div className="absolute inset-0 bg-gradient-to-r from-violet-500/10 to-indigo-500/10 rounded-xl blur-lg opacity-0 group-focus-within:opacity-100 transition-opacity" />
-        <div className="relative flex flex-col rounded-xl border border-zinc-200 bg-zinc-50 focus-within:border-violet-500 focus-within:bg-white focus-within:ring-1 focus-within:ring-violet-500 transition-all dark:border-zinc-800 dark:bg-zinc-900/50 dark:focus-within:bg-[#09090b]">
+        <div className="pointer-events-none absolute inset-0 rounded-xl bg-gradient-to-r from-violet-500/10 to-indigo-500/10 blur-lg opacity-0 transition-opacity group-focus-within:opacity-100" />
+        <div className="relative z-10 flex flex-col rounded-xl border border-zinc-200 bg-zinc-50 transition-all focus-within:border-violet-500 focus-within:bg-white focus-within:ring-1 focus-within:ring-violet-500 dark:border-zinc-800 dark:bg-zinc-900/50 dark:focus-within:bg-[#09090b]">
           {replyTo && (
             <div className="flex items-center gap-2 rounded-t-xl border-b border-zinc-200 bg-violet-50/50 px-3 py-1.5 dark:border-zinc-800 dark:bg-violet-500/5">
               <div className="flex-1 min-w-0">
@@ -495,6 +647,53 @@ export function ChatInput({
               setActiveMentionIndex(0);
             }}
             onKeyDown={(event) => {
+              if (clearConfirmation) {
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  setClearConfirmation(false);
+                  setContent("");
+                  return;
+                }
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault();
+                  void confirmClear();
+                  return;
+                }
+              }
+              if (exactSlashCommand && event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                void runSlashCommand(exactSlashCommand);
+                return;
+              }
+              if (slashMenuOpen) {
+                if (event.key === "ArrowDown") {
+                  event.preventDefault();
+                  setActiveSlashIndex((index) =>
+                    (index + 1) % slashMenuOptions.length,
+                  );
+                  return;
+                }
+                if (event.key === "ArrowUp") {
+                  event.preventDefault();
+                  setActiveSlashIndex((index) =>
+                    (index - 1 + slashMenuOptions.length) % slashMenuOptions.length,
+                  );
+                  return;
+                }
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault();
+                  const selected = slashMenuOptions[activeSlashIndex] ?? slashMenuOptions[0];
+                  if (selected) {
+                    void runSlashCommand(selected.command);
+                  }
+                  return;
+                }
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  setContent("");
+                  return;
+                }
+              }
               if (mentionMenuOpen) {
                 if (event.key === "ArrowDown") {
                   event.preventDefault();
@@ -527,11 +726,7 @@ export function ChatInput({
               }
               if (event.key === "Enter" && !event.shiftKey) {
                 event.preventDefault();
-                if (showStopInsteadOfSend) {
-                  void stopRun();
-                } else {
-                  void send();
-                }
+                void submitComposer();
               }
             }}
             className="w-full bg-transparent px-3 py-2.5 text-xs focus:outline-none resize-none min-h-[56px]"
@@ -560,6 +755,36 @@ export function ChatInput({
                   ) : null}
                 </button>
               ))}
+            </div>
+          ) : null}
+          {slashMenuOpen ? (
+            <div className="mx-2 mt-1 overflow-hidden rounded-lg border border-zinc-200 bg-white p-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-950">
+              <div className="space-y-1">
+                {slashMenuOptions.map((option, index) => (
+                  <button
+                    key={option.command}
+                    type="button"
+                    onMouseDown={(event) => {
+                      event.preventDefault();
+                      void runSlashCommand(option.command);
+                    }}
+                    className={`flex w-full items-center gap-3 rounded-md px-2 py-2 text-left text-xs transition ${
+                      index === activeSlashIndex
+                        ? "bg-violet-50 text-violet-900 dark:bg-violet-500/15 dark:text-violet-100"
+                        : "text-zinc-700 hover:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-900"
+                    }`}
+                  >
+                    <span className="mt-0.5 rounded-md border border-zinc-200 bg-white px-1.5 py-0.5 font-mono text-[10px] font-semibold text-zinc-700 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200">
+                      {option.label}
+                    </span>
+                    <span className="min-w-0">
+                      <span className="block text-[10px] leading-4 text-zinc-500 dark:text-zinc-400">
+                        {option.description}
+                      </span>
+                    </span>
+                  </button>
+                ))}
+              </div>
             </div>
           ) : null}
           <div
@@ -687,9 +912,23 @@ export function ChatInput({
             </div>
             <button
               type="button"
-              disabled={showStopInsteadOfSend ? isStopping : !canSend}
-              onClick={() => (showStopInsteadOfSend ? void stopRun() : void send())}
-              aria-label={showStopInsteadOfSend ? "Stop agent run" : "Send message"}
+              disabled={
+                showStopInsteadOfSend
+                  ? isStopping
+                  : isSending || isCommanding || uploading || (!hasDraft && !exactSlashCommand && !clearConfirmation)
+              }
+              onClick={() => void submitComposer()}
+              aria-label={
+                showStopInsteadOfSend
+                  ? "Stop agent run"
+                  : clearConfirmation
+                    ? "Confirm clear conversation"
+                    : exactSlashCommand === "clear"
+                      ? "Clear conversation"
+                      : exactSlashCommand === "summarize"
+                        ? "Run summarize"
+                        : "Send message"
+              }
               className={
                 showStopInsteadOfSend
                   ? "flex items-center justify-center h-7 w-7 rounded-lg bg-red-600 text-white shadow-lg shadow-red-500/20 hover:bg-red-700 transition disabled:cursor-not-allowed disabled:opacity-50"
