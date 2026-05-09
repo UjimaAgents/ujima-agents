@@ -437,7 +437,7 @@ describe('ConversationService @all mentions', () => {
 
   it('compacts old self notes after threshold overflow', async () => {
     const { repo, service } = createConversationFixture();
-    for (let i = 1; i <= 51; i += 1) {
+    for (let i = 1; i <= 151; i += 1) {
       service.sendSelfNote({
         organizationId: 'org-1',
         memberId: 'agent-1',
@@ -464,12 +464,13 @@ describe('ConversationService @all mentions', () => {
     expect(visible.data.every((message) => !message.content.includes('SELF_NOTE_COMPACTED_V1'))).toBe(
       true,
     );
-    expect(visible.data.some((message) => message.content.includes('note-51'))).toBe(true);
+    expect(visible.data.some((message) => message.content.startsWith('[[SELF_NOTE_SUMMARY_V1]]'))).toBe(false);
+    expect(visible.data.some((message) => message.content.includes('note-151'))).toBe(true);
   });
 
   it('keeps newer self notes visible even when a summary exists', async () => {
     const { service } = createConversationFixture();
-    for (let i = 1; i <= 51; i += 1) {
+    for (let i = 1; i <= 151; i += 1) {
       service.sendSelfNote({
         organizationId: 'org-1',
         memberId: 'agent-1',
@@ -489,7 +490,7 @@ describe('ConversationService @all mentions', () => {
       limit: 1_000,
     });
     const joined = visible.data.map((message) => message.content).join('\n');
-    expect(joined).toContain('SELF_NOTE_SUMMARY_V1');
+    expect(joined).not.toContain('SELF_NOTE_SUMMARY_V1');
     expect(joined).toContain('Override: use the latest scope decision.');
   });
 
@@ -521,7 +522,122 @@ describe('ConversationService @all mentions', () => {
     });
     const joined = visible.data.map((message) => message.content).join('\n');
     expect(joined).toContain('history-260');
-    expect(joined).toContain('SELF_NOTE_SUMMARY_V1');
+    expect(joined).not.toContain('SELF_NOTE_SUMMARY_V1');
     expect(joined.includes('SELF_NOTE_COMPACTED_V1')).toBe(false);
+  });
+
+  it('summarizes a conversation while keeping the recent raw window visible', async () => {
+    const { service } = createConversationFixture();
+    for (let i = 1; i <= 20; i += 1) {
+      service.sendMessage({
+        organizationId: 'org-1',
+        threadId: 'general',
+        channelId: 'general',
+        senderId: 'human-1',
+        content: `general-${String(i).padStart(2, '0')}`,
+      });
+    }
+
+    const result = service.archiveConversation({
+      organizationId: 'org-1',
+      threadId: 'general',
+      memberId: 'human-1',
+      mode: 'summarize',
+    });
+
+    expect(result.summaryMessage?.content.startsWith('[[CONVERSATION_SUMMARY_V1]]')).toBe(true);
+
+    const visible = await service.readChannel({
+      organizationId: 'org-1',
+      memberId: 'human-1',
+      channelId: 'general',
+      limit: 1_000,
+    });
+    const joined = visible.data.map((message) => message.content).join('\n');
+    expect(joined).toContain('general-20');
+    expect(joined).toContain('[[CONVERSATION_SUMMARY_V1]]');
+    expect(joined).not.toContain('[[CONVERSATION_COMPACTED_V1]]');
+  });
+
+  it('auto-compacts a conversation after 150 messages', async () => {
+    const { repo, service } = createConversationFixture();
+    for (let i = 1; i <= 151; i += 1) {
+      service.sendMessage({
+        organizationId: 'org-1',
+        threadId: 'general',
+        channelId: 'general',
+        senderId: 'human-1',
+        content: `auto-${i}`,
+      });
+    }
+
+    const stored = repo.listChannelMessages('org-1', 'general', { limit: 1_000 });
+    expect(stored.data.some((message) => message.content.startsWith('[[CONVERSATION_SUMMARY_V1]]'))).toBe(
+      true,
+    );
+    expect(stored.data.some((message) => message.content.startsWith('[[CONVERSATION_COMPACTED_V1]]'))).toBe(
+      true,
+    );
+  });
+
+  it('archives and clears a conversation from the visible feed', async () => {
+    const { service } = createConversationFixture();
+    for (let i = 1; i <= 4; i += 1) {
+      service.sendMessage({
+        organizationId: 'org-1',
+        threadId: 'general',
+        channelId: 'general',
+        senderId: 'human-1',
+        content: `cleanup-${i}`,
+      });
+    }
+
+    const result = service.archiveConversation({
+      organizationId: 'org-1',
+      threadId: 'general',
+      memberId: 'human-1',
+      mode: 'clear',
+    });
+
+    expect(result.summaryMessage?.content.startsWith('[[CONVERSATION_ARCHIVE_V1]]')).toBe(true);
+
+    const visible = await service.readChannel({
+      organizationId: 'org-1',
+      memberId: 'human-1',
+      channelId: 'general',
+      limit: 1_000,
+    });
+    expect(visible.data).toHaveLength(1);
+    expect(visible.data[0]?.kind).toBe('system');
+    expect(visible.data[0]?.content.startsWith('[[CONVERSATION_ARCHIVE_V1]]')).toBe(true);
+  });
+
+  it('does not wake participants when a conversation is summarized', async () => {
+    const { alerts, service } = createConversationFixture();
+    for (let i = 1; i <= 20; i += 1) {
+      await service.sendDirectMessage({
+        organizationId: 'org-1',
+        senderId: 'human-1',
+        recipientId: 'agent-1',
+        content: `dm-${i}`,
+      });
+    }
+    alerts.splice(0, alerts.length);
+
+    service.archiveConversation({
+      organizationId: 'org-1',
+      threadId: 'dm:agent-1:human-1',
+      memberId: 'human-1',
+      mode: 'summarize',
+    });
+
+    expect(alerts).toHaveLength(0);
+    const visible = await service.readChannel({
+      organizationId: 'org-1',
+      memberId: 'human-1',
+      channelId: 'dm:agent-1:human-1',
+      limit: 1_000,
+    });
+    expect(visible.data.some((message) => message.content.includes('CONVERSATION_SUMMARY_V1'))).toBe(true);
   });
 });

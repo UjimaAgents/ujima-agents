@@ -103,6 +103,38 @@ describe('channel.* tools — toInvocation()', () => {
     expect(inv.resourcePath).toBeUndefined();
   });
 
+  it('channel.read resolves a DM recipient id to the DM thread id', async () => {
+    let receivedChannelId: string | undefined;
+    await channelReadTool.execute({
+      invocation: {
+        organizationId: 'org-1',
+        runId: 'run-1',
+        memberId: 'agent-1',
+        toolCallId: 'call-1',
+        toolId: 'channel.read',
+        action: 'read',
+        resourceType: 'message',
+        input: { channel_id: 'agent-2', limit: 50 },
+      } as never,
+      team: {
+        getChannel: () => undefined,
+      } as never,
+      repo: {
+        getChannel: () => null,
+        listAllChannels: () => [],
+        getMember: (_orgId: string, memberId: string) =>
+          memberId === 'agent-2' ? ({ id: 'agent-2' } as never) : null,
+      } as never,
+      conversations: {
+        readChannel: (input: { channelId: string }) => {
+          receivedChannelId = input.channelId;
+          return input;
+        },
+      } as never,
+    });
+    expect(receivedChannelId).toBe('dm:agent-1:agent-2');
+  });
+
   // Regression: previously each channel.* tool overrode `permissionToolName`
   // to a short name (`post`, `reply`, `dm`, `list`, `read`). The permissions
   // middleware checks `toolName` against the role's `allowed_tools`, which
