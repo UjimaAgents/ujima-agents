@@ -218,10 +218,12 @@ function createConversationFixture() {
     members,
     organization,
     repo,
+    threads,
     savedMessages,
     savedMentions,
     service,
     thread,
+    channels,
   };
 }
 
@@ -661,5 +663,31 @@ describe('ConversationService @all mentions', () => {
       limit: 1_000,
     });
     expect(visible.data.some((message) => message.content.includes('CONVERSATION_SUMMARY_V1'))).toBe(true);
+  });
+});
+
+describe('ConversationService channel thread bootstrap', () => {
+  it('creates a missing thread when a visible channel is opened', async () => {
+    const { repo, service, organization, members, channels, threads } = createConversationFixture();
+    const channel = ChannelSchema.parse({
+      id: 'channel-engineering',
+      organizationId: organization.id,
+      name: 'engineering',
+      kind: 'general',
+      topic: '',
+      memberIds: [],
+      createdAt: '2026-05-01T15:54:31.691Z',
+    });
+    channels.set(channel.id, channel);
+    threads.delete(channel.id);
+
+    const page = service.listMessages(organization.id, channel.id, undefined, undefined, 'human-1');
+
+    expect(page.data).toHaveLength(0);
+    expect(repo.getThread(organization.id, channel.id)).toMatchObject({
+      id: channel.id,
+      channelId: channel.id,
+      title: channel.name,
+    });
   });
 });

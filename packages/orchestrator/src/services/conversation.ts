@@ -162,7 +162,27 @@ export class ConversationService {
   requireThreadAccess(organizationId: string, threadId: string, memberId: string): void {
     const thread = this.repo.getThread(organizationId, threadId);
     if (!thread) {
-      throw new Error(`Thread not found: ${threadId}`);
+      const channel = this.repo.getChannel(organizationId, threadId);
+      if (!channel) {
+        throw new Error(`Thread not found: ${threadId}`);
+      }
+      if (channel.archivedAt) {
+        throw new Error(`Channel is archived: ${threadId}`);
+      }
+      if (!this.canMemberAccessChannel(channel, memberId)) {
+        throw new Error('Forbidden: you do not have access to this thread');
+      }
+      this.repo.ensureThread({
+        id: threadId,
+        organizationId,
+        channelId: channel.id,
+        title: channel.name,
+        memberIds: channel.memberIds.length
+          ? channel.memberIds
+          : this.repo.listMembers(organizationId).map((member) => member.id),
+        createdAt: channel.createdAt ?? new Date().toISOString(),
+      });
+      return;
     }
 
     if (thread.memberIds.includes(memberId)) {
