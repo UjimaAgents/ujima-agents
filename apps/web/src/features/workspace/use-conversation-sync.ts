@@ -24,6 +24,7 @@ import {
   type ConversationStreamEnvelope,
 } from "./conversation-transport";
 import { activityStateToStatus, conversationActivityState, presenceToActivityState, type ActivityState } from "./activity-state";
+import { formatTimestamp } from "./lib/format-timestamp";
 import { useWorkspaceStore } from "./workspace-store";
 
 export interface ConversationSyncResult {
@@ -900,11 +901,5 @@ function memberAlertFailedToActivity(payload: MemberAlertFailedPayload): Activit
 }
 
 function formatTime(iso: string): string {
-  const parsed = Date.parse(iso);
-  if (Number.isNaN(parsed)) return "now";
-  return new Date(parsed).toLocaleTimeString([], {
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: true,
-  });
+  return formatTimestamp(iso);
 }
