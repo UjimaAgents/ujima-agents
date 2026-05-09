@@ -30,7 +30,16 @@ export const shellTool: OrchestratorTool<typeof ShellSchema> = {
     }
 
     return new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
-      const child = spawn(command, args, { cwd });
+      // Windows: run via cmd.exe so builtins (`dir`, etc.) and typical user commands work.
+      // Unix: avoid `shell: true` so tests and callers can invoke explicit POSIX binaries
+      // (`sh`, `cat`) without cmd.exe mangling; Git-Bash `sh.exe` remains on PATH when installed.
+      const win32 = process.platform === 'win32';
+      const child = spawn(command, args, {
+        cwd,
+        shell: win32,
+        windowsHide: win32,
+        env: process.env,
+      });
 
       let stdout = '';
       let stderr = '';

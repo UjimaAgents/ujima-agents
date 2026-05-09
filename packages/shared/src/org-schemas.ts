@@ -193,6 +193,8 @@ export const MessageSchema = z.object({
   senderKind: MemberKindSchema,
   kind: MessageKindSchema.default('human'),
   content: z.string().min(1),
+  /** Model "thinking" / reasoning from the previous turn; required by some APIs to be echoed back. */
+  reasoningContent: z.string().optional(),
   mentions: z.array(IdSchema).default([]),
   mentionNames: z.array(z.string().min(1)).optional(),
   toolCalls: z.array(MessageToolCallSchema).default([]),

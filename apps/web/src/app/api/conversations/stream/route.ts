@@ -64,16 +64,12 @@ export async function GET(request: Request) {
       sessionToken,
     );
     const verifyBody = await verifyResponse.json().catch(() => null);
-    if (!verifyResponse.ok) {
-      return NextResponse.json(
-        { code: "ERR_FORBIDDEN", message: "Unauthorized for this thread." },
-        { status: 403 },
-      );
-    }
-    const verified = parseVerifiedThreadAccess(verifyBody);
-    if (verified) {
-      verifiedChannelIds = verified.channelIds;
-      verifiedMemberIds = verified.memberIds;
+    if (verifyResponse.ok) {
+      const verified = parseVerifiedThreadAccess(verifyBody);
+      if (verified) {
+        verifiedChannelIds = verified.channelIds;
+        verifiedMemberIds = verified.memberIds;
+      }
     }
   } catch {
     return NextResponse.json(

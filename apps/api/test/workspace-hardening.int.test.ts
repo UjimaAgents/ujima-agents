@@ -19,6 +19,9 @@ import { MemberSchema, OrganizationSchema, type AgentDef, type MCPDef, type Team
 import type { LLMProvider } from '@ujima/llm/legacy';
 import { createTransport, type Transport } from '../src/transport/server';
 
+/** POSIX-only assumptions (`sh`, `cat`) or symlink privileges differ on Windows. */
+const skipIfWin32 = process.platform === 'win32';
+
 const TOKEN = 'b'.repeat(64);
 
 function stubProvider(): LLMProvider {
@@ -561,7 +564,7 @@ describe('workspace path hardening', () => {
     ).rejects.toMatchObject({ code: 'ERR_PATH_ESCAPE' });
   });
 
-  it('rejects symlink escapes that point outside the workspace root', async () => {
+  it.skipIf(skipIfWin32)('rejects symlink escapes that point outside the workspace root', async () => {
     const fixture = await createToolFixture();
     const outsideDir = await mkdtemp(join(tmpdir(), 'ujima-workspace-outside-'));
     tempDirs.push(outsideDir);
@@ -606,7 +609,7 @@ describe('workspace path hardening', () => {
     ).rejects.toMatchObject({ code: 'ERR_PATH_ESCAPE' });
   });
 
-  it('allows shell -c command strings without treating them as filesystem paths', async () => {
+  it.skipIf(skipIfWin32)('allows shell -c command strings without treating them as filesystem paths', async () => {
     const fixture = await createToolFixture();
 
     fixture.tools.allowRun(fixture.organizationId, 'run-shell-c');
@@ -632,7 +635,7 @@ describe('workspace path hardening', () => {
     });
   });
 
-  it('does not rewrite ordinary slash-containing shell args as filesystem paths', async () => {
+  it.skipIf(skipIfWin32)('does not rewrite ordinary slash-containing shell args as filesystem paths', async () => {
     const fixture = await createToolFixture();
 
     fixture.tools.allowRun(fixture.organizationId, 'run-shell-slash-arg');
@@ -658,7 +661,7 @@ describe('workspace path hardening', () => {
     });
   });
 
-  it('resolves positional file operands for file-oriented shell commands relative to cwd', async () => {
+  it.skipIf(skipIfWin32)('resolves positional file operands for file-oriented shell commands relative to cwd', async () => {
     const fixture = await createToolFixture();
 
     fixture.tools.allowRun(fixture.organizationId, 'run-shell-relative-file');

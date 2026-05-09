@@ -42,8 +42,8 @@ export const MODEL_OPTIONS_BY_PROVIDER: Record<string, readonly ProviderModelOpt
     { value: "devstral-latest", label: "devstral-latest" },
   ],
   deepseek: [
-    { value: "deepseek-v4-flash", label: "deepseek-v4-flash" },
-    { value: "deepseek-v4-pro", label: "deepseek-v4-pro" },
+    { value: "deepseek-chat-v2", label: "deepseek-chat-v2 (AI SDK v2 compatible)" },
+    { value: "deepseek-chat", label: "deepseek-chat (latest)" },
     { value: "deepseek-reasoner", label: "deepseek-reasoner" },
   ],
   xai: [
