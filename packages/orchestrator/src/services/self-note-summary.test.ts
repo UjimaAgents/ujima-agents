@@ -1,13 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import type { Message } from '@ujima/shared';
 import {
+  CONVERSATION_ARCHIVE_MARKER,
+  CONVERSATION_COMPACTED_MARKER,
+  CONVERSATION_SUMMARY_MARKER,
   SELF_NOTE_COMPACTED_MARKER,
   SELF_NOTE_SUMMARY_MARKER,
+  buildConversationArchiveSummary,
+  buildConversationSummary,
   buildStructuredConversationSummary,
   buildSelfNoteSummary,
   formatTimestampedContent,
+  isArchivedConversation,
+  isCompactedConversation,
   isCompactedSelfNote,
   isMessageWithMarker,
+  isConversationSummary,
   isSelfSummaryNote,
   toReadableEnglishTimestamp,
 } from './conversation-summary.js';
@@ -47,9 +55,12 @@ describe('conversation-summary', () => {
       makeMessage('Preference: short answers.', '2026-05-08T09:41:00.000Z'),
     ]);
     expect(summary.startsWith(SELF_NOTE_SUMMARY_MARKER)).toBe(true);
-    expect(summary).toContain('Current goals');
-    expect(summary).toContain('Decisions');
-    expect(summary).toContain('Important facts');
+    expect(summary).toContain('# Compacted 2 earlier self notes.');
+    expect(summary).toContain('> README-style compact summary. Keep this concise, skimmable, and focused on durable context.');
+    expect(summary).toContain('> It is okay to forget details that are not important.');
+    expect(summary).toContain('## Current goals');
+    expect(summary).toContain('## Decisions');
+    expect(summary).toContain('## Important facts');
   });
 
   it('builds general conversation summaries for non-self contexts', () => {
@@ -63,13 +74,34 @@ describe('conversation-summary', () => {
       ],
     });
     expect(summary).toContain('[[CONVERSATION_SUMMARY_V1]]');
-    expect(summary).toContain('Compacted support-thread conversation.');
+    expect(summary).toContain('# Compacted support-thread conversation.');
+    expect(summary).toContain('## Current goals');
+    expect(summary).toContain('## Decisions');
     expect(summary).toContain('Customer asked about invoice reconciliation.');
+  });
+
+  it('builds conversation archive summaries with dedicated markers', () => {
+    const summary = buildConversationArchiveSummary([
+      makeMessage('Conversation cleared for a fresh start.', '2026-05-08T09:40:00.000Z'),
+    ]);
+    expect(summary.startsWith(CONVERSATION_ARCHIVE_MARKER)).toBe(true);
+    expect(summary).toContain('Archived 1 earlier messages.');
+  });
+
+  it('builds rolling conversation summaries with dedicated markers', () => {
+    const summary = buildConversationSummary([
+      makeMessage('Keep the latest request visible.', '2026-05-08T09:40:00.000Z'),
+    ]);
+    expect(summary.startsWith(CONVERSATION_SUMMARY_MARKER)).toBe(true);
+    expect(summary).toContain('Compacted 1 earlier messages.');
   });
 
   it('detects summary and compacted markers', () => {
     expect(isSelfSummaryNote(makeMessage(`${SELF_NOTE_SUMMARY_MARKER} summary`, '2026-05-08T09:41:00.000Z'))).toBe(true);
     expect(isCompactedSelfNote(makeMessage(`${SELF_NOTE_COMPACTED_MARKER} compacted`, '2026-05-08T09:41:00.000Z'))).toBe(true);
+    expect(isConversationSummary(makeMessage(`${CONVERSATION_SUMMARY_MARKER} summary`, '2026-05-08T09:41:00.000Z'))).toBe(true);
+    expect(isCompactedConversation(makeMessage(`${CONVERSATION_COMPACTED_MARKER} compacted`, '2026-05-08T09:41:00.000Z'))).toBe(true);
+    expect(isArchivedConversation(makeMessage(`${CONVERSATION_ARCHIVE_MARKER} archived`, '2026-05-08T09:41:00.000Z'))).toBe(true);
     expect(isMessageWithMarker(makeMessage('[[X]] anything', '2026-05-08T09:41:00.000Z'), '[[X]]')).toBe(true);
   });
 });

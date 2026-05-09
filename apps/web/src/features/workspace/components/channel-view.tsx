@@ -465,6 +465,10 @@ export function ChannelView({
         )}
         <ChatInput
           organizationId={organizationId}
+          onCommand={async (command) => {
+            await feed.archiveConversation(command);
+            setReplyTo(null);
+          }}
           placeholder={
             isAgent
               ? `Message @${conversation.name}...`

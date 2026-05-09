@@ -13,10 +13,20 @@ import {
 import { readSessionToken } from '../session-token.js';
 
 const ThreadIdParamsSchema = z.object({ threadId: IdSchema });
+const ConversationArchiveBodySchema = z.object({
+  organizationId: IdSchema,
+  mode: z.enum(['summarize', 'clear']),
+});
 const ListChannelsQuerySchema = OrganizationQuerySchema.merge(PaginationQuerySchema);
 const ListChannelsResponseSchema = createPaginatedSchema(ChannelSchema);
 const ListMessagesResponseSchema = createPaginatedSchema(MessageSchema);
 const ThreadReadResponseSchema = z.object({ ok: z.literal(true) });
+const ThreadArchiveResponseSchema = z.object({
+  ok: z.literal(true),
+  mode: z.enum(['summarize', 'clear']),
+  summaryId: IdSchema.nullish(),
+  archivedCount: z.number(),
+});
 
 export interface ConversationRoutesOptions {
   repo: Repository;
@@ -247,6 +257,58 @@ export function registerConversationRoutes(
           ? 404
           : 400;
       return replyError(reply, status, message);
+    }
+  });
+
+  app.post('/threads/:threadId/archive', {
+    schema: {
+      description: 'Archive a thread, either by summarizing it or clearing visible history',
+      tags: ['Conversations'],
+      params: ThreadIdParamsSchema,
+      body: ConversationArchiveBodySchema,
+      response: {
+        200: ThreadArchiveResponseSchema,
+        400: ApiErrorSchema,
+        401: ApiErrorSchema,
+        403: ApiErrorSchema,
+        404: ApiErrorSchema,
+      },
+    },
+  }, async (req, reply) => {
+    try {
+      const authState = auth.getAuthState(readSessionToken(req));
+      if (!authState.member) {
+        return reply.code(401).send({ code: 'ERR_UNAUTHORIZED', message: 'Session required' });
+      }
+      if (authState.user?.organizationId !== req.body.organizationId) {
+        return reply.code(403).send({ code: 'ERR_FORBIDDEN', message: 'Unauthorized for this organization.' });
+      }
+
+      conversations.requireThreadAccess(
+        req.body.organizationId,
+        req.params.threadId,
+        authState.member.id,
+      );
+
+      const result = conversations.archiveConversation({
+        organizationId: req.body.organizationId,
+        threadId: req.params.threadId,
+        memberId: authState.member.id,
+        mode: req.body.mode,
+      });
+
+      return {
+        ok: true as const,
+        mode: req.body.mode,
+        summaryId: result.summaryMessage?.id ?? null,
+        archivedCount: result.compactedMessageIds.length,
+      };
+    } catch (err) {
+      const message = errMessage(err);
+      if (message.startsWith('Forbidden')) {
+        return reply.code(403).send({ code: 'ERR_FORBIDDEN', message });
+      }
+      return notFound(reply, message);
     }
   });
 }

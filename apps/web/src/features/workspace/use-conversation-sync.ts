@@ -24,6 +24,7 @@ import {
   type ConversationStreamEnvelope,
 } from "./conversation-transport";
 import { activityStateToStatus, conversationActivityState, presenceToActivityState, type ActivityState } from "./activity-state";
+import { formatTimestamp } from "./lib/format-timestamp";
 import { useWorkspaceStore } from "./workspace-store";
 
 export interface ConversationSyncResult {
@@ -39,6 +40,7 @@ export interface ConversationSyncResult {
   loading: boolean;
   error?: string;
   sendMessage(content: string, parentMessageId?: string, attachmentIds?: string[]): Promise<void>;
+  archiveConversation(mode: "summarize" | "clear"): Promise<void>;
 }
 
 export function useConversationSync(
@@ -75,6 +77,52 @@ export function useConversationSync(
     storeMembersRef.current = storeMembers;
   }, [storeMembers]);
 
+  const loadConversationState = useCallback(
+    async (signal: AbortSignal, currentConversationKey: string) => {
+      if (!transport) return;
+      const [history, latestBootstrap] = await Promise.all([
+        loadHistory(transport.organizationId, transport.threadId, signal),
+        loadBootstrap(signal),
+      ]);
+      if (signal.aborted || currentConversationKey !== conversationKey) return;
+      setError(undefined);
+      hydrateMessages(history, (message) => messageToChatMessage(message, storeMembersRef.current), messageToActivity);
+      const activeRuns = latestBootstrap?.activeRuns ?? bootstrap.activeRuns;
+      const pendingApprovals = latestBootstrap?.pendingApprovals ?? bootstrap.pendingApprovals;
+      for (const run of activeRuns.filter((item) => item.threadId === transport.threadId)) {
+        upsertRun(run, runToActivity);
+      }
+      for (const approval of pendingApprovals.filter((item) =>
+        shouldHydrateApproval(item, {
+          conversation,
+          currentThreadId: transport.threadId,
+          history,
+          runs: activeRuns,
+        }),
+      )) {
+        upsertApproval(
+          approval,
+          (value, state) => approvalToCard(value, { members: state.members }),
+          approvalToActivity,
+        );
+      }
+      setLoading(false);
+    },
+    [
+      approvalToActivity,
+      bootstrap.activeRuns,
+      bootstrap.pendingApprovals,
+      conversation,
+      conversationKey,
+      hydrateMessages,
+      setError,
+      setLoading,
+      transport,
+      upsertApproval,
+      upsertRun,
+    ],
+  );
+
   useEffect(() => {
     if (!transport) {
       return;
@@ -82,38 +130,9 @@ export function useConversationSync(
 
     const abortController = new AbortController();
     const currentConversationKey = `${transport.organizationId}:${transport.threadId}`;
-    resetConversationFeed(currentConversationKey);
-
-    void Promise.all([
-      loadHistory(transport.organizationId, transport.threadId, abortController.signal),
-      loadBootstrap(abortController.signal),
-    ])
-      .then(([history, latestBootstrap]) => {
-        if (abortController.signal.aborted || currentConversationKey !== conversationKey) return;
-        setError(undefined);
-        hydrateMessages(history, (message) => messageToChatMessage(message, storeMembersRef.current), messageToActivity);
-        const activeRuns = latestBootstrap?.activeRuns ?? bootstrap.activeRuns;
-        const pendingApprovals = latestBootstrap?.pendingApprovals ?? bootstrap.pendingApprovals;
-        for (const run of activeRuns.filter((item) => item.threadId === transport.threadId)) {
-          upsertRun(run, runToActivity);
-        }
-        for (const approval of pendingApprovals.filter((item) =>
-          shouldHydrateApproval(item, {
-            conversation,
-            currentThreadId: transport.threadId,
-            history,
-            runs: activeRuns,
-          }),
-        )) {
-          upsertApproval(
-            approval,
-            (value, state) => approvalToCard(value, { members: state.members }),
-            approvalToActivity,
-          );
-        }
-        setLoading(false);
-      })
-      .catch((err) => {
+    const loadTimer = window.setTimeout(() => {
+      resetConversationFeed(currentConversationKey);
+      void loadConversationState(abortController.signal, currentConversationKey).catch((err) => {
         if (abortController.signal.aborted || currentConversationKey !== conversationKey) return;
         setLoading(false);
         setError({
@@ -121,6 +140,7 @@ export function useConversationSync(
           message: err instanceof Error ? err.message : "Unable to load conversation history.",
         });
       });
+    }, 0);
 
     const params = buildConversationStreamParams(transport);
     const source = new EventSource(`/api/conversations/stream?${params.toString()}`);
@@ -163,24 +183,23 @@ export function useConversationSync(
 
     return () => {
       abortController.abort();
+      window.clearTimeout(loadTimer);
       source.close();
     };
   }, [
     appendActivity,
     appendMember,
-    bootstrap.activeRuns,
-    bootstrap.pendingApprovals,
     conversation,
-    hydrateMessages,
+    conversation.id,
+    conversation.type,
+    conversationKey,
+    loadConversationState,
     receiveMessage,
     removeMessage,
     resetConversationFeed,
     setLoading,
     setMemberActivity,
     transport,
-    conversationKey,
-    conversation.id,
-    conversation.type,
     upsertApproval,
     upsertRun,
   ]);
@@ -270,6 +289,39 @@ export function useConversationSync(
     [addPendingMessage, bootstrap.auth.member, conversation.id, conversation.type, receiveMessage, removeMessage, transport],
   );
 
+  const archiveConversation = useCallback(
+    async (mode: "summarize" | "clear") => {
+      if (!transport || !bootstrap.auth.member) {
+        throw new Error("Sign in before archiving a conversation.");
+      }
+
+      const response = await fetch(`/api/conversations/${encodeURIComponent(transport.threadId)}/archive`, {
+        method: "POST",
+        body: JSON.stringify({
+          organizationId: transport.organizationId,
+          mode,
+        }),
+      });
+      const body = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(
+          body &&
+            typeof body === "object" &&
+            "message" in body &&
+            typeof body.message === "string"
+            ? body.message
+            : "Unable to archive conversation.",
+        );
+      }
+
+      const controller = new AbortController();
+      const currentConversationKey = `${transport.organizationId}:${transport.threadId}`;
+      resetConversationFeed(currentConversationKey);
+      await loadConversationState(controller.signal, currentConversationKey);
+    },
+    [bootstrap.auth.member, loadConversationState, resetConversationFeed, transport],
+  );
+
   useEffect(() => {
     if (conversation.type !== "agent") return;
     if (loading) {
@@ -302,6 +354,7 @@ export function useConversationSync(
     loading,
     error: currentError,
     sendMessage,
+    archiveConversation,
   };
 }
 
@@ -649,8 +702,9 @@ function messageToChatMessage(message: Message, members: Member[]): ChatMessageD
     id: message.id,
     senderId: message.senderId,
     parentMessageId: message.parentMessageId,
-    role: sender?.roleName ?? message.senderKind,
-    name: sender?.name ?? message.senderId,
+    role: message.kind === "system" ? "system" : sender?.roleName ?? message.senderKind,
+    name: message.kind === "system" ? "System" : sender?.name ?? message.senderId,
+    kind: message.kind,
     time: formatTime(message.createdAt),
     content: message.content,
     createdAt: message.createdAt,
@@ -847,11 +901,5 @@ function memberAlertFailedToActivity(payload: MemberAlertFailedPayload): Activit
 }
 
 function formatTime(iso: string): string {
-  const parsed = Date.parse(iso);
-  if (Number.isNaN(parsed)) return "now";
-  return new Date(parsed).toLocaleTimeString([], {
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: true,
-  });
+  return formatTimestamp(iso);
 }

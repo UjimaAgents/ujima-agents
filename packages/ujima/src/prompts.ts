@@ -161,6 +161,7 @@ export function buildAgentSystemPrompt(
     formatChannelTargets(accessibleChannels),
     'Direct message recipient IDs:',
     formatDirectMessageTargets(currentMemberId, members),
+    'For DM chats, use the other person\'s member id as the conversation reference. channel.read resolves it to the DM thread automatically.',
     'Use destination: thread for the current conversation, channel for a channel post, and dm for a direct recipient.',
     ...MESSAGE_TOOL_USAGE_GUIDANCE,
     'If the message is a greeting, check-in, or casual question, reply briefly instead of staying silent.',

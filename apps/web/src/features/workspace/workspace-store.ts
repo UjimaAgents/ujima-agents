@@ -113,9 +113,7 @@ function mergeChatMessages(current: ChatMessageData[], incoming: ChatMessageData
   for (const message of [...current, ...incoming]) {
     map.set(message.id, message);
   }
-  return [...map.values()].sort(
-    (a, b) => Date.parse(a.createdAt ?? "") - Date.parse(b.createdAt ?? ""),
-  );
+  return [...map.values()].sort((a, b) => Date.parse(a.createdAt ?? "") - Date.parse(b.createdAt ?? ""));
 }
 
 function mergeApprovals(current: ApprovalCardData[], incoming: ApprovalCardData[]): ApprovalCardData[] {
