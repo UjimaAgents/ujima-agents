@@ -109,7 +109,6 @@ export function useConversationSync(
       setLoading(false);
     },
     [
-      approvalToActivity,
       bootstrap.activeRuns,
       bootstrap.pendingApprovals,
       conversation,

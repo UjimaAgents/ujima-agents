@@ -823,11 +823,14 @@ export function ChatInput({
                       } ${attachment.uploading ? "opacity-80" : ""}`}
                     >
                       {attachment.category === "image" ? (
-                        <img
+                        <>
+                          {/* eslint-disable-next-line @next/next/no-img-element -- blob or cookie-backed API URL */}
+                          <img
                           src={attachment.previewUrl ?? thumbnailUrl(attachment.id)}
                           alt={attachment.filename}
                           className="h-full w-full object-cover"
                         />
+                        </>
                       ) : (
                         <div className="flex h-full items-center gap-3 px-3 py-2">
                           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-violet-500/10 text-violet-600 dark:text-violet-300">
