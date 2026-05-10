@@ -1,4 +1,11 @@
-import type { ActivityEvent, ApprovalRequest, RunState } from "@ujima/shared";
+import {
+  parseApprovalReasonValue,
+  parseShellScope,
+  shellInvocationDisplayLine,
+  type ActivityEvent,
+  type ApprovalRequest,
+  type RunState,
+} from "@ujima/shared";
 import type { TraceStepData } from "./components/chat/details-sidebar";
 
 const TRACE_ACTIVITY_TYPES = new Set([
@@ -165,6 +172,68 @@ function toObject(value: unknown): Record<string, unknown> | undefined {
   return value as Record<string, unknown>;
 }
 
+const MAX_TERMINAL_CHARS = 16_384;
+
+function parseShellFromToolCallArgs(
+  args: Record<string, unknown> | undefined,
+): { cwd: string; command: string; args?: string[] } | null {
+  if (!args) return null;
+  const nested = toObject((args as { input?: unknown }).input);
+  const command =
+    typeof args.command === "string"
+      ? args.command
+      : typeof nested?.command === "string"
+        ? nested.command
+        : "";
+  if (!command) return null;
+  const cwdRaw =
+    typeof args.cwd === "string"
+      ? args.cwd
+      : typeof nested?.cwd === "string"
+        ? nested.cwd
+        : "";
+  const cwd = cwdRaw || ".";
+  const rawArgs = (args as { args?: unknown }).args ?? nested?.args;
+  const extra =
+    Array.isArray(rawArgs) && rawArgs.length ? rawArgs.map((a) => String(a)) : undefined;
+  return extra?.length ? { cwd, command, args: extra } : { cwd, command };
+}
+
+function truncateTerminalText(text: string): string {
+  if (text.length <= MAX_TERMINAL_CHARS) return text;
+  return `${text.slice(0, MAX_TERMINAL_CHARS)}\n\n… (truncated)`;
+}
+
+function shellToolAggregateOutput(result: unknown, isError: boolean, errorText?: string): string {
+  if (isError) {
+    const base = errorText?.trim() || "";
+    if (base) return truncateTerminalText(base);
+    try {
+      return truncateTerminalText(JSON.stringify(result, null, 2));
+    } catch {
+      return truncateTerminalText(String(result));
+    }
+  }
+  const rec = toObject(result);
+  if (rec && typeof rec.status === "string") {
+    if (rec.status === "waiting_for_approval") {
+      return "";
+    }
+    if (rec.status === "blocked") {
+      const reason = typeof rec.reason === "string" ? rec.reason : "Blocked by policy.";
+      return truncateTerminalText(reason);
+    }
+  }
+  const out = typeof rec?.stdout === "string" ? rec.stdout : "";
+  const err = typeof rec?.stderr === "string" ? rec.stderr : "";
+  const parts: string[] = [];
+  if (out.trim()) parts.push(out.trimEnd());
+  if (err.trim()) parts.push(`stderr:\n${err.trimEnd()}`);
+  const joined = parts.join("\n\n").trim();
+  if (!joined) return "";
+  return truncateTerminalText(joined);
+}
+
 function inferToolAction(args?: Record<string, unknown>): {
   action?: string;
   resourceType?: string;
@@ -280,10 +349,10 @@ function deriveToolLine(
   };
 }
 
-/** Avoid duplicating the agent's chat reply — `run.summary` on completed runs is often the full message body. */
+/** Completed runs often duplicate the agent message in `run.summary`; omit detail in the trace. */
 function runDetailForTrace(run: RunState): string {
   if (run.status === "completed") {
-    return "Finished — see the conversation for the full reply.";
+    return "";
   }
   if (run.status === "failed" || run.status === "cancelled") {
     const text = run.summary?.trim() || run.step?.trim();
@@ -322,24 +391,40 @@ function approvalEventToStep(
   const pending = approval.status === "pending";
   const actor = resolveMember(input, approval.requestedBy);
   const actorLabel = actor.isAgent ? `Agent ${actor.name}` : actor.name;
+  const scopeDecoded = parseApprovalReasonValue(approval.reason, "scope");
+  const shell = scopeDecoded ? parseShellScope(scopeDecoded) : null;
   const title = pending
-    ? `${actorLabel} requested ${approval.action} access to ${approval.resourcePath}`
+    ? shell
+      ? `${actorLabel} · shell`
+      : `${actorLabel} · ${approval.action}`
     : approval.status === "approved"
-      ? `Access granted to ${actorLabel}`
-      : `Access denied for ${actorLabel}`;
+      ? `${actorLabel} · allowed`
+      : `${actorLabel} · denied`;
+  const terminal: TraceStepData["terminal"] | undefined = shell
+    ? {
+        cwd: shell.cwd,
+        commandLine: shellInvocationDisplayLine(shell),
+      }
+    : undefined;
+  const detail = shell ? "" : `${approval.action} · ${approval.resourcePath}`;
   const status: TraceStepData["status"] = pending
     ? "running"
     : approval.status === "rejected"
       ? "failed"
       : "success";
+  const subtext =
+    shell || !approval.reason
+      ? undefined
+      : truncatePreview(approval.reason, 200);
   return {
     id: event.event_id,
     title,
-    detail: `${approval.action} · ${approval.resourcePath}`,
+    detail,
     time: formatClock(event.timestamp),
     duration: "—",
     status,
-    subtext: approval.reason ? truncatePreview(approval.reason, 200) : undefined,
+    subtext,
+    terminal,
   };
 }
 
@@ -382,18 +467,45 @@ function buildToolStep(
 
   const line = deriveToolLine(input, call ?? result, callBody);
 
+  let terminal: TraceStepData["terminal"] | undefined;
+  if (name === "shell") {
+    const shellArgs = parseShellFromToolCallArgs(
+      callBody?.toolCall?.args as Record<string, unknown> | undefined,
+    );
+    if (shellArgs) {
+      const cmdLine = shellInvocationDisplayLine(shellArgs);
+      if (hasResult) {
+        const outText = shellToolAggregateOutput(resultBody?.toolResult?.result, isError, errorText);
+        terminal = {
+          cwd: shellArgs.cwd,
+          commandLine: cmdLine,
+          output: outText,
+          outputTone: isError ? "error" : "default",
+        };
+      } else {
+        terminal = {
+          cwd: shellArgs.cwd,
+          commandLine: cmdLine,
+        };
+      }
+    }
+  }
+
+  const defaultSubtext = hasResult
+    ? isError
+      ? `Error: ${errorText ?? (resultPreview || "unknown error")}`
+      : resultPreview || ""
+    : "";
+
   return {
     id: `tool:${toolCallId}:${call?.event_id ?? ""}:${result?.event_id ?? ""}`,
     title: line.title,
-    detail: line.detail ?? (argsPreview || `${name} called`),
+    detail: terminal ? "" : line.detail ?? (argsPreview || `${name} called`),
     time: formatClock(ts),
     duration,
     status,
-    subtext: hasResult
-      ? isError
-        ? `Error: ${errorText ?? (resultPreview || "unknown error")}`
-        : resultPreview || "Done."
-      : "Waiting for result…",
+    subtext: terminal ? undefined : defaultSubtext.trim() || undefined,
+    terminal,
   };
 }
 

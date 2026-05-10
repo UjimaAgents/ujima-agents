@@ -1006,7 +1006,7 @@ function AgentEditorModal({
                   })
                 ) : (
                   <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                    No tools discovered from presets or team settings yet.
+                    No tools from presets or team settings.
                   </p>
                 )}
               </div>

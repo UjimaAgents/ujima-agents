@@ -41,6 +41,31 @@ export function parseShellScope(scope: string): ParsedShellScope | null {
   return args?.length ? { cwd, command, args } : { cwd, command };
 }
 
+/** Single-line shell invocation for display (not argv-safe). */
+export function shellInvocationDisplayLine(parsed: ParsedShellScope): string {
+  return [parsed.command, ...(parsed.args ?? [])].join(' ').trim();
+}
+
+/**
+ * Compact chat body when an approval is relayed (e.g. owner DM).
+ * Shell: fenced block with cwd then `$ command …`. Otherwise: `action` · `path`.
+ */
+export function formatApprovalRelayMarkdown(approval: {
+  action: string;
+  resourcePath: string;
+  reason: string;
+}): string {
+  const scopeEncoded = parseApprovalReasonValue(approval.reason, 'scope');
+  if (scopeEncoded) {
+    const shell = parseShellScope(scopeEncoded);
+    if (shell) {
+      const cmd = shellInvocationDisplayLine(shell);
+      return ['```', shell.cwd, `$ ${cmd}`, '```'].join('\n');
+    }
+  }
+  return `\`${approval.action}\` · \`${approval.resourcePath}\``;
+}
+
 function parseLegacyArgs(value: string | undefined): string[] | undefined {
   if (!value) return undefined;
   try {

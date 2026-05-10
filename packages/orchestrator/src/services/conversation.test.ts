@@ -130,7 +130,7 @@ function createConversationFixture() {
       });
       const rows = desc.slice(0, limit + 1);
       const hasMore = rows.length > limit;
-      if (hasMore) rows.shift();
+      if (hasMore) rows.pop();
       const data = rows.reverse();
       const head = hasMore ? data[0] : undefined;
       return {
@@ -458,7 +458,7 @@ describe('ConversationService @all mentions', () => {
 
   it('compacts old self notes after threshold overflow', async () => {
     const { repo, service } = createConversationFixture();
-    for (let i = 1; i <= 151; i += 1) {
+    for (let i = 1; i <= 501; i += 1) {
       service.sendSelfNote({
         organizationId: 'org-1',
         memberId: 'agent-1',
@@ -486,12 +486,12 @@ describe('ConversationService @all mentions', () => {
       true,
     );
     expect(visible.data.some((message) => message.content.startsWith('[[SELF_NOTE_SUMMARY_V1]]'))).toBe(false);
-    expect(visible.data.some((message) => message.content.includes('note-151'))).toBe(true);
+    expect(visible.data.some((message) => message.content.includes('note-501'))).toBe(true);
   });
 
   it('keeps newer self notes visible even when a summary exists', async () => {
     const { service } = createConversationFixture();
-    for (let i = 1; i <= 151; i += 1) {
+    for (let i = 1; i <= 501; i += 1) {
       service.sendSelfNote({
         organizationId: 'org-1',
         memberId: 'agent-1',
@@ -517,7 +517,7 @@ describe('ConversationService @all mentions', () => {
 
   it('keeps a single rolling summary across paginated self-note history', async () => {
     const { repo, service } = createConversationFixture();
-    for (let i = 1; i <= 260; i += 1) {
+    for (let i = 1; i <= 870; i += 1) {
       service.sendSelfNote({
         organizationId: 'org-1',
         memberId: 'agent-1',
@@ -542,7 +542,7 @@ describe('ConversationService @all mentions', () => {
       limit: 1_000,
     });
     const joined = visible.data.map((message) => message.content).join('\n');
-    expect(joined).toContain('history-260');
+    expect(joined).toContain('history-870');
     expect(joined).not.toContain('SELF_NOTE_SUMMARY_V1');
     expect(joined.includes('SELF_NOTE_COMPACTED_V1')).toBe(false);
   });
@@ -580,9 +580,9 @@ describe('ConversationService @all mentions', () => {
     expect(joined).not.toContain('[[CONVERSATION_COMPACTED_V1]]');
   });
 
-  it('auto-compacts a conversation after 150 messages', async () => {
+  it('auto-compacts a conversation after 500 messages', async () => {
     const { emits, repo, service } = createConversationFixture();
-    for (let i = 1; i <= 151; i += 1) {
+    for (let i = 1; i <= 501; i += 1) {
       service.sendMessage({
         organizationId: 'org-1',
         threadId: 'general',
@@ -599,12 +599,12 @@ describe('ConversationService @all mentions', () => {
     expect(stored.data.some((message) => message.content.startsWith('[[CONVERSATION_COMPACTED_V1]]'))).toBe(
       true,
     );
-    expect(emits).toHaveLength(152);
+    expect(emits).toHaveLength(502);
   });
 
   it('folds earlier conversation summaries into later compactions', async () => {
     const { repo, service } = createConversationFixture();
-    for (let i = 1; i <= 186; i += 1) {
+    for (let i = 1; i <= 536; i += 1) {
       service.sendMessage({
         organizationId: 'org-1',
         threadId: 'general',

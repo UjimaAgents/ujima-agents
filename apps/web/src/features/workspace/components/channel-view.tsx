@@ -453,7 +453,7 @@ export function ChannelView({
               </div>
             </TabPanel>
           ) : (
-            <TabEmpty emptyLabel="No approvals yet." />
+            <TabEmpty emptyLabel="No approvals." />
           )
         ) : activeTab === "tasks" ? (
           feed.runs.length > 0 ? (
@@ -465,7 +465,7 @@ export function ChannelView({
               </div>
             </TabPanel>
           ) : (
-            <TabEmpty emptyLabel="No active tasks yet." />
+            <TabEmpty emptyLabel="No active tasks." />
           )
         ) : activeTab === "files" ? (
           conversationAttachments.length > 0 ? (
@@ -498,7 +498,7 @@ export function ChannelView({
               </div>
             </TabPanel>
           ) : (
-            <TabEmpty emptyLabel="No attachments yet." />
+            <TabEmpty emptyLabel="No attachments." />
           )
         ) : (
           feed.activity.length > 0 ? (
@@ -510,7 +510,7 @@ export function ChannelView({
               </div>
             </TabPanel>
           ) : (
-            <TabEmpty emptyLabel="No activity yet." />
+            <TabEmpty emptyLabel="No activity." />
           )
         )}
         <ChatInput
@@ -526,12 +526,9 @@ export function ChannelView({
           }
           inlineError={feed.error}
           statusHint={
-            [
-              typingLabel ?? (feed.loading ? "Syncing history…" : ""),
-              stoppableRunId ? "Empty box: red button or Enter stops the run." : "",
-            ]
-              .filter(Boolean)
-              .join(" ") || "Enter to send, Shift+Enter for a new line."
+            typingLabel ||
+            (feed.loading ? "Syncing…" : "") ||
+            "Enter to send · Shift+Enter newline"
           }
           mentionSuggestions={mentionSuggestions}
           replyTo={replyTo}
@@ -566,13 +563,9 @@ export function ChannelView({
               {detailsTab === "Reasoning trace" ? (
                 <ReasoningTracePanel steps={reasoningTraceSteps} autoScroll={traceAutoScroll} />
               ) : detailsTab === "Changes" ? (
-                <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                  File-level diffs for this conversation are not wired up yet.
-                </p>
+                <p className="text-xs text-zinc-500 dark:text-zinc-400">Diffs unavailable.</p>
               ) : (
-                <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                  No extra metadata for this view yet.
-                </p>
+                <p className="text-xs text-zinc-500 dark:text-zinc-400">No metadata.</p>
               )}
             </DetailsSidebar>
           </div>

@@ -24,9 +24,9 @@ function createRenderer(mentionNames: string[]) {
   renderer.code = function ({ text, lang }: { text: string; lang?: string }) {
     const language = lang ? `text-[10px] text-zinc-400 px-3 pt-2 pb-0 block` : "hidden";
     return (
-      `<div class="my-2 overflow-hidden rounded-xl border border-zinc-200 bg-zinc-950 dark:border-zinc-800 dark:bg-black">` +
+      `<div class="my-2 overflow-hidden rounded-xl border border-zinc-200/90 bg-zinc-50 dark:border-zinc-800/50 dark:bg-[#121214]">` +
       `<span class="${language}">${h(lang ?? "")}</span>` +
-      `<pre class="overflow-x-auto p-3 pt-1.5 text-xs leading-relaxed"><code class="text-zinc-100 dark:text-zinc-100">${h(text)}</code></pre>` +
+      `<pre class="overflow-x-auto p-3 pt-1.5 text-xs leading-relaxed text-zinc-800 dark:text-zinc-200"><code class="text-inherit">${h(text)}</code></pre>` +
       `</div>`
     );
   };

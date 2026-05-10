@@ -22,10 +22,8 @@ export function ConversationSkeleton({
           </div>
         </div>
       ))}
-      <div className="rounded-xl border border-dashed border-zinc-200 bg-zinc-50 px-4 py-3 text-[11px] text-zinc-500 dark:border-zinc-800 dark:bg-zinc-950">
-        {conversation.type === "agent"
-          ? `${conversation.name} will start appearing here as soon as the first message lands.`
-          : `Live updates for #${conversation.name} will appear here as the workspace activity starts flowing.`}
+      <div className="rounded-xl border border-dashed border-zinc-200 bg-zinc-50 px-4 py-2 text-center text-[11px] text-zinc-400 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-500">
+        …
       </div>
     </div>
   );

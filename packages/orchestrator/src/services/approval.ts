@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import {
   ApprovalRequestSchema,
   SocketEventNames,
+  formatApprovalRelayMarkdown,
   orgRoom,
   runRoom,
   threadRoom,
@@ -332,7 +333,7 @@ function buildFamilyApprovalScope(rawScope: string): string {
 }
 
 function buildApprovalRelayMessage(approval: ApprovalRequest): string {
-  return `Approval requested for ${approval.action} ${approval.resourcePath}.`;
+  return formatApprovalRelayMarkdown(approval);
 }
 
 function isActiveRunStatus(status: string): boolean {
