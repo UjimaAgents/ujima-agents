@@ -1,10 +1,8 @@
 import {
-  parseApprovalDisplayScopesFromReason,
   parseFilesystemToolCallArgs,
   parseShellToolCallArgs,
   shellInvocationDisplayLine,
   type ActivityEvent,
-  type ApprovalRequest,
   type RunState,
 } from "@ujima/shared";
 import type { TraceStepData } from "./components/chat/details-sidebar";
@@ -19,9 +17,6 @@ const TRACE_ACTIVITY_TYPES = new Set([
   "run_completed",
   "run_failed",
   "run_cancelled",
-  "approval_requested",
-  "approval_approved",
-  "approval_rejected",
   "channel_message",
   "thread_message",
 ]);
@@ -41,7 +36,7 @@ export interface ReasoningTraceInput {
   agentIdFilter?: string;
   conversationName: string;
   conversationType: "channel" | "agent";
-  members: Array<{ id: string; name: string; kind?: string }>;
+  members: { id: string; name: string; kind?: string }[];
   activity: ActivityEvent[];
   runs: RunState[];
 }
@@ -108,13 +103,6 @@ function collectRunIdsForThread(input: ReasoningTraceInput): Set<string> {
   }
 
   return ids;
-}
-
-function approvalMatchesThread(
-  approval: ApprovalRequest,
-  runIdsForThread: Set<string>,
-): boolean {
-  return typeof approval.runId === "string" && runIdsForThread.has(approval.runId);
 }
 
 function toolPayloadMatchesThread(
@@ -296,7 +284,7 @@ function deriveToolLine(
     "tool"
   ).toLowerCase();
   const parsed = inferToolAction(callBody?.toolCall?.args);
-  const actorLabel = actor.isAgent ? `Agent ${actor.name}` : actor.name;
+  const actorLabel = actor.name;
   const location =
     input.conversationType === "channel"
       ? `in Channel ${input.conversationName}`
@@ -425,72 +413,6 @@ function runEventToStep(event: ActivityEvent, run: RunState): TraceStepData {
     time: formatTimestamp(event.timestamp),
     duration: "—",
     status,
-    subtext: run.status === "failed" ? "Run ended with an error." : undefined,
-  };
-}
-
-function approvalEventToStep(
-  input: ReasoningTraceInput,
-  event: ActivityEvent,
-  approval: ApprovalRequest,
-): TraceStepData {
-  const pending = approval.status === "pending";
-  const actor = resolveMember(input, approval.requestedBy);
-  const actorLabel = actor.isAgent ? `Agent ${actor.name}` : actor.name;
-  const scope = parseApprovalDisplayScopesFromReason(approval.reason);
-  const shell = scope.shell;
-  const fs = scope.filesystem;
-  const title = pending
-    ? shell
-      ? `${actorLabel} · shell`
-      : fs
-        ? fs.action === "read"
-          ? `${actorLabel} · read`
-          : `${actorLabel} · patch`
-        : `${actorLabel} · ${approval.action}`
-    : approval.status === "approved"
-      ? `${actorLabel} · allowed`
-      : `${actorLabel} · denied`;
-  const terminal: TraceStepData["terminal"] | undefined = shell
-    ? {
-        cwd: shell.cwd,
-        commandLine: shellInvocationDisplayLine(shell),
-      }
-    : undefined;
-  const filesystem: TraceStepData["filesystem"] | undefined =
-    fs && !shell
-      ? {
-          action: fs.action,
-          resourcePath: fs.resourcePath,
-          body:
-            fs.action === "write"
-              ? typeof fs.patch === "string" && fs.patch.length > 0
-                ? fs.patch
-                : typeof fs.content === "string" && fs.content.length > 0
-                  ? fs.content
-                  : undefined
-              : undefined,
-          bodyTone: "default",
-        }
-      : undefined;
-  const detail = shell || fs ? "" : `${approval.action} · ${approval.resourcePath}`;
-  const status: TraceStepData["status"] = pending
-    ? "running"
-    : approval.status === "rejected"
-      ? "failed"
-      : "success";
-  const subtext =
-    shell || fs ? undefined : approval.reason ? truncatePreview(approval.reason, 200) : undefined;
-  return {
-    id: event.event_id,
-    title,
-    detail,
-    time: formatTimestamp(event.timestamp),
-    duration: "—",
-    status,
-    subtext,
-    terminal,
-    filesystem,
   };
 }
 
@@ -510,9 +432,6 @@ function buildToolStep(
     ).toLowerCase();
   const argsPreview = mergedPayload?.toolCall?.args
     ? truncatePreview(mergedPayload.toolCall.args, 220)
-    : "";
-  const resultPreview = resultBody?.toolResult?.result
-    ? truncatePreview(resultBody.toolResult.result, 320)
     : "";
   const isError = resultBody?.toolResult?.isError === true;
   const errorText = extractToolErrorText(resultBody?.toolResult?.result);
@@ -585,7 +504,18 @@ function buildToolStep(
       const showPendingWrite =
         (!hasResult || pendingCompletion) && fsArgs.action === "write" && pendingPatch !== undefined;
       const bodyFromCall = showPendingWrite ? pendingPatch : undefined;
-      const resolved = bodyFromResult ?? bodyFromCall;
+      const trivialWriteSuccess =
+        !isError &&
+        hasResult &&
+        (!bodyFromResult || bodyFromResult === "Saved.");
+      const resolved =
+        isError
+          ? (bodyFromResult ?? bodyFromCall)
+          : fsArgs.action === "write" &&
+              pendingPatch &&
+              (!hasResult || pendingCompletion || trivialWriteSuccess)
+            ? pendingPatch
+            : (bodyFromResult ?? bodyFromCall);
       filesystem = {
         action: fsArgs.action,
         resourcePath: fsArgs.resourcePath,
@@ -594,12 +524,6 @@ function buildToolStep(
       };
     }
   }
-
-  const defaultSubtext = hasResult
-    ? isError
-      ? `Error: ${errorText ?? (resultPreview || "unknown error")}`
-      : resultPreview || ""
-    : "";
 
   const hasRich = !!(terminal || filesystem);
 
@@ -610,7 +534,6 @@ function buildToolStep(
     time: formatTimestamp(ts),
     duration,
     status,
-    subtext: hasRich ? undefined : defaultSubtext.trim() || undefined,
     terminal,
     filesystem,
   };
@@ -634,11 +557,10 @@ function findMentionedMember(
 
 function messageEventToStep(input: ReasoningTraceInput, event: ActivityEvent): TraceStepData {
   const actor = resolveMember(input, event.publisher);
-  const actorLabel = actor.isAgent ? `Agent ${actor.name}` : actor.name;
+  const actorLabel = actor.name;
   const body = (event.payload ?? {}) as MessageActivityPayload;
   const mentioned = findMentionedMember(body.content, input.members, event.publisher);
-  const mentionedLabel =
-    mentioned && mentioned.isAgent ? `Agent ${mentioned.name}` : mentioned?.name;
+  const mentionedLabel = mentioned?.name;
   const target =
     input.conversationType === "channel"
       ? `in Channel ${input.conversationName}`
@@ -694,14 +616,6 @@ export function buildReasoningTraceSteps(input: ReasoningTraceInput): TraceStepD
       return toolPayloadMatchesThread(body, threadId, agentIdFilter, runIdsForThread);
     }
 
-    if (
-      event.type === "approval_requested" ||
-      event.type === "approval_approved" ||
-      event.type === "approval_rejected"
-    ) {
-      const approval = event.payload as ApprovalRequest;
-      return approvalMatchesThread(approval, runIdsForThread);
-    }
     if (event.type === "channel_message" || event.type === "thread_message") {
       const payload = event.payload as MessageActivityPayload;
       if (event.type === "channel_message" && input.conversationType !== "channel") return false;
@@ -756,16 +670,6 @@ export function buildReasoningTraceSteps(input: ReasoningTraceInput): TraceStepD
         step: messageEventToStep(input, event),
       });
       return;
-    }
-    if (
-      event.type === "approval_requested" ||
-      event.type === "approval_approved" ||
-      event.type === "approval_rejected"
-    ) {
-      ordered.push({
-        sortIndex: index,
-        step: approvalEventToStep(input, event, event.payload as ApprovalRequest),
-      });
     }
   });
 

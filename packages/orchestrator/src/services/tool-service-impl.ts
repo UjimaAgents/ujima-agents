@@ -133,6 +133,11 @@ export class ToolServiceImpl implements ToolService {
         ...(threadId ? [threadRoom(threadId)] : []),
       ];
       this.audit(invocation, "blocked", { reason });
+      this.saveRunStep(invocation, "blocked", {
+        status: "blocked",
+        reason,
+        code: "ERR_SUPERVISOR_ALLOWLIST",
+      });
       this.emitToolCalled(invocation, rooms);
       this.realtime.emit(
         SocketEventNames.toolResult,
@@ -176,6 +181,11 @@ export class ToolServiceImpl implements ToolService {
         error: message,
         code: isPathEscapeError(error) ? ERR_PATH_ESCAPE : undefined,
       });
+      this.saveRunStep(invocation, "blocked", {
+        status: "blocked",
+        error: message,
+        ...(isPathEscapeError(error) ? { code: ERR_PATH_ESCAPE } : {}),
+      });
       this.emitToolCalled(invocation, rooms);
       this.realtime.emit(
         SocketEventNames.toolResult,
@@ -211,6 +221,10 @@ export class ToolServiceImpl implements ToolService {
 
     if (!policy.allowed) {
       this.audit(preparedInvocation, "blocked", { reason: policy.reason });
+      this.saveRunStep(preparedInvocation, "blocked", {
+        status: "blocked",
+        reason: policy.reason,
+      });
       const run = this.repo.getRun(preparedInvocation.organizationId, preparedInvocation.runId);
       const threadId = preparedInvocation.threadId ?? run?.threadId;
 

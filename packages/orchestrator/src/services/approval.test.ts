@@ -88,7 +88,7 @@ describe('ApprovalService', () => {
     expect(savedPayload?.threadId).toBe('thread-1');
     expect(emitted).toBe(2);
     expect(relayThreadId).toBe('dm:agent-1:owner-1');
-    expect(relayContent).toBe('```\n/workspace\n$ pwd\n```');
+    expect(relayContent).toBe('[Approval needed] Shell\nCwd: /workspace\nCommand: pwd');
   });
 
   it('reuses a pending approval for the same shell scope', () => {

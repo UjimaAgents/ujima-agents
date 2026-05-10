@@ -1,10 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import {
-  stepCountIs,
-  streamText,
-  type LanguageModel,
-  type ToolSet,
-} from 'ai';
+import { stepCountIs, type LanguageModel, type ToolSet } from 'ai';
 import {
   DEFAULT_SPIRIT_TEMPERATURE,
   MessageSchema,
@@ -24,6 +19,7 @@ import {
 import { buildAgentSystemPrompt, type AgentTeamHandle } from '@ujima/framework';
 import { requireOrganization } from '../utils/require-organization.js';
 import { requireTeam } from '../utils/require-team.js';
+import { runAgentLoop } from './agent-loop.js';
 import {
   toModelMessages,
   resolveSpiritModel,
@@ -42,6 +38,8 @@ import type { TeamStore } from './team-store.js';
 import type { ToolService } from './tool-service.js';
 import { ToolApprovalRequiredError } from './tool-loop-result.js';
 import { extractReasoningChunk } from '../utils/extract-reasoning.js';
+import { buildRunTranscript } from '../utils/run-transcript.js';
+import type { ToolInvocationInput } from './tool-service.js';
 
 // ----------------------------------------------------------------------
 // SpiritService — Phase 2.A.4
@@ -476,6 +474,12 @@ export class SpiritService {
       memberId: input.memberId,
       role,
     });
+    const runTranscript = buildRunTranscript(
+      this.repo.listRunSteps(input.organizationId, spirit.runId ?? spirit.id),
+    );
+    if (runTranscript) {
+      messages.push({ role: 'user', content: runTranscript });
+    }
 
     // Mark running. Both the Spirit row and the paired Run row carry
     // the same status alphabet so the dashboards keep working.
@@ -515,7 +519,7 @@ export class SpiritService {
     let lastText = '';
 
     try {
-      const result = streamText({
+      const result = await runAgentLoop({
         model,
         system,
         messages,
@@ -524,15 +528,7 @@ export class SpiritService {
         ...(this.maxOutputTokens !== undefined ? { maxOutputTokens: this.maxOutputTokens } : {}),
         temperature: this.temperature,
       });
-
-      // Drain the full stream so tool execute() callbacks run and the
-      // finish frame fires. textStream alone closes on text-end and
-      // would skip the usage payload.
-      for await (const part of result.fullStream) {
-        // intentional discard — we only need the side effects
-        void part;
-      }
-      const [steps, usage] = await Promise.all([result.steps, result.usage]);
+      const { steps, usage } = result;
 
       // Each step in `steps` is one model turn. We persist one
       // `kind='agent'` message per step that produced text or tool
@@ -685,9 +681,108 @@ export class SpiritService {
     }
   }
 
+  async resumeAfterApproval(
+    organizationId: string,
+    runId: string,
+    allowRun = true,
+    approvalScope?: string,
+  ): Promise<RunSpiritOutcome | Spirit | null> {
+    const spirit = this.findActiveSpiritByRunId(organizationId, runId);
+    if (!spirit) return null;
+
+    if (allowRun) {
+      this.tools.allowRun(organizationId, runId, approvalScope);
+    } else {
+      const failed = this.updateStatus(organizationId, spirit.id, 'failed', {
+        error: 'Approval rejected by user',
+      });
+      const run = this.repo.getRun(organizationId, runId);
+      if (run) {
+        this.repo.saveRun({
+          ...run,
+          status: 'failed',
+          step: 'failed',
+          summary: 'Approval rejected by user',
+          endedAt: run.endedAt ?? new Date().toISOString(),
+        });
+      }
+      return failed;
+    }
+
+    if (spirit.status === 'running') {
+      return spirit;
+    }
+
+    if (spirit.status !== 'waiting_for_approval') {
+      return spirit;
+    }
+
+    await this.executePendingApprovedTools(spirit);
+    return this.run({
+      organizationId,
+      taskSessionId: spirit.taskSessionId,
+      memberId: spirit.memberId,
+      role: spirit.role,
+    });
+  }
+
   // ------------------------------------------------------------------
   // internals
   // ------------------------------------------------------------------
+
+  private findActiveSpiritByRunId(organizationId: string, runId: string): Spirit | null {
+    for (const member of this.repo.listMembers(organizationId)) {
+      if (member.kind !== AGENT_KIND) continue;
+      const spirit = this.repo
+        .listActiveSpiritsForMember(organizationId, member.id)
+        .find((item) => item.runId === runId);
+      if (spirit) return spirit;
+    }
+    return null;
+  }
+
+  private async executePendingApprovedTools(spirit: Spirit): Promise<void> {
+    const runId = spirit.runId ?? spirit.id;
+    const pendingApprovalToolCallIds = new Set(
+      this.repo
+        .listPendingApprovals(spirit.organizationId)
+        .filter((approval) => approval.runId === runId && approval.toolCallId)
+        .map((approval) => approval.toolCallId as string),
+    );
+    const pendingSteps = this.repo
+      .listRunSteps(spirit.organizationId, runId)
+      .filter((step) => {
+        const output = step.output as { status?: unknown } | undefined;
+        return (
+          output?.status === 'waiting_for_approval' &&
+          !pendingApprovalToolCallIds.has(step.toolCallId)
+        );
+      });
+
+    for (const step of pendingSteps) {
+      const invocation: ToolInvocationInput = {
+        organizationId: step.organizationId,
+        runId: step.runId,
+        memberId: step.agentId,
+        threadId: step.threadId,
+        taskSessionId: spirit.taskSessionId,
+        spiritRole: spirit.role,
+        toolCallId: step.toolCallId,
+        toolId: step.toolId,
+        action: step.action,
+        resourceType: step.resourceType,
+        resourcePath: step.resourcePath || undefined,
+        input: step.input,
+        bypassPermission: true,
+      };
+
+      try {
+        await this.tools.invoke(invocation);
+      } catch {
+        // ToolService persists the failed step; keep replaying the rest.
+      }
+    }
+  }
 
   private resolveToolAllowlist(
     roleTools: readonly string[],
@@ -732,6 +827,7 @@ export class SpiritService {
       const toolName = call.toolName ?? 'unknown';
       const args = (call.input as Record<string, unknown> | undefined) ?? {};
       const result = resultsById.get(toolCallId);
+      const isError = isToolCardError(result);
       const card: MessageCard = {
         kind: 'tool.call',
         cardId: randomUUID(),
@@ -741,14 +837,14 @@ export class SpiritService {
         toolName,
         args,
         result,
-        isError: false,
+        isError,
       };
       return {
         toolCallId,
         toolName,
         args,
         result: card,
-        isError: false,
+        isError,
       };
     });
   }
@@ -808,4 +904,10 @@ export function pickProviderModel(input: {
     input.provider as { defaultModel?: string; supervisorModel?: string; supervisor_model?: string },
     input.role,
   );
+}
+
+function isToolCardError(result: unknown): boolean {
+  if (!result || typeof result !== 'object') return false;
+  const value = result as { error?: unknown; status?: unknown; isError?: unknown };
+  return value.isError === true || typeof value.error === 'string' || value.status === 'blocked';
 }

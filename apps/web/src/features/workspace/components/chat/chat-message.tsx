@@ -114,10 +114,10 @@ export function ChatMessage({
             </div>
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-1.5">
-                <p className="text-xs font-bold text-zinc-900 dark:text-white">
+                <p className="text-sm font-bold text-zinc-900 dark:text-white">
                   {systemLabel}
                 </p>
-                <p className="text-[10px] text-zinc-400">{message.time}</p>
+                <p className="text-[11px] text-zinc-400">{message.time}</p>
               </div>
             </div>
           </>
@@ -126,22 +126,22 @@ export function ChatMessage({
             <Avatar name={message.name} colorIndex={colorIndex} size="sm" />
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-1.5">
-                <p className="text-xs font-bold text-zinc-900 dark:text-white">
+                <p className="text-sm font-bold text-zinc-900 dark:text-white">
                   {message.name}
                 </p>
-                <p className="text-[10px] text-zinc-400">{message.time}</p>
+                <p className="text-[11px] text-zinc-400">{message.time}</p>
                 {message.tag && (
                   <TagBadge variant={message.tag.variant} label={message.tag.label} />
                 )}
               </div>
               {message.replyPreview && (
                 <div className="mt-1 rounded-md border-l-2 border-zinc-300 bg-zinc-100/70 px-2 py-1 dark:border-zinc-700 dark:bg-zinc-900/70">
-                  <p className="truncate text-[10px] font-semibold text-zinc-700 dark:text-zinc-300">
+                  <p className="truncate text-xs font-semibold text-zinc-700 dark:text-zinc-300">
                     Replying to {message.replyPreview.name}
                   </p>
                   <MarkdownInline
                     content={message.replyPreview.content}
-                    className="block truncate text-[10px] text-zinc-500 dark:text-zinc-400"
+                    className="block truncate text-xs text-zinc-500 dark:text-zinc-400"
                   />
                 </div>
               )}
@@ -154,12 +154,12 @@ export function ChatMessage({
                 organizationId={organizationId ?? ""}
               />
               {message.detail && (
-                <p className="mt-0.5 text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
+                <p className="mt-0.5 text-sm leading-relaxed text-zinc-500 dark:text-zinc-400">
                   {message.detail}
                 </p>
               )}
               {message.pending && (
-                <div className="mt-1 inline-flex items-center gap-1.5 rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-semibold text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+                <div className="mt-1 inline-flex items-center gap-1.5 rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-semibold text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
                   <Loader2 className="h-3 w-3 animate-spin" />
                   Sending
                 </div>

@@ -89,7 +89,7 @@ export function createPermissionGatedToolService(
       const approvalScope =
         input.toolId === 'shell'
           ? buildShellApprovalScope({ input: input.input, resourcePath: input.resourcePath })
-          : `${input.toolId}:${JSON.stringify(input.input)}`;
+          : `${input.toolId}:${input.action}:${input.resourcePath ?? ''}`;
 
       if (consumeApprovedRun(input.organizationId, input.runId, approvalScope)) {
         return inner.invoke(input);

@@ -380,9 +380,6 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     ai,
     tools,
   );
-  resumeRun = (orgId, runId, allowRun = true, approvalScope) =>
-    runs.resumeAfterApproval(orgId, runId, allowRun, approvalScope);
-
   // Phase 2.C.1 — single shared in-memory registry. SpiritService writes
   // (spawn/retire/complete); SupervisorService reads on every alert.
   const activeSpirits = new ActiveSpiritRegistry();
@@ -397,6 +394,10 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
       registry: activeSpirits,
     },
   );
+  resumeRun = async (orgId, runId, allowRun = true, approvalScope) => {
+    const spiritResult = await spirits.resumeAfterApproval(orgId, runId, allowRun, approvalScope);
+    return spiritResult ?? runs.resumeAfterApproval(orgId, runId, allowRun, approvalScope);
+  };
   // Hydrate the in-memory registry from persisted spirits BEFORE
   // SupervisorService is wired and able to receive alerts. Without
   // this, a daemon restart would see an empty registry, and

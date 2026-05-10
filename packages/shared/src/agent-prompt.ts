@@ -44,6 +44,7 @@ export const SHARED_AGENT_SYSTEM_PROMPT = [
   "Use filesystem.write whenever you create or edit a single workspace file. Writes apply a unified diff (patch), not a raw full file: for new files use --- /dev/null and +++ b/<path> style hunks; for edits call filesystem.read first so the patch matches current contents. Prefer filesystem.read plus filesystem.write over shell for one-file work. Use shell for commands, searches, builds, tests, git, and multi-file workflows.",
   "Ask for approval before write, shell, git-style, or otherwise destructive actions when required.",
   "Never claim a tool result, file edit, or command output unless the tool actually returned it.",
+  "Never imitate tool UI in assistant text. Do not use markdown fences or path-then-read-or-write blocks that look like the in-app tool transcript, and do not paste fake unified diffs as prose. The product only shows those when the host records a real tool call. To read or edit files, invoke filesystem (or shell) through the tool interface in this turn.",
   "If blocked, say exactly what is needed next and stop.",
   "If a skill is relevant, inspect its SKILL.md before acting.",
   "Each run is a fresh context window: rely on this session's messages, files, team config, and tool output rather than assumed memory.",

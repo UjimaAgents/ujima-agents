@@ -13,6 +13,13 @@ import { sameConversation, useWorkspaceStore } from "../workspace-store";
 
 import type { RolePresetTemplate } from "../../onboarding/types";
 
+/** Shared motion for dashboard layout (sidebar width, details column, resizers). */
+export const WORKSPACE_PANEL_WIDTH_TRANSITION =
+  "transition-[width] duration-300 ease-out motion-reduce:transition-none motion-reduce:duration-0";
+
+export const WORKSPACE_MAIN_GRID_TRANSITION =
+  "transition-[grid-template-columns] duration-300 ease-out motion-reduce:transition-none motion-reduce:duration-0";
+
 type WorkspaceChannel = BootstrapResponse["channels"][number];
 type WorkspaceMember = BootstrapResponse["members"][number];
 type WorkspaceTeamRole = {
@@ -394,10 +401,10 @@ export function WorkspaceShell({
   );
 
   return (
-    <div className="flex h-screen overflow-hidden bg-zinc-50 dark:bg-[#040712]">
+    <div className="flex h-screen overflow-hidden bg-zinc-50 transition-colors duration-200 dark:bg-[#040712]">
       <div
         style={{ width: `${sidebarWidth}%`, minWidth: 220, maxWidth: "40%" }}
-        className="shrink-0 h-full"
+        className={`shrink-0 h-full overflow-hidden ${WORKSPACE_PANEL_WIDTH_TRANSITION}`}
       >
         <WorkspaceSidebar
           bootstrap={bootstrap}
@@ -417,7 +424,7 @@ export function WorkspaceShell({
         />
       </div>
       <DragHandle onResize={setSidebarWidth} />
-      <main className="flex-1 flex flex-col min-w-0 overflow-hidden h-full">
+      <main className="flex h-full min-w-0 flex-1 flex-col overflow-hidden">
         <ChannelView
           key={`${resolvedSelected.type}:${resolvedSelected.id}`}
           bootstrap={bootstrap}

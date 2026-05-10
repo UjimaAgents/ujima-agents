@@ -34,16 +34,14 @@ export function FilesystemToolPane({
   const useDiffUi = isPatchWrite && looksLikeUnifiedDiff(trimmed);
   const label = action === "read" ? "Read" : "Patch";
   const badgeRead =
-    "bg-sky-100 text-sky-800 dark:bg-sky-500/15 dark:text-sky-200/95";
+    "bg-sky-500/[0.08] text-sky-900/90 dark:bg-sky-400/[0.1] dark:text-sky-200/85";
   const badgeWrite =
-    "bg-amber-100 text-amber-900 dark:bg-amber-500/12 dark:text-amber-100/90";
+    "bg-foreground/[0.06] text-foreground/75 dark:bg-foreground/[0.08] dark:text-foreground/80";
 
   return (
     <div className={`${TERMINAL_PANEL} ${className}`}>
       <div className={TERMINAL_SECTION}>
-        {!(useDiffUi && showBody) ? (
-          <div className={`${TERMINAL_CWD} break-all`}>{resourcePath}</div>
-        ) : null}
+        <div className={`${TERMINAL_CWD} break-all`}>{resourcePath}</div>
         <div className="px-3 py-2">
           <span
             className={`inline-block rounded px-2 py-0.5 text-[10px] font-semibold tracking-wide ${action === "read" ? badgeRead : badgeWrite}`}
@@ -56,7 +54,7 @@ export function FilesystemToolPane({
         <div
           className={
             useDiffUi
-              ? `${TERMINAL_OUTPUT_SCROLL_FRAME} ${bodyTone === "error" ? "ring-1 ring-inset ring-red-500/35" : ""}`
+              ? `${TERMINAL_OUTPUT_SCROLL_FRAME} ${bodyTone === "error" ? "bg-red-500/[0.04]" : ""}`
               : terminalOutputAreaClass(bodyTone)
           }
         >

@@ -15,7 +15,7 @@ describe('formatApprovalRelayMarkdown', () => {
         resourcePath: '/workspace',
         reason: `Tool action requires approval;scope=${encodeURIComponent(scope)}`,
       }),
-    ).toBe('```\n/workspace\n$ git diff\n```');
+    ).toBe('[Approval needed] Shell\nCwd: /workspace\nCommand: git diff');
   });
 
   it('renders path and action for filesystem compact scope', () => {
@@ -25,7 +25,7 @@ describe('formatApprovalRelayMarkdown', () => {
         resourcePath: '/repo/readme.md',
         reason: 'Tool action requires approval;scope=filesystem%3Awrite%3A%2Frepo%2Freadme.md',
       }),
-    ).toBe('```\n/repo/readme.md\nwrite\n```');
+    ).toBe('[Approval needed] Filesystem write\nPath: /repo/readme.md');
   });
 
   it('renders filesystem write with body when JSON scope includes patch', () => {
@@ -36,7 +36,7 @@ describe('formatApprovalRelayMarkdown', () => {
         resourcePath: '/x/a.md',
         reason: `Tool action requires approval;scope=${encodeURIComponent('filesystem:' + scope)}`,
       }),
-    ).toBe('```\n/x/a.md\nwrite\n--- /dev/null\n+++ b/a.md\n\n```');
+    ).toBe('[Approval needed] Filesystem write\nPath: /x/a.md\nPatch:\n--- /dev/null\n+++ b/a.md\n');
   });
 
   it('renders filesystem write with body when JSON scope includes content', () => {
@@ -47,7 +47,7 @@ describe('formatApprovalRelayMarkdown', () => {
         resourcePath: '/x/a.md',
         reason: `Tool action requires approval;scope=${encodeURIComponent('filesystem:' + scope)}`,
       }),
-    ).toBe('```\n/x/a.md\nwrite\nhello\n```');
+    ).toBe('[Approval needed] Filesystem write\nPath: /x/a.md\nPatch:\nhello');
   });
 
   it('falls back to action and path when scope is not shell or filesystem', () => {

@@ -719,7 +719,7 @@ export function ChatInput({
                 void submitComposer();
               }
             }}
-            className="w-full bg-transparent px-3 py-2.5 text-xs focus:outline-none resize-none min-h-[56px]"
+            className="w-full bg-transparent px-3 py-2.5 text-sm focus:outline-none resize-none min-h-[56px]"
           />
           {mentionMenuOpen ? (
             <div className="mx-2 mt-1 max-h-44 overflow-y-auto rounded-lg border border-zinc-200 bg-white p-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-950">
@@ -940,7 +940,7 @@ export function ChatInput({
             </button>
           </div>
         </div>
-        <div className="mt-2 px-1 text-[10px] text-zinc-500 dark:text-zinc-400">
+        <div className="mt-2 px-1 text-xs text-zinc-500 dark:text-zinc-400">
           <span className="block truncate">
             {statusHint ?? "Enter to send, Shift+Enter for a new line."}
           </span>

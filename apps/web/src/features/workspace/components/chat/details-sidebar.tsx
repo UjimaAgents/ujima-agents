@@ -1,7 +1,8 @@
-import { CheckCircle2, X, XCircle } from "lucide-react";
-import { Avatar } from "./primitives";
-import { TerminalPane } from "./terminal-pane";
-import { FilesystemToolPane } from "./filesystem-tool-pane";
+import {CheckCircle2, X, XCircle} from "lucide-react";
+import {TERMINAL_PANEL, TERMINAL_SECTION} from "./terminal-chrome";
+import {Avatar} from "./primitives";
+import {TerminalPane} from "./terminal-pane";
+import {FilesystemToolPane} from "./filesystem-tool-pane";
 
 /* ── Trace step (used in reasoning trace timeline) ─────────────────── */
 export interface TraceStepData {
@@ -29,35 +30,69 @@ export interface TraceStepData {
   };
 }
 
-export function TraceStep({ step }: { step: TraceStepData }) {
+export function TraceStep({
+  step,
+  isLast,
+}: {
+  step: TraceStepData;
+  /** Hide the connector below the dot on the final row. */
+  isLast?: boolean;
+}) {
+  const hasMetaRowSpacing = !!(step.terminal || step.filesystem);
+
   return (
-    <div className="relative pl-5">
-      <div className="absolute left-0 top-1 bottom-0 w-px bg-zinc-200 dark:bg-zinc-800" />
-      <div
-        className={`absolute left-[-3px] top-1 h-1.5 w-1.5 rounded-full ring-4 ring-zinc-50 dark:ring-[#09090b] ${
-          step.status === "success"
-            ? "bg-emerald-500"
-            : step.status === "failed"
-              ? "bg-red-500"
-              : "bg-violet-500"
-        }`}
-      />
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex-1">
-          <div className={`flex items-center gap-1.5 ${step.terminal || step.filesystem ? "mb-1" : ""}`}>
-            <p className="text-[11px] font-bold text-zinc-900 dark:text-white">
-              {step.title}
-            </p>
-            {step.status === "success" && (
-              <CheckCircle2 className="h-3 w-3 text-emerald-500" />
-            )}
-            {step.status === "failed" && (
-              <XCircle className="h-3 w-3 text-red-500" />
-            )}
+    <div className={`flex gap-3 ${isLast ? "pb-0" : "pb-5"}`}>
+      {/* Timeline gutter: keeps the dot off the text and centers it on the spine */}
+      <div className="relative flex w-[14px] shrink-0 flex-col items-center pt-1">
+        <div
+          className={`relative z-[1] h-2 w-2 shrink-0 rounded-full ring-[1.5px] ring-background ${
+            step.status === "success"
+              ? "bg-emerald-500"
+              : step.status === "failed"
+                ? "bg-red-500"
+                : "bg-violet-500"
+          }`}
+          aria-hidden
+        />
+        {!isLast ? (
+          <div
+            className="absolute left-1/2 top-[14px] bottom-[-20px] w-px -translate-x-1/2 bg-foreground/10"
+            aria-hidden
+          />
+        ) : null}
+      </div>
+
+      <div className="flex min-w-0 flex-1 items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div
+            className={`flex flex-wrap items-start gap-x-3 gap-y-1 ${
+              hasMetaRowSpacing ? "mb-2" : ""
+            }`}
+          >
+            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-0.5">
+              <p className="min-w-0 text-xs font-semibold leading-snug text-foreground">
+                {step.title}
+              </p>
+              {step.status === "success" && (
+                <CheckCircle2
+                  className="h-3.5 w-3.5 shrink-0 text-emerald-500"
+                  aria-hidden
+                />
+              )}
+              {step.status === "failed" && (
+                <XCircle
+                  className="h-3.5 w-3.5 shrink-0 text-red-500"
+                  aria-hidden
+                />
+              )}
+            </div>
+            <span className="shrink-0 pt-0.5 text-[10px] leading-none tabular-nums text-foreground/45">
+              {step.time}
+            </span>
           </div>
           {step.terminal ? (
             <TerminalPane
-              className="mt-0"
+              className="mt-2"
               cwd={step.terminal.cwd}
               commandLine={step.terminal.commandLine}
               output={step.terminal.output}
@@ -66,29 +101,24 @@ export function TraceStep({ step }: { step: TraceStepData }) {
             />
           ) : step.filesystem ? (
             <FilesystemToolPane
-              className="mt-0"
+              className="mt-2"
               action={step.filesystem.action}
               resourcePath={step.filesystem.resourcePath}
               body={step.filesystem.body}
               bodyTone={step.filesystem.bodyTone}
             />
           ) : step.detail.trim() ? (
-            <p className="mt-1 whitespace-pre-wrap font-mono text-[10px] text-zinc-500 dark:text-zinc-400">
+            <p className="mt-2.5 whitespace-pre-wrap font-mono text-[11px] leading-relaxed text-foreground/60">
               {step.detail}
             </p>
           ) : null}
           {step.subtext ? (
-            <p className="mt-2 text-[10px] leading-snug text-zinc-400 dark:text-zinc-500">{step.subtext}</p>
+            <p className="mt-2.5 text-[11px] leading-relaxed text-foreground/45">
+              {step.subtext}
+            </p>
           ) : null}
-          <p
-            className={`text-[9px] tabular-nums text-zinc-400 dark:text-zinc-500 ${
-              step.terminal || step.filesystem ? "mt-2.5" : step.subtext ? "mt-1.5" : step.detail?.trim() ? "mt-1.5" : "mt-0.5"
-            }`}
-          >
-            {step.time}
-          </p>
         </div>
-        <span className="text-[9px] text-zinc-400 shrink-0">
+        <span className="shrink-0 self-start pt-0.5 text-[10px] tabular-nums text-foreground/45">
           {step.duration}
         </span>
       </div>
@@ -98,49 +128,47 @@ export function TraceStep({ step }: { step: TraceStepData }) {
 
 /* ── Run summary card ──────────────────────────────────────────────── */
 export interface RunSummaryData {
-  files: { name: string; additions: number; deletions: number }[];
+  files: {name: string; additions: number; deletions: number}[];
   tokens: string;
   duration: string;
 }
 
-export function RunSummary({ data }: { data: RunSummaryData }) {
+export function RunSummary({data}: {data: RunSummaryData}) {
   return (
-    <div className="rounded-lg border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900">
-      <div className="flex items-center justify-between">
-        <p className="text-[9px] font-bold uppercase tracking-wider text-zinc-400">
+    <div className={TERMINAL_PANEL}>
+      <div
+        className={`${TERMINAL_SECTION} flex items-center justify-between px-3 py-2`}
+      >
+        <p className="text-[9px] font-semibold uppercase tracking-wider text-foreground/45">
           Files touched
         </p>
-        <p className="text-[9px] font-bold uppercase tracking-wider text-zinc-400">
+        <p className="text-[9px] font-semibold uppercase tracking-wider text-foreground/45">
           Run summary
         </p>
       </div>
-      <div className="mt-2 flex gap-3">
+      <div className="flex gap-3 px-3 py-2">
         <div className="flex-1 space-y-0.5">
           {data.files.map((f) => (
             <div
               key={f.name}
               className="flex items-center justify-between text-[10px]"
             >
-              <span className="text-zinc-600 dark:text-zinc-400">
-                {f.name}
-              </span>
-              <span className="text-emerald-600">
+              <span className="text-foreground/70">{f.name}</span>
+              <span className="text-emerald-600/90 dark:text-emerald-400/90">
                 +{f.additions} -{f.deletions}
               </span>
             </div>
           ))}
         </div>
-        <div className="w-px bg-zinc-100 dark:bg-zinc-800" />
+        <div className="w-px shrink-0 bg-foreground/10" />
         <div className="flex-1 space-y-0.5">
           <div className="flex items-center justify-between text-[10px]">
-            <span className="text-zinc-600 dark:text-zinc-400">Tokens</span>
-            <span className="font-bold text-zinc-900 dark:text-white">
-              {data.tokens}
-            </span>
+            <span className="text-foreground/55">Tokens</span>
+            <span className="font-semibold text-foreground">{data.tokens}</span>
           </div>
           <div className="flex items-center justify-between text-[10px]">
-            <span className="text-zinc-600 dark:text-zinc-400">Duration</span>
-            <span className="font-bold text-zinc-900 dark:text-white">
+            <span className="text-foreground/55">Duration</span>
+            <span className="font-semibold text-foreground">
               {data.duration}
             </span>
           </div>
@@ -151,24 +179,20 @@ export function RunSummary({ data }: { data: RunSummaryData }) {
 }
 
 /* ── Workspace boundary card ───────────────────────────────────────── */
-export function BoundaryCard({
-  label,
-  scope,
-}: {
-  label: string;
-  scope: string;
-}) {
+export function BoundaryCard({label, scope}: {label: string; scope: string}) {
   return (
-    <div className="rounded-lg bg-emerald-500/10 p-3 border border-emerald-500/20">
-      <div className="flex items-center justify-between">
-        <p className="text-[9px] font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">
+    <div className={TERMINAL_PANEL}>
+      <div
+        className={`${TERMINAL_SECTION} flex items-center justify-between px-3 py-2`}
+      >
+        <p className="text-[9px] font-semibold uppercase tracking-wider text-foreground/45">
           {label}
         </p>
-        <span className="inline-flex items-center gap-1 text-[9px] font-bold text-emerald-600 dark:text-emerald-400">
+        <span className="inline-flex items-center gap-1 text-[9px] font-semibold text-emerald-600/85 dark:text-emerald-400/85">
           <CheckCircle2 className="h-2.5 w-2.5" /> Enforced
         </span>
       </div>
-      <p className="mt-0.5 text-[10px] text-emerald-800 dark:text-emerald-300">
+      <p className="px-3 py-2 text-[10px] leading-snug text-foreground/75">
         {scope}
       </p>
     </div>
@@ -200,14 +224,14 @@ export function DetailsSidebar({
   children,
 }: DetailsSidebarProps) {
   return (
-    <aside className="h-full border-l border-zinc-200 bg-zinc-50/50 flex flex-col dark:border-zinc-800 dark:bg-zinc-950/50">
-      <header className="flex h-12 shrink-0 items-center justify-between border-b border-zinc-200 px-4 dark:border-zinc-800">
-        <h2 className="text-xs font-bold text-zinc-900 dark:text-white">
+    <aside className="flex h-full flex-col bg-background/60 dark:bg-background/40">
+      <header className="flex h-12 shrink-0 items-center justify-between border-b border-violet-500/[0.06] bg-violet-500/[0.015] px-4 dark:border-white/10 dark:bg-white/5">
+        <h2 className="text-xs font-semibold text-foreground">
           Message details
         </h2>
         <button
           onClick={onClose}
-          className="text-zinc-400 hover:text-zinc-600"
+          className="text-foreground/45 transition hover:text-foreground/70"
         >
           <X className="h-4 w-4" />
         </button>
@@ -218,27 +242,27 @@ export function DetailsSidebar({
           <Avatar name={agentName} colorIndex={agentColorIndex} size="lg" />
           <div className="flex-1">
             <div className="flex items-center justify-between">
-              <p className="text-xs font-bold text-zinc-900 dark:text-white">
+              <p className="text-xs font-semibold text-foreground">
                 {agentName}
               </p>
-              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-1.5 py-0.5 text-[9px] font-bold text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400">
+              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-700 dark:text-emerald-400/90">
                 <div className="h-1 w-1 rounded-full bg-emerald-600 dark:bg-emerald-400" />
                 {statusLabel}
               </span>
             </div>
-            <p className="text-[10px] text-zinc-500">{timeLabel}</p>
+            <p className="text-[10px] text-foreground/50">{timeLabel}</p>
           </div>
         </div>
 
-        <div className="mt-4 flex shrink-0 border-b border-zinc-200 dark:border-zinc-800">
+        <div className="mt-4 flex shrink-0">
           {tabs.map((t) => (
             <button
               key={t}
               onClick={() => onTabChange(t)}
-              className={`px-2.5 py-1.5 text-[10px] font-bold transition ${
+              className={`px-2.5 py-1.5 text-[10px] font-semibold transition ${
                 activeTab === t
-                  ? "text-violet-600 border-b-2 border-violet-600 dark:text-violet-400 dark:border-violet-400"
-                  : "text-zinc-500 hover:text-zinc-900"
+                  ? "border-b-2 border-violet-600 text-violet-700 dark:border-violet-400 dark:text-violet-300"
+                  : "text-foreground/50 hover:text-foreground/80"
               }`}
             >
               {t}
