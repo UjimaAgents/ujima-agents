@@ -4,6 +4,7 @@ import {Avatar} from "./primitives";
 import {TerminalPane} from "./terminal-pane";
 import {BackgroundShellJobPane} from "./background-shell-job-pane";
 import {FilesystemToolPane} from "./filesystem-tool-pane";
+import {WebSearchToolPane} from "./web-search-tool-pane";
 
 /* ── Trace step (used in reasoning trace timeline) ─────────────────── */
 export interface TraceStepData {
@@ -35,6 +36,19 @@ export interface TraceStepData {
     body?: string;
     bodyTone?: "default" | "error";
   };
+  webSearch?: {
+    query: string;
+    site?: string;
+    status: "streaming" | "completed";
+    source: string;
+    results: {
+      title: string;
+      url: string;
+      snippet: string;
+      source: string;
+      rank: number;
+    }[];
+  };
 }
 
 export function TraceStep({
@@ -62,67 +76,77 @@ export function TraceStep({
       outputTone={step.terminal.outputTone}
     />
   ) : step.filesystem ? (
-      <FilesystemToolPane
-        action={step.filesystem.action}
-        resourcePath={step.filesystem.resourcePath}
-        body={step.filesystem.body}
-        bodyTone={step.filesystem.bodyTone}
-      />
-    ) : step.detail.trim() ? (
+    <FilesystemToolPane
+      action={step.filesystem.action}
+      resourcePath={step.filesystem.resourcePath}
+      body={step.filesystem.body}
+      bodyTone={step.filesystem.bodyTone}
+    />
+  ) : step.webSearch ? (
+    <WebSearchToolPane
+      query={step.webSearch.query}
+      site={step.webSearch.site}
+      status={step.webSearch.status}
+      source={step.webSearch.source}
+      results={step.webSearch.results}
+    />
+  ) : step.detail.trim() ? (
       <p className="whitespace-pre-wrap font-mono text-[11px] leading-relaxed text-foreground/60">
         {step.detail}
       </p>
     ) : null;
 
   return (
-    <div className={`flex gap-3 ${isLast ? "pb-0" : "pb-7"}`}>
-      {/* Timeline gutter: keeps the dot off the text and centers it on the spine */}
-      <div className="relative flex w-[14px] shrink-0 flex-col items-center pt-1">
-        <div
-          className={`relative z-[1] h-2 w-2 shrink-0 rounded-full ring-[1.5px] ring-background ${
-            step.status === "success"
-              ? "bg-emerald-500"
-              : step.status === "failed"
-                ? "bg-red-500"
-                : "bg-violet-500"
-          }`}
-          aria-hidden
-        />
+    <div className={`flex gap-2.5 ${isLast ? "pb-0" : "pb-5"}`}>
+      {/* Timeline: dot vertically centered with the title row (h-5 ≈ one text-xs line); spine continues through the step */}
+      <div className="relative flex w-3 shrink-0 flex-col items-center self-stretch">
+        <div className="flex h-5 shrink-0 items-center justify-center">
+          <div
+            className={`relative z-[1] h-2 w-2 shrink-0 rounded-full ring-[1.5px] ring-background ${
+              step.status === "success"
+                ? "bg-emerald-500"
+                : step.status === "failed"
+                  ? "bg-red-500"
+                  : "bg-violet-500"
+            }`}
+            aria-hidden
+          />
+        </div>
         {!isLast ? (
           <div
-            className="absolute left-1/2 top-[14px] bottom-[-28px] w-px -translate-x-1/2 bg-foreground/10"
+            className="absolute left-1/2 top-5 bottom-[-20px] w-px -translate-x-1/2 bg-foreground/10"
             aria-hidden
           />
         ) : null}
       </div>
 
-      <div className="flex min-w-0 flex-1 flex-col gap-4">
-        <div className="flex items-center gap-3">
-          <div className="min-w-0 flex-1 flex flex-wrap items-center gap-x-2 gap-y-0.5">
+      <div className="flex min-w-0 flex-1 flex-col gap-2">
+        <div className="flex min-h-5 items-baseline justify-between gap-3">
+          <div className="min-w-0 flex flex-1 flex-wrap items-baseline gap-x-2 gap-y-0">
             <p className="min-w-0 text-xs font-semibold leading-snug text-foreground">
               {step.title}
             </p>
             {step.status === "success" && (
               <CheckCircle2
-                className="h-3.5 w-3.5 shrink-0 text-emerald-500"
+                className="h-3.5 w-3.5 shrink-0 translate-y-[1px] text-emerald-500"
                 aria-hidden
               />
             )}
             {step.status === "failed" && (
               <XCircle
-                className="h-3.5 w-3.5 shrink-0 text-red-500"
+                className="h-3.5 w-3.5 shrink-0 translate-y-[1px] text-red-500"
                 aria-hidden
               />
             )}
           </div>
-          <div className="flex shrink-0 items-baseline gap-3 whitespace-nowrap text-xs tabular-nums leading-snug text-foreground/45">
+          <div className="flex shrink-0 items-baseline gap-2.5 whitespace-nowrap text-[11px] tabular-nums leading-snug text-foreground/45">
             <span>{step.time}</span>
-            <span className="min-w-[4.5ch] text-end">{step.duration}</span>
+            <span className="min-w-[4ch] text-end">{step.duration}</span>
           </div>
         </div>
         {body}
         {step.subtext ? (
-          <p className="text-[11px] leading-relaxed text-foreground/45">{step.subtext}</p>
+          <p className="mt-0.5 text-[11px] leading-snug text-foreground/45">{step.subtext}</p>
         ) : null}
       </div>
     </div>
@@ -226,6 +250,8 @@ export function DetailsSidebar({
   onClose,
   children,
 }: DetailsSidebarProps) {
+  const isOffline = statusLabel.toLowerCase() === "offline";
+
   return (
     <aside className="flex h-full flex-col bg-background/60 dark:bg-background/40">
       <header className="flex h-12 shrink-0 items-center justify-between border-b border-violet-500/[0.06] bg-violet-500/[0.015] px-4 dark:border-white/10 dark:bg-white/5">
@@ -240,7 +266,7 @@ export function DetailsSidebar({
         </button>
       </header>
 
-      <div className="flex min-h-0 flex-1 flex-col p-4">
+      <div className="flex min-h-0 flex-1 flex-col px-3 py-3">
         <div className="flex shrink-0 items-center gap-3">
           <Avatar name={agentName} colorIndex={agentColorIndex} size="lg" />
           <div className="flex-1">
@@ -248,8 +274,20 @@ export function DetailsSidebar({
               <p className="text-xs font-semibold text-foreground">
                 {agentName}
               </p>
-              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-700 dark:text-emerald-400/90">
-                <div className="h-1 w-1 rounded-full bg-emerald-600 dark:bg-emerald-400" />
+              <span
+                className={`inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[9px] font-semibold ${
+                  isOffline
+                    ? "bg-foreground/5 text-foreground/55 dark:bg-white/5 dark:text-white/45"
+                    : "bg-emerald-500/10 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400/90"
+                }`}
+              >
+                <div
+                  className={`h-1 w-1 rounded-full ${
+                    isOffline
+                      ? "bg-foreground/30 dark:bg-white/30"
+                      : "bg-emerald-600 dark:bg-emerald-400"
+                  }`}
+                />
                 {statusLabel}
               </span>
             </div>
@@ -257,7 +295,7 @@ export function DetailsSidebar({
           </div>
         </div>
 
-        <div className="mt-4 flex shrink-0">
+        <div className="mt-3 flex shrink-0">
           {tabs.map((t) => (
             <button
               key={t}
@@ -273,7 +311,7 @@ export function DetailsSidebar({
           ))}
         </div>
 
-        <div className="mt-4 min-h-0 flex-1 overflow-y-auto">{children}</div>
+        <div className="mt-3 min-h-0 flex-1 overflow-y-auto">{children}</div>
       </div>
     </aside>
   );

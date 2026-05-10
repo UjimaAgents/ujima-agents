@@ -20,6 +20,14 @@ export const DEFAULT_TOOL_CATALOG: Record<string, ToolCapability> = {
     pathScopes: ['.'],
     requiresApproval: true,
   },
+  web_search: {
+    id: 'web_search',
+    name: 'Web Search',
+    description: 'Search the web for live results using a provider-backed search path with DuckDuckGo fallback.',
+    actions: ['read'],
+    pathScopes: [],
+    requiresApproval: false,
+  },
   message: {
     id: 'message',
     name: 'Message',

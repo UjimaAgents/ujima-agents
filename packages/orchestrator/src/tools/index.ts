@@ -10,6 +10,7 @@ import {
 import { filesystemTool } from './filesystem.js';
 import { shellTool } from './shell.js';
 import { messageTool } from './message.js';
+import { webSearchTool } from './web-search.js';
 import {
   supervisorTodoAddTool,
   supervisorTodoCheckTool,
@@ -24,6 +25,7 @@ export const ORCHESTRATOR_TOOLS = {
   'channel.read': channelReadTool,
   filesystem: filesystemTool,
   shell: shellTool,
+  web_search: webSearchTool,
   'self.note': selfNoteTool,
   message: messageTool,
   'supervisor.todo.add': supervisorTodoAddTool,
@@ -59,6 +61,7 @@ export const SUPERVISOR_TOOL_ALLOWLIST = Object.freeze([
   'channel.post',
   'channel.dm',
   'channel.reply',
+  'web_search',
   'supervisor.todo.add',
   'supervisor.todo.check',
   'supervisor.todo.list',

@@ -56,10 +56,10 @@ describe('conversation-summary', () => {
     ]);
     expect(summary.startsWith(SELF_NOTE_SUMMARY_MARKER)).toBe(true);
     expect(summary).toContain('# Compacted 2 earlier self notes.');
-    expect(summary).toContain('> README-style compact summary. Keep this concise, skimmable, and focused on durable context.');
-    expect(summary).toContain('> It is okay to forget details that are not important.');
-    expect(summary).toContain('## Current goals');
-    expect(summary).toContain('## Decisions');
+    expect(summary).toContain('> README-style compact summary -- durable context from earlier in the conversation.');
+    expect(summary).toContain("> Skim the headings, dive into what matters. Details that don't carry forward are safe to forget.");
+    expect(summary).toContain('## What I was working on');
+    expect(summary).toContain('## Decisions I made');
     expect(summary).toContain('## Important facts');
   });
 

@@ -373,6 +373,7 @@ export class ToolServiceImpl implements ToolService {
         repo: this.repo,
         conversations: this.conversations,
         supervisorTodos: this.supervisorTodos,
+        reportProgress: (output) => this.emitToolProgress(invocation, output),
       });
     }
 
@@ -474,6 +475,27 @@ export class ToolServiceImpl implements ToolService {
           toolCallId: invocation.toolCallId,
           toolName: invocation.toolId,
           args: toolCallArgsForClient(invocation),
+        },
+      },
+      rooms,
+    );
+  }
+
+  private emitToolProgress(invocation: ToolInvocationInput, output: unknown): void {
+    const rooms = this.getRooms(invocation.organizationId, invocation.runId, invocation.memberId);
+    const run = this.repo.getRun(invocation.organizationId, invocation.runId);
+    const threadId = invocation.threadId ?? run?.threadId;
+    this.realtime.emit(
+      SocketEventNames.toolResult,
+      {
+        organizationId: invocation.organizationId,
+        runId: invocation.runId,
+        threadId,
+        agentId: invocation.memberId,
+        toolResult: {
+          toolCallId: invocation.toolCallId,
+          result: output,
+          isError: false,
         },
       },
       rooms,

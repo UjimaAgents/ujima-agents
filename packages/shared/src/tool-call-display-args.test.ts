@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { parseFilesystemToolCallArgs, parseShellToolCallArgs } from './tool-call-display-args';
+import {
+  parseFilesystemToolCallArgs,
+  parseShellToolCallArgs,
+  parseWebSearchToolCallArgs,
+} from './tool-call-display-args';
 
 describe('parseShellToolCallArgs', () => {
   it('reads flat command and cwd', () => {
@@ -57,5 +61,27 @@ describe('parseFilesystemToolCallArgs', () => {
     expect(
       parseFilesystemToolCallArgs({ action: 'delete', resourcePath: '/x' }),
     ).toBeNull();
+  });
+});
+
+describe('parseWebSearchToolCallArgs', () => {
+  it('parses flat query and site', () => {
+    expect(parseWebSearchToolCallArgs({ query: 'openai api', site: 'openai.com', limit: 3 })).toEqual({
+      query: 'openai api',
+      site: 'openai.com',
+      limit: 3,
+    });
+  });
+
+  it('parses nested input', () => {
+    expect(
+      parseWebSearchToolCallArgs({
+        input: { query: 'web search', site: 'docs.example.com', limit: 5 },
+      } as Record<string, unknown>),
+    ).toEqual({ query: 'web search', site: 'docs.example.com', limit: 5 });
+  });
+
+  it('returns null without query', () => {
+    expect(parseWebSearchToolCallArgs({ site: 'example.com' })).toBeNull();
   });
 });

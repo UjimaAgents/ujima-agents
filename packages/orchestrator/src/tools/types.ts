@@ -10,6 +10,7 @@ export interface ToolExecutionContext {
   team: AgentTeamHandle;
   repo: ApiRepository;
   conversations: ConversationService;
+  reportProgress?: (output: unknown) => Promise<void> | void;
   /**
    * Phase 2.B — supervisor.todo.* tools route through this service.
    * Optional so tests / pre-Phase-2 contexts that don't construct

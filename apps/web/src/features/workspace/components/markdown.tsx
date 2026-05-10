@@ -43,7 +43,7 @@ function createRenderer(mentionNames: string[]) {
   };
 
   renderer.text = function ({ text }: { text: string }) {
-    return highlightMentions(text, mentionNames);
+    return renderInlineMarkdown(text, mentionNames);
   };
 
   return renderer;
@@ -82,6 +82,13 @@ function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+function renderInlineMarkdown(text: string, mentionNames: string[]): string {
+  const withMentions = highlightMentions(text, mentionNames);
+  return withMentions
+    .replace(/\*\*([^*\n]+?)\*\*/g, "<strong>$1</strong>")
+    .replace(/(^|[^\w])\*([^*\n]+?)\*(?=[^\w]|$)/g, "$1<em>$2</em>");
+}
+
 export function Markdown({
   content,
   mentionNames = [],
@@ -97,7 +104,19 @@ export function Markdown({
 
   return (
     <div
-      className={`break-words text-sm leading-relaxed text-foreground ${className}`}
+      className={`break-words text-sm leading-7 text-foreground
+        [&>p]:my-2 [&>p:first-child]:mt-0 [&>p:last-child]:mb-0
+        [&>h1]:mt-5 [&>h1]:mb-2 [&>h1]:text-xl [&>h1]:font-semibold [&>h1]:leading-tight
+        [&>h2]:mt-4 [&>h2]:mb-2 [&>h2]:text-lg [&>h2]:font-semibold [&>h2]:leading-tight
+        [&>h3]:mt-3 [&>h3]:mb-1.5 [&>h3]:text-base [&>h3]:font-semibold [&>h3]:leading-tight
+        [&>h4]:mt-3 [&>h4]:mb-1.5 [&>h4]:text-sm [&>h4]:font-semibold [&>h4]:leading-tight
+        [&_ul]:my-2 [&_ol]:my-2 [&_ul]:pl-5 [&_ol]:pl-5 [&_ul]:list-disc [&_ol]:list-decimal
+        [&_li]:my-0.5 [&_li]:pl-0 [&_li]:leading-7 [&_li>p]:my-0 [&_li>p]:inline
+        [&_li>ul]:mt-1 [&_li>ol]:mt-1 [&_li>ul]:pl-5 [&_li>ol]:pl-5
+        [&_input[type='checkbox']]:mr-2 [&_input[type='checkbox']]:align-text-bottom
+        [&>hr]:my-3 [&>hr]:border-foreground/20
+        [&_strong]:font-semibold [&_em]:italic [&_a]:underline [&_a]:underline-offset-2
+        ${className}`}
       dangerouslySetInnerHTML={{ __html: html }}
     />
   );
