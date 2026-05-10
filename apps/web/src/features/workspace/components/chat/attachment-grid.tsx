@@ -56,6 +56,8 @@ export function AttachmentGrid({
               onClick={() => setActiveImageId(attachment.id)}
               className="group overflow-hidden rounded-lg border border-zinc-200 bg-zinc-50 text-left transition hover:ring-2 hover:ring-violet-500/40 dark:border-zinc-800 dark:bg-zinc-900/60"
             >
+              {/* Same-origin attachment proxy; next/image does not apply cleanly to auth-cookie fetches. */}
+              {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={attachmentUrl(organizationId, attachment.id, true)}
                 alt={attachment.filename}
@@ -88,6 +90,7 @@ export function AttachmentGrid({
             className="relative max-h-[90vh] max-w-[90vw]"
             onClick={(event) => event.stopPropagation()}
           >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={attachmentUrl(organizationId, activeImage.id, true)}
               alt={activeImage.filename}

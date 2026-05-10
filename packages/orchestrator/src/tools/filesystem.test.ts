@@ -39,7 +39,7 @@ describe('filesystem tool', () => {
       type: 'file',
       content: 'This is the soul.',
     });
-    expect(result.path).toContain('/soul.md');
+    expect(result.path.endsWith('soul.md')).toBe(true);
   });
 
   it('throws ENOENT when soul.md does not exist', async () => {

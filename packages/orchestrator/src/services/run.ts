@@ -21,6 +21,7 @@ import type { TeamStore } from './team-store.js';
 import type { ToolService } from './tool-service.js';
 import { applyDashboardTeamOverrides } from './dashboard-team-overrides.js';
 import { ToolApprovalRequiredError } from './tool-loop-result.js';
+import { extractReasoningChunk } from '../utils/extract-reasoning.js';
 import { runUsedThreadPublishingTool } from './run-reply-guard.js';
 
 export interface CreateRunInput {
@@ -306,6 +307,7 @@ export class RunService {
 
       const text = result.text.trim();
       const reply = text || 'Acknowledged.';
+      const reasoningContent = extractReasoningChunk(result);
       const skipFinalThreadMessage = runUsedThreadPublishingTool(result);
       if (run.threadId && !skipFinalThreadMessage) {
         this.conversations.publishMessage(
@@ -318,6 +320,7 @@ export class RunService {
             senderKind: AGENT_KIND,
             kind: AGENT_KIND,
             content: reply,
+            ...(reasoningContent ? { reasoningContent } : {}),
             createdAt: new Date().toISOString(),
           }),
         );

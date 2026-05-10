@@ -368,6 +368,8 @@ function StepFields({
   onTeamTabChange: (tabId: TeamTabId) => void;
 }) {
   const [roleMenuId, setRoleMenuId] = useState<string | null>(null);
+  const [isPickingWorkspaceRoot, setIsPickingWorkspaceRoot] = useState(false);
+  const [workspaceRootPickError, setWorkspaceRootPickError] = useState<string | null>(null);
   const [roleEditor, setRoleEditor] = useState<{
     mode: "create" | "edit";
     roleId: string | null;
@@ -388,6 +390,31 @@ function StepFields({
   } | null>(null);
   const [roleSearch, setRoleSearch] = useState("");
   const [activeRoleIndustry, setActiveRoleIndustry] = useState("all");
+
+  const pickWorkspaceRoot = async () => {
+    setWorkspaceRootPickError(null);
+    setIsPickingWorkspaceRoot(true);
+    try {
+      const response = await fetch("/api/onboarding/pick-workspace-root", { method: "POST" });
+      const body = (await response.json().catch(() => null)) as
+        | { path?: string; cancelled?: boolean; message?: string }
+        | null;
+
+      if (!response.ok) {
+        throw new Error(body?.message ?? "Unable to open folder picker.");
+      }
+
+      if (body?.path) {
+        onDraftChange(updateField(draft, "workspaceRoot", body.path));
+      }
+    } catch (error) {
+      setWorkspaceRootPickError(
+        error instanceof Error ? error.message : "Unable to open folder picker.",
+      );
+    } finally {
+      setIsPickingWorkspaceRoot(false);
+    }
+  };
 
   const ownerLabel = draft.ownerName.trim() || "Owner";
   const starterRoleTemplates: RolePresetTemplate[] =
@@ -737,18 +764,32 @@ function StepFields({
             <FieldShell
               label="Workspace root"
               htmlFor="workspaceRoot"
-              hint="Enter the absolute local path where the workspace will be created (e.g. /Users/name/projects/acme)"
+              hint="Browse opens a native folder dialog when this app runs on your machine (local dev). Hosted installs: type an absolute path."
               error={showError("workspaceRoot") ? errors.workspaceRoot : undefined}
             >
-              <TextInput
-                id="workspaceRoot"
-                error={showError("workspaceRoot")}
-                value={draft.workspaceRoot}
-                onBlur={() => onFieldBlur("workspaceRoot")}
-                onChange={(event) => onDraftChange(updateField(draft, "workspaceRoot", event.target.value))}
-                placeholder="/Users/admin/projects/my-workspace"
-                aria-invalid={showError("workspaceRoot")}
-              />
+              <div className="flex gap-2">
+                <TextInput
+                  id="workspaceRoot"
+                  error={showError("workspaceRoot")}
+                  value={draft.workspaceRoot}
+                  onBlur={() => onFieldBlur("workspaceRoot")}
+                  onChange={(event) => onDraftChange(updateField(draft, "workspaceRoot", event.target.value))}
+                  placeholder="/absolute/path/to/your-workspace"
+                  aria-invalid={showError("workspaceRoot")}
+                  className="flex-1"
+                />
+                <button
+                  type="button"
+                  onClick={() => void pickWorkspaceRoot()}
+                  disabled={isPickingWorkspaceRoot}
+                  className="rounded-lg border border-zinc-200 px-3 py-2.5 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-900"
+                >
+                  {isPickingWorkspaceRoot ? "Opening..." : "Browse"}
+                </button>
+              </div>
+              {workspaceRootPickError ? (
+                <p className="mt-2 text-xs text-red-600 dark:text-red-400">{workspaceRootPickError}</p>
+              ) : null}
             </FieldShell>
           </div>
 
@@ -1293,8 +1334,12 @@ function StepFields({
               <ProviderModelFields
                 provider={roleEditor.llm}
                 model={roleEditor.model}
-                onProviderChange={(llm) => setRoleEditor({ ...roleEditor, llm })}
-                onModelChange={(model) => setRoleEditor({ ...roleEditor, model })}
+                onProviderChange={(llm) =>
+                  setRoleEditor((current) => (current ? { ...current, llm } : current))
+                }
+                onModelChange={(model) =>
+                  setRoleEditor((current) => (current ? { ...current, model } : current))
+                }
                 providerLabel="LLM provider"
                 modelLabel="Model"
                 providerId="roleLlm"

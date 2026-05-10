@@ -17,7 +17,7 @@ function runStatusVariant(status: RunState["status"]): StatusVariant {
   }
 }
 
-export function RunCard({ run }: { run: RunState }) {
+export function RunCard({ run, blockedReason }: { run: RunState; blockedReason?: string }) {
   return (
     <div className="rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3 dark:border-zinc-800 dark:bg-zinc-900/50">
       <div className="flex items-center justify-between gap-3">
@@ -28,6 +28,11 @@ export function RunCard({ run }: { run: RunState }) {
           <p className="text-[10px] text-zinc-500">
             {run.step || run.status} · {run.agentId}
           </p>
+          {blockedReason ? (
+            <p className="mt-1 text-[10px] text-red-600 dark:text-red-400">
+              Blocked reason: {blockedReason}
+            </p>
+          ) : null}
         </div>
         <StatusBadge variant={runStatusVariant(run.status)} label={run.status} />
       </div>

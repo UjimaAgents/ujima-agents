@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { expect, test } from 'vitest';
 import {
   AgentTeam,
@@ -33,8 +34,10 @@ test('starter config includes the preset team shape', () => {
   expect(config.organizationChart.reportsTo['frontend-engineer']).toBe('pm');
   expect(config.roles.map((role) => role.name)).toContain('frontend-engineer');
   expect(config.roles.map((role) => role.name)).not.toContain('engineering-frontend-developer');
-  expect(config.workspace.root).toBe('/tmp/ujima-org');
-  expect(config.workspace.roleScopes['frontend-engineer']?.[0]).toBe('/tmp/ujima-org/apps/web');
+  expect(config.workspace.root).toBe(path.resolve('/tmp/ujima-org'));
+  expect(config.workspace.roleScopes['frontend-engineer']?.[0]).toBe(
+    path.resolve('/tmp/ujima-org/apps/web'),
+  );
 });
 
 test('role catalog mirrors the upstream industry folders', () => {
@@ -135,7 +138,9 @@ test('AgentTeam normalizes and validates the team config', () => {
   expect(team.kind).toBe('ujima.agent-team');
   expect(team.organizationChart.reportsTo['frontend-alice']).toBe('pm');
   expect(team.getAgent('frontend-bob')?.personalityName).toBe('skeptical');
-  expect(team.getRole('frontend-engineer')?.workspaceScopes[0]).toBe('/tmp/ujima-org/apps/web');
+  expect(team.getRole('frontend-engineer')?.workspaceScopes[0]).toBe(
+    path.resolve('/tmp/ujima-org/apps/web'),
+  );
   expect(team.getProvider('openai')?.defaultModel).toBe('gpt-5.4');
   expect(team.getChannel('general')?.kind).toBe('general');
 });
