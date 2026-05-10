@@ -26,6 +26,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ thr
       await getSessionTokenFromCookie(),
     );
     const body = await response.json().catch(() => null);
+    if (response.status === 404) {
+      return NextResponse.json({ ok: true }, { status: 200 });
+    }
     if (!response.ok) {
       return NextResponse.json(
         parseApiError(body, "Unable to mark conversation as read."),
