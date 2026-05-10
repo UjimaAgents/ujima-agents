@@ -62,65 +62,61 @@ export function TraceStep({
         ) : null}
       </div>
 
-      <div className="flex min-w-0 flex-1 items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          <div
-            className={`flex flex-wrap items-start gap-x-3 gap-y-1 ${
-              hasMetaRowSpacing ? "mb-2" : ""
-            }`}
-          >
-            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-0.5">
-              <p className="min-w-0 text-xs font-semibold leading-snug text-foreground">
-                {step.title}
-              </p>
-              {step.status === "success" && (
-                <CheckCircle2
-                  className="h-3.5 w-3.5 shrink-0 text-emerald-500"
-                  aria-hidden
-                />
-              )}
-              {step.status === "failed" && (
-                <XCircle
-                  className="h-3.5 w-3.5 shrink-0 text-red-500"
-                  aria-hidden
-                />
-              )}
-            </div>
-            <span className="shrink-0 pt-0.5 text-[10px] leading-none tabular-nums text-foreground/45">
-              {step.time}
-            </span>
+      <div className="min-w-0 flex-1">
+        <div
+          className={`flex items-center gap-3 ${
+            hasMetaRowSpacing ? "mb-2" : ""
+          }`}
+        >
+          <div className="min-w-0 flex-1 flex flex-wrap items-center gap-x-2 gap-y-0.5">
+            <p className="min-w-0 text-xs font-semibold leading-snug text-foreground">
+              {step.title}
+            </p>
+            {step.status === "success" && (
+              <CheckCircle2
+                className="h-3.5 w-3.5 shrink-0 text-emerald-500"
+                aria-hidden
+              />
+            )}
+            {step.status === "failed" && (
+              <XCircle
+                className="h-3.5 w-3.5 shrink-0 text-red-500"
+                aria-hidden
+              />
+            )}
           </div>
-          {step.terminal ? (
-            <TerminalPane
-              className="mt-2"
-              cwd={step.terminal.cwd}
-              commandLine={step.terminal.commandLine}
-              output={step.terminal.output}
-              outputPlaceholder={step.terminal.outputPlaceholder}
-              outputTone={step.terminal.outputTone}
-            />
-          ) : step.filesystem ? (
-            <FilesystemToolPane
-              className="mt-2"
-              action={step.filesystem.action}
-              resourcePath={step.filesystem.resourcePath}
-              body={step.filesystem.body}
-              bodyTone={step.filesystem.bodyTone}
-            />
-          ) : step.detail.trim() ? (
-            <p className="mt-2.5 whitespace-pre-wrap font-mono text-[11px] leading-relaxed text-foreground/60">
-              {step.detail}
-            </p>
-          ) : null}
-          {step.subtext ? (
-            <p className="mt-2.5 text-[11px] leading-relaxed text-foreground/45">
-              {step.subtext}
-            </p>
-          ) : null}
+          <div className="flex shrink-0 items-baseline gap-3 whitespace-nowrap text-xs tabular-nums leading-snug text-foreground/45">
+            <span>{step.time}</span>
+            <span className="min-w-[4.5ch] text-end">{step.duration}</span>
+          </div>
         </div>
-        <span className="shrink-0 self-start pt-0.5 text-[10px] tabular-nums text-foreground/45">
-          {step.duration}
-        </span>
+        {step.terminal ? (
+          <TerminalPane
+            className="mt-2"
+            cwd={step.terminal.cwd}
+            commandLine={step.terminal.commandLine}
+            output={step.terminal.output}
+            outputPlaceholder={step.terminal.outputPlaceholder}
+            outputTone={step.terminal.outputTone}
+          />
+        ) : step.filesystem ? (
+          <FilesystemToolPane
+            className="mt-2"
+            action={step.filesystem.action}
+            resourcePath={step.filesystem.resourcePath}
+            body={step.filesystem.body}
+            bodyTone={step.filesystem.bodyTone}
+          />
+        ) : step.detail.trim() ? (
+          <p className="mt-2.5 whitespace-pre-wrap font-mono text-[11px] leading-relaxed text-foreground/60">
+            {step.detail}
+          </p>
+        ) : null}
+        {step.subtext ? (
+          <p className="mt-2.5 text-[11px] leading-relaxed text-foreground/45">
+            {step.subtext}
+          </p>
+        ) : null}
       </div>
     </div>
   );

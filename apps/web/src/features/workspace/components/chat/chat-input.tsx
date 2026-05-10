@@ -940,11 +940,6 @@ export function ChatInput({
             </button>
           </div>
         </div>
-        <div className="mt-2 px-1 text-xs text-zinc-500 dark:text-zinc-400">
-          <span className="block truncate">
-            {statusHint ?? "Enter to send, Shift+Enter for a new line."}
-          </span>
-        </div>
         {error ? (
           <p className="mt-2 text-xs text-red-600 dark:text-red-400">{error}</p>
         ) : null}
