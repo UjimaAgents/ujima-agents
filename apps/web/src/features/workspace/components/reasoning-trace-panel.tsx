@@ -20,18 +20,20 @@ export function ReasoningTracePanel({
 
   if (steps.length === 0) {
     return (
-      <p className="text-xs text-zinc-500 dark:text-zinc-400">No trace steps.</p>
+      <p className="text-xs text-foreground/50">No trace steps.</p>
     );
   }
 
   return (
-    <>
-      <div className="space-y-4">
-        {steps.map((step) => (
-          <TraceStep key={step.id} step={step} />
-        ))}
-      </div>
+    <div className="space-y-0">
+      {steps.map((step, index) => (
+        <TraceStep
+          key={step.id}
+          step={step}
+          isLast={index === steps.length - 1}
+        />
+      ))}
       <div ref={bottomRef} className="h-px w-full shrink-0" aria-hidden />
-    </>
+    </div>
   );
 }

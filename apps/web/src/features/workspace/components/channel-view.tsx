@@ -6,7 +6,7 @@ import { File, FileArchive, FileAudio, FileImage, FileText, FileVideo, SquarePen
 import type { BootstrapResponse } from "@ujima/api-schema";
 import type { SelectedConversation } from "../types";
 import { useConversationSync } from "../use-conversation-sync";
-import { DragHandle } from "./workspace-shell";
+import { DragHandle, WORKSPACE_MAIN_GRID_TRANSITION } from "./workspace-shell";
 import {
   ChatHeader,
   ChatTabs,
@@ -350,9 +350,14 @@ export function ChannelView({
     }
   }, [activeTab, setActiveTab, tabIds]);
 
+  const detailsCol = showDetails ? `${Math.max(detailsWidth, 33)}%` : "0px";
+
   return (
-    <div className="flex flex-1 overflow-hidden bg-white dark:bg-[#09090b]">
-      <div className="flex flex-1 min-w-0 flex-col">
+    <div
+      className={`grid flex-1 min-h-0 overflow-hidden bg-white dark:bg-[#09090b] ${WORKSPACE_MAIN_GRID_TRANSITION}`}
+      style={{ gridTemplateColumns: `minmax(0, 1fr) minmax(0, ${detailsCol})` }}
+    >
+      <div className="flex h-full min-h-0 min-w-0 flex-col">
         <ChatHeader
           title={conversation.name}
           type={conversation.type === "agent" ? "dm" : "channel"}
@@ -547,34 +552,32 @@ export function ChannelView({
         />
       </div>
 
-      {showDetails && (
-        <>
-          <DragHandle side="right" onResize={setDetailsWidth} />
-          <div
-            style={{ width: `${Math.max(detailsWidth, 33)}%`, minWidth: "33%" }}
-            className="shrink-0 h-full"
+      <div
+        className={`flex h-full min-h-0 min-w-0 overflow-hidden ${showDetails ? "" : "pointer-events-none"}`}
+        aria-hidden={!showDetails}
+      >
+        <DragHandle side="right" onResize={setDetailsWidth} />
+        <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
+          <DetailsSidebar
+            agentName={conversation.name}
+            agentColorIndex={conversationColorIndex}
+            statusLabel={selectedStatus.label}
+            timeLabel="—"
+            tabs={["Reasoning trace", "Changes", "Metadata"]}
+            activeTab={detailsTab}
+            onTabChange={(tab) => setDetailsTab(tab as typeof detailsTab)}
+            onClose={() => setShowDetails(false, { userIntent: true })}
           >
-            <DetailsSidebar
-              agentName={conversation.name}
-              agentColorIndex={conversationColorIndex}
-              statusLabel={selectedStatus.label}
-              timeLabel="—"
-              tabs={["Reasoning trace", "Changes", "Metadata"]}
-              activeTab={detailsTab}
-              onTabChange={(tab) => setDetailsTab(tab as typeof detailsTab)}
-              onClose={() => setShowDetails(false, { userIntent: true })}
-            >
-              {detailsTab === "Reasoning trace" ? (
-                <ReasoningTracePanel steps={reasoningTraceSteps} autoScroll={traceAutoScroll} />
-              ) : detailsTab === "Changes" ? (
-                <p className="text-xs text-zinc-500 dark:text-zinc-400">Diffs unavailable.</p>
-              ) : (
-                <p className="text-xs text-zinc-500 dark:text-zinc-400">No metadata.</p>
-              )}
-            </DetailsSidebar>
-          </div>
-        </>
-      )}
+            {detailsTab === "Reasoning trace" ? (
+              <ReasoningTracePanel steps={reasoningTraceSteps} autoScroll={traceAutoScroll} />
+            ) : detailsTab === "Changes" ? (
+              <p className="text-xs text-zinc-500 dark:text-zinc-400">Diffs unavailable.</p>
+            ) : (
+              <p className="text-xs text-zinc-500 dark:text-zinc-400">No metadata.</p>
+            )}
+          </DetailsSidebar>
+        </div>
+      </div>
     </div>
   );
 }

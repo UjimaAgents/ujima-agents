@@ -27,7 +27,7 @@ function createRenderer(mentionNames: string[]) {
   };
 
   renderer.codespan = function ({ text }: { text: string }) {
-    return `<code class="rounded-md bg-foreground/10 px-1.5 py-0.5 text-[11px] font-medium text-violet-700 dark:text-violet-300">${h(text)}</code>`;
+    return `<code class="rounded-md bg-foreground/10 px-1.5 py-0.5 text-xs font-medium text-violet-700 dark:text-violet-300">${h(text)}</code>`;
   };
 
   renderer.blockquote = function ({ tokens }: { tokens: unknown[] }) {
@@ -97,7 +97,7 @@ export function Markdown({
 
   return (
     <div
-      className={`break-words text-xs leading-relaxed text-foreground ${className}`}
+      className={`break-words text-sm leading-relaxed text-foreground ${className}`}
       dangerouslySetInnerHTML={{ __html: html }}
     />
   );

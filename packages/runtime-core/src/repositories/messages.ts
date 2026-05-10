@@ -282,6 +282,8 @@ export function deleteMessages(
 }
 
 function rowToMessage(row: Row, attachments: Attachment[] = []): Message {
+  const kind = rowString(row, 'kind');
+  const content = rowString(row, 'content');
   return MessageSchema.parse({
     id: rowString(row, 'id'),
     organizationId: rowString(row, 'organization_id'),
@@ -290,8 +292,8 @@ function rowToMessage(row: Row, attachments: Attachment[] = []): Message {
     parentMessageId: optionalRowString(row, 'parent_message_id'),
     senderId: rowString(row, 'sender_id'),
     senderKind: rowString(row, 'sender_kind'),
-    kind: rowString(row, 'kind'),
-    content: rowString(row, 'content'),
+    kind,
+    content,
     mentions: parseJsonArray(row.mentions),
     toolCalls: parseJsonArrayRaw(row.tool_calls),
     attachments,

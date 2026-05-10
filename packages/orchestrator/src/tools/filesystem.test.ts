@@ -129,6 +129,45 @@ describe('filesystem tool', () => {
     expect(await readFile(join(root, 'edit.md'), 'utf8')).toBe('keep\nnew line\nend\n');
   });
 
+  it('write preserves trailing blank context lines in patches', async () => {
+    root = await mkdtemp(join(tmpdir(), 'ujima-fs-'));
+    await writeFile(
+      join(root, 'quick.md'),
+      'hello\n# TimetoTest Backend - Quick Reference Guide\n# TimetoTest Backend - Quick Reference Guide\n\n',
+      'utf8',
+    );
+
+    const patch = `--- a/quick.md
++++ b/quick.md
+@@ -1,4 +1,3 @@
+-hello
+ # TimetoTest Backend - Quick Reference Guide
+ # TimetoTest Backend - Quick Reference Guide
+ 
+`;
+
+    await filesystemTool.execute({
+      invocation: {
+        organizationId: 'org-1',
+        runId: 'run-1',
+        memberId: 'agent-1',
+        toolCallId: 'call-1',
+        toolId: 'filesystem',
+        action: 'write',
+        resourceType: 'file',
+        resourcePath: 'quick.md',
+        input: { patch },
+      } as never,
+      team: { workspace: { root } } as never,
+      repo: {} as never,
+      conversations: {} as never,
+    });
+
+    expect(await readFile(join(root, 'quick.md'), 'utf8')).toBe(
+      '# TimetoTest Backend - Quick Reference Guide\n# TimetoTest Backend - Quick Reference Guide\n\n',
+    );
+  });
+
   it('write rejects a patch that does not match the file', async () => {
     root = await mkdtemp(join(tmpdir(), 'ujima-fs-'));
     await writeFile(join(root, 'x.md'), 'wrong\n', 'utf8');

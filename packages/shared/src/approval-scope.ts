@@ -110,32 +110,35 @@ export function parseFilesystemScope(scope: string): ParsedFilesystemScope | nul
 
 const RELAY_FS_WRITE_BODY_MAX = 4000;
 
-function relayFilesystemBlock(fs: ParsedFilesystemScope): string {
-  const lines = ['```', fs.resourcePath, fs.action];
-  const writeBody =
-    fs.action === 'write'
-      ? (fs.patch !== undefined && fs.patch.length > 0
-          ? fs.patch
-          : fs.content !== undefined && fs.content.length > 0
-            ? fs.content
-            : undefined)
-      : undefined;
-  if (writeBody !== undefined) {
-    const body =
-      writeBody.length > RELAY_FS_WRITE_BODY_MAX
-        ? `${writeBody.slice(0, RELAY_FS_WRITE_BODY_MAX)}\n…`
-        : writeBody;
-    lines.push(body);
+function relayShellPlain(shell: ParsedShellScope): string {
+  const cmd = shellInvocationDisplayLine(shell);
+  return [`[Approval needed] Shell`, `Cwd: ${shell.cwd}`, `Command: ${cmd}`].join('\n');
+}
+
+function relayFilesystemPlain(fs: ParsedFilesystemScope): string {
+  const lines = [`[Approval needed] Filesystem ${fs.action}`, `Path: ${fs.resourcePath}`];
+  if (fs.action === 'write') {
+    const writeBody =
+      fs.patch !== undefined && fs.patch.length > 0
+        ? fs.patch
+        : fs.content !== undefined && fs.content.length > 0
+          ? fs.content
+          : undefined;
+    if (writeBody !== undefined) {
+      const body =
+        writeBody.length > RELAY_FS_WRITE_BODY_MAX
+          ? `${writeBody.slice(0, RELAY_FS_WRITE_BODY_MAX)}\n… (truncated)`
+          : writeBody;
+      lines.push('Patch:', body);
+    }
   }
-  lines.push('```');
   return lines.join('\n');
 }
 
 /**
- * Compact chat body when an approval is relayed (e.g. owner DM).
- * Shell: fenced block with cwd then `$ command …`.
- * Filesystem: fenced block with path, action, and optional write body.
- * Otherwise: `action` · `path`.
+ * Plain-text body when an approval is relayed (e.g. owner DM).
+ * Intentionally avoids fenced blocks that mirror in-app tool UI so history
+ * does not train the model to paste fake tool transcripts.
  */
 export function formatApprovalRelayMarkdown(approval: {
   action: string;
@@ -144,11 +147,10 @@ export function formatApprovalRelayMarkdown(approval: {
 }): string {
   const { shell, filesystem } = parseApprovalDisplayScopesFromReason(approval.reason);
   if (shell) {
-    const cmd = shellInvocationDisplayLine(shell);
-    return ['```', shell.cwd, `$ ${cmd}`, '```'].join('\n');
+    return relayShellPlain(shell);
   }
   if (filesystem) {
-    return relayFilesystemBlock(filesystem);
+    return relayFilesystemPlain(filesystem);
   }
   return `\`${approval.action}\` · \`${approval.resourcePath}\``;
 }

@@ -86,7 +86,7 @@ export const filesystemTool: OrchestratorTool<typeof FilesystemSchema> = {
         if (code !== 'ENOENT') throw err;
       }
 
-      const after = applyPatch(before, patch.trim());
+      const after = applyPatch(before, patch);
       if (after === false) {
         throw new Error(
           'Patch did not apply. Use filesystem.read on this path first (edits), or a create-file unified diff from empty (--- /dev/null) for new files.',

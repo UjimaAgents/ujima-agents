@@ -121,8 +121,13 @@ export class RunService {
     }
 
     if (run.status === 'running') {
-      this.deferredApprovalResumes.add(this.runKey(organizationId, runId));
-      return run;
+      const key = this.runKey(organizationId, runId);
+      if (this.runAbortControllers.has(key)) {
+        this.deferredApprovalResumes.add(key);
+        return run;
+      }
+      const afterApprovedTools = await this.executePendingApprovedTools(run);
+      return this.advanceRun(afterApprovedTools);
     }
 
     if (run.status !== 'waiting_for_approval') {
@@ -130,9 +135,6 @@ export class RunService {
     }
 
     const afterApprovedTools = await this.executePendingApprovedTools(run);
-    if (afterApprovedTools.status === 'failed') {
-      return afterApprovedTools;
-    }
 
     return this.advanceRun({
       ...afterApprovedTools,
@@ -287,30 +289,29 @@ export class RunService {
 
       if (this.consumeDeferredApprovalResume(run.organizationId, run.id)) {
         const afterApprovedTools = await this.executePendingApprovedTools(running);
-        if (afterApprovedTools.status === 'failed') {
-          return afterApprovedTools;
-        }
         return this.advanceRun(afterApprovedTools);
-      }
-
-      const pendingApprovalExists = this.repo
-        .listPendingApprovals(run.organizationId)
-        .some((approval) => approval.runId === run.id);
-      if (pendingApprovalExists) {
-        return this.waitForApproval(running, 'Waiting for approval');
       }
 
       const statuses = [
         ...result.toolResults,
-        ...result.steps.flatMap((step) => step.toolResults),
+        ...result.steps.flatMap(
+          (step: (typeof result.steps)[number]) => step?.toolResults ?? [],
+        ),
       ]
-        .map((toolResult) => (toolResult.output as { status?: string } | undefined)?.status)
+        .map((toolResult) => (toolResult?.output as { status?: string } | undefined)?.status)
         .filter((status): status is string => typeof status === 'string');
       if (statuses.includes('blocked')) {
         return this.failRun(running, 'Tool action blocked');
       }
 
       if (statuses.includes('waiting_for_approval')) {
+        return this.waitForApproval(running, 'Waiting for approval');
+      }
+
+      const pendingApprovalExists = this.repo
+        .listPendingApprovals(run.organizationId)
+        .some((approval) => approval.runId === run.id);
+      if (pendingApprovalExists) {
         return this.waitForApproval(running, 'Waiting for approval');
       }
 
@@ -339,7 +340,8 @@ export class RunService {
     } catch (error) {
       if (error instanceof ToolApprovalRequiredError) {
         if (this.consumeDeferredApprovalResume(run.organizationId, run.id)) {
-          return this.advanceRun(running);
+          const afterApprovedTools = await this.executePendingApprovedTools(running);
+          return this.advanceRun(afterApprovedTools);
         }
         return this.waitForApproval(running, 'Waiting for approval');
       }
@@ -435,11 +437,6 @@ export class RunService {
         );
       });
 
-    if (pendingSteps.length === 0) {
-      return run;
-    }
-
-    let latestRun = run;
     for (const step of pendingSteps) {
       const invocation: ToolInvocationInput = {
         organizationId: step.organizationId,
@@ -456,22 +453,13 @@ export class RunService {
       };
 
       try {
-        const result = await this.tools.invoke(invocation);
-        if (!result.ok) {
-          const reason =
-            result.error ||
-            (result.output as { reason?: string } | undefined)?.reason ||
-            'Approved tool failed';
-          latestRun = this.failRun(latestRun, reason);
-          break;
-        }
-      } catch (error) {
-        latestRun = this.failRun(latestRun, (error as Error).message);
-        break;
+        await this.tools.invoke(invocation);
+      } catch {
+        // Tool failures are already persisted by ToolService; keep going.
       }
     }
 
-    return latestRun;
+    return run;
   }
 
   private runKey(organizationId: string, runId: string): string {
