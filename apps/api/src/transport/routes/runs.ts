@@ -9,8 +9,13 @@ import {
   RunCancelSchema,
   RunCreateSchema,
   RunListQuerySchema,
+  ShellJobDetailSchema,
+  ShellJobDetailQuerySchema,
+  ShellJobSchema,
+  RunJobTerminateSchema,
 } from '@ujima/api-schema';
 import type { ApprovalService, AuthService, RunService } from '@ujima/orchestrator';
+import { listBackgroundJobs, peekBackgroundJob, terminateBackgroundJob } from '@ujima/orchestrator';
 import { z } from 'zod';
 import {
   ERR_NO_WORKSPACE_ROOT,
@@ -21,6 +26,7 @@ import { requireOrgSession } from './org-auth.js';
 
 const RunIdParamsSchema = z.object({ runId: IdSchema });
 const ApprovalIdParamsSchema = z.object({ approvalId: IdSchema });
+const JobIdParamsSchema = z.object({ runId: IdSchema, jobId: z.string() });
 const RunDetailQuerySchema = z.object({ organizationId: IdSchema });
 const RunListResponseSchema = createPaginatedSchema(RunStateSchema);
 const RunDetailResponseSchema = z.object({
@@ -227,6 +233,89 @@ export function registerRunRoutes(
       return reply
         .code(message.startsWith('Approval not found') ? 404 : 400)
         .send({ code: message.startsWith('Approval not found') ? 'ERR_NOT_FOUND' : 'ERR_BAD_REQUEST', message });
+    }
+  });
+
+  app.get('/runs/:runId/jobs', {
+    schema: {
+      description: 'Get background shell jobs for a run',
+      tags: ['Runs'],
+      params: RunIdParamsSchema,
+      querystring: RunDetailQuerySchema,
+      response: {
+        200: z.array(ShellJobSchema),
+        400: ApiErrorSchema,
+        403: ApiErrorSchema,
+        404: ApiErrorSchema,
+      },
+    },
+  }, async (req, reply) => {
+    try {
+      const { organizationId } = RunDetailQuerySchema.parse(req.query);
+      const forbidden = requireOrgSession(auth, req, reply, organizationId);
+      if (forbidden) return forbidden;
+      const run = runs.getRun(organizationId, req.params.runId);
+      if (!run) return notFound(reply, 'Run not found');
+      return listBackgroundJobs(req.params.runId);
+    } catch (err) {
+      return badRequest(reply, errMessage(err));
+    }
+  });
+
+  app.get('/runs/:runId/jobs/:jobId', {
+    schema: {
+      description: 'Peek live stdout/stderr for a background shell job (non-destructive)',
+      tags: ['Runs'],
+      params: JobIdParamsSchema,
+      querystring: ShellJobDetailQuerySchema,
+      response: {
+        200: ShellJobDetailSchema,
+        400: ApiErrorSchema,
+        403: ApiErrorSchema,
+        404: ApiErrorSchema,
+      },
+    },
+  }, async (req, reply) => {
+    try {
+      const { organizationId } = ShellJobDetailQuerySchema.parse(req.query);
+      const forbidden = requireOrgSession(auth, req, reply, organizationId);
+      if (forbidden) return forbidden;
+      const run = runs.getRun(organizationId, req.params.runId);
+      if (!run) return notFound(reply, 'Run not found');
+      const snapshot = peekBackgroundJob(req.params.runId, req.params.jobId);
+      if (!snapshot) {
+        return notFound(reply, 'Background job not found');
+      }
+      return snapshot;
+    } catch (err) {
+      return badRequest(reply, errMessage(err));
+    }
+  });
+
+  app.post('/runs/:runId/jobs/:jobId/terminate', {
+    schema: {
+      description: 'Terminate a background shell job',
+      tags: ['Runs'],
+      params: JobIdParamsSchema,
+      body: RunJobTerminateSchema,
+      response: {
+        200: z.object({ success: z.boolean() }),
+        400: ApiErrorSchema,
+        403: ApiErrorSchema,
+        404: ApiErrorSchema,
+      },
+    },
+  }, async (req, reply) => {
+    try {
+      const forbidden = requireOrgSession(auth, req, reply, req.body.organizationId);
+      if (forbidden) return forbidden;
+      const run = runs.getRun(req.body.organizationId, req.params.runId);
+      if (!run) return notFound(reply, 'Run not found');
+
+      const success = terminateBackgroundJob(req.params.runId, req.params.jobId);
+      return { success };
+    } catch (err) {
+      return badRequest(reply, errMessage(err));
     }
   });
 }

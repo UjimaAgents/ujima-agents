@@ -32,3 +32,31 @@ export const ApprovalListQuerySchema = z.object({
   organizationId: IdSchema,
 });
 export type ApprovalListQuery = z.infer<typeof ApprovalListQuerySchema>;
+
+export const ShellJobSchema = z.object({
+  id: z.string(),
+  status: z.enum(['running', 'exited', 'error']),
+});
+export type ShellJob = z.infer<typeof ShellJobSchema>;
+
+export const ShellJobDetailSchema = z.object({
+  id: z.string(),
+  status: z.enum(['running', 'exited', 'error']),
+  cwd: z.string(),
+  commandLine: z.string(),
+  stdout: z.string(),
+  stderr: z.string(),
+  exitCode: z.number().int().optional(),
+  error: z.string().optional(),
+});
+export type ShellJobDetail = z.infer<typeof ShellJobDetailSchema>;
+
+export const ShellJobDetailQuerySchema = z.object({
+  organizationId: IdSchema,
+});
+export type ShellJobDetailQuery = z.infer<typeof ShellJobDetailQuerySchema>;
+
+export const RunJobTerminateSchema = z.object({
+  organizationId: IdSchema,
+});
+export type RunJobTerminate = z.infer<typeof RunJobTerminateSchema>;

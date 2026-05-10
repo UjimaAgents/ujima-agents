@@ -210,14 +210,21 @@ export class ToolServiceImpl implements ToolService {
 
     this.emitToolCalled(preparedInvocation, rooms);
 
-    const policy = checkToolPolicy(
-      team,
-      member.roleName,
-      preparedInvocation.toolId,
-      preparedInvocation.action,
-      preparedInvocation.resourcePath,
-      { spiritRole: preparedInvocation.spiritRole },
-    );
+    const isSubOperation =
+      preparedInvocation.toolId === "shell" &&
+      preparedInvocation.input?.operation &&
+      preparedInvocation.input.operation !== "execute";
+
+    const policy = isSubOperation
+      ? { allowed: true, requiresApproval: false, reason: "sub-operation" }
+      : checkToolPolicy(
+          team,
+          member.roleName,
+          preparedInvocation.toolId,
+          preparedInvocation.action,
+          preparedInvocation.resourcePath,
+          { spiritRole: preparedInvocation.spiritRole },
+        );
 
     if (!policy.allowed) {
       this.audit(preparedInvocation, "blocked", { reason: policy.reason });
@@ -532,6 +539,11 @@ export class ToolServiceImpl implements ToolService {
     }
 
     const input = invocation.input ?? {};
+
+    if (input.operation === "send_input" || input.operation === "read_output" || input.operation === "terminate") {
+      return invocation;
+    }
+
     const commandText = typeof input.command === "string" ? input.command : "";
     const requestedCwd =
       typeof input.cwd === "string"

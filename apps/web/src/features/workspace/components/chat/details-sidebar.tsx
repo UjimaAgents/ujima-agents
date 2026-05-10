@@ -2,6 +2,7 @@ import {CheckCircle2, X, XCircle} from "lucide-react";
 import {TERMINAL_PANEL, TERMINAL_SECTION} from "./terminal-chrome";
 import {Avatar} from "./primitives";
 import {TerminalPane} from "./terminal-pane";
+import {BackgroundShellJobPane} from "./background-shell-job-pane";
 import {FilesystemToolPane} from "./filesystem-tool-pane";
 
 /* ── Trace step (used in reasoning trace timeline) ─────────────────── */
@@ -20,6 +21,12 @@ export interface TraceStepData {
     output?: string;
     outputPlaceholder?: string;
     outputTone?: "default" | "error";
+    /** Live poll + stop for background shell jobs (see BackgroundShellJobPane). */
+    streamingJob?: {
+      runId: string;
+      jobId: string;
+      organizationId: string;
+    };
   };
   /** Filesystem read/write tool (path + action + optional body). */
   filesystem?: {
@@ -38,10 +45,37 @@ export function TraceStep({
   /** Hide the connector below the dot on the final row. */
   isLast?: boolean;
 }) {
-  const hasMetaRowSpacing = !!(step.terminal || step.filesystem);
+  const body = step.terminal?.streamingJob ? (
+    <BackgroundShellJobPane
+      cwd={step.terminal.cwd}
+      commandLine={step.terminal.commandLine}
+      runId={step.terminal.streamingJob.runId}
+      jobId={step.terminal.streamingJob.jobId}
+      organizationId={step.terminal.streamingJob.organizationId}
+    />
+  ) : step.terminal ? (
+    <TerminalPane
+      cwd={step.terminal.cwd}
+      commandLine={step.terminal.commandLine}
+      output={step.terminal.output}
+      outputPlaceholder={step.terminal.outputPlaceholder}
+      outputTone={step.terminal.outputTone}
+    />
+  ) : step.filesystem ? (
+      <FilesystemToolPane
+        action={step.filesystem.action}
+        resourcePath={step.filesystem.resourcePath}
+        body={step.filesystem.body}
+        bodyTone={step.filesystem.bodyTone}
+      />
+    ) : step.detail.trim() ? (
+      <p className="whitespace-pre-wrap font-mono text-[11px] leading-relaxed text-foreground/60">
+        {step.detail}
+      </p>
+    ) : null;
 
   return (
-    <div className={`flex gap-3 ${isLast ? "pb-0" : "pb-5"}`}>
+    <div className={`flex gap-3 ${isLast ? "pb-0" : "pb-7"}`}>
       {/* Timeline gutter: keeps the dot off the text and centers it on the spine */}
       <div className="relative flex w-[14px] shrink-0 flex-col items-center pt-1">
         <div
@@ -56,18 +90,14 @@ export function TraceStep({
         />
         {!isLast ? (
           <div
-            className="absolute left-1/2 top-[14px] bottom-[-20px] w-px -translate-x-1/2 bg-foreground/10"
+            className="absolute left-1/2 top-[14px] bottom-[-28px] w-px -translate-x-1/2 bg-foreground/10"
             aria-hidden
           />
         ) : null}
       </div>
 
-      <div className="min-w-0 flex-1">
-        <div
-          className={`flex items-center gap-3 ${
-            hasMetaRowSpacing ? "mb-2" : ""
-          }`}
-        >
+      <div className="flex min-w-0 flex-1 flex-col gap-4">
+        <div className="flex items-center gap-3">
           <div className="min-w-0 flex-1 flex flex-wrap items-center gap-x-2 gap-y-0.5">
             <p className="min-w-0 text-xs font-semibold leading-snug text-foreground">
               {step.title}
@@ -90,32 +120,9 @@ export function TraceStep({
             <span className="min-w-[4.5ch] text-end">{step.duration}</span>
           </div>
         </div>
-        {step.terminal ? (
-          <TerminalPane
-            className="mt-2"
-            cwd={step.terminal.cwd}
-            commandLine={step.terminal.commandLine}
-            output={step.terminal.output}
-            outputPlaceholder={step.terminal.outputPlaceholder}
-            outputTone={step.terminal.outputTone}
-          />
-        ) : step.filesystem ? (
-          <FilesystemToolPane
-            className="mt-2"
-            action={step.filesystem.action}
-            resourcePath={step.filesystem.resourcePath}
-            body={step.filesystem.body}
-            bodyTone={step.filesystem.bodyTone}
-          />
-        ) : step.detail.trim() ? (
-          <p className="mt-2.5 whitespace-pre-wrap font-mono text-[11px] leading-relaxed text-foreground/60">
-            {step.detail}
-          </p>
-        ) : null}
+        {body}
         {step.subtext ? (
-          <p className="mt-2.5 text-[11px] leading-relaxed text-foreground/45">
-            {step.subtext}
-          </p>
+          <p className="text-[11px] leading-relaxed text-foreground/45">{step.subtext}</p>
         ) : null}
       </div>
     </div>

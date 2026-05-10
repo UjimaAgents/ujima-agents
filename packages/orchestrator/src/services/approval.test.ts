@@ -41,22 +41,22 @@ describe('ApprovalService', () => {
       resolveApproval: () => approval,
     } as never;
     const conversations = {
-      sendDirectMessage: (input: {
+      sendDirectSystemMessage: (input: {
         organizationId: string;
-        senderId: string;
-        recipientId: string;
+        memberIdA: string;
+        memberIdB: string;
         content: string;
       }) => {
-        relayThreadId = `dm:${[input.senderId, input.recipientId].sort().join(':')}`;
+        relayThreadId = `dm:${[input.memberIdA, input.memberIdB].sort().join(':')}`;
         relayContent = input.content;
         return {
           id: 'relay-message-1',
           organizationId: input.organizationId,
           threadId: relayThreadId,
           channelId: relayThreadId,
-          senderId: input.senderId,
-          senderKind: 'agent',
-          kind: 'agent',
+          senderId: 'system',
+          senderKind: 'human',
+          kind: 'system',
           content: input.content,
           mentions: [],
           createdAt: '2026-05-04T00:00:00.000Z',
@@ -125,7 +125,7 @@ describe('ApprovalService', () => {
     const service = new ApprovalService(
       repo,
       { emit: () => { emitted++; } } as never,
-      { sendDirectMessage: () => undefined } as never,
+      { sendDirectSystemMessage: () => undefined } as never,
       () => undefined,
     );
 
@@ -208,7 +208,7 @@ describe('ApprovalService', () => {
     const service = new ApprovalService(
       repo,
       { emit: () => { emitted++; } } as never,
-      { sendDirectMessage: () => undefined } as never,
+      { sendDirectSystemMessage: () => undefined } as never,
       () => { resumed++; },
     );
 
@@ -273,7 +273,7 @@ describe('ApprovalService', () => {
     const service = new ApprovalService(
       repo,
       { emit: () => { emitted++; } } as never,
-      { sendDirectMessage: () => undefined } as never,
+      { sendDirectSystemMessage: () => undefined } as never,
       async (_organizationId: string, _runId: string, allowRun?: boolean) => {
         resumedAllowRun = allowRun;
         if (allowRun === false) {
@@ -337,7 +337,7 @@ describe('ApprovalService', () => {
     const service = new ApprovalService(
       repo,
       { emit: () => undefined } as never,
-      { sendDirectMessage: () => undefined } as never,
+      { sendDirectSystemMessage: () => undefined } as never,
       () => undefined,
     );
 
@@ -392,7 +392,7 @@ describe('ApprovalService', () => {
     const service = new ApprovalService(
       repo,
       { emit: () => undefined } as never,
-      { sendDirectMessage: () => undefined } as never,
+      { sendDirectSystemMessage: () => undefined } as never,
       () => undefined,
     );
 
@@ -468,7 +468,7 @@ describe('ApprovalService', () => {
     const service = new ApprovalService(
       repo,
       { emit: () => undefined } as never,
-      { sendDirectMessage: () => undefined } as never,
+      { sendDirectSystemMessage: () => undefined } as never,
       () => undefined,
     );
 

@@ -93,8 +93,9 @@ export function ChannelView({
       })),
       activity: feed.activity,
       runs: feed.runs,
+      organizationId: bootstrap.organization?.id,
     });
-  }, [conversation.id, conversation.name, conversation.type, currentThreadId, feed.activity, feed.runs, members]);
+  }, [conversation.id, conversation.name, conversation.type, currentThreadId, feed.activity, feed.runs, members, bootstrap.organization?.id]);
 
   const pendingThreadApprovals = useMemo(
     () =>

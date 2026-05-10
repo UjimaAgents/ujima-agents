@@ -4,9 +4,11 @@ interface ShellScopeSource {
 }
 
 export interface NormalizedShellScope {
-  cwd: string;
-  command: string;
+  cwd?: string;
+  command?: string;
   args?: string[];
+  operation?: string;
+  job_id?: string;
 }
 
 export function buildShellApprovalScope(source: ShellScopeSource): string {
@@ -15,6 +17,14 @@ export function buildShellApprovalScope(source: ShellScopeSource): string {
 
 export function normalizeShellScope(source: ShellScopeSource): NormalizedShellScope {
   const input = source.input ?? {};
+  
+  if (input.operation && input.operation !== 'execute') {
+    return {
+      operation: input.operation as string,
+      job_id: input.job_id as string | undefined,
+    };
+  }
+
   const cwd = typeof input.cwd === 'string' ? input.cwd : source.resourcePath ?? '';
   const commandText = typeof input.command === 'string' ? input.command : '';
   const explicitArgs = Array.isArray(input.args)

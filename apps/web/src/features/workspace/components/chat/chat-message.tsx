@@ -89,6 +89,8 @@ export function ChatMessage({
   }, []);
 
   const systemLabel = message.kind === "system" ? getSystemMessageLabel(message.content) : null;
+  const systemBodyMarkdown =
+    message.kind === "system" ? systemMessageBodyMarkdown(message.content) : null;
 
   return (
     <>
@@ -119,6 +121,13 @@ export function ChatMessage({
                 </p>
                 <p className="text-[11px] text-zinc-400">{message.time}</p>
               </div>
+              {systemBodyMarkdown !== null && (
+                <Markdown
+                  content={systemBodyMarkdown}
+                  mentionNames={message.mentionNames}
+                  className="mt-1 text-sm"
+                />
+              )}
             </div>
           </>
         ) : (
@@ -191,7 +200,20 @@ function getSystemMessageLabel(content: string): string {
   if (content.startsWith(CONVERSATION_ARCHIVE_MARKER)) return "Conversation archived";
   if (content.startsWith(CONVERSATION_SUMMARY_MARKER)) return "Conversation compacted";
   if (content.startsWith(SELF_NOTE_SUMMARY_MARKER)) return "Self notes compacted";
+  if (content.startsWith("[Approval needed]")) {
+    const firstLine = content.split("\n")[0]?.trim() ?? "";
+    return firstLine.length > 0 ? firstLine : "Approval needed";
+  }
   return "System summary";
+}
+
+/** Body below the title line for system messages that carry multi-line context (e.g. approval relay). */
+function systemMessageBodyMarkdown(content: string): string | null {
+  if (content.startsWith("[Approval needed]")) {
+    const rest = content.split("\n").slice(1).join("\n").trim();
+    return rest.length > 0 ? rest : null;
+  }
+  return null;
 }
 
 export const ChatMessageList = forwardRef<

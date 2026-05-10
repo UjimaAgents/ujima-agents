@@ -12,39 +12,46 @@ import type { OrchestratorTool } from '../tools/types.js';
 import { ORCHESTRATOR_TOOLS } from '../tools/index.js';
 import { toModelToolName } from '../tools/names.js';
 import { ToolApprovalRequiredError, toModelToolOutput } from '../services/tool-loop-result.js';
+import { isCompactionSummarySystemMessage } from '../services/conversation-summary.js';
 
 export function toModelMessages(messages: Message[], selfId?: string): ModelMessage[] {
-  return messages.map((message) => {
-    const role =
-      message.kind === "system"
-        ? ("system" as const)
-        : selfId
-          ? message.senderId === selfId
-            ? ("assistant" as const)
-            : ("user" as const)
-          : message.senderKind === "agent"
-            ? ("assistant" as const)
-            : ("user" as const);
+  return messages
+    .filter(
+      (message) =>
+        message.kind !== 'system' || isCompactionSummarySystemMessage(message),
+    )
+    .map((message) => {
+      if (message.kind === 'system') {
+        return {
+          role: 'system' as const,
+          content: message.content,
+        } as ModelMessage;
+      }
 
-    const reasoning = message.reasoningContent?.trim();
-    if (role === "assistant" && reasoning) {
+      const role = selfId
+        ? message.senderId === selfId
+          ? ("assistant" as const)
+          : ("user" as const)
+        : message.senderKind === "agent"
+          ? ("assistant" as const)
+          : ("user" as const);
+
+      const reasoning = message.reasoningContent?.trim();
+      if (role === "assistant" && reasoning) {
+        return {
+          role: "assistant",
+          content: [
+            { type: "reasoning" as const, text: reasoning },
+            { type: "text" as const, text: message.content },
+          ],
+        } as ModelMessage;
+      }
+
       return {
-        role: "assistant",
-        content: [
-          { type: "reasoning" as const, text: reasoning },
-          { type: "text" as const, text: message.content },
-        ],
+        role,
+        content: buildUserContent(message),
       } as ModelMessage;
-    }
-
-    return {
-      role,
-      content:
-        message.kind === "system"
-          ? message.content
-          : buildUserContent(message),
-    } as ModelMessage;
-  });
+    });
 }
 
 function buildUserContent(message: Message): UserContent {
