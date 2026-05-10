@@ -17,9 +17,12 @@ export const TERMINAL_COMMAND_ROW =
 
 export const TERMINAL_PROMPT = "select-none text-foreground/45";
 
+/** Scroll + size only (no text color); use inside structured views like unified diffs. */
+export const TERMINAL_OUTPUT_SCROLL_FRAME =
+  "max-h-[min(36vh,280px)] min-h-[2.5rem] overflow-y-auto overflow-x-auto overscroll-contain border-t border-foreground/10 [-webkit-overflow-scrolling:touch]";
+
 export function terminalOutputAreaClass(tone: "default" | "error"): string {
-  const base =
-    "max-h-[min(36vh,280px)] min-h-[2.5rem] overflow-y-auto overflow-x-auto overscroll-contain border-t border-foreground/10 px-3 py-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap [-webkit-overflow-scrolling:touch]";
+  const base = `${TERMINAL_OUTPUT_SCROLL_FRAME} px-3 py-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap`;
   return tone === "error"
     ? `${base} text-red-700 dark:text-red-300/90`
     : `${base} text-foreground/85`;

@@ -1,9 +1,11 @@
 import {
   TERMINAL_CWD,
+  TERMINAL_OUTPUT_SCROLL_FRAME,
   TERMINAL_PANEL,
   TERMINAL_SECTION,
   terminalOutputAreaClass,
 } from "./terminal-chrome";
+import { looksLikeUnifiedDiff, UnifiedDiffView } from "./unified-diff-view";
 
 const MAX_BODY_CHARS = 24_384;
 
@@ -28,7 +30,9 @@ export function FilesystemToolPane({
 }) {
   const trimmed = body?.trimEnd() ?? "";
   const showBody = trimmed.length > 0;
-  const label = action === "read" ? "Read" : "Write";
+  const isPatchWrite = action === "write";
+  const useDiffUi = isPatchWrite && looksLikeUnifiedDiff(trimmed);
+  const label = action === "read" ? "Read" : "Patch";
   const badgeRead =
     "bg-sky-100 text-sky-800 dark:bg-sky-500/15 dark:text-sky-200/95";
   const badgeWrite =
@@ -37,7 +41,9 @@ export function FilesystemToolPane({
   return (
     <div className={`${TERMINAL_PANEL} ${className}`}>
       <div className={TERMINAL_SECTION}>
-        <div className={`${TERMINAL_CWD} break-all`}>{resourcePath}</div>
+        {!(useDiffUi && showBody) ? (
+          <div className={`${TERMINAL_CWD} break-all`}>{resourcePath}</div>
+        ) : null}
         <div className="px-3 py-2">
           <span
             className={`inline-block rounded px-2 py-0.5 text-[10px] font-semibold tracking-wide ${action === "read" ? badgeRead : badgeWrite}`}
@@ -47,8 +53,20 @@ export function FilesystemToolPane({
         </div>
       </div>
       {showBody ? (
-        <div className={terminalOutputAreaClass(bodyTone)}>
-          {truncateBody(trimmed)}
+        <div
+          className={
+            useDiffUi
+              ? `${TERMINAL_OUTPUT_SCROLL_FRAME} ${bodyTone === "error" ? "ring-1 ring-inset ring-red-500/35" : ""}`
+              : terminalOutputAreaClass(bodyTone)
+          }
+        >
+          {useDiffUi ? (
+            <div className="px-3 pb-2 pt-2">
+              <UnifiedDiffView text={trimmed} />
+            </div>
+          ) : (
+            truncateBody(trimmed)
+          )}
         </div>
       ) : null}
     </div>

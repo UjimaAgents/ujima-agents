@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { PermissionMiddleware } from '@ujima/permissions';
 import {
   SocketEventNames,
@@ -349,6 +350,24 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     context.permissions,
     context.buildPermissionContext,
     approvalRequester.requestApproval,
+    (invocation, approvalId) => {
+      context.repo.saveRunStep({
+        id: randomUUID(),
+        organizationId: invocation.organizationId,
+        runId: invocation.runId,
+        threadId: invocation.threadId,
+        agentId: invocation.memberId,
+        toolCallId: invocation.toolCallId,
+        toolId: invocation.toolId,
+        action: invocation.action,
+        resourceType: invocation.resourceType,
+        resourcePath: invocation.resourcePath ?? '',
+        input: invocation.input ?? {},
+        output: { status: 'waiting_for_approval', approvalId },
+        status: 'ok',
+        createdAt: new Date().toISOString(),
+      });
+    },
   );
 
   const ai = new AiService(context.teamStore, context.repo, tools);

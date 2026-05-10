@@ -310,16 +310,23 @@ function deriveToolLine(
     const a = parsed.action?.toLowerCase();
     if (a === "read") {
       return {
-        title: `${actorLabel} read ${path}`,
-        detail: `${actorLabel} called filesystem ${location}.`,
+        title: `${actorLabel} · read`,
+        detail: "",
       };
     }
     if (a === "write") {
       return {
-        title: `${actorLabel} wrote ${path}`,
-        detail: `${actorLabel} called filesystem ${location}.`,
+        title: `${actorLabel} · patch`,
+        detail: "",
       };
     }
+  }
+
+  if (toolName === "shell") {
+    return {
+      title: `${actorLabel} · shell`,
+      detail: "",
+    };
   }
 
   const isDeleteOp =
@@ -376,12 +383,6 @@ function deriveToolLine(
     return {
       title: `${actorLabel} updated folder ${path}`,
       detail: `${actorLabel} called ${toolName} ${location}.`,
-    };
-  }
-  if (parsed.action === "execute" && parsed.resourceType === "shell") {
-    return {
-      title: `${actorLabel} ran a shell command`,
-      detail: parsed.command ? `$ ${truncatePreview(parsed.command, 200)}` : `${actorLabel} called ${toolName} ${location}.`,
     };
   }
 
@@ -445,7 +446,7 @@ function approvalEventToStep(
       : fs
         ? fs.action === "read"
           ? `${actorLabel} · read`
-          : `${actorLabel} · write`
+          : `${actorLabel} · patch`
         : `${actorLabel} · ${approval.action}`
     : approval.status === "approved"
       ? `${actorLabel} · allowed`
@@ -462,8 +463,12 @@ function approvalEventToStep(
           action: fs.action,
           resourcePath: fs.resourcePath,
           body:
-            fs.action === "write" && typeof fs.content === "string" && fs.content.length > 0
-              ? fs.content
+            fs.action === "write"
+              ? typeof fs.patch === "string" && fs.patch.length > 0
+                ? fs.patch
+                : typeof fs.content === "string" && fs.content.length > 0
+                  ? fs.content
+                  : undefined
               : undefined,
           bodyTone: "default",
         }
@@ -475,7 +480,7 @@ function approvalEventToStep(
       ? "failed"
       : "success";
   const subtext =
-    shell || fs || !approval.reason ? undefined : truncatePreview(approval.reason, 200);
+    shell || fs ? undefined : approval.reason ? truncatePreview(approval.reason, 200) : undefined;
   return {
     id: event.event_id,
     title,
@@ -571,9 +576,15 @@ function buildToolStep(
         ? filesystemToolAggregateOutput(resultBody?.toolResult?.result, isError, errorText)
         : "";
       const bodyFromResult = outText.trim() ? outText : undefined;
+      const pendingPatch =
+        typeof fsArgs.patch === "string" && fsArgs.patch.length > 0
+          ? fsArgs.patch
+          : typeof fsArgs.content === "string" && fsArgs.content.length > 0
+            ? fsArgs.content
+            : undefined;
       const showPendingWrite =
-        (!hasResult || pendingCompletion) && fsArgs.action === "write" && typeof fsArgs.content === "string";
-      const bodyFromCall = showPendingWrite ? fsArgs.content : undefined;
+        (!hasResult || pendingCompletion) && fsArgs.action === "write" && pendingPatch !== undefined;
+      const bodyFromCall = showPendingWrite ? pendingPatch : undefined;
       const resolved = bodyFromResult ?? bodyFromCall;
       filesystem = {
         action: fsArgs.action,

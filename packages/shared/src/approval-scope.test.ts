@@ -28,6 +28,17 @@ describe('formatApprovalRelayMarkdown', () => {
     ).toBe('```\n/repo/readme.md\nwrite\n```');
   });
 
+  it('renders filesystem write with body when JSON scope includes patch', () => {
+    const scope = JSON.stringify({ action: 'write', resourcePath: '/x/a.md', patch: '--- /dev/null\n+++ b/a.md\n' });
+    expect(
+      formatApprovalRelayMarkdown({
+        action: 'write',
+        resourcePath: '/x/a.md',
+        reason: `Tool action requires approval;scope=${encodeURIComponent('filesystem:' + scope)}`,
+      }),
+    ).toBe('```\n/x/a.md\nwrite\n--- /dev/null\n+++ b/a.md\n\n```');
+  });
+
   it('renders filesystem write with body when JSON scope includes content', () => {
     const scope = JSON.stringify({ action: 'write', resourcePath: '/x/a.md', content: 'hello' });
     expect(
@@ -82,6 +93,15 @@ describe('parseFilesystemScope', () => {
     expect(parseFilesystemScope('filesystem:read:/tmp/a.txt')).toEqual({
       action: 'read',
       resourcePath: '/tmp/a.txt',
+    });
+  });
+
+  it('parses JSON scope with optional patch', () => {
+    const inner = { action: 'write' as const, resourcePath: '/r.md', patch: '@@ -0,0 +1,1 @@\n+hi' };
+    expect(parseFilesystemScope('filesystem:' + JSON.stringify(inner))).toEqual({
+      action: 'write',
+      resourcePath: '/r.md',
+      patch: '@@ -0,0 +1,1 @@\n+hi',
     });
   });
 

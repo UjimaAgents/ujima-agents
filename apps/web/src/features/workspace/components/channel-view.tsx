@@ -398,7 +398,7 @@ export function ChannelView({
           <div className="relative flex flex-1 min-h-0 flex-col">
             <ChatMessageList ref={listRef} onScroll={handleScroll}>
               {feed.loading && feed.messages.length === 0 ? (
-                <ConversationSkeleton conversation={conversation} />
+                <ConversationSkeleton />
               ) : feed.messages.length > 0 ? (
                 <>
                   {feed.messages.map((message) => (

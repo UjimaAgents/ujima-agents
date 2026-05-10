@@ -8,6 +8,8 @@ export interface ParsedFilesystemScope {
   action: 'read' | 'write';
   resourcePath: string;
   /** Present for write when encoded in JSON approval scope (permission gate). */
+  patch?: string;
+  /** Legacy write payloads; prefer `patch`. */
   content?: string;
 }
 
@@ -81,6 +83,7 @@ export function parseFilesystemScope(scope: string): ParsedFilesystemScope | nul
       const parsed = JSON.parse(payload) as {
         action?: unknown;
         resourcePath?: unknown;
+        patch?: unknown;
         content?: unknown;
       };
       const action = parsed.action;
@@ -88,6 +91,7 @@ export function parseFilesystemScope(scope: string): ParsedFilesystemScope | nul
       if (action !== 'read' && action !== 'write') return null;
       if (typeof resourcePath !== 'string' || !resourcePath.trim()) return null;
       const out: ParsedFilesystemScope = { action, resourcePath };
+      if (typeof parsed.patch === 'string') out.patch = parsed.patch;
       if (typeof parsed.content === 'string') out.content = parsed.content;
       return out;
     } catch {
@@ -108,11 +112,19 @@ const RELAY_FS_WRITE_BODY_MAX = 4000;
 
 function relayFilesystemBlock(fs: ParsedFilesystemScope): string {
   const lines = ['```', fs.resourcePath, fs.action];
-  if (fs.action === 'write' && fs.content !== undefined && fs.content.length > 0) {
+  const writeBody =
+    fs.action === 'write'
+      ? (fs.patch !== undefined && fs.patch.length > 0
+          ? fs.patch
+          : fs.content !== undefined && fs.content.length > 0
+            ? fs.content
+            : undefined)
+      : undefined;
+  if (writeBody !== undefined) {
     const body =
-      fs.content.length > RELAY_FS_WRITE_BODY_MAX
-        ? `${fs.content.slice(0, RELAY_FS_WRITE_BODY_MAX)}\n…`
-        : fs.content;
+      writeBody.length > RELAY_FS_WRITE_BODY_MAX
+        ? `${writeBody.slice(0, RELAY_FS_WRITE_BODY_MAX)}\n…`
+        : writeBody;
     lines.push(body);
   }
   lines.push('```');

@@ -693,6 +693,12 @@ describe('workspace path hardening', () => {
 
     fixture.tools.allowRun(fixture.organizationId, 'run-new-file');
 
+    const patch = `--- /dev/null
++++ b/apps/web/new-file.ts
+@@ -0,0 +1,1 @@
++export const created = true;
+`;
+
     const writeResult = await fixture.tools.invoke({
       organizationId: fixture.organizationId,
       runId: 'run-new-file',
@@ -703,7 +709,7 @@ describe('workspace path hardening', () => {
       resourceType: 'file',
       resourcePath: 'apps/web/new-file.ts',
       input: {
-        content: 'export const created = true;\n',
+        patch,
       },
     });
 

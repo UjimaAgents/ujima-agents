@@ -37,7 +37,15 @@ describe('parseFilesystemToolCallArgs', () => {
     ).toEqual({ action: 'read', resourcePath: '/f.txt' });
   });
 
-  it('parses nested write with content', () => {
+  it('parses nested write with patch', () => {
+    expect(
+      parseFilesystemToolCallArgs({
+        input: { action: 'write', resourcePath: '/a.md', patch: '--- a\n+++ b\n' },
+      } as Record<string, unknown>),
+    ).toEqual({ action: 'write', resourcePath: '/a.md', patch: '--- a\n+++ b\n' });
+  });
+
+  it('parses legacy nested write with content', () => {
     expect(
       parseFilesystemToolCallArgs({
         input: { action: 'write', resourcePath: '/a.md', content: 'body' },

@@ -1,10 +1,4 @@
-import type { SelectedConversation } from "../types";
-
-export function ConversationSkeleton({
-  conversation,
-}: {
-  conversation: SelectedConversation;
-}) {
+export function ConversationSkeleton() {
   return (
     <div className="space-y-2">
       {Array.from({ length: 3 }).map((_, index) => (

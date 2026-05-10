@@ -56,8 +56,10 @@ export function parseFilesystemToolCallArgs(
         : '';
   if (actionRaw !== 'read' && actionRaw !== 'write') return null;
   if (!resourcePath.trim()) return null;
+  const patchRaw = (args as { patch?: unknown }).patch ?? nested?.patch;
   const contentRaw = (args as { content?: unknown }).content ?? nested?.content;
   const out: ParsedFilesystemScope = { action: actionRaw, resourcePath };
+  if (typeof patchRaw === 'string') out.patch = patchRaw;
   if (typeof contentRaw === 'string') out.content = contentRaw;
   return out;
 }

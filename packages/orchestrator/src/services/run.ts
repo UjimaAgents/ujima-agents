@@ -18,7 +18,7 @@ import type { RealtimeService } from './context.js';
 import type { ConversationService } from './conversation.js';
 import type { ApiRepository } from './repository-reader.js';
 import type { TeamStore } from './team-store.js';
-import type { ToolService } from './tool-service.js';
+import type { ToolInvocationInput, ToolService } from './tool-service.js';
 import { applyDashboardTeamOverrides } from './dashboard-team-overrides.js';
 import { ToolApprovalRequiredError } from './tool-loop-result.js';
 import { extractReasoningChunk } from '../utils/extract-reasoning.js';
@@ -129,8 +129,13 @@ export class RunService {
       return run;
     }
 
+    const afterApprovedTools = await this.executePendingApprovedTools(run);
+    if (afterApprovedTools.status === 'failed') {
+      return afterApprovedTools;
+    }
+
     return this.advanceRun({
-      ...run,
+      ...afterApprovedTools,
       status: 'running',
       step: 'running',
       summary: 'Run resumed after approval',
@@ -281,7 +286,11 @@ export class RunService {
       }
 
       if (this.consumeDeferredApprovalResume(run.organizationId, run.id)) {
-        return this.advanceRun(running);
+        const afterApprovedTools = await this.executePendingApprovedTools(running);
+        if (afterApprovedTools.status === 'failed') {
+          return afterApprovedTools;
+        }
+        return this.advanceRun(afterApprovedTools);
       }
 
       const pendingApprovalExists = this.repo
@@ -405,6 +414,66 @@ export class RunService {
     this.deferredApprovalResumes.delete(key);
     return true;
   }
+
+  private async executePendingApprovedTools(run: RunState): Promise<RunState> {
+    const runSteps =
+      typeof this.repo.listRunSteps === 'function'
+        ? this.repo.listRunSteps(run.organizationId, run.id)
+        : [];
+    const pendingApprovalToolCallIds = new Set(
+      this.repo
+        .listPendingApprovals(run.organizationId)
+        .filter((approval) => approval.runId === run.id && approval.toolCallId)
+        .map((approval) => approval.toolCallId as string),
+    );
+    const pendingSteps = runSteps
+      .filter((step) => {
+        const output = step.output as { status?: unknown } | undefined;
+        return (
+          output?.status === 'waiting_for_approval' &&
+          !pendingApprovalToolCallIds.has(step.toolCallId)
+        );
+      });
+
+    if (pendingSteps.length === 0) {
+      return run;
+    }
+
+    let latestRun = run;
+    for (const step of pendingSteps) {
+      const invocation: ToolInvocationInput = {
+        organizationId: step.organizationId,
+        runId: step.runId,
+        memberId: step.agentId,
+        threadId: step.threadId,
+        toolCallId: step.toolCallId,
+        toolId: step.toolId,
+        action: step.action,
+        resourceType: step.resourceType,
+        resourcePath: step.resourcePath || undefined,
+        input: step.input,
+        bypassPermission: true,
+      };
+
+      try {
+        const result = await this.tools.invoke(invocation);
+        if (!result.ok) {
+          const reason =
+            result.error ||
+            (result.output as { reason?: string } | undefined)?.reason ||
+            'Approved tool failed';
+          latestRun = this.failRun(latestRun, reason);
+          break;
+        }
+      } catch (error) {
+        latestRun = this.failRun(latestRun, (error as Error).message);
+        break;
+      }
+    }
+
+    return latestRun;
+  }
+
   private runKey(organizationId: string, runId: string): string {
     return `${organizationId}:${runId}`;
   }

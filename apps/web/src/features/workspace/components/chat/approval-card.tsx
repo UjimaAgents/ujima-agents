@@ -91,7 +91,11 @@ export function ApprovalCard({
               className="mt-2"
               action={data.filesystemScope.action}
               resourcePath={data.filesystemScope.resourcePath}
-              body={data.filesystemScope.action === "write" ? data.filesystemScope.content : undefined}
+              body={
+                data.filesystemScope.action === "write"
+                  ? (data.filesystemScope.patch ?? data.filesystemScope.content)
+                  : undefined
+              }
             />
           ) : data.commandPreview ? (
             <pre className="mt-1.5 max-h-28 overflow-y-auto rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-[10px] font-mono leading-relaxed whitespace-pre-wrap text-zinc-800 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-200">
