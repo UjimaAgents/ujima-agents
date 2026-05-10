@@ -68,3 +68,5 @@ export const SUPERVISOR_TOOL_ALLOWLIST = Object.freeze([
 export const SUPERVISOR_ALLOWED_TOOLS = SUPERVISOR_TOOL_ALLOWLIST;
 
 export type { OrchestratorTool, ToolExecutionContext } from './types.js';
+export { listBackgroundJobs, terminateBackgroundJob, peekBackgroundJob } from './shell.js';
+export type { BackgroundJobSnapshot } from './shell.js';

@@ -26,7 +26,11 @@ export {
   ORCHESTRATOR_TOOLS,
   SUPERVISOR_ALLOWED_TOOLS,
   SUPERVISOR_TOOL_ALLOWLIST,
+  listBackgroundJobs,
+  terminateBackgroundJob,
+  peekBackgroundJob,
 } from './tools/index.js';
+export type { BackgroundJobSnapshot } from './tools/index.js';
 export type { OrchestratorTool, ToolExecutionContext } from './tools/index.js';
 export {
   ActiveSpiritRegistry,

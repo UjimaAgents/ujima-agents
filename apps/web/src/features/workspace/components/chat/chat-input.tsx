@@ -943,6 +943,9 @@ export function ChatInput({
         {error ? (
           <p className="mt-2 text-xs text-red-600 dark:text-red-400">{error}</p>
         ) : null}
+        {statusHint?.trim() ? (
+          <p className="mt-1.5 px-1 text-[10px] text-zinc-400 dark:text-zinc-500">{statusHint}</p>
+        ) : null}
       </div>
     </div>
   );

@@ -39,11 +39,14 @@ export interface ReasoningTraceInput {
   members: { id: string; name: string; kind?: string }[];
   activity: ActivityEvent[];
   runs: RunState[];
+  /** Current workspace org — required for background shell job streaming in the trace. */
+  organizationId?: string;
 }
 
 interface ToolSocketPayload {
   threadId?: string;
   runId?: string;
+  organizationId?: string;
   agentId?: string;
   toolCall?: { toolCallId?: string; toolName?: string; args?: Record<string, unknown> };
   toolResult?: { toolCallId?: string; result?: unknown; isError?: boolean };
@@ -165,6 +168,12 @@ function toObject(value: unknown): Record<string, unknown> | undefined {
 }
 
 const MAX_TERMINAL_CHARS = 16_384;
+
+function extractShellBackgroundJobId(result: unknown): string | undefined {
+  const rec = toObject(result);
+  if (!rec || typeof rec.job_id !== "string" || !rec.job_id.trim()) return undefined;
+  return rec.job_id.trim();
+}
 
 function truncateTerminalText(text: string): string {
   if (text.length <= MAX_TERMINAL_CHARS) return text;
@@ -468,7 +477,22 @@ function buildToolStep(
     );
     if (shellArgs) {
       const cmdLine = shellInvocationDisplayLine(shellArgs);
-      if (hasResult) {
+      const jobId =
+        hasResult && !isError
+          ? extractShellBackgroundJobId(resultBody?.toolResult?.result)
+          : undefined;
+      const runId = mergedPayload?.runId;
+      const orgId =
+        typeof mergedPayload?.organizationId === "string"
+          ? mergedPayload.organizationId
+          : input.organizationId;
+      if (jobId && runId && orgId) {
+        terminal = {
+          cwd: shellArgs.cwd,
+          commandLine: cmdLine,
+          streamingJob: { runId, jobId, organizationId: orgId },
+        };
+      } else if (hasResult) {
         const outText = shellToolAggregateOutput(resultBody?.toolResult?.result, isError, errorText);
         terminal = {
           cwd: shellArgs.cwd,
