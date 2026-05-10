@@ -251,12 +251,12 @@ export class ApprovalService {
 
     try {
       const relay = buildApprovalRelayMessage(approval);
-      const message = this.conversations.sendDirectMessage({
+      const message = this.conversations.sendDirectSystemMessage({
         organizationId: approval.organizationId,
-        senderId: approval.requestedBy,
-        recipientId: owner.id,
+        memberIdA: approval.requestedBy,
+        memberIdB: owner.id,
         content: relay,
-        ignore: true,
+        suppressDmAlerts: true,
       });
       const rooms = [orgRoom(approval.organizationId), threadRoom(message.threadId)];
       this.realtime.emit(

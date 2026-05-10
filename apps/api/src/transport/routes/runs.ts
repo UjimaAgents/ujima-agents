@@ -241,13 +241,21 @@ export function registerRunRoutes(
       description: 'Get background shell jobs for a run',
       tags: ['Runs'],
       params: RunIdParamsSchema,
+      querystring: RunDetailQuerySchema,
       response: {
         200: z.array(ShellJobSchema),
         400: ApiErrorSchema,
+        403: ApiErrorSchema,
+        404: ApiErrorSchema,
       },
     },
   }, async (req, reply) => {
     try {
+      const { organizationId } = RunDetailQuerySchema.parse(req.query);
+      const forbidden = requireOrgSession(auth, req, reply, organizationId);
+      if (forbidden) return forbidden;
+      const run = runs.getRun(organizationId, req.params.runId);
+      if (!run) return notFound(reply, 'Run not found');
       return listBackgroundJobs(req.params.runId);
     } catch (err) {
       return badRequest(reply, errMessage(err));
@@ -272,6 +280,8 @@ export function registerRunRoutes(
       const { organizationId } = ShellJobDetailQuerySchema.parse(req.query);
       const forbidden = requireOrgSession(auth, req, reply, organizationId);
       if (forbidden) return forbidden;
+      const run = runs.getRun(organizationId, req.params.runId);
+      if (!run) return notFound(reply, 'Run not found');
       const snapshot = peekBackgroundJob(req.params.runId, req.params.jobId);
       if (!snapshot) {
         return notFound(reply, 'Background job not found');
@@ -292,13 +302,16 @@ export function registerRunRoutes(
         200: z.object({ success: z.boolean() }),
         400: ApiErrorSchema,
         403: ApiErrorSchema,
+        404: ApiErrorSchema,
       },
     },
   }, async (req, reply) => {
     try {
       const forbidden = requireOrgSession(auth, req, reply, req.body.organizationId);
       if (forbidden) return forbidden;
-      
+      const run = runs.getRun(req.body.organizationId, req.params.runId);
+      if (!run) return notFound(reply, 'Run not found');
+
       const success = terminateBackgroundJob(req.params.runId, req.params.jobId);
       return { success };
     } catch (err) {

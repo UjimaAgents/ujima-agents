@@ -530,6 +530,71 @@ export class ConversationService {
     return published;
   }
 
+  /** Persisted DM with `kind: system` (e.g. approval relay to owner). */
+  sendDirectSystemMessage(input: {
+    organizationId: string;
+    memberIdA: string;
+    memberIdB: string;
+    content: string;
+    suppressDmAlerts?: boolean;
+    attachmentIds?: string[];
+  }) {
+    requireOrganization(this.repo, input.organizationId);
+
+    const memberA = this.repo.getMember(input.organizationId, input.memberIdA);
+    const memberB = this.repo.getMember(input.organizationId, input.memberIdB);
+    if (!memberA) {
+      throw new Error(`Member not found: ${input.memberIdA}`);
+    }
+    if (!memberB) {
+      throw new Error(`Member not found: ${input.memberIdB}`);
+    }
+
+    const [firstId, secondId] = [memberA.id, memberB.id].sort();
+    const channelId = `dm:${firstId}:${secondId}`;
+    const dmChannelName = [memberA.name, memberB.name].sort().join(' / ');
+    const now = new Date().toISOString();
+
+    const channel = this.repo.saveChannel(
+      ChannelSchema.parse({
+        id: channelId,
+        organizationId: input.organizationId,
+        name: dmChannelName,
+        kind: 'dm',
+        topic: '',
+        memberIds: [memberA.id, memberB.id],
+      }),
+    );
+    this.repo.setChannelMembers(channelId, [memberA.id, memberB.id]);
+
+    this.repo.ensureThread({
+      id: channel.id,
+      organizationId: input.organizationId,
+      channelId: channel.id,
+      title: dmChannelName,
+      memberIds: [memberA.id, memberB.id],
+      createdAt: now,
+    });
+
+    const message = MessageSchema.parse({
+      id: randomUUID(),
+      organizationId: input.organizationId,
+      threadId: channel.id,
+      channelId: channel.id,
+      senderId: 'system',
+      senderKind: 'human',
+      kind: 'system',
+      content: input.content,
+      mentions: [],
+      createdAt: now,
+    });
+
+    return this.publishMessage(message, [], input.attachmentIds, {
+      suppressDmAlerts: input.suppressDmAlerts,
+      skipMentionResolution: true,
+    });
+  }
+
   sendSelfNote(input: {
     organizationId: string;
     memberId: string;
