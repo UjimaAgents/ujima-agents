@@ -7,8 +7,8 @@ import {
   MessageSchema,
   RunStateSchema,
   formatApprovalRelayMarkdown,
+  parseApprovalDisplayScopesFromReason,
   parseApprovalReasonValue,
-  parseShellScope,
   type ActivityEvent,
   type ApprovalRequest,
   type Member,
@@ -778,22 +778,32 @@ function approvalToCard(
   const requestedBy =
     state.members.find((member) => member.id === approval.requestedBy)?.name ?? approval.requestedBy;
 
-  const scopeDecoded = parseApprovalReasonValue(approval.reason, "scope");
+  const { shell: shellParsed, filesystem: fsParsed } = parseApprovalDisplayScopesFromReason(
+    approval.reason,
+  );
   const note = parseApprovalReasonValue(approval.reason, "note");
   let title =
     approval.status === "pending" ? "Approve command" : `Approval ${approval.status}`;
   let description = `${approval.action} · \`${approval.resourcePath}\``;
   let commandPreview: string | undefined;
   let shellScope: ApprovalCardData["shellScope"];
+  let filesystemScope: ApprovalCardData["filesystemScope"];
 
-  if (approval.resourceType === "shell" && scopeDecoded) {
-    const parsed = parseShellScope(scopeDecoded);
-    if (parsed) {
-      title = approval.status === "pending" ? "Approve command" : title;
-      description = note ?? "";
-      commandPreview = undefined;
-      shellScope = parsed;
-    }
+  if (shellParsed) {
+    title = approval.status === "pending" ? "Approve command" : title;
+    description = note ?? "";
+    commandPreview = undefined;
+    shellScope = shellParsed;
+  } else if (fsParsed) {
+    title =
+      approval.status === "pending"
+        ? fsParsed.action === "read"
+          ? "Approve read"
+          : "Approve write"
+        : title;
+    description = note ?? "";
+    commandPreview = undefined;
+    filesystemScope = fsParsed;
   }
 
   return {
@@ -805,6 +815,7 @@ function approvalToCard(
     description,
     commandPreview,
     shellScope,
+    filesystemScope,
     status: approval.status,
     requestedBy,
     approvalsNeeded: 1,

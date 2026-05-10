@@ -25,13 +25,13 @@ export function ReasoningTracePanel({
   }
 
   return (
-    <div className="max-h-[min(70vh,520px)] overflow-y-auto pr-1 -mr-1">
+    <>
       <div className="space-y-4">
         {steps.map((step) => (
           <TraceStep key={step.id} step={step} />
         ))}
       </div>
-      <div ref={bottomRef} className="h-px" aria-hidden />
-    </div>
+      <div ref={bottomRef} className="h-px w-full shrink-0" aria-hidden />
+    </>
   );
 }

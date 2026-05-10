@@ -109,6 +109,7 @@ export function ChannelView({
   const detailsTab = useWorkspaceStore((state) => state.detailsTab);
   const setActiveTab = useWorkspaceStore((state) => state.setActiveTab);
   const setShowDetails = useWorkspaceStore((state) => state.setShowDetails);
+  const openDetailsForAgentMessage = useWorkspaceStore((state) => state.openDetailsForAgentMessage);
   const setDetailsWidth = useWorkspaceStore((state) => state.setDetailsWidth);
   const setDetailsTab = useWorkspaceStore((state) => state.setDetailsTab);
 
@@ -373,7 +374,7 @@ export function ChannelView({
             ) : undefined
           }
           showDetails={showDetails}
-          onToggleDetails={() => setShowDetails(!showDetails)}
+          onToggleDetails={() => setShowDetails(!showDetails, { userIntent: true })}
         />
         <ChatTabs
           tabs={tabs.map((tab) => ({
@@ -536,6 +537,9 @@ export function ChannelView({
           stoppableRunId={stoppableRunId}
           onStopRun={stopAgentRun}
           onSend={(content, attachmentIds) => {
+            if (isAgent) {
+              openDetailsForAgentMessage();
+            }
             const promise = feed.sendMessage(content, replyTo?.id, attachmentIds);
             setReplyTo(null);
             return promise;
@@ -547,7 +551,7 @@ export function ChannelView({
         <>
           <DragHandle side="right" onResize={setDetailsWidth} />
           <div
-            style={{ width: `${detailsWidth}%`, minWidth: 280 }}
+            style={{ width: `${Math.max(detailsWidth, 33)}%`, minWidth: "33%" }}
             className="shrink-0 h-full"
           >
             <DetailsSidebar
@@ -558,7 +562,7 @@ export function ChannelView({
               tabs={["Reasoning trace", "Changes", "Metadata"]}
               activeTab={detailsTab}
               onTabChange={(tab) => setDetailsTab(tab as typeof detailsTab)}
-              onClose={() => setShowDetails(false)}
+              onClose={() => setShowDetails(false, { userIntent: true })}
             >
               {detailsTab === "Reasoning trace" ? (
                 <ReasoningTracePanel steps={reasoningTraceSteps} autoScroll={traceAutoScroll} />

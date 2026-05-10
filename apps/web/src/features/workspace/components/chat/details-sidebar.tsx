@@ -1,6 +1,7 @@
 import { CheckCircle2, X, XCircle } from "lucide-react";
 import { Avatar } from "./primitives";
 import { TerminalPane } from "./terminal-pane";
+import { FilesystemToolPane } from "./filesystem-tool-pane";
 
 /* ── Trace step (used in reasoning trace timeline) ─────────────────── */
 export interface TraceStepData {
@@ -19,6 +20,13 @@ export interface TraceStepData {
     outputPlaceholder?: string;
     outputTone?: "default" | "error";
   };
+  /** Filesystem read/write tool (path + action + optional body). */
+  filesystem?: {
+    action: "read" | "write";
+    resourcePath: string;
+    body?: string;
+    bodyTone?: "default" | "error";
+  };
 }
 
 export function TraceStep({ step }: { step: TraceStepData }) {
@@ -36,7 +44,7 @@ export function TraceStep({ step }: { step: TraceStepData }) {
       />
       <div className="flex items-start justify-between gap-3">
         <div className="flex-1">
-          <div className={`flex items-center gap-1.5 ${step.terminal ? "mb-1" : ""}`}>
+          <div className={`flex items-center gap-1.5 ${step.terminal || step.filesystem ? "mb-1" : ""}`}>
             <p className="text-[11px] font-bold text-zinc-900 dark:text-white">
               {step.title}
             </p>
@@ -56,6 +64,14 @@ export function TraceStep({ step }: { step: TraceStepData }) {
               outputPlaceholder={step.terminal.outputPlaceholder}
               outputTone={step.terminal.outputTone}
             />
+          ) : step.filesystem ? (
+            <FilesystemToolPane
+              className="mt-0"
+              action={step.filesystem.action}
+              resourcePath={step.filesystem.resourcePath}
+              body={step.filesystem.body}
+              bodyTone={step.filesystem.bodyTone}
+            />
           ) : step.detail.trim() ? (
             <p className="mt-1 whitespace-pre-wrap font-mono text-[10px] text-zinc-500 dark:text-zinc-400">
               {step.detail}
@@ -66,7 +82,7 @@ export function TraceStep({ step }: { step: TraceStepData }) {
           ) : null}
           <p
             className={`text-[9px] tabular-nums text-zinc-400 dark:text-zinc-500 ${
-              step.terminal ? "mt-2.5" : step.subtext ? "mt-1.5" : step.detail?.trim() ? "mt-1.5" : "mt-0.5"
+              step.terminal || step.filesystem ? "mt-2.5" : step.subtext ? "mt-1.5" : step.detail?.trim() ? "mt-1.5" : "mt-0.5"
             }`}
           >
             {step.time}
@@ -197,8 +213,8 @@ export function DetailsSidebar({
         </button>
       </header>
 
-      <div className="flex-1 overflow-y-auto p-4">
-        <div className="flex items-center gap-3">
+      <div className="flex min-h-0 flex-1 flex-col p-4">
+        <div className="flex shrink-0 items-center gap-3">
           <Avatar name={agentName} colorIndex={agentColorIndex} size="lg" />
           <div className="flex-1">
             <div className="flex items-center justify-between">
@@ -214,7 +230,7 @@ export function DetailsSidebar({
           </div>
         </div>
 
-        <div className="mt-4 flex border-b border-zinc-200 dark:border-zinc-800">
+        <div className="mt-4 flex shrink-0 border-b border-zinc-200 dark:border-zinc-800">
           {tabs.map((t) => (
             <button
               key={t}
@@ -230,7 +246,7 @@ export function DetailsSidebar({
           ))}
         </div>
 
-        <div className="mt-4">{children}</div>
+        <div className="mt-4 min-h-0 flex-1 overflow-y-auto">{children}</div>
       </div>
     </aside>
   );

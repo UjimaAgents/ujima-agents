@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { marked } from "marked";
+import { markdownTerminalCodeBlockHtml } from "./chat/terminal-chrome";
 
 const SAFE_URL_PROTOCOLS = /^(https?:|mailto:)/i;
 const HTML_ESCAPE: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" };
@@ -22,21 +23,15 @@ function createRenderer(mentionNames: string[]) {
   };
 
   renderer.code = function ({ text, lang }: { text: string; lang?: string }) {
-    const language = lang ? `text-[10px] text-zinc-400 px-3 pt-2 pb-0 block` : "hidden";
-    return (
-      `<div class="my-2 overflow-hidden rounded-xl border border-zinc-200/90 bg-zinc-50 dark:border-zinc-800/50 dark:bg-[#121214]">` +
-      `<span class="${language}">${h(lang ?? "")}</span>` +
-      `<pre class="overflow-x-auto p-3 pt-1.5 text-xs leading-relaxed text-zinc-800 dark:text-zinc-200"><code class="text-inherit">${h(text)}</code></pre>` +
-      `</div>`
-    );
+    return markdownTerminalCodeBlockHtml(h(text), h(lang ?? ""), Boolean(lang));
   };
 
   renderer.codespan = function ({ text }: { text: string }) {
-    return `<code class="rounded-md bg-zinc-100 px-1.5 py-0.5 text-[11px] font-medium text-violet-700 dark:bg-zinc-800 dark:text-violet-300">${h(text)}</code>`;
+    return `<code class="rounded-md bg-foreground/10 px-1.5 py-0.5 text-[11px] font-medium text-violet-700 dark:text-violet-300">${h(text)}</code>`;
   };
 
   renderer.blockquote = function ({ tokens }: { tokens: unknown[] }) {
-    return `<blockquote class="my-1 border-l-2 border-zinc-300 pl-3 text-zinc-500 dark:border-zinc-600 dark:text-zinc-400">${this.parser.parse(tokens as never)}</blockquote>`;
+    return `<blockquote class="my-1 border-l-2 border-foreground/18 pl-3 text-foreground/60">${this.parser.parse(tokens as never)}</blockquote>`;
   };
 
   renderer.link = function ({ href, tokens }: { href: string; tokens: unknown[] }) {
@@ -76,7 +71,7 @@ export function highlightMentions(text: string, mentionNames: string[]): string 
     const mentionEnd = mentionStart + 1 + name.length;
     result += h(text.slice(cursor, matchStart));
     result += h(prefix);
-    result += `<span class="font-semibold text-zinc-900 dark:text-white">@${h(name)}</span>`;
+    result += `<span class="font-semibold text-foreground">@${h(name)}</span>`;
     cursor = mentionEnd;
   }
   result += h(text.slice(cursor));
@@ -102,7 +97,7 @@ export function Markdown({
 
   return (
     <div
-      className={`break-words text-xs leading-relaxed ${className}`}
+      className={`break-words text-xs leading-relaxed text-foreground ${className}`}
       dangerouslySetInnerHTML={{ __html: html }}
     />
   );
@@ -126,7 +121,7 @@ export function MarkdownInline({
 
   return (
     <span
-      className={`break-words ${className}`}
+      className={`break-words text-foreground ${className}`}
       dangerouslySetInnerHTML={{ __html: html }}
     />
   );

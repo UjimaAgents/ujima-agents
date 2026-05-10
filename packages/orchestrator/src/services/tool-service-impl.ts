@@ -31,6 +31,16 @@ import {
 } from "./workspace-root.js";
 import { buildShellApprovalScope, normalizeShellScope } from "./shell-scope.js";
 
+/** Merge top-level invocation fields into `input` for client / reasoning-trace payloads. */
+function toolCallArgsForClient(inv: ToolInvocationInput): Record<string, unknown> {
+  return {
+    ...inv.input,
+    action: inv.action,
+    resourceType: inv.resourceType,
+    ...(inv.resourcePath !== undefined ? { resourcePath: inv.resourcePath } : {}),
+  };
+}
+
 export interface ApprovalRequester {
   requestApproval(input: {
     organizationId: string;
@@ -42,7 +52,7 @@ export interface ApprovalRequester {
     action: ToolInvocationInput["action"];
     reason: string;
     approvalScope?: string;
-  }): { id: string };
+  }): { id: string; toolCallId?: string };
 }
 
 export class ToolServiceImpl implements ToolService {
@@ -186,22 +196,6 @@ export class ToolServiceImpl implements ToolService {
       throw error;
     }
 
-    this.realtime.emit(
-      SocketEventNames.toolCalled,
-      {
-        organizationId: invocation.organizationId,
-        runId: invocation.runId,
-        threadId: invocation.threadId ?? this.repo.getRun(invocation.organizationId, invocation.runId)?.threadId,
-        agentId: invocation.memberId,
-        toolCall: {
-          toolCallId: preparedInvocation.toolCallId,
-          toolName: preparedInvocation.toolId,
-          args: preparedInvocation.input,
-        },
-      },
-      rooms,
-    );
-
     const policy = checkToolPolicy(
       team,
       member.roleName,
@@ -269,29 +263,12 @@ export class ToolServiceImpl implements ToolService {
         approvalId: approval.id,
         status: "pending_approval",
       });
-      this.saveRunStep(preparedInvocation, "ok", {
-        status: "waiting_for_approval",
-        approvalId: approval.id,
-      });
-
-      const run = this.repo.getRun(preparedInvocation.organizationId, preparedInvocation.runId);
-      const threadId = preparedInvocation.threadId ?? run?.threadId;
-
-      this.realtime.emit(
-        SocketEventNames.toolResult,
-        {
-          organizationId: preparedInvocation.organizationId,
-          runId: preparedInvocation.runId,
-          threadId,
-          agentId: preparedInvocation.memberId,
-          toolResult: {
-            toolCallId: preparedInvocation.toolCallId,
-            result: { status: "waiting_for_approval" },
-            isError: false,
-          },
-        },
-        rooms,
-      );
+      if (approval.toolCallId === preparedInvocation.toolCallId) {
+        this.saveRunStep(preparedInvocation, "ok", {
+          status: "waiting_for_approval",
+          approvalId: approval.id,
+        });
+      }
 
       return {
         ok: false,
@@ -299,6 +276,22 @@ export class ToolServiceImpl implements ToolService {
         output: { status: "waiting_for_approval", approvalId: approval.id },
       };
     }
+
+    this.realtime.emit(
+      SocketEventNames.toolCalled,
+      {
+        organizationId: invocation.organizationId,
+        runId: invocation.runId,
+        threadId: invocation.threadId ?? this.repo.getRun(invocation.organizationId, invocation.runId)?.threadId,
+        agentId: invocation.memberId,
+        toolCall: {
+          toolCallId: preparedInvocation.toolCallId,
+          toolName: preparedInvocation.toolId,
+          args: toolCallArgsForClient(preparedInvocation),
+        },
+      },
+      rooms,
+    );
 
     try {
       const result = await this.executeTool(preparedInvocation);

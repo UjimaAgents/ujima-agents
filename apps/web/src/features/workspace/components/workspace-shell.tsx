@@ -585,7 +585,7 @@ export function DragHandle({
         } else {
           const rightPercent =
             ((containerWidth - relativeX) / containerWidth) * 100;
-          onResize(Math.min(Math.max(rightPercent, 15), 45));
+          onResize(Math.min(Math.max(rightPercent, 33), 45));
         }
       };
 

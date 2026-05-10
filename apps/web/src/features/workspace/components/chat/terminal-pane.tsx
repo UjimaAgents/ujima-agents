@@ -1,3 +1,12 @@
+import {
+  TERMINAL_COMMAND_ROW,
+  TERMINAL_CWD,
+  TERMINAL_PANEL,
+  TERMINAL_PROMPT,
+  TERMINAL_SECTION,
+  terminalOutputAreaClass,
+} from "./terminal-chrome";
+
 export function TerminalPane({
   className = "",
   cwd,
@@ -22,29 +31,19 @@ export function TerminalPane({
   const showOutputRegion = showBody || showPlaceholder;
 
   return (
-    <div
-      className={`overflow-hidden rounded-lg border border-zinc-200/90 bg-zinc-50 text-left shadow-sm dark:border-zinc-800/50 dark:bg-[#121214] dark:shadow-none ${className}`}
-    >
-      <div className="shrink-0 border-b border-zinc-200/80 dark:border-zinc-800/40">
-        <div className="px-3 py-1.5 font-mono text-[10px] leading-snug text-zinc-600 dark:text-zinc-500">
-          {cwd}
-        </div>
-        <div className="px-3 py-2 font-mono text-[11px] leading-relaxed text-zinc-800 dark:text-zinc-200">
-          <span className="select-none text-zinc-500 dark:text-zinc-500">$ </span>
+    <div className={`${TERMINAL_PANEL} ${className}`}>
+      <div className={TERMINAL_SECTION}>
+        <div className={TERMINAL_CWD}>{cwd}</div>
+        <div className={TERMINAL_COMMAND_ROW}>
+          <span className={TERMINAL_PROMPT}>$ </span>
           <span>{commandLine}</span>
         </div>
       </div>
       {showOutputRegion ? (
-        <div
-          className={`max-h-[min(36vh,280px)] min-h-[2.5rem] overflow-y-auto overflow-x-auto overscroll-contain border-t border-zinc-200/80 px-3 py-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap [-webkit-overflow-scrolling:touch] dark:border-zinc-800/40 ${
-            outputTone === "error"
-              ? "text-red-700 dark:text-red-300/90"
-              : "text-zinc-700 dark:text-zinc-300/90"
-          }`}
-        >
+        <div className={terminalOutputAreaClass(outputTone)}>
           {showBody ? trimmed : null}
           {showPlaceholder ? (
-            <span className="text-zinc-500">{outputPlaceholder}</span>
+            <span className="text-foreground/45">{outputPlaceholder}</span>
           ) : null}
         </div>
       ) : null}

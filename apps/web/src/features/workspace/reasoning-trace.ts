@@ -1,12 +1,14 @@
 import {
-  parseApprovalReasonValue,
-  parseShellScope,
+  parseApprovalDisplayScopesFromReason,
+  parseFilesystemToolCallArgs,
+  parseShellToolCallArgs,
   shellInvocationDisplayLine,
   type ActivityEvent,
   type ApprovalRequest,
   type RunState,
 } from "@ujima/shared";
 import type { TraceStepData } from "./components/chat/details-sidebar";
+import { formatTimestamp } from "./lib/format-timestamp";
 
 const TRACE_ACTIVITY_TYPES = new Set([
   "tool_called",
@@ -50,6 +52,19 @@ interface ToolSocketPayload {
   agentId?: string;
   toolCall?: { toolCallId?: string; toolName?: string; args?: Record<string, unknown> };
   toolResult?: { toolCallId?: string; result?: unknown; isError?: boolean };
+}
+
+function mergeToolCallActivityPayload(
+  callBody: ToolSocketPayload | undefined,
+  resultBody: ToolSocketPayload | undefined,
+): ToolSocketPayload | undefined {
+  if (!callBody && !resultBody) return undefined;
+  return {
+    ...(resultBody ?? {}),
+    ...(callBody ?? {}),
+    toolCall: callBody?.toolCall ?? resultBody?.toolCall,
+    toolResult: resultBody?.toolResult ?? callBody?.toolResult,
+  };
 }
 
 interface MessageActivityPayload {
@@ -117,17 +132,6 @@ function toolPayloadMatchesThread(
   return false;
 }
 
-function formatClock(iso: string): string {
-  const parsed = Date.parse(iso);
-  if (Number.isNaN(parsed)) return "—";
-  return new Date(parsed).toLocaleTimeString([], {
-    hour: "numeric",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: true,
-  });
-}
-
 function formatDurationMs(ms: number): string {
   if (ms < 1000) return `${Math.round(ms)}ms`;
   return `${(ms / 1000).toFixed(1)}s`;
@@ -174,31 +178,6 @@ function toObject(value: unknown): Record<string, unknown> | undefined {
 
 const MAX_TERMINAL_CHARS = 16_384;
 
-function parseShellFromToolCallArgs(
-  args: Record<string, unknown> | undefined,
-): { cwd: string; command: string; args?: string[] } | null {
-  if (!args) return null;
-  const nested = toObject((args as { input?: unknown }).input);
-  const command =
-    typeof args.command === "string"
-      ? args.command
-      : typeof nested?.command === "string"
-        ? nested.command
-        : "";
-  if (!command) return null;
-  const cwdRaw =
-    typeof args.cwd === "string"
-      ? args.cwd
-      : typeof nested?.cwd === "string"
-        ? nested.cwd
-        : "";
-  const cwd = cwdRaw || ".";
-  const rawArgs = (args as { args?: unknown }).args ?? nested?.args;
-  const extra =
-    Array.isArray(rawArgs) && rawArgs.length ? rawArgs.map((a) => String(a)) : undefined;
-  return extra?.length ? { cwd, command, args: extra } : { cwd, command };
-}
-
 function truncateTerminalText(text: string): string {
   if (text.length <= MAX_TERMINAL_CHARS) return text;
   return `${text.slice(0, MAX_TERMINAL_CHARS)}\n\n… (truncated)`;
@@ -234,6 +213,51 @@ function shellToolAggregateOutput(result: unknown, isError: boolean, errorText?:
   return truncateTerminalText(joined);
 }
 
+function filesystemToolAggregateOutput(result: unknown, isError: boolean, errorText?: string): string {
+  if (isError) {
+    const base = errorText?.trim() || "";
+    if (base) return truncateTerminalText(base);
+    try {
+      return truncateTerminalText(JSON.stringify(result, null, 2));
+    } catch {
+      return truncateTerminalText(String(result));
+    }
+  }
+  const rec = toObject(result);
+  if (rec && typeof rec.status === "string") {
+    if (rec.status === "waiting_for_approval") {
+      return "";
+    }
+    if (rec.status === "blocked") {
+      const reason = typeof rec.reason === "string" ? rec.reason : "Blocked by policy.";
+      return truncateTerminalText(reason);
+    }
+  }
+  if (rec?.type === "file" && typeof rec.content === "string") {
+    return truncateTerminalText(rec.content);
+  }
+  if (rec?.type === "folder" && Array.isArray(rec.entries)) {
+    const lines = rec.entries.map((e) => String(e)).join("\n");
+    return truncateTerminalText(lines.trim() ? lines : "(empty directory)");
+  }
+  if (rec && rec.success === true) {
+    return truncateTerminalText("Saved.");
+  }
+  return "";
+}
+
+/** Tool returned but the action did not complete (approval, policy block, etc.). */
+function toolResultPendingCompletion(result: unknown, isError: boolean): boolean {
+  if (isError) return false;
+  const rec = toObject(result);
+  if (!rec || typeof rec.status !== "string") return false;
+  return (
+    rec.status === "waiting_for_approval" ||
+    rec.status === "pending_approval" ||
+    rec.status === "blocked"
+  );
+}
+
 function inferToolAction(args?: Record<string, unknown>): {
   action?: string;
   resourceType?: string;
@@ -266,7 +290,11 @@ function deriveToolLine(
   callBody: ToolSocketPayload | undefined,
 ): { title: string; detail?: string } {
   const actor = resolveMember(input, event?.publisher ?? callBody?.agentId);
-  const toolName = callBody?.toolCall?.toolName ?? "tool";
+  const toolName = (
+    callBody?.toolCall?.toolName ??
+    (callBody as { toolName?: string } | undefined)?.toolName ??
+    "tool"
+  ).toLowerCase();
   const parsed = inferToolAction(callBody?.toolCall?.args);
   const actorLabel = actor.isAgent ? `Agent ${actor.name}` : actor.name;
   const location =
@@ -277,6 +305,23 @@ function deriveToolLine(
   const path = parsed.resourcePath;
   const lowerOp = parsed.op?.toLowerCase();
   const lowerCommand = parsed.command?.toLowerCase();
+
+  if (toolName === "filesystem" && path) {
+    const a = parsed.action?.toLowerCase();
+    if (a === "read") {
+      return {
+        title: `${actorLabel} read ${path}`,
+        detail: `${actorLabel} called filesystem ${location}.`,
+      };
+    }
+    if (a === "write") {
+      return {
+        title: `${actorLabel} wrote ${path}`,
+        detail: `${actorLabel} called filesystem ${location}.`,
+      };
+    }
+  }
+
   const isDeleteOp =
     lowerOp === "delete" || lowerOp === "remove" || (lowerCommand ? /\brm\b|\bdel\b/.test(lowerCommand) : false);
   const isCreateOp =
@@ -376,7 +421,7 @@ function runEventToStep(event: ActivityEvent, run: RunState): TraceStepData {
     id: event.event_id,
     title: `Run · ${label}`,
     detail,
-    time: formatClock(event.timestamp),
+    time: formatTimestamp(event.timestamp),
     duration: "—",
     status,
     subtext: run.status === "failed" ? "Run ended with an error." : undefined,
@@ -391,12 +436,17 @@ function approvalEventToStep(
   const pending = approval.status === "pending";
   const actor = resolveMember(input, approval.requestedBy);
   const actorLabel = actor.isAgent ? `Agent ${actor.name}` : actor.name;
-  const scopeDecoded = parseApprovalReasonValue(approval.reason, "scope");
-  const shell = scopeDecoded ? parseShellScope(scopeDecoded) : null;
+  const scope = parseApprovalDisplayScopesFromReason(approval.reason);
+  const shell = scope.shell;
+  const fs = scope.filesystem;
   const title = pending
     ? shell
       ? `${actorLabel} · shell`
-      : `${actorLabel} · ${approval.action}`
+      : fs
+        ? fs.action === "read"
+          ? `${actorLabel} · read`
+          : `${actorLabel} · write`
+        : `${actorLabel} · ${approval.action}`
     : approval.status === "approved"
       ? `${actorLabel} · allowed`
       : `${actorLabel} · denied`;
@@ -406,25 +456,36 @@ function approvalEventToStep(
         commandLine: shellInvocationDisplayLine(shell),
       }
     : undefined;
-  const detail = shell ? "" : `${approval.action} · ${approval.resourcePath}`;
+  const filesystem: TraceStepData["filesystem"] | undefined =
+    fs && !shell
+      ? {
+          action: fs.action,
+          resourcePath: fs.resourcePath,
+          body:
+            fs.action === "write" && typeof fs.content === "string" && fs.content.length > 0
+              ? fs.content
+              : undefined,
+          bodyTone: "default",
+        }
+      : undefined;
+  const detail = shell || fs ? "" : `${approval.action} · ${approval.resourcePath}`;
   const status: TraceStepData["status"] = pending
     ? "running"
     : approval.status === "rejected"
       ? "failed"
       : "success";
   const subtext =
-    shell || !approval.reason
-      ? undefined
-      : truncatePreview(approval.reason, 200);
+    shell || fs || !approval.reason ? undefined : truncatePreview(approval.reason, 200);
   return {
     id: event.event_id,
     title,
     detail,
-    time: formatClock(event.timestamp),
+    time: formatTimestamp(event.timestamp),
     duration: "—",
     status,
     subtext,
     terminal,
+    filesystem,
   };
 }
 
@@ -436,11 +497,15 @@ function buildToolStep(
 ): TraceStepData {
   const callBody = call?.payload as ToolSocketPayload | undefined;
   const resultBody = result?.payload as ToolSocketPayload | undefined;
+  const mergedPayload = mergeToolCallActivityPayload(callBody, resultBody);
   const name =
-    callBody?.toolCall?.toolName ??
-    (resultBody as { toolName?: string } | undefined)?.toolName ??
-    "tool";
-  const argsPreview = callBody?.toolCall?.args ? truncatePreview(callBody.toolCall.args, 220) : "";
+    (mergedPayload?.toolCall?.toolName ??
+      (resultBody as { toolName?: string } | undefined)?.toolName ??
+      "tool"
+    ).toLowerCase();
+  const argsPreview = mergedPayload?.toolCall?.args
+    ? truncatePreview(mergedPayload.toolCall.args, 220)
+    : "";
   const resultPreview = resultBody?.toolResult?.result
     ? truncatePreview(resultBody.toolResult.result, 320)
     : "";
@@ -459,18 +524,23 @@ function buildToolStep(
 
   const ts = call?.timestamp ?? result?.timestamp ?? new Date().toISOString();
 
+  const pendingCompletion =
+    hasResult && toolResultPendingCompletion(resultBody?.toolResult?.result, isError);
+
   const status: TraceStepData["status"] = !hasResult
     ? "running"
     : isError
       ? "failed"
-      : "success";
+      : pendingCompletion
+        ? "running"
+        : "success";
 
-  const line = deriveToolLine(input, call ?? result, callBody);
+  const line = deriveToolLine(input, call ?? result, mergedPayload);
 
   let terminal: TraceStepData["terminal"] | undefined;
   if (name === "shell") {
-    const shellArgs = parseShellFromToolCallArgs(
-      callBody?.toolCall?.args as Record<string, unknown> | undefined,
+    const shellArgs = parseShellToolCallArgs(
+      mergedPayload?.toolCall?.args as Record<string, unknown> | undefined,
     );
     if (shellArgs) {
       const cmdLine = shellInvocationDisplayLine(shellArgs);
@@ -491,21 +561,47 @@ function buildToolStep(
     }
   }
 
+  let filesystem: TraceStepData["filesystem"] | undefined;
+  if (name === "filesystem") {
+    const fsArgs = parseFilesystemToolCallArgs(
+      mergedPayload?.toolCall?.args as Record<string, unknown> | undefined,
+    );
+    if (fsArgs) {
+      const outText = hasResult
+        ? filesystemToolAggregateOutput(resultBody?.toolResult?.result, isError, errorText)
+        : "";
+      const bodyFromResult = outText.trim() ? outText : undefined;
+      const showPendingWrite =
+        (!hasResult || pendingCompletion) && fsArgs.action === "write" && typeof fsArgs.content === "string";
+      const bodyFromCall = showPendingWrite ? fsArgs.content : undefined;
+      const resolved = bodyFromResult ?? bodyFromCall;
+      filesystem = {
+        action: fsArgs.action,
+        resourcePath: fsArgs.resourcePath,
+        body: resolved !== undefined && resolved.length > 0 ? resolved : undefined,
+        bodyTone: isError ? "error" : "default",
+      };
+    }
+  }
+
   const defaultSubtext = hasResult
     ? isError
       ? `Error: ${errorText ?? (resultPreview || "unknown error")}`
       : resultPreview || ""
     : "";
 
+  const hasRich = !!(terminal || filesystem);
+
   return {
     id: `tool:${toolCallId}:${call?.event_id ?? ""}:${result?.event_id ?? ""}`,
     title: line.title,
-    detail: terminal ? "" : line.detail ?? (argsPreview || `${name} called`),
-    time: formatClock(ts),
+    detail: hasRich ? "" : line.detail ?? (argsPreview || `${name} called`),
+    time: formatTimestamp(ts),
     duration,
     status,
-    subtext: terminal ? undefined : defaultSubtext.trim() || undefined,
+    subtext: hasRich ? undefined : defaultSubtext.trim() || undefined,
     terminal,
+    filesystem,
   };
 }
 
@@ -543,7 +639,7 @@ function messageEventToStep(input: ReasoningTraceInput, event: ActivityEvent): T
         ? `${actorLabel} responded to ${mentionedLabel} ${target}`
         : `${actorLabel} sent a message ${target}`,
     detail: "Message posted.",
-    time: formatClock(event.timestamp),
+    time: formatTimestamp(event.timestamp),
     duration: "—",
     status: "success",
   };

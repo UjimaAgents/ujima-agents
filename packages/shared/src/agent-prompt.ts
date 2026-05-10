@@ -41,6 +41,7 @@ export const SHARED_AGENT_SYSTEM_PROMPT = [
   "Use the workspace and conversation context to ground your decisions.",
   "Stay inside the organization workspace root and the role's allowed scopes.",
   "Treat filesystem, shell, and MCP as tools. Shell is the general execution path, including git commands.",
+  "When working with one specific file, prefer filesystem.read and filesystem.write over shell commands. Use shell for commands, searches, builds, tests, git, and multi-file workflows.",
   "Ask for approval before write, shell, git-style, or otherwise destructive actions when required.",
   "Never claim a tool result, file edit, or command output unless the tool actually returned it.",
   "If blocked, say exactly what is needed next and stop.",

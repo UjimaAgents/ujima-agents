@@ -4,6 +4,13 @@ export interface ParsedShellScope {
   args?: string[];
 }
 
+export interface ParsedFilesystemScope {
+  action: 'read' | 'write';
+  resourcePath: string;
+  /** Present for write when encoded in JSON approval scope (permission gate). */
+  content?: string;
+}
+
 export function parseApprovalReasonValue(reason: string, key: string): string | null {
   const match = reason.match(new RegExp(`(?:^|[;:])${key}=([^;]+)`));
   if (!match?.[1]) return null;
@@ -47,21 +54,89 @@ export function shellInvocationDisplayLine(parsed: ParsedShellScope): string {
 }
 
 /**
+ * Reads `scope=` from the approval reason and returns at most one of shell or filesystem.
+ * Prefer this over repeating `parseApprovalReasonValue` + `parseShellScope` + `parseFilesystemScope`.
+ */
+export function parseApprovalDisplayScopesFromReason(reason: string): {
+  shell: ParsedShellScope | null;
+  filesystem: ParsedFilesystemScope | null;
+} {
+  const scopeEncoded = parseApprovalReasonValue(reason, 'scope');
+  if (!scopeEncoded) return { shell: null, filesystem: null };
+  const shell = parseShellScope(scopeEncoded);
+  if (shell) return { shell, filesystem: null };
+  return { shell: null, filesystem: parseFilesystemScope(scopeEncoded) };
+}
+
+/**
+ * Filesystem tool approval scope from the permission gate (`filesystem:{json}`)
+ * or orchestrator inner gate (`filesystem:read:/abs/path`).
+ */
+export function parseFilesystemScope(scope: string): ParsedFilesystemScope | null {
+  if (!scope.startsWith('filesystem:')) return null;
+  const payload = scope.slice('filesystem:'.length);
+
+  if (payload.startsWith('{')) {
+    try {
+      const parsed = JSON.parse(payload) as {
+        action?: unknown;
+        resourcePath?: unknown;
+        content?: unknown;
+      };
+      const action = parsed.action;
+      const resourcePath = parsed.resourcePath;
+      if (action !== 'read' && action !== 'write') return null;
+      if (typeof resourcePath !== 'string' || !resourcePath.trim()) return null;
+      const out: ParsedFilesystemScope = { action, resourcePath };
+      if (typeof parsed.content === 'string') out.content = parsed.content;
+      return out;
+    } catch {
+      return null;
+    }
+  }
+
+  const colon = payload.indexOf(':');
+  if (colon === -1) return null;
+  const action = payload.slice(0, colon);
+  const resourcePath = payload.slice(colon + 1);
+  if (action !== 'read' && action !== 'write') return null;
+  if (!resourcePath) return null;
+  return { action, resourcePath };
+}
+
+const RELAY_FS_WRITE_BODY_MAX = 4000;
+
+function relayFilesystemBlock(fs: ParsedFilesystemScope): string {
+  const lines = ['```', fs.resourcePath, fs.action];
+  if (fs.action === 'write' && fs.content !== undefined && fs.content.length > 0) {
+    const body =
+      fs.content.length > RELAY_FS_WRITE_BODY_MAX
+        ? `${fs.content.slice(0, RELAY_FS_WRITE_BODY_MAX)}\n…`
+        : fs.content;
+    lines.push(body);
+  }
+  lines.push('```');
+  return lines.join('\n');
+}
+
+/**
  * Compact chat body when an approval is relayed (e.g. owner DM).
- * Shell: fenced block with cwd then `$ command …`. Otherwise: `action` · `path`.
+ * Shell: fenced block with cwd then `$ command …`.
+ * Filesystem: fenced block with path, action, and optional write body.
+ * Otherwise: `action` · `path`.
  */
 export function formatApprovalRelayMarkdown(approval: {
   action: string;
   resourcePath: string;
   reason: string;
 }): string {
-  const scopeEncoded = parseApprovalReasonValue(approval.reason, 'scope');
-  if (scopeEncoded) {
-    const shell = parseShellScope(scopeEncoded);
-    if (shell) {
-      const cmd = shellInvocationDisplayLine(shell);
-      return ['```', shell.cwd, `$ ${cmd}`, '```'].join('\n');
-    }
+  const { shell, filesystem } = parseApprovalDisplayScopesFromReason(approval.reason);
+  if (shell) {
+    const cmd = shellInvocationDisplayLine(shell);
+    return ['```', shell.cwd, `$ ${cmd}`, '```'].join('\n');
+  }
+  if (filesystem) {
+    return relayFilesystemBlock(filesystem);
   }
   return `\`${approval.action}\` · \`${approval.resourcePath}\``;
 }

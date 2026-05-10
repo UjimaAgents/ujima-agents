@@ -297,7 +297,7 @@ describe('ApprovalService', () => {
     expect(resumedAllowRun).toBe(false);
     expect(run.status).toBe('failed');
     expect(run.summary).toBe('Approval rejected by user');
-    expect(emitted).toBe(3);
+    expect(emitted).toBe(2);
   });
 
   it('persists an allow_always grant with the encoded scope reason', async () => {
@@ -408,5 +408,78 @@ describe('ApprovalService', () => {
     expect(capturedReason).toBe(
       `grant:always_allow:scope=${encodeURIComponent('shell:{"cwd":"/workspace","command":"git"}')};note=Always allow this git family.`,
     );
+  });
+
+  it('approves pending shell calls in the same run when allow_family matches their command family', async () => {
+    const gitDiffScope = 'shell:{"cwd":"/workspace","command":"git","args":["diff"]}';
+    const gitStatusScope = 'shell:{"cwd":"/workspace","command":"git","args":["status"]}';
+    const npmTestScope = 'shell:{"cwd":"/workspace","command":"npm","args":["test"]}';
+    const baseApproval = {
+      organizationId: 'org-1',
+      runId: 'run-1',
+      requestedBy: 'agent-1',
+      resourceType: 'shell',
+      resourcePath: '/workspace',
+      action: 'execute',
+      status: 'pending',
+      createdAt: '2026-05-04T00:00:00.000Z',
+      resolvedAt: undefined,
+    } as const;
+    const approvals = [
+      {
+        ...baseApproval,
+        id: 'ap-1',
+        toolCallId: 'tool-1',
+        reason: `Tool action requires approval;scope=${encodeURIComponent(gitDiffScope)}`,
+      },
+      {
+        ...baseApproval,
+        id: 'ap-2',
+        toolCallId: 'tool-2',
+        reason: `Tool action requires approval;scope=${encodeURIComponent(gitStatusScope)}`,
+      },
+      {
+        ...baseApproval,
+        id: 'ap-3',
+        toolCallId: 'tool-3',
+        reason: `Tool action requires approval;scope=${encodeURIComponent(npmTestScope)}`,
+      },
+    ];
+    const resolvedIds: string[] = [];
+    const repo = {
+      listPendingApprovals: () => approvals,
+      saveApproval: () => approvals[0],
+      listMembers: () => [],
+      getRun: () => ({ threadId: 'thread-1' }),
+      getApproval: () => approvals[0],
+      resolveApproval: (_orgId: string, approvalId: string, status: 'approved' | 'rejected', reason?: string) => {
+        const approval = approvals.find((item) => item.id === approvalId);
+        if (!approval) return null;
+        resolvedIds.push(approvalId);
+        return {
+          ...approval,
+          status,
+          reason: reason ?? '',
+          resolvedAt: '2026-05-04T00:01:00.000Z',
+        };
+      },
+    } as never;
+
+    const service = new ApprovalService(
+      repo,
+      { emit: () => undefined } as never,
+      { sendDirectMessage: () => undefined } as never,
+      () => undefined,
+    );
+
+    await service.resolveApproval({
+      organizationId: 'org-1',
+      approvalId: 'ap-1',
+      status: 'approved',
+      resolution: 'allow_family',
+      reason: 'Always allow this git family.',
+    });
+
+    expect(resolvedIds).toEqual(['ap-1', 'ap-2']);
   });
 });
