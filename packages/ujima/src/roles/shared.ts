@@ -1,6 +1,7 @@
 export const DEFAULT_ROLE_TOOLS = [
   "filesystem",
   "shell",
+  "web_search",
   "message",
   "channel.post",
   "channel.reply",

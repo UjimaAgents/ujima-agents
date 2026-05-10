@@ -1,17 +1,24 @@
-import type { Message } from '@ujima/shared';
+import type {Message} from "@ujima/shared";
 
-export const SELF_NOTE_SUMMARY_MARKER = '[[SELF_NOTE_SUMMARY_V1]]';
-export const SELF_NOTE_COMPACTED_MARKER = '[[SELF_NOTE_COMPACTED_V1]]';
-export const CONVERSATION_SUMMARY_MARKER = '[[CONVERSATION_SUMMARY_V1]]';
-export const CONVERSATION_COMPACTED_MARKER = '[[CONVERSATION_COMPACTED_V1]]';
-export const CONVERSATION_ARCHIVE_MARKER = '[[CONVERSATION_ARCHIVE_V1]]';
+export const SELF_NOTE_SUMMARY_MARKER = "[[SELF_NOTE_SUMMARY_V1]]";
+export const SELF_NOTE_COMPACTED_MARKER = "[[SELF_NOTE_COMPACTED_V1]]";
+export const CONVERSATION_SUMMARY_MARKER = "[[CONVERSATION_SUMMARY_V1]]";
+export const CONVERSATION_COMPACTED_MARKER = "[[CONVERSATION_COMPACTED_V1]]";
+export const CONVERSATION_ARCHIVE_MARKER = "[[CONVERSATION_ARCHIVE_V1]]";
 const README_SUMMARY_GUIDANCE = [
-  '> README-style compact summary. Keep this concise, skimmable, and focused on durable context.',
-  '> It is okay to forget details that are not important.',
+  "> README-style compact summary -- durable context from earlier in the conversation.",
+  "> Skim the headings, dive into what matters. Details that don't carry forward are safe to forget.",
 ] as const;
 
-export function formatTimestampedContent(content: string, createdAt: string): string {
-  if (content.startsWith('[') && content.includes(' at ') && content.includes(']')) {
+export function formatTimestampedContent(
+  content: string,
+  createdAt: string
+): string {
+  if (
+    content.startsWith("[") &&
+    content.includes(" at ") &&
+    content.includes("]")
+  ) {
     return content;
   }
   return `[${toReadableEnglishTimestamp(createdAt)}]\n${content}`;
@@ -20,13 +27,13 @@ export function formatTimestampedContent(content: string, createdAt: string): st
 export function toReadableEnglishTimestamp(iso: string): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return iso;
-  return new Intl.DateTimeFormat('en-US', {
-    weekday: 'long',
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
+  return new Intl.DateTimeFormat("en-US", {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
   }).format(date);
 }
 
@@ -56,7 +63,7 @@ export function isArchivedConversation(message: Message): boolean {
 
 /** Compaction / archive summary rows (`kind: system`) — include in LLM thread context; exclude other system rows (approval relay, throttles, cards). */
 export function isCompactionSummarySystemMessage(message: Message): boolean {
-  if (message.kind !== 'system') return false;
+  if (message.kind !== "system") return false;
   return (
     isMessageWithMarker(message, CONVERSATION_SUMMARY_MARKER) ||
     isMessageWithMarker(message, CONVERSATION_ARCHIVE_MARKER) ||
@@ -68,24 +75,31 @@ export function buildStructuredConversationSummary(input: {
   marker?: string;
   title: string;
   messages: Message[];
-  sections: { heading: string; bullets: string[] }[];
+  sections: {heading: string; bullets: string[]}[];
 }): string {
   const lines = input.messages.map(
-    (message) => `- ${toReadableEnglishTimestamp(message.createdAt)}: ${oneLine(message.content)}`,
+    (message) =>
+      `- ${toReadableEnglishTimestamp(message.createdAt)}: ${oneLine(message.content)}`
   );
   const out: string[] = [];
   if (input.marker) out.push(`${input.marker} # ${input.title}`);
   else out.push(`# ${input.title}`);
-  out.push('');
+  out.push("");
   out.push(...README_SUMMARY_GUIDANCE);
-  out.push('');
+  out.push("");
   for (const section of input.sections) {
     out.push(`## ${section.heading}`);
     for (const bullet of section.bullets) out.push(`- ${bullet}`);
-    out.push('');
+    out.push("");
   }
-  out.push('## Important facts', ...lines, '', '## Stale or superseded items', '- Source notes in this batch are marked as compacted.');
-  return out.join('\n');
+  out.push(
+    "## Important facts",
+    ...lines,
+    "",
+    "## Stale or superseded items",
+    "- Source notes in this batch are marked as compacted."
+  );
+  return out.join("\n");
 }
 
 export function buildSelfNoteSummary(messages: Message[]): string {
@@ -95,20 +109,28 @@ export function buildSelfNoteSummary(messages: Message[]): string {
     messages,
     sections: [
       {
-        heading: 'Current goals',
-        bullets: ['Keep recent self-note detail while preserving older memory as a concise summary.'],
+        heading: "What I was working on",
+        bullets: [
+          "Earlier self-notes below capture the working context. The raw recent notes have the latest thinking.",
+        ],
       },
       {
-        heading: 'Decisions',
-        bullets: ['Auto-compaction runs when uncompacted self notes exceed threshold.'],
+        heading: "Decisions I made",
+        bullets: [
+          "Key decisions from earlier self-notes are recorded below. Do not re-open settled points unless new information changes the picture.",
+        ],
       },
       {
-        heading: 'User preferences',
-        bullets: ['Self-note reads should show human-readable timestamps while storage stays ISO.'],
+        heading: "What I learned",
+        bullets: [
+          "Preference signals and feedback from earlier interactions are preserved in the notes below.",
+        ],
       },
       {
-        heading: 'Open questions',
-        bullets: ['None captured in this compacted batch.'],
+        heading: "Things still open",
+        bullets: [
+          "Open questions from the earlier batch are listed below. The recent raw notes may have answers by now.",
+        ],
       },
     ],
   });
@@ -121,20 +143,26 @@ export function buildConversationSummary(messages: Message[]): string {
     messages,
     sections: [
       {
-        heading: 'Current discussion',
-        bullets: ['Keep the recent raw window intact while older context is rolled into this summary.'],
+        heading: "Current discussion",
+        bullets: [
+          "Keep the recent raw window intact while older context is rolled into this summary.",
+        ],
       },
       {
-        heading: 'Decisions',
-        bullets: ['Older messages were compacted deterministically without model output.'],
+        heading: "Decisions",
+        bullets: [
+          "Older messages were compacted deterministically without model output.",
+        ],
       },
       {
-        heading: 'Open questions',
-        bullets: ['Review the live tail for the freshest replies and follow-ups.'],
+        heading: "Open questions",
+        bullets: [
+          "Review the live tail for the freshest replies and follow-ups.",
+        ],
       },
       {
-        heading: 'Stale or superseded items',
-        bullets: ['Source messages in this batch are marked as compacted.'],
+        heading: "Stale or superseded items",
+        bullets: ["Source messages in this batch are marked as compacted."],
       },
     ],
   });
@@ -147,25 +175,29 @@ export function buildConversationArchiveSummary(messages: Message[]): string {
     messages,
     sections: [
       {
-        heading: 'Current discussion',
-        bullets: ['The visible conversation was cleared and rolled into archive form.'],
+        heading: "Current discussion",
+        bullets: [
+          "The visible conversation was cleared and rolled into archive form.",
+        ],
       },
       {
-        heading: 'Decisions',
-        bullets: ['This archive remains recoverable in the message store.'],
+        heading: "Decisions",
+        bullets: ["This archive remains recoverable in the message store."],
       },
       {
-        heading: 'Open questions',
-        bullets: ['Start a fresh thread if you want a clean surface.'],
+        heading: "Open questions",
+        bullets: ["Start a fresh thread if you want a clean surface."],
       },
       {
-        heading: 'Stale or superseded items',
-        bullets: ['Source messages in this batch are marked as compacted or archived.'],
+        heading: "Stale or superseded items",
+        bullets: [
+          "Source messages in this batch are marked as compacted or archived.",
+        ],
       },
     ],
   });
 }
 
 function oneLine(content: string): string {
-  return content.replace(/\s+/g, ' ').trim().slice(0, 280);
+  return content.replace(/\s+/g, " ").trim().slice(0, 280);
 }

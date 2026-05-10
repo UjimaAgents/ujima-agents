@@ -1,6 +1,7 @@
 import {
   parseFilesystemToolCallArgs,
   parseShellToolCallArgs,
+  parseWebSearchToolCallArgs,
   shellInvocationDisplayLine,
   type ActivityEvent,
   type RunState,
@@ -251,7 +252,8 @@ function toolResultPendingCompletion(result: unknown, isError: boolean): boolean
   return (
     rec.status === "waiting_for_approval" ||
     rec.status === "pending_approval" ||
-    rec.status === "blocked"
+    rec.status === "blocked" ||
+    rec.status === "streaming"
   );
 }
 
@@ -274,6 +276,45 @@ function inferToolAction(args?: Record<string, unknown>): {
     op,
     command,
   };
+}
+
+interface WebSearchTraceData {
+  query: string;
+  site?: string;
+  status: "streaming" | "completed";
+  source: string;
+  results: WebSearchResultTraceData[];
+}
+
+interface WebSearchResultTraceData {
+  title: string;
+  url: string;
+  snippet: string;
+  source: string;
+  rank: number;
+}
+
+function normalizeWebSearchResults(result: unknown): WebSearchResultTraceData[] {
+  const rec = toObject(result);
+  if (!rec || !Array.isArray(rec.results)) return [];
+  return rec.results
+    .map((entry) => {
+      const item = toObject(entry);
+      const title = typeof item?.title === "string" ? item.title : "";
+      const url = typeof item?.url === "string" ? item.url : "";
+      const snippet = typeof item?.snippet === "string" ? item.snippet : "";
+      const source = typeof item?.source === "string" ? item.source : "";
+      const rank = typeof item?.rank === "number" ? item.rank : 0;
+      if (!title || !url) return null;
+      return {
+        title,
+        url,
+        snippet,
+        source,
+        rank,
+      };
+    })
+    .filter((item): item is WebSearchResultTraceData => item !== null);
 }
 
 function sentenceCase(value: string): string {
@@ -322,6 +363,13 @@ function deriveToolLine(
   if (toolName === "shell") {
     return {
       title: `${actorLabel} · shell`,
+      detail: "",
+    };
+  }
+
+  if (toolName === "web_search") {
+    return {
+      title: `${actorLabel} · web search`,
       detail: "",
     };
   }
@@ -392,6 +440,24 @@ function deriveToolLine(
   };
 }
 
+/** Normalize for comparing human-written step text to status labels. */
+function normalizeRunDetailLabel(text: string): string {
+  return text.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+/** True when step/summary only repeats the same status already shown in the title ("Run · Queued"). */
+function runDetailOnlyEchoesStatus(status: RunState["status"], operational: string): boolean {
+  const t = normalizeRunDetailLabel(operational);
+  if (!t) return true;
+  const variants = new Set<string>([
+    normalizeRunDetailLabel(status),
+    normalizeRunDetailLabel(status.replace(/_/g, " ")),
+  ]);
+  const mapped = RUN_STATUS_LABELS[status];
+  if (mapped) variants.add(normalizeRunDetailLabel(mapped));
+  return variants.has(t);
+}
+
 /** Completed runs often duplicate the agent message in `run.summary`; omit detail in the trace. */
 function runDetailForTrace(run: RunState): string {
   if (run.status === "completed") {
@@ -401,8 +467,14 @@ function runDetailForTrace(run: RunState): string {
     const text = run.summary?.trim() || run.step?.trim();
     return text ? truncatePreview(text, 220) : `Run ${run.id.slice(0, 8)}…`;
   }
+
   const operational = run.step?.trim() || run.summary?.trim();
-  if (!operational) return `Run ${run.id.slice(0, 8)}…`;
+  if (!operational) {
+    return "";
+  }
+  if (runDetailOnlyEchoesStatus(run.status, operational)) {
+    return "";
+  }
   return operational.length <= 160 ? operational : truncatePreview(operational, 160);
 }
 
@@ -549,7 +621,30 @@ function buildToolStep(
     }
   }
 
-  const hasRich = !!(terminal || filesystem);
+  let webSearch: WebSearchTraceData | undefined;
+  if (name === "web_search") {
+    const webArgs = parseWebSearchToolCallArgs(
+      mergedPayload?.toolCall?.args as Record<string, unknown> | undefined,
+    );
+    if (webArgs) {
+      const result = resultBody?.toolResult?.result;
+      const rec = toObject(result);
+      const status =
+        rec?.status === "completed"
+          ? "completed"
+          : "streaming";
+      const source = typeof rec?.source === "string" ? rec.source : "duckduckgo";
+      webSearch = {
+        query: webArgs.query,
+        site: webArgs.site,
+        status,
+        source,
+        results: normalizeWebSearchResults(result),
+      };
+    }
+  }
+
+  const hasRich = !!(terminal || filesystem || webSearch);
 
   return {
     id: `tool:${toolCallId}:${call?.event_id ?? ""}:${result?.event_id ?? ""}`,
@@ -560,6 +655,7 @@ function buildToolStep(
     status,
     terminal,
     filesystem,
+    webSearch,
   };
 }
 

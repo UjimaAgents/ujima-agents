@@ -61,8 +61,29 @@ export function OnboardingWorkbench({ draft }: { draft: OnboardingDraft }) {
                     tools={[
                       { name: "team.roles.sync", status: "done" },
                       { name: "providers.validate", status: "idle" },
-                      { name: "orgChart.preview", status: "running" },
+                      { name: "web_search", status: "running" },
                     ]}
+                    webSearch={{
+                      query: "Ujima Agents web search",
+                      site: "github.com",
+                      status: "streaming",
+                      source: "duckduckgo",
+                      results: [
+                        {
+                          rank: 1,
+                          title: "Ujima Agents",
+                          url: "https://github.com/",
+                          snippet: "Searchable demo surface for live agent tooling and trace previews.",
+                          source: "duckduckgo",
+                        },
+                        {
+                          rank: 2,
+                          title: "Workspace trace UI",
+                          url: "https://github.com/",
+                          snippet: "Minimal live result cards matched to the workspace chrome.",
+                          source: "duckduckgo",
+                        },
+                      ]}}
                   />
                 </div>
               </Panel>

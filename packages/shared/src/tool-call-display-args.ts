@@ -63,3 +63,42 @@ export function parseFilesystemToolCallArgs(
   if (typeof contentRaw === 'string') out.content = contentRaw;
   return out;
 }
+
+export interface ParsedWebSearchScope {
+  query: string;
+  site?: string;
+  limit?: number;
+}
+
+/**
+ * Normalized web search fields from tool call `args` (flat or nested under `input`).
+ */
+export function parseWebSearchToolCallArgs(
+  args: Record<string, unknown> | undefined,
+): ParsedWebSearchScope | null {
+  if (!args) return null;
+  const nested = toObject((args as { input?: unknown }).input);
+  const query =
+    typeof args.query === 'string'
+      ? args.query
+      : typeof nested?.query === 'string'
+        ? nested.query
+        : '';
+  if (!query.trim()) return null;
+  const siteRaw =
+    typeof args.site === 'string'
+      ? args.site
+      : typeof nested?.site === 'string'
+        ? nested.site
+        : '';
+  const limitRaw =
+    typeof args.limit === 'number'
+      ? args.limit
+      : typeof nested?.limit === 'number'
+        ? nested.limit
+        : undefined;
+  const out: ParsedWebSearchScope = { query };
+  if (siteRaw.trim()) out.site = siteRaw.trim();
+  if (typeof limitRaw === 'number' && Number.isFinite(limitRaw)) out.limit = limitRaw;
+  return out;
+}
