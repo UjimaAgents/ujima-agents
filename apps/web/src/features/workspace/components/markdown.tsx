@@ -9,7 +9,7 @@ function h(text: string): string {
   return text.replace(/[&<>"]/g, (ch) => HTML_ESCAPE[ch]);
 }
 
-function sanitizeUrl(href: unknown): string {
+export function sanitizeUrl(href: unknown): string {
   if (typeof href !== "string") return "";
   if (SAFE_URL_PROTOCOLS.test(href)) return href;
   return "";

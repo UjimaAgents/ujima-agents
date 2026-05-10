@@ -1,4 +1,5 @@
 import { ExternalLink } from "lucide-react";
+import { sanitizeUrl } from "../markdown";
 import {
   TERMINAL_OUTPUT_SCROLL_FRAME,
   TERMINAL_PANEL,
@@ -53,32 +54,42 @@ export function WebSearchToolPane({
           <div className="text-[11px] text-foreground/45">Searching…</div>
         ) : (
           <ul className="space-y-2">
-            {results.map((result) => (
-              <li key={`${result.rank}:${result.url}`}>
-                <div className="grid grid-cols-[1.75rem_minmax(0,1fr)] gap-x-1.5 gap-y-0.5">
-                  <span className="pt-[1px] font-mono text-[10px] tabular-nums text-foreground/35">
-                    {String(result.rank).padStart(2, "0")}
-                  </span>
-                  <div className="min-w-0">
-                    <a
-                      href={result.url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex max-w-full items-start gap-1 text-[11px] font-medium leading-snug text-foreground hover:underline"
-                    >
-                      <span className="min-w-0 truncate">{result.title}</span>
-                      <ExternalLink className="mt-0.5 h-3 w-3 shrink-0 opacity-50" aria-hidden />
-                    </a>
-                    <span className="ml-1 inline text-[9px] text-foreground/40">· {result.source}</span>
+            {results.map((result) => {
+              const safeUrl = sanitizeUrl(result.url);
+
+              return (
+                <li key={`${result.rank}:${result.url}`}>
+                  <div className="grid grid-cols-[1.75rem_minmax(0,1fr)] gap-x-1.5 gap-y-0.5">
+                    <span className="pt-[1px] font-mono text-[10px] tabular-nums text-foreground/35">
+                      {String(result.rank).padStart(2, "0")}
+                    </span>
+                    <div className="min-w-0">
+                      {safeUrl ? (
+                        <a
+                          href={safeUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex max-w-full items-start gap-1 text-[11px] font-medium leading-snug text-foreground hover:underline"
+                        >
+                          <span className="min-w-0 truncate">{result.title}</span>
+                          <ExternalLink className="mt-0.5 h-3 w-3 shrink-0 opacity-50" aria-hidden />
+                        </a>
+                      ) : (
+                        <span className="inline-flex max-w-full items-start gap-1 text-[11px] font-medium leading-snug text-foreground">
+                          <span className="min-w-0 truncate">{result.title}</span>
+                        </span>
+                      )}
+                      <span className="ml-1 inline text-[9px] text-foreground/40">· {result.source}</span>
+                    </div>
+                    {result.snippet ? (
+                      <p className="col-span-2 pl-[calc(1.75rem+0.375rem)] text-[11px] leading-snug text-foreground/65">
+                        {result.snippet}
+                      </p>
+                    ) : null}
                   </div>
-                  {result.snippet ? (
-                    <p className="col-span-2 pl-[calc(1.75rem+0.375rem)] text-[11px] leading-snug text-foreground/65">
-                      {result.snippet}
-                    </p>
-                  ) : null}
-                </div>
-              </li>
-            ))}
+                </li>
+              );
+            })}
           </ul>
         )}
       </div>
