@@ -54,6 +54,16 @@ export function isArchivedConversation(message: Message): boolean {
   return isMessageWithMarker(message, CONVERSATION_ARCHIVE_MARKER);
 }
 
+/** Compaction / archive summary rows (`kind: system`) — include in LLM thread context; exclude other system rows (approval relay, throttles, cards). */
+export function isCompactionSummarySystemMessage(message: Message): boolean {
+  if (message.kind !== 'system') return false;
+  return (
+    isMessageWithMarker(message, CONVERSATION_SUMMARY_MARKER) ||
+    isMessageWithMarker(message, CONVERSATION_ARCHIVE_MARKER) ||
+    isMessageWithMarker(message, SELF_NOTE_SUMMARY_MARKER)
+  );
+}
+
 export function buildStructuredConversationSummary(input: {
   marker?: string;
   title: string;

@@ -26,6 +26,8 @@ interface ShellJob {
   status: 'running' | 'exited' | 'error';
   exitCode?: number;
   error?: string;
+  /** Cleared on process exit; escalates SIGTERM → SIGKILL after {@link TERMINATION_GRACE_MS}. */
+  terminationGraceTimer?: ReturnType<typeof setTimeout>;
 }
 
 export interface BackgroundJobSnapshot {
@@ -40,6 +42,36 @@ export interface BackgroundJobSnapshot {
 }
 
 const backgroundJobs = new Map<string, ShellJob>();
+
+/** After SIGTERM, send SIGKILL if the child has not exited (handles ignored SIGTERM). */
+const TERMINATION_GRACE_MS = 10_000;
+
+function scheduleTerminationEscalation(jobKey: string, job: ShellJob): void {
+  if (job.terminationGraceTimer) clearTimeout(job.terminationGraceTimer);
+  job.terminationGraceTimer = setTimeout(() => {
+    job.terminationGraceTimer = undefined;
+    if (job.status !== 'running') return;
+    const current = backgroundJobs.get(jobKey);
+    if (!current || current !== job) return;
+    try {
+      job.process.kill('SIGKILL');
+    } catch {
+      /* process may already be reaped */
+    }
+  }, TERMINATION_GRACE_MS);
+}
+
+function requestBackgroundJobTermination(jobKey: string): boolean {
+  const job = backgroundJobs.get(jobKey);
+  if (!job || job.status !== 'running') return false;
+  try {
+    job.process.kill('SIGTERM');
+  } catch {
+    return false;
+  }
+  scheduleTerminationEscalation(jobKey, job);
+  return true;
+}
 
 export function listBackgroundJobs(runId: string) {
   const result = [];
@@ -71,15 +103,8 @@ export function peekBackgroundJob(runId: string, jobId: string): BackgroundJobSn
   };
 }
 
-export function terminateBackgroundJob(runId: string, jobId: string) {
-  const key = `${runId}:${jobId}`;
-  const job = backgroundJobs.get(key);
-  if (job) {
-    job.process.kill('SIGTERM');
-    backgroundJobs.delete(key);
-    return true;
-  }
-  return false;
+export function terminateBackgroundJob(runId: string, jobId: string): boolean {
+  return requestBackgroundJobTermination(`${runId}:${jobId}`);
 }
 
 export const shellTool: OrchestratorTool<typeof ShellSchema> = {
@@ -146,8 +171,9 @@ export const shellTool: OrchestratorTool<typeof ShellSchema> = {
       }
 
       if (op === 'terminate') {
-        job.process.kill('SIGTERM');
-        backgroundJobs.delete(jobKey);
+        if (!requestBackgroundJobTermination(jobKey)) {
+          throw new Error(`Job ${job_id} not found or already terminated`);
+        }
         return { status: 'terminated' };
       }
     }
@@ -223,6 +249,10 @@ export const shellTool: OrchestratorTool<typeof ShellSchema> = {
         job.error = error.message;
       });
       child.on('close', (code) => {
+        if (job.terminationGraceTimer) {
+          clearTimeout(job.terminationGraceTimer);
+          job.terminationGraceTimer = undefined;
+        }
         job.status = 'exited';
         job.exitCode = code ?? 0;
       });
