@@ -764,7 +764,7 @@ function StepFields({
             <FieldShell
               label="Workspace root"
               htmlFor="workspaceRoot"
-              hint="Pick a workspace folder or enter an absolute path manually."
+              hint="Browse opens a native folder dialog when this app runs on your machine (local dev). Hosted installs: type an absolute path."
               error={showError("workspaceRoot") ? errors.workspaceRoot : undefined}
             >
               <div className="flex gap-2">
@@ -774,7 +774,7 @@ function StepFields({
                   value={draft.workspaceRoot}
                   onBlur={() => onFieldBlur("workspaceRoot")}
                   onChange={(event) => onDraftChange(updateField(draft, "workspaceRoot", event.target.value))}
-                  placeholder="C:\\path\\to\\your-workspace"
+                  placeholder="/absolute/path/to/your-workspace"
                   aria-invalid={showError("workspaceRoot")}
                   className="flex-1"
                 />
