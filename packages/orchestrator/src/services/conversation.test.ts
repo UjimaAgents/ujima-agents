@@ -5,6 +5,8 @@ import {
   MemberSchema,
   OrganizationSchema,
   SocketEventNames,
+  decodeCursor,
+  encodeCursor,
 } from '@ujima/shared';
 import type { ApiRepository } from './repository-reader.js';
 import { ConversationService } from './conversation.js';
@@ -66,6 +68,16 @@ function createConversationFixture() {
   const emits: { event: string }[] = [];
   const channels = new Map([[channel.id, channel]]);
   const threads = new Map([[thread.id, thread]]);
+  const messagesById = new Map<string, any>();
+
+  function listByChannel(channelId: string) {
+    return [...messagesById.values()]
+      .filter((message) => message.organizationId === organization.id && message.channelId === channelId)
+      .sort((left, right) => {
+        const byTime = left.createdAt.localeCompare(right.createdAt);
+        return byTime !== 0 ? byTime : left.id.localeCompare(right.id);
+      });
+  }
 
   const repo = {
     getOrganization: () => organization,
@@ -74,7 +86,10 @@ function createConversationFixture() {
     getMember: (_organizationId: string, memberId: string) =>
       members.find((member) => member.id === memberId) ?? null,
     listMembers: () => members,
-    listMessages: () => ({ data: [], hasMore: false }),
+    listMessages: (_organizationId: string, threadId: string) => ({
+      data: [...messagesById.values()].filter((message) => message.threadId === threadId),
+      hasMore: false,
+    }),
     getProviderCredential: () => null,
     getChannel: (_organizationId: string, channelId: string) => channels.get(channelId) ?? null,
     listAllChannels: () => [...channels.values()],
@@ -89,14 +104,53 @@ function createConversationFixture() {
       threads.set(value.id, value);
       return value;
     },
-    getMessage: () => null,
-    listChannelMessages: () => ({ data: [], hasMore: false }),
+    getMessage: (_organizationId: string, messageId: string) => messagesById.get(messageId) ?? null,
+    listChannelMessages: (
+      _organizationId: string,
+      channelId: string,
+      options?: { cursor?: string; since?: string; limit?: number },
+    ) => {
+      const limit = options?.limit ?? 50;
+      let filtered = listByChannel(channelId);
+      if (options?.since) {
+        filtered = filtered.filter((message) => message.createdAt >= options.since!);
+      }
+      const decoded = decodeCursor(options?.cursor);
+      if (decoded) {
+        filtered = filtered.filter((message) => {
+          if (message.createdAt < decoded.timestamp) return true;
+          if (message.createdAt > decoded.timestamp) return false;
+          if (!decoded.id) return false;
+          return message.id < decoded.id;
+        });
+      }
+      const desc = [...filtered].sort((left, right) => {
+        const byTime = right.createdAt.localeCompare(left.createdAt);
+        return byTime !== 0 ? byTime : right.id.localeCompare(left.id);
+      });
+      const rows = desc.slice(0, limit + 1);
+      const hasMore = rows.length > limit;
+      if (hasMore) rows.shift();
+      const data = rows.reverse();
+      const head = hasMore ? data[0] : undefined;
+      return {
+        data,
+        hasMore,
+        nextCursor: head ? encodeCursor(head.createdAt, head.id) : undefined,
+      };
+    },
     searchChannelMessages: () => ({ data: [], hasMore: false }),
     saveMessage: (message: unknown) => {
       savedMessages.push(message);
+      const typed = message as { id: string };
+      messagesById.set(typed.id, message);
       return message;
     },
-    updateMessage: (message: unknown) => message,
+    updateMessage: (message: unknown) => {
+      const typed = message as { id: string };
+      messagesById.set(typed.id, message);
+      return message;
+    },
     replaceMessageMentions: (messageId: string, mentions: { messageId: string; memberId: string }[]) => {
       savedMentions.splice(0, savedMentions.length, ...mentions);
       return mentions;
@@ -164,10 +218,12 @@ function createConversationFixture() {
     members,
     organization,
     repo,
+    threads,
     savedMessages,
     savedMentions,
     service,
     thread,
+    channels,
   };
 }
 
@@ -195,6 +251,25 @@ describe('ConversationService @all mentions', () => {
     ]);
     expect(alerts.sort()).toEqual(['agent-1', 'agent-2']);
     expect(emits.some((entry) => entry.event === SocketEventNames.memberAlerted)).toBe(true);
+  });
+
+  it('does not fan out @all from agent-authored messages', async () => {
+    const { alerts, savedMessages, savedMentions, service, thread } = createConversationFixture();
+
+    const message = service.sendMessage({
+      organizationId: 'org-1',
+      threadId: thread.id,
+      channelId: 'general',
+      senderId: 'agent-1',
+      content: 'Please review @all',
+    });
+
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(message.mentions).toHaveLength(0);
+    expect(savedMessages).toHaveLength(1);
+    expect(savedMentions).toHaveLength(0);
+    expect(alerts).toHaveLength(0);
   });
 
   it('alerts an agent recipient for direct messages', async () => {
@@ -234,6 +309,78 @@ describe('ConversationService @all mentions', () => {
     expect(savedMessages).toHaveLength(1);
     expect(alerts).toEqual([]);
     expect(emits.some((entry) => entry.event === SocketEventNames.memberAlerted)).toBe(false);
+  });
+
+  it('alerts the other agent when an agent publishes a DM reply directly', async () => {
+    const { alerts, repo, service } = createConversationFixture();
+    const dmChannel = ChannelSchema.parse({
+      id: 'dm:agent-1:agent-2',
+      organizationId: 'org-1',
+      name: 'Mia / Noah',
+      kind: 'dm',
+      topic: '',
+      memberIds: ['agent-1', 'agent-2'],
+      createdAt: '2026-05-07T00:00:00.000Z',
+    });
+    const dmThread = ConversationThreadSchema.parse({
+      id: dmChannel.id,
+      organizationId: 'org-1',
+      channelId: dmChannel.id,
+      memberIds: dmChannel.memberIds,
+      title: dmChannel.name,
+      createdAt: '2026-05-07T00:00:00.000Z',
+    });
+    repo.saveChannel(dmChannel);
+    repo.ensureThread(dmThread);
+
+    service.publishMessage({
+      id: 'msg-1',
+      organizationId: 'org-1',
+      threadId: dmThread.id,
+      channelId: dmChannel.id,
+      senderId: 'agent-1',
+      senderKind: 'agent',
+      kind: 'agent',
+      content: 'Replying here.',
+      createdAt: '2026-05-07T00:00:01.000Z',
+      mentions: [],
+      toolCalls: [],
+      attachments: [],
+    });
+
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(alerts).toEqual(['agent-2']);
+  });
+
+  it('skips DM wake fanout when the message is exactly "Acknowledged."', async () => {
+    const { alerts, service } = createConversationFixture();
+
+    const message = await service.sendDirectMessage({
+      organizationId: 'org-1',
+      senderId: 'agent-1',
+      recipientId: 'agent-2',
+      content: 'Acknowledged.',
+    });
+
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(message.channelId).toMatch(/^dm:/);
+    expect(alerts).toEqual([]);
+  });
+
+  it('wakes the other agent when "Acknowledged." has extra text after it', async () => {
+    const { alerts, service } = createConversationFixture();
+
+    await service.sendDirectMessage({
+      organizationId: 'org-1',
+      senderId: 'agent-1',
+      recipientId: 'agent-2',
+      content: 'Acknowledged. What is the deadline for the API?',
+    });
+
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(alerts).toEqual(['agent-2']);
   });
 
   it('resolves multi-word mentions in message content', async () => {
@@ -277,5 +424,313 @@ describe('ConversationService @all mentions', () => {
     expect(alerts).toContain('agent-quinn');
 
     expect(alerts).toContain('agent-1');
+  });
+
+  it('formats self-note reads with readable timestamps', async () => {
+    const { service } = createConversationFixture();
+    service.sendSelfNote({
+      organizationId: 'org-1',
+      memberId: 'agent-1',
+      body: 'Decision: ship with compaction.',
+    });
+    const page = await service.readChannel({
+      organizationId: 'org-1',
+      memberId: 'agent-1',
+      channelId: 'self:agent-1',
+    });
+    expect(page.data).toHaveLength(1);
+    expect(page.data[0]?.content).toMatch(
+      /^\[[A-Za-z]+,\s[A-Za-z]+\s\d{1,2},\s\d{4}\sat\s\d{1,2}:\d{2}\s(?:AM|PM)\]/,
+    );
+    expect(page.data[0]?.content).toContain('Decision: ship with compaction.');
+  });
+
+  it('keeps self-channel private to the owner', async () => {
+    const { service } = createConversationFixture();
+    await expect(
+      service.readChannel({
+        organizationId: 'org-1',
+        memberId: 'agent-2',
+        channelId: 'self:agent-1',
+      }),
+    ).rejects.toThrow('Channel not found: self:agent-1');
+  });
+
+  it('compacts old self notes after threshold overflow', async () => {
+    const { repo, service } = createConversationFixture();
+    for (let i = 1; i <= 151; i += 1) {
+      service.sendSelfNote({
+        organizationId: 'org-1',
+        memberId: 'agent-1',
+        body: `note-${i}`,
+      });
+    }
+
+    const stored = repo.listChannelMessages('org-1', 'self:agent-1', { limit: 1_000 });
+    const compacted = stored.data.filter((message) =>
+      message.content.startsWith('[[SELF_NOTE_COMPACTED_V1]]'),
+    );
+    const summaries = stored.data.filter((message) =>
+      message.content.startsWith('[[SELF_NOTE_SUMMARY_V1]]'),
+    );
+    expect(compacted.length).toBeGreaterThanOrEqual(35);
+    expect(summaries.length).toBe(1);
+
+    const visible = await service.readChannel({
+      organizationId: 'org-1',
+      memberId: 'agent-1',
+      channelId: 'self:agent-1',
+      limit: 1_000,
+    });
+    expect(visible.data.every((message) => !message.content.includes('SELF_NOTE_COMPACTED_V1'))).toBe(
+      true,
+    );
+    expect(visible.data.some((message) => message.content.startsWith('[[SELF_NOTE_SUMMARY_V1]]'))).toBe(false);
+    expect(visible.data.some((message) => message.content.includes('note-151'))).toBe(true);
+  });
+
+  it('keeps newer self notes visible even when a summary exists', async () => {
+    const { service } = createConversationFixture();
+    for (let i = 1; i <= 151; i += 1) {
+      service.sendSelfNote({
+        organizationId: 'org-1',
+        memberId: 'agent-1',
+        body: `initial-${i}`,
+      });
+    }
+    service.sendSelfNote({
+      organizationId: 'org-1',
+      memberId: 'agent-1',
+      body: 'Override: use the latest scope decision.',
+    });
+
+    const visible = await service.readChannel({
+      organizationId: 'org-1',
+      memberId: 'agent-1',
+      channelId: 'self:agent-1',
+      limit: 1_000,
+    });
+    const joined = visible.data.map((message) => message.content).join('\n');
+    expect(joined).not.toContain('SELF_NOTE_SUMMARY_V1');
+    expect(joined).toContain('Override: use the latest scope decision.');
+  });
+
+  it('keeps a single rolling summary across paginated self-note history', async () => {
+    const { repo, service } = createConversationFixture();
+    for (let i = 1; i <= 260; i += 1) {
+      service.sendSelfNote({
+        organizationId: 'org-1',
+        memberId: 'agent-1',
+        body: `history-${i}`,
+      });
+    }
+
+    const stored = repo.listChannelMessages('org-1', 'self:agent-1', { limit: 1_000 });
+    const summaries = stored.data.filter((message) =>
+      message.content.startsWith('[[SELF_NOTE_SUMMARY_V1]]'),
+    );
+    const compacted = stored.data.filter((message) =>
+      message.content.startsWith('[[SELF_NOTE_COMPACTED_V1]]'),
+    );
+    expect(summaries).toHaveLength(1);
+    expect(compacted.length).toBeGreaterThan(35);
+
+    const visible = await service.readChannel({
+      organizationId: 'org-1',
+      memberId: 'agent-1',
+      channelId: 'self:agent-1',
+      limit: 1_000,
+    });
+    const joined = visible.data.map((message) => message.content).join('\n');
+    expect(joined).toContain('history-260');
+    expect(joined).not.toContain('SELF_NOTE_SUMMARY_V1');
+    expect(joined.includes('SELF_NOTE_COMPACTED_V1')).toBe(false);
+  });
+
+  it('summarizes a conversation while keeping the recent raw window visible', async () => {
+    const { service } = createConversationFixture();
+    for (let i = 1; i <= 20; i += 1) {
+      service.sendMessage({
+        organizationId: 'org-1',
+        threadId: 'general',
+        channelId: 'general',
+        senderId: 'human-1',
+        content: `general-${String(i).padStart(2, '0')}`,
+      });
+    }
+
+    const result = service.archiveConversation({
+      organizationId: 'org-1',
+      threadId: 'general',
+      memberId: 'human-1',
+      mode: 'summarize',
+    });
+
+    expect(result.summaryMessage?.content.startsWith('[[CONVERSATION_SUMMARY_V1]]')).toBe(true);
+
+    const visible = await service.readChannel({
+      organizationId: 'org-1',
+      memberId: 'human-1',
+      channelId: 'general',
+      limit: 1_000,
+    });
+    const joined = visible.data.map((message) => message.content).join('\n');
+    expect(joined).toContain('general-20');
+    expect(joined).toContain('[[CONVERSATION_SUMMARY_V1]]');
+    expect(joined).not.toContain('[[CONVERSATION_COMPACTED_V1]]');
+  });
+
+  it('auto-compacts a conversation after 150 messages', async () => {
+    const { emits, repo, service } = createConversationFixture();
+    for (let i = 1; i <= 151; i += 1) {
+      service.sendMessage({
+        organizationId: 'org-1',
+        threadId: 'general',
+        channelId: 'general',
+        senderId: 'human-1',
+        content: `auto-${i}`,
+      });
+    }
+
+    const stored = repo.listChannelMessages('org-1', 'general', { limit: 1_000 });
+    expect(stored.data.some((message) => message.content.startsWith('[[CONVERSATION_SUMMARY_V1]]'))).toBe(
+      true,
+    );
+    expect(stored.data.some((message) => message.content.startsWith('[[CONVERSATION_COMPACTED_V1]]'))).toBe(
+      true,
+    );
+    expect(emits).toHaveLength(152);
+  });
+
+  it('folds earlier conversation summaries into later compactions', async () => {
+    const { repo, service } = createConversationFixture();
+    for (let i = 1; i <= 186; i += 1) {
+      service.sendMessage({
+        organizationId: 'org-1',
+        threadId: 'general',
+        channelId: 'general',
+        senderId: 'human-1',
+        content: `roll-${i}`,
+      });
+    }
+
+    const summaries = repo
+      .listMessages('org-1', 'general')
+      .data.filter((message) => message.content.startsWith('[[CONVERSATION_SUMMARY_V1]]'));
+
+    expect(summaries).toHaveLength(1);
+    expect(summaries[0]?.content).toContain('Compacted 36 earlier messages.');
+    expect(summaries[0]?.content).toContain('Compacted 35 earlier messages.');
+  });
+
+  it('archives and clears a conversation from the visible feed', async () => {
+    const { service } = createConversationFixture();
+    for (let i = 1; i <= 4; i += 1) {
+      service.sendMessage({
+        organizationId: 'org-1',
+        threadId: 'general',
+        channelId: 'general',
+        senderId: 'human-1',
+        content: `cleanup-${i}`,
+      });
+    }
+
+    const result = service.archiveConversation({
+      organizationId: 'org-1',
+      threadId: 'general',
+      memberId: 'human-1',
+      mode: 'clear',
+    });
+
+    expect(result.summaryMessage?.content.startsWith('[[CONVERSATION_ARCHIVE_V1]]')).toBe(true);
+
+    const visible = await service.readChannel({
+      organizationId: 'org-1',
+      memberId: 'human-1',
+      channelId: 'general',
+      limit: 1_000,
+    });
+    expect(visible.data).toHaveLength(1);
+    expect(visible.data[0]?.kind).toBe('system');
+    expect(visible.data[0]?.content.startsWith('[[CONVERSATION_ARCHIVE_V1]]')).toBe(true);
+  });
+
+  it('does not wake participants when a conversation is summarized', async () => {
+    const { alerts, service } = createConversationFixture();
+    for (let i = 1; i <= 20; i += 1) {
+      await service.sendDirectMessage({
+        organizationId: 'org-1',
+        senderId: 'human-1',
+        recipientId: 'agent-1',
+        content: `dm-${i}`,
+      });
+    }
+    alerts.splice(0, alerts.length);
+
+    service.archiveConversation({
+      organizationId: 'org-1',
+      threadId: 'dm:agent-1:human-1',
+      memberId: 'human-1',
+      mode: 'summarize',
+    });
+
+    expect(alerts).toHaveLength(0);
+    const visible = await service.readChannel({
+      organizationId: 'org-1',
+      memberId: 'human-1',
+      channelId: 'dm:agent-1:human-1',
+      limit: 1_000,
+    });
+    expect(visible.data.some((message) => message.content.includes('CONVERSATION_SUMMARY_V1'))).toBe(true);
+  });
+
+  it('does not re-trigger mention alerts when publishing a compaction summary', async () => {
+    const { alerts, service, thread } = createConversationFixture();
+
+    service.sendMessage({
+      organizationId: 'org-1',
+      threadId: thread.id,
+      channelId: 'general',
+      senderId: 'human-1',
+      content: 'Please review @all and @Mia',
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    alerts.splice(0, alerts.length);
+
+    service.archiveConversation({
+      organizationId: 'org-1',
+      threadId: thread.id,
+      memberId: 'human-1',
+      mode: 'summarize',
+    });
+
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(alerts).toHaveLength(0);
+  });
+});
+
+describe('ConversationService channel thread bootstrap', () => {
+  it('creates a missing thread when a visible channel is opened', async () => {
+    const { repo, service, organization, channels, threads } = createConversationFixture();
+    const channel = ChannelSchema.parse({
+      id: 'channel-engineering',
+      organizationId: organization.id,
+      name: 'engineering',
+      kind: 'general',
+      topic: '',
+      memberIds: [],
+      createdAt: '2026-05-01T15:54:31.691Z',
+    });
+    channels.set(channel.id, channel);
+    threads.delete(channel.id);
+
+    const page = service.listMessages(organization.id, channel.id, undefined, undefined, 'human-1');
+
+    expect(page.data).toHaveLength(0);
+    expect(repo.getThread(organization.id, channel.id)).toMatchObject({
+      id: channel.id,
+      channelId: channel.id,
+      title: channel.name,
+    });
   });
 });

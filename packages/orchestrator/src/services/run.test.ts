@@ -270,4 +270,126 @@ describe('RunService', () => {
     expect(messages).toEqual([]);
     expect(generateCalls).toBe(1);
   });
+
+  it('does not publish a duplicate final assistant message when channel.dm tool ran', async () => {
+    const organizationId = 'org-1';
+    const runId = 'run-1';
+    const agentId = 'Quinn Mason';
+    const threadId = 'thread-1';
+    const messages: string[] = [];
+    let run: any = {
+      id: runId,
+      organizationId,
+      agentId,
+      threadId,
+      status: 'queued',
+      step: 'queued',
+      summary: 'Run queued',
+      startedAt: '2026-05-04T19:07:08.071Z',
+    };
+    const repo = {
+      getMember: () => ({
+        id: agentId,
+        organizationId,
+        name: agentId,
+        kind: AGENT_KIND,
+        roleName: 'backend-engineer',
+      }),
+      saveRun: (next: any) => {
+        run = next;
+        return next;
+      },
+      getRun: () => run,
+      getProviderCredential: () => null,
+      getWorkspaceSetting: () => null,
+      listMembers: () => [],
+      listPendingApprovals: () => [],
+      getThread: () => ({ channelId: 'channel-1' }),
+    } as never;
+    const service = new RunService(
+      {
+        getTeam: () =>
+          loadAgentTeam({
+            name: 'Timetotest',
+            workspace: { root: '/Users/mac/Documents/Work/Timetotest' },
+            roles: [
+              {
+                name: 'backend-engineer',
+                title: 'Backend Engineer',
+                instructions: 'Work on backend.',
+                tools: ['shell'],
+              },
+            ],
+            agents: [{ name: agentId, roleName: 'backend-engineer' }],
+          }),
+        setTeam: () => undefined,
+      } as never,
+      repo,
+      { emit: () => undefined } as never,
+      { publishMessage: (message: any) => messages.push(message.content) } as never,
+      {
+        generateRunReply: async () => ({
+          text: 'Acknowledged in prose.',
+          toolResults: [{ toolName: 'channel.dm', output: { ok: true } }],
+          steps: [],
+        }),
+      } as never,
+      {
+        allowRun: () => undefined,
+        invoke: async () => ({ ok: true }),
+      } as never,
+    );
+
+    const result = await (service as any).advanceRun(run);
+
+    expect(result.status).toBe('completed');
+    expect(result.summary).toBe('Acknowledged in prose.');
+    expect(messages).toEqual([]);
+  });
+
+  it('cancelRun marks an active run as cancelled and emits completion', () => {
+    const organizationId = 'org-1';
+    const runId = 'run-cancel-1';
+    let run: any = {
+      id: runId,
+      organizationId,
+      agentId: 'Quinn Mason',
+      threadId: 'thread-1',
+      status: 'running',
+      step: 'running',
+      summary: 'Busy',
+      startedAt: '2026-05-04T19:07:08.071Z',
+    };
+    const repo = {
+      getRun: () => run,
+      saveRun: (next: any) => {
+        run = next;
+        return next;
+      },
+    } as never;
+    let completions = 0;
+    const service = new RunService(
+      {
+        getTeam: () =>
+          loadAgentTeam({
+            name: 'Timetotest',
+            workspace: { root: '/tmp' },
+            roles: [{ name: 'backend-engineer', title: 'BE', instructions: '.', tools: ['shell'] }],
+            agents: [{ name: 'Quinn Mason', roleName: 'backend-engineer' }],
+          }),
+        setTeam: () => undefined,
+      } as never,
+      repo,
+      { emit: () => { completions += 1; } } as never,
+      {} as never,
+      { generateRunReply: async () => ({ text: '', toolResults: [], steps: [] }) } as never,
+      { allowRun: () => undefined, invoke: async () => ({ ok: true }) } as never,
+    );
+
+    const result = service.cancelRun(organizationId, runId);
+    expect(result.status).toBe('cancelled');
+    expect(result.summary).toBe('Stopped by user');
+    expect(completions).toBe(1);
+    expect(service.cancelRun(organizationId, runId).status).toBe('cancelled');
+  });
 });

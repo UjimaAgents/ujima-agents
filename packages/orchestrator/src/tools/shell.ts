@@ -4,6 +4,7 @@ import type { OrchestratorTool } from './types.js';
 
 export const ShellSchema = z.object({
   command: z.string().min(1),
+  args: z.array(z.string()).optional(),
   cwd: z.string().min(1).optional(),
 });
 
@@ -14,7 +15,11 @@ export const shellTool: OrchestratorTool<typeof ShellSchema> = {
     action: 'execute',
     resourceType: 'shell',
     resourcePath: args.cwd,
-    input: { command: args.command, cwd: args.cwd },
+    input: {
+      command: args.command,
+      ...(args.args ? { args: args.args } : {}),
+      cwd: args.cwd,
+    },
   }),
   execute: async ({ invocation, team }) => {
     const command = invocation.input?.command as string | undefined;

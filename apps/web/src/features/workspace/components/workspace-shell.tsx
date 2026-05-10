@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { GripVertical } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { getDirectMessageThreadId, SocketEventNames, type SocketEventName } from "@ujima/shared";
 import { WorkspaceSidebar } from "./workspace-sidebar";
 import { ChannelView } from "./channel-view";
 import type { BootstrapResponse } from "@ujima/api-schema";
@@ -65,16 +66,21 @@ export function WorkspaceShell({
   const searchParams = useSearchParams();
   const [teamSettingsState, setTeamSettingsState] = useState(teamSettings);
   const [agentEditorTargetId, setAgentEditorTargetId] = useState<string | null>(null);
+  const seenApprovalNotifications = useRef(new Set<string>());
   const sidebarWidth = useWorkspaceStore((state) => state.sidebarWidth);
   const selected = useWorkspaceStore((state) => state.selectedConversation);
   const channels = useWorkspaceStore((state) => state.channels);
   const members = useWorkspaceStore((state) => state.members);
   const memberActivity = useWorkspaceStore((state) => state.memberActivity);
+  const conversationUnreadCounts = useWorkspaceStore((state) => state.conversationUnreadCounts);
   const setSidebarWidth = useWorkspaceStore((state) => state.setSidebarWidth);
   const syncWorkspace = useWorkspaceStore((state) => state.syncWorkspace);
   const setSelectedConversation = useWorkspaceStore((state) => state.setSelectedConversation);
   const appendChannel = useWorkspaceStore((state) => state.appendChannel);
   const appendMember = useWorkspaceStore((state) => state.appendMember);
+  const clearConversationUnreadCount = useWorkspaceStore((state) => state.clearConversationUnreadCount);
+  const incrementConversationUnreadCount = useWorkspaceStore((state) => state.incrementConversationUnreadCount);
+  const setMemberActivity = useWorkspaceStore((state) => state.setMemberActivity);
 
   const defaultConversation = useMemo(() => {
     if (initialConversation) return initialConversation;
@@ -91,9 +97,10 @@ export function WorkspaceShell({
     syncWorkspace({
       channels: bootstrap.channels,
       members: bootstrap.members,
+      conversationUnreadCounts: bootstrap.conversationUnreadCounts,
       selectedConversation: initialConversation ?? defaultConversation,
     });
-  }, [bootstrap.channels, bootstrap.members, defaultConversation, initialConversation, syncWorkspace]);
+  }, [bootstrap.channels, bootstrap.conversationUnreadCounts, bootstrap.members, defaultConversation, initialConversation, syncWorkspace]);
 
   const urlConversation = useMemo(
     () =>
@@ -117,6 +124,70 @@ export function WorkspaceShell({
       setSelectedConversation(urlConversation);
     }
   }, [selected, setSelectedConversation, urlConversation]);
+
+  useEffect(() => {
+    if (!bootstrap.organization?.id || !bootstrap.auth.member || !resolvedSelected) return;
+    const threadId =
+      resolvedSelected.type === "agent"
+        ? getDirectMessageThreadId(bootstrap.auth.member.id, resolvedSelected.id)
+        : resolvedSelected.id;
+    clearConversationUnreadCount(resolvedSelected.id);
+    void fetch(
+      `/api/conversations/${encodeURIComponent(threadId)}/read?organizationId=${encodeURIComponent(bootstrap.organization.id)}`,
+      { method: "POST" },
+    ).catch(() => undefined);
+  }, [bootstrap.auth.member, bootstrap.organization?.id, clearConversationUnreadCount, resolvedSelected]);
+
+  useEffect(() => {
+    const currentMemberId = bootstrap.auth.member?.id;
+    if (!bootstrap.organization?.id || !currentMemberId) return;
+
+    const source = new EventSource(
+      `/api/notifications/stream?organizationId=${encodeURIComponent(bootstrap.organization.id)}`,
+    );
+
+    source.onmessage = (event) => {
+      const parsed = parseNotificationEnvelope(event.data);
+      if (!parsed) return;
+      if (parsed.type === "ready" || parsed.type === "error") return;
+      if (
+        parsed.event !== SocketEventNames.approvalRequested &&
+        !isNotificationMessageEvent(parsed.event) &&
+        !isNotificationRunEvent(parsed.event)
+      ) return;
+
+      if (isNotificationRunEvent(parsed.event)) {
+        updateRunActivity(parsed.payload, setMemberActivity);
+      }
+
+      const conversationId = resolveNotificationConversationId(
+        parsed.event,
+        parsed.payload,
+        currentMemberId,
+        bootstrap.channels,
+      );
+      if (!conversationId) return;
+      if (
+        (resolvedSelected.type === "channel" && parsed.event !== SocketEventNames.dmMessage && resolvedSelected.id === conversationId) ||
+        (resolvedSelected.type === "agent" && resolvedSelected.id === conversationId)
+      ) {
+        return;
+      }
+
+      incrementConversationUnreadCount(conversationId);
+      if (parsed.event === SocketEventNames.approvalRequested) {
+        const approvalId = parseApprovalId(parsed.payload);
+        if (approvalId && !seenApprovalNotifications.current.has(approvalId)) {
+          seenApprovalNotifications.current.add(approvalId);
+          playApprovalSound();
+        }
+      }
+    };
+
+    return () => {
+      source.close();
+    };
+  }, [bootstrap.auth.member?.id, bootstrap.channels, bootstrap.organization?.id, incrementConversationUnreadCount, resolvedSelected, setMemberActivity]);
 
   const handleSelect = useCallback(
     (conversation: SelectedConversation) => {
@@ -337,6 +408,7 @@ export function WorkspaceShell({
           channels={channels}
           members={members}
           memberActivity={memberActivity}
+          conversationUnreadCounts={conversationUnreadCounts}
           selected={resolvedSelected}
           onSelect={handleSelect}
           onCreateChannel={handleCreateChannel}
@@ -360,6 +432,123 @@ export function WorkspaceShell({
       </main>
     </div>
   );
+}
+
+function parseNotificationEnvelope(value: string): ConversationStreamEnvelope | null {
+  try {
+    const parsed = JSON.parse(value) as ConversationStreamEnvelope;
+    if (!parsed || typeof parsed !== "object" || !("type" in parsed)) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+type ConversationStreamEnvelope =
+  | { type: "ready" }
+  | { type: "error"; message: string }
+  | { type: "socket"; event: SocketEventName; payload: unknown };
+
+function isNotificationMessageEvent(event: SocketEventName): boolean {
+  return (
+    event === SocketEventNames.channelMessage ||
+    event === SocketEventNames.threadMessage ||
+    event === SocketEventNames.dmMessage
+  );
+}
+
+function isNotificationRunEvent(event: SocketEventName): boolean {
+  return (
+    event === SocketEventNames.runStarted ||
+    event === SocketEventNames.runUpdated ||
+    event === SocketEventNames.runCompleted
+  );
+}
+
+function updateRunActivity(
+  payload: unknown,
+  setMemberActivity: (memberId: string, activity: "working" | "error" | "idle" | "online" | "offline" | "loading") => void,
+): void {
+  const run = (payload as { run?: { agentId?: string; status?: string } })?.run;
+  if (typeof run?.agentId !== "string" || typeof run.status !== "string") return;
+  if (run.status === "failed" || run.status === "cancelled") {
+    setMemberActivity(run.agentId, "error");
+  } else if (run.status === "completed") {
+    setMemberActivity(run.agentId, "online");
+  } else {
+    setMemberActivity(run.agentId, "working");
+  }
+}
+
+function resolveNotificationConversationId(
+  event: SocketEventName,
+  payload: unknown,
+  currentMemberId: string,
+  channels: BootstrapResponse["channels"],
+): string | undefined {
+  if (event === SocketEventNames.channelMessage) {
+    const body = payload as { channelId?: string };
+    return typeof body.channelId === "string" && channels.some((channel) => channel.id === body.channelId)
+      ? body.channelId
+      : undefined;
+  }
+
+  if (event === SocketEventNames.threadMessage) {
+    const body = payload as { threadId?: string };
+    return typeof body.threadId === "string" && channels.some((channel) => channel.id === body.threadId)
+      ? body.threadId
+      : undefined;
+  }
+
+  if (event === SocketEventNames.dmMessage) {
+    const body = payload as { message?: { threadId?: string } };
+    const threadId = body.message?.threadId;
+    return typeof threadId === "string" ? resolveDmConversationId(threadId, currentMemberId) : undefined;
+  }
+
+  const body = payload as { threadId?: string; run?: { threadId?: string } };
+  const threadId = body.threadId ?? body.run?.threadId;
+  if (typeof threadId !== "string") return undefined;
+  if (threadId.startsWith("dm:")) {
+    return resolveDmConversationId(threadId, currentMemberId);
+  }
+  return channels.some((channel) => channel.id === threadId) ? threadId : undefined;
+}
+
+function parseApprovalId(payload: unknown): string | undefined {
+  const body = payload as { approval?: { id?: string } };
+  return typeof body.approval?.id === "string" ? body.approval.id : undefined;
+}
+
+function resolveDmConversationId(threadId: string, currentMemberId: string): string | undefined {
+  if (!threadId.startsWith("dm:")) return undefined;
+  const [, firstId, secondId] = threadId.split(":", 3);
+  if (firstId === currentMemberId) return secondId;
+  if (secondId === currentMemberId) return firstId;
+  return undefined;
+}
+
+function playApprovalSound(): void {
+  if (typeof window === "undefined") return;
+  const AudioContextCtor = window.AudioContext ?? (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  if (!AudioContextCtor) return;
+  try {
+    const context = new AudioContextCtor();
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
+    oscillator.type = "sine";
+    oscillator.frequency.value = 880;
+    gain.gain.value = 0.0001;
+    oscillator.connect(gain);
+    gain.connect(context.destination);
+    oscillator.start();
+    gain.gain.exponentialRampToValueAtTime(0.12, context.currentTime + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.18);
+    oscillator.stop(context.currentTime + 0.2);
+    void context.close().catch(() => undefined);
+  } catch {
+    // Ignore audio failures in browsers that block autoplay or AudioContext.
+  }
 }
 
 export function DragHandle({

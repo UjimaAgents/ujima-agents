@@ -2,6 +2,7 @@ import {
   AgentTeam,
   createAgent,
   defineRole,
+  upgradeLegacyDefaultRoleTools,
   type AgentConfig,
   type RoleConfig,
 } from '@ujima/framework';
@@ -43,7 +44,9 @@ function readOverrides(
     const parsed = JSON.parse(value) as Partial<DashboardTeamOverrides>;
     return {
       roles: Array.isArray(parsed.roles)
-        ? parsed.roles.map((role) => mergeRoleOverride(team?.getRole(role.name), defineRole(role)))
+        ? parsed.roles.map((role) =>
+            mergeRoleOverride(team?.getRole(role.name), defineRole(upgradeLegacyDefaultRoleTools(role))),
+          )
         : [],
       agents: Array.isArray(parsed.agents)
         ? parsed.agents

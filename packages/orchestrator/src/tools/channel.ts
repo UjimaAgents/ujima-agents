@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { getDirectMessageThreadId } from '@ujima/shared';
 import type { AgentTeamHandle } from '@ujima/framework';
 import type { ApiRepository } from '../services/repository-reader.js';
 import type { OrchestratorTool } from './types.js';
@@ -42,6 +43,7 @@ function resolveChannelId(
   team: AgentTeamHandle,
   repo: ApiRepository,
   organizationId: string,
+  currentMemberId: string,
   channelRef: string,
 ): string {
   const normalized = channelRef.trim();
@@ -52,7 +54,14 @@ function resolveChannelId(
   if (direct) return direct.id;
 
   const byName = repo.listAllChannels(organizationId).find((channel) => channel.name === normalized);
-  return byName?.id ?? normalized;
+  if (byName) return byName.id;
+
+  const member = repo.getMember(organizationId, normalized);
+  if (member) {
+    return getDirectMessageThreadId(currentMemberId, member.id);
+  }
+
+  return normalized;
 }
 
 export const channelPostTool: OrchestratorTool<typeof ChannelPostSchema> = {
@@ -82,6 +91,7 @@ export const channelPostTool: OrchestratorTool<typeof ChannelPostSchema> = {
         team,
         repo,
         invocation.organizationId,
+        invocation.memberId,
         String(invocation.input.channel_id),
       ),
       body: String(invocation.input.body),
@@ -110,7 +120,7 @@ export const channelReplyTool: OrchestratorTool<typeof ChannelReplySchema> = {
       body: String(invocation.input.body),
       mentions: Array.isArray(invocation.input.mentions)
         ? invocation.input.mentions.filter((value): value is string => typeof value === 'string')
-        : [],
+      : [],
     }),
 };
 
@@ -176,6 +186,7 @@ export const channelReadTool: OrchestratorTool<typeof ChannelReadSchema> = {
         team,
         repo,
         invocation.organizationId,
+        invocation.memberId,
         String(invocation.input.channel_id),
       ),
       since: typeof invocation.input.since === 'string' ? invocation.input.since : undefined,

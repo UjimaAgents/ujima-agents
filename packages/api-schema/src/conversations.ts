@@ -11,7 +11,8 @@ const ThreadMessageCreateSchema = z.object({
   threadId: IdSchema,
   channelId: IdSchema.optional(),
   senderId: IdSchema,
-  content: z.string().min(1),
+  content: z.string(),
+  attachmentIds: z.array(IdSchema).default([]),
   parentMessageId: IdSchema.optional(),
 }).strict();
 
@@ -19,7 +20,8 @@ const DirectMessageCreateSchema = z.object({
   organizationId: IdSchema,
   recipientId: IdSchema,
   senderId: IdSchema,
-  content: z.string().min(1),
+  content: z.string(),
+  attachmentIds: z.array(IdSchema).default([]),
   ignore: z.boolean().optional(),
   parentMessageId: IdSchema.optional(),
 }).strict();

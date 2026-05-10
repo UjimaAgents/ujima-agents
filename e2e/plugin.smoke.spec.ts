@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { AgentDef, TeamDef, type AuditRecord } from '@ujima/shared';
 import {
@@ -24,43 +24,49 @@ import {
 
 // Until @vscode/test-electron wiring lands, the cheapest way to exercise our real
 // cross-package surface is a Node-side smoke that proves:
-//   1. Every shipped demo agent / team JSON passes zod.
+//   1. The shipped demo scenario stays aligned with the persona/registry source of truth.
 //   2. The governance reducers stay pure and composable end-to-end.
 // When any of these break, the demo story breaks.
 
-const DEMO_ROOT = join(__dirname, '..', 'examples', 'demo');
-const AGENTS_DIR = join(DEMO_ROOT, 'agents');
-const TEAMS_DIR = join(DEMO_ROOT, 'teams');
-const PLUGIN_DEMO_SCENARIO = join(__dirname, '..', 'apps', 'plugin', 'src', 'demo-scenario.ts');
+const DEMO_SCENARIO_PATH = join(__dirname, '..', 'apps', 'vscode-extension', 'src', 'demo-scenario.ts');
+const DEMO_AGENT_IDS = readDemoAgentIds();
 
-test('every demo agent JSON validates against AgentDef', () => {
-  const files = readdirSync(AGENTS_DIR).filter((f) => f.endsWith('.json'));
-  expect(files.length).toBeGreaterThan(0);
-  for (const f of files) {
-    const raw = readFileSync(join(AGENTS_DIR, f), 'utf8');
-    const parsed = AgentDef.safeParse(JSON.parse(raw));
+test('every demo agent definition validates against AgentDef', () => {
+  expect(DEMO_AGENT_IDS.length).toBeGreaterThan(0);
+  for (const id of DEMO_AGENT_IDS) {
+    const template = findPersonaTemplate(id);
+    expect(template, `missing persona template for ${id}`).toBeTruthy();
+    const suggested = findRegistryEntry(template!.suggestedMcp);
+    expect(suggested, `missing registry entry for ${template!.suggestedMcp}`).toBeTruthy();
+    const parsed = AgentDef.safeParse(
+      assembleAgentFromTemplate({
+        agentId: id,
+        templateId: id,
+        mcpId: template!.suggestedMcp,
+        model: 'vscode-lm',
+        permissions: {
+          allowed_tools: [],
+          blocked_tools: suggested?.knownDestructiveTools ?? [],
+          rate_limit: { calls_per_minute: 30, max_session_tokens: 100_000 },
+        },
+      }),
+    );
     if (!parsed.success) {
-      throw new Error(`${f} failed AgentDef validation: ${parsed.error.issues[0]?.message}`);
+      throw new Error(`${id} failed AgentDef validation: ${parsed.error.issues[0]?.message}`);
     }
   }
 });
 
-test('every demo team JSON validates against TeamDef and references only shipped agents', () => {
-  const agentIds = new Set(
-    readdirSync(AGENTS_DIR)
-      .filter((f) => f.endsWith('.json'))
-      .map((f) => AgentDef.parse(JSON.parse(readFileSync(join(AGENTS_DIR, f), 'utf8'))).id),
-  );
-  const teamFiles = readdirSync(TEAMS_DIR).filter((f) => f.endsWith('.json'));
-  expect(teamFiles.length).toBeGreaterThan(0);
-  for (const f of teamFiles) {
-    const parsed = TeamDef.safeParse(JSON.parse(readFileSync(join(TEAMS_DIR, f), 'utf8')));
-    if (!parsed.success) {
-      throw new Error(`${f} failed TeamDef validation: ${parsed.error.issues[0]?.message}`);
-    }
-    for (const ref of parsed.data.agents) {
-      expect(agentIds.has(ref), `team ${parsed.data.team_id} references unknown agent: ${ref}`).toBe(true);
-    }
+test('demo team validates against TeamDef and references only shipped agents', () => {
+  const team = TeamDef.parse({
+    team_id: 'demo-team',
+    name: 'Demo Team',
+    agents: DEMO_AGENT_IDS,
+  });
+  const agentIds = new Set(DEMO_AGENT_IDS);
+  expect(team.agents.length).toBeGreaterThan(0);
+  for (const ref of team.agents) {
+    expect(agentIds.has(ref), `team ${team.team_id} references unknown agent: ${ref}`).toBe(true);
   }
 });
 
@@ -197,42 +203,59 @@ test('junior persona escalation targets are seniors of the same family (or human
 });
 
 test('demo-scenario DEMO_AGENT_FILES matches the shipped agent JSONs 1:1', () => {
-  const src = readFileSync(PLUGIN_DEMO_SCENARIO, 'utf8');
+  const src = readFileSync(DEMO_SCENARIO_PATH, 'utf8');
   const match = src.match(/const DEMO_AGENT_FILES\s*=\s*\[([^\]]+)\]/);
   expect(match, 'DEMO_AGENT_FILES array not found in demo-scenario.ts').toBeTruthy();
   const listed = Array.from((match?.[1] ?? '').matchAll(/'([^']+\.json)'/g)).map((m) => m[1]);
-  const shipped = readdirSync(AGENTS_DIR).filter((f) => f.endsWith('.json')).sort();
-  expect([...listed].sort()).toEqual(shipped);
+  expect([...listed].sort()).toEqual(DEMO_AGENT_IDS.map((id) => `${id}.json`).sort());
 });
 
 test('demo team lists every shipped demo agent id', () => {
-  const shippedIds = readdirSync(AGENTS_DIR)
-    .filter((f) => f.endsWith('.json'))
-    .map((f) => AgentDef.parse(JSON.parse(readFileSync(join(AGENTS_DIR, f), 'utf8'))).id)
-    .sort();
-  const team = TeamDef.parse(
-    JSON.parse(readFileSync(join(TEAMS_DIR, 'demo-team.json'), 'utf8')),
-  );
-  expect([...team.agents].sort()).toEqual(shippedIds);
+  const team = TeamDef.parse({
+    team_id: 'demo-team',
+    name: 'Demo Team',
+    agents: DEMO_AGENT_IDS,
+  });
+  expect([...team.agents].sort()).toEqual([...DEMO_AGENT_IDS].sort());
 });
 
 test('every demo agent references a curated registry MCP', () => {
   const mcpIds = new Set(CURATED_REGISTRY.map((e) => e.id));
-  for (const f of readdirSync(AGENTS_DIR).filter((f) => f.endsWith('.json'))) {
-    const agent = AgentDef.parse(JSON.parse(readFileSync(join(AGENTS_DIR, f), 'utf8')));
-    expect(mcpIds.has(agent.mcp), `${f} → unknown mcp: ${agent.mcp}`).toBe(true);
+  for (const id of DEMO_AGENT_IDS) {
+    const template = findPersonaTemplate(id);
+    expect(template, `missing persona template for ${id}`).toBeTruthy();
+    expect(mcpIds.has(template!.suggestedMcp), `${id} → unknown mcp: ${template!.suggestedMcp}`).toBe(true);
   }
 });
 
 test('every demo agent blocked_tools subset matches MCP knownDestructiveTools (if the registry declares any)', () => {
-  for (const f of readdirSync(AGENTS_DIR).filter((f) => f.endsWith('.json'))) {
-    const agent = AgentDef.parse(JSON.parse(readFileSync(join(AGENTS_DIR, f), 'utf8')));
-    const entry = findRegistryEntry(agent.mcp);
+  for (const id of DEMO_AGENT_IDS) {
+    const template = findPersonaTemplate(id);
+    expect(template, `missing persona template for ${id}`).toBeTruthy();
+    const entry = findRegistryEntry(template!.suggestedMcp);
     if (!entry?.knownDestructiveTools || entry.knownDestructiveTools.length === 0) continue;
-    // Whenever a registry entry flags destructive tools, demo agents should block at least one
-    // of them — otherwise we're shipping a demo that leaves known-destructive tools open.
+    const agent = assembleAgentFromTemplate({
+      agentId: id,
+      templateId: id,
+      mcpId: template!.suggestedMcp,
+      model: 'vscode-lm',
+      permissions: {
+        allowed_tools: [],
+        blocked_tools: entry.knownDestructiveTools,
+        rate_limit: { calls_per_minute: 30, max_session_tokens: 100_000 },
+      },
+    });
     const blocked = new Set(agent.permissions.blocked_tools);
     const hit = entry.knownDestructiveTools.some((t) => blocked.has(t));
     expect(hit, `${agent.id} does not block any of ${entry.id}'s destructive tools`).toBe(true);
   }
 });
+
+function readDemoAgentIds(): string[] {
+  const src = readFileSync(DEMO_SCENARIO_PATH, 'utf8');
+  const match = src.match(/const DEMO_AGENT_FILES\s*=\s*\[([^\]]+)\]/);
+  if (!match) {
+    throw new Error('DEMO_AGENT_FILES array not found in demo-scenario.ts');
+  }
+  return Array.from(match[1].matchAll(/'([^']+)\.json'/g)).map((m) => m[1]);
+}

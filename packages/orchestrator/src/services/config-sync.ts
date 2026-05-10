@@ -6,6 +6,7 @@ import {
   defineRole,
   loadAgentTeam,
   loadAgentTeamFromFile,
+  migrateAgentTeamConfig,
   normalizeProviderKey,
   type AgentTeamHandle,
 } from '@ujima/framework';
@@ -151,7 +152,15 @@ export class ConfigSyncService {
           }
         }
       }
-      const team = loadAgentTeam(parsedStored);
+      const migrated = migrateAgentTeamConfig(parsedStored);
+      if (migrated.migrated) {
+        this.repo.saveWorkspaceSetting(
+          organization.id,
+          TEAM_CONFIG_SETTING_KEY,
+          JSON.stringify(migrated.config),
+        );
+      }
+      const team = loadAgentTeam(migrated.config);
       this.teamStore.setTeam(team);
       applyDashboardTeamOverrides(this.repo, organization.id, this.teamStore);
       return { organizationId: organization.id, inferred: false };

@@ -2,6 +2,10 @@ import { describe, expect, it, vi } from 'vitest';
 import { SocketEventNames } from '@ujima/shared';
 import { wakeMemberWithFailureEvents } from './index.js';
 
+const noopRepo = {
+  findActiveRunForMemberThread: vi.fn(() => null),
+};
+
 const baseInput = {
   organizationId: 'org-1',
   memberId: 'agent-1',
@@ -26,6 +30,7 @@ describe('wakeMemberWithFailureEvents', () => {
           createRun: vi.fn(),
         },
         realtime: { emit },
+        repo: noopRepo,
       },
       baseInput,
     );
@@ -62,6 +67,7 @@ describe('wakeMemberWithFailureEvents', () => {
           })),
         },
         realtime: { emit },
+        repo: noopRepo,
       },
       baseInput,
     );
@@ -88,6 +94,7 @@ describe('wakeMemberWithFailureEvents', () => {
           }),
         },
         realtime: { emit },
+        repo: noopRepo,
       },
       baseInput,
     );
@@ -98,5 +105,35 @@ describe('wakeMemberWithFailureEvents', () => {
       stage: 'run_create',
       error: 'database locked',
     });
+  });
+
+  it('does not create a run when an active run already exists for member+thread', async () => {
+    const createRun = vi.fn();
+    const emit = vi.fn();
+    const repo = {
+      findActiveRunForMemberThread: vi.fn(() => ({
+        id: 'existing',
+        organizationId: baseInput.organizationId,
+        agentId: baseInput.memberId,
+        threadId: baseInput.threadId,
+        status: 'waiting_for_approval' as const,
+        step: 'waiting_for_approval',
+        summary: 'Waiting',
+        startedAt: '2026-01-01T00:00:00.000Z',
+      })),
+    };
+    await wakeMemberWithFailureEvents(
+      {
+        supervisor: {
+          handleAlert: vi.fn(async () => ({ kind: 'no-active-spirit' as const })),
+        },
+        runs: { createRun },
+        realtime: { emit },
+        repo,
+      },
+      baseInput,
+    );
+    expect(createRun).not.toHaveBeenCalled();
+    expect(emit).not.toHaveBeenCalled();
   });
 });

@@ -57,5 +57,6 @@ describe('buildAgentSystemPrompt', () => {
     expect(system).not.toContain('apps/frontend');
     expect(system).toContain('Use these names first when choosing a shell cwd or repo path.');
     expect(system).toContain('Allowed scopes: frontend');
+    expect(system).toContain('For DM chats, use the other person\'s member id as the conversation reference.');
   });
 });

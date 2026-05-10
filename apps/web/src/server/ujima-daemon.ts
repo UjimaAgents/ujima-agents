@@ -85,7 +85,12 @@ export async function daemonFetch(
     // resolved against the durable DB-backed session state.
     headers.set("x-ujima-session", sessionToken);
   }
-  if (init.body !== undefined && !headers.has("content-type")) {
+  if (
+    init.body !== undefined &&
+    !(init.body instanceof FormData) &&
+    !(init.body instanceof Blob) &&
+    !headers.has("content-type")
+  ) {
     headers.set("content-type", "application/json");
   }
 

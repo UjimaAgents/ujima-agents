@@ -1,12 +1,4 @@
-function formatActivityTime(iso: string): string {
-  const parsed = Date.parse(iso);
-  if (Number.isNaN(parsed)) return "now";
-  return new Date(parsed).toLocaleTimeString([], {
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: true,
-  });
-}
+import { formatTimestamp } from "../lib/format-timestamp";
 
 export function ActivityRow({
   event,
@@ -31,7 +23,7 @@ export function ActivityRow({
           </p>
         </div>
         <span className="text-[10px] text-zinc-400">
-          {formatActivityTime(event.timestamp)}
+          {formatTimestamp(event.timestamp)}
         </span>
       </div>
     </div>

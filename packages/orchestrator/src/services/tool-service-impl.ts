@@ -29,6 +29,7 @@ import {
   createMemberPathResolver,
   isPathEscapeError,
 } from "./workspace-root.js";
+import { buildShellApprovalScope, normalizeShellScope } from "./shell-scope.js";
 
 export interface ApprovalRequester {
   requestApproval(input: {
@@ -46,6 +47,7 @@ export interface ApprovalRequester {
 
 export class ToolServiceImpl implements ToolService {
   private readonly approvedRuns = new Set<string>();
+  private readonly approvedRunScopes = new Set<string>();
 
   constructor(
     private readonly teamStore: TeamStore,
@@ -61,11 +63,24 @@ export class ToolServiceImpl implements ToolService {
     private readonly supervisorTodos?: SupervisorTodoService,
   ) {}
 
-  allowRun(organizationId: string, runId: string): void {
+  allowRun(organizationId: string, runId: string, approvalScope?: string): void {
+    if (approvalScope) {
+      this.approvedRunScopes.add(this.scopedRunKey(organizationId, runId, approvalScope));
+      return;
+    }
     this.approvedRuns.add(this.runKey(organizationId, runId));
   }
 
   async invoke(invocation: ToolInvocationInput): Promise<ToolInvocationResult> {
+    const run = this.repo.getRun(invocation.organizationId, invocation.runId);
+    if (run && (run.status === "failed" || run.status === "cancelled")) {
+      return {
+        ok: false,
+        error: "Run is no longer active",
+        output: { status: "blocked", reason: "Run is no longer active" },
+      };
+    }
+
     const member = this.repo.getMember(
       invocation.organizationId,
       invocation.memberId,
@@ -228,7 +243,7 @@ export class ToolServiceImpl implements ToolService {
 
     if (
       policy.requiresApproval &&
-      !this.consumeApprovedRun(invocation.organizationId, invocation.runId) &&
+      !this.consumeApprovedRun(invocation.organizationId, invocation.runId, approvalScope) &&
       !this.repo.hasApprovalGrant({
         organizationId: preparedInvocation.organizationId,
         requestedBy: preparedInvocation.memberId,
@@ -253,6 +268,10 @@ export class ToolServiceImpl implements ToolService {
       this.audit(preparedInvocation, "ok", {
         approvalId: approval.id,
         status: "pending_approval",
+      });
+      this.saveRunStep(preparedInvocation, "ok", {
+        status: "waiting_for_approval",
+        approvalId: approval.id,
       });
 
       const run = this.repo.getRun(preparedInvocation.organizationId, preparedInvocation.runId);
@@ -283,7 +302,9 @@ export class ToolServiceImpl implements ToolService {
 
     try {
       const result = await this.executeTool(preparedInvocation);
+      const output = summarizeToolOutput(result);
       this.audit(preparedInvocation, "ok", { status: "completed" });
+      this.saveRunStep(preparedInvocation, "ok", output);
       const run = this.repo.getRun(preparedInvocation.organizationId, preparedInvocation.runId);
       const threadId = preparedInvocation.threadId ?? run?.threadId;
 
@@ -309,6 +330,10 @@ export class ToolServiceImpl implements ToolService {
       this.audit(preparedInvocation, "error", {
         error: message,
         code: isPathEscapeError(error) ? ERR_PATH_ESCAPE : undefined,
+      });
+      this.saveRunStep(preparedInvocation, "error", {
+        error: message,
+        ...(isPathEscapeError(error) ? { code: ERR_PATH_ESCAPE } : {}),
       });
       const run = this.repo.getRun(preparedInvocation.organizationId, preparedInvocation.runId);
       const threadId = preparedInvocation.threadId ?? run?.threadId;
@@ -360,7 +385,12 @@ export class ToolServiceImpl implements ToolService {
     );
   }
 
-  private consumeApprovedRun(organizationId: string, runId: string): boolean {
+  private consumeApprovedRun(organizationId: string, runId: string, approvalScope: string): boolean {
+    const scopedKey = this.scopedRunKey(organizationId, runId, approvalScope);
+    if (this.approvedRunScopes.has(scopedKey)) {
+      this.approvedRunScopes.delete(scopedKey);
+      return true;
+    }
     const key = this.runKey(organizationId, runId);
     if (!this.approvedRuns.has(key)) {
       return false;
@@ -371,6 +401,10 @@ export class ToolServiceImpl implements ToolService {
 
   private runKey(organizationId: string, runId: string): string {
     return `${organizationId}:${runId}`;
+  }
+
+  private scopedRunKey(organizationId: string, runId: string, approvalScope: string): string {
+    return `${this.runKey(organizationId, runId)}:${approvalScope}`;
   }
 
   private audit(
@@ -386,7 +420,35 @@ export class ToolServiceImpl implements ToolService {
       targetType: invocation.resourceType,
       targetId: invocation.toolId,
       status,
-      metadata: { ...invocation.input, ...metadata },
+      metadata: {
+        runId: invocation.runId,
+        toolCallId: invocation.toolCallId,
+        ...invocation.input,
+        ...metadata,
+      },
+      createdAt: new Date().toISOString(),
+    });
+  }
+
+  private saveRunStep(
+    invocation: ToolInvocationInput,
+    status: AuditStatus,
+    output: unknown,
+  ): void {
+    this.repo.saveRunStep({
+      id: randomUUID(),
+      organizationId: invocation.organizationId,
+      runId: invocation.runId,
+      threadId: invocation.threadId,
+      agentId: invocation.memberId,
+      toolCallId: invocation.toolCallId,
+      toolId: invocation.toolId,
+      action: invocation.action,
+      resourceType: invocation.resourceType,
+      resourcePath: invocation.resourcePath ?? "",
+      input: invocation.input ?? {},
+      output,
+      status,
       createdAt: new Date().toISOString(),
     });
   }
@@ -406,10 +468,10 @@ export class ToolServiceImpl implements ToolService {
 
   private buildApprovalScope(invocation: ToolInvocationInput): string {
     if (invocation.toolId === "shell") {
-      const input = invocation.input ?? {};
-      const command = typeof input.command === "string" ? input.command : "";
-      const cwd = typeof input.cwd === "string" ? input.cwd : invocation.resourcePath ?? "";
-      return `shell:${JSON.stringify({ cwd, command })}`;
+      return buildShellApprovalScope({
+        input: invocation.input ?? {},
+        resourcePath: invocation.resourcePath,
+      });
     }
     return `${invocation.toolId}:${invocation.action}:${invocation.resourcePath ?? ""}`;
   }
@@ -442,28 +504,37 @@ export class ToolServiceImpl implements ToolService {
     }
 
     const input = invocation.input ?? {};
-    const command = typeof input.command === "string" ? input.command : "";
+    const commandText = typeof input.command === "string" ? input.command : "";
     const requestedCwd =
       typeof input.cwd === "string"
         ? input.cwd
         : (invocation.resourcePath ?? resolver.scopePaths[0] ?? ".");
     const resolvedCwd = await resolver.resolve(requestedCwd);
-    const args = Array.isArray(input.args) ? input.args : undefined;
-    const resolvePathOperands = command === "cat";
+    const explicitArgs = Array.isArray(input.args) ? input.args : undefined;
+    const normalizedShell = normalizeShellScope({
+      input: {
+        ...input,
+        command: commandText,
+        ...(explicitArgs ? { args: explicitArgs } : {}),
+      },
+      resourcePath: invocation.resourcePath,
+    });
+    const argsForScopeChecks = explicitArgs ?? normalizedShell.args;
+    const resolvePathOperands = normalizedShell.command === "cat";
     const resolvedArgs =
-      resolvePathOperands && args
+      resolvePathOperands && argsForScopeChecks
         ? await Promise.all(
-            args.map(async (arg) => {
+            argsForScopeChecks.map(async (arg) => {
               if (typeof arg !== "string" || arg.startsWith("-")) return arg;
               return await resolver.resolve(resolve(resolvedCwd, arg));
             }),
           )
-        : args;
+        : argsForScopeChecks;
     const nextInput = {
       ...input,
       cwd: resolvedCwd,
-      command,
-      ...(resolvedArgs ? { args: resolvedArgs } : {}),
+      command: commandText,
+      ...(explicitArgs && resolvedArgs ? { args: resolvedArgs } : {}),
     };
 
     return {
@@ -476,4 +547,21 @@ export class ToolServiceImpl implements ToolService {
       input: nextInput,
     };
   }
+}
+
+function summarizeToolOutput(value: unknown): unknown {
+  if (!value || typeof value !== "object") return value;
+  const output = value as { stdout?: unknown; stderr?: unknown };
+  if (typeof output.stdout === "string" || typeof output.stderr === "string") {
+    return {
+      stdout: truncateText(output.stdout),
+      stderr: truncateText(output.stderr),
+    };
+  }
+  return truncateText(JSON.stringify(value));
+}
+
+function truncateText(value: unknown): string {
+  const text = typeof value === "string" ? value : "";
+  return text.length > 4000 ? `${text.slice(0, 4000)}\n[truncated]` : text;
 }

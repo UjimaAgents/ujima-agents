@@ -1,7 +1,8 @@
 import type { SqliteDbHandle as DbHandle } from '@ujima/context-store';
-import { MessageSchema, type Message } from '@ujima/shared';
+import { MessageSchema, type Attachment, type Message } from '@ujima/shared';
 import { parseJsonArray, parseJsonArrayRaw, rowString, optionalRowString } from './common.js';
 import { cursorWhereClause, decodeCursor, encodeCursor } from '@ujima/shared';
+import { listMessageAttachmentsForMessageIds } from './attachments.js';
 
 type Row = Record<string, unknown>;
 
@@ -96,7 +97,9 @@ export function getMessage(
     .prepare('SELECT * FROM messages WHERE organization_id = ? AND id = ?')
     .get(organizationId, messageId) as Row | null;
 
-  return row ? rowToMessage(row) : null;
+  if (!row) return null;
+  const attachments = listMessageAttachmentsForMessageIds(db, [messageId]).get(messageId);
+  return rowToMessage(row, attachments);
 }
 
 export function listMessages(
@@ -127,14 +130,41 @@ export function listMessages(
     rows.shift();
   }
 
-  const data = rows.map((row) =>
-    rowToMessage(row),
+  const attachmentsByMessageId = listMessageAttachmentsForMessageIds(
+    db,
+    rows.map((row) => rowString(row, 'id')),
   );
+  const data = rows.map((row) => rowToMessage(row, attachmentsByMessageId.get(rowString(row, 'id'))));
 
   const head = hasMore ? data[0] : undefined;
   const nextCursor = head ? encodeCursor(head.createdAt, head.id) : undefined;
 
   return { data, hasMore, nextCursor };
+}
+
+export function countMessagesSince(
+  db: DbHandle,
+  organizationId: string,
+  threadId: string,
+  input: {
+    since?: string;
+    excludeSenderId?: string;
+  } = {},
+): number {
+  const params: (string | number)[] = [organizationId, threadId];
+  let query = 'SELECT COUNT(*) AS count FROM messages WHERE organization_id = ? AND thread_id = ?';
+
+  if (input.since) {
+    query += ' AND created_at > ?';
+    params.push(input.since);
+  }
+  if (input.excludeSenderId) {
+    query += ' AND sender_id <> ?';
+    params.push(input.excludeSenderId);
+  }
+
+  const row = db.prepare(query).get(...params) as { count?: number } | undefined;
+  return typeof row?.count === 'number' ? row.count : 0;
 }
 
 export function listChannelMessages(
@@ -169,7 +199,11 @@ export function listChannelMessages(
   const rows = db.prepare(query).all(...params) as Row[];
   const hasMore = rows.length > limit;
   if (hasMore) rows.shift();
-  const data = rows.map(rowToMessage);
+  const attachmentsByMessageId = listMessageAttachmentsForMessageIds(
+    db,
+    rows.map((row) => rowString(row, 'id')),
+  );
+  const data = rows.map((row) => rowToMessage(row, attachmentsByMessageId.get(rowString(row, 'id'))));
   const head = hasMore ? data[0] : undefined;
   return { data, hasMore, nextCursor: head ? encodeCursor(head.createdAt, head.id) : undefined };
 }
@@ -217,7 +251,11 @@ export function searchChannelMessages(
     const rows = db.prepare(query).all(...params) as Row[];
     const hasMore = rows.length > limit;
     if (hasMore) rows.shift();
-    const data = rows.map(rowToMessage);
+    const attachmentsByMessageId = listMessageAttachmentsForMessageIds(
+      db,
+      rows.map((row) => rowString(row, 'id')),
+    );
+    const data = rows.map((row) => rowToMessage(row, attachmentsByMessageId.get(rowString(row, 'id'))));
     const head = hasMore ? data[0] : undefined;
     return {
       data,
@@ -243,7 +281,7 @@ export function deleteMessages(
   }
 }
 
-function rowToMessage(row: Row): Message {
+function rowToMessage(row: Row, attachments: Attachment[] = []): Message {
   return MessageSchema.parse({
     id: rowString(row, 'id'),
     organizationId: rowString(row, 'organization_id'),
@@ -256,6 +294,7 @@ function rowToMessage(row: Row): Message {
     content: rowString(row, 'content'),
     mentions: parseJsonArray(row.mentions),
     toolCalls: parseJsonArrayRaw(row.tool_calls),
+    attachments,
     createdAt: rowString(row, 'created_at'),
     editedAt: optionalRowString(row, 'edited_at'),
     deletedAt: optionalRowString(row, 'deleted_at'),
@@ -313,7 +352,11 @@ function searchChannelMessagesBySubstring(
   const rows = db.prepare(query).all(...params) as Row[];
   const hasMore = rows.length > limit;
   if (hasMore) rows.shift();
-  const data = rows.map(rowToMessage);
+  const attachmentsByMessageId = listMessageAttachmentsForMessageIds(
+    db,
+    rows.map((row) => rowString(row, 'id')),
+  );
+  const data = rows.map((row) => rowToMessage(row, attachmentsByMessageId.get(rowString(row, 'id'))));
   const head = hasMore ? data[0] : undefined;
   return { data, hasMore, nextCursor: head ? encodeCursor(head.createdAt, head.id) : undefined };
 }

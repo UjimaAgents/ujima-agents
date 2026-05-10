@@ -1,5 +1,6 @@
 import type { ResourceType, ToolAction, SpiritRole } from '@ujima/shared';
 import type { PermissionMiddleware, PermissionCheckInput } from '@ujima/permissions';
+import { buildShellApprovalScope } from './shell-scope.js';
 
 export interface ToolInvocationInput {
   organizationId: string;
@@ -41,7 +42,7 @@ export interface ToolInvocationResult {
 
 export interface ToolService {
   invoke(input: ToolInvocationInput): Promise<ToolInvocationResult>;
-  allowRun(organizationId: string, runId: string): void;
+  allowRun(organizationId: string, runId: string, approvalScope?: string): void;
 }
 
 export type PermissionContextBuilder = (
@@ -69,6 +70,7 @@ export function createPermissionGatedToolService(
   requestApproval?: ApprovalRequester['requestApproval'],
 ): ToolService {
   const approvedRuns = new Set<string>();
+  const approvedRunScopes = new Set<string>();
 
   const runKey = (organizationId: string, runId: string) => `${organizationId}:${runId}`;
 
@@ -77,17 +79,18 @@ export function createPermissionGatedToolService(
       if (input.bypassPermission) {
         return inner.invoke(input);
       }
-      if (consumeApprovedRun(input.organizationId, input.runId)) {
+      const context = await buildContext(input);
+      const approvalScope =
+        input.toolId === 'shell'
+          ? buildShellApprovalScope({ input: input.input, resourcePath: input.resourcePath })
+          : `${input.toolId}:${JSON.stringify(input.input)}`;
+
+      if (consumeApprovedRun(input.organizationId, input.runId, approvalScope)) {
         return inner.invoke(input);
       }
-      const context = await buildContext(input);
       const decision = await permissions.check(context);
 
       if (!decision.allowed && decision.gate === 'approval' && requestApproval) {
-        const approvalScope =
-          input.toolId === 'shell'
-            ? buildShellApprovalScope(input)
-            : `${input.toolId}:${JSON.stringify(input.input)}`;
         const approval = requestApproval({
           organizationId: input.organizationId,
           runId: input.runId,
@@ -115,13 +118,22 @@ export function createPermissionGatedToolService(
 
       return inner.invoke(input);
     },
-    allowRun(organizationId, runId) {
-      approvedRuns.add(runKey(organizationId, runId));
-      inner.allowRun(organizationId, runId);
+    allowRun(organizationId, runId, approvalScope) {
+      if (approvalScope) {
+        approvedRunScopes.add(scopedRunKey(organizationId, runId, approvalScope));
+      } else {
+        approvedRuns.add(runKey(organizationId, runId));
+      }
+      inner.allowRun(organizationId, runId, approvalScope);
     },
   };
 
-  function consumeApprovedRun(organizationId: string, runId: string): boolean {
+  function consumeApprovedRun(organizationId: string, runId: string, approvalScope: string): boolean {
+    const scopedKey = scopedRunKey(organizationId, runId, approvalScope);
+    if (approvedRunScopes.has(scopedKey)) {
+      approvedRunScopes.delete(scopedKey);
+      return true;
+    }
     const key = runKey(organizationId, runId);
     if (!approvedRuns.has(key)) {
       return false;
@@ -129,10 +141,8 @@ export function createPermissionGatedToolService(
     approvedRuns.delete(key);
     return true;
   }
-}
 
-function buildShellApprovalScope(input: ToolInvocationInput): string {
-  const command = typeof input.input.command === 'string' ? input.input.command : '';
-  const cwd = typeof input.input.cwd === 'string' ? input.input.cwd : input.resourcePath ?? '';
-  return `shell:${JSON.stringify({ cwd, command })}`;
+  function scopedRunKey(organizationId: string, runId: string, approvalScope: string): string {
+    return `${runKey(organizationId, runId)}:${approvalScope}`;
+  }
 }

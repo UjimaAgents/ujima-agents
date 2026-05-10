@@ -14,6 +14,7 @@ import { createAgent, normalizeAgents, type AgentConfig } from './agents.js';
 import { normalizeProviders } from './providers.js';
 import { createOrganizationChart } from './organization-chart.js';
 import { defineRole, listStarterRolePresets, normalizeRoles } from './roles.js';
+import { migrateAgentTeamConfig, TEAM_CONFIG_VERSION } from './team-config-migrations.js';
 import {
   AgentTeamConfigSchema,
   PolicySchema,
@@ -140,6 +141,7 @@ export function createStarterAgentTeamConfig({
 
   return {
     name: name ?? 'Ujima Team',
+    configVersion: TEAM_CONFIG_VERSION,
     workspace: createWorkspaceConfig(
       root,
       Object.keys(roleScopes).length > 0 ? roleScopes : defaultRoleScopes,
@@ -162,7 +164,8 @@ export function createStarterAgentTeamConfig({
 }
 
 export function normalizeAgentTeamConfig(config: unknown): NormalizedAgentTeamConfig {
-  const input = isRecord(config) ? config : {};
+  const migrated = migrateAgentTeamConfig(config);
+  const input = isRecord(migrated.config) ? migrated.config : {};
   const channelsInput = Array.isArray(input.channels) ? input.channels : undefined;
   const toolsInput = isRecord(input.tools) ? input.tools : undefined;
   const parsed = AgentTeamConfigSchema.parse({
