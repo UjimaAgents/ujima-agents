@@ -7,7 +7,7 @@ export const CONVERSATION_COMPACTED_MARKER = "[[CONVERSATION_COMPACTED_V1]]";
 export const CONVERSATION_ARCHIVE_MARKER = "[[CONVERSATION_ARCHIVE_V1]]";
 const README_SUMMARY_GUIDANCE = [
   "> README-style compact summary -- durable context from earlier in the conversation.",
-  "> Skim the headings, dive into what matters. Details that dont carry forward are safe to forget.",
+  "> Skim the headings, dive into what matters. Details that don't carry forward are safe to forget.",
 ] as const;
 
 export function formatTimestampedContent(
