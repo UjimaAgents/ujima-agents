@@ -1,0 +1,61 @@
+import { describe, expect, it } from 'vitest';
+import { parseFilesystemToolCallArgs, parseShellToolCallArgs } from './tool-call-display-args';
+
+describe('parseShellToolCallArgs', () => {
+  it('reads flat command and cwd', () => {
+    expect(parseShellToolCallArgs({ cwd: '/app', command: 'git', args: ['status'] })).toEqual({
+      cwd: '/app',
+      command: 'git',
+      args: ['status'],
+    });
+  });
+
+  it('reads nested input', () => {
+    expect(
+      parseShellToolCallArgs({
+        input: { cwd: '/x', command: 'echo', args: ['hi'] },
+      } as Record<string, unknown>),
+    ).toEqual({ cwd: '/x', command: 'echo', args: ['hi'] });
+  });
+
+  it('defaults cwd to dot when missing', () => {
+    expect(parseShellToolCallArgs({ command: 'ls' })).toEqual({ cwd: '.', command: 'ls' });
+  });
+
+  it('returns null without command', () => {
+    expect(parseShellToolCallArgs({ cwd: '/a' })).toBeNull();
+  });
+});
+
+describe('parseFilesystemToolCallArgs', () => {
+  it('parses flat read', () => {
+    expect(
+      parseFilesystemToolCallArgs({
+        action: 'read',
+        resourcePath: '/f.txt',
+      }),
+    ).toEqual({ action: 'read', resourcePath: '/f.txt' });
+  });
+
+  it('parses nested write with patch', () => {
+    expect(
+      parseFilesystemToolCallArgs({
+        input: { action: 'write', resourcePath: '/a.md', patch: '--- a\n+++ b\n' },
+      } as Record<string, unknown>),
+    ).toEqual({ action: 'write', resourcePath: '/a.md', patch: '--- a\n+++ b\n' });
+  });
+
+  it('parses legacy nested write with content', () => {
+    expect(
+      parseFilesystemToolCallArgs({
+        input: { action: 'write', resourcePath: '/a.md', content: 'body' },
+      } as Record<string, unknown>),
+    ).toEqual({ action: 'write', resourcePath: '/a.md', content: 'body' });
+  });
+
+  it('returns null for invalid action', () => {
+    expect(
+      parseFilesystemToolCallArgs({ action: 'delete', resourcePath: '/x' }),
+    ).toBeNull();
+  });
+});

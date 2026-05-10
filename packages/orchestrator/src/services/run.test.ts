@@ -178,6 +178,111 @@ describe('RunService', () => {
     expect(allowRunCalls).toBe(0);
   });
 
+  it('executes the original pending tool call after approval before resuming the model', async () => {
+    const organizationId = 'org-1';
+    const runId = 'run-1';
+    const agentId = 'Quinn Mason';
+    const threadId = 'thread-1';
+    const pendingStep = {
+      id: 'step-1',
+      organizationId,
+      runId,
+      threadId,
+      agentId,
+      toolCallId: 'tool-call-1',
+      toolId: 'shell',
+      action: 'execute',
+      resourceType: 'shell',
+      resourcePath: '/workspace',
+      input: { cwd: '/workspace', command: 'echo hello' },
+      output: { status: 'waiting_for_approval', approvalId: 'approval-1' },
+      status: 'ok',
+      createdAt: '2026-05-04T19:07:08.071Z',
+    };
+    let run: any = {
+      id: runId,
+      organizationId,
+      agentId,
+      threadId,
+      status: 'waiting_for_approval',
+      step: 'waiting_for_approval',
+      summary: 'Waiting for approval',
+      startedAt: '2026-05-04T19:07:08.071Z',
+    };
+    let toolInvoked = false;
+    let generateCalls = 0;
+
+    const repo = {
+      getMember: () => ({
+        id: agentId,
+        organizationId,
+        name: agentId,
+        kind: AGENT_KIND,
+        roleName: 'backend-engineer',
+      }),
+      saveRun: (next: any) => {
+        run = next;
+        return next;
+      },
+      getRun: () => run,
+      getProviderCredential: () => null,
+      getWorkspaceSetting: () => null,
+      listMembers: () => [],
+      listPendingApprovals: () => [],
+      listRunSteps: () => [pendingStep],
+      getThread: () => ({ channelId: 'channel-1' }),
+    } as never;
+
+    const service = new RunService(
+      {
+        getTeam: () =>
+          loadAgentTeam({
+            name: 'Timetotest',
+            workspace: { root: '/workspace' },
+            roles: [
+              {
+                name: 'backend-engineer',
+                title: 'Backend Engineer',
+                instructions: 'Work on backend.',
+                tools: ['shell'],
+              },
+            ],
+            agents: [{ name: agentId, roleName: 'backend-engineer' }],
+          }),
+        setTeam() {
+          return undefined;
+        },
+      } as never,
+      repo,
+      { emit: () => undefined } as never,
+      { publishMessage: () => undefined } as never,
+      {
+        generateRunReply: async () => {
+          generateCalls++;
+          expect(toolInvoked).toBe(true);
+          return { text: 'Done.', toolResults: [], steps: [] };
+        },
+      } as never,
+      {
+        allowRun() {
+          return undefined;
+        },
+        invoke: async (input: any) => {
+          toolInvoked = true;
+          expect(input.toolCallId).toBe('tool-call-1');
+          expect(input.bypassPermission).toBe(true);
+          return { ok: true, output: { status: 'completed' } };
+        },
+      } as never,
+    );
+
+    const result = await service.resumeAfterApproval(organizationId, runId, true);
+
+    expect(result.status).toBe('completed');
+    expect(toolInvoked).toBe(true);
+    expect(generateCalls).toBe(1);
+  });
+
   it('fails a running run on rejection before the next advance', async () => {
     const organizationId = 'org-1';
     const runId = 'run-1';

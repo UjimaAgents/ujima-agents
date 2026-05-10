@@ -20,6 +20,7 @@ interface WorkspaceState {
   sidebarWidth: number;
   activeTab: WorkspaceTab;
   showDetails: boolean;
+  detailsAutoOpenDismissed: boolean;
   detailsWidth: number;
   detailsTab: WorkspaceDetailsTab;
   selectedConversation?: SelectedConversation;
@@ -35,7 +36,8 @@ interface WorkspaceState {
   conversationKey?: string;
   setSidebarWidth(width: number): void;
   setActiveTab(tab: WorkspaceTab): void;
-  setShowDetails(show: boolean): void;
+  setShowDetails(show: boolean, options?: { userIntent?: boolean }): void;
+  openDetailsForAgentMessage(): void;
   setDetailsWidth(width: number): void;
   setDetailsTab(tab: WorkspaceDetailsTab): void;
   syncWorkspace(input: {
@@ -63,11 +65,14 @@ interface WorkspaceState {
   appendActivity(event: ActivityEvent): void;
 }
 
+const DETAILS_AUTO_OPEN_DISMISSED_KEY = "ujima.workspace.detailsAutoOpenDismissed";
+
 const EMPTY_ACTIVITY = {
   sidebarWidth: 25,
   activeTab: "conversation" as WorkspaceTab,
   showDetails: false,
-  detailsWidth: 25,
+  detailsAutoOpenDismissed: readDetailsAutoOpenDismissed(),
+  detailsWidth: 33,
   detailsTab: "Reasoning trace" as WorkspaceDetailsTab,
   selectedConversation: undefined,
   channels: [],
@@ -158,8 +163,27 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
     set((state) => (state.sidebarWidth === sidebarWidth ? state : { sidebarWidth })),
   setActiveTab: (activeTab) =>
     set((state) => (state.activeTab === activeTab ? state : { activeTab })),
-  setShowDetails: (showDetails) =>
-    set((state) => (state.showDetails === showDetails ? state : { showDetails })),
+  setShowDetails: (showDetails, options) =>
+    set((state) => {
+      const userIntent = options?.userIntent === true;
+      if (userIntent) {
+        writeDetailsAutoOpenDismissed(!showDetails);
+      }
+      const detailsAutoOpenDismissed = userIntent ? !showDetails : state.detailsAutoOpenDismissed;
+      if (
+        state.showDetails === showDetails &&
+        state.detailsAutoOpenDismissed === detailsAutoOpenDismissed
+      ) {
+        return state;
+      }
+      return { showDetails, detailsAutoOpenDismissed };
+    }),
+  openDetailsForAgentMessage: () =>
+    set((state) =>
+      state.showDetails || state.detailsAutoOpenDismissed
+        ? state
+        : { showDetails: true },
+    ),
   setDetailsWidth: (detailsWidth) =>
     set((state) => (state.detailsWidth === detailsWidth ? state : { detailsWidth })),
   setDetailsTab: (detailsTab) =>
@@ -326,6 +350,20 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   appendActivity: (event) =>
     set((state) => ({ activity: appendActivity(state.activity, [event]) })),
 }));
+
+function readDetailsAutoOpenDismissed(): boolean {
+  if (typeof window === "undefined") return false;
+  return window.localStorage.getItem(DETAILS_AUTO_OPEN_DISMISSED_KEY) === "true";
+}
+
+function writeDetailsAutoOpenDismissed(dismissed: boolean): void {
+  if (typeof window === "undefined") return;
+  if (dismissed) {
+    window.localStorage.setItem(DETAILS_AUTO_OPEN_DISMISSED_KEY, "true");
+  } else {
+    window.localStorage.removeItem(DETAILS_AUTO_OPEN_DISMISSED_KEY);
+  }
+}
 
 export function resolveMemberActivity(
   member: WorkspaceMember,

@@ -24,4 +24,5 @@ export * from './socket-events.js';
 export * from './cursor.js';
 export * from './conversations.js';
 export * from './approval-scope.js';
+export * from './tool-call-display-args.js';
 export { SHARED_AGENT_SYSTEM_PROMPT, buildEnvironmentContext, COLLABORATION_PROTOCOL, buildTeamHierarchySection } from './agent-prompt.js';

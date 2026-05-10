@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import {
   ApprovalRequestSchema,
   SocketEventNames,
+  formatApprovalRelayMarkdown,
   orgRoom,
   runRoom,
   threadRoom,
@@ -138,14 +139,14 @@ export class ApprovalService {
         : existing && rawScope
           ? this.repo
               .listPendingApprovals(input.organizationId)
-              .filter(
-                (approval) =>
-                  approval.runId === existing.runId &&
-                  approval.requestedBy === existing.requestedBy &&
-                  approval.resourceType === existing.resourceType &&
-                  approval.resourcePath === existing.resourcePath &&
-                  approval.action === existing.action &&
-                  decodeApprovalScope(approval.reason) === rawScope,
+              .filter((approval) =>
+                pendingApprovalMatchesResolution({
+                  approval,
+                  existing,
+                  rawScope,
+                  persistedScope,
+                  resolution: input.resolution,
+                }),
               )
           : [];
 
@@ -215,31 +216,6 @@ export class ApprovalService {
 
     if (approval.status === 'rejected' && approval.runId) {
       for (const resolved of resolvedApprovals) {
-        const run = resolved.runId ? this.repo.getRun(input.organizationId, resolved.runId) : null;
-        if (!run || !resolved.toolCallId) continue;
-        const threadId = run.threadId;
-        const rooms = [orgRoom(input.organizationId), runRoom(run.id)];
-        if (threadId) {
-          rooms.push(threadRoom(threadId));
-        }
-        this.realtime.emit(
-          SocketEventNames.toolResult,
-          {
-            organizationId: input.organizationId,
-            runId: run.id,
-            threadId,
-            agentId: resolved.requestedBy,
-            toolResult: {
-              toolCallId: resolved.toolCallId,
-              result: {
-                error: 'Approval rejected by user',
-                code: 'ERR_APPROVAL_REJECTED',
-              },
-              isError: true,
-            },
-          },
-          rooms,
-        );
         this.repo.deleteApproval(input.organizationId, resolved.id);
       }
       const run = this.repo.getRun(input.organizationId, approval.runId);
@@ -331,8 +307,33 @@ function buildFamilyApprovalScope(rawScope: string): string {
   }
 }
 
+function pendingApprovalMatchesResolution(input: {
+  approval: ApprovalRequest;
+  existing: ApprovalRequest;
+  rawScope: string;
+  persistedScope: string | undefined;
+  resolution: ApprovalResolveInput['resolution'];
+}): boolean {
+  const { approval, existing, rawScope, persistedScope, resolution } = input;
+  if (
+    approval.runId !== existing.runId ||
+    approval.requestedBy !== existing.requestedBy ||
+    approval.resourceType !== existing.resourceType ||
+    approval.resourcePath !== existing.resourcePath ||
+    approval.action !== existing.action
+  ) {
+    return false;
+  }
+
+  const approvalScope = decodeApprovalScope(approval.reason);
+  if (resolution === 'allow_family' && persistedScope) {
+    return approvalScope ? buildFamilyApprovalScope(approvalScope) === persistedScope : false;
+  }
+  return approvalScope === rawScope;
+}
+
 function buildApprovalRelayMessage(approval: ApprovalRequest): string {
-  return `Approval requested for ${approval.action} ${approval.resourcePath}.`;
+  return formatApprovalRelayMarkdown(approval);
 }
 
 function isActiveRunStatus(status: string): boolean {

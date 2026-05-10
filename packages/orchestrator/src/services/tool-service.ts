@@ -63,11 +63,17 @@ export interface ApprovalRequester {
   }): { id: string };
 }
 
+export type ApprovalWaitRecorder = (
+  input: ToolInvocationInput,
+  approvalId: string,
+) => void;
+
 export function createPermissionGatedToolService(
   inner: ToolService,
   permissions: PermissionMiddleware,
   buildContext: PermissionContextBuilder,
   requestApproval?: ApprovalRequester['requestApproval'],
+  recordApprovalWait?: ApprovalWaitRecorder,
 ): ToolService {
   const approvedRuns = new Set<string>();
   const approvedRunScopes = new Set<string>();
@@ -102,6 +108,7 @@ export function createPermissionGatedToolService(
           reason: `Tool action requires approval;scope=${encodeURIComponent(approvalScope)};note=${decision.reason}`,
           approvalScope,
         });
+        recordApprovalWait?.(input, approval.id);
         return {
           ok: false,
           requiresApprovalId: approval.id,

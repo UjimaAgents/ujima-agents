@@ -124,6 +124,74 @@ describe('createPermissionGatedToolService', () => {
     expect(innerCalls).toBe(1);
   });
 
+  it('records a waiting step when the permission gate requests approval', async () => {
+    let recorded: { toolCallId: string; approvalId: string } | undefined;
+    const inner: ToolService = {
+      async invoke() {
+        return { ok: true, output: { status: 'completed' } };
+      },
+      allowRun() {
+        return undefined;
+      },
+    };
+
+    const tools = createPermissionGatedToolService(
+      inner,
+      {
+        async check() {
+          return {
+            allowed: false,
+            reason: 'approval required',
+            code: 'requires_approval',
+            gate: 'approval',
+          };
+        },
+        async recordUsage() {
+          return undefined;
+        },
+        setSessionOverride() {
+          return undefined;
+        },
+        clearSessionOverride() {
+          return undefined;
+        },
+        setGovernancePolicy() {
+          return undefined;
+        },
+        getGovernancePolicy() {
+          return undefined;
+        },
+      },
+      async () => ({
+        agent: {} as never,
+        mcp: { id: 'fs' },
+        toolName: 'shell',
+        args: {},
+        taskId: 'task-1',
+        sessionId: 'session-1',
+      }),
+      () => ({ id: 'approval-1' }),
+      (input, approvalId) => {
+        recorded = { toolCallId: input.toolCallId, approvalId };
+      },
+    );
+
+    const result = await tools.invoke({
+      organizationId: 'org-1',
+      runId: 'run-1',
+      memberId: 'agent-1',
+      toolCallId: 'tool-1',
+      toolId: 'shell',
+      action: 'execute',
+      resourceType: 'shell',
+      resourcePath: '/workspace',
+      input: { cwd: '/workspace', command: 'echo hello' },
+    });
+
+    expect(result.requiresApprovalId).toBe('approval-1');
+    expect(recorded).toEqual({ toolCallId: 'tool-1', approvalId: 'approval-1' });
+  });
+
   it('does not spend a scoped approval on a different command', async () => {
     let innerCalls = 0;
 

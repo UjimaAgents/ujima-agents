@@ -1,5 +1,7 @@
 import { CheckCircle2, X, XCircle } from "lucide-react";
 import { Avatar } from "./primitives";
+import { TerminalPane } from "./terminal-pane";
+import { FilesystemToolPane } from "./filesystem-tool-pane";
 
 /* ── Trace step (used in reasoning trace timeline) ─────────────────── */
 export interface TraceStepData {
@@ -10,11 +12,26 @@ export interface TraceStepData {
   duration: string;
   status: "success" | "running" | "failed";
   subtext?: string;
+  /** Integrated terminal (cwd + command + scrollable output). */
+  terminal?: {
+    cwd: string;
+    commandLine: string;
+    output?: string;
+    outputPlaceholder?: string;
+    outputTone?: "default" | "error";
+  };
+  /** Filesystem read/write tool (path + action + optional body). */
+  filesystem?: {
+    action: "read" | "write";
+    resourcePath: string;
+    body?: string;
+    bodyTone?: "default" | "error";
+  };
 }
 
 export function TraceStep({ step }: { step: TraceStepData }) {
   return (
-    <div className="relative pl-5 pb-1">
+    <div className="relative pl-5">
       <div className="absolute left-0 top-1 bottom-0 w-px bg-zinc-200 dark:bg-zinc-800" />
       <div
         className={`absolute left-[-3px] top-1 h-1.5 w-1.5 rounded-full ring-4 ring-zinc-50 dark:ring-[#09090b] ${
@@ -27,7 +44,7 @@ export function TraceStep({ step }: { step: TraceStepData }) {
       />
       <div className="flex items-start justify-between gap-3">
         <div className="flex-1">
-          <div className="flex items-center gap-1.5">
+          <div className={`flex items-center gap-1.5 ${step.terminal || step.filesystem ? "mb-1" : ""}`}>
             <p className="text-[11px] font-bold text-zinc-900 dark:text-white">
               {step.title}
             </p>
@@ -38,13 +55,38 @@ export function TraceStep({ step }: { step: TraceStepData }) {
               <XCircle className="h-3 w-3 text-red-500" />
             )}
           </div>
-          <p className="text-[10px] text-zinc-500 dark:text-zinc-400">
-            {step.detail}
+          {step.terminal ? (
+            <TerminalPane
+              className="mt-0"
+              cwd={step.terminal.cwd}
+              commandLine={step.terminal.commandLine}
+              output={step.terminal.output}
+              outputPlaceholder={step.terminal.outputPlaceholder}
+              outputTone={step.terminal.outputTone}
+            />
+          ) : step.filesystem ? (
+            <FilesystemToolPane
+              className="mt-0"
+              action={step.filesystem.action}
+              resourcePath={step.filesystem.resourcePath}
+              body={step.filesystem.body}
+              bodyTone={step.filesystem.bodyTone}
+            />
+          ) : step.detail.trim() ? (
+            <p className="mt-1 whitespace-pre-wrap font-mono text-[10px] text-zinc-500 dark:text-zinc-400">
+              {step.detail}
+            </p>
+          ) : null}
+          {step.subtext ? (
+            <p className="mt-2 text-[10px] leading-snug text-zinc-400 dark:text-zinc-500">{step.subtext}</p>
+          ) : null}
+          <p
+            className={`text-[9px] tabular-nums text-zinc-400 dark:text-zinc-500 ${
+              step.terminal || step.filesystem ? "mt-2.5" : step.subtext ? "mt-1.5" : step.detail?.trim() ? "mt-1.5" : "mt-0.5"
+            }`}
+          >
+            {step.time}
           </p>
-          {step.subtext && (
-            <p className="text-[10px] text-zinc-400">{step.subtext}</p>
-          )}
-          <p className="text-[9px] text-zinc-400">{step.time}</p>
         </div>
         <span className="text-[9px] text-zinc-400 shrink-0">
           {step.duration}
@@ -171,8 +213,8 @@ export function DetailsSidebar({
         </button>
       </header>
 
-      <div className="flex-1 overflow-y-auto p-4">
-        <div className="flex items-center gap-3">
+      <div className="flex min-h-0 flex-1 flex-col p-4">
+        <div className="flex shrink-0 items-center gap-3">
           <Avatar name={agentName} colorIndex={agentColorIndex} size="lg" />
           <div className="flex-1">
             <div className="flex items-center justify-between">
@@ -188,7 +230,7 @@ export function DetailsSidebar({
           </div>
         </div>
 
-        <div className="mt-4 flex border-b border-zinc-200 dark:border-zinc-800">
+        <div className="mt-4 flex shrink-0 border-b border-zinc-200 dark:border-zinc-800">
           {tabs.map((t) => (
             <button
               key={t}
@@ -204,7 +246,7 @@ export function DetailsSidebar({
           ))}
         </div>
 
-        <div className="mt-4">{children}</div>
+        <div className="mt-4 min-h-0 flex-1 overflow-y-auto">{children}</div>
       </div>
     </aside>
   );

@@ -6,8 +6,9 @@ import {
   MemberSchema,
   MessageSchema,
   RunStateSchema,
+  formatApprovalRelayMarkdown,
+  parseApprovalDisplayScopesFromReason,
   parseApprovalReasonValue,
-  parseShellScope,
   type ActivityEvent,
   type ApprovalRequest,
   type Member,
@@ -588,7 +589,7 @@ function handleStreamEvent(
 }
 
 function buildApprovalRelayMessage(approval: ApprovalRequest): string {
-  return `Approval requested for ${approval.action} ${approval.resourcePath}.`;
+  return formatApprovalRelayMarkdown(approval);
 }
 
 function parseMessagePayload(payload: unknown): Message | null {
@@ -770,10 +771,6 @@ function messageToActivity(message: Message): ActivityEvent {
   };
 }
 
-function formatShellCommandPreview(parsed: { cwd: string; command: string }): string {
-  return `$ ${parsed.command}\nDirectory: ${parsed.cwd}`;
-}
-
 function approvalToCard(
   approval: ApprovalRequest,
   state: { members: Member[] },
@@ -781,22 +778,32 @@ function approvalToCard(
   const requestedBy =
     state.members.find((member) => member.id === approval.requestedBy)?.name ?? approval.requestedBy;
 
-  const scopeDecoded = parseApprovalReasonValue(approval.reason, "scope");
+  const { shell: shellParsed, filesystem: fsParsed } = parseApprovalDisplayScopesFromReason(
+    approval.reason,
+  );
   const note = parseApprovalReasonValue(approval.reason, "note");
   let title =
-    approval.status === "pending" ? "Approval requested" : `Approval ${approval.status}`;
-  let description = `${approval.action} ${approval.resourcePath}`;
+    approval.status === "pending" ? "Approve command" : `Approval ${approval.status}`;
+  let description = `${approval.action} · \`${approval.resourcePath}\``;
   let commandPreview: string | undefined;
   let shellScope: ApprovalCardData["shellScope"];
+  let filesystemScope: ApprovalCardData["filesystemScope"];
 
-  if (approval.resourceType === "shell" && scopeDecoded) {
-    const parsed = parseShellScope(scopeDecoded);
-    if (parsed) {
-      title = approval.status === "pending" ? (note ? "Destructive command" : "Shell command") : title;
-      description = note ? note : "The agent wants to run:";
-      commandPreview = formatShellCommandPreview(parsed);
-      shellScope = parsed;
-    }
+  if (shellParsed) {
+    title = approval.status === "pending" ? "Approve command" : title;
+    description = note ?? "";
+    commandPreview = undefined;
+    shellScope = shellParsed;
+  } else if (fsParsed) {
+    title =
+      approval.status === "pending"
+        ? fsParsed.action === "read"
+          ? "Approve read"
+          : "Approve write"
+        : title;
+    description = note ?? "";
+    commandPreview = undefined;
+    filesystemScope = fsParsed;
   }
 
   return {
@@ -808,6 +815,7 @@ function approvalToCard(
     description,
     commandPreview,
     shellScope,
+    filesystemScope,
     status: approval.status,
     requestedBy,
     approvalsNeeded: 1,

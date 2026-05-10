@@ -109,6 +109,7 @@ export function ChannelView({
   const detailsTab = useWorkspaceStore((state) => state.detailsTab);
   const setActiveTab = useWorkspaceStore((state) => state.setActiveTab);
   const setShowDetails = useWorkspaceStore((state) => state.setShowDetails);
+  const openDetailsForAgentMessage = useWorkspaceStore((state) => state.openDetailsForAgentMessage);
   const setDetailsWidth = useWorkspaceStore((state) => state.setDetailsWidth);
   const setDetailsTab = useWorkspaceStore((state) => state.setDetailsTab);
 
@@ -373,7 +374,7 @@ export function ChannelView({
             ) : undefined
           }
           showDetails={showDetails}
-          onToggleDetails={() => setShowDetails(!showDetails)}
+          onToggleDetails={() => setShowDetails(!showDetails, { userIntent: true })}
         />
         <ChatTabs
           tabs={tabs.map((tab) => ({
@@ -397,7 +398,7 @@ export function ChannelView({
           <div className="relative flex flex-1 min-h-0 flex-col">
             <ChatMessageList ref={listRef} onScroll={handleScroll}>
               {feed.loading && feed.messages.length === 0 ? (
-                <ConversationSkeleton conversation={conversation} />
+                <ConversationSkeleton />
               ) : feed.messages.length > 0 ? (
                 <>
                   {feed.messages.map((message) => (
@@ -453,7 +454,7 @@ export function ChannelView({
               </div>
             </TabPanel>
           ) : (
-            <TabEmpty emptyLabel="No approvals yet." />
+            <TabEmpty emptyLabel="No approvals." />
           )
         ) : activeTab === "tasks" ? (
           feed.runs.length > 0 ? (
@@ -465,7 +466,7 @@ export function ChannelView({
               </div>
             </TabPanel>
           ) : (
-            <TabEmpty emptyLabel="No active tasks yet." />
+            <TabEmpty emptyLabel="No active tasks." />
           )
         ) : activeTab === "files" ? (
           conversationAttachments.length > 0 ? (
@@ -498,7 +499,7 @@ export function ChannelView({
               </div>
             </TabPanel>
           ) : (
-            <TabEmpty emptyLabel="No attachments yet." />
+            <TabEmpty emptyLabel="No attachments." />
           )
         ) : (
           feed.activity.length > 0 ? (
@@ -510,7 +511,7 @@ export function ChannelView({
               </div>
             </TabPanel>
           ) : (
-            <TabEmpty emptyLabel="No activity yet." />
+            <TabEmpty emptyLabel="No activity." />
           )
         )}
         <ChatInput
@@ -526,12 +527,9 @@ export function ChannelView({
           }
           inlineError={feed.error}
           statusHint={
-            [
-              typingLabel ?? (feed.loading ? "Syncing history…" : ""),
-              stoppableRunId ? "Empty box: red button or Enter stops the run." : "",
-            ]
-              .filter(Boolean)
-              .join(" ") || "Enter to send, Shift+Enter for a new line."
+            typingLabel ||
+            (feed.loading ? "Syncing…" : "") ||
+            "Enter to send · Shift+Enter newline"
           }
           mentionSuggestions={mentionSuggestions}
           replyTo={replyTo}
@@ -539,6 +537,9 @@ export function ChannelView({
           stoppableRunId={stoppableRunId}
           onStopRun={stopAgentRun}
           onSend={(content, attachmentIds) => {
+            if (isAgent) {
+              openDetailsForAgentMessage();
+            }
             const promise = feed.sendMessage(content, replyTo?.id, attachmentIds);
             setReplyTo(null);
             return promise;
@@ -550,7 +551,7 @@ export function ChannelView({
         <>
           <DragHandle side="right" onResize={setDetailsWidth} />
           <div
-            style={{ width: `${detailsWidth}%`, minWidth: 280 }}
+            style={{ width: `${Math.max(detailsWidth, 33)}%`, minWidth: "33%" }}
             className="shrink-0 h-full"
           >
             <DetailsSidebar
@@ -561,18 +562,14 @@ export function ChannelView({
               tabs={["Reasoning trace", "Changes", "Metadata"]}
               activeTab={detailsTab}
               onTabChange={(tab) => setDetailsTab(tab as typeof detailsTab)}
-              onClose={() => setShowDetails(false)}
+              onClose={() => setShowDetails(false, { userIntent: true })}
             >
               {detailsTab === "Reasoning trace" ? (
                 <ReasoningTracePanel steps={reasoningTraceSteps} autoScroll={traceAutoScroll} />
               ) : detailsTab === "Changes" ? (
-                <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                  File-level diffs for this conversation are not wired up yet.
-                </p>
+                <p className="text-xs text-zinc-500 dark:text-zinc-400">Diffs unavailable.</p>
               ) : (
-                <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                  No extra metadata for this view yet.
-                </p>
+                <p className="text-xs text-zinc-500 dark:text-zinc-400">No metadata.</p>
               )}
             </DetailsSidebar>
           </div>

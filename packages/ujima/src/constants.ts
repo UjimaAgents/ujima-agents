@@ -6,7 +6,8 @@ export const DEFAULT_TOOL_CATALOG: Record<string, ToolCapability> = {
   filesystem: {
     id: 'filesystem',
     name: 'Filesystem',
-    description: 'Read and edit files inside the organization workspace.',
+    description:
+      'Read files or apply unified-diff patches to create or edit a single file in the workspace. Writes use `patch` (unified diff), not full-file replacement.',
     actions: ['read', 'write'],
     pathScopes: ['.'],
     requiresApproval: true,
