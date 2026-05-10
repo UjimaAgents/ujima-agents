@@ -493,6 +493,14 @@ export class ToolServiceImpl implements ToolService {
         resourcePath: invocation.resourcePath,
       });
     }
+    if (invocation.toolId === "filesystem" && invocation.action === "write") {
+      return `filesystem:${JSON.stringify({
+        action: invocation.action,
+        resourcePath: invocation.resourcePath,
+        patch: invocation.input?.patch,
+        content: invocation.input?.content,
+      })}`;
+    }
     return `${invocation.toolId}:${invocation.action}:${invocation.resourcePath ?? ""}`;
   }
 
