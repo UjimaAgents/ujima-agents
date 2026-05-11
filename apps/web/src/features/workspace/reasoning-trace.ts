@@ -599,7 +599,7 @@ function buildToolStep(
         ? "running"
         : "success";
 
-  let line = deriveToolLine(input, call ?? result, mergedPayload);
+  const line = deriveToolLine(input, call ?? result, mergedPayload);
 
   let terminal: TraceStepData["terminal"] | undefined;
   if (name === "shell") {

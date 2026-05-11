@@ -191,7 +191,8 @@ export class RunService {
           item.senderId === run.agentId &&
           item.senderKind === AGENT_KIND &&
           item.kind === AGENT_KIND &&
-          item.createdAt >= run.startedAt,
+          item.createdAt >= run.startedAt &&
+          (run.endedAt == null || item.createdAt <= run.endedAt),
       );
 
     return {
