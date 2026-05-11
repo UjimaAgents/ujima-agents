@@ -11,6 +11,7 @@ import {
   threadRoom,
   type RunState,
   type Message,
+  type RunStep,
 } from '@ujima/shared';
 import type { AiService } from '../ai-service.js';
 import { requireTeam } from '../utils/require-team.js';
@@ -40,9 +41,19 @@ export interface RunDetail {
   run: RunState;
   approvals: ReturnType<ApiRepository['listPendingApprovals']>;
   messages: ReturnType<ApiRepository['listMessages']>['data'];
+  steps: RunStep[];
+  message?: Message;
   activeAgents: { memberId: string; statusLabel: string }[];
   tokens: { perMemberId: Record<string, number> };
   tools: Record<string, RunDetailAggregate>;
+}
+
+export interface RunTraceDetail {
+  run: RunState;
+  approvals: ReturnType<ApiRepository['listPendingApprovals']>;
+  messages: Message[];
+  steps: RunStep[];
+  message?: Message;
 }
 
 export class RunService {
@@ -177,23 +188,17 @@ export class RunService {
     return this.repo.getRun(organizationId, runId);
   }
 
-  getRunTraceDetail(organizationId: string, runId: string) {
+  getRunTraceDetail(organizationId: string, runId: string): RunTraceDetail | null {
     const run = this.repo.getRun(organizationId, runId);
     if (!run) {
       return null;
     }
 
+    const approvals = this.repo
+      .listPendingApprovals(organizationId)
+      .filter((approval) => approval.runId === runId);
+    const messages = run.threadId ? this.listAllThreadMessages(organizationId, run.threadId) : [];
     const steps = this.repo.listRunSteps?.(organizationId, runId) ?? [];
-    const messages: Message[] = [];
-    if (run.threadId) {
-      let cursor: string | undefined = undefined;
-      do {
-        const page = this.repo.listMessages(organizationId, run.threadId, cursor, 100);
-        messages.push(...page.data);
-        cursor = page.nextCursor;
-      } while (cursor);
-    }
-
     const message = [...messages]
       .reverse()
       .find(
@@ -207,8 +212,10 @@ export class RunService {
 
     return {
       run,
+      approvals,
+      messages,
       steps,
-      message,
+      ...(message ? { message } : {}),
     };
   }
 
@@ -244,25 +251,19 @@ export class RunService {
     return cancelled;
   }
 
-  getRunDetail(organizationId: string, runId: string) {
-    const run = this.repo.getRun(organizationId, runId);
-    if (!run) {
-      return null;
-    }
+  getRunDetail(organizationId: string, runId: string): RunDetail | null {
+    const trace = this.getRunTraceDetail(organizationId, runId);
+    if (!trace) return null;
+    const { run, approvals, messages, steps, message } = trace;
 
     const spirit = this.repo.getSpiritByRunId(organizationId, runId);
     if (!spirit) {
-      const approvals = this.repo
-        .listPendingApprovals(organizationId)
-        .filter((approval) => approval.runId === runId);
-      const messages = run.threadId
-        ? this.repo.listMessages(organizationId, run.threadId).data
-        : [];
-
       return {
         run,
         approvals,
         messages,
+        steps,
+        ...(message ? { message } : {}),
         activeAgents: LIVE_RUN_DETAIL_STATUSES.has(run.status)
           ? [{ memberId: run.agentId, statusLabel: run.status }]
           : [],
@@ -274,14 +275,13 @@ export class RunService {
     const session = this.repo.getTaskSession(organizationId, spirit.taskSessionId);
     const sessionSpirits = this.repo.listSpiritsForSession(organizationId, spirit.taskSessionId);
     const runIds = new Set(sessionSpirits.map((current) => current.runId).filter(Boolean));
-    const approvals = this.repo
+    const sessionApprovals = this.repo
       .listPendingApprovals(organizationId)
       .filter((approval) => approval.runId && runIds.has(approval.runId));
-    const messages = session
+    const sessionMessages = session
       ? this.repo.listChannelMessages(organizationId, session.channelId, { limit: 500 }).data
-      : run.threadId
-        ? this.repo.listMessages(organizationId, run.threadId).data
-        : [];
+      : messages;
+
     const activeAgents = sessionSpirits
       .filter((current) => LIVE_RUN_DETAIL_STATUSES.has(current.status))
       .map((current) => ({
@@ -296,11 +296,13 @@ export class RunService {
 
     return {
       run,
-      approvals,
-      messages,
+      approvals: sessionApprovals,
+      messages: sessionMessages,
+      steps,
+      ...(message ? { message } : {}),
       activeAgents,
       tokens: { perMemberId },
-      tools: aggregateToolUsage(messages),
+      tools: aggregateToolUsage(sessionMessages),
     } satisfies RunDetail;
   }
 
@@ -310,6 +312,17 @@ export class RunService {
       rooms.push(threadRoom(run.threadId));
     }
     return rooms;
+  }
+
+  private listAllThreadMessages(organizationId: string, threadId: string): Message[] {
+    const messages: Message[] = [];
+    let cursor: string | undefined = undefined;
+    do {
+      const page = this.repo.listMessages(organizationId, threadId, cursor, 100);
+      messages.push(...page.data);
+      cursor = page.nextCursor;
+    } while (cursor);
+    return messages;
   }
 
   private async advanceRun(run: RunState): Promise<RunState> {
