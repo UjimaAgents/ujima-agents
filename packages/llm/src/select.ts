@@ -153,10 +153,10 @@ export function selectLanguageModel(input: SelectLanguageModelInput): LanguageMo
 function normalizeDeepSeekModelId(modelId: string): string {
   const normalized = modelId.trim().toLowerCase();
   if (normalized === 'deepseek-chat-v2') {
-    return 'deepseek-chat';
+    return 'deepseek-v4-flash';
   }
-  if (normalized === 'deepseek-v4-flash' || normalized === 'deepseek-v4-pro') {
-    return 'deepseek-chat';
+  if (normalized === 'deepseek-chat' || normalized === 'deepseek-reasoner') {
+    return 'deepseek-v4-flash';
   }
   return modelId;
 }

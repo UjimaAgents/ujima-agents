@@ -28,13 +28,14 @@ import { getSuggestedAgentName } from "../../onboarding/agent-name-suggestions";
 import { Sparkles, Bot, ArrowRight, Search as SearchIcon } from "lucide-react";
 import { resolveMemberActivity } from "../workspace-store";
 import type { ActivityState } from "../activity-state";
+import { ThemeToggle } from "@/components/theme-toggle";
 
 interface WorkspaceSidebarProps {
   bootstrap: BootstrapResponse;
   rolePresets: RolePresetTemplate[];
   teamSettings: {
-    agents: Array<{ name: string; roleName: string; personalityName: string; kind: string }>;
-    roles: Array<{
+    agents: { name: string; roleName: string; personalityName: string; kind: string }[];
+    roles: {
       id?: string;
       name: string;
       title: string;
@@ -47,7 +48,7 @@ interface WorkspaceSidebarProps {
       tools: string[];
       channels: string[];
       skills: string[];
-    }>;
+    }[];
   } | null;
   agentEditorTargetId?: string | null;
   onAgentEditorHandled?: () => void;
@@ -119,7 +120,7 @@ function customRole(title: string, instructions: string): WorkspaceRoleInput {
   };
 }
 
-type AgentEditorDraft = {
+interface AgentEditorDraft {
   originalName: string;
   originalRoleName: string;
   memberId: string;
@@ -135,7 +136,7 @@ type AgentEditorDraft = {
   tools: string[];
   channels: string[];
   skills: string[];
-};
+}
 
 function buildAgentEditorDraft({
   agent,
@@ -293,6 +294,7 @@ export function WorkspaceSidebar({
           </div>
           <ChevronDown className="ml-auto h-4 w-4 text-zinc-400" />
         </button>
+        <ThemeToggle compact />
       </div>
 
       {/* Search */}

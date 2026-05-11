@@ -1,4 +1,4 @@
-import { IdSchema } from '@ujima/shared';
+import { IdSchema, MessageSchema, RunStateSchema, RunStepSchema, createPaginatedSchema } from '@ujima/shared';
 import { z } from 'zod';
 
 export const RunCreateSchema = z.object({
@@ -15,6 +15,23 @@ export const RunListQuerySchema = z.object({
   limit: z.coerce.number().int().positive().max(100).optional(),
 });
 export type RunListQuery = z.infer<typeof RunListQuerySchema>;
+
+export const RunTraceEntrySchema = z.object({
+  run: RunStateSchema,
+  steps: z.array(RunStepSchema),
+  message: MessageSchema.optional(),
+});
+export type RunTraceEntry = z.infer<typeof RunTraceEntrySchema>;
+
+export const RunTraceListQuerySchema = z.object({
+  organizationId: IdSchema,
+  cursor: z.string().optional(),
+  limit: z.coerce.number().int().positive().max(20).optional(),
+});
+export type RunTraceListQuery = z.infer<typeof RunTraceListQuerySchema>;
+
+export const RunTraceListResponseSchema = createPaginatedSchema(RunTraceEntrySchema);
+export type RunTraceListResponse = z.infer<typeof RunTraceListResponseSchema>;
 
 export const RunCancelSchema = z.object({
   organizationId: IdSchema,

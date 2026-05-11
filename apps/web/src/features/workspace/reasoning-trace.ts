@@ -4,7 +4,9 @@ import {
   parseWebSearchToolCallArgs,
   shellInvocationDisplayLine,
   type ActivityEvent,
+  type Message,
   type RunState,
+  type RunStep,
 } from "@ujima/shared";
 import type { TraceStepData } from "./components/chat/details-sidebar";
 import { formatTimestamp } from "./lib/format-timestamp";
@@ -41,6 +43,16 @@ export interface ReasoningTraceInput {
   activity: ActivityEvent[];
   runs: RunState[];
   /** Current workspace org — required for background shell job streaming in the trace. */
+  organizationId?: string;
+}
+
+export interface HistoricalTraceInput {
+  conversationName: string;
+  conversationType: "channel" | "agent";
+  members: ReasoningTraceInput["members"];
+  run: RunState;
+  steps: RunStep[];
+  message?: Message;
   organizationId?: string;
 }
 
@@ -691,7 +703,7 @@ function messageEventToStep(input: ReasoningTraceInput, event: ActivityEvent): T
       mentionedLabel && actor.isAgent
         ? `${actorLabel} responded to ${mentionedLabel} ${target}`
         : `${actorLabel} sent a message ${target}`,
-    detail: "Message posted.",
+    detail: "",
     time: formatTimestamp(event.timestamp),
     duration: "—",
     status: "success",
@@ -807,4 +819,89 @@ export function buildReasoningTraceSteps(input: ReasoningTraceInput): TraceStepD
   });
 
   return ordered.map((o) => o.step);
+}
+
+export function buildHistoricalTraceSteps(input: HistoricalTraceInput): TraceStepData[] {
+  const context: ReasoningTraceInput = {
+    threadId: input.run.threadId ?? input.run.id,
+    conversationName: input.conversationName,
+    conversationType: input.conversationType,
+    members: input.members,
+    activity: [],
+    runs: [input.run],
+    organizationId: input.organizationId,
+  };
+
+  const steps: TraceStepData[] = [
+    runEventToStep(
+      {
+        event_id: `run:${input.run.id}`,
+        type: `run_${input.run.status}`,
+        publisher: input.run.agentId,
+        timestamp: input.run.startedAt,
+        payload: input.run,
+      },
+      input.run,
+    ),
+    ...input.steps.map((step) => runStepToTraceStep(context, step)),
+  ];
+
+  if (input.message) {
+    steps.push(
+      messageEventToStep(context, {
+        event_id: `message:${input.message.id}`,
+        type: input.conversationType === "channel" ? "channel_message" : "thread_message",
+        publisher: input.message.senderId,
+        timestamp: input.message.createdAt,
+        payload: {
+          threadId: input.message.threadId,
+          channelId: input.message.channelId,
+          content: input.message.content,
+        },
+      }),
+    );
+  }
+
+  return steps;
+}
+
+function runStepToTraceStep(input: ReasoningTraceInput, step: RunStep): TraceStepData {
+  const call: ActivityEvent = {
+    event_id: `run-step:${step.id}:call`,
+    type: "tool_called",
+    publisher: step.agentId,
+    timestamp: step.createdAt,
+    payload: {
+      runId: step.runId,
+      threadId: step.threadId,
+      agentId: step.agentId,
+      toolCall: {
+        toolCallId: step.toolCallId,
+        toolName: step.toolId,
+        args: {
+          ...step.input,
+          action: step.action,
+          resourceType: step.resourceType,
+          resourcePath: step.resourcePath,
+        },
+      },
+    },
+  };
+  const result: ActivityEvent = {
+    event_id: `run-step:${step.id}:result`,
+    type: "tool_result",
+    publisher: step.agentId,
+    timestamp: step.createdAt,
+    payload: {
+      runId: step.runId,
+      threadId: step.threadId,
+      agentId: step.agentId,
+      toolResult: {
+        toolCallId: step.toolCallId,
+        result: step.output,
+        isError: step.status === "error",
+      },
+    },
+  };
+  return buildToolStep(input, step.toolCallId, call, result);
 }
