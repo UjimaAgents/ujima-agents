@@ -1,7 +1,7 @@
 import { existsSync, realpathSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { AgentTeamHandle } from '@ujima/framework';
-import type { ToolAction } from '@ujima/shared';
+import type { ToolAction, SpiritRole } from '@ujima/shared';
 import { assertWorkspaceBoundary, isPathInsideRoot } from '@ujima/shared/workspace';
 
 export interface PolicyResult {
@@ -16,7 +16,7 @@ export function checkToolPolicy(
   toolId: string,
   action: ToolAction,
   resourcePath?: string,
-  options: { spiritRole?: 'worker' | 'supervisor' } = {},
+  options: { spiritRole?: SpiritRole } = {},
 ): PolicyResult {
   const role = team.getRole(roleName);
   if (!role) {

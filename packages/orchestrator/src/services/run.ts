@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
+import { normalizeProviderKey } from '@ujima/framework';
 import {
+  AGENT_KIND,
   MessageSchema,
   RunStateSchema,
   SocketEventNames,
@@ -8,14 +10,19 @@ import {
   runRoom,
   threadRoom,
   type RunState,
+  type Message,
 } from '@ujima/shared';
-import type { AgentTeamHandle } from '@ujima/framework';
 import type { AiService } from '../ai-service.js';
+import { requireTeam } from '../utils/require-team.js';
 import type { RealtimeService } from './context.js';
 import type { ConversationService } from './conversation.js';
 import type { ApiRepository } from './repository-reader.js';
 import type { TeamStore } from './team-store.js';
-import type { ToolService } from './tool-service.js';
+import type { ToolInvocationInput, ToolService } from './tool-service.js';
+import { applyDashboardTeamOverrides } from './dashboard-team-overrides.js';
+import { ToolApprovalRequiredError } from './tool-loop-result.js';
+import { extractReasoningChunk } from '../utils/extract-reasoning.js';
+import { runUsedThreadPublishingTool } from './run-reply-guard.js';
 
 export interface CreateRunInput {
   organizationId: string;
@@ -39,6 +46,9 @@ export interface RunDetail {
 }
 
 export class RunService {
+  private readonly deferredApprovalResumes = new Set<string>();
+  private readonly runAbortControllers = new Map<string, AbortController>();
+
   constructor(
     private readonly teamStore: TeamStore,
     private readonly repo: ApiRepository,
@@ -54,7 +64,7 @@ export class RunService {
       throw new Error(`Member not found: ${input.agentId}`);
     }
 
-    if (member.kind !== 'agent') {
+    if (member.kind !== AGENT_KIND) {
       throw new Error(`Member "${input.agentId}" is not an agent`);
     }
 
@@ -85,22 +95,63 @@ export class RunService {
       ],
     );
 
-    return this.advanceRun(run);
+    try {
+      return await this.advanceRun(run);
+    } catch (error) {
+      const latest = this.repo.getRun(run.organizationId, run.id);
+      if (latest?.status === 'cancelled') {
+        return latest;
+      }
+      if (error instanceof ToolApprovalRequiredError) {
+        return this.waitForApproval(run, 'Waiting for approval');
+      }
+      return this.failRun(run, (error as Error).message);
+    }
   }
 
-  async resumeAfterApproval(organizationId: string, runId: string): Promise<RunState> {
+  async resumeAfterApproval(
+    organizationId: string,
+    runId: string,
+    allowRun = true,
+    approvalScope?: string,
+  ): Promise<RunState> {
     const run = this.repo.getRun(organizationId, runId);
     if (!run) {
       throw new Error(`Run not found: ${runId}`);
+    }
+
+    if (allowRun) {
+      this.tools.allowRun(organizationId, runId, approvalScope);
+    }
+
+    if (!allowRun) {
+      if (run.status === 'running') {
+        return this.failRun(run, 'Approval rejected by user');
+      }
+      if (run.status === 'waiting_for_approval') {
+        return this.failRun(run, 'Approval rejected by user');
+      }
+      return run;
+    }
+
+    if (run.status === 'running') {
+      const key = this.runKey(organizationId, runId);
+      if (this.runAbortControllers.has(key)) {
+        this.deferredApprovalResumes.add(key);
+        return run;
+      }
+      const afterApprovedTools = await this.executePendingApprovedTools(run);
+      return this.advanceRun(afterApprovedTools);
     }
 
     if (run.status !== 'waiting_for_approval') {
       return run;
     }
 
-    this.tools.allowRun(organizationId, runId);
+    const afterApprovedTools = await this.executePendingApprovedTools(run);
+
     return this.advanceRun({
-      ...run,
+      ...afterApprovedTools,
       status: 'running',
       step: 'running',
       summary: 'Run resumed after approval',
@@ -115,6 +166,38 @@ export class RunService {
     return this.repo.getRun(organizationId, runId);
   }
 
+  cancelRun(organizationId: string, runId: string): RunState {
+    const run = this.repo.getRun(organizationId, runId);
+    if (!run) {
+      throw new Error(`Run not found: ${runId}`);
+    }
+    if (['completed', 'failed', 'cancelled'].includes(run.status)) {
+      return run;
+    }
+
+    const key = this.runKey(organizationId, runId);
+    this.deferredApprovalResumes.delete(key);
+
+    const cancelled = this.repo.saveRun({
+      ...run,
+      status: 'cancelled',
+      step: 'cancelled',
+      summary: 'Stopped by user',
+      endedAt: new Date().toISOString(),
+    });
+
+    this.realtime.emit(
+      SocketEventNames.runCompleted,
+      { organizationId: run.organizationId, run: cancelled },
+      this.getRooms(run),
+    );
+
+    this.runAbortControllers.get(key)?.abort();
+    this.runAbortControllers.delete(key);
+
+    return cancelled;
+  }
+
   getRunDetail(organizationId: string, runId: string): RunDetail | null {
     const run = this.repo.getRun(organizationId, runId);
     if (!run) return null;
@@ -124,9 +207,7 @@ export class RunService {
       const approvals = this.repo
         .listPendingApprovals(organizationId)
         .filter((approval) => approval.runId === runId);
-      const messages = run.threadId
-        ? this.repo.listMessages(organizationId, run.threadId).data
-        : [];
+      const messages = run.threadId ? this.listAllThreadMessages(organizationId, run.threadId) : [];
 
       return {
         run,
@@ -184,8 +265,25 @@ export class RunService {
     return rooms;
   }
 
+  private listAllThreadMessages(organizationId: string, threadId: string): Message[] {
+    const messages: Message[] = [];
+    let cursor: string | undefined = undefined;
+    do {
+      const page = this.repo.listMessages(organizationId, threadId, cursor, 100);
+      messages.push(...page.data);
+      cursor = page.nextCursor;
+    } while (cursor);
+    return messages;
+  }
+
   private async advanceRun(run: RunState): Promise<RunState> {
-    const team = this.requireTeam();
+    const currentRun = this.repo.getRun(run.organizationId, run.id);
+    if (currentRun && ['completed', 'failed', 'cancelled'].includes(currentRun.status)) {
+      return currentRun;
+    }
+
+    applyDashboardTeamOverrides(this.repo, run.organizationId, this.teamStore);
+    const team = requireTeam(this.teamStore);
     const member = this.repo.getMember(run.organizationId, run.agentId);
     if (!member) {
       throw new Error(`Member not found: ${run.agentId}`);
@@ -205,9 +303,14 @@ export class RunService {
       return this.failRun(run, `Agent not found: ${member.id}`);
     }
 
-    const providerName = role.provider;
+    const providerName = normalizeProviderKey(member.llm ?? role.provider ?? '');
     if (providerName && !this.repo.getProviderCredential(run.organizationId, providerName)) {
       return this.failRun(run, `Provider key missing for "${providerName}"`);
+    }
+
+    const preCancel = this.repo.getRun(run.organizationId, run.id);
+    if (preCancel?.status === 'cancelled') {
+      return preCancel;
     }
 
     const running = this.repo.saveRun({
@@ -217,11 +320,20 @@ export class RunService {
       summary: 'Run executing',
     });
 
+    const postCancel = this.repo.getRun(run.organizationId, run.id);
+    if (postCancel?.status === 'cancelled') {
+      return postCancel;
+    }
+
     this.realtime.emit(
       SocketEventNames.runUpdated,
       { organizationId: run.organizationId, run: running },
       this.getRooms(run),
     );
+
+    const abortKey = this.runKey(run.organizationId, run.id);
+    const abortController = new AbortController();
+    this.runAbortControllers.set(abortKey, abortController);
 
     try {
       const result = await this.ai.generateRunReply({
@@ -230,11 +342,27 @@ export class RunService {
         threadId: run.threadId ?? '',
         runId: run.id,
         summary: run.summary,
+        abortSignal: abortController.signal,
       });
 
-      const statuses = result.toolResults.map(
-        (toolResult) => (toolResult.output as { status?: string } | undefined)?.status,
-      );
+      const latestRun = this.repo.getRun(run.organizationId, run.id);
+      if (latestRun && latestRun.status !== 'running') {
+        return latestRun;
+      }
+
+      if (this.consumeDeferredApprovalResume(run.organizationId, run.id)) {
+        const afterApprovedTools = await this.executePendingApprovedTools(running);
+        return this.advanceRun(afterApprovedTools);
+      }
+
+      const statuses = [
+        ...result.toolResults,
+        ...result.steps.flatMap(
+          (step: (typeof result.steps)[number]) => step?.toolResults ?? [],
+        ),
+      ]
+        .map((toolResult) => (toolResult?.output as { status?: string } | undefined)?.status)
+        .filter((status): status is string => typeof status === 'string');
       if (statuses.includes('blocked')) {
         return this.failRun(running, 'Tool action blocked');
       }
@@ -243,8 +371,18 @@ export class RunService {
         return this.waitForApproval(running, 'Waiting for approval');
       }
 
+      const pendingApprovalExists = this.repo
+        .listPendingApprovals(run.organizationId)
+        .some((approval) => approval.runId === run.id);
+      if (pendingApprovalExists) {
+        return this.waitForApproval(running, 'Waiting for approval');
+      }
+
       const text = result.text.trim();
-      if (text.length > 0 && run.threadId) {
+      const reply = text || 'Acknowledged.';
+      const reasoningContent = extractReasoningChunk(result);
+      const skipFinalThreadMessage = runUsedThreadPublishingTool(result);
+      if (run.threadId && !skipFinalThreadMessage) {
         this.conversations.publishMessage(
           MessageSchema.parse({
             id: randomUUID(),
@@ -252,17 +390,31 @@ export class RunService {
             threadId: run.threadId,
             channelId: this.repo.getThread(run.organizationId, run.threadId)?.channelId,
             senderId: run.agentId,
-            senderKind: 'agent',
-            kind: 'agent',
-            content: text,
+            senderKind: AGENT_KIND,
+            kind: AGENT_KIND,
+            content: reply,
+            ...(reasoningContent ? { reasoningContent } : {}),
             createdAt: new Date().toISOString(),
           }),
         );
       }
 
-      return this.completeRun(running, text || 'Run completed');
+      return this.completeRun(running, reply);
     } catch (error) {
+      if (error instanceof ToolApprovalRequiredError) {
+        if (this.consumeDeferredApprovalResume(run.organizationId, run.id)) {
+          const afterApprovedTools = await this.executePendingApprovedTools(running);
+          return this.advanceRun(afterApprovedTools);
+        }
+        return this.waitForApproval(running, 'Waiting for approval');
+      }
+      const latestAfterError = this.repo.getRun(run.organizationId, run.id);
+      if (latestAfterError?.status === 'cancelled') {
+        return latestAfterError;
+      }
       return this.failRun(running, (error as Error).message);
+    } finally {
+      this.runAbortControllers.delete(abortKey);
     }
   }
 
@@ -319,12 +471,62 @@ export class RunService {
     return failed;
   }
 
-  private requireTeam(): AgentTeamHandle {
-    const team = this.teamStore.getTeam();
-    if (!team) {
-      throw new Error('Team config not loaded');
+  private consumeDeferredApprovalResume(organizationId: string, runId: string): boolean {
+    const key = this.runKey(organizationId, runId);
+    if (!this.deferredApprovalResumes.has(key)) {
+      return false;
     }
-    return team;
+    this.deferredApprovalResumes.delete(key);
+    return true;
+  }
+
+  private async executePendingApprovedTools(run: RunState): Promise<RunState> {
+    const runSteps =
+      typeof this.repo.listRunSteps === 'function'
+        ? this.repo.listRunSteps(run.organizationId, run.id)
+        : [];
+    const pendingApprovalToolCallIds = new Set(
+      this.repo
+        .listPendingApprovals(run.organizationId)
+        .filter((approval) => approval.runId === run.id && approval.toolCallId)
+        .map((approval) => approval.toolCallId as string),
+    );
+    const pendingSteps = runSteps
+      .filter((step) => {
+        const output = step.output as { status?: unknown } | undefined;
+        return (
+          output?.status === 'waiting_for_approval' &&
+          !pendingApprovalToolCallIds.has(step.toolCallId)
+        );
+      });
+
+    for (const step of pendingSteps) {
+      const invocation: ToolInvocationInput = {
+        organizationId: step.organizationId,
+        runId: step.runId,
+        memberId: step.agentId,
+        threadId: step.threadId,
+        toolCallId: step.toolCallId,
+        toolId: step.toolId,
+        action: step.action,
+        resourceType: step.resourceType,
+        resourcePath: step.resourcePath || undefined,
+        input: step.input,
+        bypassPermission: true,
+      };
+
+      try {
+        await this.tools.invoke(invocation);
+      } catch {
+        // Tool failures are already persisted by ToolService; keep going.
+      }
+    }
+
+    return run;
+  }
+
+  private runKey(organizationId: string, runId: string): string {
+    return `${organizationId}:${runId}`;
   }
 }
 

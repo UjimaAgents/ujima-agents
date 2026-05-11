@@ -1,0 +1,513 @@
+diff --git a/apps/web/src/features/workspace/components/channel-view.tsx b/apps/web/src/features/workspace/components/channel-view.tsx
+index 426c64c..2107eb2 100644
+--- a/apps/web/src/features/workspace/components/channel-view.tsx
++++ b/apps/web/src/features/workspace/components/channel-view.tsx
+@@ -1,7 +1,10 @@
+ "use client";
+ 
+-import { useState } from "react";
+-import { MessageSquare } from "lucide-react";
++import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
++import { ChevronDown, MessageSquare } from "lucide-react";
++import type { BootstrapResponse } from "@ujima/api-schema";
++import type { SelectedConversation } from "../types";
++import { useConversationSync } from "../use-conversation-sync";
+ import { DragHandle } from "./workspace-shell";
+ import {
+   ChatHeader,
+@@ -10,13 +13,12 @@ import {
+   ChatInput,
+   DetailsSidebar,
+   ChatMessage,
++  ApprovalCard,
+   type ChatTab,
+-  type ChatMessageData,
+ } from "./chat";
+-import type { BootstrapResponse } from "@ujima/api-schema";
+-import type { SelectedConversation } from "../types";
++import { StatusBadge } from "./chat/primitives";
++import type { RunState } from "@ujima/shared";
+ 
+-/* ── Tab config (reusable) ─────────────────────────────────────────── */
+ const CHANNEL_TABS: ChatTab[] = [
+   { id: "conversation", label: "Conversation" },
+   { id: "approvals", label: "Approvals" },
+@@ -30,8 +32,13 @@ const AGENT_TABS: ChatTab[] = [
+   { id: "activity", label: "Activity" },
+ ];
+ 
+-/* ── Empty state ───────────────────────────────────────────────────── */
+-function EmptyChat({ conversation }: { conversation: SelectedConversation }) {
++function EmptyChat({
++  conversation,
++  loading,
++}: {
++  conversation: SelectedConversation;
++  loading?: boolean;
++}) {
+   const isAgent = conversation.type === "agent";
+   return (
+     <div className="flex-1 flex flex-col items-center justify-center px-6">
+@@ -39,119 +46,255 @@ function EmptyChat({ conversation }: { conversation: SelectedConversation }) {
+         <MessageSquare className="h-7 w-7 text-zinc-400" />
+       </div>
+       <h3 className="mt-4 text-sm font-semibold text-zinc-900 dark:text-white">
+-        {isAgent
+-          ? `Start a conversation with ${conversation.name}`
+-          : `Welcome to #${conversation.name}`}
++        {loading
++          ? "Loading conversation…"
++          : isAgent
++            ? `Start a conversation with ${conversation.name}`
++            : `Welcome to #${conversation.name}`}
+       </h3>
+       <p className="mt-1 text-xs text-zinc-500 max-w-xs text-center">
+-        {isAgent
+-          ? "Send a message or assign a task to get started."
+-          : "This is the beginning of the channel. Send a message to start collaborating."}
++        {loading
++          ? "Pulling the latest thread history and live updates."
++          : isAgent
++            ? "Send a message or assign a task to get started."
++            : "This is the beginning of the channel. Send a message to start collaborating."}
+       </p>
+     </div>
+   );
+ }
+ 
+-/* ── ChannelView ───────────────────────────────────────────────────── */
++const ACTIVE_RUN_STATES: RunState["status"][] = [
++  "queued",
++  "running",
++  "waiting_for_approval",
++];
++
+ interface ChannelViewProps {
+   bootstrap: BootstrapResponse;
+   conversation: SelectedConversation;
++  members: BootstrapResponse["members"];
+ }
+ 
+-export function ChannelView({ bootstrap, conversation }: ChannelViewProps) {
++export function ChannelView({ bootstrap, conversation, members }: ChannelViewProps) {
+   const [activeTab, setActiveTab] = useState("conversation");
+   const [showDetails, setShowDetails] = useState(false);
+   const [detailsWidth, setDetailsWidth] = useState(25);
+   const [detailsTab, setDetailsTab] = useState("Reasoning trace");
+-  const [messages, setMessages] = useState<ChatMessageData[]>([]);
++  const [isAtBottom, setIsAtBottom] = useState(true);
++  const [unseenUpdates, setUnseenUpdates] = useState(0);
++  const listRef = useRef<HTMLDivElement>(null);
++  const previousFeedSignal = useRef("");
++  const feed = useConversationSync(bootstrap, conversation, members);
++
++  useEffect(() => {
++    setActiveTab("conversation");
++    setIsAtBottom(true);
++    setUnseenUpdates(0);
++    previousFeedSignal.current = "";
++    requestAnimationFrame(() => {
++      listRef.current?.scrollTo({ top: listRef.current.scrollHeight });
++    });
++  }, [conversation.id, conversation.type]);
+ 
+   const isAgent = conversation.type === "agent";
+-  const conversationMemberIndex = bootstrap.members.findIndex(
+-    (member) => member.id === conversation.id,
+-  );
+   const tabs = isAgent ? AGENT_TABS : CHANNEL_TABS;
+-  const sender = bootstrap.auth.member;
+-
+-  const sendMessage = async (content: string) => {
+-    if (!bootstrap.organization?.id || !sender) {
+-      throw new Error("Sign in before sending messages.");
++  const conversationColorIndex = Math.max(
++    members.findIndex((member) => member.id === conversation.id),
++    0,
++  );
++  const selectedStatus =
++    conversation.type === "channel"
++      ? { variant: "active" as const, label: "Active" }
++      : feed.status;
++  const activeRun = useMemo(
++    () => [...feed.runs].reverse().find((run) => ACTIVE_RUN_STATES.includes(run.status)),
++    [feed.runs],
++  );
++  const typingLabel = useMemo(() => {
++    if (!activeRun) return undefined;
++    const memberName =
++      members.find((member) => member.id === activeRun.agentId)?.name ?? activeRun.agentId;
++    if (activeRun.status === "waiting_for_approval") {
++      return `${memberName} is waiting for approval…`;
+     }
++    return isAgent
++      ? `${conversation.name} is responding…`
++      : `${memberName} is responding…`;
++  }, [activeRun, conversation.name, isAgent, members]);
++  const headerSubtitle =
++    typingLabel ?? (feed.loading ? "Syncing live history from the backend…" : "Connected to the conversation stream.");
++
++  const tabCounts = useMemo(() => {
++    const activeRuns = feed.runs.filter(
++      (run) =>
++        run.status === "queued" ||
++        run.status === "running" ||
++        run.status === "waiting_for_approval",
++    ).length;
++    const pendingApprovals = feed.approvals.filter((approval) => approval.title.toLowerCase().includes("requested") || approval.title.toLowerCase().includes("pending")).length;
++    return {
++      approvals: pendingApprovals,
++      tasks: activeRuns,
++      activity: feed.activity.length,
++      files: 0,
++    };
++  }, [feed.activity.length, feed.approvals, feed.runs]);
+ 
+-    const response = await fetch("/api/messages", {
+-      method: "POST",
+-      body: JSON.stringify({
+-        organizationId: bootstrap.organization.id,
+-        threadId: conversation.id,
+-        channelId:
+-          conversation.type === "channel" ? conversation.id : undefined,
+-        senderId: sender.id,
+-        content,
+-      }),
++  const scrollToLatest = useCallback((behavior: ScrollBehavior = "smooth") => {
++    listRef.current?.scrollTo({
++      top: listRef.current.scrollHeight,
++      behavior,
+     });
+-    const body = await response.json().catch(() => null);
+-
+-    if (!response.ok) {
+-      throw new Error(
+-        body &&
+-          typeof body === "object" &&
+-          "message" in body &&
+-          typeof body.message === "string"
+-          ? body.message
+-          : "Unable to send message.",
+-      );
++  }, []);
++
++  const handleScroll = useCallback(() => {
++    const list = listRef.current;
++    if (!list) return;
++    const distanceFromBottom = list.scrollHeight - list.scrollTop - list.clientHeight;
++    const atBottom = distanceFromBottom < 96;
++    setIsAtBottom(atBottom);
++    if (atBottom) {
++      setUnseenUpdates(0);
+     }
++  }, []);
+ 
+-    setMessages((current) => [
+-      ...current,
+-      {
+-        id: typeof body?.id === "string" ? body.id : crypto.randomUUID(),
+-        role: sender.roleName,
+-        name: sender.name,
+-        time: "now",
+-        content,
+-      },
+-    ]);
+-  };
++  useEffect(() => {
++    const signal = `${feed.messages.length}:${feed.approvals.length}:${feed.runs.length}:${feed.activity.length}:${feed.loading ? 1 : 0}`;
++    if (!previousFeedSignal.current) {
++      previousFeedSignal.current = signal;
++      if (feed.messages.length > 0) {
++        requestAnimationFrame(() => scrollToLatest("auto"));
++      }
++      return;
++    }
++    if (previousFeedSignal.current === signal) return;
++    previousFeedSignal.current = signal;
++    if (isAtBottom) {
++      requestAnimationFrame(() => scrollToLatest("smooth"));
++    } else {
++      setUnseenUpdates((count) => count + 1);
++    }
++  }, [feed.activity.length, feed.approvals.length, feed.loading, feed.messages.length, feed.runs.length, isAtBottom, scrollToLatest]);
+ 
+   return (
+     <div className="flex flex-1 overflow-hidden bg-white dark:bg-[#09090b]">
+-      {/* Main chat column */}
+-      <div className="flex-1 flex flex-col min-w-0">
++      <div className="flex flex-1 min-w-0 flex-col">
+         <ChatHeader
+           title={conversation.name}
+           type={conversation.type === "agent" ? "dm" : "channel"}
+           avatarName={isAgent ? conversation.name : undefined}
+-          avatarColorIndex={Math.max(conversationMemberIndex, 0)}
+-          status={conversation.type === "agent" ? "active" : "active"}
+-          statusLabel={conversation.type === "agent" ? "online" : "Active"}
++          avatarColorIndex={conversationColorIndex}
++          status={selectedStatus.variant}
++          statusLabel={selectedStatus.label}
++          subtitle={headerSubtitle}
+           showDetails={showDetails}
+           onToggleDetails={() => setShowDetails(!showDetails)}
+         />
+         <ChatTabs
+-          tabs={tabs}
++          tabs={tabs.map((tab) => ({
++            ...tab,
++            count:
++              tab.id === "approvals"
++                ? tabCounts.approvals
++                : tab.id === "tasks"
++                  ? tabCounts.tasks
++                  : tab.id === "activity"
++                    ? tabCounts.activity
++                    : tab.id === "files"
++                      ? tabCounts.files
++                      : undefined,
++            countVariant: tab.id === "approvals" && tabCounts.approvals > 0 ? "warning" : "default",
++          }))}
+           activeTab={activeTab}
+           onTabChange={setActiveTab}
+         />
+-        <ChatMessageList>
+-          {messages.length > 0 ? (
+-            messages.map((message) => (
+-              <ChatMessage key={message.id} message={message} />
+-            ))
++        {activeTab === "conversation" ? (
++          <div className="relative flex-1 min-h-0">
++            <ChatMessageList ref={listRef} onScroll={handleScroll}>
++              {feed.loading && feed.messages.length === 0 ? (
++                <ConversationSkeleton conversation={conversation} />
++              ) : feed.messages.length > 0 ? (
++                <>
++                  {feed.messages.map((message) => (
++                    <ChatMessage
++                      key={message.id}
++                      message={message}
++                      colorIndex={Math.max(
++                        members.findIndex((member) => member.id === message.senderId),
++                        0,
++                      )}
++                    />
++                  ))}
++                  {typingLabel && <TypingIndicator label={typingLabel} />}
++                </>
++              ) : (
++                <EmptyChat conversation={conversation} />
++              )}
++            </ChatMessageList>
++            {!isAtBottom && unseenUpdates > 0 && (
++              <button
++                type="button"
++                onClick={() => {
++                  scrollToLatest();
++                  setUnseenUpdates(0);
++                }}
++                className="absolute bottom-4 right-4 inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white/95 px-3 py-2 text-[11px] font-semibold text-zinc-900 shadow-lg shadow-zinc-950/10 backdrop-blur hover:border-violet-300 hover:text-violet-700 dark:border-zinc-800 dark:bg-zinc-950/95 dark:text-zinc-100"
++              >
++                <ChevronDown className="h-3.5 w-3.5" />
++                {unseenUpdates} new update{unseenUpdates === 1 ? "" : "s"}
++              </button>
++            )}
++          </div>
++        ) : activeTab === "approvals" ? (
++          feed.approvals.length > 0 ? (
++            <TabPanel>
++              <div className="space-y-2">
++                {feed.approvals.map((approval) => (
++                  <ApprovalCard key={approval.id} data={approval} />
++                ))}
++              </div>
++            </TabPanel>
++          ) : (
++            <TabEmpty emptyLabel="No approvals yet." />
++          )
++        ) : activeTab === "tasks" ? (
++          feed.runs.length > 0 ? (
++            <TabPanel>
++              <div className="space-y-2">
++                {feed.runs.map((run) => (
++                  <RunCard key={run.id} run={run} />
++                ))}
++              </div>
++            </TabPanel>
++          ) : (
++            <TabEmpty emptyLabel="No active tasks yet." />
++          )
++        ) : activeTab === "files" ? (
++          <TabEmpty emptyLabel="No file changes for this conversation yet." />
++        ) : (
++          feed.activity.length > 0 ? (
++            <TabPanel>
++              <div className="space-y-2">
++                {feed.activity.slice().reverse().map((event) => (
++                  <ActivityRow key={event.event_id} event={event} />
++                ))}
++              </div>
++            </TabPanel>
+           ) : (
+-            <EmptyChat conversation={conversation} />
+-          )}
+-        </ChatMessageList>
++            <TabEmpty emptyLabel="No activity yet." />
++          )
++        )}
+         <ChatInput
+           placeholder={
+             isAgent
+               ? `Message @${conversation.name}...`
+               : `Message #${conversation.name} or @agent...`
+           }
+-          onSend={sendMessage}
++          statusHint={typingLabel ?? (feed.loading ? "Syncing history…" : "Enter to send, Shift+Enter for a new line.")}
++          onSend={feed.sendMessage}
+         />
+       </div>
+ 
+-      {/* Right details sidebar */}
+       {showDetails && (
+         <>
+           <DragHandle side="right" onResize={setDetailsWidth} />
+@@ -161,8 +304,8 @@ export function ChannelView({ bootstrap, conversation }: ChannelViewProps) {
+           >
+             <DetailsSidebar
+               agentName={conversation.name}
+-              agentColorIndex={1}
+-              statusLabel="online"
++              agentColorIndex={conversationColorIndex}
++              statusLabel={selectedStatus.label}
+               timeLabel="—"
+               tabs={["Reasoning trace", "Changes", "Metadata"]}
+               activeTab={detailsTab}
+@@ -177,3 +320,130 @@ export function ChannelView({ bootstrap, conversation }: ChannelViewProps) {
+     </div>
+   );
+ }
++
++function TabPanel({ children }: { children: ReactNode }) {
++  return (
++    <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4">
++      {children}
++    </div>
++  );
++}
++
++function TabEmpty({ emptyLabel }: { emptyLabel: string }) {
++  return (
++    <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4">
++      <div className="flex h-full items-center justify-center text-xs text-zinc-500">
++        {emptyLabel}
++      </div>
++    </div>
++  );
++}
++
++function RunCard({ run }: { run: RunState }) {
++  return (
++    <div className="rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3 dark:border-zinc-800 dark:bg-zinc-900/50">
++      <div className="flex items-center justify-between gap-3">
++        <div className="min-w-0">
++          <p className="text-xs font-bold text-zinc-900 dark:text-white">
++            {run.summary || "Run"}
++          </p>
++          <p className="text-[10px] text-zinc-500">
++            {run.step || run.status} · {run.agentId}
++          </p>
++        </div>
++        <StatusBadge variant={runStatusVariant(run.status)} label={run.status} />
++      </div>
++    </div>
++  );
++}
++
++function ActivityRow({ event }: { event: { event_id: string; type: string; publisher: string; timestamp: string; task_id?: string; payload?: unknown } }) {
++  return (
++    <div className="rounded-xl border border-zinc-200 bg-white px-3 py-2 text-xs dark:border-zinc-800 dark:bg-zinc-950">
++      <div className="flex items-center justify-between gap-3">
++        <div className="min-w-0">
++          <p className="font-semibold text-zinc-900 dark:text-white">{event.type}</p>
++          <p className="text-[10px] text-zinc-500">
++            {event.publisher}
++            {event.task_id ? ` · ${event.task_id}` : ""}
++          </p>
++        </div>
++        <span className="text-[10px] text-zinc-400">
++          {formatActivityTime(event.timestamp)}
++        </span>
++      </div>
++    </div>
++  );
++}
++
++function runStatusVariant(status: RunState["status"]) {
++  switch (status) {
++    case "completed":
++      return "active" as const;
++    case "running":
++      return "active" as const;
++    case "waiting_for_approval":
++      return "idle" as const;
++    case "failed":
++    case "cancelled":
++      return "error" as const;
++    default:
++      return "idle" as const;
++  }
++}
++
++function formatActivityTime(iso: string): string {
++  const parsed = Date.parse(iso);
++  if (Number.isNaN(parsed)) return "now";
++  return new Date(parsed).toLocaleTimeString([], {
++    hour: "numeric",
++    minute: "2-digit",
++  });
++}
++
++function ConversationSkeleton({
++  conversation,
++}: {
++  conversation: SelectedConversation;
++}) {
++  return (
++    <div className="space-y-2">
++      {Array.from({ length: 3 }).map((_, index) => (
++        <div
++          key={index}
++          className={`flex gap-3 rounded-xl border border-zinc-200 px-3 py-3 dark:border-zinc-800 ${
++            index === 0 ? "bg-zinc-50 dark:bg-zinc-900/50" : "bg-white dark:bg-zinc-950"
++          }`}
++        >
++          <div className="h-7 w-7 animate-pulse rounded-lg bg-zinc-200 dark:bg-zinc-800" />
++          <div className="flex-1 space-y-2">
++            <div className="h-2.5 w-24 animate-pulse rounded-full bg-zinc-200 dark:bg-zinc-800" />
++            <div className="h-2.5 w-full max-w-[28rem] animate-pulse rounded-full bg-zinc-200 dark:bg-zinc-800" />
++            <div className="h-2.5 w-2/3 animate-pulse rounded-full bg-zinc-200 dark:bg-zinc-800" />
++          </div>
++        </div>
++      ))}
++      <div className="rounded-xl border border-dashed border-zinc-200 bg-zinc-50 px-4 py-3 text-[11px] text-zinc-500 dark:border-zinc-800 dark:bg-zinc-950">
++        {conversation.type === "agent"
++          ? `${conversation.name} will start appearing here as soon as the first message lands.`
++          : `Live updates for #${conversation.name} will appear here as the workspace activity starts flowing.`}
++      </div>
++    </div>
++  );
++}
++
++function TypingIndicator({ label }: { label: string }) {
++  return (
++    <div className="flex items-center gap-3 px-3 py-2">
++      <div className="h-7 w-7 rounded-lg bg-violet-500/15 ring-1 ring-violet-500/20" />
++      <div className="flex items-center gap-2 rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-[11px] font-medium text-violet-700 dark:border-violet-500/20 dark:bg-violet-500/10 dark:text-violet-300">
++        <span className="inline-flex items-center gap-1.5">
++          <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current [animation-delay:-0.2s]" />
++          <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current [animation-delay:-0.1s]" />
++          <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current" />
++        </span>
++        <span>{label}</span>
++      </div>
++    </div>
++  );
++}

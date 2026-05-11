@@ -44,6 +44,8 @@ bun install
 - `createRoleFromPreset`
 - `defineRole`
 - `normalizeRoles`
+- `listStarterRolePresets`
+- `listRoleIndustries`
 - `createPersonalityFromPreset`
 - `definePersonality`
 - `defineProvider`
@@ -52,6 +54,13 @@ bun install
 - `normalizeTools`
 - `createOrganizationChart`
 - `createWorkspaceConfig`
+
+## Role Catalog
+
+- The full preset catalog lives under `packages/ujima/src/roles/<industry>/`.
+- Each role template is a standalone TypeScript module, grouped the same way as the upstream `agency-agents` repo.
+- `ROLE_PRESETS` flattens that foldered registry for lookup and compatibility.
+- `createStarterAgentTeamConfig` only uses the curated starter subset, so the starter team stays small even though the catalog is large.
 
 ## Quick Start
 

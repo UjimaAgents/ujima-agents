@@ -63,6 +63,34 @@ export function getRun(
   return row ? rowToRun(row) : null;
 }
 
+const ACTIVE_RUN_STATUSES = ['queued', 'running', 'waiting_for_approval'] as const;
+
+/**
+ * Returns a non-terminal run for the same agent + conversation thread, if any.
+ * Used to suppress duplicate conversational wakes while a run is still active.
+ */
+export function findActiveRunForMemberThread(
+  db: DbHandle,
+  organizationId: string,
+  agentId: string,
+  threadId: string,
+): RunState | null {
+  const placeholders = ACTIVE_RUN_STATUSES.map(() => '?').join(', ');
+  const row = db
+    .prepare(
+      `SELECT * FROM runs
+       WHERE organization_id = ?
+         AND agent_id = ?
+         AND thread_id = ?
+         AND status IN (${placeholders})
+       ORDER BY started_at DESC
+       LIMIT 1`,
+    )
+    .get(organizationId, agentId, threadId, ...ACTIVE_RUN_STATUSES) as Row | null;
+
+  return row ? rowToRun(row) : null;
+}
+
 export function listRuns(
   db: DbHandle,
   organizationId: string,

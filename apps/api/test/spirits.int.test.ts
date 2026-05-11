@@ -855,11 +855,12 @@ describe('SupervisorService — Phase 2.C', () => {
     expect((result.output as { code?: string }).code).toBe('ERR_SUPERVISOR_ALLOWLIST');
   });
 
-  it('SUPERVISOR_TOOL_ALLOWLIST contains supervisor.todo.* and excludes filesystem/shell', () => {
+  it('SUPERVISOR_TOOL_ALLOWLIST contains supervisor.todo.* and web_search, excludes filesystem/shell', () => {
     expect(SUPERVISOR_TOOL_ALLOWLIST).toContain('supervisor.todo.add');
     expect(SUPERVISOR_TOOL_ALLOWLIST).toContain('supervisor.todo.check');
     expect(SUPERVISOR_TOOL_ALLOWLIST).toContain('supervisor.todo.list');
     expect(SUPERVISOR_TOOL_ALLOWLIST).toContain('self.note');
+    expect(SUPERVISOR_TOOL_ALLOWLIST).toContain('web_search');
     expect(SUPERVISOR_TOOL_ALLOWLIST).not.toContain('filesystem');
     expect(SUPERVISOR_TOOL_ALLOWLIST).not.toContain('shell');
     expect(ALWAYS_AVAILABLE_AGENT_TOOLS).toContain('self.note');

@@ -29,6 +29,37 @@ describe('channel.* tools — toInvocation()', () => {
     expect(inv.action).toBe('message');
   });
 
+  it('channel.post resolves a friendly channel name to the stored channel id', async () => {
+    let receivedChannelId: string | undefined;
+    await channelPostTool.execute({
+      invocation: {
+        organizationId: 'org-1',
+        runId: 'run-1',
+        memberId: 'agent-1',
+        toolCallId: 'call-1',
+        toolId: 'channel.post',
+        action: 'message',
+        resourceType: 'message',
+        input: { channel_id: 'general', body: 'hi', mentions: [] },
+      } as never,
+      team: {
+        getChannel: (name: string) => (name === 'general' ? { id: 'channel-general' } : undefined),
+      } as never,
+      repo: {
+        getChannel: (_orgId: string, channelId: string) =>
+          channelId === 'channel-general' ? ({ id: 'channel-general' } as never) : null,
+        listAllChannels: () => [],
+      } as never,
+      conversations: {
+        postToChannel: (input: { channelId: string }) => {
+          receivedChannelId = input.channelId;
+          return input;
+        },
+      } as never,
+    });
+    expect(receivedChannelId).toBe('channel-general');
+  });
+
   it('channel.reply does not emit resourcePath', () => {
     const inv = channelReplyTool.toInvocation({
       message_id: 'msg_1',
@@ -47,6 +78,16 @@ describe('channel.* tools — toInvocation()', () => {
     expect(inv.resourcePath).toBeUndefined();
   });
 
+  it('channel.dm forwards ignore through to the invocation payload', () => {
+    const inv = channelDmTool.toInvocation({
+      member_id: 'alex',
+      body: 'hi',
+      mentions: [],
+      ignore: true,
+    });
+    expect(inv.input).toMatchObject({ ignore: true });
+  });
+
   it('channel.list is tagged as a read', () => {
     const inv = channelListTool.toInvocation({ scope: 'mine' });
     expect(inv.action).toBe('read');
@@ -60,6 +101,38 @@ describe('channel.* tools — toInvocation()', () => {
     });
     expect(inv.action).toBe('read');
     expect(inv.resourcePath).toBeUndefined();
+  });
+
+  it('channel.read resolves a DM recipient id to the DM thread id', async () => {
+    let receivedChannelId: string | undefined;
+    await channelReadTool.execute({
+      invocation: {
+        organizationId: 'org-1',
+        runId: 'run-1',
+        memberId: 'agent-1',
+        toolCallId: 'call-1',
+        toolId: 'channel.read',
+        action: 'read',
+        resourceType: 'message',
+        input: { channel_id: 'agent-2', limit: 50 },
+      } as never,
+      team: {
+        getChannel: () => undefined,
+      } as never,
+      repo: {
+        getChannel: () => null,
+        listAllChannels: () => [],
+        getMember: (_orgId: string, memberId: string) =>
+          memberId === 'agent-2' ? ({ id: 'agent-2' } as never) : null,
+      } as never,
+      conversations: {
+        readChannel: (input: { channelId: string }) => {
+          receivedChannelId = input.channelId;
+          return input;
+        },
+      } as never,
+    });
+    expect(receivedChannelId).toBe('dm:agent-1:agent-2');
   });
 
   // Regression: previously each channel.* tool overrode `permissionToolName`
@@ -91,15 +164,11 @@ describe('channel.* tools — toInvocation()', () => {
   });
 });
 
-// Regression: ALWAYS_AVAILABLE_AGENT_TOOLS used to include all five
-// channel.* tools alongside self.note. Both AiService and the runtime
-// permission-context builder union this list into every role's allowlist
-// and into the AI SDK toolset, which silently bypassed the role's `tools`
-// declaration for channel access. Only `self.note` is meant to be
-// unconditional (the "agent must always be able to think to itself"
-// invariant — also enforced by checkToolPolicy + bypassPermission).
+// Regression: ALWAYS_AVAILABLE_AGENT_TOOLS should stay tiny. Only self.note
+// is unconditional; chat tools must remain in the role's normal `tools`
+// declaration so the role surface stays explicit.
 describe('ALWAYS_AVAILABLE_AGENT_TOOLS', () => {
-  it('contains exactly self.note (no channel.* leaks past the role allowlist)', () => {
+  it('contains exactly self.note (no chat tools leak past the role allowlist)', () => {
     expect([...ALWAYS_AVAILABLE_AGENT_TOOLS]).toEqual(['self.note']);
   });
 

@@ -34,13 +34,29 @@ export function getBootstrapSnapshot(db: DbHandle): BootstrapSnapshot {
     };
   }
 
-  const runs = listRuns(db, organization.id).data;
-  const activeRuns = runs.filter(
+  const allRuns: RunState[] = [];
+  let runsCursor: string | undefined = undefined;
+  do {
+    const page = listRuns(db, organization.id, runsCursor, 500);
+    allRuns.push(...page.data);
+    runsCursor = page.nextCursor;
+  } while (runsCursor);
+
+  const activeRuns = allRuns.filter(
     (run) =>
       run.status === 'queued' ||
       run.status === 'running' ||
       run.status === 'waiting_for_approval',
   );
+  const activeRunIds = new Set(activeRuns.map((run) => run.id));
+
+  const allChannels: Channel[] = [];
+  let channelsCursor: string | undefined = undefined;
+  do {
+    const page = listChannels(db, organization.id, channelsCursor, 500, ['self', 'dm']);
+    allChannels.push(...page.data);
+    channelsCursor = page.nextCursor;
+  } while (channelsCursor);
 
   return {
     organization,
@@ -50,8 +66,10 @@ export function getBootstrapSnapshot(db: DbHandle): BootstrapSnapshot {
     // channel kinds — `self` (agent scratchpads) and `dm` (private 2-member
     // conversations) — at the SQL level so they never enter the snapshot.
     // Member-scoped DM access goes through `listVisibleChannels` instead.
-    channels: listChannels(db, organization.id, undefined, undefined, ['self', 'dm']).data,
-    pendingApprovals: listPendingApprovals(db, organization.id),
+    channels: allChannels,
+    pendingApprovals: listPendingApprovals(db, organization.id).filter(
+      (approval) => !!approval.runId && activeRunIds.has(approval.runId),
+    ),
     activeRuns,
     providerCredentials: listProviderCredentials(db, organization.id),
   };

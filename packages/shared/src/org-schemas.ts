@@ -101,6 +101,8 @@ export const MemberSchema = z.object({
   name: z.string().min(1),
   kind: MemberKindSchema,
   roleName: z.string().min(1),
+  llm: z.string().min(1).optional(),
+  model: z.string().min(1).optional(),
   presence: PresenceStateSchema.default('offline'),
   createdAt: TimestampSchema.optional(),
   retiredAt: TimestampSchema.optional(),
@@ -181,6 +183,36 @@ export const MessageToolCallSchema = z.object({
 });
 export type MessageToolCall = z.infer<typeof MessageToolCallSchema>;
 
+export const AttachmentCategorySchema = z.enum([
+  'image',
+  'document',
+  'audio',
+  'video',
+  'archive',
+  'other',
+]);
+export type AttachmentCategory = z.infer<typeof AttachmentCategorySchema>;
+
+export const AttachmentSchema = z.object({
+  id: IdSchema,
+  organizationId: IdSchema,
+  filename: z.string().min(1),
+  mimeType: z.string().min(1),
+  category: AttachmentCategorySchema,
+  sizeBytes: z.number().int().nonnegative(),
+  storagePath: z.string().min(1),
+  uploadedBy: IdSchema,
+  createdAt: TimestampSchema,
+});
+export type Attachment = z.infer<typeof AttachmentSchema>;
+
+export const MessageAttachmentSchema = z.object({
+  messageId: IdSchema,
+  attachmentId: IdSchema,
+  sortOrder: z.number().int().nonnegative().default(0),
+});
+export type MessageAttachment = z.infer<typeof MessageAttachmentSchema>;
+
 export const MessageSchema = z.object({
   id: IdSchema,
   organizationId: IdSchema,
@@ -190,9 +222,13 @@ export const MessageSchema = z.object({
   senderId: IdSchema,
   senderKind: MemberKindSchema,
   kind: MessageKindSchema.default('human'),
-  content: z.string().min(1),
+  content: z.string(),
+  /** Model "thinking" / reasoning from the previous turn; required by some APIs to be echoed back. */
+  reasoningContent: z.string().optional(),
   mentions: z.array(IdSchema).default([]),
+  mentionNames: z.array(z.string().min(1)).optional(),
   toolCalls: z.array(MessageToolCallSchema).default([]),
+  attachments: z.array(AttachmentSchema).default([]),
   createdAt: TimestampSchema,
   editedAt: TimestampSchema.optional(),
   deletedAt: TimestampSchema.optional(),
@@ -230,6 +266,9 @@ export const ApprovalRequestSchema = z.object({
   id: IdSchema,
   organizationId: IdSchema,
   runId: IdSchema.optional(),
+  toolCallId: IdSchema.optional(),
+  /** Conversation thread that produced this approval (from the parent run). */
+  threadId: IdSchema.optional(),
   requestedBy: IdSchema,
   resourceType: ResourceTypeSchema,
   resourcePath: z.string().min(1),
@@ -266,6 +305,24 @@ export const RunStateSchema = z.object({
   endedAt: TimestampSchema.optional(),
 });
 export type RunState = z.infer<typeof RunStateSchema>;
+
+export const RunStepSchema = z.object({
+  id: IdSchema,
+  organizationId: IdSchema,
+  runId: IdSchema,
+  threadId: IdSchema.optional(),
+  agentId: IdSchema,
+  toolCallId: IdSchema,
+  toolId: z.string().min(1),
+  action: ToolActionSchema,
+  resourceType: ResourceTypeSchema,
+  resourcePath: z.string().default(''),
+  input: z.record(z.string(), z.unknown()).default({}),
+  output: z.unknown().optional(),
+  status: AuditStatusSchema.default('ok'),
+  createdAt: TimestampSchema,
+});
+export type RunStep = z.infer<typeof RunStepSchema>;
 
 // -----------------------------------------------------------------------
 // Task session aggregate (Phase 1 of the unified task shell)

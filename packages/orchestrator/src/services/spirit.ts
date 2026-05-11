@@ -1,13 +1,7 @@
 import { randomUUID } from 'node:crypto';
+import { stepCountIs, type LanguageModel, type ToolSet } from 'ai';
 import {
-  stepCountIs,
-  streamText,
-  tool,
-  type LanguageModel,
-  type ModelMessage,
-  type ToolSet,
-} from 'ai';
-import {
+  DEFAULT_SPIRIT_TEMPERATURE,
   MessageSchema,
   RunStateSchema,
   SocketEventNames,
@@ -17,26 +11,37 @@ import {
   memberRoom,
   orgRoom,
   runRoom,
-  type Member,
-  type Message,
   type MessageCard,
   type MessageToolCall,
   type Spirit,
+  type SpiritRole,
+  AGENT_KIND,
 } from '@ujima/shared';
-import { buildAgentSystemPrompt, type AgentTeamHandle, type ProviderKind } from '@ujima/framework';
-import { selectLanguageModel } from '@ujima/llm';
+import { buildAgentSystemPrompt, type AgentTeamHandle } from '@ujima/framework';
+import { requireOrganization } from '../utils/require-organization.js';
+import { requireTeam } from '../utils/require-team.js';
+import { runAgentLoop } from './agent-loop.js';
+import {
+  toModelMessages,
+  resolveSpiritModel,
+  defaultResolveProviderName,
+  defaultResolveModelId,
+  buildToolDefinitions,
+} from '../utils/to-model-messages.js';
 import {
   ALWAYS_AVAILABLE_AGENT_TOOLS,
-  ORCHESTRATOR_TOOLS,
   SUPERVISOR_TOOL_ALLOWLIST,
 } from '../tools/index.js';
-import type { OrchestratorTool } from '../tools/types.js';
 import { ActiveSpiritRegistry, isAliveStatus } from './active-spirit-registry.js';
 import type { ConversationService } from './conversation.js';
 import type { RealtimeService } from './context.js';
 import type { ApiRepository } from './repository-reader.js';
 import type { TeamStore } from './team-store.js';
 import type { ToolService } from './tool-service.js';
+import { ToolApprovalRequiredError } from './tool-loop-result.js';
+import { extractReasoningChunk } from '../utils/extract-reasoning.js';
+import { buildRunTranscript } from '../utils/run-transcript.js';
+import type { ToolInvocationInput } from './tool-service.js';
 
 // ----------------------------------------------------------------------
 // SpiritService — Phase 2.A.4
@@ -60,31 +65,10 @@ import type { ToolService } from './tool-service.js';
 // approval gate, and audit trail all apply.
 // ----------------------------------------------------------------------
 
-const SUPPORTED_PROVIDER_KINDS: ReadonlySet<ProviderKind> = new Set([
-  'anthropic',
-  'openai',
-  'google',
-  'openrouter',
-  'ollama',
-]);
-
-function resolveProviderKind(
-  providerName: string,
-  declared: ProviderKind | undefined,
-): ProviderKind {
-  if (declared) return declared;
-  if (providerName === 'openai' || providerName === 'anthropic' || providerName === 'google') {
-    return providerName;
-  }
-  throw new Error(
-    `Provider "${providerName}" has no \`kind\` declared. Add \`kind\` to the provider config.`,
-  );
-}
-
 export interface ModelResolverInput {
   organizationId: string;
   memberId: string;
-  role: 'worker' | 'supervisor';
+  role: SpiritRole;
 }
 
 /**
@@ -123,7 +107,7 @@ export interface SpawnSpiritInput {
   organizationId: string;
   taskSessionId: string;
   memberId: string;
-  role?: 'worker' | 'supervisor';
+  role?: SpiritRole;
 }
 
 export interface RunSpiritInput {
@@ -137,7 +121,7 @@ export interface RunSpiritInput {
   /** Restrict the tool palette to a specific allowlist (supervisor mode). */
   toolAllowlist?: readonly string[];
   /** Force role on the spirit row. Default 'worker'. */
-  role?: 'worker' | 'supervisor';
+  role?: SpiritRole;
 }
 
 export interface RunSpiritOutcome {
@@ -165,7 +149,7 @@ export class SpiritService {
   ) {
     this.maxIterationsPerRun = options.maxIterationsPerRun ?? 12;
     this.maxOutputTokens = options.maxOutputTokens;
-    this.temperature = options.temperature ?? 0.2;
+    this.temperature = options.temperature ?? DEFAULT_SPIRIT_TEMPERATURE;
     this.modelResolver = options.modelResolver ?? this.defaultModelResolver();
     this.registry = options.registry ?? new ActiveSpiritRegistry();
     this.conversations = options.conversations;
@@ -189,7 +173,7 @@ export class SpiritService {
   bootstrap(organizationId: string): void {
     const members = this.repo.listMembers(organizationId);
     for (const member of members) {
-      if (member.kind !== 'agent') continue;
+      if (member.kind !== AGENT_KIND) continue;
       const active = this.repo.listActiveSpiritsForMember(organizationId, member.id);
       // `listActiveSpiritsForMember` is `updated_at DESC`. Register
       // in reverse so the newest spirit ends up with the highest
@@ -256,7 +240,7 @@ export class SpiritService {
    * though their DB rows are still valid (the audit's stated bug).
    */
   spawnTracked(input: SpawnSpiritInput): { spirit: Spirit; created: boolean } {
-    this.requireOrganization(input.organizationId);
+    requireOrganization(this.repo, input.organizationId);
     const role = input.role ?? 'worker';
     const session = this.repo.getTaskSession(input.organizationId, input.taskSessionId);
     if (!session) {
@@ -266,7 +250,7 @@ export class SpiritService {
     if (!member) {
       throw new Error(`Member not found: ${input.memberId}`);
     }
-    if (member.kind !== 'agent') {
+    if (member.kind !== AGENT_KIND) {
       // Only agents do work. The originating human is on the channel
       // membership but doesn't get a spirit row.
       throw new Error(`Member "${input.memberId}" is not an agent`);
@@ -435,7 +419,7 @@ export class SpiritService {
     if (!member) {
       throw new Error(`Member not found: ${input.memberId}`);
     }
-    const team = this.requireTeam();
+    const team = requireTeam(this.teamStore);
     const organization = this.repo.getOrganization(input.organizationId);
     if (!organization) {
       throw new Error(`Organization not found: ${input.organizationId}`);
@@ -469,7 +453,7 @@ export class SpiritService {
       .data
       .slice()
       .reverse();
-    const messages = this.toModelMessages(recent, member);
+    const messages = toModelMessages(recent, member.id);
     if (input.extraPrompt) {
       messages.push({ role: 'user', content: input.extraPrompt });
     } else {
@@ -501,6 +485,12 @@ export class SpiritService {
       memberId: input.memberId,
       role,
     });
+    const runTranscript = buildRunTranscript(
+      this.repo.listRunSteps(input.organizationId, spirit.runId ?? spirit.id),
+    );
+    if (runTranscript) {
+      messages.push({ role: 'user', content: runTranscript });
+    }
 
     // Mark running. Both the Spirit row and the paired Run row carry
     // the same status alphabet so the dashboards keep working.
@@ -540,7 +530,7 @@ export class SpiritService {
     let lastText = '';
 
     try {
-      const result = streamText({
+      const result = await runAgentLoop({
         model,
         system,
         messages,
@@ -549,15 +539,7 @@ export class SpiritService {
         ...(this.maxOutputTokens !== undefined ? { maxOutputTokens: this.maxOutputTokens } : {}),
         temperature: this.temperature,
       });
-
-      // Drain the full stream so tool execute() callbacks run and the
-      // finish frame fires. textStream alone closes on text-end and
-      // would skip the usage payload.
-      for await (const part of result.fullStream) {
-        // intentional discard — we only need the side effects
-        void part;
-      }
-      const [steps, usage] = await Promise.all([result.steps, result.usage]);
+      const { steps, usage } = result;
 
       // Each step in `steps` is one model turn. We persist one
       // `kind='agent'` message per step that produced text or tool
@@ -576,16 +558,18 @@ export class SpiritService {
         }
 
         const toolCalls = this.toMessageToolCalls(stepToolCalls, stepToolResults, spirit);
+        const reasoningContent = extractReasoningChunk(step);
         const message = MessageSchema.parse({
           id: randomUUID(),
           organizationId: input.organizationId,
           threadId: session.channelId,
           channelId: session.channelId,
           senderId: member.id,
-          senderKind: 'agent',
-          kind: 'agent',
+          senderKind: AGENT_KIND,
+          kind: AGENT_KIND,
           content: stepText || `[tool turn — ${stepToolCalls.length} call(s)]`,
           toolCalls,
+          ...(reasoningContent ? { reasoningContent } : {}),
           createdAt: new Date().toISOString(),
         });
         this.repo.saveMessage(message);
@@ -659,6 +643,33 @@ export class SpiritService {
         tokensUsed: totalTokens,
       };
     } catch (err) {
+      if (err instanceof ToolApprovalRequiredError) {
+        const waiting: Spirit = SpiritSchema.parse({
+          ...running,
+          status: 'waiting_for_approval',
+          updatedAt: new Date().toISOString(),
+        });
+        this.repo.saveSpirit(waiting);
+        if (spirit.runId) {
+          const run = this.repo.getRun(input.organizationId, spirit.runId);
+          if (run) {
+            this.repo.saveRun({
+              ...run,
+              status: 'waiting_for_approval',
+              step: 'waiting_for_approval',
+              summary: 'Waiting for approval',
+            });
+          }
+        }
+        this.emit(SocketEventNames.spiritUpdated, waiting);
+        return {
+          spirit: waiting,
+          finalText: lastText,
+          iterations: totalTurns,
+          toolCalls: totalToolCalls,
+          tokensUsed: totalTokens,
+        };
+      }
       const message = err instanceof Error ? err.message : String(err);
       const failed: Spirit = SpiritSchema.parse({
         ...running,
@@ -687,13 +698,112 @@ export class SpiritService {
     }
   }
 
+  async resumeAfterApproval(
+    organizationId: string,
+    runId: string,
+    allowRun = true,
+    approvalScope?: string,
+  ): Promise<RunSpiritOutcome | Spirit | null> {
+    const spirit = this.findActiveSpiritByRunId(organizationId, runId);
+    if (!spirit) return null;
+
+    if (allowRun) {
+      this.tools.allowRun(organizationId, runId, approvalScope);
+    } else {
+      const failed = this.updateStatus(organizationId, spirit.id, 'failed', {
+        error: 'Approval rejected by user',
+      });
+      const run = this.repo.getRun(organizationId, runId);
+      if (run) {
+        this.repo.saveRun({
+          ...run,
+          status: 'failed',
+          step: 'failed',
+          summary: 'Approval rejected by user',
+          endedAt: run.endedAt ?? new Date().toISOString(),
+        });
+      }
+      return failed;
+    }
+
+    if (spirit.status === 'running') {
+      return spirit;
+    }
+
+    if (spirit.status !== 'waiting_for_approval') {
+      return spirit;
+    }
+
+    await this.executePendingApprovedTools(spirit);
+    return this.run({
+      organizationId,
+      taskSessionId: spirit.taskSessionId,
+      memberId: spirit.memberId,
+      role: spirit.role,
+    });
+  }
+
   // ------------------------------------------------------------------
   // internals
   // ------------------------------------------------------------------
 
+  private findActiveSpiritByRunId(organizationId: string, runId: string): Spirit | null {
+    for (const member of this.repo.listMembers(organizationId)) {
+      if (member.kind !== AGENT_KIND) continue;
+      const spirit = this.repo
+        .listActiveSpiritsForMember(organizationId, member.id)
+        .find((item) => item.runId === runId);
+      if (spirit) return spirit;
+    }
+    return null;
+  }
+
+  private async executePendingApprovedTools(spirit: Spirit): Promise<void> {
+    const runId = spirit.runId ?? spirit.id;
+    const pendingApprovalToolCallIds = new Set(
+      this.repo
+        .listPendingApprovals(spirit.organizationId)
+        .filter((approval) => approval.runId === runId && approval.toolCallId)
+        .map((approval) => approval.toolCallId as string),
+    );
+    const pendingSteps = this.repo
+      .listRunSteps(spirit.organizationId, runId)
+      .filter((step) => {
+        const output = step.output as { status?: unknown } | undefined;
+        return (
+          output?.status === 'waiting_for_approval' &&
+          !pendingApprovalToolCallIds.has(step.toolCallId)
+        );
+      });
+
+    for (const step of pendingSteps) {
+      const invocation: ToolInvocationInput = {
+        organizationId: step.organizationId,
+        runId: step.runId,
+        memberId: step.agentId,
+        threadId: step.threadId,
+        taskSessionId: spirit.taskSessionId,
+        spiritRole: spirit.role,
+        toolCallId: step.toolCallId,
+        toolId: step.toolId,
+        action: step.action,
+        resourceType: step.resourceType,
+        resourcePath: step.resourcePath || undefined,
+        input: step.input,
+        bypassPermission: true,
+      };
+
+      try {
+        await this.tools.invoke(invocation);
+      } catch {
+        // ToolService persists the failed step; keep replaying the rest.
+      }
+    }
+  }
+
   private resolveToolAllowlist(
     roleTools: readonly string[],
-    role: 'worker' | 'supervisor',
+    role: SpiritRole,
     override: readonly string[] | undefined,
   ): readonly string[] {
     if (override) return override;
@@ -711,46 +821,11 @@ export class SpiritService {
       memberId: string;
       threadId: string;
       taskSessionId: string;
-      spiritRole: 'worker' | 'supervisor';
+      spiritRole: SpiritRole;
       team: AgentTeamHandle;
     },
   ): ToolSet {
-    const entries: [string, OrchestratorTool][] = [];
-    for (const toolId of toolIds) {
-      const def = ORCHESTRATOR_TOOLS[toolId] as OrchestratorTool | undefined;
-      if (def) entries.push([toolId, def]);
-    }
-    // Inline `tool({...})` per iteration mirrors `AiService.buildToolDefinition`
-    // and keeps the `Tool<args, ...>` generic resolved per-iteration. A
-    // `Record<string, ReturnType<typeof tool>>` collapses the generic to
-    // `Tool<never, never>` and breaks the assignment.
-    return Object.fromEntries(
-      entries.map(([toolId, definition]) => [
-        toolId,
-        tool({
-          description: ctx.team.tools[toolId]?.description ?? `${toolId} tool`,
-          inputSchema: definition.schema,
-          execute: async (rawArgs, { toolCallId }) => {
-            const invocationData = definition.toInvocation(rawArgs);
-            const result = await this.tools.invoke({
-              organizationId: ctx.organizationId,
-              runId: ctx.runId,
-              memberId: ctx.memberId,
-              threadId: ctx.threadId,
-              taskSessionId: ctx.taskSessionId,
-              spiritRole: ctx.spiritRole,
-              toolCallId,
-              toolId,
-              ...invocationData,
-            });
-            if (!result.ok) {
-              return { error: result.error ?? 'tool invocation failed' };
-            }
-            return result.output ?? { ok: true };
-          },
-        }),
-      ]),
-    ) as ToolSet;
+    return buildToolDefinitions(toolIds, ctx.team, this.tools, ctx);
   }
 
   private toMessageToolCalls(
@@ -769,6 +844,7 @@ export class SpiritService {
       const toolName = call.toolName ?? 'unknown';
       const args = (call.input as Record<string, unknown> | undefined) ?? {};
       const result = resultsById.get(toolCallId);
+      const isError = isToolCardError(result);
       const card: MessageCard = {
         kind: 'tool.call',
         cardId: randomUUID(),
@@ -778,42 +854,16 @@ export class SpiritService {
         toolName,
         args,
         result,
-        isError: false,
+        isError,
       };
       return {
         toolCallId,
         toolName,
         args,
         result: card,
-        isError: false,
+        isError,
       };
     });
-  }
-
-  private toModelMessages(messages: Message[], self: Member): ModelMessage[] {
-    return messages.map((m) => ({
-      role:
-        m.kind === 'system'
-          ? 'system'
-          : m.senderId === self.id
-            ? 'assistant'
-            : 'user',
-      content: m.content,
-    }));
-  }
-
-  private requireTeam(): AgentTeamHandle {
-    const team = this.teamStore.getTeam();
-    if (!team) {
-      throw new Error('Team config not loaded');
-    }
-    return team;
-  }
-
-  private requireOrganization(organizationId: string): void {
-    if (!this.repo.getOrganization(organizationId)) {
-      throw new Error(`Organization not found: ${organizationId}`);
-    }
   }
 
   private emit(event: string, spirit: Spirit): void {
@@ -1008,43 +1058,20 @@ export class SpiritService {
 
   private defaultModelResolver(): ModelResolver {
     return ({ organizationId, memberId, role }) => {
-      const team = this.requireTeam();
+      const team = requireTeam(this.teamStore);
       const member = this.repo.getMember(organizationId, memberId);
       if (!member) {
         throw new Error(`Member not found: ${memberId}`);
       }
-      const agent = team.getAgent(member.id) ?? team.getAgent(member.name);
-      if (!agent) {
-        throw new Error(`Agent not found: ${memberId}`);
-      }
-      const teamRole = team.getRole(agent.roleName);
-      if (!teamRole) {
-        throw new Error(`Role not found: ${agent.roleName}`);
-      }
-      if (!teamRole.provider) {
-        throw new Error(`Role "${teamRole.name}" is missing a provider`);
-      }
-      const provider = team.getProvider(teamRole.provider);
-      if (!provider) {
-        throw new Error(`Provider not found: ${teamRole.provider}`);
-      }
-      const modelId = pickProviderModel({ teamRole, provider, role });
-      if (!modelId) {
-        throw new Error(`Provider "${teamRole.provider}" has no model id`);
-      }
-      const apiKey = this.repo.getProviderCredential(organizationId, teamRole.provider);
-      if (!apiKey) {
-        throw new Error(`Provider key missing for "${teamRole.provider}"`);
-      }
-      const kind = resolveProviderKind(teamRole.provider, provider.kind);
-      if (!SUPPORTED_PROVIDER_KINDS.has(kind)) {
-        throw new Error(`Unsupported provider kind "${kind}"`);
-      }
-      return selectLanguageModel({
-        kind,
-        modelId,
-        apiKey,
-        baseUrl: provider.baseUrl,
+      return resolveSpiritModel({
+        organizationId,
+        memberId,
+        role,
+        member,
+        team,
+        getProviderCredential: (orgId, key) => this.repo.getProviderCredential(orgId, key),
+        resolveProviderName: defaultResolveProviderName,
+        resolveModelId: defaultResolveModelId,
       });
     };
   }
@@ -1065,6 +1092,8 @@ function deriveTaskSessionOutcome(
   return 'cancelled';
 }
 
+export { defaultResolveModelId as _defaultResolveModelId } from '../utils/to-model-messages.js';
+
 /**
  * Cheaper-tier provider selection helper. Exported so the
  * SupervisorService and any future tier-aware routing can share the
@@ -1078,14 +1107,17 @@ function deriveTaskSessionOutcome(
 export function pickProviderModel(input: {
   teamRole: { model?: string };
   provider: { defaultModel?: string };
-  role: 'worker' | 'supervisor';
+  role: SpiritRole;
 }): string | undefined {
-  const baseModel = input.teamRole.model ?? input.provider.defaultModel;
-  if (input.role !== 'supervisor') return baseModel;
-  const supervisorTier =
-    (input.provider as { supervisorModel?: string; supervisor_model?: string })
-      .supervisorModel ??
-    (input.provider as { supervisorModel?: string; supervisor_model?: string })
-      .supervisor_model;
-  return supervisorTier ?? baseModel;
+  return defaultResolveModelId(
+    input.teamRole,
+    input.provider as { defaultModel?: string; supervisorModel?: string; supervisor_model?: string },
+    input.role,
+  );
+}
+
+function isToolCardError(result: unknown): boolean {
+  if (!result || typeof result !== 'object') return false;
+  const value = result as { error?: unknown; status?: unknown; isError?: unknown };
+  return value.isError === true || typeof value.error === 'string' || value.status === 'blocked';
 }

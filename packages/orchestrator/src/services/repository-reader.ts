@@ -3,6 +3,7 @@ import type {
   AuthSession,
   AuthUser,
   AuditEvent,
+  Attachment,
   Channel,
   ChannelKind,
   ConfigFieldOwnership,
@@ -12,6 +13,7 @@ import type {
   MessageMention,
   Organization,
   RunState,
+  RunStep,
   Spirit,
   SpiritRole,
   TaskSession,
@@ -76,8 +78,24 @@ export interface RepositoryReader {
   listWorkspaceMembers(organizationId: string): WorkspaceMember[];
   getMember(organizationId: string, memberId: string): Member | null;
   listMembers(organizationId: string): Member[];
-  listMessages(organizationId: string, threadId: string): PaginatedMessages;
+  countMessagesSince(
+    organizationId: string,
+    threadId: string,
+    input?: { since?: string; excludeSenderId?: string },
+  ): number;
+  getConversationRead(
+    organizationId: string,
+    memberId: string,
+    threadId: string,
+  ): { organizationId: string; memberId: string; threadId: string; lastReadAt: string } | null;
+  listMessages(
+    organizationId: string,
+    threadId: string,
+    cursor?: string,
+    limit?: number,
+  ): PaginatedMessages;
   getProviderCredential(organizationId: string, providerName: string): string | null;
+  listRunSteps?(organizationId: string, runId: string): RunStep[];
 }
 
 /**
@@ -95,6 +113,7 @@ export interface ConversationRepository extends RepositoryReader {
   ): PaginatedChannels;
   saveChannel(channel: Channel): Channel;
   setChannelMembers(channelId: string, memberIds: string[]): void;
+  deleteChannel(channelId: string): void;
   getThread(organizationId: string, threadId: string): ConversationThread | null;
   ensureThread(thread: ConversationThread): ConversationThread;
   getMessage(organizationId: string, messageId: string): Message | null;
@@ -115,12 +134,27 @@ export interface ConversationRepository extends RepositoryReader {
     query: string,
     options?: { cursor?: string; since?: string; limit?: number },
   ): PaginatedMessages;
+  getAttachment(organizationId: string, attachmentId: string): Attachment | null;
+  listMessageAttachments(messageId: string): Attachment[];
   saveMessage(message: Message): Message;
   updateMessage(message: Message): Message;
+  saveAttachment(attachment: Attachment): Attachment;
+  linkAttachmentsToMessage(messageId: string, attachmentIds: string[]): void;
   replaceMessageMentions(messageId: string, mentions: MessageMention[]): MessageMention[];
   listMessageMentions(messageId: string): MessageMention[];
   deleteMessageMentions(messageId: string): void;
   getRun(organizationId: string, runId: string): RunState | null;
+  findActiveRunForMemberThread(
+    organizationId: string,
+    agentId: string,
+    threadId: string,
+  ): RunState | null;
+  saveConversationRead(
+    organizationId: string,
+    memberId: string,
+    threadId: string,
+    lastReadAt?: string,
+  ): void;
 }
 
 /**
@@ -130,6 +164,8 @@ export interface ConversationRepository extends RepositoryReader {
  */
 export interface ApiRepository extends ConversationRepository {
   saveRun(run: RunState): RunState;
+  saveRunStep(step: RunStep): RunStep;
+  listRunSteps(organizationId: string, runId: string): RunStep[];
   listRuns(
     organizationId: string,
     cursor?: string,
@@ -157,7 +193,16 @@ export interface ApiRepository extends ConversationRepository {
     status: 'approved' | 'rejected',
     reason?: string,
   ): ApprovalRequest | null;
+  deleteApproval(organizationId: string, approvalId: string): void;
   listPendingApprovals(organizationId: string): ApprovalRequest[];
+  hasApprovalGrant(input: {
+    organizationId: string;
+    requestedBy: string;
+    resourceType: ApprovalRequest['resourceType'];
+    resourcePath: string;
+    action: ApprovalRequest['action'];
+    approvalScope: string;
+  }): boolean;
   saveAuditEvent(event: AuditEvent): AuditEvent;
   listAuditEvents(organizationId: string): AuditEvent[];
   /**

@@ -35,6 +35,17 @@ describe('database migrations', () => {
         archived_at TEXT
       );
 
+      CREATE TABLE members (
+        id TEXT PRIMARY KEY,
+        organization_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        role_name TEXT NOT NULL,
+        presence TEXT NOT NULL DEFAULT 'offline',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
       CREATE TABLE messages (
         id TEXT PRIMARY KEY,
         organization_id TEXT NOT NULL,
@@ -63,6 +74,21 @@ describe('database migrations', () => {
         notes            TEXT NOT NULL DEFAULT '',
         created_at       TEXT NOT NULL,
         updated_at       TEXT NOT NULL
+      );
+
+      CREATE TABLE approvals (
+        id               TEXT PRIMARY KEY,
+        organization_id  TEXT NOT NULL,
+        run_id           TEXT,
+        requested_by     TEXT NOT NULL,
+        resource_type    TEXT NOT NULL,
+        resource_path    TEXT NOT NULL,
+        action           TEXT NOT NULL,
+        status           TEXT NOT NULL DEFAULT 'pending',
+        reason           TEXT NOT NULL DEFAULT '',
+        created_at       TEXT NOT NULL,
+        resolved_at      TEXT,
+        tool_call_id     TEXT
       );
     `);
 

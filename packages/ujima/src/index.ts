@@ -17,6 +17,7 @@ export {
 export {
   AgentTeamConfigSchema,
   RoleConfigSchema,
+  RolePresetSchema,
   AgentConfigSchema,
   ChannelConfigSchema,
   PolicySchema,
@@ -37,7 +38,11 @@ export type {
   AgentTeamConfigInput,
 } from './schemas.js';
 
-export { buildAgentSystemPrompt, SHARED_AGENT_SYSTEM_PROMPT } from './prompts.js';
+export {
+  buildAgentSystemPrompt,
+  MESSAGE_TOOL_USAGE_GUIDANCE,
+  SHARED_AGENT_SYSTEM_PROMPT,
+} from './prompts.js';
 
 export {
   listPersonalityPresets,
@@ -46,9 +51,29 @@ export {
   definePersonality,
 } from './personality.js';
 
-export { listRolePresets, getRolePreset, createRoleFromPreset, defineRole, normalizeRoles } from './roles.js';
+export {
+  listRolePresets,
+  listStarterRolePresets,
+  listRoleIndustries,
+  getRolePreset,
+  createRoleFromPreset,
+  defineRole,
+  normalizeRoles,
+} from './roles.js';
 
-export { defineProvider, normalizeProviders } from './providers.js';
+export { defineProvider, normalizeProviderKey, normalizeProviders } from './providers.js';
+export {
+  migrateAgentTeamConfig,
+  TEAM_CONFIG_VERSION,
+  upgradeLegacyDefaultRoleTools,
+} from './team-config-migrations.js';
+
+export {
+  MODEL_OPTIONS_BY_PROVIDER,
+  defaultModelForProvider,
+  getModelOptionsForProvider,
+  type ProviderModelOption,
+} from './model-catalog.js';
 
 export { defineTool, listDefaultToolNames, normalizeTools } from './tools.js';
 

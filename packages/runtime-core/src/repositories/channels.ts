@@ -173,3 +173,8 @@ export function listChannelMemberIds(db: DbHandle, channelId: string): string[] 
 
   return rows.map((row) => row.member_id);
 }
+
+export function deleteChannel(db: DbHandle, channelId: string): void {
+  db.prepare('DELETE FROM channel_members WHERE channel_id = ?').run(channelId);
+  db.prepare('DELETE FROM channels WHERE id = ?').run(channelId);
+}

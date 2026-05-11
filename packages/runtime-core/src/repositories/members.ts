@@ -11,6 +11,8 @@ function rowToMember(row: Row): Member {
     name: rowString(row, 'name'),
     kind: rowString(row, 'kind'),
     roleName: rowString(row, 'role_name'),
+    llm: optionalRowString(row, 'llm'),
+    model: optionalRowString(row, 'model'),
     presence: rowString(row, 'presence'),
     createdAt: optionalRowString(row, 'created_at'),
     retiredAt: optionalRowString(row, 'retired_at'),
@@ -22,12 +24,14 @@ export function saveMember(db: DbHandle, member: Member): Member {
   const timestamp = now();
 
   db.prepare(
-    `INSERT INTO members (id, organization_id, name, kind, role_name, presence, created_at, updated_at, retired_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO members (id, organization_id, name, kind, role_name, llm, model, presence, created_at, updated_at, retired_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
        name = excluded.name,
        kind = excluded.kind,
        role_name = excluded.role_name,
+       llm = excluded.llm,
+       model = excluded.model,
        presence = excluded.presence,
        retired_at = excluded.retired_at,
        updated_at = excluded.updated_at`,
@@ -37,6 +41,8 @@ export function saveMember(db: DbHandle, member: Member): Member {
     payload.name,
     payload.kind,
     payload.roleName,
+    payload.llm ?? null,
+    payload.model ?? null,
     payload.presence,
     payload.createdAt ?? timestamp,
     timestamp,

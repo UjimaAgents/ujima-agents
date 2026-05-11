@@ -1,4 +1,13 @@
+import { randomUUID } from 'node:crypto';
 import type { PermissionMiddleware } from '@ujima/permissions';
+import {
+  SocketEventNames,
+  channelRoom,
+  memberRoom,
+  orgRoom,
+  threadRoom,
+  type MemberAlertFailureStage,
+} from '@ujima/shared';
 import { AiService } from '../ai-service.js';
 import { ActiveSpiritRegistry } from './active-spirit-registry.js';
 import { ApprovalService } from './approval.js';
@@ -49,6 +58,17 @@ export type {
   ReconcileTeamConfigStats,
 } from './config-sync.js';
 export { ConversationService } from './conversation.js';
+export {
+  SELF_NOTE_COMPACTED_MARKER,
+  SELF_NOTE_SUMMARY_MARKER,
+  buildStructuredConversationSummary,
+  buildSelfNoteSummary,
+  formatTimestampedContent,
+  isMessageWithMarker,
+  isCompactedSelfNote,
+  isSelfSummaryNote,
+  toReadableEnglishTimestamp,
+} from './conversation-summary.js';
 export { OnboardingService } from './onboarding.js';
 export type {
   OnboardingInlineTeam,
@@ -157,6 +177,122 @@ export interface ApiServices {
   activeSpirits: ActiveSpiritRegistry;
 }
 
+interface WakeMemberInput {
+  organizationId: string;
+  memberId: string;
+  threadId: string;
+  channelId?: string;
+  messageId: string;
+  byMemberId: string;
+  reason: string;
+}
+
+interface WakeMemberDeps {
+  supervisor: Pick<SupervisorService, 'handleAlert'>;
+  runs: Pick<RunService, 'createRun'>;
+  realtime: Pick<ApiServiceContext['realtime'], 'emit'>;
+  repo: Pick<ApiRepository, 'findActiveRunForMemberThread'>;
+}
+
+function errMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function emitMemberAlertFailed(
+  realtime: Pick<ApiServiceContext['realtime'], 'emit'>,
+  input: WakeMemberInput,
+  stage: MemberAlertFailureStage,
+  error: string,
+  runId?: string,
+): void {
+  const rooms = [
+    orgRoom(input.organizationId),
+    threadRoom(input.threadId),
+    memberRoom(input.memberId),
+    ...(input.channelId ? [channelRoom(input.channelId)] : []),
+  ];
+
+  realtime.emit(
+    SocketEventNames.memberAlertFailed,
+    {
+      organizationId: input.organizationId,
+      memberId: input.memberId,
+      channelId: input.channelId,
+      threadId: input.threadId,
+      messageId: input.messageId,
+      byMemberId: input.byMemberId,
+      reason: input.reason,
+      stage,
+      runId,
+      error,
+      occurredAt: new Date().toISOString(),
+    },
+    rooms,
+  );
+}
+
+export async function wakeMemberWithFailureEvents(
+  deps: WakeMemberDeps,
+  input: WakeMemberInput,
+): Promise<void> {
+  let dispatch: Awaited<ReturnType<SupervisorService['handleAlert']>>;
+  try {
+    dispatch = await deps.supervisor.handleAlert({
+      organizationId: input.organizationId,
+      memberId: input.memberId,
+      channelId: input.channelId,
+      messageId: input.messageId,
+      threadId: input.threadId,
+      byMemberId: input.byMemberId,
+      reason: input.reason,
+    });
+  } catch (error) {
+    emitMemberAlertFailed(
+      deps.realtime,
+      input,
+      'supervisor_dispatch',
+      errMessage(error),
+    );
+    return;
+  }
+
+  if (dispatch.kind !== 'no-active-spirit') {
+    return;
+  }
+
+  const activeRun = deps.repo.findActiveRunForMemberThread(
+    input.organizationId,
+    input.memberId,
+    input.threadId,
+  );
+  if (activeRun) {
+    return;
+  }
+
+  let run: Awaited<ReturnType<RunService['createRun']>>;
+  try {
+    run = await deps.runs.createRun({
+      organizationId: input.organizationId,
+      agentId: input.memberId,
+      threadId: input.threadId,
+      summary: `Mentioned by ${input.byMemberId} via ${input.reason} on message ${input.messageId}`,
+    });
+  } catch (error) {
+    emitMemberAlertFailed(deps.realtime, input, 'run_create', errMessage(error));
+    return;
+  }
+
+  if (run.status === 'failed') {
+    emitMemberAlertFailed(
+      deps.realtime,
+      input,
+      'run_failed',
+      run.summary || 'Run failed',
+      run.id,
+    );
+  }
+}
+
 export function createApiServices(context: ApiServicesContext): ApiServices {
   const retention = new ChannelRetentionService(
     context.repo,
@@ -179,12 +315,21 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   });
 
   // Late-bound resume callback — runs is constructed below and plugged in.
-  let resumeRun: (organizationId: string, runId: string) => Promise<unknown> | unknown = () => {
+  let resumeRun: (
+    organizationId: string,
+    runId: string,
+    allowRun?: boolean,
+    approvalScope?: string,
+  ) => Promise<unknown> | unknown = () => {
     throw new Error('resumeRun not wired');
   };
 
-  const approvalsImpl = new ApprovalService(context.repo, context.realtime, (orgId, runId) =>
-    resumeRun(orgId, runId),
+  const approvalsImpl = new ApprovalService(
+    context.repo,
+    context.realtime,
+    conversations,
+    (orgId, runId, allowRun, approvalScope) =>
+      resumeRun(orgId, runId, allowRun, approvalScope),
   );
 
   const approvalRequester: ApprovalRequester = {
@@ -206,6 +351,25 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     innerTools,
     context.permissions,
     context.buildPermissionContext,
+    approvalRequester.requestApproval,
+    (invocation, approvalId) => {
+      context.repo.saveRunStep({
+        id: randomUUID(),
+        organizationId: invocation.organizationId,
+        runId: invocation.runId,
+        threadId: invocation.threadId,
+        agentId: invocation.memberId,
+        toolCallId: invocation.toolCallId,
+        toolId: invocation.toolId,
+        action: invocation.action,
+        resourceType: invocation.resourceType,
+        resourcePath: invocation.resourcePath ?? '',
+        input: invocation.input ?? {},
+        output: { status: 'waiting_for_approval', approvalId },
+        status: 'ok',
+        createdAt: new Date().toISOString(),
+      });
+    },
   );
 
   const ai = new AiService(context.teamStore, context.repo, tools);
@@ -218,8 +382,6 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     ai,
     tools,
   );
-  resumeRun = (orgId, runId) => runs.resumeAfterApproval(orgId, runId);
-
   // Phase 2.C.1 — single shared in-memory registry. SpiritService writes
   // (spawn/retire/complete); SupervisorService reads on every alert.
   const activeSpirits = new ActiveSpiritRegistry();
@@ -235,6 +397,10 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
       registry: activeSpirits,
     },
   );
+  resumeRun = async (orgId, runId, allowRun = true, approvalScope) => {
+    const spiritResult = await spirits.resumeAfterApproval(orgId, runId, allowRun, approvalScope);
+    return spiritResult ?? runs.resumeAfterApproval(orgId, runId, allowRun, approvalScope);
+  };
   // Hydrate the in-memory registry from persisted spirits BEFORE
   // SupervisorService is wired and able to receive alerts. Without
   // this, a daemon restart would see an empty registry, and
@@ -258,24 +424,10 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   // the alert (second mention in a 2s burst) — falling through there
   // would spawn a duplicate run that defeats the debounce.
   wakeMember = async (input) => {
-    const dispatch = await supervisor.handleAlert({
-      organizationId: input.organizationId,
-      memberId: input.memberId,
-      channelId: input.channelId,
-      messageId: input.messageId,
-      threadId: input.threadId,
-      byMemberId: input.byMemberId,
-      reason: input.reason,
-    });
-    if (dispatch.kind !== 'no-active-spirit') {
-      return;
-    }
-    await runs.createRun({
-      organizationId: input.organizationId,
-      agentId: input.memberId,
-      threadId: input.threadId,
-      summary: `Mentioned by ${input.byMemberId} via ${input.reason} on message ${input.messageId}`,
-    });
+    await wakeMemberWithFailureEvents(
+      { supervisor, runs, realtime: context.realtime, repo: context.repo },
+      input,
+    );
   };
 
   const auth = new AuthService(context.repo);

@@ -1,10 +1,12 @@
 import { z } from 'zod';
+import { getDirectMessageThreadId } from '@ujima/shared';
+import type { AgentTeamHandle } from '@ujima/framework';
+import type { ApiRepository } from '../services/repository-reader.js';
 import type { OrchestratorTool } from './types.js';
 
 const ChannelPostSchema = z.object({
   channel_id: z.string().min(1),
   body: z.string().min(1),
-  reply_to: z.string().min(1).optional(),
   mentions: z.array(z.string().min(1)).default([]),
 });
 
@@ -18,6 +20,7 @@ const ChannelDmSchema = z.object({
   member_id: z.string().min(1),
   body: z.string().min(1),
   mentions: z.array(z.string().min(1)).default([]),
+  ignore: z.boolean().optional(),
 });
 
 const ChannelListSchema = z.object({
@@ -35,6 +38,31 @@ const ChannelReadSchema = z.object({
 const SelfNoteSchema = z.object({
   body: z.string().min(1),
 });
+
+function resolveChannelId(
+  team: AgentTeamHandle,
+  repo: ApiRepository,
+  organizationId: string,
+  currentMemberId: string,
+  channelRef: string,
+): string {
+  const normalized = channelRef.trim();
+  const teamChannel = team.getChannel(normalized);
+  if (teamChannel) return teamChannel.id;
+
+  const direct = repo.getChannel(organizationId, normalized);
+  if (direct) return direct.id;
+
+  const byName = repo.listAllChannels(organizationId).find((channel) => channel.name === normalized);
+  if (byName) return byName.id;
+
+  const member = repo.getMember(organizationId, normalized);
+  if (member) {
+    return getDirectMessageThreadId(currentMemberId, member.id);
+  }
+
+  return normalized;
+}
 
 export const channelPostTool: OrchestratorTool<typeof ChannelPostSchema> = {
   id: 'channel.post',
@@ -55,14 +83,18 @@ export const channelPostTool: OrchestratorTool<typeof ChannelPostSchema> = {
     permissionMcpId: 'channels',
     input: args,
   }),
-  execute: ({ invocation, conversations }) =>
+  execute: ({ invocation, team, repo, conversations }) =>
     conversations.postToChannel({
       organizationId: invocation.organizationId,
       senderId: invocation.memberId,
-      channelId: String(invocation.input.channel_id),
+      channelId: resolveChannelId(
+        team,
+        repo,
+        invocation.organizationId,
+        invocation.memberId,
+        String(invocation.input.channel_id),
+      ),
       body: String(invocation.input.body),
-      replyTo:
-        typeof invocation.input.reply_to === 'string' ? invocation.input.reply_to : undefined,
       mentions: Array.isArray(invocation.input.mentions)
         ? invocation.input.mentions.filter((value): value is string => typeof value === 'string')
         : [],
@@ -88,7 +120,7 @@ export const channelReplyTool: OrchestratorTool<typeof ChannelReplySchema> = {
       body: String(invocation.input.body),
       mentions: Array.isArray(invocation.input.mentions)
         ? invocation.input.mentions.filter((value): value is string => typeof value === 'string')
-        : [],
+      : [],
     }),
 };
 
@@ -108,6 +140,7 @@ export const channelDmTool: OrchestratorTool<typeof ChannelDmSchema> = {
       senderId: invocation.memberId,
       recipientId: String(invocation.input.member_id),
       content: String(invocation.input.body),
+      ignore: invocation.input.ignore === true,
       mentions: Array.isArray(invocation.input.mentions)
         ? invocation.input.mentions.filter((value): value is string => typeof value === 'string')
         : [],
@@ -145,11 +178,17 @@ export const channelReadTool: OrchestratorTool<typeof ChannelReadSchema> = {
     permissionMcpId: 'channels',
     input: args,
   }),
-  execute: ({ invocation, conversations }) =>
+  execute: ({ invocation, team, repo, conversations }) =>
     conversations.readChannel({
       organizationId: invocation.organizationId,
       memberId: invocation.memberId,
-      channelId: String(invocation.input.channel_id),
+      channelId: resolveChannelId(
+        team,
+        repo,
+        invocation.organizationId,
+        invocation.memberId,
+        String(invocation.input.channel_id),
+      ),
       since: typeof invocation.input.since === 'string' ? invocation.input.since : undefined,
       query: typeof invocation.input.query === 'string' ? invocation.input.query : undefined,
       cursor: typeof invocation.input.cursor === 'string' ? invocation.input.cursor : undefined,

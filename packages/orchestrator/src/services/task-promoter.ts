@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { generateText, type LanguageModel } from 'ai';
 import { z } from 'zod';
-import type { ProviderKind } from '@ujima/framework';
-import { selectLanguageModel } from '@ujima/llm';
+import { selectLanguageModel, type ProviderKind } from '@ujima/llm';
 import {
+  AGENT_KIND,
   MessageSchema,
   type AuditEvent,
   type Channel,
@@ -613,12 +613,12 @@ export class TaskPromoterService {
   private resolveAssignee(input: TaskPromotionInput): string | null {
     if (input.assignedAgentId) {
       const member = this.repo.getMember(input.organizationId, input.assignedAgentId);
-      if (member && member.kind === 'agent' && !member.retiredAt) return member.id;
+      if (member && member.kind === AGENT_KIND && !member.retiredAt) return member.id;
       return null;
     }
     const agents = this.repo
       .listMembers(input.organizationId)
-      .filter((member) => member.kind === 'agent' && !member.retiredAt);
+      .filter((m) => m.kind === AGENT_KIND && !m.retiredAt);
     return agents[0]?.id ?? null;
   }
 

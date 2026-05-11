@@ -210,7 +210,7 @@ function isModelUnsupported(err: unknown): boolean {
     if (err.code === 'NotFound' || err.code === 'Blocked') return true;
   }
   const msg = err instanceof Error ? err.message : String(err);
-  return /model (is )?not supported|unknown_model|model_not_found|does not support/i.test(msg);
+  return /model (is )?not supported|unknown_model|model_not_found|does not support|unsupported model version/i.test(msg);
 }
 
 function summarize(err: unknown): string {

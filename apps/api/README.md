@@ -69,6 +69,12 @@ bun --cwd apps/api run typecheck
 - `src/transport/*` handles HTTP and realtime transport.
 - `test/*` covers the API runtime behavior.
 
+## Role Catalog Endpoints
+
+- `GET /api/roles/presets` returns every preset role across all industries.
+- `GET /api/roles/industries` returns the grouped industry catalog.
+- `GET /api/roles/industries/:industry` returns one industry's presets.
+
 ## Team Config Sync
 
 The daemon now treats `ujima.config.*` as a first-class source of truth for

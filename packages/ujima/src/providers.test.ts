@@ -40,12 +40,13 @@ describe('ProviderConfigSchema', () => {
     expect(cfg.baseUrl).toBe('http://127.0.0.1:11434/v1');
   });
 
-  test('back-compat: kind may be omitted (old configs)', () => {
-    const cfg = ProviderConfigSchema.parse({
-      apiKeyRef: 'ANTHROPIC_API_KEY',
-      defaultModel: 'claude-opus-4-7',
-    });
-    expect(cfg.kind).toBeUndefined();
+  test('kind is required', () => {
+    expect(() =>
+      ProviderConfigSchema.parse({
+        apiKeyRef: 'ANTHROPIC_API_KEY',
+        defaultModel: 'claude-opus-4-7',
+      }),
+    ).toThrow();
   });
 });
 

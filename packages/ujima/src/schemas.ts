@@ -3,27 +3,17 @@ import {
   ChannelSchema,
   MemberKindSchema,
   OrganizationChartSchema,
+  PROVIDER_KINDS,
   RoleScopesSchema,
   ToolCapabilitySchema,
   WorkspaceConfigSchema,
 } from '@ujima/shared';
 
-export const ProviderKindSchema = z.enum([
-  'anthropic',
-  'openai',
-  'google',
-  'openrouter',
-  'ollama',
-]);
-export type ProviderKind = z.infer<typeof ProviderKindSchema>;
+export const ProviderKindSchema = z.enum(PROVIDER_KINDS);
+export type ProviderKind = (typeof PROVIDER_KINDS)[number];
 
 export const ProviderConfigSchema = z.object({
-  /**
-   * Resolver kind. Optional for back-compat with older configs that rely on
-   * the provider map key (`providers.anthropic`, `providers.openai`) as the
-   * kind. When omitted, callers fall back to the map key.
-   */
-  kind: ProviderKindSchema.optional(),
+  kind: ProviderKindSchema,
   apiKeyRef: z.string().min(1).optional(),
   defaultModel: z.string().min(1).optional(),
   /** Optional base URL override — used for `openrouter` and self-hosted `ollama`. */
@@ -92,6 +82,7 @@ export const AgentTeamConfigSchema = z.object({
   name: z.string().min(1).default('Ujima Team'),
   workspace: WorkspaceConfigSchema.default({ root: '.', roleScopes: {} }),
   organizationChart: OrganizationChartSchema.default({ reportsTo: {} }),
+  configVersion: z.number().int().positive().default(1),
   agents: z.array(AgentConfigSchema).default([]),
   providers: z.record(ProviderConfigSchema).default({}),
   roles: z.array(RoleConfigSchema).min(1),

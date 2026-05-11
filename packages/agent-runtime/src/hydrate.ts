@@ -1,4 +1,5 @@
 import type { AgentDef, TaskDef, UjimaEvent } from '@ujima/shared';
+import { SHARED_AGENT_SYSTEM_PROMPT, COLLABORATION_PROTOCOL, buildEnvironmentContext, buildTeamHierarchySection } from '@ujima/shared';
 import type { ContextEntry, ContextStore, ApprovalTracker } from '@ujima/context-store';
 import type { EventBus } from '@ujima/event-bus';
 import type { HydrationBundle } from './types';
@@ -12,6 +13,18 @@ export interface HydrateDeps {
   eventLookbackMs?: number;
   maxPeerEntries?: number;
   maxEvents?: number;
+  /** Session ID for this run, so the agent can reference it in context keys. */
+  sessionId?: string;
+  /** Other agents on the same team — gives the agent social awareness. */
+  teammates?: AgentDef[];
+  /** Name & description of the MCP the agent is connected to. */
+  mcpMeta?: { name: string; description?: string };
+  /** Operational constraints the agent should be aware of. */
+  constraints?: {
+    maxToolIterations?: number;
+    maxSessionTokens?: number;
+    callsPerMinute?: number;
+  };
 }
 
 const DEFAULT_LOOKBACK_MS = 15 * 60 * 1000;
@@ -79,6 +92,10 @@ export async function hydrate(deps: HydrateDeps): Promise<HydrationBundle> {
       events,
       peerOutputs,
       approvedArtifacts,
+      sessionId: deps.sessionId,
+      teammates: deps.teammates,
+      mcpMeta: deps.mcpMeta,
+      constraints: deps.constraints,
     }),
   };
 }
@@ -111,14 +128,87 @@ function buildSystemPrompt(opts: {
   events: UjimaEvent[];
   peerOutputs: ContextEntry[];
   approvedArtifacts: ContextEntry[];
+  sessionId?: string;
+  teammates?: AgentDef[];
+  mcpMeta?: { name: string; description?: string };
+  constraints?: {
+    maxToolIterations?: number;
+    maxSessionTokens?: number;
+    callsPerMinute?: number;
+  };
 }): string {
-  const { agent, task, events, peerOutputs, approvedArtifacts } = opts;
+  const { agent, task, events, peerOutputs, approvedArtifacts, sessionId, teammates, mcpMeta, constraints } = opts;
   const sections: string[] = [];
 
   sections.push(`You are "${agent.name}" (agent id: ${agent.id}).`);
-  sections.push(agent.persona.trim());
 
-  sections.push(`\n## Task\n${task.prompt}`);
+  // ── Shared soul: universal behavioral rules ──
+  sections.push(SHARED_AGENT_SYSTEM_PROMPT);
+
+  // ── Environment: temporal, spatial, and system grounding ──
+  sections.push(`\n${buildEnvironmentContext()}`);
+
+  // ── Identity: who the agent is and where it sits ──
+  sections.push(`\n## Persona\n${agent.persona.trim()}`);
+
+  if (agent.seniority || agent.reports_to) {
+    const identityLines = [`\n## Role`];
+    if (agent.seniority) identityLines.push(`- Seniority: ${agent.seniority}`);
+    if (agent.reports_to) identityLines.push(`- Reports to: ${agent.reports_to}`);
+    if (agent.reviews && agent.reviews.length > 0) {
+      identityLines.push(`- You review work in: ${agent.reviews.join(', ')}`);
+    }
+    sections.push(identityLines.join('\n'));
+  }
+
+  // ── Team: who the agent works with (hierarchical org chart) ──
+  if (teammates && teammates.length > 0) {
+    sections.push(buildTeamHierarchySection(teammates));
+  }
+
+  // ── Collaboration protocol: how to work with teammates ──
+  sections.push(`\n${COLLABORATION_PROTOCOL}`);
+
+  // ── Task: what the agent is here to do ──
+  const taskLines = [`\n## Task`];
+  if (task.task_id || sessionId) {
+    const ids: string[] = [];
+    if (task.task_id) ids.push(`task_id: ${task.task_id}`);
+    if (sessionId) ids.push(`session_id: ${sessionId}`);
+    taskLines.push(`_${ids.join(' | ')}_`);
+  }
+  taskLines.push(task.prompt);
+  sections.push(taskLines.join('\n'));
+
+  // ── Tooling: what the agent has access to ──
+  if (mcpMeta) {
+    const toolLines = [`\n## Tooling`];
+    toolLines.push(`- Connected to MCP: **${mcpMeta.name}**`);
+    if (mcpMeta.description) toolLines.push(`  ${mcpMeta.description}`);
+    sections.push(toolLines.join('\n'));
+  }
+
+  // ── Workspace scopes: where the agent is allowed to operate ──
+  if (agent.workspace_scopes && agent.workspace_scopes.length > 0) {
+    sections.push(
+      `\n## Workspace Scopes\nYou have access to the following paths:\n${agent.workspace_scopes.map((s) => `- ${s}`).join('\n')}`,
+    );
+  }
+
+  // ── Constraints: operational limits ──
+  if (constraints) {
+    const cLines = [`\n## Operational Constraints`];
+    if (constraints.maxToolIterations) {
+      cLines.push(`- Max tool iterations: ${constraints.maxToolIterations} — plan your work to finish within this budget`);
+    }
+    if (constraints.maxSessionTokens) {
+      cLines.push(`- Token budget: ${constraints.maxSessionTokens.toLocaleString()} tokens`);
+    }
+    if (constraints.callsPerMinute) {
+      cLines.push(`- Rate limit: ${constraints.callsPerMinute} tool calls/minute`);
+    }
+    sections.push(cLines.join('\n'));
+  }
 
   if (approvedArtifacts.length > 0) {
     sections.push(`\n## Approved artifacts (${approvedArtifacts.length})`);

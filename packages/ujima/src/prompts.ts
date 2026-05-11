@@ -1,20 +1,21 @@
+import { readdirSync } from 'node:fs';
 import type { Channel, Member, OrganizationChart } from '@ujima/shared';
+import { SHARED_AGENT_SYSTEM_PROMPT, COLLABORATION_PROTOCOL, buildEnvironmentContext } from '@ujima/shared';
 import { getPersonalityPreset } from './personality.js';
 import type { AgentConfig, RoleConfig } from './schemas.js';
 
-export const SHARED_AGENT_SYSTEM_PROMPT = [
-  'You are a trusted employee inside the organization.',
-  'Roleplay the assigned role faithfully. Do not act like a generic assistant.',
-  'Speak and behave like a teammate inside the company.',
-  'Be concrete, brief, and task-focused. Prefer direct action over explanation.',
-  'Use the workspace and conversation context to ground your decisions.',
-  "Stay inside the organization workspace root and the role's allowed scopes.",
-  'Treat filesystem, shell, and MCP as tools. Shell is the general execution path, including git commands.',
-  'Ask for approval before write, shell, git-style, or otherwise destructive actions when required.',
-  'Never claim a tool result, file edit, or command output unless the tool actually returned it.',
-  'If blocked, say exactly what is needed next and stop.',
-  'If a skill is relevant, inspect its SKILL.md before acting.',
-].join('\n');
+export { SHARED_AGENT_SYSTEM_PROMPT } from '@ujima/shared';
+
+export const MESSAGE_TOOL_USAGE_GUIDANCE = [
+  'Default to a normal plain-text reply for conversational responses.',
+  'Not every message needs a reply. If a message should be ignored, do not answer it just to acknowledge it.',
+  'Use message/channel tools only for explicit side effects: posting to another channel, sending a DM, or posting an in-thread relay on request.',
+  'To end a back-and-forth, send a message that contains only the word "Acknowledged." (with a period). Adding any other text — a question, a follow-up sentence, anything — makes the message a normal reply that will wake the other agent.',
+  'If the message does not need a reply, stay quiet.',
+  'Use ignore: true on dm messages when you want a private acknowledgement without waking the recipient or posting public channel follow-up.',
+  'Never do both for one response: either send via tool or answer in plain text, not both.',
+  'If you used a message/channel tool to send the response, keep any remaining assistant text empty.',
+] as const;
 
 function listTools(role: RoleConfig): string {
   return role.tools.length ? role.tools.join(', ') : 'none';
@@ -26,6 +27,23 @@ function listScopes(role: RoleConfig): string {
 
 function listChannels(role: RoleConfig): string {
   return role.channels.length ? role.channels.join(', ') : 'none';
+}
+
+function formatWorkspaceLayout(workspaceRoot: string): string {
+  const entries = readdirSync(workspaceRoot, { withFileTypes: true });
+  const directories = entries
+    .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.'))
+    .map((entry) => entry.name)
+    .sort((left, right) => left.localeCompare(right));
+
+  if (directories.length === 0) return '';
+
+  return [
+    '## Workspace Layout',
+    'Top-level directories:',
+    ...directories.map((entry) => `- ${entry}`),
+    'Use these names first when choosing a shell cwd or repo path.',
+  ].join('\n');
 }
 
 function formatChannelTargets(channels: Channel[]): string {
@@ -128,6 +146,8 @@ export function buildAgentSystemPrompt(
     personality ? `Personality: ${personality.title} (${personality.name})` : '',
     SHARED_AGENT_SYSTEM_PROMPT,
     '',
+    buildEnvironmentContext(),
+    '',
     "Use 'I' as an employee of the organization, not as a generic assistant.",
     role.description ? `Role objective: ${role.description}` : '',
     role.instructions,
@@ -141,10 +161,16 @@ export function buildAgentSystemPrompt(
     formatChannelTargets(accessibleChannels),
     'Direct message recipient IDs:',
     formatDirectMessageTargets(currentMemberId, members),
+    'For DM chats, use the other person\'s member id as the conversation reference. channel.read resolves it to the DM thread automatically.',
     'Use destination: thread for the current conversation, channel for a channel post, and dm for a direct recipient.',
+    ...MESSAGE_TOOL_USAGE_GUIDANCE,
+    'If the message is a greeting, check-in, or casual question, reply briefly instead of staying silent.',
+    '',
+    COLLABORATION_PROTOCOL,
     '',
     `Workspace root: ${workspaceRoot}`,
     `Allowed scopes: ${listScopes(role)}`,
+    formatWorkspaceLayout(workspaceRoot),
     `Available tools: ${listTools(role)}`,
     `Available channels: ${listChannels(role)}`,
   ]

@@ -1,5 +1,6 @@
 import { OnboardingExperience } from "@/features/onboarding/onboarding-experience";
-import { getServerBootstrap } from "@/server/ujima-daemon";
+import { buildStarterDraft, INITIAL_DRAFT, type RolePresetTemplate } from "@/features/onboarding/types";
+import { getServerBootstrap, getServerRolePresets } from "@/server/ujima-daemon";
 import { redirect } from "next/navigation";
 
 export default async function OnboardingPage() {
@@ -13,5 +14,23 @@ export default async function OnboardingPage() {
     // user can prepare the draft before the API becomes reachable.
   }
 
-  return <OnboardingExperience />;
+  const starterDraft = buildStarterDraft();
+  let roleTemplates: RolePresetTemplate[] = [];
+
+  try {
+    roleTemplates = await getServerRolePresets();
+  } catch {
+    // Fall back to the local starter draft if the role catalog is unavailable.
+    roleTemplates = INITIAL_DRAFT.roles.map((role) => ({
+      name: role.name,
+      title: role.title,
+      description: role.instructions,
+      instructions: role.instructions,
+      channels: [],
+      industry: "general",
+      key: role.name,
+    }));
+  }
+
+  return <OnboardingExperience starterDraft={starterDraft} roleTemplates={roleTemplates} />;
 }

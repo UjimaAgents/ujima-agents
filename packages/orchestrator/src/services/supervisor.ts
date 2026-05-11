@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import {
+  AGENT_KIND,
   MessageSchema,
   SocketEventNames,
   channelRoom,
@@ -7,6 +8,7 @@ import {
   orgRoom,
   type Message,
 } from '@ujima/shared';
+import { MESSAGE_TOOL_USAGE_GUIDANCE } from '@ujima/framework';
 import type { ActiveSpiritRegistry } from './active-spirit-registry.js';
 import type { RealtimeService } from './context.js';
 import type { ConversationService } from './conversation.js';
@@ -235,7 +237,9 @@ export class SupervisorService {
     const sourceMessage = this.repo.getMessage(input.organizationId, input.messageId);
     const body = sourceMessage?.content ?? '';
     return [
-      'You are answering a quick supervisor question — give a one-paragraph status update.',
+      'You are answering a quick supervisor question or carrying out a direct action request.',
+      ...MESSAGE_TOOL_USAGE_GUIDANCE,
+      'If the request is only asking for status, give a short one-paragraph update.',
       '',
       `Reason: ${input.reason}`,
       `From: ${input.byMemberId}`,
@@ -270,8 +274,8 @@ export class SupervisorService {
       channelId,
       parentMessageId: sourceMessage?.id,
       senderId: input.memberId,
-      senderKind: 'agent',
-      kind: 'agent',
+      senderKind: AGENT_KIND,
+      kind: AGENT_KIND,
       content: body,
       createdAt: new Date().toISOString(),
     });

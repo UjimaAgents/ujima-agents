@@ -178,6 +178,166 @@ describe('team config reconcile', () => {
     expect(second.stats.providersRetired).toBe(1);
   });
 
+  it('rehydrates dashboard-created agents and ignores human override pollution on startup', async () => {
+    const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
+    const teamStore = createTeamStore();
+    const syncService = new ConfigSyncService(repo, teamStore);
+    const settings = new SettingsService(repo, teamStore);
+    const dir = await mkdtemp(join(tmpdir(), 'ujima-config-sync-'));
+    tempDirs.push(dir);
+    const configPath = join(dir, 'ujima.config.js');
+
+    await writeConfigFile(configPath, teamConfig());
+    const first = await syncService.loadAndReconcileFromFile(configPath);
+
+    const human = settings.addMember({
+      organizationId: first.organization.id,
+      name: 'Owner Two',
+      kind: 'human',
+      roleName: 'pm',
+    });
+    expect(repo.getWorkspaceSetting(first.organization.id, 'dashboard.teamOverrides')).toBeNull();
+
+    repo.saveWorkspaceSetting(
+      first.organization.id,
+      'dashboard.teamOverrides',
+      JSON.stringify({
+        roles: [],
+        agents: [
+          {
+            name: human.id,
+            roleName: 'pm',
+            personalityName: 'direct',
+          },
+        ],
+      }),
+    );
+
+    const rehydratedStore = createTeamStore();
+    const rehydratedSyncService = new ConfigSyncService(repo, rehydratedStore);
+    await rehydratedSyncService.loadAndReconcileFromFile(configPath, first.organization.id);
+    expect(rehydratedStore.getTeam()?.getAgent(human.id)).toBeUndefined();
+
+    const agent = settings.addMember({
+      organizationId: first.organization.id,
+      name: 'frontend-beta',
+      kind: 'agent',
+      roleName: 'frontend-engineer',
+    });
+
+    const rehydratedStore2 = createTeamStore();
+    const rehydratedSyncService2 = new ConfigSyncService(repo, rehydratedStore2);
+    await rehydratedSyncService2.loadAndReconcileFromFile(configPath, first.organization.id);
+    expect(rehydratedStore2.getTeam()?.getAgent(agent.id)?.name).toBe(agent.id);
+  });
+
+  it('preserves provider and model when dashboard overrides an existing config role', async () => {
+    const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
+    const teamStore = createTeamStore();
+    const syncService = new ConfigSyncService(repo, teamStore);
+    const settings = new SettingsService(repo, teamStore);
+    const dir = await mkdtemp(join(tmpdir(), 'ujima-config-sync-'));
+    tempDirs.push(dir);
+    const configPath = join(dir, 'ujima.config.js');
+
+    await writeConfigFile(configPath, teamConfig());
+    const first = await syncService.loadAndReconcileFromFile(configPath);
+
+    settings.addMember({
+      organizationId: first.organization.id,
+      name: 'frontend-beta',
+      kind: 'agent',
+      roleName: 'frontend-engineer',
+      role: {
+        name: 'frontend-engineer',
+        title: 'Frontend Engineer',
+        instructions: 'Build the product.',
+        workspaceScopes: ['apps/web'],
+        tools: ['filesystem', 'shell'],
+        channels: ['general'],
+        skills: [],
+      },
+    });
+
+    expect(teamStore.getTeam()?.getRole('frontend-engineer')?.provider).toBe('openai');
+    expect(teamStore.getTeam()?.getRole('frontend-engineer')?.model).toBe('gpt-5.4');
+
+    const hydratedStore = createTeamStore();
+    const hydratedSyncService = new ConfigSyncService(repo, hydratedStore);
+    await hydratedSyncService.loadAndReconcileFromFile(configPath, first.organization.id);
+
+    expect(hydratedStore.getTeam()?.getRole('frontend-engineer')?.provider).toBe('openai');
+    expect(hydratedStore.getTeam()?.getRole('frontend-engineer')?.model).toBe('gpt-5.4');
+  });
+
+  it('preserves member provider and model when partial member updates omit them', async () => {
+    const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
+    const teamStore = createTeamStore();
+    const syncService = new ConfigSyncService(repo, teamStore);
+    const settings = new SettingsService(repo, teamStore);
+    const dir = await mkdtemp(join(tmpdir(), 'ujima-config-sync-'));
+    tempDirs.push(dir);
+    const configPath = join(dir, 'ujima.config.js');
+
+    await writeConfigFile(configPath, teamConfig());
+    const first = await syncService.loadAndReconcileFromFile(configPath);
+
+    const agent = settings.addMember({
+      organizationId: first.organization.id,
+      name: 'frontend-beta',
+      kind: 'agent',
+      roleName: 'frontend-engineer',
+      llm: 'openai',
+      model: 'gpt-5.4',
+    });
+
+    const updated = settings.updateMember({
+      organizationId: first.organization.id,
+      memberId: agent.id,
+      name: 'frontend-beta-renamed',
+      roleName: 'frontend-engineer',
+      personalityName: 'direct',
+      channelIds: ['general'],
+      role: {
+        name: 'frontend-engineer',
+        title: 'Frontend Engineer',
+        instructions: 'Build the product.',
+        workspaceScopes: ['apps/web'],
+        tools: ['filesystem', 'shell'],
+        channels: ['general'],
+        skills: [],
+      },
+    });
+
+    expect(updated.llm).toBe('openai');
+    expect(updated.model).toBe('gpt-5.4');
+  });
+
+  it('rejects new agent members when the role does not already exist and no role object is provided', async () => {
+    const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
+    const teamStore = createTeamStore();
+    const syncService = new ConfigSyncService(repo, teamStore);
+    const settings = new SettingsService(repo, teamStore);
+    const dir = await mkdtemp(join(tmpdir(), 'ujima-config-sync-'));
+    tempDirs.push(dir);
+    const configPath = join(dir, 'ujima.config.js');
+
+    await writeConfigFile(configPath, teamConfig());
+    const first = await syncService.loadAndReconcileFromFile(configPath);
+    const membersBefore = repo.listMembers(first.organization.id).length;
+
+    expect(() =>
+      settings.addMember({
+        organizationId: first.organization.id,
+        name: 'research-alpha',
+        kind: 'agent',
+        roleName: 'research-analyst',
+      }),
+    ).toThrow(/Role "research-analyst" not found/);
+
+    expect(repo.listMembers(first.organization.id).length).toBe(membersBefore);
+  });
+
   it('rejects dashboard-style organization edits when the field is config owned', async () => {
     const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
     const teamStore = createTeamStore();

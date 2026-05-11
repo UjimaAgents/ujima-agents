@@ -10,7 +10,7 @@ import {
   Repository,
 } from '@ujima/runtime-core';
 import type { AgentDef, MCPDef, TeamDef } from '@ujima/shared';
-import type { LLMProvider } from '@ujima/llm/legacy';
+import type { LanguageModel } from 'ai';
 import {
   ALWAYS_AVAILABLE_AGENT_TOOLS,
   createApiServices,
@@ -97,8 +97,8 @@ async function main(): Promise<void> {
       resolveMCPDef: async (_wsId, mcpId): Promise<MCPDef> => {
         throw new Error(`runtime: no MCP resolver configured (requested "${mcpId}")`);
       },
-      getProvider: (agent: AgentDef): LLMProvider => {
-        throw new Error(`runtime: no provider configured for agent "${agent.id}"`);
+      getModel: (agent: AgentDef): LanguageModel => {
+        throw new Error(`runtime: no model configured for agent "${agent.id}"`);
       },
     },
     {},
@@ -110,6 +110,7 @@ async function main(): Promise<void> {
 
   const secretStore = createFileSecretStore({ homeDir });
   const repository = new Repository(host.db.raw, secretStore);
+  closeOrphanedActiveRuns(repository);
   const teamStore = createTeamStore();
   const teamConfigWatcher = await startTeamConfigWatcher({
     repo: repository,
@@ -125,19 +126,19 @@ async function main(): Promise<void> {
   // gate on.
   const buildPermissionContext: PermissionContextBuilder = (input) => {
     const team = teamStore.getTeam();
-    const member = repository.getMember(input.organizationId, input.memberId);
-    const role = team && member ? team.getRole(member.roleName) : undefined;
-    const agentConfig = team
-      ? (team.getAgent(input.memberId) ??
+      const member = repository.getMember(input.organizationId, input.memberId);
+      const role = team && member ? team.getRole(member.roleName) : undefined;
+      const agentConfig = team
+        ? (team.getAgent(input.memberId) ??
         (member ? team.getAgent(member.name) : undefined))
-      : undefined;
+        : undefined;
 
     return {
       agent: {
         id: input.memberId,
         name: agentConfig?.name ?? input.memberId,
         persona: agentConfig?.personalityName ?? '',
-        model: role?.model ?? '',
+        model: member?.model ?? role?.model ?? '',
         mcp: input.permissionMcpId ?? input.toolId,
         permissions: {
           allowed_tools: [...new Set([...(role?.tools ?? []), ...ALWAYS_AVAILABLE_AGENT_TOOLS])],
@@ -178,13 +179,13 @@ async function main(): Promise<void> {
   });
   await transport.listen();
 
-  console.log(chalk.cyan(STARTUP_SPLASH));
-  console.log(`   ${chalk.green('✓')} ${chalk.bold('System Ready')}`);
+  console.info(chalk.cyan(STARTUP_SPLASH));
+  console.info(`   ${chalk.green('✓')} ${chalk.bold('System Ready')}`);
   const displayUrl = transport.url.replace('127.0.0.1', 'localhost');
-  console.log(`   ${chalk.gray('↳')} ${chalk.white('API:')}         ${chalk.cyan.underline(displayUrl)}`);
-  console.log(`   ${chalk.gray('↳')} ${chalk.white('Health:')}      ${chalk.dim(displayUrl + '/health')}`);
-  console.log(`   ${chalk.gray('↳')} ${chalk.white('Events:')}      ${chalk.dim(displayUrl + '/events')}`);
-  console.log(`   ${chalk.gray('↳')} ${chalk.white('Docs:')}        ${chalk.cyan(displayUrl + '/docs')}\n`);
+  console.info(`   ${chalk.gray('↳')} ${chalk.white('API:')}         ${chalk.cyan.underline(displayUrl)}`);
+  console.info(`   ${chalk.gray('↳')} ${chalk.white('Health:')}      ${chalk.dim(displayUrl + '/health')}`);
+  console.info(`   ${chalk.gray('↳')} ${chalk.white('Events:')}      ${chalk.dim(displayUrl + '/events')}`);
+  console.info(`   ${chalk.gray('↳')} ${chalk.white('Docs:')}        ${chalk.cyan(displayUrl + '/docs')}\n`);
 
   logger.info('runtime: ready', {
     homeDir,
@@ -228,6 +229,36 @@ async function main(): Promise<void> {
 
   const code = await exited;
   process.exit(code);
+}
+
+function closeOrphanedActiveRuns(repository: Repository): void {
+  const snapshot = repository.getBootstrapSnapshot();
+  if (!snapshot.organization) return;
+
+  const endedAt = new Date().toISOString();
+  for (const run of snapshot.activeRuns) {
+    repository.saveRun({
+      ...run,
+      status: 'failed',
+      step: 'failed',
+      summary: 'Runtime restarted before this run completed.',
+      endedAt,
+    });
+  }
+
+  const pendingApprovals = repository.listPendingApprovals(snapshot.organization.id);
+  for (const approval of pendingApprovals) {
+    const run = approval.runId
+      ? repository.getRun(snapshot.organization.id, approval.runId)
+      : null;
+    if (!run || isTerminalRunStatus(run.status)) {
+      repository.deleteApproval(snapshot.organization.id, approval.id);
+    }
+  }
+}
+
+function isTerminalRunStatus(status: string): boolean {
+  return status === 'completed' || status === 'failed' || status === 'cancelled';
 }
 
 function safeReadPid(path: string): number | undefined {

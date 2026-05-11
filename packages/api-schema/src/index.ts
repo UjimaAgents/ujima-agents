@@ -9,6 +9,7 @@ export * from './settings.js';
 export * from './task-sessions.js';
 export * from './task-files.js';
 export * from './additive/requests.js';
+export { MODEL_OPTIONS_BY_PROVIDER, defaultModelForProvider, getModelOptionsForProvider } from './model-catalog.js';
 
 export const API_VERSION = 'v1';
 

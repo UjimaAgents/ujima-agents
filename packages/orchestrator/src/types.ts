@@ -9,7 +9,7 @@ import type {
 import type { EventBus } from '@ujima/event-bus';
 import type { PermissionMiddleware } from '@ujima/permissions';
 import type { MCPConnection } from '@ujima/mcp-client';
-import type { LLMProvider } from '@ujima/llm/legacy';
+import type { LanguageModel } from 'ai';
 import type { AgentRunResult, GateResolver } from '@ujima/agent-runtime';
 
 export interface OrchestratorDeps {
@@ -18,7 +18,7 @@ export interface OrchestratorDeps {
     mcpId: string,
     opts?: { agentId?: string; scopePaths?: string[] },
   ) => Promise<MCPConnection> | MCPConnection;
-  getProvider: (agent: AgentDef) => LLMProvider;
+  getModel: (agent: AgentDef) => LanguageModel;
   eventBus: EventBus;
   context: ContextStore;
   audit: AuditLog;

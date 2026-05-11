@@ -475,7 +475,7 @@ async function spawnAgentRun(input: {
       task: taskForAgent,
       sessionId: input.sessionId,
       spawnReason: 'initial',
-      provider: input.deps.getProvider(input.agent),
+      model: input.deps.getModel(input.agent),
       mcp,
       permissions: input.deps.permissions,
       eventBus: input.deps.eventBus,
@@ -609,20 +609,11 @@ async function runPlanner(
     payload: { kind: 'planning_started', candidate_agent_ids: agents.map((a) => a.id) },
   });
 
-  let provider;
-  try {
-    provider = deps.getProvider(planningAgent);
-  } catch (err) {
-    const reason = err instanceof Error ? err.message : String(err);
-    return { assignments: [], error: `planner provider unavailable: ${reason}` };
-  }
-
   try {
     const result = await planAssignments({
       task,
       agents,
-      provider,
-      model: planningAgent.model,
+      model: deps.getModel(planningAgent),
     });
 
     await deps.eventBus.publish(ORCHESTRATOR_EVENT_CHANNEL, {

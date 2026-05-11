@@ -3,6 +3,7 @@ import type { BootstrapSnapshot, ApiRepository } from './repository-reader.js';
 import type { TeamStore } from './team-store.js';
 import type { TeamSummary } from './team.js';
 import type { AuthService } from './auth.js';
+import { getDirectMessageThreadId } from '@ujima/shared';
 import {
   listProviderStatuses,
   summarizeTeam,
@@ -18,6 +19,7 @@ export interface BootstrapResponse {
   channels: BootstrapSnapshot['channels'];
   pendingApprovals: BootstrapSnapshot['pendingApprovals'];
   activeRuns: BootstrapSnapshot['activeRuns'];
+  conversationUnreadCounts: Record<string, number>;
   auth: AuthState;
 }
 
@@ -31,6 +33,8 @@ export class BootstrapService {
   getBootstrap(input: { sessionToken?: string | null } = {}): BootstrapResponse {
     const snapshot = this.repo.getBootstrapSnapshot();
     const team = this.teamStore.getTeam();
+    const authState = this.auth.getAuthState(input.sessionToken);
+    const member = snapshot.organization ? authState.member : undefined;
 
     return {
       serviceReady: true,
@@ -44,7 +48,42 @@ export class BootstrapService {
       channels: snapshot.channels,
       pendingApprovals: snapshot.pendingApprovals,
       activeRuns: snapshot.activeRuns,
-      auth: this.auth.getAuthState(input.sessionToken),
+      conversationUnreadCounts: member
+        ? this.buildConversationUnreadCounts(snapshot, member.id)
+        : {},
+      auth: authState,
     };
+  }
+
+  private buildConversationUnreadCounts(snapshot: BootstrapSnapshot, memberId: string): Record<string, number> {
+    if (!snapshot.organization) return {};
+    const organizationId = snapshot.organization.id;
+    const counts: Record<string, number> = {};
+
+    for (const channel of snapshot.channels) {
+      if (channel.kind === 'self' || channel.kind === 'dm') continue;
+      const read = this.repo.getConversationRead(organizationId, memberId, channel.id);
+      const unread = this.repo.countMessagesSince(organizationId, channel.id, {
+        since: read?.lastReadAt,
+        excludeSenderId: memberId,
+      });
+      if (unread > 0) {
+        counts[channel.id] = unread;
+      }
+    }
+
+    for (const peer of snapshot.members) {
+      if (peer.kind !== 'agent' || peer.id === memberId) continue;
+      const threadId = getDirectMessageThreadId(memberId, peer.id);
+      const read = this.repo.getConversationRead(organizationId, memberId, threadId);
+      const unread = this.repo.countMessagesSince(organizationId, threadId, {
+        since: read?.lastReadAt,
+        excludeSenderId: memberId,
+      });
+      if (unread > 0) {
+        counts[peer.id] = unread;
+      }
+    }
+    return counts;
   }
 }

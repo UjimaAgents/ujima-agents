@@ -4,6 +4,7 @@ import type {
   AuthSession,
   AuthUser,
   AuditEvent,
+  Attachment,
   Channel,
   ChannelKind,
   ConfigFieldOwnership,
@@ -13,6 +14,7 @@ import type {
   MessageMention,
   Organization,
   RunState,
+  RunStep,
   Spirit,
   SpiritRole,
   TaskSession,
@@ -21,6 +23,7 @@ import type {
   TodoStatus,
   WorkspaceMember,
 } from '@ujima/shared';
+import { ApprovalRequestSchema } from '@ujima/shared';
 import {
   findAuthUsersByEmail as readAuthUsersByEmail,
   getAuthSessionByTokenHash as readAuthSessionByTokenHash,
@@ -36,6 +39,8 @@ import {
 } from './auth.js';
 import {
   getApproval as readApproval,
+  deleteApproval as deleteApprovalRecord,
+  hasApprovalGrant as readApprovalGrant,
   listPendingApprovals as readPendingApprovals,
   resolveApproval as resolveApprovalRecord,
   saveApproval as writeApproval,
@@ -46,6 +51,7 @@ import {
   type BootstrapSnapshot,
 } from './bootstrap.js';
 import {
+  deleteChannel as removeChannel,
   getChannel as readChannel,
   listAllChannels as readAllChannels,
   listChannels as readChannels,
@@ -74,8 +80,19 @@ import {
   replaceMessageMentions as writeMessageMentions,
 } from './message-mentions.js';
 import {
+  getConversationRead as readConversationRead,
+  saveConversationRead as writeConversationRead,
+} from './conversation-reads.js';
+import {
+  getAttachment as readAttachment,
+  linkAttachmentsToMessage as writeMessageAttachments,
+  listMessageAttachments as readMessageAttachments,
+  saveAttachment as writeAttachment,
+} from './attachments.js';
+import {
   deleteMessages as removeMessages,
   getMessage as readMessage,
+  countMessagesSince as readMessageCountSince,
   listMessages as readMessages,
   listChannelMessages as readChannelMessages,
   saveMessage as writeMessage,
@@ -99,11 +116,16 @@ import {
   saveProviderCredential as writeProviderCredential,
 } from './organization.js';
 import {
+  findActiveRunForMemberThread as readActiveRunForMemberThread,
   getRun as readRun,
   listRuns as readRuns,
   saveRun as writeRun,
   type PaginatedRuns,
 } from './runs.js';
+import {
+  listRunSteps as readRunSteps,
+  saveRunStep as writeRunStep,
+} from './run-steps.js';
 import {
   getTaskSession as readTaskSession,
   getTaskSessionByChannel as readTaskSessionByChannel,
@@ -239,6 +261,8 @@ export class Repository {
   ): PaginatedChannels => readChannels(this.db, organizationId, cursor, limit, excludeKinds);
   setChannelMembers = (channelId: string, memberIds: string[]): void =>
     writeChannelMembers(this.db, channelId, memberIds);
+  deleteChannel = (channelId: string): void =>
+    removeChannel(this.db, channelId);
 
   saveThread = (thread: ConversationThread): ConversationThread =>
     writeThread(this.db, thread);
@@ -253,12 +277,24 @@ export class Repository {
   updateMessage = (message: Message): Message => writeMessageUpdate(this.db, message);
   getMessage = (organizationId: string, messageId: string): Message | null =>
     readMessage(this.db, organizationId, messageId);
+  saveAttachment = (attachment: Attachment): Attachment => writeAttachment(this.db, attachment);
+  getAttachment = (organizationId: string, attachmentId: string): Attachment | null =>
+    readAttachment(this.db, organizationId, attachmentId);
+  listMessageAttachments = (messageId: string): Attachment[] =>
+    readMessageAttachments(this.db, messageId);
+  linkAttachmentsToMessage = (messageId: string, attachmentIds: string[]): void =>
+    writeMessageAttachments(this.db, messageId, attachmentIds);
   listMessages = (
     organizationId: string,
     threadId: string,
     cursor?: string,
     limit?: number,
   ): PaginatedMessages => readMessages(this.db, organizationId, threadId, cursor, limit);
+  countMessagesSince = (
+    organizationId: string,
+    threadId: string,
+    input?: { since?: string; excludeSenderId?: string },
+  ): number => readMessageCountSince(this.db, organizationId, threadId, input);
   listChannelMessages = (
     organizationId: string,
     channelId: string,
@@ -280,10 +316,46 @@ export class Repository {
     removeMessageMentions(this.db, messageId);
   deleteMessages = (organizationId: string, messageIds: string[]): void =>
     removeMessages(this.db, organizationId, messageIds);
+  saveConversationRead = (
+    organizationId: string,
+    memberId: string,
+    threadId: string,
+    lastReadAt?: string,
+  ): void => {
+    void writeConversationRead(this.db, {
+      organizationId,
+      memberId,
+      threadId,
+      lastReadAt,
+    });
+  };
+  getConversationRead = (
+    organizationId: string,
+    memberId: string,
+    threadId: string,
+  ): { organizationId: string; memberId: string; threadId: string; lastReadAt: string } | null => {
+    const read = readConversationRead(this.db, organizationId, memberId, threadId);
+    return read
+      ? {
+          organizationId: read.organization_id,
+          memberId: read.member_id,
+          threadId: read.thread_id,
+        lastReadAt: read.last_read_at,
+      }
+      : null;
+  };
 
   saveRun = (run: RunState): RunState => writeRun(this.db, run);
   getRun = (organizationId: string, runId: string): RunState | null =>
     readRun(this.db, organizationId, runId);
+  findActiveRunForMemberThread = (
+    organizationId: string,
+    agentId: string,
+    threadId: string,
+  ): RunState | null => readActiveRunForMemberThread(this.db, organizationId, agentId, threadId);
+  saveRunStep = (step: RunStep): RunStep => writeRunStep(this.db, step);
+  listRunSteps = (organizationId: string, runId: string): RunStep[] =>
+    readRunSteps(this.db, organizationId, runId);
   listRuns = (organizationId: string, cursor?: string, limit?: number): PaginatedRuns =>
     readRuns(this.db, organizationId, cursor, limit);
 
@@ -318,8 +390,26 @@ export class Repository {
     reason = '',
   ): ApprovalRequest | null =>
     resolveApprovalRecord(this.db, organizationId, approvalId, status, reason);
-  listPendingApprovals = (organizationId: string): ApprovalRequest[] =>
-    readPendingApprovals(this.db, organizationId);
+  deleteApproval = (organizationId: string, approvalId: string): void =>
+    deleteApprovalRecord(this.db, organizationId, approvalId);
+  listPendingApprovals = (organizationId: string): ApprovalRequest[] => {
+    const list = readPendingApprovals(this.db, organizationId);
+    return list.map((approval) => {
+      if (approval.threadId) return approval;
+      if (!approval.runId) return approval;
+      const run = readRun(this.db, organizationId, approval.runId);
+      if (!run?.threadId) return approval;
+      return ApprovalRequestSchema.parse({ ...approval, threadId: run.threadId });
+    });
+  };
+  hasApprovalGrant = (input: {
+    organizationId: string;
+    requestedBy: string;
+    resourceType: ApprovalRequest['resourceType'];
+    resourcePath: string;
+    action: ApprovalRequest['action'];
+    approvalScope: string;
+  }): boolean => readApprovalGrant(this.db, input);
 
   saveAuditEvent = (event: AuditEvent): AuditEvent => writeAuditEvent(this.db, event);
   listAuditEvents = (organizationId: string): AuditEvent[] => readAuditEvents(this.db, organizationId);

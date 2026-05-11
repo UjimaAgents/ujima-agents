@@ -8,6 +8,7 @@ import {
 } from 'ai';
 import { z } from 'zod';
 import type { AgentDef, UjimaEvent } from '@ujima/shared';
+import { DEFAULT_SPIRIT_TEMPERATURE } from '@ujima/shared';
 import type { AuditLog } from '@ujima/context-store';
 import type { MCPConnection, ToolInfo } from '@ujima/mcp-client';
 import type { PermissionMiddleware } from '@ujima/permissions';
@@ -45,6 +46,8 @@ export interface AiSdkLoopInputs {
   temperature?: number;
 }
 
+import { type BrowserStateSnapshot, captureBrowserState } from './browser';
+
 export interface AiSdkLoopOutcome {
   exitReason: 'completed' | 'escalated' | 'rate_limit_tripped' | 'killed' | 'error';
   escalationReason?: string;
@@ -53,6 +56,7 @@ export interface AiSdkLoopOutcome {
   iterations: number;
   tokensUsed: number;
   finalText: string;
+  browserState?: BrowserStateSnapshot;
   /**
    * AI SDK `usage` breakdown for cost-meter wiring (E0.1.5). Zero when the
    * provider doesn't surface usage.
@@ -72,14 +76,84 @@ class LoopExit extends Error {
   }
 }
 
+function isAbortError(err: unknown): boolean {
+  if (err instanceof Error && err.name === 'AbortError') return true;
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    'name' in err &&
+    (err as { name?: unknown }).name === 'AbortError'
+  );
+}
+
+function raceWithAbortSignal<T>(inner: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+  if (!signal) return inner;
+  if (signal.aborted) {
+    const e = new Error('Aborted');
+    e.name = 'AbortError';
+    return Promise.reject(e);
+  }
+  return Promise.race([
+    inner,
+    new Promise<never>((_, reject) => {
+      const onAbort = () => {
+        const e = new Error('Aborted');
+        e.name = 'AbortError';
+        reject(e);
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
+    }),
+  ]);
+}
+
+function loopExitFrom(err: unknown): LoopExit | undefined {
+  if (err instanceof LoopExit) return err;
+  let cur: unknown = err;
+  for (let i = 0; i < 6 && cur instanceof Error; i++) {
+    const c = (cur as Error & { cause?: unknown }).cause;
+    if (c instanceof LoopExit) return c;
+    cur = c;
+  }
+  return undefined;
+}
+
 function genEventId(prefix: string): string {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function truncateToolContent(content: unknown, maxChars: number): string {
-  const serialized = typeof content === 'string' ? content : JSON.stringify(content);
-  if (serialized.length <= maxChars) return serialized;
-  return `${serialized.slice(0, maxChars)}\n\n[… truncated ${serialized.length - maxChars} chars]`;
+function truncateToolContent(content: unknown, maxChars: number): unknown {
+  if (maxChars <= 0) {
+    return '[tool output truncated]';
+  }
+
+  if (typeof content === 'string') {
+    return truncateText(content, maxChars);
+  }
+
+  const serialized = safeStringify(content);
+  if (serialized.length <= maxChars) {
+    return content;
+  }
+
+  return {
+    truncated: true,
+    summary: `Tool output exceeded ${maxChars} chars and was truncated.`,
+    preview: truncateText(serialized, maxChars),
+  };
+}
+
+function truncateText(value: string, maxChars: number): string {
+  if (value.length <= maxChars) return value;
+  const omitted = value.length - maxChars;
+  return `${value.slice(0, maxChars)}\n...[truncated ${omitted} chars]`;
+}
+
+function safeStringify(value: unknown): string {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
 }
 
 export async function runAiSdkLoop(input: AiSdkLoopInputs): Promise<AiSdkLoopOutcome> {
@@ -101,10 +175,12 @@ export async function runAiSdkLoop(input: AiSdkLoopInputs): Promise<AiSdkLoopOut
     onStream,
     gateResolver,
     maxOutputTokens,
-    temperature = 0.2,
+    temperature = DEFAULT_SPIRIT_TEMPERATURE,
   } = input;
 
   let toolCalls = 0;
+  let iterations = 0;
+  let browserState: BrowserStateSnapshot | undefined;
   let forcedExit: Partial<AiSdkLoopOutcome> | undefined;
 
   const stream = (type: string, payload: unknown): void => {
@@ -189,23 +265,29 @@ export async function runAiSdkLoop(input: AiSdkLoopInputs): Promise<AiSdkLoopOut
 
             let gateDecision: GateDecision;
             try {
-              gateDecision = await gateResolver.awaitDecision({
-                agentId: agent.id,
-                taskId,
-                sessionId,
-                toolCallId,
-                toolName: info.name,
-                mcpId: mcp.id,
-                mcpName: mcp.def.name,
-                args,
-                gate:
-                  decision.gate ??
-                  (decision.code === 'requires_input' ? 'input' : 'approval'),
-                code: decision.code as 'requires_approval' | 'requires_input',
-                reason: decision.reason,
+              gateDecision = await raceWithAbortSignal(
+                gateResolver.awaitDecision({
+                  agentId: agent.id,
+                  taskId,
+                  sessionId,
+                  toolCallId,
+                  toolName: info.name,
+                  mcpId: mcp.id,
+                  mcpName: mcp.def.name,
+                  args,
+                  gate:
+                    decision.gate ??
+                    (decision.code === 'requires_input' ? 'input' : 'approval'),
+                  code: decision.code as 'requires_approval' | 'requires_input',
+                  reason: decision.reason,
+                  abortSignal,
+                }),
                 abortSignal,
-              });
+              );
             } catch (err) {
+              if (isAbortError(err)) {
+                throw new LoopExit({ exitReason: 'killed' });
+              }
               const message = err instanceof Error ? err.message : String(err);
               stream('agent_tool_result', {
                 id: toolCallId,
@@ -305,6 +387,15 @@ export async function runAiSdkLoop(input: AiSdkLoopInputs): Promise<AiSdkLoopOut
               finalArgs,
             );
             const duration = Date.now() - start;
+            if (!result.isError) {
+              browserState = captureBrowserState(
+                toolName,
+                finalArgs,
+                result.content,
+                browserState,
+                mcp.id,
+              );
+            }
             await audit.write({
               event_id: genEventId('tc'),
               event_type: 'tool_call',
@@ -374,6 +465,9 @@ export async function runAiSdkLoop(input: AiSdkLoopInputs): Promise<AiSdkLoopOut
       tools: toolSet,
       stopWhen: stepCountIs(maxIterations),
       abortSignal,
+      onStepFinish: () => {
+        iterations++;
+      },
       ...(maxOutputTokens !== undefined ? { maxOutputTokens } : {}),
       temperature,
     });
@@ -382,6 +476,9 @@ export async function runAiSdkLoop(input: AiSdkLoopInputs): Promise<AiSdkLoopOut
     // part fires (which carries usage). textStream closes on text-end and
     // would miss the finish frame.
     for await (const part of result.fullStream) {
+      if (part.type === 'error') {
+        throw part.error;
+      }
       if (part.type === 'text-delta') {
         stream('agent_thought_delta', { text: part.text });
       }
@@ -409,9 +506,10 @@ export async function runAiSdkLoop(input: AiSdkLoopInputs): Promise<AiSdkLoopOut
         error: forcedExit.error,
         escalationReason: forcedExit.escalationReason,
         toolCalls,
-        iterations: 1,
+        iterations,
         tokensUsed,
         finalText,
+        browserState,
         usage: {
           inputTokens: usage?.inputTokens ?? 0,
           outputTokens: usage?.outputTokens ?? 0,
@@ -448,9 +546,10 @@ export async function runAiSdkLoop(input: AiSdkLoopInputs): Promise<AiSdkLoopOut
         exitReason: 'escalated',
         escalationReason: escalation.condition,
         toolCalls,
-        iterations: 1,
+        iterations,
         tokensUsed,
         finalText,
+        browserState,
         usage: {
           inputTokens: usage?.inputTokens ?? 0,
           outputTokens: usage?.outputTokens ?? 0,
@@ -468,9 +567,10 @@ export async function runAiSdkLoop(input: AiSdkLoopInputs): Promise<AiSdkLoopOut
     return {
       exitReason: 'completed',
       toolCalls,
-      iterations: 1,
+      iterations,
       tokensUsed,
       finalText,
+      browserState,
       usage: {
         inputTokens: usage?.inputTokens ?? 0,
         outputTokens: usage?.outputTokens ?? 0,
@@ -478,15 +578,28 @@ export async function runAiSdkLoop(input: AiSdkLoopInputs): Promise<AiSdkLoopOut
       },
     };
   } catch (err) {
-    if (err instanceof LoopExit) {
-      forcedExit = err.outcome;
+    const loopExit = loopExitFrom(err);
+    if (loopExit) {
+      forcedExit = loopExit.outcome;
       return {
-        exitReason: err.outcome.exitReason ?? 'error',
-        error: err.outcome.error,
+        exitReason: loopExit.outcome.exitReason ?? 'error',
+        error: loopExit.outcome.error,
         toolCalls,
-        iterations: 1,
+        iterations,
         tokensUsed: 0,
         finalText: '',
+        browserState,
+        usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+      };
+    }
+    if (isAbortError(err) || abortSignal?.aborted) {
+      return {
+        exitReason: 'killed',
+        toolCalls,
+        iterations,
+        tokensUsed: 0,
+        finalText: '',
+        browserState,
         usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
       };
     }
@@ -496,9 +609,10 @@ export async function runAiSdkLoop(input: AiSdkLoopInputs): Promise<AiSdkLoopOut
       exitReason: 'error',
       error: message,
       toolCalls,
-      iterations: 1,
+      iterations,
       tokensUsed: 0,
       finalText: '',
+      browserState,
       usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
     };
   }

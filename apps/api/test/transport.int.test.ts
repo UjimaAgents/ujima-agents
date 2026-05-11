@@ -6,13 +6,10 @@ import { createRuntimeHost, createBufferLogger, type RuntimeHost } from '@ujima/
 import { Repository } from '@ujima/runtime-core';
 import { createClient, UjimaApiError } from '@ujima/client-sdk';
 import { createTransport, type Transport } from '../src/transport/server';
-import type { LLMProvider } from '@ujima/llm/legacy';
+import type { LanguageModel } from 'ai';
 
 const TOKEN = 'a'.repeat(64);
-
-function stubProvider(): LLMProvider {
-  throw new Error('no provider configured');
-}
+const stubLanguageModel = {} as unknown as LanguageModel;
 
 describe('transport (in-process)', () => {
   let homeDir: string;
@@ -29,7 +26,7 @@ describe('transport (in-process)', () => {
         loadAgent: async () => undefined,
         loadTeam: async () => undefined,
         resolveMCPDef: async (_w, id) => { throw new Error(`no mcp ${id}`); },
-        getProvider: stubProvider,
+        getModel: () => stubLanguageModel,
       },
       {},
     );
@@ -94,6 +91,31 @@ describe('transport (in-process)', () => {
     const h = await client.health();
     expect(h.status).toBe('ok');
     expect(h.pid).toBe(process.pid);
+  });
+
+  it('serves the role catalog endpoints', async () => {
+    const headers = { authorization: `Bearer ${TOKEN}` };
+
+    const presetsRes = await fetch(`${baseUrl}/api/roles/presets`, { headers });
+    expect(presetsRes.status).toBe(200);
+    const presets = (await presetsRes.json()) as { presets: Array<{ key: string; industry: string }> };
+    expect(presets.presets.some((preset) => preset.key === 'frontendEngineer')).toBe(true);
+
+    const industriesRes = await fetch(`${baseUrl}/api/roles/industries`, { headers });
+    expect(industriesRes.status).toBe(200);
+    const industries = (await industriesRes.json()) as {
+      industries: Array<{ industry: string; presets: Array<{ key: string }> }>;
+    };
+    expect(industries.industries.some((group) => group.industry === 'engineering')).toBe(true);
+
+    const engineeringRes = await fetch(`${baseUrl}/api/roles/industries/engineering`, { headers });
+    expect(engineeringRes.status).toBe(200);
+    const engineering = (await engineeringRes.json()) as {
+      industry: string;
+      presets: Array<{ key: string }>;
+    };
+    expect(engineering.industry).toBe('engineering');
+    expect(engineering.presets.some((preset) => preset.key === 'frontendEngineer')).toBe(true);
   });
 
   it('creates, lists, fetches, updates, and removes workspaces', async () => {
