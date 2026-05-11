@@ -119,6 +119,7 @@ import {
   findActiveRunForMemberThread as readActiveRunForMemberThread,
   getRun as readRun,
   listRuns as readRuns,
+  listThreadRuns as readThreadRuns,
   saveRun as writeRun,
   type PaginatedRuns,
 } from './runs.js';
@@ -358,6 +359,12 @@ export class Repository {
     readRunSteps(this.db, organizationId, runId);
   listRuns = (organizationId: string, cursor?: string, limit?: number): PaginatedRuns =>
     readRuns(this.db, organizationId, cursor, limit);
+  listThreadRuns = (
+    organizationId: string,
+    threadId: string,
+    cursor?: string,
+    limit?: number,
+  ): PaginatedRuns => readThreadRuns(this.db, organizationId, threadId, cursor, limit);
 
   saveTaskSession = (session: TaskSession): TaskSession =>
     writeTaskSession(this.db, session);

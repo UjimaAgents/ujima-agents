@@ -1,5 +1,6 @@
 export const DEFAULT_ROLE_TOOLS = [
   "filesystem",
+  "grep",
   "shell",
   "web_search",
   "message",

@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import type { Repository } from '@ujima/runtime-core';
-import { ApprovalRequestSchema, MessageSchema, RunStateSchema, createPaginatedSchema, IdSchema } from '@ujima/shared';
+import { ApprovalRequestSchema, MessageSchema, RunStateSchema, RunStepSchema, createPaginatedSchema, IdSchema } from '@ujima/shared';
 import {
   ApprovalListQuerySchema,
   ApprovalResolveSchema,
@@ -25,9 +25,22 @@ import {
 import { requireOrgSession } from './org-auth.js';
 
 const RunIdParamsSchema = z.object({ runId: IdSchema });
+const ThreadIdParamsSchema = z.object({ threadId: IdSchema });
 const ApprovalIdParamsSchema = z.object({ approvalId: IdSchema });
 const JobIdParamsSchema = z.object({ runId: IdSchema, jobId: z.string() });
 const RunDetailQuerySchema = z.object({ organizationId: IdSchema });
+const RunTraceListQuerySchema = z.object({
+  organizationId: IdSchema,
+  cursor: z.string().optional(),
+  limit: z.coerce.number().int().positive().max(20).optional(),
+});
+const RunTraceListResponseSchema = createPaginatedSchema(
+  z.object({
+    run: RunStateSchema,
+    steps: z.array(RunStepSchema),
+    message: MessageSchema.optional(),
+  }),
+);
 const RunListResponseSchema = createPaginatedSchema(RunStateSchema);
 const RunDetailResponseSchema = z.object({
   run: RunStateSchema,
@@ -124,6 +137,31 @@ export function registerRunRoutes(
       return detail;
     } catch (err) {
       return badRequest(reply, errMessage(err));
+    }
+  });
+
+  app.get('/threads/:threadId/traces', {
+    schema: {
+      description: 'List run traces for a thread',
+      tags: ['Runs'],
+      params: ThreadIdParamsSchema,
+      querystring: RunTraceListQuerySchema,
+      response: {
+        200: RunTraceListResponseSchema,
+        400: ApiErrorSchema,
+        404: ApiErrorSchema,
+      },
+    },
+  }, async (req, reply) => {
+    try {
+      return runs.listThreadTraces(
+        req.query.organizationId,
+        req.params.threadId,
+        req.query.cursor,
+        req.query.limit,
+      );
+    } catch (err) {
+      return notFound(reply, errMessage(err));
     }
   });
 

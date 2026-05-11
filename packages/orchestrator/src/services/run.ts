@@ -173,6 +173,17 @@ export class RunService {
     return this.repo.listRuns(organizationId, cursor, limit);
   }
 
+  listThreadTraces(organizationId: string, threadId: string, cursor?: string, limit?: number) {
+    const page = this.repo.listThreadRuns(organizationId, threadId, cursor, limit);
+    return {
+      ...page,
+      data: page.data.flatMap((run) => {
+        const detail = this.getRunTraceDetail(organizationId, run.id);
+        return detail ? [detail] : [];
+      }),
+    };
+  }
+
   getRun(organizationId: string, runId: string) {
     return this.repo.getRun(organizationId, runId);
   }

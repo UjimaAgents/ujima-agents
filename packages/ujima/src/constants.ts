@@ -7,10 +7,18 @@ export const DEFAULT_TOOL_CATALOG: Record<string, ToolCapability> = {
     id: 'filesystem',
     name: 'Filesystem',
     description:
-      'Read files or apply unified-diff patches to create or edit a single file in the workspace. Writes use `patch` (unified diff), not full-file replacement.',
+      'Read files in line windows or apply unified-diff patches to create or edit a single file in the workspace. Hidden or secret-looking paths require approval before read. Writes use `patch` (unified diff), not full-file replacement.',
     actions: ['read', 'write'],
     pathScopes: ['.'],
     requiresApproval: true,
+  },
+  grep: {
+    id: 'grep',
+    name: 'Grep',
+    description: 'Search visible workspace files for matching lines, then use filesystem.read for a focused window around the hit.',
+    actions: ['read'],
+    pathScopes: ['.'],
+    requiresApproval: false,
   },
   shell: {
     id: 'shell',

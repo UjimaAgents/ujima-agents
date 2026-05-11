@@ -4,6 +4,7 @@ import {Avatar} from "./primitives";
 import {TerminalPane} from "./terminal-pane";
 import {BackgroundShellJobPane} from "./background-shell-job-pane";
 import {FilesystemToolPane} from "./filesystem-tool-pane";
+import {GrepToolPane} from "./grep-tool-pane";
 import {WebSearchToolPane} from "./web-search-tool-pane";
 
 /* ── Trace step (used in reasoning trace timeline) ─────────────────── */
@@ -33,8 +34,21 @@ export interface TraceStepData {
   filesystem?: {
     action: "read" | "write";
     resourcePath: string;
+    meta?: string;
     body?: string;
     bodyTone?: "default" | "error";
+  };
+  grep?: {
+    query: string;
+    path: string;
+    count: number;
+    limit: number;
+    truncated?: boolean;
+    matches: {
+      path: string;
+      lineNumber: number;
+      line: string;
+    }[];
   };
   webSearch?: {
     query: string;
@@ -59,6 +73,16 @@ export function TraceStep({
   /** Hide the connector below the dot on the final row. */
   isLast?: boolean;
 }) {
+  const { subject, remainder } = splitTraceTitle(step.title);
+  const showSuccessIcon =
+    step.status === "success" && isToolTraceTitle(step.title);
+  const isCompactRow =
+    step.title.startsWith("Run ·") &&
+    !step.detail.trim() &&
+    !step.subtext &&
+    !step.terminal &&
+    !step.filesystem &&
+    !step.webSearch;
   const body = step.terminal?.streamingJob ? (
     <BackgroundShellJobPane
       cwd={step.terminal.cwd}
@@ -79,8 +103,18 @@ export function TraceStep({
     <FilesystemToolPane
       action={step.filesystem.action}
       resourcePath={step.filesystem.resourcePath}
+      meta={step.filesystem.meta}
       body={step.filesystem.body}
       bodyTone={step.filesystem.bodyTone}
+    />
+  ) : step.grep ? (
+    <GrepToolPane
+      query={step.grep.query}
+      path={step.grep.path}
+      count={step.grep.count}
+      limit={step.grep.limit}
+      truncated={step.grep.truncated}
+      matches={step.grep.matches}
     />
   ) : step.webSearch ? (
     <WebSearchToolPane
@@ -97,7 +131,7 @@ export function TraceStep({
     ) : null;
 
   return (
-    <div className={`flex gap-2.5 ${isLast ? "pb-0" : "pb-5"}`}>
+    <div className={`flex gap-2.5 ${isLast ? "pb-0" : isCompactRow ? "pb-2" : "pb-5"}`}>
       {/* Timeline: dot vertically centered with the title row (h-5 ≈ one text-xs line); spine continues through the step */}
       <div className="relative flex w-3 shrink-0 flex-col items-center self-stretch">
         <div className="flex h-5 shrink-0 items-center justify-center">
@@ -123,21 +157,21 @@ export function TraceStep({
       <div className="flex min-w-0 flex-1 flex-col gap-2">
         <div className="flex min-h-5 items-baseline justify-between gap-3">
           <div className="min-w-0 flex flex-1 flex-wrap items-baseline gap-x-2 gap-y-0">
-            <p className="min-w-0 text-xs font-semibold leading-snug text-foreground">
-              {step.title}
+            <p className="min-w-0 text-xs leading-snug text-foreground">
+              <span className="font-semibold">{subject}</span>
+              {remainder ? <span className="font-normal">{remainder}</span> : null}
             </p>
-            {step.status === "success" && (
+            {showSuccessIcon ? (
               <CheckCircle2
                 className="h-3.5 w-3.5 shrink-0 translate-y-[1px] text-emerald-500"
                 aria-hidden
               />
-            )}
-            {step.status === "failed" && (
+            ) : step.status === "failed" ? (
               <XCircle
                 className="h-3.5 w-3.5 shrink-0 translate-y-[1px] text-red-500"
                 aria-hidden
               />
-            )}
+            ) : null}
           </div>
           <div className="flex shrink-0 items-baseline gap-2.5 whitespace-nowrap text-[11px] tabular-nums leading-snug text-foreground/45">
             <span>{step.time}</span>
@@ -150,6 +184,65 @@ export function TraceStep({
         ) : null}
       </div>
     </div>
+  );
+}
+
+function splitTraceTitle(title: string): { subject: string; remainder: string } {
+  const trimmed = title.trim();
+  if (!trimmed) return { subject: "", remainder: "" };
+
+  const separators = [
+    " sent a message ",
+    " responded to ",
+    " called tool ",
+    " used ",
+    " updated ",
+    " posted ",
+    " created ",
+    " ran ",
+    " finished ",
+  ];
+
+  for (const separator of separators) {
+    const index = trimmed.indexOf(separator);
+    if (index > 0) {
+      return {
+        subject: trimmed.slice(0, index),
+        remainder: trimmed.slice(index),
+      };
+    }
+  }
+
+  const dotIndex = trimmed.indexOf(" · ");
+  if (dotIndex > 0) {
+    return {
+      subject: trimmed.slice(0, dotIndex),
+      remainder: trimmed.slice(dotIndex),
+    };
+  }
+
+  const spaceIndex = trimmed.indexOf(" ");
+  if (spaceIndex > 0) {
+    return {
+      subject: trimmed.slice(0, spaceIndex),
+      remainder: trimmed.slice(spaceIndex),
+    };
+  }
+
+  return { subject: trimmed, remainder: "" };
+}
+
+function isToolTraceTitle(title: string): boolean {
+  const trimmed = title.trim();
+  return (
+    trimmed.includes(" called tool ") ||
+    trimmed.includes(" · read ") ||
+    trimmed.includes(" · grep ") ||
+    trimmed.includes(" updated ") ||
+    trimmed.includes(" used ") ||
+    trimmed.includes(" created ") ||
+    trimmed.includes(" ran ") ||
+    trimmed.includes(" finished ")
   );
 }
 

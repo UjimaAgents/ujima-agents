@@ -1,8 +1,9 @@
 import { applyPatch } from 'diff';
 import { z } from 'zod';
-import { readFile, readdir, stat, writeFile } from 'node:fs/promises';
+import { readFile, stat, writeFile } from 'node:fs/promises';
 import { assertWorkspaceBoundary } from '@ujima/shared/workspace';
 import type { OrchestratorTool } from './types.js';
+import { readWindowValue } from './window-utils.js';
 
 export const FilesystemSchema = z
   .object({
@@ -11,6 +12,19 @@ export const FilesystemSchema = z
       .string()
       .min(1)
       .describe('Path relative to the workspace root, or absolute within the workspace.'),
+    offset: z
+      .number()
+      .int()
+      .min(1)
+      .default(1)
+      .describe('1-based starting line for read.'),
+    limit: z
+      .number()
+      .int()
+      .min(1)
+      .max(200)
+      .default(20)
+      .describe('Maximum number of lines to return for read.'),
     patch: z
       .string()
       .optional()
@@ -34,6 +48,14 @@ export const FilesystemSchema = z
         message: 'Do not pass `patch` for read.',
       });
     }
+
+    if (val.action === 'write' && (val.offset !== 1 || val.limit !== 20)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['offset'],
+        message: 'Do not pass `offset` or `limit` for write.',
+      });
+    }
   });
 
 export const filesystemTool: OrchestratorTool<typeof FilesystemSchema> = {
@@ -43,7 +65,10 @@ export const filesystemTool: OrchestratorTool<typeof FilesystemSchema> = {
     action: args.action,
     resourceType: 'file',
     resourcePath: args.resourcePath,
-    input: args.action === 'write' ? { patch: args.patch } : {},
+    input:
+      args.action === 'write'
+        ? { patch: args.patch }
+        : { offset: args.offset, limit: args.limit },
   }),
   execute: async ({ invocation, team }) => {
     if (!invocation.resourcePath) {
@@ -58,17 +83,16 @@ export const filesystemTool: OrchestratorTool<typeof FilesystemSchema> = {
     if (invocation.action === 'read') {
       const resource = await stat(resolved);
       if (resource.isDirectory()) {
-        const entries = await readdir(resolved);
-        return {
-          type: 'folder' as const,
-          path: resolved,
-          entries,
-        };
+        throw new Error('filesystem.read only supports files, not directories');
       }
+      const offset = readWindowValue(invocation.input?.offset, 1);
+      const limit = readWindowValue(invocation.input?.limit, 20);
       return {
         type: 'file' as const,
         path: resolved,
-        content: await readFile(resolved, 'utf8'),
+        offset,
+        limit,
+        content: sliceWindow(await readFile(resolved, 'utf8'), offset, limit),
       };
     }
 
@@ -100,3 +124,9 @@ export const filesystemTool: OrchestratorTool<typeof FilesystemSchema> = {
     throw new Error(`Unsupported filesystem action: ${invocation.action}`);
   },
 };
+
+function sliceWindow(content: string, offset: number, limit: number): string {
+  if (limit <= 0) return '';
+  const start = Math.max(offset - 1, 0);
+  return content.split(/\r?\n/).slice(start, start + limit).join('\n');
+}

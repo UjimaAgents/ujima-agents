@@ -1,10 +1,13 @@
 import {
   parseFilesystemToolCallArgs,
+  parseGrepToolCallArgs,
   parseShellToolCallArgs,
   parseWebSearchToolCallArgs,
   shellInvocationDisplayLine,
   type ActivityEvent,
+  type Message,
   type RunState,
+  type RunStep,
 } from "@ujima/shared";
 import type { TraceStepData } from "./components/chat/details-sidebar";
 import { formatTimestamp } from "./lib/format-timestamp";
@@ -41,6 +44,16 @@ export interface ReasoningTraceInput {
   activity: ActivityEvent[];
   runs: RunState[];
   /** Current workspace org — required for background shell job streaming in the trace. */
+  organizationId?: string;
+}
+
+export interface HistoricalTraceInput {
+  conversationName: string;
+  conversationType: "channel" | "agent";
+  members: ReasoningTraceInput["members"];
+  run: RunState;
+  steps: RunStep[];
+  message?: Message;
   organizationId?: string;
 }
 
@@ -181,6 +194,18 @@ function truncateTerminalText(text: string): string {
   return `${text.slice(0, MAX_TERMINAL_CHARS)}\n\n… (truncated)`;
 }
 
+function parseMaybeJsonObject(value: unknown): Record<string, unknown> | undefined {
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value) as unknown;
+      return toObject(parsed);
+    } catch {
+      return undefined;
+    }
+  }
+  return toObject(value);
+}
+
 function shellToolAggregateOutput(result: unknown, isError: boolean, errorText?: string): string {
   if (isError) {
     const base = errorText?.trim() || "";
@@ -221,7 +246,7 @@ function filesystemToolAggregateOutput(result: unknown, isError: boolean, errorT
       return truncateTerminalText(String(result));
     }
   }
-  const rec = toObject(result);
+  const rec = parseMaybeJsonObject(result);
   if (rec && typeof rec.status === "string") {
     if (rec.status === "waiting_for_approval") {
       return "";
@@ -233,10 +258,6 @@ function filesystemToolAggregateOutput(result: unknown, isError: boolean, errorT
   }
   if (rec?.type === "file" && typeof rec.content === "string") {
     return truncateTerminalText(rec.content);
-  }
-  if (rec?.type === "folder" && Array.isArray(rec.entries)) {
-    const lines = rec.entries.map((e) => String(e)).join("\n");
-    return truncateTerminalText(lines.trim() ? lines : "(empty directory)");
   }
   if (rec && rec.success === true) {
     return truncateTerminalText("Saved.");
@@ -264,10 +285,31 @@ function inferToolAction(args?: Record<string, unknown>): {
   input?: Record<string, unknown>;
   op?: string;
   command?: string;
+  offset?: number;
+  limit?: number;
+  query?: string;
 } {
   const input = toObject(args?.input);
   const op = typeof input?.op === "string" ? input.op : undefined;
   const command = typeof input?.command === "string" ? input.command : undefined;
+  const offset =
+    typeof args?.offset === "number"
+      ? args.offset
+      : typeof input?.offset === "number"
+        ? input.offset
+        : undefined;
+  const limit =
+    typeof args?.limit === "number"
+      ? args.limit
+      : typeof input?.limit === "number"
+        ? input.limit
+        : undefined;
+  const query =
+    typeof args?.query === "string"
+      ? args.query
+      : typeof input?.query === "string"
+        ? input.query
+        : undefined;
   return {
     action: typeof args?.action === "string" ? args.action : undefined,
     resourceType: typeof args?.resourceType === "string" ? args.resourceType : undefined,
@@ -275,6 +317,9 @@ function inferToolAction(args?: Record<string, unknown>): {
     input,
     op,
     command,
+    offset,
+    limit,
+    query,
   };
 }
 
@@ -341,6 +386,10 @@ function deriveToolLine(
       : `in the DM thread`;
 
   const path = parsed.resourcePath;
+  const windowLabel =
+    typeof parsed.offset === "number" || typeof parsed.limit === "number"
+      ? ` [offset=${parsed.offset ?? 1}, limit=${parsed.limit ?? 20}]`
+      : "";
   const lowerOp = parsed.op?.toLowerCase();
   const lowerCommand = parsed.command?.toLowerCase();
 
@@ -348,7 +397,7 @@ function deriveToolLine(
     const a = parsed.action?.toLowerCase();
     if (a === "read") {
       return {
-        title: `${actorLabel} · read`,
+        title: `${actorLabel} · read ${path}${windowLabel}`,
         detail: "",
       };
     }
@@ -363,6 +412,16 @@ function deriveToolLine(
   if (toolName === "shell") {
     return {
       title: `${actorLabel} · shell`,
+      detail: "",
+    };
+  }
+
+  if (toolName === "grep") {
+    const query = parsed.query ?? "";
+    return {
+      title: query
+        ? `${actorLabel} · grep "${query}"`
+        : `${actorLabel} · grep`,
       detail: "",
     };
   }
@@ -615,8 +674,48 @@ function buildToolStep(
       filesystem = {
         action: fsArgs.action,
         resourcePath: fsArgs.resourcePath,
+        meta:
+          fsArgs.action === "read"
+            ? `[offset=${fsArgs.offset ?? 1}, limit=${fsArgs.limit ?? 20}]`
+            : undefined,
         body: resolved !== undefined && resolved.length > 0 ? resolved : undefined,
         bodyTone: isError ? "error" : "default",
+      };
+    }
+  }
+
+  let grep: TraceStepData["grep"] | undefined;
+  if (name === "grep") {
+    const grepArgs = parseGrepToolCallArgs(
+      mergedPayload?.toolCall?.args as Record<string, unknown> | undefined,
+    );
+    if (grepArgs) {
+      const result = resultBody?.toolResult?.result;
+      const rec = parseMaybeJsonObject(result);
+      const matches = Array.isArray(rec?.matches)
+        ? rec.matches
+            .map((entry) => {
+              const item = toObject(entry);
+              const path = typeof item?.path === "string" ? item.path : "";
+              const lineNumber = typeof item?.lineNumber === "number" ? item.lineNumber : 0;
+              const line = typeof item?.line === "string" ? item.line : "";
+              if (!path || !lineNumber) return null;
+              return { path, lineNumber, line };
+            })
+            .filter(
+              (item): item is { path: string; lineNumber: number; line: string } =>
+                item !== null,
+            )
+        : [];
+      const count = typeof rec?.count === "number" ? rec.count : matches.length;
+      const limit = typeof rec?.limit === "number" ? rec.limit : grepArgs.limit ?? 20;
+      grep = {
+        query: grepArgs.query,
+        path: grepArgs.resourcePath,
+        count,
+        limit,
+        truncated: typeof rec?.truncated === "boolean" ? rec.truncated : undefined,
+        matches,
       };
     }
   }
@@ -644,7 +743,7 @@ function buildToolStep(
     }
   }
 
-  const hasRich = !!(terminal || filesystem || webSearch);
+  const hasRich = !!(terminal || filesystem || grep || webSearch);
 
   return {
     id: `tool:${toolCallId}:${call?.event_id ?? ""}:${result?.event_id ?? ""}`,
@@ -655,6 +754,7 @@ function buildToolStep(
     status,
     terminal,
     filesystem,
+    grep,
     webSearch,
   };
 }
@@ -691,7 +791,7 @@ function messageEventToStep(input: ReasoningTraceInput, event: ActivityEvent): T
       mentionedLabel && actor.isAgent
         ? `${actorLabel} responded to ${mentionedLabel} ${target}`
         : `${actorLabel} sent a message ${target}`,
-    detail: "Message posted.",
+    detail: "",
     time: formatTimestamp(event.timestamp),
     duration: "—",
     status: "success",
@@ -807,4 +907,89 @@ export function buildReasoningTraceSteps(input: ReasoningTraceInput): TraceStepD
   });
 
   return ordered.map((o) => o.step);
+}
+
+export function buildHistoricalTraceSteps(input: HistoricalTraceInput): TraceStepData[] {
+  const context: ReasoningTraceInput = {
+    threadId: input.run.threadId ?? input.run.id,
+    conversationName: input.conversationName,
+    conversationType: input.conversationType,
+    members: input.members,
+    activity: [],
+    runs: [input.run],
+    organizationId: input.organizationId,
+  };
+
+  const steps: TraceStepData[] = [
+    runEventToStep(
+      {
+        event_id: `run:${input.run.id}`,
+        type: `run_${input.run.status}`,
+        publisher: input.run.agentId,
+        timestamp: input.run.startedAt,
+        payload: input.run,
+      },
+      input.run,
+    ),
+    ...input.steps.map((step) => runStepToTraceStep(context, step)),
+  ];
+
+  if (input.message) {
+    steps.push(
+      messageEventToStep(context, {
+        event_id: `message:${input.message.id}`,
+        type: input.conversationType === "channel" ? "channel_message" : "thread_message",
+        publisher: input.message.senderId,
+        timestamp: input.message.createdAt,
+        payload: {
+          threadId: input.message.threadId,
+          channelId: input.message.channelId,
+          content: input.message.content,
+        },
+      }),
+    );
+  }
+
+  return steps;
+}
+
+function runStepToTraceStep(input: ReasoningTraceInput, step: RunStep): TraceStepData {
+  const call: ActivityEvent = {
+    event_id: `run-step:${step.id}:call`,
+    type: "tool_called",
+    publisher: step.agentId,
+    timestamp: step.createdAt,
+    payload: {
+      runId: step.runId,
+      threadId: step.threadId,
+      agentId: step.agentId,
+      toolCall: {
+        toolCallId: step.toolCallId,
+        toolName: step.toolId,
+        args: {
+          ...step.input,
+          action: step.action,
+          resourceType: step.resourceType,
+          resourcePath: step.resourcePath,
+        },
+      },
+    },
+  };
+  const result: ActivityEvent = {
+    event_id: `run-step:${step.id}:result`,
+    type: "tool_result",
+    publisher: step.agentId,
+    timestamp: step.createdAt,
+    payload: {
+      runId: step.runId,
+      threadId: step.threadId,
+      agentId: step.agentId,
+      toolResult: {
+        toolCallId: step.toolCallId,
+        result: step.output,
+        isError: step.status === "error",
+      },
+    },
+  };
+  return buildToolStep(input, step.toolCallId, call, result);
 }

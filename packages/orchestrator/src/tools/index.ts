@@ -8,6 +8,7 @@ import {
   selfNoteTool,
 } from './channel.js';
 import { filesystemTool } from './filesystem.js';
+import { grepTool } from './grep.js';
 import { shellTool } from './shell.js';
 import { messageTool } from './message.js';
 import { webSearchTool } from './web-search.js';
@@ -24,6 +25,7 @@ export const ORCHESTRATOR_TOOLS = {
   'channel.list': channelListTool,
   'channel.read': channelReadTool,
   filesystem: filesystemTool,
+  grep: grepTool,
   shell: shellTool,
   web_search: webSearchTool,
   'self.note': selfNoteTool,

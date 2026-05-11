@@ -171,6 +171,12 @@ export interface ApiRepository extends ConversationRepository {
     cursor?: string,
     limit?: number,
   ): PaginatedRuns;
+  listThreadRuns(
+    organizationId: string,
+    threadId: string,
+    cursor?: string,
+    limit?: number,
+  ): PaginatedRuns;
   saveTaskSession(session: TaskSession): TaskSession;
   getTaskSession(organizationId: string, taskSessionId: string): TaskSession | null;
   getTaskSessionBySlug(organizationId: string, slug: string): TaskSession | null;
