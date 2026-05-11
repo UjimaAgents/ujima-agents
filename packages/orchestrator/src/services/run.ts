@@ -11,6 +11,7 @@ import {
   threadRoom,
   type RunState,
   type Message,
+  type RunStep,
 } from '@ujima/shared';
 import type { AiService } from '../ai-service.js';
 import { requireTeam } from '../utils/require-team.js';
@@ -40,9 +41,19 @@ export interface RunDetail {
   run: RunState;
   approvals: ReturnType<ApiRepository['listPendingApprovals']>;
   messages: ReturnType<ApiRepository['listMessages']>['data'];
+  steps: RunStep[];
+  message?: Message;
   activeAgents: { memberId: string; statusLabel: string }[];
   tokens: { perMemberId: Record<string, number> };
   tools: Record<string, RunDetailAggregate>;
+}
+
+export interface RunTraceDetail {
+  run: RunState;
+  approvals: ReturnType<ApiRepository['listPendingApprovals']>;
+  messages: Message[];
+  steps: RunStep[];
+  message?: Message;
 }
 
 export class RunService {
@@ -166,6 +177,37 @@ export class RunService {
     return this.repo.getRun(organizationId, runId);
   }
 
+  getRunTraceDetail(organizationId: string, runId: string): RunTraceDetail | null {
+    const run = this.repo.getRun(organizationId, runId);
+    if (!run) {
+      return null;
+    }
+
+    const approvals = this.repo
+      .listPendingApprovals(organizationId)
+      .filter((approval) => approval.runId === runId);
+    const messages = run.threadId ? this.listAllThreadMessages(organizationId, run.threadId) : [];
+    const steps = this.repo.listRunSteps?.(organizationId, runId) ?? [];
+    const message = [...messages]
+      .reverse()
+      .find(
+        (item) =>
+          item.senderId === run.agentId &&
+          item.senderKind === AGENT_KIND &&
+          item.kind === AGENT_KIND &&
+          item.createdAt >= run.startedAt &&
+          (run.endedAt == null || item.createdAt <= run.endedAt),
+      );
+
+    return {
+      run,
+      approvals,
+      messages,
+      steps,
+      ...(message ? { message } : {}),
+    };
+  }
+
   cancelRun(organizationId: string, runId: string): RunState {
     const run = this.repo.getRun(organizationId, runId);
     if (!run) {
@@ -199,20 +241,18 @@ export class RunService {
   }
 
   getRunDetail(organizationId: string, runId: string): RunDetail | null {
-    const run = this.repo.getRun(organizationId, runId);
-    if (!run) return null;
+    const trace = this.getRunTraceDetail(organizationId, runId);
+    if (!trace) return null;
+    const { run, approvals, messages, steps, message } = trace;
 
     const spirit = this.repo.getSpiritByRunId(organizationId, runId);
     if (!spirit) {
-      const approvals = this.repo
-        .listPendingApprovals(organizationId)
-        .filter((approval) => approval.runId === runId);
-      const messages = run.threadId ? this.listAllThreadMessages(organizationId, run.threadId) : [];
-
       return {
         run,
         approvals,
         messages,
+        steps,
+        ...(message ? { message } : {}),
         activeAgents:
           run.status === 'queued' || run.status === 'running' || run.status === 'waiting_for_approval'
             ? [{ memberId: run.agentId, statusLabel: run.status }]
@@ -225,14 +265,12 @@ export class RunService {
     const session = this.repo.getTaskSession(organizationId, spirit.taskSessionId);
     const sessionSpirits = this.repo.listSpiritsForSession(organizationId, spirit.taskSessionId);
     const runIds = new Set(sessionSpirits.map((current) => current.runId).filter(Boolean));
-    const approvals = this.repo
+    const sessionApprovals = this.repo
       .listPendingApprovals(organizationId)
       .filter((approval) => approval.runId && runIds.has(approval.runId));
-    const messages = session
+    const sessionMessages = session
       ? this.repo.listChannelMessages(organizationId, session.channelId, { limit: 500 }).data
-      : run.threadId
-        ? this.repo.listMessages(organizationId, run.threadId).data
-        : [];
+      : messages;
 
     const activeAgents = sessionSpirits
       .filter((current) => LIVE_RUN_DETAIL_STATUSES.has(current.status))
@@ -249,11 +287,13 @@ export class RunService {
 
     return {
       run,
-      approvals,
-      messages,
+      approvals: sessionApprovals,
+      messages: sessionMessages,
+      steps,
+      ...(message ? { message } : {}),
       activeAgents,
       tokens: { perMemberId },
-      tools: aggregateToolUsage(messages),
+      tools: aggregateToolUsage(sessionMessages),
     };
   }
 
