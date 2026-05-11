@@ -4,6 +4,7 @@ import {Avatar} from "./primitives";
 import {TerminalPane} from "./terminal-pane";
 import {BackgroundShellJobPane} from "./background-shell-job-pane";
 import {FilesystemToolPane} from "./filesystem-tool-pane";
+import {GrepToolPane} from "./grep-tool-pane";
 import {WebSearchToolPane} from "./web-search-tool-pane";
 
 /* ── Trace step (used in reasoning trace timeline) ─────────────────── */
@@ -33,8 +34,21 @@ export interface TraceStepData {
   filesystem?: {
     action: "read" | "write";
     resourcePath: string;
+    meta?: string;
     body?: string;
     bodyTone?: "default" | "error";
+  };
+  grep?: {
+    query: string;
+    path: string;
+    count: number;
+    limit: number;
+    truncated?: boolean;
+    matches: {
+      path: string;
+      lineNumber: number;
+      line: string;
+    }[];
   };
   webSearch?: {
     query: string;
@@ -89,8 +103,18 @@ export function TraceStep({
     <FilesystemToolPane
       action={step.filesystem.action}
       resourcePath={step.filesystem.resourcePath}
+      meta={step.filesystem.meta}
       body={step.filesystem.body}
       bodyTone={step.filesystem.bodyTone}
+    />
+  ) : step.grep ? (
+    <GrepToolPane
+      query={step.grep.query}
+      path={step.grep.path}
+      count={step.grep.count}
+      limit={step.grep.limit}
+      truncated={step.grep.truncated}
+      matches={step.grep.matches}
     />
   ) : step.webSearch ? (
     <WebSearchToolPane
@@ -212,6 +236,8 @@ function isToolTraceTitle(title: string): boolean {
   const trimmed = title.trim();
   return (
     trimmed.includes(" called tool ") ||
+    trimmed.includes(" · read ") ||
+    trimmed.includes(" · grep ") ||
     trimmed.includes(" updated ") ||
     trimmed.includes(" used ") ||
     trimmed.includes(" created ") ||

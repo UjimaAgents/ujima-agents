@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   parseFilesystemToolCallArgs,
+  parseGrepToolCallArgs,
   parseShellToolCallArgs,
   parseWebSearchToolCallArgs,
 } from './tool-call-display-args';
@@ -37,8 +38,10 @@ describe('parseFilesystemToolCallArgs', () => {
       parseFilesystemToolCallArgs({
         action: 'read',
         resourcePath: '/f.txt',
+        offset: 10,
+        limit: 20,
       }),
-    ).toEqual({ action: 'read', resourcePath: '/f.txt' });
+    ).toEqual({ action: 'read', resourcePath: '/f.txt', offset: 10, limit: 20 });
   });
 
   it('parses nested write with patch', () => {
@@ -61,6 +64,36 @@ describe('parseFilesystemToolCallArgs', () => {
     expect(
       parseFilesystemToolCallArgs({ action: 'delete', resourcePath: '/x' }),
     ).toBeNull();
+  });
+});
+
+describe('parseGrepToolCallArgs', () => {
+  it('parses flat args', () => {
+    expect(
+      parseGrepToolCallArgs({
+        query: 'cors',
+        resourcePath: 'apps/web',
+        limit: 5,
+        ignoreCase: true,
+      }),
+    ).toEqual({
+      query: 'cors',
+      resourcePath: 'apps/web',
+      limit: 5,
+      ignoreCase: true,
+    });
+  });
+
+  it('parses nested input', () => {
+    expect(
+      parseGrepToolCallArgs({
+        input: { query: 'auth', path: 'packages', limit: 3 },
+      } as Record<string, unknown>),
+    ).toEqual({ query: 'auth', resourcePath: 'packages', limit: 3 });
+  });
+
+  it('returns null without query', () => {
+    expect(parseGrepToolCallArgs({ path: 'apps/web' })).toBeNull();
   });
 });
 

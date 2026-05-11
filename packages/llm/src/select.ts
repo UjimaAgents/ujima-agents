@@ -1,4 +1,5 @@
 import { createAnthropic } from '@ai-sdk/anthropic';
+import { createDeepSeek } from '@ai-sdk/deepseek';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createOpenAI } from '@ai-sdk/openai';
 import type { LanguageModelV3 } from '@ai-sdk/provider';
@@ -96,10 +97,7 @@ export function selectLanguageModel(input: SelectLanguageModelInput): LanguageMo
 
   if (input.kind === 'deepseek') {
     if (!input.apiKey) throw new LLMError('not_configured', 'deepseek provider requires apiKey');
-    // Use DeepSeek's OpenAI-compatible endpoint instead of the dedicated
-    // DeepSeek SDK adapter to avoid model-spec version mismatches across
-    // mixed AI SDK runtimes (v5/v6 paths).
-    return createOpenAI({
+    return createDeepSeek({
       apiKey: input.apiKey,
       baseURL: input.baseUrl ?? DEEPSEEK_BASE_URL,
     }).chat(normalizeDeepSeekModelId(input.modelId));

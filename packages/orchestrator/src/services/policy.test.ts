@@ -154,6 +154,50 @@ describe('checkToolPolicy', () => {
         reason: expect.stringContaining('outside allowed scopes'),
       });
     });
+
+    it('requires approval for hidden or secret-looking reads', async () => {
+      await writeFile(join(workspaceRoot, '.env'), 'TOKEN=secret\n', 'utf8');
+
+      const team = loadAgentTeam({
+        name: 'Secret Org',
+        workspace: { root: workspaceRoot },
+        providers: {
+          openai: {
+            kind: 'openai',
+            defaultModel: 'gpt-5.4',
+            models: ['gpt-5.4'],
+          },
+        },
+        roles: [
+          {
+            name: 'secret-reader',
+            title: 'Secret Reader',
+            instructions: 'Can inspect root files.',
+            provider: 'openai',
+            model: 'gpt-5.4',
+            workspaceScopes: ['.'],
+            tools: ['filesystem'],
+            channels: ['general'],
+          },
+        ],
+        agents: [],
+        channels: [{ name: 'general', kind: 'general', topic: 'General' }],
+      } as Record<string, unknown>);
+
+      expect(
+        checkToolPolicy(
+          team,
+          'secret-reader',
+          'filesystem',
+          'read',
+          join(workspaceRoot, '.env'),
+        ),
+      ).toEqual({
+        allowed: true,
+        requiresApproval: true,
+        reason: 'Path "' + join(workspaceRoot, '.env') + '" requires approval',
+      });
+    });
   });
 
   // Regression coverage for two bugs in the channel-tool surface:

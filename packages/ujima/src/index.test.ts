@@ -29,6 +29,7 @@ test('starter config includes the preset team shape', () => {
   expect(config.name).toBe('Ujima Demo');
   expect(config.channels[0]?.name).toBe('general');
   expect(Object.keys(config.tools)).toContain('filesystem');
+  expect(Object.keys(config.tools)).toContain('grep');
   expect(Object.keys(config.tools)).toContain('shell');
   expect(config.agents.map((agent) => agent.name)).toContain('pm');
   expect(config.organizationChart.reportsTo['frontend-engineer']).toBe('pm');
@@ -259,6 +260,7 @@ test('legacy default role tools are migrated forward on load', () => {
   });
 
   expect(team.config.configVersion).toBe(3);
+  expect(team.getRole('frontend-engineer')?.tools).toContain('grep');
 });
 
 test('validateAgentTeamConfig rejects agents that reference unknown roles', () => {
