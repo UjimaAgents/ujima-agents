@@ -705,6 +705,62 @@ describe('orchestrator runTask — manual mode + concurrent execution', () => {
     expect(jrResumePrompt).toContain('Frame created at /designs/card.fig');
   });
 
+  it('fails slim mode without starting agents when the requested sequence has unknown agents', async () => {
+    const mcp = makeFakeMCPConnection({ id: 'figma' });
+    const permissions = createPermissionMiddleware({ audit: db.audit, agentState: db.agentState });
+    let modelCalls = 0;
+
+    const handle = runTask(
+      {
+        resolveAgent: (id) =>
+          id === 'sr-designer' ? srDesigner : id === 'jr-designer' ? jrDesigner : undefined,
+        getMCPConnection: () => mcp,
+        getModel: () => {
+          modelCalls += 1;
+          return lm({ script: [textTurn('should not run')] });
+        },
+        eventBus: bus,
+        context: db.context,
+        audit: db.audit,
+        permissions,
+        agentState: db.agentState,
+        approvals: db.approvals,
+      },
+      {
+        task: { ...task, execution_mode: 'slim' },
+        team,
+        sessionId: 'sess-slim-bad-sequence',
+        sequence: ['frontend-typo'],
+      },
+    );
+
+    const result = await handle.result;
+    expect(result.status).toBe('failed');
+    expect(result.agentResults).toHaveLength(1);
+    expect(result.agentResults[0]?.error).toContain('unknown agents in slim sequence: frontend-typo');
+    expect(modelCalls).toBe(0);
+  });
+
+  it('rejects invalid execution mode (Zod validation)', () => {
+    const badTask = { ...task, execution_mode: 'invalid' as unknown as 'concurrent' };
+    expect(() =>
+      runTask(
+        {
+          resolveAgent: (id) => (id === 'sr-designer' ? srDesigner : undefined),
+          getMCPConnection: () => makeFakeMCPConnection({}),
+          getModel: () => lm({ script: [textTurn('ok')] }),
+          eventBus: bus,
+          context: db.context,
+          audit: db.audit,
+          permissions: createPermissionMiddleware({ audit: db.audit }),
+          agentState: db.agentState,
+          approvals: db.approvals,
+        },
+        { task: badTask, team, sessionId: 'sess-invalid' },
+      ),
+    ).toThrow();
+  });
+
   it('converts review_required into an approval record and approval_requested event', async () => {
     const mcp = makeFakeMCPConnection({ id: 'figma' });
     const permissions = createPermissionMiddleware({ audit: db.audit });

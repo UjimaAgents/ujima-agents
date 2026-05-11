@@ -566,9 +566,11 @@ export class TaskPromoterService {
     }
 
     const resolved: string[] = [];
+    let sawHint = false;
     for (const hint of teamHints) {
       const key = hint.trim().toLowerCase();
       if (!key) continue;
+      sawHint = true;
       for (const memberId of byNameOrId.get(key) ?? []) {
         if (!resolved.includes(memberId)) {
           resolved.push(memberId);
@@ -577,6 +579,9 @@ export class TaskPromoterService {
     }
     if (resolved.length > 0) {
       return resolved;
+    }
+    if (sawHint) {
+      return [];
     }
 
     const channelAgents = activeAgents

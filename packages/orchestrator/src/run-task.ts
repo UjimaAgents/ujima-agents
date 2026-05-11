@@ -328,6 +328,9 @@ async function runSlimTask(input: {
   } = input;
 
   const sequence = resolveSlimSequence(agentDefs, runInput.sequence);
+  if (typeof sequence === 'string') {
+    return [failedSpawnResult(runInput, { id: 'slim-sequence' }, sequence)];
+  }
   const agentResults: AgentRunResult[] = [];
 
   for (let stageIdx = 0; stageIdx < sequence.length; stageIdx += 1) {
@@ -549,14 +552,17 @@ function failedSpawnResult(
   };
 }
 
-function resolveSlimSequence(agentDefs: AgentDef[], requested?: readonly string[]): string[] {
+function resolveSlimSequence(agentDefs: AgentDef[], requested?: readonly string[]): string[] | string {
   const available = new Set(agentDefs.map((agent) => agent.id));
   if (!requested || requested.length === 0) {
     return agentDefs.map((agent) => agent.id);
   }
   const sequence = requested.filter((agentId, index) => requested.indexOf(agentId) === index);
-  const valid = sequence.filter((agentId) => available.has(agentId));
-  return valid.length > 0 ? valid : agentDefs.map((agent) => agent.id);
+  const unknown = sequence.filter((agentId) => !available.has(agentId));
+  if (unknown.length > 0) {
+    return `unknown agents in slim sequence: ${unknown.join(', ')}`;
+  }
+  return sequence;
 }
 
 interface SlimCheckpointRecord {

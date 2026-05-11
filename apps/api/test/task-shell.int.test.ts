@@ -413,4 +413,25 @@ describe('task shell integrations', () => {
     expect(sessions).toHaveLength(1);
     expect(sessions[0]?.teamMemberIds).toEqual(['frontend-alice']);
   });
+
+  it('skips explicit task promotion when provided team hints do not resolve', async () => {
+    const fixture = await createFixture();
+    tempDirs.push(fixture.archiveRoot);
+
+    const message = fixture.conversations.sendMessage({
+      organizationId: fixture.organizationId,
+      threadId: 'general',
+      channelId: 'general',
+      senderId: fixture.ownerId,
+      content: '/task run [frontedn] Implement the auth callbacks',
+    });
+
+    const outcome = await fixture.taskPromoter.handlePostedMessage({
+      organizationId: fixture.organizationId,
+      messageId: message.id,
+    });
+
+    expect(outcome?.decision).toBe('skip');
+    expect(fixture.repo.listTaskSessions(fixture.organizationId, { limit: 20 }).data).toHaveLength(0);
+  });
 });
