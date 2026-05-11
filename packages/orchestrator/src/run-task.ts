@@ -328,6 +328,7 @@ async function runSlimTask(input: {
   if (typeof sequence === 'string') {
     return [failedSpawnResult(runInput, { id: 'slim-sequence' }, sequence)];
   }
+  const teamAgentIds = agentDefs.map((agent) => agent.id);
   const agentResults: AgentRunResult[] = [];
 
   for (let stageIdx = 0; stageIdx < sequence.length; stageIdx += 1) {
@@ -335,7 +336,15 @@ async function runSlimTask(input: {
     if (!agentId) {
       continue;
     }
-    const checkpoint = await readSlimCheckpoint(deps, runInput.task.task_id, stageIdx);
+    const checkpoint = await readSlimCheckpoint({
+      deps,
+      taskId: runInput.task.task_id,
+      sessionId: runInput.sessionId,
+      stage: stageIdx,
+      agentId,
+      sequence,
+      teamAgentIds,
+    });
     if (checkpoint) {
       // Slim mode resumes by replaying persisted stage outputs back into the
       // in-memory execution state, so later stages see the same predecessor
@@ -392,7 +401,16 @@ async function runSlimTask(input: {
     recordCompletedStageOutputs(executionState, [result]);
 
     if (result.exitReason === 'completed') {
-      await writeSlimCheckpoint(deps, runInput.task.task_id, stageIdx, result, executionState);
+      await writeSlimCheckpoint({
+        deps,
+        taskId: runInput.task.task_id,
+        sessionId: runInput.sessionId,
+        stage: stageIdx,
+        sequence,
+        teamAgentIds,
+        result,
+        executionState,
+      });
     } else {
       break;
     }
@@ -565,35 +583,64 @@ function resolveSlimSequence(agentDefs: AgentDef[], requested?: readonly string[
 interface SlimCheckpointRecord {
   stage: number;
   agentId: string;
+  sequence: string[];
+  teamAgentIds: string[];
   result: AgentRunResult;
   browserState?: string;
 }
 
-async function readSlimCheckpoint(
-  deps: OrchestratorDeps,
-  taskId: string,
-  stage: number,
-): Promise<SlimCheckpointRecord | undefined> {
-  return deps.context.get<SlimCheckpointRecord>(slimCheckpointKey(taskId, stage));
+async function readSlimCheckpoint(input: {
+  deps: OrchestratorDeps;
+  taskId: string;
+  sessionId: string;
+  stage: number;
+  agentId: string;
+  sequence: readonly string[];
+  teamAgentIds: readonly string[];
+}): Promise<SlimCheckpointRecord | undefined> {
+  const record = await input.deps.context.get<SlimCheckpointRecord>(
+    slimCheckpointKey(input.taskId, input.sessionId, input.stage),
+  );
+  if (!record) {
+    return undefined;
+  }
+  if (
+    record.stage !== input.stage ||
+    record.agentId !== input.agentId ||
+    !sameStringList(record.sequence, input.sequence) ||
+    !sameStringList(record.teamAgentIds, input.teamAgentIds)
+  ) {
+    return undefined;
+  }
+  return record;
 }
 
-async function writeSlimCheckpoint(
-  deps: OrchestratorDeps,
-  taskId: string,
-  stage: number,
-  result: AgentRunResult,
-  executionState: ExecutionState,
-): Promise<void> {
-  await deps.context.put(slimCheckpointKey(taskId, stage), {
-    stage,
-    agentId: result.agentId,
-    result,
-    browserState: executionState.completedBrowserState.get(result.agentId),
+async function writeSlimCheckpoint(input: {
+  deps: OrchestratorDeps;
+  taskId: string;
+  sessionId: string;
+  stage: number;
+  sequence: readonly string[];
+  teamAgentIds: readonly string[];
+  result: AgentRunResult;
+  executionState: ExecutionState;
+}): Promise<void> {
+  await input.deps.context.put(slimCheckpointKey(input.taskId, input.sessionId, input.stage), {
+    stage: input.stage,
+    agentId: input.result.agentId,
+    sequence: [...input.sequence],
+    teamAgentIds: [...input.teamAgentIds],
+    result: input.result,
+    browserState: input.executionState.completedBrowserState.get(input.result.agentId),
   } satisfies SlimCheckpointRecord);
 }
 
-function slimCheckpointKey(taskId: string, stage: number): string {
-  return `task:${taskId}:slim:checkpoint:${stage}`;
+function slimCheckpointKey(taskId: string, sessionId: string, stage: number): string {
+  return `task:${taskId}:session:${sessionId}:slim:checkpoint:${stage}`;
+}
+
+function sameStringList(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
 async function runPlanner(

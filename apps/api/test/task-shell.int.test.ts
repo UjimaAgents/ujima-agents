@@ -414,7 +414,7 @@ describe('task shell integrations', () => {
     expect(sessions[0]?.teamMemberIds).toEqual(['frontend-alice']);
   });
 
-  it('skips explicit task promotion when provided team hints do not resolve', async () => {
+  it('skips explicit task promotion when any provided team hint does not resolve', async () => {
     const fixture = await createFixture();
     tempDirs.push(fixture.archiveRoot);
 
@@ -423,7 +423,7 @@ describe('task shell integrations', () => {
       threadId: 'general',
       channelId: 'general',
       senderId: fixture.ownerId,
-      content: '/task run [frontedn] Implement the auth callbacks',
+      content: '/task run [frontend-alice, frontedn] Implement the auth callbacks',
     });
 
     const outcome = await fixture.taskPromoter.handlePostedMessage({
@@ -433,5 +433,10 @@ describe('task shell integrations', () => {
 
     expect(outcome?.decision).toBe('skip');
     expect(fixture.repo.listTaskSessions(fixture.organizationId, { limit: 20 }).data).toHaveLength(0);
+    const audit = fixture.repo
+      .listAuditEvents(fixture.organizationId)
+      .find((event) => event.action === 'audit.task_promoter');
+    expect(audit?.status).toBe('blocked');
+    expect(audit?.metadata.rationale).toContain('frontedn');
   });
 });
