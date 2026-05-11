@@ -148,8 +148,60 @@ export class RunService {
     return this.repo.listRuns(organizationId, cursor, limit);
   }
 
+  listThreadTraces(organizationId: string, threadId: string, cursor?: string, limit?: number) {
+    const page = this.repo.listThreadRuns(organizationId, threadId, cursor, limit);
+    return {
+      ...page,
+      data: page.data.flatMap((run) => {
+        const detail = this.getRunTraceDetail(organizationId, run.id);
+        return detail ? [detail] : [];
+      }),
+    };
+  }
+
   getRun(organizationId: string, runId: string) {
     return this.repo.getRun(organizationId, runId);
+  }
+
+  getRunTraceDetail(organizationId: string, runId: string) {
+    const run = this.repo.getRun(organizationId, runId);
+    if (!run) {
+      return null;
+    }
+
+    const approvals = this.repo
+      .listPendingApprovals(organizationId)
+      .filter((approval) => approval.runId === runId);
+
+    const steps = this.repo.listRunSteps?.(organizationId, runId) ?? [];
+    const messages: Message[] = [];
+    if (run.threadId) {
+      let cursor: string | undefined = undefined;
+      do {
+        const page = this.repo.listMessages(organizationId, run.threadId, cursor, 100);
+        messages.push(...page.data);
+        cursor = page.nextCursor;
+      } while (cursor);
+    }
+
+    const message = [...messages]
+      .reverse()
+      .find(
+        (item) =>
+          item.senderId === run.agentId &&
+          item.senderKind === AGENT_KIND &&
+          item.kind === AGENT_KIND &&
+          item.createdAt >= run.startedAt &&
+          (run.endedAt == null || item.createdAt <= run.endedAt),
+      );
+
+    return {
+      run,
+      approvals,
+      messages,
+      steps,
+      message,
+    };
   }
 
   cancelRun(organizationId: string, runId: string): RunState {
@@ -185,23 +237,9 @@ export class RunService {
   }
 
   getRunDetail(organizationId: string, runId: string) {
-    const run = this.repo.getRun(organizationId, runId);
-    if (!run) return null;
-
-    const approvals = this.repo
-      .listPendingApprovals(organizationId)
-      .filter((approval) => approval.runId === runId);
-
-    const messages: Message[] = [];
-    if (run.threadId) {
-      let cursor: string | undefined = undefined;
-      do {
-        const page = this.repo.listMessages(organizationId, run.threadId, cursor, 100);
-        messages.push(...page.data);
-        cursor = page.nextCursor;
-      } while (cursor);
-    }
-
+    const detail = this.getRunTraceDetail(organizationId, runId);
+    if (!detail) return null;
+    const { run, approvals, messages } = detail;
     return { run, approvals, messages };
   }
 

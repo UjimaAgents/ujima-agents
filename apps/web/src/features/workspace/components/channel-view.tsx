@@ -570,7 +570,20 @@ export function ChannelView({
             onClose={() => setShowDetails(false, { userIntent: true })}
           >
             {detailsTab === "Reasoning trace" ? (
-              <ReasoningTracePanel steps={reasoningTraceSteps} autoScroll={traceAutoScroll} />
+              <ReasoningTracePanel
+                key={`${currentThreadId ?? conversation.id}:${reasoningTraceSteps.length > 0 ? "live" : "history"}`}
+                organizationId={bootstrap.organization?.id}
+                threadId={currentThreadId}
+                conversationName={conversation.name}
+                conversationType={conversation.type}
+                members={members.map((member) => ({
+                  id: member.id,
+                  name: member.name,
+                  kind: member.kind,
+                }))}
+                liveSteps={reasoningTraceSteps}
+                autoScroll={traceAutoScroll}
+              />
             ) : detailsTab === "Changes" ? (
               <p className="text-xs text-zinc-500 dark:text-zinc-400">Diffs unavailable.</p>
             ) : (

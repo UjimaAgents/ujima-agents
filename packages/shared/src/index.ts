@@ -25,6 +25,7 @@ export * from "./cursor.js";
 export * from "./conversations.js";
 export * from "./approval-scope.js";
 export * from "./tool-call-display-args.js";
+export * from "./workspace-file-filters.js";
 export {
   SHARED_AGENT_SYSTEM_PROMPT,
   buildEnvironmentContext,

@@ -2,6 +2,7 @@ import { existsSync, realpathSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { AgentTeamHandle } from '@ujima/framework';
 import type { ToolAction, SpiritRole } from '@ujima/shared';
+import { isSensitiveWorkspacePath } from '@ujima/shared/workspace-file-filters';
 import { assertWorkspaceBoundary, isPathInsideRoot } from '@ujima/shared/workspace';
 
 export interface PolicyResult {
@@ -94,6 +95,14 @@ export function checkToolPolicy(
         allowed: false,
         requiresApproval: false,
         reason: `Path "${resourcePath}" is outside allowed scopes for role "${roleName}"`,
+      };
+    }
+
+    if (action === 'read' && isSensitiveWorkspacePath(resourcePath)) {
+      return {
+        allowed: true,
+        requiresApproval: true,
+        reason: `Path "${resourcePath}" requires approval`,
       };
     }
   }

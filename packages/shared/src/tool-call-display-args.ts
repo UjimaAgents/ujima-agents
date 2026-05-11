@@ -1,8 +1,55 @@
-import type { ParsedFilesystemScope, ParsedShellScope } from './approval-scope.js';
+import type { ParsedFilesystemScope, ParsedGrepScope, ParsedShellScope } from './approval-scope.js';
 
 function toObject(value: unknown): Record<string, unknown> | undefined {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
   return value as Record<string, unknown>;
+}
+
+function nestedInput(args: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+  return args ? toObject((args as { input?: unknown }).input) : undefined;
+}
+
+function readStringArg(
+  args: Record<string, unknown> | undefined,
+  nested: Record<string, unknown> | undefined,
+  key: string,
+): string | undefined {
+  const value = args?.[key];
+  if (typeof value === 'string') return value;
+  const nestedValue = nested?.[key];
+  return typeof nestedValue === 'string' ? nestedValue : undefined;
+}
+
+function readNumberArg(
+  args: Record<string, unknown> | undefined,
+  nested: Record<string, unknown> | undefined,
+  key: string,
+): number | undefined {
+  const value = args?.[key];
+  if (typeof value === 'number') return value;
+  const nestedValue = nested?.[key];
+  return typeof nestedValue === 'number' ? nestedValue : undefined;
+}
+
+function readBooleanArg(
+  args: Record<string, unknown> | undefined,
+  nested: Record<string, unknown> | undefined,
+  key: string,
+): boolean | undefined {
+  const value = args?.[key];
+  if (typeof value === 'boolean') return value;
+  const nestedValue = nested?.[key];
+  return typeof nestedValue === 'boolean' ? nestedValue : undefined;
+}
+
+function readStringArrayArg(
+  args: Record<string, unknown> | undefined,
+  nested: Record<string, unknown> | undefined,
+  key: string,
+): string[] | undefined {
+  const value = args?.[key];
+  const candidate = Array.isArray(value) ? value : nested?.[key];
+  return Array.isArray(candidate) && candidate.length ? candidate.map((item) => String(item)) : undefined;
 }
 
 /**
@@ -13,24 +60,11 @@ export function parseShellToolCallArgs(
   args: Record<string, unknown> | undefined,
 ): ParsedShellScope | null {
   if (!args) return null;
-  const nested = toObject((args as { input?: unknown }).input);
-  const command =
-    typeof args.command === 'string'
-      ? args.command
-      : typeof nested?.command === 'string'
-        ? nested.command
-        : '';
+  const nested = nestedInput(args);
+  const command = readStringArg(args, nested, 'command') ?? '';
   if (!command) return null;
-  const cwdRaw =
-    typeof args.cwd === 'string'
-      ? args.cwd
-      : typeof nested?.cwd === 'string'
-        ? nested.cwd
-        : '';
-  const cwd = cwdRaw || '.';
-  const rawArgs = (args as { args?: unknown }).args ?? nested?.args;
-  const extra =
-    Array.isArray(rawArgs) && rawArgs.length ? rawArgs.map((a) => String(a)) : undefined;
+  const cwd = readStringArg(args, nested, 'cwd') || '.';
+  const extra = readStringArrayArg(args, nested, 'args');
   return extra?.length ? { cwd, command, args: extra } : { cwd, command };
 }
 
@@ -41,26 +75,41 @@ export function parseFilesystemToolCallArgs(
   args: Record<string, unknown> | undefined,
 ): ParsedFilesystemScope | null {
   if (!args) return null;
-  const nested = toObject((args as { input?: unknown }).input);
-  const actionRaw =
-    typeof args.action === 'string'
-      ? args.action
-      : typeof nested?.action === 'string'
-        ? nested.action
-        : '';
-  const resourcePath =
-    typeof args.resourcePath === 'string'
-      ? args.resourcePath
-      : typeof nested?.resourcePath === 'string'
-        ? nested.resourcePath
-        : '';
+  const nested = nestedInput(args);
+  const actionRaw = readStringArg(args, nested, 'action') ?? '';
+  const resourcePath = readStringArg(args, nested, 'resourcePath') ?? '';
   if (actionRaw !== 'read' && actionRaw !== 'write') return null;
   if (!resourcePath.trim()) return null;
-  const patchRaw = (args as { patch?: unknown }).patch ?? nested?.patch;
-  const contentRaw = (args as { content?: unknown }).content ?? nested?.content;
+  const offsetRaw = readNumberArg(args, nested, 'offset');
+  const limitRaw = readNumberArg(args, nested, 'limit');
   const out: ParsedFilesystemScope = { action: actionRaw, resourcePath };
-  if (typeof patchRaw === 'string') out.patch = patchRaw;
-  if (typeof contentRaw === 'string') out.content = contentRaw;
+  if (typeof offsetRaw === 'number' && Number.isFinite(offsetRaw)) out.offset = offsetRaw;
+  if (typeof limitRaw === 'number' && Number.isFinite(limitRaw)) out.limit = limitRaw;
+  const patchRaw = readStringArg(args, nested, 'patch');
+  const contentRaw = readStringArg(args, nested, 'content');
+  if (patchRaw !== undefined) out.patch = patchRaw;
+  if (contentRaw !== undefined) out.content = contentRaw;
+  return out;
+}
+
+/**
+ * Normalized grep fields from tool call `args` (flat or nested under `input`).
+ */
+export function parseGrepToolCallArgs(
+  args: Record<string, unknown> | undefined,
+): ParsedGrepScope | null {
+  if (!args) return null;
+  const nested = nestedInput(args);
+  const query = readStringArg(args, nested, 'query') ?? '';
+  if (!query.trim()) return null;
+  const resourcePath =
+    readStringArg(args, nested, 'resourcePath') || readStringArg(args, nested, 'path') || '';
+  if (!resourcePath.trim()) return null;
+  const limitRaw = readNumberArg(args, nested, 'limit');
+  const ignoreCaseRaw = readBooleanArg(args, nested, 'ignoreCase');
+  const out: ParsedGrepScope = { query, resourcePath };
+  if (typeof limitRaw === 'number' && Number.isFinite(limitRaw)) out.limit = limitRaw;
+  if (typeof ignoreCaseRaw === 'boolean') out.ignoreCase = ignoreCaseRaw;
   return out;
 }
 
@@ -77,26 +126,11 @@ export function parseWebSearchToolCallArgs(
   args: Record<string, unknown> | undefined,
 ): ParsedWebSearchScope | null {
   if (!args) return null;
-  const nested = toObject((args as { input?: unknown }).input);
-  const query =
-    typeof args.query === 'string'
-      ? args.query
-      : typeof nested?.query === 'string'
-        ? nested.query
-        : '';
+  const nested = nestedInput(args);
+  const query = readStringArg(args, nested, 'query') ?? '';
   if (!query.trim()) return null;
-  const siteRaw =
-    typeof args.site === 'string'
-      ? args.site
-      : typeof nested?.site === 'string'
-        ? nested.site
-        : '';
-  const limitRaw =
-    typeof args.limit === 'number'
-      ? args.limit
-      : typeof nested?.limit === 'number'
-        ? nested.limit
-        : undefined;
+  const siteRaw = readStringArg(args, nested, 'site') ?? '';
+  const limitRaw = readNumberArg(args, nested, 'limit');
   const out: ParsedWebSearchScope = { query };
   if (siteRaw.trim()) out.site = siteRaw.trim();
   if (typeof limitRaw === 'number' && Number.isFinite(limitRaw)) out.limit = limitRaw;

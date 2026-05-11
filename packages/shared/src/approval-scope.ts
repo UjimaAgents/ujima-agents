@@ -7,10 +7,19 @@ export interface ParsedShellScope {
 export interface ParsedFilesystemScope {
   action: 'read' | 'write';
   resourcePath: string;
+  offset?: number;
+  limit?: number;
   /** Present for write when encoded in JSON approval scope (permission gate). */
   patch?: string;
   /** Legacy write payloads; prefer `patch`. */
   content?: string;
+}
+
+export interface ParsedGrepScope {
+  query: string;
+  resourcePath: string;
+  limit?: number;
+  ignoreCase?: boolean;
 }
 
 export function parseApprovalReasonValue(reason: string, key: string): string | null {
@@ -83,6 +92,8 @@ export function parseFilesystemScope(scope: string): ParsedFilesystemScope | nul
       const parsed = JSON.parse(payload) as {
         action?: unknown;
         resourcePath?: unknown;
+        offset?: unknown;
+        limit?: unknown;
         patch?: unknown;
         content?: unknown;
       };
@@ -91,6 +102,12 @@ export function parseFilesystemScope(scope: string): ParsedFilesystemScope | nul
       if (action !== 'read' && action !== 'write') return null;
       if (typeof resourcePath !== 'string' || !resourcePath.trim()) return null;
       const out: ParsedFilesystemScope = { action, resourcePath };
+      if (typeof parsed.offset === 'number' && Number.isFinite(parsed.offset)) {
+        out.offset = parsed.offset;
+      }
+      if (typeof parsed.limit === 'number' && Number.isFinite(parsed.limit)) {
+        out.limit = parsed.limit;
+      }
       if (typeof parsed.patch === 'string') out.patch = parsed.patch;
       if (typeof parsed.content === 'string') out.content = parsed.content;
       return out;
@@ -117,6 +134,11 @@ function relayShellPlain(shell: ParsedShellScope): string {
 
 function relayFilesystemPlain(fs: ParsedFilesystemScope): string {
   const lines = [`[Approval needed] Filesystem ${fs.action}`, `Path: ${fs.resourcePath}`];
+  if (fs.action === 'read' && (fs.offset !== undefined || fs.limit !== undefined)) {
+    lines.push(
+      `Window: offset=${fs.offset ?? 1}, limit=${fs.limit ?? 20}`,
+    );
+  }
   if (fs.action === 'write') {
     const writeBody =
       fs.patch !== undefined && fs.patch.length > 0

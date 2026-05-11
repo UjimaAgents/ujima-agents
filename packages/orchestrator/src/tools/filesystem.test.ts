@@ -44,9 +44,64 @@ describe('filesystem tool', () => {
 
     expect(result).toMatchObject({
       type: 'file',
+      offset: 1,
+      limit: 20,
       content: 'This is the soul.',
     });
     expect(result.path.endsWith('soul.md')).toBe(true);
+  });
+
+  it('reads only the requested file window', async () => {
+    root = await mkdtemp(join(tmpdir(), 'ujima-fs-'));
+    await writeFile(join(root, 'window.txt'), 'one\ntwo\nthree\nfour\n', 'utf8');
+
+    const result = (await filesystemTool.execute({
+      invocation: {
+        organizationId: 'org-1',
+        runId: 'run-1',
+        memberId: 'agent-1',
+        toolCallId: 'call-1',
+        toolId: 'filesystem',
+        action: 'read',
+        resourceType: 'file',
+        resourcePath: 'window.txt',
+        input: { offset: 2, limit: 2 },
+      } as never,
+      team: { workspace: { root } } as never,
+      repo: {} as never,
+      conversations: {} as never,
+    })) as { type: string; path: string; offset: number; limit: number; content: string };
+
+    expect(result).toMatchObject({
+      type: 'file',
+      offset: 2,
+      limit: 2,
+      content: 'two\nthree',
+    });
+  });
+
+  it('rejects directories', async () => {
+    root = await mkdtemp(join(tmpdir(), 'ujima-fs-'));
+    await writeFile(join(root, 'file.txt'), 'hello\n', 'utf8');
+
+    await expect(
+      filesystemTool.execute({
+        invocation: {
+          organizationId: 'org-1',
+          runId: 'run-1',
+          memberId: 'agent-1',
+          toolCallId: 'call-1',
+          toolId: 'filesystem',
+          action: 'read',
+          resourceType: 'file',
+          resourcePath: '.',
+          input: {},
+        } as never,
+        team: { workspace: { root } } as never,
+        repo: {} as never,
+        conversations: {} as never,
+      }),
+    ).rejects.toThrow(/only supports files/);
   });
 
   it('throws ENOENT when soul.md does not exist', async () => {

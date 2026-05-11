@@ -123,3 +123,36 @@ export function listRuns(
 
   return { data, hasMore, nextCursor };
 }
+
+export function listThreadRuns(
+  db: DbHandle,
+  organizationId: string,
+  threadId: string,
+  cursor?: string,
+  limit = 50,
+): PaginatedRuns {
+  const params: (string | number)[] = [organizationId, threadId];
+  let query = 'SELECT * FROM runs WHERE organization_id = ? AND thread_id = ?';
+
+  const decoded = decodeCursor(cursor);
+  if (decoded) {
+    const { sql, params: cursorParams } = cursorWhereClause(decoded, 'started_at', 'id');
+    query += ` AND ${sql}`;
+    params.push(...cursorParams);
+  }
+
+  query += ' ORDER BY started_at DESC, id DESC LIMIT ?';
+  params.push(limit + 1);
+
+  const rows = db.prepare(query).all(...params) as Row[];
+  const hasMore = rows.length > limit;
+  if (hasMore) {
+    rows.pop();
+  }
+
+  const data = rows.map(rowToRun);
+  const tail = hasMore ? data[data.length - 1] : undefined;
+  const nextCursor = tail ? encodeCursor(tail.startedAt, tail.id) : undefined;
+
+  return { data, hasMore, nextCursor };
+}

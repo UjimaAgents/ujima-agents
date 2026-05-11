@@ -19,12 +19,14 @@ export function FilesystemToolPane({
   className = "",
   action,
   resourcePath,
+  meta,
   body,
   bodyTone = "default",
 }: {
   className?: string;
   action: "read" | "write";
   resourcePath: string;
+  meta?: string;
   body?: string;
   bodyTone?: "default" | "error";
 }) {
@@ -42,6 +44,7 @@ export function FilesystemToolPane({
     <div className={`${TERMINAL_PANEL} ${className}`}>
       <div className={TERMINAL_SECTION}>
         <div className={`${TERMINAL_CWD} break-all`}>{resourcePath}</div>
+        {meta ? <div className="px-3 pb-0.5 font-mono text-[10px] text-foreground/45">{meta}</div> : null}
         <div className="px-3 py-2">
           <span
             className={`inline-block rounded px-2 py-0.5 text-[10px] font-semibold tracking-wide ${action === "read" ? badgeRead : badgeWrite}`}
