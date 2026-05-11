@@ -248,6 +248,107 @@ export class TaskPromoterService {
         })
       : await this.evaluateMessage({ organizationId: input.organizationId, message, channel });
 
+    if (decision.decision === 'skip') {
+      const audit = this.writePromoterAudit({
+        organizationId: input.organizationId,
+        requestedBy: message.senderId,
+        channelId: channel.id,
+        messageId: message.id,
+        decision: decision.decision,
+        confidence: decision.confidence,
+        rationale: decision.rationale,
+        prompt: message.content,
+        team: decision.team,
+        executionMode: decision.executionMode,
+        slugHint: decision.slugHint,
+        explicitCommand: Boolean(explicit),
+      });
+      return {
+        decision: decision.decision,
+        confidence: decision.confidence,
+        auditEventId: audit.id,
+      };
+    }
+
+    if (decision.decision === 'confirm') {
+      const audit = this.writePromoterAudit({
+        organizationId: input.organizationId,
+        requestedBy: message.senderId,
+        channelId: channel.id,
+        messageId: message.id,
+        decision: decision.decision,
+        confidence: decision.confidence,
+        rationale: decision.rationale,
+        prompt: message.content,
+        team: decision.team,
+        executionMode: decision.executionMode,
+        slugHint: decision.slugHint,
+        explicitCommand: Boolean(explicit),
+      });
+      this.publishPromotionConfirm(message, channel, decision);
+      return {
+        decision: decision.decision,
+        confidence: decision.confidence,
+        auditEventId: audit.id,
+      };
+    }
+
+    const taskSessions = this.taskSessions;
+    if (!taskSessions) {
+      const audit = this.writePromoterAudit({
+        organizationId: input.organizationId,
+        requestedBy: message.senderId,
+        channelId: channel.id,
+        messageId: message.id,
+        decision: 'skip',
+        confidence: 0,
+        rationale: 'task sessions service unavailable',
+        prompt: message.content,
+        team: decision.team,
+        executionMode: decision.executionMode,
+        slugHint: decision.slugHint,
+        explicitCommand: Boolean(explicit),
+        status: 'blocked',
+      });
+      return {
+        decision: 'skip',
+        confidence: 0,
+        auditEventId: audit.id,
+      };
+    }
+
+    const resolvedTeam = this.resolveTaskTeam(
+      input.organizationId,
+      channel,
+      decision.team,
+    );
+    const team = resolvedTeam.memberIds;
+    if (team.length === 0) {
+      const unresolvedDetail = resolvedTeam.unresolvedHints.length
+        ? `unresolved team hints: ${resolvedTeam.unresolvedHints.join(', ')}`
+        : 'no agent members available';
+      const audit = this.writePromoterAudit({
+        organizationId: input.organizationId,
+        requestedBy: message.senderId,
+        channelId: channel.id,
+        messageId: message.id,
+        decision: 'skip',
+        confidence: 0,
+        rationale: unresolvedDetail,
+        prompt: message.content,
+        team: decision.team,
+        executionMode: decision.executionMode,
+        slugHint: decision.slugHint,
+        explicitCommand: Boolean(explicit),
+        status: 'blocked',
+      });
+      return {
+        decision: 'skip',
+        confidence: 0,
+        auditEventId: audit.id,
+      };
+    }
+
     const audit = this.writePromoterAudit({
       organizationId: input.organizationId,
       requestedBy: message.senderId,
@@ -262,45 +363,6 @@ export class TaskPromoterService {
       slugHint: decision.slugHint,
       explicitCommand: Boolean(explicit),
     });
-
-    if (decision.decision === 'skip') {
-      return {
-        decision: decision.decision,
-        confidence: decision.confidence,
-        auditEventId: audit.id,
-      };
-    }
-
-    if (decision.decision === 'confirm') {
-      this.publishPromotionConfirm(message, channel, decision);
-      return {
-        decision: decision.decision,
-        confidence: decision.confidence,
-        auditEventId: audit.id,
-      };
-    }
-
-    const taskSessions = this.taskSessions;
-    if (!taskSessions) {
-      return {
-        decision: 'skip',
-        confidence: 0,
-        auditEventId: audit.id,
-      };
-    }
-
-    const team = this.resolveTaskTeam(
-      input.organizationId,
-      channel,
-      decision.team,
-    );
-    if (team.length === 0) {
-      return {
-        decision: 'skip',
-        confidence: 0,
-        auditEventId: audit.id,
-      };
-    }
 
     const detail = taskSessions.create({
       organizationId: input.organizationId,
@@ -495,7 +557,7 @@ export class TaskPromoterService {
       kind: 'task.promotion-confirm',
       cardId: randomUUID(),
       decision: 'confirm',
-      team: this.resolveTaskTeam(sourceMessage.organizationId, channel, decision.team),
+      team: this.resolveTaskTeam(sourceMessage.organizationId, channel, decision.team).memberIds,
       rationale: decision.rationale,
     };
 
@@ -552,7 +614,7 @@ export class TaskPromoterService {
     organizationId: string,
     channel: Channel,
     teamHints: readonly string[] = [],
-  ): string[] {
+  ): { memberIds: string[]; unresolvedHints: string[] } {
     const activeAgents = this.repo
       .listMembers(organizationId)
       .filter((member) => member.kind === 'agent' && !member.retiredAt);
@@ -566,32 +628,42 @@ export class TaskPromoterService {
     }
 
     const resolved: string[] = [];
+    const unresolvedHints: string[] = [];
     let sawHint = false;
     for (const hint of teamHints) {
-      const key = hint.trim().toLowerCase();
+      const trimmed = hint.trim();
+      const key = trimmed.toLowerCase();
       if (!key) continue;
       sawHint = true;
-      for (const memberId of byNameOrId.get(key) ?? []) {
+      const matches = byNameOrId.get(key) ?? [];
+      if (matches.length === 0) {
+        unresolvedHints.push(trimmed);
+        continue;
+      }
+      for (const memberId of matches) {
         if (!resolved.includes(memberId)) {
           resolved.push(memberId);
         }
       }
     }
+    if (unresolvedHints.length > 0) {
+      return { memberIds: [], unresolvedHints };
+    }
     if (resolved.length > 0) {
-      return resolved;
+      return { memberIds: resolved, unresolvedHints: [] };
     }
     if (sawHint) {
-      return [];
+      return { memberIds: [], unresolvedHints: [] };
     }
 
     const channelAgents = activeAgents
       .filter((member) => channel.memberIds.includes(member.id))
       .map((member) => member.id);
     if (channelAgents.length > 0) {
-      return channelAgents;
+      return { memberIds: channelAgents, unresolvedHints: [] };
     }
 
-    return activeAgents.map((member) => member.id);
+    return { memberIds: activeAgents.map((member) => member.id), unresolvedHints: [] };
   }
 
   private shouldRateLimit(channelId: string): boolean {
