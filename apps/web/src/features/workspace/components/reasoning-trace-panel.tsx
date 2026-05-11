@@ -29,6 +29,7 @@ export function ReasoningTracePanel({
   const rootRef = useRef<HTMLDivElement>(null);
   const pendingPrependRef = useRef<{ scrollHeight: number; scrollTop: number } | null>(null);
   const shouldScrollToBottomRef = useRef(false);
+  const autoFillRef = useRef(false);
   const [history, setHistory] = useState<RunTraceEntry[]>([]);
   const [cursor, setCursor] = useState<string | undefined>();
   const [hasMore, setHasMore] = useState(false);
@@ -110,6 +111,40 @@ export function ReasoningTracePanel({
       container.removeEventListener("scroll", onScroll);
     };
   }, [cursor, hasMore, historyEnabled, loadingMore, organizationId, threadId]);
+
+  useEffect(() => {
+    const container = rootRef.current?.parentElement;
+    if (!historyEnabled || loadingMore || autoFillRef.current) return;
+    if (!container || history.length === 0 || !hasMore || !cursor) return;
+    if (container.scrollHeight > container.clientHeight + 1) return;
+
+    autoFillRef.current = true;
+    let cancelled = false;
+
+    void loadTracePage({
+      organizationId,
+      threadId,
+      cursor,
+      limit: TRACE_PAGE_SIZE,
+    })
+      .then((page) => {
+        if (cancelled) return;
+        setHistory((current) => [...page.data.slice().reverse(), ...current]);
+        setCursor(page.nextCursor);
+        setHasMore(page.hasMore);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setError(err instanceof Error ? err.message : "Unable to load older traces.");
+      })
+      .finally(() => {
+        autoFillRef.current = false;
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [cursor, hasMore, history.length, historyEnabled, loadingMore, organizationId, threadId]);
 
   useLayoutEffect(() => {
     if (pendingPrependRef.current) {
