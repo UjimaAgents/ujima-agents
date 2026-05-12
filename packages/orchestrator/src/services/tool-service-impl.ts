@@ -562,7 +562,12 @@ export class ToolServiceImpl implements ToolService {
 
     const input = invocation.input ?? {};
 
-    if (input.operation === "send_input" || input.operation === "read_output" || input.operation === "terminate") {
+    if (
+      input.operation === "send_input" ||
+      input.operation === "read_output" ||
+      input.operation === "wait" ||
+      input.operation === "terminate"
+    ) {
       return invocation;
     }
 
