@@ -219,9 +219,20 @@ export function listMcpServerAttachments(
  * Resolve the attached MCPs visible to a given spirit role. `'worker'`
  * receives attachments scoped `worker` or `both`; `'supervisor'`
  * receives `supervisor` or `both`. Defensive: callers should not
- * filter again. The query joins to `mcp_servers` so disabled servers
- * are excluded — disabling is the "freeze access without losing the
- * attachment metadata" path.
+ * filter again.
+ *
+ * Three SQL-layer filters guard the result:
+ *   1. `mcp_servers.status = 'active'` — disabled servers are excluded
+ *      so an operator can pause access without losing the attachment
+ *      metadata.
+ *   2. `members.retired_at IS NULL` — retired agents are excluded so a
+ *      member retired AFTER MCPs were attached can't keep invoking
+ *      those servers through a still-running spirit. (The attach()
+ *      service already blocks new bindings for retired members; this
+ *      closes the same boundary on the runtime side.)
+ *   3. `agent_mcp_attachments.scope IN (...)` — role-scoped: a
+ *      `worker`-scoped attachment is invisible to supervisor spirits
+ *      and vice-versa.
  */
 export function listAttachedServersForSpirit(
   db: DbHandle,
@@ -250,8 +261,12 @@ export function listAttachedServersForSpirit(
          JOIN mcp_servers s
            ON s.id = a.mcp_server_id
           AND s.organization_id = a.organization_id
+         JOIN members m
+           ON m.id = a.member_id
+          AND m.organization_id = a.organization_id
         WHERE a.organization_id = ? AND a.member_id = ?
           AND s.status = 'active'
+          AND m.retired_at IS NULL
           AND a.scope IN (${placeholders})
         ORDER BY s.name ASC`,
     )

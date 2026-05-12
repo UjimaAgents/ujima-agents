@@ -9,6 +9,7 @@ import {
   OnboardingService,
   createTeamStore,
 } from '@ujima/orchestrator';
+import { mapMcpRouteError } from '../src/transport/routes/mcps.js';
 
 // Phase 3 of the MCP integration — covers the registry CRUD + JSON
 // import path + per-agent attachments + the redaction contract that
@@ -379,5 +380,141 @@ describe('McpRegistryService — Phase 3 MCP integration', () => {
         mcpServerId: server.id,
       }),
     ).toThrow(/retired/);
+  });
+
+  // -------------------------------------------------------------------
+  // NEW (audit fix): a member retired AFTER MCPs were attached must
+  // STOP resolving those attachments at runtime. `attach()` already
+  // blocks new bindings for retired members; this test guards the
+  // other half of the boundary — the runtime lookup the spirit uses.
+  // -------------------------------------------------------------------
+  it('listAttachedServersForSpirit filters retired members at the SQL layer', async () => {
+    const fixture = await createFixture();
+    tempDirs.push(fixture.archiveRoot);
+
+    const server = fixture.registry.create({
+      organizationId: fixture.organizationId,
+      createdBy: fixture.ownerId,
+      name: 'pre-retire',
+      transport: 'stdio',
+      command: 'x',
+    });
+    fixture.registry.attach({
+      organizationId: fixture.organizationId,
+      memberId: 'agent-x',
+      mcpServerId: server.id,
+      scope: 'both',
+    });
+
+    // Before retirement: spirit-shaped lookups see the attachment.
+    expect(
+      fixture.repo.listAttachedServersForSpirit(fixture.organizationId, 'agent-x', 'worker'),
+    ).toHaveLength(1);
+    expect(
+      fixture.repo.listAttachedServersForSpirit(fixture.organizationId, 'agent-x', 'supervisor'),
+    ).toHaveLength(1);
+
+    // Retire the member AFTER attachment.
+    const alice = fixture.repo.getMember(fixture.organizationId, 'agent-x');
+    fixture.repo.saveMember({ ...alice!, retiredAt: new Date().toISOString() });
+
+    // After retirement: BOTH role lookups must return zero so the
+    // running spirit can't keep invoking the MCP. Pre-fix, only
+    // attach() blocked new bindings — the runtime lookup happily
+    // returned the existing attachment.
+    expect(
+      fixture.repo.listAttachedServersForSpirit(fixture.organizationId, 'agent-x', 'worker'),
+    ).toHaveLength(0);
+    expect(
+      fixture.repo.listAttachedServersForSpirit(fixture.organizationId, 'agent-x', 'supervisor'),
+    ).toHaveLength(0);
+
+    // The attachment row itself is preserved — retirement is a soft
+    // disable on the member, not a cascade-delete of attachments.
+    // (If the member is un-retired the attachment becomes live again
+    // without the operator having to re-attach.)
+    expect(
+      fixture.repo.listAgentMcpAttachments(fixture.organizationId, 'agent-x'),
+    ).toHaveLength(1);
+  });
+});
+
+// =====================================================================
+// Audit fix — route error mapping. The route handler had a default
+// branch that surfaced every unknown error as `400 ERR_BAD_REQUEST`,
+// hiding real server faults (DB outage, secret-store I/O, MCP
+// transport blip) from monitoring/retry tooling. The mapping now
+// uses an explicit 400 allowlist and falls back to 500.
+// =====================================================================
+
+describe('mapMcpRouteError', () => {
+  it('maps "X not found" errors → 404 ERR_NOT_FOUND', () => {
+    expect(mapMcpRouteError(new Error('Organization not found: org-x'))).toEqual({
+      status: 404,
+      code: 'ERR_NOT_FOUND',
+      message: 'Organization not found: org-x',
+    });
+    expect(mapMcpRouteError(new Error('MCP server not found: s-1'))).toEqual({
+      status: 404,
+      code: 'ERR_NOT_FOUND',
+      message: 'MCP server not found: s-1',
+    });
+    expect(mapMcpRouteError(new Error('Member not found: agent-x'))).toEqual({
+      status: 404,
+      code: 'ERR_NOT_FOUND',
+      message: 'Member not found: agent-x',
+    });
+  });
+
+  it('maps state-conflict messages → 409 ERR_CONFLICT', () => {
+    for (const msg of [
+      'MCP server "fs" already exists in this organisation',
+      'MCP server "fs" is disabled',
+      'Cannot attach MCP to retired member "agent-x"',
+      'Cannot attach MCP to non-agent member "owner"',
+    ]) {
+      const result = mapMcpRouteError(new Error(msg));
+      expect(result.status).toBe(409);
+      expect(result.code).toBe('ERR_CONFLICT');
+    }
+  });
+
+  it('maps explicit input-validation messages → 400 ERR_BAD_REQUEST', () => {
+    for (const msg of [
+      'MCP server name is required',
+      'stdio MCP servers require a command',
+      'sse MCP servers require a url',
+      'http-streamable MCP servers require a url',
+      'Failed to parse MCP config JSON: Unexpected token',
+    ]) {
+      const result = mapMcpRouteError(new Error(msg));
+      expect(result.status).toBe(400);
+      expect(result.code).toBe('ERR_BAD_REQUEST');
+    }
+  });
+
+  it('maps unknown / unexpected errors → 500 ERR_INTERNAL (NOT 400)', () => {
+    // The audit case: a DB I/O failure, a secret-store write failure,
+    // an MCP transport error — none match the 404/409/400 buckets and
+    // pre-fix were silently routed to ERR_BAD_REQUEST (400). The
+    // catch-all is now 500.
+    const cases = [
+      'SQLITE_BUSY: database is locked',
+      'EACCES: permission denied, write /var/folders/.../secret',
+      'connect ECONNREFUSED 127.0.0.1:53000',
+      'Unexpected error inside repo.transaction()',
+    ];
+    for (const msg of cases) {
+      const result = mapMcpRouteError(new Error(msg));
+      expect(result.status).toBe(500);
+      expect(result.code).toBe('ERR_INTERNAL');
+      expect(result.message).toBe(msg);
+    }
+
+    // Non-Error throws are also handled.
+    const stringResult = mapMcpRouteError('boom');
+    expect(stringResult.status).toBe(500);
+    expect(stringResult.code).toBe('ERR_INTERNAL');
+    expect(stringResult.message).toBe('boom');
   });
 });

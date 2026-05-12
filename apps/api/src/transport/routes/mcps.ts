@@ -56,6 +56,7 @@ export function registerMcpRoutes(
       response: {
         200: McpServerListResponseSchema,
         404: ApiErrorSchema,
+        500: ApiErrorSchema,
       },
     },
   }, async (req, reply) => {
@@ -78,6 +79,7 @@ export function registerMcpRoutes(
         400: ApiErrorSchema,
         404: ApiErrorSchema,
         409: ApiErrorSchema,
+        500: ApiErrorSchema,
       },
     },
   }, async (req, reply) => {
@@ -101,6 +103,7 @@ export function registerMcpRoutes(
         200: ImportMcpServersResponseSchema,
         400: ApiErrorSchema,
         404: ApiErrorSchema,
+        500: ApiErrorSchema,
       },
     },
   }, async (req, reply) => {
@@ -123,6 +126,7 @@ export function registerMcpRoutes(
         200: McpServerResponseSchema,
         400: ApiErrorSchema,
         404: ApiErrorSchema,
+        500: ApiErrorSchema,
       },
     },
   }, async (req, reply) => {
@@ -159,6 +163,7 @@ export function registerMcpRoutes(
       response: {
         204: z.null(),
         404: ApiErrorSchema,
+        500: ApiErrorSchema,
       },
     },
   }, async (req, reply) => {
@@ -184,6 +189,7 @@ export function registerMcpRoutes(
       response: {
         200: TestMcpResponseSchema,
         404: ApiErrorSchema,
+        500: ApiErrorSchema,
       },
     },
   }, async (req, reply) => {
@@ -206,6 +212,7 @@ export function registerMcpRoutes(
       response: {
         200: McpToolsResponseSchema,
         404: ApiErrorSchema,
+        500: ApiErrorSchema,
       },
     },
   }, async (req, reply) => {
@@ -229,6 +236,7 @@ export function registerMcpRoutes(
       response: {
         200: AgentMcpAttachmentsResponseSchema,
         404: ApiErrorSchema,
+        500: ApiErrorSchema,
       },
     },
   }, async (req, reply) => {
@@ -254,6 +262,7 @@ export function registerMcpRoutes(
         400: ApiErrorSchema,
         404: ApiErrorSchema,
         409: ApiErrorSchema,
+        500: ApiErrorSchema,
       },
     },
   }, async (req, reply) => {
@@ -281,6 +290,7 @@ export function registerMcpRoutes(
       response: {
         204: z.null(),
         404: ApiErrorSchema,
+        500: ApiErrorSchema,
       },
     },
   }, async (req, reply) => {
@@ -295,14 +305,33 @@ export function registerMcpRoutes(
   });
 }
 
-function handle(reply: FastifyReply, err: unknown): FastifyReply {
+/**
+ * Map an MCP-route error to an HTTP status + code + message. Pure so a
+ * unit test can pin the mapping without spinning up Fastify.
+ *
+ * Buckets:
+ *   * 404 — caller addressed something that doesn't exist
+ *   * 409 — state conflict (already-present, disabled, wrong-kind, retired)
+ *   * 400 — EXPLICIT validation allowlist. The catch-all is 500, NOT
+ *           400, so unknown server faults (DB outage, secret-store
+ *           I/O, MCP connection blip) don't get silently labelled as
+ *           "your request was malformed" — that mislabelling hides
+ *           real incidents from monitoring/retry tooling and makes
+ *           triage much harder.
+ *   * 500 — anything else.
+ */
+export function mapMcpRouteError(err: unknown): {
+  status: number;
+  code: 'ERR_NOT_FOUND' | 'ERR_CONFLICT' | 'ERR_BAD_REQUEST' | 'ERR_INTERNAL';
+  message: string;
+} {
   const message = err instanceof Error ? err.message : String(err);
   if (
     message.startsWith('Organization not found') ||
     message.startsWith('MCP server not found') ||
     message.startsWith('Member not found')
   ) {
-    return replyError(reply, 404, 'ERR_NOT_FOUND', message);
+    return { status: 404, code: 'ERR_NOT_FOUND', message };
   }
   if (
     message.includes('already exists') ||
@@ -310,9 +339,22 @@ function handle(reply: FastifyReply, err: unknown): FastifyReply {
     message.includes('retired') ||
     message.includes('non-agent')
   ) {
-    return replyError(reply, 409, 'ERR_CONFLICT', message);
+    return { status: 409, code: 'ERR_CONFLICT', message };
   }
-  return replyError(reply, 400, 'ERR_BAD_REQUEST', message);
+  if (
+    message.startsWith('MCP server name is required') ||
+    message.startsWith('stdio MCP servers require') ||
+    message.includes('MCP servers require a url') ||
+    message.startsWith('Failed to parse MCP config JSON')
+  ) {
+    return { status: 400, code: 'ERR_BAD_REQUEST', message };
+  }
+  return { status: 500, code: 'ERR_INTERNAL', message };
+}
+
+function handle(reply: FastifyReply, err: unknown): FastifyReply {
+  const { status, code, message } = mapMcpRouteError(err);
+  return replyError(reply, status, code, message);
 }
 
 function replyError(reply: FastifyReply, status: number, code: string, message: string): FastifyReply {
