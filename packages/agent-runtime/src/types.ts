@@ -3,10 +3,8 @@ import type { AuditLog, AgentStateStore, ApprovalTracker, ContextEntry, ContextS
 import type { EventBus } from '@ujima/event-bus';
 import type { PermissionMiddleware, PermissionGate, PermissionDenyCode } from '@ujima/permissions';
 import type { MCPConnection } from '@ujima/mcp-client';
-import type { LLMProvider } from '@ujima/llm/legacy';
 import type { LanguageModel } from 'ai';
-import type { BrowserStateSnapshot } from './tool-loop';
-import type { OrchestratorEngine } from './engine';
+import { type BrowserStateSnapshot } from './browser';
 
 export interface GateRequest {
   agentId: string;
@@ -45,16 +43,8 @@ export interface AgentRunInputs {
   task: TaskDef;
   sessionId: string;
   spawnReason: SpawnReason;
-  /**
-   * Orchestrator engine. Default `'legacy'` for now (preserves current call
-   * sites that pass `provider`). `'ai-sdk'` uses {@link runAiSdkLoop} and
-   * requires `model` instead of `provider`.
-   */
-  engine?: OrchestratorEngine;
-  /** Required when `engine !== 'ai-sdk'`. */
-  provider?: LLMProvider;
-  /** Required when `engine === 'ai-sdk'`. */
-  model?: LanguageModel;
+  /** AI SDK LanguageModel used to run the agent loop. */
+  model: LanguageModel;
   mcp: MCPConnection;
   permissions: PermissionMiddleware;
   eventBus: EventBus;

@@ -1,25 +1,14 @@
 import { z } from 'zod';
 import type { OrchestratorTool } from './types.js';
 
-export const MessageSchema = z.discriminatedUnion('destination', [
-  z.object({
-    destination: z.literal('thread'),
-    content: z.string().min(1),
-    mentions: z.array(z.string().min(1)).default([]),
-  }),
-  z.object({
-    destination: z.literal('channel'),
-    channelId: z.string().min(1),
-    content: z.string().min(1),
-    mentions: z.array(z.string().min(1)).default([]),
-  }),
-  z.object({
-    destination: z.literal('dm'),
-    recipientId: z.string().min(1),
-    content: z.string().min(1),
-    mentions: z.array(z.string().min(1)).default([]),
-  }),
-]);
+export const MessageSchema = z.object({
+  destination: z.enum(['thread', 'channel', 'dm']),
+  channelId: z.string().min(1).optional(),
+  recipientId: z.string().min(1).optional(),
+  content: z.string().min(1),
+  mentions: z.array(z.string().min(1)).default([]),
+  ignore: z.boolean().optional(),
+});
 
 export const messageTool: OrchestratorTool<typeof MessageSchema> = {
   id: 'message',
@@ -85,6 +74,7 @@ export const messageTool: OrchestratorTool<typeof MessageSchema> = {
         senderId: invocation.memberId,
         recipientId,
         content,
+        ignore: invocation.input.ignore === true,
         mentions,
       });
     }

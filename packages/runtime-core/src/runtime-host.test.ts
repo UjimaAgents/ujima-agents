@@ -4,12 +4,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createRuntimeHost, sanitizeMcpArgs } from './runtime-host';
 import { createBufferLogger } from './logger';
-import type { LLMProvider } from '@ujima/llm/legacy';
+import type { LanguageModel } from 'ai';
 import { createPathResolver } from './path-resolver';
 
-function stubProvider(): LLMProvider {
-  throw new Error('no provider configured');
-}
+const stubLanguageModel = {} as unknown as LanguageModel;
 
 describe('createRuntimeHost', () => {
   it('opens db at configured path and shuts down cleanly', async () => {
@@ -22,7 +20,7 @@ describe('createRuntimeHost', () => {
         loadAgent: async () => undefined,
         loadTeam: async () => undefined,
         resolveMCPDef: async (_w, id) => { throw new Error(`no mcp ${id}`); },
-        getProvider: stubProvider,
+        getModel: () => stubLanguageModel,
       },
       {},
     );
@@ -41,7 +39,7 @@ describe('createRuntimeHost', () => {
         loadAgent: async () => undefined,
         loadTeam: async () => undefined,
         resolveMCPDef: async (_w, id) => { throw new Error(`no mcp ${id}`); },
-        getProvider: stubProvider,
+        getModel: () => stubLanguageModel,
       },
       {},
     );
@@ -67,7 +65,7 @@ describe('createRuntimeHost', () => {
         loadAgent: async () => undefined,
         loadTeam: async () => undefined,
         resolveMCPDef: async (_w, id) => { throw new Error(`no mcp ${id}`); },
-        getProvider: stubProvider,
+        getModel: () => stubLanguageModel,
       },
       {},
     );

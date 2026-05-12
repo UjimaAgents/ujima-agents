@@ -21,8 +21,19 @@ export {
 
 export { AiService } from './ai-service.js';
 export type { GenerateRunReplyInput } from './ai-service.js';
-export { ALWAYS_AVAILABLE_AGENT_TOOLS } from './tools/index.js';
 export {
+  ALWAYS_AVAILABLE_AGENT_TOOLS,
+  ORCHESTRATOR_TOOLS,
+  SUPERVISOR_ALLOWED_TOOLS,
+  SUPERVISOR_TOOL_ALLOWLIST,
+  listBackgroundJobs,
+  terminateBackgroundJob,
+  peekBackgroundJob,
+} from './tools/index.js';
+export type { BackgroundJobSnapshot } from './tools/index.js';
+export type { OrchestratorTool, ToolExecutionContext } from './tools/index.js';
+export {
+  ActiveSpiritRegistry,
   ApprovalService,
   AuthService,
   BootstrapService,
@@ -32,11 +43,18 @@ export {
   OnboardingService,
   RunService,
   SettingsService,
+  SpiritService,
+  SupervisorService,
+  SupervisorTodoService,
   TaskPromoterService,
+  TaskSessionService,
+  taskRunChannelId,
   ToolServiceImpl,
   createApiServices,
   createPermissionGatedToolService,
   createTeamStore,
+  isAliveStatus,
+  pickProviderModel,
   ERR_NO_WORKSPACE_ROOT,
   WorkspaceRootRequiredError,
   isWorkspaceRootRequiredError,
@@ -76,6 +94,23 @@ export type {
   RegisterOwnerAuthInput,
   TaskPromotionInput,
   TaskPromotionResult,
+  CreateTaskSessionInput,
+  TaskSessionDetail,
+  PaginatedTaskSessions,
+  ActiveSpiritEntry,
+  ModelResolver,
+  ModelResolverInput,
+  RunSpiritInput,
+  RunSpiritOutcome,
+  SpawnSpiritInput,
+  SpiritServiceOptions,
+  SupervisorAlertInput,
+  SupervisorDispatchResult,
+  SupervisorReplyOutcome,
+  SupervisorServiceOptions,
+  SupervisorTodoAddInput,
+  SupervisorTodoCheckInput,
+  SupervisorTodoListInput,
   TeamSettingsResponse,
   TeamStore,
   TeamSummary,

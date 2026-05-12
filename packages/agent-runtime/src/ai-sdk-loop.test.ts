@@ -201,6 +201,7 @@ describe('runAiSdkLoop', () => {
     expect(outcome.exitReason).toBe('completed');
     expect(outcome.finalText).toBe("I can't write that file.");
     expect(outcome.toolCalls).toBe(1); // attempted once
+    expect(outcome.iterations).toBe(2);
   });
 
   test('approval gate: reject returns rejection text to the model; run still completes', async () => {

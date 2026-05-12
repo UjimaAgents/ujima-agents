@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { expect, test } from 'vitest';
 import {
   AgentTeam,
@@ -10,6 +11,7 @@ import {
   defineProvider,
   defineTool,
   loadAgentTeam,
+  listRolePresets,
   validateAgentTeamConfig,
 } from './index.js';
 
@@ -27,16 +29,29 @@ test('starter config includes the preset team shape', () => {
   expect(config.name).toBe('Ujima Demo');
   expect(config.channels[0]?.name).toBe('general');
   expect(Object.keys(config.tools)).toContain('filesystem');
+  expect(Object.keys(config.tools)).toContain('grep');
   expect(Object.keys(config.tools)).toContain('shell');
   expect(config.agents.map((agent) => agent.name)).toContain('pm');
   expect(config.organizationChart.reportsTo['frontend-engineer']).toBe('pm');
   expect(config.roles.map((role) => role.name)).toContain('frontend-engineer');
-  expect(config.workspace.root).toBe('/tmp/ujima-org');
-  expect(config.workspace.roleScopes['frontend-engineer']?.[0]).toBe('/tmp/ujima-org/apps/web');
+  expect(config.roles.map((role) => role.name)).not.toContain('engineering-frontend-developer');
+  expect(config.workspace.root).toBe(path.resolve('/tmp/ujima-org'));
+  expect(config.workspace.roleScopes['frontend-engineer']?.[0]).toBe(
+    path.resolve('/tmp/ujima-org/apps/web'),
+  );
+});
+
+test('role catalog mirrors the upstream industry folders', () => {
+  const names = listRolePresets().map((role) => role.name);
+
+  expect(names).toContain('engineering-frontend-developer');
+  expect(names).toContain('product-manager');
+  expect(names).toContain('support-support-responder');
 });
 
 test('framework helpers normalize roles, tools, and providers', () => {
   const provider = defineProvider({
+    kind: 'openai',
     defaultModel: 'gpt-5.4',
     models: ['gpt-5.4'],
   });
@@ -94,6 +109,7 @@ test('AgentTeam normalizes and validates the team config', () => {
     ],
     providers: {
       openai: {
+        kind: 'openai',
         defaultModel: 'gpt-5.4',
         models: ['gpt-5.4'],
       },
@@ -123,9 +139,44 @@ test('AgentTeam normalizes and validates the team config', () => {
   expect(team.kind).toBe('ujima.agent-team');
   expect(team.organizationChart.reportsTo['frontend-alice']).toBe('pm');
   expect(team.getAgent('frontend-bob')?.personalityName).toBe('skeptical');
-  expect(team.getRole('frontend-engineer')?.workspaceScopes[0]).toBe('/tmp/ujima-org/apps/web');
+  expect(team.getRole('frontend-engineer')?.workspaceScopes[0]).toBe(
+    path.resolve('/tmp/ujima-org/apps/web'),
+  );
   expect(team.getProvider('openai')?.defaultModel).toBe('gpt-5.4');
   expect(team.getChannel('general')?.kind).toBe('general');
+});
+
+test('AgentTeam normalizes provider keys before lookup', () => {
+  const team = AgentTeam({
+    name: 'Ujima Demo',
+    workspace: {
+      root: '/tmp/ujima-org',
+      roleScopes: {},
+    },
+    organizationChart: { reportsTo: {} },
+    agents: [createAgent('pm', 'pm', 'direct')],
+    providers: {
+      OpenAI: {
+        kind: 'openai',
+        defaultModel: 'gpt-5.4',
+        models: ['gpt-5.4'],
+      },
+    },
+    roles: [
+      {
+        name: 'pm',
+        title: 'Product Manager',
+        instructions: ROLE_PRESETS.pm?.instructions ?? '',
+        provider: 'OpenAI',
+        workspaceScopes: ['.'],
+        tools: ['filesystem'],
+        channels: ['general'],
+      },
+    ],
+  });
+
+  expect(team.getProvider('openai')?.defaultModel).toBe('gpt-5.4');
+  expect(team.getRole('pm')?.provider).toBe('openai');
 });
 
 test('loadAgentTeam returns a ready-to-use handle', () => {
@@ -148,6 +199,7 @@ test('loadAgentTeam returns a ready-to-use handle', () => {
     ],
     providers: {
       openai: {
+        kind: 'openai',
         defaultModel: 'gpt-5.4',
         models: ['gpt-5.4'],
       },
@@ -176,6 +228,39 @@ test('loadAgentTeam returns a ready-to-use handle', () => {
 
   expect(team.getRole('frontend-engineer')?.name).toBe('frontend-engineer');
   expect(team.getAgent('frontend-alice')?.roleName).toBe('frontend-engineer');
+});
+
+test('legacy default role tools are migrated forward on load', () => {
+  const team = loadAgentTeam({
+    name: 'Ujima Demo',
+    workspace: {
+      root: '/tmp/ujima-org',
+      roleScopes: {},
+    },
+    organizationChart: { reportsTo: {} },
+    agents: [createAgent('pm', 'pm', 'direct')],
+    roles: [
+      {
+        name: 'pm',
+        title: 'Product Manager',
+        instructions: ROLE_PRESETS.pm?.instructions ?? '',
+        workspaceScopes: ['.'],
+        tools: ['filesystem'],
+        channels: ['general'],
+      },
+      {
+        name: 'frontend-engineer',
+        title: 'Frontend Engineer',
+        instructions: ROLE_PRESETS.frontendEngineer?.instructions ?? '',
+        workspaceScopes: ['apps/web'],
+        tools: ['filesystem', 'shell', 'message', 'channel.post', 'channel.reply', 'channel.dm', 'channel.list', 'channel.read', 'self.note', 'mcp'],
+        channels: ['general'],
+      },
+    ],
+  });
+
+  expect(team.config.configVersion).toBe(3);
+  expect(team.getRole('frontend-engineer')?.tools).toContain('grep');
 });
 
 test('validateAgentTeamConfig rejects agents that reference unknown roles', () => {

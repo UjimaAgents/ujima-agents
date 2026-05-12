@@ -3,6 +3,7 @@ import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest }
 import { Server as SocketIOServer, type Socket } from 'socket.io';
 import type { Repository, RuntimeHost, Logger } from '@ujima/runtime-core';
 import type {
+  ActiveSpiritRegistry,
   ApprovalService,
   AuthService,
   BootstrapService,
@@ -10,7 +11,11 @@ import type {
   OnboardingService,
   RunService,
   SettingsService,
+  SpiritService,
+  SupervisorService,
+  SupervisorTodoService,
   TaskPromoterService,
+  TaskSessionService,
 } from '@ujima/orchestrator';
 import type { UjimaEvent } from '@ujima/shared';
 import {
@@ -25,16 +30,21 @@ import {
 import { z } from 'zod';
 import swagger from '@fastify/swagger';
 import swaggerUi from '@fastify/swagger-ui';
+import multipart from '@fastify/multipart';
 import { jsonSchemaTransform, serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { RealtimeService } from './realtime.js';
+import { registerAttachmentRoutes } from './routes/attachments.js';
 import { registerConversationRoutes } from './routes/conversations.js';
 import { registerAuthRoutes } from './routes/auth.js';
 import { registerOnboardingRoutes } from './routes/onboarding.js';
 import { registerRunRoutes } from './routes/runs.js';
+import { registerRoleRoutes } from './routes/roles.js';
 import { registerSettingsRoutes } from './routes/settings.js';
 import { registerTaskRoutes } from './routes/tasks.js';
+import { registerTaskSessionRoutes } from './routes/task-sessions.js';
 import { registerWorkspaceRoutes } from './routes/workspaces.js';
 import { registerAgentRoutes } from './routes/agents.js';
+import { registerOauthRoutes } from './routes/oauth.js';
 
 const WS_QUEUE_CAP = 256;
 const STARTED_AT = Date.now();
@@ -63,6 +73,11 @@ export interface TransportOptions {
       onboarding: OnboardingService;
       settings: SettingsService;
       taskPromoter: TaskPromoterService;
+      taskSessions: TaskSessionService;
+      spirits: SpiritService;
+      supervisor: SupervisorService;
+      supervisorTodos: SupervisorTodoService;
+      activeSpirits: ActiveSpiritRegistry;
     };
   };
 }
@@ -111,9 +126,11 @@ export function createTransport(opts: TransportOptions): Transport {
       },
       tags: [
         { name: 'Agents' },
+        { name: 'Attachments' },
         { name: 'Conversations' },
         { name: 'Onboarding' },
         { name: 'Runs' },
+        { name: 'Roles' },
         { name: 'Settings' },
         { name: 'System' },
         { name: 'Tasks' },
@@ -183,6 +200,11 @@ export function createTransport(opts: TransportOptions): Transport {
 
   io.on('connection', (socket) => onSocketConnection(socket, host));
 
+  // Public APIs (No Auth Required)
+  fastify.register(async (api) => {
+    registerOauthRoutes(api);
+  }, { prefix: '/api' });
+
   // Data API (Authenticated)
   fastify.register(async (api) => {
     api.addHook('onRequest', async (req, reply) => {
@@ -196,20 +218,31 @@ export function createTransport(opts: TransportOptions): Transport {
     // Core Entities
     registerWorkspaceRoutes(api, host);
     registerAgentRoutes(api, host);
+    registerRoleRoutes(api);
 
     // Orchestrator Services
     if (opts.apiServices) {
       const realtime = new RealtimeService(io, opts.apiServices.repo);
       const services = opts.apiServices.buildServices(realtime);
+
+      api.register(multipart, {
+        limits: { fileSize: 25 * 1024 * 1024 },
+      });
+      registerAttachmentRoutes(api, {
+        repo: opts.apiServices.repo,
+        auth: services.auth,
+      });
       
       registerConversationRoutes(api, {
         repo: opts.apiServices.repo,
         conversations: services.conversations,
+        auth: services.auth,
       });
       registerRunRoutes(api, {
         repo: opts.apiServices.repo,
         runs: services.runs,
         approvals: services.approvals,
+        auth: services.auth,
       });
       registerAuthRoutes(api, { auth: services.auth });
       registerOnboardingRoutes(api, {
@@ -217,11 +250,19 @@ export function createTransport(opts: TransportOptions): Transport {
         bootstrap: services.bootstrap,
         onboarding: services.onboarding,
       });
-      registerSettingsRoutes(api, { repo: opts.apiServices.repo, settings: services.settings });
+      registerSettingsRoutes(api, {
+        repo: opts.apiServices.repo,
+        settings: services.settings,
+        auth: services.auth,
+      });
       registerTaskRoutes(api, {
         host,
         repo: opts.apiServices.repo,
         taskPromoter: services.taskPromoter,
+      });
+      registerTaskSessionRoutes(api, {
+        taskSessions: services.taskSessions,
+        repo: opts.apiServices.repo,
       });
     }
   }, { prefix: '/api' });

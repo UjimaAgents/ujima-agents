@@ -63,6 +63,34 @@ export function getRun(
   return row ? rowToRun(row) : null;
 }
 
+const ACTIVE_RUN_STATUSES = ['queued', 'running', 'waiting_for_approval'] as const;
+
+/**
+ * Returns a non-terminal run for the same agent + conversation thread, if any.
+ * Used to suppress duplicate conversational wakes while a run is still active.
+ */
+export function findActiveRunForMemberThread(
+  db: DbHandle,
+  organizationId: string,
+  agentId: string,
+  threadId: string,
+): RunState | null {
+  const placeholders = ACTIVE_RUN_STATUSES.map(() => '?').join(', ');
+  const row = db
+    .prepare(
+      `SELECT * FROM runs
+       WHERE organization_id = ?
+         AND agent_id = ?
+         AND thread_id = ?
+         AND status IN (${placeholders})
+       ORDER BY started_at DESC
+       LIMIT 1`,
+    )
+    .get(organizationId, agentId, threadId, ...ACTIVE_RUN_STATUSES) as Row | null;
+
+  return row ? rowToRun(row) : null;
+}
+
 export function listRuns(
   db: DbHandle,
   organizationId: string,
@@ -84,6 +112,39 @@ export function listRuns(
 
   const rows = db.prepare(query).all(...params) as Row[];
 
+  const hasMore = rows.length > limit;
+  if (hasMore) {
+    rows.pop();
+  }
+
+  const data = rows.map(rowToRun);
+  const tail = hasMore ? data[data.length - 1] : undefined;
+  const nextCursor = tail ? encodeCursor(tail.startedAt, tail.id) : undefined;
+
+  return { data, hasMore, nextCursor };
+}
+
+export function listThreadRuns(
+  db: DbHandle,
+  organizationId: string,
+  threadId: string,
+  cursor?: string,
+  limit = 50,
+): PaginatedRuns {
+  const params: (string | number)[] = [organizationId, threadId];
+  let query = 'SELECT * FROM runs WHERE organization_id = ? AND thread_id = ?';
+
+  const decoded = decodeCursor(cursor);
+  if (decoded) {
+    const { sql, params: cursorParams } = cursorWhereClause(decoded, 'started_at', 'id');
+    query += ` AND ${sql}`;
+    params.push(...cursorParams);
+  }
+
+  query += ' ORDER BY started_at DESC, id DESC LIMIT ?';
+  params.push(limit + 1);
+
+  const rows = db.prepare(query).all(...params) as Row[];
   const hasMore = rows.length > limit;
   if (hasMore) {
     rows.pop();

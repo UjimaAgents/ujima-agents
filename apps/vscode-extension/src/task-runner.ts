@@ -14,15 +14,14 @@ import { bindGovernancePolicyStore, type GovernancePolicyBinding } from './gover
 import { findRegistryEntry, type MCPPool } from '@ujima/mcp-client';
 import { createRuntimeHost, type RuntimeHost } from '@ujima/runtime-core';
 import { createVscodeOutputChannelLogger } from './runtime-logger-adapter';
-import {
-  createMockProvider,
-  selectProvider,
-  textTurn,
-  type LLMProvider,
-} from '@ujima/llm/legacy';
+import type { LanguageModel } from 'ai';
+import { selectLanguageModel } from '@ujima/llm';
 import { runTask, type SessionHandle } from '@ujima/orchestrator';
 import type { SessionController } from './session-controller';
-import { createVscodeLmProvider } from './vscode-lm-provider';
+import {
+  createUnconfiguredStubLanguageModel,
+  tryCreateVscodeLmLanguageModel,
+} from './vscode-lm-language-model';
 import type { AgentChatPanel } from './agent-chat-panel';
 import type { GateCenter } from './gate-center';
 
@@ -212,7 +211,7 @@ export class TaskRunner implements vscode.Disposable {
           const def = await this.resolveMCPDef(folder.uri, mcpId);
           return pool.get(def, opts);
         },
-        getProvider: () => this.pickProvider(),
+        getModel: (agent) => this.resolveLanguageModel(agent),
         eventBus: bus,
         context: db.context,
         audit: db.audit,
@@ -337,7 +336,7 @@ export class TaskRunner implements vscode.Disposable {
         resolveMCPDef: async (_wsId, mcpId) => {
           throw new Error(`plugin runtime-host has no MCP resolver (requested "${mcpId}")`);
         },
-        getProvider: () => this.pickProvider(),
+        getModel: (agent) => this.resolveLanguageModel(agent),
         policyResolver: policy ? () => policy.store.current() : undefined,
       },
       { dbPath },
@@ -354,21 +353,65 @@ export class TaskRunner implements vscode.Disposable {
     return this.infra;
   }
 
-  private pickProvider(): LLMProvider {
-    const vscodeLm = createVscodeLmProvider({ channel: this.opts.channel });
-    try {
-      const provider = selectProvider({
-        order: ['vscode-lm', 'anthropic', 'openai-compat', 'ollama'],
-        config: { vscodeLmProvider: vscodeLm },
-      });
-      this.opts.channel.appendLine(`[runner] LLM provider: ${provider.id}`);
-      return provider;
-    } catch {
-      this.opts.channel.appendLine(
-        `[runner] no real LLM provider available — falling back to mock. Install GitHub Copilot (for vscode.lm) or set ANTHROPIC_API_KEY / OPENAI_API_KEY / run Ollama.`,
-      );
-      return createMockProvider({ script: [textTurn('(mock) no LLM configured — enable Copilot or set an API key to run real agents.')] });
+  private resolveLanguageModel(agent: AgentDef): LanguageModel {
+    const env = process.env;
+    if (env.ANTHROPIC_API_KEY) {
+      try {
+        const m = selectLanguageModel({
+          kind: 'anthropic',
+          modelId: agent.model,
+          apiKey: env.ANTHROPIC_API_KEY,
+        });
+        this.opts.channel.appendLine('[runner] LLM: anthropic (AI SDK)');
+        return m;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.opts.channel.appendLine(`[runner] anthropic: ${msg}`);
+      }
     }
+    if (env.OPENAI_API_KEY) {
+      try {
+        const m = selectLanguageModel({
+          kind: 'openai',
+          modelId: agent.model,
+          apiKey: env.OPENAI_API_KEY,
+          baseUrl: env.OPENAI_BASE_URL,
+        });
+        this.opts.channel.appendLine('[runner] LLM: openai (AI SDK)');
+        return m;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.opts.channel.appendLine(`[runner] openai: ${msg}`);
+      }
+    }
+
+    const vscodeLm = tryCreateVscodeLmLanguageModel({
+      channel: this.opts.channel,
+      modelId: agent.model,
+    });
+    if (vscodeLm) {
+      this.opts.channel.appendLine('[runner] LLM: vscode.lm (AI SDK bridge)');
+      return vscodeLm;
+    }
+
+    try {
+      const m = selectLanguageModel({
+        kind: 'ollama',
+        modelId: agent.model,
+        apiKey: env.OLLAMA_API_KEY,
+        baseUrl: env.OLLAMA_BASE_URL,
+      });
+      this.opts.channel.appendLine('[runner] LLM: ollama (AI SDK)');
+      return m;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.opts.channel.appendLine(`[runner] ollama: ${msg}`);
+    }
+
+    this.opts.channel.appendLine(
+      '[runner] no LLM available — stub responses. Set ANTHROPIC_API_KEY, OPENAI_API_KEY, run Ollama, or install Copilot (vscode.lm).',
+    );
+    return createUnconfiguredStubLanguageModel();
   }
 
   private async loadTeams(workspace: vscode.Uri): Promise<TeamDef[]> {

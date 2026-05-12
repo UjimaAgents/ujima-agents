@@ -7,6 +7,7 @@ import { loadAgentTeam } from '@ujima/framework';
 import {
   ALWAYS_AVAILABLE_AGENT_TOOLS,
   ConversationService,
+  AuthService,
   OnboardingService,
   ToolServiceImpl,
   createApiServices,
@@ -17,6 +18,9 @@ import { Repository, createBufferLogger, createRuntimeHost, type RuntimeHost } f
 import { MemberSchema, OrganizationSchema, type AgentDef, type MCPDef, type TeamDef } from '@ujima/shared';
 import type { LLMProvider } from '@ujima/llm/legacy';
 import { createTransport, type Transport } from '../src/transport/server';
+
+/** POSIX-only assumptions (`sh`, `cat`) or symlink privileges differ on Windows. */
+const skipIfWin32 = process.platform === 'win32';
 
 const TOKEN = 'b'.repeat(64);
 
@@ -73,6 +77,9 @@ describe('workspace-root REST gating', () => {
   let repo: Repository;
   let baseUrl: string;
   let organizationId: string;
+  let readyOrganizationId: string;
+  let readyOwnerSessionToken: string;
+  let otherOwnerSessionToken: string;
 
   beforeAll(async () => {
     homeDir = await mkdtemp(join(tmpdir(), 'ujima-workspace-gate-'));
@@ -135,6 +142,81 @@ describe('workspace-root REST gating', () => {
       reason: 'pending',
       createdAt: new Date().toISOString(),
     });
+
+    readyOrganizationId = 'org-ready-authz';
+    repo.saveOrganization(
+      OrganizationSchema.parse({
+        id: readyOrganizationId,
+        name: 'Ready Authz Org',
+        workspace: { root: homeDir, roleScopes: {} },
+        organizationChart: { reportsTo: {} },
+      }),
+    );
+    repo.saveMember(
+      MemberSchema.parse({
+        id: 'ready-owner',
+        organizationId: readyOrganizationId,
+        name: 'Ready Owner',
+        kind: 'human',
+        roleName: 'owner',
+      }),
+    );
+    repo.saveMember(
+      MemberSchema.parse({
+        id: 'ready-agent',
+        organizationId: readyOrganizationId,
+        name: 'ready-agent',
+        kind: 'agent',
+        roleName: 'frontend-engineer',
+        llm: 'openai',
+        model: 'gpt-5.4',
+      }),
+    );
+    repo.saveApproval({
+      id: 'ready-approval-1',
+      organizationId: readyOrganizationId,
+      runId: 'ready-run-1',
+      requestedBy: 'ready-agent',
+      resourceType: 'file',
+      resourcePath: 'apps/web/index.ts',
+      action: 'write',
+      status: 'pending',
+      reason: 'pending',
+      createdAt: new Date().toISOString(),
+    });
+
+    const otherOrganizationId = 'org-other-authz';
+    repo.saveOrganization(
+      OrganizationSchema.parse({
+        id: otherOrganizationId,
+        name: 'Other Authz Org',
+        workspace: { root: homeDir, roleScopes: {} },
+        organizationChart: { reportsTo: {} },
+      }),
+    );
+    repo.saveMember(
+      MemberSchema.parse({
+        id: 'other-owner',
+        organizationId: otherOrganizationId,
+        name: 'Other Owner',
+        kind: 'human',
+        roleName: 'owner',
+      }),
+    );
+
+    const auth = new AuthService(repo);
+    readyOwnerSessionToken = auth.registerOwnerAccount({
+      organizationId: readyOrganizationId,
+      memberId: 'ready-owner',
+      email: 'ready-owner@example.com',
+      password: 'password',
+    }).sessionToken;
+    otherOwnerSessionToken = auth.registerOwnerAccount({
+      organizationId: otherOrganizationId,
+      memberId: 'other-owner',
+      email: 'other-owner@example.com',
+      password: 'password',
+    }).sessionToken;
 
     const buildPermissionContext: PermissionContextBuilder = (input) => {
       const teamConfig = teamStore.getTeam();
@@ -261,7 +343,7 @@ describe('workspace-root REST gating', () => {
         method: 'POST',
         body: {
           organizationId,
-          status: 'approved',
+          resolution: 'allow_once',
         },
       },
     ];
@@ -280,7 +362,109 @@ describe('workspace-root REST gating', () => {
       expect(payload.code, `${check.method} ${check.url}`).toBe('ERR_NO_WORKSPACE_ROOT');
     }
   });
+
+  it('requires a session for privileged mutations on ready workspaces', async () => {
+    const approvalResponse = await fetch(`${baseUrl}/api/approvals/ready-approval-1/resolve`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${TOKEN}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        organizationId: readyOrganizationId,
+        resolution: 'reject',
+      }),
+    });
+    expect(approvalResponse.status).toBe(401);
+
+    const memberResponse = await fetch(`${baseUrl}/api/orgs/${readyOrganizationId}/members/ready-agent`, {
+      method: 'PATCH',
+      headers: {
+        authorization: `Bearer ${TOKEN}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify(memberUpdateBody()),
+    });
+    expect(memberResponse.status).toBe(401);
+  });
+
+  it('rejects privileged mutations from another organization session', async () => {
+    const approvalResponse = await fetch(`${baseUrl}/api/approvals/ready-approval-1/resolve`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${TOKEN}`,
+        'x-ujima-session': otherOwnerSessionToken,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        organizationId: readyOrganizationId,
+        resolution: 'reject',
+      }),
+    });
+    expect(approvalResponse.status).toBe(403);
+
+    const memberResponse = await fetch(`${baseUrl}/api/orgs/${readyOrganizationId}/members/ready-agent`, {
+      method: 'PATCH',
+      headers: {
+        authorization: `Bearer ${TOKEN}`,
+        'x-ujima-session': otherOwnerSessionToken,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify(memberUpdateBody()),
+    });
+    expect(memberResponse.status).toBe(403);
+  });
+
+  it('allows privileged mutations from the matching organization session', async () => {
+    const approvalResponse = await fetch(`${baseUrl}/api/approvals/ready-approval-1/resolve`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${TOKEN}`,
+        'x-ujima-session': readyOwnerSessionToken,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        organizationId: readyOrganizationId,
+        resolution: 'reject',
+      }),
+    });
+    expect(approvalResponse.status).toBe(200);
+
+    const memberResponse = await fetch(`${baseUrl}/api/orgs/${readyOrganizationId}/members/ready-agent`, {
+      method: 'PATCH',
+      headers: {
+        authorization: `Bearer ${TOKEN}`,
+        'x-ujima-session': readyOwnerSessionToken,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify(memberUpdateBody({ name: 'ready-agent-renamed' })),
+    });
+    expect(memberResponse.status).toBe(200);
+    expect(await memberResponse.json()).toMatchObject({
+      id: 'ready-agent',
+      name: 'ready-agent-renamed',
+    });
+  });
 });
+
+function memberUpdateBody(overrides: Record<string, unknown> = {}) {
+  return {
+    name: 'ready-agent',
+    roleName: 'frontend-engineer',
+    personalityName: 'direct',
+    channelIds: ['general'],
+    role: {
+      name: 'frontend-engineer',
+      title: 'Frontend Engineer',
+      instructions: 'Build frontend',
+      workspaceScopes: ['apps/web'],
+      tools: ['filesystem', 'shell'],
+      channels: ['general'],
+      skills: [],
+    },
+    ...overrides,
+  };
+}
 
 describe('workspace path hardening', () => {
   const tempDirs: string[] = [];
@@ -356,7 +540,7 @@ describe('workspace path hardening', () => {
         resourceType: 'shell',
         input: {
           command: 'cat',
-          args: ['../../etc/passwd'],
+          args: ['../../../etc/passwd'],
         },
       }),
     ).rejects.toMatchObject({ code: 'ERR_PATH_ESCAPE' });
@@ -380,7 +564,7 @@ describe('workspace path hardening', () => {
     ).rejects.toMatchObject({ code: 'ERR_PATH_ESCAPE' });
   });
 
-  it('rejects symlink escapes that point outside the workspace root', async () => {
+  it.skipIf(skipIfWin32)('rejects symlink escapes that point outside the workspace root', async () => {
     const fixture = await createToolFixture();
     const outsideDir = await mkdtemp(join(tmpdir(), 'ujima-workspace-outside-'));
     tempDirs.push(outsideDir);
@@ -425,7 +609,7 @@ describe('workspace path hardening', () => {
     ).rejects.toMatchObject({ code: 'ERR_PATH_ESCAPE' });
   });
 
-  it('allows shell -c command strings without treating them as filesystem paths', async () => {
+  it.skipIf(skipIfWin32)('allows shell -c command strings without treating them as filesystem paths', async () => {
     const fixture = await createToolFixture();
 
     fixture.tools.allowRun(fixture.organizationId, 'run-shell-c');
@@ -451,7 +635,7 @@ describe('workspace path hardening', () => {
     });
   });
 
-  it('does not rewrite ordinary slash-containing shell args as filesystem paths', async () => {
+  it.skipIf(skipIfWin32)('does not rewrite ordinary slash-containing shell args as filesystem paths', async () => {
     const fixture = await createToolFixture();
 
     fixture.tools.allowRun(fixture.organizationId, 'run-shell-slash-arg');
@@ -477,7 +661,7 @@ describe('workspace path hardening', () => {
     });
   });
 
-  it('resolves positional file operands for file-oriented shell commands relative to cwd', async () => {
+  it.skipIf(skipIfWin32)('resolves positional file operands for file-oriented shell commands relative to cwd', async () => {
     const fixture = await createToolFixture();
 
     fixture.tools.allowRun(fixture.organizationId, 'run-shell-relative-file');
@@ -509,6 +693,12 @@ describe('workspace path hardening', () => {
 
     fixture.tools.allowRun(fixture.organizationId, 'run-new-file');
 
+    const patch = `--- /dev/null
++++ b/apps/web/new-file.ts
+@@ -0,0 +1,1 @@
++export const created = true;
+`;
+
     const writeResult = await fixture.tools.invoke({
       organizationId: fixture.organizationId,
       runId: 'run-new-file',
@@ -519,7 +709,7 @@ describe('workspace path hardening', () => {
       resourceType: 'file',
       resourcePath: 'apps/web/new-file.ts',
       input: {
-        content: 'export const created = true;\n',
+        patch,
       },
     });
 

@@ -14,7 +14,7 @@ import type { PermissionMiddleware } from '@ujima/permissions';
 import { createPermissionMiddleware } from '@ujima/permissions';
 import type { MCPPool, MCPConnection } from '@ujima/mcp-client';
 import { createMCPPool } from '@ujima/mcp-client';
-import type { LLMProvider } from '@ujima/llm/legacy';
+import { type LanguageModel } from 'ai';
 import type { GateResolver } from '@ujima/agent-runtime';
 import type { RunTaskInputs, SessionHandle } from '@ujima/orchestrator';
 import { runTask, ORCHESTRATOR_EVENT_CHANNEL } from '@ujima/orchestrator';
@@ -32,7 +32,7 @@ export interface StartTaskInput {
   teamId: string;
   taskId?: string;
   orchestratorMode?: 'auto' | 'manual';
-  executionMode?: 'concurrent' | 'slim';
+  executionMode?: 'concurrent';
   onStream?: (event: UjimaEvent) => void;
 }
 
@@ -85,7 +85,7 @@ export interface RuntimeHostDeps {
   loadAgent(workspaceId: string, agentId: string): Promise<AgentDef | undefined>;
   loadTeam(workspaceId: string, teamId: string): Promise<TeamDef | undefined>;
   resolveMCPDef(workspaceId: string, mcpId: string): Promise<MCPDef>;
-  getProvider(agent: AgentDef): LLMProvider;
+  getModel: (agent: AgentDef) => LanguageModel;
   /**
    * Returns the currently-active governance policy (hot-reload friendly) or
    * `undefined` if the workspace has none. Called on every tool check.
@@ -170,7 +170,7 @@ export async function createRuntimeHost(deps: RuntimeHostDeps, config: RuntimeHo
       {
         resolveAgent: (id) => agentById.get(id),
         getMCPConnection: async (mcpId, opts) => getMCPConnection(ws.id, mcpId, opts),
-        getProvider: (a) => deps.getProvider(a),
+        getModel: (a) => deps.getModel(a),
         eventBus: bus,
         context: db.context,
         audit: db.audit,

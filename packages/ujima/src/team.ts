@@ -9,15 +9,15 @@ import {
   normalizeRoleScopes,
   normalizeWorkspaceRoot,
 } from '@ujima/shared/workspace';
-import { DEFAULT_TOOL_CATALOG, ROLE_PRESETS } from './constants.js';
+import { DEFAULT_TOOL_CATALOG } from './constants.js';
 import { createAgent, normalizeAgents, type AgentConfig } from './agents.js';
 import { normalizeProviders } from './providers.js';
 import { createOrganizationChart } from './organization-chart.js';
-import { listRolePresets, normalizeRoles } from './roles.js';
+import { defineRole, listStarterRolePresets, normalizeRoles } from './roles.js';
+import { migrateAgentTeamConfig, TEAM_CONFIG_VERSION } from './team-config-migrations.js';
 import {
   AgentTeamConfigSchema,
   PolicySchema,
-  RoleConfigSchema,
   type AgentTeamConfig,
   type ChannelConfig,
   type ProviderConfig,
@@ -123,8 +123,8 @@ export function createStarterAgentTeamConfig({
   roleScopes?: Record<string, string[]>;
 } = {}): NormalizedAgentTeamConfig {
   const root = normalizeWorkspaceRoot(workspaceRoot ?? '.');
-  const starterRoles = listRolePresets().map((preset) =>
-    RoleConfigSchema.parse({
+  const starterRoles = listStarterRolePresets().map((preset) =>
+    defineRole({
       ...preset,
       id: preset.name,
       kind: 'agent',
@@ -132,7 +132,7 @@ export function createStarterAgentTeamConfig({
   );
 
   const defaultRoleScopes = Object.fromEntries(
-    Object.values(ROLE_PRESETS).map((preset) => [preset.name, preset.workspaceScopes]),
+    starterRoles.map((preset) => [preset.name, preset.workspaceScopes]),
   ) as Record<string, string[]>;
   const normalizedAgents = normalizeAgents(
     agents ?? starterRoles.map((role) => createAgent(role.name, role.name)),
@@ -141,6 +141,7 @@ export function createStarterAgentTeamConfig({
 
   return {
     name: name ?? 'Ujima Team',
+    configVersion: TEAM_CONFIG_VERSION,
     workspace: createWorkspaceConfig(
       root,
       Object.keys(roleScopes).length > 0 ? roleScopes : defaultRoleScopes,
@@ -163,7 +164,8 @@ export function createStarterAgentTeamConfig({
 }
 
 export function normalizeAgentTeamConfig(config: unknown): NormalizedAgentTeamConfig {
-  const input = isRecord(config) ? config : {};
+  const migrated = migrateAgentTeamConfig(config);
+  const input = isRecord(migrated.config) ? migrated.config : {};
   const channelsInput = Array.isArray(input.channels) ? input.channels : undefined;
   const toolsInput = isRecord(input.tools) ? input.tools : undefined;
   const parsed = AgentTeamConfigSchema.parse({
@@ -244,5 +246,3 @@ export function AgentTeam(config: AgentTeamConfig | Record<string, unknown>): Ag
 
   return handle;
 }
-
-export { listRolePresets };

@@ -1,5 +1,20 @@
+import { WebSearchToolPane } from "../../workspace/components/chat/web-search-tool-pane";
+
 interface ToolCallPanelProps {
   tools: { name: string; status: "idle" | "running" | "done" }[];
+  webSearch?: {
+    query: string;
+    site?: string;
+    status: "streaming" | "completed";
+    source: string;
+    results: {
+      title: string;
+      url: string;
+      snippet: string;
+      source: string;
+      rank: number;
+    }[];
+  };
 }
 
 const STATUS_CLASS: Record<ToolCallPanelProps["tools"][number]["status"], string> = {
@@ -8,7 +23,7 @@ const STATUS_CLASS: Record<ToolCallPanelProps["tools"][number]["status"], string
   done: "bg-emerald-100 text-emerald-800",
 };
 
-export function ToolCallPanel({ tools }: ToolCallPanelProps) {
+export function ToolCallPanel({ tools, webSearch }: ToolCallPanelProps) {
   return (
     <section className="h-full rounded-xl border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900">
       <div className="mb-2 flex items-center justify-between">
@@ -25,6 +40,17 @@ export function ToolCallPanel({ tools }: ToolCallPanelProps) {
           </div>
         ))}
       </div>
+      {webSearch ? (
+        <div className="mt-3">
+          <WebSearchToolPane
+            query={webSearch.query}
+            site={webSearch.site}
+            status={webSearch.status}
+            source={webSearch.source}
+            results={webSearch.results}
+          />
+        </div>
+      ) : null}
       <p className="mt-3 text-xs text-zinc-500 dark:text-zinc-400">
         This panel is designed as a slot to progressively replace static rows with server-driven generative components.
       </p>

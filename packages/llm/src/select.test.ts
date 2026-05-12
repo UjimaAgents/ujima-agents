@@ -3,7 +3,19 @@ import { LLMError, PROVIDER_KINDS, selectLanguageModel } from './index';
 
 describe('selectLanguageModel', () => {
   test('exposes the expected provider kinds', () => {
-    expect([...PROVIDER_KINDS]).toEqual(['anthropic', 'openai', 'google', 'openrouter', 'ollama']);
+    expect([...PROVIDER_KINDS]).toEqual([
+      'anthropic',
+      'openai',
+      'google',
+      'openrouter',
+      'ollama',
+      'deepseek',
+      'xai',
+      'mistral',
+      'kimi',
+      'zhipu',
+      'openai-codex',
+    ]);
   });
 
   test('anthropic resolves without network', () => {
@@ -61,7 +73,18 @@ describe('selectLanguageModel', () => {
   });
 
   test('anthropic/openai/google/openrouter all require apiKey', () => {
-    for (const kind of ['anthropic', 'openai', 'google', 'openrouter'] as const) {
+    for (const kind of [
+      'anthropic',
+      'openai',
+      'google',
+      'openrouter',
+      'deepseek',
+      'xai',
+      'mistral',
+      'kimi',
+      'zhipu',
+      'openai-codex',
+    ] as const) {
       expect(() => selectLanguageModel({ kind, modelId: 'x' })).toThrow(LLMError);
     }
   });

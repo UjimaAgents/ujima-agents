@@ -73,6 +73,133 @@ describe('checkToolPolicy', () => {
     ).toMatchObject({ allowed: false });
   });
 
+  describe('filesystem access to soul.md', () => {
+    it('allows a role scoped to apps/web to read soul.md there', async () => {
+      await writeFile(join(workspaceRoot, 'apps', 'web', 'soul.md'), 'I am the soul.\n', 'utf8');
+
+      const team = loadAgentTeam({
+        name: 'Soul Org',
+        workspace: { root: workspaceRoot },
+        providers: {
+          openai: {
+            kind: 'openai',
+            defaultModel: 'gpt-5.4',
+            models: ['gpt-5.4'],
+          },
+        },
+        roles: [
+          {
+            name: 'root-reader',
+            title: 'Root Reader',
+            instructions: 'Can read soul.md.',
+            provider: 'openai',
+            model: 'gpt-5.4',
+            workspaceScopes: ['apps/web'],
+            tools: ['filesystem'],
+            channels: ['general'],
+          },
+        ],
+        agents: [],
+        channels: [{ name: 'general', kind: 'general', topic: 'General' }],
+      } as Record<string, unknown>);
+
+      expect(
+        checkToolPolicy(
+          team,
+          'root-reader',
+          'filesystem',
+          'read',
+          join(workspaceRoot, 'apps', 'web', 'soul.md'),
+        ),
+      ).toEqual({ allowed: true, requiresApproval: false });
+    });
+
+    it('blocks a role without access to apps/web', () => {
+      const team = loadAgentTeam({
+        name: 'Soul Org',
+        workspace: { root: workspaceRoot },
+        providers: {
+          openai: {
+            kind: 'openai',
+            defaultModel: 'gpt-5.4',
+            models: ['gpt-5.4'],
+          },
+        },
+        roles: [
+          {
+            name: 'web-reader',
+            title: 'Web Reader',
+            instructions: 'Can only read apps/web.',
+            provider: 'openai',
+            model: 'gpt-5.4',
+            workspaceScopes: ['apps/api'],
+            tools: ['filesystem'],
+            channels: ['general'],
+          },
+        ],
+        agents: [],
+        channels: [{ name: 'general', kind: 'general', topic: 'General' }],
+      } as Record<string, unknown>);
+
+      expect(
+        checkToolPolicy(
+          team,
+          'web-reader',
+          'filesystem',
+          'read',
+          join(workspaceRoot, 'apps', 'web', 'soul.md'),
+        ),
+      ).toMatchObject({
+        allowed: false,
+        reason: expect.stringContaining('outside allowed scopes'),
+      });
+    });
+
+    it('requires approval for hidden or secret-looking reads', async () => {
+      await writeFile(join(workspaceRoot, '.env'), 'TOKEN=secret\n', 'utf8');
+
+      const team = loadAgentTeam({
+        name: 'Secret Org',
+        workspace: { root: workspaceRoot },
+        providers: {
+          openai: {
+            kind: 'openai',
+            defaultModel: 'gpt-5.4',
+            models: ['gpt-5.4'],
+          },
+        },
+        roles: [
+          {
+            name: 'secret-reader',
+            title: 'Secret Reader',
+            instructions: 'Can inspect root files.',
+            provider: 'openai',
+            model: 'gpt-5.4',
+            workspaceScopes: ['.'],
+            tools: ['filesystem'],
+            channels: ['general'],
+          },
+        ],
+        agents: [],
+        channels: [{ name: 'general', kind: 'general', topic: 'General' }],
+      } as Record<string, unknown>);
+
+      expect(
+        checkToolPolicy(
+          team,
+          'secret-reader',
+          'filesystem',
+          'read',
+          join(workspaceRoot, '.env'),
+        ),
+      ).toEqual({
+        allowed: true,
+        requiresApproval: true,
+        reason: 'Path "' + join(workspaceRoot, '.env') + '" requires approval',
+      });
+    });
+  });
+
   // Regression coverage for two bugs in the channel-tool surface:
   //   1. checkToolPolicy was forcing channel.* writes through the approval
   //      gate (`requiresApproval: action !== 'read'`), pausing every run on
@@ -211,5 +338,6 @@ describe('checkToolPolicy', () => {
         checkToolPolicy(team, 'silent-role', 'self.note', 'message'),
       ).toEqual({ allowed: true, requiresApproval: false });
     });
+
   });
 });

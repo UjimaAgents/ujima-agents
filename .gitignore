@@ -28,6 +28,8 @@ coverage
 # environment and secrets
 .env
 .env.*
+.ujima-dev-home/
+
 *.pem
 *.key
 *.crt
@@ -47,3 +49,7 @@ logs
 .DS_Store
 .idea
 .vscode
+
+# VS Code extension build artifacts (rebuild with package script; do not commit binaries)
+*.vsix
+**/.stage/

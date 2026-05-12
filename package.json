@@ -11,7 +11,7 @@
   ],
   "scripts": {
     "build": "turbo run build",
-    "dev": "turbo run dev --parallel",
+    "dev": "turbo run dev --concurrency=100",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
     "test": "vitest run",
@@ -29,17 +29,21 @@
   "devDependencies": {
     "@eslint/js": "^9.9.0",
     "@playwright/test": "^1.46.0",
+    "@tailwindcss/postcss": "4",
+    "@ujima/mcp-client": "workspace:*",
     "@types/node": "^20.14.10",
     "@typescript-eslint/eslint-plugin": "^8.0.0",
     "@typescript-eslint/parser": "^8.0.0",
     "eslint": "^9.9.0",
     "prettier": "^3.3.3",
+    "tailwindcss": "4",
     "turbo": "^2.0.14",
     "typescript": "^5.5.4",
     "typescript-eslint": "^8.0.0",
     "vitest": "^2.0.5"
   },
   "dependencies": {
+    "@ai-sdk/deepseek": "^1.0.15",
     "better-sqlite3": "^12.9.0"
   }
 }

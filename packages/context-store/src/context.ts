@@ -75,7 +75,8 @@ export function createContextStore(deps: ContextStoreDeps): ContextStore {
     },
 
     subscribe(prefix, handler) {
-      const likePattern = `${prefix}%`;
+      const escapedPrefix = prefix.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
+      const likePattern = `${escapedPrefix}%`;
       const inProcHandler = (entry: ContextEntry): void => {
         if (entry.key.startsWith(prefix)) {
           void handler(entry);

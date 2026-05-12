@@ -3,6 +3,7 @@ import type {
   AuthSession,
   AuthUser,
   AuditEvent,
+  Attachment,
   Channel,
   ChannelKind,
   ConfigFieldOwnership,
@@ -12,8 +13,21 @@ import type {
   MessageMention,
   Organization,
   RunState,
+  RunStep,
+  Spirit,
+  SpiritRole,
+  TaskSession,
+  TaskSessionStatus,
+  Todo,
+  TodoStatus,
   WorkspaceMember,
 } from '@ujima/shared';
+
+export interface PaginatedTaskSessions {
+  data: TaskSession[];
+  nextCursor?: string;
+  hasMore: boolean;
+}
 
 export interface BootstrapSnapshot {
   organization: Organization | null;
@@ -64,8 +78,24 @@ export interface RepositoryReader {
   listWorkspaceMembers(organizationId: string): WorkspaceMember[];
   getMember(organizationId: string, memberId: string): Member | null;
   listMembers(organizationId: string): Member[];
-  listMessages(organizationId: string, threadId: string): PaginatedMessages;
+  countMessagesSince(
+    organizationId: string,
+    threadId: string,
+    input?: { since?: string; excludeSenderId?: string },
+  ): number;
+  getConversationRead(
+    organizationId: string,
+    memberId: string,
+    threadId: string,
+  ): { organizationId: string; memberId: string; threadId: string; lastReadAt: string } | null;
+  listMessages(
+    organizationId: string,
+    threadId: string,
+    cursor?: string,
+    limit?: number,
+  ): PaginatedMessages;
   getProviderCredential(organizationId: string, providerName: string): string | null;
+  listRunSteps?(organizationId: string, runId: string): RunStep[];
 }
 
 /**
@@ -83,6 +113,7 @@ export interface ConversationRepository extends RepositoryReader {
   ): PaginatedChannels;
   saveChannel(channel: Channel): Channel;
   setChannelMembers(channelId: string, memberIds: string[]): void;
+  deleteChannel(channelId: string): void;
   getThread(organizationId: string, threadId: string): ConversationThread | null;
   ensureThread(thread: ConversationThread): ConversationThread;
   getMessage(organizationId: string, messageId: string): Message | null;
@@ -103,12 +134,27 @@ export interface ConversationRepository extends RepositoryReader {
     query: string,
     options?: { cursor?: string; since?: string; limit?: number },
   ): PaginatedMessages;
+  getAttachment(organizationId: string, attachmentId: string): Attachment | null;
+  listMessageAttachments(messageId: string): Attachment[];
   saveMessage(message: Message): Message;
   updateMessage(message: Message): Message;
+  saveAttachment(attachment: Attachment): Attachment;
+  linkAttachmentsToMessage(messageId: string, attachmentIds: string[]): void;
   replaceMessageMentions(messageId: string, mentions: MessageMention[]): MessageMention[];
   listMessageMentions(messageId: string): MessageMention[];
   deleteMessageMentions(messageId: string): void;
   getRun(organizationId: string, runId: string): RunState | null;
+  findActiveRunForMemberThread(
+    organizationId: string,
+    agentId: string,
+    threadId: string,
+  ): RunState | null;
+  saveConversationRead(
+    organizationId: string,
+    memberId: string,
+    threadId: string,
+    lastReadAt?: string,
+  ): void;
 }
 
 /**
@@ -118,11 +164,33 @@ export interface ConversationRepository extends RepositoryReader {
  */
 export interface ApiRepository extends ConversationRepository {
   saveRun(run: RunState): RunState;
+  saveRunStep(step: RunStep): RunStep;
+  listRunSteps(organizationId: string, runId: string): RunStep[];
   listRuns(
     organizationId: string,
     cursor?: string,
     limit?: number,
   ): PaginatedRuns;
+  listThreadRuns(
+    organizationId: string,
+    threadId: string,
+    cursor?: string,
+    limit?: number,
+  ): PaginatedRuns;
+  saveTaskSession(session: TaskSession): TaskSession;
+  getTaskSession(organizationId: string, taskSessionId: string): TaskSession | null;
+  getTaskSessionBySlug(organizationId: string, slug: string): TaskSession | null;
+  getTaskSessionByChannel(organizationId: string, channelId: string): TaskSession | null;
+  listTaskSessions(
+    organizationId: string,
+    options?: { cursor?: string; limit?: number; status?: TaskSessionStatus },
+  ): PaginatedTaskSessions;
+  updateTaskSessionStatus(
+    organizationId: string,
+    taskSessionId: string,
+    status: TaskSessionStatus,
+    options?: { summary?: string; completedAt?: string },
+  ): TaskSession | null;
   saveApproval(approval: ApprovalRequest): ApprovalRequest;
   getApproval(organizationId: string, approvalId: string): ApprovalRequest | null;
   resolveApproval(
@@ -131,8 +199,46 @@ export interface ApiRepository extends ConversationRepository {
     status: 'approved' | 'rejected',
     reason?: string,
   ): ApprovalRequest | null;
+  deleteApproval(organizationId: string, approvalId: string): void;
   listPendingApprovals(organizationId: string): ApprovalRequest[];
+  hasApprovalGrant(input: {
+    organizationId: string;
+    requestedBy: string;
+    resourceType: ApprovalRequest['resourceType'];
+    resourcePath: string;
+    action: ApprovalRequest['action'];
+    approvalScope: string;
+  }): boolean;
   saveAuditEvent(event: AuditEvent): AuditEvent;
+  /**
+   * Run a synchronous DB transaction. The callback must complete
+   * synchronously — async work belongs after the commit. See
+   * `Repository.transaction` for the underlying contract.
+   */
+  transaction<T>(fn: () => T): T;
+  saveSpirit(spirit: Spirit): Spirit;
+  getSpirit(organizationId: string, spiritId: string): Spirit | null;
+  getSpiritByTriple(
+    organizationId: string,
+    taskSessionId: string,
+    memberId: string,
+    role: SpiritRole,
+  ): Spirit | null;
+  listSpiritsForSession(organizationId: string, taskSessionId: string): Spirit[];
+  listActiveSpiritsForMember(organizationId: string, memberId: string): Spirit[];
+  saveTodo(todo: Todo): Todo;
+  getTodo(organizationId: string, todoId: string): Todo | null;
+  listTodosForSession(
+    organizationId: string,
+    taskSessionId: string,
+    options?: { status?: TodoStatus; memberId?: string },
+  ): Todo[];
+  updateTodoStatus(
+    organizationId: string,
+    todoId: string,
+    status: TodoStatus,
+    options?: { notes?: string },
+  ): Todo | null;
   deleteMessages(organizationId: string, messageIds: string[]): void;
   saveOrganization(organization: Organization): Organization;
   getLatestOrganization(): Organization | null;

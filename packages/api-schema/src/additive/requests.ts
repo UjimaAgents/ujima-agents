@@ -10,8 +10,15 @@ export const AddMemberRequestSchema = z.object({
   name: z.string().min(1),
   kind: z.enum(['human', 'agent']),
   roleName: z.string().min(1),
+  channelIds: z.array(IdSchema).default([]),
 });
 export type AddMemberRequest = z.infer<typeof AddMemberRequestSchema>;
+
+export const CreateChannelRequestSchema = z.object({
+  name: z.string().min(1),
+  topic: z.string().optional(),
+});
+export type CreateChannelRequest = z.infer<typeof CreateChannelRequestSchema>;
 
 export const ProviderTestResultSchema = z.object({
   provider: z.string(),

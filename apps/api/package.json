@@ -17,6 +17,7 @@
     "clean": "rm -rf dist .turbo *.tsbuildinfo"
   },
   "dependencies": {
+    "@fastify/multipart": "8.x",
     "@fastify/swagger": "^8.14.0",
     "@fastify/swagger-ui": "^1.10.0",
     "@ujima/agent-runtime": "workspace:*",
@@ -39,7 +40,9 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@ai-sdk/provider": "^3.0.8",
     "@types/node": "^20.14.0",
+    "ai": "^6.0.168",
     "typescript": "^5.5.0",
     "vitest": "^1.6.0"
   }

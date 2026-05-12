@@ -49,7 +49,15 @@ export async function startTeamConfigWatcher(options: {
   const runSync = async (): Promise<void> => {
     const configPath = resolveTeamConfigPath();
     if (!configPath) {
-      logger.info('team config not found');
+      const stored = syncService.loadFromStoredConfig(boundOrganizationId);
+      if (stored) {
+        boundOrganizationId = stored.organizationId;
+        logger.info(stored.inferred ? 'team config inferred from repository' : 'team config loaded from repository', {
+          organizationId: stored.organizationId,
+        });
+      } else {
+        logger.info('team config not found');
+      }
       return;
     }
 

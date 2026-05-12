@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { cookies } from "next/headers";
 import type { BootstrapResponse, SessionAuthState } from "@ujima/api-schema";
+import type { RolePresetTemplate } from "@/features/onboarding/types";
 
 export const WEB_SESSION_COOKIE = "ujima_web_session";
 const DEFAULT_DAEMON_PORT = process.env.UJIMA_PORT ?? "7511";
@@ -22,7 +23,7 @@ export class DaemonRequestError extends Error {
   }
 }
 
-function daemonBaseUrl(): string {
+export function daemonBaseUrl(): string {
   return (process.env.UJIMA_API_URL ?? `http://127.0.0.1:${DEFAULT_DAEMON_PORT}`).replace(/\/$/, "");
 }
 
@@ -34,7 +35,7 @@ function resolveHomeDir(): string {
   return join(homedir(), ".ujima");
 }
 
-function readDaemonBearerToken(): string {
+export function readDaemonBearerToken(): string {
   const fromEnv = process.env.UJIMA_TOKEN;
   if (fromEnv && fromEnv.trim().length > 0) {
     return fromEnv.trim();
@@ -84,7 +85,12 @@ export async function daemonFetch(
     // resolved against the durable DB-backed session state.
     headers.set("x-ujima-session", sessionToken);
   }
-  if (init.body !== undefined && !headers.has("content-type")) {
+  if (
+    init.body !== undefined &&
+    !(init.body instanceof FormData) &&
+    !(init.body instanceof Blob) &&
+    !headers.has("content-type")
+  ) {
     headers.set("content-type", "application/json");
   }
 
@@ -121,4 +127,49 @@ export async function getServerBootstrap(): Promise<BootstrapResponse> {
 
 export async function getServerAuthState(): Promise<SessionAuthState> {
   return daemonJson<SessionAuthState>("/api/auth/session", {}, await getSessionTokenFromCookie());
+}
+
+export async function requireOrgAccess(organizationId: string): Promise<SessionAuthState> {
+  const authState = await getServerAuthState();
+  if (!authState.authenticated) {
+    throw new DaemonRequestError(401, "ERR_UNAUTHORIZED", "Session required");
+  }
+  if (authState.user?.organizationId !== organizationId) {
+    throw new DaemonRequestError(403, "ERR_FORBIDDEN", "Unauthorized for this organization.");
+  }
+  return authState;
+}
+
+export async function getServerRolePresets(): Promise<RolePresetTemplate[]> {
+  const response = await daemonJson<{ presets: RolePresetTemplate[] }>("/api/roles/presets");
+  return response.presets;
+}
+
+export async function getServerTeamSettings(organizationId?: string): Promise<{
+  name: string;
+  workspace: { root: string; roleScopes: Record<string, string[]> };
+  organizationChart: { reportsTo: Record<string, string> };
+  agents: Array<{ name: string; roleName: string; personalityName: string; kind: string }>;
+  roles: Array<{
+    id?: string;
+    name: string;
+    title: string;
+    description: string;
+    instructions: string;
+    kind: string;
+    provider?: string;
+    model?: string;
+    workspaceScopes: string[];
+    tools: string[];
+    channels: string[];
+    skills: string[];
+  }>;
+  channels: Array<{ id?: string; name: string; kind: string; topic: string; memberIds: string[] }>;
+  tools: Record<string, unknown>;
+  policies: unknown;
+}> {
+  const path = organizationId
+    ? `/api/settings/team?organizationId=${encodeURIComponent(organizationId)}`
+    : "/api/settings/team";
+  return daemonJson(path, {}, await getSessionTokenFromCookie());
 }

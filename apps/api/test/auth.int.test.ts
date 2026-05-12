@@ -113,8 +113,10 @@ describe('auth flow', () => {
         },
       }),
     });
+    const bodyText = await onboardingResponse.text();
+    console.error('RESPONSE:', bodyText);
     expect(onboardingResponse.status).toBe(200);
-    const onboarding = (await onboardingResponse.json()) as {
+    const onboarding = JSON.parse(bodyText) as {
       organization: { id: string };
       auth: { authenticated: boolean; user: { email: string } | null };
       sessionToken: string;

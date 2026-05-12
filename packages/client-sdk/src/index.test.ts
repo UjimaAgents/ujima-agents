@@ -30,4 +30,38 @@ describe('client-sdk', () => {
     await client.workspaces.list();
     expect(seen).toEqual(['Bearer abc123']);
   });
+
+  it('calls the role catalog endpoints', async () => {
+    const seen: string[] = [];
+    const stub: typeof fetch = async (url, _init) => {
+      seen.push(new URL(String(url)).pathname);
+      if (String(url).endsWith('/roles/presets')) {
+        return new Response(JSON.stringify({ presets: [] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      if (String(url).endsWith('/roles/industries')) {
+        return new Response(JSON.stringify({ industries: [] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      return new Response(JSON.stringify({ industry: 'engineering', presets: [] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    };
+
+    const client = createClient({ baseUrl: 'http://x', token: 'abc123', fetchImpl: stub });
+    await client.roles.listPresets();
+    await client.roles.listIndustries();
+    await client.roles.getIndustry('engineering');
+
+    expect(seen).toEqual([
+      '/api/roles/presets',
+      '/api/roles/industries',
+      '/api/roles/industries/engineering',
+    ]);
+  });
 });

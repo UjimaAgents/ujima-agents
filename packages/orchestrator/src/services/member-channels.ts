@@ -1,5 +1,5 @@
 import type { AgentTeamHandle } from '@ujima/framework';
-import { ChannelSchema, type Channel, type Member } from '@ujima/shared';
+import { AGENT_KIND, ChannelSchema, type Channel, type Member } from '@ujima/shared';
 import type { ApiRepository } from './repository-reader.js';
 
 export function selfChannelId(memberId: string): string {
@@ -45,7 +45,7 @@ export function addMemberToDefaultChannels(
   organizationId: string,
   member: Pick<Member, 'id' | 'kind' | 'roleName'>,
 ): void {
-  if (member.kind !== 'agent') {
+  if (member.kind !== AGENT_KIND) {
     return;
   }
 

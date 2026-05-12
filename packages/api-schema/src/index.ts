@@ -5,7 +5,9 @@ export * from './auth.js';
 export * from './onboarding.js';
 export * from './runs.js';
 export * from './settings.js';
+export * from './task-sessions.js';
 export * from './additive/requests.js';
+export { MODEL_OPTIONS_BY_PROVIDER, defaultModelForProvider, getModelOptionsForProvider } from './model-catalog.js';
 
 export const API_VERSION = 'v1';
 
@@ -70,7 +72,7 @@ export const StartTaskRequestSchema = z.object({
   prompt: z.string().min(1),
   task_id: z.string().optional(),
   orchestrator_mode: z.enum(['auto', 'manual']).optional(),
-  execution_mode: z.enum(['concurrent', 'slim']).optional(),
+  execution_mode: z.enum(['concurrent']).optional(),
 });
 export type StartTaskRequest = z.infer<typeof StartTaskRequestSchema>;
 

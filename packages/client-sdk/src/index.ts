@@ -14,6 +14,34 @@ import type {
   WsFrame,
 } from '@ujima/api-schema';
 
+export interface RolePresetCatalogItem {
+  name: string;
+  title: string;
+  description: string;
+  instructions: string;
+  workspaceScopes: string[];
+  tools: string[];
+  channels: string[];
+  skills: string[];
+  industry: string;
+  key: string;
+}
+
+export interface RoleIndustryCatalog {
+  industry: string;
+  presets: RolePresetCatalogItem[];
+}
+
+export interface ListRolePresetsResponse {
+  presets: RolePresetCatalogItem[];
+}
+
+export interface ListRoleIndustriesResponse {
+  industries: RoleIndustryCatalog[];
+}
+
+export type GetRoleIndustryResponse = RoleIndustryCatalog;
+
 export class UjimaApiError extends Error {
   readonly status: number;
   readonly code: ApiError['code'];
@@ -52,6 +80,11 @@ export interface UjimaClient {
   };
   agents: {
     list(): Promise<ListAgentsResponse>;
+  };
+  roles: {
+    listPresets(): Promise<ListRolePresetsResponse>;
+    listIndustries(): Promise<ListRoleIndustriesResponse>;
+    getIndustry(industry: string): Promise<GetRoleIndustryResponse>;
   };
   subscribeEvents(
     filter: EventSubscribeQuery,
@@ -110,6 +143,17 @@ export function createClient(opts: ClientOptions): UjimaClient {
     },
     agents: {
       list: () => request<ListAgentsResponse>(apiBaseUrl, 'GET', '/agents'),
+    },
+    roles: {
+      listPresets: () => request<ListRolePresetsResponse>(apiBaseUrl, 'GET', '/roles/presets'),
+      listIndustries: () =>
+        request<ListRoleIndustriesResponse>(apiBaseUrl, 'GET', '/roles/industries'),
+      getIndustry: (industry) =>
+        request<GetRoleIndustryResponse>(
+          apiBaseUrl,
+          'GET',
+          `/roles/industries/${encodeURIComponent(industry)}`,
+        ),
     },
     subscribeEvents(filter, handler) {
       const query: Record<string, string> = {};

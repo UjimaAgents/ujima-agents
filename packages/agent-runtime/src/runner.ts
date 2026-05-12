@@ -2,7 +2,6 @@ import { openDb } from '@ujima/context-store';
 import { createLocalEventBus } from '@ujima/event-bus';
 import { createPermissionMiddleware } from '@ujima/permissions';
 import { createMCPPool } from '@ujima/mcp-client';
-import { selectProvider } from '@ujima/llm/legacy';
 import { selectLanguageModel, type ProviderKind } from '@ujima/llm';
 import type { AgentDef, MCPDef, TaskDef } from '@ujima/shared';
 import { runAgent } from './shell';
@@ -47,7 +46,9 @@ function readAiSdkConfigFromEnv(env: NodeJS.ProcessEnv): RunnerConfig['llm'] | u
 }
 
 export async function runInRunner(config: RunnerConfig): Promise<AgentRunResult> {
-  const engine = resolveOrchestratorEngine(config.engine ?? process.env.UJIMA_ORCHESTRATOR_ENGINE);
+  // Validate engine value (always ai-sdk); the assignment isn't used
+  // but validateOrchestratorEngine throws on invalid input.
+  void resolveOrchestratorEngine(config.engine ?? process.env.UJIMA_ORCHESTRATOR_ENGINE);
   const db = openDb({ dbPath: config.dbPath });
   const bus = createLocalEventBus({ audit: db.audit, pendingEvents: db.pendingEvents });
   const permissions = createPermissionMiddleware({ audit: db.audit, agentState: db.agentState });
@@ -61,31 +62,20 @@ export async function runInRunner(config: RunnerConfig): Promise<AgentRunResult>
   }
   const mcp = await pool.get(mcpDef);
 
-  const runInputs =
-    engine === 'ai-sdk'
-      ? (() => {
-          const llm = config.llm ?? readAiSdkConfigFromEnv(process.env);
-          if (!llm) {
-            throw new Error(
-              "runInRunner: engine='ai-sdk' requires `llm` config or UJIMA_LLM_KIND + UJIMA_LLM_MODEL_ID env vars.",
-            );
-          }
-          return {
-            engine: 'ai-sdk' as const,
-            model: selectLanguageModel(llm),
-          };
-        })()
-      : {
-          engine: 'legacy' as const,
-          provider: selectProvider(),
-        };
+  const llm = config.llm ?? readAiSdkConfigFromEnv(process.env);
+  if (!llm) {
+    throw new Error(
+      "runInRunner: requires `llm` config or UJIMA_LLM_KIND + UJIMA_LLM_MODEL_ID env vars.",
+    );
+  }
+  const model = selectLanguageModel(llm);
 
   const handle = runAgent({
     agent: config.agent,
     task: config.task,
     sessionId: config.sessionId,
     spawnReason: config.spawnReason,
-    ...runInputs,
+    model,
     mcp,
     permissions,
     eventBus: bus,

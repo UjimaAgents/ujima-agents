@@ -48,3 +48,21 @@ export const OrganizationSettingsResponseSchema = z.object({
 });
 export type OrganizationSettingsResponse = z.infer<typeof OrganizationSettingsResponseSchema>;
 
+export const PoliciesUpdateSchema = z.object({
+  organizationId: IdSchema,
+  requireApprovalForWrites: z.boolean().optional(),
+  requireApprovalForShell: z.boolean().optional(),
+});
+export type PoliciesUpdateRequest = z.infer<typeof PoliciesUpdateSchema>;
+
+export const ChannelUpdateSchema = z.object({
+  name: z.string().min(1).optional(),
+  topic: z.string().optional(),
+});
+export type ChannelUpdateRequest = z.infer<typeof ChannelUpdateSchema>;
+
+export const ChannelOperationParamsSchema = z.object({
+  orgId: IdSchema,
+  channelId: IdSchema,
+});
+

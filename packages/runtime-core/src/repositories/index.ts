@@ -4,6 +4,7 @@ import type {
   AuthSession,
   AuthUser,
   AuditEvent,
+  Attachment,
   Channel,
   ChannelKind,
   ConfigFieldOwnership,
@@ -13,8 +14,16 @@ import type {
   MessageMention,
   Organization,
   RunState,
+  RunStep,
+  Spirit,
+  SpiritRole,
+  TaskSession,
+  TaskSessionStatus,
+  Todo,
+  TodoStatus,
   WorkspaceMember,
 } from '@ujima/shared';
+import { ApprovalRequestSchema } from '@ujima/shared';
 import {
   findAuthUsersByEmail as readAuthUsersByEmail,
   getAuthSessionByTokenHash as readAuthSessionByTokenHash,
@@ -30,6 +39,8 @@ import {
 } from './auth.js';
 import {
   getApproval as readApproval,
+  deleteApproval as deleteApprovalRecord,
+  hasApprovalGrant as readApprovalGrant,
   listPendingApprovals as readPendingApprovals,
   resolveApproval as resolveApprovalRecord,
   saveApproval as writeApproval,
@@ -40,6 +51,7 @@ import {
   type BootstrapSnapshot,
 } from './bootstrap.js';
 import {
+  deleteChannel as removeChannel,
   getChannel as readChannel,
   listAllChannels as readAllChannels,
   listChannels as readChannels,
@@ -68,8 +80,19 @@ import {
   replaceMessageMentions as writeMessageMentions,
 } from './message-mentions.js';
 import {
+  getConversationRead as readConversationRead,
+  saveConversationRead as writeConversationRead,
+} from './conversation-reads.js';
+import {
+  getAttachment as readAttachment,
+  linkAttachmentsToMessage as writeMessageAttachments,
+  listMessageAttachments as readMessageAttachments,
+  saveAttachment as writeAttachment,
+} from './attachments.js';
+import {
   deleteMessages as removeMessages,
   getMessage as readMessage,
+  countMessagesSince as readMessageCountSince,
   listMessages as readMessages,
   listChannelMessages as readChannelMessages,
   saveMessage as writeMessage,
@@ -93,17 +116,45 @@ import {
   saveProviderCredential as writeProviderCredential,
 } from './organization.js';
 import {
+  findActiveRunForMemberThread as readActiveRunForMemberThread,
   getRun as readRun,
   listRuns as readRuns,
+  listThreadRuns as readThreadRuns,
   saveRun as writeRun,
   type PaginatedRuns,
 } from './runs.js';
+import {
+  listRunSteps as readRunSteps,
+  saveRunStep as writeRunStep,
+} from './run-steps.js';
+import {
+  getTaskSession as readTaskSession,
+  getTaskSessionByChannel as readTaskSessionByChannel,
+  getTaskSessionBySlug as readTaskSessionBySlug,
+  listTaskSessions as readTaskSessions,
+  saveTaskSession as writeTaskSession,
+  updateTaskSessionStatus as writeTaskSessionStatus,
+  type PaginatedTaskSessions,
+} from './task-sessions.js';
+import {
+  getTodo as readTodo,
+  listTodosForSession as readTodosForSession,
+  saveTodo as writeTodo,
+  updateTodoStatus as writeTodoStatus,
+} from './todos.js';
 import {
   ensureThread as ensureThreadRecord,
   getThread as readThread,
   saveThread as writeThread,
   setThreadMembers as writeThreadMembers,
 } from './threads.js';
+import {
+  getSpirit as readSpirit,
+  getSpiritByTriple as readSpiritByTriple,
+  listActiveSpiritsForMember as readActiveSpiritsForMember,
+  listSpiritsForSession as readSpiritsForSession,
+  saveSpirit as writeSpirit,
+} from './spirits.js';
 
 export class Repository {
   private readonly secrets: SecretStore;
@@ -210,6 +261,8 @@ export class Repository {
   ): PaginatedChannels => readChannels(this.db, organizationId, cursor, limit, excludeKinds);
   setChannelMembers = (channelId: string, memberIds: string[]): void =>
     writeChannelMembers(this.db, channelId, memberIds);
+  deleteChannel = (channelId: string): void =>
+    removeChannel(this.db, channelId);
 
   saveThread = (thread: ConversationThread): ConversationThread =>
     writeThread(this.db, thread);
@@ -224,12 +277,24 @@ export class Repository {
   updateMessage = (message: Message): Message => writeMessageUpdate(this.db, message);
   getMessage = (organizationId: string, messageId: string): Message | null =>
     readMessage(this.db, organizationId, messageId);
+  saveAttachment = (attachment: Attachment): Attachment => writeAttachment(this.db, attachment);
+  getAttachment = (organizationId: string, attachmentId: string): Attachment | null =>
+    readAttachment(this.db, organizationId, attachmentId);
+  listMessageAttachments = (messageId: string): Attachment[] =>
+    readMessageAttachments(this.db, messageId);
+  linkAttachmentsToMessage = (messageId: string, attachmentIds: string[]): void =>
+    writeMessageAttachments(this.db, messageId, attachmentIds);
   listMessages = (
     organizationId: string,
     threadId: string,
     cursor?: string,
     limit?: number,
   ): PaginatedMessages => readMessages(this.db, organizationId, threadId, cursor, limit);
+  countMessagesSince = (
+    organizationId: string,
+    threadId: string,
+    input?: { since?: string; excludeSenderId?: string },
+  ): number => readMessageCountSince(this.db, organizationId, threadId, input);
   listChannelMessages = (
     organizationId: string,
     channelId: string,
@@ -251,12 +316,74 @@ export class Repository {
     removeMessageMentions(this.db, messageId);
   deleteMessages = (organizationId: string, messageIds: string[]): void =>
     removeMessages(this.db, organizationId, messageIds);
+  saveConversationRead = (
+    organizationId: string,
+    memberId: string,
+    threadId: string,
+    lastReadAt?: string,
+  ): void => {
+    void writeConversationRead(this.db, {
+      organizationId,
+      memberId,
+      threadId,
+      lastReadAt,
+    });
+  };
+  getConversationRead = (
+    organizationId: string,
+    memberId: string,
+    threadId: string,
+  ): { organizationId: string; memberId: string; threadId: string; lastReadAt: string } | null => {
+    const read = readConversationRead(this.db, organizationId, memberId, threadId);
+    return read
+      ? {
+          organizationId: read.organization_id,
+          memberId: read.member_id,
+          threadId: read.thread_id,
+        lastReadAt: read.last_read_at,
+      }
+      : null;
+  };
 
   saveRun = (run: RunState): RunState => writeRun(this.db, run);
   getRun = (organizationId: string, runId: string): RunState | null =>
     readRun(this.db, organizationId, runId);
+  findActiveRunForMemberThread = (
+    organizationId: string,
+    agentId: string,
+    threadId: string,
+  ): RunState | null => readActiveRunForMemberThread(this.db, organizationId, agentId, threadId);
+  saveRunStep = (step: RunStep): RunStep => writeRunStep(this.db, step);
+  listRunSteps = (organizationId: string, runId: string): RunStep[] =>
+    readRunSteps(this.db, organizationId, runId);
   listRuns = (organizationId: string, cursor?: string, limit?: number): PaginatedRuns =>
     readRuns(this.db, organizationId, cursor, limit);
+  listThreadRuns = (
+    organizationId: string,
+    threadId: string,
+    cursor?: string,
+    limit?: number,
+  ): PaginatedRuns => readThreadRuns(this.db, organizationId, threadId, cursor, limit);
+
+  saveTaskSession = (session: TaskSession): TaskSession =>
+    writeTaskSession(this.db, session);
+  getTaskSession = (organizationId: string, taskSessionId: string): TaskSession | null =>
+    readTaskSession(this.db, organizationId, taskSessionId);
+  getTaskSessionBySlug = (organizationId: string, slug: string): TaskSession | null =>
+    readTaskSessionBySlug(this.db, organizationId, slug);
+  getTaskSessionByChannel = (organizationId: string, channelId: string): TaskSession | null =>
+    readTaskSessionByChannel(this.db, organizationId, channelId);
+  listTaskSessions = (
+    organizationId: string,
+    options?: { cursor?: string; limit?: number; status?: TaskSessionStatus },
+  ): PaginatedTaskSessions => readTaskSessions(this.db, organizationId, options);
+  updateTaskSessionStatus = (
+    organizationId: string,
+    taskSessionId: string,
+    status: TaskSessionStatus,
+    options?: { summary?: string; completedAt?: string },
+  ): TaskSession | null =>
+    writeTaskSessionStatus(this.db, organizationId, taskSessionId, status, options);
 
   saveApproval = (approval: ApprovalRequest): ApprovalRequest =>
     writeApproval(this.db, approval);
@@ -269,10 +396,85 @@ export class Repository {
     reason = '',
   ): ApprovalRequest | null =>
     resolveApprovalRecord(this.db, organizationId, approvalId, status, reason);
-  listPendingApprovals = (organizationId: string): ApprovalRequest[] =>
-    readPendingApprovals(this.db, organizationId);
+  deleteApproval = (organizationId: string, approvalId: string): void =>
+    deleteApprovalRecord(this.db, organizationId, approvalId);
+  listPendingApprovals = (organizationId: string): ApprovalRequest[] => {
+    const list = readPendingApprovals(this.db, organizationId);
+    return list.map((approval) => {
+      if (approval.threadId) return approval;
+      if (!approval.runId) return approval;
+      const run = readRun(this.db, organizationId, approval.runId);
+      if (!run?.threadId) return approval;
+      return ApprovalRequestSchema.parse({ ...approval, threadId: run.threadId });
+    });
+  };
+  hasApprovalGrant = (input: {
+    organizationId: string;
+    requestedBy: string;
+    resourceType: ApprovalRequest['resourceType'];
+    resourcePath: string;
+    action: ApprovalRequest['action'];
+    approvalScope: string;
+  }): boolean => readApprovalGrant(this.db, input);
 
   saveAuditEvent = (event: AuditEvent): AuditEvent => writeAuditEvent(this.db, event);
+
+  /**
+   * Execute `fn` inside a synchronous DB transaction. Commits on
+   * normal return, rolls back on throw. The callback must run
+   * synchronously — bun:sqlite / better-sqlite3 don't support async
+   * statement queues so awaiting inside the transaction would either
+   * suspend it (better-sqlite3) or escape it (bun:sqlite). Async work
+   * (network, LLM calls, message publishing) belongs after the commit.
+   *
+   * Nested transactions are NOT supported — the SQLite drivers raise
+   * "cannot start a transaction within a transaction". Callers should
+   * compose the entire write at the top of the chain.
+   */
+  transaction = <T>(fn: () => T): T => {
+    this.db.exec('BEGIN');
+    try {
+      const result = fn();
+      this.db.exec('COMMIT');
+      return result;
+    } catch (err) {
+      try {
+        this.db.exec('ROLLBACK');
+      } catch {
+        // best-effort rollback — surface the original error
+      }
+      throw err;
+    }
+  };
+
+  saveSpirit = (spirit: Spirit): Spirit => writeSpirit(this.db, spirit);
+  getSpirit = (organizationId: string, spiritId: string): Spirit | null =>
+    readSpirit(this.db, organizationId, spiritId);
+  getSpiritByTriple = (
+    organizationId: string,
+    taskSessionId: string,
+    memberId: string,
+    role: SpiritRole,
+  ): Spirit | null => readSpiritByTriple(this.db, organizationId, taskSessionId, memberId, role);
+  listSpiritsForSession = (organizationId: string, taskSessionId: string): Spirit[] =>
+    readSpiritsForSession(this.db, organizationId, taskSessionId);
+  listActiveSpiritsForMember = (organizationId: string, memberId: string): Spirit[] =>
+    readActiveSpiritsForMember(this.db, organizationId, memberId);
+
+  saveTodo = (todo: Todo): Todo => writeTodo(this.db, todo);
+  getTodo = (organizationId: string, todoId: string): Todo | null =>
+    readTodo(this.db, organizationId, todoId);
+  listTodosForSession = (
+    organizationId: string,
+    taskSessionId: string,
+    options?: { status?: TodoStatus; memberId?: string },
+  ): Todo[] => readTodosForSession(this.db, organizationId, taskSessionId, options);
+  updateTodoStatus = (
+    organizationId: string,
+    todoId: string,
+    status: TodoStatus,
+    options?: { notes?: string },
+  ): Todo | null => writeTodoStatus(this.db, organizationId, todoId, status, options);
 
   getBootstrapSnapshot = (): BootstrapSnapshot => readBootstrapSnapshot(this.db);
 }

@@ -424,6 +424,13 @@ const MIGRATIONS: { id: string; up: string }[] = [
     `,
   },
   {
+    id: '007_member_llm_model',
+    up: `
+      ALTER TABLE members ADD COLUMN llm TEXT;
+      ALTER TABLE members ADD COLUMN model TEXT;
+    `,
+  },
+  {
     id: '007_auth',
     up: `
       CREATE TABLE IF NOT EXISTS auth_users (
@@ -462,6 +469,186 @@ const MIGRATIONS: { id: string; up: string }[] = [
         ON auth_sessions(expires_at);
     `,
   },
+  {
+    id: '008_task_sessions',
+    up: `
+      -- Phase 1 of the unified task shell. A task_session is the parent
+      -- aggregate above per-agent RunState rows: one session per piece of
+      -- work, one task-run channel pinned to it, multiple worker runs
+      -- linked back via runs.task_session_id (added in a follow-up
+      -- migration when the worker loop lands).
+      CREATE TABLE IF NOT EXISTS task_sessions (
+        id              TEXT PRIMARY KEY,
+        organization_id TEXT NOT NULL,
+        slug            TEXT NOT NULL,
+        channel_id      TEXT NOT NULL,
+        requested_by    TEXT NOT NULL,
+        execution_mode  TEXT NOT NULL DEFAULT 'concurrent',
+        status          TEXT NOT NULL DEFAULT 'queued',
+        prompt          TEXT NOT NULL DEFAULT '',
+        summary         TEXT NOT NULL DEFAULT '',
+        team_member_ids TEXT NOT NULL DEFAULT '[]',
+        origin_channel_id TEXT,
+        origin_message_id TEXT,
+        promotion_metadata TEXT NOT NULL DEFAULT '{}',
+        supervisor_turn_count INTEGER NOT NULL DEFAULT 0,
+        created_at      TEXT NOT NULL,
+        updated_at      TEXT NOT NULL,
+        completed_at    TEXT,
+        UNIQUE (organization_id, slug),
+        UNIQUE (channel_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_task_sessions_org_status
+        ON task_sessions(organization_id, status, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_task_sessions_org_created
+        ON task_sessions(organization_id, created_at DESC, id DESC);
+    `,
+  },
+  {
+    id: '009_spirits',
+    up: `
+      -- Phase 2.A — spirits table.
+      --
+      -- A "spirit" is the per-{task_session_id, member_id, role} runtime
+      -- instance that drives an agent through a task session. The two
+      -- roles split distinct concerns:
+      --   role='worker'      — multi-turn loop that owns the work
+      --   role='supervisor'  — lazy DM/@mention answerer on a cheaper
+      --                        tier with a strict tool allowlist
+      --
+      -- Spirits are sticky to the (session, member, role) triple — re-
+      -- spawning the same combination resumes the existing row instead
+      -- of creating a duplicate. UNIQUE enforces the invariant at the
+      -- DB layer so two parallel start() calls can't race past each
+      -- other.
+      CREATE TABLE IF NOT EXISTS spirits (
+        id              TEXT PRIMARY KEY,
+        organization_id TEXT NOT NULL,
+        task_session_id TEXT NOT NULL,
+        member_id       TEXT NOT NULL,
+        role            TEXT NOT NULL DEFAULT 'worker',
+        run_id          TEXT,
+        status          TEXT NOT NULL DEFAULT 'queued',
+        iteration       INTEGER NOT NULL DEFAULT 0,
+        tokens_used     INTEGER NOT NULL DEFAULT 0,
+        last_message_id TEXT,
+        last_error      TEXT,
+        created_at      TEXT NOT NULL,
+        updated_at      TEXT NOT NULL,
+        ended_at        TEXT,
+        UNIQUE (task_session_id, member_id, role)
+      );
+      CREATE INDEX IF NOT EXISTS idx_spirits_org_status
+        ON spirits(organization_id, status, updated_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_spirits_session
+        ON spirits(task_session_id, role);
+      CREATE INDEX IF NOT EXISTS idx_spirits_member
+        ON spirits(member_id, status);
+    `,
+  },
+  {
+    id: '010_supervisor_todos',
+    up: `
+      -- Phase 2.B — extend the existing todos table (introduced in
+      -- migration 004_additive_ports) with a task_session_id pointer
+      -- so the supervisor.todo.* tools can scope reads/writes to the
+      -- active task without leaking across sessions.
+      --
+      -- Pre-existing todos rows continue to work with NULL — the
+      -- supervisor surface only writes scoped rows, but legacy
+      -- callers of the table aren't affected.
+      ALTER TABLE todos ADD COLUMN task_session_id TEXT;
+      CREATE INDEX IF NOT EXISTS idx_todos_task_session ON todos(task_session_id);
+    `,
+  },
+  {
+    id: '011_approval_tool_call_id',
+    up: `
+      ALTER TABLE approvals ADD COLUMN tool_call_id TEXT;
+    `,
+  },
+  {
+    id: '012_attachments',
+    up: `
+      CREATE TABLE IF NOT EXISTS attachments (
+        id              TEXT PRIMARY KEY,
+        organization_id TEXT NOT NULL,
+        filename        TEXT NOT NULL,
+        mime_type       TEXT NOT NULL,
+        category        TEXT NOT NULL,
+        size_bytes      INTEGER NOT NULL,
+        storage_path    TEXT NOT NULL,
+        uploaded_by     TEXT NOT NULL,
+        created_at      TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_attachments_org
+        ON attachments(organization_id, created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS message_attachments (
+        message_id    TEXT NOT NULL,
+        attachment_id TEXT NOT NULL,
+        sort_order    INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (message_id, attachment_id),
+        FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE,
+        FOREIGN KEY (attachment_id) REFERENCES attachments(id) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_message_attachments_message
+        ON message_attachments(message_id);
+      CREATE INDEX IF NOT EXISTS idx_message_attachments_attachment
+        ON message_attachments(attachment_id);
+    `,
+  },
+  {
+    id: '013_conversation_reads',
+    up: `
+      CREATE TABLE IF NOT EXISTS conversation_reads (
+        organization_id  TEXT NOT NULL,
+        member_id        TEXT NOT NULL,
+        thread_id        TEXT NOT NULL,
+        last_read_at     TEXT NOT NULL,
+        PRIMARY KEY (organization_id, member_id, thread_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_conversation_reads_member
+        ON conversation_reads(organization_id, member_id, thread_id);
+    `,
+  },
+  {
+    id: '014_run_steps',
+    up: `
+      CREATE TABLE IF NOT EXISTS run_steps (
+        id               TEXT PRIMARY KEY,
+        organization_id  TEXT NOT NULL,
+        run_id           TEXT NOT NULL,
+        thread_id        TEXT,
+        agent_id         TEXT NOT NULL,
+        tool_call_id     TEXT NOT NULL,
+        tool_id          TEXT NOT NULL,
+        action           TEXT NOT NULL,
+        resource_type    TEXT NOT NULL,
+        resource_path    TEXT NOT NULL DEFAULT '',
+        input            TEXT NOT NULL DEFAULT '{}',
+        output           TEXT,
+        status           TEXT NOT NULL DEFAULT 'ok',
+        created_at       TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_run_steps_run
+        ON run_steps(organization_id, run_id, created_at);
+    `,
+  },
+  {
+    id: '016_approval_thread_id',
+    up: `
+      ALTER TABLE approvals ADD COLUMN thread_id TEXT;
+      CREATE INDEX IF NOT EXISTS idx_approvals_thread
+        ON approvals(organization_id, thread_id, status);
+    `,
+  },
+  {
+    id: '017_drop_thread_dispositions',
+    up: `
+      DROP TABLE IF EXISTS thread_dispositions;
+    `,
+  },
 ];
 
 export interface DbOptions {
@@ -497,6 +684,10 @@ function runMigrations(db: DbHandle): void {
 
   for (const m of MIGRATIONS) {
     if (applied.has(m.id)) continue;
+    if (m.id === '011_approval_tool_call_id' && hasColumn(db, 'approvals', 'tool_call_id')) {
+      insert.run(m.id, Date.now());
+      continue;
+    }
     db.exec('BEGIN');
     try {
       db.exec(m.up);
@@ -511,4 +702,9 @@ function runMigrations(db: DbHandle): void {
 
 export function nowMs(): number {
   return Date.now();
+}
+
+function hasColumn(db: DbHandle, table: string, column: string): boolean {
+  const rows = db.prepare(`PRAGMA table_info(${table})`).all() as { name?: unknown }[];
+  return rows.some((row) => row.name === column);
 }
