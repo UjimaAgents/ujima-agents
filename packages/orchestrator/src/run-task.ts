@@ -1,4 +1,4 @@
-import type { AgentDef, TaskDef } from '@ujima/shared';
+import { TaskDef as TaskDefSchema, type AgentDef, type TaskDef } from '@ujima/shared';
 import type { AgentRunInputs, AgentRunResult, BrowserStateSnapshot } from '@ujima/agent-runtime';
 import { runConcurrent, type ConcurrentRunHandle } from '@ujima/agent-runtime';
 import { resolveManualTeam } from './manual-mode';
@@ -15,7 +15,9 @@ import {
 } from './types';
 
 export function runTask(deps: OrchestratorDeps, input: RunTaskInputs): SessionHandle {
-  const { task, team, sessionId } = input;
+  const task = TaskDefSchema.parse(input.task);
+  const runInput: RunTaskInputs = { ...input, task };
+  const { team, sessionId } = runInput;
   if (task.execution_mode !== 'concurrent' && task.execution_mode !== 'slim') {
     throw new Error(`Unsupported execution mode: ${String(task.execution_mode)}`);
   }
@@ -137,7 +139,7 @@ export function runTask(deps: OrchestratorDeps, input: RunTaskInputs): SessionHa
         task.execution_mode === 'slim'
           ? await runSlimTask({
               deps,
-              input,
+              input: runInput,
               agentDefs,
               sessionController,
               perAgentControllers,
@@ -146,7 +148,7 @@ export function runTask(deps: OrchestratorDeps, input: RunTaskInputs): SessionHa
             })
           : await runConcurrentTask({
               deps,
-              input,
+              input: runInput,
               agentDefs,
               assignments,
               sessionController,

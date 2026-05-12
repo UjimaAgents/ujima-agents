@@ -20,7 +20,7 @@ import {
   type RealtimeService,
   type ToolService,
 } from '@ujima/orchestrator';
-import { MessageCardSchema } from '@ujima/shared';
+import { MessageCardSchema, MessageSchema } from '@ujima/shared';
 
 function noopRealtime(): RealtimeService {
   return { emit: () => undefined };
@@ -302,12 +302,30 @@ describe('task shell integrations', () => {
 
     const spirit = fixture.repo.listSpiritsForSession(fixture.organizationId, session.id)[0];
     expect(spirit?.runId).toBeDefined();
+    for (let index = 0; index < 505; index += 1) {
+      fixture.conversations.publishMessage(
+        MessageSchema.parse({
+          id: `bulk-${index}`,
+          organizationId: fixture.organizationId,
+          threadId: session.channelId,
+          channelId: session.channelId,
+          senderId: fixture.ownerId,
+          senderKind: 'human',
+          kind: 'human',
+          content: `bulk task history ${index}`,
+          createdAt: new Date(Date.UTC(2026, 0, 1, 0, 0, index)).toISOString(),
+        }),
+        [],
+      );
+    }
 
     const detail = fixture.runs.getRunDetail(fixture.organizationId, spirit!.runId!);
     expect(detail).not.toBeNull();
     expect(detail?.tokens.perMemberId['frontend-alice']).toBeGreaterThan(0);
     expect(detail?.tools.filesystem?.count).toBe(1);
     expect(detail?.tools.filesystem?.pending).toBe(0);
+    expect(detail?.messages.some((message) => message.content === 'bulk task history 0')).toBe(true);
+    expect(detail?.messages.some((message) => message.content === 'bulk task history 504')).toBe(true);
   });
 
   it('auto-promotes a confident human message into a task session and audits the decision', async () => {
@@ -343,6 +361,45 @@ describe('task shell integrations', () => {
       .listAuditEvents(fixture.organizationId)
       .find((event) => event.action === 'audit.task_promoter');
     expect(audit?.metadata.decision).toBe('promote');
+  });
+
+  it('marks auto-started promoted sessions failed when start throws', async () => {
+    const fixture = await createFixture();
+    tempDirs.push(fixture.archiveRoot);
+    const taskPromoter = new TaskPromoterService(fixture.repo, fixture.runs, {
+      taskSessions: {
+        create: fixture.taskSessions.create.bind(fixture.taskSessions),
+        start: async () => {
+          throw new Error('member retired before start');
+        },
+        updateStatus: fixture.taskSessions.updateStatus.bind(fixture.taskSessions),
+      } as TaskSessionService,
+      evaluator: async () => ({
+        decision: 'promote',
+        confidence: 0.93,
+        team: ['frontend-alice'],
+        rationale: 'clear implementation request',
+      }),
+      autoStart: true,
+    });
+
+    const message = fixture.conversations.sendMessage({
+      organizationId: fixture.organizationId,
+      threadId: 'general',
+      channelId: 'general',
+      senderId: fixture.ownerId,
+      content: 'Implement the auth flow now',
+    });
+
+    const outcome = await taskPromoter.handlePostedMessage({
+      organizationId: fixture.organizationId,
+      messageId: message.id,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const session = fixture.taskSessions.get(fixture.organizationId, outcome!.taskSessionId!);
+    expect(session?.status).toBe('failed');
+    expect(session?.summary).toContain('member retired before start');
   });
 
   it('skips vague human chatter and never promotes agent-authored messages', async () => {
