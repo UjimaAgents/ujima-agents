@@ -64,6 +64,11 @@ function coerceOne(id: string, raw: Record<string, unknown>): MCPDef {
         Object.entries(raw.env).filter(([, v]) => typeof v === 'string') as [string, string][],
       )
     : {};
+  const headersRaw = isRecord(raw.headers)
+    ? Object.fromEntries(
+        Object.entries(raw.headers).filter(([, v]) => typeof v === 'string') as [string, string][],
+      )
+    : undefined;
 
   const defInput = {
     id,
@@ -75,6 +80,7 @@ function coerceOne(id: string, raw: Record<string, unknown>): MCPDef {
     command,
     args: argsRaw,
     env: envRaw,
+    ...(headersRaw && Object.keys(headersRaw).length > 0 ? { headers: headersRaw } : {}),
     url: urlRaw,
   };
 

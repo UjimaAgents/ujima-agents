@@ -57,16 +57,20 @@ export function checkToolPolicy(
     };
   }
 
+  if (toolId === 'message') {
+    return { allowed: true, requiresApproval: false };
+  }
+
+  if (toolId === 'mcp') {
+    return { allowed: true, requiresApproval: true };
+  }
+
   if (!role.tools.includes(toolId)) {
     return {
       allowed: false,
       requiresApproval: false,
       reason: `Role "${roleName}" cannot use tool "${toolId}"`,
     };
-  }
-
-  if (toolId === 'message') {
-    return { allowed: true, requiresApproval: false };
   }
 
   // channel.* tools (post / reply / dm / list / read) operate on the

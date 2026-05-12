@@ -1,4 +1,5 @@
 import type {
+  AgentMcpAttachment,
   ApprovalRequest,
   AuthSession,
   AuthUser,
@@ -8,6 +9,8 @@ import type {
   ChannelKind,
   ConfigFieldOwnership,
   ConversationThread,
+  McpServer,
+  McpToolCache,
   Member,
   Message,
   MessageMention,
@@ -228,6 +231,39 @@ export interface ApiRepository extends ConversationRepository {
   getSpiritByRunId(organizationId: string, runId: string): Spirit | null;
   listSpiritsForSession(organizationId: string, taskSessionId: string): Spirit[];
   listActiveSpiritsForMember(organizationId: string, memberId: string): Spirit[];
+  /**
+   * Generic secret-store passthrough. Values are opaque strings —
+   * callers JSON-encode structured payloads (e.g. MCP env maps).
+   */
+  writeSecret(value: string): string;
+  readSecret(keyRef: string): string | null;
+  deleteSecret(keyRef: string): void;
+  saveMcpServer(server: McpServer): McpServer;
+  getMcpServer(organizationId: string, serverId: string): McpServer | null;
+  getMcpServerByName(organizationId: string, name: string): McpServer | null;
+  listMcpServers(organizationId: string): McpServer[];
+  deleteMcpServer(organizationId: string, serverId: string): void;
+  saveAgentMcpAttachment(attachment: AgentMcpAttachment): AgentMcpAttachment;
+  deleteAgentMcpAttachment(
+    organizationId: string,
+    memberId: string,
+    mcpServerId: string,
+  ): void;
+  listAgentMcpAttachments(
+    organizationId: string,
+    memberId: string,
+  ): AgentMcpAttachment[];
+  listMcpServerAttachments(
+    organizationId: string,
+    mcpServerId: string,
+  ): AgentMcpAttachment[];
+  listAttachedServersForSpirit(
+    organizationId: string,
+    memberId: string,
+    role: 'worker' | 'supervisor',
+  ): { attachment: AgentMcpAttachment; server: McpServer }[];
+  saveMcpToolCache(cache: McpToolCache): McpToolCache;
+  getMcpToolCache(organizationId: string, mcpServerId: string): McpToolCache | null;
   saveTodo(todo: Todo): Todo;
   getTodo(organizationId: string, todoId: string): Todo | null;
   listTodosForSession(

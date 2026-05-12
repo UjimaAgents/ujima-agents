@@ -16,11 +16,12 @@ import { BootstrapService } from './bootstrap.js';
 import { ChannelRetentionService } from './channel-retention.js';
 import type { ApiServiceContext } from './context.js';
 import { ConversationService } from './conversation.js';
+import { McpRegistryService } from './mcp-registry.js';
 import { OnboardingService } from './onboarding.js';
 import type { ApiRepository } from './repository-reader.js';
 import { RunService } from './run.js';
 import { SettingsService } from './settings.js';
-import { SpiritService, type ModelResolver } from './spirit.js';
+import { SpiritService, type ModelResolver, type SpiritMcpPool } from './spirit.js';
 import { SupervisorService } from './supervisor.js';
 import { SupervisorTodoService } from './supervisor-todo.js';
 import { TaskPromoterService, type TaskPromotionEvaluator } from './task-promoter.js';
@@ -112,6 +113,15 @@ export type {
   SpawnSpiritInput,
   SpiritServiceOptions,
 } from './spirit.js';
+export { McpRegistryService } from './mcp-registry.js';
+export type {
+  AttachMcpInput,
+  CreateMcpServerInput,
+  ImportMcpServersInput,
+  ImportMcpServersResult,
+  TestMcpResult,
+  UpdateMcpServerInput,
+} from './mcp-registry.js';
 export {
   ERR_NO_WORKSPACE_ROOT,
   WorkspaceRootRequiredError,
@@ -156,6 +166,13 @@ export interface ApiServicesContext extends ApiServiceContext {
    */
   spiritModelResolver?: ModelResolver;
   taskPromoterEvaluator?: TaskPromotionEvaluator;
+  /**
+   * Optional MCP pool. When provided, SpiritService injects per-agent
+   * attached MCP tools into the runtime palette. Production wires the
+   * runtime host's shared pool; tests can pass a stub or leave unset
+   * (the spirit run path still works without MCP tools).
+   */
+  mcpPool?: SpiritMcpPool;
 }
 
 export interface ApiServices {
@@ -175,6 +192,7 @@ export interface ApiServices {
   supervisor: SupervisorService;
   supervisorTodos: SupervisorTodoService;
   activeSpirits: ActiveSpiritRegistry;
+  mcpRegistry: McpRegistryService;
 }
 
 interface WakeMemberInput {
@@ -345,6 +363,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     conversations,
     context.realtime,
     supervisorTodos,
+    context.mcpPool,
   );
 
   const tools = createPermissionGatedToolService(
@@ -395,6 +414,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
       conversations,
       modelResolver: context.spiritModelResolver,
       registry: activeSpirits,
+      mcpPool: context.mcpPool,
     },
   );
   resumeRun = async (orgId, runId, allowRun = true, approvalScope) => {
@@ -441,6 +461,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     conversations,
     evaluator: context.taskPromoterEvaluator,
   });
+  const mcpRegistry = new McpRegistryService(context.repo);
 
   return {
     ai,
@@ -459,5 +480,6 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     supervisor,
     supervisorTodos,
     activeSpirits,
+    mcpRegistry,
   };
 }
