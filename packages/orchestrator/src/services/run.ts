@@ -280,7 +280,7 @@ export class RunService {
       .listPendingApprovals(organizationId)
       .filter((approval) => approval.runId && runIds.has(approval.runId));
     const sessionMessages = session
-      ? this.repo.listChannelMessages(organizationId, session.channelId, { limit: 500 }).data
+      ? this.listAllChannelMessages(organizationId, session.channelId)
       : messages;
 
     const activeAgents = sessionSpirits
@@ -321,6 +321,17 @@ export class RunService {
     let cursor: string | undefined = undefined;
     do {
       const page = this.repo.listMessages(organizationId, threadId, cursor, 100);
+      messages.push(...page.data);
+      cursor = page.nextCursor;
+    } while (cursor);
+    return messages;
+  }
+
+  private listAllChannelMessages(organizationId: string, channelId: string): Message[] {
+    const messages: Message[] = [];
+    let cursor: string | undefined = undefined;
+    do {
+      const page = this.repo.listChannelMessages(organizationId, channelId, { cursor, limit: 100 });
       messages.push(...page.data);
       cursor = page.nextCursor;
     } while (cursor);

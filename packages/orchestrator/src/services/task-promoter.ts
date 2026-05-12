@@ -384,6 +384,10 @@ export class TaskPromoterService {
           .start(input.organizationId, detail.session.id, { runFirstTurn: true })
           .catch((err) => {
             const messageText = err instanceof Error ? err.message : String(err);
+            taskSessions.updateStatus(input.organizationId, detail.session.id, 'failed', {
+              summary: `Task session auto-start failed: ${messageText}`,
+              completedAt: new Date().toISOString(),
+            });
             this.writePromoterAudit({
               organizationId: input.organizationId,
               requestedBy: message.senderId,
