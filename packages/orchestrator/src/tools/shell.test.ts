@@ -83,4 +83,61 @@ unixDescribe('shellTool background termination', () => {
     expect(terminateBackgroundJob(runId, jobId)).toBe(true);
     expect(peekBackgroundJob(runId, jobId)).not.toBeNull();
   });
+
+  it('waits for the job to exit instead of returning on first output', async () => {
+    const runId = `run-wait-${Math.random().toString(36).slice(2)}`;
+    const execResult = (await shellTool.execute({
+      invocation: {
+        organizationId: 'org-1',
+        runId,
+        memberId: 'agent-1',
+        toolCallId: 'tool-1',
+        toolId: 'shell',
+        action: 'execute',
+        resourceType: 'shell',
+        resourcePath: '/',
+        input: {
+          command: 'sh',
+          args: ['-c', 'printf ready; sleep 1'],
+          cwd: process.cwd(),
+          background: true,
+        },
+      },
+      team: { workspace: { root: process.cwd() } } as never,
+      repo: {} as never,
+      conversations: {} as never,
+    })) as { job_id: string };
+
+    const waitPromise = Promise.resolve(
+      shellTool.execute({
+        invocation: {
+          organizationId: 'org-1',
+          runId,
+          memberId: 'agent-1',
+          toolCallId: 'tool-2',
+          toolId: 'shell',
+          action: 'execute',
+          resourceType: 'shell',
+          input: {
+            operation: 'wait',
+            job_id: execResult.job_id,
+          },
+        },
+        team: { workspace: { root: process.cwd() } } as never,
+        repo: {} as never,
+        conversations: {} as never,
+      }),
+    ) as Promise<{ status: string; stdout: string }>;
+
+    const race = await Promise.race([
+      waitPromise.then(() => 'resolved'),
+      new Promise((resolve) => setTimeout(() => resolve('pending'), 150)),
+    ]);
+
+    expect(race).toBe('pending');
+
+    const snapshot = await waitPromise;
+    expect(snapshot.status).toBe('exited');
+    expect(snapshot.stdout).toBe('ready');
+  });
 });

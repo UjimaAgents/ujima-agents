@@ -119,6 +119,52 @@ describe('McpRegistryService — Phase 3 MCP integration', () => {
     ).toThrow(/already exists/);
   });
 
+  it('keeps existing secret refs intact when an update fails before save', async () => {
+    const fixture = await createFixture();
+    tempDirs.push(fixture.archiveRoot);
+
+    const first = fixture.registry.create({
+      organizationId: fixture.organizationId,
+      createdBy: fixture.ownerId,
+      name: 'first',
+      transport: 'stdio',
+      command: 'first-cli',
+      env: { TOKEN: 'old-token' },
+      headers: { authorization: 'Bearer old' },
+    });
+    fixture.registry.create({
+      organizationId: fixture.organizationId,
+      createdBy: fixture.ownerId,
+      name: 'second',
+      transport: 'stdio',
+      command: 'second-cli',
+    });
+
+    const before = fixture.repo.getMcpServer(fixture.organizationId, first.id);
+    const envKeyRef = before?.envKeyRef;
+    const headersKeyRef = before?.headersKeyRef;
+    expect(envKeyRef).toBeDefined();
+    expect(headersKeyRef).toBeDefined();
+    expect(fixture.repo.readSecret(envKeyRef!)).toBe(JSON.stringify({ TOKEN: 'old-token' }));
+    expect(fixture.repo.readSecret(headersKeyRef!)).toBe(JSON.stringify({ authorization: 'Bearer old' }));
+
+    expect(() =>
+      fixture.registry.update({
+        organizationId: fixture.organizationId,
+        serverId: first.id,
+        name: 'second',
+        env: { TOKEN: 'new-token' },
+        headers: { authorization: 'Bearer new' },
+      }),
+    ).toThrow(/already exists/);
+
+    const after = fixture.repo.getMcpServer(fixture.organizationId, first.id);
+    expect(after?.envKeyRef).toBe(envKeyRef);
+    expect(after?.headersKeyRef).toBe(headersKeyRef);
+    expect(fixture.repo.readSecret(envKeyRef!)).toBe(JSON.stringify({ TOKEN: 'old-token' }));
+    expect(fixture.repo.readSecret(headersKeyRef!)).toBe(JSON.stringify({ authorization: 'Bearer old' }));
+  });
+
   it('imports Claude Desktop JSON, dedupes pre-existing names, and surfaces parse warnings', async () => {
     const fixture = await createFixture();
     tempDirs.push(fixture.archiveRoot);

@@ -6,7 +6,7 @@ import { parseShellToolCallArgs, shellInvocationDisplayLine } from '@ujima/share
 import type { OrchestratorTool } from './types.js';
 
 export const ShellSchema = z.object({
-  operation: z.enum(['execute', 'send_input', 'read_output', 'terminate']).optional(),
+  operation: z.enum(['execute', 'send_input', 'read_output', 'wait', 'terminate']).optional(),
   command: z.string().optional(),
   args: z.array(z.string()).optional(),
   cwd: z.string().optional(),
@@ -45,6 +45,8 @@ const backgroundJobs = new Map<string, ShellJob>();
 
 /** After SIGTERM, send SIGKILL if the child has not exited (handles ignored SIGTERM). */
 const TERMINATION_GRACE_MS = 10_000;
+const WAIT_POLL_MS = 250;
+const WAIT_TIMEOUT_MS = 30_000;
 
 function scheduleTerminationEscalation(jobKey: string, job: ShellJob): void {
   if (job.terminationGraceTimer) clearTimeout(job.terminationGraceTimer);
@@ -54,7 +56,11 @@ function scheduleTerminationEscalation(jobKey: string, job: ShellJob): void {
     const current = backgroundJobs.get(jobKey);
     if (!current || current !== job) return;
     try {
-      job.process.kill('SIGKILL');
+      if (process.platform === 'win32') {
+        job.process.kill('SIGKILL');
+      } else if (job.process.pid !== undefined) {
+        process.kill(-job.process.pid, 'SIGKILL');
+      }
     } catch {
       /* process may already be reaped */
     }
@@ -65,7 +71,11 @@ function requestBackgroundJobTermination(jobKey: string): boolean {
   const job = backgroundJobs.get(jobKey);
   if (!job || job.status !== 'running') return false;
   try {
-    job.process.kill('SIGTERM');
+    if (process.platform === 'win32') {
+      job.process.kill('SIGTERM');
+    } else if (job.process.pid !== undefined) {
+      process.kill(-job.process.pid, 'SIGTERM');
+    }
   } catch {
     return false;
   }
@@ -103,6 +113,42 @@ export function peekBackgroundJob(runId: string, jobId: string): BackgroundJobSn
   };
 }
 
+async function waitForBackgroundJob(
+  runId: string,
+  jobId: string,
+): Promise<BackgroundJobSnapshot | null> {
+  const currentSnapshot = () => peekBackgroundJob(runId, jobId);
+  const shouldResolve = (snapshot: BackgroundJobSnapshot | null) =>
+    !!snapshot && snapshot.status !== 'running';
+
+  const initial = currentSnapshot();
+  if (shouldResolve(initial)) {
+    return initial;
+  }
+
+  return await new Promise<BackgroundJobSnapshot | null>((resolve, reject) => {
+    const timer = setInterval(() => {
+      const snapshot = currentSnapshot();
+      if (!snapshot) {
+        clearInterval(timer);
+        clearTimeout(timeout);
+        resolve(null);
+        return;
+      }
+      if (shouldResolve(snapshot)) {
+        clearInterval(timer);
+        clearTimeout(timeout);
+        resolve(snapshot);
+      }
+    }, WAIT_POLL_MS);
+
+    const timeout = setTimeout(() => {
+      clearInterval(timer);
+      reject(new Error(`Timed out waiting for background job after ${WAIT_TIMEOUT_MS}ms`));
+    }, WAIT_TIMEOUT_MS);
+  });
+}
+
 export function terminateBackgroundJob(runId: string, jobId: string): boolean {
   return requestBackgroundJobTermination(`${runId}:${jobId}`);
 }
@@ -138,7 +184,7 @@ export const shellTool: OrchestratorTool<typeof ShellSchema> = {
   execute: async ({ invocation, team }) => {
     const op = invocation.input?.operation || 'execute';
 
-    if (op === 'send_input' || op === 'read_output' || op === 'terminate') {
+    if (op === 'send_input' || op === 'read_output' || op === 'wait' || op === 'terminate') {
       const job_id = invocation.input?.job_id as string;
       const jobKey = `${invocation.runId}:${job_id}`;
       const job = backgroundJobs.get(jobKey);
@@ -168,6 +214,14 @@ export const shellTool: OrchestratorTool<typeof ShellSchema> = {
         job.stdoutBuffer = '';
         job.stderrBuffer = '';
         return result;
+      }
+
+      if (op === 'wait') {
+        const snapshot = await waitForBackgroundJob(invocation.runId, job_id);
+        if (!snapshot) {
+          throw new Error(`Job ${job_id} not found or already terminated`);
+        }
+        return snapshot;
       }
 
       if (op === 'terminate') {
@@ -205,8 +259,18 @@ export const shellTool: OrchestratorTool<typeof ShellSchema> = {
           env: process.env,
         })
       : args.length > 0
-        ? spawn(command, args, { cwd, shell: false, env: process.env })
-        : spawn(command, { cwd, shell: true, env: process.env });
+        ? spawn(command, args, {
+            cwd,
+            shell: false,
+            env: process.env,
+            ...(background ? { detached: true } : {}),
+          })
+        : spawn(command, {
+            cwd,
+            shell: true,
+            env: process.env,
+            ...(background ? { detached: true } : {}),
+          });
 
     const maxBytes = 5 * 1024 * 1024; // 5MB max buffer
 
@@ -257,7 +321,10 @@ export const shellTool: OrchestratorTool<typeof ShellSchema> = {
         job.exitCode = code ?? 0;
       });
 
-      return { job_id, message: `Background job started. Use read_output with job_id ${job_id} to view logs.` };
+      return {
+        job_id,
+        message: `Background job started. Use wait or read_output with job_id ${job_id} to view logs.`,
+      };
     }
 
     // Synchronous execution

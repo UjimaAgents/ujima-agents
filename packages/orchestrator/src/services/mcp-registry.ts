@@ -130,20 +130,31 @@ export class McpRegistryService {
 
   update(input: UpdateMcpServerInput): McpServerPublic {
     const existing = this.requireServer(input.organizationId, input.serverId);
+    const nextName = input.name?.trim() ?? existing.name;
+    if (!nextName) {
+      throw new Error('MCP server name is required');
+    }
+    const nameConflict = this.repo.getMcpServerByName(input.organizationId, nextName);
+    if (nameConflict && nameConflict.id !== existing.id) {
+      throw new Error(`MCP server "${nextName}" already exists in this organisation`);
+    }
+
     let envKeyRef = existing.envKeyRef;
+    let nextEnvKeyRef: string | undefined;
     if (input.env !== undefined) {
-      if (existing.envKeyRef) this.repo.deleteSecret(existing.envKeyRef);
-      envKeyRef = this.writeSecretMap(input.env);
+      nextEnvKeyRef = this.writeSecretMap(input.env);
+      envKeyRef = nextEnvKeyRef;
     }
     let headersKeyRef = existing.headersKeyRef;
+    let nextHeadersKeyRef: string | undefined;
     if (input.headers !== undefined) {
-      if (existing.headersKeyRef) this.repo.deleteSecret(existing.headersKeyRef);
-      headersKeyRef = this.writeSecretMap(input.headers);
+      nextHeadersKeyRef = this.writeSecretMap(input.headers);
+      headersKeyRef = nextHeadersKeyRef;
     }
 
     const updated = McpServerSchema.parse({
       ...existing,
-      name: input.name?.trim() ?? existing.name,
+      name: nextName,
       description: input.description ?? existing.description,
       category: input.category ?? existing.category,
       command: input.command ?? existing.command,
@@ -155,7 +166,19 @@ export class McpRegistryService {
       status: input.status ?? existing.status,
       updatedAt: new Date().toISOString(),
     });
-    this.repo.saveMcpServer(updated);
+    try {
+      this.repo.saveMcpServer(updated);
+    } catch (err) {
+      this.deleteSecretIfPresent(nextEnvKeyRef);
+      this.deleteSecretIfPresent(nextHeadersKeyRef);
+      throw err;
+    }
+    if (input.env !== undefined && existing.envKeyRef !== envKeyRef) {
+      this.deleteSecretIfPresent(existing.envKeyRef);
+    }
+    if (input.headers !== undefined && existing.headersKeyRef !== headersKeyRef) {
+      this.deleteSecretIfPresent(existing.headersKeyRef);
+    }
     return this.toPublic(updated);
   }
 
@@ -398,6 +421,10 @@ export class McpRegistryService {
   private writeSecretMap(map: Record<string, string> | undefined): string | undefined {
     if (!map || Object.keys(map).length === 0) return undefined;
     return this.repo.writeSecret(JSON.stringify(map));
+  }
+
+  private deleteSecretIfPresent(keyRef: string | undefined): void {
+    if (keyRef) this.repo.deleteSecret(keyRef);
   }
 
   private readSecretMap(keyRef: string | undefined): Record<string, string> {
