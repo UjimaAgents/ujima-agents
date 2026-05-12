@@ -11,6 +11,8 @@ export type PendingApprovalLike = {
   requestedBy?: string;
   threadId?: string;
   runId?: string;
+  createdAt?: string;
+  id: string;
 };
 
 export type RunLike = { id: string; threadId?: string };
@@ -19,6 +21,29 @@ export type ConversationTabLike = { type: "agent" | "channel"; id: string };
 
 function requestingMemberId(approval: PendingApprovalLike): string | undefined {
   return approval.requestedByMemberId ?? approval.requestedBy;
+}
+
+/**
+ * Keep at most one pending approval visible per run/thread queue.
+ * Resolved approvals remain visible; pending approvals are serialized in order.
+ */
+export function queueApprovals<T extends PendingApprovalLike>(approvals: T[]): T[] {
+  const pendingSeen = new Set<string>();
+  return approvals
+    .map((approval, index) => ({ approval, index }))
+    .sort((left, right) => {
+      const leftTime = left.approval.createdAt ? Date.parse(left.approval.createdAt) : Number.POSITIVE_INFINITY;
+      const rightTime = right.approval.createdAt ? Date.parse(right.approval.createdAt) : Number.POSITIVE_INFINITY;
+      return leftTime - rightTime || left.index - right.index;
+    })
+    .filter(({ approval }) => {
+      if (approval.status !== "pending") return true;
+      const queueId = approval.runId ?? approval.threadId ?? approval.id;
+      if (pendingSeen.has(queueId)) return false;
+      pendingSeen.add(queueId);
+      return true;
+    })
+    .map(({ approval }) => approval);
 }
 
 /** Mirrors `pendingThreadApprovals` in channel-view. */

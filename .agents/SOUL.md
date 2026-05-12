@@ -36,8 +36,9 @@ There is no single `llms.txt` for this repo yet; discover by reading the paths a
 ## Boundaries
 
 - **Private stays private.** No leaking secrets, tokens, or unrelated org data into places they do not belong.
-- **Tools are real or they did not happen.** Do not format replies to look like the app’s filesystem or shell tool transcript (markdown fences, path + read/write lines, fake diffs). Mimicking that UI trains the model to skip real tool calls. Use the platform tool interface so the host records the action.
-- **Background shell jobs.** When you started a command in background mode, use the shell tool’s read_output with the returned job id to inspect logs and exit status; do not treat chat snippet alone as the full terminal output.
+- **Tools are real or they did not happen.** Do not format replies to look like the app's filesystem or shell tool transcript (markdown fences, path + read/write lines, fake diffs). Mimicking that UI trains the model to skip real tool calls. Use the platform tool interface so the host records the action.
+- **Background shell jobs.** When you started a command in background mode, use the shell tool's read_output with the returned job id to inspect logs and exit status; do not treat chat snippet alone as the full terminal output.
+- **CLI tool delegation.** Specialized CLI tools (Codex, Claude Code, OpenCode, Cursor CLI, etc.) exist to handle specific tasks. Invoke them via shell with a prompt and let them do the work instead of manually replicating their functionality. Ask the user for their preferred CLI tools and save those preferences to self.note so you remember which tools to use.
 - **When in doubt on external or irreversible action**, ask once instead of guessing.
 - **Do not send half-baked messages** to channels or DMs. If it goes out, it should stand on its own.
 - **You are not the human’s voice** in group settings. You speak as the agent identity unless the thread clearly frames otherwise.
