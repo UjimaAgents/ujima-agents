@@ -1,4 +1,5 @@
-import { ShieldAlert } from "lucide-react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { ChevronDown, ShieldAlert } from "lucide-react";
 import { MarkdownInline } from "../markdown";
 import { shellInvocationDisplayLine, type ParsedFilesystemScope } from "@ujima/shared";
 import { FilesystemToolPane } from "./filesystem-tool-pane";
@@ -24,6 +25,7 @@ export interface ApprovalCardData {
   status: "pending" | "approved" | "rejected";
   /** Display name for the requesting agent */
   requestedBy: string;
+  createdAt?: string;
   approvalsNeeded: number;
   reviewers?: { color: string }[];
 }
@@ -41,6 +43,11 @@ export function ApprovalCard({
   onResolve?: (resolution: "allow_once" | "allow_always" | "allow_family" | "reject") => void;
 }) {
   const isPending = data.status === "pending";
+  const [allowMenuOpen, setAllowMenuOpen] = useState(false);
+  const [allowMenuPlacement, setAllowMenuPlacement] = useState<"up" | "down">("up");
+  const allowMenuRef = useRef<HTMLDivElement>(null);
+  const allowMenuButtonRef = useRef<HTMLButtonElement>(null);
+  const allowMenuListRef = useRef<HTMLDivElement>(null);
   const statusLabel =
     data.status === "approved"
       ? "Approved"
@@ -53,6 +60,50 @@ export function ApprovalCard({
       : data.status === "rejected"
         ? "bg-red-100 text-red-700 dark:bg-red-500/10 dark:text-red-300"
         : "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300";
+
+  useEffect(() => {
+    if (!allowMenuOpen) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (allowMenuRef.current?.contains(event.target as Node)) return;
+      setAllowMenuOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setAllowMenuOpen(false);
+    };
+    window.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [allowMenuOpen]);
+
+  useLayoutEffect(() => {
+    if (!allowMenuOpen) return;
+    const updatePlacement = () => {
+      const button = allowMenuButtonRef.current;
+      const menu = allowMenuListRef.current;
+      if (!button || !menu) return;
+
+      const menuHeight = menu.offsetHeight;
+      const spaceAbove = button.getBoundingClientRect().top;
+      const spaceBelow = window.innerHeight - button.getBoundingClientRect().bottom;
+      setAllowMenuPlacement(spaceAbove >= menuHeight + 8 || spaceAbove >= spaceBelow ? "up" : "down");
+    };
+
+    updatePlacement();
+    window.addEventListener("resize", updatePlacement);
+    window.addEventListener("scroll", updatePlacement, true);
+    return () => {
+      window.removeEventListener("resize", updatePlacement);
+      window.removeEventListener("scroll", updatePlacement, true);
+    };
+  }, [allowMenuOpen]);
+
+  function resolveApproval(resolution: "allow_once" | "allow_always" | "allow_family" | "reject") {
+    setAllowMenuOpen(false);
+    onResolve?.(resolution);
+  }
 
   return (
     <div className="rounded-xl border border-zinc-200 bg-zinc-50/90 px-4 py-3 shadow-sm backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/60">
@@ -110,37 +161,56 @@ export function ApprovalCard({
           <button
             type="button"
             disabled={resolving}
-            onClick={() => onResolve?.("reject")}
-            className="rounded-md border border-zinc-200 bg-transparent px-3 py-1.5 text-[10px] font-semibold text-zinc-700 hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-900"
+            onClick={() => resolveApproval("reject")}
+            className="rounded-md border border-zinc-200 bg-transparent px-3 py-1.5 text-[10px] text-zinc-600 hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
           >
             Reject
           </button>
-          <button
-            type="button"
-            disabled={resolving}
-            onClick={() => onResolve?.("allow_once")}
-            className="rounded-md border border-violet-700 bg-violet-600 px-3 py-1.5 text-[10px] font-semibold text-white shadow-sm hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {resolving ? "Resolving..." : "Allow for now"}
-          </button>
-          <button
-            type="button"
-            disabled={resolving}
-            onClick={() => onResolve?.("allow_always")}
-            className="rounded-md border border-violet-200 bg-violet-50 px-3 py-1.5 text-[10px] font-semibold text-violet-700 hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-violet-500/30 dark:bg-violet-500/10 dark:text-violet-300 dark:hover:bg-violet-500/15"
-          >
-            Always Allow
-          </button>
-          {data.shellScope ? (
+          <div ref={allowMenuRef} className="relative">
             <button
+              ref={allowMenuButtonRef}
               type="button"
               disabled={resolving}
-              onClick={() => onResolve?.("allow_family")}
-              className="rounded-md border border-violet-200 bg-violet-50 px-3 py-1.5 text-[10px] font-semibold text-violet-700 hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-violet-500/30 dark:bg-violet-500/10 dark:text-violet-300 dark:hover:bg-violet-500/15"
+              onClick={() => setAllowMenuOpen((value) => !value)}
+              className="inline-flex items-center gap-1 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-[10px] text-zinc-700 hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
             >
-              Always Allow {data.shellScope.command} Family
+              Allow
+              <ChevronDown className="h-3 w-3" aria-hidden />
             </button>
-          ) : null}
+            {allowMenuOpen ? (
+              <div
+                ref={allowMenuListRef}
+                className={`absolute right-0 z-10 w-32 overflow-hidden rounded-md border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-950 ${
+                  allowMenuPlacement === "up" ? "bottom-full mb-1" : "top-full mt-1"
+                }`}
+              >
+                <button
+                  type="button"
+                  disabled={resolving}
+                  onClick={() => resolveApproval("allow_once")}
+                  className="block w-full px-3 py-2 text-left text-[10px] text-zinc-700 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-60 dark:text-zinc-200 dark:hover:bg-zinc-900"
+                >
+                  Once
+                </button>
+                <button
+                  type="button"
+                  disabled={resolving}
+                  onClick={() => resolveApproval("allow_always")}
+                  className="block w-full px-3 py-2 text-left text-[10px] text-zinc-700 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-60 dark:text-zinc-200 dark:hover:bg-zinc-900"
+                >
+                  Always
+                </button>
+                <button
+                  type="button"
+                  disabled={resolving}
+                  onClick={() => resolveApproval("allow_family")}
+                  className="block w-full px-3 py-2 text-left text-[10px] text-zinc-700 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-60 dark:text-zinc-200 dark:hover:bg-zinc-900"
+                >
+                  Family
+                </button>
+              </div>
+            ) : null}
+          </div>
         </div>
       ) : (
         <div className={`mt-3 flex justify-end ${BODY_INDENT}`}>

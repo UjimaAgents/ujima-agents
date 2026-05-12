@@ -300,11 +300,18 @@ export class McpRegistryService {
       return { ok: true, tools: descriptors, testedAt };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      // Preserve the previous tool inventory on failure — a transient
+      // listTools outage shouldn't destroy the cache that SpiritService
+      // uses as a fallback. Only the server row's `last_test_error` is
+      // updated. If no cache exists yet (first-ever test failed),
+      // write an empty placeholder so the cache row still surfaces the
+      // error to the settings UI.
+      const existingCache = this.repo.getMcpToolCache(organizationId, server.id);
       this.repo.saveMcpToolCache({
         mcpServerId: server.id,
         organizationId,
-        tools: [],
-        fetchedAt: testedAt,
+        tools: existingCache?.tools ?? [],
+        fetchedAt: existingCache?.fetchedAt ?? testedAt,
         error: message,
       });
       this.repo.saveMcpServer({
@@ -315,7 +322,12 @@ export class McpRegistryService {
         lastTestError: message,
         updatedAt: testedAt,
       });
-      return { ok: false, tools: [], error: message, testedAt };
+      return {
+        ok: false,
+        tools: existingCache?.tools ?? [],
+        error: message,
+        testedAt,
+      };
     } finally {
       if (connection) {
         try {

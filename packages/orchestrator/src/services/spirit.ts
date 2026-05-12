@@ -1,5 +1,12 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { stepCountIs, tool, type LanguageModel, type ToolSet } from 'ai';
+import {
+  jsonSchema,
+  stepCountIs,
+  tool,
+  type FlexibleSchema,
+  type LanguageModel,
+  type ToolSet,
+} from 'ai';
 import { z } from 'zod';
 import {
   DEFAULT_SPIRIT_TEMPERATURE,
@@ -1208,6 +1215,13 @@ export class SpiritService {
         description: string;
         serverId: string;
         serverName: string;
+        /**
+         * MCP-provided JSON schema for this tool's arguments, if the
+         * server advertised one. Threaded through so the AI SDK tool
+         * definition surfaces the real parameter contract to the
+         * model instead of a free-form `Record<string, unknown>`.
+         */
+        inputSchema?: Record<string, unknown>;
       },
     ];
     const entries: ToolEntry[] = [];
@@ -1227,6 +1241,10 @@ export class SpiritService {
               : undefined,
         }));
       } catch {
+        // Live discovery failed — fall back to whatever the registry's
+        // last successful test wrote into the cache. Audit-fix
+        // contract: a transient outage shouldn't drop the MCP from
+        // the model's palette.
         toolList = this.repo.getMcpToolCache(ctx.organizationId, resolution.serverId)?.tools ?? [];
       }
       const nsSlug = buildMcpNamespace(resolution.serverName, resolution.serverId);
@@ -1240,6 +1258,10 @@ export class SpiritService {
             description: t.description || `${resolution.serverName}.${t.name}`,
             serverId: resolution.serverId,
             serverName: resolution.serverName,
+            inputSchema:
+              t.inputSchema && typeof t.inputSchema === 'object' && !Array.isArray(t.inputSchema)
+                ? (t.inputSchema as Record<string, unknown>)
+                : undefined,
           },
         ]);
       }
@@ -1253,7 +1275,7 @@ export class SpiritService {
         aiToolId,
         tool({
           description: entry.description,
-          inputSchema: z.record(z.string(), z.unknown()),
+          inputSchema: mcpToolInputSchema(entry.inputSchema),
           execute: async (rawArgs, { toolCallId }) => {
             const args = (rawArgs ?? {}) as Record<string, unknown>;
             try {
@@ -1347,6 +1369,31 @@ function uniqueMcpToolId(
 
 function shortStableHash(value: string): string {
   return createHash('sha256').update(value).digest('hex').slice(0, 8);
+}
+
+/**
+ * Build the AI SDK `inputSchema` for an MCP tool definition.
+ *
+ * When the MCP server advertises a JSON Schema for the tool's args, we
+ * surface it verbatim via `jsonSchema()` so the model sees the real
+ * parameter contract — type info, required fields, enums, descriptions,
+ * the lot. The previous free-form `z.record(z.string(), z.unknown())`
+ * stripped all of that, which left the model guessing arg shapes and
+ * frequently producing malformed calls.
+ *
+ * When the server doesn't advertise a schema (some MCPs emit
+ * `inputSchema: undefined` for legacy reasons), we fall back to a
+ * permissive record so the call is still possible. This is the same
+ * shape the prior implementation used everywhere — we keep it as the
+ * floor, not the default.
+ */
+function mcpToolInputSchema(
+  schema: Record<string, unknown> | undefined,
+): FlexibleSchema<Record<string, unknown>> {
+  if (schema && typeof schema === 'object' && !Array.isArray(schema)) {
+    return jsonSchema<Record<string, unknown>>(schema as never);
+  }
+  return z.record(z.string(), z.unknown());
 }
 
 const LIVE_SPIRIT_STATUSES = new Set(['queued', 'running', 'waiting_for_approval']);

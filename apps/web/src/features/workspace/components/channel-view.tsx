@@ -27,7 +27,7 @@ import { RunCard } from "./run-card";
 import { ActivityRow } from "./activity-row";
 import { ConversationSkeleton } from "./conversation-skeleton";
 import { resolveWorkspaceApproval } from "../approval-resolution";
-import { pendingApprovalVisibleInChannelView } from "../approval-thread-filter";
+import { pendingApprovalVisibleInChannelView, queueApprovals } from "../approval-thread-filter";
 import { ReasoningTracePanel } from "./reasoning-trace-panel";
 
 const CHANNEL_TABS: ChatTab[] = [
@@ -97,12 +97,14 @@ export function ChannelView({
     });
   }, [conversation.id, conversation.name, conversation.type, currentThreadId, feed.activity, feed.runs, members, bootstrap.organization?.id]);
 
+  const visibleApprovals = useMemo(() => queueApprovals(feed.approvals), [feed.approvals]);
+
   const pendingThreadApprovals = useMemo(
     () =>
-      feed.approvals.filter((approval) =>
+      visibleApprovals.filter((approval) =>
         pendingApprovalVisibleInChannelView(approval, conversation, currentThreadId, feed.runs),
       ),
-    [conversation, currentThreadId, feed.approvals, feed.runs],
+    [conversation, currentThreadId, feed.runs, visibleApprovals],
   );
   const activeTab = useWorkspaceStore((state) => state.activeTab);
   const showDetails = useWorkspaceStore((state) => state.showDetails);
@@ -446,10 +448,10 @@ export function ChannelView({
             </ChatMessageList>
           </div>
         ) : activeTab === "approvals" ? (
-          feed.approvals.length > 0 ? (
+          visibleApprovals.length > 0 ? (
             <TabPanel>
               <div className="space-y-2">
-                {feed.approvals.map((approval) => (
+                {visibleApprovals.map((approval) => (
                   <ApprovalCard
                     key={approval.id}
                     data={approval}

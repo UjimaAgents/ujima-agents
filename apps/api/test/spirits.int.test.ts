@@ -75,8 +75,26 @@ function makeTextOnlyModel(text: string): LanguageModel {
 function makeToolCaptureModel(capturedToolNames: string[][]): LanguageModel {
   return new MockLanguageModelV3({
     doStream: async (options) => {
-      const tools = (options as { tools?: Record<string, unknown> }).tools ?? {};
-      capturedToolNames.push(Object.keys(tools).sort());
+      // The V3 protocol passes tools as an ARRAY of `{ type, name, ... }`
+      // entries — not as a `Record<string, ToolDef>` keyed by tool id.
+      // We normalise to tool ids so test assertions can read them
+      // identically across "record" and "array" providers.
+      const rawTools = (options as { tools?: unknown }).tools;
+      let toolKeys: string[];
+      if (Array.isArray(rawTools)) {
+        toolKeys = rawTools
+          .map((entry) =>
+            entry && typeof entry === 'object'
+              ? (entry as { name?: unknown }).name
+              : undefined,
+          )
+          .filter((name): name is string => typeof name === 'string');
+      } else if (rawTools && typeof rawTools === 'object') {
+        toolKeys = Object.keys(rawTools);
+      } else {
+        toolKeys = [];
+      }
+      capturedToolNames.push(toolKeys.sort());
       return {
         stream: simulateReadableStream<LanguageModelV3StreamPart>({
           chunks: [

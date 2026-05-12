@@ -108,26 +108,24 @@ unixDescribe('shellTool background termination', () => {
       conversations: {} as never,
     })) as { job_id: string };
 
-    const waitPromise = Promise.resolve(
-      shellTool.execute({
-        invocation: {
-          organizationId: 'org-1',
-          runId,
-          memberId: 'agent-1',
-          toolCallId: 'tool-2',
-          toolId: 'shell',
-          action: 'execute',
-          resourceType: 'shell',
-          input: {
-            operation: 'wait',
-            job_id: execResult.job_id,
-          },
+    const waitPromise = shellTool.execute({
+      invocation: {
+        organizationId: 'org-1',
+        runId,
+        memberId: 'agent-1',
+        toolCallId: 'tool-2',
+        toolId: 'shell',
+        action: 'execute',
+        resourceType: 'shell',
+        input: {
+          operation: 'wait',
+          job_id: execResult.job_id,
         },
-        team: { workspace: { root: process.cwd() } } as never,
-        repo: {} as never,
-        conversations: {} as never,
-      }),
-    ) as Promise<{ status: string; stdout: string }>;
+      },
+      team: { workspace: { root: process.cwd() } } as never,
+      repo: {} as never,
+      conversations: {} as never,
+    }) as Promise<unknown>;
 
     const race = await Promise.race([
       waitPromise.then(() => 'resolved'),
@@ -136,7 +134,7 @@ unixDescribe('shellTool background termination', () => {
 
     expect(race).toBe('pending');
 
-    const snapshot = await waitPromise;
+    const snapshot = (await waitPromise) as { status: string; stdout: string };
     expect(snapshot.status).toBe('exited');
     expect(snapshot.stdout).toBe('ready');
   });
