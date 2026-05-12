@@ -29,15 +29,21 @@ function requestingMemberId(approval: PendingApprovalLike): string | undefined {
  */
 export function queueApprovals<T extends PendingApprovalLike>(approvals: T[]): T[] {
   const pendingSeen = new Set<string>();
-  return [...approvals]
-    .sort((a, b) => (a.createdAt ?? "").localeCompare(b.createdAt ?? "") || a.id.localeCompare(b.id))
-    .filter((approval) => {
+  return approvals
+    .map((approval, index) => ({ approval, index }))
+    .sort((left, right) => {
+      const leftTime = left.approval.createdAt ? Date.parse(left.approval.createdAt) : Number.POSITIVE_INFINITY;
+      const rightTime = right.approval.createdAt ? Date.parse(right.approval.createdAt) : Number.POSITIVE_INFINITY;
+      return leftTime - rightTime || left.index - right.index;
+    })
+    .filter(({ approval }) => {
       if (approval.status !== "pending") return true;
       const queueId = approval.runId ?? approval.threadId ?? approval.id;
       if (pendingSeen.has(queueId)) return false;
       pendingSeen.add(queueId);
       return true;
-    });
+    })
+    .map(({ approval }) => approval);
 }
 
 /** Mirrors `pendingThreadApprovals` in channel-view. */

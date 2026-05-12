@@ -25,6 +25,7 @@ export interface ApprovalCardData {
   status: "pending" | "approved" | "rejected";
   /** Display name for the requesting agent */
   requestedBy: string;
+  createdAt?: string;
   approvalsNeeded: number;
   reviewers?: { color: string }[];
 }

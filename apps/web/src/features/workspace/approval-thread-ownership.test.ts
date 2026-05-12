@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { pendingApprovalVisibleInChannelView } from "./approval-thread-filter";
+import { pendingApprovalVisibleInChannelView, queueApprovals } from "./approval-thread-filter";
 
 describe("pendingApprovalVisibleInChannelView", () => {
   const dmThreadIvy = "dm:human:ivy";
@@ -65,5 +65,17 @@ describe("pendingApprovalVisibleInChannelView", () => {
       [{ id: "run-1", threadId: dmThreadIvy }],
     );
     expect(visible).toBe(false);
+  });
+});
+
+describe("queueApprovals", () => {
+  it("keeps the earliest created pending approval visible first", () => {
+    const approvals = queueApprovals([
+      { id: "b", status: "pending", runId: "run-1", createdAt: "2026-05-12T08:00:02.000Z" },
+      { id: "a", status: "pending", runId: "run-1", createdAt: "2026-05-12T08:00:01.000Z" },
+      { id: "c", status: "approved", runId: "run-1", createdAt: "2026-05-12T08:00:03.000Z" },
+    ]);
+
+    expect(approvals.map((approval) => approval.id)).toEqual(["a", "c"]);
   });
 });

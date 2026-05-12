@@ -114,11 +114,8 @@ export function peekBackgroundJob(runId: string, jobId: string): BackgroundJobSn
 }
 
 async function waitForBackgroundJob(runId: string, jobId: string): Promise<BackgroundJobSnapshot | null> {
-  const startedAt = Date.now();
-
   const currentSnapshot = () => peekBackgroundJob(runId, jobId);
-  const shouldResolve = (snapshot: BackgroundJobSnapshot | null) =>
-    !!snapshot && (snapshot.status !== 'running' || snapshot.stdout.length > 0 || snapshot.stderr.length > 0);
+  const shouldResolve = (snapshot: BackgroundJobSnapshot | null) => !!snapshot && snapshot.status !== 'running';
 
   const initial = currentSnapshot();
   if (shouldResolve(initial)) {
@@ -134,7 +131,7 @@ async function waitForBackgroundJob(runId: string, jobId: string): Promise<Backg
         resolve(null);
         return;
       }
-      if (shouldResolve(snapshot) || Date.now() - startedAt >= WAIT_TIMEOUT_MS) {
+      if (shouldResolve(snapshot)) {
         clearInterval(timer);
         clearTimeout(timeout);
         resolve(snapshot);
@@ -143,7 +140,7 @@ async function waitForBackgroundJob(runId: string, jobId: string): Promise<Backg
 
     const timeout = setTimeout(() => {
       clearInterval(timer);
-      resolve(currentSnapshot());
+      reject(new Error(`Timed out waiting for background job after ${WAIT_TIMEOUT_MS}ms`));
     }, WAIT_TIMEOUT_MS);
   });
 }

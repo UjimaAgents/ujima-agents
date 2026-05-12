@@ -818,6 +818,7 @@ function approvalToCard(
     filesystemScope,
     status: approval.status,
     requestedBy,
+    createdAt: approval.createdAt,
     approvalsNeeded: 1,
   };
 }
