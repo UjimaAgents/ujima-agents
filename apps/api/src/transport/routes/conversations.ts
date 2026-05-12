@@ -3,7 +3,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { createPaginatedSchema, ChannelSchema, IdSchema, MessageSchema, PaginationQuerySchema } from '@ujima/shared';
 import { ApiErrorSchema, MessageCreateSchema, OrganizationQuerySchema } from '@ujima/api-schema';
 import type { Repository } from '@ujima/runtime-core';
-import type { AuthService, ConversationService } from '@ujima/orchestrator';
+import type { AuthService, ConversationService, TaskPromoterService } from '@ujima/orchestrator';
 import { z } from 'zod';
 import {
   ERR_NO_WORKSPACE_ROOT,
@@ -32,13 +32,14 @@ export interface ConversationRoutesOptions {
   repo: Repository;
   conversations: ConversationService;
   auth: AuthService;
+  taskPromoter?: TaskPromoterService;
 }
 
 export function registerConversationRoutes(
   _app: FastifyInstance,
   options: ConversationRoutesOptions,
 ): void {
-  const { repo, conversations, auth } = options;
+  const { repo, conversations, auth, taskPromoter } = options;
   const app = _app.withTypeProvider<ZodTypeProvider>();
 
   app.get('/channels', {
@@ -240,10 +241,24 @@ export function registerConversationRoutes(
           ignore: req.body.ignore,
         });
       }
-      return conversations.sendMessage({
+      const message = conversations.sendMessage({
         ...req.body,
         senderId,
       });
+      if (taskPromoter && message.kind === 'human' && message.channelId) {
+        try {
+          await taskPromoter.handlePostedMessage({
+            organizationId: message.organizationId,
+            messageId: message.id,
+          });
+        } catch {
+          // Human traffic should never fail just because the promoter
+          // evaluator or auto-task path errored. The original message is
+          // already persisted and visible; promotion is a best-effort
+          // follow-up concern.
+        }
+      }
+      return message;
     } catch (err) {
       const message = errMessage(err);
       if (isWorkspaceRootNotReadyError(err)) {

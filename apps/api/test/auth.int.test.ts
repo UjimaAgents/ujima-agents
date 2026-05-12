@@ -10,13 +10,10 @@ import {
   createTeamStore,
 } from '@ujima/orchestrator';
 import { createTransport, type Transport } from '../src/transport/server';
-import type { LLMProvider } from '@ujima/llm/legacy';
+import type { LanguageModel } from 'ai';
 
 const TOKEN = 'b'.repeat(64);
-
-function stubProvider(): LLMProvider {
-  throw new Error('no provider configured');
-}
+const stubLanguageModel = {} as unknown as LanguageModel;
 
 describe('auth flow', () => {
   let homeDir: string;
@@ -35,7 +32,7 @@ describe('auth flow', () => {
         resolveMCPDef: async (_w, id) => {
           throw new Error(`no mcp ${id}`);
         },
-        getProvider: stubProvider,
+        getModel: () => stubLanguageModel,
       },
       {},
     );

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { TaskFileSchema } from './task-files.js';
 
 export * from './conversations.js';
 export * from './auth.js';
@@ -6,6 +7,7 @@ export * from './onboarding.js';
 export * from './runs.js';
 export * from './settings.js';
 export * from './task-sessions.js';
+export * from './task-files.js';
 export * from './additive/requests.js';
 export { MODEL_OPTIONS_BY_PROVIDER, defaultModelForProvider, getModelOptionsForProvider } from './model-catalog.js';
 
@@ -68,11 +70,27 @@ export type ListWorkspacesResponse = z.infer<typeof ListWorkspacesResponseSchema
 export const StartTaskRequestSchema = z.object({
   workspace_id: z.string().min(1),
   session_id: z.string().min(1),
-  team_id: z.string().min(1),
-  prompt: z.string().min(1),
+  team_id: z.string().min(1).optional(),
+  prompt: z.string().min(1).optional(),
   task_id: z.string().optional(),
   orchestrator_mode: z.enum(['auto', 'manual']).optional(),
-  execution_mode: z.enum(['concurrent']).optional(),
+  execution_mode: z.enum(['concurrent', 'slim']).optional(),
+  task_file: TaskFileSchema.optional(),
+}).superRefine((value, ctx) => {
+  if (!value.prompt && !value.task_file) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['prompt'],
+      message: 'prompt is required when task_file is omitted',
+    });
+  }
+  if (!value.team_id && !value.task_file?.team.length) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['team_id'],
+      message: 'team_id or task_file.team is required',
+    });
+  }
 });
 export type StartTaskRequest = z.infer<typeof StartTaskRequestSchema>;
 

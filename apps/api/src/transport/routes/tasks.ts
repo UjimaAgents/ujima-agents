@@ -79,14 +79,17 @@ export function registerTaskRoutes(_app: FastifyInstance, options: TaskRoutesOpt
     },
   }, async (req, reply) => {
     try {
+      const taskFile = req.body.task_file;
       const res = await host.startTask({
         workspaceId: req.body.workspace_id,
         sessionId: req.body.session_id,
         teamId: req.body.team_id,
-        prompt: req.body.prompt,
-        taskId: req.body.task_id,
+        agentIds: taskFile?.team,
+        prompt: taskFile?.prompt ?? req.body.prompt ?? '',
+        taskId: taskFile?.task_id ?? req.body.task_id,
         orchestratorMode: req.body.orchestrator_mode,
-        executionMode: req.body.execution_mode,
+        executionMode: taskFile?.execution_mode ?? req.body.execution_mode,
+        sequence: taskFile?.sequence,
       });
       return {
         task: toTaskDto({

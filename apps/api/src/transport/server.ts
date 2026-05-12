@@ -237,6 +237,7 @@ export function createTransport(opts: TransportOptions): Transport {
         repo: opts.apiServices.repo,
         conversations: services.conversations,
         auth: services.auth,
+        taskPromoter: services.taskPromoter,
       });
       registerRunRoutes(api, {
         repo: opts.apiServices.repo,

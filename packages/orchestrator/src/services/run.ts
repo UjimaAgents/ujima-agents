@@ -11,6 +11,7 @@ import {
   threadRoom,
   type RunState,
   type Message,
+  type RunStep,
 } from '@ujima/shared';
 import type { AiService } from '../ai-service.js';
 import { requireTeam } from '../utils/require-team.js';
@@ -29,6 +30,30 @@ export interface CreateRunInput {
   agentId: string;
   threadId: string;
   summary?: string;
+}
+
+export interface RunDetailAggregate {
+  count: number;
+  pending: number;
+}
+
+export interface RunDetail {
+  run: RunState;
+  approvals: ReturnType<ApiRepository['listPendingApprovals']>;
+  messages: ReturnType<ApiRepository['listMessages']>['data'];
+  steps: RunStep[];
+  message?: Message;
+  activeAgents: { memberId: string; statusLabel: string }[];
+  tokens: { perMemberId: Record<string, number> };
+  tools: Record<string, RunDetailAggregate>;
+}
+
+export interface RunTraceDetail {
+  run: RunState;
+  approvals: ReturnType<ApiRepository['listPendingApprovals']>;
+  messages: Message[];
+  steps: RunStep[];
+  message?: Message;
 }
 
 export class RunService {
@@ -163,7 +188,7 @@ export class RunService {
     return this.repo.getRun(organizationId, runId);
   }
 
-  getRunTraceDetail(organizationId: string, runId: string) {
+  getRunTraceDetail(organizationId: string, runId: string): RunTraceDetail | null {
     const run = this.repo.getRun(organizationId, runId);
     if (!run) {
       return null;
@@ -172,18 +197,8 @@ export class RunService {
     const approvals = this.repo
       .listPendingApprovals(organizationId)
       .filter((approval) => approval.runId === runId);
-
+    const messages = run.threadId ? this.listAllThreadMessages(organizationId, run.threadId) : [];
     const steps = this.repo.listRunSteps?.(organizationId, runId) ?? [];
-    const messages: Message[] = [];
-    if (run.threadId) {
-      let cursor: string | undefined = undefined;
-      do {
-        const page = this.repo.listMessages(organizationId, run.threadId, cursor, 100);
-        messages.push(...page.data);
-        cursor = page.nextCursor;
-      } while (cursor);
-    }
-
     const message = [...messages]
       .reverse()
       .find(
@@ -200,7 +215,7 @@ export class RunService {
       approvals,
       messages,
       steps,
-      message,
+      ...(message ? { message } : {}),
     };
   }
 
@@ -236,11 +251,61 @@ export class RunService {
     return cancelled;
   }
 
-  getRunDetail(organizationId: string, runId: string) {
-    const detail = this.getRunTraceDetail(organizationId, runId);
-    if (!detail) return null;
-    const { run, approvals, messages } = detail;
-    return { run, approvals, messages };
+  getRunDetail(organizationId: string, runId: string): RunDetail | null {
+    const trace = this.getRunTraceDetail(organizationId, runId);
+    if (!trace) return null;
+    const { run, approvals, messages, steps, message } = trace;
+
+    const spirit = this.repo.getSpiritByRunId(organizationId, runId);
+    if (!spirit) {
+      return {
+        run,
+        approvals,
+        messages,
+        steps,
+        ...(message ? { message } : {}),
+        activeAgents:
+          run.status === 'queued' || run.status === 'running' || run.status === 'waiting_for_approval'
+            ? [{ memberId: run.agentId, statusLabel: run.status }]
+            : [],
+        tokens: { perMemberId: { [run.agentId]: 0 } },
+        tools: aggregateToolUsage(messages),
+      };
+    }
+
+    const session = this.repo.getTaskSession(organizationId, spirit.taskSessionId);
+    const sessionSpirits = this.repo.listSpiritsForSession(organizationId, spirit.taskSessionId);
+    const runIds = new Set(sessionSpirits.map((current) => current.runId).filter(Boolean));
+    const sessionApprovals = this.repo
+      .listPendingApprovals(organizationId)
+      .filter((approval) => approval.runId && runIds.has(approval.runId));
+    const sessionMessages = session
+      ? this.listAllChannelMessages(organizationId, session.channelId)
+      : messages;
+
+    const activeAgents = sessionSpirits
+      .filter((current) => LIVE_RUN_DETAIL_STATUSES.has(current.status))
+      .map((current) => ({
+        memberId: current.memberId,
+        statusLabel:
+          current.role === 'supervisor' ? `supervisor:${current.status}` : current.status,
+      }));
+
+    const perMemberId: Record<string, number> = {};
+    for (const current of sessionSpirits) {
+      perMemberId[current.memberId] = (perMemberId[current.memberId] ?? 0) + current.tokensUsed;
+    }
+
+    return {
+      run,
+      approvals: sessionApprovals,
+      messages: sessionMessages,
+      steps,
+      ...(message ? { message } : {}),
+      activeAgents,
+      tokens: { perMemberId },
+      tools: aggregateToolUsage(sessionMessages),
+    };
   }
 
   private getRooms(run: RunState) {
@@ -249,6 +314,28 @@ export class RunService {
       rooms.push(threadRoom(run.threadId));
     }
     return rooms;
+  }
+
+  private listAllThreadMessages(organizationId: string, threadId: string): Message[] {
+    const messages: Message[] = [];
+    let cursor: string | undefined = undefined;
+    do {
+      const page = this.repo.listMessages(organizationId, threadId, cursor, 100);
+      messages.push(...page.data);
+      cursor = page.nextCursor;
+    } while (cursor);
+    return messages;
+  }
+
+  private listAllChannelMessages(organizationId: string, channelId: string): Message[] {
+    const messages: Message[] = [];
+    let cursor: string | undefined = undefined;
+    do {
+      const page = this.repo.listChannelMessages(organizationId, channelId, { cursor, limit: 100 });
+      messages.push(...page.data);
+      cursor = page.nextCursor;
+    } while (cursor);
+    return messages;
   }
 
   private async advanceRun(run: RunState): Promise<RunState> {
@@ -503,4 +590,36 @@ export class RunService {
   private runKey(organizationId: string, runId: string): string {
     return `${organizationId}:${runId}`;
   }
+}
+
+const LIVE_RUN_DETAIL_STATUSES = new Set(['queued', 'running', 'waiting_for_approval']);
+
+function aggregateToolUsage(messages: readonly { toolCalls: readonly { toolName: string; result?: unknown }[] }[]) {
+  const tools: Record<string, RunDetailAggregate> = {};
+  for (const message of messages) {
+    for (const toolCall of message.toolCalls) {
+      const current = (tools[toolCall.toolName] ??= { count: 0, pending: 0 });
+      current.count += 1;
+      if (toolCallResultIsPending(toolCall.result)) {
+        current.pending += 1;
+      }
+    }
+  }
+  return tools;
+}
+
+function toolCallResultIsPending(result: unknown): boolean {
+  if (!result || typeof result !== 'object') {
+    return false;
+  }
+  const record = result as Record<string, unknown>;
+  if (record.status === 'waiting_for_approval') {
+    return true;
+  }
+  const nested = record.result;
+  return Boolean(
+    nested &&
+      typeof nested === 'object' &&
+      (nested as Record<string, unknown>).status === 'waiting_for_approval',
+  );
 }

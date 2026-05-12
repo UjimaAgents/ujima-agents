@@ -45,7 +45,7 @@ import {
   resolveApproval as resolveApprovalRecord,
   saveApproval as writeApproval,
 } from './approvals.js';
-import { saveAuditEvent as writeAuditEvent } from './audit.js';
+import { listAuditEvents as readAuditEvents, saveAuditEvent as writeAuditEvent } from './audit.js';
 import {
   getBootstrapSnapshot as readBootstrapSnapshot,
   type BootstrapSnapshot,
@@ -150,6 +150,7 @@ import {
 } from './threads.js';
 import {
   getSpirit as readSpirit,
+  getSpiritByRunId as readSpiritByRunId,
   getSpiritByTriple as readSpiritByTriple,
   listActiveSpiritsForMember as readActiveSpiritsForMember,
   listSpiritsForSession as readSpiritsForSession,
@@ -418,6 +419,7 @@ export class Repository {
   }): boolean => readApprovalGrant(this.db, input);
 
   saveAuditEvent = (event: AuditEvent): AuditEvent => writeAuditEvent(this.db, event);
+  listAuditEvents = (organizationId: string): AuditEvent[] => readAuditEvents(this.db, organizationId);
 
   /**
    * Execute `fn` inside a synchronous DB transaction. Commits on
@@ -456,6 +458,8 @@ export class Repository {
     memberId: string,
     role: SpiritRole,
   ): Spirit | null => readSpiritByTriple(this.db, organizationId, taskSessionId, memberId, role);
+  getSpiritByRunId = (organizationId: string, runId: string): Spirit | null =>
+    readSpiritByRunId(this.db, organizationId, runId);
   listSpiritsForSession = (organizationId: string, taskSessionId: string): Spirit[] =>
     readSpiritsForSession(this.db, organizationId, taskSessionId);
   listActiveSpiritsForMember = (organizationId: string, memberId: string): Spirit[] =>
