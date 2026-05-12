@@ -27,11 +27,12 @@ import {
   type ApprovalRequester,
   type ModelResolver,
   type RealtimeService,
+  type SpiritServiceOptions,
   type ToolService,
 } from '@ujima/orchestrator';
 import { createPermissionMiddleware } from '@ujima/permissions';
 import { AgentTeam } from '@ujima/framework';
-import { ChannelSchema, MemberSchema, OrganizationSchema } from '@ujima/shared';
+import { ChannelSchema, MemberSchema, OrganizationSchema, type MCPDef } from '@ujima/shared';
 import { MessageCardSchema } from '@ujima/shared';
 
 // ---------------------------------------------------------------------
@@ -71,12 +72,52 @@ function makeTextOnlyModel(text: string): LanguageModel {
   ]);
 }
 
+function makeToolCaptureModel(capturedToolNames: string[][]): LanguageModel {
+  return new MockLanguageModelV3({
+    doStream: async (options) => {
+      const tools = (options as { tools?: Record<string, unknown> }).tools ?? {};
+      capturedToolNames.push(Object.keys(tools).sort());
+      return {
+        stream: simulateReadableStream<LanguageModelV3StreamPart>({
+          chunks: [
+            { type: 'text-start', id: '1' },
+            { type: 'text-delta', id: '1', delta: 'done' },
+            { type: 'text-end', id: '1' },
+            {
+              type: 'finish',
+              usage: v3Usage(9, 4),
+              finishReason: { unified: 'stop' as const, raw: 'stop' },
+            },
+          ],
+        }),
+      };
+    },
+  }) as unknown as LanguageModel;
+}
+
+function mcpDef(id: string, name: string): MCPDef {
+  return {
+    id,
+    name,
+    version: '0.0.0',
+    description: '',
+    category: 'general',
+    transport: 'stdio',
+    command: 'mcp',
+    args: [],
+    env: {},
+    isolation: 'shared',
+  };
+}
+
 interface FixtureOptions {
   modelByCall?: LanguageModel[];
   staticModel?: LanguageModel;
   agentNames?: string[];
   /** Use the real ToolServiceImpl path (with allowlist enforcement). */
   realToolPipeline?: boolean;
+  mcpPool?: SpiritServiceOptions['mcpPool'];
+  mcpResolver?: SpiritServiceOptions['mcpResolver'];
 }
 
 interface ModelCall {
@@ -195,6 +236,8 @@ async function createFixture(opts: FixtureOptions = {}): Promise<Fixture> {
     modelResolver,
     maxIterationsPerRun: 8,
     registry,
+    ...(opts.mcpPool ? { mcpPool: opts.mcpPool } : {}),
+    ...(opts.mcpResolver ? { mcpResolver: opts.mcpResolver } : {}),
   });
   const supervisor = new SupervisorService(
     repo,
@@ -460,6 +503,102 @@ describe('SpiritService — Phase 2.A lifecycle', () => {
 
     const run = fixture.repo.getRun(fixture.organizationId, outcome.spirit.runId!);
     expect(run?.status).toBe('completed');
+  });
+
+  it('surfaces cached MCP tools when live listTools fails', async () => {
+    const capturedToolNames: string[][] = [];
+    const serverId = 'server-cached';
+    const mcpPool: NonNullable<SpiritServiceOptions['mcpPool']> = {
+      get: async () => ({
+        listTools: async () => {
+          throw new Error('temporary transport failure');
+        },
+        callTool: async () => ({ content: { ok: true } }),
+      }),
+    };
+    const fixture = await createFixture({
+      staticModel: makeToolCaptureModel(capturedToolNames),
+      mcpPool,
+      mcpResolver: async () => [
+        {
+          def: mcpDef(serverId, 'Cached MCP'),
+          serverId,
+          serverName: 'Cached MCP',
+        },
+      ],
+    });
+    tempDirs.push(fixture.archiveRoot);
+    fixture.repo.saveMcpToolCache({
+      mcpServerId: serverId,
+      organizationId: fixture.organizationId,
+      tools: [{ name: 'cached tool', description: 'Cached fallback' }],
+      fetchedAt: new Date().toISOString(),
+    });
+
+    const { session } = fixture.taskSessions.create({
+      organizationId: fixture.organizationId,
+      requestedBy: fixture.ownerId,
+      prompt: 'Use cached tools',
+      team: ['frontend-alice'],
+    });
+
+    await fixture.spirits.run({
+      organizationId: fixture.organizationId,
+      taskSessionId: session.id,
+      memberId: 'frontend-alice',
+    });
+
+    const finalToolNames = capturedToolNames[capturedToolNames.length - 1] ?? [];
+    const mcpToolNames = finalToolNames.filter((name) => name.startsWith('mcp__'));
+    expect(mcpToolNames).toHaveLength(1);
+    expect(mcpToolNames[0]).toMatch(/^mcp__cached_mcp_[0-9a-f]{8}__cached_tool$/);
+  });
+
+  it('keeps MCP tool ids unique for servers whose names sanitize the same way', async () => {
+    const capturedToolNames: string[][] = [];
+    const mcpPool: NonNullable<SpiritServiceOptions['mcpPool']> = {
+      get: async () => ({
+        listTools: async () => [{ name: 'search', description: 'Search' }],
+        callTool: async () => ({ content: { ok: true } }),
+      }),
+    };
+    const fixture = await createFixture({
+      staticModel: makeToolCaptureModel(capturedToolNames),
+      mcpPool,
+      mcpResolver: async () => [
+        {
+          def: mcpDef('server-alpha', 'Git Hub'),
+          serverId: 'server-alpha',
+          serverName: 'Git Hub',
+        },
+        {
+          def: mcpDef('server-beta', 'Git@Hub'),
+          serverId: 'server-beta',
+          serverName: 'Git@Hub',
+        },
+      ],
+    });
+    tempDirs.push(fixture.archiveRoot);
+
+    const { session } = fixture.taskSessions.create({
+      organizationId: fixture.organizationId,
+      requestedBy: fixture.ownerId,
+      prompt: 'Use MCP tools',
+      team: ['frontend-alice'],
+    });
+
+    await fixture.spirits.run({
+      organizationId: fixture.organizationId,
+      taskSessionId: session.id,
+      memberId: 'frontend-alice',
+    });
+
+    const finalToolNames = capturedToolNames[capturedToolNames.length - 1] ?? [];
+    const mcpToolNames = finalToolNames.filter(
+      (name) => name.startsWith('mcp__git_hub_') && name.endsWith('__search'),
+    );
+    expect(mcpToolNames).toHaveLength(2);
+    expect(new Set(mcpToolNames).size).toBe(2);
   });
 
   it('TaskSessionService.start provisions one spirit per team member', async () => {

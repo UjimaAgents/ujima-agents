@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { stepCountIs, tool, type LanguageModel, type ToolSet } from 'ai';
 import { z } from 'zod';
 import {
@@ -15,6 +15,7 @@ import {
   type MCPDef,
   type MessageCard,
   type MessageToolCall,
+  type McpToolDescriptor,
   type Spirit,
   type SpiritRole,
   AGENT_KIND,
@@ -1175,11 +1176,9 @@ export class SpiritService {
 
   /**
    * Build AI SDK tool definitions for every MCP attached to this
-   * (member, role). Tool ids are namespaced `mcp__${slug}__${tool}`
-   * so collisions across servers can't happen and the namespace
-   * encodes provenance for governance + audit. Missing pool / missing
-   * resolver / listTools failures all degrade silently to an empty
-   * MCP palette — the model still has the built-in tools.
+   * (member, role). Tool ids are namespaced with the display slug and
+   * a stable server-id hash so similar server names cannot overwrite
+   * each other in the flattened AI SDK tool palette.
    */
   private async buildMcpToolDefinitions(ctx: {
     organizationId: string;
@@ -1205,7 +1204,6 @@ export class SpiritService {
     type ToolEntry = readonly [
       string,
       {
-        connection: Awaited<ReturnType<SpiritMcpPool['get']>>;
         toolName: string;
         description: string;
         serverId: string;
@@ -1213,31 +1211,33 @@ export class SpiritService {
       },
     ];
     const entries: ToolEntry[] = [];
+    const usedToolIds = new Set<string>();
     const pool = this.mcpPool;
     for (const resolution of resolutions) {
-      let connection;
+      let toolList: McpToolDescriptor[] = [];
       try {
-        connection = await pool.get(resolution.def, { agentId: ctx.memberId });
+        const connection = await pool.get(resolution.def, { agentId: ctx.memberId });
+        const liveTools = await connection.listTools();
+        toolList = liveTools.map((t) => ({
+          name: t.name,
+          description: t.description ?? '',
+          inputSchema:
+            t.inputSchema && typeof t.inputSchema === 'object' && !Array.isArray(t.inputSchema)
+              ? (t.inputSchema as Record<string, unknown>)
+              : undefined,
+        }));
       } catch {
-        continue;
+        toolList = this.repo.getMcpToolCache(ctx.organizationId, resolution.serverId)?.tools ?? [];
       }
-      let toolList: { name: string; description?: string; inputSchema?: unknown }[];
-      try {
-        toolList = await connection.listTools();
-      } catch {
-        // Skip this MCP for the rest of the run; the built-in palette
-        // and other MCPs remain available.
-        continue;
-      }
-      const nsSlug = sanitizeMcpNamespace(resolution.serverName);
+      const nsSlug = buildMcpNamespace(resolution.serverName, resolution.serverId);
       for (const t of toolList) {
-        const aiToolId = `mcp__${nsSlug}__${sanitizeMcpToolName(t.name)}`;
+        const baseToolId = `mcp__${nsSlug}__${sanitizeMcpToolName(t.name)}`;
+        const aiToolId = uniqueMcpToolId(baseToolId, resolution.serverId, t.name, usedToolIds);
         entries.push([
           aiToolId,
           {
-            connection,
             toolName: t.name,
-            description: t.description ?? `${resolution.serverName}.${t.name}`,
+            description: t.description || `${resolution.serverName}.${t.name}`,
             serverId: resolution.serverId,
             serverName: resolution.serverName,
           },
@@ -1308,12 +1308,45 @@ function sanitizeMcpNamespace(name: string): string {
     .slice(0, 40) || 'mcp';
 }
 
+function buildMcpNamespace(name: string, serverId: string): string {
+  const hash = shortStableHash(serverId);
+  const maxNameLength = 40 - hash.length - 1;
+  const nameSlug = sanitizeMcpNamespace(name).slice(0, maxNameLength).replace(/_+$/g, '');
+  return `${nameSlug || 'mcp'}_${hash}`;
+}
+
 function sanitizeMcpToolName(name: string): string {
   return name
     .replace(/[^A-Za-z0-9_-]+/g, '_')
     .replace(/_+/g, '_')
     .replace(/^_+|_+$/g, '')
     .slice(0, 40) || 'tool';
+}
+
+function uniqueMcpToolId(
+  baseToolId: string,
+  serverId: string,
+  toolName: string,
+  usedToolIds: Set<string>,
+): string {
+  if (!usedToolIds.has(baseToolId)) {
+    usedToolIds.add(baseToolId);
+    return baseToolId;
+  }
+
+  const suffix = shortStableHash(`${serverId}:${toolName}`);
+  let candidate = `${baseToolId}__${suffix}`;
+  let attempt = 2;
+  while (usedToolIds.has(candidate)) {
+    candidate = `${baseToolId}__${suffix}_${attempt}`;
+    attempt += 1;
+  }
+  usedToolIds.add(candidate);
+  return candidate;
+}
+
+function shortStableHash(value: string): string {
+  return createHash('sha256').update(value).digest('hex').slice(0, 8);
 }
 
 const LIVE_SPIRIT_STATUSES = new Set(['queued', 'running', 'waiting_for_approval']);
