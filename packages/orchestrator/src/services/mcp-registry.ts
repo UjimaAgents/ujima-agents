@@ -124,7 +124,13 @@ export class McpRegistryService {
       createdAt: now,
       updatedAt: now,
     });
-    this.repo.saveMcpServer(server);
+    try {
+      this.repo.saveMcpServer(server);
+    } catch (err) {
+      this.deleteSecretIfPresent(envKeyRef);
+      this.deleteSecretIfPresent(headersKeyRef);
+      throw err;
+    }
     return this.toPublic(server);
   }
 
@@ -253,7 +259,13 @@ export class McpRegistryService {
         createdAt: now,
         updatedAt: now,
       });
-      this.repo.saveMcpServer(server);
+      try {
+        this.repo.saveMcpServer(server);
+      } catch (err) {
+        this.deleteSecretIfPresent(envKeyRef);
+        this.deleteSecretIfPresent(headersKeyRef);
+        throw err;
+      }
       imported.push(this.toPublic(server));
     }
 
@@ -292,7 +304,6 @@ export class McpRegistryService {
       });
       this.repo.saveMcpServer({
         ...server,
-        status: 'active',
         lastTestedAt: testedAt,
         lastTestError: undefined,
         updatedAt: testedAt,

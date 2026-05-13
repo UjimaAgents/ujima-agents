@@ -1,15 +1,28 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { openDatabase } from '@ujima/context-store';
 import { Repository } from '@ujima/runtime-core';
+import type * as McpClientModule from '@ujima/mcp-client';
 import {
   McpRegistryService,
   OnboardingService,
   createTeamStore,
 } from '@ujima/orchestrator';
 import { mapMcpRouteError } from '../src/transport/routes/mcps.js';
+
+const mcpClientMock = vi.hoisted(() => ({
+  connectMCP: vi.fn(),
+}));
+
+vi.mock('@ujima/mcp-client', async (importOriginal) => {
+  const actual = await importOriginal<typeof McpClientModule>();
+  return {
+    ...actual,
+    connectMCP: mcpClientMock.connectMCP,
+  };
+});
 
 // Phase 3 of the MCP integration — covers the registry CRUD + JSON
 // import path + per-agent attachments + the redaction contract that
@@ -59,6 +72,7 @@ async function createFixture() {
 describe('McpRegistryService — Phase 3 MCP integration', () => {
   const tempDirs: string[] = [];
   afterEach(async () => {
+    mcpClientMock.connectMCP.mockReset();
     await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
   });
 
@@ -120,6 +134,45 @@ describe('McpRegistryService — Phase 3 MCP integration', () => {
     ).toThrow(/already exists/);
   });
 
+  it('cleans newly written secrets when create fails after secret writes', async () => {
+    const fixture = await createFixture();
+    tempDirs.push(fixture.archiveRoot);
+    const originalWriteSecret = fixture.repo.writeSecret;
+    const originalSaveMcpServer = fixture.repo.saveMcpServer;
+    const writtenSecretRefs: string[] = [];
+    fixture.repo.writeSecret = ((value: string) => {
+      const keyRef = originalWriteSecret(value);
+      writtenSecretRefs.push(keyRef);
+      return keyRef;
+    }) as typeof fixture.repo.writeSecret;
+    fixture.repo.saveMcpServer = (() => {
+      throw new Error('save failed');
+    }) as typeof fixture.repo.saveMcpServer;
+
+    try {
+      expect(() =>
+        fixture.registry.create({
+          organizationId: fixture.organizationId,
+          createdBy: fixture.ownerId,
+          name: 'fragile',
+          transport: 'stdio',
+          command: 'fragile-cli',
+          env: { TOKEN: 'new-token' },
+          headers: { authorization: 'Bearer new' },
+        }),
+      ).toThrow(/save failed/);
+    } finally {
+      fixture.repo.writeSecret = originalWriteSecret;
+      fixture.repo.saveMcpServer = originalSaveMcpServer;
+    }
+
+    expect(writtenSecretRefs).toHaveLength(2);
+    for (const keyRef of writtenSecretRefs) {
+      expect(fixture.repo.readSecret(keyRef)).toBeNull();
+    }
+    expect(fixture.repo.getMcpServerByName(fixture.organizationId, 'fragile')).toBeNull();
+  });
+
   it('keeps existing secret refs intact when an update fails before save', async () => {
     const fixture = await createFixture();
     tempDirs.push(fixture.archiveRoot);
@@ -164,6 +217,49 @@ describe('McpRegistryService — Phase 3 MCP integration', () => {
     expect(after?.headersKeyRef).toBe(headersKeyRef);
     expect(fixture.repo.readSecret(envKeyRef!)).toBe(JSON.stringify({ TOKEN: 'old-token' }));
     expect(fixture.repo.readSecret(headersKeyRef!)).toBe(JSON.stringify({ authorization: 'Bearer old' }));
+  });
+
+  it('cleans newly written secrets when import fails after secret writes', async () => {
+    const fixture = await createFixture();
+    tempDirs.push(fixture.archiveRoot);
+    const originalWriteSecret = fixture.repo.writeSecret;
+    const originalSaveMcpServer = fixture.repo.saveMcpServer;
+    const writtenSecretRefs: string[] = [];
+    fixture.repo.writeSecret = ((value: string) => {
+      const keyRef = originalWriteSecret(value);
+      writtenSecretRefs.push(keyRef);
+      return keyRef;
+    }) as typeof fixture.repo.writeSecret;
+    fixture.repo.saveMcpServer = (() => {
+      throw new Error('save failed');
+    }) as typeof fixture.repo.saveMcpServer;
+
+    try {
+      expect(() =>
+        fixture.registry.import({
+          organizationId: fixture.organizationId,
+          createdBy: fixture.ownerId,
+          json: JSON.stringify({
+            mcpServers: {
+              fragile: {
+                command: 'fragile-cli',
+                env: { TOKEN: 'new-token' },
+                headers: { authorization: 'Bearer new' },
+              },
+            },
+          }),
+        }),
+      ).toThrow(/save failed/);
+    } finally {
+      fixture.repo.writeSecret = originalWriteSecret;
+      fixture.repo.saveMcpServer = originalSaveMcpServer;
+    }
+
+    expect(writtenSecretRefs).toHaveLength(2);
+    for (const keyRef of writtenSecretRefs) {
+      expect(fixture.repo.readSecret(keyRef)).toBeNull();
+    }
+    expect(fixture.repo.getMcpServerByName(fixture.organizationId, 'fragile')).toBeNull();
   });
 
   it('imports Claude Desktop JSON, dedupes pre-existing names, and surfaces parse warnings', async () => {
@@ -380,6 +476,44 @@ describe('McpRegistryService — Phase 3 MCP integration', () => {
         mcpServerId: server.id,
       }),
     ).toThrow(/retired/);
+  });
+
+  it('test() does not reactivate a disabled MCP server on success', async () => {
+    const fixture = await createFixture();
+    tempDirs.push(fixture.archiveRoot);
+    const server = fixture.registry.create({
+      organizationId: fixture.organizationId,
+      createdBy: fixture.ownerId,
+      name: 'disabled-test',
+      transport: 'stdio',
+      command: 'x',
+    });
+    fixture.registry.update({
+      organizationId: fixture.organizationId,
+      serverId: server.id,
+      status: 'disabled',
+    });
+    const disabledBefore = fixture.repo.getMcpServer(fixture.organizationId, server.id);
+    expect(disabledBefore?.status).toBe('disabled');
+    mcpClientMock.connectMCP.mockResolvedValue({
+      id: 'mock-connection',
+      def: {},
+      listTools: async () => [{ name: 'ping', description: 'Ping' }],
+      callTool: async () => ({ content: { ok: true } }),
+      close: async () => undefined,
+      isOpen: () => true,
+    });
+
+    const result = await fixture.registry.test(fixture.organizationId, server.id);
+
+    expect(result.ok).toBe(true);
+    const after = fixture.repo.getMcpServer(fixture.organizationId, server.id);
+    expect(after?.status).toBe('disabled');
+    expect(after?.lastTestedAt).toBe(result.testedAt);
+    expect(after?.lastTestError).toBeUndefined();
+    expect(fixture.repo.getMcpToolCache(fixture.organizationId, server.id)?.tools).toEqual([
+      { name: 'ping', description: 'Ping', inputSchema: undefined },
+    ]);
   });
 
   // -------------------------------------------------------------------
