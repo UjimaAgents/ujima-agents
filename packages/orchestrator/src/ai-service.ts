@@ -1,6 +1,6 @@
 import { isLoopFinished, type ToolSet } from 'ai';
 import { buildAgentSystemPrompt, normalizeProviderKey } from '@ujima/framework';
-import type { SpiritRole } from '@ujima/shared';
+import type { Message, SpiritRole } from '@ujima/shared';
 import { DEFAULT_SPIRIT_TEMPERATURE } from '@ujima/shared';
 import { runAgentLoop } from './services/agent-loop.js';
 import type { RepositoryReader } from './services/repository-reader.js';
@@ -14,6 +14,12 @@ import {
 } from './utils/to-model-messages.js';
 import { requireTeam } from './utils/require-team.js';
 import { buildRunTranscript } from './utils/run-transcript.js';
+import {
+  createMessageCursor,
+  isMessageAfterCursor,
+  moveCursor,
+  type MessageCursor,
+} from './utils/message-interrupts.js';
 
 
 // Resolver now delegates to the canonical `@ujima/llm` surface so every
@@ -27,6 +33,7 @@ export interface GenerateRunReplyInput {
   threadId: string;
   runId: string;
   summary?: string;
+  systemPromptSuffix?: string;
   abortSignal?: AbortSignal;
 }
 
@@ -94,9 +101,9 @@ export class AiService {
       organization.organizationChart,
     );
 
-    const messages = toModelMessages(
-      this.repo.listMessages(input.organizationId, input.threadId, undefined, 20).data,
-    );
+    const initialThreadMessages = this.repo.listMessages(input.organizationId, input.threadId, undefined, 20).data;
+    const messages = toModelMessages(initialThreadMessages, input.agentId);
+    const interruptCursor = createMessageCursor(initialThreadMessages);
     if (input.summary) {
       messages.push({
         role: 'user',
@@ -113,15 +120,39 @@ export class AiService {
       });
     }
 
+    const systemPrompt = input.systemPromptSuffix ? `${system}\n\n${input.systemPromptSuffix}` : system;
+
     return runAgentLoop({
       model,
-      system,
+      system: systemPrompt,
       messages,
       tools: toolDefs,
       stopWhen: isLoopFinished(),
       maxOutputTokens: 1200,
       temperature: DEFAULT_SPIRIT_TEMPERATURE,
       abortSignal: input.abortSignal,
+      loadInterruptMessages: () => {
+        const interrupts = this.loadRunInterrupts(input, interruptCursor);
+        return toModelMessages(interrupts, input.agentId);
+      },
     });
+  }
+
+  private loadRunInterrupts(
+    input: Pick<GenerateRunReplyInput, 'organizationId' | 'agentId' | 'threadId'>,
+    cursor: MessageCursor,
+  ): Message[] {
+    const page = this.repo.listMessages(input.organizationId, input.threadId, undefined, 100).data;
+    const interrupts = page.filter(
+      (message) =>
+        message.kind === 'human' &&
+        message.senderId !== input.agentId &&
+        isMessageAfterCursor(message, cursor),
+    );
+    const latest = page.at(-1);
+    if (latest) {
+      moveCursor(cursor, latest);
+    }
+    return interrupts;
   }
 }

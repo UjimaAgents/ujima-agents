@@ -14,9 +14,10 @@ import {
   Send,
   Smile,
   Square,
+  Target,
   X,
 } from "lucide-react";
-import { AttachmentSchema, type AttachmentCategory } from "@ujima/shared";
+import { AttachmentSchema, type AttachmentCategory } from "@ujima/shared/browser";
 import type { ChatMessageData } from "./chat-message";
 import { MarkdownInline } from "../markdown";
 
@@ -42,7 +43,8 @@ interface MentionTrigger {
   query: string;
 }
 
-type ComposerCommand = "summarize" | "clear";
+export type ComposerCommand = "summarize" | "clear" | "goal";
+type ThreadCommand = Exclude<ComposerCommand, "goal">;
 
 const SLASH_COMMANDS: Array<{
   command: ComposerCommand;
@@ -50,14 +52,19 @@ const SLASH_COMMANDS: Array<{
   description: string;
 }> = [
   {
-    command: "summarize",
-    label: "/summarize",
-    description: "Compact the thread and keep the recent raw window.",
-  },
-  {
     command: "clear",
     label: "/clear",
     description: "Archive the thread and empty the visible chat.",
+  },
+  {
+    command: "goal",
+    label: "/goal",
+    description: "Toggle goal mode for this conversation.",
+  },
+  {
+    command: "summarize",
+    label: "/summarize",
+    description: "Compact the thread and keep the recent raw window.",
   },
 ];
 
@@ -65,6 +72,7 @@ export function getExactSlashCommand(value: string): ComposerCommand | null {
   const trimmed = value.trim();
   if (trimmed === "/summarize") return "summarize";
   if (trimmed === "/clear") return "clear";
+  if (trimmed === "/goal") return "goal";
   return null;
 }
 
@@ -98,22 +106,26 @@ export function ChatInput({
   replyTo,
   onCancelReply,
   organizationId,
+  goalMode: goalModeProp,
+  onGoalModeChange,
   stoppableRunId,
   onStopRun,
 }: {
   placeholder?: string;
   organizationId?: string;
-  onSend: (content: string, attachmentIds?: string[]) => Promise<void> | void;
-  onCommand: (command: ComposerCommand) => Promise<void> | void;
+  onSend: (content: string, attachmentIds?: string[], metadata?: { goalMode?: boolean }) => Promise<void> | void;
+  onCommand: (command: ThreadCommand, rawContent?: string) => Promise<void> | void;
   statusHint?: string;
   inlineError?: string;
   mentionSuggestions?: MentionSuggestion[];
   replyTo?: ChatMessageData | null;
   onCancelReply?: () => void;
-  /** When set and the composer has no draft, show Stop instead of Send. */
+  goalMode?: boolean;
+  onGoalModeChange?: (active: boolean) => void;
   stoppableRunId?: string | null;
   onStopRun?: (runId: string) => Promise<void> | void;
 }) {
+  const goalMode = goalModeProp ?? false;
   const [content, setContent] = useState("");
   const [isSending, setIsSending] = useState(false);
   const [isStopping, setIsStopping] = useState(false);
@@ -429,7 +441,7 @@ export function ChatInput({
     setError(null);
     setIsSending(true);
     try {
-      await onSend(next, attachments.map((attachment) => attachment.id));
+      await onSend(next, attachments.map((attachment) => attachment.id), goalMode ? { goalMode: true } : undefined);
       for (const attachment of attachments) {
         revokePreviewUrl(attachment);
       }
@@ -447,6 +459,18 @@ export function ChatInput({
 
   const runSlashCommand = async (command: ComposerCommand) => {
     if (isSending || isCommanding || uploading) return;
+    if (command === "goal") {
+      onGoalModeChange?.(!goalMode);
+      setError(null);
+      setContent("");
+      setSelection({ start: 0, end: 0 });
+      setClearConfirmation(false);
+      setEmojiMenuOpen(false);
+      requestAnimationFrame(() => {
+        textareaRef.current?.focus();
+      });
+      return;
+    }
     if (command === "clear" && !canConfirmClear) {
       setClearConfirmation(true);
       setError(null);
@@ -461,7 +485,8 @@ export function ChatInput({
     setError(null);
     setIsCommanding(true);
     try {
-      await onCommand(command);
+      const currentContent = content;
+      await onCommand(command, currentContent);
       setContent("");
       setSelection({ start: 0, end: 0 });
       setAttachments([]);
@@ -581,7 +606,7 @@ export function ChatInput({
           onChange={handleAttachmentInput}
         />
         <div className="pointer-events-none absolute inset-0 rounded-xl bg-gradient-to-r from-violet-500/10 to-indigo-500/10 blur-lg opacity-0 transition-opacity group-focus-within:opacity-100" />
-        <div className="relative z-10 flex flex-col rounded-xl border border-zinc-200 bg-zinc-50 transition-all focus-within:border-violet-500 focus-within:bg-white focus-within:ring-1 focus-within:ring-violet-500 dark:border-zinc-800 dark:bg-zinc-900/50 dark:focus-within:bg-[#09090b]">
+        <div className={`relative z-10 flex flex-col rounded-xl border transition-all focus-within:border-violet-500 focus-within:bg-white focus-within:ring-1 focus-within:ring-violet-500 dark:focus-within:bg-[#09090b] ${goalMode ? "border-violet-400/50 bg-violet-50/30 dark:border-violet-500/30 dark:bg-violet-500/5" : "border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/50"}`}>
           {replyTo && (
             <div className="flex items-center gap-2 rounded-t-xl border-b border-zinc-200 bg-violet-50/50 px-3 py-1.5 dark:border-zinc-800 dark:bg-violet-500/5">
               <div className="flex-1 min-w-0">
@@ -604,6 +629,36 @@ export function ChatInput({
               )}
             </div>
           )}
+          {slashMenuOpen ? (
+            <div className="mx-2 mb-1 overflow-hidden rounded-lg bg-zinc-100/70 p-1 ring-1 ring-zinc-200/70 dark:bg-zinc-950/60 dark:ring-zinc-800/70">
+              <div className="space-y-1">
+                {slashMenuOptions.map((option, index) => (
+                  <button
+                    key={option.command}
+                    type="button"
+                    onMouseDown={(event) => {
+                      event.preventDefault();
+                      void runSlashCommand(option.command);
+                    }}
+                    className={`flex w-full items-center gap-3 rounded-md px-2 py-2 text-left text-xs transition ${
+                      index === activeSlashSelection
+                        ? "bg-violet-50 text-violet-900 dark:bg-violet-500/15 dark:text-violet-100"
+                        : "text-zinc-700 hover:bg-zinc-200/80 dark:text-zinc-200 dark:hover:bg-zinc-900"
+                    }`}
+                  >
+                    <span className="mt-0.5 rounded-md border border-zinc-200 bg-white px-1.5 py-0.5 font-mono text-[10px] font-semibold text-zinc-700 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200">
+                      {option.label}
+                    </span>
+                    <span className="min-w-0">
+                      <span className="block text-[10px] leading-4 text-zinc-500 dark:text-zinc-400">
+                        {option.description}
+                      </span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
           <textarea
             ref={textareaRef}
             placeholder={placeholder}
@@ -747,36 +802,6 @@ export function ChatInput({
               ))}
             </div>
           ) : null}
-          {slashMenuOpen ? (
-            <div className="mx-2 mt-1 overflow-hidden rounded-lg border border-zinc-200 bg-white p-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-950">
-              <div className="space-y-1">
-                {slashMenuOptions.map((option, index) => (
-                  <button
-                    key={option.command}
-                    type="button"
-                    onMouseDown={(event) => {
-                      event.preventDefault();
-                      void runSlashCommand(option.command);
-                    }}
-                    className={`flex w-full items-center gap-3 rounded-md px-2 py-2 text-left text-xs transition ${
-                      index === activeSlashSelection
-                        ? "bg-violet-50 text-violet-900 dark:bg-violet-500/15 dark:text-violet-100"
-                        : "text-zinc-700 hover:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-900"
-                    }`}
-                  >
-                    <span className="mt-0.5 rounded-md border border-zinc-200 bg-white px-1.5 py-0.5 font-mono text-[10px] font-semibold text-zinc-700 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200">
-                      {option.label}
-                    </span>
-                    <span className="min-w-0">
-                      <span className="block text-[10px] leading-4 text-zinc-500 dark:text-zinc-400">
-                        {option.description}
-                      </span>
-                    </span>
-                  </button>
-                ))}
-              </div>
-            </div>
-          ) : null}
           <div
             ref={emojiMenuRef}
             className={`absolute bottom-[68px] left-3 z-20 w-72 rounded-xl border border-zinc-200 bg-white p-2 shadow-xl transition ${emojiMenuOpen ? "opacity-100 translate-y-0" : "pointer-events-none opacity-0 translate-y-1"} dark:border-zinc-700 dark:bg-zinc-950`}
@@ -881,6 +906,19 @@ export function ChatInput({
           ) : null}
           <div className="flex items-center justify-between border-t border-zinc-200 px-3 py-1.5 dark:border-zinc-800">
             <div className="flex items-center gap-2">
+              {goalMode ? (
+                <button
+                  type="button"
+                  aria-label="Disable goal mode"
+                  aria-pressed="true"
+                  title="Goal mode active — click to disable"
+                  onClick={() => onGoalModeChange?.(false)}
+                  className="inline-flex h-7 items-center gap-1.5 rounded-md border border-violet-200 bg-violet-50 px-2 text-[11px] font-medium text-violet-700 transition hover:bg-violet-100 dark:border-violet-500/30 dark:bg-violet-500/10 dark:text-violet-300 dark:hover:bg-violet-500/15"
+                >
+                  <Target className="h-3.5 w-3.5" />
+                  Goal
+                </button>
+              ) : null}
               <button type="button" aria-label="Add content" className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300">
                 <Plus className="h-4 w-4" />
               </button>

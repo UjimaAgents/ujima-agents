@@ -281,12 +281,21 @@ export class ConversationService {
       mentions: uniqueMentionIds(resolvedMentions),
       mentionNames: this.resolveMentionNames(message.organizationId, message.content, channel),
     });
+    const existing = this.repo.getMessage(finalMessage.organizationId, finalMessage.id);
     const messageAttachments = (finalMessage as { attachments?: { id: string }[] }).attachments ?? [];
     const linkedAttachmentIds = attachmentIds ?? messageAttachments.map((attachment) => attachment.id);
     if (linkedAttachmentIds.length > 0) {
       this.requireAttachments(finalMessage.organizationId, linkedAttachmentIds);
     }
-    this.repo.saveMessage(finalMessage);
+    if (existing) {
+      this.repo.updateMessage({
+        ...finalMessage,
+        createdAt: existing.createdAt,
+        editedAt: new Date().toISOString(),
+      });
+    } else {
+      this.repo.saveMessage(finalMessage);
+    }
     this.repo.replaceMessageMentions(finalMessage.id, resolvedMentions);
     if (linkedAttachmentIds.length > 0) {
       this.repo.linkAttachmentsToMessage(finalMessage.id, linkedAttachmentIds);
@@ -333,6 +342,7 @@ export class ConversationService {
     mentions?: string[];
     parentMessageId?: string;
     attachmentIds?: string[];
+    metadata?: { goalMode?: boolean };
   }) {
     requireOrganization(this.repo, input.organizationId);
 
@@ -380,6 +390,7 @@ export class ConversationService {
       kind: sender.kind,
       content: input.content,
       mentions: [...mentions],
+      ...(input.metadata ? { metadata: input.metadata } : {}),
       createdAt: new Date().toISOString(),
     });
 
@@ -451,6 +462,7 @@ export class ConversationService {
     parentMessageId?: string;
     ignore?: boolean;
     attachmentIds?: string[];
+    metadata?: { goalMode?: boolean };
   }) {
     requireOrganization(this.repo, input.organizationId);
 
@@ -517,6 +529,7 @@ export class ConversationService {
       kind: sender.kind,
       content: input.content,
       mentions: input.mentions ?? [],
+      ...(input.metadata ? { metadata: input.metadata } : {}),
       createdAt: now,
     });
 

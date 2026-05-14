@@ -91,6 +91,7 @@ import {
 } from './attachments.js';
 import {
   deleteMessages as removeMessages,
+  getLatestHumanMessageInThread as readLatestHumanMessageInThread,
   getMessage as readMessage,
   countMessagesSince as readMessageCountSince,
   listMessages as readMessages,
@@ -278,6 +279,8 @@ export class Repository {
   updateMessage = (message: Message): Message => writeMessageUpdate(this.db, message);
   getMessage = (organizationId: string, messageId: string): Message | null =>
     readMessage(this.db, organizationId, messageId);
+  getLatestHumanMessageInThread = (organizationId: string, threadId: string): Message | null =>
+    readLatestHumanMessageInThread(this.db, organizationId, threadId);
   saveAttachment = (attachment: Attachment): Attachment => writeAttachment(this.db, attachment);
   getAttachment = (organizationId: string, attachmentId: string): Attachment | null =>
     readAttachment(this.db, organizationId, attachmentId);

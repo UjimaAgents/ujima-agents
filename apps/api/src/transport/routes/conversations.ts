@@ -230,21 +230,23 @@ export function registerConversationRoutes(
         return reply.code(403).send({ code: 'ERR_FORBIDDEN', message: 'Unauthorized for this organization.' });
       }
       const senderId = authState.member.id;
-      if ('recipientId' in req.body) {
-        return conversations.sendDirectMessage({
-          organizationId: req.body.organizationId,
-          senderId,
-          recipientId: req.body.recipientId,
-          content: req.body.content,
-          attachmentIds: req.body.attachmentIds,
-          parentMessageId: req.body.parentMessageId,
-          ignore: req.body.ignore,
-        });
-      }
-      const message = conversations.sendMessage({
-        ...req.body,
-        senderId,
-      });
+      const message =
+        'recipientId' in req.body
+          ? conversations.sendDirectMessage({
+              organizationId: req.body.organizationId,
+              senderId,
+              recipientId: req.body.recipientId,
+              content: req.body.content,
+              attachmentIds: req.body.attachmentIds,
+              parentMessageId: req.body.parentMessageId,
+              ignore: req.body.ignore,
+              metadata: req.body.metadata,
+            })
+          : conversations.sendMessage({
+              ...req.body,
+              senderId,
+              metadata: req.body.metadata,
+            });
       if (taskPromoter && message.kind === 'human' && message.channelId) {
         try {
           await taskPromoter.handlePostedMessage({

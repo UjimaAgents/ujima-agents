@@ -8,7 +8,7 @@ import {
   type Message,
   type RunState,
   type RunStep,
-} from "@ujima/shared";
+} from "@ujima/shared/browser";
 import type { TraceStepData } from "./components/chat/details-sidebar";
 import { formatTimestamp } from "./lib/format-timestamp";
 

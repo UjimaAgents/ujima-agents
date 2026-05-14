@@ -3,26 +3,25 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { GripVertical } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { getDirectMessageThreadId, SocketEventNames, type SocketEventName } from "@ujima/shared";
+import {
+  getDirectMessageThreadId,
+  SocketEventNames,
+  type SocketEventName,
+} from "@ujima/shared/browser";
 import { WorkspaceSidebar } from "./workspace-sidebar";
 import { ChannelView } from "./channel-view";
 import type { BootstrapResponse } from "@ujima/api-schema";
-import type { SelectedConversation, WorkspaceRoleInput } from "../types";
 import { resolveSelectedConversationFromSearchParams } from "../conversation-routing";
-import { sameConversation, useWorkspaceStore } from "../workspace-store";
-
+import type { SelectedConversation, WorkspaceRoleInput } from "../types";
+import { useWorkspaceStore } from "../workspace-store";
 import type { RolePresetTemplate } from "../../onboarding/types";
-
-/** Shared motion for dashboard layout (sidebar width, details column, resizers). */
-export const WORKSPACE_PANEL_WIDTH_TRANSITION =
-  "transition-[width] duration-300 ease-out motion-reduce:transition-none motion-reduce:duration-0";
 
 export const WORKSPACE_MAIN_GRID_TRANSITION =
   "transition-[grid-template-columns] duration-300 ease-out motion-reduce:transition-none motion-reduce:duration-0";
 
 type WorkspaceChannel = BootstrapResponse["channels"][number];
 type WorkspaceMember = BootstrapResponse["members"][number];
-type WorkspaceTeamRole = {
+interface WorkspaceTeamRole {
   id?: string;
   name: string;
   title: string;
@@ -35,45 +34,23 @@ type WorkspaceTeamRole = {
   tools: string[];
   channels: string[];
   skills: string[];
-};
+}
 type WorkspaceTeamSettings = {
-  agents: Array<{ name: string; roleName: string; personalityName: string; kind: string }>;
+  agents: { name: string; roleName: string; personalityName: string; kind: string }[];
   roles: WorkspaceTeamRole[];
 } | null;
 
-function normalizeWorkspaceTeamRole(role: WorkspaceRoleInput): WorkspaceTeamRole {
-  return {
-    id: role.id ?? role.name,
-    name: role.name,
-    title: role.title,
-    description: role.description ?? "",
-    instructions: role.instructions,
-    kind: role.kind ?? "agent",
-    provider: role.provider,
-    model: role.model,
-    workspaceScopes: role.workspaceScopes ?? [],
-    tools: role.tools ?? [],
-    channels: role.channels ?? [],
-    skills: role.skills ?? [],
-  };
-}
-
-export function WorkspaceShell({
-  bootstrap,
-  rolePresets,
-  teamSettings,
-  initialConversation,
-}: {
+export function WorkspaceShell(props: {
   bootstrap: BootstrapResponse;
   rolePresets: RolePresetTemplate[];
   teamSettings: WorkspaceTeamSettings;
   initialConversation?: SelectedConversation;
 }) {
+  const { bootstrap, initialConversation } = props;
+  const organizationId = bootstrap.organization?.id;
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [teamSettingsState, setTeamSettingsState] = useState(teamSettings);
   const [agentEditorTargetId, setAgentEditorTargetId] = useState<string | null>(null);
-  const seenApprovalNotifications = useRef(new Set<string>());
   const sidebarWidth = useWorkspaceStore((state) => state.sidebarWidth);
   const selected = useWorkspaceStore((state) => state.selectedConversation);
   const channels = useWorkspaceStore((state) => state.channels);
@@ -88,6 +65,7 @@ export function WorkspaceShell({
   const clearConversationUnreadCount = useWorkspaceStore((state) => state.clearConversationUnreadCount);
   const incrementConversationUnreadCount = useWorkspaceStore((state) => state.incrementConversationUnreadCount);
   const setMemberActivity = useWorkspaceStore((state) => state.setMemberActivity);
+  const seenApprovalNotifications = useRef(new Set<string>());
 
   const defaultConversation = useMemo(() => {
     if (initialConversation) return initialConversation;
@@ -100,146 +78,50 @@ export function WorkspaceShell({
     };
   }, [channels, initialConversation]);
 
-  useEffect(() => {
-    syncWorkspace({
-      channels: bootstrap.channels,
-      members: bootstrap.members,
-      conversationUnreadCounts: bootstrap.conversationUnreadCounts,
-      selectedConversation: initialConversation ?? defaultConversation,
-    });
-  }, [bootstrap.channels, bootstrap.conversationUnreadCounts, bootstrap.members, defaultConversation, initialConversation, syncWorkspace]);
-
   const urlConversation = useMemo(
-    () =>
-      resolveSelectedConversationFromSearchParams(searchParams, {
-        ...bootstrap,
-        members,
-        channels,
-      }) ?? defaultConversation,
-    [bootstrap, channels, defaultConversation, members, searchParams],
+    () => resolveSelectedConversationFromSearchParams(searchParams, bootstrap),
+    [searchParams, bootstrap],
   );
-  const resolvedSelected = selected ?? urlConversation;
 
-  useEffect(() => {
-    const sameIdentity = sameConversation(selected, urlConversation);
-    const nameChanged =
-      sameIdentity &&
-      !!selected &&
-      !!urlConversation &&
-      selected.name !== urlConversation.name;
-    if (!sameIdentity || nameChanged) {
-      setSelectedConversation(urlConversation);
-    }
-  }, [selected, setSelectedConversation, urlConversation]);
-
-  useEffect(() => {
-    if (!bootstrap.organization?.id || !bootstrap.auth.member || !resolvedSelected) return;
-    const threadId =
-      resolvedSelected.type === "agent"
-        ? getDirectMessageThreadId(bootstrap.auth.member.id, resolvedSelected.id)
-        : resolvedSelected.id;
-    clearConversationUnreadCount(resolvedSelected.id);
-    void fetch(
-      `/api/conversations/${encodeURIComponent(threadId)}/read?organizationId=${encodeURIComponent(bootstrap.organization.id)}`,
-      { method: "POST" },
-    ).catch(() => undefined);
-  }, [bootstrap.auth.member, bootstrap.organization?.id, clearConversationUnreadCount, resolvedSelected]);
-
-  useEffect(() => {
-    const currentMemberId = bootstrap.auth.member?.id;
-    if (!bootstrap.organization?.id || !currentMemberId) return;
-
-    const source = new EventSource(
-      `/api/notifications/stream?organizationId=${encodeURIComponent(bootstrap.organization.id)}`,
-    );
-
-    source.onmessage = (event) => {
-      const parsed = parseNotificationEnvelope(event.data);
-      if (!parsed) return;
-      if (parsed.type === "ready" || parsed.type === "error") return;
-      if (
-        parsed.event !== SocketEventNames.approvalRequested &&
-        !isNotificationMessageEvent(parsed.event) &&
-        !isNotificationRunEvent(parsed.event)
-      ) return;
-
-      if (isNotificationRunEvent(parsed.event)) {
-        updateRunActivity(parsed.payload, setMemberActivity);
-      }
-
-      const conversationId = resolveNotificationConversationId(
-        parsed.event,
-        parsed.payload,
-        currentMemberId,
-        bootstrap.channels,
-      );
-      if (!conversationId) return;
-      if (
-        (resolvedSelected.type === "channel" && parsed.event !== SocketEventNames.dmMessage && resolvedSelected.id === conversationId) ||
-        (resolvedSelected.type === "agent" && resolvedSelected.id === conversationId)
-      ) {
-        return;
-      }
-
-      incrementConversationUnreadCount(conversationId);
-      if (parsed.event === SocketEventNames.approvalRequested) {
-        const approvalId = parseApprovalId(parsed.payload);
-        if (approvalId && !seenApprovalNotifications.current.has(approvalId)) {
-          seenApprovalNotifications.current.add(approvalId);
-          playApprovalSound();
-        }
-      }
-    };
-
-    return () => {
-      source.close();
-    };
-  }, [bootstrap.auth.member?.id, bootstrap.channels, bootstrap.organization?.id, incrementConversationUnreadCount, resolvedSelected, setMemberActivity]);
+  const resolvedSelected = urlConversation ?? selected ?? defaultConversation;
 
   const handleSelect = useCallback(
     (conversation: SelectedConversation) => {
-      const param =
-        conversation.type === "agent"
-          ? `agentId=${encodeURIComponent(conversation.id)}`
-          : `channelId=${encodeURIComponent(conversation.id)}`;
       setSelectedConversation(conversation);
-      router.replace(`/workspace?${param}`, { scroll: false });
+      const params = new URLSearchParams(searchParams.toString());
+      if (conversation.type === "channel") {
+        params.set("channelId", conversation.id);
+        params.delete("agentId");
+      } else {
+        params.set("agentId", conversation.id);
+        params.delete("channelId");
+      }
+      router.replace(`?${params.toString()}`, { scroll: false });
     },
-    [router, setSelectedConversation],
+    [router, searchParams, setSelectedConversation],
   );
 
   const handleCreateChannel = useCallback(
     async (name: string) => {
-      const trimmed = name.trim();
-      if (!trimmed) return null;
-
-      const orgId = bootstrap.organization?.id;
-      if (!orgId) return null;
-
-      const response = await fetch(
-        `/api/orgs/${encodeURIComponent(orgId)}/channels`,
-        {
-          method: "POST",
-          body: JSON.stringify({ name: trimmed }),
-        },
-      );
-      const body = await response.json().catch(() => null);
-      if (!response.ok) {
-        throw new Error(
-          body &&
-            typeof body === "object" &&
-            "message" in body &&
-            typeof body.message === "string"
-            ? body.message
-            : "Unable to create channel.",
-        );
+      if (!organizationId) {
+        throw new Error("Missing organization context for channel creation.");
       }
-
-      const channel = body as WorkspaceChannel;
+      const response = await fetch(`/api/orgs/${organizationId}/channels`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      if (!response.ok) {
+        const err = await response.json().catch(() => null);
+        throw new Error(err?.message ?? "Unable to create channel.");
+      }
+      const channel = (await response.json()) as WorkspaceChannel;
       appendChannel(channel);
-      return { type: "channel" as const, id: channel.id, name: channel.name };
+      const created = { type: "channel" as const, id: channel.id, name: channel.name };
+      handleSelect(created);
+      return created;
     },
-    [appendChannel, bootstrap.organization?.id],
+    [appendChannel, handleSelect, organizationId],
   );
 
   const handleCreateAgent = useCallback(
@@ -251,64 +133,26 @@ export function WorkspaceShell({
       model: string;
       role: WorkspaceRoleInput;
     }) => {
-      const trimmed = input.name.trim();
-      if (!trimmed) return null;
-
-      const orgId = bootstrap.organization?.id;
-      if (!orgId) return null;
-
-      const response = await fetch(
-        `/api/orgs/${encodeURIComponent(orgId)}/members`,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            name: trimmed,
-            kind: "agent",
-            roleName: input.roleName.trim() || trimmed,
-            channelIds: input.channelIds,
-            llm: input.llm,
-            model: input.model,
-            role: input.role,
-          }),
-        },
-      );
-      const body = await response.json().catch(() => null);
-      if (!response.ok) {
-        throw new Error(
-          body &&
-            typeof body === "object" &&
-            "message" in body &&
-            typeof body.message === "string"
-            ? body.message
-            : "Unable to create agent.",
-        );
+      if (!organizationId) {
+        throw new Error("Missing organization context for agent creation.");
       }
-
-      const member = body as WorkspaceMember;
+      const response = await fetch(`/api/orgs/${organizationId}/members`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...input,
+          kind: "agent",
+        }),
+      });
+      if (!response.ok) {
+        const err = await response.json().catch(() => null);
+        throw new Error(err?.message ?? "Unable to create agent.");
+      }
+      const member = (await response.json()) as WorkspaceMember;
       appendMember(member);
-      setTeamSettingsState((current) =>
-        current
-          ? {
-              ...current,
-              agents: [
-                ...current.agents.filter((agent) => agent.name !== member.id),
-                {
-                  name: member.id,
-                  roleName: input.roleName.trim() || member.roleName,
-                  personalityName: input.role.personalityName ?? "direct",
-                  kind: "agent",
-                },
-              ],
-              roles: [
-                ...current.roles.filter((role) => role.name !== input.role.name),
-                normalizeWorkspaceTeamRole(input.role),
-              ],
-            }
-          : current,
-      );
       return { type: "agent" as const, id: member.id, name: member.name };
     },
-    [appendMember, bootstrap.organization?.id],
+    [appendMember, organizationId],
   );
 
   const handleUpdateAgent = useCallback(
@@ -324,13 +168,14 @@ export function WorkspaceShell({
       model: string;
       role: WorkspaceRoleInput;
     }) => {
-      const orgId = bootstrap.organization?.id;
-      if (!orgId) return null;
-
+      if (!organizationId) {
+        throw new Error("Missing organization context for agent updates.");
+      }
       const response = await fetch(
-        `/api/orgs/${encodeURIComponent(orgId)}/members/${encodeURIComponent(input.memberId)}`,
+        `/api/orgs/${organizationId}/members/${input.memberId}`,
         {
           method: "PATCH",
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             name: input.name,
             roleName: input.roleName,
@@ -342,101 +187,206 @@ export function WorkspaceShell({
           }),
         },
       );
-      const body = await response.json().catch(() => null);
       if (!response.ok) {
-        throw new Error(
-          body &&
-            typeof body === "object" &&
-            "message" in body &&
-            typeof body.message === "string"
-            ? body.message
-            : "Unable to update agent.",
-        );
+        const err = await response.json().catch(() => null);
+        throw new Error(err?.message ?? "Unable to update agent.");
       }
-
-      const member = body as WorkspaceMember;
+      const member = (await response.json()) as WorkspaceMember;
       appendMember(member);
-      setTeamSettingsState((current) =>
-        current
-          ? (() => {
-              const nextAgents = [
-                ...current.agents.filter((agent) => agent.name !== input.previousAgentId),
-                {
-                  name: member.id,
-                  roleName: input.roleName,
-                  personalityName: input.personalityName,
-                  kind: "agent",
-                },
-              ];
-              const previousRoleStillUsed = nextAgents.some(
-                (agent) =>
-                  agent.name !== member.id &&
-                  agent.roleName === input.previousRoleName,
-              );
-              const roles = [
-                ...current.roles.filter((role) => {
-                  if (role.name === input.roleName) return false;
-                  if (
-                    role.name === input.previousRoleName &&
-                    input.previousRoleName !== input.roleName &&
-                    !previousRoleStillUsed
-                  ) {
-                    return false;
-                  }
-                  return true;
-                }),
-                normalizeWorkspaceTeamRole(input.role),
-              ];
-              return {
-                ...current,
-                agents: nextAgents,
-                roles,
-              };
-            })()
-          : current,
-      );
       return member;
     },
-    [appendMember, bootstrap.organization?.id],
+    [appendMember, organizationId],
   );
 
+  useEffect(() => {
+    if (!bootstrap.channels) return;
+    syncWorkspace({
+      channels: bootstrap.channels,
+      members: bootstrap.members,
+      conversationUnreadCounts: bootstrap.conversationUnreadCounts,
+      selectedConversation: resolvedSelected,
+    });
+  }, [
+    bootstrap.channels,
+    bootstrap.conversationUnreadCounts,
+    bootstrap.members,
+    resolvedSelected,
+    syncWorkspace,
+  ]);
+
+  useEffect(() => {
+    const currentMemberId = bootstrap.auth.member?.id;
+    if (!organizationId || !currentMemberId) return;
+
+    const source = new EventSource(
+      `/api/notifications/stream?organizationId=${encodeURIComponent(organizationId)}`,
+    );
+
+    source.onmessage = (event) => {
+      const envelope = parseNotificationEnvelope(event.data);
+      if (!envelope || envelope.type === "ready" || envelope.type === "error") return;
+      if (
+        envelope.event !== SocketEventNames.approvalRequested &&
+        !isNotificationMessageEvent(envelope.event) &&
+        !isNotificationRunEvent(envelope.event)
+      ) {
+        return;
+      }
+
+      if (isNotificationRunEvent(envelope.event)) {
+        updateRunActivity(envelope.payload, setMemberActivity);
+      }
+
+      const conversationId = resolveNotificationConversationId(
+        envelope.event,
+        envelope.payload,
+        currentMemberId,
+        bootstrap.channels,
+      );
+      if (!conversationId) return;
+
+      if (
+        (resolvedSelected.type === "channel" &&
+          envelope.event !== SocketEventNames.dmMessage &&
+          resolvedSelected.id === conversationId) ||
+        (resolvedSelected.type === "agent" && resolvedSelected.id === conversationId)
+      ) {
+        return;
+      }
+
+      incrementConversationUnreadCount(conversationId);
+
+      if (envelope.event === SocketEventNames.approvalRequested) {
+        const approvalId = parseApprovalId(envelope.payload);
+        if (approvalId && !seenApprovalNotifications.current.has(approvalId)) {
+          seenApprovalNotifications.current.add(approvalId);
+          playApprovalSound();
+        }
+      }
+    };
+
+    return () => {
+      source.close();
+    };
+  }, [
+    bootstrap.auth.member?.id,
+    bootstrap.channels,
+    bootstrap.organization?.id,
+    incrementConversationUnreadCount,
+    organizationId,
+    resolvedSelected,
+    setMemberActivity,
+  ]);
+
+  useEffect(() => {
+    if (!organizationId || !bootstrap.auth.member || !resolvedSelected) return;
+    const threadId =
+      resolvedSelected.type === "agent"
+        ? getDirectMessageThreadId(bootstrap.auth.member.id, resolvedSelected.id)
+        : resolvedSelected.id;
+    clearConversationUnreadCount(resolvedSelected.id);
+    void fetch(
+      `/api/conversations/${encodeURIComponent(threadId)}/read?organizationId=${encodeURIComponent(organizationId)}`,
+      { method: "POST" },
+    ).catch(() => undefined);
+  }, [bootstrap.auth.member, clearConversationUnreadCount, organizationId, resolvedSelected]);
+
   return (
-    <div className="flex h-screen overflow-hidden bg-zinc-50 transition-colors duration-200 dark:bg-[#040712]">
+    <div className="flex h-full min-h-0">
       <div
-        style={{ width: `${sidebarWidth}%`, minWidth: 220, maxWidth: "40%" }}
-        className={`shrink-0 h-full overflow-hidden ${WORKSPACE_PANEL_WIDTH_TRANSITION}`}
+        className="flex h-full shrink-0 flex-col overflow-hidden border-r border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950"
+        style={{ width: `${sidebarWidth}%` }}
       >
         <WorkspaceSidebar
           bootstrap={bootstrap}
-          rolePresets={rolePresets}
-          teamSettings={teamSettingsState}
-          agentEditorTargetId={agentEditorTargetId}
-          onAgentEditorHandled={() => setAgentEditorTargetId(null)}
+          rolePresets={props.rolePresets}
+          teamSettings={props.teamSettings}
           channels={channels}
           members={members}
           memberActivity={memberActivity}
-          conversationUnreadCounts={conversationUnreadCounts}
           selected={resolvedSelected}
+          agentEditorTargetId={agentEditorTargetId}
+          conversationUnreadCounts={conversationUnreadCounts}
           onSelect={handleSelect}
           onCreateChannel={handleCreateChannel}
           onCreateAgent={handleCreateAgent}
           onUpdateAgent={handleUpdateAgent}
+          onAgentEditorHandled={() => setAgentEditorTargetId(null)}
         />
       </div>
       <DragHandle onResize={setSidebarWidth} />
-      <main className="flex h-full min-w-0 flex-1 flex-col overflow-hidden">
-        <ChannelView
-          key={`${resolvedSelected.type}:${resolvedSelected.id}`}
-          bootstrap={bootstrap}
-          conversation={resolvedSelected}
-          members={members}
-          onOpenAgentEditor={() => {
-            if (resolvedSelected.type === "agent") {
-              setAgentEditorTargetId(resolvedSelected.id);
-            }
-          }}
-        />
+      <main className="flex h-full min-w-0 flex-1 overflow-hidden">
+        <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+          <ChannelView
+            key={`${resolvedSelected.type}:${resolvedSelected.id}`}
+            bootstrap={bootstrap}
+            conversation={resolvedSelected}
+            members={members}
+            onOpenAgentEditor={() => {
+              if (resolvedSelected.type === "agent") {
+                setAgentEditorTargetId(resolvedSelected.id);
+              }
+            }}
+          />
+        </div>
       </main>
+    </div>
+  );
+}
+
+export function DragHandle({
+  side,
+  onResize,
+}: {
+  side?: "left" | "right";
+  onResize: (pct: number) => void;
+}) {
+  const dragging = useRef(false);
+
+  const onPointerDown = useCallback(
+    (event: React.PointerEvent) => {
+      event.preventDefault();
+      dragging.current = true;
+      const startX = event.clientX;
+      const handle = event.currentTarget;
+      const parent = handle.parentElement;
+      if (!parent?.parentElement) return;
+      const startPct = parseFloat(getComputedStyle(parent).width);
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+
+      const onMove = (e: PointerEvent) => {
+        if (!dragging.current) return;
+        const container = parent.parentElement;
+        if (!container) return;
+        const parentWidth = container.getBoundingClientRect().width;
+        const dx = e.clientX - startX;
+        const pct = Math.max(15, Math.min(50, startPct + (dx / parentWidth) * 100));
+        onResize(pct);
+      };
+
+      const onUp = () => {
+        dragging.current = false;
+        document.body.style.cursor = "";
+        document.body.style.userSelect = "";
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+      };
+
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+    },
+    [onResize],
+  );
+
+  return (
+    <div
+      className="relative w-1 shrink-0 cursor-col-resize bg-transparent hover:bg-violet-500/20 transition-colors group"
+      data-side={side}
+      onPointerDown={onPointerDown}
+    >
+      <div className="absolute inset-y-0 -left-1 -right-1" />
+      <GripVertical className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 h-5 w-5 text-zinc-300 opacity-0 group-hover:opacity-100 transition-opacity dark:text-zinc-600" />
     </div>
   );
 }
@@ -477,13 +427,11 @@ function updateRunActivity(
   setMemberActivity: (memberId: string, activity: "working" | "error" | "idle" | "online" | "offline" | "loading") => void,
 ): void {
   const run = (payload as { run?: { agentId?: string; status?: string } })?.run;
-  if (typeof run?.agentId !== "string" || typeof run.status !== "string") return;
-  if (run.status === "failed" || run.status === "cancelled") {
-    setMemberActivity(run.agentId, "error");
-  } else if (run.status === "completed") {
-    setMemberActivity(run.agentId, "online");
-  } else {
+  if (!run?.agentId) return;
+  if (run.status === "running") {
     setMemberActivity(run.agentId, "working");
+  } else if (run.status === "completed" || run.status === "failed" || run.status === "cancelled") {
+    setMemberActivity(run.agentId, "idle");
   }
 }
 
@@ -501,10 +449,23 @@ function resolveNotificationConversationId(
   }
 
   if (event === SocketEventNames.threadMessage) {
-    const body = payload as { threadId?: string };
-    return typeof body.threadId === "string" && channels.some((channel) => channel.id === body.threadId)
-      ? body.threadId
-      : undefined;
+    const body = payload as {
+      threadId?: string;
+      message?: { threadId?: string; channelId?: string };
+    };
+    const threadId = body.threadId ?? body.message?.threadId;
+    if (typeof threadId !== "string") return undefined;
+    if (threadId.startsWith("dm:")) {
+      return resolveDmConversationId(threadId, currentMemberId);
+    }
+    const messageChannelId = body.message?.channelId;
+    if (
+      typeof messageChannelId === "string" &&
+      channels.some((channel) => channel.id === messageChannelId)
+    ) {
+      return messageChannelId;
+    }
+    return channels.some((channel) => channel.id === threadId) ? threadId : undefined;
   }
 
   if (event === SocketEventNames.dmMessage) {
@@ -537,7 +498,8 @@ function resolveDmConversationId(threadId: string, currentMemberId: string): str
 
 function playApprovalSound(): void {
   if (typeof window === "undefined") return;
-  const AudioContextCtor = window.AudioContext ?? (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  const AudioContextCtor =
+    window.AudioContext ?? (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
   if (!AudioContextCtor) return;
   try {
     const context = new AudioContextCtor();
@@ -554,71 +516,6 @@ function playApprovalSound(): void {
     oscillator.stop(context.currentTime + 0.2);
     void context.close().catch(() => undefined);
   } catch {
-    // Ignore audio failures in browsers that block autoplay or AudioContext.
+    // Ignore browsers that block autoplay or AudioContext.
   }
-}
-
-export function DragHandle({
-  onResize,
-  side = "left",
-  className = "",
-}: {
-  onResize: (percent: number) => void;
-  side?: "left" | "right";
-  className?: string;
-}) {
-  const handleRef = useRef<HTMLDivElement>(null);
-  const isDragging = useRef(false);
-
-  const onMouseDown = useCallback(
-    (e: React.MouseEvent) => {
-      e.preventDefault();
-      isDragging.current = true;
-      document.body.style.cursor = "col-resize";
-      document.body.style.userSelect = "none";
-
-      const container = handleRef.current?.parentElement;
-      if (!container) return;
-
-      const onMouseMove = (e: MouseEvent) => {
-        if (!isDragging.current || !container) return;
-        const rect = container.getBoundingClientRect();
-        const containerWidth = rect.width;
-        const relativeX = e.clientX - rect.left;
-
-        if (side === "left") {
-          const percent = (relativeX / containerWidth) * 100;
-          onResize(Math.min(Math.max(percent, 15), 40));
-        } else {
-          const rightPercent =
-            ((containerWidth - relativeX) / containerWidth) * 100;
-          onResize(Math.min(Math.max(rightPercent, 33), 45));
-        }
-      };
-
-      const onMouseUp = () => {
-        isDragging.current = false;
-        document.body.style.cursor = "";
-        document.body.style.userSelect = "";
-        window.removeEventListener("mousemove", onMouseMove);
-        window.removeEventListener("mouseup", onMouseUp);
-      };
-
-      window.addEventListener("mousemove", onMouseMove);
-      window.addEventListener("mouseup", onMouseUp);
-    },
-    [onResize, side],
-  );
-
-  return (
-    <div
-      ref={handleRef}
-      onMouseDown={onMouseDown}
-      className={`group relative flex w-1.5 shrink-0 cursor-col-resize items-center justify-center bg-zinc-200 transition-colors hover:bg-violet-500/40 dark:bg-zinc-800 dark:hover:bg-violet-500/30 ${className}`}
-    >
-      <div className="pointer-events-none absolute z-50 flex h-8 w-5 items-center justify-center rounded-full border border-zinc-300 bg-white opacity-0 shadow-md transition-opacity group-hover:opacity-100 dark:border-zinc-600 dark:bg-zinc-800">
-        <GripVertical className="h-3.5 w-3.5 text-zinc-400 group-hover:text-violet-500" />
-      </div>
-    </div>
-  );
 }

@@ -46,6 +46,9 @@ describe('RunService', () => {
       getWorkspaceSetting: () => null,
       listMembers: () => [],
       listPendingApprovals: () => [],
+      listMessages: () => ({ data: [], hasMore: false }),
+      getLatestHumanMessageInThread: () => null,
+      getSpiritByRunId: () => null,
       getThread: () => ({ channelId: 'channel-1' }),
     } as never;
     const tools = {
@@ -95,6 +98,119 @@ describe('RunService', () => {
     expect(result.summary).toBe('Here are the last 10 backend commits.');
     expect(messages).toEqual(['Here are the last 10 backend commits.']);
     expect(generateCalls).toBe(2);
+  });
+
+  it('adds goal mode suffix from latest human in thread, not from a capped recent page', async () => {
+    const organizationId = 'org-1';
+    const runId = 'run-1';
+    const agentId = 'Quinn Mason';
+    const threadId = 'thread-1';
+    let capturedSuffix: string | undefined;
+    const goalHuman = {
+      id: 'human-buried',
+      organizationId,
+      threadId,
+      senderId: 'human-1',
+      senderKind: 'human',
+      kind: 'human',
+      content: 'Goal from earlier in thread',
+      mentions: [],
+      toolCalls: [],
+      attachments: [],
+      metadata: { goalMode: true },
+      createdAt: '2026-05-04T19:07:01.071Z',
+    };
+    const repo = {
+      getMember: () => ({
+        id: agentId,
+        organizationId,
+        name: agentId,
+        kind: AGENT_KIND,
+        roleName: 'backend-engineer',
+      }),
+      saveRun: (next: any) => next,
+      getRun: (orgId: string, id: string) =>
+        orgId === organizationId && id === runId
+          ? {
+              id: runId,
+              organizationId,
+              agentId,
+              threadId,
+              status: 'queued',
+              step: 'queued',
+              summary: 'Run queued',
+              startedAt: '2026-05-04T19:07:08.071Z',
+            }
+          : null,
+      getProviderCredential: () => null,
+      getWorkspaceSetting: () => null,
+      listMembers: () => [],
+      listPendingApprovals: () => [],
+      listMessages: () => ({
+        data: [
+          {
+            id: 'agent-reply-1',
+            organizationId,
+            threadId,
+            senderId: agentId,
+            senderKind: AGENT_KIND,
+            kind: AGENT_KIND,
+            content: 'Only agent lines on this page',
+            mentions: [],
+            toolCalls: [],
+            attachments: [],
+            createdAt: '2026-05-04T19:07:08.500Z',
+          },
+        ],
+        hasMore: false,
+      }),
+      getLatestHumanMessageInThread: () => goalHuman,
+      getSpiritByRunId: () => null,
+      getThread: () => ({ channelId: 'channel-1' }),
+    } as never;
+    const service = new RunService(
+      {
+        getTeam: () =>
+          loadAgentTeam({
+            name: 'Timetotest',
+            workspace: { root: '/workspace' },
+            roles: [
+              {
+                name: 'backend-engineer',
+                title: 'Backend Engineer',
+                instructions: 'Work on backend.',
+                tools: ['shell'],
+              },
+            ],
+            agents: [{ name: agentId, roleName: 'backend-engineer' }],
+          }),
+        setTeam: () => undefined,
+      } as never,
+      repo,
+      { emit: () => undefined } as never,
+      { publishMessage: () => undefined } as never,
+      {
+        generateRunReply: async (input: { systemPromptSuffix?: string }) => {
+          capturedSuffix = input.systemPromptSuffix;
+          return { text: 'ok', toolResults: [], steps: [] };
+        },
+      } as never,
+      { allowRun: () => undefined, invoke: async () => ({ ok: true }) } as never,
+    );
+
+    await (service as any).advanceRun({
+      id: runId,
+      organizationId,
+      agentId,
+      threadId,
+      status: 'queued',
+      step: 'queued',
+      summary: 'Run queued',
+      startedAt: '2026-05-04T19:07:08.071Z',
+    });
+
+    expect(capturedSuffix).toContain('Goal Mode (Active)');
+    expect(capturedSuffix).toContain('goal artifact file');
   });
 
   it('replays approved tools before the next turn when approval lands mid-run', async () => {
@@ -149,6 +265,9 @@ describe('RunService', () => {
       getWorkspaceSetting: () => null,
       listMembers: () => [],
       listPendingApprovals: () => [],
+      listMessages: () => ({ data: [], hasMore: false }),
+      getLatestHumanMessageInThread: () => null,
+      getSpiritByRunId: () => null,
       listRunSteps: () => [pendingStep],
       getThread: () => ({ channelId: 'channel-1' }),
     } as never;
@@ -240,6 +359,9 @@ describe('RunService', () => {
       getWorkspaceSetting: () => null,
       listMembers: () => [],
       listPendingApprovals: () => [],
+      listMessages: () => ({ data: [], hasMore: false }),
+      getLatestHumanMessageInThread: () => null,
+      getSpiritByRunId: () => null,
       getThread: () => ({ channelId: 'channel-1' }),
     } as never;
     const service = new RunService(
@@ -339,6 +461,9 @@ describe('RunService', () => {
       getWorkspaceSetting: () => null,
       listMembers: () => [],
       listPendingApprovals: () => [],
+      listMessages: () => ({ data: [], hasMore: false }),
+      getLatestHumanMessageInThread: () => null,
+      getSpiritByRunId: () => null,
       listRunSteps: () => [pendingStep],
       getThread: () => ({ channelId: 'channel-1' }),
     } as never;
@@ -462,6 +587,9 @@ describe('RunService', () => {
       listMembers: () => [],
       listPendingApprovals: () => [],
       listRunSteps: () => pendingSteps,
+      listMessages: () => ({ data: [], hasMore: false }),
+      getLatestHumanMessageInThread: () => null,
+      getSpiritByRunId: () => null,
       getThread: () => ({ channelId: 'channel-1' }),
     } as never;
 
@@ -557,6 +685,9 @@ describe('RunService', () => {
       getWorkspaceSetting: () => null,
       listMembers: () => [],
       listPendingApprovals: () => [],
+      listMessages: () => ({ data: [], hasMore: false }),
+      getLatestHumanMessageInThread: () => null,
+      getSpiritByRunId: () => null,
       getThread: () => ({ channelId: 'channel-1' }),
     } as never;
     const tools = {
@@ -642,6 +773,9 @@ describe('RunService', () => {
       getWorkspaceSetting: () => null,
       listMembers: () => [],
       listPendingApprovals: () => [],
+      listMessages: () => ({ data: [], hasMore: false }),
+      getLatestHumanMessageInThread: () => null,
+      getSpiritByRunId: () => null,
       getThread: () => ({ channelId: 'channel-1' }),
     } as never;
     const service = new RunService(

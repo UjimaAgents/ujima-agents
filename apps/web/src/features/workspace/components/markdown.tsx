@@ -82,6 +82,12 @@ function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+function stripScriptTags(content: string): string {
+  return content
+    .replace(/<script\b[^>]*>/gi, "&lt;script&gt;")
+    .replace(/<\/script>/gi, "&lt;/script&gt;");
+}
+
 function renderInlineMarkdown(text: string, mentionNames: string[]): string {
   const withMentions = highlightMentions(text, mentionNames);
   return withMentions
@@ -99,7 +105,11 @@ export function Markdown({
   className?: string;
 }) {
   const html = useMemo(() => {
-    return marked.parse(content, { gfm: true, breaks: true, renderer: createRenderer(mentionNames) }) as string;
+    return marked.parse(stripScriptTags(content), {
+      gfm: true,
+      breaks: true,
+      renderer: createRenderer(mentionNames),
+    }) as string;
   }, [content, mentionNames]);
 
   return (
@@ -132,7 +142,7 @@ export function MarkdownInline({
   className?: string;
 }) {
   const html = useMemo(() => {
-    return marked.parseInline(content, {
+    return marked.parseInline(stripScriptTags(content), {
       gfm: true,
       renderer: createRenderer(mentionNames),
     }) as string;

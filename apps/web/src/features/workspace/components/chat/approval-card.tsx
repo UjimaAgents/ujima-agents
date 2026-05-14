@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ChevronDown, ShieldAlert } from "lucide-react";
 import { MarkdownInline } from "../markdown";
-import { shellInvocationDisplayLine, type ParsedFilesystemScope } from "@ujima/shared";
+import { shellInvocationDisplayLine, type ParsedFilesystemScope } from "@ujima/shared/browser";
 import { FilesystemToolPane } from "./filesystem-tool-pane";
 import { TerminalPane } from "./terminal-pane";
 

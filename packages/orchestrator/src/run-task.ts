@@ -18,6 +18,9 @@ export function runTask(deps: OrchestratorDeps, input: RunTaskInputs): SessionHa
   const task = TaskDefSchema.parse(input.task);
   const runInput: RunTaskInputs = { ...input, task };
   const { team, sessionId } = runInput;
+  if (task.execution_mode !== 'concurrent' && task.execution_mode !== 'slim') {
+    throw new Error(`Unsupported execution mode: ${String(task.execution_mode)}`);
+  }
 
   const sessionController = new AbortController();
   const perAgentControllers = new Map<string, AbortController>();

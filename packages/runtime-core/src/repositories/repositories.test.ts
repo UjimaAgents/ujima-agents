@@ -240,6 +240,151 @@ test('searchChannelMessages tolerates unmatched quotes in user search text', () 
   expect(results.data.map((message) => message.content)).toContain('quoted needle here');
 });
 
+test('message metadata (goalMode) round-trips through save, list, get, and update', () => {
+  const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
+  const orgId = randomUUID();
+  const now = new Date().toISOString();
+  const messageId = randomUUID();
+
+  repo.saveOrganization(
+    OrganizationSchema.parse({
+      id: orgId,
+      name: 'Meta Org',
+      workspace: { root: '/tmp/meta-org', roleScopes: {} },
+    }),
+  );
+  repo.saveChannel({
+    id: 'general',
+    organizationId: orgId,
+    name: 'general',
+    kind: 'general',
+    topic: '',
+    memberIds: [],
+  });
+  repo.ensureThread({
+    id: 'general',
+    organizationId: orgId,
+    channelId: 'general',
+    title: 'general',
+    memberIds: [],
+    createdAt: now,
+  });
+
+  const saved = repo.saveMessage(
+    MessageSchema.parse({
+      id: messageId,
+      organizationId: orgId,
+      threadId: 'general',
+      channelId: 'general',
+      senderId: 'user',
+      senderKind: 'human',
+      kind: 'human',
+      content: 'goal',
+      mentions: [],
+      metadata: { goalMode: true },
+      createdAt: now,
+    }),
+  );
+  expect(saved.metadata).toEqual({ goalMode: true });
+
+  const listed = repo.listMessages(orgId, 'general', undefined, 10).data.find((m) => m.id === messageId);
+  expect(listed?.metadata).toEqual({ goalMode: true });
+
+  const got = repo.getMessage(orgId, messageId);
+  expect(got?.metadata).toEqual({ goalMode: true });
+
+  repo.updateMessage(
+    MessageSchema.parse({
+      ...saved,
+      content: 'updated',
+      metadata: { goalMode: false },
+      editedAt: new Date().toISOString(),
+    }),
+  );
+  expect(repo.getMessage(orgId, messageId)?.metadata).toEqual({ goalMode: false });
+});
+
+test('getLatestHumanMessageInThread returns newest human by timestamp', () => {
+  const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
+  const orgId = randomUUID();
+  const now = '2026-05-04T19:07:00.000Z';
+
+  repo.saveOrganization(
+    OrganizationSchema.parse({
+      id: orgId,
+      name: 'Latest Human Org',
+      workspace: { root: '/tmp/latest-human', roleScopes: {} },
+    }),
+  );
+  repo.saveChannel({
+    id: 'general',
+    organizationId: orgId,
+    name: 'general',
+    kind: 'general',
+    topic: '',
+    memberIds: [],
+  });
+  repo.ensureThread({
+    id: 'general',
+    organizationId: orgId,
+    channelId: 'general',
+    title: 'general',
+    memberIds: [],
+    createdAt: now,
+  });
+
+  repo.saveMessage(
+    MessageSchema.parse({
+      id: 'h-old',
+      organizationId: orgId,
+      threadId: 'general',
+      channelId: 'general',
+      senderId: 'u1',
+      senderKind: 'human',
+      kind: 'human',
+      content: 'first',
+      mentions: [],
+      metadata: { goalMode: false },
+      createdAt: '2026-05-04T19:07:01.000Z',
+    }),
+  );
+  for (let i = 0; i < 3; i++) {
+    repo.saveMessage(
+      MessageSchema.parse({
+        id: `a-${i}`,
+        organizationId: orgId,
+        threadId: 'general',
+        channelId: 'general',
+        senderId: 'agent',
+        senderKind: 'agent',
+        kind: 'agent',
+        content: `agent ${i}`,
+        mentions: [],
+        createdAt: `2026-05-04T19:07:0${2 + i}.000Z`,
+      }),
+    );
+  }
+  repo.saveMessage(
+    MessageSchema.parse({
+      id: 'h-new',
+      organizationId: orgId,
+      threadId: 'general',
+      channelId: 'general',
+      senderId: 'u1',
+      senderKind: 'human',
+      kind: 'human',
+      content: 'second',
+      mentions: [],
+      metadata: { goalMode: true },
+      createdAt: '2026-05-04T19:07:09.000Z',
+    }),
+  );
+
+  const latest = repo.getLatestHumanMessageInThread(orgId, 'general');
+  expect(latest?.id).toBe('h-new');
+  expect(latest?.metadata).toEqual({ goalMode: true });
+});
+
 test('hasApprovalGrant matches legacy shell scopes against canonical JSON scopes', () => {
   const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
   const orgId = randomUUID();

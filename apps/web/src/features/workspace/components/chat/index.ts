@@ -12,6 +12,7 @@ export type { ChatMessageData } from "./chat-message";
 export { AttachmentGrid } from "./attachment-grid";
 
 export { ChatInput } from "./chat-input";
+export type { ComposerCommand } from "./chat-input";
 
 export { ApprovalCard } from "./approval-card";
 export type { ApprovalCardData } from "./approval-card";

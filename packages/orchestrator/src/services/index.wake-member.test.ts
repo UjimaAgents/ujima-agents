@@ -21,7 +21,7 @@ describe('wakeMemberWithFailureEvents', () => {
     const emit = vi.fn();
     await wakeMemberWithFailureEvents(
       {
-        supervisor: {
+        spirits: {
           handleAlert: vi.fn(async () => {
             throw new Error('supervisor exploded');
           }),
@@ -50,7 +50,7 @@ describe('wakeMemberWithFailureEvents', () => {
     const emit = vi.fn();
     await wakeMemberWithFailureEvents(
       {
-        supervisor: {
+        spirits: {
           handleAlert: vi.fn(async () => ({ kind: 'no-active-spirit' as const })),
         },
         runs: {
@@ -85,7 +85,7 @@ describe('wakeMemberWithFailureEvents', () => {
     const emit = vi.fn();
     await wakeMemberWithFailureEvents(
       {
-        supervisor: {
+        spirits: {
           handleAlert: vi.fn(async () => ({ kind: 'no-active-spirit' as const })),
         },
         runs: {
@@ -124,7 +124,7 @@ describe('wakeMemberWithFailureEvents', () => {
     };
     await wakeMemberWithFailureEvents(
       {
-        supervisor: {
+        spirits: {
           handleAlert: vi.fn(async () => ({ kind: 'no-active-spirit' as const })),
         },
         runs: { createRun },

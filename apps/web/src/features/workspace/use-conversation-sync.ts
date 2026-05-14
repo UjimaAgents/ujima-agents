@@ -14,7 +14,7 @@ import {
   type Member,
   type Message,
   type RunState,
-} from "@ujima/shared";
+} from "@ujima/shared/browser";
 import { BootstrapResponseSchema, type BootstrapResponse } from "@ujima/api-schema";
 import type { ApprovalCardData, ChatMessageData } from "./components/chat";
 import type { SelectedConversation } from "./types";
@@ -40,7 +40,7 @@ export interface ConversationSyncResult {
   };
   loading: boolean;
   error?: string;
-  sendMessage(content: string, parentMessageId?: string, attachmentIds?: string[]): Promise<void>;
+  sendMessage(content: string, parentMessageId?: string, attachmentIds?: string[], metadata?: { goalMode?: boolean }): Promise<void>;
   archiveConversation(mode: "summarize" | "clear"): Promise<void>;
 }
 
@@ -229,7 +229,7 @@ export function useConversationSync(
   }, [activeRun, conversation.id, conversation.type, loading, memberActivity, selectedMember?.presence]);
 
   const sendMessage = useCallback(
-    async (content: string, parentMessageId?: string, attachmentIds?: string[]) => {
+    async (content: string, parentMessageId?: string, attachmentIds?: string[], metadata?: { goalMode?: boolean }) => {
       if (!transport || !bootstrap.auth.member) {
         throw new Error("Sign in before sending messages.");
       }
@@ -262,6 +262,7 @@ export function useConversationSync(
             content,
             parentMessageId,
             attachmentIds,
+            metadata,
           ),
         ),
       });
@@ -719,6 +720,7 @@ function messageToChatMessage(message: Message, members: Member[]): ChatMessageD
       category: attachment.category,
       sizeBytes: attachment.sizeBytes,
     })) ?? [],
+    toolCalls: message.toolCalls,
     pending: false,
   };
 }

@@ -145,6 +145,8 @@ export async function getServerRolePresets(): Promise<RolePresetTemplate[]> {
   return response.presets;
 }
 
+
+
 export async function getServerTeamSettings(organizationId?: string): Promise<{
   name: string;
   workspace: { root: string; roleScopes: Record<string, string[]> };
