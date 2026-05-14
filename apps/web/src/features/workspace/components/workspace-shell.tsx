@@ -11,6 +11,7 @@ import {
 import { WorkspaceSidebar } from "./workspace-sidebar";
 import { ChannelView } from "./channel-view";
 import type { BootstrapResponse } from "@ujima/api-schema";
+import { resolveSelectedConversationFromSearchParams } from "../conversation-routing";
 import type { SelectedConversation, WorkspaceRoleInput } from "../types";
 import { useWorkspaceStore } from "../workspace-store";
 import type { RolePresetTemplate } from "../../onboarding/types";
@@ -77,7 +78,12 @@ export function WorkspaceShell(props: {
     };
   }, [channels, initialConversation]);
 
-  const resolvedSelected = selected ?? defaultConversation;
+  const urlConversation = useMemo(
+    () => resolveSelectedConversationFromSearchParams(searchParams, bootstrap),
+    [searchParams, bootstrap],
+  );
+
+  const resolvedSelected = urlConversation ?? selected ?? defaultConversation;
 
   const handleSelect = useCallback(
     (conversation: SelectedConversation) => {
@@ -443,10 +449,23 @@ function resolveNotificationConversationId(
   }
 
   if (event === SocketEventNames.threadMessage) {
-    const body = payload as { threadId?: string };
-    return typeof body.threadId === "string" && channels.some((channel) => channel.id === body.threadId)
-      ? body.threadId
-      : undefined;
+    const body = payload as {
+      threadId?: string;
+      message?: { threadId?: string; channelId?: string };
+    };
+    const threadId = body.threadId ?? body.message?.threadId;
+    if (typeof threadId !== "string") return undefined;
+    if (threadId.startsWith("dm:")) {
+      return resolveDmConversationId(threadId, currentMemberId);
+    }
+    const messageChannelId = body.message?.channelId;
+    if (
+      typeof messageChannelId === "string" &&
+      channels.some((channel) => channel.id === messageChannelId)
+    ) {
+      return messageChannelId;
+    }
+    return channels.some((channel) => channel.id === threadId) ? threadId : undefined;
   }
 
   if (event === SocketEventNames.dmMessage) {
