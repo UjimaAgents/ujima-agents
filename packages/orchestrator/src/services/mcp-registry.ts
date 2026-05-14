@@ -12,6 +12,8 @@ import type { MCPDef } from '@ujima/shared';
 import { materializeMcpDef } from './mcp-runtime.js';
 import type { ApiRepository } from './repository-reader.js';
 
+type McpConnector = (def: MCPDef) => Promise<MCPConnection>;
+
 // ---------------------------------------------------------------------
 // McpRegistryService — Phase 3 of the MCP integration.
 //
@@ -88,17 +90,21 @@ export interface TestMcpResult {
 }
 
 export class McpRegistryService {
-  constructor(private readonly repo: ApiRepository) {}
+  constructor(
+    private readonly repo: ApiRepository,
+    private readonly connect: McpConnector = connectMCP,
+  ) {}
 
   // ----------------- CRUD -----------------------------------------------
 
   create(input: CreateMcpServerInput): McpServerPublic {
     this.requireOrganization(input.organizationId);
-    if (!input.name.trim()) {
+    const name = input.name.trim();
+    if (!name) {
       throw new Error('MCP server name is required');
     }
-    if (this.repo.getMcpServerByName(input.organizationId, input.name)) {
-      throw new Error(`MCP server "${input.name}" already exists in this organisation`);
+    if (this.repo.getMcpServerByName(input.organizationId, name)) {
+      throw new Error(`MCP server "${name}" already exists in this organisation`);
     }
     this.validateConnectivity(input);
 
@@ -109,7 +115,7 @@ export class McpRegistryService {
     const server = McpServerSchema.parse({
       id: randomUUID(),
       organizationId: input.organizationId,
-      name: input.name.trim(),
+      name,
       description: input.description ?? '',
       category: input.category ?? 'general',
       transport: input.transport,
@@ -286,7 +292,7 @@ export class McpRegistryService {
     const testedAt = new Date().toISOString();
     let connection: MCPConnection | undefined;
     try {
-      connection = await connectMCP(def);
+      connection = await this.connect(def);
       const tools = await connection.listTools();
       const descriptors: McpToolDescriptor[] = tools.map((tool) => ({
         name: tool.name,

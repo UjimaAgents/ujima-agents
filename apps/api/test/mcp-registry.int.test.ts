@@ -1,28 +1,15 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { openDatabase } from '@ujima/context-store';
 import { Repository } from '@ujima/runtime-core';
-import type * as McpClientModule from '@ujima/mcp-client';
 import {
   McpRegistryService,
   OnboardingService,
   createTeamStore,
 } from '@ujima/orchestrator';
 import { mapMcpRouteError } from '../src/transport/routes/mcps.js';
-
-const mcpClientMock = vi.hoisted(() => ({
-  connectMCP: vi.fn(),
-}));
-
-vi.mock('@ujima/mcp-client', async (importOriginal) => {
-  const actual = await importOriginal<typeof McpClientModule>();
-  return {
-    ...actual,
-    connectMCP: mcpClientMock.connectMCP,
-  };
-});
 
 // Phase 3 of the MCP integration — covers the registry CRUD + JSON
 // import path + per-agent attachments + the redaction contract that
@@ -72,7 +59,6 @@ async function createFixture() {
 describe('McpRegistryService — Phase 3 MCP integration', () => {
   const tempDirs: string[] = [];
   afterEach(async () => {
-    mcpClientMock.connectMCP.mockReset();
     await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
   });
 
@@ -130,6 +116,29 @@ describe('McpRegistryService — Phase 3 MCP integration', () => {
         transport: 'stdio',
         command: 'node',
         args: ['fs.js'],
+      }),
+    ).toThrow(/already exists/);
+  });
+
+  it('rejects duplicate names after trimming create input', async () => {
+    const fixture = await createFixture();
+    tempDirs.push(fixture.archiveRoot);
+
+    fixture.registry.create({
+      organizationId: fixture.organizationId,
+      createdBy: fixture.ownerId,
+      name: 'trimmed',
+      transport: 'stdio',
+      command: 'node',
+    });
+
+    expect(() =>
+      fixture.registry.create({
+        organizationId: fixture.organizationId,
+        createdBy: fixture.ownerId,
+        name: 'trimmed ',
+        transport: 'stdio',
+        command: 'node',
       }),
     ).toThrow(/already exists/);
   });
@@ -495,16 +504,16 @@ describe('McpRegistryService — Phase 3 MCP integration', () => {
     });
     const disabledBefore = fixture.repo.getMcpServer(fixture.organizationId, server.id);
     expect(disabledBefore?.status).toBe('disabled');
-    mcpClientMock.connectMCP.mockResolvedValue({
+    const registry = new McpRegistryService(fixture.repo, async () => ({
       id: 'mock-connection',
-      def: {},
+      def: {} as never,
       listTools: async () => [{ name: 'ping', description: 'Ping' }],
       callTool: async () => ({ content: { ok: true } }),
       close: async () => undefined,
       isOpen: () => true,
-    });
+    }));
 
-    const result = await fixture.registry.test(fixture.organizationId, server.id);
+    const result = await registry.test(fixture.organizationId, server.id);
 
     expect(result.ok).toBe(true);
     const after = fixture.repo.getMcpServer(fixture.organizationId, server.id);

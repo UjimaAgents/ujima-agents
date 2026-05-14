@@ -52,7 +52,7 @@ import { ToolApprovalRequiredError, toModelToolOutput } from './tool-loop-result
 import { extractReasoningChunk } from '../utils/extract-reasoning.js';
 import { buildRunTranscript } from '../utils/run-transcript.js';
 import type { ToolInvocationInput } from './tool-service.js';
-import { materializeMcpDef, type McpRuntimePool } from './mcp-runtime.js';
+import { materializeMcpDef, mcpPermissionToolName, type McpRuntimePool } from './mcp-runtime.js';
 
 // ----------------------------------------------------------------------
 // SpiritService — Phase 2.A.4
@@ -1292,7 +1292,7 @@ export class SpiritService {
                 resourceType: 'mcp',
                 resourcePath: `${entry.serverId}:${entry.toolName}`,
                 permissionMcpId: entry.serverId,
-                permissionToolName: entry.toolName,
+                permissionToolName: mcpPermissionToolName(entry.serverId, entry.toolName),
                 input: {
                   mcpServerId: entry.serverId,
                   mcpServerName: entry.serverName,

@@ -37,6 +37,10 @@ function resolveHomeDir(): string {
 
 const DIRTY_FLAG_NAME = 'runtime.dirty';
 
+function mcpPermissionToolName(serverId: string, toolName: string): string {
+  return `mcp:${encodeURIComponent(serverId)}:${encodeURIComponent(toolName)}`;
+}
+
 function writeDirtyFlag(homeDir: string): void {
   try {
     mkdirSync(homeDir, { recursive: true });
@@ -132,7 +136,21 @@ async function main(): Promise<void> {
       ? (team.getAgent(input.memberId) ??
         (member ? team.getAgent(member.name) : undefined))
       : undefined;
-    const permissionToolName = input.permissionToolName ?? input.toolId;
+    let permissionToolName = input.permissionToolName ?? input.toolId;
+    if (input.toolId === 'mcp') {
+      const inputRecord = input.input ?? {};
+      const serverId =
+        input.permissionMcpId ??
+        (typeof inputRecord.mcpServerId === 'string' ? inputRecord.mcpServerId : input.toolId);
+      const rawToolName =
+        typeof inputRecord.toolName === 'string'
+          ? inputRecord.toolName
+          : (input.permissionToolName ?? input.toolId);
+      permissionToolName =
+        typeof inputRecord.toolName !== 'string' && rawToolName.startsWith('mcp:')
+          ? rawToolName
+          : mcpPermissionToolName(serverId, rawToolName);
+    }
     const allowedTools = new Set([
       ...(role?.tools ?? []),
       ...ALWAYS_AVAILABLE_AGENT_TOOLS,

@@ -398,8 +398,10 @@ export class ToolServiceImpl implements ToolService {
 
     const serverId =
       invocation.permissionMcpId ?? readString(invocation.input, "mcpServerId");
+    const permissionToolName = invocation.permissionToolName;
     const toolName =
-      invocation.permissionToolName ?? readString(invocation.input, "toolName");
+      readString(invocation.input, "toolName") ??
+      (permissionToolName?.startsWith("mcp:") ? undefined : permissionToolName);
     if (!serverId) {
       throw new Error("MCP invocation is missing mcpServerId");
     }

@@ -28,6 +28,8 @@ import {
   type ModelResolver,
   type RealtimeService,
   type SpiritServiceOptions,
+  type ToolInvocationInput,
+  type ToolInvocationResult,
   type ToolService,
 } from '@ujima/orchestrator';
 import { createPermissionMiddleware } from '@ujima/permissions';
@@ -113,6 +115,55 @@ function makeToolCaptureModel(capturedToolNames: string[][]): LanguageModel {
   }) as unknown as LanguageModel;
 }
 
+function makeMcpToolCallModel(matchToolName: (name: string) => boolean): LanguageModel {
+  return new MockLanguageModelV3({
+    doStream: async (options) => {
+      const hasToolResults = options.prompt.some((m) =>
+        Array.isArray(m.content)
+          ? m.content.some((c: { type?: string }) => c.type === 'tool-result')
+          : false,
+      );
+      if (hasToolResults) {
+        return {
+          stream: simulateReadableStream<LanguageModelV3StreamPart>({
+            chunks: [
+              { type: 'text-start', id: '2' },
+              { type: 'text-delta', id: '2', delta: 'done' },
+              { type: 'text-end', id: '2' },
+              {
+                type: 'finish',
+                usage: v3Usage(12, 4),
+                finishReason: { unified: 'stop' as const, raw: 'stop' },
+              },
+            ],
+          }),
+        };
+      }
+
+      const tools = (options as { tools?: Record<string, unknown> }).tools ?? {};
+      const toolName = Object.keys(tools).find(matchToolName);
+      if (!toolName) throw new Error('expected MCP tool not found in model palette');
+      return {
+        stream: simulateReadableStream<LanguageModelV3StreamPart>({
+          chunks: [
+            {
+              type: 'tool-call',
+              toolCallId: 'call-mcp-1',
+              toolName,
+              input: JSON.stringify({}),
+            },
+            {
+              type: 'finish',
+              usage: v3Usage(10, 3),
+              finishReason: { unified: 'tool-calls' as const, raw: 'tool-calls' },
+            },
+          ],
+        }),
+      };
+    },
+  }) as unknown as LanguageModel;
+}
+
 function mcpDef(id: string, name: string): MCPDef {
   return {
     id,
@@ -136,6 +187,7 @@ interface FixtureOptions {
   realToolPipeline?: boolean;
   mcpPool?: SpiritServiceOptions['mcpPool'];
   mcpResolver?: SpiritServiceOptions['mcpResolver'];
+  toolInvoke?: (input: ToolInvocationInput) => ToolInvocationResult | Promise<ToolInvocationResult>;
 }
 
 interface ModelCall {
@@ -244,7 +296,10 @@ async function createFixture(opts: FixtureOptions = {}): Promise<Fixture> {
     // Stub: bypass policy + IAM. Used by tests that only care about the
     // spirit/supervisor flow, not the tool gate.
     tools = {
-      invoke: async () => ({ ok: true, output: { status: 'completed', result: 'noop' } }),
+      invoke: async (input) =>
+        opts.toolInvoke
+          ? await opts.toolInvoke(input)
+          : { ok: true, output: { status: 'completed', result: 'noop' } },
       allowRun: () => undefined,
     };
   }
@@ -617,6 +672,52 @@ describe('SpiritService — Phase 2.A lifecycle', () => {
     );
     expect(mcpToolNames).toHaveLength(2);
     expect(new Set(mcpToolNames).size).toBe(2);
+  });
+
+  it('namespaces MCP permission tool names away from built-in tool names', async () => {
+    const invocations: ToolInvocationInput[] = [];
+    const serverId = 'server-policy';
+    const mcpPool: NonNullable<SpiritServiceOptions['mcpPool']> = {
+      get: async () => ({
+        listTools: async () => [{ name: 'self.note', description: 'Remote collision' }],
+        callTool: async () => ({ content: { ok: true } }),
+      }),
+    };
+    const fixture = await createFixture({
+      staticModel: makeMcpToolCallModel((name) => name.endsWith('__self_note')),
+      mcpPool,
+      mcpResolver: async () => [
+        {
+          def: mcpDef(serverId, 'Collision MCP'),
+          serverId,
+          serverName: 'Collision MCP',
+        },
+      ],
+      toolInvoke: (input) => {
+        invocations.push(input);
+        return { ok: true, output: { status: 'completed' } };
+      },
+    });
+    tempDirs.push(fixture.archiveRoot);
+
+    const { session } = fixture.taskSessions.create({
+      organizationId: fixture.organizationId,
+      requestedBy: fixture.ownerId,
+      prompt: 'Call MCP self note',
+      team: ['frontend-alice'],
+    });
+
+    await fixture.spirits.run({
+      organizationId: fixture.organizationId,
+      taskSessionId: session.id,
+      memberId: 'frontend-alice',
+    });
+
+    expect(invocations).toHaveLength(1);
+    expect(invocations[0]!.toolId).toBe('mcp');
+    expect(invocations[0]!.permissionToolName).toBe('mcp:server-policy:self.note');
+    expect(invocations[0]!.permissionToolName).not.toBe('self.note');
+    expect(invocations[0]!.input.toolName).toBe('self.note');
   });
 
   it('TaskSessionService.start provisions one spirit per team member', async () => {

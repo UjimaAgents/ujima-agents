@@ -20,6 +20,10 @@ export interface McpSecretReader {
   readSecret(keyRef: string): string | null;
 }
 
+export function mcpPermissionToolName(serverId: string, toolName: string): string {
+  return `mcp:${encodeURIComponent(serverId)}:${encodeURIComponent(toolName)}`;
+}
+
 type McpRuntimeServer = Pick<
   McpServer,
   | 'id'
