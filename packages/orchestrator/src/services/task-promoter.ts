@@ -1,8 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { generateText, type LanguageModel } from 'ai';
 import { z } from 'zod';
-import type { ProviderKind } from '@ujima/framework';
-import { selectLanguageModel } from '@ujima/llm';
+import { selectLanguageModel, type ProviderKind } from '@ujima/llm';
 import {
   AGENT_KIND,
   MessageSchema,

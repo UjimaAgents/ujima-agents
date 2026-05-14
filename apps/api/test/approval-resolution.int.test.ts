@@ -9,7 +9,6 @@ import { createTransport, type Transport } from '../src/transport/server';
 import type { LanguageModel } from 'ai';
 
 const TOKEN = 'c'.repeat(64);
-
 const stubLanguageModel = {} as unknown as LanguageModel;
 
 describe('approval resolution route', () => {

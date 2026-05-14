@@ -1352,8 +1352,6 @@ export class SpiritService {
   }
 }
 
-export { defaultResolveModelId as _defaultResolveModelId } from '../utils/to-model-messages.js';
-
 const LIVE_SPIRIT_STATUSES = new Set(['queued', 'running', 'waiting_for_approval']);
 const TERMINAL_TASK_SESSION_STATUSES = new Set(['completed', 'failed', 'cancelled']);
 
@@ -1368,6 +1366,8 @@ function deriveTaskSessionOutcome(
   }
   return 'cancelled';
 }
+
+export { defaultResolveModelId as _defaultResolveModelId } from '../utils/to-model-messages.js';
 
 /**
  * Cheaper-tier provider selection helper. Exported so the

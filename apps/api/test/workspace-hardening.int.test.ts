@@ -23,7 +23,6 @@ import { createTransport, type Transport } from '../src/transport/server';
 const skipIfWin32 = process.platform === 'win32';
 
 const TOKEN = 'b'.repeat(64);
-
 const stubLanguageModel = {} as unknown as LanguageModel;
 
 function createNoopRealtime() {

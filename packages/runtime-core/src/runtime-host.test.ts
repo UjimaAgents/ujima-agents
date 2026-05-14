@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createRuntimeHost, sanitizeMcpArgs } from './runtime-host';
 import { createBufferLogger } from './logger';
+import type { AgentDef } from '@ujima/shared';
 import type { LanguageModel } from 'ai';
 import type { AgentDef } from '@ujima/shared';
 import { createPathResolver } from './path-resolver';
