@@ -3,7 +3,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { GripVertical } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { SocketEventNames, type SocketEventName } from "@ujima/shared/browser";
+import {
+  getDirectMessageThreadId,
+  SocketEventNames,
+  type SocketEventName,
+} from "@ujima/shared/browser";
 import { WorkspaceSidebar } from "./workspace-sidebar";
 import { ChannelView } from "./channel-view";
 import type { BootstrapResponse } from "@ujima/api-schema";
@@ -16,7 +20,7 @@ export const WORKSPACE_MAIN_GRID_TRANSITION =
 
 type WorkspaceChannel = BootstrapResponse["channels"][number];
 type WorkspaceMember = BootstrapResponse["members"][number];
-type WorkspaceTeamRole = {
+interface WorkspaceTeamRole {
   id?: string;
   name: string;
   title: string;
@@ -29,9 +33,9 @@ type WorkspaceTeamRole = {
   tools: string[];
   channels: string[];
   skills: string[];
-};
+}
 type WorkspaceTeamSettings = {
-  agents: Array<{ name: string; roleName: string; personalityName: string; kind: string }>;
+  agents: { name: string; roleName: string; personalityName: string; kind: string }[];
   roles: WorkspaceTeamRole[];
 } | null;
 
@@ -57,8 +61,10 @@ export function WorkspaceShell(props: {
   const setSelectedConversation = useWorkspaceStore((state) => state.setSelectedConversation);
   const appendChannel = useWorkspaceStore((state) => state.appendChannel);
   const appendMember = useWorkspaceStore((state) => state.appendMember);
+  const clearConversationUnreadCount = useWorkspaceStore((state) => state.clearConversationUnreadCount);
   const incrementConversationUnreadCount = useWorkspaceStore((state) => state.incrementConversationUnreadCount);
   const setMemberActivity = useWorkspaceStore((state) => state.setMemberActivity);
+  const seenApprovalNotifications = useRef(new Set<string>());
 
   const defaultConversation = useMemo(() => {
     if (initialConversation) return initialConversation;
@@ -191,49 +197,93 @@ export function WorkspaceShell(props: {
     syncWorkspace({
       channels: bootstrap.channels,
       members: bootstrap.members,
-      conversationUnreadCounts,
+      conversationUnreadCounts: bootstrap.conversationUnreadCounts,
       selectedConversation: resolvedSelected,
     });
   }, [
     bootstrap.channels,
+    bootstrap.conversationUnreadCounts,
     bootstrap.members,
-    conversationUnreadCounts,
     resolvedSelected,
     syncWorkspace,
   ]);
 
-  const wsRef = useRef<WebSocket | null>(null);
   useEffect(() => {
-    if (!organizationId) return;
-    if (wsRef.current) return;
+    const currentMemberId = bootstrap.auth.member?.id;
+    if (!organizationId || !currentMemberId) return;
 
-    const baseUrl = process.env.NEXT_PUBLIC_UJIMA_API_URL ?? `http://127.0.0.1:7511`;
-    const socketUrl = baseUrl.replace(/^http/, "ws");
-    const wsUrl = `${socketUrl}/api/events?organization_id=${organizationId}`;
-    const ws = new WebSocket(wsUrl);
-    wsRef.current = ws;
+    const source = new EventSource(
+      `/api/notifications/stream?organizationId=${encodeURIComponent(organizationId)}`,
+    );
 
-    ws.onmessage = (event) => {
+    source.onmessage = (event) => {
       const envelope = parseNotificationEnvelope(event.data);
-      if (!envelope) return;
-      if (envelope.type === "socket" && isNotificationMessageEvent(envelope.event)) {
-        if (resolvedSelected.type === "channel") {
-          const payload = envelope.payload as { channelId?: string };
-          if (payload?.channelId && payload.channelId !== resolvedSelected.id) {
-            incrementConversationUnreadCount(payload.channelId, 1);
-          }
-        }
+      if (!envelope || envelope.type === "ready" || envelope.type === "error") return;
+      if (
+        envelope.event !== SocketEventNames.approvalRequested &&
+        !isNotificationMessageEvent(envelope.event) &&
+        !isNotificationRunEvent(envelope.event)
+      ) {
+        return;
       }
-      if (envelope.type === "socket" && isNotificationRunEvent(envelope.event)) {
+
+      if (isNotificationRunEvent(envelope.event)) {
         updateRunActivity(envelope.payload, setMemberActivity);
+      }
+
+      const conversationId = resolveNotificationConversationId(
+        envelope.event,
+        envelope.payload,
+        currentMemberId,
+        bootstrap.channels,
+      );
+      if (!conversationId) return;
+
+      if (
+        (resolvedSelected.type === "channel" &&
+          envelope.event !== SocketEventNames.dmMessage &&
+          resolvedSelected.id === conversationId) ||
+        (resolvedSelected.type === "agent" && resolvedSelected.id === conversationId)
+      ) {
+        return;
+      }
+
+      incrementConversationUnreadCount(conversationId);
+
+      if (envelope.event === SocketEventNames.approvalRequested) {
+        const approvalId = parseApprovalId(envelope.payload);
+        if (approvalId && !seenApprovalNotifications.current.has(approvalId)) {
+          seenApprovalNotifications.current.add(approvalId);
+          playApprovalSound();
+        }
       }
     };
 
     return () => {
-      ws.close();
-      wsRef.current = null;
+      source.close();
     };
-  }, [incrementConversationUnreadCount, organizationId, resolvedSelected.id, resolvedSelected.type, setMemberActivity]);
+  }, [
+    bootstrap.auth.member?.id,
+    bootstrap.channels,
+    bootstrap.organization?.id,
+    incrementConversationUnreadCount,
+    organizationId,
+    resolvedSelected,
+    setMemberActivity,
+  ]);
+
+  useEffect(() => {
+    if (!organizationId || !bootstrap.auth.member || !resolvedSelected) return;
+    const threadId =
+      resolvedSelected.type === "agent"
+        ? getDirectMessageThreadId(bootstrap.auth.member.id, resolvedSelected.id)
+        : resolvedSelected.id;
+    clearConversationUnreadCount(resolvedSelected.id);
+    void fetch(
+      `/api/conversations/${encodeURIComponent(threadId)}/read?organizationId=${encodeURIComponent(organizationId)}`,
+      { method: "POST" },
+    ).catch(() => undefined);
+  }, [bootstrap.auth.member, clearConversationUnreadCount, organizationId, resolvedSelected]);
 
   return (
     <div className="flex h-full min-h-0">
@@ -292,16 +342,18 @@ export function DragHandle({
       event.preventDefault();
       dragging.current = true;
       const startX = event.clientX;
-      const startPct = parseFloat(
-        getComputedStyle(event.currentTarget.parentElement!).width,
-      );
+      const handle = event.currentTarget;
+      const parent = handle.parentElement;
+      if (!parent?.parentElement) return;
+      const startPct = parseFloat(getComputedStyle(parent).width);
       document.body.style.cursor = "col-resize";
       document.body.style.userSelect = "none";
 
       const onMove = (e: PointerEvent) => {
         if (!dragging.current) return;
-        const parent = (event.currentTarget as HTMLElement).parentElement!;
-        const parentWidth = parent.parentElement!.getBoundingClientRect().width;
+        const container = parent.parentElement;
+        if (!container) return;
+        const parentWidth = container.getBoundingClientRect().width;
         const dx = e.clientX - startX;
         const pct = Math.max(15, Math.min(50, startPct + (dx / parentWidth) * 100));
         onResize(pct);
@@ -374,5 +426,77 @@ function updateRunActivity(
     setMemberActivity(run.agentId, "working");
   } else if (run.status === "completed" || run.status === "failed" || run.status === "cancelled") {
     setMemberActivity(run.agentId, "idle");
+  }
+}
+
+function resolveNotificationConversationId(
+  event: SocketEventName,
+  payload: unknown,
+  currentMemberId: string,
+  channels: BootstrapResponse["channels"],
+): string | undefined {
+  if (event === SocketEventNames.channelMessage) {
+    const body = payload as { channelId?: string };
+    return typeof body.channelId === "string" && channels.some((channel) => channel.id === body.channelId)
+      ? body.channelId
+      : undefined;
+  }
+
+  if (event === SocketEventNames.threadMessage) {
+    const body = payload as { threadId?: string };
+    return typeof body.threadId === "string" && channels.some((channel) => channel.id === body.threadId)
+      ? body.threadId
+      : undefined;
+  }
+
+  if (event === SocketEventNames.dmMessage) {
+    const body = payload as { message?: { threadId?: string } };
+    const threadId = body.message?.threadId;
+    return typeof threadId === "string" ? resolveDmConversationId(threadId, currentMemberId) : undefined;
+  }
+
+  const body = payload as { threadId?: string; run?: { threadId?: string } };
+  const threadId = body.threadId ?? body.run?.threadId;
+  if (typeof threadId !== "string") return undefined;
+  if (threadId.startsWith("dm:")) {
+    return resolveDmConversationId(threadId, currentMemberId);
+  }
+  return channels.some((channel) => channel.id === threadId) ? threadId : undefined;
+}
+
+function parseApprovalId(payload: unknown): string | undefined {
+  const body = payload as { approval?: { id?: string } };
+  return typeof body.approval?.id === "string" ? body.approval.id : undefined;
+}
+
+function resolveDmConversationId(threadId: string, currentMemberId: string): string | undefined {
+  if (!threadId.startsWith("dm:")) return undefined;
+  const [, firstId, secondId] = threadId.split(":", 3);
+  if (firstId === currentMemberId) return secondId;
+  if (secondId === currentMemberId) return firstId;
+  return undefined;
+}
+
+function playApprovalSound(): void {
+  if (typeof window === "undefined") return;
+  const AudioContextCtor =
+    window.AudioContext ?? (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  if (!AudioContextCtor) return;
+  try {
+    const context = new AudioContextCtor();
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
+    oscillator.type = "sine";
+    oscillator.frequency.value = 880;
+    gain.gain.value = 0.0001;
+    oscillator.connect(gain);
+    gain.connect(context.destination);
+    oscillator.start();
+    gain.gain.exponentialRampToValueAtTime(0.12, context.currentTime + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.18);
+    oscillator.stop(context.currentTime + 0.2);
+    void context.close().catch(() => undefined);
+  } catch {
+    // Ignore browsers that block autoplay or AudioContext.
   }
 }

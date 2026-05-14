@@ -238,7 +238,12 @@ export class SpiritService {
     if (active.length === 0) {
       return { kind: 'no-active-spirit' };
     }
-    const target = this.findActiveSpiritForThread(active, input.threadId, input.channelId);
+    const target = this.findActiveSpiritForThread(
+      active,
+      input.organizationId,
+      input.threadId,
+      input.channelId,
+    );
     if (!target) {
       return { kind: 'no-active-spirit' };
     }
@@ -1004,16 +1009,61 @@ export class SpiritService {
     return null;
   }
 
+  /**
+   * Only @mentions on shared org surfaces (not dedicated task-run channels)
+   * may fall back to the newest active spirit when no session surface matches.
+   */
+  private isBroadOrgChannelSurface(
+    organizationId: string,
+    threadId: string,
+    channelId?: string,
+  ): boolean {
+    const getChannel = this.repo.getChannel;
+    if (typeof getChannel !== 'function') return false;
+    const check = (surfaceId: string): boolean => {
+      const ch = getChannel.call(this.repo, organizationId, surfaceId);
+      if (!ch) return false;
+      return ch.kind === 'general' || ch.kind === 'group' || ch.kind === 'dm';
+    };
+    if (check(threadId)) return true;
+    if (channelId && channelId !== threadId && check(channelId)) return true;
+    return false;
+  }
+
   private findActiveSpiritForThread(
     active: ActiveSpiritEntry[],
+    organizationId: string,
     threadId: string,
     channelId?: string,
   ): ActiveSpiritEntry | null {
-    return active.find((entry) => {
+    if (active.length === 0) return null;
+
+    const matchesSurface = (entry: ActiveSpiritEntry): boolean => {
       const session = this.repo.getTaskSession(entry.organizationId, entry.taskSessionId);
       if (!session) return false;
-      return session.channelId === threadId || (channelId !== undefined && session.channelId === channelId);
-    }) ?? null;
+      if (session.channelId === threadId || (channelId !== undefined && session.channelId === channelId)) {
+        return true;
+      }
+      const { origin } = session;
+      if (
+        origin.channelId &&
+        (origin.channelId === threadId || (channelId !== undefined && origin.channelId === channelId))
+      ) {
+        return true;
+      }
+      if (origin.threadId && origin.threadId === threadId) {
+        return true;
+      }
+      return false;
+    };
+
+    const direct = active.find((entry) => matchesSurface(entry));
+    if (direct) return direct;
+
+    if (this.isBroadOrgChannelSurface(organizationId, threadId, channelId)) {
+      return active[0] ?? null;
+    }
+    return null;
   }
 
   private async executePendingApprovedTools(spirit: Spirit): Promise<void> {
