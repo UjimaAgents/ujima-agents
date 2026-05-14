@@ -142,7 +142,11 @@ function makeMcpToolCallModel(matchToolName: (name: string) => boolean): Languag
 
       const tools = (options as { tools?: Record<string, unknown> }).tools ?? {};
       const toolName = Object.keys(tools).find(matchToolName);
-      if (!toolName) throw new Error('expected MCP tool not found in model palette');
+      if (!toolName) {
+        throw new Error(
+          `expected MCP tool not found in model palette; saw ${Object.keys(tools).join(', ')}`,
+        );
+      }
       return {
         stream: simulateReadableStream<LanguageModelV3StreamPart>({
           chunks: [
@@ -684,7 +688,7 @@ describe('SpiritService — Phase 2.A lifecycle', () => {
       }),
     };
     const fixture = await createFixture({
-      staticModel: makeMcpToolCallModel((name) => name.endsWith('__self_note')),
+      staticModel: makeMcpToolCallModel((name) => name.startsWith('mcp__')),
       mcpPool,
       mcpResolver: async () => [
         {
