@@ -21,9 +21,11 @@ import type { ApiRepository } from './repository-reader.js';
 import type { TeamStore } from './team-store.js';
 import type { ToolInvocationInput, ToolService } from './tool-service.js';
 import { applyDashboardTeamOverrides } from './dashboard-team-overrides.js';
+import { appendGoalArtifactToolCall } from './goal-artifact-card.js';
 import { ToolApprovalRequiredError } from './tool-loop-result.js';
 import { extractReasoningChunk } from '../utils/extract-reasoning.js';
 import { runUsedThreadPublishingTool } from './run-reply-guard.js';
+import { goalModeEnabledFromMessage, goalModeSystemPromptSuffix } from './goal-mode-prompt.js';
 
 export interface CreateRunInput {
   organizationId: string;
@@ -396,12 +398,15 @@ export class RunService {
     this.runAbortControllers.set(abortKey, abortController);
 
     try {
+      const goalModeActive = this.isGoalModeActive(run.organizationId, run.threadId ?? '');
+      const systemPromptSuffix = goalModeSystemPromptSuffix(goalModeActive);
       const result = await this.ai.generateRunReply({
         organizationId: run.organizationId,
         agentId: run.agentId,
         threadId: run.threadId ?? '',
         runId: run.id,
         summary: run.summary,
+        systemPromptSuffix,
         abortSignal: abortController.signal,
       });
 
@@ -443,6 +448,10 @@ export class RunService {
       const reasoningContent = extractReasoningChunk(result);
       const skipFinalThreadMessage = runUsedThreadPublishingTool(result);
       if (run.threadId && !skipFinalThreadMessage) {
+        const goalArtifactToolCall = await appendGoalArtifactToolCall(
+          result.steps.flatMap((step: (typeof result.steps)[number]) => step?.toolCalls ?? []),
+          team.workspace.root,
+        );
         this.conversations.publishMessage(
           MessageSchema.parse({
             id: randomUUID(),
@@ -453,6 +462,7 @@ export class RunService {
             senderKind: AGENT_KIND,
             kind: AGENT_KIND,
             content: reply,
+            ...(goalArtifactToolCall ? { toolCalls: [goalArtifactToolCall] } : {}),
             ...(reasoningContent ? { reasoningContent } : {}),
             createdAt: new Date().toISOString(),
           }),
@@ -587,6 +597,13 @@ export class RunService {
 
   private runKey(organizationId: string, runId: string): string {
     return `${organizationId}:${runId}`;
+  }
+
+  private isGoalModeActive(organizationId: string, threadId: string): boolean {
+    if (!threadId) return false;
+    return goalModeEnabledFromMessage(
+      this.repo.getLatestHumanMessageInThread(organizationId, threadId),
+    );
   }
 }
 

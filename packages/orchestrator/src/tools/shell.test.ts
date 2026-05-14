@@ -127,9 +127,9 @@ unixDescribe('shellTool background termination', () => {
       conversations: {} as never,
     }) as Promise<{ status: string; stdout: string }>;
 
-    const race = await Promise.race([
+    const race = await Promise.race<string>([
       waitPromise.then(() => 'resolved'),
-      new Promise((resolve) => setTimeout(() => resolve('pending'), 150)),
+      new Promise<string>((resolve) => setTimeout(() => resolve('pending'), 150)),
     ]);
 
     expect(race).toBe('pending');

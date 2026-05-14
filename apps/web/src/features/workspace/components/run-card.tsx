@@ -1,4 +1,4 @@
-import type { RunState } from "@ujima/shared";
+import type { RunState } from "@ujima/shared/browser";
 import { StatusBadge, type StatusVariant } from "./chat/primitives";
 
 function runStatusVariant(status: RunState["status"]): StatusVariant {

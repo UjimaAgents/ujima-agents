@@ -151,7 +151,6 @@ describe('approval resolution route', () => {
             taskPromoter: {},
             taskSessions: {},
             spirits: {},
-            supervisor: {},
             supervisorTodos: {},
             activeSpirits: {},
           } as any),

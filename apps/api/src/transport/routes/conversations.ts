@@ -240,10 +240,12 @@ export function registerConversationRoutes(
               attachmentIds: req.body.attachmentIds,
               parentMessageId: req.body.parentMessageId,
               ignore: req.body.ignore,
+              metadata: req.body.metadata,
             })
           : conversations.sendMessage({
               ...req.body,
               senderId,
+              metadata: req.body.metadata,
             });
       if (taskPromoter && message.kind === 'human' && message.channelId) {
         try {

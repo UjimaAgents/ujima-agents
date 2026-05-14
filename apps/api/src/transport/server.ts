@@ -16,7 +16,6 @@ import type {
   RunService,
   SettingsService,
   SpiritService,
-  SupervisorService,
   SupervisorTodoService,
   TaskPromoterService,
   TaskSessionService,
@@ -83,7 +82,6 @@ export interface TransportOptions {
       taskPromoter: TaskPromoterService;
       taskSessions: TaskSessionService;
       spirits: SpiritService;
-      supervisor: SupervisorService;
       supervisorTodos: SupervisorTodoService;
       activeSpirits: ActiveSpiritRegistry;
     };

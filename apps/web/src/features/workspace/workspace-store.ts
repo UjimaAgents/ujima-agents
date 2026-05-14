@@ -5,7 +5,7 @@ import type {
   ApprovalRequest,
   Message,
   RunState,
-} from "@ujima/shared";
+} from "@ujima/shared/browser";
 import type { SelectedConversation } from "./types";
 import type { ChatMessageData, ApprovalCardData } from "./components/chat";
 import type { ActivityState } from "./activity-state";

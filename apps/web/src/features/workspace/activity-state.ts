@@ -1,4 +1,4 @@
-import type { RunState } from "@ujima/shared";
+import type { RunState } from "@ujima/shared/browser";
 
 export type ActivityState = "loading" | "working" | "online" | "idle" | "offline" | "error";
 

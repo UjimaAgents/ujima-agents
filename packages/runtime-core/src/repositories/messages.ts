@@ -1,5 +1,5 @@
 import type { SqliteDbHandle as DbHandle } from '@ujima/context-store';
-import { MessageSchema, type Attachment, type Message } from '@ujima/shared';
+import { MessageMetadataSchema, MessageSchema, type Attachment, type Message } from '@ujima/shared';
 import { parseJsonArray, parseJsonArrayRaw, rowString, optionalRowString } from './common.js';
 import { cursorWhereClause, decodeCursor, encodeCursor } from '@ujima/shared';
 import { listMessageAttachmentsForMessageIds } from './attachments.js';
@@ -28,10 +28,11 @@ export function saveMessage(db: DbHandle, message: Message): Message {
       content,
       mentions,
       tool_calls,
+      metadata,
       created_at,
       edited_at,
       deleted_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     payload.id,
     payload.organizationId,
@@ -44,6 +45,7 @@ export function saveMessage(db: DbHandle, message: Message): Message {
     payload.content,
     JSON.stringify(payload.mentions),
     JSON.stringify(payload.toolCalls ?? []),
+    JSON.stringify(payload.metadata ?? {}),
     payload.createdAt,
     payload.editedAt ?? null,
     payload.deletedAt ?? null,
@@ -66,6 +68,7 @@ export function updateMessage(db: DbHandle, message: Message): Message {
             content = ?,
             mentions = ?,
             tool_calls = ?,
+            metadata = ?,
             edited_at = ?,
             deleted_at = ?
       WHERE organization_id = ? AND id = ?`,
@@ -79,6 +82,7 @@ export function updateMessage(db: DbHandle, message: Message): Message {
     payload.content,
     JSON.stringify(payload.mentions),
     JSON.stringify(payload.toolCalls ?? []),
+    JSON.stringify(payload.metadata ?? {}),
     payload.editedAt ?? null,
     payload.deletedAt ?? null,
     payload.organizationId,
@@ -98,6 +102,26 @@ export function getMessage(
     .get(organizationId, messageId) as Row | null;
 
   if (!row) return null;
+  const attachments = listMessageAttachmentsForMessageIds(db, [messageId]).get(messageId);
+  return rowToMessage(row, attachments);
+}
+
+export function getLatestHumanMessageInThread(
+  db: DbHandle,
+  organizationId: string,
+  threadId: string,
+): Message | null {
+  const row = db
+    .prepare(
+      `SELECT * FROM messages
+       WHERE organization_id = ? AND thread_id = ? AND kind = 'human'
+       ORDER BY created_at DESC, id DESC
+       LIMIT 1`,
+    )
+    .get(organizationId, threadId) as Row | null;
+
+  if (!row) return null;
+  const messageId = rowString(row, 'id');
   const attachments = listMessageAttachmentsForMessageIds(db, [messageId]).get(messageId);
   return rowToMessage(row, attachments);
 }
@@ -284,6 +308,7 @@ export function deleteMessages(
 function rowToMessage(row: Row, attachments: Attachment[] = []): Message {
   const kind = rowString(row, 'kind');
   const content = rowString(row, 'content');
+  const metadata = metadataFromRow(row.metadata);
   return MessageSchema.parse({
     id: rowString(row, 'id'),
     organizationId: rowString(row, 'organization_id'),
@@ -297,10 +322,22 @@ function rowToMessage(row: Row, attachments: Attachment[] = []): Message {
     mentions: parseJsonArray(row.mentions),
     toolCalls: parseJsonArrayRaw(row.tool_calls),
     attachments,
+    ...(metadata ? { metadata } : {}),
     createdAt: rowString(row, 'created_at'),
     editedAt: optionalRowString(row, 'edited_at'),
     deletedAt: optionalRowString(row, 'deleted_at'),
   });
+}
+
+function metadataFromRow(raw: unknown): Message['metadata'] {
+  if (typeof raw !== 'string' || raw.length === 0 || raw === '{}') return undefined;
+  try {
+    const result = MessageMetadataSchema.safeParse(JSON.parse(raw));
+    if (!result.success || result.data === undefined) return undefined;
+    return Object.keys(result.data).length > 0 ? result.data : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function normalizeSearchTerms(queryText: string): string[] {

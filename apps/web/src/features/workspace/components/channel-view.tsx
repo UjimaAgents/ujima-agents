@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { buildReasoningTraceSteps } from "../reasoning-trace";
 import { File, FileArchive, FileAudio, FileImage, FileText, FileVideo, SquarePen } from "lucide-react";
 import type { BootstrapResponse } from "@ujima/api-schema";
@@ -18,8 +18,8 @@ import {
   type ChatTab,
   type ChatMessageData,
 } from "./chat";
-import type { RunState } from "@ujima/shared";
-import { getDirectMessageThreadId } from "@ujima/shared";
+import type { RunState } from "@ujima/shared/browser";
+import { getDirectMessageThreadId } from "@ujima/shared/browser";
 import { useWorkspaceStore } from "../workspace-store";
 import { EmptyChat } from "./empty-chat";
 import { TypingIndicator } from "./typing-indicator";
@@ -50,6 +50,21 @@ const ACTIVE_RUN_STATES: RunState["status"][] = [
   "waiting_for_approval",
 ];
 
+function readGoalModePreference(key: string): boolean {
+  try {
+    return localStorage.getItem(key) === "true";
+  } catch {
+    return false;
+  }
+}
+
+function writeGoalModePreference(key: string, active: boolean): void {
+  try {
+    if (active) localStorage.setItem(key, "true");
+    else localStorage.removeItem(key);
+  } catch {}
+}
+
 interface ChannelViewProps {
   bootstrap: BootstrapResponse;
   conversation: SelectedConversation;
@@ -70,6 +85,19 @@ export function ChannelView({
   const bottomRef = useRef<HTMLDivElement>(null);
   const previousFeedSignal = useRef("");
   const feed = useConversationSync(bootstrap, conversation);
+
+  const goalModeKey = `ujima:goalMode:${bootstrap.organization?.id ?? "unknown"}:${conversation.id}`;
+  const [goalMode, setGoalMode] = useState(() =>
+    typeof window === "undefined" ? false : readGoalModePreference(goalModeKey),
+  );
+  useEffect(() => {
+    writeGoalModePreference(goalModeKey, goalMode);
+  }, [goalMode, goalModeKey]);
+  const handleGoalModeChange = useCallback(
+    (active: boolean) => setGoalMode(active),
+    [],
+  );
+
   const currentThreadId = useMemo(() => {
     const senderId = bootstrap.auth.member?.id;
     if (!senderId) return undefined;
@@ -524,6 +552,8 @@ export function ChannelView({
         )}
         <ChatInput
           organizationId={organizationId}
+          goalMode={goalMode}
+          onGoalModeChange={handleGoalModeChange}
           onCommand={async (command) => {
             await feed.archiveConversation(command);
             setReplyTo(null);
@@ -544,11 +574,11 @@ export function ChannelView({
           onCancelReply={() => setReplyTo(null)}
           stoppableRunId={stoppableRunId}
           onStopRun={stopAgentRun}
-          onSend={(content, attachmentIds) => {
+          onSend={(content, attachmentIds, metadata) => {
             if (isAgent) {
               openDetailsForAgentMessage();
             }
-            const promise = feed.sendMessage(content, replyTo?.id, attachmentIds);
+            const promise = feed.sendMessage(content, replyTo?.id, attachmentIds, metadata);
             setReplyTo(null);
             return promise;
           }}

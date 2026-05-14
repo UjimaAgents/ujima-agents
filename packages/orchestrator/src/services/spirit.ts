@@ -11,13 +11,20 @@ import {
   memberRoom,
   orgRoom,
   runRoom,
+  threadRoom,
   type MessageCard,
+  type Message,
   type MessageToolCall,
   type Spirit,
   type SpiritRole,
+  type TaskSession,
   AGENT_KIND,
 } from '@ujima/shared';
-import { buildAgentSystemPrompt, type AgentTeamHandle } from '@ujima/framework';
+import {
+  MESSAGE_TOOL_USAGE_GUIDANCE,
+  buildAgentSystemPrompt,
+  type AgentTeamHandle,
+} from '@ujima/framework';
 import { requireOrganization } from '../utils/require-organization.js';
 import { requireTeam } from '../utils/require-team.js';
 import { runAgentLoop } from './agent-loop.js';
@@ -32,7 +39,7 @@ import {
   ALWAYS_AVAILABLE_AGENT_TOOLS,
   SUPERVISOR_TOOL_ALLOWLIST,
 } from '../tools/index.js';
-import { ActiveSpiritRegistry, isAliveStatus } from './active-spirit-registry.js';
+import { ActiveSpiritRegistry, isAliveStatus, type ActiveSpiritEntry } from './active-spirit-registry.js';
 import type { ConversationService } from './conversation.js';
 import type { RealtimeService } from './context.js';
 import type { ApiRepository } from './repository-reader.js';
@@ -42,28 +49,15 @@ import { ToolApprovalRequiredError } from './tool-loop-result.js';
 import { extractReasoningChunk } from '../utils/extract-reasoning.js';
 import { buildRunTranscript } from '../utils/run-transcript.js';
 import type { ToolInvocationInput } from './tool-service.js';
+import { appendGoalArtifactToolCall } from './goal-artifact-card.js';
+import { goalModeEnabledFromMessage, goalModeSystemPromptSuffix } from './goal-mode-prompt.js';
+import {
+  createMessageCursor,
+  isMessageAfterCursor,
+  moveCursor,
+} from '../utils/message-interrupts.js';
 
-// ----------------------------------------------------------------------
-// SpiritService — Phase 2.A.4
-//
-// A "spirit" is the per-{task_session_id, member_id, role} runtime
-// instance that drives an agent through a task session. The service
-// owns the lifecycle (spawn / get / list / updateStatus / retire) and
-// the multi-turn AI SDK execution path that landed in Phase 2.5.
-//
-// Spirit-role split:
-//   * worker     — the multi-turn loop owning the work
-//   * supervisor — the lazy DM/@mention answerer (called by SupervisorService)
-//
-// Spawn registers the spirit in the in-memory ActiveSpiritRegistry so
-// the supervisor gate has O(1) "is this member alive?" lookups.
-// Retire / completion / failure all unregister.
-//
-// The execution path intentionally does NOT depend on the legacy MCP
-// `runAiSdkLoop` (that wraps a single MCPConnection). Spirit turns go
-// through the orchestrator ToolService so the existing IAM matrix,
-// approval gate, and audit trail all apply.
-// ----------------------------------------------------------------------
+// SpiritService: per-(session, member, role) agent runtime (spawn, registry, worker loop, supervisor alerts).
 
 export interface ModelResolverInput {
   organizationId: string;
@@ -71,13 +65,7 @@ export interface ModelResolverInput {
   role: SpiritRole;
 }
 
-/**
- * Resolves an AI SDK LanguageModel for a worker or supervisor turn. The
- * default impl walks the team / repo provider credentials; tests inject
- * a custom resolver that returns a `MockLanguageModelV3`. The cheaper-
- * tier supervisor pick is encapsulated here so production is one
- * config field flip away from a custom routing strategy.
- */
+/** Resolves the AI SDK model for a worker or supervisor turn (tests inject mocks). */
 export type ModelResolver = (input: ModelResolverInput) => LanguageModel | Promise<LanguageModel>;
 
 export interface SpiritServiceOptions {
@@ -90,17 +78,15 @@ export interface SpiritServiceOptions {
   /** Custom model resolver. */
   modelResolver?: ModelResolver;
   /**
-   * Inject the in-memory active-spirit registry. Optional — when not
-   * provided, the service spins up its own. Sharing one across
-   * `SpiritService` + `SupervisorService` is the production pattern.
+   * Shared registry (optional). Production wires one registry across services that coordinate alerts.
    */
   registry?: ActiveSpiritRegistry;
   /**
-   * Optional message publisher for task-session completion/failure
-   * summaries. When omitted, SpiritService falls back to direct
-   * repo/realtime writes for system messages.
+   * Optional publisher for task-session summaries; otherwise SpiritService writes system messages directly.
    */
   conversations?: ConversationService;
+  supervisorDebounceMs?: number;
+  supervisorTurnCapPerSession?: number;
 }
 
 export interface SpawnSpiritInput {
@@ -116,6 +102,8 @@ export interface RunSpiritInput {
   memberId: string;
   /** Optional extra prompt — supervisor uses this to carry the alert context. */
   extraPrompt?: string;
+  /** Optional suffix appended to the built system prompt. */
+  systemPromptSuffix?: string;
   /** Override the iteration cap for a single call (e.g. 1 for supervisor). */
   maxIterations?: number;
   /** Restrict the tool palette to a specific allowlist (supervisor mode). */
@@ -132,6 +120,31 @@ export interface RunSpiritOutcome {
   tokensUsed: number;
 }
 
+export interface SpiritAlertInput {
+  organizationId: string;
+  memberId: string;
+  channelId?: string;
+  messageId: string;
+  threadId: string;
+  byMemberId: string;
+  reason: string;
+}
+
+export interface SpiritSupervisorReplyOutcome {
+  taskSessionId: string;
+  message: Message;
+  fallback: boolean;
+  reason: string;
+}
+
+export type SpiritAlertDispatchResult =
+  | { kind: 'replied'; outcome: SpiritSupervisorReplyOutcome }
+  | { kind: 'no-active-spirit' }
+  | { kind: 'debounced' };
+
+const DEFAULT_SUPERVISOR_DEBOUNCE_MS = 2_000;
+const DEFAULT_SUPERVISOR_TURN_CAP_PER_SESSION = 10;
+
 export class SpiritService {
   private readonly maxIterationsPerRun: number;
   private readonly maxOutputTokens: number | undefined;
@@ -139,6 +152,10 @@ export class SpiritService {
   private readonly modelResolver: ModelResolver;
   private readonly registry: ActiveSpiritRegistry;
   private readonly conversations?: ConversationService;
+  private readonly supervisorDebounceMs: number;
+  private readonly supervisorTurnCapPerSession: number;
+  private readonly supervisorMutexes = new Map<string, Promise<unknown>>();
+  private readonly supervisorLastAlertAt = new Map<string, number>();
 
   constructor(
     private readonly teamStore: TeamStore,
@@ -153,6 +170,9 @@ export class SpiritService {
     this.modelResolver = options.modelResolver ?? this.defaultModelResolver();
     this.registry = options.registry ?? new ActiveSpiritRegistry();
     this.conversations = options.conversations;
+    this.supervisorDebounceMs = options.supervisorDebounceMs ?? DEFAULT_SUPERVISOR_DEBOUNCE_MS;
+    this.supervisorTurnCapPerSession =
+      options.supervisorTurnCapPerSession ?? DEFAULT_SUPERVISOR_TURN_CAP_PER_SESSION;
   }
 
   /**
@@ -207,6 +227,44 @@ export class SpiritService {
   /** Test/observability hook for the registry. */
   getActiveRegistry(): ActiveSpiritRegistry {
     return this.registry;
+  }
+
+  /**
+   * Unified member-alert dispatch. This replaces the previous split
+   * supervisor runtime path by routing alert handling through SpiritService.
+   */
+  async handleAlert(input: SpiritAlertInput): Promise<SpiritAlertDispatchResult> {
+    const active = this.registry.getActiveForMember(input.organizationId, input.memberId);
+    if (active.length === 0) {
+      return { kind: 'no-active-spirit' };
+    }
+    const target = this.findActiveSpiritForThread(active, input.threadId, input.channelId);
+    if (!target) {
+      return { kind: 'no-active-spirit' };
+    }
+    if (this.shouldDebounceSupervisorAlert(input.organizationId, input.memberId, target.taskSessionId)) {
+      return { kind: 'debounced' };
+    }
+
+    this.supervisorLastAlertAt.set(
+      this.supervisorDebounceKey(input.organizationId, input.memberId, target.taskSessionId),
+      Date.now(),
+    );
+
+    const mutexKey = this.supervisorMutexKey(input.organizationId, input.memberId, target.taskSessionId);
+    const previous = this.supervisorMutexes.get(mutexKey) ?? Promise.resolve();
+    const next = previous.then(() => this.runSupervisorAlertTurn(target.taskSessionId, input));
+    this.supervisorMutexes.set(
+      mutexKey,
+      next.catch(() => undefined).finally(() => {
+        if (this.supervisorMutexes.get(mutexKey) === next) {
+          this.supervisorMutexes.delete(mutexKey);
+        }
+      }),
+    );
+
+    const outcome = await next;
+    return { kind: 'replied', outcome };
   }
 
   // ----------------- lifecycle: spawn / get / list / status / retire ----
@@ -454,6 +512,7 @@ export class SpiritService {
       .slice()
       .reverse();
     const messages = toModelMessages(recent, member.id);
+    const interruptCursor = createMessageCursor(recent);
     if (input.extraPrompt) {
       messages.push({ role: 'user', content: input.extraPrompt });
     } else {
@@ -477,6 +536,12 @@ export class SpiritService {
       team.channels,
       organization.organizationChart,
     );
+    const systemPromptSuffix = this.resolveGoalSystemPromptSuffix(
+      input.organizationId,
+      input.taskSessionId,
+      input.systemPromptSuffix,
+    );
+    const systemPrompt = systemPromptSuffix ? `${system}\n\n${systemPromptSuffix}` : system;
 
     // All validation passed. Now commit the spirit.
     const spirit = this.spawn({
@@ -532,12 +597,30 @@ export class SpiritService {
     try {
       const result = await runAgentLoop({
         model,
-        system,
+        system: systemPrompt,
         messages,
         tools: toolDefs,
         stopWhen: stepCountIs(maxIterations),
         ...(this.maxOutputTokens !== undefined ? { maxOutputTokens: this.maxOutputTokens } : {}),
         temperature: this.temperature,
+        loadInterruptMessages: () => {
+          const page = this.repo
+            .listChannelMessages(input.organizationId, session.channelId, { limit: 100 })
+            .data
+            .slice()
+            .reverse();
+          const interrupts = page.filter(
+            (message) =>
+              message.kind === 'human' &&
+              message.senderId !== member.id &&
+              isMessageAfterCursor(message, interruptCursor),
+          );
+          const latest = page.at(-1);
+          if (latest) {
+            moveCursor(interruptCursor, latest);
+          }
+          return toModelMessages(interrupts, member.id);
+        },
       });
       const { steps, usage } = result;
 
@@ -558,6 +641,11 @@ export class SpiritService {
         }
 
         const toolCalls = this.toMessageToolCalls(stepToolCalls, stepToolResults, spirit);
+        const goalArtifactToolCall = await appendGoalArtifactToolCall(
+          stepToolCalls,
+          team.workspace.root,
+        );
+        const messageToolCalls = goalArtifactToolCall ? [...toolCalls, goalArtifactToolCall] : toolCalls;
         const reasoningContent = extractReasoningChunk(step);
         const message = MessageSchema.parse({
           id: randomUUID(),
@@ -568,7 +656,7 @@ export class SpiritService {
           senderKind: AGENT_KIND,
           kind: AGENT_KIND,
           content: stepText || `[tool turn — ${stepToolCalls.length} call(s)]`,
-          toolCalls,
+          toolCalls: messageToolCalls,
           ...(reasoningContent ? { reasoningContent } : {}),
           createdAt: new Date().toISOString(),
         });
@@ -698,6 +786,164 @@ export class SpiritService {
     }
   }
 
+  private resolveGoalSystemPromptSuffix(
+    organizationId: string,
+    taskSessionId: string,
+    systemPromptSuffix?: string,
+  ): string | undefined {
+    const session = this.repo.getTaskSession(organizationId, taskSessionId) as TaskSession | null;
+    const originMessageId = session?.origin?.messageId;
+    const originMessage = originMessageId ? this.repo.getMessage(organizationId, originMessageId) : null;
+    const goalSuffix = goalModeSystemPromptSuffix(goalModeEnabledFromMessage(originMessage));
+    if (goalSuffix && systemPromptSuffix) {
+      return `${systemPromptSuffix}\n\n${goalSuffix}`;
+    }
+    return systemPromptSuffix ?? goalSuffix;
+  }
+
+  private async runSupervisorAlertTurn(
+    taskSessionId: string,
+    input: SpiritAlertInput,
+  ): Promise<SpiritSupervisorReplyOutcome> {
+    const session = this.repo.getTaskSession(input.organizationId, taskSessionId);
+    if (!session) {
+      const fallback = this.publishSupervisorFallback(taskSessionId, input, 'Task session not found');
+      return { taskSessionId, message: fallback, fallback: true, reason: 'session-missing' };
+    }
+    if (session.supervisorTurnCount >= this.supervisorTurnCapPerSession) {
+      const fallback = this.publishSupervisorCapMessage(taskSessionId, input);
+      return { taskSessionId, message: fallback, fallback: true, reason: 'cap-reached' };
+    }
+
+    const sourceMessage = this.repo.getMessage(input.organizationId, input.messageId);
+    const goalModeSuffix = goalModeSystemPromptSuffix(goalModeEnabledFromMessage(sourceMessage));
+
+    try {
+      const outcome = await this.run({
+        organizationId: input.organizationId,
+        taskSessionId,
+        memberId: input.memberId,
+        role: 'supervisor',
+        maxIterations: 2,
+        extraPrompt: this.buildSupervisorAlertContext(input),
+        systemPromptSuffix: goalModeSuffix,
+      });
+      this.repo.saveTaskSession({
+        ...session,
+        supervisorTurnCount: session.supervisorTurnCount + 1,
+        updatedAt: new Date().toISOString(),
+      });
+      const replyText = outcome.finalText.trim() || `Currently on step ${session.status} of #${session.slug}.`;
+      const message = this.publishSupervisorReply(taskSessionId, input, replyText, false);
+      return { taskSessionId, message, fallback: false, reason: 'ok' };
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      const message = this.publishSupervisorFallback(taskSessionId, input, reason);
+      return { taskSessionId, message, fallback: true, reason };
+    }
+  }
+
+  private buildSupervisorAlertContext(input: SpiritAlertInput): string {
+    const sourceMessage = this.repo.getMessage(input.organizationId, input.messageId);
+    const body = sourceMessage?.content ?? '';
+    return [
+      'You are answering a quick supervisor question or carrying out a direct action request.',
+      ...MESSAGE_TOOL_USAGE_GUIDANCE,
+      'If the request is only asking for status, give a short one-paragraph update.',
+      '',
+      `Reason: ${input.reason}`,
+      `From: ${input.byMemberId}`,
+      sourceMessage ? `In channel: ${sourceMessage.channelId ?? 'dm'}` : '',
+      body ? `Question: ${body}` : '',
+    ]
+      .filter((line) => line.length > 0)
+      .join('\n');
+  }
+
+  private publishSupervisorReply(
+    taskSessionId: string,
+    input: SpiritAlertInput,
+    body: string,
+    fallback: boolean,
+  ): Message {
+    if (!this.conversations) {
+      throw new Error('Conversation service is required for supervisor replies');
+    }
+    const sourceMessage = this.repo.getMessage(input.organizationId, input.messageId);
+    const channelId = sourceMessage?.channelId ?? input.channelId;
+    if (!channelId) {
+      return this.conversations.sendSelfNote({
+        organizationId: input.organizationId,
+        memberId: input.memberId,
+        body,
+      });
+    }
+    const message = MessageSchema.parse({
+      id: randomUUID(),
+      organizationId: input.organizationId,
+      threadId: sourceMessage?.threadId ?? input.threadId,
+      channelId,
+      parentMessageId: sourceMessage?.id,
+      senderId: input.memberId,
+      senderKind: AGENT_KIND,
+      kind: AGENT_KIND,
+      content: body,
+      createdAt: new Date().toISOString(),
+    });
+    this.conversations.publishMessage(message, []);
+    this.realtime.emit(
+      SocketEventNames.supervisorReplied,
+      {
+        organizationId: input.organizationId,
+        taskSessionId,
+        memberId: input.memberId,
+        message,
+        reason: fallback ? 'fallback' : input.reason,
+      },
+      [orgRoom(input.organizationId), channelRoom(channelId), memberRoom(input.memberId)],
+    );
+    return message;
+  }
+
+  private publishSupervisorFallback(
+    taskSessionId: string,
+    input: SpiritAlertInput,
+    reason: string,
+  ): Message {
+    const session = this.repo.getTaskSession(input.organizationId, taskSessionId);
+    const slug = session?.slug ?? taskSessionId;
+    const summary = session?.summary?.trim() || (session ? `step ${session.status}` : 'in progress');
+    const body = `Currently on ${summary} of #${slug}. Full activity in #${slug}. (supervisor fallback: ${reason})`;
+    return this.publishSupervisorReply(taskSessionId, input, body, true);
+  }
+
+  private publishSupervisorCapMessage(taskSessionId: string, input: SpiritAlertInput): Message {
+    const session = this.repo.getTaskSession(input.organizationId, taskSessionId);
+    const slug = session?.slug ?? taskSessionId;
+    const body = `Supervisor turn cap reached for #${slug} (${this.supervisorTurnCapPerSession} turns). Full activity in #${slug}.`;
+    return this.publishSupervisorReply(taskSessionId, input, body, true);
+  }
+
+  private supervisorMutexKey(organizationId: string, memberId: string, taskSessionId: string): string {
+    return `${organizationId}:${memberId}:${taskSessionId}:supervisor`;
+  }
+
+  private supervisorDebounceKey(organizationId: string, memberId: string, taskSessionId: string): string {
+    return `${organizationId}:${memberId}:${taskSessionId}`;
+  }
+
+  private shouldDebounceSupervisorAlert(
+    organizationId: string,
+    memberId: string,
+    taskSessionId: string,
+  ): boolean {
+    const last = this.supervisorLastAlertAt.get(
+      this.supervisorDebounceKey(organizationId, memberId, taskSessionId),
+    );
+    if (last === undefined) return false;
+    return Date.now() - last < this.supervisorDebounceMs;
+  }
+
   async resumeAfterApproval(
     organizationId: string,
     runId: string,
@@ -756,6 +1002,18 @@ export class SpiritService {
       if (spirit) return spirit;
     }
     return null;
+  }
+
+  private findActiveSpiritForThread(
+    active: ActiveSpiritEntry[],
+    threadId: string,
+    channelId?: string,
+  ): ActiveSpiritEntry | null {
+    return active.find((entry) => {
+      const session = this.repo.getTaskSession(entry.organizationId, entry.taskSessionId);
+      if (!session) return false;
+      return session.channelId === threadId || (channelId !== undefined && session.channelId === channelId);
+    }) ?? null;
   }
 
   private async executePendingApprovedTools(spirit: Spirit): Promise<void> {
@@ -963,7 +1221,7 @@ export class SpiritService {
       organizationId: string;
       channelId: string;
       slug: string;
-      origin: { channelId?: string };
+      origin: { threadId?: string; channelId?: string };
     },
     outcome: 'completed' | 'failed' | 'cancelled',
     summary: string,
@@ -992,19 +1250,28 @@ export class SpiritService {
     const general = this.repo
       .listAllChannels(session.organizationId)
       .find((channel) => channel.kind === 'general' || channel.id === 'general' || channel.name === 'general');
-    const linkbackChannelIds = new Set<string>();
+    const linkbackTargets = new Map<string, { threadId: string; channelId?: string }>();
     if (general && general.id !== session.channelId) {
-      linkbackChannelIds.add(general.id);
+      linkbackTargets.set(general.id, { threadId: general.id, channelId: general.id });
     }
     if (session.origin.channelId && session.origin.channelId !== session.channelId) {
-      linkbackChannelIds.add(session.origin.channelId);
+      linkbackTargets.set(session.origin.channelId, {
+        threadId: session.origin.channelId,
+        channelId: session.origin.channelId,
+      });
+    }
+    if (session.origin.threadId && session.origin.threadId !== session.channelId) {
+      linkbackTargets.set(session.origin.threadId, {
+        threadId: session.origin.threadId,
+        channelId: session.origin.channelId,
+      });
     }
 
-    for (const channelId of linkbackChannelIds) {
+    for (const target of linkbackTargets.values()) {
       this.publishSystemCardMessage({
         organizationId: session.organizationId,
-        threadId: channelId,
-        channelId,
+        threadId: target.threadId,
+        channelId: target.channelId,
         content: `Task #${session.slug} ${statusVerb} — see #${session.slug}`,
         card,
       });
@@ -1014,7 +1281,7 @@ export class SpiritService {
   private publishSystemCardMessage(input: {
     organizationId: string;
     threadId: string;
-    channelId: string;
+    channelId?: string;
     content: string;
     card: MessageCard;
   }): void {
@@ -1046,13 +1313,21 @@ export class SpiritService {
 
     this.repo.saveMessage(message);
     this.realtime.emit(
-      SocketEventNames.channelMessage,
-      {
-        organizationId: input.organizationId,
-        channelId: input.channelId,
-        message,
-      },
-      [orgRoom(input.organizationId), channelRoom(input.channelId)],
+      input.channelId ? SocketEventNames.channelMessage : SocketEventNames.threadMessage,
+      input.channelId
+        ? {
+            organizationId: input.organizationId,
+            channelId: input.channelId,
+            message,
+          }
+        : {
+            organizationId: input.organizationId,
+            threadId: input.threadId,
+            message,
+          },
+      input.channelId
+        ? [orgRoom(input.organizationId), channelRoom(input.channelId)]
+        : [orgRoom(input.organizationId), threadRoom(input.threadId)],
     );
   }
 

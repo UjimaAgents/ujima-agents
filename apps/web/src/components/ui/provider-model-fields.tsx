@@ -1,6 +1,6 @@
 import { Select } from "@/components/ui/select";
 import { FieldShell } from "@/components/ui/form-fields";
-import { defaultModelForProvider, getModelOptionsForProvider } from "@ujima/shared";
+import { defaultModelForProvider, getModelOptionsForProvider } from "@ujima/shared/browser";
 import { PROVIDER_OPTIONS } from "@/features/onboarding/provider-catalog";
 import { useMemo } from "react";
 
