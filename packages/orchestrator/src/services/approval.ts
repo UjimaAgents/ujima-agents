@@ -2,11 +2,9 @@ import { randomUUID } from 'node:crypto';
 import {
   ApprovalRequestSchema,
   SocketEventNames,
-  formatApprovalRelayMarkdown,
   orgRoom,
   runRoom,
   threadRoom,
-  getDirectMessageThreadId,
   type ApprovalRequest,
   type ResourceType,
   type ToolAction,

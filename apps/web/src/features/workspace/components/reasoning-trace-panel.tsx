@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ArrowDown } from "lucide-react";
 import { RunTraceListResponseSchema, type RunTraceEntry } from "@ujima/api-schema";
 import { buildHistoricalTraceSteps } from "../reasoning-trace";
@@ -188,7 +188,7 @@ export function ReasoningTracePanel({
       });
       return () => cancelAnimationFrame(frame);
     }
-  }, [history, liveSteps]);
+  }, [history, liveSteps, showScrollBottom]);
 
   const filteredLiveSteps = useMemo(() => {
     if (filter === "all") return liveSteps;

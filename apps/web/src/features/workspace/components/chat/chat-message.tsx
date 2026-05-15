@@ -22,6 +22,9 @@ export interface ChatMessageData {
   content: string;
   kind?: "human" | "agent" | "system";
   createdAt?: string;
+  threadId?: string;
+  channelId?: string;
+  streamRunId?: string;
   pinned?: boolean;
   mentionNames?: string[];
   attachments?: {

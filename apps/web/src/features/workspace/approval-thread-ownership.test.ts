@@ -8,6 +8,7 @@ describe("pendingApprovalVisibleInChannelView", () => {
   it("hides Ivy approval in Ava agent tab when threadId points at Ivy DM", () => {
     const visible = pendingApprovalVisibleInChannelView(
       {
+        id: "approval-1",
         status: "pending",
         requestedByMemberId: "ivy",
         requestedBy: "Ivy",
@@ -24,6 +25,7 @@ describe("pendingApprovalVisibleInChannelView", () => {
   it("shows Ivy approval in Ivy agent tab for same thread", () => {
     const visible = pendingApprovalVisibleInChannelView(
       {
+        id: "approval-2",
         status: "pending",
         requestedByMemberId: "ivy",
         requestedBy: "Ivy",
@@ -40,6 +42,7 @@ describe("pendingApprovalVisibleInChannelView", () => {
   it("falls back to run.threadId for legacy approvals without threadId on approval", () => {
     const visible = pendingApprovalVisibleInChannelView(
       {
+        id: "approval-3",
         status: "pending",
         requestedByMemberId: "ivy",
         requestedBy: "Ivy",
@@ -55,6 +58,7 @@ describe("pendingApprovalVisibleInChannelView", () => {
   it("hides legacy approval when run thread does not match current DM", () => {
     const visible = pendingApprovalVisibleInChannelView(
       {
+        id: "approval-4",
         status: "pending",
         requestedByMemberId: "ivy",
         requestedBy: "Ivy",

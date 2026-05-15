@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { loadAgentTeam } from '@ujima/framework';
-import { AGENT_KIND } from '@ujima/shared';
+import { AGENT_KIND, SocketEventNames, type RunState } from '@ujima/shared';
 import { RunService } from './run.js';
 import { ToolApprovalRequiredError } from './tool-loop-result.js';
 
@@ -211,6 +211,99 @@ describe('RunService', () => {
 
     expect(capturedSuffix).toContain('Goal Mode (Active)');
     expect(capturedSuffix).toContain('goal artifact file');
+  });
+
+  it('streams agent chunks to realtime while the run is still executing', async () => {
+    const organizationId = 'org-1';
+    const runId = 'run-1';
+    const agentId = 'Quinn Mason';
+    const threadId = 'thread-1';
+    const emits: Array<{ event: string; payload: unknown }> = [];
+    let run: RunState = {
+      id: runId,
+      organizationId,
+      agentId,
+      threadId,
+      status: 'queued',
+      step: 'queued',
+      summary: 'Run queued',
+      startedAt: '2026-05-04T19:07:08.071Z',
+    };
+    const repo = {
+      getMember: () => ({
+        id: agentId,
+        organizationId,
+        name: agentId,
+        kind: AGENT_KIND,
+        roleName: 'backend-engineer',
+      }),
+      saveRun: (next: RunState) => {
+        run = next;
+        return next;
+      },
+      getRun: () => run,
+      getProviderCredential: () => null,
+      getWorkspaceSetting: () => null,
+      listMembers: () => [],
+      listPendingApprovals: () => [],
+      listMessages: () => ({ data: [], hasMore: false }),
+      getLatestHumanMessageInThread: () => null,
+      getSpiritByRunId: () => null,
+      getThread: () => ({ channelId: 'channel-1' }),
+    } as never;
+
+    const service = new RunService(
+      {
+        getTeam: () =>
+          loadAgentTeam({
+            name: 'Timetotest',
+            workspace: { root: '/workspace' },
+            roles: [
+              {
+                name: 'backend-engineer',
+                title: 'Backend Engineer',
+                instructions: 'Work on backend.',
+                tools: ['shell'],
+              },
+            ],
+            agents: [{ name: agentId, roleName: 'backend-engineer' }],
+          }),
+        setTeam: () => undefined,
+      } as never,
+      repo,
+      { emit: (event: string, payload: unknown) => emits.push({ event, payload }) } as never,
+      { publishMessage: () => undefined } as never,
+      {
+        generateRunReply: async (input: {
+          onChunk?: (chunk: { kind: 'text' | 'reasoning'; delta: string }) => PromiseLike<void> | void;
+        }) => {
+          await input.onChunk?.({ kind: 'reasoning', delta: 'Thinking…' });
+          await input.onChunk?.({ kind: 'text', delta: 'Hello' });
+          return { text: 'Hello', toolResults: [], steps: [] };
+        },
+      } as never,
+      { allowRun: () => undefined, invoke: async () => ({ ok: true }) } as never,
+    );
+
+    const result = await (service as any).advanceRun(run);
+
+    expect(result.status).toBe('completed');
+    expect(
+      emits.some(
+        ({ event, payload }) =>
+          event === SocketEventNames.runChunk &&
+          payload.kind === 'reasoning' &&
+          payload.delta === 'Thinking…',
+      ),
+    ).toBe(true);
+    expect(
+      emits.some(
+        ({ event, payload }) =>
+          event === SocketEventNames.runChunk &&
+          payload.kind === 'text' &&
+          payload.delta === 'Hello',
+      ),
+    ).toBe(true);
   });
 
   it('replays approved tools before the next turn when approval lands mid-run', async () => {

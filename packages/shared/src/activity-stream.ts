@@ -3,6 +3,7 @@ export interface ActivityEvent {
   type: string;
   publisher: string;
   timestamp: string;
+  order?: number;
   task_id?: string;
   session_id?: string;
   payload?: unknown;
@@ -62,6 +63,20 @@ export interface AppendOptions {
   max?: number;
 }
 
+export function compareActivityEvents(a: ActivityEvent, b: ActivityEvent): number {
+  if (typeof a.order === "number" && typeof b.order === "number" && a.order !== b.order) {
+    return a.order - b.order;
+  }
+
+  const at = Date.parse(a.timestamp);
+  const bt = Date.parse(b.timestamp);
+  if (!Number.isNaN(at) && !Number.isNaN(bt) && at !== bt) {
+    return at - bt;
+  }
+
+  return a.event_id.localeCompare(b.event_id);
+}
+
 export function appendEvents(
   current: ActivityEvent[],
   incoming: ActivityEvent[],
@@ -75,12 +90,7 @@ export function appendEvents(
     seen.add(e.event_id);
     merged.push(e);
   }
-  merged.sort((a, b) => {
-    const at = Date.parse(a.timestamp);
-    const bt = Date.parse(b.timestamp);
-    if (Number.isNaN(at) || Number.isNaN(bt)) return 0;
-    return at - bt;
-  });
+  merged.sort(compareActivityEvents);
   const max = options.max;
   if (max !== undefined && merged.length > max) {
     return merged.slice(merged.length - max);

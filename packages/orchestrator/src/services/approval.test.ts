@@ -23,7 +23,6 @@ describe('ApprovalService', () => {
     let saved = 0;
     let emitted = 0;
     let relayThreadId: string | undefined;
-    let relayContent: string | undefined;
     let savedPayload: ApprovalRequest | undefined;
     const repo = {
       listPendingApprovals: () => [],
@@ -48,7 +47,6 @@ describe('ApprovalService', () => {
         content: string;
       }) => {
         relayThreadId = `dm:${[input.memberIdA, input.memberIdB].sort().join(':')}`;
-        relayContent = input.content;
         return {
           id: 'relay-message-1',
           organizationId: input.organizationId,

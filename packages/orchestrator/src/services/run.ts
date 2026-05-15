@@ -13,6 +13,7 @@ import {
   type Message,
   type RunStep,
 } from '@ujima/shared';
+import type { AgentLoopChunk } from './agent-loop.js';
 import type { AiService } from '../ai-service.js';
 import { requireTeam } from '../utils/require-team.js';
 import type { RealtimeService } from './context.js';
@@ -316,6 +317,25 @@ export class RunService {
     return rooms;
   }
 
+  private emitRunChunk(run: RunState, chunk: AgentLoopChunk): void {
+    if (!run.threadId || !chunk.delta) {
+      return;
+    }
+
+    this.realtime.emit(
+      SocketEventNames.runChunk,
+      {
+        organizationId: run.organizationId,
+        runId: run.id,
+        threadId: run.threadId,
+        agentId: run.agentId,
+        kind: chunk.kind,
+        delta: chunk.delta,
+      },
+      this.getRooms(run),
+    );
+  }
+
   private listAllThreadMessages(organizationId: string, threadId: string): Message[] {
     const messages: Message[] = [];
     let cursor: string | undefined = undefined;
@@ -400,6 +420,8 @@ export class RunService {
     try {
       const goalModeActive = this.isGoalModeActive(run.organizationId, run.threadId ?? '');
       const systemPromptSuffix = goalModeSystemPromptSuffix(goalModeActive);
+      let streamedText = '';
+      let streamedReasoning = '';
       const result = await this.ai.generateRunReply({
         organizationId: run.organizationId,
         agentId: run.agentId,
@@ -408,6 +430,11 @@ export class RunService {
         summary: run.summary,
         systemPromptSuffix,
         abortSignal: abortController.signal,
+        onChunk: (chunk) => {
+          if (chunk.kind === 'text') streamedText += chunk.delta;
+          if (chunk.kind === 'reasoning') streamedReasoning += chunk.delta;
+          this.emitRunChunk(run, chunk);
+        },
       });
 
       const latestRun = this.repo.getRun(run.organizationId, run.id);
@@ -443,9 +470,9 @@ export class RunService {
         return this.waitForApproval(running, 'Waiting for approval');
       }
 
-      const text = result.text.trim();
+      const text = (result.text || streamedText).trim();
       const reply = text || 'Acknowledged.';
-      const reasoningContent = extractReasoningChunk(result);
+      const reasoningContent = extractReasoningChunk(result) ?? (streamedReasoning.trim() || undefined);
       const skipFinalThreadMessage = runUsedThreadPublishingTool(result);
       if (run.threadId && !skipFinalThreadMessage) {
         const goalArtifactToolCall = await appendGoalArtifactToolCall(

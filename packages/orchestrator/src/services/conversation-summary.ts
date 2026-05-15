@@ -6,8 +6,8 @@ export const CONVERSATION_SUMMARY_MARKER = "[[CONVERSATION_SUMMARY_V1]]";
 export const CONVERSATION_COMPACTED_MARKER = "[[CONVERSATION_COMPACTED_V1]]";
 export const CONVERSATION_ARCHIVE_MARKER = "[[CONVERSATION_ARCHIVE_V1]]";
 const README_SUMMARY_GUIDANCE = [
-  "> README-style compact summary -- durable context from earlier in the conversation.",
-  "> Skim the headings, dive into what matters. Details that don't carry forward are safe to forget.",
+  "> README-style compact summary -- your durable context from earlier in the conversation.",
+  "> Treat these notes as your own continuity. Details that don't carry forward are safe to forget.",
 ] as const;
 
 export function formatTimestampedContent(
@@ -111,7 +111,7 @@ export function buildSelfNoteSummary(messages: Message[]): string {
       {
         heading: "What I was working on",
         bullets: [
-          "Earlier self-notes below capture the working context. The raw recent notes have the latest thinking.",
+          "Earlier self-notes below are part of your own working context. The raw recent notes have the latest thinking.",
         ],
       },
       {

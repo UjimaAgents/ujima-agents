@@ -2,7 +2,7 @@ import { isLoopFinished, type ToolSet } from 'ai';
 import { buildAgentSystemPrompt, normalizeProviderKey } from '@ujima/framework';
 import type { Message, SpiritRole } from '@ujima/shared';
 import { DEFAULT_SPIRIT_TEMPERATURE } from '@ujima/shared';
-import { runAgentLoop } from './services/agent-loop.js';
+import { runAgentLoop, type AgentLoopChunk } from './services/agent-loop.js';
 import type { RepositoryReader } from './services/repository-reader.js';
 import type { TeamStore } from './services/team-store.js';
 import type { ToolService } from './services/tool-service.js';
@@ -35,6 +35,7 @@ export interface GenerateRunReplyInput {
   summary?: string;
   systemPromptSuffix?: string;
   abortSignal?: AbortSignal;
+  onChunk?: (chunk: AgentLoopChunk) => PromiseLike<void> | void;
 }
 
 export class AiService {
@@ -131,6 +132,7 @@ export class AiService {
       maxOutputTokens: 1200,
       temperature: DEFAULT_SPIRIT_TEMPERATURE,
       abortSignal: input.abortSignal,
+      onChunk: input.onChunk,
       loadInterruptMessages: () => {
         const interrupts = this.loadRunInterrupts(input, interruptCursor);
         return toModelMessages(interrupts, input.agentId);

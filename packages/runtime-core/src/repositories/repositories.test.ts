@@ -304,6 +304,65 @@ test('message metadata (goalMode) round-trips through save, list, get, and updat
   expect(repo.getMessage(orgId, messageId)?.metadata).toEqual({ goalMode: false });
 });
 
+test('message reasoning content round-trips through save, list, get, and update', () => {
+  const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
+  const orgId = randomUUID();
+  const now = new Date().toISOString();
+  const messageId = randomUUID();
+
+  repo.saveOrganization(
+    OrganizationSchema.parse({
+      id: orgId,
+      name: 'Reasoning Org',
+      workspace: { root: '/tmp/reasoning-org', roleScopes: {} },
+    }),
+  );
+  repo.saveChannel({
+    id: 'general',
+    organizationId: orgId,
+    name: 'general',
+    kind: 'general',
+    topic: '',
+    memberIds: [],
+  });
+  repo.ensureThread({
+    id: 'general',
+    organizationId: orgId,
+    channelId: 'general',
+    title: 'general',
+    memberIds: [],
+    createdAt: now,
+  });
+
+  const saved = repo.saveMessage(
+    MessageSchema.parse({
+      id: messageId,
+      organizationId: orgId,
+      threadId: 'general',
+      channelId: 'general',
+      senderId: 'agent',
+      senderKind: 'agent',
+      kind: 'agent',
+      content: 'Visible reply',
+      reasoningContent: 'Private reasoning',
+      mentions: [],
+      createdAt: now,
+    }),
+  );
+  expect(saved.reasoningContent).toBe('Private reasoning');
+  expect(repo.getMessage(orgId, messageId)?.reasoningContent).toBe('Private reasoning');
+  expect(repo.listMessages(orgId, 'general', undefined, 10).data[0]?.reasoningContent).toBe('Private reasoning');
+
+  repo.updateMessage(
+    MessageSchema.parse({
+      ...saved,
+      reasoningContent: 'Updated reasoning',
+      editedAt: new Date().toISOString(),
+    }),
+  );
+  expect(repo.getMessage(orgId, messageId)?.reasoningContent).toBe('Updated reasoning');
+});
+
 test('getLatestHumanMessageInThread returns newest human by timestamp', () => {
   const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
   const orgId = randomUUID();

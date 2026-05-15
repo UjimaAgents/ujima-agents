@@ -33,3 +33,17 @@ describe('socket-events member.alert_failed', () => {
     expect(parsed.success).toBe(false);
   });
 });
+
+describe('socket-events run:chunk', () => {
+  it('parses streamed text and reasoning chunks', () => {
+    const parsed = SocketEventSchemas[SocketEventNames.runChunk].safeParse({
+      organizationId: 'org-1',
+      runId: 'run-1',
+      threadId: 'thread-1',
+      agentId: 'agent-1',
+      kind: 'text',
+      delta: 'Hello',
+    });
+    expect(parsed.success).toBe(true);
+  });
+});

@@ -37,7 +37,7 @@ import {
 } from '@ujima/framework';
 import { requireOrganization } from '../utils/require-organization.js';
 import { requireTeam } from '../utils/require-team.js';
-import { runAgentLoop } from './agent-loop.js';
+import { runAgentLoop, type AgentLoopChunk } from './agent-loop.js';
 import {
   toModelMessages,
   resolveSpiritModel,
@@ -570,9 +570,7 @@ export class SpiritService {
     // to do before spawn.)
     const recent = this.repo
       .listChannelMessages(input.organizationId, session.channelId, { limit: 20 })
-      .data
-      .slice()
-      .reverse();
+      .data;
     const messages = toModelMessages(recent, member.id);
     const interruptCursor = createMessageCursor(recent);
     if (input.extraPrompt) {
@@ -667,6 +665,7 @@ export class SpiritService {
     let totalToolCalls = 0;
     let totalTokens = 0;
     let lastText = '';
+    let streamedReasoning = '';
 
     try {
       const result = await runAgentLoop({
@@ -677,12 +676,22 @@ export class SpiritService {
         stopWhen: stepCountIs(maxIterations),
         ...(this.maxOutputTokens !== undefined ? { maxOutputTokens: this.maxOutputTokens } : {}),
         temperature: this.temperature,
+        onChunk: (chunk) => {
+          if (chunk.kind === 'reasoning') streamedReasoning += chunk.delta;
+          this.emitRunChunk(
+            {
+              organizationId: input.organizationId,
+              runId: spirit.runId ?? spirit.id,
+              threadId: session.channelId,
+              agentId: input.memberId,
+            },
+            chunk,
+          );
+        },
         loadInterruptMessages: () => {
           const page = this.repo
             .listChannelMessages(input.organizationId, session.channelId, { limit: 100 })
-            .data
-            .slice()
-            .reverse();
+            .data;
           const interrupts = page.filter(
             (message) =>
               message.kind === 'human' &&
@@ -703,7 +712,7 @@ export class SpiritService {
       // calls, with tool-call cards inlined. This keeps the channel
       // history readable as a turn-by-turn timeline.
       let lastMessageId: string | undefined;
-      for (const step of steps) {
+      for (const [index, step] of steps.entries()) {
         totalTurns += 1;
         const stepText = typeof step.text === 'string' ? step.text : '';
         const stepToolCalls = Array.isArray(step.toolCalls) ? step.toolCalls : [];
@@ -720,7 +729,9 @@ export class SpiritService {
           team.workspace.root,
         );
         const messageToolCalls = goalArtifactToolCall ? [...toolCalls, goalArtifactToolCall] : toolCalls;
-        const reasoningContent = extractReasoningChunk(step);
+        const reasoningContent =
+          extractReasoningChunk(step) ??
+          (index === steps.length - 1 ? streamedReasoning.trim() || undefined : undefined);
         const message = MessageSchema.parse({
           id: randomUUID(),
           organizationId: input.organizationId,
@@ -1251,6 +1262,39 @@ export class SpiritService {
         orgRoom(spirit.organizationId),
         memberRoom(spirit.memberId),
         ...(spirit.runId ? [runRoom(spirit.runId)] : []),
+      ],
+    );
+  }
+
+  private emitRunChunk(
+    input: {
+      organizationId: string;
+      runId: string;
+      threadId: string;
+      agentId: string;
+    },
+    chunk: AgentLoopChunk,
+  ): void {
+    if (!chunk.delta || !input.threadId) {
+      return;
+    }
+
+    this.realtime.emit(
+      SocketEventNames.runChunk,
+      {
+        organizationId: input.organizationId,
+        runId: input.runId,
+        threadId: input.threadId,
+        agentId: input.agentId,
+        kind: chunk.kind,
+        delta: chunk.delta,
+      },
+      [
+        orgRoom(input.organizationId),
+        channelRoom(input.threadId),
+        threadRoom(input.threadId),
+        memberRoom(input.agentId),
+        runRoom(input.runId),
       ],
     );
   }

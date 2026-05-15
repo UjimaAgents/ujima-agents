@@ -464,7 +464,7 @@ function RunningFigureIndicator() {
     <svg
       viewBox="0 0 24 24"
       aria-hidden="true"
-      className="h-4 w-4 shrink-0 text-violet-600 dark:text-violet-400"
+      className="h-4 w-4 shrink-0 origin-center text-violet-600 animate-running-figure motion-reduce:animate-none dark:text-violet-400"
     >
       <g fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8">
         <circle cx="15.2" cy="4.2" r="1.35" fill="currentColor" stroke="none" />
@@ -477,13 +477,6 @@ function RunningFigureIndicator() {
         <path d="M9.4 7.8 6.6 9.1" opacity="0.45" />
         <path d="M17.6 16.8 20.2 18" opacity="0.45" />
       </g>
-      <animateTransform
-        attributeName="transform"
-        type="translate"
-        values="0 0;0 -0.7;0 0"
-        dur="0.78s"
-        repeatCount="indefinite"
-      />
     </svg>
   );
 }
@@ -502,6 +495,7 @@ export const SidebarSectionHeader = memo(function SidebarSectionHeader({
       </h3>
       {onAdd && (
         <button
+          type="button"
           onClick={onAdd}
           className="rounded p-0.5 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-900 dark:hover:bg-zinc-900 dark:hover:text-zinc-100"
         >

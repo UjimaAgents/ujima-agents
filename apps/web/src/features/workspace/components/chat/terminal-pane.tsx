@@ -35,6 +35,7 @@ export function TerminalPane({
       <div className={TERMINAL_SECTION}>
         <div className={TERMINAL_CWD}>{cwd}</div>
         <button
+          type="button"
           onClick={() => {
             navigator.clipboard.writeText(commandLine);
           }}

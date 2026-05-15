@@ -1,5 +1,5 @@
-import {memo, useMemo} from "react";
-import {CheckCircle2, X, XCircle, ArrowDown} from "lucide-react";
+import { memo } from "react";
+import { CheckCircle2, X, XCircle } from "lucide-react";
 import {TERMINAL_PANEL, TERMINAL_SECTION} from "./terminal-chrome";
 import {Avatar} from "./primitives";
 import {TerminalPane} from "./terminal-pane";
@@ -13,6 +13,7 @@ export interface TraceStepData {
   id: string;
   title: string;
   detail: string;
+  reasoning?: string;
   time: string;
   duration: string;
   status: "success" | "running" | "failed";
@@ -80,6 +81,7 @@ export const TraceStep = memo(function TraceStep({
   const isCompactRow =
     step.title.startsWith("Run ·") &&
     !step.detail.trim() &&
+    !step.reasoning &&
     !step.subtext &&
     !step.terminal &&
     !step.filesystem &&
@@ -183,6 +185,16 @@ export const TraceStep = memo(function TraceStep({
             <span className="min-w-[4ch] text-end">{step.duration}</span>
           </div>
         </div>
+        {step.reasoning ? (
+          <details className="mt-0.5" open={step.status === "running"}>
+            <summary className="cursor-pointer list-none text-[11px] leading-snug text-foreground/45">
+              Reasoning
+            </summary>
+            <p className="mt-1 whitespace-pre-wrap font-mono text-[11px] leading-relaxed text-foreground/60">
+              {step.reasoning}
+            </p>
+          </details>
+        ) : null}
         {body}
         {step.subtext ? (
           <p className="mt-0.5 text-[11px] leading-snug text-foreground/45">

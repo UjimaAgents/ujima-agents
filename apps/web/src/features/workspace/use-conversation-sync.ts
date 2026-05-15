@@ -5,6 +5,7 @@ import {
   ApprovalRequestSchema,
   MemberSchema,
   MessageSchema,
+  RunChunkEventSchema,
   RunStateSchema,
   formatApprovalRelayMarkdown,
   parseApprovalDisplayScopesFromReason,
@@ -13,6 +14,7 @@ import {
   type ApprovalRequest,
   type Member,
   type Message,
+  type RunChunkEvent,
   type RunState,
 } from "@ujima/shared/browser";
 import { BootstrapResponseSchema, type BootstrapResponse } from "@ujima/api-schema";
@@ -65,6 +67,7 @@ export function useConversationSync(
   const hydrateMessages = useWorkspaceStore((state) => state.hydrateMessages);
   const addPendingMessage = useWorkspaceStore((state) => state.addPendingMessage);
   const receiveMessage = useWorkspaceStore((state) => state.receiveMessage);
+  const appendStreamingMessage = useWorkspaceStore((state) => state.appendStreamingMessage);
   const removeMessage = useWorkspaceStore((state) => state.removeMessage);
   const upsertApproval = useWorkspaceStore((state) => state.upsertApproval);
   const upsertRun = useWorkspaceStore((state) => state.upsertRun);
@@ -73,10 +76,15 @@ export function useConversationSync(
   const setMemberActivity = useWorkspaceStore((state) => state.setMemberActivity);
   const [error, setError] = useState<{ conversationKey: string; message: string } | undefined>(undefined);
   const storeMembersRef = useRef(storeMembers);
+  const runChunkSequenceRef = useRef(0);
 
   useEffect(() => {
     storeMembersRef.current = storeMembers;
   }, [storeMembers]);
+
+  useEffect(() => {
+    runChunkSequenceRef.current = 0;
+  }, [conversationKey]);
 
   const loadConversationState = useCallback(
     async (signal: AbortSignal, currentConversationKey: string) => {
@@ -171,6 +179,14 @@ export function useConversationSync(
         setLoading,
         setMemberActivity,
         storeMembers: storeMembersRef.current,
+        appendRunChunk: (chunk) =>
+          appendRunChunk({
+            chunk,
+            members: storeMembersRef.current,
+            appendActivity,
+            appendStreamingMessage,
+            sequence: runChunkSequenceRef.current++,
+          }),
         upsertApproval,
         upsertRun,
       });
@@ -188,6 +204,7 @@ export function useConversationSync(
     };
   }, [
     appendActivity,
+    appendStreamingMessage,
     appendMember,
     conversation,
     conversation.id,
@@ -487,6 +504,7 @@ function handleStreamEvent(
   actions: {
     appendActivity(event: ActivityEvent): void;
     appendMember(member: Member): void;
+    appendRunChunk(chunk: RunChunkEvent): void;
     receiveMessage(
       tempId: string | undefined,
       message: Message,
@@ -550,6 +568,12 @@ function handleStreamEvent(
       }
       return;
     }
+    case "run:chunk": {
+      const chunk = parseRunChunkPayload(envelope.payload);
+      if (!chunk) return;
+      actions.appendRunChunk(chunk);
+      return;
+    }
     case "member.alerted": {
       const alerted = parseMemberAlertedPayload(envelope.payload);
       if (!alerted) return;
@@ -600,6 +624,11 @@ function parseMessagePayload(payload: unknown): Message | null {
 
 function parseApprovalPayload(payload: unknown): ApprovalRequest | null {
   const parsed = ApprovalRequestSchema.safeParse((payload as { approval?: unknown })?.approval);
+  return parsed.success ? parsed.data : null;
+}
+
+function parseRunChunkPayload(payload: unknown): RunChunkEvent | null {
+  const parsed = RunChunkEventSchema.safeParse(payload);
   return parsed.success ? parsed.data : null;
 }
 
@@ -703,6 +732,8 @@ function messageToChatMessage(message: Message, members: Member[]): ChatMessageD
     id: message.id,
     senderId: message.senderId,
     parentMessageId: message.parentMessageId,
+    threadId: message.threadId,
+    channelId: message.channelId,
     role: message.kind === "system" ? "system" : sender?.roleName ?? message.senderKind,
     name: message.kind === "system" ? "System" : sender?.name ?? message.senderId,
     kind: message.kind,
@@ -769,8 +800,47 @@ function messageToActivity(message: Message): ActivityEvent {
       threadId: message.threadId,
       channelId: message.channelId,
       content: message.content,
+      reasoning: message.reasoningContent,
     },
   };
+}
+
+function runChunkToActivity(chunk: RunChunkEvent, sequence: number): ActivityEvent {
+  return {
+    event_id: `run_chunk:${chunk.runId}:${sequence}:${chunk.kind}`,
+    type: "run_chunk",
+    publisher: chunk.agentId,
+    timestamp: new Date().toISOString(),
+    task_id: chunk.runId,
+    payload: chunk,
+  };
+}
+
+function appendRunChunk(input: {
+  chunk: RunChunkEvent;
+  members: Member[];
+  sequence: number;
+  appendActivity(event: ActivityEvent): void;
+  appendStreamingMessage(message: ChatMessageData): void;
+}): void {
+  input.appendActivity(runChunkToActivity(input.chunk, input.sequence));
+  if (input.chunk.kind !== "text" || !input.chunk.delta) return;
+
+  const sender = input.members.find((member) => member.id === input.chunk.agentId);
+  const createdAt = new Date().toISOString();
+  input.appendStreamingMessage({
+    id: `run-stream:${input.chunk.runId}`,
+    streamRunId: input.chunk.runId,
+    senderId: input.chunk.agentId,
+    threadId: input.chunk.threadId,
+    role: sender?.roleName ?? "agent",
+    name: sender?.name ?? input.chunk.agentId,
+    kind: "agent",
+    time: formatTime(createdAt),
+    content: input.chunk.delta,
+    createdAt,
+    pending: false,
+  });
 }
 
 function approvalToCard(

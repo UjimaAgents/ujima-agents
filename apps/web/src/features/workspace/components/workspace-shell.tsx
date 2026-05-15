@@ -98,7 +98,9 @@ export function WorkspaceShell(props: {
 
   useEffect(() => {
     goalModeSyncing.current = true;
-    setGoalMode(readGoalModePreference(goalModeKey));
+    queueMicrotask(() => {
+      setGoalMode(readGoalModePreference(goalModeKey));
+    });
   }, [goalModeKey]);
 
   useEffect(() => {
@@ -411,7 +413,7 @@ export function DragHandle({
       window.addEventListener("pointerup", onUp);
       window.addEventListener("pointercancel", onUp);
     },
-    [onResize],
+    [onResize, side],
   );
 
   return (
