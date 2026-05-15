@@ -1,5 +1,13 @@
-import { randomUUID } from 'node:crypto';
-import { stepCountIs, type LanguageModel, type ToolSet } from 'ai';
+import { createHash, randomUUID } from 'node:crypto';
+import {
+  jsonSchema,
+  stepCountIs,
+  tool,
+  type FlexibleSchema,
+  type LanguageModel,
+  type ToolSet,
+} from 'ai';
+import { z } from 'zod';
 import {
   DEFAULT_SPIRIT_TEMPERATURE,
   MessageSchema,
@@ -12,9 +20,11 @@ import {
   orgRoom,
   runRoom,
   threadRoom,
+  type MCPDef,
   type MessageCard,
   type Message,
   type MessageToolCall,
+  type McpToolDescriptor,
   type Spirit,
   type SpiritRole,
   type TaskSession,
@@ -45,10 +55,11 @@ import type { RealtimeService } from './context.js';
 import type { ApiRepository } from './repository-reader.js';
 import type { TeamStore } from './team-store.js';
 import type { ToolService } from './tool-service.js';
-import { ToolApprovalRequiredError } from './tool-loop-result.js';
+import { ToolApprovalRequiredError, toModelToolOutput } from './tool-loop-result.js';
 import { extractReasoningChunk } from '../utils/extract-reasoning.js';
 import { buildRunTranscript } from '../utils/run-transcript.js';
 import type { ToolInvocationInput } from './tool-service.js';
+import { materializeMcpDef, mcpPermissionToolName, type McpRuntimePool } from './mcp-runtime.js';
 import { appendGoalArtifactToolCall } from './goal-artifact-card.js';
 import { goalModeEnabledFromMessage, goalModeSystemPromptSuffix } from './goal-mode-prompt.js';
 import {
@@ -85,8 +96,50 @@ export interface SpiritServiceOptions {
    * Optional publisher for task-session summaries; otherwise SpiritService writes system messages directly.
    */
   conversations?: ConversationService;
+  /**
+   * Inject an MCP pool so spirit runs can call the agent's attached
+   * MCP servers. When omitted, MCP tools are simply absent from the
+   * palette — the built-in tool path still works. Production wires
+   * the runtime host's pool; tests can pass a stub.
+   */
+  mcpPool?: SpiritMcpPool;
+  /**
+   * Service that resolves which MCPs an agent has attached at run
+   * time. Optional — when absent, no MCP tools are injected. The
+   * canonical implementation is `McpRegistryService` (which exposes
+   * `listAttachedServersForSpirit` indirectly via the repo).
+   */
+  mcpResolver?: SpiritMcpResolver;
   supervisorDebounceMs?: number;
   supervisorTurnCapPerSession?: number;
+}
+
+/**
+ * Minimal MCP pool surface the SpiritService needs. Matches
+ * `@ujima/mcp-client.MCPPool` structurally so production injection is
+ * `pool: runtimeHost.pool`. Kept here so tests don't have to pull in
+ * the real pool to mock it.
+ */
+export type SpiritMcpPool = McpRuntimePool;
+
+/**
+ * Resolves the MCP servers visible to a given (member, role). The
+ * production implementation walks `repo.listAttachedServersForSpirit`;
+ * tests inject a stub that returns a fixed list.
+ */
+export type SpiritMcpResolver = (input: {
+  organizationId: string;
+  memberId: string;
+  role: SpiritRole;
+}) => Promise<SpiritMcpResolution[]>;
+
+export interface SpiritMcpResolution {
+  /** Materialised `MCPDef` ready to hand to a pool / connection. */
+  def: MCPDef;
+  /** Origin server id (for namespacing, audit, governance). */
+  serverId: string;
+  /** Human-readable server name used in the tool-id namespace. */
+  serverName: string;
 }
 
 export interface SpawnSpiritInput {
@@ -152,6 +205,8 @@ export class SpiritService {
   private readonly modelResolver: ModelResolver;
   private readonly registry: ActiveSpiritRegistry;
   private readonly conversations?: ConversationService;
+  private readonly mcpPool?: SpiritMcpPool;
+  private readonly mcpResolver?: SpiritMcpResolver;
   private readonly supervisorDebounceMs: number;
   private readonly supervisorTurnCapPerSession: number;
   private readonly supervisorMutexes = new Map<string, Promise<unknown>>();
@@ -170,6 +225,8 @@ export class SpiritService {
     this.modelResolver = options.modelResolver ?? this.defaultModelResolver();
     this.registry = options.registry ?? new ActiveSpiritRegistry();
     this.conversations = options.conversations;
+    this.mcpPool = options.mcpPool;
+    this.mcpResolver = options.mcpResolver ?? this.defaultMcpResolver();
     this.supervisorDebounceMs = options.supervisorDebounceMs ?? DEFAULT_SUPERVISOR_DEBOUNCE_MS;
     this.supervisorTurnCapPerSession =
       options.supervisorTurnCapPerSession ?? DEFAULT_SUPERVISOR_TURN_CAP_PER_SESSION;
@@ -580,7 +637,7 @@ export class SpiritService {
     this.emit(SocketEventNames.spiritUpdated, running);
 
     const allowedToolIds = this.resolveToolAllowlist(teamRole.tools, role, input.toolAllowlist);
-    const toolDefs = this.buildToolDefinitions(allowedToolIds, {
+    const builtInToolDefs = this.buildToolDefinitions(allowedToolIds, {
       organizationId: input.organizationId,
       runId: spirit.runId ?? spirit.id,
       memberId: input.memberId,
@@ -592,6 +649,18 @@ export class SpiritService {
       spiritRole: role,
       team,
     });
+    // Attached MCP tools layer ON TOP of the built-in palette. The
+    // model sees one unified tool set; the namespacing keeps tool
+    // ids unambiguous and the dispatch routes to the right server.
+    const mcpToolDefs = await this.buildMcpToolDefinitions({
+      organizationId: input.organizationId,
+      memberId: input.memberId,
+      runId: spirit.runId ?? spirit.id,
+      threadId: session.channelId,
+      taskSessionId: input.taskSessionId,
+      role,
+    });
+    const toolDefs: ToolSet = { ...builtInToolDefs, ...mcpToolDefs };
 
     const maxIterations = input.maxIterations ?? this.maxIterationsPerRun;
     let totalTurns = 0;
@@ -1400,6 +1469,256 @@ export class SpiritService {
       });
     };
   }
+
+  /**
+   * Production MCP resolver: walks `listAttachedServersForSpirit` on
+   * the repo and materialises an `MCPDef` per attachment, decoding the
+   * stored env-key-ref via the secret store. Disabled servers are
+   * filtered out by the repo query itself.
+   */
+  private defaultMcpResolver(): SpiritMcpResolver {
+    return async ({ organizationId, memberId, role }) => {
+      const attachments = this.repo.listAttachedServersForSpirit(
+        organizationId,
+        memberId,
+        role,
+      );
+      return attachments.map(({ server }) => {
+        const def = this.mcpServerToDef(server);
+        return { def, serverId: server.id, serverName: server.name };
+      });
+    };
+  }
+
+  private mcpServerToDef(server: {
+    id: string;
+    name: string;
+    description: string;
+    category: string;
+    transport: 'stdio' | 'sse' | 'http-streamable';
+    command?: string;
+    args: string[];
+    envKeyRef?: string;
+    url?: string;
+    headersKeyRef?: string;
+    isolation: 'shared' | 'per-agent';
+  }): MCPDef {
+    return materializeMcpDef(this.repo, server);
+  }
+
+  /**
+   * Build AI SDK tool definitions for every MCP attached to this
+   * (member, role). Tool ids are namespaced with the display slug and
+   * a stable server-id hash so similar server names cannot overwrite
+   * each other in the flattened AI SDK tool palette.
+   */
+  private async buildMcpToolDefinitions(ctx: {
+    organizationId: string;
+    memberId: string;
+    runId: string;
+    threadId: string;
+    taskSessionId: string;
+    role: SpiritRole;
+  }): Promise<ToolSet> {
+    if (!this.mcpPool || !this.mcpResolver) return {} as ToolSet;
+    let resolutions: SpiritMcpResolution[];
+    try {
+      resolutions = await this.mcpResolver({
+        organizationId: ctx.organizationId,
+        memberId: ctx.memberId,
+        role: ctx.role,
+      });
+    } catch {
+      return {} as ToolSet;
+    }
+    if (resolutions.length === 0) return {} as ToolSet;
+
+    type ToolEntry = readonly [
+      string,
+      {
+        toolName: string;
+        description: string;
+        serverId: string;
+        serverName: string;
+        /**
+         * MCP-provided JSON schema for this tool's arguments, if the
+         * server advertised one. Threaded through so the AI SDK tool
+         * definition surfaces the real parameter contract to the
+         * model instead of a free-form `Record<string, unknown>`.
+         */
+        inputSchema?: Record<string, unknown>;
+      },
+    ];
+    const entries: ToolEntry[] = [];
+    const usedToolIds = new Set<string>();
+    const pool = this.mcpPool;
+    for (const resolution of resolutions) {
+      let toolList: McpToolDescriptor[] = [];
+      try {
+        const connection = await pool.get(resolution.def, { agentId: ctx.memberId });
+        const liveTools = await connection.listTools();
+        toolList = liveTools.map((t) => ({
+          name: t.name,
+          description: t.description ?? '',
+          inputSchema:
+            t.inputSchema && typeof t.inputSchema === 'object' && !Array.isArray(t.inputSchema)
+              ? (t.inputSchema as Record<string, unknown>)
+              : undefined,
+        }));
+      } catch {
+        // Live discovery failed — fall back to whatever the registry's
+        // last successful test wrote into the cache. Audit-fix
+        // contract: a transient outage shouldn't drop the MCP from
+        // the model's palette.
+        toolList = this.repo.getMcpToolCache(ctx.organizationId, resolution.serverId)?.tools ?? [];
+      }
+      const nsSlug = buildMcpNamespace(resolution.serverName, resolution.serverId);
+      for (const t of toolList) {
+        const baseToolId = `mcp__${nsSlug}__${sanitizeMcpToolName(t.name)}`;
+        const aiToolId = uniqueMcpToolId(baseToolId, resolution.serverId, t.name, usedToolIds);
+        entries.push([
+          aiToolId,
+          {
+            toolName: t.name,
+            description: t.description || `${resolution.serverName}.${t.name}`,
+            serverId: resolution.serverId,
+            serverName: resolution.serverName,
+            inputSchema:
+              t.inputSchema && typeof t.inputSchema === 'object' && !Array.isArray(t.inputSchema)
+                ? (t.inputSchema as Record<string, unknown>)
+                : undefined,
+          },
+        ]);
+      }
+    }
+    // Build the AI SDK tool defs in a separate pass so the per-iteration
+    // `tool({...})` keeps its generic resolved — collecting them into a
+    // Record<string, ReturnType<typeof tool>> first collapses the
+    // generic to `Tool<never, never>` and breaks assignment.
+    return Object.fromEntries(
+      entries.map(([aiToolId, entry]) => [
+        aiToolId,
+        tool({
+          description: entry.description,
+          inputSchema: mcpToolInputSchema(entry.inputSchema),
+          execute: async (rawArgs, { toolCallId }) => {
+            const args = (rawArgs ?? {}) as Record<string, unknown>;
+            try {
+              const result = await this.tools.invoke({
+                organizationId: ctx.organizationId,
+                runId: ctx.runId,
+                memberId: ctx.memberId,
+                threadId: ctx.threadId,
+                taskSessionId: ctx.taskSessionId,
+                spiritRole: ctx.role,
+                toolCallId,
+                toolId: 'mcp',
+                action: 'mcp',
+                resourceType: 'mcp',
+                resourcePath: `${entry.serverId}:${entry.toolName}`,
+                permissionMcpId: entry.serverId,
+                permissionToolName: mcpPermissionToolName(entry.serverId, entry.toolName),
+                input: {
+                  mcpServerId: entry.serverId,
+                  mcpServerName: entry.serverName,
+                  toolName: entry.toolName,
+                  args,
+                },
+              });
+              return toModelToolOutput(result);
+            } catch (error) {
+              if (error instanceof ToolApprovalRequiredError) {
+                throw error;
+              }
+              return {
+                error: error instanceof Error ? error.message : String(error),
+              };
+            }
+          },
+        }),
+      ]),
+    ) as ToolSet;
+  }
+}
+
+/**
+ * Make a server-name segment safe for use inside the AI SDK tool id.
+ * AI SDK tool ids are typically `[A-Za-z0-9_-]+`; we lowercase, replace
+ * everything else with `_`, and trim to a reasonable length.
+ */
+function sanitizeMcpNamespace(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 40) || 'mcp';
+}
+
+function buildMcpNamespace(name: string, serverId: string): string {
+  const hash = shortStableHash(serverId);
+  const maxNameLength = 40 - hash.length - 1;
+  const nameSlug = sanitizeMcpNamespace(name).slice(0, maxNameLength).replace(/_+$/g, '');
+  return `${nameSlug || 'mcp'}_${hash}`;
+}
+
+function sanitizeMcpToolName(name: string): string {
+  return name
+    .replace(/[^A-Za-z0-9_-]+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 40) || 'tool';
+}
+
+function uniqueMcpToolId(
+  baseToolId: string,
+  serverId: string,
+  toolName: string,
+  usedToolIds: Set<string>,
+): string {
+  if (!usedToolIds.has(baseToolId)) {
+    usedToolIds.add(baseToolId);
+    return baseToolId;
+  }
+
+  const suffix = shortStableHash(`${serverId}:${toolName}`);
+  let candidate = `${baseToolId}__${suffix}`;
+  let attempt = 2;
+  while (usedToolIds.has(candidate)) {
+    candidate = `${baseToolId}__${suffix}_${attempt}`;
+    attempt += 1;
+  }
+  usedToolIds.add(candidate);
+  return candidate;
+}
+
+function shortStableHash(value: string): string {
+  return createHash('sha256').update(value).digest('hex').slice(0, 8);
+}
+
+/**
+ * Build the AI SDK `inputSchema` for an MCP tool definition.
+ *
+ * When the MCP server advertises a JSON Schema for the tool's args, we
+ * surface it verbatim via `jsonSchema()` so the model sees the real
+ * parameter contract — type info, required fields, enums, descriptions,
+ * the lot. The previous free-form `z.record(z.string(), z.unknown())`
+ * stripped all of that, which left the model guessing arg shapes and
+ * frequently producing malformed calls.
+ *
+ * When the server doesn't advertise a schema (some MCPs emit
+ * `inputSchema: undefined` for legacy reasons), we fall back to a
+ * permissive record so the call is still possible. This is the same
+ * shape the prior implementation used everywhere — we keep it as the
+ * floor, not the default.
+ */
+function mcpToolInputSchema(
+  schema: Record<string, unknown> | undefined,
+): FlexibleSchema<Record<string, unknown>> {
+  if (schema && typeof schema === 'object' && !Array.isArray(schema)) {
+    return jsonSchema<Record<string, unknown>>(schema as never);
+  }
+  return z.record(z.string(), z.unknown());
 }
 
 const LIVE_SPIRIT_STATUSES = new Set(['queued', 'running', 'waiting_for_approval']);

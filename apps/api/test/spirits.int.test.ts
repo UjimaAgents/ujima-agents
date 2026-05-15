@@ -26,11 +26,14 @@ import {
   type ApprovalRequester,
   type ModelResolver,
   type RealtimeService,
+  type SpiritServiceOptions,
+  type ToolInvocationInput,
+  type ToolInvocationResult,
   type ToolService,
 } from '@ujima/orchestrator';
 import { createPermissionMiddleware } from '@ujima/permissions';
 import { AgentTeam } from '@ujima/framework';
-import { ChannelSchema, MemberSchema, OrganizationSchema } from '@ujima/shared';
+import { ChannelSchema, MemberSchema, OrganizationSchema, type MCPDef } from '@ujima/shared';
 import { MessageCardSchema } from '@ujima/shared';
 
 // ---------------------------------------------------------------------
@@ -70,12 +73,126 @@ function makeTextOnlyModel(text: string): LanguageModel {
   ]);
 }
 
+function extractModelToolNames(rawTools: unknown): string[] {
+  if (Array.isArray(rawTools)) {
+    return rawTools
+      .map((entry) =>
+        entry && typeof entry === 'object'
+          ? (entry as { name?: unknown }).name
+          : undefined,
+      )
+      .filter((name): name is string => typeof name === 'string')
+      .sort();
+  }
+  if (rawTools && typeof rawTools === 'object') {
+    return Object.keys(rawTools).sort();
+  }
+  return [];
+}
+
+function makeToolCaptureModel(capturedToolNames: string[][]): LanguageModel {
+  return new MockLanguageModelV3({
+    doStream: async (options) => {
+      // The V3 protocol passes tools as an ARRAY of `{ type, name, ... }`
+      // entries — not as a `Record<string, ToolDef>` keyed by tool id.
+      // We normalise to tool ids so test assertions can read them
+      // identically across "record" and "array" providers.
+      capturedToolNames.push(extractModelToolNames((options as { tools?: unknown }).tools));
+      return {
+        stream: simulateReadableStream<LanguageModelV3StreamPart>({
+          chunks: [
+            { type: 'text-start', id: '1' },
+            { type: 'text-delta', id: '1', delta: 'done' },
+            { type: 'text-end', id: '1' },
+            {
+              type: 'finish',
+              usage: v3Usage(9, 4),
+              finishReason: { unified: 'stop' as const, raw: 'stop' },
+            },
+          ],
+        }),
+      };
+    },
+  }) as unknown as LanguageModel;
+}
+
+function makeMcpToolCallModel(matchToolName: (name: string) => boolean): LanguageModel {
+  return new MockLanguageModelV3({
+    doStream: async (options) => {
+      const hasToolResults = options.prompt.some((m) =>
+        Array.isArray(m.content)
+          ? m.content.some((c: { type?: string }) => c.type === 'tool-result')
+          : false,
+      );
+      if (hasToolResults) {
+        return {
+          stream: simulateReadableStream<LanguageModelV3StreamPart>({
+            chunks: [
+              { type: 'text-start', id: '2' },
+              { type: 'text-delta', id: '2', delta: 'done' },
+              { type: 'text-end', id: '2' },
+              {
+                type: 'finish',
+                usage: v3Usage(12, 4),
+                finishReason: { unified: 'stop' as const, raw: 'stop' },
+              },
+            ],
+          }),
+        };
+      }
+
+      const toolNames = extractModelToolNames((options as { tools?: unknown }).tools);
+      const toolName = toolNames.find(matchToolName);
+      if (!toolName) {
+        throw new Error(
+          `expected MCP tool not found in model palette; saw ${toolNames.join(', ')}`,
+        );
+      }
+      return {
+        stream: simulateReadableStream<LanguageModelV3StreamPart>({
+          chunks: [
+            {
+              type: 'tool-call',
+              toolCallId: 'call-mcp-1',
+              toolName,
+              input: JSON.stringify({}),
+            },
+            {
+              type: 'finish',
+              usage: v3Usage(10, 3),
+              finishReason: { unified: 'tool-calls' as const, raw: 'tool-calls' },
+            },
+          ],
+        }),
+      };
+    },
+  }) as unknown as LanguageModel;
+}
+
+function mcpDef(id: string, name: string): MCPDef {
+  return {
+    id,
+    name,
+    version: '0.0.0',
+    description: '',
+    category: 'general',
+    transport: 'stdio',
+    command: 'mcp',
+    args: [],
+    env: {},
+    isolation: 'shared',
+  };
+}
+
 interface FixtureOptions {
   modelByCall?: LanguageModel[];
   staticModel?: LanguageModel;
   agentNames?: string[];
   /** Use the real ToolServiceImpl path (with allowlist enforcement). */
   realToolPipeline?: boolean;
+  mcpPool?: SpiritServiceOptions['mcpPool'];
+  mcpResolver?: SpiritServiceOptions['mcpResolver'];
+  toolInvoke?: (input: ToolInvocationInput) => ToolInvocationResult | Promise<ToolInvocationResult>;
 }
 
 interface ModelCall {
@@ -183,7 +300,10 @@ async function createFixture(opts: FixtureOptions = {}): Promise<Fixture> {
     // Stub: bypass policy + IAM. Used by tests that only care about the
     // spirit/supervisor flow, not the tool gate.
     tools = {
-      invoke: async () => ({ ok: true, output: { status: 'completed', result: 'noop' } }),
+      invoke: async (input) =>
+        opts.toolInvoke
+          ? await opts.toolInvoke(input)
+          : { ok: true, output: { status: 'completed', result: 'noop' } },
       allowRun: () => undefined,
     };
   }
@@ -193,6 +313,8 @@ async function createFixture(opts: FixtureOptions = {}): Promise<Fixture> {
     modelResolver,
     maxIterationsPerRun: 8,
     registry,
+    ...(opts.mcpPool ? { mcpPool: opts.mcpPool } : {}),
+    ...(opts.mcpResolver ? { mcpResolver: opts.mcpResolver } : {}),
     conversations,
     supervisorDebounceMs: 0,
     supervisorTurnCapPerSession: 3,
@@ -449,6 +571,148 @@ describe('SpiritService — Phase 2.A lifecycle', () => {
 
     const run = fixture.repo.getRun(fixture.organizationId, outcome.spirit.runId!);
     expect(run?.status).toBe('completed');
+  });
+
+  it('surfaces cached MCP tools when live listTools fails', async () => {
+    const capturedToolNames: string[][] = [];
+    const serverId = 'server-cached';
+    const mcpPool: NonNullable<SpiritServiceOptions['mcpPool']> = {
+      get: async () => ({
+        listTools: async () => {
+          throw new Error('temporary transport failure');
+        },
+        callTool: async () => ({ content: { ok: true } }),
+      }),
+    };
+    const fixture = await createFixture({
+      staticModel: makeToolCaptureModel(capturedToolNames),
+      mcpPool,
+      mcpResolver: async () => [
+        {
+          def: mcpDef(serverId, 'Cached MCP'),
+          serverId,
+          serverName: 'Cached MCP',
+        },
+      ],
+    });
+    tempDirs.push(fixture.archiveRoot);
+    fixture.repo.saveMcpToolCache({
+      mcpServerId: serverId,
+      organizationId: fixture.organizationId,
+      tools: [{ name: 'cached tool', description: 'Cached fallback' }],
+      fetchedAt: new Date().toISOString(),
+    });
+
+    const { session } = fixture.taskSessions.create({
+      organizationId: fixture.organizationId,
+      requestedBy: fixture.ownerId,
+      prompt: 'Use cached tools',
+      team: ['frontend-alice'],
+    });
+
+    await fixture.spirits.run({
+      organizationId: fixture.organizationId,
+      taskSessionId: session.id,
+      memberId: 'frontend-alice',
+    });
+
+    const finalToolNames = capturedToolNames[capturedToolNames.length - 1] ?? [];
+    const mcpToolNames = finalToolNames.filter((name) => name.startsWith('mcp__'));
+    expect(mcpToolNames).toHaveLength(1);
+    expect(mcpToolNames[0]).toMatch(/^mcp__cached_mcp_[0-9a-f]{8}__cached_tool$/);
+  });
+
+  it('keeps MCP tool ids unique for servers whose names sanitize the same way', async () => {
+    const capturedToolNames: string[][] = [];
+    const mcpPool: NonNullable<SpiritServiceOptions['mcpPool']> = {
+      get: async () => ({
+        listTools: async () => [{ name: 'search', description: 'Search' }],
+        callTool: async () => ({ content: { ok: true } }),
+      }),
+    };
+    const fixture = await createFixture({
+      staticModel: makeToolCaptureModel(capturedToolNames),
+      mcpPool,
+      mcpResolver: async () => [
+        {
+          def: mcpDef('server-alpha', 'Git Hub'),
+          serverId: 'server-alpha',
+          serverName: 'Git Hub',
+        },
+        {
+          def: mcpDef('server-beta', 'Git@Hub'),
+          serverId: 'server-beta',
+          serverName: 'Git@Hub',
+        },
+      ],
+    });
+    tempDirs.push(fixture.archiveRoot);
+
+    const { session } = fixture.taskSessions.create({
+      organizationId: fixture.organizationId,
+      requestedBy: fixture.ownerId,
+      prompt: 'Use MCP tools',
+      team: ['frontend-alice'],
+    });
+
+    await fixture.spirits.run({
+      organizationId: fixture.organizationId,
+      taskSessionId: session.id,
+      memberId: 'frontend-alice',
+    });
+
+    const finalToolNames = capturedToolNames[capturedToolNames.length - 1] ?? [];
+    const mcpToolNames = finalToolNames.filter(
+      (name) => name.startsWith('mcp__git_hub_') && name.endsWith('__search'),
+    );
+    expect(mcpToolNames).toHaveLength(2);
+    expect(new Set(mcpToolNames).size).toBe(2);
+  });
+
+  it('namespaces MCP permission tool names away from built-in tool names', async () => {
+    const invocations: ToolInvocationInput[] = [];
+    const serverId = 'server-policy';
+    const mcpPool: NonNullable<SpiritServiceOptions['mcpPool']> = {
+      get: async () => ({
+        listTools: async () => [{ name: 'self.note', description: 'Remote collision' }],
+        callTool: async () => ({ content: { ok: true } }),
+      }),
+    };
+    const fixture = await createFixture({
+      staticModel: makeMcpToolCallModel((name) => name.startsWith('mcp__')),
+      mcpPool,
+      mcpResolver: async () => [
+        {
+          def: mcpDef(serverId, 'Collision MCP'),
+          serverId,
+          serverName: 'Collision MCP',
+        },
+      ],
+      toolInvoke: (input) => {
+        invocations.push(input);
+        return { ok: true, output: { status: 'completed' } };
+      },
+    });
+    tempDirs.push(fixture.archiveRoot);
+
+    const { session } = fixture.taskSessions.create({
+      organizationId: fixture.organizationId,
+      requestedBy: fixture.ownerId,
+      prompt: 'Call MCP self note',
+      team: ['frontend-alice'],
+    });
+
+    await fixture.spirits.run({
+      organizationId: fixture.organizationId,
+      taskSessionId: session.id,
+      memberId: 'frontend-alice',
+    });
+
+    expect(invocations).toHaveLength(1);
+    expect(invocations[0]!.toolId).toBe('mcp');
+    expect(invocations[0]!.permissionToolName).toBe('mcp:server-policy:self.note');
+    expect(invocations[0]!.permissionToolName).not.toBe('self.note');
+    expect(invocations[0]!.input.toolName).toBe('self.note');
   });
 
   it('TaskSessionService.start provisions one spirit per team member', async () => {

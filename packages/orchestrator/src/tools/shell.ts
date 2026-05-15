@@ -113,9 +113,13 @@ export function peekBackgroundJob(runId: string, jobId: string): BackgroundJobSn
   };
 }
 
-async function waitForBackgroundJob(runId: string, jobId: string): Promise<BackgroundJobSnapshot | null> {
+async function waitForBackgroundJob(
+  runId: string,
+  jobId: string,
+): Promise<BackgroundJobSnapshot | null> {
   const currentSnapshot = () => peekBackgroundJob(runId, jobId);
-  const shouldResolve = (snapshot: BackgroundJobSnapshot | null) => !!snapshot && snapshot.status !== 'running';
+  const shouldResolve = (snapshot: BackgroundJobSnapshot | null) =>
+    !!snapshot && snapshot.status !== 'running';
 
   const initial = currentSnapshot();
   if (shouldResolve(initial)) {
@@ -255,8 +259,18 @@ export const shellTool: OrchestratorTool<typeof ShellSchema> = {
           env: process.env,
         })
       : args.length > 0
-        ? spawn(command, args, { cwd, shell: false, env: process.env, ...(background ? { detached: true } : {}) })
-        : spawn(command, { cwd, shell: true, env: process.env, ...(background ? { detached: true } : {}) });
+        ? spawn(command, args, {
+            cwd,
+            shell: false,
+            env: process.env,
+            ...(background ? { detached: true } : {}),
+          })
+        : spawn(command, {
+            cwd,
+            shell: true,
+            env: process.env,
+            ...(background ? { detached: true } : {}),
+          });
 
     const maxBytes = 5 * 1024 * 1024; // 5MB max buffer
 
@@ -307,7 +321,10 @@ export const shellTool: OrchestratorTool<typeof ShellSchema> = {
         job.exitCode = code ?? 0;
       });
 
-      return { job_id, message: `Background job started. Use wait or read_output with job_id ${job_id} to view logs.` };
+      return {
+        job_id,
+        message: `Background job started. Use wait or read_output with job_id ${job_id} to view logs.`,
+      };
     }
 
     // Synchronous execution

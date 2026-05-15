@@ -21,19 +21,26 @@ export function buildTransport(def: MCPDef): Transport {
       if (!def.url) {
         throw new Error(`MCP "${def.id}": sse transport requires a url`);
       }
-      return new SSEClientTransport(new URL(def.url));
+      return new SSEClientTransport(new URL(def.url), requestOptions(def.headers));
     }
     case 'http-streamable': {
       if (!def.url) {
         throw new Error(`MCP "${def.id}": http-streamable transport requires a url`);
       }
-      return new StreamableHTTPClientTransport(new URL(def.url));
+      return new StreamableHTTPClientTransport(new URL(def.url), requestOptions(def.headers));
     }
     default: {
       const _exhaustive: never = def.transport;
       throw new Error(`Unsupported transport: ${String(_exhaustive)}`);
     }
   }
+}
+
+function requestOptions(headers: Record<string, string> | undefined):
+  | { requestInit: RequestInit }
+  | undefined {
+  if (!headers || Object.keys(headers).length === 0) return undefined;
+  return { requestInit: { headers } };
 }
 
 function mergeEnv(defEnv: Record<string, string> | undefined): Record<string, string> {

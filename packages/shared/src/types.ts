@@ -57,6 +57,7 @@ export const MCPDef = z.object({
   command: z.string().optional(),
   args: z.array(z.string()).default([]),
   env: z.record(z.string()).default({}),
+  headers: z.record(z.string()).optional(),
   url: z.string().optional(),
   /**
    * `shared` (default): one MCP process per `id`, reused across agents.

@@ -12,6 +12,7 @@ import type {
   AuthService,
   BootstrapService,
   ConversationService,
+  McpRegistryService,
   OnboardingService,
   RunService,
   SettingsService,
@@ -49,6 +50,7 @@ import {registerRoleRoutes} from "./routes/roles.js";
 import {registerSettingsRoutes} from "./routes/settings.js";
 import {registerTaskRoutes} from "./routes/tasks.js";
 import {registerTaskSessionRoutes} from "./routes/task-sessions.js";
+import {registerMcpRoutes} from "./routes/mcps.js";
 import {registerWorkspaceRoutes} from "./routes/workspaces.js";
 import {registerAgentRoutes} from "./routes/agents.js";
 import {registerOauthRoutes} from "./routes/oauth.js";
@@ -84,6 +86,7 @@ export interface TransportOptions {
       spirits: SpiritService;
       supervisorTodos: SupervisorTodoService;
       activeSpirits: ActiveSpiritRegistry;
+      mcpRegistry: McpRegistryService;
     };
   };
 }
@@ -295,6 +298,10 @@ export function createTransport(opts: TransportOptions): Transport {
         registerTaskSessionRoutes(api, {
           taskSessions: services.taskSessions,
           repo: opts.apiServices.repo,
+        });
+        registerMcpRoutes(api, {
+          auth: services.auth,
+          mcpRegistry: services.mcpRegistry,
         });
       }
     },

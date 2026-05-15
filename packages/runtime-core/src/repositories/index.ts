@@ -1,5 +1,6 @@
 import type { SqliteDbHandle as DbHandle } from '@ujima/context-store';
 import type {
+  AgentMcpAttachment,
   ApprovalRequest,
   AuthSession,
   AuthUser,
@@ -9,6 +10,8 @@ import type {
   ChannelKind,
   ConfigFieldOwnership,
   ConversationThread,
+  McpServer,
+  McpToolCache,
   Member,
   Message,
   MessageMention,
@@ -157,6 +160,20 @@ import {
   listSpiritsForSession as readSpiritsForSession,
   saveSpirit as writeSpirit,
 } from './spirits.js';
+import {
+  deleteAgentMcpAttachment as removeAgentMcpAttachment,
+  deleteMcpServer as removeMcpServer,
+  getMcpServer as readMcpServer,
+  getMcpServerByName as readMcpServerByName,
+  getMcpToolCache as readMcpToolCache,
+  listAgentMcpAttachments as readAgentMcpAttachments,
+  listAttachedServersForSpirit as readAttachedServersForSpirit,
+  listMcpServerAttachments as readMcpServerAttachments,
+  listMcpServers as readMcpServers,
+  saveAgentMcpAttachment as writeAgentMcpAttachment,
+  saveMcpServer as writeMcpServer,
+  saveMcpToolCache as writeMcpToolCache,
+} from './mcp-servers.js';
 
 export class Repository {
   private readonly secrets: SecretStore;
@@ -482,6 +499,51 @@ export class Repository {
     status: TodoStatus,
     options?: { notes?: string },
   ): Todo | null => writeTodoStatus(this.db, organizationId, todoId, status, options);
+
+  // Generic secret-store passthrough — used by the MCP registry (env
+  // maps + auth headers) and any other component that needs to put
+  // sensitive material in the file-backed store without going through
+  // the provider-credential helper. Values are written / read as
+  // opaque strings; the caller JSON-encodes structured payloads.
+  writeSecret = (value: string): string => this.secrets.write(value);
+  readSecret = (keyRef: string): string | null => this.secrets.read(keyRef);
+  deleteSecret = (keyRef: string): void => this.secrets.delete(keyRef);
+
+  saveMcpServer = (server: McpServer): McpServer => writeMcpServer(this.db, server);
+  getMcpServer = (organizationId: string, serverId: string): McpServer | null =>
+    readMcpServer(this.db, organizationId, serverId);
+  getMcpServerByName = (organizationId: string, name: string): McpServer | null =>
+    readMcpServerByName(this.db, organizationId, name);
+  listMcpServers = (organizationId: string): McpServer[] => readMcpServers(this.db, organizationId);
+  deleteMcpServer = (organizationId: string, serverId: string): void =>
+    removeMcpServer(this.db, organizationId, serverId);
+
+  saveAgentMcpAttachment = (
+    attachment: AgentMcpAttachment,
+  ): AgentMcpAttachment => writeAgentMcpAttachment(this.db, attachment);
+  deleteAgentMcpAttachment = (
+    organizationId: string,
+    memberId: string,
+    mcpServerId: string,
+  ): void => removeAgentMcpAttachment(this.db, organizationId, memberId, mcpServerId);
+  listAgentMcpAttachments = (
+    organizationId: string,
+    memberId: string,
+  ): AgentMcpAttachment[] => readAgentMcpAttachments(this.db, organizationId, memberId);
+  listMcpServerAttachments = (
+    organizationId: string,
+    mcpServerId: string,
+  ): AgentMcpAttachment[] => readMcpServerAttachments(this.db, organizationId, mcpServerId);
+  listAttachedServersForSpirit = (
+    organizationId: string,
+    memberId: string,
+    role: 'worker' | 'supervisor',
+  ): { attachment: AgentMcpAttachment; server: McpServer }[] =>
+    readAttachedServersForSpirit(this.db, organizationId, memberId, role);
+
+  saveMcpToolCache = (cache: McpToolCache): McpToolCache => writeMcpToolCache(this.db, cache);
+  getMcpToolCache = (organizationId: string, mcpServerId: string): McpToolCache | null =>
+    readMcpToolCache(this.db, organizationId, mcpServerId);
 
   getBootstrapSnapshot = (): BootstrapSnapshot => readBootstrapSnapshot(this.db);
 }

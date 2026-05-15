@@ -545,3 +545,126 @@ export const TodoSchema = z.object({
   updatedAt: TimestampSchema,
 });
 export type Todo = z.infer<typeof TodoSchema>;
+
+// -----------------------------------------------------------------------
+// MCP Registry (Phase 3 — agent-owned MCP access)
+// -----------------------------------------------------------------------
+//
+// A `McpServer` is the canonical record for an MCP endpoint an org has
+// registered. Secrets — stdio env vars, remote auth headers — are stored
+// out-of-band via `*_key_ref` pointers into the file-backed secret
+// store. They never appear inline in DB rows, API responses, audit
+// rows, or realtime events.
+//
+// `AgentMcpAttachment` is the access grant: which agent can call which
+// MCP, and at which spirit-role scope. Worker spirits inherit
+// `scope='worker'|'both'` MCPs; supervisor spirits only inherit
+// `scope='supervisor'|'both'` MCPs. The default `'worker'` matches
+// the architecture rule: supervisors never automatically inherit
+// worker MCPs.
+
+export const McpTransportSchema = z.enum(['stdio', 'sse', 'http-streamable']);
+export type McpTransport = z.infer<typeof McpTransportSchema>;
+
+export const McpIsolationSchema = z.enum(['shared', 'per-agent']);
+export type McpIsolation = z.infer<typeof McpIsolationSchema>;
+
+export const McpServerStatusSchema = z.enum(['active', 'disabled', 'error']);
+export type McpServerStatus = z.infer<typeof McpServerStatusSchema>;
+
+export const McpAttachmentScopeSchema = z.enum(['worker', 'supervisor', 'both']);
+export type McpAttachmentScope = z.infer<typeof McpAttachmentScopeSchema>;
+
+/**
+ * Canonical MCP server row. Secrets ride as `*_key_ref` only;
+ * `envKeyRef` is the secret-store pointer to the JSON-encoded env-var
+ * map for stdio servers, `headersKeyRef` is the same for HTTP/SSE
+ * auth headers. The REST surface emits a redacted shape (see
+ * `McpServerPublicSchema`).
+ */
+export const McpServerSchema = z.object({
+  id: IdSchema,
+  organizationId: IdSchema,
+  name: z.string().min(1),
+  description: z.string().default(''),
+  category: z.string().default('general'),
+  transport: McpTransportSchema,
+  command: z.string().optional(),
+  args: z.array(z.string()).default([]),
+  envKeyRef: z.string().min(1).optional(),
+  url: z.string().optional(),
+  headersKeyRef: z.string().min(1).optional(),
+  isolation: McpIsolationSchema.default('shared'),
+  status: McpServerStatusSchema.default('active'),
+  lastTestedAt: TimestampSchema.optional(),
+  lastTestError: z.string().optional(),
+  createdBy: IdSchema,
+  createdAt: TimestampSchema,
+  updatedAt: TimestampSchema,
+});
+export type McpServer = z.infer<typeof McpServerSchema>;
+
+/**
+ * Redacted MCP server shape returned over the REST API. Drops every
+ * `*_key_ref` (those are internal secret-store pointers, not data the
+ * caller should see) and surfaces `hasEnv` / `hasHeaders` booleans so
+ * the UI can render "configured" indicators without ever touching
+ * secret material. `secretKeys` is a list of the named keys present
+ * (useful for the settings form) — names only, no values.
+ */
+export const McpServerPublicSchema = z.object({
+  id: IdSchema,
+  organizationId: IdSchema,
+  name: z.string(),
+  description: z.string(),
+  category: z.string(),
+  transport: McpTransportSchema,
+  command: z.string().optional(),
+  args: z.array(z.string()),
+  url: z.string().optional(),
+  isolation: McpIsolationSchema,
+  status: McpServerStatusSchema,
+  hasEnv: z.boolean(),
+  hasHeaders: z.boolean(),
+  envKeys: z.array(z.string()),
+  headerKeys: z.array(z.string()),
+  lastTestedAt: TimestampSchema.optional(),
+  lastTestError: z.string().optional(),
+  createdBy: IdSchema,
+  createdAt: TimestampSchema,
+  updatedAt: TimestampSchema,
+});
+export type McpServerPublic = z.infer<typeof McpServerPublicSchema>;
+
+export const AgentMcpAttachmentSchema = z.object({
+  id: IdSchema,
+  organizationId: IdSchema,
+  memberId: IdSchema,
+  mcpServerId: IdSchema,
+  scope: McpAttachmentScopeSchema.default('worker'),
+  createdAt: TimestampSchema,
+  updatedAt: TimestampSchema,
+});
+export type AgentMcpAttachment = z.infer<typeof AgentMcpAttachmentSchema>;
+
+/**
+ * Tool entry as stored in the cache. Mirrors what MCP's `listTools`
+ * returns. `destructive` is optional metadata the policy layer reads
+ * to decide whether a tool needs explicit approval beyond the default.
+ */
+export const McpToolDescriptorSchema = z.object({
+  name: z.string().min(1),
+  description: z.string().default(''),
+  inputSchema: z.record(z.string(), z.unknown()).optional(),
+  destructive: z.boolean().optional(),
+});
+export type McpToolDescriptor = z.infer<typeof McpToolDescriptorSchema>;
+
+export const McpToolCacheSchema = z.object({
+  mcpServerId: IdSchema,
+  organizationId: IdSchema,
+  tools: z.array(McpToolDescriptorSchema).default([]),
+  fetchedAt: TimestampSchema,
+  error: z.string().optional(),
+});
+export type McpToolCache = z.infer<typeof McpToolCacheSchema>;
