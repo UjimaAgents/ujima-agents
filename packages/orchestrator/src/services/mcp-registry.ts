@@ -236,9 +236,26 @@ export class McpRegistryService {
     const now = new Date().toISOString();
 
     for (const def of parsed.defs) {
-      if (this.repo.getMcpServerByName(input.organizationId, def.name)) {
+      const name = def.name.trim();
+      if (!name) {
         skipped.push({
           name: def.name,
+          reason: 'MCP server name is required',
+        });
+        continue;
+      }
+      try {
+        this.validateConnectivity(def);
+      } catch (err) {
+        skipped.push({
+          name,
+          reason: err instanceof Error ? err.message : String(err),
+        });
+        continue;
+      }
+      if (this.repo.getMcpServerByName(input.organizationId, name)) {
+        skipped.push({
+          name,
           reason: 'A server with this name already exists in the organisation',
         });
         continue;
@@ -250,7 +267,7 @@ export class McpRegistryService {
       const server = McpServerSchema.parse({
         id: randomUUID(),
         organizationId: input.organizationId,
-        name: def.name,
+        name,
         description: def.description,
         category: input.defaultCategory ?? def.category,
         transport: def.transport,
@@ -478,7 +495,7 @@ export class McpRegistryService {
     return {};
   }
 
-  private validateConnectivity(input: CreateMcpServerInput): void {
+  private validateConnectivity(input: Pick<CreateMcpServerInput, 'transport' | 'command' | 'url'>): void {
     if (input.transport === 'stdio') {
       if (!input.command || input.command.trim().length === 0) {
         throw new Error('stdio MCP servers require a command');

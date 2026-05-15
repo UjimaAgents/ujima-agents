@@ -305,6 +305,87 @@ describe('McpRegistryService — Phase 3 MCP integration', () => {
     expect(JSON.stringify(result)).not.toContain('"tok"');
   });
 
+  it('normalizes imported names before duplicate checks and persistence', async () => {
+    const fixture = await createFixture();
+    tempDirs.push(fixture.archiveRoot);
+
+    fixture.registry.create({
+      organizationId: fixture.organizationId,
+      createdBy: fixture.ownerId,
+      name: 'fs',
+      transport: 'stdio',
+      command: 'node',
+    });
+
+    const result = fixture.registry.import({
+      organizationId: fixture.organizationId,
+      createdBy: fixture.ownerId,
+      json: JSON.stringify({
+        mcpServers: {
+          'fs-copy': {
+            name: 'fs ',
+            command: 'node',
+          },
+          'trimmed-new': {
+            name: ' trimmed-new ',
+            command: 'node',
+          },
+        },
+      }),
+    });
+
+    expect(result.imported.map((server) => server.name)).toEqual(['trimmed-new']);
+    expect(result.skipped).toEqual([
+      {
+        name: 'fs',
+        reason: 'A server with this name already exists in the organisation',
+      },
+    ]);
+    expect(fixture.repo.getMcpServerByName(fixture.organizationId, 'fs ')).toBeNull();
+    expect(fixture.repo.getMcpServerByName(fixture.organizationId, 'trimmed-new')).toBeTruthy();
+  });
+
+  it('skips imported MCP entries that fail transport connectivity validation', async () => {
+    const fixture = await createFixture();
+    tempDirs.push(fixture.archiveRoot);
+
+    const result = fixture.registry.import({
+      organizationId: fixture.organizationId,
+      createdBy: fixture.ownerId,
+      json: JSON.stringify({
+        mcpServers: {
+          'stdio-missing-command': {
+            transport: 'stdio',
+          },
+          'remote-missing-url': {
+            transport: 'sse',
+          },
+          valid: {
+            transport: 'http-streamable',
+            url: 'https://valid.example/mcp',
+          },
+        },
+      }),
+    });
+
+    expect(result.imported.map((server) => server.name)).toEqual(['valid']);
+    expect(result.skipped).toEqual([
+      {
+        name: 'stdio-missing-command',
+        reason: 'stdio MCP servers require a command',
+      },
+      {
+        name: 'remote-missing-url',
+        reason: 'sse MCP servers require a url',
+      },
+    ]);
+    expect(
+      fixture.repo.getMcpServerByName(fixture.organizationId, 'stdio-missing-command'),
+    ).toBeNull();
+    expect(fixture.repo.getMcpServerByName(fixture.organizationId, 'remote-missing-url')).toBeNull();
+    expect(fixture.repo.getMcpServerByName(fixture.organizationId, 'valid')).toBeTruthy();
+  });
+
   it('list() returns redacted shapes ordered by name', async () => {
     const fixture = await createFixture();
     tempDirs.push(fixture.archiveRoot);
