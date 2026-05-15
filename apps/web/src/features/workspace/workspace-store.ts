@@ -5,7 +5,7 @@ import type {
   ApprovalRequest,
   Message,
   RunState,
-} from "@ujima/shared";
+} from "@ujima/shared/browser";
 import type { SelectedConversation } from "./types";
 import type { ChatMessageData, ApprovalCardData } from "./components/chat";
 import type { ActivityState } from "./activity-state";
@@ -197,14 +197,20 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
           ? conversationUnreadCounts
           : state.conversationUnreadCounts;
       const currentSelection = state.selectedConversation;
+      const passed = selectedConversation;
+      const passedValid =
+        passed &&
+        (passed.type === "channel"
+          ? nextChannels.some((channel) => channel.id === passed.id)
+          : nextMembers.some((member) => member.id === passed.id));
       const selectionExists =
         currentSelection &&
         (currentSelection.type === "channel"
           ? nextChannels.some((channel) => channel.id === currentSelection.id)
           : nextMembers.some((member) => member.id === currentSelection.id));
       const nextSelection =
-        (selectionExists ? currentSelection : selectedConversation) ??
-        currentSelection ??
+        (passedValid ? passed : undefined) ??
+        (selectionExists ? currentSelection : undefined) ??
         resolveDefaultConversation(nextChannels);
       if (
         nextChannels === state.channels &&

@@ -1,10 +1,12 @@
 import { useCallback, useRef, useState, forwardRef, type MouseEvent, type ReactNode, type UIEventHandler } from "react";
 import { CheckCircle2, Loader2, Sparkles } from "lucide-react";
-import { type AttachmentCategory } from "@ujima/shared";
+import { type AttachmentCategory } from "@ujima/shared/browser";
 import { Avatar, TagBadge, type TagVariant } from "./primitives";
 import { MessageActions } from "../message-actions";
 import { Markdown, MarkdownInline } from "../markdown";
 import { AttachmentGrid } from "./attachment-grid";
+import { TerminalPane } from "./terminal-pane";
+import { FilesystemToolPane } from "./filesystem-tool-pane";
 
 const CONVERSATION_ARCHIVE_MARKER = "[[CONVERSATION_ARCHIVE_V1]]";
 const CONVERSATION_SUMMARY_MARKER = "[[CONVERSATION_SUMMARY_V1]]";
@@ -28,6 +30,13 @@ export interface ChatMessageData {
     mimeType: string;
     category: AttachmentCategory;
     sizeBytes: number;
+  }[];
+  toolCalls?: {
+    toolCallId: string;
+    toolName: string;
+    args: Record<string, unknown>;
+    result?: unknown;
+    isError?: boolean;
   }[];
   replyPreview?: {
     name: string;
@@ -91,6 +100,15 @@ export function ChatMessage({
   const systemLabel = message.kind === "system" ? getSystemMessageLabel(message.content) : null;
   const systemBodyMarkdown =
     message.kind === "system" ? systemMessageBodyMarkdown(message.content) : null;
+  const approvalShellTerminal =
+    message.kind === "system" && systemLabel?.includes("Shell") && systemBodyMarkdown
+      ? parseRelayShellBody(systemBodyMarkdown)
+      : null;
+  const approvalFsTerminal =
+    message.kind === "system" && systemLabel?.includes("Filesystem") && systemBodyMarkdown
+      ? parseRelayFilesystemBody(systemBodyMarkdown, systemLabel)
+      : null;
+  const goalArtifact = getGoalArtifactCard(message.toolCalls);
 
   return (
     <>
@@ -121,13 +139,28 @@ export function ChatMessage({
                 </p>
                 <p className="text-[11px] text-zinc-400">{message.time}</p>
               </div>
-              {systemBodyMarkdown !== null && (
+              {approvalShellTerminal ? (
+                <TerminalPane
+                  className="mt-1.5"
+                  cwd={approvalShellTerminal.cwd}
+                  commandLine={approvalShellTerminal.commandLine}
+                />
+              ) : approvalFsTerminal ? (
+                <FilesystemToolPane
+                  className="mt-1.5"
+                  action={approvalFsTerminal.action}
+                  resourcePath={approvalFsTerminal.resourcePath}
+                  meta={approvalFsTerminal.meta}
+                  body={approvalFsTerminal.body}
+                />
+              ) : systemBodyMarkdown !== null ? (
                 <Markdown
                   content={systemBodyMarkdown}
                   mentionNames={message.mentionNames}
                   className="mt-1 text-sm"
                 />
-              )}
+              ) : null}
+              {goalArtifact ? <GoalArtifactPreview artifact={goalArtifact} /> : null}
             </div>
           </>
         ) : (
@@ -158,6 +191,7 @@ export function ChatMessage({
                 content={message.content}
                 mentionNames={message.mentionNames}
               />
+              {goalArtifact ? <GoalArtifactPreview artifact={goalArtifact} /> : null}
               <AttachmentGrid
                 attachments={message.attachments}
                 organizationId={organizationId ?? ""}
@@ -214,6 +248,115 @@ function systemMessageBodyMarkdown(content: string): string | null {
     return rest.length > 0 ? rest : null;
   }
   return null;
+}
+
+/** Matches `formatApprovalRelayMarkdown` shell relay body (`packages/shared` approval-scope). */
+function parseRelayShellBody(body: string): { cwd: string; commandLine: string } | null {
+  const cwdMatch = body.match(/^Cwd:\s*(.+)$/m);
+  const cmdMatch = body.match(/^Command:\s*(.+)$/m);
+  const cwd = cwdMatch?.[1]?.trim();
+  const commandLine = cmdMatch?.[1]?.trim();
+  if (!cwd || !commandLine) return null;
+  return { cwd, commandLine };
+}
+
+function parseFilesystemActionFromRelayLabel(label: string): "read" | "write" | null {
+  const m = label.match(/Filesystem\s+(read|write)\b/i);
+  if (!m) return null;
+  return m[1].toLowerCase() === "read" ? "read" : "write";
+}
+
+function parseRelayFilesystemBody(
+  body: string,
+  label: string,
+): { action: "read" | "write"; resourcePath: string; meta?: string; body?: string } | null {
+  const action = parseFilesystemActionFromRelayLabel(label);
+  if (!action) return null;
+  const lines = body.split("\n");
+  let resourcePath: string | undefined;
+  let i = 0;
+  for (; i < lines.length; i++) {
+    const line = lines[i]?.trimEnd() ?? "";
+    if (line.startsWith("Path: ")) {
+      resourcePath = line.slice(6).trim();
+      break;
+    }
+  }
+  if (!resourcePath) return null;
+  i += 1;
+  let meta: string | undefined;
+  if (lines[i]?.trimStart().startsWith("Window: ")) {
+    meta = lines[i].replace(/^\s*Window:\s*/, "").trim();
+    i += 1;
+  }
+  let patchBody: string | undefined;
+  const patchHeader = lines[i]?.trim();
+  if (patchHeader === "Patch:" || patchHeader?.startsWith("Patch:")) {
+    patchBody = lines.slice(i + 1).join("\n").trim();
+    if (patchBody.length === 0) patchBody = undefined;
+  }
+  return { action, resourcePath, meta, body: patchBody };
+}
+
+type GoalArtifactView = {
+  goalName: string;
+  goalFilePath: string;
+  html: string;
+  artifactFormat: "html" | "markdown";
+  status: string;
+};
+
+function getGoalArtifactCard(toolCalls?: ChatMessageData["toolCalls"]): GoalArtifactView | null {
+  const card = toolCalls?.find((entry) => entry.toolName === "card.goal.file");
+  if (!card) return null;
+  const { goalName, goalFilePath, html, status, artifactFormat } = card.args;
+  if (
+    typeof goalName !== "string" ||
+    typeof goalFilePath !== "string" ||
+    typeof html !== "string" ||
+    typeof status !== "string"
+  ) {
+    return null;
+  }
+  return {
+    goalName,
+    goalFilePath,
+    html,
+    artifactFormat: artifactFormat === "markdown" ? "markdown" : "html",
+    status,
+  };
+}
+
+function GoalArtifactPreview({ artifact }: { artifact: GoalArtifactView }) {
+  return (
+    <div className="mt-3 overflow-hidden rounded-xl bg-zinc-50/70 shadow-sm ring-1 ring-zinc-200/50 dark:bg-zinc-900/30 dark:ring-zinc-800/60">
+      <div className="flex items-center justify-between gap-3 px-3 py-2">
+        <div className="min-w-0">
+          <p className="truncate text-[10px] font-semibold uppercase tracking-[0.18em] text-zinc-500 dark:text-zinc-400">
+            Goal file
+          </p>
+          <p className="truncate text-[11px] text-zinc-400 dark:text-zinc-500">
+            {artifact.goalFilePath}
+          </p>
+        </div>
+        <span className="rounded-full bg-violet-100/80 px-2 py-0.5 text-[10px] font-semibold text-violet-700 dark:bg-violet-500/10 dark:text-violet-300">
+          {artifact.status}
+        </span>
+      </div>
+      {artifact.artifactFormat === "markdown" ? (
+        <div className="max-h-[540px] overflow-auto px-4 py-3">
+          <Markdown content={artifact.html} />
+        </div>
+      ) : (
+        <iframe
+          title={artifact.goalName}
+          sandbox=""
+          srcDoc={artifact.html}
+          className="h-[540px] w-full border-0 bg-transparent"
+        />
+      )}
+    </div>
+  );
 }
 
 export const ChatMessageList = forwardRef<

@@ -15,7 +15,6 @@ import {
   OnboardingService,
   SUPERVISOR_TOOL_ALLOWLIST,
   SpiritService,
-  SupervisorService,
   SupervisorTodoService,
   TaskSessionService,
   ToolServiceImpl,
@@ -207,7 +206,6 @@ interface Fixture {
   repo: ApiRepository;
   conversations: ConversationService;
   spirits: SpiritService;
-  supervisor: SupervisorService;
   supervisorTodos: SupervisorTodoService;
   taskSessions: TaskSessionService;
   registry: ActiveSpiritRegistry;
@@ -317,18 +315,10 @@ async function createFixture(opts: FixtureOptions = {}): Promise<Fixture> {
     registry,
     ...(opts.mcpPool ? { mcpPool: opts.mcpPool } : {}),
     ...(opts.mcpResolver ? { mcpResolver: opts.mcpResolver } : {}),
-  });
-  const supervisor = new SupervisorService(
-    repo,
-    noopRealtime(),
     conversations,
-    spirits,
-    registry,
-    {
-      debounceMs: 0,
-      turnCapPerSession: 3,
-    },
-  );
+    supervisorDebounceMs: 0,
+    supervisorTurnCapPerSession: 3,
+  });
   const taskSessions = new TaskSessionService(repo, conversations, spirits);
 
   return {
@@ -336,7 +326,6 @@ async function createFixture(opts: FixtureOptions = {}): Promise<Fixture> {
     repo,
     conversations,
     spirits,
-    supervisor,
     supervisorTodos,
     taskSessions,
     registry,
@@ -855,10 +844,10 @@ describe('supervisor.todo.* (Phase 2.B)', () => {
 });
 
 // =====================================================================
-// Phase 2.C — SupervisorService gate, mutex, cap, allowlist enforcement
+// Phase 2.C — SpiritService alert gate, mutex, cap, allowlist enforcement
 // =====================================================================
 
-describe('SupervisorService — Phase 2.C', () => {
+describe('SpiritService alert dispatch — Phase 2.C', () => {
   const tempDirs: string[] = [];
   afterEach(async () => {
     await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
@@ -868,7 +857,7 @@ describe('SupervisorService — Phase 2.C', () => {
     const fixture = await createFixture();
     tempDirs.push(fixture.archiveRoot);
 
-    const outcome = await fixture.supervisor.handleAlert({
+    const outcome = await fixture.spirits.handleAlert({
       organizationId: fixture.organizationId,
       memberId: 'frontend-alice',
       messageId: 'msg-doesnt-exist',
@@ -913,7 +902,7 @@ describe('SupervisorService — Phase 2.C', () => {
       body: '@frontend-alice quick status?',
     });
 
-    const dispatch = await fixture.supervisor.handleAlert({
+    const dispatch = await fixture.spirits.handleAlert({
       organizationId: fixture.organizationId,
       memberId: 'frontend-alice',
       messageId: askMessage.id,
@@ -967,7 +956,7 @@ describe('SupervisorService — Phase 2.C', () => {
     const outcomes = [];
     for (let i = 0; i < 4; i += 1) {
       const m = post(i);
-      const r = await fixture.supervisor.handleAlert({
+      const r = await fixture.spirits.handleAlert({
         organizationId: fixture.organizationId,
         memberId: 'frontend-alice',
         messageId: m.id,
@@ -1052,7 +1041,7 @@ describe('SupervisorService — Phase 2.C', () => {
     });
 
     // Fire both alerts before either resolves. The mutex must chain them.
-    const promiseA = fixture.supervisor.handleAlert({
+    const promiseA = fixture.spirits.handleAlert({
       organizationId: fixture.organizationId,
       memberId: 'frontend-alice',
       messageId: askA.id,
@@ -1061,7 +1050,7 @@ describe('SupervisorService — Phase 2.C', () => {
       byMemberId: fixture.ownerId,
       reason: 'mention',
     });
-    const promiseB = fixture.supervisor.handleAlert({
+    const promiseB = fixture.spirits.handleAlert({
       organizationId: fixture.organizationId,
       memberId: 'frontend-alice',
       messageId: askB.id,
@@ -1198,15 +1187,10 @@ describe('SupervisorService — Phase 2.C', () => {
     const spirits = new SpiritService(teamStore, repo, noopRealtime(), stubTools, {
       modelResolver: () => makeTextOnlyModel('reply'),
       registry,
-    });
-    const supervisor = new SupervisorService(
-      repo,
-      noopRealtime(),
       conversations,
-      spirits,
-      registry,
-      { debounceMs: 5_000, turnCapPerSession: 10 },
-    );
+      supervisorDebounceMs: 5_000,
+      supervisorTurnCapPerSession: 10,
+    });
     const taskSessions = new TaskSessionService(repo, conversations, spirits);
 
     const { session } = taskSessions.create({
@@ -1230,7 +1214,7 @@ describe('SupervisorService — Phase 2.C', () => {
       body: '@agent-x first',
     });
 
-    const first = await supervisor.handleAlert({
+    const first = await spirits.handleAlert({
       organizationId: owner.organizationId,
       memberId: 'agent-x',
       messageId: m1.id,
@@ -1248,7 +1232,7 @@ describe('SupervisorService — Phase 2.C', () => {
       channelId: general.id,
       body: '@agent-x second',
     });
-    const second = await supervisor.handleAlert({
+    const second = await spirits.handleAlert({
       organizationId: owner.organizationId,
       memberId: 'agent-x',
       messageId: m2.id,
@@ -1414,6 +1398,7 @@ describe('TaskSessionService.create — audit fix regressions', () => {
     const preSpirits = new SpiritService(teamStore, repo, noopRealtime(), stubTools, {
       modelResolver: () => makeTextOnlyModel('x'),
       registry: preRegistry,
+      conversations,
     });
     const taskSessions = new TaskSessionService(repo, conversations, preSpirits);
     const { session } = taskSessions.create({
@@ -1437,21 +1422,16 @@ describe('TaskSessionService.create — audit fix regressions', () => {
     const postSpirits = new SpiritService(teamStore, repo, noopRealtime(), stubTools, {
       modelResolver: () => makeTextOnlyModel('x'),
       registry: postRegistry,
+      conversations,
+      supervisorDebounceMs: 0,
+      supervisorTurnCapPerSession: 5,
     });
     expect(postRegistry.hasActiveForMember(owner.organizationId, 'agent-x')).toBe(false);
     postSpirits.bootstrapAll();
     expect(postRegistry.hasActiveForMember(owner.organizationId, 'agent-x')).toBe(true);
 
-    // Sanity: the SupervisorService wired against the post-restart
+    // Sanity: the SpiritService wired against the post-restart
     // registry now sees the alert as active, not as a fall-through.
-    const postSupervisor = new SupervisorService(
-      repo,
-      noopRealtime(),
-      conversations,
-      postSpirits,
-      postRegistry,
-      { debounceMs: 0, turnCapPerSession: 5 },
-    );
     const general = repo.getChannel(owner.organizationId, 'general')!;
     const ask = conversations.postToChannel({
       organizationId: owner.organizationId,
@@ -1459,7 +1439,7 @@ describe('TaskSessionService.create — audit fix regressions', () => {
       channelId: general.id,
       body: '@agent-x post-restart ping',
     });
-    const dispatch = await postSupervisor.handleAlert({
+    const dispatch = await postSpirits.handleAlert({
       organizationId: owner.organizationId,
       memberId: 'agent-x',
       messageId: ask.id,
@@ -1519,6 +1499,7 @@ describe('TaskSessionService.create — audit fix regressions', () => {
     const preSpirits = new SpiritService(teamStore, repo, noopRealtime(), stubTools, {
       modelResolver: () => makeTextOnlyModel('x'),
       registry: preRegistry,
+      conversations,
     });
     const taskSessions = new TaskSessionService(repo, conversations, preSpirits);
 
@@ -1562,6 +1543,9 @@ describe('TaskSessionService.create — audit fix regressions', () => {
     const postSpirits = new SpiritService(teamStore, repo, noopRealtime(), stubTools, {
       modelResolver: () => makeTextOnlyModel('x'),
       registry: postRegistry,
+      conversations,
+      supervisorDebounceMs: 0,
+      supervisorTurnCapPerSession: 5,
     });
     postSpirits.bootstrapAll();
 
@@ -1573,14 +1557,6 @@ describe('TaskSessionService.create — audit fix regressions', () => {
     // session, not the old one. Pre-fix this assertion would fail
     // because handleAlert picks active[0] which would have been
     // oldSpirit.
-    const postSupervisor = new SupervisorService(
-      repo,
-      noopRealtime(),
-      conversations,
-      postSpirits,
-      postRegistry,
-      { debounceMs: 0, turnCapPerSession: 5 },
-    );
     const general = repo.getChannel(owner.organizationId, 'general')!;
     const ask = conversations.postToChannel({
       organizationId: owner.organizationId,
@@ -1588,7 +1564,7 @@ describe('TaskSessionService.create — audit fix regressions', () => {
       channelId: general.id,
       body: '@agent-x post-restart status?',
     });
-    const dispatch = await postSupervisor.handleAlert({
+    const dispatch = await postSpirits.handleAlert({
       organizationId: owner.organizationId,
       memberId: 'agent-x',
       messageId: ask.id,
@@ -1752,7 +1728,7 @@ describe('TaskSessionService.create — audit fix regressions', () => {
       body: '@frontend-alice status?',
     });
 
-    const dispatch = await fixture.supervisor.handleAlert({
+    const dispatch = await fixture.spirits.handleAlert({
       organizationId: fixture.organizationId,
       memberId: 'frontend-alice',
       messageId: ask.id,
@@ -1825,17 +1801,10 @@ describe('TaskSessionService.create — audit fix regressions', () => {
       {
         modelResolver: () => makeTextOnlyModel('answer'),
         registry,
+        conversations,
+        supervisorDebounceMs: 60_000,
+        supervisorTurnCapPerSession: 100,
       },
-    );
-    const supervisor = new SupervisorService(
-      repo,
-      noopRealtime(),
-      conversations,
-      spirits,
-      registry,
-      // Very long debounce so any "leaked" execution would clearly
-      // show as a `replied` instead of `debounced`.
-      { debounceMs: 60_000, turnCapPerSession: 100 },
     );
     const taskSessions = new TaskSessionService(repo, conversations, spirits);
 
@@ -1867,7 +1836,7 @@ describe('TaskSessionService.create — audit fix regressions', () => {
       }),
     );
     const promises = messages.map((m) =>
-      supervisor.handleAlert({
+      spirits.handleAlert({
         organizationId: owner.organizationId,
         memberId: 'agent-x',
         messageId: m.id,
@@ -1892,9 +1861,9 @@ describe('TaskSessionService.create — audit fix regressions', () => {
   });
 
   // -------------------------------------------------------------------
-   // NEW (audit fix): supervisor.todo.* is rejected from worker turns
-   // even when the role's tool allowlist names them.
-   // -------------------------------------------------------------------
+  // NEW (audit fix): supervisor.todo.* is rejected from worker turns
+  // even when the role's tool allowlist names them.
+  // -------------------------------------------------------------------
   it('worker turn cannot call supervisor.todo.* even when the role lists them in `tools`', async () => {
     // Role config carries `supervisor.todo.add` in `tools`. Pre-fix,
     // checkToolPolicy unconditionally allowed the supervisor.* family
@@ -2314,17 +2283,10 @@ describe('TaskSessionService.create — audit fix regressions', () => {
       {
         modelResolver: () => makeTextOnlyModel('answer'),
         registry,
+        conversations,
+        supervisorDebounceMs: 60_000,
+        supervisorTurnCapPerSession: 100,
       },
-    );
-    const supervisor = new SupervisorService(
-      repo,
-      noopRealtime(),
-      conversations,
-      spirits,
-      registry,
-      // Long debounce — pre-fix the per-member key would suppress
-      // any second alert in the next ~minute regardless of session.
-      { debounceMs: 60_000, turnCapPerSession: 100 },
     );
     const taskSessions = new TaskSessionService(repo, conversations, spirits);
 
@@ -2368,7 +2330,7 @@ describe('TaskSessionService.create — audit fix regressions', () => {
       channelId: general.id,
       body: '@agent-x first ping (B)',
     });
-    const dispatchB = await supervisor.handleAlert({
+    const dispatchB = await spirits.handleAlert({
       organizationId: owner.organizationId,
       memberId: 'agent-x',
       messageId: askB.id,
@@ -2403,7 +2365,7 @@ describe('TaskSessionService.create — audit fix regressions', () => {
       channelId: general.id,
       body: '@agent-x second ping (A)',
     });
-    const dispatchA = await supervisor.handleAlert({
+    const dispatchA = await spirits.handleAlert({
       organizationId: owner.organizationId,
       memberId: 'agent-x',
       messageId: askA.id,
@@ -2479,6 +2441,7 @@ describe('TaskSessionService.create — audit fix regressions', () => {
           throw new Error('simulated provider resolution failure');
         },
         registry,
+        conversations,
       },
     );
     const taskSessions = new TaskSessionService(repo, conversations, spirits);
@@ -2747,7 +2710,7 @@ describe('TaskSessionService.create — audit fix regressions', () => {
       channelId: general.id,
       body: '@frontend-alice status?',
     });
-    const dispatch = await fixture.supervisor.handleAlert({
+    const dispatch = await fixture.spirits.handleAlert({
       organizationId: fixture.organizationId,
       memberId: 'frontend-alice',
       messageId: ask.id,

@@ -1,7 +1,11 @@
-import { readFileSync } from 'node:fs';
-import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
-import { Server as SocketIOServer, type Socket } from 'socket.io';
-import type { Repository, RuntimeHost, Logger } from '@ujima/runtime-core';
+import {readFileSync} from "node:fs";
+import Fastify, {
+  type FastifyInstance,
+  type FastifyReply,
+  type FastifyRequest,
+} from "fastify";
+import {Server as SocketIOServer, type Socket} from "socket.io";
+import type {Repository, RuntimeHost, Logger} from "@ujima/runtime-core";
 import type {
   ActiveSpiritRegistry,
   ApprovalService,
@@ -13,12 +17,11 @@ import type {
   RunService,
   SettingsService,
   SpiritService,
-  SupervisorService,
   SupervisorTodoService,
   TaskPromoterService,
   TaskSessionService,
-} from '@ujima/orchestrator';
-import type { UjimaEvent } from '@ujima/shared';
+} from "@ujima/orchestrator";
+import type {UjimaEvent} from "@ujima/shared";
 import {
   ApiErrorSchema,
   DEFAULT_BIND_HOST,
@@ -27,33 +30,37 @@ import {
   HealthResponseSchema,
   type ErrorCode,
   type WsFrame,
-} from '@ujima/api-schema';
-import { z } from 'zod';
-import swagger from '@fastify/swagger';
-import swaggerUi from '@fastify/swagger-ui';
-import multipart from '@fastify/multipart';
-import { jsonSchemaTransform, serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
-import { RealtimeService } from './realtime.js';
-import { registerAttachmentRoutes } from './routes/attachments.js';
-import { registerConversationRoutes } from './routes/conversations.js';
-import { registerAuthRoutes } from './routes/auth.js';
-import { registerOnboardingRoutes } from './routes/onboarding.js';
-import { registerRunRoutes } from './routes/runs.js';
-import { registerRoleRoutes } from './routes/roles.js';
-import { registerSettingsRoutes } from './routes/settings.js';
-import { registerTaskRoutes } from './routes/tasks.js';
-import { registerTaskSessionRoutes } from './routes/task-sessions.js';
-import { registerMcpRoutes } from './routes/mcps.js';
-import { registerWorkspaceRoutes } from './routes/workspaces.js';
-import { registerAgentRoutes } from './routes/agents.js';
-import { registerOauthRoutes } from './routes/oauth.js';
+} from "@ujima/api-schema";
+import {z} from "zod";
+import swagger from "@fastify/swagger";
+import swaggerUi from "@fastify/swagger-ui";
+import multipart from "@fastify/multipart";
+import {
+  jsonSchemaTransform,
+  serializerCompiler,
+  validatorCompiler,
+} from "fastify-type-provider-zod";
+import {RealtimeService} from "./realtime.js";
+import {registerAttachmentRoutes} from "./routes/attachments.js";
+import {registerConversationRoutes} from "./routes/conversations.js";
+import {registerAuthRoutes} from "./routes/auth.js";
+import {registerOnboardingRoutes} from "./routes/onboarding.js";
+import {registerRunRoutes} from "./routes/runs.js";
+import {registerRoleRoutes} from "./routes/roles.js";
+import {registerSettingsRoutes} from "./routes/settings.js";
+import {registerTaskRoutes} from "./routes/tasks.js";
+import {registerTaskSessionRoutes} from "./routes/task-sessions.js";
+import {registerMcpRoutes} from "./routes/mcps.js";
+import {registerWorkspaceRoutes} from "./routes/workspaces.js";
+import {registerAgentRoutes} from "./routes/agents.js";
+import {registerOauthRoutes} from "./routes/oauth.js";
 
 const WS_QUEUE_CAP = 256;
 const STARTED_AT = Date.now();
 const EventHandshakeResponseSchema = z.object({
-  status: z.literal('ready'),
-  transport: z.literal('socket.io'),
-  path: z.literal('/events'),
+  status: z.literal("ready"),
+  transport: z.literal("socket.io"),
+  path: z.literal("/events"),
 });
 
 export interface TransportOptions {
@@ -77,7 +84,6 @@ export interface TransportOptions {
       taskPromoter: TaskPromoterService;
       taskSessions: TaskSessionService;
       spirits: SpiritService;
-      supervisor: SupervisorService;
       supervisorTodos: SupervisorTodoService;
       activeSpirits: ActiveSpiritRegistry;
       mcpRegistry: McpRegistryService;
@@ -92,7 +98,7 @@ export interface Transport {
 }
 
 export function createTransport(opts: TransportOptions): Transport {
-  const { host, token, logger } = opts;
+  const {host, token, logger} = opts;
   const bindHost = opts.bindHost ?? DEFAULT_BIND_HOST;
   const port = opts.port ?? DEFAULT_BIND_PORT;
   const useTls = Boolean(opts.tlsCertPath && opts.tlsKeyPath);
@@ -100,7 +106,7 @@ export function createTransport(opts: TransportOptions): Transport {
   const tlsCertPath = opts.tlsCertPath;
 
   if (!bindHostIsLoopback(bindHost) && !useTls) {
-    throw new Error('non-loopback bind requires TLS');
+    throw new Error("non-loopback bind requires TLS");
   }
 
   const fastify: FastifyInstance = Fastify({
@@ -123,176 +129,205 @@ export function createTransport(opts: TransportOptions): Transport {
   fastify.register(swagger, {
     openapi: {
       info: {
-        title: 'Ujima Agents API',
-        description: 'Local control plane for running AI software teams',
-        version: '1.0.0',
+        title: "Ujima Agents API",
+        description: "Local control plane for running AI software teams",
+        version: "1.0.0",
       },
       tags: [
-        { name: 'Agents' },
-        { name: 'Attachments' },
-        { name: 'Conversations' },
-        { name: 'Onboarding' },
-        { name: 'Runs' },
-        { name: 'Roles' },
-        { name: 'Settings' },
-        { name: 'System' },
-        { name: 'Tasks' },
-        { name: 'Workspaces' },
+        {name: "Agents"},
+        {name: "Attachments"},
+        {name: "Conversations"},
+        {name: "Onboarding"},
+        {name: "Runs"},
+        {name: "Roles"},
+        {name: "Settings"},
+        {name: "System"},
+        {name: "Tasks"},
+        {name: "Workspaces"},
       ],
-      servers: [{ url: `${useTls ? 'https' : 'http'}://${bindHost}:${port}/api` }],
+      servers: [
+        {url: `${useTls ? "https" : "http"}://${bindHost}:${port}/api`},
+      ],
       components: {
         securitySchemes: {
-          bearerAuth: { type: 'http', scheme: 'bearer' },
+          bearerAuth: {type: "http", scheme: "bearer"},
         },
       },
-      security: [{ bearerAuth: [] }],
+      security: [{bearerAuth: []}],
     },
     transform: jsonSchemaTransform,
   });
 
   fastify.register(swaggerUi, {
-    routePrefix: '/docs',
-    uiConfig: { docExpansion: 'list', deepLinking: false },
+    routePrefix: "/docs",
+    uiConfig: {docExpansion: "list", deepLinking: false},
   });
 
   // Health Check (Public)
-  fastify.get('/health', {
-    schema: {
-      description: 'Check system health and uptime',
-      tags: ['System'],
-      response: { 200: HealthResponseSchema },
+  fastify.get(
+    "/health",
+    {
+      schema: {
+        description: "Check system health and uptime",
+        tags: ["System"],
+        response: {200: HealthResponseSchema},
+      },
     },
-  }, async () => {
-    return {
-      status: 'ok',
-      version: 'v1',
-      uptimeMs: Date.now() - STARTED_AT,
-      pid: process.pid,
-    };
-  });
+    async () => {
+      return {
+        status: "ok",
+        version: "v1",
+        uptimeMs: Date.now() - STARTED_AT,
+        pid: process.pid,
+      };
+    }
+  );
 
   // Socket.IO Handshake
   const io = new SocketIOServer(fastify.server, {
-    path: '/events',
-    cors: { origin: false },
+    path: "/events",
+    cors: {origin: false},
   });
 
-  fastify.get('/events', {
-    schema: {
-      description: 'Realtime event stream (Socket.IO)',
-      tags: ['System'],
-      response: {
-        200: EventHandshakeResponseSchema,
+  fastify.get(
+    "/events",
+    {
+      schema: {
+        description: "Realtime event stream (Socket.IO)",
+        tags: ["System"],
+        response: {
+          200: EventHandshakeResponseSchema,
+        },
       },
     },
-  }, async () => {
-    return {
-      status: 'ready',
-      transport: 'socket.io',
-      path: '/events',
-    };
-  });
+    async () => {
+      return {
+        status: "ready",
+        transport: "socket.io",
+        path: "/events",
+      };
+    }
+  );
 
   io.use((socket, next) => {
-    const authHeader = socket.handshake.auth?.token ?? socket.handshake.headers.authorization ?? '';
+    const authHeader =
+      socket.handshake.auth?.token ??
+      socket.handshake.headers.authorization ??
+      "";
     const bearerMatch = /^Bearer\s+(.+)$/.exec(String(authHeader));
-    const raw = typeof authHeader === 'string' && !bearerMatch ? authHeader : bearerMatch?.[1];
-    if (raw !== token) return next(new Error('ERR_UNAUTHORIZED'));
+    const raw =
+      typeof authHeader === "string" && !bearerMatch
+        ? authHeader
+        : bearerMatch?.[1];
+    if (raw !== token) return next(new Error("ERR_UNAUTHORIZED"));
     next();
   });
 
-  io.on('connection', (socket) => onSocketConnection(socket, host));
+  io.on("connection", (socket) => onSocketConnection(socket, host));
 
   // Public APIs (No Auth Required)
-  fastify.register(async (api) => {
-    registerOauthRoutes(api);
-  }, { prefix: '/api' });
+  fastify.register(
+    async (api) => {
+      registerOauthRoutes(api);
+    },
+    {prefix: "/api"}
+  );
 
   // Data API (Authenticated)
-  fastify.register(async (api) => {
-    api.addHook('onRequest', async (req, reply) => {
-      const auth = req.headers.authorization ?? '';
-      const match = /^Bearer\s+(.+)$/.exec(auth);
-      if (!match || match[1] !== token) {
-        return replyError(reply, 401, 'ERR_UNAUTHORIZED', 'missing or invalid bearer token');
+  fastify.register(
+    async (api) => {
+      api.addHook("onRequest", async (req, reply) => {
+        const auth = req.headers.authorization ?? "";
+        const match = /^Bearer\s+(.+)$/.exec(auth);
+        if (!match || match[1] !== token) {
+          return replyError(
+            reply,
+            401,
+            "ERR_UNAUTHORIZED",
+            "missing or invalid bearer token"
+          );
+        }
+      });
+
+      // Core Entities
+      registerWorkspaceRoutes(api, host);
+      registerAgentRoutes(api, host);
+      registerRoleRoutes(api);
+
+      // Orchestrator Services
+      if (opts.apiServices) {
+        const realtime = new RealtimeService(io, opts.apiServices.repo);
+        const services = opts.apiServices.buildServices(realtime);
+
+        api.register(multipart, {
+          limits: {fileSize: 25 * 1024 * 1024},
+        });
+        registerAttachmentRoutes(api, {
+          repo: opts.apiServices.repo,
+          auth: services.auth,
+        });
+
+        registerConversationRoutes(api, {
+          repo: opts.apiServices.repo,
+          conversations: services.conversations,
+          auth: services.auth,
+          taskPromoter: services.taskPromoter,
+        });
+        registerRunRoutes(api, {
+          repo: opts.apiServices.repo,
+          runs: services.runs,
+          approvals: services.approvals,
+          auth: services.auth,
+        });
+        registerAuthRoutes(api, {auth: services.auth});
+        registerOnboardingRoutes(api, {
+          auth: services.auth,
+          bootstrap: services.bootstrap,
+          onboarding: services.onboarding,
+        });
+        registerSettingsRoutes(api, {
+          repo: opts.apiServices.repo,
+          settings: services.settings,
+          auth: services.auth,
+        });
+        registerTaskRoutes(api, {
+          host,
+          repo: opts.apiServices.repo,
+          taskPromoter: services.taskPromoter,
+        });
+        registerTaskSessionRoutes(api, {
+          taskSessions: services.taskSessions,
+          repo: opts.apiServices.repo,
+        });
+        registerMcpRoutes(api, {
+          auth: services.auth,
+          mcpRegistry: services.mcpRegistry,
+        });
       }
-    });
-
-    // Core Entities
-    registerWorkspaceRoutes(api, host);
-    registerAgentRoutes(api, host);
-    registerRoleRoutes(api);
-
-    // Orchestrator Services
-    if (opts.apiServices) {
-      const realtime = new RealtimeService(io, opts.apiServices.repo);
-      const services = opts.apiServices.buildServices(realtime);
-
-      api.register(multipart, {
-        limits: { fileSize: 25 * 1024 * 1024 },
-      });
-      registerAttachmentRoutes(api, {
-        repo: opts.apiServices.repo,
-        auth: services.auth,
-      });
-      
-      registerConversationRoutes(api, {
-        repo: opts.apiServices.repo,
-        conversations: services.conversations,
-        auth: services.auth,
-        taskPromoter: services.taskPromoter,
-      });
-      registerRunRoutes(api, {
-        repo: opts.apiServices.repo,
-        runs: services.runs,
-        approvals: services.approvals,
-        auth: services.auth,
-      });
-      registerAuthRoutes(api, { auth: services.auth });
-      registerOnboardingRoutes(api, {
-        auth: services.auth,
-        bootstrap: services.bootstrap,
-        onboarding: services.onboarding,
-      });
-      registerSettingsRoutes(api, {
-        repo: opts.apiServices.repo,
-        settings: services.settings,
-        auth: services.auth,
-      });
-      registerTaskRoutes(api, {
-        host,
-        repo: opts.apiServices.repo,
-        taskPromoter: services.taskPromoter,
-      });
-      registerTaskSessionRoutes(api, {
-        taskSessions: services.taskSessions,
-        repo: opts.apiServices.repo,
-      });
-      registerMcpRoutes(api, {
-        auth: services.auth,
-        mcpRegistry: services.mcpRegistry,
-      });
-    }
-  }, { prefix: '/api' });
+    },
+    {prefix: "/api"}
+  );
 
   fastify.setErrorHandler((err, req, reply) => {
-    logger.error('transport: unhandled error', { 
+    logger.error("transport: unhandled error", {
       url: req.url,
       method: req.method,
-      error: err.message, 
-      stack: err.stack 
+      error: err.message,
+      stack: err.stack,
     });
-    return replyError(reply, 500, 'ERR_INTERNAL', err.message);
+    return replyError(reply, 500, "ERR_INTERNAL", err.message);
   });
 
-  let readyUrl = '';
+  let readyUrl = "";
 
   return {
-    get url() { return readyUrl; },
+    get url() {
+      return readyUrl;
+    },
     async listen() {
       await fastify.ready();
-      readyUrl = await fastify.listen({ host: bindHost, port });
-      logger.info('transport: listening', { url: readyUrl });
+      readyUrl = await fastify.listen({host: bindHost, port});
+      logger.info("transport: listening", {url: readyUrl});
     },
     async close() {
       io.disconnectSockets(true);
@@ -303,13 +338,18 @@ export function createTransport(opts: TransportOptions): Transport {
 }
 
 function bindHostIsLoopback(bindHost: string): boolean {
-  return bindHost === '127.0.0.1' || bindHost === 'localhost' || bindHost === '::1';
+  return (
+    bindHost === "127.0.0.1" || bindHost === "localhost" || bindHost === "::1"
+  );
 }
 
 function onSocketConnection(socket: Socket, host: RuntimeHost): void {
   const parsed = EventSubscribeQuerySchema.safeParse(socket.handshake.query);
   if (!parsed.success) {
-    socket.emit('error', { code: 'ERR_BAD_REQUEST', message: parsed.error.message });
+    socket.emit("error", {
+      code: "ERR_BAD_REQUEST",
+      message: parsed.error.message,
+    });
     socket.disconnect(true);
     return;
   }
@@ -319,7 +359,11 @@ function onSocketConnection(socket: Socket, host: RuntimeHost): void {
 
   const send = (frame: WsFrame): void => {
     if (queue.length >= WS_QUEUE_CAP) {
-      socket.emit('frame', { kind: 'overflow', dropped: queue.length, code: 1008 });
+      socket.emit("frame", {
+        kind: "overflow",
+        dropped: queue.length,
+        code: 1008,
+      });
       socket.disconnect(true);
       return;
     }
@@ -333,7 +377,7 @@ function onSocketConnection(socket: Socket, host: RuntimeHost): void {
       while (socket.connected) {
         const next = queue.shift();
         if (next === undefined) break;
-        socket.emit('frame', next);
+        socket.emit("frame", next);
       }
       flushing = false;
     });
@@ -348,15 +392,20 @@ function onSocketConnection(socket: Socket, host: RuntimeHost): void {
       eventType: filter.event_type,
       replaySinceMs: filter.since_ms,
     },
-    (event: UjimaEvent) => send({ kind: 'event', event }),
+    (event: UjimaEvent) => send({kind: "event", event})
   );
 
-  socket.on('disconnect', () => subscription.unsubscribe());
-  send({ kind: 'ready', since_ms: filter.since_ms });
+  socket.on("disconnect", () => subscription.unsubscribe());
+  send({kind: "ready", since_ms: filter.since_ms});
 }
 
-function replyError(reply: FastifyReply, status: number, code: ErrorCode, message: string): FastifyReply {
-  return reply.status(status).send(ApiErrorSchema.parse({ code, message }));
+function replyError(
+  reply: FastifyReply,
+  status: number,
+  code: ErrorCode,
+  message: string
+): FastifyReply {
+  return reply.status(status).send(ApiErrorSchema.parse({code, message}));
 }
 
-export type { FastifyRequest };
+export type {FastifyRequest};

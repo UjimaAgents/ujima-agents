@@ -42,7 +42,7 @@ export interface CreateTaskSessionInput {
   prompt: string;
   team: string[]; // member ids on the task
   executionMode?: TaskExecutionMode;
-  origin?: { channelId?: string; messageId?: string };
+  origin?: { threadId?: string; channelId?: string; messageId?: string };
   promotionMetadata?: Record<string, unknown>;
   /**
    * Optional explicit slug. Useful for tests / CLI invocations that want
@@ -171,6 +171,7 @@ export class TaskSessionService {
         summary: '',
         teamMemberIds: teamMembers.map((m) => m.id),
         origin: {
+          threadId: input.origin?.threadId,
           channelId: input.origin?.channelId,
           messageId: input.origin?.messageId,
         },
@@ -183,7 +184,7 @@ export class TaskSessionService {
         const channelToSave = ChannelSchema.parse({
           id: channelId,
           organizationId: input.organizationId,
-          name: `#${slug}`,
+          name: slug,
           kind: 'task-run',
           topic: input.prompt.slice(0, 240),
           memberIds: channelMemberIds,
@@ -196,7 +197,7 @@ export class TaskSessionService {
             id: channelId,
             organizationId: input.organizationId,
             channelId,
-            title: `#${slug}`,
+            title: slug,
             memberIds: channelMemberIds,
             createdAt: now,
           });
@@ -238,24 +239,25 @@ export class TaskSessionService {
       card: joinCard,
     });
 
-    if (input.origin?.channelId && input.origin.channelId !== channelId) {
-      const originChannel = this.repo.getChannel(input.organizationId, input.origin.channelId);
-      if (originChannel) {
-        const linkCard: MessageCard = {
-          kind: 'task.origin-link',
-          cardId: randomUUID(),
-          taskSessionId: sessionId,
-          taskChannelId: channelId,
-          taskSlug: slug,
-        };
-        this.publishCardMessage({
-          organizationId: input.organizationId,
-          threadId: originChannel.id,
-          channelId: originChannel.id,
-          content: `Started #${slug} — follow along`,
-          card: linkCard,
-        });
-      }
+    const originThreadId = input.origin?.threadId ?? input.origin?.channelId;
+    if (originThreadId && originThreadId !== channelId) {
+      const originChannel = input.origin?.channelId
+        ? this.repo.getChannel(input.organizationId, input.origin.channelId)
+        : null;
+      const linkCard: MessageCard = {
+        kind: 'task.origin-link',
+        cardId: randomUUID(),
+        taskSessionId: sessionId,
+        taskChannelId: channelId,
+        taskSlug: slug,
+      };
+      this.publishCardMessage({
+        organizationId: input.organizationId,
+        threadId: originThreadId,
+        channelId: originChannel?.id,
+        content: `Started #${slug} — follow along`,
+        card: linkCard,
+      });
     }
 
     return {
@@ -423,7 +425,7 @@ export class TaskSessionService {
   private publishCardMessage(input: {
     organizationId: string;
     threadId: string;
-    channelId: string;
+    channelId?: string;
     content: string;
     card: MessageCard;
   }): void {

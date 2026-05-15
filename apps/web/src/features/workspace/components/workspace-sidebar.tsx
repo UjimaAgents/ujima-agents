@@ -5,8 +5,8 @@ import {
   Search,
   Plus,
   Settings,
-  ChevronDown,
   Command,
+  ChevronDown,
 } from "lucide-react";
 import Link from "next/link";
 import { Avatar } from "./chat/primitives";
@@ -265,6 +265,7 @@ export function WorkspaceSidebar({
     (channel) => channel.kind !== "self" && channel.kind !== "dm",
   );
   const agentMembers = members.filter((member) => member.kind === "agent");
+
   const filteredRolePresets = useMemo(() => {
     const query = agentSearch.trim().toLowerCase();
     if (!query) return rolePresets;
@@ -314,6 +315,8 @@ export function WorkspaceSidebar({
 
       {/* Navigation Groups */}
       <div className="relative z-10 flex-1 overflow-y-auto px-2 py-3">
+
+
         {/* Channels */}
         <div className="mb-5">
           <SidebarSectionHeader
@@ -369,6 +372,8 @@ export function WorkspaceSidebar({
           </div>
         </div>
       </div>
+
+
 
       {/* User Footer */}
       <div className="border-t border-zinc-200 p-3 dark:border-zinc-800">
@@ -783,7 +788,7 @@ function SidebarItem({
         )}
       </div>
     </div>
-  );
+    );
 }
 
 function SidebarSectionHeader({
@@ -791,18 +796,16 @@ function SidebarSectionHeader({
   onAdd,
 }: {
   title: string;
-  onAdd: () => void;
+  onAdd?: () => void;
 }) {
   return (
     <div className="flex items-center justify-between px-2 text-[10px] font-bold uppercase tracking-widest text-zinc-500 dark:text-zinc-500">
       <span>{title}</span>
-      <button
-        type="button"
-        onClick={onAdd}
-        className="rounded p-0.5 opacity-40"
-      >
-        <Plus className="h-3 w-3" />
-      </button>
+      {onAdd ? (
+        <button type="button" onClick={onAdd} className="rounded p-0.5 opacity-40">
+          <Plus className="h-3 w-3" />
+        </button>
+      ) : null}
     </div>
   );
 }

@@ -6,6 +6,10 @@ export const OrganizationQuerySchema = z.object({
 });
 export type OrganizationQuery = z.infer<typeof OrganizationQuerySchema>;
 
+const MessageCreateMetadataSchema = z.object({
+  goalMode: z.boolean().optional(),
+}).optional();
+
 const ThreadMessageCreateSchema = z.object({
   organizationId: IdSchema,
   threadId: IdSchema,
@@ -14,6 +18,7 @@ const ThreadMessageCreateSchema = z.object({
   content: z.string(),
   attachmentIds: z.array(IdSchema).default([]),
   parentMessageId: IdSchema.optional(),
+  metadata: MessageCreateMetadataSchema,
 }).strict();
 
 const DirectMessageCreateSchema = z.object({
@@ -24,6 +29,7 @@ const DirectMessageCreateSchema = z.object({
   attachmentIds: z.array(IdSchema).default([]),
   ignore: z.boolean().optional(),
   parentMessageId: IdSchema.optional(),
+  metadata: MessageCreateMetadataSchema,
 }).strict();
 
 export const MessageCreateSchema = z.union([ThreadMessageCreateSchema, DirectMessageCreateSchema]);

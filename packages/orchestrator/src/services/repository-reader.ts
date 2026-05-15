@@ -120,6 +120,7 @@ export interface ConversationRepository extends RepositoryReader {
   getThread(organizationId: string, threadId: string): ConversationThread | null;
   ensureThread(thread: ConversationThread): ConversationThread;
   getMessage(organizationId: string, messageId: string): Message | null;
+  getLatestHumanMessageInThread(organizationId: string, threadId: string): Message | null;
   listMessages(
     organizationId: string,
     threadId: string,

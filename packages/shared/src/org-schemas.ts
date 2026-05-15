@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { GoalStatusSchema } from './goal-schemas.js';
 
 export const IdSchema = z.string().min(1);
 export type Id = z.infer<typeof IdSchema>;
@@ -213,6 +214,11 @@ export const MessageAttachmentSchema = z.object({
 });
 export type MessageAttachment = z.infer<typeof MessageAttachmentSchema>;
 
+export const MessageMetadataSchema = z.object({
+  goalMode: z.boolean().optional(),
+}).optional();
+export type MessageMetadata = z.infer<typeof MessageMetadataSchema>;
+
 export const MessageSchema = z.object({
   id: IdSchema,
   organizationId: IdSchema,
@@ -229,6 +235,7 @@ export const MessageSchema = z.object({
   mentionNames: z.array(z.string().min(1)).optional(),
   toolCalls: z.array(MessageToolCallSchema).default([]),
   attachments: z.array(AttachmentSchema).default([]),
+  metadata: MessageMetadataSchema,
   createdAt: TimestampSchema,
   editedAt: TimestampSchema.optional(),
   deletedAt: TimestampSchema.optional(),
@@ -339,6 +346,7 @@ export type RunStep = z.infer<typeof RunStepSchema>;
 // session (added in Phase 2 when the worker loop lands).
 
 export const TaskSessionOriginSchema = z.object({
+  threadId: IdSchema.optional(),
   channelId: IdSchema.optional(),
   messageId: IdSchema.optional(),
 });
@@ -406,6 +414,17 @@ export const TaskSummaryCardSchema = z.object({
   taskSlug: z.string().min(1).optional(),
 });
 
+export const GoalArtifactCardSchema = z.object({
+  ...MessageCardCommon,
+  kind: z.literal('goal.file'),
+  goalId: IdSchema,
+  goalName: z.string().min(1),
+  goalFilePath: z.string().min(1),
+  html: z.string(),
+  artifactFormat: z.enum(['html', 'markdown']).default('html'),
+  status: GoalStatusSchema,
+});
+
 export const ApprovalCardSchema = z.object({
   ...MessageCardCommon,
   kind: z.literal('approval'),
@@ -439,6 +458,7 @@ export const MessageCardSchema = z.discriminatedUnion('kind', [
   TaskJoinCardSchema,
   TaskOriginLinkCardSchema,
   TaskSummaryCardSchema,
+  GoalArtifactCardSchema,
   ApprovalCardSchema,
   PromotionConfirmCardSchema,
   ToolCallCardSchema,

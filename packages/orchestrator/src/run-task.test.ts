@@ -849,6 +849,295 @@ describe('orchestrator runTask — manual mode + concurrent execution', () => {
     ).toThrow();
   });
 
+  it('slim mode checkpoints completed stages and resumes from the last completed stage', async () => {
+    const mcp = makeFakeMCPConnection({
+      id: 'figma',
+      tools: [
+        { name: 'create_frame', description: '', inputSchema: { type: 'object', properties: {} } },
+        { name: 'inspect_frame', description: '', inputSchema: { type: 'object', properties: {} } },
+      ],
+    });
+    const permissions = createPermissionMiddleware({ audit: db.audit, agentState: db.agentState });
+
+    const firstHandle: ReturnType<typeof runTask> = runTask(
+      {
+        resolveAgent: (id) =>
+          id === 'sr-designer' ? srDesigner : id === 'jr-designer' ? jrDesigner : undefined,
+        getMCPConnection: () => mcp,
+        getModel: (agent) => createLanguageModelFromLegacyProvider(getOrThrow(firstProviders, agent.id), 'mock'),
+        eventBus: bus,
+        context: db.context,
+        audit: db.audit,
+        permissions,
+        agentState: db.agentState,
+        approvals: db.approvals,
+        onStream: (event) => {
+          const payload = event.payload as { wave?: number } | undefined;
+          if (event.type === 'wave_started' && payload?.wave === 1) {
+            queueMicrotask(() => firstHandle.killSession());
+          }
+        },
+      },
+      {
+        task: { ...task, execution_mode: 'slim' },
+        team,
+        sessionId: 'sess-slim-resume',
+        sequence: ['sr-designer', 'jr-designer'],
+      },
+    );
+    let jrResumePrompt = '';
+    let srRestartCalls = 0;
+
+    const firstProviders = new Map<string, LLMProvider>([
+      [
+        'sr-designer',
+        createMockProvider({
+          script: [textTurn('Frame created at /designs/card.fig')],
+        }),
+      ],
+      [
+        'jr-designer',
+        {
+          id: 'mock',
+          async *stream({ abortSignal }) {
+            await new Promise<void>((_, reject) => {
+              if (abortSignal?.aborted) {
+                reject(new Error('aborted'));
+                return;
+              }
+              abortSignal?.addEventListener('abort', () => reject(new Error('aborted')), {
+                once: true,
+              });
+            });
+            yield { type: 'finish', reason: 'end_turn' };
+          },
+        },
+      ],
+    ]);
+
+    const firstResult = await firstHandle.result;
+    expect(firstResult.status).toBe('paused');
+
+    const stage0 = await db.context.get<{
+      stage: number;
+      agentId: string;
+      result: { finalText: string };
+    }>('task:task-profile:session:sess-slim-resume:slim:checkpoint:0');
+    expect(stage0?.stage).toBe(0);
+    expect(stage0?.agentId).toBe('sr-designer');
+    expect(stage0?.result.finalText).toContain('/designs/card.fig');
+
+    const resumeProviders = new Map<string, LLMProvider>([
+      [
+        'sr-designer',
+        {
+          id: 'mock',
+          async *stream() {
+            srRestartCalls += 1;
+            yield { type: 'text', text: 'should not run' };
+            yield { type: 'finish', reason: 'end_turn' };
+          },
+        },
+      ],
+      [
+        'jr-designer',
+        {
+          id: 'mock',
+          async *stream({ messages }) {
+            const userMsg = messages.find((message) => message.role === 'user');
+            if (userMsg && typeof userMsg.content === 'string') {
+              jrResumePrompt = userMsg.content;
+            }
+            yield { type: 'text', text: 'Reviewed the card.' };
+            yield { type: 'finish', reason: 'end_turn' };
+          },
+        },
+      ],
+    ]);
+
+    const secondHandle = runTask(
+      {
+        resolveAgent: (id) =>
+          id === 'sr-designer' ? srDesigner : id === 'jr-designer' ? jrDesigner : undefined,
+        getMCPConnection: () => mcp,
+        getModel: (agent) => createLanguageModelFromLegacyProvider(getOrThrow(resumeProviders, agent.id), 'mock'),
+        eventBus: bus,
+        context: db.context,
+        audit: db.audit,
+        permissions,
+        agentState: db.agentState,
+        approvals: db.approvals,
+      },
+      {
+        task: { ...task, execution_mode: 'slim' },
+        team,
+        sessionId: 'sess-slim-resume',
+        sequence: ['sr-designer', 'jr-designer'],
+      },
+    );
+
+    const secondResult = await secondHandle.result;
+    expect(secondResult.status).toBe('completed');
+    expect(srRestartCalls).toBe(0);
+    expect(jrResumePrompt).toContain('[Output from sr-designer]');
+    expect(jrResumePrompt).toContain('Frame created at /designs/card.fig');
+  });
+
+  it('does not replay slim checkpoints from a different session with the same task id', async () => {
+    const mcp = makeFakeMCPConnection({
+      id: 'figma',
+      tools: [
+        { name: 'create_frame', description: '', inputSchema: { type: 'object', properties: {} } },
+        { name: 'inspect_frame', description: '', inputSchema: { type: 'object', properties: {} } },
+      ],
+    });
+    const permissions = createPermissionMiddleware({ audit: db.audit, agentState: db.agentState });
+    let secondSrCalls = 0;
+
+    const firstHandle = runTask(
+      {
+        resolveAgent: (id) =>
+          id === 'sr-designer' ? srDesigner : id === 'jr-designer' ? jrDesigner : undefined,
+        getMCPConnection: () => mcp,
+        getModel: (agent) =>
+          agent.id === 'sr-designer'
+            ? lm({ script: [textTurn('First session output')] })
+            : createLanguageModelFromLegacyProvider(
+                {
+                  id: 'mock',
+                  async *stream({ abortSignal }) {
+                    await new Promise<void>((_, reject) => {
+                      if (abortSignal?.aborted) {
+                        reject(new Error('aborted'));
+                        return;
+                      }
+                      abortSignal?.addEventListener('abort', () => reject(new Error('aborted')), {
+                        once: true,
+                      });
+                    });
+                    yield { type: 'finish', reason: 'end_turn' };
+                  },
+                },
+                'mock',
+              ),
+        eventBus: bus,
+        context: db.context,
+        audit: db.audit,
+        permissions,
+        agentState: db.agentState,
+        approvals: db.approvals,
+        onStream: (event) => {
+          const payload = event.payload as { wave?: number } | undefined;
+          if (event.type === 'wave_started' && payload?.wave === 1) {
+            queueMicrotask(() => firstHandle.killSession());
+          }
+        },
+      },
+      {
+        task: { ...task, execution_mode: 'slim' },
+        team,
+        sessionId: 'sess-slim-stale-a',
+        sequence: ['sr-designer', 'jr-designer'],
+      },
+    );
+    await firstHandle.result;
+
+    const secondHandle = runTask(
+      {
+        resolveAgent: (id) =>
+          id === 'sr-designer' ? srDesigner : id === 'jr-designer' ? jrDesigner : undefined,
+        getMCPConnection: () => mcp,
+        getModel: (agent) =>
+          agent.id === 'sr-designer'
+            ? createLanguageModelFromLegacyProvider(
+                {
+                  id: 'mock',
+                  async *stream() {
+                    secondSrCalls += 1;
+                    yield { type: 'text', text: 'Second session output' };
+                    yield { type: 'finish', reason: 'end_turn' };
+                  },
+                },
+                'mock',
+              )
+            : lm({ script: [textTurn('Reviewed fresh output.')] }),
+        eventBus: bus,
+        context: db.context,
+        audit: db.audit,
+        permissions,
+        agentState: db.agentState,
+        approvals: db.approvals,
+      },
+      {
+        task: { ...task, execution_mode: 'slim' },
+        team,
+        sessionId: 'sess-slim-stale-b',
+        sequence: ['sr-designer', 'jr-designer'],
+      },
+    );
+
+    const secondResult = await secondHandle.result;
+    expect(secondResult.status).toBe('completed');
+    expect(secondSrCalls).toBe(1);
+    expect(secondResult.agentResults[0]?.finalText).toContain('Second session output');
+  });
+
+  it('fails slim mode without starting agents when the requested sequence has unknown agents', async () => {
+    const mcp = makeFakeMCPConnection({ id: 'figma' });
+    const permissions = createPermissionMiddleware({ audit: db.audit, agentState: db.agentState });
+    let modelCalls = 0;
+
+    const handle = runTask(
+      {
+        resolveAgent: (id) =>
+          id === 'sr-designer' ? srDesigner : id === 'jr-designer' ? jrDesigner : undefined,
+        getMCPConnection: () => mcp,
+        getModel: () => {
+          modelCalls += 1;
+          return lm({ script: [textTurn('should not run')] });
+        },
+        eventBus: bus,
+        context: db.context,
+        audit: db.audit,
+        permissions,
+        agentState: db.agentState,
+        approvals: db.approvals,
+      },
+      {
+        task: { ...task, execution_mode: 'slim' },
+        team,
+        sessionId: 'sess-slim-bad-sequence',
+        sequence: ['frontend-typo'],
+      },
+    );
+
+    const result = await handle.result;
+    expect(result.status).toBe('failed');
+    expect(result.agentResults).toHaveLength(1);
+    expect(result.agentResults[0]?.error).toContain('unknown agents in slim sequence: frontend-typo');
+    expect(modelCalls).toBe(0);
+  });
+
+  it('rejects invalid execution mode (Zod validation)', () => {
+    const badTask = { ...task, execution_mode: 'invalid' as unknown as 'concurrent' };
+    expect(() =>
+      runTask(
+        {
+          resolveAgent: (id) => (id === 'sr-designer' ? srDesigner : undefined),
+          getMCPConnection: () => makeFakeMCPConnection({}),
+          getModel: () => lm({ script: [textTurn('ok')] }),
+          eventBus: bus,
+          context: db.context,
+          audit: db.audit,
+          permissions: createPermissionMiddleware({ audit: db.audit }),
+          agentState: db.agentState,
+          approvals: db.approvals,
+        },
+        { task: badTask, team, sessionId: 'sess-invalid' },
+      ),
+    ).toThrow();
+  });
+
   it('converts review_required into an approval record and approval_requested event', async () => {
     const mcp = makeFakeMCPConnection({ id: 'figma' });
     const permissions = createPermissionMiddleware({ audit: db.audit });

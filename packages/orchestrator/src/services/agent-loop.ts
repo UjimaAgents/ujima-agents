@@ -1,4 +1,4 @@
-import { streamText, type LanguageModel, type ToolSet } from 'ai';
+import { streamText, type LanguageModel, type ModelMessage, type ToolSet } from 'ai';
 
 export interface AgentLoopStep {
   text?: string;
@@ -24,19 +24,31 @@ export async function runAgentLoop(input: {
   maxOutputTokens?: number;
   temperature?: number;
   abortSignal?: AbortSignal;
+  loadInterruptMessages?: (step: AgentLoopStep) => Promise<ModelMessage[]> | ModelMessage[];
 }): Promise<AgentLoopResult> {
   const steps: AgentLoopStep[] = [];
+  const messages = [...input.messages];
   const result = streamText({
     model: input.model,
     system: input.system,
-    messages: input.messages,
+    messages,
     tools: input.tools,
     stopWhen: input.stopWhen,
     ...(input.maxOutputTokens !== undefined ? { maxOutputTokens: input.maxOutputTokens } : {}),
     ...(input.temperature !== undefined ? { temperature: input.temperature } : {}),
     ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),
+    prepareStep: async ({ stepNumber, messages: nextMessages }) => {
+      if (stepNumber === 0) return undefined;
+      const previousStep = steps.at(-1);
+      if (!previousStep) return undefined;
+      const interrupts = await input.loadInterruptMessages?.(previousStep);
+      if (!interrupts?.length) return undefined;
+      messages.splice(0, messages.length, ...nextMessages, ...interrupts);
+      return { messages };
+    },
     onStepFinish: (step) => {
-      steps.push(step as unknown as AgentLoopStep);
+      const loopStep = step as unknown as AgentLoopStep;
+      steps.push(loopStep);
     },
   });
   for await (const part of result.fullStream) {
