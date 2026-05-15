@@ -74,6 +74,23 @@ function makeTextOnlyModel(text: string): LanguageModel {
   ]);
 }
 
+function extractModelToolNames(rawTools: unknown): string[] {
+  if (Array.isArray(rawTools)) {
+    return rawTools
+      .map((entry) =>
+        entry && typeof entry === 'object'
+          ? (entry as { name?: unknown }).name
+          : undefined,
+      )
+      .filter((name): name is string => typeof name === 'string')
+      .sort();
+  }
+  if (rawTools && typeof rawTools === 'object') {
+    return Object.keys(rawTools).sort();
+  }
+  return [];
+}
+
 function makeToolCaptureModel(capturedToolNames: string[][]): LanguageModel {
   return new MockLanguageModelV3({
     doStream: async (options) => {
@@ -81,22 +98,7 @@ function makeToolCaptureModel(capturedToolNames: string[][]): LanguageModel {
       // entries — not as a `Record<string, ToolDef>` keyed by tool id.
       // We normalise to tool ids so test assertions can read them
       // identically across "record" and "array" providers.
-      const rawTools = (options as { tools?: unknown }).tools;
-      let toolKeys: string[];
-      if (Array.isArray(rawTools)) {
-        toolKeys = rawTools
-          .map((entry) =>
-            entry && typeof entry === 'object'
-              ? (entry as { name?: unknown }).name
-              : undefined,
-          )
-          .filter((name): name is string => typeof name === 'string');
-      } else if (rawTools && typeof rawTools === 'object') {
-        toolKeys = Object.keys(rawTools);
-      } else {
-        toolKeys = [];
-      }
-      capturedToolNames.push(toolKeys.sort());
+      capturedToolNames.push(extractModelToolNames((options as { tools?: unknown }).tools));
       return {
         stream: simulateReadableStream<LanguageModelV3StreamPart>({
           chunks: [
@@ -140,11 +142,11 @@ function makeMcpToolCallModel(matchToolName: (name: string) => boolean): Languag
         };
       }
 
-      const tools = (options as { tools?: Record<string, unknown> }).tools ?? {};
-      const toolName = Object.keys(tools).find(matchToolName);
+      const toolNames = extractModelToolNames((options as { tools?: unknown }).tools);
+      const toolName = toolNames.find(matchToolName);
       if (!toolName) {
         throw new Error(
-          `expected MCP tool not found in model palette; saw ${Object.keys(tools).join(', ')}`,
+          `expected MCP tool not found in model palette; saw ${toolNames.join(', ')}`,
         );
       }
       return {
