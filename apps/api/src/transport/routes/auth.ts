@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import {
+  AccessibleOrganizationsResponseSchema,
   ApiErrorSchema,
   AuthLoginRequestSchema,
   AuthLogoutResponseSchema,
@@ -63,6 +64,19 @@ export function registerAuthRoutes(
       }
       return badRequest(reply, message);
     }
+  });
+
+  app.get('/auth/orgs', {
+    schema: {
+      description: 'List all organizations accessible to the current user',
+      tags: ['Onboarding'],
+      response: {
+        200: AccessibleOrganizationsResponseSchema,
+      },
+    },
+  }, async (req) => {
+    const orgs = auth.listAccessibleOrganizations(readSessionToken(req));
+    return { organizations: orgs };
   });
 
   app.post('/auth/logout', {

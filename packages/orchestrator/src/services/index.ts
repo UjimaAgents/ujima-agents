@@ -23,6 +23,7 @@ import { SettingsService } from './settings.js';
 import { SpiritService, type ModelResolver } from './spirit.js';
 import { SupervisorService } from './supervisor.js';
 import { SupervisorTodoService } from './supervisor-todo.js';
+import { SchedulerService } from './scheduler.js';
 import { TaskPromoterService } from './task-promoter.js';
 import { TaskSessionService } from './task-session.js';
 import {
@@ -77,6 +78,10 @@ export type {
 } from './onboarding.js';
 export { RunService } from './run.js';
 export type { CreateRunInput } from './run.js';
+export { SchedulerService } from './scheduler.js';
+export type {
+  SchedulerServiceOptions,
+} from './scheduler.js';
 export { SettingsService } from './settings.js';
 export type {
   OrganizationSettingsResponse,
@@ -167,6 +172,7 @@ export interface ApiServices {
   bootstrap: BootstrapService;
   onboarding: OnboardingService;
   settings: SettingsService;
+  scheduler: SchedulerService;
   taskPromoter: TaskPromoterService;
   taskSessions: TaskSessionService;
   spirits: SpiritService;
@@ -430,6 +436,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   const auth = new AuthService(context.repo);
   const bootstrap = new BootstrapService(context.repo, context.teamStore, auth);
   const onboarding = new OnboardingService(context.repo, context.teamStore);
+  const scheduler = new SchedulerService(context.repo, conversations, context.realtime);
   const settings = new SettingsService(context.repo, context.teamStore);
   const taskPromoter = new TaskPromoterService(context.repo, runs);
   const taskSessions = new TaskSessionService(context.repo, conversations, spirits);
@@ -448,6 +455,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     taskPromoter,
     taskSessions,
     spirits,
+    scheduler,
     supervisor,
     supervisorTodos,
     activeSpirits,

@@ -523,3 +523,51 @@ export const TodoSchema = z.object({
   updatedAt: TimestampSchema,
 });
 export type Todo = z.infer<typeof TodoSchema>;
+
+// -----------------------------------------------------------------------
+// Scheduled Jobs (cron)
+// -----------------------------------------------------------------------
+
+export const CronExpressionSchema = z.string().min(1).regex(
+  /^(\S+\s+){4}\S+$/,
+  'Must be a valid 5-field cron expression (min hour dom mon dow)',
+);
+export type CronExpression = z.infer<typeof CronExpressionSchema>;
+
+export const JobStatusSchema = z.enum(['active', 'paused', 'completed', 'failed']);
+export type JobStatus = z.infer<typeof JobStatusSchema>;
+
+export const ScheduledJobSchema = z.object({
+  id: IdSchema,
+  organizationId: IdSchema,
+  name: z.string().min(1),
+  cronExpression: CronExpressionSchema,
+  prompt: z.string().min(1),
+  channelId: IdSchema.optional(),
+  memberId: IdSchema,
+  status: JobStatusSchema.default('active'),
+  lastRunAt: TimestampSchema.optional(),
+  nextRunAt: TimestampSchema.optional(),
+  runCount: z.number().int().min(0).default(0),
+  lastError: z.string().optional(),
+  createdAt: TimestampSchema,
+  updatedAt: TimestampSchema,
+});
+export type ScheduledJob = z.infer<typeof ScheduledJobSchema>;
+
+export const CreateScheduledJobInputSchema = z.object({
+  name: z.string().min(1),
+  cronExpression: CronExpressionSchema,
+  prompt: z.string().min(1),
+  channelId: IdSchema.optional(),
+});
+export type CreateScheduledJobInput = z.infer<typeof CreateScheduledJobInputSchema>;
+
+export const UpdateScheduledJobInputSchema = z.object({
+  name: z.string().min(1).optional(),
+  cronExpression: CronExpressionSchema.optional(),
+  prompt: z.string().min(1).optional(),
+  channelId: IdSchema.optional(),
+  status: JobStatusSchema.optional(),
+});
+export type UpdateScheduledJobInput = z.infer<typeof UpdateScheduledJobInputSchema>;

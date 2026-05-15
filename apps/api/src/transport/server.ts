@@ -10,6 +10,7 @@ import type {
   ConversationService,
   OnboardingService,
   RunService,
+  SchedulerService,
   SettingsService,
   SpiritService,
   SupervisorService,
@@ -45,6 +46,7 @@ import { registerTaskSessionRoutes } from './routes/task-sessions.js';
 import { registerWorkspaceRoutes } from './routes/workspaces.js';
 import { registerAgentRoutes } from './routes/agents.js';
 import { registerOauthRoutes } from './routes/oauth.js';
+import { registerScheduleRoutes } from './routes/schedules.js';
 
 const WS_QUEUE_CAP = 256;
 const STARTED_AT = Date.now();
@@ -71,6 +73,7 @@ export interface TransportOptions {
       auth: AuthService;
       bootstrap: BootstrapService;
       onboarding: OnboardingService;
+      scheduler: SchedulerService;
       settings: SettingsService;
       taskPromoter: TaskPromoterService;
       taskSessions: TaskSessionService;
@@ -131,6 +134,7 @@ export function createTransport(opts: TransportOptions): Transport {
         { name: 'Onboarding' },
         { name: 'Runs' },
         { name: 'Roles' },
+        { name: 'Schedules' },
         { name: 'Settings' },
         { name: 'System' },
         { name: 'Tasks' },
@@ -264,6 +268,13 @@ export function createTransport(opts: TransportOptions): Transport {
         taskSessions: services.taskSessions,
         repo: opts.apiServices.repo,
       });
+      registerScheduleRoutes(api, {
+        repo: opts.apiServices.repo,
+        auth: services.auth,
+        scheduler: services.scheduler,
+      });
+      // Start the scheduler heartbeat
+      services.scheduler.start();
     }
   }, { prefix: '/api' });
 

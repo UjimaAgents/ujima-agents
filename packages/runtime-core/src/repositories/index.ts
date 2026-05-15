@@ -15,6 +15,7 @@ import type {
   Organization,
   RunState,
   RunStep,
+  ScheduledJob,
   Spirit,
   SpiritRole,
   TaskSession,
@@ -110,6 +111,7 @@ import {
   getOrganization as readOrganization,
   getProviderCredential as readProviderCredential,
   listOrganizations as readOrganizations,
+  listOrganizationsForUser as readOrganizationsForUser,
   listProviderCredentials as readProviderCredentials,
   saveWorkspaceSetting as writeWorkspaceSetting,
   saveOrganization as writeOrganization,
@@ -155,6 +157,13 @@ import {
   listSpiritsForSession as readSpiritsForSession,
   saveSpirit as writeSpirit,
 } from './spirits.js';
+import {
+  deleteScheduledJob as removeScheduledJob,
+  getScheduledJob as readScheduledJob,
+  listDueJobsGlobally as readDueJobsGlobally,
+  listScheduledJobs as readScheduledJobs,
+  saveScheduledJob as writeScheduledJob,
+} from './scheduled-jobs.js';
 
 export class Repository {
   private readonly secrets: SecretStore;
@@ -170,6 +179,8 @@ export class Repository {
     readOrganization(this.db, organizationId);
   getLatestOrganization = (): Organization | null => readLatestOrganization(this.db);
   listOrganizations = (): Organization[] => readOrganizations(this.db);
+  listOrganizationsForUser = (emailNormalized: string): Organization[] =>
+    readOrganizationsForUser(this.db, emailNormalized);
   saveOrganization = (organization: Organization): Organization =>
     writeOrganization(this.db, organization);
   saveWorkspaceSetting = (organizationId: string, key: string, value: string): void =>
@@ -475,6 +486,16 @@ export class Repository {
     status: TodoStatus,
     options?: { notes?: string },
   ): Todo | null => writeTodoStatus(this.db, organizationId, todoId, status, options);
+
+  saveScheduledJob = (job: ScheduledJob): ScheduledJob =>
+    writeScheduledJob(this.db, job);
+  getScheduledJob = (organizationId: string, jobId: string): ScheduledJob | null =>
+    readScheduledJob(this.db, organizationId, jobId);
+  listScheduledJobs = (organizationId: string): ScheduledJob[] =>
+    readScheduledJobs(this.db, organizationId);
+  deleteScheduledJob = (organizationId: string, jobId: string): void =>
+    removeScheduledJob(this.db, organizationId, jobId);
+  listDueJobsGlobally = (): ScheduledJob[] => readDueJobsGlobally(this.db);
 
   getBootstrapSnapshot = (): BootstrapSnapshot => readBootstrapSnapshot(this.db);
 }

@@ -42,7 +42,7 @@ interface MentionTrigger {
   query: string;
 }
 
-type ComposerCommand = "summarize" | "clear";
+type ComposerCommand = "summarize" | "clear" | "schedule";
 
 const SLASH_COMMANDS: Array<{
   command: ComposerCommand;
@@ -59,12 +59,19 @@ const SLASH_COMMANDS: Array<{
     label: "/clear",
     description: "Archive the thread and empty the visible chat.",
   },
+  {
+    command: "schedule",
+    label: "/schedule <cron> <prompt>",
+    description: "Schedule a recurring job with a cron expression.",
+  },
 ];
 
 export function getExactSlashCommand(value: string): ComposerCommand | null {
   const trimmed = value.trim();
   if (trimmed === "/summarize") return "summarize";
   if (trimmed === "/clear") return "clear";
+  if (trimmed.startsWith("/schedule ")) return "schedule";
+  if (trimmed === "/schedule") return "schedule";
   return null;
 }
 
@@ -104,7 +111,7 @@ export function ChatInput({
   placeholder?: string;
   organizationId?: string;
   onSend: (content: string, attachmentIds?: string[]) => Promise<void> | void;
-  onCommand: (command: ComposerCommand) => Promise<void> | void;
+  onCommand: (command: ComposerCommand, content?: string) => Promise<void> | void;
   statusHint?: string;
   inlineError?: string;
   mentionSuggestions?: MentionSuggestion[];
@@ -458,10 +465,11 @@ export function ChatInput({
       return;
     }
 
+    const rawContent = content;
     setError(null);
     setIsCommanding(true);
     try {
-      await onCommand(command);
+      await onCommand(command, rawContent);
       setContent("");
       setSelection({ start: 0, end: 0 });
       setAttachments([]);

@@ -522,7 +522,33 @@ export function ChannelView({
         )}
         <ChatInput
           organizationId={organizationId}
-          onCommand={async (command) => {
+          onCommand={async (command, content) => {
+            if (command === "schedule") {
+              const scheduleMatch = /^\/schedule\s+(.+?)\s+(.+)$/s.exec(content?.trim() ?? "");
+              if (!scheduleMatch) {
+                throw new Error("Usage: /schedule <cron> <prompt> — e.g. /schedule 0 9 * * 1-5 Standup");
+              }
+              const [, cronExpression, prompt] = scheduleMatch;
+              const res = await fetch("/api/schedules", {
+                method: "POST",
+                body: JSON.stringify({
+                  name: prompt.slice(0, 60),
+                  cronExpression,
+                  prompt,
+                  channelId: conversation.type === "channel" ? conversation.id : undefined,
+                }),
+              });
+              if (!res.ok) {
+                const err = await res.json().catch(() => ({ message: "Unknown error" }));
+                throw new Error(err.message || "Failed to create schedule");
+              }
+              const data = await res.json();
+              // Send a confirmation message to the thread
+              await feed.sendMessage(
+                `📅 Scheduled **"${data.job.name}"** with cron \`${cronExpression}\``,
+              );
+              return;
+            }
             await feed.archiveConversation(command);
             setReplyTo(null);
           }}

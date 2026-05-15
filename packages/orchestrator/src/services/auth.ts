@@ -1,5 +1,5 @@
 import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
-import { AuthSessionSchema, AuthUserSchema, type AuthSession, type AuthUser, type Member } from '@ujima/shared';
+import { AuthSessionSchema, AuthUserSchema, type AuthSession, type AuthUser, type Member, type Organization } from '@ujima/shared';
 import type { ApiRepository } from './repository-reader.js';
 
 const PASSWORD_HASH_PREFIX = 'scrypt';
@@ -186,6 +186,17 @@ export class AuthService {
     if (!record) return false;
     this.repo.revokeAuthSession(record.session.id, new Date().toISOString());
     return true;
+  }
+
+  listAccessibleOrganizations(sessionToken?: string | null): Organization[] {
+    if (!sessionToken) return [];
+    const record = this.repo.getAuthSessionByTokenHash(hashSessionToken(sessionToken));
+    if (!record || record.session.revokedAt) return [];
+    const user = this.repo.getAuthUserById(record.session.userId);
+    if (!user) return [];
+    return this.repo.listOrganizationsForUser(
+      user.email.trim().toLowerCase(),
+    ).map((org) => ({ id: org.id, name: org.name } as Organization));
   }
 
   private issueSession(user: AuthUser, member: Member): AuthenticatedSession {

@@ -13,6 +13,7 @@ export interface BootstrapResponse {
   serviceReady: true;
   onboardingStatus: 'pending' | 'ready';
   organization: { id: string; name: string } | null;
+  organizations: { id: string; name: string }[];
   team: TeamSummary | null;
   providers: { name: string; hasKey: boolean }[];
   members: BootstrapSnapshot['members'];
@@ -36,12 +37,17 @@ export class BootstrapService {
     const authState = this.auth.getAuthState(input.sessionToken);
     const member = snapshot.organization ? authState.member : undefined;
 
+    const accessibleOrgs = authState.authenticated
+      ? this.auth.listAccessibleOrganizations(input.sessionToken)
+      : [];
+
     return {
       serviceReady: true,
       onboardingStatus: snapshot.organization ? 'ready' : 'pending',
       organization: snapshot.organization
         ? { id: snapshot.organization.id, name: snapshot.organization.name }
         : null,
+      organizations: accessibleOrgs,
       team: team ? summarizeTeam(team) : null,
       providers: team ? listProviderStatuses(team, snapshot.providerCredentials) : [],
       members: snapshot.members,
