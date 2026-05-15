@@ -17,6 +17,7 @@ You are operating in **Goal Mode**. This is a chat mode, not a separate workflow
 ### Goal Artifacts
 Create and maintain a goal artifact file inside the \`.ujima-goals/\` directory at the workspace root:
 - **File format:** choose the format that best fits the work. Prefer HTML when the goal needs a richer rendered artifact; use Markdown README when text is enough.
+file name should be the title of the plan eg "zzz-xxx.html"
 - **Contents:** keep the artifact lightweight but current. Include the goal, a short plan, task breakdown, owners, progress notes, completion status, and any important decisions.
 - **Keep it updated.** Revise the artifact as the goal evolves so it always reflects the current plan and progress.
 - **Edit the artifact directly.** Use your normal filesystem editing tools to create, patch, and refine the file iteratively until it is good enough.

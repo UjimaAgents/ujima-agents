@@ -1,4 +1,5 @@
-import {CheckCircle2, X, XCircle} from "lucide-react";
+import {memo, useMemo} from "react";
+import {CheckCircle2, X, XCircle, ArrowDown} from "lucide-react";
 import {TERMINAL_PANEL, TERMINAL_SECTION} from "./terminal-chrome";
 import {Avatar} from "./primitives";
 import {TerminalPane} from "./terminal-pane";
@@ -30,7 +31,7 @@ export interface TraceStepData {
       organizationId: string;
     };
   };
-  /** Filesystem read/write tool (path + action + optional body). */
+  /** Workspace file tool (path + action + optional body). */
   filesystem?: {
     action: "read" | "write";
     resourcePath: string;
@@ -65,7 +66,7 @@ export interface TraceStepData {
   };
 }
 
-export function TraceStep({
+export const TraceStep = memo(function TraceStep({
   step,
   isLast,
 }: {
@@ -73,7 +74,7 @@ export function TraceStep({
   /** Hide the connector below the dot on the final row. */
   isLast?: boolean;
 }) {
-  const { subject, remainder } = splitTraceTitle(step.title);
+  const {subject, remainder} = splitTraceTitle(step.title);
   const showSuccessIcon =
     step.status === "success" && isToolTraceTitle(step.title);
   const isCompactRow =
@@ -125,13 +126,15 @@ export function TraceStep({
       results={step.webSearch.results}
     />
   ) : step.detail.trim() ? (
-      <p className="whitespace-pre-wrap font-mono text-[11px] leading-relaxed text-foreground/60">
-        {step.detail}
-      </p>
-    ) : null;
+    <p className="whitespace-pre-wrap font-mono text-[11px] leading-relaxed text-foreground/60">
+      {step.detail}
+    </p>
+  ) : null;
 
   return (
-    <div className={`flex gap-2.5 ${isLast ? "pb-0" : isCompactRow ? "pb-2" : "pb-5"}`}>
+    <div
+      className={`flex gap-2.5 ${isLast ? "pb-0" : isCompactRow ? "pb-2" : "pb-5"}`}
+    >
       {/* Timeline: dot vertically centered with the title row (h-5 ≈ one text-xs line); spine continues through the step */}
       <div className="relative flex w-3 shrink-0 flex-col items-center self-stretch">
         <div className="flex h-5 shrink-0 items-center justify-center">
@@ -159,7 +162,9 @@ export function TraceStep({
           <div className="min-w-0 flex flex-1 flex-wrap items-baseline gap-x-2 gap-y-0">
             <p className="min-w-0 text-xs leading-snug text-foreground">
               <span className="font-semibold">{subject}</span>
-              {remainder ? <span className="font-normal">{remainder}</span> : null}
+              {remainder ? (
+                <span className="font-normal">{remainder}</span>
+              ) : null}
             </p>
             {showSuccessIcon ? (
               <CheckCircle2
@@ -180,16 +185,18 @@ export function TraceStep({
         </div>
         {body}
         {step.subtext ? (
-          <p className="mt-0.5 text-[11px] leading-snug text-foreground/45">{step.subtext}</p>
+          <p className="mt-0.5 text-[11px] leading-snug text-foreground/45">
+            {step.subtext}
+          </p>
         ) : null}
       </div>
     </div>
   );
-}
+});
 
-function splitTraceTitle(title: string): { subject: string; remainder: string } {
+function splitTraceTitle(title: string): {subject: string; remainder: string} {
   const trimmed = title.trim();
-  if (!trimmed) return { subject: "", remainder: "" };
+  if (!trimmed) return {subject: "", remainder: ""};
 
   const separators = [
     " sent a message ",
@@ -229,7 +236,7 @@ function splitTraceTitle(title: string): { subject: string; remainder: string } 
     };
   }
 
-  return { subject: trimmed, remainder: "" };
+  return {subject: trimmed, remainder: ""};
 }
 
 function isToolTraceTitle(title: string): boolean {
@@ -237,7 +244,20 @@ function isToolTraceTitle(title: string): boolean {
   return (
     trimmed.includes(" called tool ") ||
     trimmed.includes(" · read ") ||
+    trimmed.includes(" · patch ") ||
     trimmed.includes(" · grep ") ||
+    trimmed.includes(" · view ") ||
+    trimmed.includes(" · write ") ||
+    trimmed.includes(" · edit ") ||
+    trimmed.includes(" · multiedit ") ||
+    trimmed.includes(" · ls ") ||
+    trimmed.includes(" · glob ") ||
+    trimmed.includes(" · fetch ") ||
+    trimmed.includes(" · download ") ||
+    trimmed.includes(" · job output ") ||
+    trimmed.includes(" · job kill ") ||
+    trimmed.includes(" · shell ") ||
+    trimmed.includes(" · web search ") ||
     trimmed.includes(" updated ") ||
     trimmed.includes(" used ") ||
     trimmed.includes(" created ") ||
@@ -346,14 +366,16 @@ export function DetailsSidebar({
   const isOffline = statusLabel.toLowerCase() === "offline";
 
   return (
-    <aside className="flex h-full flex-col bg-background/60 dark:bg-background/40">
-      <header className="flex h-12 shrink-0 items-center justify-between border-b border-violet-500/[0.06] bg-violet-500/[0.015] px-4 dark:border-white/10 dark:bg-white/5">
-        <h2 className="text-xs font-semibold text-foreground">
-          Message details
-        </h2>
+    <aside className="flex h-full animate-slide-in-right flex-col bg-background/60 dark:bg-background/40">
+      <header className="flex h-14 shrink-0 items-center justify-between border-b border-violet-500/[0.06] bg-violet-500/[0.015] px-4 dark:border-white/10 dark:bg-white/5">
+        <div className="flex flex-col">
+          <h2 className="text-xs font-semibold text-foreground leading-none">
+            Message details
+          </h2>
+        </div>
         <button
           onClick={onClose}
-          className="text-foreground/45 transition hover:text-foreground/70"
+          className="rounded-full p-1 text-foreground/45 transition hover:bg-foreground/5 hover:text-foreground/70"
         >
           <X className="h-4 w-4" />
         </button>

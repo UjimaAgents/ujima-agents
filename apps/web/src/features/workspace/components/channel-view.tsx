@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { buildReasoningTraceSteps } from "../reasoning-trace";
 import { File, FileArchive, FileAudio, FileImage, FileText, FileVideo, SquarePen } from "lucide-react";
 import type { BootstrapResponse } from "@ujima/api-schema";
@@ -15,6 +15,8 @@ import {
   DetailsSidebar,
   ChatMessage,
   ApprovalCard,
+  GoalHUD,
+  getGoalArtifactCard,
   type ChatTab,
   type ChatMessageData,
 } from "./chat";
@@ -50,26 +52,13 @@ const ACTIVE_RUN_STATES: RunState["status"][] = [
   "waiting_for_approval",
 ];
 
-function readGoalModePreference(key: string): boolean {
-  try {
-    return localStorage.getItem(key) === "true";
-  } catch {
-    return false;
-  }
-}
-
-function writeGoalModePreference(key: string, active: boolean): void {
-  try {
-    if (active) localStorage.setItem(key, "true");
-    else localStorage.removeItem(key);
-  } catch {}
-}
-
 interface ChannelViewProps {
   bootstrap: BootstrapResponse;
   conversation: SelectedConversation;
   members: BootstrapResponse["members"];
   onOpenAgentEditor?: () => void;
+  goalMode: boolean;
+  onGoalModeChange: (active: boolean) => void;
 }
 
 export function ChannelView({
@@ -77,6 +66,8 @@ export function ChannelView({
   conversation,
   members,
   onOpenAgentEditor,
+  goalMode,
+  onGoalModeChange,
 }: ChannelViewProps) {
   const [isAtBottom, setIsAtBottom] = useState(true);
   const [resolvingApprovals, setResolvingApprovals] = useState<Record<string, boolean>>({});
@@ -85,18 +76,6 @@ export function ChannelView({
   const bottomRef = useRef<HTMLDivElement>(null);
   const previousFeedSignal = useRef("");
   const feed = useConversationSync(bootstrap, conversation);
-
-  const goalModeKey = `ujima:goalMode:${bootstrap.organization?.id ?? "unknown"}:${conversation.id}`;
-  const [goalMode, setGoalMode] = useState(() =>
-    typeof window === "undefined" ? false : readGoalModePreference(goalModeKey),
-  );
-  useEffect(() => {
-    writeGoalModePreference(goalModeKey, goalMode);
-  }, [goalMode, goalModeKey]);
-  const handleGoalModeChange = useCallback(
-    (active: boolean) => setGoalMode(active),
-    [],
-  );
 
   const currentThreadId = useMemo(() => {
     const senderId = bootstrap.auth.member?.id;
@@ -165,6 +144,19 @@ export function ChannelView({
           ),
     [currentThreadId, feed.runs],
   );
+  const activeGoal = useMemo(() => {
+    const latest = [...feed.messages]
+      .reverse()
+      .find((m) => !!getGoalArtifactCard(m.toolCalls));
+    if (!latest) return null;
+    return getGoalArtifactCard(latest.toolCalls);
+  }, [feed.messages]);
+  const activeStep = useMemo(() => {
+    const running = typingRuns.find((r) => r.status === "running");
+    const s = running?.step;
+    if (!s || s.toLowerCase() === "running") return undefined;
+    return s;
+  }, [typingRuns]);
   const traceAutoScroll = useMemo(
     () => typingRuns.length > 0 && detailsTab === "Reasoning trace",
     [detailsTab, typingRuns.length],
@@ -432,6 +424,13 @@ export function ChannelView({
         />
         {activeTab === "conversation" ? (
           <div className="relative flex flex-1 min-h-0 flex-col">
+            {activeGoal && (
+              <GoalHUD
+                goalName={activeGoal.goalName}
+                goalFilePath={activeGoal.goalFilePath}
+                status={activeGoal.status}
+              />
+            )}
             <ChatMessageList ref={listRef} onScroll={handleScroll}>
               {feed.loading && feed.messages.length === 0 ? (
                 <ConversationSkeleton />
@@ -466,6 +465,7 @@ export function ChannelView({
                       name={typingMember?.name ?? conversation.name}
                       colorIndex={typingColorIndex}
                       names={typingMembers.map((member) => member.name)}
+                      activeStep={activeStep}
                     />
                   ) : null}
                 </>
@@ -553,10 +553,11 @@ export function ChannelView({
         <ChatInput
           organizationId={organizationId}
           goalMode={goalMode}
-          onGoalModeChange={handleGoalModeChange}
+          onGoalModeChange={onGoalModeChange}
           onCommand={async (command) => {
             await feed.archiveConversation(command);
             setReplyTo(null);
+            scrollToLatest("auto");
           }}
           placeholder={
             isAgent

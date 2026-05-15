@@ -181,6 +181,53 @@ function toObject(value: unknown): Record<string, unknown> | undefined {
   return value as Record<string, unknown>;
 }
 
+function nestedInput(args: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+  return args ? toObject((args as { input?: unknown }).input) : undefined;
+}
+
+function readStringArg(
+  args: Record<string, unknown> | undefined,
+  nested: Record<string, unknown> | undefined,
+  key: string,
+): string | undefined {
+  const value = args?.[key];
+  if (typeof value === "string") return value;
+  const nestedValue = nested?.[key];
+  return typeof nestedValue === "string" ? nestedValue : undefined;
+}
+
+function readNumberArg(
+  args: Record<string, unknown> | undefined,
+  nested: Record<string, unknown> | undefined,
+  key: string,
+): number | undefined {
+  const value = args?.[key];
+  if (typeof value === "number") return value;
+  const nestedValue = nested?.[key];
+  return typeof nestedValue === "number" ? nestedValue : undefined;
+}
+
+function readBooleanArg(
+  args: Record<string, unknown> | undefined,
+  nested: Record<string, unknown> | undefined,
+  key: string,
+): boolean | undefined {
+  const value = args?.[key];
+  if (typeof value === "boolean") return value;
+  const nestedValue = nested?.[key];
+  return typeof nestedValue === "boolean" ? nestedValue : undefined;
+}
+
+function readStringArrayArg(
+  args: Record<string, unknown> | undefined,
+  nested: Record<string, unknown> | undefined,
+  key: string,
+): string[] | undefined {
+  const value = args?.[key];
+  const candidate = Array.isArray(value) ? value : nested?.[key];
+  return Array.isArray(candidate) && candidate.length ? candidate.map((item) => String(item)) : undefined;
+}
+
 const MAX_TERMINAL_CHARS = 16_384;
 
 function extractShellBackgroundJobId(result: unknown): string | undefined {
@@ -206,7 +253,7 @@ function parseMaybeJsonObject(value: unknown): Record<string, unknown> | undefin
   return toObject(value);
 }
 
-function shellToolAggregateOutput(result: unknown, isError: boolean, errorText?: string): string {
+function toolAggregateOutput(result: unknown, isError: boolean, errorText?: string): string {
   if (isError) {
     const base = errorText?.trim() || "";
     if (base) return truncateTerminalText(base);
@@ -216,7 +263,11 @@ function shellToolAggregateOutput(result: unknown, isError: boolean, errorText?:
       return truncateTerminalText(String(result));
     }
   }
-  const rec = toObject(result);
+  if (typeof result === "string" && result.trim()) {
+    return truncateTerminalText(result);
+  }
+  const rec = parseMaybeJsonObject(result);
+  if (!rec) return "";
   if (rec && typeof rec.status === "string") {
     if (rec.status === "waiting_for_approval") {
       return "";
@@ -224,6 +275,27 @@ function shellToolAggregateOutput(result: unknown, isError: boolean, errorText?:
     if (rec.status === "blocked") {
       const reason = typeof rec.reason === "string" ? rec.reason : "Blocked by policy.";
       return truncateTerminalText(reason);
+    }
+  }
+  if (typeof rec?.diff === "string" && rec.diff.trim()) {
+    return truncateTerminalText(rec.diff);
+  }
+  if (typeof rec?.content === "string" && rec.content.trim()) {
+    return truncateTerminalText(rec.content);
+  }
+  if (Array.isArray(rec?.matches)) {
+    const lines = rec.matches
+      .map((entry) => {
+        const item = toObject(entry);
+        const path = typeof item?.path === "string" ? item.path : "";
+        const lineNumber = typeof item?.lineNumber === "number" ? item.lineNumber : 0;
+        const line = typeof item?.line === "string" ? item.line : "";
+        if (!path || !lineNumber) return "";
+        return `${path}:${lineNumber}${line ? `: ${line}` : ""}`;
+      })
+      .filter(Boolean);
+    if (lines.length > 0) {
+      return truncateTerminalText(lines.join("\n"));
     }
   }
   const out = typeof rec?.stdout === "string" ? rec.stdout : "";
@@ -232,37 +304,17 @@ function shellToolAggregateOutput(result: unknown, isError: boolean, errorText?:
   if (out.trim()) parts.push(out.trimEnd());
   if (err.trim()) parts.push(`stderr:\n${err.trimEnd()}`);
   const joined = parts.join("\n\n").trim();
-  if (!joined) return "";
-  return truncateTerminalText(joined);
-}
-
-function filesystemToolAggregateOutput(result: unknown, isError: boolean, errorText?: string): string {
-  if (isError) {
-    const base = errorText?.trim() || "";
-    if (base) return truncateTerminalText(base);
-    try {
-      return truncateTerminalText(JSON.stringify(result, null, 2));
-    } catch {
-      return truncateTerminalText(String(result));
-    }
+  if (typeof rec?.bytesWritten === "number") {
+    return truncateTerminalText(`Saved ${rec.bytesWritten} bytes.`);
   }
-  const rec = parseMaybeJsonObject(result);
-  if (rec && typeof rec.status === "string") {
-    if (rec.status === "waiting_for_approval") {
-      return "";
-    }
-    if (rec.status === "blocked") {
-      const reason = typeof rec.reason === "string" ? rec.reason : "Blocked by policy.";
-      return truncateTerminalText(reason);
-    }
-  }
-  if (rec?.type === "file" && typeof rec.content === "string") {
-    return truncateTerminalText(rec.content);
-  }
-  if (rec && rec.success === true) {
+  if (rec?.success === true) {
     return truncateTerminalText("Saved.");
   }
-  return "";
+  if (typeof rec?.status === "string" && rec.status.trim()) {
+    return truncateTerminalText(rec.status);
+  }
+  if (!joined) return "";
+  return truncateTerminalText(joined);
 }
 
 /** Tool returned but the action did not complete (approval, policy block, etc.). */
@@ -274,7 +326,8 @@ function toolResultPendingCompletion(result: unknown, isError: boolean): boolean
     rec.status === "waiting_for_approval" ||
     rec.status === "pending_approval" ||
     rec.status === "blocked" ||
-    rec.status === "streaming"
+    rec.status === "streaming" ||
+    rec.status === "running"
   );
 }
 
@@ -288,8 +341,20 @@ function inferToolAction(args?: Record<string, unknown>): {
   offset?: number;
   limit?: number;
   query?: string;
+  pattern?: string;
+  depth?: number;
+  content?: string;
+  patch?: string;
+  oldString?: string;
+  newString?: string;
+  replaceAll?: boolean;
+  ignore?: string[];
+  url?: string;
+  jobId?: string;
+  wait?: boolean;
 } {
   const input = toObject(args?.input);
+  const nested = input;
   const op = typeof input?.op === "string" ? input.op : undefined;
   const command = typeof input?.command === "string" ? input.command : undefined;
   const offset =
@@ -310,6 +375,17 @@ function inferToolAction(args?: Record<string, unknown>): {
       : typeof input?.query === "string"
         ? input.query
         : undefined;
+  const pattern = readStringArg(args, nested, "pattern");
+  const depth = readNumberArg(args, nested, "depth");
+  const content = readStringArg(args, nested, "content");
+  const patch = readStringArg(args, nested, "patch");
+  const oldString = readStringArg(args, nested, "oldString");
+  const newString = readStringArg(args, nested, "newString");
+  const replaceAll = readBooleanArg(args, nested, "replaceAll");
+  const ignore = readStringArrayArg(args, nested, "ignore");
+  const url = readStringArg(args, nested, "url");
+  const jobId = readStringArg(args, nested, "job_id") ?? readStringArg(args, nested, "jobId");
+  const wait = readBooleanArg(args, nested, "wait");
   return {
     action: typeof args?.action === "string" ? args.action : undefined,
     resourceType: typeof args?.resourceType === "string" ? args.resourceType : undefined,
@@ -320,6 +396,17 @@ function inferToolAction(args?: Record<string, unknown>): {
     offset,
     limit,
     query,
+    pattern,
+    depth,
+    content,
+    patch,
+    oldString,
+    newString,
+    replaceAll,
+    ignore,
+    url,
+    jobId,
+    wait,
   };
 }
 
@@ -386,27 +473,48 @@ function deriveToolLine(
       : `in the DM thread`;
 
   const path = parsed.resourcePath;
-  const windowLabel =
-    typeof parsed.offset === "number" || typeof parsed.limit === "number"
-      ? ` [offset=${parsed.offset ?? 1}, limit=${parsed.limit ?? 20}]`
-      : "";
   const lowerOp = parsed.op?.toLowerCase();
   const lowerCommand = parsed.command?.toLowerCase();
 
-  if (toolName === "filesystem" && path) {
-    const a = parsed.action?.toLowerCase();
-    if (a === "read") {
-      return {
-        title: `${actorLabel} · read ${path}${windowLabel}`,
-        detail: "",
-      };
-    }
-    if (a === "write") {
-      return {
-        title: `${actorLabel} · patch`,
-        detail: "",
-      };
-    }
+  const simpleToolTitle = (label: string, detail = "") => ({
+    title: `${actorLabel} · ${label}`,
+    detail,
+  });
+
+  if (toolName === "filesystem") {
+    return parsed.action?.toLowerCase() === "write"
+      ? simpleToolTitle("patch")
+      : simpleToolTitle("read");
+  }
+  if (toolName === "view") {
+    return simpleToolTitle("view");
+  }
+  if (toolName === "write") {
+    return simpleToolTitle("write");
+  }
+  if (toolName === "edit") {
+    return simpleToolTitle("edit");
+  }
+  if (toolName === "multiedit") {
+    return simpleToolTitle("multiedit");
+  }
+  if (toolName === "ls") {
+    return simpleToolTitle("ls");
+  }
+  if (toolName === "glob") {
+    return simpleToolTitle("glob");
+  }
+  if (toolName === "fetch") {
+    return simpleToolTitle("fetch");
+  }
+  if (toolName === "download") {
+    return simpleToolTitle("download");
+  }
+  if (toolName === "job_output") {
+    return simpleToolTitle("job output");
+  }
+  if (toolName === "job_kill") {
+    return simpleToolTitle("job kill");
   }
 
   if (toolName === "shell") {
@@ -417,11 +525,8 @@ function deriveToolLine(
   }
 
   if (toolName === "grep") {
-    const query = parsed.query ?? "";
     return {
-      title: query
-        ? `${actorLabel} · grep "${query}"`
-        : `${actorLabel} · grep`,
+      title: `${actorLabel} · grep`,
       detail: "",
     };
   }
@@ -573,9 +678,15 @@ function buildToolStep(
   const argsPreview = mergedPayload?.toolCall?.args
     ? truncatePreview(mergedPayload.toolCall.args, 220)
     : "";
+  const parsed = inferToolAction(
+    mergedPayload?.toolCall?.args as Record<string, unknown> | undefined,
+  );
   const isError = resultBody?.toolResult?.isError === true;
   const errorText = extractToolErrorText(resultBody?.toolResult?.result);
   const hasResult = !!result;
+  const resultOutput = hasResult
+    ? toolAggregateOutput(resultBody?.toolResult?.result, isError, errorText)
+    : "";
 
   let duration = "—";
   if (call && result) {
@@ -603,9 +714,7 @@ function buildToolStep(
 
   let terminal: TraceStepData["terminal"] | undefined;
   if (name === "shell") {
-    const shellArgs = parseShellToolCallArgs(
-      mergedPayload?.toolCall?.args as Record<string, unknown> | undefined,
-    );
+    const shellArgs = parseShellToolCallArgs(mergedPayload?.toolCall?.args as Record<string, unknown> | undefined);
     if (shellArgs) {
       const cmdLine = shellInvocationDisplayLine(shellArgs);
       const jobId =
@@ -624,11 +733,10 @@ function buildToolStep(
           streamingJob: { runId, jobId, organizationId: orgId },
         };
       } else if (hasResult) {
-        const outText = shellToolAggregateOutput(resultBody?.toolResult?.result, isError, errorText);
         terminal = {
           cwd: shellArgs.cwd,
           commandLine: cmdLine,
-          output: outText,
+          output: resultOutput,
           outputTone: isError ? "error" : "default",
         };
       } else {
@@ -639,6 +747,52 @@ function buildToolStep(
       }
     }
   }
+  if (name === "fetch") {
+    const url = parsed.url ?? "";
+    const origin = (() => {
+      if (!url) return ".";
+      try {
+        return new URL(url).origin;
+      } catch {
+        return ".";
+      }
+    })();
+    terminal = {
+      cwd: origin,
+      commandLine: url ? `fetch ${url}` : "fetch",
+      output: hasResult ? resultOutput : undefined,
+      outputTone: isError ? "error" : "default",
+    };
+  }
+  if (name === "job_output") {
+    const snapshot = toObject(resultBody?.toolResult?.result);
+    const jobId = parsed.jobId;
+    const runId = mergedPayload?.runId;
+    const orgId =
+      typeof mergedPayload?.organizationId === "string"
+        ? mergedPayload.organizationId
+        : input.organizationId;
+    if (snapshot?.status === "running" && jobId && runId && orgId) {
+      terminal = {
+        cwd: typeof snapshot.cwd === "string" ? snapshot.cwd : ".",
+        commandLine:
+          typeof snapshot.commandLine === "string" && snapshot.commandLine.trim()
+            ? snapshot.commandLine
+            : `job_output ${jobId}`,
+        streamingJob: { runId, jobId, organizationId: orgId },
+      };
+    } else if (hasResult) {
+      terminal = {
+        cwd: typeof snapshot?.cwd === "string" ? snapshot.cwd : ".",
+        commandLine:
+          typeof snapshot?.commandLine === "string" && snapshot.commandLine.trim()
+            ? snapshot.commandLine
+            : `job_output ${jobId ?? ""}`.trim(),
+        output: resultOutput,
+        outputTone: isError ? "error" : "default",
+      };
+    }
+  }
 
   let filesystem: TraceStepData["filesystem"] | undefined;
   if (name === "filesystem") {
@@ -646,10 +800,7 @@ function buildToolStep(
       mergedPayload?.toolCall?.args as Record<string, unknown> | undefined,
     );
     if (fsArgs) {
-      const outText = hasResult
-        ? filesystemToolAggregateOutput(resultBody?.toolResult?.result, isError, errorText)
-        : "";
-      const bodyFromResult = outText.trim() ? outText : undefined;
+      const bodyFromResult = resultOutput.trim() ? resultOutput : undefined;
       const pendingPatch =
         typeof fsArgs.patch === "string" && fsArgs.patch.length > 0
           ? fsArgs.patch
@@ -682,6 +833,48 @@ function buildToolStep(
         bodyTone: isError ? "error" : "default",
       };
     }
+  }
+  if (name === "view" || name === "write" || name === "edit" || name === "multiedit" || name === "ls" || name === "glob" || name === "download") {
+    const bodyFromResult = resultOutput;
+    const pendingBody =
+      !hasResult || pendingCompletion
+        ? name === "write"
+          ? parsed.content ?? argsPreview
+          : name === "edit"
+            ? [parsed.oldString, parsed.newString].filter(Boolean).join(" -> ") || argsPreview
+            : name === "multiedit"
+              ? argsPreview
+              : name === "view"
+                ? argsPreview
+                : name === "ls"
+                  ? argsPreview
+                  : name === "glob"
+                    ? parsed.pattern ?? argsPreview
+                    : name === "download"
+                      ? parsed.url ?? argsPreview
+                      : undefined
+        : undefined;
+    const resolved = bodyFromResult || pendingBody;
+    filesystem = {
+      action: name === "write" || name === "edit" || name === "multiedit" || name === "download" ? "write" : "read",
+      resourcePath: parsed.resourcePath ?? "",
+      meta:
+        name === "view"
+          ? `[offset=${parsed.offset ?? 1}, limit=${parsed.limit ?? 2000}]`
+          : name === "ls"
+            ? `[depth=${parsed.depth ?? 0}, limit=${parsed.limit ?? 1000}]`
+            : name === "glob"
+              ? parsed.pattern
+                ? `[pattern=${parsed.pattern}]`
+                : undefined
+              : name === "download"
+                ? parsed.url
+                  ? `[url=${parsed.url}]`
+                  : undefined
+                : undefined,
+      body: resolved !== undefined && resolved.length > 0 ? resolved : undefined,
+      bodyTone: isError ? "error" : "default",
+    };
   }
 
   let grep: TraceStepData["grep"] | undefined;
@@ -748,7 +941,7 @@ function buildToolStep(
   return {
     id: `tool:${toolCallId}:${call?.event_id ?? ""}:${result?.event_id ?? ""}`,
     title: line.title,
-    detail: hasRich ? "" : line.detail ?? (argsPreview || `${name} called`),
+    detail: hasRich ? "" : line.detail || resultOutput || argsPreview || `${name} called`,
     time: formatTimestamp(ts),
     duration,
     status,

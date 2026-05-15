@@ -97,7 +97,6 @@ export class ApprovalService {
     });
 
     this.repo.saveApproval(approval);
-    void this.relayApprovalToOwner(approval);
     const rooms = [orgRoom(input.organizationId), runRoom(input.runId)];
     const threadForRooms = approval.threadId ?? runForApproval?.threadId;
     if (threadForRooms) {
@@ -199,19 +198,6 @@ export class ApprovalService {
         { organizationId: input.organizationId, threadId: run?.threadId, approval: resolved },
         rooms,
       );
-
-      const ownerRelayThreadId = this.getOwnerRelayThreadId(input.organizationId, resolved.requestedBy);
-      if (ownerRelayThreadId) {
-        const ownerRooms = [orgRoom(input.organizationId), threadRoom(ownerRelayThreadId)];
-        if (runId) {
-          ownerRooms.push(runRoom(runId));
-        }
-        this.realtime.emit(
-          SocketEventNames.approvalResolved,
-          { organizationId: input.organizationId, threadId: ownerRelayThreadId, approval: resolved },
-          ownerRooms,
-        );
-      }
     }
 
     if (approval.status === 'rejected' && approval.runId) {
@@ -243,40 +229,6 @@ export class ApprovalService {
         const run = approval.runId ? this.repo.getRun(organizationId, approval.runId) : null;
         return !!run && isActiveRunStatus(run.status);
       });
-  }
-
-  private async relayApprovalToOwner(approval: ApprovalRequest): Promise<void> {
-    const owner = this.getOwnerMember(approval.organizationId);
-    if (!owner || owner.id === approval.requestedBy) return;
-
-    try {
-      const relay = buildApprovalRelayMessage(approval);
-      const message = this.conversations.sendDirectSystemMessage({
-        organizationId: approval.organizationId,
-        memberIdA: approval.requestedBy,
-        memberIdB: owner.id,
-        content: relay,
-        suppressDmAlerts: true,
-      });
-      const rooms = [orgRoom(approval.organizationId), threadRoom(message.threadId)];
-      this.realtime.emit(
-        SocketEventNames.approvalRequested,
-        { organizationId: approval.organizationId, threadId: message.threadId, approval },
-        rooms,
-      );
-    } catch (error) {
-      console.warn('Failed to relay approval to owner', {
-        organizationId: approval.organizationId,
-        approvalId: approval.id,
-        error,
-      });
-    }
-  }
-
-  private getOwnerRelayThreadId(organizationId: string, requestedBy: string): string | null {
-    const owner = this.getOwnerMember(organizationId);
-    if (!owner || owner.id === requestedBy) return null;
-    return getDirectMessageThreadId(owner.id, requestedBy);
   }
 
   private getOwnerMember(organizationId: string) {
@@ -330,10 +282,6 @@ function pendingApprovalMatchesResolution(input: {
     return approvalScope ? buildFamilyApprovalScope(approvalScope) === persistedScope : false;
   }
   return approvalScope === rawScope;
-}
-
-function buildApprovalRelayMessage(approval: ApprovalRequest): string {
-  return formatApprovalRelayMarkdown(approval);
 }
 
 function isActiveRunStatus(status: string): boolean {

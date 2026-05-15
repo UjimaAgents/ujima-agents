@@ -106,7 +106,10 @@ export function ApprovalCard({
   }
 
   return (
-    <div className="rounded-xl border border-zinc-200 bg-zinc-50/90 px-4 py-3 shadow-sm backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/60">
+    <div
+      key={data.id}
+      className="animate-approval-in rounded-xl border border-zinc-200 bg-zinc-50/90 px-4 py-3 shadow-sm backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/60"
+    >
       <div className="flex gap-3">
         <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-violet-200 bg-violet-50 dark:border-violet-500/20 dark:bg-violet-500/10">
           <ShieldAlert className="h-4 w-4 text-violet-600 dark:text-violet-300" />

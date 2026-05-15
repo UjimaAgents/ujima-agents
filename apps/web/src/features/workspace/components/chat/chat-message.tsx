@@ -119,7 +119,7 @@ export function ChatMessage({
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseUp}
-        className={`relative group flex gap-3 px-3 py-2.5 rounded-xl transition-all cursor-pointer select-none ${
+        className={`relative group animate-in flex gap-3 px-3 py-2.5 rounded-xl transition-all cursor-pointer select-none ${
           message.kind === "system" ? "items-center" : "items-start"
         } ${
           active
@@ -306,7 +306,7 @@ type GoalArtifactView = {
   status: string;
 };
 
-function getGoalArtifactCard(toolCalls?: ChatMessageData["toolCalls"]): GoalArtifactView | null {
+export function getGoalArtifactCard(toolCalls?: ChatMessageData["toolCalls"]): GoalArtifactView | null {
   const card = toolCalls?.find((entry) => entry.toolName === "card.goal.file");
   if (!card) return null;
   const { goalName, goalFilePath, html, status, artifactFormat } = card.args;

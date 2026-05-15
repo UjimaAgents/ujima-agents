@@ -7,7 +7,7 @@ export type { ChatHeaderProps } from "./chat-header";
 export { ChatTabs } from "./chat-tabs";
 export type { ChatTab } from "./chat-tabs";
 
-export { ChatMessage, ChatMessageList } from "./chat-message";
+export { ChatMessage, ChatMessageList, getGoalArtifactCard } from "./chat-message";
 export type { ChatMessageData } from "./chat-message";
 export { AttachmentGrid } from "./attachment-grid";
 
@@ -19,3 +19,5 @@ export type { ApprovalCardData } from "./approval-card";
 
 export { DetailsSidebar, TraceStep, RunSummary, BoundaryCard } from "./details-sidebar";
 export type { DetailsSidebarProps, TraceStepData, RunSummaryData } from "./details-sidebar";
+export { GoalHUD } from "./goal-hud";
+export type { GoalHUDProps } from "./goal-hud";

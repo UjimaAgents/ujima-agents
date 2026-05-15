@@ -79,6 +79,30 @@ export function createPermissionGatedToolService(
   const approvedRunScopes = new Set<string>();
 
   const runKey = (organizationId: string, runId: string) => `${organizationId}:${runId}`;
+  const buildApprovalScope = (input: ToolInvocationInput): string => {
+    if (input.toolId === 'shell') {
+      return buildShellApprovalScope({ input: input.input, resourcePath: input.resourcePath });
+    }
+    if (input.toolId === 'filesystem' && input.action === 'write') {
+      return `filesystem:${JSON.stringify({ action: input.action, resourcePath: input.resourcePath, patch: input.input.patch, content: input.input.content })}`;
+    }
+    if (input.toolId === 'write') {
+      return `write:${JSON.stringify({ resourcePath: input.resourcePath, content: input.input.content })}`;
+    }
+    if (input.toolId === 'edit') {
+      return `edit:${JSON.stringify({ resourcePath: input.resourcePath, oldString: input.input.oldString, newString: input.input.newString, replaceAll: input.input.replaceAll })}`;
+    }
+    if (input.toolId === 'multiedit') {
+      return `multiedit:${JSON.stringify({ resourcePath: input.resourcePath, edits: input.input.edits })}`;
+    }
+    if (input.toolId === 'download') {
+      return `download:${JSON.stringify({ resourcePath: input.resourcePath, url: input.input.url, timeout: input.input.timeout })}`;
+    }
+    if (input.toolId === 'job_kill') {
+      return `job_kill:${JSON.stringify({ job_id: input.input.job_id })}`;
+    }
+    return `${input.toolId}:${input.action}:${input.resourcePath ?? ''}`;
+  };
 
   return {
     async invoke(input) {
@@ -86,12 +110,7 @@ export function createPermissionGatedToolService(
         return inner.invoke(input);
       }
       const context = await buildContext(input);
-      const approvalScope =
-        input.toolId === 'shell'
-          ? buildShellApprovalScope({ input: input.input, resourcePath: input.resourcePath })
-          : input.toolId === 'filesystem' && input.action === 'write'
-            ? `filesystem:${JSON.stringify({ action: input.action, resourcePath: input.resourcePath, patch: input.input.patch, content: input.input.content })}`
-            : `${input.toolId}:${input.action}:${input.resourcePath ?? ''}`;
+      const approvalScope = buildApprovalScope(input);
 
       if (consumeApprovedRun(input.organizationId, input.runId, approvalScope)) {
         return inner.invoke(input);

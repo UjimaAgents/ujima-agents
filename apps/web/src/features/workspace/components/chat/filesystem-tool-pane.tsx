@@ -55,11 +55,11 @@ export function FilesystemToolPane({
       </div>
       {showBody ? (
         <div
-          className={
+          className={`${
             useDiffUi
               ? `${TERMINAL_OUTPUT_SCROLL_FRAME} ${bodyTone === "error" ? "bg-red-500/[0.04]" : ""}`
               : terminalOutputAreaClass(bodyTone)
-          }
+          } animate-in`}
         >
           {useDiffUi ? (
             <div className="px-3 pb-2 pt-2">
