@@ -742,6 +742,7 @@ export class SpiritService {
           kind: AGENT_KIND,
           content: stepText || `[tool turn — ${stepToolCalls.length} call(s)]`,
           toolCalls: messageToolCalls,
+          metadata: { runId: spirit.runId ?? spirit.id },
           ...(reasoningContent ? { reasoningContent } : {}),
           createdAt: new Date().toISOString(),
         });

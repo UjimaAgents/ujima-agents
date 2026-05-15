@@ -489,6 +489,7 @@ export class RunService {
             senderKind: AGENT_KIND,
             kind: AGENT_KIND,
             content: reply,
+            metadata: { runId: run.id },
             ...(goalArtifactToolCall ? { toolCalls: [goalArtifactToolCall] } : {}),
             ...(reasoningContent ? { reasoningContent } : {}),
             createdAt: new Date().toISOString(),

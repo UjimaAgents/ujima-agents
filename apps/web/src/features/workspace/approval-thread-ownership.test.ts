@@ -39,6 +39,22 @@ describe("pendingApprovalVisibleInChannelView", () => {
     expect(visible).toBe(true);
   });
 
+  it("shows Ivy approval in Ivy agent DM when the run lives on a channel thread", () => {
+    const visible = pendingApprovalVisibleInChannelView(
+      {
+        id: "approval-channel-run",
+        status: "pending",
+        requestedByMemberId: "ivy",
+        requestedBy: "Ivy",
+        runId: "run-general",
+      },
+      { type: "agent", id: "ivy" },
+      dmThreadIvy,
+      [{ id: "run-general", threadId: "general" }],
+    );
+    expect(visible).toBe(true);
+  });
+
   it("falls back to run.threadId for legacy approvals without threadId on approval", () => {
     const visible = pendingApprovalVisibleInChannelView(
       {

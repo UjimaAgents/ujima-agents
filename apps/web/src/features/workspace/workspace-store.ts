@@ -126,11 +126,13 @@ function mergeChatMessages(current: ChatMessageData[], incoming: ChatMessageData
 }
 
 function pruneStreamingMessage(current: ChatMessageData[], incoming: ChatMessageData): ChatMessageData[] {
-  if (incoming.kind !== "agent" || incoming.pending) return current;
+  if (incoming.kind !== "agent" || incoming.pending || !incoming.streamRunId) return current;
+  const rid = incoming.streamRunId;
   return current.filter(
     (message) =>
       !(
         message.streamRunId &&
+        message.streamRunId === rid &&
         message.senderId === incoming.senderId &&
         message.threadId === incoming.threadId
       ),

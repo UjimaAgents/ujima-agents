@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { loadAgentTeam } from '@ujima/framework';
-import { AGENT_KIND, SocketEventNames, type RunState } from '@ujima/shared';
+import { AGENT_KIND, SocketEventNames, type RunChunkEvent, type RunState } from '@ujima/shared';
 import { RunService } from './run.js';
 import { ToolApprovalRequiredError } from './tool-loop-result.js';
 
@@ -218,7 +218,7 @@ describe('RunService', () => {
     const runId = 'run-1';
     const agentId = 'Quinn Mason';
     const threadId = 'thread-1';
-    const emits: Array<{ event: string; payload: unknown }> = [];
+    const emits: { event: string; payload: unknown }[] = [];
     let run: RunState = {
       id: runId,
       organizationId,
@@ -289,20 +289,18 @@ describe('RunService', () => {
 
     expect(result.status).toBe('completed');
     expect(
-      emits.some(
-        ({ event, payload }) =>
-          event === SocketEventNames.runChunk &&
-          payload.kind === 'reasoning' &&
-          payload.delta === 'Thinking…',
-      ),
+      emits.some(({ event, payload }) => {
+        if (event !== SocketEventNames.runChunk) return false;
+        const chunk = payload as RunChunkEvent;
+        return chunk.kind === 'reasoning' && chunk.delta === 'Thinking…';
+      }),
     ).toBe(true);
     expect(
-      emits.some(
-        ({ event, payload }) =>
-          event === SocketEventNames.runChunk &&
-          payload.kind === 'text' &&
-          payload.delta === 'Hello',
-      ),
+      emits.some(({ event, payload }) => {
+        if (event !== SocketEventNames.runChunk) return false;
+        const chunk = payload as RunChunkEvent;
+        return chunk.kind === 'text' && chunk.delta === 'Hello';
+      }),
     ).toBe(true);
   });
 

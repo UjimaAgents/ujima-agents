@@ -7,7 +7,6 @@ import {
   MessageSchema,
   RunChunkEventSchema,
   RunStateSchema,
-  formatApprovalRelayMarkdown,
   parseApprovalDisplayScopesFromReason,
   parseApprovalReasonValue,
   type ActivityEvent,
@@ -27,6 +26,7 @@ import {
   type ConversationStreamEnvelope,
 } from "./conversation-transport";
 import { activityStateToStatus, conversationActivityState, presenceToActivityState, type ActivityState } from "./activity-state";
+import { pendingApprovalVisibleInChannelView } from "./approval-thread-filter";
 import { formatTimestamp } from "./lib/format-timestamp";
 import { useWorkspaceStore } from "./workspace-store";
 
@@ -105,7 +105,6 @@ export function useConversationSync(
         shouldHydrateApproval(item, {
           conversation,
           currentThreadId: transport.threadId,
-          history,
           runs: activeRuns,
         }),
       )) {
@@ -458,44 +457,23 @@ function shouldHydrateApproval(
   input: {
     conversation: SelectedConversation;
     currentThreadId: string;
-    history: Message[];
     runs: RunState[];
   },
 ): boolean {
   if (approval.status !== "pending") return false;
-
-  if (approval.threadId && approval.threadId !== input.currentThreadId) {
-    return false;
-  }
-
-  if (approval.threadId === input.currentThreadId) {
-    if (input.conversation.type === "agent" && approval.requestedBy !== input.conversation.id) {
-      return false;
-    }
-    return true;
-  }
-
-  const run = approval.runId
-    ? input.runs.find((item) => item.id === approval.runId)
-    : undefined;
-
-  if (run?.threadId === input.currentThreadId) {
-    if (input.conversation.type === "agent" && approval.requestedBy !== input.conversation.id) {
-      return false;
-    }
-    return true;
-  }
-
-  if (input.conversation.type !== "agent" || approval.requestedBy !== input.conversation.id) {
-    return false;
-  }
-
-  const relayContent = buildApprovalRelayMessage(approval);
-  return input.history.some(
-    (message) =>
-      message.threadId === input.currentThreadId &&
-      message.senderId === approval.requestedBy &&
-      message.content === relayContent,
+  return pendingApprovalVisibleInChannelView(
+    {
+      id: approval.id,
+      status: approval.status,
+      requestedByMemberId: approval.requestedBy,
+      requestedBy: approval.requestedBy,
+      threadId: approval.threadId,
+      runId: approval.runId,
+      createdAt: approval.createdAt,
+    },
+    { type: input.conversation.type, id: input.conversation.id },
+    input.currentThreadId,
+    input.runs,
   );
 }
 
@@ -611,10 +589,6 @@ function handleStreamEvent(
     default:
       return;
   }
-}
-
-function buildApprovalRelayMessage(approval: ApprovalRequest): string {
-  return formatApprovalRelayMarkdown(approval);
 }
 
 function parseMessagePayload(payload: unknown): Message | null {
@@ -753,6 +727,7 @@ function messageToChatMessage(message: Message, members: Member[]): ChatMessageD
     })) ?? [],
     toolCalls: message.toolCalls,
     pending: false,
+    ...(message.metadata?.runId ? { streamRunId: message.metadata.runId } : {}),
   };
 }
 
