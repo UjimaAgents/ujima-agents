@@ -3,7 +3,7 @@ import { mkdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { mkdtemp } from 'node:fs/promises';
-import { buildAgentSystemPrompt, createAgent, defineRole } from './index.js';
+import { buildAgentSystemPrompt, createAgent, defineRole, getPersonalityPreset } from './index.js';
 
 describe('buildAgentSystemPrompt', () => {
   let root = '';
@@ -35,6 +35,7 @@ describe('buildAgentSystemPrompt', () => {
       root,
       'Ujima Demo',
       'frontend-alice',
+      'Frontend Alice',
       'thread-1',
       agent,
       role,
@@ -60,5 +61,32 @@ describe('buildAgentSystemPrompt', () => {
     expect(system).toContain('Background shell commands return a job id');
     expect(system).toContain('Allowed scopes: frontend');
     expect(system).toContain('For DM chats, use the other person\'s member id as the conversation reference.');
+  });
+
+  it('uses the member display name for the current agent prompt', () => {
+    const agent = createAgent('6609c516-a42a-454a-a038-3cb5bc82d046', 'qa-engineer', 'direct');
+    const role = defineRole({
+      name: 'qa-engineer',
+      title: 'QA Engineer',
+      instructions: 'Test the product.',
+    });
+    const system = buildAgentSystemPrompt(
+      '.',
+      'Ujima Demo',
+      '6609c516-a42a-454a-a038-3cb5bc82d046',
+      'Phoebe Hunter',
+      'thread-1',
+      agent,
+      role,
+      [
+        { id: 'ivy', name: 'Ivy Brooks', roleName: 'qa-engineer', kind: 'agent', createdAt: '2026-05-04T00:00:00.000Z' },
+      ] as never,
+      [agent, createAgent('ivy', 'qa-engineer', 'skeptical')] as never,
+      [] as never,
+      { reportsTo: {} },
+    );
+
+    expect(system).toContain('You are Phoebe Hunter, an employee of Ujima Demo, acting as QA Engineer (qa-engineer).');
+    expect(system).toContain(`- Ivy Brooks | qa-engineer | ${getPersonalityPreset('skeptical')?.title ?? 'Skeptical'} | agent | joined 2026-05-04`);
   });
 });

@@ -22,7 +22,7 @@ import type { ApiRepository } from './repository-reader.js';
 import type { TeamStore } from './team-store.js';
 import type { ToolInvocationInput, ToolService } from './tool-service.js';
 import { applyDashboardTeamOverrides } from './dashboard-team-overrides.js';
-import { appendGoalArtifactToolCall } from './goal-artifact-card.js';
+import { appendGoalArtifactToolCall, buildGoalArtifactMessage } from './goal-artifact-card.js';
 import { ToolApprovalRequiredError } from './tool-loop-result.js';
 import { extractReasoningChunk } from '../utils/extract-reasoning.js';
 import { runUsedThreadPublishingTool } from './run-reply-guard.js';
@@ -475,11 +475,9 @@ export class RunService {
       const reply = text || 'Acknowledged.';
       const reasoningContent = extractReasoningChunk(result) ?? (streamedReasoning.trim() || undefined);
       const skipFinalThreadMessage = runUsedThreadPublishingTool(result);
+      const goalToolCalls = result.steps.flatMap((step: (typeof result.steps)[number]) => step?.toolCalls ?? []);
+      const goalArtifactToolCall = await appendGoalArtifactToolCall(goalToolCalls, team.workspace.root);
       if (run.threadId && !skipFinalThreadMessage) {
-        const goalArtifactToolCall = await appendGoalArtifactToolCall(
-          result.steps.flatMap((step: (typeof result.steps)[number]) => step?.toolCalls ?? []),
-          team.workspace.root,
-        );
         this.conversations.publishMessage(
           MessageSchema.parse({
             id: randomUUID(),
@@ -496,6 +494,21 @@ export class RunService {
             createdAt: new Date().toISOString(),
           }),
         );
+      } else if (run.threadId && goalArtifactToolCall) {
+        const goalArtifactMessage = buildGoalArtifactMessage({
+          goalArtifactToolCall,
+          organizationId: run.organizationId,
+          threadId: run.threadId,
+          channelId: this.repo.getThread(run.organizationId, run.threadId)?.channelId,
+          senderId: run.agentId,
+          senderKind: AGENT_KIND,
+          kind: AGENT_KIND,
+          runId: run.id,
+          content: reply,
+        });
+        if (goalArtifactMessage) {
+          this.conversations.publishMessage(goalArtifactMessage);
+        }
       }
 
       return this.completeRun(running, reply);

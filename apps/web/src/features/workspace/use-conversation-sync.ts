@@ -42,6 +42,10 @@ import {
 import { formatTimestamp } from "./lib/format-timestamp";
 import { useWorkspaceStore } from "./workspace-store";
 
+function isActiveRun(run: RunState): boolean {
+  return run.status === "queued" || run.status === "running" || run.status === "waiting_for_approval";
+}
+
 export interface ConversationSyncResult {
   messages: ChatMessageData[];
   approvals: ApprovalCardData[];
@@ -79,7 +83,7 @@ export function useConversationSync(
   const hydrateMessages = useWorkspaceStore((state) => state.hydrateMessages);
   const addPendingMessage = useWorkspaceStore((state) => state.addPendingMessage);
   const receiveMessage = useWorkspaceStore((state) => state.receiveMessage);
-  const appendStreamingMessage = useWorkspaceStore((state) => state.appendStreamingMessage);
+  const appendRunChunksToStore = useWorkspaceStore((state) => state.appendRunChunks);
   const removeMessage = useWorkspaceStore((state) => state.removeMessage);
   const upsertApproval = useWorkspaceStore((state) => state.upsertApproval);
   const upsertRun = useWorkspaceStore((state) => state.upsertRun);
@@ -89,6 +93,8 @@ export function useConversationSync(
   const [error, setError] = useState<{ conversationKey: string; message: string } | undefined>(undefined);
   const storeMembersRef = useRef(storeMembers);
   const runChunkSequenceRef = useRef(0);
+  const pendingRunChunksRef = useRef<RunChunkStoreItem[]>([]);
+  const runChunkFrameRef = useRef<number | undefined>(undefined);
 
   useEffect(() => {
     storeMembersRef.current = storeMembers;
@@ -96,7 +102,32 @@ export function useConversationSync(
 
   useEffect(() => {
     runChunkSequenceRef.current = 0;
+    pendingRunChunksRef.current = [];
+    if (runChunkFrameRef.current !== undefined) {
+      window.cancelAnimationFrame(runChunkFrameRef.current);
+      runChunkFrameRef.current = undefined;
+    }
   }, [conversationKey]);
+
+  const queueRunChunk = useCallback(
+    (chunk: RunChunkEvent) => {
+      pendingRunChunksRef.current.push(
+        buildRunChunkItem({
+          chunk,
+          members: storeMembersRef.current,
+          sequence: runChunkSequenceRef.current++,
+        }),
+      );
+      if (runChunkFrameRef.current !== undefined) return;
+      runChunkFrameRef.current = window.requestAnimationFrame(() => {
+        runChunkFrameRef.current = undefined;
+        const items = pendingRunChunksRef.current;
+        pendingRunChunksRef.current = [];
+        appendRunChunksToStore(items);
+      });
+    },
+    [appendRunChunksToStore],
+  );
 
   const loadConversationState = useCallback(
     async (signal: AbortSignal, currentConversationKey: string) => {
@@ -190,14 +221,7 @@ export function useConversationSync(
         setLoading,
         setMemberActivity,
         storeMembers: storeMembersRef.current,
-        appendRunChunk: (chunk) =>
-          appendRunChunk({
-            chunk,
-            members: storeMembersRef.current,
-            appendActivity,
-            appendStreamingMessage,
-            sequence: runChunkSequenceRef.current++,
-          }),
+        appendRunChunk: queueRunChunk,
         upsertApproval,
         upsertRun,
       });
@@ -211,17 +235,26 @@ export function useConversationSync(
     return () => {
       abortController.abort();
       window.clearTimeout(loadTimer);
+      if (runChunkFrameRef.current !== undefined) {
+        window.cancelAnimationFrame(runChunkFrameRef.current);
+        runChunkFrameRef.current = undefined;
+      }
+      if (pendingRunChunksRef.current.length > 0) {
+        appendRunChunksToStore(pendingRunChunksRef.current);
+        pendingRunChunksRef.current = [];
+      }
       source.close();
     };
   }, [
     appendActivity,
-    appendStreamingMessage,
+    appendRunChunksToStore,
     appendMember,
     conversation,
     conversation.id,
     conversation.type,
     conversationKey,
     loadConversationState,
+    queueRunChunk,
     receiveMessage,
     removeMessage,
     resetConversationFeed,
@@ -237,10 +270,14 @@ export function useConversationSync(
     return storeMembers.find((member) => member.id === conversation.id);
   }, [conversation.id, conversation.type, storeMembers]);
 
-  const activeRun = useMemo(
-    () => [...runs].reverse().find((run) => ["queued", "running", "waiting_for_approval"].includes(run.status)),
-    [runs],
-  );
+  const activeRun = useMemo(() => {
+    if (!transport) return undefined;
+    for (let index = runs.length - 1; index >= 0; index -= 1) {
+      const run = runs[index];
+      if (run.threadId === transport.threadId && isActiveRun(run)) return run;
+    }
+    return undefined;
+  }, [runs, transport]);
 
   const status = useMemo(() => {
     if (conversation.type !== "agent") {
@@ -368,13 +405,9 @@ export function useConversationSync(
 
   const currentError =
     error && error.conversationKey === conversationKey ? error.message : undefined;
-  const messagesWithReplyPreview = useMemo(
-    () => attachReplyPreviews(messages),
-    [messages],
-  );
 
   return {
-    messages: messagesWithReplyPreview,
+    messages,
     approvals,
     runs,
     activity,
@@ -385,22 +418,6 @@ export function useConversationSync(
     sendMessage,
     archiveConversation,
   };
-}
-
-function attachReplyPreviews(messages: ChatMessageData[]): ChatMessageData[] {
-  const byId = new Map(messages.map((message) => [message.id, message]));
-  return messages.map((message) => {
-    if (!message.parentMessageId) return message;
-    const parent = byId.get(message.parentMessageId);
-    if (!parent) return message;
-    return {
-      ...message,
-      replyPreview: {
-        name: parent.name,
-        content: parent.content,
-      },
-    };
-  });
 }
 
 async function loadHistory(
@@ -750,31 +767,39 @@ function resolveMentionNames(content: string, members: Member[]): string[] {
   return [...names];
 }
 
-function appendRunChunk(input: {
+type RunChunkStoreItem = {
+  message?: ChatMessageData;
+  activity: ActivityEvent;
+};
+
+function buildRunChunkItem(input: {
   chunk: RunChunkEvent;
   members: Member[];
   sequence: number;
-  appendActivity(event: ActivityEvent): void;
-  appendStreamingMessage(message: ChatMessageData): void;
-}): void {
-  input.appendActivity(runChunkToActivity(input.chunk, input.sequence));
-  if (input.chunk.kind !== "text" || !input.chunk.delta) return;
+}): RunChunkStoreItem {
+  const activity = runChunkToActivity(input.chunk, input.sequence);
+  if (input.chunk.kind !== "text" || !input.chunk.delta) {
+    return { activity };
+  }
 
   const sender = input.members.find((member) => member.id === input.chunk.agentId);
   const createdAt = new Date().toISOString();
-  input.appendStreamingMessage({
-    id: `run-stream:${input.chunk.runId}`,
-    streamRunId: input.chunk.runId,
-    senderId: input.chunk.agentId,
-    threadId: input.chunk.threadId,
-    role: sender?.roleName ?? "agent",
-    name: sender?.name ?? input.chunk.agentId,
-    kind: "agent",
-    time: formatTime(createdAt),
-    content: input.chunk.delta,
-    createdAt,
-    pending: false,
-  });
+  return {
+    activity,
+    message: {
+      id: `run-stream:${input.chunk.runId}`,
+      streamRunId: input.chunk.runId,
+      senderId: input.chunk.agentId,
+      threadId: input.chunk.threadId,
+      role: sender?.roleName ?? "agent",
+      name: sender?.name ?? input.chunk.agentId,
+      kind: "agent",
+      time: formatTime(createdAt),
+      content: input.chunk.delta,
+      createdAt,
+      pending: false,
+    },
+  };
 }
 
 function formatTime(iso: string): string {

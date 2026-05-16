@@ -624,6 +624,47 @@ test('bootstrap snapshot drops self and dm channels', async () => {
   expect(visibleIds).not.toContain('dm_alex_quinn');
 });
 
+test('channel membership stays mirrored and reads tolerate drift', () => {
+  const db = openDatabase({ dbPath: ':memory:' });
+  const repo = new Repository(db);
+  const orgId = randomUUID();
+
+  repo.saveOrganization(
+    OrganizationSchema.parse({
+      id: orgId,
+      name: 'Membership Org',
+      workspace: { root: '/tmp/membership-org', roleScopes: {} },
+    }),
+  );
+  repo.saveChannel({
+    id: 'general',
+    organizationId: orgId,
+    name: 'general',
+    kind: 'general',
+    topic: '',
+    memberIds: [],
+  });
+  repo.ensureThread({
+    id: 'general',
+    organizationId: orgId,
+    channelId: 'general',
+    title: 'general',
+    memberIds: [],
+    createdAt: '2026-04-27T08:00:00.000Z',
+  });
+
+  repo.setChannelMembers('general', ['ava']);
+  const mirroredThreadMembers = db
+    .prepare('SELECT member_id FROM thread_members WHERE thread_id = ? ORDER BY member_id ASC')
+    .all('general') as { member_id: string }[];
+  expect(mirroredThreadMembers.map((row) => row.member_id)).toEqual(['ava']);
+
+  db.prepare('DELETE FROM channel_members WHERE channel_id = ?').run('general');
+  db.prepare('INSERT INTO channel_members (channel_id, member_id) VALUES (?, ?)').run('general', 'phoebe');
+
+  expect(repo.getChannel(orgId, 'general')?.memberIds).toEqual(['ava', 'phoebe']);
+});
+
 // Regression: paginators used to cursor only on `created_at`, so two rows
 // sharing the same millisecond timestamp could be split across the page
 // boundary and the second one would be skipped forever (the cursor pointed

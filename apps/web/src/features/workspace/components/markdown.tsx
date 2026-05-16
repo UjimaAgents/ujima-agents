@@ -114,7 +114,7 @@ export function Markdown({
 
   return (
     <div
-      className={`break-words text-sm leading-7 text-foreground
+      className={`min-w-0 break-words text-sm leading-7 text-foreground [overflow-wrap:anywhere]
         [&>p]:my-2 [&>p:first-child]:mt-0 [&>p:last-child]:mb-0
         [&>h1]:mt-5 [&>h1]:mb-2 [&>h1]:text-xl [&>h1]:font-semibold [&>h1]:leading-tight
         [&>h2]:mt-4 [&>h2]:mb-2 [&>h2]:text-lg [&>h2]:font-semibold [&>h2]:leading-tight
@@ -125,7 +125,7 @@ export function Markdown({
         [&_li>ul]:mt-1 [&_li>ol]:mt-1 [&_li>ul]:pl-5 [&_li>ol]:pl-5
         [&_input[type='checkbox']]:mr-2 [&_input[type='checkbox']]:align-text-bottom
         [&>hr]:my-3 [&>hr]:border-foreground/20
-        [&_strong]:font-semibold [&_em]:italic [&_a]:underline [&_a]:underline-offset-2
+        [&_strong]:font-semibold [&_em]:italic [&_a]:underline [&_a]:underline-offset-2 [&_code]:break-words
         ${className}`}
       dangerouslySetInnerHTML={{ __html: html }}
     />
@@ -150,7 +150,7 @@ export function MarkdownInline({
 
   return (
     <span
-      className={`break-words text-foreground ${className}`}
+      className={`break-words text-foreground [overflow-wrap:anywhere] ${className}`}
       dangerouslySetInnerHTML={{ __html: html }}
     />
   );

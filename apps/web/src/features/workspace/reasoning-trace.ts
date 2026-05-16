@@ -248,6 +248,7 @@ function readStringArrayArg(
 }
 
 const MAX_TERMINAL_CHARS = 16_384;
+const MAX_RUN_CHUNK_DETAIL_CHARS = 4_096;
 
 function extractShellBackgroundJobId(result: unknown): string | undefined {
   const rec = toObject(result);
@@ -708,9 +709,15 @@ function mergeRunChunkStep(step: TraceStepData, event: ActivityEvent): TraceStep
   return {
     ...step,
     id: `${step.id}:${event.event_id}`,
-    detail: `${step.detail}${body?.delta ?? ""}`,
+    detail: appendRunChunkDetail(step.detail, body?.delta ?? ""),
     time: formatTimestamp(event.timestamp),
   };
+}
+
+function appendRunChunkDetail(current: string, delta: string): string {
+  const next = `${current}${delta}`;
+  if (next.length <= MAX_RUN_CHUNK_DETAIL_CHARS) return next;
+  return `…${next.slice(-(MAX_RUN_CHUNK_DETAIL_CHARS - 1))}`;
 }
 
 function buildToolStep(

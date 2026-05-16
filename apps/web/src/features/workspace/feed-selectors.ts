@@ -11,23 +11,48 @@ export function buildTabCounts(input: {
   messages: ChatMessageData[];
   runs: RunState[];
 }) {
+  let approvals = 0;
+  let tasks = 0;
+  let files = 0;
+  for (const approval of input.approvals) {
+    if (approval.status === "pending") approvals += 1;
+  }
+  for (const run of input.runs) {
+    if (isLiveRun(run)) tasks += 1;
+  }
+  for (const message of input.messages) {
+    files += message.attachments?.length ?? 0;
+  }
   return {
-    approvals: input.approvals.filter((approval) => approval.status === "pending").length,
-    tasks: input.runs.filter(isLiveRun).length,
+    approvals,
+    tasks,
     activity: input.activity.length,
-    files: input.messages.reduce((count, message) => count + (message.attachments?.length ?? 0), 0),
+    files,
   };
 }
 
 export function collectConversationAttachments(messages: ChatMessageData[]) {
-  return messages.flatMap((message) =>
-    (message.attachments ?? []).map((attachment) => ({
-      ...attachment,
-      messageName: message.name,
-      messageTime: message.time,
-      messageId: message.id,
-    })),
-  );
+  const attachments: {
+    id: string;
+    filename: string;
+    mimeType: string;
+    category: NonNullable<ChatMessageData["attachments"]>[number]["category"];
+    sizeBytes: number;
+    messageName: string;
+    messageTime: string;
+    messageId: string;
+  }[] = [];
+  for (const message of messages) {
+    for (const attachment of message.attachments ?? []) {
+      attachments.push({
+        ...attachment,
+        messageName: message.name,
+        messageTime: message.time,
+        messageId: message.id,
+      });
+    }
+  }
+  return attachments;
 }
 
 export function collectBlockedRunReasons(activity: ActivityEvent[]): Map<string, string> {

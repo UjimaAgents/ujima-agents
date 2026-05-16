@@ -1,7 +1,8 @@
 import type { SqliteDbHandle as DbHandle } from '@ujima/context-store';
 import { ChannelSchema, type Channel, type ChannelKind } from '@ujima/shared';
-import { now, rowString } from './common.js';
+import { now, replaceMemberLinks, rowString } from './common.js';
 import { cursorWhereClause, decodeCursor, encodeCursor } from '@ujima/shared';
+import { listThreadIdsForChannel } from './threads.js';
 
 type Row = Record<string, unknown>;
 
@@ -157,19 +158,23 @@ export function listAllChannels(db: DbHandle, organizationId: string): Channel[]
 }
 
 export function setChannelMembers(db: DbHandle, channelId: string, memberIds: string[]): void {
-  db.prepare('DELETE FROM channel_members WHERE channel_id = ?').run(channelId);
-  const insert = db.prepare('INSERT INTO channel_members (channel_id, member_id) VALUES (?, ?)');
-  for (const memberId of memberIds) {
-    insert.run(channelId, memberId);
+  replaceMemberLinks(db, 'channel_members', 'channel_id', channelId, memberIds);
+  for (const threadId of listThreadIdsForChannel(db, channelId)) {
+    replaceMemberLinks(db, 'thread_members', 'thread_id', threadId, memberIds);
   }
 }
 
 export function listChannelMemberIds(db: DbHandle, channelId: string): string[] {
   const rows = db
     .prepare(
-      'SELECT member_id FROM channel_members WHERE channel_id = ? ORDER BY member_id ASC',
+      `SELECT member_id FROM channel_members WHERE channel_id = ?
+       UNION
+       SELECT member_id FROM thread_members WHERE thread_id IN (
+         SELECT id FROM threads WHERE channel_id = ? OR id = ?
+       )
+       ORDER BY member_id ASC`,
     )
-    .all(channelId) as { member_id: string }[];
+    .all(channelId, channelId, channelId) as { member_id: string }[];
 
   return rows.map((row) => row.member_id);
 }

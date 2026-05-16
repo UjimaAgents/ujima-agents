@@ -6,7 +6,6 @@ import type {
   Message,
   RunState,
 } from "@ujima/shared/browser";
-import { appendEvents } from "@ujima/shared/browser";
 import type { SelectedConversation } from "./types";
 import type { ChatMessageData, ApprovalCardData } from "./components/chat";
 import type { ActivityState } from "./activity-state";
@@ -14,7 +13,7 @@ import { presenceToActivityState } from "./activity-state";
 
 export type WorkspaceChannel = BootstrapResponse["channels"][number];
 export type WorkspaceMember = BootstrapResponse["members"][number];
-export type WorkspaceTab = "conversation" | "approvals" | "files" | "activity" | "tasks";
+export type WorkspaceTab = "conversation" | "approvals" | "files" | "activity" | "tasks" | "members";
 export type WorkspaceDetailsTab = "Reasoning trace" | "Changes" | "Metadata";
 
 interface WorkspaceState {
@@ -61,7 +60,8 @@ interface WorkspaceState {
   hydrateMessages(messages: Message[], toMessage: (message: Message) => ChatMessageData, toActivity: (message: Message) => ActivityEvent): void;
   addPendingMessage(message: ChatMessageData): void;
   receiveMessage(tempId: string | undefined, message: Message, toMessage: (message: Message) => ChatMessageData, toActivity: (message: Message) => ActivityEvent): void;
-  appendStreamingMessage(message: ChatMessageData): void;
+  appendRunChunk(message: ChatMessageData | undefined, activity: ActivityEvent): void;
+  appendRunChunks(items: { message?: ChatMessageData; activity: ActivityEvent }[]): void;
   removeMessage(id: string): void;
   upsertApproval(approval: ApprovalRequest, toCard: (approval: ApprovalRequest, state: Pick<WorkspaceState, "members">) => ApprovalCardData, toActivity: (approval: ApprovalRequest) => ActivityEvent): void;
   upsertRun(run: RunState, toActivity: (run: RunState) => ActivityEvent): void;
@@ -125,6 +125,25 @@ function mergeChatMessages(current: ChatMessageData[], incoming: ChatMessageData
   return [...map.values()].sort((a, b) => Date.parse(a.createdAt ?? "") - Date.parse(b.createdAt ?? ""));
 }
 
+function ensureReplyPreviews(messages: ChatMessageData[]): ChatMessageData[] {
+  const byId = new Map(messages.map((message) => [message.id, message]));
+  let changed = false;
+  const next = messages.map((message) => {
+    if (message.replyPreview || !message.parentMessageId) return message;
+    const parent = byId.get(message.parentMessageId);
+    if (!parent) return message;
+    changed = true;
+    return {
+      ...message,
+      replyPreview: {
+        name: parent.name,
+        content: parent.content,
+      },
+    };
+  });
+  return changed ? next : messages;
+}
+
 function pruneStreamingMessage(current: ChatMessageData[], incoming: ChatMessageData): ChatMessageData[] {
   if (incoming.kind !== "agent" || incoming.pending || !incoming.streamRunId) return current;
   const rid = incoming.streamRunId;
@@ -147,12 +166,18 @@ function mergeApprovals(current: ApprovalCardData[], incoming: ApprovalCardData[
 }
 
 function mergeRuns(current: RunState[], incoming: RunState[]): RunState[] {
-  const map = new Map<string, RunState>();
-  for (const run of current) map.set(run.id, run);
-  for (const run of incoming) map.set(run.id, run);
-  return [...map.values()].sort(
-    (a, b) => Date.parse(a.startedAt) - Date.parse(b.startedAt),
-  );
+  let next = current;
+  for (const run of incoming) {
+    const index = next.findIndex((item) => item.id === run.id);
+    if (index === -1) {
+      next = next === current ? [...current, run] : [...next, run];
+      continue;
+    }
+    if (sameRecord(next[index], run)) continue;
+    next = next === current ? [...current] : next;
+    next[index] = run;
+  }
+  return next;
 }
 
 function appendSequencedEvents(
@@ -160,14 +185,45 @@ function appendSequencedEvents(
   events: ActivityEvent[],
 ): Pick<WorkspaceState, "activitySequence" | "activity"> {
   if (events.length === 0) return state;
+  const seen = new Set(state.activity.map((event) => event.event_id));
   const stamped = events.map((event, index) => ({
     ...event,
     order: state.activitySequence + index,
-  }));
+  })).filter((event) => !seen.has(event.event_id));
+  if (stamped.length === 0) return state;
+  const activity = state.activity.length + stamped.length > 200
+    ? [...state.activity, ...stamped].slice(-200)
+    : [...state.activity, ...stamped];
   return {
-    activitySequence: state.activitySequence + events.length,
-    activity: appendEvents(state.activity, stamped, { max: 200 }),
+    activitySequence: state.activitySequence + stamped.length,
+    activity,
   };
+}
+
+function mergeRunChunkMessages(
+  current: ChatMessageData[],
+  items: { message?: ChatMessageData }[],
+): ChatMessageData[] {
+  let messages = current;
+  for (const item of items) {
+    const message = item.message;
+    if (!message) continue;
+    const index = messages.findIndex((entry) => entry.id === message.id);
+    if (index === -1) {
+      messages = messages === current ? [...current, message] : [...messages, message];
+      continue;
+    }
+    const existing = messages[index];
+    const next = messages === current ? [...current] : messages;
+    next[index] = {
+      ...existing,
+      content: `${existing.content}${message.content}`,
+      createdAt: message.createdAt,
+      time: message.time,
+    };
+    messages = next;
+  }
+  return messages;
 }
 
 export function sameConversation(
@@ -399,8 +455,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
           }
         }
       }
+      const mergedMessages = ensureReplyPreviews(mergeChatMessages(state.messages, converted));
       return {
-        messages: mergeChatMessages(state.messages, converted),
+        messages: mergedMessages,
         ...appendSequencedEvents(state, messages.map((message) => toActivity(message))),
       };
     }),
@@ -422,27 +479,30 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
           );
       if (withoutTemp.some((item) => item.id === nextMessage.id)) {
         return {
-          messages: pruneStreamingMessage(withoutTemp, nextMessage),
+          messages: ensureReplyPreviews(pruneStreamingMessage(withoutTemp, nextMessage)),
           ...appendSequencedEvents(state, [toActivity(message)]),
         };
       }
       return {
-        messages: mergeChatMessages(pruneStreamingMessage(withoutTemp, nextMessage), [nextMessage]),
+        messages: ensureReplyPreviews(mergeChatMessages(pruneStreamingMessage(withoutTemp, nextMessage), [nextMessage])),
         ...appendSequencedEvents(state, [toActivity(message)]),
       };
     }),
-  appendStreamingMessage: (message) =>
+  appendRunChunk: (message, activity) =>
     set((state) => {
-      const existing = state.messages.find((item) => item.id === message.id);
-      if (!existing) {
-        return { messages: mergeChatMessages(state.messages, [message]) };
-      }
+      const messages = mergeRunChunkMessages(state.messages, message ? [{ message }] : []);
       return {
-        messages: state.messages.map((item) =>
-          item.id === message.id
-            ? { ...item, content: `${item.content}${message.content}`, createdAt: message.createdAt, time: message.time }
-            : item,
-        ),
+        ...(messages === state.messages ? {} : { messages }),
+        ...appendSequencedEvents(state, [activity]),
+      };
+    }),
+  appendRunChunks: (items) =>
+    set((state) => {
+      if (items.length === 0) return state;
+      const messages = mergeRunChunkMessages(state.messages, items);
+      return {
+        ...(messages === state.messages ? {} : { messages }),
+        ...appendSequencedEvents(state, items.map((item) => item.activity)),
       };
     }),
   removeMessage: (id) =>

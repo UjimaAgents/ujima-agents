@@ -75,6 +75,7 @@ export interface UpdateChannelInput {
   channelId: string;
   name?: string;
   topic?: string;
+  memberIds?: string[];
 }
 
 export interface ProviderTestResult {
@@ -414,13 +415,18 @@ export class SettingsService {
       throw new Error(`Channel not found: ${input.channelId}`);
     }
 
-    return this.repo.saveChannel(
+    this.repo.saveChannel(
       ChannelSchema.parse({
         ...existing,
         name: input.name ?? existing.name,
         topic: input.topic !== undefined ? input.topic : existing.topic,
       }),
     );
+    if (input.memberIds !== undefined) {
+      this.repo.setChannelMembers(existing.id, [...new Set(input.memberIds)].sort());
+    }
+
+    return this.repo.getChannel(input.organizationId, existing.id) ?? existing;
   }
 
   deleteChannel(organizationId: string, channelId: string): void {

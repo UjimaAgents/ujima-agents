@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ChevronDown, ShieldAlert } from "lucide-react";
 import { MarkdownInline } from "../markdown";
 import { shellInvocationDisplayLine, type ParsedFilesystemScope } from "@ujima/shared/browser";
@@ -34,7 +34,7 @@ export interface ApprovalCardData {
 /** Indent to align with body text past the shield icon (w-8 + gap-3). */
 const BODY_INDENT = "pl-11";
 
-export function ApprovalCard({
+export const ApprovalCard = memo(function ApprovalCard({
   data,
   resolving,
   onResolve,
@@ -228,4 +228,4 @@ export function ApprovalCard({
       )}
     </div>
   );
-}
+});

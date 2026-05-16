@@ -64,6 +64,10 @@ function formatJoinedAt(value: string | undefined): string {
   return value ? value.slice(0, 10) : 'unknown';
 }
 
+function resolveAgentForMember(member: Member, agents: AgentConfig[]): AgentConfig | undefined {
+  return agents.find((agent) => agent.name === member.id) ?? agents.find((agent) => agent.name === member.name);
+}
+
 function formatMemberLine(member: Member, agent?: AgentConfig): string {
   const personality = agent ? getPersonalityPreset(agent.personalityName) : undefined;
   const parts = [
@@ -113,12 +117,10 @@ function buildOrganizationContextPrompt(
   agents: AgentConfig[],
   organizationChart: OrganizationChart,
 ): string {
-  const agentsByName = new Map(agents.map((agent) => [agent.name, agent]));
-
   return [
     `Organization: ${organizationName}`,
     'Employees:',
-    members.map((member) => formatMemberLine(member, agentsByName.get(member.name))).join('\n'),
+    members.map((member) => formatMemberLine(member, resolveAgentForMember(member, agents))).join('\n'),
     'Hierarchy:',
     formatOrgChart(members, organizationChart),
   ].join('\n');
@@ -128,6 +130,7 @@ export function buildAgentSystemPrompt(
   workspaceRoot: string,
   organizationName: string,
   currentMemberId: string,
+  currentMemberName: string,
   currentThreadId: string,
   agent: AgentConfig,
   role: RoleConfig,
@@ -142,7 +145,7 @@ export function buildAgentSystemPrompt(
   const personality = getPersonalityPreset(agent.personalityName);
 
   return [
-    `You are ${agent.name}, an employee of ${organizationName}, acting as ${role.title} (${role.name}).`,
+    `You are ${currentMemberName}, an employee of ${organizationName}, acting as ${role.title} (${role.name}).`,
     personality ? `Personality: ${personality.title} (${personality.name})` : '',
     SHARED_AGENT_SYSTEM_PROMPT,
     '',

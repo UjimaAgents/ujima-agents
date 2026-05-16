@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useDeferredValue, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { buildReasoningTraceSteps } from "../reasoning-trace";
 import { File, FileArchive, FileAudio, FileImage, FileText, FileVideo, SquarePen } from "lucide-react";
 import type { BootstrapResponse } from "@ujima/api-schema";
@@ -20,6 +21,7 @@ import {
   type ChatTab,
   type ChatMessageData,
 } from "./chat";
+import { ChannelMembersTab } from "./channel-members-tab";
 import type { RunState } from "@ujima/shared/browser";
 import { getDirectMessageThreadId } from "@ujima/shared/browser";
 import { useWorkspaceStore } from "../workspace-store";
@@ -35,10 +37,15 @@ import { buildTabCounts, collectBlockedRunReasons, collectConversationAttachment
 
 const CHANNEL_TABS: ChatTab[] = [
   { id: "conversation", label: "Conversation" },
+  { id: "members", label: "Members" },
   { id: "approvals", label: "Approvals" },
   { id: "files", label: "Files" },
   { id: "activity", label: "Activity" },
 ];
+const MAX_LIVE_TRACE_ACTIVITY = 400;
+const MAX_ACTIVITY_ROWS = 100;
+const EMPTY_ACTIVITY_EVENTS = [] as ReturnType<typeof useConversationSync>["activity"];
+const EMPTY_RUNS = [] as RunState[];
 
 const AGENT_TABS: ChatTab[] = [
   { id: "conversation", label: "Conversation" },
@@ -72,6 +79,31 @@ export function ChannelView({
   const bottomRef = useRef<HTMLDivElement>(null);
   const previousFeedSignal = useRef("");
   const feed = useConversationSync(bootstrap, conversation);
+  const activeTab = useWorkspaceStore((state) => state.activeTab);
+  const showDetails = useWorkspaceStore((state) => state.showDetails);
+  const detailsWidth = useWorkspaceStore((state) => state.detailsWidth);
+  const detailsTab = useWorkspaceStore((state) => state.detailsTab);
+  const setActiveTab = useWorkspaceStore((state) => state.setActiveTab);
+  const setShowDetails = useWorkspaceStore((state) => state.setShowDetails);
+  const openDetailsForAgentMessage = useWorkspaceStore((state) => state.openDetailsForAgentMessage);
+  const setDetailsWidth = useWorkspaceStore((state) => state.setDetailsWidth);
+  const setDetailsTab = useWorkspaceStore((state) => state.setDetailsTab);
+  const memberById = useMemo(() => new Map(members.map((member) => [member.id, member])), [members]);
+  const memberIndexById = useMemo(
+    () => new Map(members.map((member, index) => [member.id, index])),
+    [members],
+  );
+  const channelById = useMemo(
+    () => new Map(bootstrap.channels.map((channel) => [channel.id, channel])),
+    [bootstrap.channels],
+  );
+  const currentChannel = useMemo(
+    () => (conversation.type === "channel" ? channelById.get(conversation.id) : undefined),
+    [channelById, conversation.id, conversation.type],
+  );
+  const [channelMemberIds, setChannelMemberIds] = useState<string[]>(
+    () => currentChannel?.memberIds ?? [],
+  );
 
   const currentThreadId = useMemo(() => {
     const senderId = bootstrap.auth.member?.id;
@@ -82,81 +114,105 @@ export function ChannelView({
     return conversation.id;
   }, [bootstrap.auth.member?.id, conversation.id, conversation.type]);
 
+  const traceMembers = useMemo(
+    () =>
+      members.map((member) => ({
+        id: member.id,
+        name: member.name,
+        kind: member.kind,
+      })),
+    [members],
+  );
+  const reasoningTraceVisible = showDetails && detailsTab === "Reasoning trace";
+  const liveTraceActivity = useMemo(
+    () => (reasoningTraceVisible ? feed.activity.slice(-MAX_LIVE_TRACE_ACTIVITY) : []),
+    [feed.activity, reasoningTraceVisible],
+  );
+  const liveTraceRuns = useMemo(
+    () => (reasoningTraceVisible ? feed.runs : []),
+    [feed.runs, reasoningTraceVisible],
+  );
+  const deferredTraceActivity = useDeferredValue(liveTraceActivity);
+  const deferredTraceRuns = useDeferredValue(liveTraceRuns);
+  const reasoningTraceState = useMemo(
+    () => (reasoningTraceVisible ? { activity: deferredTraceActivity, runs: deferredTraceRuns } : null),
+    [deferredTraceActivity, deferredTraceRuns, reasoningTraceVisible],
+  );
   const reasoningTraceSteps = useMemo(() => {
-    if (!currentThreadId) return [];
+    if (!currentThreadId || !reasoningTraceVisible || !reasoningTraceState) return [];
     return buildReasoningTraceSteps({
       threadId: currentThreadId,
       agentIdFilter: conversation.type === "agent" ? conversation.id : undefined,
       conversationName: conversation.name,
       conversationType: conversation.type,
-      members: members.map((member) => ({
-        id: member.id,
-        name: member.name,
-        kind: member.kind,
-      })),
-      activity: feed.activity,
-      runs: feed.runs,
+      members: traceMembers,
+      activity: reasoningTraceState.activity,
+      runs: reasoningTraceState.runs,
       organizationId: bootstrap.organization?.id,
     });
-  }, [conversation.id, conversation.name, conversation.type, currentThreadId, feed.activity, feed.runs, members, bootstrap.organization?.id]);
+  }, [
+    bootstrap.organization?.id,
+    conversation.id,
+    conversation.name,
+    conversation.type,
+    currentThreadId,
+    reasoningTraceVisible,
+    reasoningTraceState,
+    traceMembers,
+  ]);
 
-  const visibleApprovals = useMemo(() => queueApprovals(feed.approvals), [feed.approvals]);
-
+  const approvalsSource = activeTab === "conversation" || activeTab === "approvals" ? feed.approvals : null;
+  const visibleApprovals = useMemo(
+    () => (approvalsSource ? queueApprovals(approvalsSource) : []),
+    [approvalsSource],
+  );
   const pendingThreadApprovals = useMemo(
     () =>
-      visibleApprovals.filter((approval) =>
-        pendingApprovalVisibleInChannelView(approval, conversation, currentThreadId, feed.runs),
-      ),
-    [conversation, currentThreadId, feed.runs, visibleApprovals],
+      activeTab === "conversation"
+        ? visibleApprovals.filter((approval) =>
+            pendingApprovalVisibleInChannelView(approval, conversation, currentThreadId, feed.runs),
+          )
+        : [],
+    [activeTab, conversation, currentThreadId, feed.runs, visibleApprovals],
   );
-  const activeTab = useWorkspaceStore((state) => state.activeTab);
-  const showDetails = useWorkspaceStore((state) => state.showDetails);
-  const detailsWidth = useWorkspaceStore((state) => state.detailsWidth);
-  const detailsTab = useWorkspaceStore((state) => state.detailsTab);
-  const setActiveTab = useWorkspaceStore((state) => state.setActiveTab);
-  const setShowDetails = useWorkspaceStore((state) => state.setShowDetails);
-  const openDetailsForAgentMessage = useWorkspaceStore((state) => state.openDetailsForAgentMessage);
-  const setDetailsWidth = useWorkspaceStore((state) => state.setDetailsWidth);
-  const setDetailsTab = useWorkspaceStore((state) => state.setDetailsTab);
 
   const isAgent = conversation.type === "agent";
   const tabs = isAgent ? AGENT_TABS : CHANNEL_TABS;
   const tabIds = useMemo(() => new Set(tabs.map((tab) => tab.id)), [tabs]);
-  const conversationColorIndex = Math.max(
-    members.findIndex((member) => member.id === conversation.id),
-    0,
-  );
+  const conversationColorIndex = Math.max(memberIndexById.get(conversation.id) ?? 0, 0);
+  const messageVirtualizer = useVirtualizer({
+    count: feed.messages.length,
+    getScrollElement: () => listRef.current,
+    estimateSize: () => 132,
+    overscan: 8,
+  });
+  const virtualMessageRows = messageVirtualizer.getVirtualItems();
   const selectedStatus =
     conversation.type === "channel"
       ? { variant: "active" as const, label: "Active" }
       : feed.status;
-  const typingRuns = useMemo(
-    () =>
-      !currentThreadId
-        ? []
-        : feed.runs.filter(
-            (run) =>
-              isLiveRun(run) && run.threadId === currentThreadId,
-          ),
-    [currentThreadId, feed.runs],
-  );
+  const liveThreadRuns = useMemo(() => {
+    if (!currentThreadId) return EMPTY_RUNS;
+    return feed.runs.filter((run) => isLiveRun(run) && run.threadId === currentThreadId);
+  }, [currentThreadId, feed.runs]);
+  const typingRuns = activeTab === "conversation" ? liveThreadRuns : EMPTY_RUNS;
+  const taskRuns = activeTab === "tasks" ? liveThreadRuns : EMPTY_RUNS;
+  const activeGoalSource = activeTab === "conversation" ? feed.messages : null;
   const activeGoal = useMemo(() => {
-    const latest = [...feed.messages]
-      .reverse()
-      .find((m) => !!getGoalArtifactCard(m.toolCalls));
-    if (!latest) return null;
-    return getGoalArtifactCard(latest.toolCalls);
-  }, [feed.messages]);
+    if (!activeGoalSource) return null;
+    for (let index = activeGoalSource.length - 1; index >= 0; index -= 1) {
+      const goal = getGoalArtifactCard(activeGoalSource[index]?.toolCalls);
+      if (goal) return goal;
+    }
+    return null;
+  }, [activeGoalSource]);
   const activeStep = useMemo(() => {
     const running = typingRuns.find((r) => r.status === "running");
     const s = running?.step;
     if (!s || s.toLowerCase() === "running") return undefined;
     return s;
   }, [typingRuns]);
-  const traceAutoScroll = useMemo(
-    () => typingRuns.length > 0 && detailsTab === "Reasoning trace",
-    [detailsTab, typingRuns.length],
-  );
+  const traceAutoScroll = reasoningTraceVisible && typingRuns.length > 0;
   const stoppableRunId = useMemo(() => {
     const sorted = [...typingRuns].sort((a, b) => {
       const pri = (r: RunState) =>
@@ -171,15 +227,15 @@ export function ChannelView({
     const seen = new Set<string>();
     const resolved: typeof members = [];
     for (const run of typingRuns) {
-      const member = members.find((item) => item.id === run.agentId);
+      const member = memberById.get(run.agentId);
       if (!member || seen.has(member.id)) continue;
       seen.add(member.id);
       resolved.push(member);
     }
     return resolved;
-  }, [members, typingRuns]);
+  }, [memberById, typingRuns]);
   const typingLabel = useMemo(() => {
-    if (!typingRuns.length) return undefined;
+    if (activeTab !== "conversation" || !typingRuns.length) return undefined;
     const memberName =
       typingMembers[0]?.name ?? typingRuns[0]?.agentId ?? conversation.name;
     if (typingRuns.length > 1) {
@@ -194,16 +250,14 @@ export function ChannelView({
     return isAgent
       ? `${conversation.name} is responding`
       : `${memberName} is responding`;
-  }, [conversation.name, isAgent, typingMembers, typingRuns]);
+  }, [activeTab, conversation.name, isAgent, typingMembers, typingRuns]);
   const typingMember = useMemo(
-    () =>
-      typingMembers[0] ??
-      (isAgent ? members.find((member) => member.id === conversation.id) : undefined),
-    [conversation.id, isAgent, members, typingMembers],
+    () => typingMembers[0] ?? (isAgent ? memberById.get(conversation.id) : undefined),
+    [conversation.id, isAgent, memberById, typingMembers],
   );
   const typingColorIndex = useMemo(
-    () => Math.max(members.findIndex((member) => member.id === typingMember?.id), 0),
-    [members, typingMember?.id],
+    () => Math.max(memberIndexById.get(typingMember?.id ?? "") ?? 0, 0),
+    [memberIndexById, typingMember?.id],
   );
   const mentionSuggestions = useMemo(() => {
     const currentMemberId = bootstrap.auth.member?.id;
@@ -282,6 +336,12 @@ export function ChannelView({
     },
     [organizationId],
   );
+  const handleTabChange = useCallback(
+    (tab: string) => {
+      setActiveTab(tab as typeof activeTab);
+    },
+    [setActiveTab],
+  );
 
   const tabCounts = useMemo(
     () =>
@@ -293,12 +353,45 @@ export function ChannelView({
       }),
     [feed.activity, feed.approvals, feed.messages, feed.runs],
   );
+  const tabsWithCounts = useMemo(
+    () =>
+      tabs.map((tab) => ({
+        ...tab,
+        count:
+          tab.id === "approvals"
+            ? tabCounts.approvals
+            : tab.id === "files"
+              ? tabCounts.files
+              : tab.id === "activity"
+                ? tabCounts.activity
+                : tab.id === "members"
+                  ? channelMemberIds.length
+                  : tab.id === "tasks"
+                    ? tabCounts.tasks
+                    : undefined,
+        countVariant:
+          tab.id === "approvals" && tabCounts.approvals > 0 ? ("warning" as const) : ("default" as const),
+      })),
+    [channelMemberIds.length, tabCounts.activity, tabCounts.approvals, tabCounts.files, tabCounts.tasks, tabs],
+  );
+  const conversationAttachmentsSource = activeTab === "files" ? feed.messages : null;
   const conversationAttachments = useMemo(
-    () => collectConversationAttachments(feed.messages),
-    [feed.messages],
+    () => (conversationAttachmentsSource ? collectConversationAttachments(conversationAttachmentsSource) : []),
+    [conversationAttachmentsSource],
   );
 
-  const blockedRunReasons = useMemo(() => collectBlockedRunReasons(feed.activity), [feed.activity]);
+  const blockedRunActivity = activeTab === "tasks" ? feed.activity : null;
+  const blockedRunReasons = useMemo(
+    () => (blockedRunActivity ? collectBlockedRunReasons(blockedRunActivity) : new Map<string, string>()),
+    [blockedRunActivity],
+  );
+  const visibleActivity = useMemo(
+    () =>
+      activeTab === "activity"
+        ? feed.activity.slice(-MAX_ACTIVITY_ROWS).reverse()
+        : EMPTY_ACTIVITY_EVENTS,
+    [activeTab, feed.activity],
+  );
 
   const scrollToLatest = useCallback((behavior: ScrollBehavior = "smooth") => {
     bottomRef.current?.scrollIntoView({ block: "end", behavior });
@@ -314,7 +407,7 @@ export function ChannelView({
 
   useLayoutEffect(() => {
     const pendingKey = pendingThreadApprovals.map((a) => a.id).join(",");
-    const signal = `${feed.messages.length}:${feed.approvals.length}:${feed.runs.length}:${feed.activity.length}:${feed.loading ? 1 : 0}:${pendingKey}`;
+    const signal = `${feed.messages.length}:${feed.approvals.length}:${feed.runs.length}:${feed.loading ? 1 : 0}:${pendingKey}`;
     if (!previousFeedSignal.current) {
       previousFeedSignal.current = signal;
       if (feed.messages.length > 0) {
@@ -327,7 +420,7 @@ export function ChannelView({
     if (isAtBottom) {
       scrollToLatest("smooth");
     }
-  }, [feed.activity.length, feed.approvals.length, feed.loading, feed.messages.length, feed.runs.length, isAtBottom, pendingThreadApprovals, scrollToLatest]);
+  }, [feed.approvals.length, feed.loading, feed.messages.length, feed.runs.length, isAtBottom, pendingThreadApprovals, scrollToLatest]);
 
   useLayoutEffect(() => {
     if (!tabIds.has(activeTab)) {
@@ -367,22 +460,9 @@ export function ChannelView({
           onToggleDetails={() => setShowDetails(!showDetails, { userIntent: true })}
         />
         <ChatTabs
-          tabs={tabs.map((tab) => ({
-            ...tab,
-            count:
-              tab.id === "approvals"
-                ? tabCounts.approvals
-                : tab.id === "tasks"
-                  ? tabCounts.tasks
-                  : tab.id === "activity"
-                    ? tabCounts.activity
-                    : tab.id === "files"
-                      ? tabCounts.files
-                      : undefined,
-            countVariant: tab.id === "approvals" && tabCounts.approvals > 0 ? "warning" : "default",
-          }))}
+          tabs={tabsWithCounts}
           activeTab={activeTab}
-          onTabChange={(tab) => setActiveTab(tab as typeof activeTab)}
+          onTabChange={handleTabChange}
         />
         {activeTab === "conversation" ? (
           <div className="relative flex flex-1 min-h-0 flex-col">
@@ -394,22 +474,37 @@ export function ChannelView({
               />
             )}
             <ChatMessageList ref={listRef} onScroll={handleScroll}>
-              {feed.loading && feed.messages.length === 0 ? (
-                <ConversationSkeleton />
-              ) : feed.messages.length > 0 ? (
-                <>
-                  {feed.messages.map((message) => (
-                    <ChatMessage
-                      key={message.id}
-                      message={message}
-                      organizationId={organizationId}
-                      colorIndex={Math.max(
-                        members.findIndex((member) => member.id === message.senderId),
-                        0,
-                      )}
-                      onReply={setReplyTo}
-                    />
-                  ))}
+            {feed.loading && feed.messages.length === 0 ? (
+              <ConversationSkeleton />
+            ) : feed.messages.length > 0 ? (
+              <>
+                  <div
+                    className="relative w-full"
+                    style={{ height: `${messageVirtualizer.getTotalSize()}px` }}
+                  >
+                    {virtualMessageRows.map((virtualRow) => {
+                      const message = feed.messages[virtualRow.index];
+                      if (!message) return null;
+                      return (
+                        <div
+                          key={message.id}
+                          data-index={virtualRow.index}
+                          ref={messageVirtualizer.measureElement}
+                          className="absolute left-0 top-0 w-full pb-2"
+                          style={{
+                            transform: `translateY(${virtualRow.start}px)`,
+                          }}
+                        >
+                          <ChatMessage
+                            message={message}
+                            organizationId={organizationId}
+                            colorIndex={Math.max(memberIndexById.get(message.senderId ?? "") ?? 0, 0)}
+                            onReply={setReplyTo}
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
                   {pendingThreadApprovals.length > 0 ? (
                     <div className="space-y-2 px-3 py-2">
                       {pendingThreadApprovals.map((approval) => (
@@ -437,6 +532,17 @@ export function ChannelView({
               <div ref={bottomRef} className="h-px" />
             </ChatMessageList>
           </div>
+        ) : activeTab === "members" ? (
+          currentChannel ? (
+            <ChannelMembersTab
+              organizationId={organizationId}
+              channel={{ ...currentChannel, memberIds: channelMemberIds }}
+              members={members}
+              onSaved={setChannelMemberIds}
+            />
+          ) : (
+            <TabEmpty emptyLabel="Channel unavailable." />
+          )
         ) : activeTab === "approvals" ? (
           visibleApprovals.length > 0 ? (
             <TabPanel>
@@ -455,10 +561,10 @@ export function ChannelView({
             <TabEmpty emptyLabel="No approvals." />
           )
         ) : activeTab === "tasks" ? (
-          feed.runs.length > 0 ? (
+          taskRuns.length > 0 ? (
             <TabPanel>
               <div className="space-y-2">
-                {feed.runs.map((run) => (
+                {taskRuns.map((run) => (
                   <RunCard key={run.id} run={run} blockedReason={blockedRunReasons.get(run.id)} />
                 ))}
               </div>
@@ -500,10 +606,10 @@ export function ChannelView({
             <TabEmpty emptyLabel="No attachments." />
           )
         ) : (
-          feed.activity.length > 0 ? (
+          visibleActivity.length > 0 ? (
             <TabPanel>
               <div className="space-y-2">
-                {feed.activity.slice().reverse().map((event) => (
+                {visibleActivity.map((event) => (
                   <ActivityRow key={event.event_id} event={event} />
                 ))}
               </div>
@@ -549,7 +655,7 @@ export function ChannelView({
       </div>
 
       <div
-        className={`flex h-full min-h-0 min-w-0 overflow-hidden ${showDetails ? "" : "pointer-events-none"}`}
+        className={`flex h-full min-h-0 min-w-0 overflow-hidden border-l border-zinc-200 dark:border-zinc-800 ${showDetails ? "" : "pointer-events-none"}`}
         aria-hidden={!showDetails}
       >
         <DragHandle side="right" onResize={setDetailsWidth} />
@@ -571,11 +677,7 @@ export function ChannelView({
                 threadId={currentThreadId}
                 conversationName={conversation.name}
                 conversationType={conversation.type}
-                members={members.map((member) => ({
-                  id: member.id,
-                  name: member.name,
-                  kind: member.kind,
-                }))}
+                members={traceMembers}
                 liveSteps={reasoningTraceSteps}
                 autoScroll={traceAutoScroll}
               />

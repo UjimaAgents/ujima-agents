@@ -1,6 +1,6 @@
 import type { SqliteDbHandle as DbHandle } from '@ujima/context-store';
 import { ConversationThreadSchema, type ConversationThread } from '@ujima/shared';
-import { now, optionalRowString, rowString } from './common.js';
+import { now, optionalRowString, replaceMemberLinks, rowString } from './common.js';
 
 type Row = Record<string, unknown>;
 
@@ -66,10 +66,10 @@ export function setThreadMembers(
   threadId: string,
   memberIds: string[],
 ): void {
-  db.prepare('DELETE FROM thread_members WHERE thread_id = ?').run(threadId);
-  const insert = db.prepare('INSERT INTO thread_members (thread_id, member_id) VALUES (?, ?)');
-  for (const memberId of memberIds) {
-    insert.run(threadId, memberId);
+  replaceMemberLinks(db, 'thread_members', 'thread_id', threadId, memberIds);
+  const channelId = getThreadChannelId(db, threadId);
+  if (channelId) {
+    replaceMemberLinks(db, 'channel_members', 'channel_id', channelId, memberIds);
   }
 }
 
@@ -81,4 +81,20 @@ export function listThreadMemberIds(db: DbHandle, threadId: string): string[] {
     .all(threadId) as { member_id: string }[];
 
   return rows.map((row) => row.member_id);
+}
+
+export function getThreadChannelId(db: DbHandle, threadId: string): string | undefined {
+  const row = db
+    .prepare('SELECT channel_id FROM threads WHERE id = ?')
+    .get(threadId) as Row | null;
+
+  return row ? optionalRowString(row, 'channel_id') : undefined;
+}
+
+export function listThreadIdsForChannel(db: DbHandle, channelId: string): string[] {
+  const rows = db
+    .prepare('SELECT id FROM threads WHERE channel_id = ? OR id = ? ORDER BY id ASC')
+    .all(channelId, channelId) as { id: string }[];
+
+  return rows.map((row) => row.id);
 }

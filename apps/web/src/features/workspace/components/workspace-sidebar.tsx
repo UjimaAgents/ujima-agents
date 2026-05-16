@@ -464,18 +464,59 @@ function RunningFigureIndicator() {
     <svg
       viewBox="0 0 24 24"
       aria-hidden="true"
-      className="h-4 w-4 shrink-0 origin-center text-violet-600 animate-running-figure motion-reduce:animate-none dark:text-violet-400"
+      className="h-4 w-4 shrink-0 text-violet-600 dark:text-violet-400"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="1.8"
     >
-      <g fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8">
-        <circle cx="15.2" cy="4.2" r="1.35" fill="currentColor" stroke="none" />
-        <path d="M12.7 7.2h-2.2l-1.7 3" />
-        <path d="M10.9 12.2 8 16.8" />
-        <path d="M12.5 9.1 16 10.2" />
-        <path d="M11.2 13.2 7.5 15.1" />
-        <path d="M12.7 10.9 15.6 15" />
-        <path d="M16.2 10.2 19.2 9.1" />
-        <path d="M9.4 7.8 6.6 9.1" opacity="0.45" />
-        <path d="M17.6 16.8 20.2 18" opacity="0.45" />
+      {/* Head */}
+      <circle cx="14" cy="4" r="1.4" fill="currentColor" stroke="none" />
+
+      {/* Torso */}
+      <line x1="13.5" y1="5.5" x2="11" y2="12">
+        <animate attributeName="y2" values="12;11.5;12;11.5;12" dur="0.6s" repeatCount="indefinite" />
+      </line>
+
+      {/* Back arm (depth via opacity) */}
+      <path strokeOpacity="0.4" d="M13 7 L10 9.5">
+        <animate attributeName="d"
+          values="M13 7 L10 9.5;M13 7 L15.5 9;M13 7 L16 10.5;M13 7 L15.5 9;M13 7 L10 9.5"
+          dur="0.6s" repeatCount="indefinite" />
+      </path>
+
+      {/* Front arm */}
+      <path d="M13 7 L16 10.5">
+        <animate attributeName="d"
+          values="M13 7 L16 10.5;M13 7 L11.5 10;M13 7 L10 9.5;M13 7 L11.5 10;M13 7 L16 10.5"
+          dur="0.6s" repeatCount="indefinite" />
+      </path>
+
+      {/* Back leg (depth via opacity) */}
+      <path strokeOpacity="0.4" d="M11 12 L8 15 L6.5 16">
+        <animate attributeName="d"
+          values="M11 12 L8 15 L6.5 16;M11 12 L12 16 L14 19;M11 12 L14.5 15.5 L16.5 18;M11 12 L12 16 L14 19;M11 12 L8 15 L6.5 16"
+          dur="0.6s" repeatCount="indefinite" />
+      </path>
+
+      {/* Front leg */}
+      <path d="M11 12 L14.5 15.5 L16.5 18">
+        <animate attributeName="d"
+          values="M11 12 L14.5 15.5 L16.5 18;M11 12 L12 16 L10 19;M11 12 L8 15 L6.5 16;M11 12 L12 16 L10 19;M11 12 L14.5 15.5 L16.5 18"
+          dur="0.6s" repeatCount="indefinite" />
+      </path>
+
+      {/* Motion lines */}
+      <g strokeOpacity="0.25" strokeWidth="1.2">
+        <line x1="6" y1="7" x2="3" y2="7.5">
+          <animate attributeName="x1" values="6;4;6" dur="0.3s" repeatCount="indefinite" />
+          <animate attributeName="x2" values="3;1;3" dur="0.3s" repeatCount="indefinite" />
+        </line>
+        <line x1="5" y1="10" x2="2.5" y2="10.5">
+          <animate attributeName="x1" values="5;3;5" dur="0.3s" repeatCount="indefinite" />
+          <animate attributeName="x2" values="2.5;0.5;2.5" dur="0.3s" repeatCount="indefinite" />
+        </line>
       </g>
     </svg>
   );
