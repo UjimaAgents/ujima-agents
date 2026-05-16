@@ -28,6 +28,7 @@ export interface ApprovalCardData {
   createdAt?: string;
   approvalsNeeded: number;
   reviewers?: { color: string }[];
+  error?: string;
 }
 
 /** Indent to align with body text past the shield icon (w-8 + gap-3). */
@@ -133,6 +134,9 @@ export function ApprovalCard({
               content={data.description}
               className="mt-0.5 block text-[10px] text-zinc-500 dark:text-zinc-400"
             />
+          ) : null}
+          {data.error ? (
+            <p className="mt-1 text-[10px] font-medium text-red-600 dark:text-red-300">{data.error}</p>
           ) : null}
           {data.shellScope ? (
             <TerminalPane

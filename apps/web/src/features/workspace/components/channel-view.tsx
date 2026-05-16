@@ -31,6 +31,7 @@ import { ConversationSkeleton } from "./conversation-skeleton";
 import { resolveWorkspaceApproval } from "../approval-resolution";
 import { pendingApprovalVisibleInChannelView, queueApprovals } from "../approval-thread-filter";
 import { ReasoningTracePanel } from "./reasoning-trace-panel";
+import { buildTabCounts, collectBlockedRunReasons, collectConversationAttachments, isLiveRun } from "../feed-selectors";
 
 const CHANNEL_TABS: ChatTab[] = [
   { id: "conversation", label: "Conversation" },
@@ -44,12 +45,6 @@ const AGENT_TABS: ChatTab[] = [
   { id: "approvals", label: "Approvals" },
   { id: "tasks", label: "Tasks" },
   { id: "activity", label: "Activity" },
-];
-
-const ACTIVE_RUN_STATES: RunState["status"][] = [
-  "queued",
-  "running",
-  "waiting_for_approval",
 ];
 
 interface ChannelViewProps {
@@ -71,6 +66,7 @@ export function ChannelView({
 }: ChannelViewProps) {
   const [isAtBottom, setIsAtBottom] = useState(true);
   const [resolvingApprovals, setResolvingApprovals] = useState<Record<string, boolean>>({});
+  const [approvalErrors, setApprovalErrors] = useState<Record<string, string>>({});
   const [replyTo, setReplyTo] = useState<ChatMessageData | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -140,7 +136,7 @@ export function ChannelView({
         ? []
         : feed.runs.filter(
             (run) =>
-              ACTIVE_RUN_STATES.includes(run.status) && run.threadId === currentThreadId,
+              isLiveRun(run) && run.threadId === currentThreadId,
           ),
     [currentThreadId, feed.runs],
   );
@@ -235,6 +231,11 @@ export function ChannelView({
         throw new Error("Missing organization context for approval resolution.");
       }
       setResolvingApprovals((state) => ({ ...state, [approvalId]: true }));
+      setApprovalErrors((state) => {
+        const next = { ...state };
+        delete next[approvalId];
+        return next;
+      });
       try {
         const response = await resolveWorkspaceApproval({
           organizationId,
@@ -247,7 +248,7 @@ export function ChannelView({
             body && typeof body === "object" && "message" in body && typeof body.message === "string"
               ? body.message
               : "Unable to resolve approval.";
-          console.error(message);
+          setApprovalErrors((state) => ({ ...state, [approvalId]: message }));
         }
       } finally {
         setResolvingApprovals((state) => {
@@ -282,61 +283,22 @@ export function ChannelView({
     [organizationId],
   );
 
-  const tabCounts = useMemo(() => {
-    const activeRuns = feed.runs.filter(
-      (run) =>
-        run.status === "queued" ||
-        run.status === "running" ||
-        run.status === "waiting_for_approval",
-    ).length;
-    const pendingApprovals = feed.approvals.filter((approval) => approval.status === "pending").length;
-    const files = feed.messages.reduce((count, message) => count + (message.attachments?.length ?? 0), 0);
-    return {
-      approvals: pendingApprovals,
-      tasks: activeRuns,
-      activity: feed.activity.length,
-      files,
-    };
-  }, [feed.activity.length, feed.approvals, feed.messages, feed.runs]);
-  const conversationAttachments = useMemo(
+  const tabCounts = useMemo(
     () =>
-      feed.messages.flatMap((message) =>
-        (message.attachments ?? []).map((attachment) => ({
-          ...attachment,
-          messageName: message.name,
-          messageTime: message.time,
-          messageId: message.id,
-        })),
-      ),
+      buildTabCounts({
+        activity: feed.activity,
+        approvals: feed.approvals,
+        messages: feed.messages,
+        runs: feed.runs,
+      }),
+    [feed.activity, feed.approvals, feed.messages, feed.runs],
+  );
+  const conversationAttachments = useMemo(
+    () => collectConversationAttachments(feed.messages),
     [feed.messages],
   );
 
-  const blockedRunReasons = useMemo(() => {
-    const reasons = new Map<string, string>();
-    for (const event of feed.activity) {
-      if (event.type !== "tool_result") continue;
-      const body = event.payload as {
-        runId?: string;
-        toolResult?: { isError?: boolean; result?: unknown };
-      };
-      if (!body.runId || !body.toolResult?.isError) continue;
-      const result = body.toolResult.result as
-        | { error?: unknown; reason?: unknown }
-        | string
-        | undefined;
-      const reason =
-        typeof result === "string"
-          ? result
-          : typeof result?.error === "string"
-            ? result.error
-            : typeof result?.reason === "string"
-              ? result.reason
-              : undefined;
-      if (!reason || reasons.has(body.runId)) continue;
-      reasons.set(body.runId, reason);
-    }
-    return reasons;
-  }, [feed.activity]);
+  const blockedRunReasons = useMemo(() => collectBlockedRunReasons(feed.activity), [feed.activity]);
 
   const scrollToLatest = useCallback((behavior: ScrollBehavior = "smooth") => {
     bottomRef.current?.scrollIntoView({ block: "end", behavior });
@@ -453,7 +415,7 @@ export function ChannelView({
                       {pendingThreadApprovals.map((approval) => (
                         <ApprovalCard
                           key={approval.id}
-                          data={approval}
+                          data={{ ...approval, error: approvalErrors[approval.id] }}
                           resolving={!!resolvingApprovals[approval.id]}
                           onResolve={(resolution) => resolveApproval(approval.id, resolution)}
                         />
@@ -482,7 +444,7 @@ export function ChannelView({
                 {visibleApprovals.map((approval) => (
                   <ApprovalCard
                     key={approval.id}
-                    data={approval}
+                    data={{ ...approval, error: approvalErrors[approval.id] }}
                     resolving={!!resolvingApprovals[approval.id]}
                     onResolve={(resolution) => resolveApproval(approval.id, resolution)}
                   />

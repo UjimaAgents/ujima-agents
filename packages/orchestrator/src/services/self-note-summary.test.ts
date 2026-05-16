@@ -90,10 +90,13 @@ describe('conversation-summary', () => {
 
   it('builds rolling conversation summaries with dedicated markers', () => {
     const summary = buildConversationSummary([
-      makeMessage('Keep the latest request visible.', '2026-05-08T09:40:00.000Z'),
+      makeMessage('Decision: keep the latest request visible.', '2026-05-08T09:40:00.000Z'),
+      makeMessage('Need to verify approval errors in the UI.', '2026-05-08T09:41:00.000Z'),
     ]);
     expect(summary.startsWith(CONVERSATION_SUMMARY_MARKER)).toBe(true);
-    expect(summary).toContain('Compacted 1 earlier messages.');
+    expect(summary).toContain('Compacted 2 earlier messages.');
+    expect(summary).toContain('Decision: keep the latest request visible.');
+    expect(summary).toContain('Need to verify approval errors in the UI.');
   });
 
   it('detects summary and compacted markers', () => {

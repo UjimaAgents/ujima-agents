@@ -27,6 +27,7 @@ import { ToolApprovalRequiredError } from './tool-loop-result.js';
 import { extractReasoningChunk } from '../utils/extract-reasoning.js';
 import { runUsedThreadPublishingTool } from './run-reply-guard.js';
 import { goalModeEnabledFromMessage, goalModeSystemPromptSuffix } from './goal-mode-prompt.js';
+import { pendingApprovalRunSummary } from './approval-summary.js';
 
 export interface CreateRunInput {
   organizationId: string;
@@ -117,7 +118,7 @@ export class RunService {
         return latest;
       }
       if (error instanceof ToolApprovalRequiredError) {
-        return this.waitForApproval(run, 'Waiting for approval');
+        return this.waitForApproval(run, pendingApprovalRunSummary(this.repo, run.organizationId, run.id));
       }
       return this.failRun(run, (error as Error).message);
     }
@@ -460,14 +461,14 @@ export class RunService {
       }
 
       if (statuses.includes('waiting_for_approval')) {
-        return this.waitForApproval(running, 'Waiting for approval');
+        return this.waitForApproval(running, pendingApprovalRunSummary(this.repo, running.organizationId, running.id));
       }
 
       const pendingApprovalExists = this.repo
         .listPendingApprovals(run.organizationId)
         .some((approval) => approval.runId === run.id);
       if (pendingApprovalExists) {
-        return this.waitForApproval(running, 'Waiting for approval');
+        return this.waitForApproval(running, pendingApprovalRunSummary(this.repo, running.organizationId, running.id));
       }
 
       const text = (result.text || streamedText).trim();
@@ -504,7 +505,7 @@ export class RunService {
           const afterApprovedTools = await this.executePendingApprovedTools(running);
           return this.advanceRun(afterApprovedTools);
         }
-        return this.waitForApproval(running, 'Waiting for approval');
+        return this.waitForApproval(running, pendingApprovalRunSummary(this.repo, running.organizationId, running.id));
       }
       const latestAfterError = this.repo.getRun(run.organizationId, run.id);
       if (latestAfterError?.status === 'cancelled') {

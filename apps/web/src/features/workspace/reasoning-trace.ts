@@ -287,15 +287,6 @@ function toolAggregateOutput(result: unknown, isError: boolean, errorText?: stri
   }
   const rec = parseMaybeJsonObject(result);
   if (!rec) return "";
-  if (rec && typeof rec.status === "string") {
-    if (rec.status === "waiting_for_approval") {
-      return "";
-    }
-    if (rec.status === "blocked") {
-      const reason = typeof rec.reason === "string" ? rec.reason : "Blocked by policy.";
-      return truncateTerminalText(reason);
-    }
-  }
   if (typeof rec?.diff === "string" && rec.diff.trim()) {
     return truncateTerminalText(rec.diff);
   }
@@ -323,6 +314,16 @@ function toolAggregateOutput(result: unknown, isError: boolean, errorText?: stri
   if (out.trim()) parts.push(out.trimEnd());
   if (err.trim()) parts.push(`stderr:\n${err.trimEnd()}`);
   const joined = parts.join("\n\n").trim();
+  if (joined) return truncateTerminalText(joined);
+  if (rec && typeof rec.status === "string") {
+    if (rec.status === "waiting_for_approval") {
+      return "";
+    }
+    if (rec.status === "blocked") {
+      const reason = typeof rec.reason === "string" ? rec.reason : "Blocked by policy.";
+      return truncateTerminalText(reason);
+    }
+  }
   if (typeof rec?.bytesWritten === "number") {
     return truncateTerminalText(`Saved ${rec.bytesWritten} bytes.`);
   }
@@ -332,8 +333,7 @@ function toolAggregateOutput(result: unknown, isError: boolean, errorText?: stri
   if (typeof rec?.status === "string" && rec.status.trim()) {
     return truncateTerminalText(rec.status);
   }
-  if (!joined) return "";
-  return truncateTerminalText(joined);
+  return "";
 }
 
 /** Tool returned but the action did not complete (approval, policy block, etc.). */
@@ -824,7 +824,7 @@ function buildToolStep(
       typeof mergedPayload?.organizationId === "string"
         ? mergedPayload.organizationId
         : input.organizationId;
-    if (snapshot?.status === "running" && jobId && runId && orgId) {
+    if (snapshot?.status === "running" && !resultOutput && jobId && runId && orgId) {
       terminal = {
         cwd: typeof snapshot.cwd === "string" ? snapshot.cwd : ".",
         commandLine:

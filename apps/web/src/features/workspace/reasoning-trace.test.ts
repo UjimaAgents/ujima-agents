@@ -130,4 +130,61 @@ describe("reasoning-trace ordering", () => {
       "Thinking first. Still thinking.",
     );
   });
+
+  it("shows buffered output for running background jobs", () => {
+    const activity: ActivityEvent[] = [
+      {
+        event_id: "tool:called:run-1:tc-1",
+        type: "tool_called",
+        publisher: "agent-1",
+        timestamp: "2026-05-04T19:07:08.000Z",
+        payload: {
+          runId: "run-1",
+          threadId: "thread-1",
+          agentId: "agent-1",
+          toolCall: {
+            toolCallId: "tc-1",
+            toolName: "job_output",
+            args: { job_id: "job-1" },
+          },
+        },
+      },
+      {
+        event_id: "tool:result:run-1:tc-1",
+        type: "tool_result",
+        publisher: "agent-1",
+        timestamp: "2026-05-04T19:07:09.000Z",
+        payload: {
+          runId: "run-1",
+          threadId: "thread-1",
+          agentId: "agent-1",
+          toolResult: {
+            toolCallId: "tc-1",
+            result: {
+              id: "job-1",
+              status: "running",
+              cwd: "/workspace",
+              commandLine: "bun test",
+              stdout: "one passing test\n",
+              stderr: "",
+            },
+            isError: false,
+          },
+        },
+      },
+    ];
+
+    const steps = buildReasoningTraceSteps({
+      threadId: "thread-1",
+      agentIdFilter: "agent-1",
+      conversationName: "Agent",
+      conversationType: "agent",
+      members: [{ id: "agent-1", name: "Agent", kind: "agent" }],
+      activity,
+      runs: [],
+      organizationId: "org-1",
+    });
+
+    expect(steps[0]?.terminal?.output).toBe("one passing test");
+  });
 });

@@ -62,6 +62,7 @@ import type { ToolInvocationInput } from './tool-service.js';
 import { materializeMcpDef, mcpPermissionToolName, type McpRuntimePool } from './mcp-runtime.js';
 import { appendGoalArtifactToolCall } from './goal-artifact-card.js';
 import { goalModeEnabledFromMessage, goalModeSystemPromptSuffix } from './goal-mode-prompt.js';
+import { pendingApprovalRunSummary } from './approval-summary.js';
 import {
   createMessageCursor,
   isMessageAfterCursor,
@@ -831,7 +832,7 @@ export class SpiritService {
               ...run,
               status: 'waiting_for_approval',
               step: 'waiting_for_approval',
-              summary: 'Waiting for approval',
+              summary: pendingApprovalRunSummary(this.repo, input.organizationId, spirit.runId),
             });
           }
         }

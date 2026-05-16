@@ -1,4 +1,6 @@
 import { mkdir, writeFile } from 'node:fs/promises';
+import { lookup } from 'node:dns/promises';
+import { isIP } from 'node:net';
 import { dirname } from 'node:path';
 import { z } from 'zod';
 import { assertWorkspaceBoundary } from '@ujima/shared/workspace';
@@ -6,6 +8,7 @@ import type { OrchestratorTool } from './types.js';
 
 const FETCH_MAX_BYTES = 5 * 1024 * 1024;
 const DOWNLOAD_MAX_BYTES = 100 * 1024 * 1024;
+const MAX_REDIRECTS = 5;
 
 const FetchSchema = z.object({
   url: z.string().min(1),
@@ -97,14 +100,87 @@ function parseHttpUrl(value: string): URL {
 }
 
 async function fetchWithTimeout(url: URL, timeoutSeconds: number): Promise<Response> {
-  const controller = new AbortController();
-  const timeoutMs = Math.max(1, Math.min(timeoutSeconds, 600)) * 1000;
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    return await fetch(url, { signal: controller.signal });
-  } finally {
-    clearTimeout(timer);
+  let current = url;
+  for (let redirects = 0; redirects <= MAX_REDIRECTS; redirects += 1) {
+    await assertPublicEgressUrl(current);
+    const controller = new AbortController();
+    const timeoutMs = Math.max(1, Math.min(timeoutSeconds, 600)) * 1000;
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetch(current, { signal: controller.signal, redirect: 'manual' });
+      if (!isRedirect(response.status)) return response;
+      const location = response.headers.get('location');
+      if (!location) return response;
+      current = parseHttpUrl(new URL(location, current).toString());
+    } finally {
+      clearTimeout(timer);
+    }
   }
+  throw new Error('Too many redirects');
+}
+
+async function assertPublicEgressUrl(url: URL): Promise<void> {
+  if (url.username || url.password) {
+    throw new Error('URL credentials are not allowed');
+  }
+
+  const host = url.hostname.toLowerCase();
+  if (isBlockedHostname(host)) {
+    throw new Error('URL host is not allowed');
+  }
+
+  const directIp = isIP(host);
+  const addresses = directIp
+    ? [{ address: host }]
+    : await lookup(host, { all: true, verbatim: true });
+  if (addresses.length === 0 || addresses.some(({ address }) => isPrivateAddress(address))) {
+    throw new Error('URL resolves to a private or link-local address');
+  }
+}
+
+function isRedirect(status: number): boolean {
+  return status >= 300 && status < 400;
+}
+
+function isBlockedHostname(host: string): boolean {
+  return (
+    host === 'localhost' ||
+    host === 'metadata.google.internal' ||
+    host.endsWith('.localhost') ||
+    host.endsWith('.local')
+  );
+}
+
+function isPrivateAddress(address: string): boolean {
+  const mappedV4 = address.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/i)?.[1];
+  if (mappedV4) return isPrivateV4(mappedV4);
+  if (isIP(address) === 4) return isPrivateV4(address);
+  const normalized = address.toLowerCase();
+  return (
+    normalized === '::1' ||
+    normalized === '::' ||
+    normalized.startsWith('fc') ||
+    normalized.startsWith('fd') ||
+    normalized.startsWith('fe80:')
+  );
+}
+
+function isPrivateV4(address: string): boolean {
+  const parts = address.split('.').map((part) => Number(part));
+  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) {
+    return true;
+  }
+  const [a, b] = parts as [number, number, number, number];
+  return (
+    a === 0 ||
+    a === 10 ||
+    a === 127 ||
+    (a === 100 && b >= 64 && b <= 127) ||
+    (a === 169 && b === 254) ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168) ||
+    a >= 224
+  );
 }
 
 async function readResponseText(response: Response, maxBytes: number): Promise<string> {
