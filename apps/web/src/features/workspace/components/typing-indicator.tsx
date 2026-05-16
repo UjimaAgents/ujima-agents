@@ -1,6 +1,7 @@
+import { memo } from "react";
 import { Avatar } from "./chat/primitives";
 
-export function TypingIndicator({
+export const TypingIndicator = memo(function TypingIndicator({
   label,
   name,
   colorIndex,
@@ -60,4 +61,4 @@ export function TypingIndicator({
       </div>
     </div>
   );
-}
+});

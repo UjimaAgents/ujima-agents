@@ -465,6 +465,7 @@ export function registerSettingsRoutes(
         channelId: req.params.channelId,
         name: req.body.name,
         topic: req.body.topic,
+        memberIds: req.body.memberIds,
       });
     } catch (err) {
       const message = errMessage(err);

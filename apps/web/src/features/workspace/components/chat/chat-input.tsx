@@ -689,7 +689,6 @@ export function ChatInput({
                 start: event.currentTarget.selectionStart ?? 0,
                 end: event.currentTarget.selectionEnd ?? 0,
               });
-              setActiveMentionIndex(0);
             }}
             onKeyDown={(event) => {
               if (canConfirmClear) {
@@ -802,39 +801,41 @@ export function ChatInput({
               ))}
             </div>
           ) : null}
-          <div
-            ref={emojiMenuRef}
-            className={`absolute bottom-[68px] left-3 z-20 w-72 rounded-xl border border-zinc-200 bg-white p-2 shadow-xl transition ${emojiMenuOpen ? "opacity-100 translate-y-0" : "pointer-events-none opacity-0 translate-y-1"} dark:border-zinc-700 dark:bg-zinc-950`}
-          >
-            <div className="mb-2 flex items-center justify-between px-1">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-zinc-500 dark:text-zinc-400">
-                Emoji
-              </p>
-              <button
-                type="button"
-                onClick={() => setEmojiMenuOpen(false)}
-                className="rounded-md px-1.5 py-0.5 text-[10px] text-zinc-500 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-900"
-              >
-                Close
-              </button>
-            </div>
-            <div className="grid max-h-64 grid-cols-8 gap-1 overflow-y-auto pr-1">
-              {emojiOptions.map((emoji) => (
+          {emojiMenuOpen ? (
+            <div
+              ref={emojiMenuRef}
+              className="absolute bottom-[68px] left-3 z-20 w-72 rounded-xl border border-zinc-200 bg-white p-2 shadow-xl transition dark:border-zinc-700 dark:bg-zinc-950"
+            >
+              <div className="mb-2 flex items-center justify-between px-1">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-zinc-500 dark:text-zinc-400">
+                  Emoji
+                </p>
                 <button
-                  key={emoji}
                   type="button"
-                  onMouseDown={(event) => {
-                    event.preventDefault();
-                    insertEmoji(emoji);
-                  }}
-                  className="flex h-9 w-9 items-center justify-center rounded-lg text-lg transition hover:bg-zinc-100 dark:hover:bg-zinc-900"
-                  aria-label={`Insert ${emoji}`}
+                  onClick={() => setEmojiMenuOpen(false)}
+                  className="rounded-md px-1.5 py-0.5 text-[10px] text-zinc-500 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-900"
                 >
-                  {emoji}
+                  Close
                 </button>
-              ))}
+              </div>
+              <div className="grid max-h-64 grid-cols-8 gap-1 overflow-y-auto pr-1">
+                {emojiOptions.map((emoji) => (
+                  <button
+                    key={emoji}
+                    type="button"
+                    onMouseDown={(event) => {
+                      event.preventDefault();
+                      insertEmoji(emoji);
+                    }}
+                    className="flex h-9 w-9 items-center justify-center rounded-lg text-lg transition hover:bg-zinc-100 dark:hover:bg-zinc-900"
+                    aria-label={`Insert ${emoji}`}
+                  >
+                    {emoji}
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
+          ) : null}
           {attachments.length > 0 ? (
             <div className="border-t border-zinc-200 px-3 py-2 dark:border-zinc-800">
               <div className="flex gap-2 overflow-x-auto pb-1">

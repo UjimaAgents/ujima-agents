@@ -1,8 +1,12 @@
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { loadAgentTeam } from '@ujima/framework';
 import { AGENT_KIND, SocketEventNames, type RunChunkEvent, type RunState } from '@ujima/shared';
 import { RunService } from './run.js';
 import { ToolApprovalRequiredError } from './tool-loop-result.js';
+import { appendGoalArtifactToolCall } from './goal-artifact-card.js';
 
 describe('RunService', () => {
   it('resumes after approval even when approval resolves before the run enters waiting state', async () => {
@@ -210,7 +214,122 @@ describe('RunService', () => {
     });
 
     expect(capturedSuffix).toContain('Goal Mode (Active)');
-    expect(capturedSuffix).toContain('goal artifact file');
+    expect(capturedSuffix).toContain('Markdown README only');
+  });
+
+  it('emits a goal artifact message when the final reply is skipped by a thread-publishing tool', async () => {
+    const organizationId = 'org-1';
+    const runId = 'run-1';
+    const agentId = 'Quinn Mason';
+    const threadId = 'thread-1';
+    const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), 'ujima-goal-'));
+    await mkdir(path.join(workspaceRoot, '.ujima-goals'), { recursive: true });
+    await writeFile(
+      path.join(workspaceRoot, '.ujima-goals', 'plan.md'),
+      '# Goal\n\nStatus: in_progress\n',
+    );
+
+    const messages: any[] = [];
+    let run: any = {
+      id: runId,
+      organizationId,
+      agentId,
+      threadId,
+      status: 'queued',
+      step: 'queued',
+      summary: 'Run queued',
+      startedAt: '2026-05-04T19:07:08.071Z',
+    };
+
+    const repo = {
+      getMember: () => ({
+        id: agentId,
+        organizationId,
+        name: agentId,
+        kind: AGENT_KIND,
+        roleName: 'backend-engineer',
+      }),
+      saveRun: (next: any) => {
+        run = next;
+        return next;
+      },
+      getRun: () => run,
+      getProviderCredential: () => null,
+      getWorkspaceSetting: () => null,
+      listMembers: () => [],
+      listPendingApprovals: () => [],
+      listMessages: () => ({ data: [], hasMore: false }),
+      getLatestHumanMessageInThread: () => null,
+      getSpiritByRunId: () => null,
+      getThread: () => ({ channelId: 'channel-1' }),
+    } as never;
+
+    const service = new RunService(
+      {
+        getTeam: () =>
+          loadAgentTeam({
+            name: 'Timetotest',
+            workspace: { root: workspaceRoot },
+            roles: [
+              {
+                name: 'backend-engineer',
+                title: 'Backend Engineer',
+                instructions: 'Work on backend.',
+                tools: ['shell'],
+              },
+            ],
+            agents: [{ name: agentId, roleName: 'backend-engineer' }],
+          }),
+        setTeam: () => undefined,
+      } as never,
+      repo,
+      { emit: () => undefined } as never,
+      { publishMessage: (message: any) => messages.push(message) } as never,
+      {
+        generateRunReply: async () => ({
+          text: 'Done.',
+          toolResults: [],
+          steps: [
+            {
+              toolCalls: [
+                { toolCallId: 'tool-call-1', toolName: 'message', input: {} },
+                {
+                  toolCallId: 'tool-call-2',
+                  toolName: 'filesystem',
+                  input: { action: 'write', resourcePath: '.ujima-goals/plan.md' },
+                },
+              ],
+            },
+          ],
+        }),
+      } as never,
+      { allowRun: () => undefined, invoke: async () => ({ ok: true }) } as never,
+    );
+
+    const result = await (service as any).advanceRun(run);
+
+    expect(result.status).toBe('completed');
+    expect(messages).toHaveLength(1);
+    expect(messages[0].content).toBe('Done.');
+    expect(messages[0].toolCalls[0]?.toolName).toBe('card.goal.file');
+  });
+
+  it('builds persisted goal cards for workspace write tool HTML files', async () => {
+    const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), 'ujima-goal-'));
+    await mkdir(path.join(workspaceRoot, '.ujima-goals'), { recursive: true });
+    await writeFile(
+      path.join(workspaceRoot, '.ujima-goals', 'plan.html'),
+      '<!doctype html><html><body><h1>Goal</h1></body></html>',
+    );
+
+    const card = await appendGoalArtifactToolCall(
+      [{ toolName: 'write', args: { resourcePath: '.ujima-goals/plan.html' } }],
+      workspaceRoot,
+    );
+
+    expect(card?.toolName).toBe('card.goal.file');
+    expect(card?.args.goalFilePath).toBe('.ujima-goals/plan.html');
+    expect(card?.args.artifactFormat).toBe('html');
   });
 
   it('streams agent chunks to realtime while the run is still executing', async () => {

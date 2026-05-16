@@ -587,6 +587,7 @@ export class SpiritService {
       team.workspace.root,
       organization.name,
       member.id,
+      member.name,
       session.channelId,
       agent,
       teamRole,

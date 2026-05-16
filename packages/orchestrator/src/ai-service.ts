@@ -91,6 +91,7 @@ export class AiService {
       team.workspace.root,
       organization.name,
       member.id,
+      member.name,
       input.threadId,
       agent,
       role,

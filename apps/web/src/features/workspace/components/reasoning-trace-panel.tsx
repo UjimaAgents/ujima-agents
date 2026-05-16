@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { ArrowDown } from "lucide-react";
 import { RunTraceListResponseSchema, type RunTraceEntry } from "@ujima/api-schema";
 import { buildHistoricalTraceSteps } from "../reasoning-trace";
@@ -8,6 +9,13 @@ import { TraceStep, type TraceStepData } from "./chat/details-sidebar";
 
 const TRACE_PAGE_SIZE = 15;
 const TOP_LOAD_THRESHOLD = 40;
+const TRACE_ESTIMATE_SIZE = 140;
+
+type TraceRowData = {
+  key: string;
+  step: TraceStepData;
+  isLast: boolean;
+};
 
 function scrollContainerToBottom(container: HTMLElement) {
   container.scrollTop = Math.max(0, container.scrollHeight - container.clientHeight);
@@ -15,6 +23,15 @@ function scrollContainerToBottom(container: HTMLElement) {
 
 function getTraceScrollContainer(root: HTMLDivElement | null) {
   return root?.parentElement?.parentElement ?? null;
+}
+
+function matchesTraceFilter(step: TraceStepData, filter: "all" | "errors" | "files" | "shell" | "search") {
+  if (filter === "all") return true;
+  if (filter === "errors") return step.status === "failed";
+  if (filter === "files") return !!step.filesystem || !!step.grep;
+  if (filter === "shell") return !!step.terminal;
+  if (filter === "search") return !!step.webSearch;
+  return true;
 }
 
 export function ReasoningTracePanel({
@@ -111,7 +128,6 @@ export function ReasoningTracePanel({
         limit: TRACE_PAGE_SIZE,
       })
       .then((page) => {
-        shouldScrollToBottomRef.current = true;
         setHistory((current) => [...page.data.slice().reverse(), ...current]);
         setCursor(page.nextCursor);
         setHasMore(page.hasMore);
@@ -190,59 +206,54 @@ export function ReasoningTracePanel({
     }
   }, [history, liveSteps, showScrollBottom]);
 
-  const filteredLiveSteps = useMemo(() => {
-    if (filter === "all") return liveSteps;
-    return liveSteps.filter((step) => {
-      if (filter === "errors") return step.status === "failed";
-      if (filter === "files") return !!step.filesystem || !!step.grep;
-      if (filter === "shell") return !!step.terminal;
-      if (filter === "search") return !!step.webSearch;
-      return true;
+  const traceRows = useMemo<TraceRowData[]>(() => {
+    if (liveSteps.length > 0) {
+      const filtered = liveSteps.filter((step) => matchesTraceFilter(step, filter));
+      return filtered.map((step, index) => ({
+        key: step.id,
+        step,
+        isLast: index === filtered.length - 1,
+      }));
+    }
+
+    if (!historyEnabled) return [];
+
+    return history.flatMap((entry) => {
+      const steps = buildHistoricalTraceSteps({
+        conversationName,
+        conversationType,
+        members,
+        run: entry.run,
+        steps: entry.steps,
+        message: entry.message,
+        organizationId,
+      });
+
+      const filtered = steps.filter((step) => matchesTraceFilter(step, filter));
+      return filtered.map((step, index) => ({
+        key: `${entry.run.id}:${step.id}`,
+        step,
+        isLast: index === filtered.length - 1,
+      }));
     });
-  }, [filter, liveSteps]);
+  }, [
+    conversationName,
+    conversationType,
+    filter,
+    history,
+    historyEnabled,
+    liveSteps,
+    members,
+    organizationId,
+  ]);
 
-  const renderedLiveSteps = useMemo(
-    () =>
-      filteredLiveSteps.map((step, index) => (
-        <TraceStep key={step.id} step={step} isLast={index === filteredLiveSteps.length - 1} />
-      )),
-    [filteredLiveSteps],
-  );
-
-  const renderedHistory = useMemo(
-    () =>
-      history.flatMap((entry) => {
-        const steps = buildHistoricalTraceSteps({
-          conversationName,
-          conversationType,
-          members,
-          run: entry.run,
-          steps: entry.steps,
-          message: entry.message,
-          organizationId,
-        });
-
-        const filtered =
-          filter === "all"
-            ? steps
-            : steps.filter((step) => {
-                if (filter === "errors") return step.status === "failed";
-                if (filter === "files") return !!step.filesystem || !!step.grep;
-                if (filter === "shell") return !!step.terminal;
-                if (filter === "search") return !!step.webSearch;
-                return true;
-              });
-
-        return filtered.map((step, index) => (
-          <TraceStep
-            key={`${entry.run.id}:${step.id}`}
-            step={step}
-            isLast={index === filtered.length - 1}
-          />
-        ));
-      }),
-    [conversationName, conversationType, history, members, organizationId, filter],
-  );
+  const traceVirtualizer = useVirtualizer({
+    count: traceRows.length,
+    getScrollElement: () => getTraceScrollContainer(rootRef.current),
+    estimateSize: () => TRACE_ESTIMATE_SIZE,
+    overscan: 4,
+  });
+  const virtualTraceRows = traceVirtualizer.getVirtualItems();
 
   const filterBar = useMemo(
     () => (
@@ -288,13 +299,31 @@ export function ReasoningTracePanel({
       ) : null,
     [showScrollBottom],
   );
+  const traceEmptyLabel = traceRows.length === 0 ? "No trace steps." : null;
 
   if (liveSteps.length > 0) {
     return (
       <div className="flex flex-col gap-4">
         {filterBar}
-        <div ref={rootRef} className="space-y-0">
-          {renderedLiveSteps}
+        <div ref={rootRef} className="relative min-h-0">
+          <div className="relative w-full" style={{ height: `${traceVirtualizer.getTotalSize()}px` }}>
+            {virtualTraceRows.map((virtualRow) => {
+              const row = traceRows[virtualRow.index];
+              if (!row) return null;
+              return (
+                <div
+                  key={row.key}
+                  data-index={virtualRow.index}
+                  ref={traceVirtualizer.measureElement}
+                  className="absolute left-0 top-0 w-full"
+                  style={{ transform: `translateY(${virtualRow.start}px)`, contain: "layout paint" }}
+                >
+                  <TraceStep step={row.step} isLast={row.isLast} />
+                </div>
+              );
+            })}
+          </div>
+          {traceEmptyLabel ? <p className="px-1 text-xs text-foreground/50">{traceEmptyLabel}</p> : null}
           {error ? <p className="text-xs text-red-500">{error}</p> : null}
           <div className="h-px w-full" aria-hidden />
         </div>
@@ -314,8 +343,25 @@ export function ReasoningTracePanel({
   return (
     <div className="flex flex-col gap-4">
       {filterBar}
-      <div ref={rootRef} className="space-y-3">
-        {renderedHistory}
+      <div ref={rootRef} className="relative min-h-0">
+        <div className="relative w-full" style={{ height: `${traceVirtualizer.getTotalSize()}px` }}>
+          {virtualTraceRows.map((virtualRow) => {
+            const row = traceRows[virtualRow.index];
+            if (!row) return null;
+            return (
+              <div
+                key={row.key}
+                data-index={virtualRow.index}
+                ref={traceVirtualizer.measureElement}
+                className="absolute left-0 top-0 w-full"
+                style={{ transform: `translateY(${virtualRow.start}px)`, contain: "layout paint" }}
+              >
+                <TraceStep step={row.step} isLast={row.isLast} />
+              </div>
+            );
+          })}
+        </div>
+        {traceEmptyLabel ? <p className="px-1 text-xs text-foreground/50">{traceEmptyLabel}</p> : null}
         {loadingMore ? (
           <p className="px-1 text-[10px] text-foreground/40">Loading older traces...</p>
         ) : null}

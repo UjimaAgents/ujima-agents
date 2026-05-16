@@ -1,7 +1,8 @@
+import { memo } from "react";
 import { formatTimestamp } from "../lib/format-timestamp";
 import { describeActivity } from "../activity-events";
 
-export function ActivityRow({
+export const ActivityRow = memo(function ActivityRow({
   event,
 }: {
   event: {
@@ -29,4 +30,4 @@ export function ActivityRow({
       </div>
     </div>
   );
-}
+});

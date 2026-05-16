@@ -53,17 +53,7 @@
     }
   }
 
-  --animate-running-figure: running-figure 0.9s ease-in-out infinite;
 
-  @keyframes running-figure {
-    0%,
-    100% {
-      transform: translateY(0) scale(1);
-    }
-    50% {
-      transform: translateY(-1px) scale(1.03);
-    }
-  }
 }
 
 body {

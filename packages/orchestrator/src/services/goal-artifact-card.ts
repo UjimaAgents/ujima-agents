@@ -1,7 +1,8 @@
 import path from 'node:path';
+import { existsSync, realpathSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
-import type { GoalStatus, MessageCard, MessageToolCall } from '@ujima/shared';
+import { MessageSchema, type GoalStatus, type Message, type MessageCard, type MessageToolCall } from '@ujima/shared';
 import { assertWorkspaceBoundary } from '@ujima/shared/workspace';
 
 interface ToolCallLike {
@@ -11,7 +12,6 @@ interface ToolCallLike {
 }
 
 const GOAL_ARTIFACT_DIR = '.ujima-goals';
-const MARKDOWN_EXTENSIONS = new Set(['.md', '.mdx', '.markdown']);
 const GOAL_STATUS_VALUES = ['draft', 'planning', 'in_progress', 'completed', 'failed'] as const;
 
 export async function appendGoalArtifactToolCall(
@@ -21,16 +21,16 @@ export async function appendGoalArtifactToolCall(
   const writeCall = [...toolCalls].reverse().find(isGoalArtifactWrite);
   if (!writeCall) return undefined;
 
-  const resourcePath = readStringField(writeCall, 'resourcePath');
+  const resourcePath = goalArtifactWritePath(writeCall);
   if (!resourcePath) return undefined;
 
   const resolvedPath = assertWorkspaceBoundary(workspaceRoot, resourcePath);
-  const relativePath = normalizePath(path.relative(path.resolve(workspaceRoot), resolvedPath));
+  const rootPath = existsSync(workspaceRoot) ? realpathSync(path.resolve(workspaceRoot)) : path.resolve(workspaceRoot);
+  const relativePath = normalizePath(path.relative(rootPath, resolvedPath));
   if (!relativePath.startsWith(`${GOAL_ARTIFACT_DIR}/`)) return undefined;
 
-  const html = await readFile(resolvedPath, 'utf8');
-  const artifactFormat = MARKDOWN_EXTENSIONS.has(path.extname(relativePath).toLowerCase()) ? 'markdown' : 'html';
-  const card = buildGoalArtifactCard(relativePath, html, artifactFormat);
+  const content = await readFile(resolvedPath, 'utf8');
+  const card = buildGoalArtifactCard(relativePath, content);
 
   return {
     toolCallId: randomUUID(),
@@ -41,14 +41,39 @@ export async function appendGoalArtifactToolCall(
   };
 }
 
+export function buildGoalArtifactMessage(input: {
+  goalArtifactToolCall: MessageToolCall;
+  organizationId: string;
+  threadId: string;
+  channelId?: string | null;
+  senderId: string;
+  senderKind: Message['senderKind'];
+  kind: Message['kind'];
+  runId?: string;
+  content?: string;
+}): Message {
+  return MessageSchema.parse({
+    id: randomUUID(),
+    organizationId: input.organizationId,
+    threadId: input.threadId,
+    channelId: input.channelId ?? undefined,
+    senderId: input.senderId,
+    senderKind: input.senderKind,
+    kind: input.kind,
+    content: input.content ?? 'Goal artifact updated.',
+    metadata: input.runId ? { runId: input.runId } : {},
+    toolCalls: [input.goalArtifactToolCall],
+    createdAt: new Date().toISOString(),
+  });
+}
+
 function isGoalArtifactWrite(call: ToolCallLike): boolean {
-  return call.toolName === 'filesystem' && readStringField(call, 'action') === 'write';
+  return goalArtifactWritePath(call) !== undefined;
 }
 
 function buildGoalArtifactCard(
   goalFilePath: string,
-  html: string,
-  artifactFormat: 'html' | 'markdown',
+  content: string,
 ): MessageCard {
   return {
     cardId: randomUUID(),
@@ -56,10 +81,28 @@ function buildGoalArtifactCard(
     goalId: goalFilePath,
     goalName: path.basename(goalFilePath, path.extname(goalFilePath)) || 'Goal',
     goalFilePath,
-    html,
-    artifactFormat,
-    status: inferGoalStatus(html),
+    html: content,
+    artifactFormat: inferArtifactFormat(goalFilePath, content),
+    status: inferGoalStatus(content),
   };
+}
+
+function goalArtifactWritePath(call: ToolCallLike): string | undefined {
+  const toolName = call.toolName?.toLowerCase();
+  const resourcePath = readStringField(call, 'resourcePath');
+  if (!resourcePath) return undefined;
+  if (toolName === 'filesystem') {
+    return readStringField(call, 'action') === 'write' ? resourcePath : undefined;
+  }
+  return toolName === 'write' || toolName === 'edit' || toolName === 'multiedit'
+    ? resourcePath
+    : undefined;
+}
+
+function inferArtifactFormat(goalFilePath: string, content: string): 'html' | 'markdown' {
+  if (goalFilePath.toLowerCase().endsWith('.html')) return 'html';
+  const trimmed = content.trimStart().toLowerCase();
+  return trimmed.startsWith('<!doctype html') || trimmed.startsWith('<html') ? 'html' : 'markdown';
 }
 
 function inferGoalStatus(content: string): GoalStatus {
@@ -80,8 +123,10 @@ function isGoalStatus(value: string | undefined): value is GoalStatus {
 
 function readStringField(call: ToolCallLike, key: string): string | undefined {
   const payload = normalizePayload(call);
-  const value = payload?.[key];
-  return typeof value === "string" ? value : undefined;
+  const direct = payload?.[key];
+  if (typeof direct === 'string') return direct;
+  const nested = isRecord(payload?.input) ? payload.input[key] : undefined;
+  return typeof nested === 'string' ? nested : undefined;
 }
 
 function normalizePayload(call: ToolCallLike): Record<string, unknown> | undefined {

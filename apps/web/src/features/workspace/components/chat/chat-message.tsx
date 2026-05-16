@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState, forwardRef, type MouseEvent, type ReactNode, type UIEventHandler } from "react";
+import { memo, useCallback, useRef, useState, forwardRef, type MouseEvent, type ReactNode, type UIEventHandler } from "react";
 import { CheckCircle2, Loader2, Sparkles } from "lucide-react";
 import { type AttachmentCategory } from "@ujima/shared/browser";
 import { Avatar, TagBadge, type TagVariant } from "./primitives";
@@ -53,7 +53,7 @@ export interface ChatMessageData {
 
 const DRAG_THRESHOLD = 30;
 
-export function ChatMessage({
+export const ChatMessage = memo(function ChatMessage({
   message,
   active,
   onClick,
@@ -128,7 +128,7 @@ export function ChatMessage({
           active
             ? "bg-violet-50/50 ring-1 ring-violet-200 dark:bg-violet-500/5 dark:ring-violet-500/20"
             : "hover:bg-zinc-50 dark:hover:bg-zinc-900/50"
-        } ${message.pending ? "opacity-70" : ""}`}
+        } ${message.status === "success" ? "pr-8" : ""} ${message.pending ? "opacity-70" : ""}`}
       >
         {message.kind === "system" ? (
           <>
@@ -136,12 +136,13 @@ export function ChatMessage({
               <Sparkles className="h-3.5 w-3.5" />
             </div>
             <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-1.5">
-                <p className="text-sm font-bold text-zinc-900 dark:text-white">
+              <div className="flex min-w-0 flex-wrap items-baseline gap-x-1.5 gap-y-0.5">
+                <p className="min-w-0 max-w-full truncate text-sm font-bold text-zinc-900 dark:text-white">
                   {systemLabel}
                 </p>
-                <p className="text-[11px] text-zinc-400">{message.time}</p>
+                <p className="shrink-0 text-[11px] text-zinc-400">{message.time}</p>
               </div>
+              {goalArtifact ? <GoalArtifactPreview artifact={goalArtifact} /> : null}
               {approvalShellTerminal ? (
                 <TerminalPane
                   className="mt-1.5"
@@ -163,18 +164,17 @@ export function ChatMessage({
                   className="mt-1 text-sm"
                 />
               ) : null}
-              {goalArtifact ? <GoalArtifactPreview artifact={goalArtifact} /> : null}
             </div>
           </>
         ) : (
           <>
             <Avatar name={message.name} colorIndex={colorIndex} size="sm" />
             <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-1.5">
-                <p className="text-sm font-bold text-zinc-900 dark:text-white">
+              <div className="flex min-w-0 flex-wrap items-baseline gap-x-1.5 gap-y-0.5">
+                <p className="min-w-0 max-w-full truncate text-sm font-bold text-zinc-900 dark:text-white">
                   {message.name}
                 </p>
-                <p className="text-[11px] text-zinc-400">{message.time}</p>
+                <p className="shrink-0 text-[11px] text-zinc-400">{message.time}</p>
                 {message.tag && (
                   <TagBadge variant={message.tag.variant} label={message.tag.label} />
                 )}
@@ -190,11 +190,11 @@ export function ChatMessage({
                   />
                 </div>
               )}
+              {goalArtifact ? <GoalArtifactPreview artifact={goalArtifact} /> : null}
               <Markdown
                 content={message.content}
                 mentionNames={message.mentionNames}
               />
-              {goalArtifact ? <GoalArtifactPreview artifact={goalArtifact} /> : null}
               <AttachmentGrid
                 attachments={message.attachments}
                 organizationId={organizationId ?? ""}
@@ -231,7 +231,7 @@ export function ChatMessage({
       )}
     </>
   );
-}
+});
 
 function getSystemMessageLabel(content: string): string {
   if (content.startsWith(CONVERSATION_ARCHIVE_MARKER)) return "Conversation archived";
@@ -304,7 +304,7 @@ function parseRelayFilesystemBody(
 type GoalArtifactView = {
   goalName: string;
   goalFilePath: string;
-  html: string;
+  content: string;
   artifactFormat: "html" | "markdown";
   status: string;
 };
@@ -312,7 +312,7 @@ type GoalArtifactView = {
 export function getGoalArtifactCard(toolCalls?: ChatMessageData["toolCalls"]): GoalArtifactView | null {
   const card = toolCalls?.find((entry) => entry.toolName === "card.goal.file");
   if (!card) return null;
-  const { goalName, goalFilePath, html, status, artifactFormat } = card.args;
+  const { goalName, goalFilePath, html, artifactFormat, status } = card.args;
   if (
     typeof goalName !== "string" ||
     typeof goalFilePath !== "string" ||
@@ -324,8 +324,8 @@ export function getGoalArtifactCard(toolCalls?: ChatMessageData["toolCalls"]): G
   return {
     goalName,
     goalFilePath,
-    html,
-    artifactFormat: artifactFormat === "markdown" ? "markdown" : "html",
+    content: html,
+    artifactFormat: artifactFormat === "html" ? "html" : "markdown",
     status,
   };
 }
@@ -346,17 +346,17 @@ function GoalArtifactPreview({ artifact }: { artifact: GoalArtifactView }) {
           {artifact.status}
         </span>
       </div>
-      {artifact.artifactFormat === "markdown" ? (
-        <div className="max-h-[540px] overflow-auto px-4 py-3">
-          <Markdown content={artifact.html} />
-        </div>
-      ) : (
+      {artifact.artifactFormat === "html" ? (
         <iframe
           title={artifact.goalName}
           sandbox=""
-          srcDoc={artifact.html}
+          srcDoc={artifact.content}
           className="h-[540px] w-full border-0 bg-transparent"
         />
+      ) : (
+        <div className="max-h-[540px] overflow-auto px-4 py-3">
+          <Markdown content={artifact.content} />
+        </div>
       )}
     </div>
   );
@@ -374,7 +374,7 @@ export const ChatMessageList = forwardRef<
     <div
       ref={ref}
       onScroll={onScroll}
-      className={`h-full min-h-0 overflow-y-auto px-4 py-4 space-y-2 ${className}`}
+      className={`h-full min-h-0 overflow-y-auto px-4 py-4 ${className}`}
     >
       {children}
     </div>
