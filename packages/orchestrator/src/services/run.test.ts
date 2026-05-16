@@ -1268,6 +1268,7 @@ describe('SpiritService run path', () => {
         run = next;
         return next;
       },
+      getThread: () => ({ channelId: 'channel-1' }),
     } as never;
     let completions = 0;
     const service = createSpiritRunService(
