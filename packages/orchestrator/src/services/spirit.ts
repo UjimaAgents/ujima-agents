@@ -1510,6 +1510,11 @@ export class SpiritService {
           continue;
         }
 
+        // Skip per-step text publication when this step used a thread-publishing
+        // tool (message, channel.reply, channel.post, etc.) — the tool already
+        // wrote to the thread, so re-publishing stepText would double-post.
+        const stepUsedPublishingTool = runUsedThreadPublishingTool({ steps: [step] });
+
         const stepGoalArtifactToolCall =
           (await appendGoalArtifactToolCall(stepToolCalls, team.workspace.root)) ??
           (await appendGoalArtifactToolCall(
@@ -1535,6 +1540,9 @@ export class SpiritService {
           continue;
         }
         const channelId = this.repo.getThread(run.organizationId, threadId)?.channelId;
+        if (stepUsedPublishingTool && !stepGoalArtifactToolCall) {
+          continue;
+        }
         if (!stepText && !stepGoalArtifactToolCall) {
           continue;
         }
@@ -1678,7 +1686,7 @@ export class SpiritService {
     if (run.threadId) {
       rooms.push(threadRoom(run.threadId));
       const channelId = this.repo.getThread(run.organizationId, run.threadId)?.channelId;
-      if (channelId && channelId !== run.threadId) {
+      if (channelId) {
         rooms.push(channelRoom(channelId));
       }
     }
@@ -1695,7 +1703,7 @@ export class SpiritService {
 
     const rooms = [orgRoom(run.organizationId), memberRoom(run.agentId), runRoom(run.runId), threadRoom(run.threadId)];
     const channelId = this.repo.getThread(run.organizationId, run.threadId)?.channelId;
-    if (channelId && channelId !== run.threadId) {
+    if (channelId) {
       rooms.push(channelRoom(channelId));
     }
 
