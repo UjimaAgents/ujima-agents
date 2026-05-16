@@ -1677,6 +1677,10 @@ export class SpiritService {
     const rooms = [orgRoom(run.organizationId), memberRoom(run.agentId), runRoom(run.id)];
     if (run.threadId) {
       rooms.push(threadRoom(run.threadId));
+      const channelId = this.repo.getThread(run.organizationId, run.threadId)?.channelId;
+      if (channelId && channelId !== run.threadId) {
+        rooms.push(channelRoom(channelId));
+      }
     }
     return rooms;
   }
@@ -1689,6 +1693,12 @@ export class SpiritService {
       return;
     }
 
+    const rooms = [orgRoom(run.organizationId), memberRoom(run.agentId), runRoom(run.runId), threadRoom(run.threadId)];
+    const channelId = this.repo.getThread(run.organizationId, run.threadId)?.channelId;
+    if (channelId && channelId !== run.threadId) {
+      rooms.push(channelRoom(channelId));
+    }
+
     this.realtime.emit(
       SocketEventNames.runChunk,
       {
@@ -1699,7 +1709,7 @@ export class SpiritService {
         kind: chunk.kind,
         delta: chunk.delta,
       },
-      [orgRoom(run.organizationId), memberRoom(run.agentId), runRoom(run.runId), threadRoom(run.threadId)],
+      rooms,
     );
   }
 

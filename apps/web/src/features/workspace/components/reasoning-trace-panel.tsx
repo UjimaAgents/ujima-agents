@@ -113,6 +113,8 @@ export function ReasoningTracePanel({
       setShowScrollBottom((prev) => (prev !== shouldShow ? shouldShow : prev));
       if (shouldShow) {
         shouldScrollToBottomRef.current = false;
+      } else {
+        shouldScrollToBottomRef.current = true;
       }
 
       if (!historyEnabled || loadingMore || !hasMore || !cursor) return;
@@ -288,6 +290,7 @@ export function ReasoningTracePanel({
         <div className="sticky bottom-6 z-20 flex justify-center pointer-events-none">
           <button
             onClick={() => {
+              shouldScrollToBottomRef.current = true;
               const container = getTraceScrollContainer(rootRef.current);
               if (container) {
                 container.scrollTo({
