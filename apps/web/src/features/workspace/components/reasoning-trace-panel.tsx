@@ -111,6 +111,9 @@ export function ReasoningTracePanel({
       const shouldShow = distFromBottom > 150;
       
       setShowScrollBottom((prev) => (prev !== shouldShow ? shouldShow : prev));
+      if (shouldShow) {
+        shouldScrollToBottomRef.current = false;
+      }
 
       if (!historyEnabled || loadingMore || !hasMore || !cursor) return;
       if (container.scrollTop > TOP_LOAD_THRESHOLD) return;
@@ -187,13 +190,16 @@ export function ReasoningTracePanel({
       const frame = requestAnimationFrame(() => {
         const container = getTraceScrollContainer(rootRef.current);
         if (!container) return;
+        if (shouldScrollToBottomRef.current) {
+          scrollContainerToBottom(container);
+          return;
+        }
         container.scrollTop = scrollTop + (container.scrollHeight - scrollHeight);
       });
       return () => cancelAnimationFrame(frame);
     }
 
     if (shouldScrollToBottomRef.current) {
-      shouldScrollToBottomRef.current = false;
       // Do not auto-scroll if the user has manually scrolled up to look at history
       if (showScrollBottom) return;
 

@@ -14,7 +14,7 @@ import {
   ShellJobSchema,
   RunJobTerminateSchema,
 } from '@ujima/api-schema';
-import type { ApprovalService, AuthService, RunService } from '@ujima/orchestrator';
+import type { ApprovalService, AuthService, SpiritService } from '@ujima/orchestrator';
 import { listBackgroundJobs, peekBackgroundJob, terminateBackgroundJob } from '@ujima/orchestrator';
 import { z } from 'zod';
 import {
@@ -66,7 +66,7 @@ const RunDetailResponseSchema = z.object({
 
 export interface RunRoutesOptions {
   repo: Repository;
-  runs: RunService;
+  runs: SpiritService;
   approvals: ApprovalService;
   auth: AuthService;
 }

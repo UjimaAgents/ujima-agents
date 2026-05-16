@@ -13,9 +13,9 @@ import {
 } from '@ujima/shared';
 import type { ConversationService } from './conversation.js';
 import type { ApiRepository } from './repository-reader.js';
-import type { RunService } from './run.js';
 import type { TaskSessionService } from './task-session.js';
 import type { TeamStore } from './team-store.js';
+import type { SpiritService } from './spirit.js';
 
 export interface TaskPromotionInput {
   organizationId: string;
@@ -126,7 +126,7 @@ export class TaskPromoterService {
 
   constructor(
     private readonly repo: ApiRepository,
-    private readonly runs: RunService,
+    private readonly spirits: Pick<SpiritService, 'createRun'>,
     options: TaskPromoterServiceOptions = {},
   ) {
     this.teamStore = options.teamStore;
@@ -160,7 +160,7 @@ export class TaskPromoterService {
     }
 
     const threadId = input.threadId ?? input.channelId;
-    const run = await this.runs.createRun({
+    const run = await this.spirits.createRun({
       organizationId: input.organizationId,
       agentId: assignee,
       threadId,

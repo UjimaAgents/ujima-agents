@@ -14,7 +14,6 @@ import type {
   ConversationService,
   McpRegistryService,
   OnboardingService,
-  RunService,
   SettingsService,
   SpiritService,
   SupervisorTodoService,
@@ -75,7 +74,7 @@ export interface TransportOptions {
     repo: Repository;
     buildServices: (realtime: RealtimeService) => {
       conversations: ConversationService;
-      runs: RunService;
+      runs: SpiritService;
       approvals: ApprovalService;
       auth: AuthService;
       bootstrap: BootstrapService;
