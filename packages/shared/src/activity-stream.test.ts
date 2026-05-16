@@ -90,6 +90,17 @@ describe('activity-stream append', () => {
     expect(merged.map((e) => e.event_id)).toEqual(['e1', 'e2', 'e3']);
   });
 
+  it('uses order ahead of timestamp when events are sequenced', () => {
+    const merged = appendEvents(
+      [],
+      [
+        { event_id: 'tool', type: 't', publisher: 'p', timestamp: new Date(3000).toISOString(), order: 2 },
+        { event_id: 'chunk', type: 't', publisher: 'p', timestamp: new Date(1000).toISOString(), order: 1 },
+      ],
+    );
+    expect(merged.map((e) => e.event_id)).toEqual(['chunk', 'tool']);
+  });
+
   it('trims to max keeping most recent', () => {
     const base: ActivityEvent[] = Array.from({ length: 5 }, (_, i) =>
       mk(`e${i}`, 'p', 't', i * 1_000),

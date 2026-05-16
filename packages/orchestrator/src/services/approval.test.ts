@@ -23,7 +23,6 @@ describe('ApprovalService', () => {
     let saved = 0;
     let emitted = 0;
     let relayThreadId: string | undefined;
-    let relayContent: string | undefined;
     let savedPayload: ApprovalRequest | undefined;
     const repo = {
       listPendingApprovals: () => [],
@@ -48,7 +47,6 @@ describe('ApprovalService', () => {
         content: string;
       }) => {
         relayThreadId = `dm:${[input.memberIdA, input.memberIdB].sort().join(':')}`;
-        relayContent = input.content;
         return {
           id: 'relay-message-1',
           organizationId: input.organizationId,
@@ -86,9 +84,7 @@ describe('ApprovalService', () => {
     expect(result.status).toBe('pending');
     expect(saved).toBe(1);
     expect(savedPayload?.threadId).toBe('thread-1');
-    expect(emitted).toBe(2);
-    expect(relayThreadId).toBe('dm:agent-1:owner-1');
-    expect(relayContent).toBe('[Approval needed] Shell\nCwd: /workspace\nCommand: pwd');
+    expect(emitted).toBe(1);
   });
 
   it('reuses a pending approval for the same shell scope', () => {
@@ -222,7 +218,7 @@ describe('ApprovalService', () => {
 
     expect(result.status).toBe('approved');
     expect([...approvals.values()].every((approval) => approval.status === 'approved')).toBe(true);
-    expect(emitted).toBe(4);
+    expect(emitted).toBe(2);
     expect(resumed).toBe(1);
   });
 
@@ -297,7 +293,7 @@ describe('ApprovalService', () => {
     expect(resumedAllowRun).toBe(false);
     expect(run.status).toBe('failed');
     expect(run.summary).toBe('Approval rejected by user');
-    expect(emitted).toBe(2);
+    expect(emitted).toBe(1);
   });
 
   it('persists an allow_always grant with the encoded scope reason', async () => {

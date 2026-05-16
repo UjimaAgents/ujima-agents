@@ -113,7 +113,7 @@ export function peekBackgroundJob(runId: string, jobId: string): BackgroundJobSn
   };
 }
 
-async function waitForBackgroundJob(
+export async function waitForBackgroundJob(
   runId: string,
   jobId: string,
 ): Promise<BackgroundJobSnapshot | null> {

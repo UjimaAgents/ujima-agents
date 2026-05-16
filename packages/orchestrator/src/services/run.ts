@@ -13,6 +13,7 @@ import {
   type Message,
   type RunStep,
 } from '@ujima/shared';
+import type { AgentLoopChunk } from './agent-loop.js';
 import type { AiService } from '../ai-service.js';
 import { requireTeam } from '../utils/require-team.js';
 import type { RealtimeService } from './context.js';
@@ -26,6 +27,7 @@ import { ToolApprovalRequiredError } from './tool-loop-result.js';
 import { extractReasoningChunk } from '../utils/extract-reasoning.js';
 import { runUsedThreadPublishingTool } from './run-reply-guard.js';
 import { goalModeEnabledFromMessage, goalModeSystemPromptSuffix } from './goal-mode-prompt.js';
+import { pendingApprovalRunSummary } from './approval-summary.js';
 
 export interface CreateRunInput {
   organizationId: string;
@@ -116,7 +118,7 @@ export class RunService {
         return latest;
       }
       if (error instanceof ToolApprovalRequiredError) {
-        return this.waitForApproval(run, 'Waiting for approval');
+        return this.waitForApproval(run, pendingApprovalRunSummary(this.repo, run.organizationId, run.id));
       }
       return this.failRun(run, (error as Error).message);
     }
@@ -316,6 +318,25 @@ export class RunService {
     return rooms;
   }
 
+  private emitRunChunk(run: RunState, chunk: AgentLoopChunk): void {
+    if (!run.threadId || !chunk.delta) {
+      return;
+    }
+
+    this.realtime.emit(
+      SocketEventNames.runChunk,
+      {
+        organizationId: run.organizationId,
+        runId: run.id,
+        threadId: run.threadId,
+        agentId: run.agentId,
+        kind: chunk.kind,
+        delta: chunk.delta,
+      },
+      this.getRooms(run),
+    );
+  }
+
   private listAllThreadMessages(organizationId: string, threadId: string): Message[] {
     const messages: Message[] = [];
     let cursor: string | undefined = undefined;
@@ -400,6 +421,8 @@ export class RunService {
     try {
       const goalModeActive = this.isGoalModeActive(run.organizationId, run.threadId ?? '');
       const systemPromptSuffix = goalModeSystemPromptSuffix(goalModeActive);
+      let streamedText = '';
+      let streamedReasoning = '';
       const result = await this.ai.generateRunReply({
         organizationId: run.organizationId,
         agentId: run.agentId,
@@ -408,6 +431,11 @@ export class RunService {
         summary: run.summary,
         systemPromptSuffix,
         abortSignal: abortController.signal,
+        onChunk: (chunk) => {
+          if (chunk.kind === 'text') streamedText += chunk.delta;
+          if (chunk.kind === 'reasoning') streamedReasoning += chunk.delta;
+          this.emitRunChunk(run, chunk);
+        },
       });
 
       const latestRun = this.repo.getRun(run.organizationId, run.id);
@@ -433,19 +461,19 @@ export class RunService {
       }
 
       if (statuses.includes('waiting_for_approval')) {
-        return this.waitForApproval(running, 'Waiting for approval');
+        return this.waitForApproval(running, pendingApprovalRunSummary(this.repo, running.organizationId, running.id));
       }
 
       const pendingApprovalExists = this.repo
         .listPendingApprovals(run.organizationId)
         .some((approval) => approval.runId === run.id);
       if (pendingApprovalExists) {
-        return this.waitForApproval(running, 'Waiting for approval');
+        return this.waitForApproval(running, pendingApprovalRunSummary(this.repo, running.organizationId, running.id));
       }
 
-      const text = result.text.trim();
+      const text = (result.text || streamedText).trim();
       const reply = text || 'Acknowledged.';
-      const reasoningContent = extractReasoningChunk(result);
+      const reasoningContent = extractReasoningChunk(result) ?? (streamedReasoning.trim() || undefined);
       const skipFinalThreadMessage = runUsedThreadPublishingTool(result);
       if (run.threadId && !skipFinalThreadMessage) {
         const goalArtifactToolCall = await appendGoalArtifactToolCall(
@@ -462,6 +490,7 @@ export class RunService {
             senderKind: AGENT_KIND,
             kind: AGENT_KIND,
             content: reply,
+            metadata: { runId: run.id },
             ...(goalArtifactToolCall ? { toolCalls: [goalArtifactToolCall] } : {}),
             ...(reasoningContent ? { reasoningContent } : {}),
             createdAt: new Date().toISOString(),
@@ -476,7 +505,7 @@ export class RunService {
           const afterApprovedTools = await this.executePendingApprovedTools(running);
           return this.advanceRun(afterApprovedTools);
         }
-        return this.waitForApproval(running, 'Waiting for approval');
+        return this.waitForApproval(running, pendingApprovalRunSummary(this.repo, running.organizationId, running.id));
       }
       const latestAfterError = this.repo.getRun(run.organizationId, run.id);
       if (latestAfterError?.status === 'cancelled') {

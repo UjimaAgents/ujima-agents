@@ -13,15 +13,18 @@ interface ModalProps {
 
 export function Modal({ isOpen, onClose, title, children }: ModalProps) {
   useEffect(() => {
-    if (isOpen) {
-      document.body.style.overflow = "hidden";
-    } else {
-      document.body.style.overflow = "unset";
-    }
-    return () => {
-      document.body.style.overflow = "unset";
+    if (!isOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
     };
-  }, [isOpen]);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [isOpen, onClose]);
 
   if (!isOpen) return null;
 
@@ -40,7 +43,8 @@ export function Modal({ isOpen, onClose, title, children }: ModalProps) {
         
         <div className="relative mb-6 flex shrink-0 items-center justify-between">
           <h2 className="text-xl font-bold text-zinc-900 dark:text-white">{title}</h2>
-          <button 
+          <button
+            type="button"
             onClick={onClose}
             className="rounded-full p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600 transition-colors dark:hover:bg-zinc-900 dark:hover:text-zinc-300"
           >

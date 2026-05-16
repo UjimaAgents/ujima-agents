@@ -1,12 +1,21 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { ArrowDown } from "lucide-react";
 import { RunTraceListResponseSchema, type RunTraceEntry } from "@ujima/api-schema";
 import { buildHistoricalTraceSteps } from "../reasoning-trace";
 import { TraceStep, type TraceStepData } from "./chat/details-sidebar";
 
-const TRACE_PAGE_SIZE = 1;
+const TRACE_PAGE_SIZE = 15;
 const TOP_LOAD_THRESHOLD = 40;
+
+function scrollContainerToBottom(container: HTMLElement) {
+  container.scrollTop = Math.max(0, container.scrollHeight - container.clientHeight);
+}
+
+function getTraceScrollContainer(root: HTMLDivElement | null) {
+  return root?.parentElement?.parentElement ?? null;
+}
 
 export function ReasoningTracePanel({
   organizationId,
@@ -35,6 +44,8 @@ export function ReasoningTracePanel({
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | undefined>();
+  const [filter, setFilter] = useState<"all" | "errors" | "files" | "shell" | "search">("all");
+  const [showScrollBottom, setShowScrollBottom] = useState(false);
 
   const historyEnabled = liveSteps.length === 0 && !!organizationId && !!threadId;
 
@@ -74,10 +85,16 @@ export function ReasoningTracePanel({
   }, [historyEnabled, organizationId, threadId]);
 
   useEffect(() => {
-    const container = rootRef.current?.parentElement;
+    const container = getTraceScrollContainer(rootRef.current);
     if (!container) return;
 
     const onScroll = () => {
+      const { scrollTop, scrollHeight, clientHeight } = container;
+      const distFromBottom = scrollHeight - scrollTop - clientHeight;
+      const shouldShow = distFromBottom > 150;
+      
+      setShowScrollBottom((prev) => (prev !== shouldShow ? shouldShow : prev));
+
       if (!historyEnabled || loadingMore || !hasMore || !cursor) return;
       if (container.scrollTop > TOP_LOAD_THRESHOLD) return;
 
@@ -93,11 +110,12 @@ export function ReasoningTracePanel({
         cursor,
         limit: TRACE_PAGE_SIZE,
       })
-        .then((page) => {
-          setHistory((current) => [...page.data.slice().reverse(), ...current]);
-          setCursor(page.nextCursor);
-          setHasMore(page.hasMore);
-        })
+      .then((page) => {
+        shouldScrollToBottomRef.current = true;
+        setHistory((current) => [...page.data.slice().reverse(), ...current]);
+        setCursor(page.nextCursor);
+        setHasMore(page.hasMore);
+      })
         .catch((err) => {
           setError(err instanceof Error ? err.message : "Unable to load older traces.");
         })
@@ -113,7 +131,7 @@ export function ReasoningTracePanel({
   }, [cursor, hasMore, historyEnabled, loadingMore, organizationId, threadId]);
 
   useEffect(() => {
-    const container = rootRef.current?.parentElement;
+    const container = getTraceScrollContainer(rootRef.current);
     if (!historyEnabled || loadingMore || autoFillRef.current) return;
     if (!container || history.length === 0 || !hasMore || !cursor) return;
     if (container.scrollHeight > container.clientHeight + 1) return;
@@ -151,7 +169,7 @@ export function ReasoningTracePanel({
       const { scrollHeight, scrollTop } = pendingPrependRef.current;
       pendingPrependRef.current = null;
       const frame = requestAnimationFrame(() => {
-        const container = rootRef.current?.parentElement;
+        const container = getTraceScrollContainer(rootRef.current);
         if (!container) return;
         container.scrollTop = scrollTop + (container.scrollHeight - scrollHeight);
       });
@@ -160,21 +178,35 @@ export function ReasoningTracePanel({
 
     if (shouldScrollToBottomRef.current) {
       shouldScrollToBottomRef.current = false;
+      // Do not auto-scroll if the user has manually scrolled up to look at history
+      if (showScrollBottom) return;
+
       const frame = requestAnimationFrame(() => {
-        const container = rootRef.current?.parentElement;
+        const container = getTraceScrollContainer(rootRef.current);
         if (!container) return;
-        container.scrollTop = container.scrollHeight;
+        scrollContainerToBottom(container);
       });
       return () => cancelAnimationFrame(frame);
     }
-  }, [history, liveSteps]);
+  }, [history, liveSteps, showScrollBottom]);
+
+  const filteredLiveSteps = useMemo(() => {
+    if (filter === "all") return liveSteps;
+    return liveSteps.filter((step) => {
+      if (filter === "errors") return step.status === "failed";
+      if (filter === "files") return !!step.filesystem || !!step.grep;
+      if (filter === "shell") return !!step.terminal;
+      if (filter === "search") return !!step.webSearch;
+      return true;
+    });
+  }, [filter, liveSteps]);
 
   const renderedLiveSteps = useMemo(
     () =>
-      liveSteps.map((step, index) => (
-        <TraceStep key={step.id} step={step} isLast={index === liveSteps.length - 1} />
+      filteredLiveSteps.map((step, index) => (
+        <TraceStep key={step.id} step={step} isLast={index === filteredLiveSteps.length - 1} />
       )),
-    [liveSteps],
+    [filteredLiveSteps],
   );
 
   const renderedHistory = useMemo(
@@ -190,23 +222,83 @@ export function ReasoningTracePanel({
           organizationId,
         });
 
-        return steps.map((step, index) => (
+        const filtered =
+          filter === "all"
+            ? steps
+            : steps.filter((step) => {
+                if (filter === "errors") return step.status === "failed";
+                if (filter === "files") return !!step.filesystem || !!step.grep;
+                if (filter === "shell") return !!step.terminal;
+                if (filter === "search") return !!step.webSearch;
+                return true;
+              });
+
+        return filtered.map((step, index) => (
           <TraceStep
             key={`${entry.run.id}:${step.id}`}
             step={step}
-            isLast={index === steps.length - 1}
+            isLast={index === filtered.length - 1}
           />
         ));
       }),
-    [conversationName, conversationType, history, members, organizationId],
+    [conversationName, conversationType, history, members, organizationId, filter],
+  );
+
+  const filterBar = useMemo(
+    () => (
+      <div className="sticky top-0 z-10 -mx-1 flex flex-wrap gap-1.5 bg-background/95 pb-3 pt-1.5 backdrop-blur-sm px-1.5">
+        {(["all", "errors", "files", "shell", "search"] as const).map((f) => (
+          <button
+            key={f}
+            onClick={() => setFilter(f)}
+            className={`rounded-full px-2.5 py-1 text-[10px] font-semibold capitalize transition ${
+              filter === f
+                ? "bg-violet-600 text-white shadow-sm dark:bg-violet-500"
+                : "bg-foreground/5 text-foreground/50 hover:bg-foreground/10 hover:text-foreground/70"
+            }`}
+          >
+            {f}
+          </button>
+        ))}
+      </div>
+    ),
+    [filter],
+  );
+
+  const scrollBottomButton = useMemo(
+    () =>
+      showScrollBottom ? (
+        <div className="sticky bottom-6 z-20 flex justify-center pointer-events-none">
+          <button
+            onClick={() => {
+              const container = getTraceScrollContainer(rootRef.current);
+              if (container) {
+                container.scrollTo({
+                  top: Math.max(0, container.scrollHeight - container.clientHeight),
+                  behavior: "smooth",
+                });
+              }
+            }}
+            className="pointer-events-auto flex items-center gap-1.5 rounded-full bg-violet-600 px-4 py-2 text-[10px] font-bold text-white shadow-xl shadow-violet-500/30 transition hover:scale-105 active:scale-95 animate-in fade-in slide-in-from-bottom-4 duration-300"
+          >
+            <ArrowDown className="h-3.5 w-3.5" />
+            Back to bottom
+          </button>
+        </div>
+      ) : null,
+    [showScrollBottom],
   );
 
   if (liveSteps.length > 0) {
     return (
-      <div ref={rootRef} className="space-y-0">
-        {renderedLiveSteps}
-        {error ? <p className="text-xs text-red-500">{error}</p> : null}
-        <div className="h-px w-full" aria-hidden />
+      <div className="flex flex-col gap-4">
+        {filterBar}
+        <div ref={rootRef} className="space-y-0">
+          {renderedLiveSteps}
+          {error ? <p className="text-xs text-red-500">{error}</p> : null}
+          <div className="h-px w-full" aria-hidden />
+        </div>
+        {scrollBottomButton}
       </div>
     );
   }
@@ -220,11 +312,17 @@ export function ReasoningTracePanel({
   }
 
   return (
-    <div ref={rootRef} className="space-y-3">
-      {renderedHistory}
-      {loadingMore ? <p className="px-1 text-[10px] text-foreground/40">Loading older traces...</p> : null}
-      {error ? <p className="px-1 text-xs text-red-500">{error}</p> : null}
-      <div className="h-px w-full" aria-hidden />
+    <div className="flex flex-col gap-4">
+      {filterBar}
+      <div ref={rootRef} className="space-y-3">
+        {renderedHistory}
+        {loadingMore ? (
+          <p className="px-1 text-[10px] text-foreground/40">Loading older traces...</p>
+        ) : null}
+        {error ? <p className="px-1 text-xs text-red-500">{error}</p> : null}
+        <div className="h-px w-full" aria-hidden />
+      </div>
+      {scrollBottomButton}
     </div>
   );
 }

@@ -68,6 +68,8 @@ export function ChatHeader({
                       ? "bg-emerald-500"
                       : status === "idle"
                         ? "bg-amber-500"
+                        : status === "error"
+                          ? "bg-red-500"
                         : "bg-zinc-300 dark:bg-zinc-700"
                   }`}
                 />
@@ -94,7 +96,8 @@ export function ChatHeader({
         )}
         {actions}
         {onToggleDetails && (
-          <button 
+          <button
+            type="button"
             onClick={onToggleDetails}
             className={`p-1.5 rounded-md transition-colors ${showDetails ? 'bg-zinc-100 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100' : 'text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300'}`}
           >

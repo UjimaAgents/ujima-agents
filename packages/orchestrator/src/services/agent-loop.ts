@@ -7,6 +7,11 @@ export interface AgentLoopStep {
   [key: string]: unknown;
 }
 
+export interface AgentLoopChunk {
+  kind: 'text' | 'reasoning';
+  delta: string;
+}
+
 export interface AgentLoopResult {
   text: string;
   steps: AgentLoopStep[];
@@ -25,9 +30,11 @@ export async function runAgentLoop(input: {
   temperature?: number;
   abortSignal?: AbortSignal;
   loadInterruptMessages?: (step: AgentLoopStep) => Promise<ModelMessage[]> | ModelMessage[];
+  onChunk?: (chunk: AgentLoopChunk) => PromiseLike<void> | void;
 }): Promise<AgentLoopResult> {
   const steps: AgentLoopStep[] = [];
   const messages = [...input.messages];
+  const onChunk = input.onChunk;
   const result = streamText({
     model: input.model,
     system: input.system,
@@ -37,6 +44,19 @@ export async function runAgentLoop(input: {
     ...(input.maxOutputTokens !== undefined ? { maxOutputTokens: input.maxOutputTokens } : {}),
     ...(input.temperature !== undefined ? { temperature: input.temperature } : {}),
     ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),
+    ...(onChunk
+      ? {
+          onChunk: async ({ chunk }) => {
+            if (chunk.type === 'text-delta') {
+              await onChunk({ kind: 'text', delta: chunk.text });
+              return;
+            }
+            if (chunk.type === 'reasoning-delta') {
+              await onChunk({ kind: 'reasoning', delta: chunk.text });
+            }
+          },
+        }
+      : {}),
     prepareStep: async ({ stepNumber, messages: nextMessages }) => {
       if (stepNumber === 0) return undefined;
       const previousStep = steps.at(-1);

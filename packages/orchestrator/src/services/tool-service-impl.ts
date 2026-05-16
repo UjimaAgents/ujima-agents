@@ -580,6 +580,38 @@ export class ToolServiceImpl implements ToolService {
         content: invocation.input?.content,
       })}`;
     }
+    if (invocation.toolId === "write") {
+      return `write:${JSON.stringify({
+        resourcePath: invocation.resourcePath,
+        content: invocation.input?.content,
+      })}`;
+    }
+    if (invocation.toolId === "edit") {
+      return `edit:${JSON.stringify({
+        resourcePath: invocation.resourcePath,
+        oldString: invocation.input?.oldString,
+        newString: invocation.input?.newString,
+        replaceAll: invocation.input?.replaceAll,
+      })}`;
+    }
+    if (invocation.toolId === "multiedit") {
+      return `multiedit:${JSON.stringify({
+        resourcePath: invocation.resourcePath,
+        edits: invocation.input?.edits,
+      })}`;
+    }
+    if (invocation.toolId === "download") {
+      return `download:${JSON.stringify({
+        resourcePath: invocation.resourcePath,
+        url: invocation.input?.url,
+        timeout: invocation.input?.timeout,
+      })}`;
+    }
+    if (invocation.toolId === "job_kill") {
+      return `job_kill:${JSON.stringify({
+        job_id: invocation.input?.job_id,
+      })}`;
+    }
     return `${invocation.toolId}:${invocation.action}:${invocation.resourcePath ?? ""}`;
   }
 
@@ -588,7 +620,17 @@ export class ToolServiceImpl implements ToolService {
     roleName: string,
     team: AgentTeamHandle,
   ): Promise<ToolInvocationInput> {
-    if (invocation.toolId !== "filesystem" && invocation.toolId !== "shell") {
+    if (
+      invocation.toolId !== "filesystem" &&
+      invocation.toolId !== "shell" &&
+      invocation.toolId !== "view" &&
+      invocation.toolId !== "write" &&
+      invocation.toolId !== "edit" &&
+      invocation.toolId !== "multiedit" &&
+      invocation.toolId !== "ls" &&
+      invocation.toolId !== "glob" &&
+      invocation.toolId !== "download"
+    ) {
       return invocation;
     }
 
@@ -600,7 +642,16 @@ export class ToolServiceImpl implements ToolService {
       roleName,
     );
 
-    if (invocation.toolId === "filesystem") {
+    if (
+      invocation.toolId === "filesystem" ||
+      invocation.toolId === "view" ||
+      invocation.toolId === "write" ||
+      invocation.toolId === "edit" ||
+      invocation.toolId === "multiedit" ||
+      invocation.toolId === "ls" ||
+      invocation.toolId === "glob" ||
+      invocation.toolId === "download"
+    ) {
       if (!invocation.resourcePath) {
         return invocation;
       }

@@ -5,14 +5,13 @@ import {
   ApprovalRequestSchema,
   MemberSchema,
   MessageSchema,
+  RunChunkEventSchema,
   RunStateSchema,
-  formatApprovalRelayMarkdown,
-  parseApprovalDisplayScopesFromReason,
-  parseApprovalReasonValue,
   type ActivityEvent,
   type ApprovalRequest,
   type Member,
   type Message,
+  type RunChunkEvent,
   type RunState,
 } from "@ujima/shared/browser";
 import { BootstrapResponseSchema, type BootstrapResponse } from "@ujima/api-schema";
@@ -25,6 +24,21 @@ import {
   type ConversationStreamEnvelope,
 } from "./conversation-transport";
 import { activityStateToStatus, conversationActivityState, presenceToActivityState, type ActivityState } from "./activity-state";
+import { pendingApprovalVisibleInChannelView } from "./approval-thread-filter";
+import { approvalToCard } from "./approval-card-data";
+import {
+  approvalToActivity,
+  memberAlertedToActivity,
+  memberAlertFailedToActivity,
+  memberToActivity,
+  messageToActivity,
+  presenceToActivity,
+  runChunkToActivity,
+  runToActivity,
+  toolToActivity,
+  type MemberAlertFailedPayload,
+  type MemberAlertedPayload,
+} from "./activity-events";
 import { formatTimestamp } from "./lib/format-timestamp";
 import { useWorkspaceStore } from "./workspace-store";
 
@@ -65,6 +79,7 @@ export function useConversationSync(
   const hydrateMessages = useWorkspaceStore((state) => state.hydrateMessages);
   const addPendingMessage = useWorkspaceStore((state) => state.addPendingMessage);
   const receiveMessage = useWorkspaceStore((state) => state.receiveMessage);
+  const appendStreamingMessage = useWorkspaceStore((state) => state.appendStreamingMessage);
   const removeMessage = useWorkspaceStore((state) => state.removeMessage);
   const upsertApproval = useWorkspaceStore((state) => state.upsertApproval);
   const upsertRun = useWorkspaceStore((state) => state.upsertRun);
@@ -73,10 +88,15 @@ export function useConversationSync(
   const setMemberActivity = useWorkspaceStore((state) => state.setMemberActivity);
   const [error, setError] = useState<{ conversationKey: string; message: string } | undefined>(undefined);
   const storeMembersRef = useRef(storeMembers);
+  const runChunkSequenceRef = useRef(0);
 
   useEffect(() => {
     storeMembersRef.current = storeMembers;
   }, [storeMembers]);
+
+  useEffect(() => {
+    runChunkSequenceRef.current = 0;
+  }, [conversationKey]);
 
   const loadConversationState = useCallback(
     async (signal: AbortSignal, currentConversationKey: string) => {
@@ -97,7 +117,6 @@ export function useConversationSync(
         shouldHydrateApproval(item, {
           conversation,
           currentThreadId: transport.threadId,
-          history,
           runs: activeRuns,
         }),
       )) {
@@ -171,6 +190,14 @@ export function useConversationSync(
         setLoading,
         setMemberActivity,
         storeMembers: storeMembersRef.current,
+        appendRunChunk: (chunk) =>
+          appendRunChunk({
+            chunk,
+            members: storeMembersRef.current,
+            appendActivity,
+            appendStreamingMessage,
+            sequence: runChunkSequenceRef.current++,
+          }),
         upsertApproval,
         upsertRun,
       });
@@ -188,6 +215,7 @@ export function useConversationSync(
     };
   }, [
     appendActivity,
+    appendStreamingMessage,
     appendMember,
     conversation,
     conversation.id,
@@ -441,44 +469,23 @@ function shouldHydrateApproval(
   input: {
     conversation: SelectedConversation;
     currentThreadId: string;
-    history: Message[];
     runs: RunState[];
   },
 ): boolean {
   if (approval.status !== "pending") return false;
-
-  if (approval.threadId && approval.threadId !== input.currentThreadId) {
-    return false;
-  }
-
-  if (approval.threadId === input.currentThreadId) {
-    if (input.conversation.type === "agent" && approval.requestedBy !== input.conversation.id) {
-      return false;
-    }
-    return true;
-  }
-
-  const run = approval.runId
-    ? input.runs.find((item) => item.id === approval.runId)
-    : undefined;
-
-  if (run?.threadId === input.currentThreadId) {
-    if (input.conversation.type === "agent" && approval.requestedBy !== input.conversation.id) {
-      return false;
-    }
-    return true;
-  }
-
-  if (input.conversation.type !== "agent" || approval.requestedBy !== input.conversation.id) {
-    return false;
-  }
-
-  const relayContent = buildApprovalRelayMessage(approval);
-  return input.history.some(
-    (message) =>
-      message.threadId === input.currentThreadId &&
-      message.senderId === approval.requestedBy &&
-      message.content === relayContent,
+  return pendingApprovalVisibleInChannelView(
+    {
+      id: approval.id,
+      status: approval.status,
+      requestedByMemberId: approval.requestedBy,
+      requestedBy: approval.requestedBy,
+      threadId: approval.threadId,
+      runId: approval.runId,
+      createdAt: approval.createdAt,
+    },
+    { type: input.conversation.type, id: input.conversation.id },
+    input.currentThreadId,
+    input.runs,
   );
 }
 
@@ -487,6 +494,7 @@ function handleStreamEvent(
   actions: {
     appendActivity(event: ActivityEvent): void;
     appendMember(member: Member): void;
+    appendRunChunk(chunk: RunChunkEvent): void;
     receiveMessage(
       tempId: string | undefined,
       message: Message,
@@ -550,6 +558,12 @@ function handleStreamEvent(
       }
       return;
     }
+    case "run:chunk": {
+      const chunk = parseRunChunkPayload(envelope.payload);
+      if (!chunk) return;
+      actions.appendRunChunk(chunk);
+      return;
+    }
     case "member.alerted": {
       const alerted = parseMemberAlertedPayload(envelope.payload);
       if (!alerted) return;
@@ -589,10 +603,6 @@ function handleStreamEvent(
   }
 }
 
-function buildApprovalRelayMessage(approval: ApprovalRequest): string {
-  return formatApprovalRelayMarkdown(approval);
-}
-
 function parseMessagePayload(payload: unknown): Message | null {
   const parsed = MessageSchema.safeParse((payload as { message?: unknown })?.message);
   return parsed.success ? parsed.data : null;
@@ -600,6 +610,11 @@ function parseMessagePayload(payload: unknown): Message | null {
 
 function parseApprovalPayload(payload: unknown): ApprovalRequest | null {
   const parsed = ApprovalRequestSchema.safeParse((payload as { approval?: unknown })?.approval);
+  return parsed.success ? parsed.data : null;
+}
+
+function parseRunChunkPayload(payload: unknown): RunChunkEvent | null {
+  const parsed = RunChunkEventSchema.safeParse(payload);
   return parsed.success ? parsed.data : null;
 }
 
@@ -617,30 +632,6 @@ function parsePresencePayload(payload: unknown): { memberId?: string; state?: st
   const body = payload as { memberId?: unknown; state?: unknown };
   if (typeof body.memberId !== "string" || typeof body.state !== "string") return null;
   return { memberId: body.memberId, state: body.state };
-}
-
-interface MemberAlertFailedPayload {
-  organizationId: string;
-  memberId: string;
-  channelId?: string;
-  threadId?: string;
-  messageId: string;
-  byMemberId: string;
-  reason: string;
-  stage: "supervisor_dispatch" | "run_create" | "run_failed";
-  runId?: string;
-  error: string;
-  occurredAt: string;
-}
-
-interface MemberAlertedPayload {
-  organizationId: string;
-  memberId: string;
-  channelId?: string;
-  threadId?: string;
-  messageId: string;
-  byMemberId: string;
-  reason: string;
 }
 
 function parseMemberAlertedPayload(payload: unknown): MemberAlertedPayload | null {
@@ -703,6 +694,8 @@ function messageToChatMessage(message: Message, members: Member[]): ChatMessageD
     id: message.id,
     senderId: message.senderId,
     parentMessageId: message.parentMessageId,
+    threadId: message.threadId,
+    channelId: message.channelId,
     role: message.kind === "system" ? "system" : sender?.roleName ?? message.senderKind,
     name: message.kind === "system" ? "System" : sender?.name ?? message.senderId,
     kind: message.kind,
@@ -722,6 +715,7 @@ function messageToChatMessage(message: Message, members: Member[]): ChatMessageD
     })) ?? [],
     toolCalls: message.toolCalls,
     pending: false,
+    ...(message.metadata?.runId ? { streamRunId: message.metadata.runId } : {}),
   };
 }
 
@@ -756,158 +750,31 @@ function resolveMentionNames(content: string, members: Member[]): string[] {
   return [...names];
 }
 
-function messageToActivity(message: Message): ActivityEvent {
-  return {
-    event_id: `message:${message.id}`,
-    type: message.channelId ? "channel_message" : "thread_message",
-    publisher: message.senderId,
-    timestamp: message.createdAt,
-    task_id: undefined,
-    session_id: undefined,
-    payload: {
-      messageId: message.id,
-      threadId: message.threadId,
-      channelId: message.channelId,
-      content: message.content,
-    },
-  };
-}
+function appendRunChunk(input: {
+  chunk: RunChunkEvent;
+  members: Member[];
+  sequence: number;
+  appendActivity(event: ActivityEvent): void;
+  appendStreamingMessage(message: ChatMessageData): void;
+}): void {
+  input.appendActivity(runChunkToActivity(input.chunk, input.sequence));
+  if (input.chunk.kind !== "text" || !input.chunk.delta) return;
 
-function approvalToCard(
-  approval: ApprovalRequest,
-  state: { members: Member[] },
-): ApprovalCardData {
-  const requestedBy =
-    state.members.find((member) => member.id === approval.requestedBy)?.name ?? approval.requestedBy;
-
-  const { shell: shellParsed, filesystem: fsParsed } = parseApprovalDisplayScopesFromReason(
-    approval.reason,
-  );
-  const note = parseApprovalReasonValue(approval.reason, "note");
-  let title =
-    approval.status === "pending" ? "Approve command" : `Approval ${approval.status}`;
-  let description = `${approval.action} · \`${approval.resourcePath}\``;
-  let commandPreview: string | undefined;
-  let shellScope: ApprovalCardData["shellScope"];
-  let filesystemScope: ApprovalCardData["filesystemScope"];
-
-  if (shellParsed) {
-    title = approval.status === "pending" ? "Approve command" : title;
-    description = note ?? "";
-    commandPreview = undefined;
-    shellScope = shellParsed;
-  } else if (fsParsed) {
-    title =
-      approval.status === "pending"
-        ? fsParsed.action === "read"
-          ? "Approve read"
-          : "Approve write"
-        : title;
-    description = note ?? "";
-    commandPreview = undefined;
-    filesystemScope = fsParsed;
-  }
-
-  return {
-    id: approval.id,
-    runId: approval.runId,
-    threadId: approval.threadId,
-    requestedByMemberId: approval.requestedBy,
-    title,
-    description,
-    commandPreview,
-    shellScope,
-    filesystemScope,
-    status: approval.status,
-    requestedBy,
-    createdAt: approval.createdAt,
-    approvalsNeeded: 1,
-  };
-}
-
-function approvalToActivity(approval: ApprovalRequest): ActivityEvent {
-  return {
-    event_id: `approval:${approval.id}:${approval.status}:${approval.resolvedAt ?? approval.createdAt}`,
-    type: approval.status === "pending" ? "approval_requested" : `approval_${approval.status}`,
-    publisher: approval.requestedBy,
-    timestamp: approval.resolvedAt ?? approval.createdAt,
-    task_id: approval.runId,
-    payload: approval,
-  };
-}
-
-function runToActivity(run: RunState): ActivityEvent {
-  return {
-    event_id: `run:${run.id}:${run.status}:${run.step}:${run.endedAt ?? run.startedAt}`,
-    type: `run_${run.status}`,
-    publisher: run.agentId,
-    timestamp: run.endedAt ?? run.startedAt,
-    task_id: run.id,
-    payload: run,
-  };
-}
-
-function toolToActivity(
-  event: "tool:called" | "tool:result",
-  payload: unknown,
-): ActivityEvent {
-  const body = payload as {
-    runId?: string;
-    agentId?: string;
-    toolCall?: { toolCallId?: string };
-    toolResult?: { toolCallId?: string };
-  };
-  const toolCallId = body.toolCall?.toolCallId ?? body.toolResult?.toolCallId ?? "unknown";
-  return {
-    event_id: `tool:${event}:${String(body.runId ?? "unknown")}:${toolCallId}`,
-    type: event === "tool:called" ? "tool_called" : "tool_result",
-    publisher: String(body.agentId ?? "unknown"),
-    timestamp: new Date().toISOString(),
-    task_id: body.runId,
-    payload,
-  };
-}
-
-function presenceToActivity(payload: unknown): ActivityEvent {
-  const body = payload as { memberId?: string; state?: string };
-  return {
-    event_id: `presence:${String(body.memberId ?? "unknown")}:${String(body.state ?? "unknown")}:${Date.now()}`,
-    type: "channel_presence",
-    publisher: String(body.memberId ?? "unknown"),
-    timestamp: new Date().toISOString(),
-    payload,
-  };
-}
-
-function memberToActivity(member: Member): ActivityEvent {
-  return {
-    event_id: `member:${member.id}:${member.presence ?? "unknown"}:${member.createdAt ?? Date.now()}`,
-    type: "member_updated",
-    publisher: member.id,
-    timestamp: member.createdAt ?? new Date().toISOString(),
-    payload: member,
-  };
-}
-
-function memberAlertedToActivity(payload: MemberAlertedPayload): ActivityEvent {
-  return {
-    event_id: `member-alerted:${payload.memberId}:${payload.messageId}:${payload.reason}`,
-    type: "member_alerted",
-    publisher: payload.memberId,
-    timestamp: new Date().toISOString(),
-    payload,
-  };
-}
-
-function memberAlertFailedToActivity(payload: MemberAlertFailedPayload): ActivityEvent {
-  return {
-    event_id: `member-alert-failed:${payload.memberId}:${payload.messageId}:${payload.stage}:${payload.occurredAt}`,
-    type: "member_alert_failed",
-    publisher: payload.memberId,
-    timestamp: payload.occurredAt,
-    task_id: payload.runId,
-    payload,
-  };
+  const sender = input.members.find((member) => member.id === input.chunk.agentId);
+  const createdAt = new Date().toISOString();
+  input.appendStreamingMessage({
+    id: `run-stream:${input.chunk.runId}`,
+    streamRunId: input.chunk.runId,
+    senderId: input.chunk.agentId,
+    threadId: input.chunk.threadId,
+    role: sender?.roleName ?? "agent",
+    name: sender?.name ?? input.chunk.agentId,
+    kind: "agent",
+    time: formatTime(createdAt),
+    content: input.chunk.delta,
+    createdAt,
+    pending: false,
+  });
 }
 
 function formatTime(iso: string): string {

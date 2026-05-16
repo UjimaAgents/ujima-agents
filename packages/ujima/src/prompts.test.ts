@@ -56,6 +56,7 @@ describe('buildAgentSystemPrompt', () => {
     expect(system).toContain('- frontend');
     expect(system).not.toContain('apps/frontend');
     expect(system).toContain('Use these names first when choosing a shell cwd or repo path.');
+    expect(system).toContain('Use grep, ls, and glob to find files and lines first.');
     expect(system).toContain('Background shell commands return a job id');
     expect(system).toContain('Allowed scopes: frontend');
     expect(system).toContain('For DM chats, use the other person\'s member id as the conversation reference.');

@@ -5,6 +5,7 @@ export * from "./messages.js";
 export {
   EMPTY_ACTIVITY_FILTER,
   appendEvents,
+  compareActivityEvents,
   filterActivity,
   uniqueAgents,
   uniqueTypes,

@@ -28,6 +28,7 @@ export interface ApprovalCardData {
   createdAt?: string;
   approvalsNeeded: number;
   reviewers?: { color: string }[];
+  error?: string;
 }
 
 /** Indent to align with body text past the shield icon (w-8 + gap-3). */
@@ -106,7 +107,10 @@ export function ApprovalCard({
   }
 
   return (
-    <div className="rounded-xl border border-zinc-200 bg-zinc-50/90 px-4 py-3 shadow-sm backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/60">
+    <div
+      key={data.id}
+      className="animate-approval-in rounded-xl border border-zinc-200 bg-zinc-50/90 px-4 py-3 shadow-sm backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/60"
+    >
       <div className="flex gap-3">
         <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-violet-200 bg-violet-50 dark:border-violet-500/20 dark:bg-violet-500/10">
           <ShieldAlert className="h-4 w-4 text-violet-600 dark:text-violet-300" />
@@ -130,6 +134,9 @@ export function ApprovalCard({
               content={data.description}
               className="mt-0.5 block text-[10px] text-zinc-500 dark:text-zinc-400"
             />
+          ) : null}
+          {data.error ? (
+            <p className="mt-1 text-[10px] font-medium text-red-600 dark:text-red-300">{data.error}</p>
           ) : null}
           {data.shellScope ? (
             <TerminalPane

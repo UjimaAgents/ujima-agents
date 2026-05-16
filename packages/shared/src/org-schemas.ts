@@ -216,6 +216,8 @@ export type MessageAttachment = z.infer<typeof MessageAttachmentSchema>;
 
 export const MessageMetadataSchema = z.object({
   goalMode: z.boolean().optional(),
+  /** Correlates persisted agent replies with in-flight `run:chunk` streaming bubbles. */
+  runId: IdSchema.optional(),
 }).optional();
 export type MessageMetadata = z.infer<typeof MessageMetadataSchema>;
 
