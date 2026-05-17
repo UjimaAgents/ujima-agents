@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { ActivityEvent, RunState } from "@ujima/shared/browser";
-import { buildReasoningTraceSteps } from "./reasoning-trace";
+import type { ActivityEvent, Message, RunState } from "@ujima/shared/browser";
+import { buildHistoricalTraceSteps, buildReasoningTraceSteps } from "./reasoning-trace";
 
 describe("reasoning-trace ordering", () => {
   it("keeps reasoning chunks, tool calls, tool results, and text in arrival order", () => {
@@ -186,5 +186,53 @@ describe("reasoning-trace ordering", () => {
     });
 
     expect(steps[0]?.terminal?.output).toBe("one passing test");
+  });
+
+  it("rebuilds persisted reasoning and text as separate historical trace rows", () => {
+    const organizationId = "org-1";
+    const threadId = "thread-1";
+    const agentId = "agent-1";
+    const run: RunState = {
+      id: "run-1",
+      organizationId,
+      agentId,
+      threadId,
+      status: "completed",
+      step: "completed",
+      summary: "done",
+      startedAt: "2026-05-04T19:07:00.000Z",
+      endedAt: "2026-05-04T19:07:02.000Z",
+    };
+    const message: Message = {
+      id: "msg-1",
+      organizationId,
+      threadId,
+      senderId: agentId,
+      senderKind: "agent",
+      kind: "agent",
+      content: "Final answer.",
+      reasoningContent: "Private reasoning.",
+      mentions: [],
+      toolCalls: [],
+      attachments: [],
+      metadata: { runId: run.id },
+      createdAt: "2026-05-04T19:07:02.000Z",
+    };
+
+    const steps = buildHistoricalTraceSteps({
+      conversationName: "Agent",
+      conversationType: "agent",
+      members: [{ id: agentId, name: "Agent", kind: "agent" }],
+      run,
+      steps: [],
+      message,
+      organizationId,
+    });
+
+    expect(steps.map((step) => [step.title, step.detail])).toEqual([
+      ["Run · Completed", ""],
+      ["Agent · reasoning", "Private reasoning."],
+      ["Agent · text", "Final answer."],
+    ]);
   });
 });

@@ -1,5 +1,5 @@
-import { memo, useCallback, useRef, useState, forwardRef, type MouseEvent, type ReactNode, type UIEventHandler } from "react";
-import { CheckCircle2, Loader2, Sparkles } from "lucide-react";
+import { memo, useCallback, useEffect, useRef, useState, forwardRef, type MouseEvent, type ReactNode, type UIEventHandler } from "react";
+import { CheckCircle2, ChevronDown, Copy, Loader2, Maximize2, Sparkles } from "lucide-react";
 import { type AttachmentCategory } from "@ujima/shared/browser";
 import { Avatar, TagBadge, type TagVariant } from "./primitives";
 import { MessageActions } from "../message-actions";
@@ -7,6 +7,7 @@ import { Markdown, MarkdownInline } from "../markdown";
 import { AttachmentGrid } from "./attachment-grid";
 import { TerminalPane } from "./terminal-pane";
 import { FilesystemToolPane } from "./filesystem-tool-pane";
+import { Modal } from "../modal";
 
 const CONVERSATION_ARCHIVE_MARKER = "[[CONVERSATION_ARCHIVE_V1]]";
 const CONVERSATION_SUMMARY_MARKER = "[[CONVERSATION_SUMMARY_V1]]";
@@ -158,11 +159,13 @@ export const ChatMessage = memo(function ChatMessage({
                   body={approvalFsTerminal.body}
                 />
               ) : systemBodyMarkdown !== null ? (
-                <Markdown
-                  content={systemBodyMarkdown}
-                  mentionNames={message.mentionNames}
-                  className="mt-1 text-sm"
-                />
+                <div className={goalArtifact ? "mt-3" : "mt-1"}>
+                  <Markdown
+                    content={systemBodyMarkdown}
+                    mentionNames={message.mentionNames}
+                    className="text-sm"
+                  />
+                </div>
               ) : null}
             </div>
           </>
@@ -191,10 +194,12 @@ export const ChatMessage = memo(function ChatMessage({
                 </div>
               )}
               {goalArtifact ? <GoalArtifactPreview artifact={goalArtifact} /> : null}
-              <Markdown
-                content={message.content}
-                mentionNames={message.mentionNames}
-              />
+              <div className={goalArtifact ? "mt-3" : "mt-1"}>
+                <Markdown
+                  content={message.content}
+                  mentionNames={message.mentionNames}
+                />
+              </div>
               <AttachmentGrid
                 attachments={message.attachments}
                 organizationId={organizationId ?? ""}
@@ -301,13 +306,21 @@ function parseRelayFilesystemBody(
   return { action, resourcePath, meta, body: patchBody };
 }
 
-type GoalArtifactView = {
+interface GoalArtifactView {
   goalName: string;
   goalFilePath: string;
   content: string;
   artifactFormat: "html" | "markdown";
   status: string;
-};
+}
+
+function formatGoalStatus(status: string): string {
+  return status
+    .trim()
+    .toLowerCase()
+    .replaceAll("_", " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
 
 export function getGoalArtifactCard(toolCalls?: ChatMessageData["toolCalls"]): GoalArtifactView | null {
   const card = toolCalls?.find((entry) => entry.toolName === "card.goal.file");
@@ -331,34 +344,161 @@ export function getGoalArtifactCard(toolCalls?: ChatMessageData["toolCalls"]): G
 }
 
 function GoalArtifactPreview({ artifact }: { artifact: GoalArtifactView }) {
+  const [isExpanded, setIsExpanded] = useState(false);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [iframeHeight, setIframeHeight] = useState(540);
+  const [copied, setCopied] = useState(false);
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const copiedTimerRef = useRef<number | null>(null);
+  const isHtml = artifact.artifactFormat === "html";
+
+  const measureIframeHeight = useCallback(() => {
+    const iframe = iframeRef.current;
+    if (!iframe) return;
+    try {
+      const doc = iframe.contentDocument;
+      const nextHeight = Math.max(
+        doc?.documentElement?.scrollHeight ?? 0,
+        doc?.body?.scrollHeight ?? 0,
+        540,
+      );
+      setIframeHeight(nextHeight);
+    } catch {
+      setIframeHeight(540);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!isHtml) return;
+    measureIframeHeight();
+  }, [artifact.content, isHtml, measureIframeHeight]);
+
+  const copyArtifact = useCallback(() => {
+    navigator.clipboard.writeText(artifact.content).then(() => {
+      setCopied(true);
+      if (copiedTimerRef.current !== null) window.clearTimeout(copiedTimerRef.current);
+      copiedTimerRef.current = window.setTimeout(() => {
+        setCopied(false);
+        copiedTimerRef.current = null;
+      }, 1400);
+    }).catch(() => undefined);
+  }, [artifact.content]);
+
+  useEffect(() => {
+    return () => {
+      if (copiedTimerRef.current !== null) window.clearTimeout(copiedTimerRef.current);
+    };
+  }, []);
+
   return (
-    <div className="mt-3 overflow-hidden rounded-xl bg-zinc-50/70 shadow-sm ring-1 ring-zinc-200/50 dark:bg-zinc-900/30 dark:ring-zinc-800/60">
-      <div className="flex items-center justify-between gap-3 px-3 py-2">
-        <div className="min-w-0">
-          <p className="truncate text-[10px] font-semibold uppercase tracking-[0.18em] text-zinc-500 dark:text-zinc-400">
-            Goal file
-          </p>
-          <p className="truncate text-[11px] text-zinc-400 dark:text-zinc-500">
-            {artifact.goalFilePath}
-          </p>
+    <>
+      <div className="mt-3 overflow-hidden rounded-xl bg-zinc-50/70 shadow-sm ring-1 ring-zinc-200/50 dark:bg-zinc-900/30 dark:ring-zinc-800/60">
+        <div className="flex items-center justify-between gap-3 border-b border-zinc-200/60 px-3 py-2 dark:border-zinc-800/60">
+          <div className="min-w-0">
+            <p className="truncate text-[11px] leading-none text-zinc-400 dark:text-zinc-500">
+              {artifact.goalFilePath}
+            </p>
+          </div>
+          <div className="flex shrink-0 items-center gap-1">
+            <span className="rounded-full bg-violet-100/80 px-2 py-0.5 text-[10px] font-semibold text-violet-700 dark:bg-violet-500/10 dark:text-violet-300">
+              {formatGoalStatus(artifact.status)}
+            </span>
+            <button
+              type="button"
+              onClick={copyArtifact}
+              className={`inline-flex h-8 w-8 items-center justify-center rounded-full transition ${
+                copied
+                  ? "bg-emerald-500/10 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-400"
+                  : "text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+              }`}
+              title="Copy artifact"
+              aria-label="Copy artifact"
+            >
+              {copied ? <CheckCircle2 className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsModalOpen(true)}
+              className="inline-flex h-8 w-8 items-center justify-center rounded-full text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-900 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+              title="Open in modal"
+              aria-label="Open in modal"
+            >
+              <Maximize2 className="h-3.5 w-3.5" />
+            </button>
+          </div>
         </div>
-        <span className="rounded-full bg-violet-100/80 px-2 py-0.5 text-[10px] font-semibold text-violet-700 dark:bg-violet-500/10 dark:text-violet-300">
-          {artifact.status}
-        </span>
+        <div className="relative">
+          {isHtml ? (
+            <iframe
+              ref={iframeRef}
+              title={artifact.goalName}
+              sandbox=""
+              srcDoc={artifact.content}
+              onLoad={measureIframeHeight}
+              className={`w-full border-0 bg-transparent ${isExpanded ? "" : "pointer-events-none"}`}
+              style={{ height: isExpanded ? iframeHeight : 540 }}
+            />
+          ) : (
+            <div className={isExpanded ? "" : "max-h-[540px] overflow-hidden"}>
+              <div className="px-4 py-3">
+                <Markdown content={artifact.content} />
+              </div>
+            </div>
+          )}
+          {!isExpanded ? (
+            <>
+              <div className="pointer-events-none absolute inset-x-0 bottom-0 h-28 bg-gradient-to-t from-zinc-50 via-zinc-50/80 to-transparent dark:from-zinc-900 dark:via-zinc-900/80" />
+              <div className="absolute inset-x-0 bottom-3 z-20 flex justify-center">
+                <button
+                  type="button"
+                  onClick={() => setIsExpanded(true)}
+                  className="pointer-events-auto inline-flex items-center gap-1.5 rounded-full border border-white/15 bg-zinc-950/90 px-3 py-1.5 text-[10px] font-semibold text-white shadow-lg shadow-black/20 backdrop-blur-md transition hover:bg-zinc-900 focus:outline-none focus:ring-2 focus:ring-violet-400/70 dark:border-white/10 dark:bg-zinc-950/90 dark:text-white"
+                >
+                  See more
+                  <ChevronDown className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </>
+          ) : null}
+        </div>
       </div>
-      {artifact.artifactFormat === "html" ? (
-        <iframe
-          title={artifact.goalName}
-          sandbox=""
-          srcDoc={artifact.content}
-          className="h-[540px] w-full border-0 bg-transparent"
-        />
-      ) : (
-        <div className="max-h-[540px] overflow-auto px-4 py-3">
-          <Markdown content={artifact.content} />
+      <Modal
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        title={artifact.goalName}
+        contentClassName="max-w-6xl"
+      >
+        <div className="space-y-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="truncate text-sm text-zinc-500 dark:text-zinc-400">
+                {artifact.goalFilePath}
+              </p>
+            </div>
+            <span className="rounded-full bg-violet-100/80 px-2 py-0.5 text-[10px] font-semibold text-violet-700 dark:bg-violet-500/10 dark:text-violet-300">
+              {formatGoalStatus(artifact.status)}
+            </span>
+          </div>
+          <div className="overflow-hidden rounded-xl ring-1 ring-zinc-200/60 dark:ring-zinc-800/70">
+            {isHtml ? (
+              <div className="max-h-[calc(100vh-12rem)] overflow-auto">
+                <iframe
+                  title={artifact.goalName}
+                  sandbox=""
+                  srcDoc={artifact.content}
+                  className="w-full border-0 bg-white dark:bg-zinc-950"
+                  style={{ height: iframeHeight }}
+                />
+              </div>
+            ) : (
+              <div className="max-h-[calc(100vh-12rem)] overflow-auto px-4 py-3">
+                <Markdown content={artifact.content} />
+              </div>
+            )}
+          </div>
         </div>
-      )}
-    </div>
+      </Modal>
+    </>
   );
 }
 

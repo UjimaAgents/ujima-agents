@@ -9,9 +9,10 @@ interface ModalProps {
   onClose: () => void;
   title: string;
   children: React.ReactNode;
+  contentClassName?: string;
 }
 
-export function Modal({ isOpen, onClose, title, children }: ModalProps) {
+export function Modal({ isOpen, onClose, title, children, contentClassName = "" }: ModalProps) {
   useEffect(() => {
     if (!isOpen) return;
     const previousOverflow = document.body.style.overflow;
@@ -37,7 +38,7 @@ export function Modal({ isOpen, onClose, title, children }: ModalProps) {
       />
       
       {/* Modal Content */}
-      <div className="relative my-auto flex max-h-[calc(100vh-3rem)] w-full max-w-md transform flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white p-6 shadow-2xl transition-all animate-in zoom-in-95 duration-300 dark:border-zinc-800 dark:bg-[#09090b]">
+      <div className={`relative my-auto flex max-h-[calc(100vh-3rem)] w-full transform flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white p-6 shadow-2xl transition-all animate-in zoom-in-95 duration-300 dark:border-zinc-800 dark:bg-[#09090b] ${contentClassName || "max-w-md"}`}>
         {/* Glow effect */}
         <div className="absolute -top-24 -left-24 h-48 w-48 rounded-full bg-violet-500/10 blur-[80px]" />
         

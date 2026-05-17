@@ -33,10 +33,6 @@ export async function GET(request: Request) {
     );
     const body = await response.json().catch(() => null);
 
-    if (response.status === 404) {
-      return NextResponse.json({ data: [], hasMore: false, nextCursor: undefined }, { status: 200 });
-    }
-
     if (!response.ok) {
       return NextResponse.json(
         parseApiError(body, "Unable to load conversation history right now."),

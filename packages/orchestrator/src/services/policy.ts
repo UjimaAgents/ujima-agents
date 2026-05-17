@@ -1,5 +1,5 @@
 import { existsSync, realpathSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { join, resolve, sep } from 'node:path';
 import type { AgentTeamHandle } from '@ujima/framework';
 import type { ToolAction, SpiritRole } from '@ujima/shared';
 import { isSensitiveWorkspacePath } from '@ujima/shared/workspace-file-filters';
@@ -94,6 +94,13 @@ export function checkToolPolicy(
       };
     }
 
+    if (
+      (action === 'write' || toolId === 'edit' || toolId === 'multiedit') &&
+      isGoalArtifactPath(team.workspace.root, resourcePath)
+    ) {
+      return { allowed: true, requiresApproval: false };
+    }
+
     if (!role.workspaceScopes.some((scope) => pathWithinScope(team.workspace.root, scope, resourcePath))) {
       return {
         allowed: false,
@@ -126,4 +133,10 @@ function pathWithinScope(workspaceRoot: string, scope: string, resourcePath: str
 function canonicalizeForComparison(path: string, workspaceRoot: string): string {
   const resolved = resolve(workspaceRoot, path);
   return existsSync(resolved) ? realpathSync(resolved) : resolved;
+}
+
+function isGoalArtifactPath(workspaceRoot: string, resourcePath: string): boolean {
+  const candidate = canonicalizeForComparison(resourcePath, workspaceRoot);
+  const goalRoot = canonicalizeForComparison(join(workspaceRoot, '.ujima-goals'), workspaceRoot);
+  return candidate === goalRoot || candidate.startsWith(`${goalRoot}${sep}`);
 }

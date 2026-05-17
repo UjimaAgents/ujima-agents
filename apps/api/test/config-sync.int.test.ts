@@ -8,8 +8,8 @@ import { OrganizationSchema } from '@ujima/shared';
 import {
   ConversationService,
   ConfigSyncService,
-  RunService,
   SettingsService,
+  SpiritService,
   TaskPromoterService,
   createTeamStore,
 } from '@ujima/orchestrator';
@@ -531,13 +531,15 @@ describe('team config reconcile', () => {
     const syncService = new ConfigSyncService(repo, teamStore);
     const realtime = createNoopRealtime();
     const conversations = new ConversationService(repo, realtime);
-    const runs = new RunService(
+    const runs = new SpiritService(
       teamStore,
       repo,
       realtime,
-      conversations,
-      { generateRunReply: async () => ({ text: '', toolResults: [] }) } as never,
       { allowRun: () => undefined, invoke: async () => ({ ok: true }) } as never,
+      {
+        conversations,
+        ai: { generateRunReply: async () => ({ text: '', toolResults: [], steps: [] }) } as never,
+      },
     );
     const promoter = new TaskPromoterService(repo, runs);
     const dir = await mkdtemp(join(tmpdir(), 'ujima-config-sync-'));

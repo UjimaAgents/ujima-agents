@@ -14,7 +14,7 @@
     "dev": "turbo run dev --concurrency=100",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
-    "test": "vitest run",
+    "test": "vitest run --minWorkers=1 --maxWorkers=4",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "verify": "bun run lint && bun run typecheck && bun run test",
