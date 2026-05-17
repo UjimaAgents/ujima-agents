@@ -172,7 +172,7 @@ async function cmdStart(argv: string[]): Promise<void> {
     },
   });
 
-  return new Promise<void>((_, reject) => {
+  return new Promise<void>((_, _reject) => {
     child.on('error', (err) => {
       process.stderr.write(`ujima start error: ${err.message}\n`);
       process.exit(1);
