@@ -1,7 +1,8 @@
 #!/usr/bin/env node
-import { readFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { readFileSync, existsSync } from 'node:fs';
+import { join, resolve, dirname } from 'node:path';
 import { homedir } from 'node:os';
+import { spawn } from 'node:child_process';
 import { maybeLoadTeam } from '@ujima/runtime-core';
 import { DEFAULT_BIND_HOST, DEFAULT_BIND_PORT } from '@ujima/api-schema';
 
@@ -127,12 +128,74 @@ async function cmdInit(argv: string[]): Promise<void> {
   process.stdout.write(`${text}\n`);
 }
 
+function findWorkspaceRoot(startDir = process.cwd()): string | null {
+  let dir = startDir;
+  while (true) {
+    const pkgPath = join(dir, 'package.json');
+    if (existsSync(pkgPath)) {
+      try {
+        const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
+        if (pkg.name === 'ujima-agents') {
+          return dir;
+        }
+      } catch {
+        // ignore JSON parsing errors for malformed files
+      }
+    }
+    const configPath = join(dir, 'ujima.config.ts');
+    if (existsSync(configPath)) {
+      return dir;
+    }
+    const parent = dirname(dir);
+    if (parent === dir) {
+      break;
+    }
+    dir = parent;
+  }
+  return null;
+}
+
+async function cmdStart(argv: string[]): Promise<void> {
+  const root = findWorkspaceRoot();
+  if (!root) {
+    process.stderr.write('ujima start: Could not find workspace root (looking for package.json with name "ujima-agents" or ujima.config.ts)\n');
+    process.exit(1);
+  }
+
+  process.stdout.write(`ujima start: Found workspace root at ${root}\nStarting stack with 'bun run dev'...\n\n`);
+
+  const child = spawn('bun', ['run', 'dev', ...argv], {
+    cwd: root,
+    stdio: 'inherit',
+    env: {
+      ...process.env,
+    },
+  });
+
+  return new Promise<void>((_, reject) => {
+    child.on('error', (err) => {
+      process.stderr.write(`ujima start error: ${err.message}\n`);
+      process.exit(1);
+    });
+
+    child.on('exit', (code, signal) => {
+      if (signal) {
+        process.stdout.write(`\nujima start process terminated by signal ${signal}\n`);
+        process.exit(128 + (typeof signal === 'number' ? signal : 0));
+      } else {
+        process.exit(code ?? 0);
+      }
+    });
+  });
+}
+
 function printUsage(): void {
   process.stdout.write(
     [
       'Usage: ujima <command> [options]',
       '',
       'Commands:',
+      '  start  Start the development stack (runs bun dev)',
       '  init   Run first-run onboarding against a running daemon',
       '',
       'init options:',
@@ -159,6 +222,9 @@ async function main(): Promise<void> {
     return;
   }
   switch (command) {
+    case 'start':
+      await cmdStart(rest);
+      return;
     case 'init':
       await cmdInit(rest);
       return;

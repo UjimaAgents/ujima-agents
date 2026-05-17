@@ -441,6 +441,10 @@ async function loadHistory(
     });
     const body = await response.json().catch(() => null);
 
+    if (response.status === 404) {
+      return messages;
+    }
+
     if (!response.ok) {
       const message =
         body && typeof body === "object" && "message" in body && typeof body.message === "string"

@@ -481,13 +481,15 @@ function GoalArtifactPreview({ artifact }: { artifact: GoalArtifactView }) {
           </div>
           <div className="overflow-hidden rounded-xl ring-1 ring-zinc-200/60 dark:ring-zinc-800/70">
             {isHtml ? (
-              <iframe
-                title={artifact.goalName}
-                sandbox=""
-                srcDoc={artifact.content}
-                className="w-full border-0 bg-white dark:bg-zinc-950"
-                style={{ height: iframeHeight }}
-              />
+              <div className="max-h-[calc(100vh-12rem)] overflow-auto">
+                <iframe
+                  title={artifact.goalName}
+                  sandbox=""
+                  srcDoc={artifact.content}
+                  className="w-full border-0 bg-white dark:bg-zinc-950"
+                  style={{ height: iframeHeight }}
+                />
+              </div>
             ) : (
               <div className="max-h-[calc(100vh-12rem)] overflow-auto px-4 py-3">
                 <Markdown content={artifact.content} />

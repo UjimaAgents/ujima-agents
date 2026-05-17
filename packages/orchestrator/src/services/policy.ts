@@ -94,7 +94,10 @@ export function checkToolPolicy(
       };
     }
 
-    if (action === 'write' && isGoalArtifactPath(team.workspace.root, resourcePath)) {
+    if (
+      (action === 'write' || toolId === 'edit' || toolId === 'multiedit') &&
+      isGoalArtifactPath(team.workspace.root, resourcePath)
+    ) {
       return { allowed: true, requiresApproval: false };
     }
 
