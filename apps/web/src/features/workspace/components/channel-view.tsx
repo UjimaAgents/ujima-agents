@@ -16,8 +16,6 @@ import {
   DetailsSidebar,
   ChatMessage,
   ApprovalCard,
-  GoalHUD,
-  getGoalArtifactCard,
   type ChatTab,
   type ChatMessageData,
 } from "./chat";
@@ -180,6 +178,7 @@ export function ChannelView({
   const tabs = isAgent ? AGENT_TABS : CHANNEL_TABS;
   const tabIds = useMemo(() => new Set(tabs.map((tab) => tab.id)), [tabs]);
   const conversationColorIndex = Math.max(memberIndexById.get(conversation.id) ?? 0, 0);
+  // eslint-disable-next-line react-hooks/incompatible-library
   const messageVirtualizer = useVirtualizer({
     count: feed.messages.length,
     getScrollElement: () => listRef.current,
@@ -197,15 +196,6 @@ export function ChannelView({
   }, [currentThreadId, feed.runs]);
   const typingRuns = activeTab === "conversation" ? liveThreadRuns : EMPTY_RUNS;
   const taskRuns = activeTab === "tasks" ? liveThreadRuns : EMPTY_RUNS;
-  const activeGoalSource = activeTab === "conversation" ? feed.messages : null;
-  const activeGoal = useMemo(() => {
-    if (!activeGoalSource) return null;
-    for (let index = activeGoalSource.length - 1; index >= 0; index -= 1) {
-      const goal = getGoalArtifactCard(activeGoalSource[index]?.toolCalls);
-      if (goal) return goal;
-    }
-    return null;
-  }, [activeGoalSource]);
   const activeStep = useMemo(() => {
     const running = typingRuns.find((r) => r.status === "running");
     const s = running?.step;
@@ -466,13 +456,6 @@ export function ChannelView({
         />
         {activeTab === "conversation" ? (
           <div className="relative flex flex-1 min-h-0 flex-col">
-            {activeGoal && (
-              <GoalHUD
-                goalName={activeGoal.goalName}
-                goalFilePath={activeGoal.goalFilePath}
-                status={activeGoal.status}
-              />
-            )}
             <ChatMessageList ref={listRef} onScroll={handleScroll}>
             {feed.loading && feed.messages.length === 0 ? (
               <ConversationSkeleton />

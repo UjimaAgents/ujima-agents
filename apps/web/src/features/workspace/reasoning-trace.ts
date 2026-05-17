@@ -624,50 +624,11 @@ function deriveToolLine(
   };
 }
 
-/** Normalize for comparing human-written step text to status labels. */
-function normalizeRunDetailLabel(text: string): string {
-  return text.trim().toLowerCase().replace(/\s+/g, " ");
-}
-
-/** True when step/summary only repeats the same status already shown in the title ("Run · Queued"). */
-function runDetailOnlyEchoesStatus(status: RunState["status"], operational: string): boolean {
-  const t = normalizeRunDetailLabel(operational);
-  if (!t) return true;
-  const variants = new Set<string>([
-    normalizeRunDetailLabel(status),
-    normalizeRunDetailLabel(status.replace(/_/g, " ")),
-  ]);
-  const mapped = RUN_STATUS_LABELS[status];
-  if (mapped) variants.add(normalizeRunDetailLabel(mapped));
-  return variants.has(t);
-}
-
-/** Completed runs often duplicate the agent message in `run.summary`; omit detail in the trace. */
-function runDetailForTrace(run: RunState): string {
-  if (run.status === "completed") {
-    return "";
-  }
-  if (run.status === "failed" || run.status === "cancelled") {
-    const text = run.summary?.trim() || run.step?.trim();
-    return text ? truncatePreview(text, 220) : `Run ${run.id.slice(0, 8)}…`;
-  }
-
-  const operational = run.step?.trim() || run.summary?.trim();
-  if (!operational) {
-    return "";
-  }
-  if (runDetailOnlyEchoesStatus(run.status, operational)) {
-    return "";
-  }
-  return operational.length <= 160 ? operational : truncatePreview(operational, 160);
-}
-
 function runEventToStep(
   event: ActivityEvent,
   run: RunState,
 ): TraceStepData {
   const label = RUN_STATUS_LABELS[run.status] ?? run.status;
-  const detail = runDetailForTrace(run);
   const status: TraceStepData["status"] =
     run.status === "failed" || run.status === "cancelled"
       ? "failed"
@@ -677,7 +638,7 @@ function runEventToStep(
   return {
     id: event.event_id,
     title: `Run · ${label}`,
-    detail,
+    detail: "",
     time: formatTimestamp(event.timestamp),
     duration: "—",
     status,
@@ -1203,23 +1164,42 @@ export function buildHistoricalTraceSteps(input: HistoricalTraceInput): TraceSte
   ];
 
   if (input.message) {
-    steps.push(
-      messageEventToStep(context, {
-        event_id: `message:${input.message.id}`,
-        type: input.conversationType === "channel" ? "channel_message" : "thread_message",
-        publisher: input.message.senderId,
-        timestamp: input.message.createdAt,
-        payload: {
-          threadId: input.message.threadId,
-          channelId: input.message.channelId,
-          content: input.message.content,
-          reasoning: input.message.reasoningContent,
-        },
-      }),
-    );
+    for (const item of persistedMessageChunks(input.message)) {
+      steps.push(runChunkEventToStep(context, item));
+    }
   }
 
   return steps;
+}
+
+function persistedMessageChunks(message: Message): ActivityEvent[] {
+  const runId = message.metadata?.runId;
+  if (!runId) return [];
+
+  const base = {
+    publisher: message.senderId,
+    timestamp: message.createdAt,
+    task_id: runId,
+  };
+  return [
+    { kind: "reasoning", delta: message.reasoningContent?.trim() ?? "" },
+    { kind: "text", delta: message.content.trim() },
+  ].flatMap(({ kind, delta }) =>
+    delta
+      ? [{
+          ...base,
+          event_id: `message:${message.id}:${kind}`,
+          type: "run_chunk",
+          payload: {
+            runId,
+            threadId: message.threadId,
+            agentId: message.senderId,
+            kind,
+            delta,
+          },
+        }]
+      : [],
+  );
 }
 
 function runStepToTraceStep(input: ReasoningTraceInput, step: RunStep): TraceStepData {

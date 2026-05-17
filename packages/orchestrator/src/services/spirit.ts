@@ -931,7 +931,10 @@ export class SpiritService {
     const session = this.repo.getTaskSession(organizationId, taskSessionId) as TaskSession | null;
     const originMessageId = session?.origin?.messageId;
     const originMessage = originMessageId ? this.repo.getMessage(organizationId, originMessageId) : null;
-    const goalSuffix = goalModeSystemPromptSuffix(goalModeEnabledFromMessage(originMessage));
+    const goalSuffix = goalModeSystemPromptSuffix({
+      goalMode: goalModeEnabledFromMessage(originMessage),
+      messageContent: originMessage?.content,
+    });
     if (goalSuffix && systemPromptSuffix) {
       return `${systemPromptSuffix}\n\n${goalSuffix}`;
     }
@@ -953,7 +956,10 @@ export class SpiritService {
     }
 
     const sourceMessage = this.repo.getMessage(input.organizationId, input.messageId);
-    const goalModeSuffix = goalModeSystemPromptSuffix(goalModeEnabledFromMessage(sourceMessage));
+    const goalModeSuffix = goalModeSystemPromptSuffix({
+      goalMode: goalModeEnabledFromMessage(sourceMessage),
+      messageContent: sourceMessage?.content,
+    });
 
     try {
       const outcome = await this.run({
@@ -1243,11 +1249,10 @@ export class SpiritService {
       .reverse()
       .find(
         (item) =>
+          item.metadata?.runId === run.id &&
           item.senderId === run.agentId &&
           item.senderKind === AGENT_KIND &&
-          item.kind === AGENT_KIND &&
-          item.createdAt >= run.startedAt &&
-          (run.endedAt == null || item.createdAt <= run.endedAt),
+          item.kind === AGENT_KIND,
       );
 
     return {
@@ -1421,7 +1426,10 @@ export class SpiritService {
 
     try {
       const goalModeActive = this.isGoalModeActive(run.organizationId, run.threadId ?? '');
-      const systemPromptSuffix = goalModeSystemPromptSuffix(goalModeActive);
+      const systemPromptSuffix = goalModeSystemPromptSuffix({
+        goalMode: goalModeActive,
+        messageContent: this.repo.getLatestHumanMessageInThread(run.organizationId, run.threadId ?? '')?.content,
+      });
       let streamedText = '';
       let streamedReasoning = '';
       const ai = this.ai;

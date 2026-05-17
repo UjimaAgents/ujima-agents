@@ -442,8 +442,11 @@ async function loadHistory(
     const body = await response.json().catch(() => null);
 
     if (!response.ok) {
-      if (response.status === 404) return [];
-      throw new Error("Unable to load conversation history.");
+      const message =
+        body && typeof body === "object" && "message" in body && typeof body.message === "string"
+          ? body.message
+          : "Unable to load conversation history.";
+      throw new Error(message);
     }
 
     if (body && Array.isArray(body.data)) {

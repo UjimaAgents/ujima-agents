@@ -152,7 +152,6 @@ function pruneStreamingMessage(current: ChatMessageData[], incoming: ChatMessage
       !(
         message.streamRunId &&
         message.streamRunId === rid &&
-        message.senderId === incoming.senderId &&
         message.threadId === incoming.threadId
       ),
   );
@@ -208,6 +207,15 @@ function mergeRunChunkMessages(
   for (const item of items) {
     const message = item.message;
     if (!message) continue;
+    const hasFinalMessage = message.streamRunId
+      ? messages.some(
+          (entry) =>
+            entry.id !== message.id &&
+            entry.streamRunId === message.streamRunId &&
+            entry.threadId === message.threadId,
+        )
+      : false;
+    if (hasFinalMessage) continue;
     const index = messages.findIndex((entry) => entry.id === message.id);
     if (index === -1) {
       messages = messages === current ? [...current, message] : [...messages, message];

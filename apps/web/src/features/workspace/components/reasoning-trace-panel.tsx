@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { useVirtualizer } from "@tanstack/react-virtual";
 import { ArrowDown } from "lucide-react";
 import { RunTraceListResponseSchema, type RunTraceEntry } from "@ujima/api-schema";
 import { buildHistoricalTraceSteps } from "../reasoning-trace";
@@ -9,13 +8,12 @@ import { TraceStep, type TraceStepData } from "./chat/details-sidebar";
 
 const TRACE_PAGE_SIZE = 15;
 const TOP_LOAD_THRESHOLD = 40;
-const TRACE_ESTIMATE_SIZE = 140;
 
-type TraceRowData = {
+interface TraceRowData {
   key: string;
   step: TraceStepData;
   isLast: boolean;
-};
+}
 
 function scrollContainerToBottom(container: HTMLElement) {
   container.scrollTop = Math.max(0, container.scrollHeight - container.clientHeight);
@@ -255,14 +253,6 @@ export function ReasoningTracePanel({
     organizationId,
   ]);
 
-  const traceVirtualizer = useVirtualizer({
-    count: traceRows.length,
-    getScrollElement: () => getTraceScrollContainer(rootRef.current),
-    estimateSize: () => TRACE_ESTIMATE_SIZE,
-    overscan: 4,
-  });
-  const virtualTraceRows = traceVirtualizer.getVirtualItems();
-
   const filterBar = useMemo(
     () => (
       <div className="sticky top-0 z-10 -mx-1 flex flex-wrap gap-1.5 bg-background/95 pb-3 pt-1.5 backdrop-blur-sm px-1.5">
@@ -309,36 +299,25 @@ export function ReasoningTracePanel({
     [showScrollBottom],
   );
   const traceEmptyLabel = traceRows.length === 0 ? "No trace steps." : null;
+  const traceList = (
+    <>
+      <div ref={rootRef} className="relative min-h-0">
+        <div className="space-y-1.5">
+          {traceRows.map((row) => (
+            <TraceStep key={row.key} step={row.step} isLast={row.isLast} />
+          ))}
+        </div>
+        {traceEmptyLabel ? <p className="px-1 text-xs text-foreground/50">{traceEmptyLabel}</p> : null}
+        {loadingMore ? <p className="px-1 text-[10px] text-foreground/40">Loading older traces...</p> : null}
+        {error ? <p className="px-1 text-xs text-red-500">{error}</p> : null}
+        <div className="h-px w-full" aria-hidden />
+      </div>
+      {scrollBottomButton}
+    </>
+  );
 
   if (liveSteps.length > 0) {
-    return (
-      <div className="flex flex-col gap-4">
-        {filterBar}
-        <div ref={rootRef} className="relative min-h-0">
-          <div className="relative w-full" style={{ height: `${traceVirtualizer.getTotalSize()}px` }}>
-            {virtualTraceRows.map((virtualRow) => {
-              const row = traceRows[virtualRow.index];
-              if (!row) return null;
-              return (
-                <div
-                  key={row.key}
-                  data-index={virtualRow.index}
-                  ref={traceVirtualizer.measureElement}
-                  className="absolute left-0 top-0 w-full"
-                  style={{ transform: `translateY(${virtualRow.start}px)`, contain: "layout paint" }}
-                >
-                  <TraceStep step={row.step} isLast={row.isLast} />
-                </div>
-              );
-            })}
-          </div>
-          {traceEmptyLabel ? <p className="px-1 text-xs text-foreground/50">{traceEmptyLabel}</p> : null}
-          {error ? <p className="text-xs text-red-500">{error}</p> : null}
-          <div className="h-px w-full" aria-hidden />
-        </div>
-        {scrollBottomButton}
-      </div>
-    );
+    return <div className="flex flex-col gap-4">{filterBar}{traceList}</div>;
   }
 
   if (historyEnabled && history.length === 0) {
@@ -349,37 +328,7 @@ export function ReasoningTracePanel({
     return <p className="text-xs text-foreground/50">{error ?? "No trace steps."}</p>;
   }
 
-  return (
-    <div className="flex flex-col gap-4">
-      {filterBar}
-      <div ref={rootRef} className="relative min-h-0">
-        <div className="relative w-full" style={{ height: `${traceVirtualizer.getTotalSize()}px` }}>
-          {virtualTraceRows.map((virtualRow) => {
-            const row = traceRows[virtualRow.index];
-            if (!row) return null;
-            return (
-              <div
-                key={row.key}
-                data-index={virtualRow.index}
-                ref={traceVirtualizer.measureElement}
-                className="absolute left-0 top-0 w-full"
-                style={{ transform: `translateY(${virtualRow.start}px)`, contain: "layout paint" }}
-              >
-                <TraceStep step={row.step} isLast={row.isLast} />
-              </div>
-            );
-          })}
-        </div>
-        {traceEmptyLabel ? <p className="px-1 text-xs text-foreground/50">{traceEmptyLabel}</p> : null}
-        {loadingMore ? (
-          <p className="px-1 text-[10px] text-foreground/40">Loading older traces...</p>
-        ) : null}
-        {error ? <p className="px-1 text-xs text-red-500">{error}</p> : null}
-        <div className="h-px w-full" aria-hidden />
-      </div>
-      {scrollBottomButton}
-    </div>
-  );
+  return <div className="flex flex-col gap-4">{filterBar}{traceList}</div>;
 }
 
 async function loadTracePage(input: {
