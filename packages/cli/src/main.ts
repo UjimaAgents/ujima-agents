@@ -155,14 +155,33 @@ function findWorkspaceRoot(startDir = process.cwd()): string | null {
   return null;
 }
 
+function findMonorepoRoot(startDir = process.cwd()): string | null {
+  let dir = startDir;
+  while (true) {
+    const pkgPath = join(dir, 'package.json');
+    if (existsSync(pkgPath)) {
+      try {
+        const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
+        if (pkg.name === 'ujima-agents') return dir;
+      } catch {
+        // ignore JSON parsing errors
+      }
+    }
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return null;
+}
+
 async function cmdStart(argv: string[]): Promise<void> {
-  const root = findWorkspaceRoot();
+  const root = findMonorepoRoot();
   if (!root) {
-    process.stderr.write('ujima start: Could not find workspace root (looking for package.json with name "ujima-agents" or ujima.config.ts)\n');
+    process.stderr.write('ujima start: Could not find Ujima monorepo root (looking for package.json with name "ujima-agents"). Run this command from within the Ujima repo.\n');
     process.exit(1);
   }
 
-  process.stdout.write(`ujima start: Found workspace root at ${root}\nStarting stack with 'bun run dev'...\n\n`);
+  process.stdout.write(`ujima start: Found monorepo at ${root}\nStarting stack with 'bun run dev'...\n\n`);
 
   const child = spawn('bun', ['run', 'dev', ...argv], {
     cwd: root,
