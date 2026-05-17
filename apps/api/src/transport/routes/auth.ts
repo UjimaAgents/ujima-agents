@@ -1,4 +1,4 @@
-import type { FastifyInstance, FastifyReply } from 'fastify';
+import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import {
   ApiErrorSchema,
@@ -9,6 +9,7 @@ import {
 } from '@ujima/api-schema';
 import type { AuthService } from '@ujima/orchestrator';
 import { readSessionToken } from '../session-token.js';
+import { apiError, errorMessage } from './route-errors.js';
 
 export interface AuthRoutesOptions {
   auth: AuthService;
@@ -57,11 +58,11 @@ export function registerAuthRoutes(
         sessionToken: session.sessionToken,
       };
     } catch (err) {
-      const message = errMessage(err);
+      const message = errorMessage(err);
       if (/invalid email or password/i.test(message)) {
-        return unauthorized(reply, message);
+        return apiError(reply, 401, message);
       }
-      return badRequest(reply, message);
+      return apiError(reply, 400, message);
     }
   });
 
@@ -78,16 +79,4 @@ export function registerAuthRoutes(
       loggedOut: auth.logout(readSessionToken(req)),
     };
   });
-}
-
-function badRequest(reply: FastifyReply, message: string): FastifyReply {
-  return reply.code(400).send({ code: 'ERR_BAD_REQUEST', message });
-}
-
-function unauthorized(reply: FastifyReply, message: string): FastifyReply {
-  return reply.code(401).send({ code: 'ERR_UNAUTHORIZED', message });
-}
-
-function errMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }

@@ -4,6 +4,7 @@ import { MarkdownInline } from "../markdown";
 import { shellInvocationDisplayLine, type ParsedFilesystemScope } from "@ujima/shared/browser";
 import { FilesystemToolPane } from "./filesystem-tool-pane";
 import { TerminalPane } from "./terminal-pane";
+import { ExpandableOutput } from "./expandable-output";
 
 export interface ApprovalCardData {
   id: string;
@@ -156,9 +157,13 @@ export const ApprovalCard = memo(function ApprovalCard({
               }
             />
           ) : data.commandPreview ? (
-            <pre className="mt-1.5 max-h-28 overflow-y-auto rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-[10px] font-mono leading-relaxed whitespace-pre-wrap text-zinc-800 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-200">
-              {data.commandPreview}
-            </pre>
+            <div className="mt-1.5 rounded-lg border border-zinc-200 dark:border-zinc-800">
+              <ExpandableOutput>
+                <pre className="px-2 py-1.5 text-[10px] font-mono leading-relaxed whitespace-pre-wrap break-words text-zinc-800 dark:text-zinc-200">
+                  {data.commandPreview}
+                </pre>
+              </ExpandableOutput>
+            </div>
           ) : null}
         </div>
       </div>

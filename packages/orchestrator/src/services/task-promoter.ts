@@ -16,6 +16,7 @@ import type { ApiRepository } from './repository-reader.js';
 import type { TaskSessionService } from './task-session.js';
 import type { TeamStore } from './team-store.js';
 import type { SpiritService } from './spirit.js';
+import { errorMessage } from '../utils/error-message.js';
 
 export interface TaskPromotionInput {
   organizationId: string;
@@ -383,7 +384,7 @@ export class TaskPromoterService {
         void taskSessions
           .start(input.organizationId, detail.session.id, { runFirstTurn: true })
           .catch((err) => {
-            const messageText = err instanceof Error ? err.message : String(err);
+            const messageText = errorMessage(err);
             taskSessions.updateStatus(input.organizationId, detail.session.id, 'failed', {
               summary: `Task session auto-start failed: ${messageText}`,
               completedAt: new Date().toISOString(),
@@ -480,7 +481,7 @@ export class TaskPromoterService {
       return TaskPromotionDecisionSchema.parse({
         decision: 'skip',
         confidence: 0,
-        rationale: `promoter fallback: ${err instanceof Error ? err.message : String(err)}`,
+        rationale: `promoter fallback: ${errorMessage(err)}`,
       });
     }
   }

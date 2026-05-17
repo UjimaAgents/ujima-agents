@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { FastifyInstance, FastifyReply } from 'fastify';
+import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { AgentTeamConfigSchema, RoleConfigSchema } from '@ujima/framework';
 import type { Repository } from '@ujima/runtime-core';
@@ -21,11 +21,10 @@ import {
 import type { AuthService, SettingsService } from '@ujima/orchestrator';
 import { z } from 'zod';
 import {
-  ERR_NO_WORKSPACE_ROOT,
   assertReadyWorkspaceRoot,
-  isWorkspaceRootNotReadyError,
 } from './workspace-root.js';
 import { requireOrgSession } from './org-auth.js';
+import { apiError, errorMessage, routeError, workspaceRootError } from './route-errors.js';
 
 const OrgIdParamsSchema = z.object({ orgId: IdSchema });
 const ProviderTestParamsSchema = z.object({ providerName: z.string().min(1) });
@@ -89,8 +88,7 @@ export function registerSettingsRoutes(
       if (forbidden) return forbidden;
       return settings.getTeamSettings() as z.infer<typeof TeamSettingsResponseSchema>;
     } catch (err) {
-      const message = errMessage(err);
-      return replyError(reply, message.startsWith('Organization not found') ? 404 : 503, message);
+      return routeError(reply, err, { notFound: 'Organization not found', fallback: 503 });
     }
   });
 
@@ -114,8 +112,7 @@ export function registerSettingsRoutes(
       if (forbidden) return forbidden;
       return settings.listProviders(req.query.organizationId);
     } catch (err) {
-      const message = errMessage(err);
-      return replyError(reply, message.startsWith('Organization not found') ? 404 : 503, message);
+      return routeError(reply, err, { notFound: 'Organization not found', fallback: 503 });
     }
   });
 
@@ -143,16 +140,15 @@ export function registerSettingsRoutes(
         providers: settings.upsertProviders(req.body.organizationId, req.body.providerKeys),
       };
     } catch (err) {
-      const message = errMessage(err);
-      if (isWorkspaceRootNotReadyError(err)) {
-        return reply.code(409).send({ code: ERR_NO_WORKSPACE_ROOT, message });
-      }
+      const rootError = workspaceRootError(reply, err);
+      if (rootError) return rootError;
+      const message = errorMessage(err);
       const code = message.startsWith('Organization not found')
         ? 404
         : message.startsWith('Unknown provider keys')
           ? 400
           : 503;
-      return replyError(reply, code, message);
+      return apiError(reply, code, message);
     }
   });
 
@@ -181,11 +177,7 @@ export function registerSettingsRoutes(
         providers: settings.deleteProvider(req.query.organizationId, req.params.providerName),
       };
     } catch (err) {
-      const message = errMessage(err);
-      if (isWorkspaceRootNotReadyError(err)) {
-        return reply.code(409).send({ code: ERR_NO_WORKSPACE_ROOT, message });
-      }
-      return replyError(reply, message.startsWith('Organization not found') ? 404 : 503, message);
+      return routeError(reply, err, { notFound: 'Organization not found', fallback: 503, workspaceRoot: true });
     }
   });
 
@@ -209,8 +201,7 @@ export function registerSettingsRoutes(
       if (forbidden) return forbidden;
       return settings.getOrganizationSettings(req.query.organizationId);
     } catch (err) {
-      const message = errMessage(err);
-      return replyError(reply, message.startsWith('Organization not found') ? 404 : 503, message);
+      return routeError(reply, err, { notFound: 'Organization not found', fallback: 503 });
     }
   });
 
@@ -235,11 +226,7 @@ export function registerSettingsRoutes(
       if (forbidden) return forbidden;
       return settings.updateOrganizationSettings(req.body);
     } catch (err) {
-      const message = errMessage(err);
-      if (isWorkspaceRootNotReadyError(err)) {
-        return reply.code(409).send({ code: ERR_NO_WORKSPACE_ROOT, message });
-      }
-      return replyError(reply, message.startsWith('Organization not found') ? 404 : 400, message);
+      return routeError(reply, err, { notFound: 'Organization not found', workspaceRoot: true });
     }
   });
 
@@ -264,8 +251,7 @@ export function registerSettingsRoutes(
       if (forbidden) return forbidden;
       return settings.testProvider(req.query.organizationId, req.params.providerName);
     } catch (err) {
-      const message = errMessage(err);
-      return replyError(reply, message.startsWith('Organization not found') ? 404 : 503, message);
+      return routeError(reply, err, { notFound: 'Organization not found', fallback: 503 });
     }
   });
 
@@ -282,7 +268,7 @@ export function registerSettingsRoutes(
     try {
       return { organizations: settings.listOrganizations() };
     } catch (err) {
-      return replyError(reply, 503, errMessage(err));
+      return routeError(reply, err, { fallback: 503 });
     }
   });
 
@@ -319,11 +305,7 @@ export function registerSettingsRoutes(
       });
       return member;
     } catch (err) {
-      const message = errMessage(err);
-      if (isWorkspaceRootNotReadyError(err)) {
-        return reply.code(409).send({ code: ERR_NO_WORKSPACE_ROOT, message });
-      }
-      return replyError(reply, message.startsWith('Organization not found') ? 404 : 400, message);
+      return routeError(reply, err, { notFound: 'Organization not found', workspaceRoot: true });
     }
   });
 
@@ -359,11 +341,7 @@ export function registerSettingsRoutes(
         role: req.body.role,
       });
     } catch (err) {
-      const message = errMessage(err);
-      if (isWorkspaceRootNotReadyError(err)) {
-        return reply.code(409).send({ code: ERR_NO_WORKSPACE_ROOT, message });
-      }
-      return replyError(reply, message.startsWith('Member not found') ? 404 : 400, message);
+      return routeError(reply, err, { notFound: 'Member not found', workspaceRoot: true });
     }
   });
 
@@ -398,11 +376,7 @@ export function registerSettingsRoutes(
         }),
       );
     } catch (err) {
-      const message = errMessage(err);
-      if (isWorkspaceRootNotReadyError(err)) {
-        return reply.code(409).send({ code: ERR_NO_WORKSPACE_ROOT, message });
-      }
-      return replyError(reply, message.startsWith('Organization not found') ? 404 : 400, message);
+      return routeError(reply, err, { notFound: 'Organization not found', workspaceRoot: true });
     }
   });
 
@@ -432,11 +406,7 @@ export function registerSettingsRoutes(
         requireApprovalForShell: req.body.requireApprovalForShell,
       });
     } catch (err) {
-      const message = errMessage(err);
-      if (isWorkspaceRootNotReadyError(err)) {
-        return reply.code(409).send({ code: ERR_NO_WORKSPACE_ROOT, message });
-      }
-      return replyError(reply, message.startsWith('Organization not found') ? 404 : 400, message);
+      return routeError(reply, err, { notFound: 'Organization not found', workspaceRoot: true });
     }
   });
 
@@ -468,11 +438,7 @@ export function registerSettingsRoutes(
         memberIds: req.body.memberIds,
       });
     } catch (err) {
-      const message = errMessage(err);
-      if (isWorkspaceRootNotReadyError(err)) {
-        return reply.code(409).send({ code: ERR_NO_WORKSPACE_ROOT, message });
-      }
-      return replyError(reply, message.startsWith('Channel not found') ? 404 : 400, message);
+      return routeError(reply, err, { notFound: 'Channel not found', workspaceRoot: true });
     }
   });
 
@@ -498,20 +464,7 @@ export function registerSettingsRoutes(
       settings.deleteChannel(req.params.orgId, req.params.channelId);
       return { success: true as const };
     } catch (err) {
-      const message = errMessage(err);
-      if (isWorkspaceRootNotReadyError(err)) {
-        return reply.code(409).send({ code: ERR_NO_WORKSPACE_ROOT, message });
-      }
-      return replyError(reply, message.startsWith('Channel not found') ? 404 : 400, message);
+      return routeError(reply, err, { notFound: 'Channel not found', workspaceRoot: true });
     }
   });
-}
-
-function replyError(reply: FastifyReply, status: number, message: string): FastifyReply {
-  const code = status === 404 ? 'ERR_NOT_FOUND' : status === 503 ? 'ERR_INTERNAL' : 'ERR_BAD_REQUEST';
-  return reply.code(status).send({ code, message });
-}
-
-function errMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }

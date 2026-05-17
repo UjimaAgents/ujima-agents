@@ -20,8 +20,7 @@ import {
   type ChatMessageData,
 } from "./chat";
 import { ChannelMembersTab } from "./channel-members-tab";
-import type { RunState } from "@ujima/shared/browser";
-import { getDirectMessageThreadId } from "@ujima/shared/browser";
+import { getDirectMessageThreadId, RunStateSchema, type RunState } from "@ujima/shared/browser";
 import { useWorkspaceStore } from "../workspace-store";
 import { EmptyChat } from "./empty-chat";
 import { TypingIndicator } from "./typing-indicator";
@@ -29,6 +28,7 @@ import { RunCard } from "./run-card";
 import { ActivityRow } from "./activity-row";
 import { ConversationSkeleton } from "./conversation-skeleton";
 import { resolveWorkspaceApproval } from "../approval-resolution";
+import { runToActivity } from "../activity-events";
 import { pendingApprovalVisibleInChannelView, queueApprovals } from "../approval-thread-filter";
 import { ReasoningTracePanel } from "./reasoning-trace-panel";
 import { buildTabCounts, collectBlockedRunReasons, collectConversationAttachments, isLiveRun } from "../feed-selectors";
@@ -40,7 +40,7 @@ const CHANNEL_TABS: ChatTab[] = [
   { id: "files", label: "Files" },
   { id: "activity", label: "Activity" },
 ];
-const MAX_LIVE_TRACE_ACTIVITY = 400;
+const MAX_LIVE_TRACE_ACTIVITY = 2_000;
 const MAX_ACTIVITY_ROWS = 100;
 const EMPTY_ACTIVITY_EVENTS = [] as ReturnType<typeof useConversationSync>["activity"];
 const EMPTY_RUNS = [] as RunState[];
@@ -86,6 +86,7 @@ export function ChannelView({
   const openDetailsForAgentMessage = useWorkspaceStore((state) => state.openDetailsForAgentMessage);
   const setDetailsWidth = useWorkspaceStore((state) => state.setDetailsWidth);
   const setDetailsTab = useWorkspaceStore((state) => state.setDetailsTab);
+  const upsertRun = useWorkspaceStore((state) => state.upsertRun);
   const memberById = useMemo(() => new Map(members.map((member) => [member.id, member])), [members]);
   const memberIndexById = useMemo(
     () => new Map(members.map((member, index) => [member.id, index])),
@@ -204,7 +205,7 @@ export function ChannelView({
   }, [typingRuns]);
   const traceAutoScroll = reasoningTraceVisible && typingRuns.length > 0;
   const stoppableRunId = useMemo(() => {
-    const sorted = [...typingRuns].sort((a, b) => {
+    const sorted = [...liveThreadRuns].sort((a, b) => {
       const pri = (r: RunState) =>
         r.status === "running" ? 0 : r.status === "waiting_for_approval" ? 1 : 2;
       const d = pri(a) - pri(b);
@@ -212,7 +213,7 @@ export function ChannelView({
       return (b.startedAt ?? "").localeCompare(a.startedAt ?? "");
     });
     return sorted[0]?.id;
-  }, [typingRuns]);
+  }, [liveThreadRuns]);
   const typingMembers = useMemo(() => {
     const seen = new Set<string>();
     const resolved: typeof members = [];
@@ -323,8 +324,12 @@ export function ChannelView({
             : "Unable to stop the run.";
         throw new Error(message);
       }
+      const parsed = RunStateSchema.safeParse(body);
+      if (parsed.success) {
+        upsertRun(parsed.data, runToActivity);
+      }
     },
-    [organizationId],
+    [organizationId, upsertRun],
   );
   const handleTabChange = useCallback(
     (tab: string) => {
@@ -387,6 +392,18 @@ export function ChannelView({
     bottomRef.current?.scrollIntoView({ block: "end", behavior });
   }, []);
 
+  const latestMessageSignal = useMemo(() => {
+    const last = feed.messages.at(-1);
+    if (!last) return "";
+    return [
+      last.id,
+      last.createdAt ?? "",
+      last.content.length,
+      last.pending ? 1 : 0,
+      last.streamRunId ?? "",
+    ].join(":");
+  }, [feed.messages]);
+
   const handleScroll = useCallback(() => {
     const list = listRef.current;
     if (!list) return;
@@ -397,7 +414,7 @@ export function ChannelView({
 
   useLayoutEffect(() => {
     const pendingKey = pendingThreadApprovals.map((a) => a.id).join(",");
-    const signal = `${feed.messages.length}:${feed.approvals.length}:${feed.runs.length}:${feed.loading ? 1 : 0}:${pendingKey}`;
+    const signal = `${feed.messages.length}:${latestMessageSignal}:${feed.approvals.length}:${feed.runs.length}:${feed.loading ? 1 : 0}:${pendingKey}`;
     if (!previousFeedSignal.current) {
       previousFeedSignal.current = signal;
       if (feed.messages.length > 0) {
@@ -410,7 +427,16 @@ export function ChannelView({
     if (isAtBottom) {
       scrollToLatest("smooth");
     }
-  }, [feed.approvals.length, feed.loading, feed.messages.length, feed.runs.length, isAtBottom, pendingThreadApprovals, scrollToLatest]);
+  }, [
+    feed.approvals.length,
+    feed.loading,
+    feed.messages.length,
+    feed.runs.length,
+    isAtBottom,
+    latestMessageSignal,
+    pendingThreadApprovals,
+    scrollToLatest,
+  ]);
 
   useLayoutEffect(() => {
     if (!tabIds.has(activeTab)) {

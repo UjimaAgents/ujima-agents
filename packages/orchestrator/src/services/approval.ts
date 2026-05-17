@@ -12,6 +12,7 @@ import {
 import type { RealtimeService } from './context.js';
 import type { ApiRepository } from './repository-reader.js';
 import type { ConversationService } from './conversation.js';
+import { isLiveStatus } from './live-status.js';
 
 export interface ApprovalRequestInput {
   organizationId: string;
@@ -225,7 +226,7 @@ export class ApprovalService {
       .listPendingApprovals(organizationId)
       .filter((approval) => {
         const run = approval.runId ? this.repo.getRun(organizationId, approval.runId) : null;
-        return !!run && isActiveRunStatus(run.status);
+        return !!run && isLiveStatus(run.status);
       });
   }
 
@@ -280,8 +281,4 @@ function pendingApprovalMatchesResolution(input: {
     return approvalScope ? buildFamilyApprovalScope(approvalScope) === persistedScope : false;
   }
   return approvalScope === rawScope;
-}
-
-function isActiveRunStatus(status: string): boolean {
-  return status === 'queued' || status === 'running' || status === 'waiting_for_approval';
 }

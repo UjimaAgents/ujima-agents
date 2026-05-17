@@ -1,4 +1,4 @@
-import type { FastifyInstance, FastifyReply } from 'fastify';
+import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import type { RuntimeHost } from '@ujima/runtime-core';
 import {
@@ -9,6 +9,7 @@ import {
   WorkspaceSchema,
 } from '@ujima/api-schema';
 import { z } from 'zod';
+import { apiError, errorMessage } from './route-errors.js';
 
 const WorkspaceIdParamsSchema = z.object({ id: z.string().min(1) });
 const WorkspaceRemovedResponseSchema = z.object({ removed: z.boolean() });
@@ -61,7 +62,7 @@ export function registerWorkspaceRoutes(_app: FastifyInstance, host: RuntimeHost
     try {
       return toWorkspaceDto(host.workspaces.update(id, req.body));
     } catch (err) {
-      return replyError(reply, 404, 'ERR_NOT_FOUND', errMessage(err));
+      return apiError(reply, 404, errorMessage(err));
     }
   });
 
@@ -78,7 +79,7 @@ export function registerWorkspaceRoutes(_app: FastifyInstance, host: RuntimeHost
   }, async (req, reply) => {
     const { id } = req.params;
     const ws = host.workspaces.get(id);
-    if (!ws) return replyError(reply, 404, 'ERR_NOT_FOUND', `workspace "${id}" not found`);
+    if (!ws) return apiError(reply, 404, `workspace "${id}" not found`);
     return toWorkspaceDto(ws);
   });
 
@@ -99,12 +100,4 @@ export function registerWorkspaceRoutes(_app: FastifyInstance, host: RuntimeHost
 
 function toWorkspaceDto(ws: { id: string; root_path: string | null; label: string | null; created_at: number; updated_at: number }) {
   return { ...ws };
-}
-
-function replyError(reply: FastifyReply, status: number, code: string, message: string): FastifyReply {
-  return reply.status(status).send({ code, message });
-}
-
-function errMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }

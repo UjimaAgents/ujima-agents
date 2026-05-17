@@ -14,6 +14,7 @@ import {
 import type { AuthService } from '@ujima/orchestrator';
 import type { Repository } from '@ujima/runtime-core';
 import { readSessionToken } from '../session-token.js';
+import { apiError, errorMessage } from './route-errors.js';
 
 const FILE_LIMIT_BYTES = 25 * 1024 * 1024;
 const ATTACHMENT_PARAMS_SCHEMA = z.object({ attachmentId: IdSchema });
@@ -47,7 +48,7 @@ export function registerAttachmentRoutes(
     try {
       const authState = auth.getAuthState(readSessionToken(req));
       if (!authState.member) {
-        return reply.code(401).send({ code: 'ERR_UNAUTHORIZED', message: 'Session required' });
+        return apiError(reply, 401, 'Session required');
       }
 
       let organizationId = '';
@@ -65,20 +66,20 @@ export function registerAttachmentRoutes(
       }
 
       if (!organizationId || !file) {
-        return reply.code(400).send({ code: 'ERR_BAD_REQUEST', message: 'Invalid attachment upload request.' });
+        return apiError(reply, 400, 'Invalid attachment upload request.');
       }
       if (authState.user?.organizationId !== organizationId) {
-        return reply.code(403).send({ code: 'ERR_FORBIDDEN', message: 'Unauthorized for this organization.' });
+        return apiError(reply, 403, 'Unauthorized for this organization.');
       }
 
       if (!data) {
-        return reply.code(400).send({ code: 'ERR_BAD_REQUEST', message: 'Invalid attachment upload request.' });
+        return apiError(reply, 400, 'Invalid attachment upload request.');
       }
       if (file.truncated) {
-        return reply.code(413).send({ code: 'ERR_BAD_REQUEST', message: 'Attachment exceeds the 25 MB limit.' });
+        return apiError(reply, 413, 'Attachment exceeds the 25 MB limit.');
       }
       if (data.length > FILE_LIMIT_BYTES) {
-        return reply.code(413).send({ code: 'ERR_BAD_REQUEST', message: 'Attachment exceeds the 25 MB limit.' });
+        return apiError(reply, 413, 'Attachment exceeds the 25 MB limit.');
       }
 
       const attachmentId = randomUUID();
@@ -109,12 +110,9 @@ export function registerAttachmentRoutes(
       }
     } catch (err) {
       if (isUploadTooLargeError(err)) {
-        return reply.code(413).send({ code: 'ERR_BAD_REQUEST', message: 'Attachment exceeds the 25 MB limit.' });
+        return apiError(reply, 413, 'Attachment exceeds the 25 MB limit.');
       }
-      return reply.code(400).send({
-        code: 'ERR_BAD_REQUEST',
-        message: err instanceof Error ? err.message : 'Unable to upload attachment.',
-      });
+      return apiError(reply, 400, errorMessage(err) || 'Unable to upload attachment.');
     }
   });
 
@@ -152,15 +150,15 @@ async function serveAttachment(
 ): Promise<FastifyReply> {
   const authState = auth.getAuthState(sessionToken);
   if (!authState.member) {
-    return reply.code(401).send({ code: 'ERR_UNAUTHORIZED', message: 'Session required' });
+    return apiError(reply, 401, 'Session required');
   }
   if (authState.user?.organizationId !== organizationId) {
-    return reply.code(403).send({ code: 'ERR_FORBIDDEN', message: 'Unauthorized for this organization.' });
+    return apiError(reply, 403, 'Unauthorized for this organization.');
   }
 
   const attachment = repo.getAttachment(organizationId, attachmentId);
   if (!attachment) {
-    return reply.code(404).send({ code: 'ERR_NOT_FOUND', message: 'Attachment not found.' });
+    return apiError(reply, 404, 'Attachment not found.');
   }
   if (thumbnail && attachment.category !== 'image') {
     return reply.code(204).send();
@@ -168,7 +166,7 @@ async function serveAttachment(
 
   const path = resolveAttachmentPath(attachment.storagePath);
   if (!existsSync(path)) {
-    return reply.code(404).send({ code: 'ERR_NOT_FOUND', message: 'Attachment not found.' });
+    return apiError(reply, 404, 'Attachment not found.');
   }
   const data = readFileSync(path);
   return reply

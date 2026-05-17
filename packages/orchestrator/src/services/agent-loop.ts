@@ -1,4 +1,5 @@
 import { streamText, type LanguageModel, type ModelMessage, type ToolSet } from 'ai';
+import { findToolApprovalRequiredError } from './tool-loop-result.js';
 
 export interface AgentLoopStep {
   text?: string;
@@ -73,6 +74,8 @@ export async function runAgentLoop(input: {
   });
   for await (const part of result.fullStream) {
     if (part.type === 'error') {
+      const approvalError = findToolApprovalRequiredError(part.error);
+      if (approvalError) throw approvalError;
       throw part.error;
     }
   }

@@ -9,8 +9,8 @@ import {
   TERMINAL_PANEL,
   TERMINAL_PROMPT,
   TERMINAL_SECTION,
-  terminalOutputAreaClass,
 } from "./terminal-chrome";
+import { ExpandableOutput } from "./expandable-output";
 
 const POLL_MS = 700;
 
@@ -184,27 +184,35 @@ export function BackgroundShellJobPane({
           </button>
         ) : null}
       </div>
-      <div className={terminalOutputAreaClass(tone)}>
-        {loadError ? (
-          <span className="text-red-700 dark:text-red-300/90">{loadError}</span>
-        ) : combined ? (
-          combined
-        ) : showRunning ? (
-          <span className="text-foreground/45">Waiting for output…</span>
-        ) : snapshot?.status === "exited" ? (
-          <span className="text-foreground/45">
-            {snapshot.exitCode != null
-              ? `Finished (exit ${snapshot.exitCode})`
-              : "Finished"}
-          </span>
-        ) : null}
-        {snapshot?.error ? (
-          <div className="mt-2 border-t border-foreground/10 pt-2 text-red-700 dark:text-red-300/90">
-            {snapshot.error}
-          </div>
-        ) : null}
-        <div ref={bottomRef} className="h-px w-full shrink-0" aria-hidden />
-      </div>
+      <ExpandableOutput>
+        <div
+          className={`px-3 py-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-words ${
+            tone === "error"
+              ? "text-red-700 dark:text-red-300/90"
+              : "text-foreground/85"
+          }`}
+        >
+          {loadError ? (
+            <span className="text-red-700 dark:text-red-300/90">{loadError}</span>
+          ) : combined ? (
+            combined
+          ) : showRunning ? (
+            <span className="text-foreground/45">Waiting for output…</span>
+          ) : snapshot?.status === "exited" ? (
+            <span className="text-foreground/45">
+              {snapshot.exitCode != null
+                ? `Finished (exit ${snapshot.exitCode})`
+                : "Finished"}
+            </span>
+          ) : null}
+          {snapshot?.error ? (
+            <div className="mt-2 border-t border-foreground/10 pt-2 text-red-700 dark:text-red-300/90">
+              {snapshot.error}
+            </div>
+          ) : null}
+          <div ref={bottomRef} className="h-px w-full shrink-0" aria-hidden />
+        </div>
+      </ExpandableOutput>
     </div>
   );
 }

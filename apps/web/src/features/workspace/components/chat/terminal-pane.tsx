@@ -4,8 +4,8 @@ import {
   TERMINAL_PANEL,
   TERMINAL_PROMPT,
   TERMINAL_SECTION,
-  terminalOutputAreaClass,
 } from "./terminal-chrome";
+import { ExpandableOutput } from "./expandable-output";
 
 export function TerminalPane({
   className = "",
@@ -47,12 +47,20 @@ export function TerminalPane({
         </button>
       </div>
       {showOutputRegion ? (
-        <div className={`${terminalOutputAreaClass(outputTone)} animate-in`}>
-          {showBody ? trimmed : null}
-          {showPlaceholder ? (
-            <span className="text-foreground/45">{outputPlaceholder}</span>
-          ) : null}
-        </div>
+        <ExpandableOutput>
+          <div
+            className={`px-3 py-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-words ${
+              outputTone === "error"
+                ? "text-red-700 dark:text-red-300/90"
+                : "text-foreground/85"
+            }`}
+          >
+            {showBody ? trimmed : null}
+            {showPlaceholder ? (
+              <span className="text-foreground/45">{outputPlaceholder}</span>
+            ) : null}
+          </div>
+        </ExpandableOutput>
       ) : null}
     </div>
   );

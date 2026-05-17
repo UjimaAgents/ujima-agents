@@ -7,10 +7,10 @@ import type { OrchestratorTool } from './types.js';
 
 export const ShellSchema = z.object({
   operation: z.enum(['execute', 'send_input', 'read_output', 'wait', 'terminate']).optional(),
-  command: z.string().optional(),
-  args: z.array(z.string()).optional(),
-  cwd: z.string().optional(),
-  background: z.boolean().optional(),
+  command: z.string().optional().describe('Command to run for builds, tests, git, and real CLI work. Do not create or edit files with shell; use write, edit, or multiedit.'),
+  args: z.array(z.string()).optional().describe('Optional argv list for the command.'),
+  cwd: z.string().optional().describe('Working directory for the command.'),
+  background: z.boolean().optional().describe('Run long-lived commands in the background.'),
   job_id: z.string().optional(),
   input: z.string().optional(),
 });

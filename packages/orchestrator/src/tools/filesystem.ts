@@ -22,7 +22,7 @@ export const FilesystemSchema = z
       .number()
       .int()
       .min(1)
-      .max(200)
+      .max(1000)
       .default(20)
       .describe('Maximum number of lines to return for read.'),
     patch: z

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   mergeConversationUnreadCounts,
   normalizeConversationSelection,
+  useWorkspaceStore,
   type WorkspaceChannel,
   type WorkspaceMember,
 } from "./workspace-store";
@@ -50,4 +51,30 @@ describe("workspace-store helpers", () => {
       ),
     ).toEqual({ general: 0, random: 2, ava: 3 });
   });
+
+  it("keeps enough live activity for long streaming traces", () => {
+    const store = useWorkspaceStore.getState();
+    store.resetConversationFeed("org:thread");
+
+    for (let index = 0; index < 1_200; index += 1) {
+      useWorkspaceStore.getState().appendActivity({
+        event_id: `chunk-${index}`,
+        type: "run_chunk",
+        publisher: "ava",
+        timestamp: new Date(0).toISOString(),
+        payload: {
+          runId: "run-1",
+          threadId: "thread",
+          agentId: "ava",
+          kind: "reasoning",
+          delta: ".",
+        },
+      });
+    }
+
+    const activity = useWorkspaceStore.getState().activity;
+    expect(activity).toHaveLength(1_200);
+    expect(activity[0]?.event_id).toBe("chunk-0");
+  });
+
 });

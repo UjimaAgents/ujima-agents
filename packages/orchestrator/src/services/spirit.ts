@@ -52,14 +52,15 @@ import {
   ALWAYS_AVAILABLE_AGENT_TOOLS,
   SUPERVISOR_TOOL_ALLOWLIST,
 } from '../tools/index.js';
-import { ActiveSpiritRegistry, isAliveStatus, type ActiveSpiritEntry } from './active-spirit-registry.js';
+import { ActiveSpiritRegistry, type ActiveSpiritEntry } from './active-spirit-registry.js';
 import type { ConversationService } from './conversation.js';
 import type { RealtimeService } from './context.js';
 import type { ApiRepository } from './repository-reader.js';
 import type { TeamStore } from './team-store.js';
 import type { ToolService } from './tool-service.js';
-import { ToolApprovalRequiredError, toModelToolOutput } from './tool-loop-result.js';
+import { findToolApprovalRequiredError, toModelToolErrorOutput, toModelToolOutput } from './tool-loop-result.js';
 import { extractReasoningChunk } from '../utils/extract-reasoning.js';
+import { errorMessage } from '../utils/error-message.js';
 import { buildRunTranscript } from '../utils/run-transcript.js';
 import type { ToolInvocationInput } from './tool-service.js';
 import { materializeMcpDef, mcpPermissionToolName, type McpRuntimePool } from './mcp-runtime.js';
@@ -67,6 +68,7 @@ import { appendGoalArtifactToolCall, buildGoalArtifactMessage } from './goal-art
 import { goalModeEnabledFromMessage, goalModeSystemPromptSuffix } from './goal-mode-prompt.js';
 import { pendingApprovalRunSummary } from './approval-summary.js';
 import { applyDashboardTeamOverrides } from './dashboard-team-overrides.js';
+import { isLiveRunStatus, isLiveSpiritStatus } from './live-status.js';
 import type { AiService } from '../ai-service.js';
 import { runUsedThreadPublishingTool } from './run-reply-guard.js';
 import {
@@ -510,10 +512,10 @@ export class SpiritService {
       status,
       lastError: options.error ?? existing.lastError,
       updatedAt: now,
-      endedAt: isAliveStatus(status) ? existing.endedAt : (existing.endedAt ?? now),
+      endedAt: isLiveSpiritStatus(status) ? existing.endedAt : (existing.endedAt ?? now),
     });
     this.repo.saveSpirit(updated);
-    if (isAliveStatus(status)) {
+    if (isLiveSpiritStatus(status)) {
       this.registry.register(updated);
     } else {
       this.registry.unregister(updated.organizationId, updated.memberId, updated.id);
@@ -868,7 +870,7 @@ export class SpiritService {
         tokensUsed: totalTokens,
       };
     } catch (err) {
-      if (err instanceof ToolApprovalRequiredError) {
+      if (findToolApprovalRequiredError(err)) {
         const waiting: Spirit = SpiritSchema.parse({
           ...running,
           status: 'waiting_for_approval',
@@ -895,7 +897,7 @@ export class SpiritService {
           tokensUsed: totalTokens,
         };
       }
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errorMessage(err);
       const failed: Spirit = SpiritSchema.parse({
         ...running,
         status: 'failed',
@@ -1208,7 +1210,7 @@ export class SpiritService {
       if (latest?.status === 'cancelled') {
         return latest;
       }
-      if (error instanceof ToolApprovalRequiredError) {
+      if (findToolApprovalRequiredError(error)) {
         return this.waitForApproval(run, pendingApprovalRunSummary(this.repo, run.organizationId, run.id));
       }
       return this.failRun(run, (error as Error).message);
@@ -1309,7 +1311,7 @@ export class SpiritService {
         messages,
         steps,
         ...(message ? { message } : {}),
-        activeAgents: LIVE_RUN_DETAIL_STATUSES.has(run.status)
+        activeAgents: isLiveRunStatus(run.status)
           ? [{ memberId: run.agentId, statusLabel: run.status }]
           : [],
         tokens: { perMemberId: { [run.agentId]: 0 } },
@@ -1328,7 +1330,7 @@ export class SpiritService {
       : messages;
 
     const activeAgents = sessionSpirits
-      .filter((current) => LIVE_RUN_DETAIL_STATUSES.has(current.status))
+      .filter((current) => isLiveRunStatus(current.status))
       .map((current) => ({
         memberId: current.memberId,
         statusLabel: current.role === 'supervisor' ? `supervisor:${current.status}` : current.status,
@@ -1619,7 +1621,7 @@ export class SpiritService {
 
       return this.completeRun(running, reply);
     } catch (error) {
-      if (error instanceof ToolApprovalRequiredError) {
+      if (findToolApprovalRequiredError(error)) {
         if (this.consumeDeferredApprovalResume(run.organizationId, run.id)) {
           const afterApprovedTools = await this.executePendingApprovedRunTools(running);
           return this.advanceRun(afterApprovedTools);
@@ -2000,7 +2002,7 @@ export class SpiritService {
     if (workers.length === 0) {
       return;
     }
-    if (workers.some((spirit) => LIVE_SPIRIT_STATUSES.has(spirit.status))) {
+    if (workers.some((spirit) => isLiveSpiritStatus(spirit.status))) {
       return;
     }
 
@@ -2036,12 +2038,10 @@ export class SpiritService {
       return trimmedPreferred;
     }
 
-    const latestWithMessage = workers
-      .slice()
-      .reverse()
-      .find((spirit) => spirit.lastMessageId && this.repo.getMessage(organizationId, spirit.lastMessageId));
-    if (latestWithMessage?.lastMessageId) {
-      const latestMessage = this.repo.getMessage(organizationId, latestWithMessage.lastMessageId);
+    for (const spirit of workers.slice().reverse()) {
+      const latestMessage = spirit.lastMessageId
+        ? this.repo.getMessage(organizationId, spirit.lastMessageId)
+        : null;
       const content = latestMessage?.content.trim();
       if (content) {
         return content;
@@ -2053,9 +2053,12 @@ export class SpiritService {
       return failed.lastError;
     }
 
+    const membersById = new Map(
+      this.repo.listMembers(organizationId).map((member) => [member.id, member]),
+    );
     const completedNames = workers
       .filter((spirit) => spirit.status === 'completed')
-      .map((spirit) => this.repo.getMember(organizationId, spirit.memberId)?.name ?? spirit.memberId);
+      .map((spirit) => membersById.get(spirit.memberId)?.name ?? spirit.memberId);
     if (completedNames.length > 0) {
       return `Completed by ${completedNames.join(', ')}`;
     }
@@ -2356,12 +2359,7 @@ export class SpiritService {
               });
               return toModelToolOutput(result);
             } catch (error) {
-              if (error instanceof ToolApprovalRequiredError) {
-                throw error;
-              }
-              return {
-                error: error instanceof Error ? error.message : String(error),
-              };
+              return toModelToolErrorOutput(error);
             }
           },
         }),
@@ -2450,7 +2448,6 @@ function mcpToolInputSchema(
   return z.record(z.string(), z.unknown());
 }
 
-const LIVE_SPIRIT_STATUSES = new Set(['queued', 'running', 'waiting_for_approval']);
 const TERMINAL_TASK_SESSION_STATUSES = new Set(['completed', 'failed', 'cancelled']);
 
 function deriveTaskSessionOutcome(
@@ -2494,8 +2491,6 @@ function isToolCardError(result: unknown): boolean {
   const value = result as { error?: unknown; status?: unknown; isError?: unknown };
   return value.isError === true || typeof value.error === 'string' || value.status === 'blocked';
 }
-
-const LIVE_RUN_DETAIL_STATUSES = new Set<RunState['status']>(['queued', 'running', 'waiting_for_approval']);
 
 function aggregateToolUsage(
   messages: readonly { toolCalls?: readonly { toolName?: string; result?: unknown }[] }[],

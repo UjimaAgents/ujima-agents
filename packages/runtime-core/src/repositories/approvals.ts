@@ -116,7 +116,24 @@ export function listPendingApprovals(
 ): ApprovalRequest[] {
   const rows = db
     .prepare(
-      "SELECT * FROM approvals WHERE organization_id = ? AND status = 'pending' ORDER BY created_at ASC",
+      `SELECT
+         a.id,
+         a.organization_id,
+         a.run_id,
+         a.tool_call_id,
+         COALESCE(a.thread_id, r.thread_id) AS thread_id,
+         a.requested_by,
+         a.resource_type,
+         a.resource_path,
+         a.action,
+         a.status,
+         a.reason,
+         a.created_at,
+         a.resolved_at
+       FROM approvals a
+       LEFT JOIN runs r ON r.organization_id = a.organization_id AND r.id = a.run_id
+       WHERE a.organization_id = ? AND a.status = 'pending'
+       ORDER BY a.created_at ASC`,
     )
     .all(organizationId) as Row[];
 

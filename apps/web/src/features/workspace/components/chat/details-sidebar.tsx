@@ -427,7 +427,7 @@ export function DetailsSidebar({
           ))}
         </div>
 
-        <div className="mt-3 min-h-0 flex-1 overflow-y-auto">{children}</div>
+        <div className="mt-3 min-h-0 flex-1 overflow-y-auto overflow-x-hidden">{children}</div>
       </div>
     </aside>
   );

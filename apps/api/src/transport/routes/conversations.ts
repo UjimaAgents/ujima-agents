@@ -1,16 +1,15 @@
-import type { FastifyInstance, FastifyReply } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { createPaginatedSchema, ChannelSchema, IdSchema, MessageSchema, PaginationQuerySchema } from '@ujima/shared';
 import { ApiErrorSchema, MessageCreateSchema, OrganizationQuerySchema } from '@ujima/api-schema';
 import type { Repository } from '@ujima/runtime-core';
-import type { AuthService, ConversationService, TaskPromoterService } from '@ujima/orchestrator';
+import type { AuthService, AuthState, ConversationService, TaskPromoterService } from '@ujima/orchestrator';
 import { z } from 'zod';
 import {
-  ERR_NO_WORKSPACE_ROOT,
   assertReadyWorkspaceRoot,
-  isWorkspaceRootNotReadyError,
 } from './workspace-root.js';
 import { readSessionToken } from '../session-token.js';
+import { apiError, errorMessage, routeError } from './route-errors.js';
 
 const ThreadIdParamsSchema = z.object({ threadId: IdSchema });
 const ConversationArchiveBodySchema = z.object({
@@ -57,20 +56,15 @@ export function registerConversationRoutes(
     },
   }, async (req, reply) => {
     try {
-      const authState = auth.getAuthState(readSessionToken(req));
-      if (!authState.member) {
-        return reply.code(401).send({ code: 'ERR_UNAUTHORIZED', message: 'Session required' });
-      }
-      if (authState.user?.organizationId !== req.query.organizationId) {
-        return reply.code(403).send({ code: 'ERR_FORBIDDEN', message: 'Unauthorized for this organization.' });
-      }
+      const authState = requireConversationSession(auth, req, reply, req.query.organizationId);
+      if ('code' in authState) return authState;
       return conversations.listChannels(
         req.query.organizationId,
         req.query.cursor,
         req.query.limit,
       );
     } catch (err) {
-      return notFound(reply, errMessage(err));
+      return apiError(reply, 404, errorMessage(err));
     }
   });
 
@@ -90,13 +84,8 @@ export function registerConversationRoutes(
     },
   }, async (req, reply) => {
     try {
-      const authState = auth.getAuthState(readSessionToken(req));
-      if (!authState.member) {
-        return reply.code(401).send({ code: 'ERR_UNAUTHORIZED', message: 'Session required' });
-      }
-      if (authState.user?.organizationId !== req.query.organizationId) {
-        return reply.code(403).send({ code: 'ERR_FORBIDDEN', message: 'Unauthorized for this organization.' });
-      }
+      const authState = requireConversationSession(auth, req, reply, req.query.organizationId);
+      if ('code' in authState) return authState;
       conversations.requireThreadAccess(
         req.query.organizationId,
         req.params.threadId,
@@ -114,11 +103,11 @@ export function registerConversationRoutes(
         channelIds: channel ? [channel.id] : [],
       };
     } catch (err) {
-      const message = errMessage(err);
+      const message = errorMessage(err);
       if (message.startsWith('Forbidden')) {
-        return reply.code(403).send({ code: 'ERR_FORBIDDEN', message });
+        return apiError(reply, 403, message);
       }
-      return notFound(reply, message);
+      return apiError(reply, 404, message);
     }
   });
 
@@ -138,13 +127,8 @@ export function registerConversationRoutes(
     },
   }, async (req, reply) => {
     try {
-      const authState = auth.getAuthState(readSessionToken(req));
-      if (!authState.member) {
-        return reply.code(401).send({ code: 'ERR_UNAUTHORIZED', message: 'Session required' });
-      }
-      if (authState.user?.organizationId !== req.query.organizationId) {
-        return reply.code(403).send({ code: 'ERR_FORBIDDEN', message: 'Unauthorized for this organization.' });
-      }
+      const authState = requireConversationSession(auth, req, reply, req.query.organizationId);
+      if ('code' in authState) return authState;
       return conversations.listMessages(
         req.query.organizationId,
         req.params.threadId,
@@ -153,11 +137,11 @@ export function registerConversationRoutes(
         authState.member?.id,
       );
     } catch (err) {
-      const message = errMessage(err);
+      const message = errorMessage(err);
       if (message.startsWith('Forbidden')) {
-        return reply.code(403).send({ code: 'ERR_FORBIDDEN', message });
+        return apiError(reply, 403, message);
       }
-      return notFound(reply, message);
+      return apiError(reply, 404, message);
     }
   });
 
@@ -177,13 +161,8 @@ export function registerConversationRoutes(
     },
   }, async (req, reply) => {
     try {
-      const authState = auth.getAuthState(readSessionToken(req));
-      if (!authState.member) {
-        return reply.code(401).send({ code: 'ERR_UNAUTHORIZED', message: 'Session required' });
-      }
-      if (authState.user?.organizationId !== req.query.organizationId) {
-        return reply.code(403).send({ code: 'ERR_FORBIDDEN', message: 'Unauthorized for this organization.' });
-      }
+      const authState = requireConversationSession(auth, req, reply, req.query.organizationId);
+      if ('code' in authState) return authState;
       conversations.requireThreadAccess(
         req.query.organizationId,
         req.params.threadId,
@@ -197,11 +176,11 @@ export function registerConversationRoutes(
       );
       return { ok: true as const };
     } catch (err) {
-      const message = errMessage(err);
+      const message = errorMessage(err);
       if (message.startsWith('Forbidden')) {
-        return reply.code(403).send({ code: 'ERR_FORBIDDEN', message });
+        return apiError(reply, 403, message);
       }
-      return notFound(reply, message);
+      return apiError(reply, 404, message);
     }
   });
 
@@ -222,13 +201,8 @@ export function registerConversationRoutes(
   }, async (req, reply) => {
     try {
       assertReadyWorkspaceRoot(repo, req.body.organizationId);
-      const authState = auth.getAuthState(readSessionToken(req));
-      if (!authState.member) {
-        return reply.code(401).send({ code: 'ERR_UNAUTHORIZED', message: 'Session required' });
-      }
-      if (authState.user?.organizationId !== req.body.organizationId) {
-        return reply.code(403).send({ code: 'ERR_FORBIDDEN', message: 'Unauthorized for this organization.' });
-      }
+      const authState = requireConversationSession(auth, req, reply, req.body.organizationId);
+      if ('code' in authState) return authState;
       const senderId = authState.member.id;
       const message =
         'recipientId' in req.body
@@ -262,18 +236,10 @@ export function registerConversationRoutes(
       }
       return message;
     } catch (err) {
-      const message = errMessage(err);
-      if (isWorkspaceRootNotReadyError(err)) {
-        return reply.code(409).send({ code: ERR_NO_WORKSPACE_ROOT, message });
-      }
-      const status =
-        message.startsWith('Organization not found') ||
-        message.startsWith('Sender not found') ||
-        message.startsWith('Channel not found') ||
-        message.startsWith('Recipient not found')
-          ? 404
-          : 400;
-      return replyError(reply, status, message);
+      return routeError(reply, err, {
+        notFound: ['Organization not found', 'Sender not found', 'Channel not found', 'Recipient not found'],
+        workspaceRoot: true,
+      });
     }
   });
 
@@ -293,13 +259,8 @@ export function registerConversationRoutes(
     },
   }, async (req, reply) => {
     try {
-      const authState = auth.getAuthState(readSessionToken(req));
-      if (!authState.member) {
-        return reply.code(401).send({ code: 'ERR_UNAUTHORIZED', message: 'Session required' });
-      }
-      if (authState.user?.organizationId !== req.body.organizationId) {
-        return reply.code(403).send({ code: 'ERR_FORBIDDEN', message: 'Unauthorized for this organization.' });
-      }
+      const authState = requireConversationSession(auth, req, reply, req.body.organizationId);
+      if ('code' in authState) return authState;
 
       conversations.requireThreadAccess(
         req.body.organizationId,
@@ -321,23 +282,25 @@ export function registerConversationRoutes(
         archivedCount: result.compactedMessageIds.length,
       };
     } catch (err) {
-      const message = errMessage(err);
+      const message = errorMessage(err);
       if (message.startsWith('Forbidden')) {
-        return reply.code(403).send({ code: 'ERR_FORBIDDEN', message });
+        return apiError(reply, 403, message);
       }
-      return notFound(reply, message);
+      return apiError(reply, 404, message);
     }
   });
 }
 
-function notFound(reply: FastifyReply, message: string): FastifyReply {
-  return replyError(reply, 404, message);
-}
-
-function replyError(reply: FastifyReply, status: number, message: string): FastifyReply {
-  return reply.code(status).send({ code: status === 404 ? 'ERR_NOT_FOUND' : 'ERR_BAD_REQUEST', message });
-}
-
-function errMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
+function requireConversationSession(
+  auth: AuthService,
+  req: FastifyRequest,
+  reply: FastifyReply,
+  organizationId: string,
+): (AuthState & { member: NonNullable<AuthState['member']> }) | FastifyReply {
+  const authState = auth.getAuthState(readSessionToken(req));
+  if (!authState.member) return apiError(reply, 401, 'Session required');
+  if (authState.user?.organizationId !== organizationId) {
+    return apiError(reply, 403, 'Unauthorized for this organization.');
+  }
+  return authState as AuthState & { member: NonNullable<AuthState['member']> };
 }

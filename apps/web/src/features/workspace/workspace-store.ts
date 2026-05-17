@@ -61,7 +61,6 @@ interface WorkspaceState {
   addPendingMessage(message: ChatMessageData): void;
   receiveMessage(tempId: string | undefined, message: Message, toMessage: (message: Message) => ChatMessageData, toActivity: (message: Message) => ActivityEvent): void;
   appendRunChunk(message: ChatMessageData | undefined, activity: ActivityEvent): void;
-  appendRunChunks(items: { message?: ChatMessageData; activity: ActivityEvent }[]): void;
   removeMessage(id: string): void;
   upsertApproval(approval: ApprovalRequest, toCard: (approval: ApprovalRequest, state: Pick<WorkspaceState, "members">) => ApprovalCardData, toActivity: (approval: ApprovalRequest) => ActivityEvent): void;
   upsertRun(run: RunState, toActivity: (run: RunState) => ActivityEvent): void;
@@ -69,6 +68,7 @@ interface WorkspaceState {
 }
 
 const DETAILS_AUTO_OPEN_DISMISSED_KEY = "ujima.workspace.detailsAutoOpenDismissed";
+const MAX_LIVE_ACTIVITY_EVENTS = 2_000;
 
 const EMPTY_ACTIVITY = {
   sidebarWidth: 25,
@@ -190,8 +190,8 @@ function appendSequencedEvents(
     order: state.activitySequence + index,
   })).filter((event) => !seen.has(event.event_id));
   if (stamped.length === 0) return state;
-  const activity = state.activity.length + stamped.length > 200
-    ? [...state.activity, ...stamped].slice(-200)
+  const activity = state.activity.length + stamped.length > MAX_LIVE_ACTIVITY_EVENTS
+    ? [...state.activity, ...stamped].slice(-MAX_LIVE_ACTIVITY_EVENTS)
     : [...state.activity, ...stamped];
   return {
     activitySequence: state.activitySequence + stamped.length,
@@ -502,15 +502,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
       return {
         ...(messages === state.messages ? {} : { messages }),
         ...appendSequencedEvents(state, [activity]),
-      };
-    }),
-  appendRunChunks: (items) =>
-    set((state) => {
-      if (items.length === 0) return state;
-      const messages = mergeRunChunkMessages(state.messages, items);
-      return {
-        ...(messages === state.messages ? {} : { messages }),
-        ...appendSequencedEvents(state, items.map((item) => item.activity)),
       };
     }),
   removeMessage: (id) =>

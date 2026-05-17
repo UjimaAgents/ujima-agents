@@ -1,4 +1,4 @@
-import type { FastifyInstance, FastifyReply } from 'fastify';
+import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import {
@@ -15,6 +15,7 @@ import {
 } from '@ujima/api-schema';
 import { TaskSessionSchema, TodoStatusSchema } from '@ujima/shared';
 import type { ApiRepository, TaskSessionService } from '@ujima/orchestrator';
+import { apiError, errorMessage } from './route-errors.js';
 
 // Routes for the unified task shell (Phase 1). Mounted under `/api`
 // in server.ts, so the public paths are `/api/task-sessions/*`.
@@ -68,23 +69,23 @@ export function registerTaskSessionRoutes(
       const detail = taskSessions.create(req.body);
       return { session: detail.session };
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errorMessage(err);
       // Human-only origination invariant — surfaces a 403-flavoured
       // ERR_FORBIDDEN since the agent role is structurally disallowed.
       if (message.startsWith('Only human members can originate tasks')) {
-        return replyError(reply, 403, 'ERR_FORBIDDEN', message);
+        return apiError(reply, 403, message);
       }
       if (
         message.startsWith('Organization not found') ||
         message.startsWith('Requester not found') ||
         message.startsWith('Team member not found')
       ) {
-        return replyError(reply, 404, 'ERR_NOT_FOUND', message);
+        return apiError(reply, 404, message);
       }
       if (message.startsWith('Cannot include retired member')) {
-        return replyError(reply, 409, 'ERR_CONFLICT', message);
+        return apiError(reply, 409, message);
       }
-      return replyError(reply, 400, 'ERR_BAD_REQUEST', message);
+      return apiError(reply, 400, message);
     }
   });
 
@@ -106,11 +107,11 @@ export function registerTaskSessionRoutes(
         status: req.query.status,
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errorMessage(err);
       if (message.startsWith('Organization not found')) {
-        return replyError(reply, 404, 'ERR_NOT_FOUND', message);
+        return apiError(reply, 404, message);
       }
-      return replyError(reply, 400, 'ERR_BAD_REQUEST', message);
+      return apiError(reply, 400, message);
     }
   });
 
@@ -129,15 +130,15 @@ export function registerTaskSessionRoutes(
     try {
       const session = taskSessions.get(req.query.organizationId, req.params.id);
       if (!session) {
-        return replyError(reply, 404, 'ERR_NOT_FOUND', `task session "${req.params.id}" not found`);
+        return apiError(reply, 404, `task session "${req.params.id}" not found`);
       }
       return session;
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errorMessage(err);
       if (message.startsWith('Organization not found')) {
-        return replyError(reply, 404, 'ERR_NOT_FOUND', message);
+        return apiError(reply, 404, message);
       }
-      return replyError(reply, 400, 'ERR_BAD_REQUEST', message);
+      return apiError(reply, 400, message);
     }
   });
 
@@ -161,13 +162,13 @@ export function registerTaskSessionRoutes(
       });
       return result;
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errorMessage(err);
       if (
         message.startsWith('Organization not found') ||
         message.startsWith('Task session not found') ||
         message.startsWith('Member not found')
       ) {
-        return replyError(reply, 404, 'ERR_NOT_FOUND', message);
+        return apiError(reply, 404, message);
       }
       if (
         message.includes('not wired') ||
@@ -175,9 +176,9 @@ export function registerTaskSessionRoutes(
         message.includes('retired') ||
         message.includes('terminal')
       ) {
-        return replyError(reply, 409, 'ERR_CONFLICT', message);
+        return apiError(reply, 409, message);
       }
-      return replyError(reply, 400, 'ERR_BAD_REQUEST', message);
+      return apiError(reply, 400, message);
     }
   });
 
@@ -195,7 +196,7 @@ export function registerTaskSessionRoutes(
   }, async (req, reply) => {
     const session = repo.getTaskSession(req.query.organizationId, req.params.id);
     if (!session) {
-      return replyError(reply, 404, 'ERR_NOT_FOUND', `task session "${req.params.id}" not found`);
+      return apiError(reply, 404, `task session "${req.params.id}" not found`);
     }
     const spirits = repo.listSpiritsForSession(req.query.organizationId, req.params.id);
     return { spirits };
@@ -215,15 +216,11 @@ export function registerTaskSessionRoutes(
   }, async (req, reply) => {
     const session = repo.getTaskSession(req.query.organizationId, req.params.id);
     if (!session) {
-      return replyError(reply, 404, 'ERR_NOT_FOUND', `task session "${req.params.id}" not found`);
+      return apiError(reply, 404, `task session "${req.params.id}" not found`);
     }
     const todos = repo.listTodosForSession(req.query.organizationId, req.params.id, {
       status: req.query.status,
     });
     return { todos };
   });
-}
-
-function replyError(reply: FastifyReply, status: number, code: string, message: string): FastifyReply {
-  return reply.status(status).send({ code, message });
 }
