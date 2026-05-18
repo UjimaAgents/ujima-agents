@@ -258,6 +258,12 @@ export function ChatInput({
   }, [slashQuery]);
   const slashMenuOpen = slashQuery !== null && slashMenuOptions.length > 0;
   const canStopRun = Boolean(stoppableRunId && onStopRun);
+  const showStopInsteadOfSend =
+    canStopRun &&
+    !hasDraft &&
+    !uploading &&
+    !isSending &&
+    !isCommanding;
   const mentionTrigger = findMentionTrigger(content, selection.start);
   const filteredMentionSuggestions = useMemo(() => {
     if (!mentionTrigger) return [];
@@ -550,6 +556,10 @@ export function ChatInput({
   };
 
   const submitComposer = async () => {
+    if (showStopInsteadOfSend) {
+      await stopRun();
+      return;
+    }
     if (canConfirmClear) {
       await confirmClear();
       return;
@@ -984,7 +994,23 @@ export function ChatInput({
                   Goal
                 </button>
               ) : null}
-              {canStopRun ? (
+              {canStopRun && !showStopInsteadOfSend && (
+                <button
+                  type="button"
+                  aria-label="Stop agent run"
+                  title="Stop agent run"
+                  onClick={() => void stopRun()}
+                  disabled={isStopping}
+                  className="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-red-600 text-white shadow-lg shadow-red-500/20 transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {isStopping ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Square className="h-3 w-3 fill-current" />
+                  )}
+                </button>
+              )}
+              {showStopInsteadOfSend ? (
                 <button
                   type="button"
                   aria-label="Stop agent run"

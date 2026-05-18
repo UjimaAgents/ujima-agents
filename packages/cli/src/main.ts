@@ -128,32 +128,6 @@ async function cmdInit(argv: string[]): Promise<void> {
   process.stdout.write(`${text}\n`);
 }
 
-function findWorkspaceRoot(startDir = process.cwd()): string | null {
-  let dir = startDir;
-  while (true) {
-    const pkgPath = join(dir, 'package.json');
-    if (existsSync(pkgPath)) {
-      try {
-        const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
-        if (pkg.name === 'ujima-agents') {
-          return dir;
-        }
-      } catch {
-        // ignore JSON parsing errors for malformed files
-      }
-    }
-    const configPath = join(dir, 'ujima.config.ts');
-    if (existsSync(configPath)) {
-      return dir;
-    }
-    const parent = dirname(dir);
-    if (parent === dir) {
-      break;
-    }
-    dir = parent;
-  }
-  return null;
-}
 
 function findMonorepoRoot(startDir = process.cwd()): string | null {
   let dir = startDir;
