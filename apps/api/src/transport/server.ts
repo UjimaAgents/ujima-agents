@@ -313,7 +313,6 @@ export function createTransport(opts: TransportOptions): Transport {
         registerScheduleRoutes(api, {
           repo: opts.apiServices.repo,
           auth: services.auth,
-          scheduler: services.scheduler,
         });
         services.scheduler.start();
       }

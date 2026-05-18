@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { randomUUID } from 'node:crypto';
 import type { Repository } from '@ujima/runtime-core';
-import type { AuthService, SchedulerService } from '@ujima/orchestrator';
+import { computeNextCronRun, type AuthService } from '@ujima/orchestrator';
 import { readSessionToken } from '../session-token.js';
 import {
   CreateScheduledJobRequestSchema,
@@ -18,7 +18,6 @@ import { ScheduledJobSchema } from '@ujima/shared';
 interface ScheduleRouteDeps {
   repo: Repository;
   auth: AuthService;
-  scheduler: SchedulerService;
 }
 
 export function registerScheduleRoutes(api: FastifyInstance, deps: ScheduleRouteDeps): void {
@@ -34,7 +33,14 @@ export function registerScheduleRoutes(api: FastifyInstance, deps: ScheduleRoute
     if (!authState.member || !authState.user) {
       return reply.status(401).send({ code: 'ERR_UNAUTHORIZED', message: 'Unauthorized' });
     }
-    const now = new Date().toISOString();
+    const now = new Date();
+    const nextRunAt = computeNextCronRun(req.body.cronExpression, now);
+    if (!nextRunAt) {
+      return reply.status(400).send({
+        code: 'ERR_BAD_REQUEST',
+        message: 'Invalid cron expression.',
+      });
+    }
     const job = ScheduledJobSchema.parse({
       id: randomUUID(),
       organizationId: authState.user.organizationId,
@@ -44,9 +50,10 @@ export function registerScheduleRoutes(api: FastifyInstance, deps: ScheduleRoute
       channelId: req.body.channelId,
       memberId: authState.member.id,
       status: 'active',
+      nextRunAt: nextRunAt.toISOString(),
       runCount: 0,
-      createdAt: now,
-      updatedAt: now,
+      createdAt: now.toISOString(),
+      updatedAt: now.toISOString(),
     });
     deps.repo.saveScheduledJob(job);
     return reply.status(201).send({ job });
@@ -101,10 +108,20 @@ export function registerScheduleRoutes(api: FastifyInstance, deps: ScheduleRoute
     if (!existing) {
       return reply.status(404).send({ code: 'ERR_NOT_FOUND', message: 'Scheduled job not found' });
     }
+    const now = new Date();
+    const cronExpression = req.body.cronExpression ?? existing.cronExpression;
+    const nextRunAt = req.body.cronExpression ? computeNextCronRun(cronExpression, now) : existing.nextRunAt;
+    if (req.body.cronExpression && !nextRunAt) {
+      return reply.status(400).send({
+        code: 'ERR_BAD_REQUEST',
+        message: 'Invalid cron expression.',
+      });
+    }
     const updated = ScheduledJobSchema.parse({
       ...existing,
       ...req.body,
-      updatedAt: new Date().toISOString(),
+      nextRunAt: nextRunAt ?? undefined,
+      updatedAt: now.toISOString(),
     });
     deps.repo.saveScheduledJob(updated);
     return reply.status(200).send({ job: updated });

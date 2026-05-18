@@ -293,15 +293,10 @@ export function WorkspaceSidebar({
                       onClick={async () => {
                         setOrgMenuOpen(false);
                         if (active) return;
-                        // POST to login with the selected org forces a new session
-                        const res = await fetch("/api/auth/login", {
+                        const res = await fetch("/api/auth/switch-org", {
                           method: "POST",
                           headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({
-                            organizationId: org.id,
-                            email: bootstrap.auth.user?.email,
-                            password: "", // will prompt re-login
-                          }),
+                          body: JSON.stringify({ organizationId: org.id }),
                         });
                         if (res.ok) {
                           window.location.href = "/workspace";

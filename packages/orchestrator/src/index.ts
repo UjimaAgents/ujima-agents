@@ -46,6 +46,8 @@ export {
   SpiritService,
   SupervisorTodoService,
   SchedulerService,
+  computeNextCronRun,
+  parseCronExpression,
   TaskPromoterService,
   TaskSessionService,
   taskRunChannelId,

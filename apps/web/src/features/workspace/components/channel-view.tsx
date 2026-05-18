@@ -32,6 +32,7 @@ import { runToActivity } from "../activity-events";
 import { pendingApprovalVisibleInChannelView, queueApprovals } from "../approval-thread-filter";
 import { ReasoningTracePanel } from "./reasoning-trace-panel";
 import { buildTabCounts, collectBlockedRunReasons, collectConversationAttachments, isLiveRun } from "../feed-selectors";
+import { parseScheduleCommand } from "../parse-schedule-command";
 
 const CHANNEL_TABS: ChatTab[] = [
   { id: "conversation", label: "Conversation" },
@@ -633,13 +634,11 @@ export function ChannelView({
           onGoalModeChange={onGoalModeChange}
           onCommand={async (command, content) => {
             if (command === "schedule") {
-              const scheduleMatch = /^\/schedule\s+((?:\S+\s+){4}\S+)\s+([\s\S]+)$/.exec(
-                content?.trim() ?? "",
-              );
-              if (!scheduleMatch) {
+              const parsed = parseScheduleCommand(content ?? "");
+              if (!parsed) {
                 throw new Error("Usage: /schedule <cron> <prompt> — e.g. /schedule 0 9 * * 1-5 Standup");
               }
-              const [, cronExpression, prompt] = scheduleMatch;
+              const { cronExpression, prompt } = parsed;
               const res = await fetch("/api/schedules", {
                 method: "POST",
                 body: JSON.stringify({

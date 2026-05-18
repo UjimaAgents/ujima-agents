@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
-import { parseCronExpression, SchedulerService } from './scheduler.js';
+import { computeNextCronRun, parseCronExpression, SchedulerService } from './scheduler.js';
 import type { ApiRepository } from './repository-reader.js';
 import type { ConversationService } from './conversation.js';
 import type { RealtimeService } from './context.js';
@@ -81,6 +81,20 @@ describe('parseCronExpression', () => {
   });
 });
 
+describe('computeNextCronRun', () => {
+  it('returns the next cron boundary strictly after the reference time', () => {
+    const next = computeNextCronRun('0 9 * * *', new Date('2025-01-15T08:30:00'));
+    expect(next).not.toBeNull();
+    expect(next!.getHours()).toBe(9);
+    expect(next!.getMinutes()).toBe(0);
+    expect(next!.getTime()).toBeGreaterThan(new Date('2025-01-15T08:30:00').getTime());
+  });
+
+  it('returns null for invalid cron expressions', () => {
+    expect(computeNextCronRun('not-a-cron')).toBeNull();
+  });
+});
+
 describe('SchedulerService', () => {
   let mockRepo: ApiRepository;
   let mockConversations: ConversationService;
@@ -129,6 +143,7 @@ describe('SchedulerService', () => {
       channelId: 'channel-1',
       memberId: 'member-1',
       status: 'active' as const,
+      nextRunAt: now,
       runCount: 0,
       createdAt: now,
       updatedAt: now,
@@ -160,6 +175,7 @@ describe('SchedulerService', () => {
       channelId: 'channel-1',
       memberId: 'member-1',
       status: 'active' as const,
+      nextRunAt: now,
       runCount: 0,
       createdAt: now,
       updatedAt: now,

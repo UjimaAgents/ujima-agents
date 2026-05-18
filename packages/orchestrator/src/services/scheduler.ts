@@ -3,15 +3,16 @@ import type { ApiRepository } from './repository-reader.js';
 import type { ConversationService } from './conversation.js';
 import type { RealtimeService } from './context.js';
 
-/**
- * Parse a 5-field cron expression and return the next Date
- * at or after `from` that matches. Returns null if the expression
- * is invalid or no match exists within a reasonable window.
- *
- * Fields: minute (0-59), hour (0-23), day-of-month (1-31),
- *         month (1-12), day-of-week (0-6, 0=Sunday).
- * Supports: * (wildcard), N (exact), N-M (range), N,M (list).
- */
+export function computeNextCronRun(cronExpression: string, after: Date = new Date()): Date | null {
+  const matcher = parseCronExpression(cronExpression);
+  if (!matcher) return null;
+  const start = new Date(after);
+  start.setSeconds(0, 0);
+  start.setMinutes(start.getMinutes() + 1);
+  return matcher(start);
+}
+
+/** Parse a 5-field cron expression and return the next Date at or after `from` that matches. */
 export function parseCronExpression(expr: string): ((date: Date) => Date | null) | null {
   const parts = expr.trim().split(/\s+/);
   if (parts.length !== 5) return null;
@@ -111,7 +112,6 @@ export class SchedulerService {
     if (this.running) return;
     this.running = true;
     this.timer = setInterval(() => this.tick(), this.pollIntervalMs);
-    // Run immediately on start
     queueMicrotask(() => this.tick());
   }
 
@@ -132,6 +132,18 @@ export class SchedulerService {
       for (const job of due) {
         if (!this.running) break;
         try {
+          if (!job.nextRunAt) {
+            const firstRun = computeNextCronRun(job.cronExpression, now);
+            if (firstRun) {
+              this.repo.saveScheduledJob({
+                ...job,
+                nextRunAt: firstRun.toISOString(),
+                updatedAt: now.toISOString(),
+              });
+            }
+            continue;
+          }
+
           const matcher = parseCronExpression(job.cronExpression);
           const nextRun = matcher ? matcher(now) : null;
 
@@ -144,7 +156,6 @@ export class SchedulerService {
             updatedAt: now.toISOString(),
           };
 
-          // Execute the job
           await this.executeJob(job);
 
           this.repo.saveScheduledJob(updatedJob);

@@ -17,6 +17,8 @@ import { requireOrgSession } from './org-auth.js';
 import { readSessionToken } from '../session-token.js';
 import { apiError, errorMessage } from './route-errors.js';
 
+const ORGANIZATION_WORKSPACE_IDS_KEY = 'organization_workspace_ids';
+
 const WorkspaceIdParamsSchema = z.object({ id: z.string().min(1) });
 const WorkspaceRemovedResponseSchema = z.object({ removed: z.boolean() });
 const workspaceAuthResponses = {
@@ -35,6 +37,7 @@ export interface WorkspaceRoutesOptions {
 interface WorkspaceOrgSession {
   organizationId: string;
   organization: Organization;
+  repo: Repository;
 }
 
 export function registerWorkspaceRoutes(
@@ -57,17 +60,17 @@ export function registerWorkspaceRoutes(
     const session = requireWorkspaceOrgSession({ auth, repo }, req, reply);
     if (!isWorkspaceOrgSession(session)) return session;
 
-    const { organization } = session;
-    if (!repo) {
-      return replyError(reply, 503, 'ERR_UNAVAILABLE', 'Workspace routes are not configured');
+    syncWorkspacesFromOrganizations(host.workspaces, [session.organization]);
+    const defaultWorkspaceId = `ws_${session.organization.id}`;
+    if (host.workspaces.get(defaultWorkspaceId)) {
+      linkWorkspaceToOrganization(session.repo, session.organization.id, defaultWorkspaceId);
     }
-    syncWorkspacesFromOrganizations(host.workspaces, [organization]);
-    const current = resolveCurrentWorkspace(organization, host, repo);
+    const current = resolveCurrentWorkspace(session.organization, host, session.repo);
 
     return {
       current_root_path: current.root,
       current_workspace_id: current.id,
-      workspaces: listWorkspacesForOrganization(host, repo, organization, current.id).map((ws) => ({
+      workspaces: listWorkspacesForOrganization(host, session.repo, session.organization, current.id).map((ws) => ({
         ...toWorkspaceDto(ws),
         is_current:
           (current.id !== null && ws.id === current.id) ||
@@ -91,7 +94,9 @@ export function registerWorkspaceRoutes(
     const session = requireWorkspaceOrgSession({ auth, repo }, req, reply);
     if (!isWorkspaceOrgSession(session)) return session;
 
-    return toWorkspaceDto(host.workspaces.create(req.body));
+    const workspace = host.workspaces.create(req.body);
+    linkWorkspaceToOrganization(session.repo, session.organizationId, workspace.id);
+    return toWorkspaceDto(workspace);
   });
 
   app.post('/workspaces/:id/activate', {
@@ -153,10 +158,7 @@ export function registerWorkspaceRoutes(
     if (!isWorkspaceOrgSession(session)) return session;
 
     const { id } = req.params;
-    if (!repo) {
-      return replyError(reply, 503, 'ERR_UNAVAILABLE', 'Workspace routes are not configured');
-    }
-    if (!workspaceAccessibleToOrganization(host, repo, session.organization, id)) {
+    if (!workspaceAccessibleToOrganization(host, session.repo, session.organization, id)) {
       return replyError(reply, 404, 'ERR_NOT_FOUND', `workspace "${id}" not found`);
     }
     try {
@@ -182,10 +184,7 @@ export function registerWorkspaceRoutes(
     if (!isWorkspaceOrgSession(session)) return session;
 
     const { id } = req.params;
-    if (!repo) {
-      return replyError(reply, 503, 'ERR_UNAVAILABLE', 'Workspace routes are not configured');
-    }
-    if (!workspaceAccessibleToOrganization(host, repo, session.organization, id)) {
+    if (!workspaceAccessibleToOrganization(host, session.repo, session.organization, id)) {
       return replyError(reply, 404, 'ERR_NOT_FOUND', `workspace "${id}" not found`);
     }
     const ws = host.workspaces.get(id);
@@ -209,10 +208,7 @@ export function registerWorkspaceRoutes(
     if (!isWorkspaceOrgSession(session)) return session;
 
     const { id } = req.params;
-    if (!repo) {
-      return replyError(reply, 503, 'ERR_UNAVAILABLE', 'Workspace routes are not configured');
-    }
-    if (!workspaceAccessibleToOrganization(host, repo, session.organization, id)) {
+    if (!workspaceAccessibleToOrganization(host, session.repo, session.organization, id)) {
       return replyError(reply, 404, 'ERR_NOT_FOUND', `workspace "${id}" not found`);
     }
     return { removed: host.workspaces.remove(id) };
@@ -249,7 +245,30 @@ function requireWorkspaceOrgSession(
     return replyError(reply, 404, 'ERR_NOT_FOUND', 'Organization not found');
   }
 
-  return { organizationId, organization };
+  return { organizationId, organization, repo };
+}
+
+function readLinkedWorkspaceIds(repo: Repository, organizationId: string): Set<string> {
+  const raw = repo.getWorkspaceSetting(organizationId, ORGANIZATION_WORKSPACE_IDS_KEY);
+  if (!raw) return new Set();
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return new Set();
+    return new Set(parsed.filter((id): id is string => typeof id === 'string' && id.length > 0));
+  } catch {
+    return new Set();
+  }
+}
+
+function linkWorkspaceToOrganization(
+  repo: Repository,
+  organizationId: string,
+  workspaceId: string,
+): void {
+  const ids = readLinkedWorkspaceIds(repo, organizationId);
+  if (ids.has(workspaceId)) return;
+  ids.add(workspaceId);
+  repo.saveWorkspaceSetting(organizationId, ORGANIZATION_WORKSPACE_IDS_KEY, JSON.stringify([...ids]));
 }
 
 function listWorkspacesForOrganization(
@@ -258,11 +277,13 @@ function listWorkspacesForOrganization(
   organization: Organization,
   activeWorkspaceId: string | null,
 ) {
+  const linkedIds = readLinkedWorkspaceIds(repo, organization.id);
   const activeId =
     repo.getWorkspaceSetting(organization.id, ACTIVE_WORKSPACE_SETTING_KEY) ?? activeWorkspaceId;
   const orgRoot = organization.workspace.root?.trim();
 
   return host.workspaces.list().filter((workspace) => {
+    if (linkedIds.has(workspace.id)) return true;
     if (activeId && workspace.id === activeId) return true;
     if (workspace.id === `ws_${organization.id}`) return true;
     if (orgRoot && workspace.root_path && pathsMatch(workspace.root_path, orgRoot)) return true;

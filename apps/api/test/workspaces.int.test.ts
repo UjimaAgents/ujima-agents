@@ -194,6 +194,16 @@ describe('workspace routes', () => {
       expect(createResponse.status).toBe(200);
       const created = (await createResponse.json()) as { id: string; root_path: string };
       expect(created.root_path).toBe(otherHome);
+
+      const listResponse = await fetch(`${baseUrl}/api/workspaces`, {
+        headers: {
+          authorization: `Bearer ${TOKEN}`,
+          'x-ujima-session': sessionToken,
+        },
+      });
+      expect(listResponse.status).toBe(200);
+      const listed = (await listResponse.json()) as { workspaces: Array<{ id: string }> };
+      expect(listed.workspaces.some((workspace) => workspace.id === created.id)).toBe(true);
     } finally {
       await rm(otherHome, { recursive: true, force: true });
     }

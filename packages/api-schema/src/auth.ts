@@ -39,3 +39,8 @@ export const AccessibleOrganizationsResponseSchema = z.object({
   })),
 });
 export type AccessibleOrganizationsResponse = z.infer<typeof AccessibleOrganizationsResponseSchema>;
+
+export const AuthSwitchOrganizationRequestSchema = z.object({
+  organizationId: IdSchema,
+});
+export type AuthSwitchOrganizationRequest = z.infer<typeof AuthSwitchOrganizationRequestSchema>;

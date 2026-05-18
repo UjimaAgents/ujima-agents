@@ -188,6 +188,33 @@ export class AuthService {
     return true;
   }
 
+  switchOrganization(
+    sessionToken: string | null | undefined,
+    organizationId: string,
+  ): AuthenticatedSession {
+    const state = this.getAuthState(sessionToken);
+    if (!state.authenticated || !state.user) {
+      throw new Error('session required');
+    }
+
+    const emailNormalized = normalizeEmail(state.user.email);
+    const credentials = this.repo.getAuthUserCredentials(organizationId, emailNormalized);
+    if (!credentials) {
+      throw new Error('you do not have access to this organization');
+    }
+
+    const member = this.repo.getMember(organizationId, credentials.user.memberId);
+    if (!member) {
+      throw new Error(`member "${credentials.user.memberId}" no longer exists`);
+    }
+
+    if (sessionToken) {
+      this.logout(sessionToken);
+    }
+
+    return this.issueSession(credentials.user, member);
+  }
+
   listAccessibleOrganizations(sessionToken?: string | null): Organization[] {
     if (!sessionToken) return [];
     const record = this.repo.getAuthSessionByTokenHash(hashSessionToken(sessionToken));
