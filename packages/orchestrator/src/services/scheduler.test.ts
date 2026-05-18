@@ -1,5 +1,10 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
-import { computeNextCronRun, parseCronExpression, SchedulerService } from './scheduler.js';
+import {
+  computeNextCronRun,
+  parseCronExpression,
+  resolveScheduledJobNextRunAt,
+  SchedulerService,
+} from './scheduler.js';
 import type { ApiRepository } from './repository-reader.js';
 import type { ConversationService } from './conversation.js';
 import type { RealtimeService } from './context.js';
@@ -95,6 +100,35 @@ describe('computeNextCronRun', () => {
   });
 });
 
+describe('resolveScheduledJobNextRunAt', () => {
+  const existing = {
+    cronExpression: '0 9 * * *',
+    status: 'paused',
+    nextRunAt: '2020-01-01T09:00:00.000Z',
+  };
+
+  it('recomputes when reactivating a paused job', () => {
+    const now = new Date('2025-01-15T10:00:00');
+    const next = resolveScheduledJobNextRunAt(existing, { status: 'active' }, now);
+    expect(next).toBeDefined();
+    expect(Date.parse(next!)).toBeGreaterThan(now.getTime());
+  });
+
+  it('keeps nextRunAt when pausing without cron change', () => {
+    const active = { ...existing, status: 'active', nextRunAt: '2025-06-01T09:00:00.000Z' };
+    const next = resolveScheduledJobNextRunAt(active, { status: 'paused' }, new Date());
+    expect(next).toBe(active.nextRunAt);
+  });
+
+  it('recomputes when cron changes on an active job', () => {
+    const active = { ...existing, status: 'active' };
+    const now = new Date('2025-01-15T10:00:00');
+    const next = resolveScheduledJobNextRunAt(active, { cronExpression: '0 10 * * *' }, now);
+    expect(next).toBeDefined();
+    expect(Date.parse(next!)).toBeGreaterThan(now.getTime());
+  });
+});
+
 describe('SchedulerService', () => {
   let mockRepo: ApiRepository;
   let mockConversations: ConversationService;
@@ -132,6 +166,40 @@ describe('SchedulerService', () => {
     scheduler.stop();
   });
 
+  it('advances nextRunAt strictly after a successful run', async () => {
+    const runAt = new Date('2025-01-15T09:00:00');
+    vi.useFakeTimers();
+    vi.setSystemTime(runAt);
+
+    const dueJob = {
+      id: 'job-advance',
+      organizationId: 'org-1',
+      name: 'Daily',
+      cronExpression: '0 9 * * *',
+      prompt: 'Run daily',
+      channelId: 'channel-1',
+      memberId: 'member-1',
+      status: 'active' as const,
+      nextRunAt: runAt.toISOString(),
+      runCount: 0,
+      createdAt: runAt.toISOString(),
+      updatedAt: runAt.toISOString(),
+    };
+    mockRepo.listDueJobsGlobally = vi.fn().mockReturnValue([dueJob]);
+
+    scheduler.start();
+    await vi.waitFor(() => {
+      expect(mockRepo.saveScheduledJob).toHaveBeenCalled();
+    }, { timeout: 2000 });
+
+    const saved = vi.mocked(mockRepo.saveScheduledJob).mock.calls.at(-1)?.[0];
+    expect(saved?.runCount).toBe(1);
+    expect(Date.parse(saved!.nextRunAt!)).toBeGreaterThan(runAt.getTime());
+
+    scheduler.stop();
+    vi.useRealTimers();
+  });
+
   it('executes due jobs and sends messages', async () => {
     const now = new Date().toISOString();
     const dueJob = {
@@ -164,31 +232,40 @@ describe('SchedulerService', () => {
     scheduler.stop();
   });
 
-  it('handles job execution errors and records lastError', async () => {
-    const now = new Date().toISOString();
+  it('handles job execution errors and advances nextRunAt', async () => {
+    const runAt = new Date('2025-01-15T09:00:00');
+    vi.useFakeTimers();
+    vi.setSystemTime(runAt);
+
     const dueJob = {
       id: 'job-2',
       organizationId: 'org-1',
       name: 'Failing job',
-      cronExpression: '* * * * *',
+      cronExpression: '0 9 * * *',
       prompt: 'Do something',
       channelId: 'channel-1',
       memberId: 'member-1',
       status: 'active' as const,
-      nextRunAt: now,
+      nextRunAt: runAt.toISOString(),
       runCount: 0,
-      createdAt: now,
-      updatedAt: now,
+      createdAt: runAt.toISOString(),
+      updatedAt: runAt.toISOString(),
     };
     mockRepo.listDueJobsGlobally = vi.fn().mockReturnValue([dueJob]);
+    vi.mocked(mockConversations.sendMessage).mockRejectedValueOnce(new Error('send failed'));
 
     scheduler.start();
 
     await vi.waitFor(() => {
-      expect(mockRepo.saveScheduledJob).toHaveBeenCalledOnce();
+      expect(mockRepo.saveScheduledJob).toHaveBeenCalled();
     }, { timeout: 2000 });
 
+    const saved = vi.mocked(mockRepo.saveScheduledJob).mock.calls.at(-1)?.[0];
+    expect(saved?.lastError).toBe('send failed');
+    expect(Date.parse(saved!.nextRunAt!)).toBeGreaterThan(runAt.getTime());
+
     scheduler.stop();
+    vi.useRealTimers();
   });
 
   it('does not throw from errors in listDueJobsGlobally', async () => {

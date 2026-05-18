@@ -81,7 +81,7 @@ export interface TransportOptions {
       auth: AuthService;
       bootstrap: BootstrapService;
       onboarding: OnboardingService;
-      scheduler: SchedulerService;
+      scheduler?: SchedulerService;
       settings: SettingsService;
       taskPromoter: TaskPromoterService;
       taskSessions: TaskSessionService;
@@ -314,7 +314,7 @@ export function createTransport(opts: TransportOptions): Transport {
           repo: opts.apiServices.repo,
           auth: services.auth,
         });
-        services.scheduler.start();
+        services.scheduler?.start();
       }
     },
     {prefix: "/api"}

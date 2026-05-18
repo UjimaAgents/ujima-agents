@@ -4,6 +4,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createRuntimeHost, createBufferLogger, type RuntimeHost } from '@ujima/runtime-core';
 import { Repository } from '@ujima/runtime-core';
+import {
+  AuthService,
+  BootstrapService,
+  OnboardingService,
+  SettingsService,
+  createTeamStore,
+} from '@ujima/orchestrator';
 import { createClient, UjimaApiError } from '@ujima/client-sdk';
 import { createTransport, type Transport } from '../src/transport/server';
 import type { LanguageModel } from 'ai';
@@ -16,6 +23,7 @@ describe('transport (in-process)', () => {
   let host: RuntimeHost;
   let transport: Transport;
   let baseUrl: string;
+  let sessionToken: string;
 
   beforeAll(async () => {
     homeDir = await mkdtemp(join(tmpdir(), 'ujima-transport-'));
@@ -31,6 +39,12 @@ describe('transport (in-process)', () => {
       {},
     );
     const apiRepo = new Repository(host.db.raw);
+    const teamStore = createTeamStore();
+    const auth = new AuthService(apiRepo);
+    const bootstrap = new BootstrapService(apiRepo, teamStore, auth);
+    const onboarding = new OnboardingService(apiRepo, teamStore);
+    const settings = new SettingsService(apiRepo, teamStore);
+
     transport = createTransport({
       host,
       token: TOKEN,
@@ -44,17 +58,52 @@ describe('transport (in-process)', () => {
             conversations: {},
             runs: {},
             approvals: {},
-            auth: {},
-            bootstrap: {},
-            onboarding: {},
-            settings: {},
+            auth,
+            bootstrap,
+            onboarding,
+            settings,
             taskPromoter: {},
-          } as any),
+          }) as never,
       },
     });
     await transport.listen();
     baseUrl = transport.url;
-  }, 15_000);
+
+    const onboardingResponse = await fetch(`${baseUrl}/api/onboarding`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${TOKEN}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        organizationName: 'Transport Org',
+        ownerName: 'Owner',
+        ownerEmail: 'owner@transport.test',
+        ownerPassword: 'correct horse battery staple',
+        workspaceRoot: homeDir,
+        providerKeys: { openai: 'test-key' },
+        team: {
+          channels: [{ name: 'general', kind: 'general', topic: 'General' }],
+          roles: [
+            {
+              name: 'frontend-engineer',
+              title: 'Frontend Engineer',
+              instructions: 'Build the UI',
+              provider: 'openai',
+              model: 'gpt-4.1',
+              workspaceScopes: ['.'],
+              channels: ['general'],
+            },
+          ],
+          agents: [{ name: 'frontend-engineer', roleName: 'frontend-engineer' }],
+          providers: { openai: { kind: 'openai' } },
+        },
+      }),
+    });
+    expect(onboardingResponse.status).toBe(200);
+    const onboardingBody = (await onboardingResponse.json()) as { sessionToken: string };
+    sessionToken = onboardingBody.sessionToken;
+  }, 20_000);
 
   afterAll(async () => {
     await transport.close();
@@ -119,21 +168,56 @@ describe('transport (in-process)', () => {
   });
 
   it('creates, lists, fetches, updates, and removes workspaces', async () => {
-    const client = createClient({ baseUrl, token: TOKEN });
-    const created = await client.workspaces.create({ label: 'demo', root_path: '/tmp/demo' });
-    expect(created.id).toBeTruthy();
+    const workspaceHome = await mkdtemp(join(tmpdir(), 'ujima-transport-ws-'));
+    const headers = {
+      authorization: `Bearer ${TOKEN}`,
+      'content-type': 'application/json',
+      'x-ujima-session': sessionToken,
+    };
 
-    const list = await client.workspaces.list();
-    expect(list.workspaces.some((w) => w.id === created.id)).toBe(true);
+    try {
+      const createRes = await fetch(`${baseUrl}/api/workspaces`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ label: 'demo', root_path: workspaceHome }),
+      });
+      expect(createRes.status).toBe(200);
+      const created = (await createRes.json()) as { id: string; label: string };
+      expect(created.id).toBeTruthy();
 
-    const fetched = await client.workspaces.get(created.id);
-    expect(fetched.label).toBe('demo');
+      const listRes = await fetch(`${baseUrl}/api/workspaces`, {
+        headers: { authorization: headers.authorization, 'x-ujima-session': sessionToken },
+      });
+      expect(listRes.status).toBe(200);
+      const list = (await listRes.json()) as { workspaces: Array<{ id: string }> };
+      expect(list.workspaces.some((w) => w.id === created.id)).toBe(true);
 
-    const updated = await client.workspaces.update(created.id, { label: 'renamed' });
-    expect(updated.label).toBe('renamed');
+      const getRes = await fetch(`${baseUrl}/api/workspaces/${encodeURIComponent(created.id)}`, {
+        headers: { authorization: headers.authorization, 'x-ujima-session': sessionToken },
+      });
+      expect(getRes.status).toBe(200);
+      const fetched = (await getRes.json()) as { label: string };
+      expect(fetched.label).toBe('demo');
 
-    const removed = await client.workspaces.remove(created.id);
-    expect(removed.removed).toBe(true);
+      const updateRes = await fetch(`${baseUrl}/api/workspaces/${encodeURIComponent(created.id)}`, {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify({ label: 'renamed' }),
+      });
+      expect(updateRes.status).toBe(200);
+      const updated = (await updateRes.json()) as { label: string };
+      expect(updated.label).toBe('renamed');
+
+      const removeRes = await fetch(`${baseUrl}/api/workspaces/${encodeURIComponent(created.id)}`, {
+        method: 'DELETE',
+        headers: { authorization: headers.authorization, 'x-ujima-session': sessionToken },
+      });
+      expect(removeRes.status).toBe(200);
+      const removed = (await removeRes.json()) as { removed: boolean };
+      expect(removed.removed).toBe(true);
+    } finally {
+      await rm(workspaceHome, { recursive: true, force: true });
+    }
   });
 
   it('returns 409 ERR_NO_WORKSPACE_ROOT when starting a task on an unready workspace', async () => {

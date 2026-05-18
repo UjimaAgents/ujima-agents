@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { randomUUID } from 'node:crypto';
 import type { Repository } from '@ujima/runtime-core';
-import { computeNextCronRun, type AuthService } from '@ujima/orchestrator';
+import { computeNextCronRun, resolveScheduledJobNextRunAt, type AuthService } from '@ujima/orchestrator';
 import { readSessionToken } from '../session-token.js';
 import {
   CreateScheduledJobRequestSchema,
@@ -109,9 +109,11 @@ export function registerScheduleRoutes(api: FastifyInstance, deps: ScheduleRoute
       return reply.status(404).send({ code: 'ERR_NOT_FOUND', message: 'Scheduled job not found' });
     }
     const now = new Date();
-    const cronExpression = req.body.cronExpression ?? existing.cronExpression;
-    const nextRunAt = req.body.cronExpression ? computeNextCronRun(cronExpression, now) : existing.nextRunAt;
-    if (req.body.cronExpression && !nextRunAt) {
+    const nextRunAt = resolveScheduledJobNextRunAt(existing, req.body, now);
+    const needsValidNextRun =
+      req.body.cronExpression !== undefined ||
+      (req.body.status === 'active' && existing.status !== 'active');
+    if (needsValidNextRun && (req.body.status ?? existing.status) === 'active' && !nextRunAt) {
       return reply.status(400).send({
         code: 'ERR_BAD_REQUEST',
         message: 'Invalid cron expression.',
@@ -120,7 +122,7 @@ export function registerScheduleRoutes(api: FastifyInstance, deps: ScheduleRoute
     const updated = ScheduledJobSchema.parse({
       ...existing,
       ...req.body,
-      nextRunAt: nextRunAt ?? undefined,
+      nextRunAt,
       updatedAt: now.toISOString(),
     });
     deps.repo.saveScheduledJob(updated);

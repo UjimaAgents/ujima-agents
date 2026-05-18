@@ -77,7 +77,12 @@ export type {
   OnboardingResult,
 } from './onboarding.js';
 export type { CreateRunInput } from './spirit.js';
-export { SchedulerService, computeNextCronRun, parseCronExpression } from './scheduler.js';
+export {
+  SchedulerService,
+  computeNextCronRun,
+  parseCronExpression,
+  resolveScheduledJobNextRunAt,
+} from './scheduler.js';
 export type { SchedulerServiceOptions } from './scheduler.js';
 export { SettingsService } from './settings.js';
 export type {

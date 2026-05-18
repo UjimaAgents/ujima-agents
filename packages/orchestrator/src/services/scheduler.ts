@@ -12,6 +12,24 @@ export function computeNextCronRun(cronExpression: string, after: Date = new Dat
   return matcher(start);
 }
 
+export function resolveScheduledJobNextRunAt(
+  existing: { cronExpression: string; status: string; nextRunAt?: string },
+  patch: { cronExpression?: string; status?: string },
+  now: Date = new Date(),
+): string | undefined {
+  const status = patch.status ?? existing.status;
+  const cronExpression = patch.cronExpression ?? existing.cronExpression;
+  const recompute =
+    patch.cronExpression !== undefined ||
+    (status === 'active' && existing.status !== 'active');
+
+  if (status !== 'active' || !recompute) {
+    return existing.nextRunAt;
+  }
+
+  return computeNextCronRun(cronExpression, now)?.toISOString() ?? existing.nextRunAt;
+}
+
 /** Parse a 5-field cron expression and return the next Date at or after `from` that matches. */
 export function parseCronExpression(expr: string): ((date: Date) => Date | null) | null {
   const parts = expr.trim().split(/\s+/);
@@ -144,28 +162,25 @@ export class SchedulerService {
             continue;
           }
 
-          const matcher = parseCronExpression(job.cronExpression);
-          const nextRun = matcher ? matcher(now) : null;
+          await this.executeJob(job);
 
-          const updatedJob = {
+          const nextRun = computeNextCronRun(job.cronExpression, now);
+          this.repo.saveScheduledJob({
             ...job,
             lastRunAt: now.toISOString(),
             nextRunAt: nextRun?.toISOString(),
             runCount: job.runCount + 1,
             lastError: undefined,
             updatedAt: now.toISOString(),
-          };
-
-          await this.executeJob(job);
-
-          this.repo.saveScheduledJob(updatedJob);
+          });
         } catch (error) {
-          const updatedJob = {
+          const nextRun = computeNextCronRun(job.cronExpression, now);
+          this.repo.saveScheduledJob({
             ...job,
             lastError: error instanceof Error ? error.message : String(error),
-            updatedAt: new Date().toISOString(),
-          };
-          this.repo.saveScheduledJob(updatedJob);
+            nextRunAt: nextRun?.toISOString() ?? job.nextRunAt,
+            updatedAt: now.toISOString(),
+          });
         }
       }
     } catch {

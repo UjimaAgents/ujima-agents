@@ -48,6 +48,7 @@ export {
   SchedulerService,
   computeNextCronRun,
   parseCronExpression,
+  resolveScheduledJobNextRunAt,
   TaskPromoterService,
   TaskSessionService,
   taskRunChannelId,
