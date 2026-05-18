@@ -37,6 +37,7 @@ type WorkspaceTeamRole = {
   skills: string[];
 };
 type WorkspaceTeamSettings = {
+  workspace?: { root: string; roleScopes?: Record<string, string[]> };
   agents: Array<{ name: string; roleName: string; personalityName: string; kind: string }>;
   roles: WorkspaceTeamRole[];
 } | null;
@@ -410,6 +411,9 @@ export function WorkspaceShell({
           bootstrap={bootstrap}
           rolePresets={rolePresets}
           teamSettings={teamSettingsState}
+          currentWorkspaceRoot={
+            teamSettingsState?.workspace?.root ?? bootstrap.team?.workspaceRoot
+          }
           agentEditorTargetId={agentEditorTargetId}
           onAgentEditorHandled={() => setAgentEditorTargetId(null)}
           channels={channels}

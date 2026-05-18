@@ -1,32 +1,77 @@
-import type { FastifyInstance, FastifyReply } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
-import type { RuntimeHost } from '@ujima/runtime-core';
+import { syncWorkspacesFromOrganizations, type Repository, type RuntimeHost } from '@ujima/runtime-core';
+import type { Organization } from '@ujima/shared';
 import {
+  ActivateWorkspaceResponseSchema,
   CreateWorkspaceRequestSchema,
   ApiErrorSchema,
   ListWorkspacesResponseSchema,
   UpdateWorkspaceRequestSchema,
   WorkspaceSchema,
 } from '@ujima/api-schema';
+import type { AuthService, SettingsService } from '@ujima/orchestrator';
+import { ACTIVE_WORKSPACE_SETTING_KEY } from '@ujima/orchestrator';
 import { z } from 'zod';
+import { requireOrgSession } from './org-auth.js';
+import { readSessionToken } from '../session-token.js';
 
 const WorkspaceIdParamsSchema = z.object({ id: z.string().min(1) });
 const WorkspaceRemovedResponseSchema = z.object({ removed: z.boolean() });
+const workspaceAuthResponses = {
+  401: ApiErrorSchema,
+  403: ApiErrorSchema,
+  503: ApiErrorSchema,
+};
 
-export function registerWorkspaceRoutes(_app: FastifyInstance, host: RuntimeHost): void {
+export interface WorkspaceRoutesOptions {
+  host: RuntimeHost;
+  repo?: Repository;
+  auth?: AuthService;
+  settings?: SettingsService;
+}
+
+interface WorkspaceOrgSession {
+  organizationId: string;
+  organization: Organization;
+}
+
+export function registerWorkspaceRoutes(
+  _app: FastifyInstance,
+  options: WorkspaceRoutesOptions,
+): void {
+  const { host, repo, auth, settings } = options;
   const app = _app.withTypeProvider<ZodTypeProvider>();
 
   app.get('/workspaces', {
     schema: {
-      description: 'List all available workspaces',
+      description: 'List workspaces for the authenticated organization',
       tags: ['Workspaces'],
       response: {
         200: ListWorkspacesResponseSchema,
+        ...workspaceAuthResponses,
       },
     },
-  }, async () => {
+  }, async (req, reply) => {
+    const session = requireWorkspaceOrgSession({ auth, repo }, req, reply);
+    if (!isWorkspaceOrgSession(session)) return session;
+
+    const { organization } = session;
+    if (!repo) {
+      return replyError(reply, 503, 'ERR_UNAVAILABLE', 'Workspace routes are not configured');
+    }
+    syncWorkspacesFromOrganizations(host.workspaces, [organization]);
+    const current = resolveCurrentWorkspace(organization, host, repo);
+
     return {
-      workspaces: host.workspaces.list().map(toWorkspaceDto),
+      current_root_path: current.root,
+      current_workspace_id: current.id,
+      workspaces: listWorkspacesForOrganization(host, repo, organization, current.id).map((ws) => ({
+        ...toWorkspaceDto(ws),
+        is_current:
+          (current.id !== null && ws.id === current.id) ||
+          (current.root ? pathsMatch(ws.root_path, current.root) : false),
+      })),
     };
   });
 
@@ -38,11 +83,56 @@ export function registerWorkspaceRoutes(_app: FastifyInstance, host: RuntimeHost
       response: {
         200: WorkspaceSchema,
         400: ApiErrorSchema,
+        ...workspaceAuthResponses,
       },
     },
-  }, async (req) => {
-    const ws = host.workspaces.create(req.body);
-    return toWorkspaceDto(ws);
+  }, async (req, reply) => {
+    const session = requireWorkspaceOrgSession({ auth, repo }, req, reply);
+    if (!isWorkspaceOrgSession(session)) return session;
+
+    return toWorkspaceDto(host.workspaces.create(req.body));
+  });
+
+  app.post('/workspaces/:id/activate', {
+    schema: {
+      description: 'Switch the active workspace for the current organization',
+      tags: ['Workspaces'],
+      params: WorkspaceIdParamsSchema,
+      response: {
+        200: ActivateWorkspaceResponseSchema,
+        400: ApiErrorSchema,
+        404: ApiErrorSchema,
+        ...workspaceAuthResponses,
+      },
+    },
+  }, async (req, reply) => {
+    if (!settings) {
+      return replyError(reply, 503, 'ERR_UNAVAILABLE', 'Workspace activation is not configured');
+    }
+
+    const session = requireWorkspaceOrgSession({ auth, repo }, req, reply);
+    if (!isWorkspaceOrgSession(session)) return session;
+
+    const { organizationId } = session;
+
+    try {
+      const teamSettings = settings.activateWorkspace(
+        { organizationId, workspaceId: req.params.id },
+        host.workspaces,
+      );
+      const workspace = host.workspaces.get(req.params.id);
+      if (!workspace) {
+        return replyError(reply, 404, 'ERR_NOT_FOUND', `workspace "${req.params.id}" not found`);
+      }
+      return {
+        workspace: toWorkspaceDto(workspace),
+        workspaceRoot: teamSettings.workspace.root,
+      };
+    } catch (err) {
+      const message = errMessage(err);
+      const status = message.includes('not found') ? 404 : 400;
+      return replyError(reply, status, status === 404 ? 'ERR_NOT_FOUND' : 'ERR_BAD_REQUEST', message);
+    }
   });
 
   app.put('/workspaces/:id', {
@@ -54,10 +144,20 @@ export function registerWorkspaceRoutes(_app: FastifyInstance, host: RuntimeHost
       response: {
         200: WorkspaceSchema,
         404: ApiErrorSchema,
+        ...workspaceAuthResponses,
       },
     },
   }, async (req, reply) => {
+    const session = requireWorkspaceOrgSession({ auth, repo }, req, reply);
+    if (!isWorkspaceOrgSession(session)) return session;
+
     const { id } = req.params;
+    if (!repo) {
+      return replyError(reply, 503, 'ERR_UNAVAILABLE', 'Workspace routes are not configured');
+    }
+    if (!workspaceAccessibleToOrganization(host, repo, session.organization, id)) {
+      return replyError(reply, 404, 'ERR_NOT_FOUND', `workspace "${id}" not found`);
+    }
     try {
       return toWorkspaceDto(host.workspaces.update(id, req.body));
     } catch (err) {
@@ -73,10 +173,20 @@ export function registerWorkspaceRoutes(_app: FastifyInstance, host: RuntimeHost
       response: {
         200: WorkspaceSchema,
         404: ApiErrorSchema,
+        ...workspaceAuthResponses,
       },
     },
   }, async (req, reply) => {
+    const session = requireWorkspaceOrgSession({ auth, repo }, req, reply);
+    if (!isWorkspaceOrgSession(session)) return session;
+
     const { id } = req.params;
+    if (!repo) {
+      return replyError(reply, 503, 'ERR_UNAVAILABLE', 'Workspace routes are not configured');
+    }
+    if (!workspaceAccessibleToOrganization(host, repo, session.organization, id)) {
+      return replyError(reply, 404, 'ERR_NOT_FOUND', `workspace "${id}" not found`);
+    }
     const ws = host.workspaces.get(id);
     if (!ws) return replyError(reply, 404, 'ERR_NOT_FOUND', `workspace "${id}" not found`);
     return toWorkspaceDto(ws);
@@ -89,12 +199,103 @@ export function registerWorkspaceRoutes(_app: FastifyInstance, host: RuntimeHost
       params: WorkspaceIdParamsSchema,
       response: {
         200: WorkspaceRemovedResponseSchema,
+        404: ApiErrorSchema,
+        ...workspaceAuthResponses,
       },
     },
-  }, async (req) => {
+  }, async (req, reply) => {
+    const session = requireWorkspaceOrgSession({ auth, repo }, req, reply);
+    if (!isWorkspaceOrgSession(session)) return session;
+
     const { id } = req.params;
+    if (!repo) {
+      return replyError(reply, 503, 'ERR_UNAVAILABLE', 'Workspace routes are not configured');
+    }
+    if (!workspaceAccessibleToOrganization(host, repo, session.organization, id)) {
+      return replyError(reply, 404, 'ERR_NOT_FOUND', `workspace "${id}" not found`);
+    }
     return { removed: host.workspaces.remove(id) };
   });
+}
+
+function isWorkspaceOrgSession(
+  value: WorkspaceOrgSession | FastifyReply,
+): value is WorkspaceOrgSession {
+  return 'organization' in value;
+}
+
+function requireWorkspaceOrgSession(
+  deps: { auth?: AuthService; repo?: Repository },
+  req: FastifyRequest,
+  reply: FastifyReply,
+): WorkspaceOrgSession | FastifyReply {
+  const { auth, repo } = deps;
+  if (!auth || !repo) {
+    return replyError(reply, 503, 'ERR_UNAVAILABLE', 'Workspace routes are not configured');
+  }
+
+  const authState = auth.getAuthState(readSessionToken(req));
+  const organizationId = authState.user?.organizationId;
+  if (!organizationId) {
+    return replyError(reply, 401, 'ERR_UNAUTHORIZED', 'Session required');
+  }
+
+  const forbidden = requireOrgSession(auth, req, reply, organizationId);
+  if (forbidden) return forbidden;
+
+  const organization = repo.getOrganization(organizationId);
+  if (!organization) {
+    return replyError(reply, 404, 'ERR_NOT_FOUND', 'Organization not found');
+  }
+
+  return { organizationId, organization };
+}
+
+function listWorkspacesForOrganization(
+  host: RuntimeHost,
+  repo: Repository,
+  organization: Organization,
+  activeWorkspaceId: string | null,
+) {
+  const activeId =
+    repo.getWorkspaceSetting(organization.id, ACTIVE_WORKSPACE_SETTING_KEY) ?? activeWorkspaceId;
+  const orgRoot = organization.workspace.root?.trim();
+
+  return host.workspaces.list().filter((workspace) => {
+    if (activeId && workspace.id === activeId) return true;
+    if (workspace.id === `ws_${organization.id}`) return true;
+    if (orgRoot && workspace.root_path && pathsMatch(workspace.root_path, orgRoot)) return true;
+    return false;
+  });
+}
+
+function workspaceAccessibleToOrganization(
+  host: RuntimeHost,
+  repo: Repository,
+  organization: Organization,
+  workspaceId: string,
+): boolean {
+  const activeId = repo.getWorkspaceSetting(organization.id, ACTIVE_WORKSPACE_SETTING_KEY);
+  return listWorkspacesForOrganization(host, repo, organization, activeId).some((ws) => ws.id === workspaceId);
+}
+
+function resolveCurrentWorkspace(
+  organization: Organization,
+  host: RuntimeHost,
+  repo?: Repository,
+): { root: string | null; id: string | null } {
+  const activeId = repo?.getWorkspaceSetting(organization.id, ACTIVE_WORKSPACE_SETTING_KEY) ?? null;
+  if (activeId) {
+    const active = host.workspaces.get(activeId);
+    if (active?.root_path) {
+      return { root: active.root_path, id: active.id };
+    }
+  }
+
+  return {
+    root: organization.workspace.root || null,
+    id: activeId,
+  };
 }
 
 function toWorkspaceDto(ws: { id: string; root_path: string | null; label: string | null; created_at: number; updated_at: number }) {
@@ -107,4 +308,10 @@ function replyError(reply: FastifyReply, status: number, code: string, message: 
 
 function errMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+function pathsMatch(a: string | null, b: string): boolean {
+  if (!a) return false;
+  const normalize = (value: string) => value.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+  return normalize(a) === normalize(b);
 }

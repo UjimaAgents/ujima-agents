@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
+import { resolve } from 'node:path';
 import { openDatabase } from '@ujima/context-store';
-import { createWorkspaceStore, NoWorkspaceRootError } from './workspaces';
+import { createWorkspaceStore, NoWorkspaceRootError, syncWorkspacesFromOrganizations } from './workspaces';
 
 describe('WorkspaceStore', () => {
   let store: ReturnType<typeof createWorkspaceStore>;
@@ -42,5 +43,28 @@ describe('WorkspaceStore', () => {
   it('requireReady returns workspace when root_path is set', () => {
     const ws = store.create({ root_path: '/tmp/x' });
     expect(store.requireReady(ws.id).id).toBe(ws.id);
+  });
+
+  it('syncWorkspacesFromOrganizations creates a row for each org root', () => {
+    const root = resolve('/tmp/acme');
+    syncWorkspacesFromOrganizations(store, [
+      {
+        id: 'org-1',
+        name: 'Acme',
+        workspace: { root },
+      },
+    ]);
+    const synced = store.findByRoot(root);
+    expect(synced?.label).toBe('Acme');
+    expect(synced?.id).toBe('ws_org-1');
+
+    syncWorkspacesFromOrganizations(store, [
+      {
+        id: 'org-1',
+        name: 'Acme',
+        workspace: { root },
+      },
+    ]);
+    expect(store.list()).toHaveLength(1);
   });
 });

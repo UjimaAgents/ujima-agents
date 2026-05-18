@@ -58,6 +58,7 @@ export type {
   ReconcileTeamConfigResult,
   ReconcileTeamConfigStats,
 } from './config-sync.js';
+export { ACTIVE_WORKSPACE_SETTING_KEY, TEAM_CONFIG_SETTING_KEY } from './config-sync.js';
 export { ConversationService } from './conversation.js';
 export {
   SELF_NOTE_COMPACTED_MARKER,
@@ -87,6 +88,7 @@ export type {
   OrganizationSettingsResponse,
   TeamSettingsResponse,
   UpdateOrganizationInput,
+  ActivateWorkspaceInput,
 } from './settings.js';
 export { TaskPromoterService } from './task-promoter.js';
 export { TaskSessionService, taskRunChannelId } from './task-session.js';

@@ -1,13 +1,18 @@
+import { existsSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { AGENT_KIND, ChannelSchema, MemberSchema, PROVIDER_KINDS, type Organization, type Member, type Channel } from '@ujima/shared';
-import { AgentTeam, createAgent, defineRole, normalizeProviderKey, type RoleConfig } from '@ujima/framework';
+import { AgentTeam, createAgent, defineRole, loadAgentTeam, normalizeProviderKey, type RoleConfig } from '@ujima/framework';
+interface WorkspaceCatalog {
+  get(id: string): { id: string; root_path: string | null } | undefined;
+}
 import type { ApiRepository } from './repository-reader.js';
 import type { TeamStore } from './team-store.js';
 import { listProviderStatuses, type ProviderStatus } from './team.js';
 import { addMemberToDefaultChannels, ensureMemberSelfChannel } from './member-channels.js';
 import { upsertWorkspaceMemberScopes } from './workspace-root.js';
 import { upsertDashboardTeamOverride } from './dashboard-team-overrides.js';
-import { persistTeamConfig } from './config-sync.js';
+import { ACTIVE_WORKSPACE_SETTING_KEY, persistTeamConfig } from './config-sync.js';
 import { requireTeam } from '../utils/require-team.js';
 import { requireOrganization } from '../utils/require-organization.js';
 
@@ -32,6 +37,11 @@ export interface UpdateOrganizationInput {
   organizationId: string;
   organizationName?: string;
   organizationChart?: { reportsTo: Record<string, string> };
+}
+
+export interface ActivateWorkspaceInput {
+  organizationId: string;
+  workspaceId: string;
 }
 
 export interface AddMemberInput {
@@ -155,6 +165,51 @@ export class SettingsService {
     private readonly repo: ApiRepository,
     private readonly teamStore: TeamStore,
   ) {}
+
+  activateWorkspace(
+    input: ActivateWorkspaceInput,
+    workspaces: WorkspaceCatalog,
+  ): TeamSettingsResponse {
+    const organization = requireOrganization(this.repo, input.organizationId);
+    const workspace = workspaces.get(input.workspaceId);
+    if (!workspace) {
+      throw new Error(`workspace "${input.workspaceId}" not found`);
+    }
+    if (!workspace.root_path?.trim()) {
+      throw new Error(`workspace "${input.workspaceId}" has no root_path`);
+    }
+    const resolvedRoot = resolve(workspace.root_path);
+    if (!existsSync(resolvedRoot)) {
+      throw new Error(`workspace root "${resolvedRoot}" does not exist on disk`);
+    }
+
+    this.repo.saveOrganization({
+      ...organization,
+      workspace: {
+        ...organization.workspace,
+        root: resolvedRoot,
+      },
+    });
+    this.repo.saveWorkspaceSetting(
+      input.organizationId,
+      ACTIVE_WORKSPACE_SETTING_KEY,
+      workspace.id,
+    );
+
+    const team = requireTeam(this.teamStore);
+    const config = team.toJSON();
+    const updatedTeam = loadAgentTeam({
+      ...config,
+      workspace: {
+        ...config.workspace,
+        root: resolvedRoot,
+      },
+    });
+    this.teamStore.setTeam(updatedTeam);
+    persistTeamConfig(this.repo, input.organizationId, updatedTeam);
+
+    return this.getTeamSettings();
+  }
 
   getTeamSettings(): TeamSettingsResponse {
     const team = requireTeam(this.teamStore);

@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { SocketEventNames } from '@ujima/shared';
 import type { ApiRepository } from './repository-reader.js';
 import type { ConversationService } from './conversation.js';
 import type { RealtimeService } from './context.js';
@@ -17,13 +17,15 @@ export function parseCronExpression(expr: string): ((date: Date) => Date | null)
   if (parts.length !== 5) return null;
 
   const fieldParsers = parts.map((part) => parseCronField(part));
-  if (fieldParsers.some((p) => p === null)) return null;
+  if (fieldParsers.length !== 5 || fieldParsers.some((p) => p === null)) return null;
 
-  const minParser = fieldParsers[0]!;
-  const hourParser = fieldParsers[1]!;
-  const domParser = fieldParsers[2]!;
-  const monthParser = fieldParsers[3]!;
-  const dowParser = fieldParsers[4]!;
+  const [minParser, hourParser, domParser, monthParser, dowParser] = fieldParsers as [
+    (value: number) => boolean,
+    (value: number) => boolean,
+    (value: number) => boolean,
+    (value: number) => boolean,
+    (value: number) => boolean,
+  ];
 
   return (from: Date): Date | null => {
     const candidate = new Date(from);
@@ -168,7 +170,7 @@ export class SchedulerService {
     name: string;
   }): Promise<void> {
     // Ensure the scheduler sender member exists
-    let sender = this.repo.getMember(job.organizationId, CRON_SENDER_ID);
+    const sender = this.repo.getMember(job.organizationId, CRON_SENDER_ID);
     if (!sender) {
       this.repo.saveMember({
         id: CRON_SENDER_ID,
@@ -182,7 +184,7 @@ export class SchedulerService {
     }
 
     if (job.channelId) {
-      this.conversations.sendMessage({
+      await this.conversations.sendMessage({
         organizationId: job.organizationId,
         channelId: job.channelId,
         threadId: job.channelId,
@@ -190,5 +192,12 @@ export class SchedulerService {
         content: `**⏰ Scheduled: ${job.name}**\n\n${job.prompt}`,
       });
     }
+
+    this.realtime.emit(SocketEventNames.scheduledJobExecuted, {
+      organizationId: job.organizationId,
+      jobName: job.name,
+      channelId: job.channelId,
+      prompt: job.prompt,
+    });
   }
 }

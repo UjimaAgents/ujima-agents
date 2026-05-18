@@ -53,6 +53,7 @@ export const SocketEventNames = Object.freeze({
   spiritCompleted: 'spirit:completed',
   spiritRetired: 'spirit:retired',
   supervisorReplied: 'supervisor:replied',
+  scheduledJobExecuted: 'schedule:executed',
 });
 
 export type SocketEventName = (typeof SocketEventNames)[keyof typeof SocketEventNames];
@@ -183,6 +184,14 @@ export const SupervisorRepliedEventSchema = z.object({
 });
 export type SupervisorRepliedEvent = z.infer<typeof SupervisorRepliedEventSchema>;
 
+export const ScheduledJobExecutedEventSchema = z.object({
+  organizationId: IdSchema,
+  jobName: z.string().min(1),
+  channelId: IdSchema.optional(),
+  prompt: z.string(),
+});
+export type ScheduledJobExecutedEvent = z.infer<typeof ScheduledJobExecutedEventSchema>;
+
 export const SocketEventSchemas = Object.freeze({
   [SocketEventNames.channelMessage]: ChannelMessageEventSchema,
   [SocketEventNames.channelPresence]: ChannelPresenceEventSchema,
@@ -204,4 +213,5 @@ export const SocketEventSchemas = Object.freeze({
   [SocketEventNames.spiritCompleted]: SpiritEventSchema,
   [SocketEventNames.spiritRetired]: SpiritEventSchema,
   [SocketEventNames.supervisorReplied]: SupervisorRepliedEventSchema,
+  [SocketEventNames.scheduledJobExecuted]: ScheduledJobExecutedEventSchema,
 });

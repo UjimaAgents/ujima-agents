@@ -82,6 +82,7 @@ function visibleChannels(channels: Channel[]): Channel[] {
 }
 const CONFIG_PATH_SETTING_KEY = 'config_sync.path';
 export const TEAM_CONFIG_SETTING_KEY = 'team.config';
+export const ACTIVE_WORKSPACE_SETTING_KEY = 'active_workspace_id';
 
 function channelId(channel: { id?: string; name: string }): string {
   return channel.id ?? channel.name;

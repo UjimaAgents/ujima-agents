@@ -2,7 +2,9 @@
 
 import {
   Building2,
+  Clock,
   FolderKanban,
+  Layers,
   MessageSquare,
   Server,
   ShieldCheck,
@@ -10,6 +12,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
+import { useSearchParams } from "next/navigation";
 import type { BootstrapResponse, OrganizationSettingsResponse, ProviderStatus } from "@ujima/api-schema";
 import { GeneralTab } from "./general-tab";
 import { AgentsTab } from "./agents-tab";
@@ -17,8 +20,10 @@ import { ChannelsTab } from "./channels-tab";
 import { OrgChartTab } from "./org-chart-tab";
 import { PoliciesTab } from "./policies-tab";
 import { ProvidersTab } from "./providers-tab";
+import { SchedulesTab } from "./schedules-tab";
+import { WorkspacesTab } from "./workspaces-tab";
 
-type SettingsTabId = "general" | "agents" | "channels" | "org-chart" | "policies" | "providers";
+type SettingsTabId = "general" | "agents" | "channels" | "org-chart" | "policies" | "providers" | "schedules" | "workspaces";
 
 interface SettingsTab {
   id: SettingsTabId;
@@ -33,6 +38,8 @@ const TABS: SettingsTab[] = [
   { id: "org-chart", label: "Organization chart", icon: Building2 },
   { id: "policies", label: "Policies", icon: ShieldCheck },
   { id: "providers", label: "Providers", icon: Server },
+  { id: "schedules", label: "Schedules", icon: Clock },
+  { id: "workspaces", label: "Workspaces", icon: Layers },
 ];
 
 export interface TeamSettingsData {
@@ -70,7 +77,12 @@ export function OrganizationSettingsPage({
   teamSettings: TeamSettingsData | null;
   providers: ProviderStatus[];
 }) {
-  const [activeTab, setActiveTab] = useState<SettingsTabId>("general");
+  const searchParams = useSearchParams();
+  const [activeTab, setActiveTab] = useState<SettingsTabId>(() => {
+    const tabParam = searchParams?.get("tab");
+    if (tabParam && TABS.some((t) => t.id === tabParam)) return tabParam as SettingsTabId;
+    return "general";
+  });
   const [orgSettingsState, setOrgSettingsState] = useState(orgSettings);
   const [teamSettingsState] = useState(teamSettings);
   const [providersState, setProvidersState] = useState(providers);
@@ -98,7 +110,7 @@ export function OrganizationSettingsPage({
               Organization Settings
             </h1>
             <p className="mt-4 max-w-2xl text-sm leading-7 text-zinc-600 dark:text-zinc-300">
-              Manage your organization, team, agents, channels, policies, and providers.
+              Manage your organization, team, agents, channels, schedules, workspaces, policies, and providers.
             </p>
           </div>
           <Link
@@ -177,6 +189,16 @@ export function OrganizationSettingsPage({
               orgId={orgId}
               providers={providersState}
               onProvidersChange={setProvidersState}
+            />
+          )}
+          {activeTab === "schedules" && (
+            <SchedulesTab />
+          )}
+          {activeTab === "workspaces" && (
+            <WorkspacesTab
+              currentWorkspaceRoot={
+                teamSettingsState?.workspace?.root ?? bootstrap.team?.workspaceRoot
+              }
             />
           )}
         </div>

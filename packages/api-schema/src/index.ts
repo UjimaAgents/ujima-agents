@@ -63,8 +63,22 @@ export const UpdateWorkspaceRequestSchema = z.object({
 });
 export type UpdateWorkspaceRequest = z.infer<typeof UpdateWorkspaceRequestSchema>;
 
-export const ListWorkspacesResponseSchema = z.object({ workspaces: z.array(WorkspaceSchema) });
+export const WorkspaceListItemSchema = WorkspaceSchema.extend({
+  is_current: z.boolean().optional(),
+});
+
+export const ListWorkspacesResponseSchema = z.object({
+  workspaces: z.array(WorkspaceListItemSchema),
+  current_root_path: z.string().nullable().optional(),
+  current_workspace_id: z.string().nullable().optional(),
+});
 export type ListWorkspacesResponse = z.infer<typeof ListWorkspacesResponseSchema>;
+
+export const ActivateWorkspaceResponseSchema = z.object({
+  workspace: WorkspaceSchema,
+  workspaceRoot: z.string(),
+});
+export type ActivateWorkspaceResponse = z.infer<typeof ActivateWorkspaceResponseSchema>;
 
 export const StartTaskRequestSchema = z.object({
   workspace_id: z.string().min(1),

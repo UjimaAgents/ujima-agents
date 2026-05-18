@@ -220,7 +220,6 @@ export function createTransport(opts: TransportOptions): Transport {
     });
 
     // Core Entities
-    registerWorkspaceRoutes(api, host);
     registerAgentRoutes(api, host);
     registerRoleRoutes(api);
 
@@ -228,6 +227,13 @@ export function createTransport(opts: TransportOptions): Transport {
     if (opts.apiServices) {
       const realtime = new RealtimeService(io, opts.apiServices.repo);
       const services = opts.apiServices.buildServices(realtime);
+
+      registerWorkspaceRoutes(api, {
+        host,
+        repo: opts.apiServices.repo,
+        auth: services.auth,
+        settings: services.settings,
+      });
 
       api.register(multipart, {
         limits: { fileSize: 25 * 1024 * 1024 },

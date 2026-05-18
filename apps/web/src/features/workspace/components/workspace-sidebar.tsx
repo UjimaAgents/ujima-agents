@@ -2,6 +2,8 @@
 
 import {
   Hash,
+  Clock,
+  Layers,
   Search,
   Plus,
   Settings,
@@ -30,6 +32,7 @@ import { Sparkles, Bot, ArrowRight, Search as SearchIcon } from "lucide-react";
 import { resolveMemberActivity } from "../workspace-store";
 import type { ActivityState } from "../activity-state";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { WorkspaceSwitcher } from "./workspace-switcher";
 
 interface WorkspaceSidebarProps {
   bootstrap: BootstrapResponse;
@@ -51,6 +54,7 @@ interface WorkspaceSidebarProps {
       skills: string[];
     }[];
   } | null;
+  currentWorkspaceRoot?: string;
   agentEditorTargetId?: string | null;
   onAgentEditorHandled?: () => void;
   channels: BootstrapResponse["channels"];
@@ -213,6 +217,7 @@ export function WorkspaceSidebar({
   bootstrap,
   rolePresets,
   teamSettings,
+  currentWorkspaceRoot,
   agentEditorTargetId,
   onAgentEditorHandled,
   channels,
@@ -346,7 +351,12 @@ export function WorkspaceSidebar({
             </>
           ) : null}
         </div>
-        <ThemeToggle compact />
+        <div className="flex items-center gap-2">
+          <WorkspaceSwitcher
+            currentWorkspaceRoot={currentWorkspaceRoot ?? bootstrap.team?.workspaceRoot}
+          />
+          <ThemeToggle compact />
+        </div>
       </div>
 
       {/* Search */}
@@ -419,6 +429,27 @@ export function WorkspaceSidebar({
               />
             ))}
           </div>
+        </div>
+
+        {/* Quick links */}
+        <div className="mb-5 space-y-0.5">
+          <p className="px-2 text-[10px] font-bold uppercase tracking-widest text-zinc-500 dark:text-zinc-500">
+            Admin
+          </p>
+          <Link
+            href="/settings/organization?tab=schedules"
+            className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-xs font-semibold text-zinc-500 transition hover:bg-zinc-100 dark:hover:bg-zinc-900"
+          >
+            <Clock className="h-4 w-4" />
+            Schedules
+          </Link>
+          <Link
+            href="/settings/organization?tab=workspaces"
+            className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-xs font-semibold text-zinc-500 transition hover:bg-zinc-100 dark:hover:bg-zinc-900"
+          >
+            <Layers className="h-4 w-4" />
+            Workspaces
+          </Link>
         </div>
       </div>
 

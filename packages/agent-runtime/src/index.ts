@@ -15,12 +15,6 @@ export { createLanguageModelFromLegacyProvider } from './legacy-llm-language-mod
 export type { OrchestratorEngine } from './engine';
 export { ORCHESTRATOR_ENGINES, resolveOrchestratorEngine } from './engine';
 
-export { runAiSdkLoop } from './ai-sdk-loop';
-export type { AiSdkLoopInputs, AiSdkLoopOutcome } from './ai-sdk-loop';
-
-export type { OrchestratorEngine } from './engine';
-export { ORCHESTRATOR_ENGINES, resolveOrchestratorEngine } from './engine';
-
 export { matchesEscalation } from './escalation';
 export type { EscalationMatch } from './escalation';
 

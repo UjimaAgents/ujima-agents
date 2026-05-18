@@ -1,5 +1,5 @@
 import type { SqliteDbHandle as DbHandle } from '@ujima/context-store';
-import { ScheduledJobSchema, type ScheduledJob, type JobStatus } from '@ujima/shared';
+import { ScheduledJobSchema, type ScheduledJob } from '@ujima/shared';
 import { now, optionalRowString, rowString } from './common.js';
 
 type Row = Record<string, unknown>;

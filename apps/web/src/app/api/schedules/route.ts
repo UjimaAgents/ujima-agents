@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { hasObjectProperty, parseApiError, upstreamUnavailable } from "@/server/api-response";
+import { parseApiError, upstreamUnavailable } from "@/server/api-response";
 import { daemonFetch, getSessionTokenFromCookie } from "@/server/ujima-daemon";
 
 export const dynamic = "force-dynamic";

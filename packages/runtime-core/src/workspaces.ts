@@ -1,5 +1,6 @@
 import type { SqliteDbHandle as DbHandle } from '@ujima/context-store';
 import { randomBytes } from 'node:crypto';
+import { resolve } from 'node:path';
 
 export const ERR_NO_WORKSPACE_ROOT = 'ERR_NO_WORKSPACE_ROOT';
 
@@ -126,4 +127,36 @@ export function createWorkspaceStore(raw: DbHandle): WorkspaceStore {
       return ws;
     },
   };
+}
+
+/**
+ * Ensures each organization's configured workspace root has a row in
+ * `workspaces` (onboarding writes org roots before multi-workspace UI existed).
+ */
+export function syncWorkspacesFromOrganizations(
+  store: WorkspaceStore,
+  organizations: readonly { id: string; name: string; workspace: { root: string } }[],
+): void {
+  for (const org of organizations) {
+    const root = org.workspace.root?.trim();
+    if (!root) continue;
+
+    const normalizedRoot = resolve(root);
+    const existing =
+      store.findByRoot(normalizedRoot) ??
+      store.findByRoot(root);
+
+    if (!existing) {
+      store.create({
+        id: `ws_${org.id}`,
+        root_path: normalizedRoot,
+        label: org.name.trim() || 'Current workspace',
+      });
+      continue;
+    }
+
+    if (!existing.label?.trim() && org.name.trim()) {
+      store.update(existing.id, { label: org.name.trim() });
+    }
+  }
 }

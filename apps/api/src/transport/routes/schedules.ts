@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { randomUUID } from 'node:crypto';
 import type { Repository } from '@ujima/runtime-core';
 import type { AuthService, SchedulerService } from '@ujima/orchestrator';
+import { readSessionToken } from '../session-token.js';
 import {
   CreateScheduledJobRequestSchema,
   CreateScheduledJobResponseSchema,
@@ -29,8 +30,8 @@ export function registerScheduleRoutes(api: FastifyInstance, deps: ScheduleRoute
       response: { 201: CreateScheduledJobResponseSchema },
     },
   }, async (req: FastifyRequest<{ Body: CreateScheduledJobRequest }>, reply: FastifyReply) => {
-    const authState = deps.auth.getAuthState(req.headers['x-ujima-session'] as string | undefined);
-    if (!authState.authenticated) {
+    const authState = deps.auth.getAuthState(readSessionToken(req));
+    if (!authState.member || !authState.user) {
       return reply.status(401).send({ code: 'ERR_UNAUTHORIZED', message: 'Unauthorized' });
     }
     const now = new Date().toISOString();
@@ -58,8 +59,8 @@ export function registerScheduleRoutes(api: FastifyInstance, deps: ScheduleRoute
       response: { 200: ListScheduledJobsResponseSchema },
     },
   }, async (req: FastifyRequest, reply: FastifyReply) => {
-    const authState = deps.auth.getAuthState(req.headers['x-ujima-session'] as string | undefined);
-    if (!authState.authenticated) {
+    const authState = deps.auth.getAuthState(readSessionToken(req));
+    if (!authState.user) {
       return reply.status(401).send({ code: 'ERR_UNAUTHORIZED', message: 'Unauthorized' });
     }
     const jobs = deps.repo.listScheduledJobs(authState.user.organizationId);
@@ -73,8 +74,8 @@ export function registerScheduleRoutes(api: FastifyInstance, deps: ScheduleRoute
       response: { 200: GetScheduledJobResponseSchema },
     },
   }, async (req: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
-    const authState = deps.auth.getAuthState(req.headers['x-ujima-session'] as string | undefined);
-    if (!authState.authenticated) {
+    const authState = deps.auth.getAuthState(readSessionToken(req));
+    if (!authState.user) {
       return reply.status(401).send({ code: 'ERR_UNAUTHORIZED', message: 'Unauthorized' });
     }
     const job = deps.repo.getScheduledJob(authState.user.organizationId, req.params.id);
@@ -92,8 +93,8 @@ export function registerScheduleRoutes(api: FastifyInstance, deps: ScheduleRoute
       response: { 200: UpdateScheduledJobResponseSchema },
     },
   }, async (req: FastifyRequest<{ Params: { id: string }; Body: UpdateScheduledJobRequest }>, reply: FastifyReply) => {
-    const authState = deps.auth.getAuthState(req.headers['x-ujima-session'] as string | undefined);
-    if (!authState.authenticated) {
+    const authState = deps.auth.getAuthState(readSessionToken(req));
+    if (!authState.user) {
       return reply.status(401).send({ code: 'ERR_UNAUTHORIZED', message: 'Unauthorized' });
     }
     const existing = deps.repo.getScheduledJob(authState.user.organizationId, req.params.id);
@@ -116,8 +117,8 @@ export function registerScheduleRoutes(api: FastifyInstance, deps: ScheduleRoute
       response: { 204: { type: 'null' } },
     },
   }, async (req: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
-    const authState = deps.auth.getAuthState(req.headers['x-ujima-session'] as string | undefined);
-    if (!authState.authenticated) {
+    const authState = deps.auth.getAuthState(readSessionToken(req));
+    if (!authState.user) {
       return reply.status(401).send({ code: 'ERR_UNAUTHORIZED', message: 'Unauthorized' });
     }
     deps.repo.deleteScheduledJob(authState.user.organizationId, req.params.id);

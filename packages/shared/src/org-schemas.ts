@@ -77,7 +77,8 @@ export const RoleScopesSchema = z.record(z.array(z.string().min(1))).default({})
 export type RoleScopes = z.infer<typeof RoleScopesSchema>;
 
 export const WorkspaceConfigSchema = z.object({
-  root: z.string().min(1),
+  /** Empty until onboarding or workspace activation sets a path. */
+  root: z.string().default(''),
   roleScopes: RoleScopesSchema,
 });
 export type WorkspaceConfig = z.infer<typeof WorkspaceConfigSchema>;

@@ -46,6 +46,7 @@ export {
   SpiritService,
   SupervisorService,
   SupervisorTodoService,
+  SchedulerService,
   TaskPromoterService,
   TaskSessionService,
   taskRunChannelId,
@@ -62,6 +63,7 @@ export {
   listProviderStatuses,
   summarizeTeam,
   validateProviderKeys,
+  ACTIVE_WORKSPACE_SETTING_KEY,
 } from './services/index.js';
 export type {
   ApiRepository,
@@ -107,6 +109,7 @@ export type {
   SupervisorAlertInput,
   SupervisorDispatchResult,
   SupervisorReplyOutcome,
+  SchedulerServiceOptions,
   SupervisorServiceOptions,
   SupervisorTodoAddInput,
   SupervisorTodoCheckInput,
@@ -119,4 +122,5 @@ export type {
   ToolInvocationResult,
   ToolService,
   UpdateOrganizationInput,
+  ActivateWorkspaceInput,
 } from './services/index.js';
