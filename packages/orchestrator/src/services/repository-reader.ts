@@ -324,5 +324,5 @@ export interface ApiRepository extends ConversationRepository {
   getAuthSessionByTokenHash(sessionTokenHash: string): StoredAuthSession | null;
   revokeAuthSession(sessionId: string, revokedAt?: string): AuthSession | null;
   touchAuthSession(sessionId: string, lastSeenAt?: string): AuthSession | null;
-  getBootstrapSnapshot(): BootstrapSnapshot;
+  getBootstrapSnapshot(organizationId?: string): BootstrapSnapshot;
 }

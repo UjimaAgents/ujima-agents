@@ -3,6 +3,7 @@ import type { BootstrapSnapshot, ApiRepository } from './repository-reader.js';
 import type { TeamStore } from './team-store.js';
 import type { TeamSummary } from './team.js';
 import type { AuthService } from './auth.js';
+import { ConfigSyncService } from './config-sync.js';
 import { getDirectMessageThreadId } from '@ujima/shared';
 import {
   listProviderStatuses,
@@ -32,9 +33,17 @@ export class BootstrapService {
   ) {}
 
   getBootstrap(input: { sessionToken?: string | null } = {}): BootstrapResponse {
-    const snapshot = this.repo.getBootstrapSnapshot();
-    const team = this.teamStore.getTeam();
     const authState = this.auth.getAuthState(input.sessionToken);
+    const organizationId = authState.authenticated && authState.user
+      ? authState.user.organizationId
+      : this.repo.getLatestOrganization()?.id;
+
+    if (organizationId) {
+      new ConfigSyncService(this.repo, this.teamStore).loadFromStoredConfig(organizationId);
+    }
+
+    const snapshot = this.repo.getBootstrapSnapshot(organizationId);
+    const team = this.teamStore.getTeam();
     const member = snapshot.organization ? authState.member : undefined;
 
     const accessibleOrgs = authState.authenticated

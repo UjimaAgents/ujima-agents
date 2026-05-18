@@ -6,7 +6,7 @@ import type {
   Organization,
   RunState,
 } from '@ujima/shared';
-import { getLatestOrganization, listProviderCredentials } from './organization.js';
+import { getLatestOrganization, getOrganization, listProviderCredentials } from './organization.js';
 import { listMembers } from './members.js';
 import { listChannels } from './channels.js';
 import { listPendingApprovals } from './approvals.js';
@@ -21,8 +21,8 @@ export interface BootstrapSnapshot {
   providerCredentials: Record<string, boolean>;
 }
 
-export function getBootstrapSnapshot(db: DbHandle): BootstrapSnapshot {
-  const organization = getLatestOrganization(db);
+export function getBootstrapSnapshot(db: DbHandle, organizationId?: string): BootstrapSnapshot {
+  const organization = organizationId ? getOrganization(db, organizationId) : getLatestOrganization(db);
   if (!organization) {
     return {
       organization: null,

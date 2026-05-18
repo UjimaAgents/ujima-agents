@@ -560,7 +560,8 @@ export class Repository {
   getMcpToolCache = (organizationId: string, mcpServerId: string): McpToolCache | null =>
     readMcpToolCache(this.db, organizationId, mcpServerId);
 
-  getBootstrapSnapshot = (): BootstrapSnapshot => readBootstrapSnapshot(this.db);
+  getBootstrapSnapshot = (organizationId?: string): BootstrapSnapshot =>
+    readBootstrapSnapshot(this.db, organizationId);
 }
 
 export type {

@@ -146,7 +146,7 @@ export function WorkspacesTab({ currentWorkspaceRoot }: WorkspacesTabProps) {
     }
   };
 
-  const formatDate = (ts: number) => new Date(ts * 1000).toLocaleString();
+  const formatDate = (ts: number) => new Date(ts).toLocaleString();
 
   const sortedWorkspaces = [...workspaces].sort((a, b) => {
     const aCurrent = isCurrentWorkspace(a.root_path, currentWorkspaceRoot, a.is_current);
