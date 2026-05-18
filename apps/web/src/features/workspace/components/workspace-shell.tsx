@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import {
   getDirectMessageThreadId,
   SocketEventNames,
+  type RunState,
   type SocketEventName,
 } from "@ujima/shared/browser";
 import { WorkspaceSidebar } from "./workspace-sidebar";
@@ -232,11 +233,18 @@ export function WorkspaceShell(props: {
       conversationUnreadCounts: bootstrap.conversationUnreadCounts,
       selectedConversation: resolvedSelected,
     });
+    for (const run of bootstrap.activeRuns) {
+      if (isLiveRunStatus(run.status)) {
+        setMemberActivity(run.agentId, "working");
+      }
+    }
   }, [
+    bootstrap.activeRuns,
     bootstrap.channels,
     bootstrap.conversationUnreadCounts,
     bootstrap.members,
     resolvedSelected,
+    setMemberActivity,
     syncWorkspace,
   ]);
 
@@ -463,13 +471,17 @@ function updateRunActivity(
   payload: unknown,
   setMemberActivity: (memberId: string, activity: "working" | "error" | "idle" | "online" | "offline" | "loading") => void,
 ): void {
-  const run = (payload as { run?: { agentId?: string; status?: string } })?.run;
+  const run = (payload as { run?: Pick<RunState, "agentId" | "status"> })?.run;
   if (!run?.agentId) return;
-  if (run.status === "running") {
+  if (isLiveRunStatus(run.status)) {
     setMemberActivity(run.agentId, "working");
   } else if (run.status === "completed" || run.status === "failed" || run.status === "cancelled") {
     setMemberActivity(run.agentId, "idle");
   }
+}
+
+function isLiveRunStatus(status: RunState["status"] | undefined): boolean {
+  return status === "queued" || status === "running" || status === "waiting_for_approval";
 }
 
 function resolveNotificationConversationId(

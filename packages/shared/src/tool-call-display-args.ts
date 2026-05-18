@@ -62,7 +62,6 @@ export function parseShellToolCallArgs(
   if (!args) return null;
   const nested = nestedInput(args);
   const command = readStringArg(args, nested, 'command') ?? '';
-  if (!command) return null;
   const cwd = readStringArg(args, nested, 'cwd') || '.';
   const extra = readStringArrayArg(args, nested, 'args');
   return extra?.length ? { cwd, command, args: extra } : { cwd, command };
@@ -77,7 +76,10 @@ export function parseFilesystemToolCallArgs(
   if (!args) return null;
   const nested = nestedInput(args);
   const actionRaw = readStringArg(args, nested, 'action') ?? '';
-  const resourcePath = readStringArg(args, nested, 'resourcePath') ?? '';
+  const resourcePath =
+    readStringArg(args, nested, 'file_path') ??
+    readStringArg(args, nested, 'resourcePath') ??
+    '';
   if (actionRaw !== 'read' && actionRaw !== 'write') return null;
   if (!resourcePath.trim()) return null;
   const offsetRaw = readNumberArg(args, nested, 'offset');
@@ -103,7 +105,10 @@ export function parseGrepToolCallArgs(
   const query = readStringArg(args, nested, 'query') ?? '';
   if (!query.trim()) return null;
   const resourcePath =
-    readStringArg(args, nested, 'resourcePath') || readStringArg(args, nested, 'path') || '';
+    readStringArg(args, nested, 'file_path') ||
+    readStringArg(args, nested, 'resourcePath') ||
+    readStringArg(args, nested, 'path') ||
+    '';
   if (!resourcePath.trim()) return null;
   const limitRaw = readNumberArg(args, nested, 'limit');
   const ignoreCaseRaw = readBooleanArg(args, nested, 'ignoreCase');

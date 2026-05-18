@@ -113,6 +113,7 @@ export const ChatMessage = memo(function ChatMessage({
       ? parseRelayFilesystemBody(systemBodyMarkdown, systemLabel)
       : null;
   const goalArtifact = getGoalArtifactCard(message.toolCalls);
+  const showBody = message.content.trim().length > 0;
 
   return (
     <>
@@ -195,10 +196,12 @@ export const ChatMessage = memo(function ChatMessage({
               )}
               {goalArtifact ? <GoalArtifactPreview artifact={goalArtifact} /> : null}
               <div className={goalArtifact ? "mt-3" : "mt-1"}>
-                <Markdown
-                  content={message.content}
-                  mentionNames={message.mentionNames}
-                />
+                {showBody ? (
+                  <Markdown
+                    content={message.content}
+                    mentionNames={message.mentionNames}
+                  />
+                ) : null}
               </div>
               <AttachmentGrid
                 attachments={message.attachments}

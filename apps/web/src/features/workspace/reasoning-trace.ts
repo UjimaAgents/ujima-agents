@@ -204,6 +204,24 @@ function toObject(value: unknown): Record<string, unknown> | undefined {
   return value as Record<string, unknown>;
 }
 
+function unwrapResultRecord(value: unknown): Record<string, unknown> | undefined {
+  const record = toObject(value);
+  if (!record) return undefined;
+
+  if (
+    typeof record.content === "string" ||
+    typeof record.diff === "string" ||
+    typeof record.stdout === "string" ||
+    typeof record.stderr === "string" ||
+    Array.isArray(record.matches)
+  ) {
+    return record;
+  }
+
+  const nested = toObject(record.result) ?? toObject(record.data);
+  return nested ? unwrapResultRecord(nested) ?? record : record;
+}
+
 function readStringArg(
   args: Record<string, unknown> | undefined,
   nested: Record<string, unknown> | undefined,
@@ -247,6 +265,74 @@ function readStringArrayArg(
   return Array.isArray(candidate) && candidate.length ? candidate.map((item) => String(item)) : undefined;
 }
 
+function splitDiffLines(prefix: "+" | "-", value: string): string[] {
+  return value.split(/\r?\n/).map((line) => `${prefix}${line}`);
+}
+
+function proposedWriteDiff(resourcePath: string, content: string): string {
+  const lineCount = Math.max(1, content.split(/\r?\n/).length);
+  return [
+    `--- ${resourcePath}`,
+    `+++ ${resourcePath}`,
+    `@@ -0,0 +1,${lineCount} @@`,
+    ...splitDiffLines("+", content),
+  ].join("\n");
+}
+
+function proposedEditDiff(resourcePath: string, oldString: string, newString: string): string {
+  return [
+    `--- ${resourcePath}`,
+    `+++ ${resourcePath}`,
+    "@@",
+    ...splitDiffLines("-", oldString),
+    ...splitDiffLines("+", newString),
+  ].join("\n");
+}
+
+function proposedMultiEditDiff(
+  resourcePath: string | undefined,
+  edits: { oldString?: string; newString?: string }[] | undefined,
+): string | undefined {
+  if (!resourcePath || !edits?.length) return undefined;
+  const patch = edits
+    .map((edit) =>
+      edit.oldString !== undefined && edit.newString !== undefined
+        ? proposedEditDiff(resourcePath, edit.oldString, edit.newString)
+        : "",
+    )
+    .filter(Boolean)
+    .join("\n");
+  return patch || undefined;
+}
+
+function readEditArrayArg(
+  args: Record<string, unknown> | undefined,
+  nested: Record<string, unknown> | undefined,
+): { oldString?: string; newString?: string }[] | undefined {
+  const candidate = Array.isArray(args?.edits) ? args?.edits : nested?.edits;
+  if (!Array.isArray(candidate)) return undefined;
+  const edits: { oldString?: string; newString?: string }[] = [];
+  for (const entry of candidate) {
+    const item = toObject(entry);
+    if (!item) continue;
+    edits.push({
+      oldString:
+        typeof item.old_string === "string"
+          ? item.old_string
+          : typeof item.oldString === "string"
+            ? item.oldString
+            : undefined,
+      newString:
+        typeof item.new_string === "string"
+          ? item.new_string
+          : typeof item.newString === "string"
+            ? item.newString
+            : undefined,
+    });
+  }
+  return edits.length ? edits : undefined;
+}
+
 const MAX_TERMINAL_CHARS = 16_384;
 const MAX_RUN_CHUNK_DETAIL_CHARS = 4_096;
 
@@ -261,19 +347,64 @@ function truncateTerminalText(text: string): string {
   return `${text.slice(0, MAX_TERMINAL_CHARS)}\n\n… (truncated)`;
 }
 
+function extractContentFromResult(result: unknown): string | undefined {
+  if (!result) return undefined;
+  const rec = parseMaybeJsonObject(result);
+  if (rec) {
+    const content = rec.content;
+    if (typeof content === "string" && content.trim()) return content.trimEnd();
+    const text = rec.body ?? rec.text ?? rec.output;
+    if (typeof text === "string" && text.trim()) return text.trimEnd();
+    return undefined;
+  }
+  if (typeof result !== "string") return undefined;
+  const match = result.match(/"(content|body|text|output)"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+  if (!match?.[2]) return extractTruncatedContentField(result);
+  try {
+    return JSON.parse(`"${match[2]}"`).trimEnd() || undefined;
+  } catch {
+    return match[2].trim() || undefined;
+  }
+}
+
+function extractTruncatedContentField(text: string): string | undefined {
+  for (const field of ["content", "body", "text", "output"]) {
+    const marker = `"${field}"`;
+    const keyIndex = text.indexOf(marker);
+    if (keyIndex === -1) continue;
+    const colonIndex = text.indexOf(":", keyIndex + marker.length);
+    if (colonIndex === -1) continue;
+    const quoteIndex = text.indexOf('"', colonIndex + 1);
+    if (quoteIndex === -1) continue;
+    const raw = text.slice(quoteIndex + 1).replace(/"\s*[},]?\s*$/, "");
+    if (!raw.trim()) continue;
+    try {
+      return JSON.parse(`"${raw.replace(/\\$/, "")}"`).trimEnd() || undefined;
+    } catch {
+      return raw.replace(/\\n/g, "\n").replace(/\\"/g, '"').trimEnd() || undefined;
+    }
+  }
+  return undefined;
+}
+
 function parseMaybeJsonObject(value: unknown): Record<string, unknown> | undefined {
   if (typeof value === "string") {
     try {
       const parsed = JSON.parse(value) as unknown;
-      return toObject(parsed);
+      return unwrapResultRecord(parsed);
     } catch {
       return undefined;
     }
   }
-  return toObject(value);
+  return unwrapResultRecord(value);
 }
 
-function toolAggregateOutput(result: unknown, isError: boolean, errorText?: string): string {
+function toolAggregateOutput(
+  toolName: string,
+  result: unknown,
+  isError: boolean,
+  errorText?: string,
+): string {
   if (isError) {
     const base = errorText?.trim() || "";
     if (base) return truncateTerminalText(base);
@@ -283,56 +414,83 @@ function toolAggregateOutput(result: unknown, isError: boolean, errorText?: stri
       return truncateTerminalText(String(result));
     }
   }
+
+  if (toolName === "view" || toolName === "read") {
+    const content = extractContentFromResult(result);
+    if (content) return truncateTerminalText(content);
+  }
+
+  const rec = parseMaybeJsonObject(result);
+  if (rec) {
+    if (toolName === "grep") {
+      const lines = Array.isArray(rec.matches)
+        ? rec.matches
+            .map((entry) => {
+              const item = toObject(entry);
+              const path = typeof item?.path === "string" ? item.path : "";
+              const lineNumber = typeof item?.lineNumber === "number" ? item.lineNumber : 0;
+              const line = typeof item?.line === "string" ? item.line : "";
+              if (!path || !lineNumber) return "";
+              return `${path}:${lineNumber}${line ? `: ${line}` : ""}`;
+            })
+            .filter(Boolean)
+        : [];
+      if (lines.length > 0) {
+        return truncateTerminalText(lines.join("\n"));
+      }
+      const content = extractContentFromResult(rec);
+      if (content) return truncateTerminalText(content);
+    }
+
+    if (typeof rec?.diff === "string" && rec.diff.trim()) {
+      return truncateTerminalText(rec.diff);
+    }
+    if (typeof rec?.content === "string" && rec.content.trim()) {
+      return truncateTerminalText(rec.content);
+    }
+    if (Array.isArray(rec?.matches)) {
+      const lines = rec.matches
+        .map((entry) => {
+          const item = toObject(entry);
+          const path = typeof item?.path === "string" ? item.path : "";
+          const lineNumber = typeof item?.lineNumber === "number" ? item.lineNumber : 0;
+          const line = typeof item?.line === "string" ? item.line : "";
+          if (!path || !lineNumber) return "";
+          return `${path}:${lineNumber}${line ? `: ${line}` : ""}`;
+        })
+        .filter(Boolean);
+      if (lines.length > 0) {
+        return truncateTerminalText(lines.join("\n"));
+      }
+    }
+    const out = typeof rec?.stdout === "string" ? rec.stdout : "";
+    const err = typeof rec?.stderr === "string" ? rec.stderr : "";
+    const parts: string[] = [];
+    if (out.trim()) parts.push(out.trimEnd());
+    if (err.trim()) parts.push(`stderr:\n${err.trimEnd()}`);
+    const joined = parts.join("\n\n").trim();
+    if (joined) return truncateTerminalText(joined);
+    if (rec && typeof rec.status === "string") {
+      if (rec.status === "waiting_for_approval") {
+        return "";
+      }
+      if (rec.status === "blocked") {
+        const reason = typeof rec.reason === "string" ? rec.reason : "Blocked by policy.";
+        return truncateTerminalText(reason);
+      }
+    }
+    if (typeof rec?.bytesWritten === "number") {
+      return truncateTerminalText(`Saved ${rec.bytesWritten} bytes.`);
+    }
+    if (rec?.success === true) {
+      return truncateTerminalText("Saved.");
+    }
+    if (typeof rec?.status === "string" && rec.status.trim()) {
+      return truncateTerminalText(rec.status);
+    }
+  }
   if (typeof result === "string" && result.trim()) {
     return truncateTerminalText(result);
-  }
-  const rec = parseMaybeJsonObject(result);
-  if (!rec) return "";
-  if (typeof rec?.diff === "string" && rec.diff.trim()) {
-    return truncateTerminalText(rec.diff);
-  }
-  if (typeof rec?.content === "string" && rec.content.trim()) {
-    return truncateTerminalText(rec.content);
-  }
-  if (Array.isArray(rec?.matches)) {
-    const lines = rec.matches
-      .map((entry) => {
-        const item = toObject(entry);
-        const path = typeof item?.path === "string" ? item.path : "";
-        const lineNumber = typeof item?.lineNumber === "number" ? item.lineNumber : 0;
-        const line = typeof item?.line === "string" ? item.line : "";
-        if (!path || !lineNumber) return "";
-        return `${path}:${lineNumber}${line ? `: ${line}` : ""}`;
-      })
-      .filter(Boolean);
-    if (lines.length > 0) {
-      return truncateTerminalText(lines.join("\n"));
-    }
-  }
-  const out = typeof rec?.stdout === "string" ? rec.stdout : "";
-  const err = typeof rec?.stderr === "string" ? rec.stderr : "";
-  const parts: string[] = [];
-  if (out.trim()) parts.push(out.trimEnd());
-  if (err.trim()) parts.push(`stderr:\n${err.trimEnd()}`);
-  const joined = parts.join("\n\n").trim();
-  if (joined) return truncateTerminalText(joined);
-  if (rec && typeof rec.status === "string") {
-    if (rec.status === "waiting_for_approval") {
-      return "";
-    }
-    if (rec.status === "blocked") {
-      const reason = typeof rec.reason === "string" ? rec.reason : "Blocked by policy.";
-      return truncateTerminalText(reason);
-    }
-  }
-  if (typeof rec?.bytesWritten === "number") {
-    return truncateTerminalText(`Saved ${rec.bytesWritten} bytes.`);
-  }
-  if (rec?.success === true) {
-    return truncateTerminalText("Saved.");
-  }
-  if (typeof rec?.status === "string" && rec.status.trim()) {
-    return truncateTerminalText(rec.status);
   }
   return "";
 }
@@ -368,6 +526,7 @@ function inferToolAction(args?: Record<string, unknown>): {
   oldString?: string;
   newString?: string;
   replaceAll?: boolean;
+  edits?: { oldString?: string; newString?: string }[];
   ignore?: string[];
   url?: string;
   jobId?: string;
@@ -399,9 +558,10 @@ function inferToolAction(args?: Record<string, unknown>): {
   const depth = readNumberArg(args, nested, "depth");
   const content = readStringArg(args, nested, "content");
   const patch = readStringArg(args, nested, "patch");
-  const oldString = readStringArg(args, nested, "oldString");
-  const newString = readStringArg(args, nested, "newString");
-  const replaceAll = readBooleanArg(args, nested, "replaceAll");
+  const oldString = readStringArg(args, nested, "old_string") ?? readStringArg(args, nested, "oldString");
+  const newString = readStringArg(args, nested, "new_string") ?? readStringArg(args, nested, "newString");
+  const replaceAll = readBooleanArg(args, nested, "replace_all") ?? readBooleanArg(args, nested, "replaceAll");
+  const edits = readEditArrayArg(args, nested);
   const ignore = readStringArrayArg(args, nested, "ignore");
   const url = readStringArg(args, nested, "url");
   const jobId = readStringArg(args, nested, "job_id") ?? readStringArg(args, nested, "jobId");
@@ -409,7 +569,9 @@ function inferToolAction(args?: Record<string, unknown>): {
   return {
     action: typeof args?.action === "string" ? args.action : undefined,
     resourceType: typeof args?.resourceType === "string" ? args.resourceType : undefined,
-    resourcePath: typeof args?.resourcePath === "string" ? args.resourcePath : undefined,
+    resourcePath:
+      readStringArg(args, nested, "file_path") ??
+      (typeof args?.resourcePath === "string" ? args.resourcePath : undefined),
     input,
     op,
     command,
@@ -423,6 +585,7 @@ function inferToolAction(args?: Record<string, unknown>): {
     oldString,
     newString,
     replaceAll,
+    edits,
     ignore,
     url,
     jobId,
@@ -705,7 +868,7 @@ function buildToolStep(
   const errorText = extractToolErrorText(resultBody?.toolResult?.result);
   const hasResult = !!result;
   const resultOutput = hasResult
-    ? toolAggregateOutput(resultBody?.toolResult?.result, isError, errorText)
+    ? toolAggregateOutput(name, resultBody?.toolResult?.result, isError, errorText)
     : "";
 
   let duration = "—";
@@ -820,7 +983,8 @@ function buildToolStep(
       mergedPayload?.toolCall?.args as Record<string, unknown> | undefined,
     );
     if (fsArgs) {
-      const bodyFromResult = resultOutput.trim() ? resultOutput : undefined;
+      const fromRaw = extractContentFromResult(resultBody?.toolResult?.result);
+      const bodyFromResult = fromRaw || (resultOutput.trim() ? resultOutput : undefined);
       const pendingPatch =
         typeof fsArgs.patch === "string" && fsArgs.patch.length > 0
           ? fsArgs.patch
@@ -854,16 +1018,21 @@ function buildToolStep(
       };
     }
   }
-  if (name === "view" || name === "write" || name === "edit" || name === "multiedit" || name === "ls" || name === "glob" || name === "download") {
-    const bodyFromResult = resultOutput;
+  if (name === "view" || name === "read" || name === "write" || name === "edit" || name === "multiedit" || name === "ls" || name === "glob" || name === "download") {
+    const fromRaw = extractContentFromResult(resultBody?.toolResult?.result);
+    const bodyFromResult = fromRaw || resultOutput;
     const pendingBody =
       !hasResult || pendingCompletion
         ? name === "write"
-          ? parsed.content ?? argsPreview
+          ? parsed.resourcePath && parsed.content !== undefined
+            ? proposedWriteDiff(parsed.resourcePath, parsed.content)
+            : argsPreview
           : name === "edit"
-            ? [parsed.oldString, parsed.newString].filter(Boolean).join(" -> ") || argsPreview
+            ? parsed.resourcePath && parsed.oldString !== undefined && parsed.newString !== undefined
+              ? proposedEditDiff(parsed.resourcePath, parsed.oldString, parsed.newString)
+              : argsPreview
             : name === "multiedit"
-              ? argsPreview
+              ? proposedMultiEditDiff(parsed.resourcePath, parsed.edits) ?? argsPreview
               : name === "view"
                 ? argsPreview
                 : name === "ls"
@@ -878,9 +1047,9 @@ function buildToolStep(
     filesystem = {
       action: name === "write" || name === "edit" || name === "multiedit" || name === "download" ? "write" : "read",
       resourcePath: parsed.resourcePath ?? "",
-      meta:
-        name === "view"
-          ? `[offset=${parsed.offset ?? 1}, limit=${parsed.limit ?? 2000}]`
+        meta:
+          name === "view"
+          ? `[offset=${parsed.offset ?? 1}, limit=${parsed.limit ?? 1000}]`
           : name === "ls"
             ? `[depth=${parsed.depth ?? 0}, limit=${parsed.limit ?? 1000}]`
             : name === "glob"

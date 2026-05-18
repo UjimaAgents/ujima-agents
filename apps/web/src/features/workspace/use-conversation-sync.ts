@@ -83,7 +83,7 @@ export function useConversationSync(
   const hydrateMessages = useWorkspaceStore((state) => state.hydrateMessages);
   const addPendingMessage = useWorkspaceStore((state) => state.addPendingMessage);
   const receiveMessage = useWorkspaceStore((state) => state.receiveMessage);
-  const appendRunChunksToStore = useWorkspaceStore((state) => state.appendRunChunks);
+  const appendRunChunkToStore = useWorkspaceStore((state) => state.appendRunChunk);
   const removeMessage = useWorkspaceStore((state) => state.removeMessage);
   const upsertApproval = useWorkspaceStore((state) => state.upsertApproval);
   const upsertRun = useWorkspaceStore((state) => state.upsertRun);
@@ -93,8 +93,6 @@ export function useConversationSync(
   const [error, setError] = useState<{ conversationKey: string; message: string } | undefined>(undefined);
   const storeMembersRef = useRef(storeMembers);
   const runChunkSequenceRef = useRef(0);
-  const pendingRunChunksRef = useRef<RunChunkStoreItem[]>([]);
-  const runChunkFrameRef = useRef<number | undefined>(undefined);
 
   useEffect(() => {
     storeMembersRef.current = storeMembers;
@@ -102,31 +100,18 @@ export function useConversationSync(
 
   useEffect(() => {
     runChunkSequenceRef.current = 0;
-    pendingRunChunksRef.current = [];
-    if (runChunkFrameRef.current !== undefined) {
-      window.cancelAnimationFrame(runChunkFrameRef.current);
-      runChunkFrameRef.current = undefined;
-    }
   }, [conversationKey]);
 
   const queueRunChunk = useCallback(
     (chunk: RunChunkEvent) => {
-      pendingRunChunksRef.current.push(
-        buildRunChunkItem({
-          chunk,
-          members: storeMembersRef.current,
-          sequence: runChunkSequenceRef.current++,
-        }),
-      );
-      if (runChunkFrameRef.current !== undefined) return;
-      runChunkFrameRef.current = window.requestAnimationFrame(() => {
-        runChunkFrameRef.current = undefined;
-        const items = pendingRunChunksRef.current;
-        pendingRunChunksRef.current = [];
-        appendRunChunksToStore(items);
+      const item = buildRunChunkItem({
+        chunk,
+        members: storeMembersRef.current,
+        sequence: runChunkSequenceRef.current++,
       });
+      appendRunChunkToStore(item.message, item.activity);
     },
-    [appendRunChunksToStore],
+    [appendRunChunkToStore],
   );
 
   const loadConversationState = useCallback(
@@ -235,19 +220,10 @@ export function useConversationSync(
     return () => {
       abortController.abort();
       window.clearTimeout(loadTimer);
-      if (runChunkFrameRef.current !== undefined) {
-        window.cancelAnimationFrame(runChunkFrameRef.current);
-        runChunkFrameRef.current = undefined;
-      }
-      if (pendingRunChunksRef.current.length > 0) {
-        appendRunChunksToStore(pendingRunChunksRef.current);
-        pendingRunChunksRef.current = [];
-      }
       source.close();
     };
   }, [
     appendActivity,
-    appendRunChunksToStore,
     appendMember,
     conversation,
     conversation.id,
@@ -619,9 +595,10 @@ function handleStreamEvent(
       return;
     }
     case "tool:called":
-    case "tool:result":
+    case "tool:result": {
       actions.appendActivity(toolToActivity(envelope.event, envelope.payload));
       return;
+    }
     default:
       return;
   }
@@ -774,10 +751,10 @@ function resolveMentionNames(content: string, members: Member[]): string[] {
   return [...names];
 }
 
-type RunChunkStoreItem = {
+interface RunChunkStoreItem {
   message?: ChatMessageData;
   activity: ActivityEvent;
-};
+}
 
 function buildRunChunkItem(input: {
   chunk: RunChunkEvent;
@@ -785,12 +762,10 @@ function buildRunChunkItem(input: {
   sequence: number;
 }): RunChunkStoreItem {
   const activity = runChunkToActivity(input.chunk, input.sequence);
-  if (input.chunk.kind !== "text" || !input.chunk.delta) {
-    return { activity };
-  }
-
   const sender = input.members.find((member) => member.id === input.chunk.agentId);
   const createdAt = new Date().toISOString();
+  if (!input.chunk.delta) return { activity };
+  if (input.chunk.kind === "reasoning") return { activity };
   return {
     activity,
     message: {

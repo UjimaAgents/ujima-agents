@@ -7,7 +7,7 @@ export const DEFAULT_TOOL_CATALOG: Record<string, ToolCapability> = {
     id: 'filesystem',
     name: 'Filesystem',
     description:
-      'Read files in line windows or apply unified-diff patches to create or edit a single file in the workspace. Hidden or secret-looking paths require approval before read. Writes use `patch` (unified diff), not full-file replacement.',
+      'Legacy file tool: read line windows or apply unified-diff patches. Prefer view/read for file reads and write/edit/multiedit for normal file changes.',
     actions: ['read', 'write'],
     pathScopes: ['.'],
     requiresApproval: true,
@@ -15,7 +15,7 @@ export const DEFAULT_TOOL_CATALOG: Record<string, ToolCapability> = {
   view: {
     id: 'view',
     name: 'View',
-    description: 'Read a workspace file in a numbered window.',
+    description: 'Read a workspace file in a numbered window. Accepts file_path or resourcePath, offset, and limit.',
     actions: ['read'],
     pathScopes: ['.'],
     requiresApproval: false,
@@ -23,7 +23,7 @@ export const DEFAULT_TOOL_CATALOG: Record<string, ToolCapability> = {
   write: {
     id: 'write',
     name: 'Write',
-    description: 'Replace the full contents of a workspace file.',
+    description: 'Create or overwrite one workspace file with full content. Use for new files or large rewrites. Accepts file_path and content. For surgical edits use edit or multiedit.',
     actions: ['write'],
     pathScopes: ['.'],
     requiresApproval: true,
@@ -31,7 +31,7 @@ export const DEFAULT_TOOL_CATALOG: Record<string, ToolCapability> = {
   edit: {
     id: 'edit',
     name: 'Edit',
-    description: 'Replace a single exact string in a workspace file.',
+    description: 'Edit one file by exact find-and-replace. Accepts file_path, old_string, new_string, and replace_all. Prefer this over shell for small file changes.',
     actions: ['write'],
     pathScopes: ['.'],
     requiresApproval: true,
@@ -39,7 +39,7 @@ export const DEFAULT_TOOL_CATALOG: Record<string, ToolCapability> = {
   multiedit: {
     id: 'multiedit',
     name: 'Multi Edit',
-    description: 'Apply multiple exact replacements to one workspace file.',
+    description: 'Apply multiple exact find-and-replace edits to one file in order. Accepts file_path and edits with old_string/new_string. Prefer this over shell for multiple changes in one file.',
     actions: ['write'],
     pathScopes: ['.'],
     requiresApproval: true,
@@ -103,7 +103,7 @@ export const DEFAULT_TOOL_CATALOG: Record<string, ToolCapability> = {
   shell: {
     id: 'shell',
     name: 'Shell',
-    description: 'Run local commands inside the organization workspace.',
+    description: 'Run local commands inside the organization workspace for builds, tests, git, and real CLI work. Do not create or edit files with shell redirection, heredocs, sed/perl/python scripts, or tee; use write, edit, or multiedit.',
     actions: ['execute'],
     pathScopes: ['.'],
     requiresApproval: true,

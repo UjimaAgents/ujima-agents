@@ -1,4 +1,4 @@
-import type { FastifyInstance, FastifyReply } from 'fastify';
+import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import type { Repository } from '@ujima/runtime-core';
 import { ApprovalRequestSchema, MessageSchema, RunStateSchema, RunStepSchema, createPaginatedSchema, IdSchema } from '@ujima/shared';
@@ -18,11 +18,10 @@ import type { ApprovalService, AuthService, SpiritService } from '@ujima/orchest
 import { listBackgroundJobs, peekBackgroundJob, terminateBackgroundJob } from '@ujima/orchestrator';
 import { z } from 'zod';
 import {
-  ERR_NO_WORKSPACE_ROOT,
   assertReadyWorkspaceRoot,
-  isWorkspaceRootNotReadyError,
 } from './workspace-root.js';
 import { requireOrgSession } from './org-auth.js';
+import { apiError, errorMessage, workspaceRootError } from './route-errors.js';
 
 const RunIdParamsSchema = z.object({ runId: IdSchema });
 const ThreadIdParamsSchema = z.object({ threadId: IdSchema });
@@ -92,7 +91,7 @@ export function registerRunRoutes(
     try {
       return runs.listRuns(req.query.organizationId, req.query.cursor, req.query.limit);
     } catch (err) {
-      return badRequest(reply, errMessage(err));
+      return apiError(reply, 400, errorMessage(err));
     }
   });
 
@@ -111,10 +110,10 @@ export function registerRunRoutes(
   }, async (req, reply) => {
     try {
       const run = runs.getRun(req.query.organizationId, req.params.runId);
-      if (!run) return notFound(reply, 'Run not found');
+      if (!run) return apiError(reply, 404, 'Run not found');
       return run;
     } catch (err) {
-      return badRequest(reply, errMessage(err));
+      return apiError(reply, 400, errorMessage(err));
     }
   });
 
@@ -133,10 +132,10 @@ export function registerRunRoutes(
   }, async (req, reply) => {
     try {
       const detail = runs.getRunDetail(req.query.organizationId, req.params.runId);
-      if (!detail) return notFound(reply, 'Run not found');
+      if (!detail) return apiError(reply, 404, 'Run not found');
       return detail;
     } catch (err) {
-      return badRequest(reply, errMessage(err));
+      return apiError(reply, 400, errorMessage(err));
     }
   });
 
@@ -161,7 +160,7 @@ export function registerRunRoutes(
         req.query.limit,
       );
     } catch (err) {
-      return notFound(reply, errMessage(err));
+      return apiError(reply, 404, errorMessage(err));
     }
   });
 
@@ -187,15 +186,14 @@ export function registerRunRoutes(
       if (forbidden) return forbidden;
       return await runs.createRun(req.body);
     } catch (err) {
-      const message = errMessage(err);
-      if (isWorkspaceRootNotReadyError(err)) {
-        return reply.code(409).send({ code: ERR_NO_WORKSPACE_ROOT, message });
-      }
+      const rootError = workspaceRootError(reply, err);
+      if (rootError) return rootError;
+      const message = errorMessage(err);
       const status =
         message.startsWith('Member not found') || message.startsWith('Organization not found')
           ? 404
           : 503;
-      return replyError(reply, status, message);
+      return apiError(reply, status, message);
     }
   });
 
@@ -221,14 +219,13 @@ export function registerRunRoutes(
       if (forbidden) return forbidden;
       return runs.cancelRun(req.body.organizationId, req.params.runId);
     } catch (err) {
-      const message = errMessage(err);
-      if (isWorkspaceRootNotReadyError(err)) {
-        return reply.code(409).send({ code: ERR_NO_WORKSPACE_ROOT, message });
-      }
+      const rootError = workspaceRootError(reply, err);
+      if (rootError) return rootError;
+      const message = errorMessage(err);
       if (message.startsWith('Run not found')) {
-        return notFound(reply, message);
+        return apiError(reply, 404, message);
       }
-      return replyError(reply, 400, message);
+      return apiError(reply, 400, message);
     }
   });
 
@@ -246,7 +243,7 @@ export function registerRunRoutes(
     try {
       return approvals.listPending(req.query.organizationId);
     } catch (err) {
-      return badRequest(reply, errMessage(err));
+      return apiError(reply, 400, errorMessage(err));
     }
   });
 
@@ -280,13 +277,10 @@ export function registerRunRoutes(
         reason: req.body.reason,
       });
     } catch (err) {
-      const message = errMessage(err);
-      if (isWorkspaceRootNotReadyError(err)) {
-        return reply.code(409).send({ code: ERR_NO_WORKSPACE_ROOT, message });
-      }
-      return reply
-        .code(message.startsWith('Approval not found') ? 404 : 400)
-        .send({ code: message.startsWith('Approval not found') ? 'ERR_NOT_FOUND' : 'ERR_BAD_REQUEST', message });
+      const rootError = workspaceRootError(reply, err);
+      if (rootError) return rootError;
+      const message = errorMessage(err);
+      return apiError(reply, message.startsWith('Approval not found') ? 404 : 400, message);
     }
   });
 
@@ -309,10 +303,10 @@ export function registerRunRoutes(
       const forbidden = requireOrgSession(auth, req, reply, organizationId);
       if (forbidden) return forbidden;
       const run = runs.getRun(organizationId, req.params.runId);
-      if (!run) return notFound(reply, 'Run not found');
+      if (!run) return apiError(reply, 404, 'Run not found');
       return listBackgroundJobs(req.params.runId);
     } catch (err) {
-      return badRequest(reply, errMessage(err));
+      return apiError(reply, 400, errorMessage(err));
     }
   });
 
@@ -335,14 +329,14 @@ export function registerRunRoutes(
       const forbidden = requireOrgSession(auth, req, reply, organizationId);
       if (forbidden) return forbidden;
       const run = runs.getRun(organizationId, req.params.runId);
-      if (!run) return notFound(reply, 'Run not found');
+      if (!run) return apiError(reply, 404, 'Run not found');
       const snapshot = peekBackgroundJob(req.params.runId, req.params.jobId);
       if (!snapshot) {
-        return notFound(reply, 'Background job not found');
+        return apiError(reply, 404, 'Background job not found');
       }
       return snapshot;
     } catch (err) {
-      return badRequest(reply, errMessage(err));
+      return apiError(reply, 400, errorMessage(err));
     }
   });
 
@@ -364,29 +358,12 @@ export function registerRunRoutes(
       const forbidden = requireOrgSession(auth, req, reply, req.body.organizationId);
       if (forbidden) return forbidden;
       const run = runs.getRun(req.body.organizationId, req.params.runId);
-      if (!run) return notFound(reply, 'Run not found');
+      if (!run) return apiError(reply, 404, 'Run not found');
 
       const success = terminateBackgroundJob(req.params.runId, req.params.jobId);
       return { success };
     } catch (err) {
-      return badRequest(reply, errMessage(err));
+      return apiError(reply, 400, errorMessage(err));
     }
   });
-}
-
-function badRequest(reply: FastifyReply, message: string): FastifyReply {
-  return replyError(reply, 400, message);
-}
-
-function notFound(reply: FastifyReply, message: string): FastifyReply {
-  return replyError(reply, 404, message);
-}
-
-function replyError(reply: FastifyReply, status: number, message: string): FastifyReply {
-  const code = status === 404 ? 'ERR_NOT_FOUND' : status === 503 ? 'ERR_INTERNAL' : 'ERR_BAD_REQUEST';
-  return reply.code(status).send({ code, message });
-}
-
-function errMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }

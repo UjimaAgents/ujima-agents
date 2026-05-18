@@ -11,6 +11,7 @@ import { connectMCP, parseMCPConfigJSON, type MCPConnection } from '@ujima/mcp-c
 import type { MCPDef } from '@ujima/shared';
 import { materializeMcpDef } from './mcp-runtime.js';
 import type { ApiRepository } from './repository-reader.js';
+import { errorMessage } from '../utils/error-message.js';
 
 type McpConnector = (def: MCPDef) => Promise<MCPConnection>;
 
@@ -227,7 +228,7 @@ export class McpRegistryService {
     try {
       parsed = parseMCPConfigJSON(input.json);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errorMessage(err);
       throw new Error(`Failed to parse MCP config JSON: ${message}`);
     }
 
@@ -249,7 +250,7 @@ export class McpRegistryService {
       } catch (err) {
         skipped.push({
           name,
-          reason: err instanceof Error ? err.message : String(err),
+          reason: errorMessage(err),
         });
         continue;
       }
@@ -333,7 +334,7 @@ export class McpRegistryService {
       });
       return { ok: true, tools: descriptors, testedAt };
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errorMessage(err);
       // Preserve the previous tool inventory on failure — a transient
       // listTools outage shouldn't destroy the cache that SpiritService
       // uses as a fallback. Only the server row's `last_test_error` is

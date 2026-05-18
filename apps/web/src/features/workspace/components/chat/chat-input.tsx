@@ -14,7 +14,6 @@ import {
   Send,
   Smile,
   Square,
-  Target,
   X,
 } from "lucide-react";
 import { AttachmentSchema, type AttachmentCategory } from "@ujima/shared/browser";
@@ -67,6 +66,58 @@ const SLASH_COMMANDS: Array<{
     description: "Compact the thread and keep the recent raw window.",
   },
 ];
+
+function RunningFigureIndicator() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      className="h-3.5 w-3.5 shrink-0 text-violet-700 dark:text-violet-300"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="1.8"
+    >
+      <circle cx="14" cy="4" r="1.4" fill="currentColor" stroke="none" />
+      <line x1="13.5" y1="5.5" x2="11" y2="12">
+        <animate attributeName="y2" values="12;11.5;12;11.5;12" dur="0.6s" repeatCount="indefinite" />
+      </line>
+      <path strokeOpacity="0.4" d="M13 7 L10 9.5">
+        <animate
+          attributeName="d"
+          values="M13 7 L10 9.5;M13 7 L15.5 9;M13 7 L16 10.5;M13 7 L15.5 9;M13 7 L10 9.5"
+          dur="0.6s"
+          repeatCount="indefinite"
+        />
+      </path>
+      <path d="M13 7 L16 10.5">
+        <animate
+          attributeName="d"
+          values="M13 7 L16 10.5;M13 7 L11.5 10;M13 7 L10 9.5;M13 7 L11.5 10;M13 7 L16 10.5"
+          dur="0.6s"
+          repeatCount="indefinite"
+        />
+      </path>
+      <path strokeOpacity="0.4" d="M11 12 L8 15 L6.5 16">
+        <animate
+          attributeName="d"
+          values="M11 12 L8 15 L6.5 16;M11 12 L12 16 L14 19;M11 12 L14.5 15.5 L16.5 18;M11 12 L12 16 L14 19;M11 12 L8 15 L6.5 16"
+          dur="0.6s"
+          repeatCount="indefinite"
+        />
+      </path>
+      <path d="M11 12 L14.5 15.5 L16.5 18">
+        <animate
+          attributeName="d"
+          values="M11 12 L14.5 15.5 L16.5 18;M11 12 L8 15 L6.5 16;M11 12 L12 16 L14 19;M11 12 L8 15 L6.5 16;M11 12 L14.5 15.5 L16.5 18"
+          dur="0.6s"
+          repeatCount="indefinite"
+        />
+      </path>
+    </svg>
+  );
+}
 
 export function getExactSlashCommand(value: string): ComposerCommand | null {
   const trimmed = value.trim();
@@ -206,10 +257,10 @@ export function ChatInput({
     return SLASH_COMMANDS.filter((option) => option.command.startsWith(slashQuery));
   }, [slashQuery]);
   const slashMenuOpen = slashQuery !== null && slashMenuOptions.length > 0;
+  const canStopRun = Boolean(stoppableRunId && onStopRun);
   const showStopInsteadOfSend =
-    Boolean(stoppableRunId && onStopRun) &&
-    content.trim().length === 0 &&
-    attachments.length === 0 &&
+    canStopRun &&
+    !hasDraft &&
     !uploading &&
     !isSending &&
     !isCommanding;
@@ -907,19 +958,6 @@ export function ChatInput({
           ) : null}
           <div className="flex items-center justify-between border-t border-zinc-200 px-3 py-1.5 dark:border-zinc-800">
             <div className="flex items-center gap-2">
-              {goalMode ? (
-                <button
-                  type="button"
-                  aria-label="Disable goal mode"
-                  aria-pressed="true"
-                  title="Goal mode active — click to disable"
-                  onClick={() => onGoalModeChange?.(false)}
-                  className="inline-flex h-7 items-center gap-1.5 rounded-md border border-violet-200 bg-violet-50 px-2 text-[11px] font-medium text-violet-700 transition hover:bg-violet-100 dark:border-violet-500/30 dark:bg-violet-500/10 dark:text-violet-300 dark:hover:bg-violet-500/15"
-                >
-                  <Target className="h-3.5 w-3.5" />
-                  Goal
-                </button>
-              ) : null}
               <button type="button" aria-label="Add content" className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300">
                 <Plus className="h-4 w-4" />
               </button>
@@ -942,41 +980,71 @@ export function ChatInput({
                 <Paperclip className="h-4 w-4" />
               </button>
             </div>
-            <button
-              type="button"
-              disabled={
-                showStopInsteadOfSend
-                  ? isStopping
-                  : isSending || isCommanding || uploading || (!hasDraft && !exactSlashCommand && !canConfirmClear)
-              }
-              onClick={() => void submitComposer()}
-              aria-label={
-                showStopInsteadOfSend
-                  ? "Stop agent run"
-                  : canConfirmClear
-                    ? "Confirm clear conversation"
-                    : exactSlashCommand === "clear"
-                      ? "Clear conversation"
-                      : exactSlashCommand === "summarize"
-                        ? "Run summarize"
-                        : "Send message"
-              }
-              className={
-                showStopInsteadOfSend
-                  ? "flex items-center justify-center h-7 w-7 rounded-lg bg-red-600 text-white shadow-lg shadow-red-500/20 hover:bg-red-700 transition disabled:cursor-not-allowed disabled:opacity-50"
-                  : "flex items-center justify-center h-7 w-7 rounded-lg bg-violet-600 text-white shadow-lg shadow-violet-500/20 hover:bg-violet-700 transition disabled:cursor-not-allowed disabled:opacity-50"
-              }
-            >
-              {showStopInsteadOfSend ? (
-                isStopping ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <Square className="h-3 w-3 fill-current" />
-                )
-              ) : (
-                <Send className="h-3.5 w-3.5" />
+            <div className="flex items-center gap-2">
+              {goalMode ? (
+                <button
+                  type="button"
+                  aria-label="Disable goal mode"
+                  aria-pressed="true"
+                  title="Goal mode active — click to disable"
+                  onClick={() => onGoalModeChange?.(false)}
+                  className="inline-flex h-7 items-center gap-1.5 rounded-md bg-violet-50 px-2 text-[11px] font-medium text-violet-700 transition hover:bg-violet-100 dark:bg-violet-500/10 dark:text-violet-300 dark:hover:bg-violet-500/15"
+                >
+                  <RunningFigureIndicator />
+                  Goal
+                </button>
+              ) : null}
+              {canStopRun && !showStopInsteadOfSend && (
+                <button
+                  type="button"
+                  aria-label="Stop agent run"
+                  title="Stop agent run"
+                  onClick={() => void stopRun()}
+                  disabled={isStopping}
+                  className="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-red-600 text-white shadow-lg shadow-red-500/20 transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {isStopping ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Square className="h-3 w-3 fill-current" />
+                  )}
+                </button>
               )}
-            </button>
+              {showStopInsteadOfSend ? (
+                <button
+                  type="button"
+                  aria-label="Stop agent run"
+                  title="Stop agent run"
+                  onClick={() => void stopRun()}
+                  disabled={isStopping}
+                  className="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-red-600 text-white shadow-lg shadow-red-500/20 transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {isStopping ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Square className="h-3 w-3 fill-current" />
+                  )}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  disabled={isSending || isCommanding || uploading || (!hasDraft && !exactSlashCommand && !canConfirmClear)}
+                  onClick={() => void submitComposer()}
+                  aria-label={
+                    canConfirmClear
+                      ? "Confirm clear conversation"
+                      : exactSlashCommand === "clear"
+                        ? "Clear conversation"
+                        : exactSlashCommand === "summarize"
+                          ? "Run summarize"
+                          : "Send message"
+                  }
+                  className="flex h-7 w-7 items-center justify-center rounded-lg bg-violet-600 text-white shadow-lg shadow-violet-500/20 transition hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <Send className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
           </div>
         </div>
         {error ? (

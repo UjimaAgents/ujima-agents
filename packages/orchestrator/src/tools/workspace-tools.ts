@@ -7,41 +7,95 @@ import { isSensitiveWorkspacePath } from '@ujima/shared/workspace-file-filters';
 import type { OrchestratorTool } from './types.js';
 import { readWindowValue } from './window-utils.js';
 
-const VIEW_DEFAULT_LIMIT = 2000;
+const VIEW_DEFAULT_LIMIT = 1000;
 const VIEW_MAX_BYTES = 200 * 1024;
 const TREE_LIMIT = 1000;
 const GLOB_LIMIT = 100;
 const IGNORED_DIRECTORIES = new Set(['.git', '.next', 'build', 'coverage', 'dist', 'node_modules']);
 
+const FilePathFields = {
+  resourcePath: z.string().min(1).optional().describe('Workspace file path. `file_path` is also accepted.'),
+  file_path: z.string().min(1).optional().describe('Workspace file path. Prefer this for file editing tools.'),
+};
+
+function filePathFrom(args: { resourcePath?: string; file_path?: string }): string {
+  return args.file_path ?? args.resourcePath ?? '';
+}
+
+function stringFrom(args: Record<string, unknown>, primary: string, alias: string): string {
+  const value = args[alias] ?? args[primary];
+  return typeof value === 'string' ? value : '';
+}
+
+function booleanFrom(args: Record<string, unknown>, primary: string, alias: string): boolean {
+  const value = args[alias] ?? args[primary];
+  return typeof value === 'boolean' ? value : false;
+}
+
 const EditSchema = z.object({
-  resourcePath: z.string().min(1),
-  oldString: z.string(),
-  newString: z.string(),
-  replaceAll: z.boolean().default(false),
+  ...FilePathFields,
+  oldString: z.string().optional().describe('Exact text to replace. `old_string` is also accepted.'),
+  old_string: z.string().optional().describe('Exact text to replace. Prefer this field.'),
+  newString: z.string().optional().describe('Replacement text. `new_string` is also accepted.'),
+  new_string: z.string().optional().describe('Replacement text. Prefer this field.'),
+  replaceAll: z.boolean().optional().describe('Replace every occurrence. `replace_all` is also accepted.'),
+  replace_all: z.boolean().optional().describe('Replace every occurrence. Prefer this field.'),
+}).superRefine((value, ctx) => {
+  if (!filePathFrom(value).trim()) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['file_path'], message: 'file_path is required' });
+  }
+  if (stringFrom(value, 'oldString', 'old_string') === '') {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['old_string'], message: 'old_string is required' });
+  }
+  if (stringFrom(value, 'newString', 'new_string') === '') {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['new_string'], message: 'new_string is required' });
+  }
 });
 
 const MultiEditSchema = z.object({
-  resourcePath: z.string().min(1),
+  ...FilePathFields,
   edits: z
     .array(
       z.object({
-        oldString: z.string(),
-        newString: z.string(),
-        replaceAll: z.boolean().default(false),
+        oldString: z.string().optional().describe('Exact text to replace. `old_string` is also accepted.'),
+        old_string: z.string().optional().describe('Exact text to replace. Prefer this field.'),
+        newString: z.string().optional().describe('Replacement text. `new_string` is also accepted.'),
+        new_string: z.string().optional().describe('Replacement text. Prefer this field.'),
+        replaceAll: z.boolean().optional().describe('Replace every occurrence. `replace_all` is also accepted.'),
+        replace_all: z.boolean().optional().describe('Replace every occurrence. Prefer this field.'),
+      }).superRefine((value, ctx) => {
+        if (stringFrom(value, 'oldString', 'old_string') === '') {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['old_string'], message: 'old_string is required' });
+        }
+        if (stringFrom(value, 'newString', 'new_string') === '') {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['new_string'], message: 'new_string is required' });
+        }
       }),
     )
     .min(1),
+}).superRefine((value, ctx) => {
+  if (!filePathFrom(value).trim()) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['file_path'], message: 'file_path is required' });
+  }
 });
 
 const ViewSchema = z.object({
-  resourcePath: z.string().min(1),
+  ...FilePathFields,
   offset: z.number().int().min(1).default(1),
   limit: z.number().int().min(1).max(VIEW_DEFAULT_LIMIT).default(VIEW_DEFAULT_LIMIT),
+}).superRefine((value, ctx) => {
+  if (!filePathFrom(value).trim()) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['file_path'], message: 'file_path is required' });
+  }
 });
 
 const WriteSchema = z.object({
-  resourcePath: z.string().min(1),
-  content: z.string(),
+  ...FilePathFields,
+  content: z.string().describe('Complete file contents to write. For small changes, prefer edit or multiedit.'),
+}).superRefine((value, ctx) => {
+  if (!filePathFrom(value).trim()) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['file_path'], message: 'file_path is required' });
+  }
 });
 
 const LsSchema = z.object({
@@ -63,7 +117,7 @@ export const viewTool: OrchestratorTool<typeof ViewSchema> = {
   toInvocation: (args) => ({
     action: 'read',
     resourceType: 'file',
-    resourcePath: args.resourcePath,
+    resourcePath: filePathFrom(args),
     input: {
       offset: args.offset,
       limit: args.limit,
@@ -103,7 +157,7 @@ export const writeTool: OrchestratorTool<typeof WriteSchema> = {
   toInvocation: (args) => ({
     action: 'write',
     resourceType: 'file',
-    resourcePath: args.resourcePath,
+    resourcePath: filePathFrom(args),
     input: {
       content: args.content,
     },
@@ -141,11 +195,11 @@ export const editTool: OrchestratorTool<typeof EditSchema> = {
   toInvocation: (args) => ({
     action: 'write',
     resourceType: 'file',
-    resourcePath: args.resourcePath,
+    resourcePath: filePathFrom(args),
     input: {
-      oldString: args.oldString,
-      newString: args.newString,
-      replaceAll: args.replaceAll,
+      oldString: stringFrom(args, 'oldString', 'old_string'),
+      newString: stringFrom(args, 'newString', 'new_string'),
+      replaceAll: booleanFrom(args, 'replaceAll', 'replace_all'),
     },
   }),
   execute: async ({ invocation, team }) => {
@@ -185,9 +239,13 @@ export const multieditTool: OrchestratorTool<typeof MultiEditSchema> = {
   toInvocation: (args) => ({
     action: 'write',
     resourceType: 'file',
-    resourcePath: args.resourcePath,
+    resourcePath: filePathFrom(args),
     input: {
-      edits: args.edits,
+      edits: args.edits.map((edit) => ({
+        oldString: stringFrom(edit, 'oldString', 'old_string'),
+        newString: stringFrom(edit, 'newString', 'new_string'),
+        replaceAll: booleanFrom(edit, 'replaceAll', 'replace_all'),
+      })),
     },
   }),
   execute: async ({ invocation, team }) => {
