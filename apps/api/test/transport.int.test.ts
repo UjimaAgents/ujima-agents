@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -299,5 +299,45 @@ describe('transport (in-process)', () => {
       }, 50);
     });
     expect(gotError).toBe(true);
+  });
+
+  it('stops the scheduler when transport closes', async () => {
+    const scheduler = {
+      start: vi.fn(),
+      stop: vi.fn(),
+    };
+    const repo = new Repository(host.db.raw);
+    const schedTransport = createTransport({
+      host,
+      token: TOKEN,
+      logger: createBufferLogger(),
+      bindHost: '127.0.0.1',
+      port: 0,
+      apiServices: {
+        repo,
+        buildServices: () =>
+          ({
+            conversations: {},
+            runs: {},
+            approvals: {},
+            auth: {},
+            bootstrap: {},
+            onboarding: {},
+            settings: {},
+            taskPromoter: {},
+            taskSessions: {},
+            spirits: {},
+            supervisorTodos: {},
+            activeSpirits: {},
+            mcpRegistry: {},
+            scheduler,
+          }) as never,
+      },
+    });
+
+    await schedTransport.listen();
+    expect(scheduler.start).toHaveBeenCalledTimes(1);
+    await schedTransport.close();
+    expect(scheduler.stop).toHaveBeenCalledTimes(1);
   });
 });

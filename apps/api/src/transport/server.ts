@@ -191,6 +191,7 @@ export function createTransport(opts: TransportOptions): Transport {
     path: "/events",
     cors: {origin: false},
   });
+  let scheduler: SchedulerService | undefined;
 
   fastify.get(
     "/events",
@@ -314,7 +315,8 @@ export function createTransport(opts: TransportOptions): Transport {
           repo: opts.apiServices.repo,
           auth: services.auth,
         });
-        services.scheduler?.start();
+        scheduler = services.scheduler;
+        scheduler?.start();
       }
     },
     {prefix: "/api"}
@@ -342,6 +344,7 @@ export function createTransport(opts: TransportOptions): Transport {
       logger.info("transport: listening", {url: readyUrl});
     },
     async close() {
+      scheduler?.stop();
       io.disconnectSockets(true);
       io.close();
       await fastify.close();

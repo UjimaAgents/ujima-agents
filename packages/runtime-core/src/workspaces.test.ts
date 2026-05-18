@@ -24,6 +24,14 @@ describe('WorkspaceStore', () => {
     expect(store.get(ws.id)).toBeUndefined();
   });
 
+  it('normalizes relative roots to absolute paths on create and update', () => {
+    const created = store.create({ root_path: './tmp/foo' });
+    expect(created.root_path).toBe(resolve('./tmp/foo'));
+
+    const updated = store.update(created.id, { root_path: './tmp/bar' });
+    expect(updated.root_path).toBe(resolve('./tmp/bar'));
+  });
+
   it('list returns rows in creation order', () => {
     const a = store.create({ label: 'a' });
     const b = store.create({ label: 'b' });
@@ -66,5 +74,27 @@ describe('WorkspaceStore', () => {
       },
     ]);
     expect(store.list()).toHaveLength(1);
+  });
+
+  it('syncWorkspacesFromOrganizations reuses org workspace id rows with legacy relative roots', () => {
+    store.create({
+      id: 'ws_org-legacy',
+      root_path: './legacy-root',
+      label: '',
+    });
+
+    syncWorkspacesFromOrganizations(store, [
+      {
+        id: 'org-legacy',
+        name: 'Legacy Org',
+        workspace: { root: './legacy-root' },
+      },
+    ]);
+
+    const rows = store.list();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.id).toBe('ws_org-legacy');
+    expect(rows[0]?.root_path).toBe(resolve('./legacy-root'));
+    expect(rows[0]?.label).toBe('Legacy Org');
   });
 });
