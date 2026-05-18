@@ -16,7 +16,7 @@ import {
   Square,
   X,
 } from "lucide-react";
-import { AttachmentSchema, type AttachmentCategory } from "@ujima/shared";
+import { AttachmentSchema, type AttachmentCategory } from "@ujima/shared/browser";
 import type { ChatMessageData } from "./chat-message";
 import { MarkdownInline } from "../markdown";
 
@@ -42,7 +42,8 @@ interface MentionTrigger {
   query: string;
 }
 
-type ComposerCommand = "summarize" | "clear" | "schedule";
+export type ComposerCommand = "summarize" | "clear" | "goal" | "schedule";
+type ThreadCommand = Exclude<ComposerCommand, "goal">;
 
 const SLASH_COMMANDS: Array<{
   command: ComposerCommand;
@@ -50,26 +51,84 @@ const SLASH_COMMANDS: Array<{
   description: string;
 }> = [
   {
-    command: "summarize",
-    label: "/summarize",
-    description: "Compact the thread and keep the recent raw window.",
-  },
-  {
     command: "clear",
     label: "/clear",
     description: "Archive the thread and empty the visible chat.",
+  },
+  {
+    command: "goal",
+    label: "/goal",
+    description: "Toggle goal mode for this conversation.",
   },
   {
     command: "schedule",
     label: "/schedule <cron> <prompt>",
     description: "Schedule a recurring job with a cron expression.",
   },
+  {
+    command: "summarize",
+    label: "/summarize",
+    description: "Compact the thread and keep the recent raw window.",
+  },
 ];
+
+function RunningFigureIndicator() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      className="h-3.5 w-3.5 shrink-0 text-violet-700 dark:text-violet-300"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="1.8"
+    >
+      <circle cx="14" cy="4" r="1.4" fill="currentColor" stroke="none" />
+      <line x1="13.5" y1="5.5" x2="11" y2="12">
+        <animate attributeName="y2" values="12;11.5;12;11.5;12" dur="0.6s" repeatCount="indefinite" />
+      </line>
+      <path strokeOpacity="0.4" d="M13 7 L10 9.5">
+        <animate
+          attributeName="d"
+          values="M13 7 L10 9.5;M13 7 L15.5 9;M13 7 L16 10.5;M13 7 L15.5 9;M13 7 L10 9.5"
+          dur="0.6s"
+          repeatCount="indefinite"
+        />
+      </path>
+      <path d="M13 7 L16 10.5">
+        <animate
+          attributeName="d"
+          values="M13 7 L16 10.5;M13 7 L11.5 10;M13 7 L10 9.5;M13 7 L11.5 10;M13 7 L16 10.5"
+          dur="0.6s"
+          repeatCount="indefinite"
+        />
+      </path>
+      <path strokeOpacity="0.4" d="M11 12 L8 15 L6.5 16">
+        <animate
+          attributeName="d"
+          values="M11 12 L8 15 L6.5 16;M11 12 L12 16 L14 19;M11 12 L14.5 15.5 L16.5 18;M11 12 L12 16 L14 19;M11 12 L8 15 L6.5 16"
+          dur="0.6s"
+          repeatCount="indefinite"
+        />
+      </path>
+      <path d="M11 12 L14.5 15.5 L16.5 18">
+        <animate
+          attributeName="d"
+          values="M11 12 L14.5 15.5 L16.5 18;M11 12 L8 15 L6.5 16;M11 12 L12 16 L14 19;M11 12 L8 15 L6.5 16;M11 12 L14.5 15.5 L16.5 18"
+          dur="0.6s"
+          repeatCount="indefinite"
+        />
+      </path>
+    </svg>
+  );
+}
 
 export function getExactSlashCommand(value: string): ComposerCommand | null {
   const trimmed = value.trim();
   if (trimmed === "/summarize") return "summarize";
   if (trimmed === "/clear") return "clear";
+  if (trimmed === "/goal") return "goal";
   if (trimmed.startsWith("/schedule ")) return "schedule";
   if (trimmed === "/schedule") return "schedule";
   return null;
@@ -105,22 +164,26 @@ export function ChatInput({
   replyTo,
   onCancelReply,
   organizationId,
+  goalMode: goalModeProp,
+  onGoalModeChange,
   stoppableRunId,
   onStopRun,
 }: {
   placeholder?: string;
   organizationId?: string;
-  onSend: (content: string, attachmentIds?: string[]) => Promise<void> | void;
-  onCommand: (command: ComposerCommand, content?: string) => Promise<void> | void;
+  onSend: (content: string, attachmentIds?: string[], metadata?: { goalMode?: boolean }) => Promise<void> | void;
+  onCommand: (command: ThreadCommand, rawContent?: string) => Promise<void> | void;
   statusHint?: string;
   inlineError?: string;
   mentionSuggestions?: MentionSuggestion[];
   replyTo?: ChatMessageData | null;
   onCancelReply?: () => void;
-  /** When set and the composer has no draft, show Stop instead of Send. */
+  goalMode?: boolean;
+  onGoalModeChange?: (active: boolean) => void;
   stoppableRunId?: string | null;
   onStopRun?: (runId: string) => Promise<void> | void;
 }) {
+  const goalMode = goalModeProp ?? false;
   const [content, setContent] = useState("");
   const [isSending, setIsSending] = useState(false);
   const [isStopping, setIsStopping] = useState(false);
@@ -201,10 +264,10 @@ export function ChatInput({
     return SLASH_COMMANDS.filter((option) => option.command.startsWith(slashQuery));
   }, [slashQuery]);
   const slashMenuOpen = slashQuery !== null && slashMenuOptions.length > 0;
+  const canStopRun = Boolean(stoppableRunId && onStopRun);
   const showStopInsteadOfSend =
-    Boolean(stoppableRunId && onStopRun) &&
-    content.trim().length === 0 &&
-    attachments.length === 0 &&
+    canStopRun &&
+    !hasDraft &&
     !uploading &&
     !isSending &&
     !isCommanding;
@@ -436,7 +499,7 @@ export function ChatInput({
     setError(null);
     setIsSending(true);
     try {
-      await onSend(next, attachments.map((attachment) => attachment.id));
+      await onSend(next, attachments.map((attachment) => attachment.id), goalMode ? { goalMode: true } : undefined);
       for (const attachment of attachments) {
         revokePreviewUrl(attachment);
       }
@@ -454,6 +517,18 @@ export function ChatInput({
 
   const runSlashCommand = async (command: ComposerCommand) => {
     if (isSending || isCommanding || uploading) return;
+    if (command === "goal") {
+      onGoalModeChange?.(!goalMode);
+      setError(null);
+      setContent("");
+      setSelection({ start: 0, end: 0 });
+      setClearConfirmation(false);
+      setEmojiMenuOpen(false);
+      requestAnimationFrame(() => {
+        textareaRef.current?.focus();
+      });
+      return;
+    }
     if (command === "clear" && !canConfirmClear) {
       setClearConfirmation(true);
       setError(null);
@@ -469,7 +544,8 @@ export function ChatInput({
     setError(null);
     setIsCommanding(true);
     try {
-      await onCommand(command, rawContent);
+      const currentContent = content;
+      await onCommand(command, currentContent);
       setContent("");
       setSelection({ start: 0, end: 0 });
       setAttachments([]);
@@ -589,7 +665,7 @@ export function ChatInput({
           onChange={handleAttachmentInput}
         />
         <div className="pointer-events-none absolute inset-0 rounded-xl bg-gradient-to-r from-violet-500/10 to-indigo-500/10 blur-lg opacity-0 transition-opacity group-focus-within:opacity-100" />
-        <div className="relative z-10 flex flex-col rounded-xl border border-zinc-200 bg-zinc-50 transition-all focus-within:border-violet-500 focus-within:bg-white focus-within:ring-1 focus-within:ring-violet-500 dark:border-zinc-800 dark:bg-zinc-900/50 dark:focus-within:bg-[#09090b]">
+        <div className={`relative z-10 flex flex-col rounded-xl border transition-all focus-within:border-violet-500 focus-within:bg-white focus-within:ring-1 focus-within:ring-violet-500 dark:focus-within:bg-[#09090b] ${goalMode ? "border-violet-400/50 bg-violet-50/30 dark:border-violet-500/30 dark:bg-violet-500/5" : "border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/50"}`}>
           {replyTo && (
             <div className="flex items-center gap-2 rounded-t-xl border-b border-zinc-200 bg-violet-50/50 px-3 py-1.5 dark:border-zinc-800 dark:bg-violet-500/5">
               <div className="flex-1 min-w-0">
@@ -612,6 +688,36 @@ export function ChatInput({
               )}
             </div>
           )}
+          {slashMenuOpen ? (
+            <div className="mx-2 mb-1 overflow-hidden rounded-lg bg-zinc-100/70 p-1 ring-1 ring-zinc-200/70 dark:bg-zinc-950/60 dark:ring-zinc-800/70">
+              <div className="space-y-1">
+                {slashMenuOptions.map((option, index) => (
+                  <button
+                    key={option.command}
+                    type="button"
+                    onMouseDown={(event) => {
+                      event.preventDefault();
+                      void runSlashCommand(option.command);
+                    }}
+                    className={`flex w-full items-center gap-3 rounded-md px-2 py-2 text-left text-xs transition ${
+                      index === activeSlashSelection
+                        ? "bg-violet-50 text-violet-900 dark:bg-violet-500/15 dark:text-violet-100"
+                        : "text-zinc-700 hover:bg-zinc-200/80 dark:text-zinc-200 dark:hover:bg-zinc-900"
+                    }`}
+                  >
+                    <span className="mt-0.5 rounded-md border border-zinc-200 bg-white px-1.5 py-0.5 font-mono text-[10px] font-semibold text-zinc-700 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200">
+                      {option.label}
+                    </span>
+                    <span className="min-w-0">
+                      <span className="block text-[10px] leading-4 text-zinc-500 dark:text-zinc-400">
+                        {option.description}
+                      </span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
           <textarea
             ref={textareaRef}
             placeholder={placeholder}
@@ -642,7 +748,6 @@ export function ChatInput({
                 start: event.currentTarget.selectionStart ?? 0,
                 end: event.currentTarget.selectionEnd ?? 0,
               });
-              setActiveMentionIndex(0);
             }}
             onKeyDown={(event) => {
               if (canConfirmClear) {
@@ -755,69 +860,41 @@ export function ChatInput({
               ))}
             </div>
           ) : null}
-          {slashMenuOpen ? (
-            <div className="mx-2 mt-1 overflow-hidden rounded-lg border border-zinc-200 bg-white p-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-950">
-              <div className="space-y-1">
-                {slashMenuOptions.map((option, index) => (
+          {emojiMenuOpen ? (
+            <div
+              ref={emojiMenuRef}
+              className="absolute bottom-[68px] left-3 z-20 w-72 rounded-xl border border-zinc-200 bg-white p-2 shadow-xl transition dark:border-zinc-700 dark:bg-zinc-950"
+            >
+              <div className="mb-2 flex items-center justify-between px-1">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-zinc-500 dark:text-zinc-400">
+                  Emoji
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setEmojiMenuOpen(false)}
+                  className="rounded-md px-1.5 py-0.5 text-[10px] text-zinc-500 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-900"
+                >
+                  Close
+                </button>
+              </div>
+              <div className="grid max-h-64 grid-cols-8 gap-1 overflow-y-auto pr-1">
+                {emojiOptions.map((emoji) => (
                   <button
-                    key={option.command}
+                    key={emoji}
                     type="button"
                     onMouseDown={(event) => {
                       event.preventDefault();
-                      void runSlashCommand(option.command);
+                      insertEmoji(emoji);
                     }}
-                    className={`flex w-full items-center gap-3 rounded-md px-2 py-2 text-left text-xs transition ${
-                      index === activeSlashSelection
-                        ? "bg-violet-50 text-violet-900 dark:bg-violet-500/15 dark:text-violet-100"
-                        : "text-zinc-700 hover:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-900"
-                    }`}
+                    className="flex h-9 w-9 items-center justify-center rounded-lg text-lg transition hover:bg-zinc-100 dark:hover:bg-zinc-900"
+                    aria-label={`Insert ${emoji}`}
                   >
-                    <span className="mt-0.5 rounded-md border border-zinc-200 bg-white px-1.5 py-0.5 font-mono text-[10px] font-semibold text-zinc-700 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200">
-                      {option.label}
-                    </span>
-                    <span className="min-w-0">
-                      <span className="block text-[10px] leading-4 text-zinc-500 dark:text-zinc-400">
-                        {option.description}
-                      </span>
-                    </span>
+                    {emoji}
                   </button>
                 ))}
               </div>
             </div>
           ) : null}
-          <div
-            ref={emojiMenuRef}
-            className={`absolute bottom-[68px] left-3 z-20 w-72 rounded-xl border border-zinc-200 bg-white p-2 shadow-xl transition ${emojiMenuOpen ? "opacity-100 translate-y-0" : "pointer-events-none opacity-0 translate-y-1"} dark:border-zinc-700 dark:bg-zinc-950`}
-          >
-            <div className="mb-2 flex items-center justify-between px-1">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-zinc-500 dark:text-zinc-400">
-                Emoji
-              </p>
-              <button
-                type="button"
-                onClick={() => setEmojiMenuOpen(false)}
-                className="rounded-md px-1.5 py-0.5 text-[10px] text-zinc-500 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-900"
-              >
-                Close
-              </button>
-            </div>
-            <div className="grid max-h-64 grid-cols-8 gap-1 overflow-y-auto pr-1">
-              {emojiOptions.map((emoji) => (
-                <button
-                  key={emoji}
-                  type="button"
-                  onMouseDown={(event) => {
-                    event.preventDefault();
-                    insertEmoji(emoji);
-                  }}
-                  className="flex h-9 w-9 items-center justify-center rounded-lg text-lg transition hover:bg-zinc-100 dark:hover:bg-zinc-900"
-                  aria-label={`Insert ${emoji}`}
-                >
-                  {emoji}
-                </button>
-              ))}
-            </div>
-          </div>
           {attachments.length > 0 ? (
             <div className="border-t border-zinc-200 px-3 py-2 dark:border-zinc-800">
               <div className="flex gap-2 overflow-x-auto pb-1">
@@ -911,41 +988,71 @@ export function ChatInput({
                 <Paperclip className="h-4 w-4" />
               </button>
             </div>
-            <button
-              type="button"
-              disabled={
-                showStopInsteadOfSend
-                  ? isStopping
-                  : isSending || isCommanding || uploading || (!hasDraft && !exactSlashCommand && !canConfirmClear)
-              }
-              onClick={() => void submitComposer()}
-              aria-label={
-                showStopInsteadOfSend
-                  ? "Stop agent run"
-                  : canConfirmClear
-                    ? "Confirm clear conversation"
-                    : exactSlashCommand === "clear"
-                      ? "Clear conversation"
-                      : exactSlashCommand === "summarize"
-                        ? "Run summarize"
-                        : "Send message"
-              }
-              className={
-                showStopInsteadOfSend
-                  ? "flex items-center justify-center h-7 w-7 rounded-lg bg-red-600 text-white shadow-lg shadow-red-500/20 hover:bg-red-700 transition disabled:cursor-not-allowed disabled:opacity-50"
-                  : "flex items-center justify-center h-7 w-7 rounded-lg bg-violet-600 text-white shadow-lg shadow-violet-500/20 hover:bg-violet-700 transition disabled:cursor-not-allowed disabled:opacity-50"
-              }
-            >
-              {showStopInsteadOfSend ? (
-                isStopping ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <Square className="h-3 w-3 fill-current" />
-                )
-              ) : (
-                <Send className="h-3.5 w-3.5" />
+            <div className="flex items-center gap-2">
+              {goalMode ? (
+                <button
+                  type="button"
+                  aria-label="Disable goal mode"
+                  aria-pressed="true"
+                  title="Goal mode active — click to disable"
+                  onClick={() => onGoalModeChange?.(false)}
+                  className="inline-flex h-7 items-center gap-1.5 rounded-md bg-violet-50 px-2 text-[11px] font-medium text-violet-700 transition hover:bg-violet-100 dark:bg-violet-500/10 dark:text-violet-300 dark:hover:bg-violet-500/15"
+                >
+                  <RunningFigureIndicator />
+                  Goal
+                </button>
+              ) : null}
+              {canStopRun && !showStopInsteadOfSend && (
+                <button
+                  type="button"
+                  aria-label="Stop agent run"
+                  title="Stop agent run"
+                  onClick={() => void stopRun()}
+                  disabled={isStopping}
+                  className="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-red-600 text-white shadow-lg shadow-red-500/20 transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {isStopping ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Square className="h-3 w-3 fill-current" />
+                  )}
+                </button>
               )}
-            </button>
+              {showStopInsteadOfSend ? (
+                <button
+                  type="button"
+                  aria-label="Stop agent run"
+                  title="Stop agent run"
+                  onClick={() => void stopRun()}
+                  disabled={isStopping}
+                  className="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-red-600 text-white shadow-lg shadow-red-500/20 transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {isStopping ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Square className="h-3 w-3 fill-current" />
+                  )}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  disabled={isSending || isCommanding || uploading || (!hasDraft && !exactSlashCommand && !canConfirmClear)}
+                  onClick={() => void submitComposer()}
+                  aria-label={
+                    canConfirmClear
+                      ? "Confirm clear conversation"
+                      : exactSlashCommand === "clear"
+                        ? "Clear conversation"
+                        : exactSlashCommand === "summarize"
+                          ? "Run summarize"
+                          : "Send message"
+                  }
+                  className="flex h-7 w-7 items-center justify-center rounded-lg bg-violet-600 text-white shadow-lg shadow-violet-500/20 transition hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <Send className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
           </div>
         </div>
         {error ? (

@@ -1,7 +1,8 @@
 import type { SqliteDbHandle as DbHandle } from '@ujima/context-store';
 import { ChannelSchema, type Channel, type ChannelKind } from '@ujima/shared';
-import { now, rowString } from './common.js';
+import { now, replaceMemberLinks, rowString } from './common.js';
 import { cursorWhereClause, decodeCursor, encodeCursor } from '@ujima/shared';
+import { listThreadIdsForChannel } from './threads.js';
 
 type Row = Record<string, unknown>;
 
@@ -66,13 +67,17 @@ export function getChannel(
     return null;
   }
 
+  return rowToChannel(row, listChannelMemberIds(db, rowString(row, 'id')));
+}
+
+function rowToChannel(row: Row, memberIds: string[]): Channel {
   return ChannelSchema.parse({
     id: rowString(row, 'id'),
     organizationId: rowString(row, 'organization_id'),
     name: rowString(row, 'name'),
     kind: rowString(row, 'kind'),
     topic: rowString(row, 'topic'),
-    memberIds: listChannelMemberIds(db, rowString(row, 'id')),
+    memberIds,
     parentMessageId: typeof row.parent_message_id === 'string' ? row.parent_message_id : undefined,
     createdAt: typeof row.created_at === 'string' ? row.created_at : undefined,
     archivedAt: typeof row.archived_at === 'string' ? row.archived_at : undefined,
@@ -116,19 +121,8 @@ export function listChannels(
     rows.pop();
   }
 
-  const data = rows.map((row) =>
-    ChannelSchema.parse({
-      id: rowString(row, 'id'),
-      organizationId: rowString(row, 'organization_id'),
-      name: rowString(row, 'name'),
-      kind: rowString(row, 'kind'),
-      topic: rowString(row, 'topic'),
-      memberIds: listChannelMemberIds(db, rowString(row, 'id')),
-      parentMessageId: typeof row.parent_message_id === 'string' ? row.parent_message_id : undefined,
-      createdAt: typeof row.created_at === 'string' ? row.created_at : undefined,
-      archivedAt: typeof row.archived_at === 'string' ? row.archived_at : undefined,
-    }),
-  );
+  const memberIds = listChannelMemberIdsForChannelIds(db, rows.map((row) => rowString(row, 'id')));
+  const data = rows.map((row) => rowToChannel(row, memberIds.get(rowString(row, 'id')) ?? []));
 
   const tail = hasMore ? data[data.length - 1] : undefined;
   const nextCursor = tail?.createdAt && tail.id ? encodeCursor(tail.createdAt, tail.id) : undefined;
@@ -141,37 +135,60 @@ export function listAllChannels(db: DbHandle, organizationId: string): Channel[]
     .prepare('SELECT * FROM channels WHERE organization_id = ? ORDER BY created_at DESC, id DESC')
     .all(organizationId) as Row[];
 
-  return rows.map((row) =>
-    ChannelSchema.parse({
-      id: rowString(row, 'id'),
-      organizationId: rowString(row, 'organization_id'),
-      name: rowString(row, 'name'),
-      kind: rowString(row, 'kind'),
-      topic: rowString(row, 'topic'),
-      memberIds: listChannelMemberIds(db, rowString(row, 'id')),
-      parentMessageId: typeof row.parent_message_id === 'string' ? row.parent_message_id : undefined,
-      createdAt: typeof row.created_at === 'string' ? row.created_at : undefined,
-      archivedAt: typeof row.archived_at === 'string' ? row.archived_at : undefined,
-    }),
-  );
+  const memberIds = listChannelMemberIdsForChannelIds(db, rows.map((row) => rowString(row, 'id')));
+  return rows.map((row) => rowToChannel(row, memberIds.get(rowString(row, 'id')) ?? []));
 }
 
 export function setChannelMembers(db: DbHandle, channelId: string, memberIds: string[]): void {
-  db.prepare('DELETE FROM channel_members WHERE channel_id = ?').run(channelId);
-  const insert = db.prepare('INSERT INTO channel_members (channel_id, member_id) VALUES (?, ?)');
-  for (const memberId of memberIds) {
-    insert.run(channelId, memberId);
+  replaceMemberLinks(db, 'channel_members', 'channel_id', channelId, memberIds);
+  for (const threadId of listThreadIdsForChannel(db, channelId)) {
+    replaceMemberLinks(db, 'thread_members', 'thread_id', threadId, memberIds);
   }
 }
 
 export function listChannelMemberIds(db: DbHandle, channelId: string): string[] {
+  return listChannelMemberIdsForChannelIds(db, [channelId]).get(channelId) ?? [];
+}
+
+function listChannelMemberIdsForChannelIds(
+  db: DbHandle,
+  channelIds: string[],
+): Map<string, string[]> {
+  if (channelIds.length === 0) return new Map();
+  const placeholders = channelIds.map(() => '?').join(', ');
+  const membersByChannelId = new Map(channelIds.map((id) => [id, new Set<string>()]));
+
   const rows = db
     .prepare(
-      'SELECT member_id FROM channel_members WHERE channel_id = ? ORDER BY member_id ASC',
+      `SELECT channel_id, member_id
+         FROM channel_members
+        WHERE channel_id IN (${placeholders})
+       UNION
+       SELECT
+         CASE
+           WHEN t.channel_id IN (${placeholders}) THEN t.channel_id
+           ELSE t.id
+         END AS channel_id,
+         tm.member_id
+         FROM thread_members tm
+         JOIN threads t ON t.id = tm.thread_id
+        WHERE t.channel_id IN (${placeholders}) OR t.id IN (${placeholders})`,
     )
-    .all(channelId) as { member_id: string }[];
+    .all(...channelIds, ...channelIds, ...channelIds, ...channelIds) as {
+      channel_id: string;
+      member_id: string;
+    }[];
 
-  return rows.map((row) => row.member_id);
+  for (const row of rows) {
+    membersByChannelId.get(row.channel_id)?.add(row.member_id);
+  }
+
+  return new Map(
+    [...membersByChannelId.entries()].map(([channelId, memberIds]) => [
+      channelId,
+      [...memberIds].sort(),
+    ]),
+  );
 }
 
 export function deleteChannel(db: DbHandle, channelId: string): void {

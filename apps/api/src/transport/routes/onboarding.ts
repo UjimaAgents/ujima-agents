@@ -1,8 +1,9 @@
-import type { FastifyInstance, FastifyReply } from 'fastify';
+import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { OnboardingRequestSchema, OnboardingResponseSchema, BootstrapResponseSchema, ApiErrorSchema } from '@ujima/api-schema';
 import type { AuthService, BootstrapService, OnboardingService } from '@ujima/orchestrator';
 import { readSessionToken } from '../session-token.js';
+import { apiError, errorMessage } from './route-errors.js';
 
 export interface OnboardingRoutesOptions {
   auth: AuthService;
@@ -71,15 +72,7 @@ export function registerOnboardingRoutes(
         sessionToken: session.sessionToken,
       };
     } catch (err) {
-      return badRequest(reply, errMessage(err));
+      return apiError(reply, 400, errorMessage(err));
     }
   });
-}
-
-function badRequest(reply: FastifyReply, message: string): FastifyReply {
-  return reply.code(400).send({ code: 'ERR_BAD_REQUEST', message });
-}
-
-function errMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }

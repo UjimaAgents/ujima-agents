@@ -650,7 +650,96 @@ const MIGRATIONS: { id: string; up: string }[] = [
     `,
   },
   {
-    id: '018_scheduled_jobs',
+    id: '018_message_metadata',
+    up: `
+      ALTER TABLE messages ADD COLUMN metadata TEXT NOT NULL DEFAULT '{}';
+    `,
+  },
+  {
+    id: '019_message_reasoning_content',
+    up: `
+      ALTER TABLE messages ADD COLUMN reasoning_content TEXT;
+    `,
+  },
+  {
+    id: '020_mcp_registry',
+    up: `
+      -- Phase 3 (MCP) — registry of MCP servers known to an organisation.
+      -- A "server" is a stdio command, SSE endpoint, or HTTP-streamable
+      -- URL the org has registered for its agents to use. Connection
+      -- material that is sensitive (env vars on stdio, auth headers on
+      -- remote) is stored as a key_ref pointer into the file-backed
+      -- secret store — never inline. The redaction layer over the REST
+      -- API ensures these never leak in responses.
+      CREATE TABLE IF NOT EXISTS mcp_servers (
+        id              TEXT PRIMARY KEY,
+        organization_id TEXT NOT NULL,
+        name            TEXT NOT NULL,
+        description     TEXT NOT NULL DEFAULT '',
+        category        TEXT NOT NULL DEFAULT 'general',
+        transport       TEXT NOT NULL,
+        command         TEXT,
+        args            TEXT NOT NULL DEFAULT '[]',
+        env_key_ref     TEXT,
+        url             TEXT,
+        headers_key_ref TEXT,
+        isolation       TEXT NOT NULL DEFAULT 'shared',
+        status          TEXT NOT NULL DEFAULT 'active',
+        last_tested_at  TEXT,
+        last_test_error TEXT,
+        created_by      TEXT NOT NULL,
+        created_at      TEXT NOT NULL,
+        updated_at      TEXT NOT NULL,
+        UNIQUE (organization_id, name)
+      );
+      CREATE INDEX IF NOT EXISTS idx_mcp_servers_org_status
+        ON mcp_servers(organization_id, status, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_mcp_servers_org_category
+        ON mcp_servers(organization_id, category);
+
+      -- agent_mcp_attachments — many-to-many between members (agents) and
+      -- mcp_servers. The scope column records which spirit role(s) may
+      -- use the attachment:
+      --   * 'worker'      (default) — worker spirits inherit this MCP
+      --   * 'supervisor'  — only supervisor spirits may use it
+      --   * 'both'        — both roles may use it
+      -- This is the supervisor-boundary the architecture demanded:
+      -- supervisors never automatically inherit arbitrary MCPs.
+      CREATE TABLE IF NOT EXISTS agent_mcp_attachments (
+        id              TEXT PRIMARY KEY,
+        organization_id TEXT NOT NULL,
+        member_id       TEXT NOT NULL,
+        mcp_server_id   TEXT NOT NULL,
+        scope           TEXT NOT NULL DEFAULT 'worker',
+        created_at      TEXT NOT NULL,
+        updated_at      TEXT NOT NULL,
+        UNIQUE (organization_id, member_id, mcp_server_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_agent_mcp_attachments_member
+        ON agent_mcp_attachments(organization_id, member_id);
+      CREATE INDEX IF NOT EXISTS idx_agent_mcp_attachments_server
+        ON agent_mcp_attachments(organization_id, mcp_server_id);
+
+      -- mcp_tool_cache — last-known tool inventory per server. Populated
+      -- by POST /settings/mcps/:id/test and consumed by:
+      --   1. settings UI (so the page renders without re-connecting)
+      --   2. governance UI (so policy rows can target real tool ids)
+      --   3. runtime (as an optimistic fallback when listTools fails)
+      -- The tools_json blob is an array of { name, description, inputSchema }
+      -- objects mirroring the MCP listTools result.
+      CREATE TABLE IF NOT EXISTS mcp_tool_cache (
+        mcp_server_id   TEXT PRIMARY KEY,
+        organization_id TEXT NOT NULL,
+        tools_json      TEXT NOT NULL DEFAULT '[]',
+        fetched_at      TEXT NOT NULL,
+        error           TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_mcp_tool_cache_org
+        ON mcp_tool_cache(organization_id);
+    `,
+  },
+  {
+    id: '021_scheduled_jobs',
     up: `
       CREATE TABLE IF NOT EXISTS scheduled_jobs (
         id               TEXT PRIMARY KEY,
@@ -708,6 +797,14 @@ function runMigrations(db: DbHandle): void {
   for (const m of MIGRATIONS) {
     if (applied.has(m.id)) continue;
     if (m.id === '011_approval_tool_call_id' && hasColumn(db, 'approvals', 'tool_call_id')) {
+      insert.run(m.id, Date.now());
+      continue;
+    }
+    if (m.id === '018_message_metadata' && hasColumn(db, 'messages', 'metadata')) {
+      insert.run(m.id, Date.now());
+      continue;
+    }
+    if (m.id === '019_message_reasoning_content' && hasColumn(db, 'messages', 'reasoning_content')) {
       insert.run(m.id, Date.now());
       continue;
     }

@@ -3,6 +3,7 @@ import {
   ApiErrorSchema,
   CreateWorkspaceRequestSchema,
   StartTaskRequestSchema,
+  TaskFileSchema,
   WsFrameSchema,
   DEFAULT_BIND_HOST,
   DEFAULT_BIND_PORT,
@@ -23,7 +24,7 @@ describe('api-schema', () => {
     expect(CreateWorkspaceRequestSchema.safeParse({}).success).toBe(true);
   });
 
-  it('requires workspace_id, session_id, team_id, prompt on StartTaskRequest', () => {
+  it('accepts direct task start requests', () => {
     expect(
       StartTaskRequestSchema.safeParse({
         workspace_id: 'w',
@@ -32,7 +33,40 @@ describe('api-schema', () => {
         prompt: 'hi',
       }).success,
     ).toBe(true);
+  });
+
+  it('accepts task-file based start requests', () => {
+    expect(
+      StartTaskRequestSchema.safeParse({
+        workspace_id: 'w',
+        session_id: 's',
+        task_file: {
+          task_id: 'auth-refresh',
+          prompt: 'Refresh the auth flow',
+          team: ['frontend-alice', 'frontend-bob'],
+          execution_mode: 'slim',
+          approvals: { mode: 'human_all' },
+          sequence: ['frontend-alice', 'frontend-bob'],
+        },
+      }).success,
+    ).toBe(true);
+  });
+
+  it('rejects empty task starts', () => {
     expect(StartTaskRequestSchema.safeParse({}).success).toBe(false);
+  });
+
+  it('parses a valid task YAML payload shape', () => {
+    expect(
+      TaskFileSchema.safeParse({
+        task_id: 'auth-refresh',
+        prompt: 'Refresh the auth flow',
+        team: ['frontend-alice', 'frontend-bob'],
+        execution_mode: 'slim',
+        approvals: { mode: 'human_all' },
+        sequence: ['frontend-alice', 'frontend-bob'],
+      }).success,
+    ).toBe(true);
   });
 
   it('discriminates WsFrame variants', () => {

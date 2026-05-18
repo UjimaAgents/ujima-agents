@@ -281,12 +281,21 @@ export class ConversationService {
       mentions: uniqueMentionIds(resolvedMentions),
       mentionNames: this.resolveMentionNames(message.organizationId, message.content, channel),
     });
+    const existing = this.repo.getMessage(finalMessage.organizationId, finalMessage.id);
     const messageAttachments = (finalMessage as { attachments?: { id: string }[] }).attachments ?? [];
     const linkedAttachmentIds = attachmentIds ?? messageAttachments.map((attachment) => attachment.id);
     if (linkedAttachmentIds.length > 0) {
       this.requireAttachments(finalMessage.organizationId, linkedAttachmentIds);
     }
-    this.repo.saveMessage(finalMessage);
+    if (existing) {
+      this.repo.updateMessage({
+        ...finalMessage,
+        createdAt: existing.createdAt,
+        editedAt: new Date().toISOString(),
+      });
+    } else {
+      this.repo.saveMessage(finalMessage);
+    }
     this.repo.replaceMessageMentions(finalMessage.id, resolvedMentions);
     if (linkedAttachmentIds.length > 0) {
       this.repo.linkAttachmentsToMessage(finalMessage.id, linkedAttachmentIds);
@@ -333,6 +342,7 @@ export class ConversationService {
     mentions?: string[];
     parentMessageId?: string;
     attachmentIds?: string[];
+    metadata?: { runId?: string; goalMode?: boolean };
   }) {
     requireOrganization(this.repo, input.organizationId);
 
@@ -380,6 +390,7 @@ export class ConversationService {
       kind: sender.kind,
       content: input.content,
       mentions: [...mentions],
+      ...(input.metadata ? { metadata: input.metadata } : {}),
       createdAt: new Date().toISOString(),
     });
 
@@ -395,16 +406,12 @@ export class ConversationService {
     body: string;
     replyTo?: string;
     mentions?: string[];
+    metadata?: { runId?: string };
   }) {
     const channel = this.requireActiveChannel(input.organizationId, input.channelId);
     let threadId = channel.id;
     if (input.replyTo) {
       const parent = this.requireMessage(input.organizationId, input.replyTo);
-      // Reject cross-channel replies: a reply must live in the same channel
-      // as its parent message. Otherwise the resulting message would render
-      // in `input.channelId` while threading under a different channel's
-      // conversation — corrupting channel history and leaking replies across
-      // channel boundaries.
       if (parent.channelId !== channel.id) {
         throw new Error(
           `Cannot reply across channels: parent message ${parent.id} belongs to channel ${parent.channelId}, not ${channel.id}`,
@@ -420,6 +427,7 @@ export class ConversationService {
       content: input.body,
       mentions: input.mentions,
       parentMessageId: input.replyTo,
+      metadata: input.metadata,
     });
   }
 
@@ -429,6 +437,7 @@ export class ConversationService {
     messageId: string;
     body: string;
     mentions?: string[];
+    metadata?: { runId?: string };
   }) {
     const parent = this.requireMessage(input.organizationId, input.messageId);
     return this.sendMessage({
@@ -439,6 +448,7 @@ export class ConversationService {
       content: input.body,
       mentions: input.mentions,
       parentMessageId: parent.id,
+      metadata: input.metadata,
     });
   }
 
@@ -451,6 +461,7 @@ export class ConversationService {
     parentMessageId?: string;
     ignore?: boolean;
     attachmentIds?: string[];
+    metadata?: { runId?: string; goalMode?: boolean };
   }) {
     requireOrganization(this.repo, input.organizationId);
 
@@ -517,6 +528,7 @@ export class ConversationService {
       kind: sender.kind,
       content: input.content,
       mentions: input.mentions ?? [],
+      ...(input.metadata ? { metadata: input.metadata } : {}),
       createdAt: now,
     });
 

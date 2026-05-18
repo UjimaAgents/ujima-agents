@@ -68,6 +68,39 @@ export type ApprovalWaitRecorder = (
   approvalId: string,
 ) => void;
 
+export function buildToolApprovalScope(input: ToolInvocationInput): string {
+  if (input.toolId === 'shell') {
+    return buildShellApprovalScope({ input: input.input, resourcePath: input.resourcePath });
+  }
+  if (input.toolId === 'filesystem' && input.action === 'write') {
+    return `filesystem:${JSON.stringify({ action: input.action, resourcePath: input.resourcePath, patch: input.input.patch, content: input.input.content })}`;
+  }
+  if (input.toolId === 'write') {
+    return `write:${JSON.stringify({ resourcePath: input.resourcePath, content: input.input.content })}`;
+  }
+  if (input.toolId === 'edit') {
+    return `edit:${JSON.stringify({ resourcePath: input.resourcePath, oldString: input.input.oldString, newString: input.input.newString, replaceAll: input.input.replaceAll })}`;
+  }
+  if (input.toolId === 'multiedit') {
+    return `multiedit:${JSON.stringify({ resourcePath: input.resourcePath, edits: input.input.edits })}`;
+  }
+  if (input.toolId === 'download') {
+    return `download:${JSON.stringify({ resourcePath: input.resourcePath, url: input.input.url, timeout: input.input.timeout })}`;
+  }
+  if (input.toolId === 'job_kill') {
+    return `job_kill:${JSON.stringify({ job_id: input.input.job_id })}`;
+  }
+  return `${input.toolId}:${input.action}:${input.resourcePath ?? ''}`;
+}
+
+export function approvalWaitResult(approvalId: string): ToolInvocationResult {
+  return {
+    ok: false,
+    requiresApprovalId: approvalId,
+    output: { status: 'waiting_for_approval', approvalId },
+  };
+}
+
 export function createPermissionGatedToolService(
   inner: ToolService,
   permissions: PermissionMiddleware,
@@ -79,19 +112,13 @@ export function createPermissionGatedToolService(
   const approvedRunScopes = new Set<string>();
 
   const runKey = (organizationId: string, runId: string) => `${organizationId}:${runId}`;
-
   return {
     async invoke(input) {
       if (input.bypassPermission) {
         return inner.invoke(input);
       }
       const context = await buildContext(input);
-      const approvalScope =
-        input.toolId === 'shell'
-          ? buildShellApprovalScope({ input: input.input, resourcePath: input.resourcePath })
-          : input.toolId === 'filesystem' && input.action === 'write'
-            ? `filesystem:${JSON.stringify({ action: input.action, resourcePath: input.resourcePath, patch: input.input.patch, content: input.input.content })}`
-            : `${input.toolId}:${input.action}:${input.resourcePath ?? ''}`;
+      const approvalScope = buildToolApprovalScope(input);
 
       if (consumeApprovedRun(input.organizationId, input.runId, approvalScope)) {
         return inner.invoke(input);
@@ -111,11 +138,7 @@ export function createPermissionGatedToolService(
           approvalScope,
         });
         recordApprovalWait?.(input, approval.id);
-        return {
-          ok: false,
-          requiresApprovalId: approval.id,
-          output: { status: 'waiting_for_approval', approvalId: approval.id },
-        };
+        return approvalWaitResult(approval.id);
       }
 
       if (!decision.allowed) {

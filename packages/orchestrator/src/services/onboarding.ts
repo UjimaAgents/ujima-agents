@@ -18,6 +18,7 @@ import { addMemberToDefaultChannels, ensureMemberSelfChannel } from './member-ch
 import { upsertWorkspaceMemberScopes } from './workspace-root.js';
 import { persistTeamConfig } from './config-sync.js';
 import { visibleChannelsFromRepo } from './settings.js';
+import { visiblePublicChannels } from './channel-visibility.js';
 
 export interface OnboardingInlineTeam {
   name?: string;
@@ -79,13 +80,6 @@ function buildInitialOrganizationChart(
   }
 
   return { reportsTo };
-}
-
-function visibleChannels(channels: Channel[]): Channel[] {
-  // Hide both `self` (private agent scratchpads) and `dm` (private 2-member
-  // conversations) from the onboarding response. Member-scoped DM access
-  // goes through `listVisibleChannels` (channel.list tool path).
-  return channels.filter((channel) => channel.kind !== 'self' && channel.kind !== 'dm');
 }
 
 export class OnboardingService {
@@ -283,7 +277,7 @@ export class OnboardingService {
     return {
       organization,
       members,
-      channels: visibleChannels(visibleChannelsFromRepo(this.repo, organizationId)),
+      channels: visiblePublicChannels(visibleChannelsFromRepo(this.repo, organizationId)),
       team: summarizeTeam(team),
     };
   }

@@ -1,5 +1,6 @@
 import type { SqliteDbHandle as DbHandle } from '@ujima/context-store';
 import type {
+  AgentMcpAttachment,
   ApprovalRequest,
   AuthSession,
   AuthUser,
@@ -9,6 +10,8 @@ import type {
   ChannelKind,
   ConfigFieldOwnership,
   ConversationThread,
+  McpServer,
+  McpToolCache,
   Member,
   Message,
   MessageMention,
@@ -24,7 +27,6 @@ import type {
   TodoStatus,
   WorkspaceMember,
 } from '@ujima/shared';
-import { ApprovalRequestSchema } from '@ujima/shared';
 import {
   findAuthUsersByEmail as readAuthUsersByEmail,
   getAuthSessionByTokenHash as readAuthSessionByTokenHash,
@@ -46,7 +48,7 @@ import {
   resolveApproval as resolveApprovalRecord,
   saveApproval as writeApproval,
 } from './approvals.js';
-import { saveAuditEvent as writeAuditEvent } from './audit.js';
+import { listAuditEvents as readAuditEvents, saveAuditEvent as writeAuditEvent } from './audit.js';
 import {
   getBootstrapSnapshot as readBootstrapSnapshot,
   type BootstrapSnapshot,
@@ -92,6 +94,7 @@ import {
 } from './attachments.js';
 import {
   deleteMessages as removeMessages,
+  getLatestHumanMessageInThread as readLatestHumanMessageInThread,
   getMessage as readMessage,
   countMessagesSince as readMessageCountSince,
   listMessages as readMessages,
@@ -120,6 +123,7 @@ import {
 import {
   findActiveRunForMemberThread as readActiveRunForMemberThread,
   getRun as readRun,
+  listActiveRuns as readActiveRuns,
   listRuns as readRuns,
   listThreadRuns as readThreadRuns,
   saveRun as writeRun,
@@ -152,6 +156,7 @@ import {
 } from './threads.js';
 import {
   getSpirit as readSpirit,
+  getSpiritByRunId as readSpiritByRunId,
   getSpiritByTriple as readSpiritByTriple,
   listActiveSpiritsForMember as readActiveSpiritsForMember,
   listSpiritsForSession as readSpiritsForSession,
@@ -164,6 +169,20 @@ import {
   listScheduledJobs as readScheduledJobs,
   saveScheduledJob as writeScheduledJob,
 } from './scheduled-jobs.js';
+import {
+  deleteAgentMcpAttachment as removeAgentMcpAttachment,
+  deleteMcpServer as removeMcpServer,
+  getMcpServer as readMcpServer,
+  getMcpServerByName as readMcpServerByName,
+  getMcpToolCache as readMcpToolCache,
+  listAgentMcpAttachments as readAgentMcpAttachments,
+  listAttachedServersForSpirit as readAttachedServersForSpirit,
+  listMcpServerAttachments as readMcpServerAttachments,
+  listMcpServers as readMcpServers,
+  saveAgentMcpAttachment as writeAgentMcpAttachment,
+  saveMcpServer as writeMcpServer,
+  saveMcpToolCache as writeMcpToolCache,
+} from './mcp-servers.js';
 
 export class Repository {
   private readonly secrets: SecretStore;
@@ -288,6 +307,8 @@ export class Repository {
   updateMessage = (message: Message): Message => writeMessageUpdate(this.db, message);
   getMessage = (organizationId: string, messageId: string): Message | null =>
     readMessage(this.db, organizationId, messageId);
+  getLatestHumanMessageInThread = (organizationId: string, threadId: string): Message | null =>
+    readLatestHumanMessageInThread(this.db, organizationId, threadId);
   saveAttachment = (attachment: Attachment): Attachment => writeAttachment(this.db, attachment);
   getAttachment = (organizationId: string, attachmentId: string): Attachment | null =>
     readAttachment(this.db, organizationId, attachmentId);
@@ -364,6 +385,7 @@ export class Repository {
     agentId: string,
     threadId: string,
   ): RunState | null => readActiveRunForMemberThread(this.db, organizationId, agentId, threadId);
+  listActiveRuns = (organizationId: string): RunState[] => readActiveRuns(this.db, organizationId);
   saveRunStep = (step: RunStep): RunStep => writeRunStep(this.db, step);
   listRunSteps = (organizationId: string, runId: string): RunStep[] =>
     readRunSteps(this.db, organizationId, runId);
@@ -410,14 +432,7 @@ export class Repository {
   deleteApproval = (organizationId: string, approvalId: string): void =>
     deleteApprovalRecord(this.db, organizationId, approvalId);
   listPendingApprovals = (organizationId: string): ApprovalRequest[] => {
-    const list = readPendingApprovals(this.db, organizationId);
-    return list.map((approval) => {
-      if (approval.threadId) return approval;
-      if (!approval.runId) return approval;
-      const run = readRun(this.db, organizationId, approval.runId);
-      if (!run?.threadId) return approval;
-      return ApprovalRequestSchema.parse({ ...approval, threadId: run.threadId });
-    });
+    return readPendingApprovals(this.db, organizationId);
   };
   hasApprovalGrant = (input: {
     organizationId: string;
@@ -429,6 +444,7 @@ export class Repository {
   }): boolean => readApprovalGrant(this.db, input);
 
   saveAuditEvent = (event: AuditEvent): AuditEvent => writeAuditEvent(this.db, event);
+  listAuditEvents = (organizationId: string): AuditEvent[] => readAuditEvents(this.db, organizationId);
 
   /**
    * Execute `fn` inside a synchronous DB transaction. Commits on
@@ -467,6 +483,8 @@ export class Repository {
     memberId: string,
     role: SpiritRole,
   ): Spirit | null => readSpiritByTriple(this.db, organizationId, taskSessionId, memberId, role);
+  getSpiritByRunId = (organizationId: string, runId: string): Spirit | null =>
+    readSpiritByRunId(this.db, organizationId, runId);
   listSpiritsForSession = (organizationId: string, taskSessionId: string): Spirit[] =>
     readSpiritsForSession(this.db, organizationId, taskSessionId);
   listActiveSpiritsForMember = (organizationId: string, memberId: string): Spirit[] =>
@@ -496,6 +514,51 @@ export class Repository {
   deleteScheduledJob = (organizationId: string, jobId: string): void =>
     removeScheduledJob(this.db, organizationId, jobId);
   listDueJobsGlobally = (): ScheduledJob[] => readDueJobsGlobally(this.db);
+
+  // Generic secret-store passthrough — used by the MCP registry (env
+  // maps + auth headers) and any other component that needs to put
+  // sensitive material in the file-backed store without going through
+  // the provider-credential helper. Values are written / read as
+  // opaque strings; the caller JSON-encodes structured payloads.
+  writeSecret = (value: string): string => this.secrets.write(value);
+  readSecret = (keyRef: string): string | null => this.secrets.read(keyRef);
+  deleteSecret = (keyRef: string): void => this.secrets.delete(keyRef);
+
+  saveMcpServer = (server: McpServer): McpServer => writeMcpServer(this.db, server);
+  getMcpServer = (organizationId: string, serverId: string): McpServer | null =>
+    readMcpServer(this.db, organizationId, serverId);
+  getMcpServerByName = (organizationId: string, name: string): McpServer | null =>
+    readMcpServerByName(this.db, organizationId, name);
+  listMcpServers = (organizationId: string): McpServer[] => readMcpServers(this.db, organizationId);
+  deleteMcpServer = (organizationId: string, serverId: string): void =>
+    removeMcpServer(this.db, organizationId, serverId);
+
+  saveAgentMcpAttachment = (
+    attachment: AgentMcpAttachment,
+  ): AgentMcpAttachment => writeAgentMcpAttachment(this.db, attachment);
+  deleteAgentMcpAttachment = (
+    organizationId: string,
+    memberId: string,
+    mcpServerId: string,
+  ): void => removeAgentMcpAttachment(this.db, organizationId, memberId, mcpServerId);
+  listAgentMcpAttachments = (
+    organizationId: string,
+    memberId: string,
+  ): AgentMcpAttachment[] => readAgentMcpAttachments(this.db, organizationId, memberId);
+  listMcpServerAttachments = (
+    organizationId: string,
+    mcpServerId: string,
+  ): AgentMcpAttachment[] => readMcpServerAttachments(this.db, organizationId, mcpServerId);
+  listAttachedServersForSpirit = (
+    organizationId: string,
+    memberId: string,
+    role: 'worker' | 'supervisor',
+  ): { attachment: AgentMcpAttachment; server: McpServer }[] =>
+    readAttachedServersForSpirit(this.db, organizationId, memberId, role);
+
+  saveMcpToolCache = (cache: McpToolCache): McpToolCache => writeMcpToolCache(this.db, cache);
+  getMcpToolCache = (organizationId: string, mcpServerId: string): McpToolCache | null =>
+    readMcpToolCache(this.db, organizationId, mcpServerId);
 
   getBootstrapSnapshot = (): BootstrapSnapshot => readBootstrapSnapshot(this.db);
 }

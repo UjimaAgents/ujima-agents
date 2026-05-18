@@ -1,4 +1,5 @@
 import type {
+  AgentMcpAttachment,
   ApprovalRequest,
   AuthSession,
   AuthUser,
@@ -8,6 +9,8 @@ import type {
   ChannelKind,
   ConfigFieldOwnership,
   ConversationThread,
+  McpServer,
+  McpToolCache,
   Member,
   Message,
   MessageMention,
@@ -118,6 +121,7 @@ export interface ConversationRepository extends RepositoryReader {
   getThread(organizationId: string, threadId: string): ConversationThread | null;
   ensureThread(thread: ConversationThread): ConversationThread;
   getMessage(organizationId: string, messageId: string): Message | null;
+  getLatestHumanMessageInThread(organizationId: string, threadId: string): Message | null;
   listMessages(
     organizationId: string,
     threadId: string,
@@ -217,6 +221,7 @@ export interface ApiRepository extends ConversationRepository {
     approvalScope: string;
   }): boolean;
   saveAuditEvent(event: AuditEvent): AuditEvent;
+  listAuditEvents(organizationId: string): AuditEvent[];
   /**
    * Run a synchronous DB transaction. The callback must complete
    * synchronously — async work belongs after the commit. See
@@ -231,8 +236,42 @@ export interface ApiRepository extends ConversationRepository {
     memberId: string,
     role: SpiritRole,
   ): Spirit | null;
+  getSpiritByRunId(organizationId: string, runId: string): Spirit | null;
   listSpiritsForSession(organizationId: string, taskSessionId: string): Spirit[];
   listActiveSpiritsForMember(organizationId: string, memberId: string): Spirit[];
+  /**
+   * Generic secret-store passthrough. Values are opaque strings —
+   * callers JSON-encode structured payloads (e.g. MCP env maps).
+   */
+  writeSecret(value: string): string;
+  readSecret(keyRef: string): string | null;
+  deleteSecret(keyRef: string): void;
+  saveMcpServer(server: McpServer): McpServer;
+  getMcpServer(organizationId: string, serverId: string): McpServer | null;
+  getMcpServerByName(organizationId: string, name: string): McpServer | null;
+  listMcpServers(organizationId: string): McpServer[];
+  deleteMcpServer(organizationId: string, serverId: string): void;
+  saveAgentMcpAttachment(attachment: AgentMcpAttachment): AgentMcpAttachment;
+  deleteAgentMcpAttachment(
+    organizationId: string,
+    memberId: string,
+    mcpServerId: string,
+  ): void;
+  listAgentMcpAttachments(
+    organizationId: string,
+    memberId: string,
+  ): AgentMcpAttachment[];
+  listMcpServerAttachments(
+    organizationId: string,
+    mcpServerId: string,
+  ): AgentMcpAttachment[];
+  listAttachedServersForSpirit(
+    organizationId: string,
+    memberId: string,
+    role: 'worker' | 'supervisor',
+  ): { attachment: AgentMcpAttachment; server: McpServer }[];
+  saveMcpToolCache(cache: McpToolCache): McpToolCache;
+  getMcpToolCache(organizationId: string, mcpServerId: string): McpToolCache | null;
   saveTodo(todo: Todo): Todo;
   getTodo(organizationId: string, todoId: string): Todo | null;
   listTodosForSession(

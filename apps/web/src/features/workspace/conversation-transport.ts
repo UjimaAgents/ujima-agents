@@ -1,7 +1,7 @@
 import type { BootstrapResponse } from "@ujima/api-schema";
 import type { WsFrame } from "@ujima/api-schema";
-import type { SocketEventName } from "@ujima/shared";
-import { getDirectMessageThreadId } from "@ujima/shared";
+import type { SocketEventName } from "@ujima/shared/browser";
+import { getDirectMessageThreadId } from "@ujima/shared/browser";
 import type { SelectedConversation } from "./types";
 
 export interface ConversationTransport {
@@ -44,6 +44,7 @@ export function buildConversationMessagePayload(
   content: string,
   parentMessageId?: string,
   attachmentIds?: string[],
+  metadata?: { goalMode?: boolean },
 ):
   | {
       organizationId: string;
@@ -52,6 +53,7 @@ export function buildConversationMessagePayload(
       content: string;
       attachmentIds?: string[];
       parentMessageId?: string;
+      metadata?: { goalMode?: boolean };
     }
   | {
       organizationId: string;
@@ -61,6 +63,7 @@ export function buildConversationMessagePayload(
       content: string;
       attachmentIds?: string[];
       parentMessageId?: string;
+      metadata?: { goalMode?: boolean };
     } {
   if (transport.recipientId) {
     return {
@@ -70,6 +73,7 @@ export function buildConversationMessagePayload(
       content,
       attachmentIds,
       parentMessageId,
+      ...(metadata ? { metadata } : {}),
     };
   }
 
@@ -81,6 +85,7 @@ export function buildConversationMessagePayload(
     content,
     attachmentIds,
     parentMessageId,
+    ...(metadata ? { metadata } : {}),
   };
 }
 

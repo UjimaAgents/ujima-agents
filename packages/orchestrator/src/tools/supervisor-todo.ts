@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { OrchestratorTool, ToolExecutionContext } from './types.js';
+import { errorMessage } from '../utils/error-message.js';
 
 // supervisor.todo.* — the supervisor's only side-effect tool family.
 //
@@ -108,7 +109,7 @@ export const supervisorTodoCheckTool: OrchestratorTool<typeof TodoCheckSchema> =
       });
       return { todo };
     } catch (err) {
-      return { error: err instanceof Error ? err.message : String(err) };
+      return { error: errorMessage(err) };
     }
   },
 };

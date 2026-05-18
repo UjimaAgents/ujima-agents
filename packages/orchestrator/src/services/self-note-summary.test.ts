@@ -56,8 +56,8 @@ describe('conversation-summary', () => {
     ]);
     expect(summary.startsWith(SELF_NOTE_SUMMARY_MARKER)).toBe(true);
     expect(summary).toContain('# Compacted 2 earlier self notes.');
-    expect(summary).toContain('> README-style compact summary -- durable context from earlier in the conversation.');
-    expect(summary).toContain("> Skim the headings, dive into what matters. Details that don't carry forward are safe to forget.");
+    expect(summary).toContain('> README-style compact summary -- your durable context from earlier in the conversation.');
+    expect(summary).toContain("> Treat these notes as your own continuity. Details that don't carry forward are safe to forget.");
     expect(summary).toContain('## What I was working on');
     expect(summary).toContain('## Decisions I made');
     expect(summary).toContain('## Important facts');
@@ -90,10 +90,13 @@ describe('conversation-summary', () => {
 
   it('builds rolling conversation summaries with dedicated markers', () => {
     const summary = buildConversationSummary([
-      makeMessage('Keep the latest request visible.', '2026-05-08T09:40:00.000Z'),
+      makeMessage('Decision: keep the latest request visible.', '2026-05-08T09:40:00.000Z'),
+      makeMessage('Need to verify approval errors in the UI.', '2026-05-08T09:41:00.000Z'),
     ]);
     expect(summary.startsWith(CONVERSATION_SUMMARY_MARKER)).toBe(true);
-    expect(summary).toContain('Compacted 1 earlier messages.');
+    expect(summary).toContain('Compacted 2 earlier messages.');
+    expect(summary).toContain('Decision: keep the latest request visible.');
+    expect(summary).toContain('Need to verify approval errors in the UI.');
   });
 
   it('detects summary and compacted markers', () => {

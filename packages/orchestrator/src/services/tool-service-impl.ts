@@ -19,17 +19,21 @@ import {
   ORCHESTRATOR_TOOLS,
   SUPERVISOR_TOOL_ALLOWLIST,
 } from "../tools/index.js";
-import type {
-  ToolInvocationInput,
-  ToolInvocationResult,
-  ToolService,
+import {
+  approvalWaitResult,
+  buildToolApprovalScope,
+  type ToolInvocationInput,
+  type ToolInvocationResult,
+  type ToolService,
 } from "./tool-service.js";
 import {
   ERR_PATH_ESCAPE,
   createMemberPathResolver,
   isPathEscapeError,
 } from "./workspace-root.js";
-import { buildShellApprovalScope, normalizeShellScope } from "./shell-scope.js";
+import { normalizeShellScope } from "./shell-scope.js";
+import { materializeMcpDef, type McpRuntimePool } from "./mcp-runtime.js";
+import { formatReadableToolOutput } from "../utils/tool-output.js";
 
 /** Merge top-level invocation fields into `input` for client / reasoning-trace payloads. */
 function toolCallArgsForClient(inv: ToolInvocationInput): Record<string, unknown> {
@@ -71,6 +75,7 @@ export class ToolServiceImpl implements ToolService {
      * pre-Phase-2 wiring still constructs.
      */
     private readonly supervisorTodos?: SupervisorTodoService,
+    private readonly mcpPool?: McpRuntimePool,
   ) {}
 
   allowRun(organizationId: string, runId: string, approvalScope?: string): void {
@@ -120,6 +125,7 @@ export class ToolServiceImpl implements ToolService {
       invocation.permissionMcpId === "supervisor";
     if (
       supervisorTagged &&
+      invocation.toolId !== "mcp" &&
       !SUPERVISOR_TOOL_ALLOWLIST.includes(
         invocation.toolId as (typeof SUPERVISOR_TOOL_ALLOWLIST)[number],
       )
@@ -217,6 +223,8 @@ export class ToolServiceImpl implements ToolService {
 
     const policy = isSubOperation
       ? { allowed: true, requiresApproval: false, reason: "sub-operation" }
+      : preparedInvocation.toolId === "mcp"
+        ? { allowed: true, requiresApproval: true }
       : checkToolPolicy(
           team,
           member.roleName,
@@ -258,7 +266,7 @@ export class ToolServiceImpl implements ToolService {
       };
     }
 
-    const approvalScope = this.buildApprovalScope(preparedInvocation);
+    const approvalScope = buildToolApprovalScope(preparedInvocation);
 
     if (
       policy.requiresApproval &&
@@ -295,11 +303,7 @@ export class ToolServiceImpl implements ToolService {
         });
       }
 
-      return {
-        ok: false,
-        requiresApprovalId: approval.id,
-        output: { status: "waiting_for_approval", approvalId: approval.id },
-      };
+      return approvalWaitResult(approval.id);
     }
 
     try {
@@ -378,14 +382,59 @@ export class ToolServiceImpl implements ToolService {
     }
 
     if (invocation.toolId === "mcp") {
-      throw new Error(
-        "MCP proxying is not yet implemented in the local runtime",
-      );
+      return this.executeMcpTool(invocation);
     }
 
     throw new Error(
       `Tool "${invocation.toolId}" action "${invocation.action}" is not implemented`,
     );
+  }
+
+  private async executeMcpTool(invocation: ToolInvocationInput): Promise<unknown> {
+    if (!this.mcpPool) {
+      throw new Error("MCP proxying is not configured in the local runtime");
+    }
+
+    const serverId =
+      invocation.permissionMcpId ?? readString(invocation.input, "mcpServerId");
+    const permissionToolName = invocation.permissionToolName;
+    const toolName =
+      readString(invocation.input, "toolName") ??
+      (permissionToolName?.startsWith("mcp:") ? undefined : permissionToolName);
+    if (!serverId) {
+      throw new Error("MCP invocation is missing mcpServerId");
+    }
+    if (!toolName) {
+      throw new Error("MCP invocation is missing toolName");
+    }
+
+    const role = invocation.spiritRole ?? "worker";
+    const attachment = this.repo
+      .listAttachedServersForSpirit(invocation.organizationId, invocation.memberId, role)
+      .find((current) => current.server.id === serverId);
+    if (!attachment) {
+      throw new Error(
+        `MCP server "${serverId}" is not attached to member "${invocation.memberId}" for ${role} spirits`,
+      );
+    }
+
+    const def = materializeMcpDef(this.repo, attachment.server);
+    const connection = await this.mcpPool.get(def, { agentId: invocation.memberId });
+    const result = await connection.callTool(
+      {
+        agentId: invocation.memberId,
+        taskId: invocation.taskSessionId,
+        sessionId: invocation.runId,
+      },
+      toolName,
+      Object.prototype.hasOwnProperty.call(invocation.input, "args")
+        ? invocation.input.args
+        : {},
+    );
+    if (result.isError) {
+      throw new Error(formatMcpError(result.content, toolName));
+    }
+    return result.content;
   }
 
   private consumeApprovedRun(organizationId: string, runId: string, approvalScope: string): boolean {
@@ -515,30 +564,22 @@ export class ToolServiceImpl implements ToolService {
     return rooms;
   }
 
-  private buildApprovalScope(invocation: ToolInvocationInput): string {
-    if (invocation.toolId === "shell") {
-      return buildShellApprovalScope({
-        input: invocation.input ?? {},
-        resourcePath: invocation.resourcePath,
-      });
-    }
-    if (invocation.toolId === "filesystem" && invocation.action === "write") {
-      return `filesystem:${JSON.stringify({
-        action: invocation.action,
-        resourcePath: invocation.resourcePath,
-        patch: invocation.input?.patch,
-        content: invocation.input?.content,
-      })}`;
-    }
-    return `${invocation.toolId}:${invocation.action}:${invocation.resourcePath ?? ""}`;
-  }
-
   private async prepareInvocation(
     invocation: ToolInvocationInput,
     roleName: string,
     team: AgentTeamHandle,
   ): Promise<ToolInvocationInput> {
-    if (invocation.toolId !== "filesystem" && invocation.toolId !== "shell") {
+    if (
+      invocation.toolId !== "filesystem" &&
+      invocation.toolId !== "shell" &&
+      invocation.toolId !== "view" &&
+      invocation.toolId !== "write" &&
+      invocation.toolId !== "edit" &&
+      invocation.toolId !== "multiedit" &&
+      invocation.toolId !== "ls" &&
+      invocation.toolId !== "glob" &&
+      invocation.toolId !== "download"
+    ) {
       return invocation;
     }
 
@@ -550,7 +591,16 @@ export class ToolServiceImpl implements ToolService {
       roleName,
     );
 
-    if (invocation.toolId === "filesystem") {
+    if (
+      invocation.toolId === "filesystem" ||
+      invocation.toolId === "view" ||
+      invocation.toolId === "write" ||
+      invocation.toolId === "edit" ||
+      invocation.toolId === "multiedit" ||
+      invocation.toolId === "ls" ||
+      invocation.toolId === "glob" ||
+      invocation.toolId === "download"
+    ) {
       if (!invocation.resourcePath) {
         return invocation;
       }
@@ -562,7 +612,12 @@ export class ToolServiceImpl implements ToolService {
 
     const input = invocation.input ?? {};
 
-    if (input.operation === "send_input" || input.operation === "read_output" || input.operation === "terminate") {
+    if (
+      input.operation === "send_input" ||
+      input.operation === "read_output" ||
+      input.operation === "wait" ||
+      input.operation === "terminate"
+    ) {
       return invocation;
     }
 
@@ -611,10 +666,15 @@ export class ToolServiceImpl implements ToolService {
   }
 }
 
-function summarizeToolOutput(value: unknown): unknown {
+export function summarizeToolOutput(value: unknown): unknown {
+  const output = value as { status?: unknown; stdout?: unknown; stderr?: unknown } | undefined;
+  const formatted = formatReadableToolOutput(value);
+  if (formatted) return truncateText(formatted);
+
+  if (output && typeof output.status === "string") return value;
+
   if (!value || typeof value !== "object") return value;
-  const output = value as { stdout?: unknown; stderr?: unknown };
-  if (typeof output.stdout === "string" || typeof output.stderr === "string") {
+  if (typeof output?.stdout === "string" || typeof output?.stderr === "string") {
     return {
       stdout: truncateText(output.stdout),
       stderr: truncateText(output.stderr),
@@ -626,4 +686,19 @@ function summarizeToolOutput(value: unknown): unknown {
 function truncateText(value: unknown): string {
   const text = typeof value === "string" ? value : "";
   return text.length > 4000 ? `${text.slice(0, 4000)}\n[truncated]` : text;
+}
+
+function readString(input: Record<string, unknown>, key: string): string | undefined {
+  const value = input[key];
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function formatMcpError(content: unknown, toolName: string): string {
+  if (typeof content === "string" && content.length > 0) return content;
+  if (content === undefined || content === null) return `MCP tool "${toolName}" failed`;
+  try {
+    return JSON.stringify(content);
+  } catch {
+    return `MCP tool "${toolName}" failed`;
+  }
 }

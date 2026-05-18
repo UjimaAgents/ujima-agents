@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { pendingApprovalVisibleInChannelView } from "./approval-thread-filter";
+import { pendingApprovalVisibleInChannelView, queueApprovals } from "./approval-thread-filter";
 
 describe("pendingApprovalVisibleInChannelView", () => {
   const dmThreadIvy = "dm:human:ivy";
@@ -8,6 +8,7 @@ describe("pendingApprovalVisibleInChannelView", () => {
   it("hides Ivy approval in Ava agent tab when threadId points at Ivy DM", () => {
     const visible = pendingApprovalVisibleInChannelView(
       {
+        id: "approval-1",
         status: "pending",
         requestedByMemberId: "ivy",
         requestedBy: "Ivy",
@@ -24,6 +25,7 @@ describe("pendingApprovalVisibleInChannelView", () => {
   it("shows Ivy approval in Ivy agent tab for same thread", () => {
     const visible = pendingApprovalVisibleInChannelView(
       {
+        id: "approval-2",
         status: "pending",
         requestedByMemberId: "ivy",
         requestedBy: "Ivy",
@@ -37,9 +39,26 @@ describe("pendingApprovalVisibleInChannelView", () => {
     expect(visible).toBe(true);
   });
 
+  it("shows Ivy approval in Ivy agent DM when the run lives on a channel thread", () => {
+    const visible = pendingApprovalVisibleInChannelView(
+      {
+        id: "approval-channel-run",
+        status: "pending",
+        requestedByMemberId: "ivy",
+        requestedBy: "Ivy",
+        runId: "run-general",
+      },
+      { type: "agent", id: "ivy" },
+      dmThreadIvy,
+      [{ id: "run-general", threadId: "general" }],
+    );
+    expect(visible).toBe(true);
+  });
+
   it("falls back to run.threadId for legacy approvals without threadId on approval", () => {
     const visible = pendingApprovalVisibleInChannelView(
       {
+        id: "approval-3",
         status: "pending",
         requestedByMemberId: "ivy",
         requestedBy: "Ivy",
@@ -55,6 +74,7 @@ describe("pendingApprovalVisibleInChannelView", () => {
   it("hides legacy approval when run thread does not match current DM", () => {
     const visible = pendingApprovalVisibleInChannelView(
       {
+        id: "approval-4",
         status: "pending",
         requestedByMemberId: "ivy",
         requestedBy: "Ivy",
@@ -65,5 +85,17 @@ describe("pendingApprovalVisibleInChannelView", () => {
       [{ id: "run-1", threadId: dmThreadIvy }],
     );
     expect(visible).toBe(false);
+  });
+});
+
+describe("queueApprovals", () => {
+  it("keeps the earliest created pending approval visible first", () => {
+    const approvals = queueApprovals([
+      { id: "b", status: "pending", runId: "run-1", createdAt: "2026-05-12T08:00:02.000Z" },
+      { id: "a", status: "pending", runId: "run-1", createdAt: "2026-05-12T08:00:01.000Z" },
+      { id: "c", status: "approved", runId: "run-1", createdAt: "2026-05-12T08:00:03.000Z" },
+    ]);
+
+    expect(approvals.map((approval) => approval.id)).toEqual(["a", "c"]);
   });
 });

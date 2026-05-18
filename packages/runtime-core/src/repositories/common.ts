@@ -1,3 +1,5 @@
+import type { SqliteDbHandle as DbHandle } from '@ujima/context-store';
+
 type Row = Record<string, unknown>;
 
 export function now(): string {
@@ -44,4 +46,19 @@ export function parseJsonArrayRaw(value: unknown): unknown[] {
   }
   const parsed = JSON.parse(value) as unknown;
   return Array.isArray(parsed) ? parsed : [];
+}
+
+export function replaceMemberLinks(
+  db: DbHandle,
+  table: 'channel_members' | 'thread_members',
+  keyColumn: 'channel_id' | 'thread_id',
+  keyValue: string,
+  memberIds: string[],
+): void {
+  const uniqueMemberIds = [...new Set(memberIds)].sort();
+  db.prepare(`DELETE FROM ${table} WHERE ${keyColumn} = ?`).run(keyValue);
+  const insert = db.prepare(`INSERT INTO ${table} (${keyColumn}, member_id) VALUES (?, ?)`);
+  for (const memberId of uniqueMemberIds) {
+    insert.run(keyValue, memberId);
+  }
 }

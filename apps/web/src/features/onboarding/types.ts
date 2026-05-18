@@ -1,4 +1,4 @@
-import { defaultModelForProvider } from "@ujima/shared";
+import { defaultModelForProvider } from "@ujima/shared/browser";
 
 export type OnboardingStepId = "organization" | "owner" | "team" | "review";
 export type TeamTabId = "agents" | "channels" | "org-chart" | "policies" | "providers";
@@ -89,7 +89,7 @@ export interface RolePresetTemplate {
   industry: string;
   key: string;
 }
-export { defaultModelForProvider, getModelOptionsForProvider } from "@ujima/shared";
+export { defaultModelForProvider, getModelOptionsForProvider } from "@ujima/shared/browser";
 
 export function buildStarterDraft(): OnboardingDraft {
   return {

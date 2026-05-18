@@ -102,7 +102,7 @@ describe('TaskSessionService — Phase 1 task shell', () => {
     expect(channel?.memberIds.sort()).toEqual(
       [fixture.ownerId, 'frontend-alice', 'frontend-bob'].sort(),
     );
-    expect(channel?.name).toBe(`#${session.slug}`);
+    expect(channel?.name).toBe(session.slug);
 
     // 3. Join system message lives in the new channel and carries a
     //    valid `task.join` MessageCard payload on `tool_calls[0].args`.

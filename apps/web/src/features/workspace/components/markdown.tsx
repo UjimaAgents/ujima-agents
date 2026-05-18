@@ -82,6 +82,122 @@ function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+function stripScriptTags(content: string): string {
+  return content
+    .replace(/<script\b[^>]*>/gi, "&lt;script&gt;")
+    .replace(/<\/script>/gi, "&lt;/script&gt;");
+}
+
+export function renderMarkdown(content: string, mentionNames: string[]): string {
+  return marked.parse(stripScriptTags(content), {
+    gfm: true,
+    breaks: true,
+    renderer: createRenderer(mentionNames),
+  }) as string;
+}
+
+interface StreamingMarkdownCache {
+  content: string;
+  prefix: string;
+  prefixHtml: string;
+}
+
+const streamingMarkdownCaches = new Map<string, StreamingMarkdownCache>();
+
+function joinRenderedFragments(prefix: string, trail: string): string {
+  const left = prefix.trimEnd();
+  const right = trail.trimStart();
+  if (!left) return right;
+  if (!right) return left;
+  return `${left}\n${right}`;
+}
+
+function isBlankLine(line: string): boolean {
+  return /^\s*$/.test(line);
+}
+
+export function findSafeMarkdownBoundary(content: string): number {
+  if (!content) return -1;
+
+  const lines = content.split("\n");
+  let offset = 0;
+  let boundary = -1;
+  let fenceCount = 0;
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    const lineLen = line.length;
+    if (/^\s*```/.test(line)) fenceCount += 1;
+    if (isBlankLine(line) && fenceCount % 2 === 0) {
+      const prev = lines[i - 1] ?? "";
+      const next = lines[i + 1] ?? "";
+      const trimmedPrev = prev.trim();
+      const trimmedNext = next.trim();
+      const endsWithHazard =
+        /^\s*([-*+]|\d+\.)\s/.test(prev) ||
+        /^\s*>/.test(prev) ||
+        /^\s{4,}\S/.test(prev) ||
+        /^\s*[|:\s-]*\|[|:\s-]*$/.test(prev) ||
+        /^=+\s*$/.test(prev) ||
+        /^-+\s*$/.test(prev);
+      const nextIsSetextUnderline = /^=+\s*$/.test(trimmedNext) || /^-+\s*$/.test(trimmedNext);
+      if (!endsWithHazard && !nextIsSetextUnderline && trimmedPrev.length > 0) {
+        boundary = offset + lineLen + 1;
+      }
+    }
+    offset += lineLen + 1;
+  }
+
+  return boundary;
+}
+
+export function renderStreamingMarkdown(
+  content: string,
+  mentionNames: string[],
+): string {
+  const mentionKey = mentionNames.join("\u0000");
+  const cache = streamingMarkdownCaches.get(mentionKey) ?? {
+    content: "",
+    prefix: "",
+    prefixHtml: "",
+  };
+  if (!streamingMarkdownCaches.has(mentionKey)) {
+    streamingMarkdownCaches.set(mentionKey, cache);
+  }
+
+  if (!content.startsWith(cache.content)) {
+    cache.content = "";
+    cache.prefix = "";
+    cache.prefixHtml = "";
+  }
+
+  const boundary = findSafeMarkdownBoundary(content);
+  if (boundary < 0) {
+    cache.content = content;
+    cache.prefix = "";
+    cache.prefixHtml = "";
+    return renderMarkdown(content, mentionNames);
+  }
+
+  const prefix = content.slice(0, boundary);
+  const trail = content.slice(boundary);
+  if (prefix === cache.prefix && content.startsWith(cache.content)) {
+    const prefixHtml = cache.prefixHtml;
+    const trailHtml = trail ? renderMarkdown(trail, mentionNames) : "";
+    cache.content = content;
+    return trailHtml ? joinRenderedFragments(prefixHtml, trailHtml) : prefixHtml;
+  }
+
+  const prefixHtml = renderMarkdown(prefix, mentionNames);
+  const trailHtml = trail ? renderMarkdown(trail, mentionNames) : "";
+  streamingMarkdownCaches.set(mentionKey, {
+    content,
+    prefix,
+    prefixHtml,
+  });
+  return trailHtml ? joinRenderedFragments(prefixHtml, trailHtml) : prefixHtml;
+}
+
 function renderInlineMarkdown(text: string, mentionNames: string[]): string {
   const withMentions = highlightMentions(text, mentionNames);
   return withMentions
@@ -98,13 +214,11 @@ export function Markdown({
   mentionNames?: string[];
   className?: string;
 }) {
-  const html = useMemo(() => {
-    return marked.parse(content, { gfm: true, breaks: true, renderer: createRenderer(mentionNames) }) as string;
-  }, [content, mentionNames]);
+  const html = renderStreamingMarkdown(content, mentionNames);
 
   return (
     <div
-      className={`break-words text-sm leading-7 text-foreground
+      className={`min-w-0 break-words text-sm leading-7 text-foreground [overflow-wrap:anywhere]
         [&>p]:my-2 [&>p:first-child]:mt-0 [&>p:last-child]:mb-0
         [&>h1]:mt-5 [&>h1]:mb-2 [&>h1]:text-xl [&>h1]:font-semibold [&>h1]:leading-tight
         [&>h2]:mt-4 [&>h2]:mb-2 [&>h2]:text-lg [&>h2]:font-semibold [&>h2]:leading-tight
@@ -115,7 +229,7 @@ export function Markdown({
         [&_li>ul]:mt-1 [&_li>ol]:mt-1 [&_li>ul]:pl-5 [&_li>ol]:pl-5
         [&_input[type='checkbox']]:mr-2 [&_input[type='checkbox']]:align-text-bottom
         [&>hr]:my-3 [&>hr]:border-foreground/20
-        [&_strong]:font-semibold [&_em]:italic [&_a]:underline [&_a]:underline-offset-2
+        [&_strong]:font-semibold [&_em]:italic [&_a]:underline [&_a]:underline-offset-2 [&_code]:break-words
         ${className}`}
       dangerouslySetInnerHTML={{ __html: html }}
     />
@@ -132,7 +246,7 @@ export function MarkdownInline({
   className?: string;
 }) {
   const html = useMemo(() => {
-    return marked.parseInline(content, {
+    return marked.parseInline(stripScriptTags(content), {
       gfm: true,
       renderer: createRenderer(mentionNames),
     }) as string;
@@ -140,7 +254,7 @@ export function MarkdownInline({
 
   return (
     <span
-      className={`break-words text-foreground ${className}`}
+      className={`break-words text-foreground [overflow-wrap:anywhere] ${className}`}
       dangerouslySetInnerHTML={{ __html: html }}
     />
   );

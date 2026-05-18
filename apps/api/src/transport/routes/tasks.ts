@@ -1,4 +1,4 @@
-import type { FastifyInstance, FastifyReply } from 'fastify';
+import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import type { Repository } from '@ujima/runtime-core';
 import { ERR_NO_WORKSPACE_ROOT, NoWorkspaceRootError, type RuntimeHost } from '@ujima/runtime-core';
@@ -20,6 +20,7 @@ import {
   assertReadyWorkspaceRoot,
   isWorkspaceRootNotReadyError,
 } from './workspace-root.js';
+import { apiError, errorMessage } from './route-errors.js';
 
 export interface TaskRoutesOptions {
   host: RuntimeHost;
@@ -61,7 +62,7 @@ export function registerTaskRoutes(_app: FastifyInstance, options: TaskRoutesOpt
     },
   }, async (req, reply) => {
     const task = host.listTasks().find((t) => t.taskId === req.params.id);
-    if (!task) return replyError(reply, 404, 'ERR_NOT_FOUND', `task "${req.params.id}" not found`);
+    if (!task) return apiError(reply, 404, `task "${req.params.id}" not found`);
     return toTaskDto(task);
   });
 
@@ -79,14 +80,17 @@ export function registerTaskRoutes(_app: FastifyInstance, options: TaskRoutesOpt
     },
   }, async (req, reply) => {
     try {
+      const taskFile = req.body.task_file;
       const res = await host.startTask({
         workspaceId: req.body.workspace_id,
         sessionId: req.body.session_id,
         teamId: req.body.team_id,
-        prompt: req.body.prompt,
-        taskId: req.body.task_id,
+        agentIds: taskFile?.team,
+        prompt: taskFile?.prompt ?? req.body.prompt ?? '',
+        taskId: taskFile?.task_id ?? req.body.task_id,
         orchestratorMode: req.body.orchestrator_mode,
-        executionMode: req.body.execution_mode,
+        executionMode: taskFile?.execution_mode ?? req.body.execution_mode,
+        sequence: taskFile?.sequence,
       });
       return {
         task: toTaskDto({
@@ -104,9 +108,9 @@ export function registerTaskRoutes(_app: FastifyInstance, options: TaskRoutesOpt
         isWorkspaceRootNotReadyError(err) ||
         (err instanceof Error && err.message.includes(ERR_NO_WORKSPACE_ROOT))
       ) {
-        return replyError(reply, 409, ERR_NO_WORKSPACE_ROOT, err instanceof Error ? err.message : String(err));
+        return apiError(reply, 409, errorMessage(err), ERR_NO_WORKSPACE_ROOT);
       }
-      return replyError(reply, 500, 'ERR_INTERNAL', err instanceof Error ? err.message : String(err));
+      return apiError(reply, 500, errorMessage(err));
     }
   });
 
@@ -154,12 +158,10 @@ export function registerTaskRoutes(_app: FastifyInstance, options: TaskRoutesOpt
       return await taskPromoter.promote(req.body);
     } catch (err) {
       if (isWorkspaceRootNotReadyError(err)) {
-        const message = err instanceof Error ? err.message : String(err);
-        return reply.code(409).send({ code: ERR_NO_WORKSPACE_ROOT, message });
+        return apiError(reply, 409, errorMessage(err), ERR_NO_WORKSPACE_ROOT);
       }
-      const message = err instanceof Error ? err.message : String(err);
-      const code = message.startsWith('Organization not found') ? 404 : 400;
-      return reply.code(code).send({ code: code === 404 ? 'ERR_NOT_FOUND' : 'ERR_BAD_REQUEST', message });
+      const message = errorMessage(err);
+      return apiError(reply, message.startsWith('Organization not found') ? 404 : 400, message);
     }
   });
 }
@@ -180,8 +182,4 @@ function toTaskDto(t: {
     started_at: t.startedAt,
     agent_ids: t.agentIds,
   };
-}
-
-function replyError(reply: FastifyReply, status: number, code: string, message: string): FastifyReply {
-  return reply.status(status).send({ code, message });
 }

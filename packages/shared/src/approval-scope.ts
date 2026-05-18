@@ -15,6 +15,39 @@ export interface ParsedFilesystemScope {
   content?: string;
 }
 
+function stringField(record: Record<string, unknown>, ...keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === 'string') return value;
+  }
+  return undefined;
+}
+
+function splitDiffLines(prefix: '+' | '-', value: string): string[] {
+  const lines = value.split(/\r?\n/);
+  return lines.map((line) => `${prefix}${line}`);
+}
+
+function proposedWriteDiff(resourcePath: string, content: string): string {
+  const lineCount = Math.max(1, content.split(/\r?\n/).length);
+  return [
+    `--- ${resourcePath}`,
+    `+++ ${resourcePath}`,
+    `@@ -0,0 +1,${lineCount} @@`,
+    ...splitDiffLines('+', content),
+  ].join('\n');
+}
+
+function proposedEditDiff(resourcePath: string, oldString: string, newString: string): string {
+  return [
+    `--- ${resourcePath}`,
+    `+++ ${resourcePath}`,
+    '@@',
+    ...splitDiffLines('-', oldString),
+    ...splitDiffLines('+', newString),
+  ].join('\n');
+}
+
 export interface ParsedGrepScope {
   query: string;
   resourcePath: string;
@@ -76,7 +109,7 @@ export function parseApprovalDisplayScopesFromReason(reason: string): {
   if (!scopeEncoded) return { shell: null, filesystem: null };
   const shell = parseShellScope(scopeEncoded);
   if (shell) return { shell, filesystem: null };
-  return { shell: null, filesystem: parseFilesystemScope(scopeEncoded) };
+  return { shell: null, filesystem: parseFilesystemScope(scopeEncoded) ?? parseWorkspaceWriteScope(scopeEncoded) };
 }
 
 /**
@@ -123,6 +156,64 @@ export function parseFilesystemScope(scope: string): ParsedFilesystemScope | nul
   if (action !== 'read' && action !== 'write') return null;
   if (!resourcePath) return null;
   return { action, resourcePath };
+}
+
+function parseWorkspaceWriteScope(scope: string): ParsedFilesystemScope | null {
+  const prefix = scope.startsWith('write:')
+    ? 'write:'
+    : scope.startsWith('edit:')
+      ? 'edit:'
+      : scope.startsWith('multiedit:')
+        ? 'multiedit:'
+        : null;
+  if (!prefix) return null;
+  const payload = scope.slice(prefix.length);
+  if (!payload.startsWith('{')) return null;
+
+  try {
+    const parsed = JSON.parse(payload) as Record<string, unknown>;
+    const resourcePath = stringField(parsed, 'resourcePath', 'file_path');
+    if (!resourcePath?.trim()) return null;
+
+    if (prefix === 'write:') {
+      const content = stringField(parsed, 'content');
+      return {
+        action: 'write',
+        resourcePath,
+        patch: content !== undefined ? proposedWriteDiff(resourcePath, content) : undefined,
+      };
+    }
+
+    if (prefix === 'edit:') {
+      const oldString = stringField(parsed, 'oldString', 'old_string');
+      const newString = stringField(parsed, 'newString', 'new_string');
+      return {
+        action: 'write',
+        resourcePath,
+        patch:
+          oldString !== undefined && newString !== undefined
+            ? proposedEditDiff(resourcePath, oldString, newString)
+            : undefined,
+      };
+    }
+
+    const edits = Array.isArray(parsed.edits) ? parsed.edits : [];
+    const patch = edits
+      .map((edit) => {
+        if (!edit || typeof edit !== 'object' || Array.isArray(edit)) return '';
+        const item = edit as Record<string, unknown>;
+        const oldString = stringField(item, 'oldString', 'old_string');
+        const newString = stringField(item, 'newString', 'new_string');
+        return oldString !== undefined && newString !== undefined
+          ? proposedEditDiff(resourcePath, oldString, newString)
+          : '';
+      })
+      .filter(Boolean)
+      .join('\n');
+    return { action: 'write', resourcePath, patch: patch || undefined };
+  } catch {
+    return null;
+  }
 }
 
 const RELAY_FS_WRITE_BODY_MAX = 4000;

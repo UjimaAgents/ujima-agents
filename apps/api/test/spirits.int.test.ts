@@ -15,7 +15,6 @@ import {
   OnboardingService,
   SUPERVISOR_TOOL_ALLOWLIST,
   SpiritService,
-  SupervisorService,
   SupervisorTodoService,
   TaskSessionService,
   ToolServiceImpl,
@@ -27,11 +26,14 @@ import {
   type ApprovalRequester,
   type ModelResolver,
   type RealtimeService,
+  type SpiritServiceOptions,
+  type ToolInvocationInput,
+  type ToolInvocationResult,
   type ToolService,
 } from '@ujima/orchestrator';
 import { createPermissionMiddleware } from '@ujima/permissions';
 import { AgentTeam } from '@ujima/framework';
-import { ChannelSchema, MemberSchema, OrganizationSchema } from '@ujima/shared';
+import { ChannelSchema, MemberSchema, OrganizationSchema, type MCPDef } from '@ujima/shared';
 import { MessageCardSchema } from '@ujima/shared';
 
 // ---------------------------------------------------------------------
@@ -71,12 +73,126 @@ function makeTextOnlyModel(text: string): LanguageModel {
   ]);
 }
 
+function extractModelToolNames(rawTools: unknown): string[] {
+  if (Array.isArray(rawTools)) {
+    return rawTools
+      .map((entry) =>
+        entry && typeof entry === 'object'
+          ? (entry as { name?: unknown }).name
+          : undefined,
+      )
+      .filter((name): name is string => typeof name === 'string')
+      .sort();
+  }
+  if (rawTools && typeof rawTools === 'object') {
+    return Object.keys(rawTools).sort();
+  }
+  return [];
+}
+
+function makeToolCaptureModel(capturedToolNames: string[][]): LanguageModel {
+  return new MockLanguageModelV3({
+    doStream: async (options) => {
+      // The V3 protocol passes tools as an ARRAY of `{ type, name, ... }`
+      // entries — not as a `Record<string, ToolDef>` keyed by tool id.
+      // We normalise to tool ids so test assertions can read them
+      // identically across "record" and "array" providers.
+      capturedToolNames.push(extractModelToolNames((options as { tools?: unknown }).tools));
+      return {
+        stream: simulateReadableStream<LanguageModelV3StreamPart>({
+          chunks: [
+            { type: 'text-start', id: '1' },
+            { type: 'text-delta', id: '1', delta: 'done' },
+            { type: 'text-end', id: '1' },
+            {
+              type: 'finish',
+              usage: v3Usage(9, 4),
+              finishReason: { unified: 'stop' as const, raw: 'stop' },
+            },
+          ],
+        }),
+      };
+    },
+  }) as unknown as LanguageModel;
+}
+
+function makeMcpToolCallModel(matchToolName: (name: string) => boolean): LanguageModel {
+  return new MockLanguageModelV3({
+    doStream: async (options) => {
+      const hasToolResults = options.prompt.some((m) =>
+        Array.isArray(m.content)
+          ? m.content.some((c: { type?: string }) => c.type === 'tool-result')
+          : false,
+      );
+      if (hasToolResults) {
+        return {
+          stream: simulateReadableStream<LanguageModelV3StreamPart>({
+            chunks: [
+              { type: 'text-start', id: '2' },
+              { type: 'text-delta', id: '2', delta: 'done' },
+              { type: 'text-end', id: '2' },
+              {
+                type: 'finish',
+                usage: v3Usage(12, 4),
+                finishReason: { unified: 'stop' as const, raw: 'stop' },
+              },
+            ],
+          }),
+        };
+      }
+
+      const toolNames = extractModelToolNames((options as { tools?: unknown }).tools);
+      const toolName = toolNames.find(matchToolName);
+      if (!toolName) {
+        throw new Error(
+          `expected MCP tool not found in model palette; saw ${toolNames.join(', ')}`,
+        );
+      }
+      return {
+        stream: simulateReadableStream<LanguageModelV3StreamPart>({
+          chunks: [
+            {
+              type: 'tool-call',
+              toolCallId: 'call-mcp-1',
+              toolName,
+              input: JSON.stringify({}),
+            },
+            {
+              type: 'finish',
+              usage: v3Usage(10, 3),
+              finishReason: { unified: 'tool-calls' as const, raw: 'tool-calls' },
+            },
+          ],
+        }),
+      };
+    },
+  }) as unknown as LanguageModel;
+}
+
+function mcpDef(id: string, name: string): MCPDef {
+  return {
+    id,
+    name,
+    version: '0.0.0',
+    description: '',
+    category: 'general',
+    transport: 'stdio',
+    command: 'mcp',
+    args: [],
+    env: {},
+    isolation: 'shared',
+  };
+}
+
 interface FixtureOptions {
   modelByCall?: LanguageModel[];
   staticModel?: LanguageModel;
   agentNames?: string[];
   /** Use the real ToolServiceImpl path (with allowlist enforcement). */
   realToolPipeline?: boolean;
+  mcpPool?: SpiritServiceOptions['mcpPool'];
+  mcpResolver?: SpiritServiceOptions['mcpResolver'];
+  toolInvoke?: (input: ToolInvocationInput) => ToolInvocationResult | Promise<ToolInvocationResult>;
 }
 
 interface ModelCall {
@@ -90,7 +206,6 @@ interface Fixture {
   repo: ApiRepository;
   conversations: ConversationService;
   spirits: SpiritService;
-  supervisor: SupervisorService;
   supervisorTodos: SupervisorTodoService;
   taskSessions: TaskSessionService;
   registry: ActiveSpiritRegistry;
@@ -185,7 +300,10 @@ async function createFixture(opts: FixtureOptions = {}): Promise<Fixture> {
     // Stub: bypass policy + IAM. Used by tests that only care about the
     // spirit/supervisor flow, not the tool gate.
     tools = {
-      invoke: async () => ({ ok: true, output: { status: 'completed', result: 'noop' } }),
+      invoke: async (input) =>
+        opts.toolInvoke
+          ? await opts.toolInvoke(input)
+          : { ok: true, output: { status: 'completed', result: 'noop' } },
       allowRun: () => undefined,
     };
   }
@@ -195,18 +313,12 @@ async function createFixture(opts: FixtureOptions = {}): Promise<Fixture> {
     modelResolver,
     maxIterationsPerRun: 8,
     registry,
-  });
-  const supervisor = new SupervisorService(
-    repo,
-    noopRealtime(),
+    ...(opts.mcpPool ? { mcpPool: opts.mcpPool } : {}),
+    ...(opts.mcpResolver ? { mcpResolver: opts.mcpResolver } : {}),
     conversations,
-    spirits,
-    registry,
-    {
-      debounceMs: 0,
-      turnCapPerSession: 3,
-    },
-  );
+    supervisorDebounceMs: 0,
+    supervisorTurnCapPerSession: 3,
+  });
   const taskSessions = new TaskSessionService(repo, conversations, spirits);
 
   return {
@@ -214,7 +326,6 @@ async function createFixture(opts: FixtureOptions = {}): Promise<Fixture> {
     repo,
     conversations,
     spirits,
-    supervisor,
     supervisorTodos,
     taskSessions,
     registry,
@@ -462,6 +573,148 @@ describe('SpiritService — Phase 2.A lifecycle', () => {
     expect(run?.status).toBe('completed');
   });
 
+  it('surfaces cached MCP tools when live listTools fails', async () => {
+    const capturedToolNames: string[][] = [];
+    const serverId = 'server-cached';
+    const mcpPool: NonNullable<SpiritServiceOptions['mcpPool']> = {
+      get: async () => ({
+        listTools: async () => {
+          throw new Error('temporary transport failure');
+        },
+        callTool: async () => ({ content: { ok: true } }),
+      }),
+    };
+    const fixture = await createFixture({
+      staticModel: makeToolCaptureModel(capturedToolNames),
+      mcpPool,
+      mcpResolver: async () => [
+        {
+          def: mcpDef(serverId, 'Cached MCP'),
+          serverId,
+          serverName: 'Cached MCP',
+        },
+      ],
+    });
+    tempDirs.push(fixture.archiveRoot);
+    fixture.repo.saveMcpToolCache({
+      mcpServerId: serverId,
+      organizationId: fixture.organizationId,
+      tools: [{ name: 'cached tool', description: 'Cached fallback' }],
+      fetchedAt: new Date().toISOString(),
+    });
+
+    const { session } = fixture.taskSessions.create({
+      organizationId: fixture.organizationId,
+      requestedBy: fixture.ownerId,
+      prompt: 'Use cached tools',
+      team: ['frontend-alice'],
+    });
+
+    await fixture.spirits.run({
+      organizationId: fixture.organizationId,
+      taskSessionId: session.id,
+      memberId: 'frontend-alice',
+    });
+
+    const finalToolNames = capturedToolNames[capturedToolNames.length - 1] ?? [];
+    const mcpToolNames = finalToolNames.filter((name) => name.startsWith('mcp__'));
+    expect(mcpToolNames).toHaveLength(1);
+    expect(mcpToolNames[0]).toMatch(/^mcp__cached_mcp_[0-9a-f]{8}__cached_tool$/);
+  });
+
+  it('keeps MCP tool ids unique for servers whose names sanitize the same way', async () => {
+    const capturedToolNames: string[][] = [];
+    const mcpPool: NonNullable<SpiritServiceOptions['mcpPool']> = {
+      get: async () => ({
+        listTools: async () => [{ name: 'search', description: 'Search' }],
+        callTool: async () => ({ content: { ok: true } }),
+      }),
+    };
+    const fixture = await createFixture({
+      staticModel: makeToolCaptureModel(capturedToolNames),
+      mcpPool,
+      mcpResolver: async () => [
+        {
+          def: mcpDef('server-alpha', 'Git Hub'),
+          serverId: 'server-alpha',
+          serverName: 'Git Hub',
+        },
+        {
+          def: mcpDef('server-beta', 'Git@Hub'),
+          serverId: 'server-beta',
+          serverName: 'Git@Hub',
+        },
+      ],
+    });
+    tempDirs.push(fixture.archiveRoot);
+
+    const { session } = fixture.taskSessions.create({
+      organizationId: fixture.organizationId,
+      requestedBy: fixture.ownerId,
+      prompt: 'Use MCP tools',
+      team: ['frontend-alice'],
+    });
+
+    await fixture.spirits.run({
+      organizationId: fixture.organizationId,
+      taskSessionId: session.id,
+      memberId: 'frontend-alice',
+    });
+
+    const finalToolNames = capturedToolNames[capturedToolNames.length - 1] ?? [];
+    const mcpToolNames = finalToolNames.filter(
+      (name) => name.startsWith('mcp__git_hub_') && name.endsWith('__search'),
+    );
+    expect(mcpToolNames).toHaveLength(2);
+    expect(new Set(mcpToolNames).size).toBe(2);
+  });
+
+  it('namespaces MCP permission tool names away from built-in tool names', async () => {
+    const invocations: ToolInvocationInput[] = [];
+    const serverId = 'server-policy';
+    const mcpPool: NonNullable<SpiritServiceOptions['mcpPool']> = {
+      get: async () => ({
+        listTools: async () => [{ name: 'self.note', description: 'Remote collision' }],
+        callTool: async () => ({ content: { ok: true } }),
+      }),
+    };
+    const fixture = await createFixture({
+      staticModel: makeMcpToolCallModel((name) => name.startsWith('mcp__')),
+      mcpPool,
+      mcpResolver: async () => [
+        {
+          def: mcpDef(serverId, 'Collision MCP'),
+          serverId,
+          serverName: 'Collision MCP',
+        },
+      ],
+      toolInvoke: (input) => {
+        invocations.push(input);
+        return { ok: true, output: { status: 'completed' } };
+      },
+    });
+    tempDirs.push(fixture.archiveRoot);
+
+    const { session } = fixture.taskSessions.create({
+      organizationId: fixture.organizationId,
+      requestedBy: fixture.ownerId,
+      prompt: 'Call MCP self note',
+      team: ['frontend-alice'],
+    });
+
+    await fixture.spirits.run({
+      organizationId: fixture.organizationId,
+      taskSessionId: session.id,
+      memberId: 'frontend-alice',
+    });
+
+    expect(invocations).toHaveLength(1);
+    expect(invocations[0]!.toolId).toBe('mcp');
+    expect(invocations[0]!.permissionToolName).toBe('mcp:server-policy:self.note');
+    expect(invocations[0]!.permissionToolName).not.toBe('self.note');
+    expect(invocations[0]!.input.toolName).toBe('self.note');
+  });
+
   it('TaskSessionService.start provisions one spirit per team member', async () => {
     const fixture = await createFixture({
       agentNames: ['frontend-alice', 'frontend-bob'],
@@ -591,10 +844,10 @@ describe('supervisor.todo.* (Phase 2.B)', () => {
 });
 
 // =====================================================================
-// Phase 2.C — SupervisorService gate, mutex, cap, allowlist enforcement
+// Phase 2.C — SpiritService alert gate, mutex, cap, allowlist enforcement
 // =====================================================================
 
-describe('SupervisorService — Phase 2.C', () => {
+describe('SpiritService alert dispatch — Phase 2.C', () => {
   const tempDirs: string[] = [];
   afterEach(async () => {
     await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
@@ -604,7 +857,7 @@ describe('SupervisorService — Phase 2.C', () => {
     const fixture = await createFixture();
     tempDirs.push(fixture.archiveRoot);
 
-    const outcome = await fixture.supervisor.handleAlert({
+    const outcome = await fixture.spirits.handleAlert({
       organizationId: fixture.organizationId,
       memberId: 'frontend-alice',
       messageId: 'msg-doesnt-exist',
@@ -649,7 +902,7 @@ describe('SupervisorService — Phase 2.C', () => {
       body: '@frontend-alice quick status?',
     });
 
-    const dispatch = await fixture.supervisor.handleAlert({
+    const dispatch = await fixture.spirits.handleAlert({
       organizationId: fixture.organizationId,
       memberId: 'frontend-alice',
       messageId: askMessage.id,
@@ -703,7 +956,7 @@ describe('SupervisorService — Phase 2.C', () => {
     const outcomes = [];
     for (let i = 0; i < 4; i += 1) {
       const m = post(i);
-      const r = await fixture.supervisor.handleAlert({
+      const r = await fixture.spirits.handleAlert({
         organizationId: fixture.organizationId,
         memberId: 'frontend-alice',
         messageId: m.id,
@@ -788,7 +1041,7 @@ describe('SupervisorService — Phase 2.C', () => {
     });
 
     // Fire both alerts before either resolves. The mutex must chain them.
-    const promiseA = fixture.supervisor.handleAlert({
+    const promiseA = fixture.spirits.handleAlert({
       organizationId: fixture.organizationId,
       memberId: 'frontend-alice',
       messageId: askA.id,
@@ -797,7 +1050,7 @@ describe('SupervisorService — Phase 2.C', () => {
       byMemberId: fixture.ownerId,
       reason: 'mention',
     });
-    const promiseB = fixture.supervisor.handleAlert({
+    const promiseB = fixture.spirits.handleAlert({
       organizationId: fixture.organizationId,
       memberId: 'frontend-alice',
       messageId: askB.id,
@@ -934,15 +1187,10 @@ describe('SupervisorService — Phase 2.C', () => {
     const spirits = new SpiritService(teamStore, repo, noopRealtime(), stubTools, {
       modelResolver: () => makeTextOnlyModel('reply'),
       registry,
-    });
-    const supervisor = new SupervisorService(
-      repo,
-      noopRealtime(),
       conversations,
-      spirits,
-      registry,
-      { debounceMs: 5_000, turnCapPerSession: 10 },
-    );
+      supervisorDebounceMs: 5_000,
+      supervisorTurnCapPerSession: 10,
+    });
     const taskSessions = new TaskSessionService(repo, conversations, spirits);
 
     const { session } = taskSessions.create({
@@ -966,7 +1214,7 @@ describe('SupervisorService — Phase 2.C', () => {
       body: '@agent-x first',
     });
 
-    const first = await supervisor.handleAlert({
+    const first = await spirits.handleAlert({
       organizationId: owner.organizationId,
       memberId: 'agent-x',
       messageId: m1.id,
@@ -984,7 +1232,7 @@ describe('SupervisorService — Phase 2.C', () => {
       channelId: general.id,
       body: '@agent-x second',
     });
-    const second = await supervisor.handleAlert({
+    const second = await spirits.handleAlert({
       organizationId: owner.organizationId,
       memberId: 'agent-x',
       messageId: m2.id,
@@ -1150,6 +1398,7 @@ describe('TaskSessionService.create — audit fix regressions', () => {
     const preSpirits = new SpiritService(teamStore, repo, noopRealtime(), stubTools, {
       modelResolver: () => makeTextOnlyModel('x'),
       registry: preRegistry,
+      conversations,
     });
     const taskSessions = new TaskSessionService(repo, conversations, preSpirits);
     const { session } = taskSessions.create({
@@ -1173,21 +1422,16 @@ describe('TaskSessionService.create — audit fix regressions', () => {
     const postSpirits = new SpiritService(teamStore, repo, noopRealtime(), stubTools, {
       modelResolver: () => makeTextOnlyModel('x'),
       registry: postRegistry,
+      conversations,
+      supervisorDebounceMs: 0,
+      supervisorTurnCapPerSession: 5,
     });
     expect(postRegistry.hasActiveForMember(owner.organizationId, 'agent-x')).toBe(false);
     postSpirits.bootstrapAll();
     expect(postRegistry.hasActiveForMember(owner.organizationId, 'agent-x')).toBe(true);
 
-    // Sanity: the SupervisorService wired against the post-restart
+    // Sanity: the SpiritService wired against the post-restart
     // registry now sees the alert as active, not as a fall-through.
-    const postSupervisor = new SupervisorService(
-      repo,
-      noopRealtime(),
-      conversations,
-      postSpirits,
-      postRegistry,
-      { debounceMs: 0, turnCapPerSession: 5 },
-    );
     const general = repo.getChannel(owner.organizationId, 'general')!;
     const ask = conversations.postToChannel({
       organizationId: owner.organizationId,
@@ -1195,7 +1439,7 @@ describe('TaskSessionService.create — audit fix regressions', () => {
       channelId: general.id,
       body: '@agent-x post-restart ping',
     });
-    const dispatch = await postSupervisor.handleAlert({
+    const dispatch = await postSpirits.handleAlert({
       organizationId: owner.organizationId,
       memberId: 'agent-x',
       messageId: ask.id,
@@ -1255,6 +1499,7 @@ describe('TaskSessionService.create — audit fix regressions', () => {
     const preSpirits = new SpiritService(teamStore, repo, noopRealtime(), stubTools, {
       modelResolver: () => makeTextOnlyModel('x'),
       registry: preRegistry,
+      conversations,
     });
     const taskSessions = new TaskSessionService(repo, conversations, preSpirits);
 
@@ -1298,6 +1543,9 @@ describe('TaskSessionService.create — audit fix regressions', () => {
     const postSpirits = new SpiritService(teamStore, repo, noopRealtime(), stubTools, {
       modelResolver: () => makeTextOnlyModel('x'),
       registry: postRegistry,
+      conversations,
+      supervisorDebounceMs: 0,
+      supervisorTurnCapPerSession: 5,
     });
     postSpirits.bootstrapAll();
 
@@ -1309,14 +1557,6 @@ describe('TaskSessionService.create — audit fix regressions', () => {
     // session, not the old one. Pre-fix this assertion would fail
     // because handleAlert picks active[0] which would have been
     // oldSpirit.
-    const postSupervisor = new SupervisorService(
-      repo,
-      noopRealtime(),
-      conversations,
-      postSpirits,
-      postRegistry,
-      { debounceMs: 0, turnCapPerSession: 5 },
-    );
     const general = repo.getChannel(owner.organizationId, 'general')!;
     const ask = conversations.postToChannel({
       organizationId: owner.organizationId,
@@ -1324,7 +1564,7 @@ describe('TaskSessionService.create — audit fix regressions', () => {
       channelId: general.id,
       body: '@agent-x post-restart status?',
     });
-    const dispatch = await postSupervisor.handleAlert({
+    const dispatch = await postSpirits.handleAlert({
       organizationId: owner.organizationId,
       memberId: 'agent-x',
       messageId: ask.id,
@@ -1488,7 +1728,7 @@ describe('TaskSessionService.create — audit fix regressions', () => {
       body: '@frontend-alice status?',
     });
 
-    const dispatch = await fixture.supervisor.handleAlert({
+    const dispatch = await fixture.spirits.handleAlert({
       organizationId: fixture.organizationId,
       memberId: 'frontend-alice',
       messageId: ask.id,
@@ -1561,17 +1801,10 @@ describe('TaskSessionService.create — audit fix regressions', () => {
       {
         modelResolver: () => makeTextOnlyModel('answer'),
         registry,
+        conversations,
+        supervisorDebounceMs: 60_000,
+        supervisorTurnCapPerSession: 100,
       },
-    );
-    const supervisor = new SupervisorService(
-      repo,
-      noopRealtime(),
-      conversations,
-      spirits,
-      registry,
-      // Very long debounce so any "leaked" execution would clearly
-      // show as a `replied` instead of `debounced`.
-      { debounceMs: 60_000, turnCapPerSession: 100 },
     );
     const taskSessions = new TaskSessionService(repo, conversations, spirits);
 
@@ -1603,7 +1836,7 @@ describe('TaskSessionService.create — audit fix regressions', () => {
       }),
     );
     const promises = messages.map((m) =>
-      supervisor.handleAlert({
+      spirits.handleAlert({
         organizationId: owner.organizationId,
         memberId: 'agent-x',
         messageId: m.id,
@@ -1628,9 +1861,9 @@ describe('TaskSessionService.create — audit fix regressions', () => {
   });
 
   // -------------------------------------------------------------------
-   // NEW (audit fix): supervisor.todo.* is rejected from worker turns
-   // even when the role's tool allowlist names them.
-   // -------------------------------------------------------------------
+  // NEW (audit fix): supervisor.todo.* is rejected from worker turns
+  // even when the role's tool allowlist names them.
+  // -------------------------------------------------------------------
   it('worker turn cannot call supervisor.todo.* even when the role lists them in `tools`', async () => {
     // Role config carries `supervisor.todo.add` in `tools`. Pre-fix,
     // checkToolPolicy unconditionally allowed the supervisor.* family
@@ -2050,17 +2283,10 @@ describe('TaskSessionService.create — audit fix regressions', () => {
       {
         modelResolver: () => makeTextOnlyModel('answer'),
         registry,
+        conversations,
+        supervisorDebounceMs: 60_000,
+        supervisorTurnCapPerSession: 100,
       },
-    );
-    const supervisor = new SupervisorService(
-      repo,
-      noopRealtime(),
-      conversations,
-      spirits,
-      registry,
-      // Long debounce — pre-fix the per-member key would suppress
-      // any second alert in the next ~minute regardless of session.
-      { debounceMs: 60_000, turnCapPerSession: 100 },
     );
     const taskSessions = new TaskSessionService(repo, conversations, spirits);
 
@@ -2104,7 +2330,7 @@ describe('TaskSessionService.create — audit fix regressions', () => {
       channelId: general.id,
       body: '@agent-x first ping (B)',
     });
-    const dispatchB = await supervisor.handleAlert({
+    const dispatchB = await spirits.handleAlert({
       organizationId: owner.organizationId,
       memberId: 'agent-x',
       messageId: askB.id,
@@ -2139,7 +2365,7 @@ describe('TaskSessionService.create — audit fix regressions', () => {
       channelId: general.id,
       body: '@agent-x second ping (A)',
     });
-    const dispatchA = await supervisor.handleAlert({
+    const dispatchA = await spirits.handleAlert({
       organizationId: owner.organizationId,
       memberId: 'agent-x',
       messageId: askA.id,
@@ -2215,6 +2441,7 @@ describe('TaskSessionService.create — audit fix regressions', () => {
           throw new Error('simulated provider resolution failure');
         },
         registry,
+        conversations,
       },
     );
     const taskSessions = new TaskSessionService(repo, conversations, spirits);
@@ -2483,7 +2710,7 @@ describe('TaskSessionService.create — audit fix regressions', () => {
       channelId: general.id,
       body: '@frontend-alice status?',
     });
-    const dispatch = await fixture.supervisor.handleAlert({
+    const dispatch = await fixture.spirits.handleAlert({
       organizationId: fixture.organizationId,
       memberId: 'frontend-alice',
       messageId: ask.id,

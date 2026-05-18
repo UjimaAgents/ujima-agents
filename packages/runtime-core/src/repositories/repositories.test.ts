@@ -240,6 +240,210 @@ test('searchChannelMessages tolerates unmatched quotes in user search text', () 
   expect(results.data.map((message) => message.content)).toContain('quoted needle here');
 });
 
+test('message metadata (goalMode) round-trips through save, list, get, and update', () => {
+  const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
+  const orgId = randomUUID();
+  const now = new Date().toISOString();
+  const messageId = randomUUID();
+
+  repo.saveOrganization(
+    OrganizationSchema.parse({
+      id: orgId,
+      name: 'Meta Org',
+      workspace: { root: '/tmp/meta-org', roleScopes: {} },
+    }),
+  );
+  repo.saveChannel({
+    id: 'general',
+    organizationId: orgId,
+    name: 'general',
+    kind: 'general',
+    topic: '',
+    memberIds: [],
+  });
+  repo.ensureThread({
+    id: 'general',
+    organizationId: orgId,
+    channelId: 'general',
+    title: 'general',
+    memberIds: [],
+    createdAt: now,
+  });
+
+  const saved = repo.saveMessage(
+    MessageSchema.parse({
+      id: messageId,
+      organizationId: orgId,
+      threadId: 'general',
+      channelId: 'general',
+      senderId: 'user',
+      senderKind: 'human',
+      kind: 'human',
+      content: 'goal',
+      mentions: [],
+      metadata: { goalMode: true },
+      createdAt: now,
+    }),
+  );
+  expect(saved.metadata).toEqual({ goalMode: true });
+
+  const listed = repo.listMessages(orgId, 'general', undefined, 10).data.find((m) => m.id === messageId);
+  expect(listed?.metadata).toEqual({ goalMode: true });
+
+  const got = repo.getMessage(orgId, messageId);
+  expect(got?.metadata).toEqual({ goalMode: true });
+
+  repo.updateMessage(
+    MessageSchema.parse({
+      ...saved,
+      content: 'updated',
+      metadata: { goalMode: false },
+      editedAt: new Date().toISOString(),
+    }),
+  );
+  expect(repo.getMessage(orgId, messageId)?.metadata).toEqual({ goalMode: false });
+});
+
+test('message reasoning content round-trips through save, list, get, and update', () => {
+  const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
+  const orgId = randomUUID();
+  const now = new Date().toISOString();
+  const messageId = randomUUID();
+
+  repo.saveOrganization(
+    OrganizationSchema.parse({
+      id: orgId,
+      name: 'Reasoning Org',
+      workspace: { root: '/tmp/reasoning-org', roleScopes: {} },
+    }),
+  );
+  repo.saveChannel({
+    id: 'general',
+    organizationId: orgId,
+    name: 'general',
+    kind: 'general',
+    topic: '',
+    memberIds: [],
+  });
+  repo.ensureThread({
+    id: 'general',
+    organizationId: orgId,
+    channelId: 'general',
+    title: 'general',
+    memberIds: [],
+    createdAt: now,
+  });
+
+  const saved = repo.saveMessage(
+    MessageSchema.parse({
+      id: messageId,
+      organizationId: orgId,
+      threadId: 'general',
+      channelId: 'general',
+      senderId: 'agent',
+      senderKind: 'agent',
+      kind: 'agent',
+      content: 'Visible reply',
+      reasoningContent: 'Private reasoning',
+      mentions: [],
+      createdAt: now,
+    }),
+  );
+  expect(saved.reasoningContent).toBe('Private reasoning');
+  expect(repo.getMessage(orgId, messageId)?.reasoningContent).toBe('Private reasoning');
+  expect(repo.listMessages(orgId, 'general', undefined, 10).data[0]?.reasoningContent).toBe('Private reasoning');
+
+  repo.updateMessage(
+    MessageSchema.parse({
+      ...saved,
+      reasoningContent: 'Updated reasoning',
+      editedAt: new Date().toISOString(),
+    }),
+  );
+  expect(repo.getMessage(orgId, messageId)?.reasoningContent).toBe('Updated reasoning');
+});
+
+test('getLatestHumanMessageInThread returns newest human by timestamp', () => {
+  const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
+  const orgId = randomUUID();
+  const now = '2026-05-04T19:07:00.000Z';
+
+  repo.saveOrganization(
+    OrganizationSchema.parse({
+      id: orgId,
+      name: 'Latest Human Org',
+      workspace: { root: '/tmp/latest-human', roleScopes: {} },
+    }),
+  );
+  repo.saveChannel({
+    id: 'general',
+    organizationId: orgId,
+    name: 'general',
+    kind: 'general',
+    topic: '',
+    memberIds: [],
+  });
+  repo.ensureThread({
+    id: 'general',
+    organizationId: orgId,
+    channelId: 'general',
+    title: 'general',
+    memberIds: [],
+    createdAt: now,
+  });
+
+  repo.saveMessage(
+    MessageSchema.parse({
+      id: 'h-old',
+      organizationId: orgId,
+      threadId: 'general',
+      channelId: 'general',
+      senderId: 'u1',
+      senderKind: 'human',
+      kind: 'human',
+      content: 'first',
+      mentions: [],
+      metadata: { goalMode: false },
+      createdAt: '2026-05-04T19:07:01.000Z',
+    }),
+  );
+  for (let i = 0; i < 3; i++) {
+    repo.saveMessage(
+      MessageSchema.parse({
+        id: `a-${i}`,
+        organizationId: orgId,
+        threadId: 'general',
+        channelId: 'general',
+        senderId: 'agent',
+        senderKind: 'agent',
+        kind: 'agent',
+        content: `agent ${i}`,
+        mentions: [],
+        createdAt: `2026-05-04T19:07:0${2 + i}.000Z`,
+      }),
+    );
+  }
+  repo.saveMessage(
+    MessageSchema.parse({
+      id: 'h-new',
+      organizationId: orgId,
+      threadId: 'general',
+      channelId: 'general',
+      senderId: 'u1',
+      senderKind: 'human',
+      kind: 'human',
+      content: 'second',
+      mentions: [],
+      metadata: { goalMode: true },
+      createdAt: '2026-05-04T19:07:09.000Z',
+    }),
+  );
+
+  const latest = repo.getLatestHumanMessageInThread(orgId, 'general');
+  expect(latest?.id).toBe('h-new');
+  expect(latest?.metadata).toEqual({ goalMode: true });
+});
+
 test('hasApprovalGrant matches legacy shell scopes against canonical JSON scopes', () => {
   const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
   const orgId = randomUUID();
@@ -418,6 +622,47 @@ test('bootstrap snapshot drops self and dm channels', async () => {
   expect(visibleIds).toContain('general');
   expect(visibleIds).not.toContain('self_alex');
   expect(visibleIds).not.toContain('dm_alex_quinn');
+});
+
+test('channel membership stays mirrored and reads tolerate drift', () => {
+  const db = openDatabase({ dbPath: ':memory:' });
+  const repo = new Repository(db);
+  const orgId = randomUUID();
+
+  repo.saveOrganization(
+    OrganizationSchema.parse({
+      id: orgId,
+      name: 'Membership Org',
+      workspace: { root: '/tmp/membership-org', roleScopes: {} },
+    }),
+  );
+  repo.saveChannel({
+    id: 'general',
+    organizationId: orgId,
+    name: 'general',
+    kind: 'general',
+    topic: '',
+    memberIds: [],
+  });
+  repo.ensureThread({
+    id: 'general',
+    organizationId: orgId,
+    channelId: 'general',
+    title: 'general',
+    memberIds: [],
+    createdAt: '2026-04-27T08:00:00.000Z',
+  });
+
+  repo.setChannelMembers('general', ['ava']);
+  const mirroredThreadMembers = db
+    .prepare('SELECT member_id FROM thread_members WHERE thread_id = ? ORDER BY member_id ASC')
+    .all('general') as { member_id: string }[];
+  expect(mirroredThreadMembers.map((row) => row.member_id)).toEqual(['ava']);
+
+  db.prepare('DELETE FROM channel_members WHERE channel_id = ?').run('general');
+  db.prepare('INSERT INTO channel_members (channel_id, member_id) VALUES (?, ?)').run('general', 'phoebe');
+
+  expect(repo.getChannel(orgId, 'general')?.memberIds).toEqual(['ava', 'phoebe']);
 });
 
 // Regression: paginators used to cursor only on `created_at`, so two rows

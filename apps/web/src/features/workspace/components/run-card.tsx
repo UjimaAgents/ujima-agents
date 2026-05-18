@@ -1,4 +1,5 @@
-import type { RunState } from "@ujima/shared";
+import { memo } from "react";
+import type { RunState } from "@ujima/shared/browser";
 import { StatusBadge, type StatusVariant } from "./chat/primitives";
 
 function runStatusVariant(status: RunState["status"]): StatusVariant {
@@ -17,7 +18,7 @@ function runStatusVariant(status: RunState["status"]): StatusVariant {
   }
 }
 
-export function RunCard({ run, blockedReason }: { run: RunState; blockedReason?: string }) {
+export const RunCard = memo(function RunCard({ run, blockedReason }: { run: RunState; blockedReason?: string }) {
   return (
     <div className="rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3 dark:border-zinc-800 dark:bg-zinc-900/50">
       <div className="flex items-center justify-between gap-3">
@@ -38,4 +39,4 @@ export function RunCard({ run, blockedReason }: { run: RunState; blockedReason?:
       </div>
     </div>
   );
-}
+});

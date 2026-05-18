@@ -15,22 +15,27 @@ const LEGACY_DEFAULT_ROLE_TOOLS = [
   'self.note',
   'mcp',
 ] as const;
+const LEGACY_DEFAULT_ROLE_TOOL_SET = new Set<string>([
+  ...LEGACY_DEFAULT_ROLE_TOOLS,
+  'web_search',
+]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 
-function sameStringList(value: unknown, expected: readonly string[]): boolean {
+function isLegacyDefaultRoleToolList(value: unknown): boolean {
   return (
     Array.isArray(value) &&
-    value.length === expected.length &&
-    value.every((item, index) => item === expected[index])
+    value.length >= LEGACY_DEFAULT_ROLE_TOOLS.length &&
+    value.every((item) => typeof item === 'string' && LEGACY_DEFAULT_ROLE_TOOL_SET.has(item)) &&
+    LEGACY_DEFAULT_ROLE_TOOLS.every((tool) => value.includes(tool))
   );
 }
 
 export function upgradeLegacyDefaultRoleTools<T extends Record<string, unknown>>(role: T): T {
   if (!Array.isArray(role.tools)) return role;
-  if (sameStringList(role.tools, LEGACY_DEFAULT_ROLE_TOOLS)) {
+  if (isLegacyDefaultRoleToolList(role.tools)) {
     return {
       ...role,
       tools: [...DEFAULT_ROLE_TOOLS],

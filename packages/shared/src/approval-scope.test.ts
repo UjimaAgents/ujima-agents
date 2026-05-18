@@ -50,6 +50,49 @@ describe('formatApprovalRelayMarkdown', () => {
     ).toBe('[Approval needed] Filesystem write\nPath: /x/a.md\nPatch:\nhello');
   });
 
+  it('renders workspace write approval as a diff patch', () => {
+    const scope = JSON.stringify({ resourcePath: '/x/a.md', content: 'hello\nworld' });
+    expect(
+      formatApprovalRelayMarkdown({
+        action: 'write',
+        resourcePath: '/x/a.md',
+        reason: `Tool action requires approval;scope=${encodeURIComponent('write:' + scope)}`,
+      }),
+    ).toBe(
+      '[Approval needed] Filesystem write\nPath: /x/a.md\nPatch:\n--- /x/a.md\n+++ /x/a.md\n@@ -0,0 +1,2 @@\n+hello\n+world',
+    );
+  });
+
+  it('renders workspace edit approval as a diff patch', () => {
+    const scope = JSON.stringify({ file_path: '/x/a.md', old_string: 'old', new_string: 'new' });
+    expect(
+      formatApprovalRelayMarkdown({
+        action: 'edit',
+        resourcePath: '/x/a.md',
+        reason: `Tool action requires approval;scope=${encodeURIComponent('edit:' + scope)}`,
+      }),
+    ).toBe('[Approval needed] Filesystem write\nPath: /x/a.md\nPatch:\n--- /x/a.md\n+++ /x/a.md\n@@\n-old\n+new');
+  });
+
+  it('renders workspace multiedit approval as a diff patch', () => {
+    const scope = JSON.stringify({
+      resourcePath: '/x/a.md',
+      edits: [
+        { oldString: 'one', newString: 'two' },
+        { old_string: 'red', new_string: 'blue' },
+      ],
+    });
+    expect(
+      formatApprovalRelayMarkdown({
+        action: 'multiedit',
+        resourcePath: '/x/a.md',
+        reason: `Tool action requires approval;scope=${encodeURIComponent('multiedit:' + scope)}`,
+      }),
+    ).toBe(
+      '[Approval needed] Filesystem write\nPath: /x/a.md\nPatch:\n--- /x/a.md\n+++ /x/a.md\n@@\n-one\n+two\n--- /x/a.md\n+++ /x/a.md\n@@\n-red\n+blue',
+    );
+  });
+
   it('falls back to action and path when scope is not shell or filesystem', () => {
     expect(
       formatApprovalRelayMarkdown({

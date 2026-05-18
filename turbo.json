@@ -4,7 +4,7 @@
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
-      "outputs": ["dist/**", "out/**", ".vite/**", ".next/**"],
+      "outputs": ["dist/**", "out/**", ".vite/**", ".next/**", "!.next/cache/**"],
       "inputs": ["src/**", "tsconfig.json", "package.json"]
     },
     "dev": {

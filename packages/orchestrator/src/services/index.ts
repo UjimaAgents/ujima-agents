@@ -16,15 +16,14 @@ import { BootstrapService } from './bootstrap.js';
 import { ChannelRetentionService } from './channel-retention.js';
 import type { ApiServiceContext } from './context.js';
 import { ConversationService } from './conversation.js';
+import { McpRegistryService } from './mcp-registry.js';
 import { OnboardingService } from './onboarding.js';
 import type { ApiRepository } from './repository-reader.js';
-import { RunService } from './run.js';
 import { SettingsService } from './settings.js';
-import { SpiritService, type ModelResolver } from './spirit.js';
-import { SupervisorService } from './supervisor.js';
+import { SpiritService, type ModelResolver, type SpiritMcpPool } from './spirit.js';
 import { SupervisorTodoService } from './supervisor-todo.js';
 import { SchedulerService } from './scheduler.js';
-import { TaskPromoterService } from './task-promoter.js';
+import { TaskPromoterService, type TaskPromotionEvaluator } from './task-promoter.js';
 import { TaskSessionService } from './task-session.js';
 import {
   createPermissionGatedToolService,
@@ -77,12 +76,9 @@ export type {
   OnboardingInput,
   OnboardingResult,
 } from './onboarding.js';
-export { RunService } from './run.js';
-export type { CreateRunInput } from './run.js';
+export type { CreateRunInput } from './spirit.js';
 export { SchedulerService } from './scheduler.js';
-export type {
-  SchedulerServiceOptions,
-} from './scheduler.js';
+export type { SchedulerServiceOptions } from './scheduler.js';
 export { SettingsService } from './settings.js';
 export type {
   OrganizationSettingsResponse,
@@ -94,13 +90,7 @@ export { TaskPromoterService } from './task-promoter.js';
 export { TaskSessionService, taskRunChannelId } from './task-session.js';
 export type { CreateTaskSessionInput, TaskSessionDetail } from './task-session.js';
 export type { TaskPromotionInput, TaskPromotionResult } from './task-promoter.js';
-export { SupervisorService } from './supervisor.js';
-export type {
-  SupervisorAlertInput,
-  SupervisorDispatchResult,
-  SupervisorReplyOutcome,
-  SupervisorServiceOptions,
-} from './supervisor.js';
+export type { TaskPromotionDecision, TaskPromotionEvaluator } from './task-promoter.js';
 export { SupervisorTodoService } from './supervisor-todo.js';
 export type {
   SupervisorTodoAddInput,
@@ -118,6 +108,15 @@ export type {
   SpawnSpiritInput,
   SpiritServiceOptions,
 } from './spirit.js';
+export { McpRegistryService } from './mcp-registry.js';
+export type {
+  AttachMcpInput,
+  CreateMcpServerInput,
+  ImportMcpServersInput,
+  ImportMcpServersResult,
+  TestMcpResult,
+  UpdateMcpServerInput,
+} from './mcp-registry.js';
 export {
   ERR_NO_WORKSPACE_ROOT,
   WorkspaceRootRequiredError,
@@ -161,6 +160,14 @@ export interface ApiServicesContext extends ApiServiceContext {
    * the SpiritService walks the team config + provider credentials.
    */
   spiritModelResolver?: ModelResolver;
+  taskPromoterEvaluator?: TaskPromotionEvaluator;
+  /**
+   * Optional MCP pool. When provided, SpiritService injects per-agent
+   * attached MCP tools into the runtime palette. Production wires the
+   * runtime host's shared pool; tests can pass a stub or leave unset
+   * (the spirit run path still works without MCP tools).
+   */
+  mcpPool?: SpiritMcpPool;
 }
 
 export interface ApiServices {
@@ -168,7 +175,7 @@ export interface ApiServices {
   tools: ToolService;
   conversations: ConversationService;
   retention: ChannelRetentionService;
-  runs: RunService;
+  runs: SpiritService;
   approvals: ApprovalService;
   auth: AuthService;
   bootstrap: BootstrapService;
@@ -178,9 +185,9 @@ export interface ApiServices {
   taskPromoter: TaskPromoterService;
   taskSessions: TaskSessionService;
   spirits: SpiritService;
-  supervisor: SupervisorService;
   supervisorTodos: SupervisorTodoService;
   activeSpirits: ActiveSpiritRegistry;
+  mcpRegistry: McpRegistryService;
 }
 
 interface WakeMemberInput {
@@ -194,8 +201,8 @@ interface WakeMemberInput {
 }
 
 interface WakeMemberDeps {
-  supervisor: Pick<SupervisorService, 'handleAlert'>;
-  runs: Pick<RunService, 'createRun'>;
+  spirits: Pick<SpiritService, 'handleAlert'>;
+  runs: Pick<SpiritService, 'createRun'>;
   realtime: Pick<ApiServiceContext['realtime'], 'emit'>;
   repo: Pick<ApiRepository, 'findActiveRunForMemberThread'>;
 }
@@ -241,9 +248,9 @@ export async function wakeMemberWithFailureEvents(
   deps: WakeMemberDeps,
   input: WakeMemberInput,
 ): Promise<void> {
-  let dispatch: Awaited<ReturnType<SupervisorService['handleAlert']>>;
+  let dispatch: Awaited<ReturnType<SpiritService['handleAlert']>>;
   try {
-    dispatch = await deps.supervisor.handleAlert({
+    dispatch = await deps.spirits.handleAlert({
       organizationId: input.organizationId,
       memberId: input.memberId,
       channelId: input.channelId,
@@ -275,7 +282,7 @@ export async function wakeMemberWithFailureEvents(
     return;
   }
 
-  let run: Awaited<ReturnType<RunService['createRun']>>;
+  let run: Awaited<ReturnType<SpiritService['createRun']>>;
   try {
     run = await deps.runs.createRun({
       organizationId: input.organizationId,
@@ -351,6 +358,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     conversations,
     context.realtime,
     supervisorTodos,
+    context.mcpPool,
   );
 
   const tools = createPermissionGatedToolService(
@@ -380,16 +388,8 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
 
   const ai = new AiService(context.teamStore, context.repo, tools);
 
-  const runs = new RunService(
-    context.teamStore,
-    context.repo,
-    context.realtime,
-    conversations,
-    ai,
-    tools,
-  );
   // Phase 2.C.1 — single shared in-memory registry. SpiritService writes
-  // (spawn/retire/complete); SupervisorService reads on every alert.
+  // (spawn/retire/complete) and reads on every alert.
   const activeSpirits = new ActiveSpiritRegistry();
 
   const spirits = new SpiritService(
@@ -398,29 +398,20 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     context.realtime,
     tools,
     {
+      conversations,
+      ai,
       modelResolver: context.spiritModelResolver,
       registry: activeSpirits,
+      mcpPool: context.mcpPool,
     },
   );
-  resumeRun = async (orgId, runId, allowRun = true, approvalScope) => {
-    const spiritResult = await spirits.resumeAfterApproval(orgId, runId, allowRun, approvalScope);
-    return spiritResult ?? runs.resumeAfterApproval(orgId, runId, allowRun, approvalScope);
-  };
-  // Hydrate the in-memory registry from persisted spirits BEFORE
-  // SupervisorService is wired and able to receive alerts. Without
-  // this, a daemon restart would see an empty registry, and
-  // `handleAlert` would return `no-active-spirit` for already-running
-  // work — falling through to the regular wake path and spawning
-  // duplicate runs for active tasks until something in this process
-  // re-spawns the spirit.
+  const runs = spirits;
+  resumeRun = async (orgId, runId, allowRun = true, approvalScope) =>
+    spirits.resumeAfterApproval(orgId, runId, allowRun, approvalScope);
+  // Hydrate the in-memory registry from persisted spirits BEFORE alert
+  // handling begins. Without this, a daemon restart would see an empty
+  // registry and fall through to regular wake runs for already-active work.
   spirits.bootstrapAll();
-  const supervisor = new SupervisorService(
-    context.repo,
-    context.realtime,
-    conversations,
-    spirits,
-    activeSpirits,
-  );
 
   // Wake routing — replaces the simple `runs.createRun` fan-out.
   // The dispatch result is a discriminated union; only
@@ -430,7 +421,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   // would spawn a duplicate run that defeats the debounce.
   wakeMember = async (input) => {
     await wakeMemberWithFailureEvents(
-      { supervisor, runs, realtime: context.realtime, repo: context.repo },
+      { spirits, runs: spirits, realtime: context.realtime, repo: context.repo },
       input,
     );
   };
@@ -440,8 +431,14 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   const onboarding = new OnboardingService(context.repo, context.teamStore);
   const scheduler = new SchedulerService(context.repo, conversations, context.realtime);
   const settings = new SettingsService(context.repo, context.teamStore);
-  const taskPromoter = new TaskPromoterService(context.repo, runs);
   const taskSessions = new TaskSessionService(context.repo, conversations, spirits);
+  const taskPromoter = new TaskPromoterService(context.repo, spirits, {
+    teamStore: context.teamStore,
+    taskSessions,
+    conversations,
+    evaluator: context.taskPromoterEvaluator,
+  });
+  const mcpRegistry = new McpRegistryService(context.repo);
 
   return {
     ai,
@@ -458,8 +455,8 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     taskSessions,
     spirits,
     scheduler,
-    supervisor,
     supervisorTodos,
     activeSpirits,
+    mcpRegistry,
   };
 }

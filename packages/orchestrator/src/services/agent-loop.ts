@@ -1,10 +1,16 @@
-import { streamText, type LanguageModel, type ToolSet } from 'ai';
+import { streamText, type LanguageModel, type ModelMessage, type ToolSet } from 'ai';
+import { findToolApprovalRequiredError } from './tool-loop-result.js';
 
 export interface AgentLoopStep {
   text?: string;
   toolCalls?: { toolCallId?: string; toolName?: string; input?: unknown }[];
   toolResults?: { toolCallId?: string; output?: unknown }[];
   [key: string]: unknown;
+}
+
+export interface AgentLoopChunk {
+  kind: 'text' | 'reasoning';
+  delta: string;
 }
 
 export interface AgentLoopResult {
@@ -24,23 +30,52 @@ export async function runAgentLoop(input: {
   maxOutputTokens?: number;
   temperature?: number;
   abortSignal?: AbortSignal;
+  loadInterruptMessages?: (step: AgentLoopStep) => Promise<ModelMessage[]> | ModelMessage[];
+  onChunk?: (chunk: AgentLoopChunk) => PromiseLike<void> | void;
 }): Promise<AgentLoopResult> {
   const steps: AgentLoopStep[] = [];
+  const messages = [...input.messages];
+  const onChunk = input.onChunk;
   const result = streamText({
     model: input.model,
     system: input.system,
-    messages: input.messages,
+    messages,
     tools: input.tools,
     stopWhen: input.stopWhen,
     ...(input.maxOutputTokens !== undefined ? { maxOutputTokens: input.maxOutputTokens } : {}),
     ...(input.temperature !== undefined ? { temperature: input.temperature } : {}),
     ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),
+    ...(onChunk
+      ? {
+          onChunk: async ({ chunk }) => {
+            if (chunk.type === 'text-delta') {
+              await onChunk({ kind: 'text', delta: chunk.text });
+              return;
+            }
+            if (chunk.type === 'reasoning-delta') {
+              await onChunk({ kind: 'reasoning', delta: chunk.text });
+            }
+          },
+        }
+      : {}),
+    prepareStep: async ({ stepNumber, messages: nextMessages }) => {
+      if (stepNumber === 0) return undefined;
+      const previousStep = steps.at(-1);
+      if (!previousStep) return undefined;
+      const interrupts = await input.loadInterruptMessages?.(previousStep);
+      if (!interrupts?.length) return undefined;
+      messages.splice(0, messages.length, ...nextMessages, ...interrupts);
+      return { messages };
+    },
     onStepFinish: (step) => {
-      steps.push(step as unknown as AgentLoopStep);
+      const loopStep = step as unknown as AgentLoopStep;
+      steps.push(loopStep);
     },
   });
   for await (const part of result.fullStream) {
     if (part.type === 'error') {
+      const approvalError = findToolApprovalRequiredError(part.error);
+      if (approvalError) throw approvalError;
       throw part.error;
     }
   }

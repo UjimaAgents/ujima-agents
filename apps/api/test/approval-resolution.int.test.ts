@@ -6,13 +6,10 @@ import { createBufferLogger, createRuntimeHost, Repository, type RuntimeHost } f
 import { ApprovalRequestSchema, MemberSchema, OrganizationSchema, RunStateSchema } from '@ujima/shared';
 import { AuthService } from '@ujima/orchestrator';
 import { createTransport, type Transport } from '../src/transport/server';
-import type { LLMProvider } from '@ujima/llm/legacy';
+import type { LanguageModel } from 'ai';
 
 const TOKEN = 'c'.repeat(64);
-
-function stubProvider(): LLMProvider {
-  throw new Error('no provider configured');
-}
+const stubLanguageModel = {} as unknown as LanguageModel;
 
 describe('approval resolution route', () => {
   let homeDir: string;
@@ -55,7 +52,7 @@ describe('approval resolution route', () => {
         resolveMCPDef: async (_workspaceId, id) => {
           throw new Error(`no mcp ${id}`);
         },
-        getProvider: stubProvider,
+        getModel: () => stubLanguageModel,
       },
       {},
     );
@@ -153,7 +150,6 @@ describe('approval resolution route', () => {
             taskPromoter: {},
             taskSessions: {},
             spirits: {},
-            supervisor: {},
             supervisorTodos: {},
             activeSpirits: {},
           } as any),

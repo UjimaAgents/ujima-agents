@@ -198,6 +198,44 @@ describe('checkToolPolicy', () => {
         reason: 'Path "' + join(workspaceRoot, '.env') + '" requires approval',
       });
     });
+
+    it('bypasses approval for writes inside .ujima-goals', async () => {
+      const team = loadAgentTeam({
+        name: 'Goal Org',
+        workspace: { root: workspaceRoot },
+        providers: {
+          openai: {
+            kind: 'openai',
+            defaultModel: 'gpt-5.4',
+            models: ['gpt-5.4'],
+          },
+        },
+        roles: [
+          {
+            name: 'goal-writer',
+            title: 'Goal Writer',
+            instructions: 'Can manage goal artifacts.',
+            provider: 'openai',
+            model: 'gpt-5.4',
+            workspaceScopes: ['.'],
+            tools: ['filesystem', 'write', 'edit', 'multiedit'],
+            channels: ['general'],
+          },
+        ],
+        agents: [],
+        channels: [{ name: 'general', kind: 'general', topic: 'General' }],
+      } as Record<string, unknown>);
+
+      expect(
+        checkToolPolicy(
+          team,
+          'goal-writer',
+          'filesystem',
+          'write',
+          join(workspaceRoot, '.ujima-goals', 'plan.md'),
+        ),
+      ).toEqual({ allowed: true, requiresApproval: false });
+    });
   });
 
   // Regression coverage for two bugs in the channel-tool surface:

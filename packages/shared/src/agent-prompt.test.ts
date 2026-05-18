@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildTeamHierarchySection } from './agent-prompt.js';
+import { SHARED_AGENT_SYSTEM_PROMPT, buildTeamHierarchySection } from './agent-prompt.js';
 
 describe('buildTeamHierarchySection', () => {
   it('keeps mid-level managers in the rendered hierarchy', () => {
@@ -55,5 +55,13 @@ describe('buildTeamHierarchySection', () => {
     expect(section).toContain('**IC**');
     expect(section.indexOf('**CEO**')).toBeLessThan(section.indexOf('**Lead**'));
     expect(section.indexOf('**Lead**')).toBeLessThan(section.indexOf('**IC**'));
+  });
+});
+
+describe('SHARED_AGENT_SYSTEM_PROMPT', () => {
+  it('treats compacted summaries as owned continuity, not a fresh slate', () => {
+    expect(SHARED_AGENT_SYSTEM_PROMPT).toContain('Treat compacted summaries and self.note history as your own working memory across turns.');
+    expect(SHARED_AGENT_SYSTEM_PROMPT).toContain('Each run continues from the session\'s continuity: rely on messages, files, team config, and tool output before assuming anything is unknown.');
+    expect(SHARED_AGENT_SYSTEM_PROMPT).not.toContain('fresh context window');
   });
 });

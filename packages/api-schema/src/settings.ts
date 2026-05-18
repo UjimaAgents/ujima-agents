@@ -58,6 +58,7 @@ export type PoliciesUpdateRequest = z.infer<typeof PoliciesUpdateSchema>;
 export const ChannelUpdateSchema = z.object({
   name: z.string().min(1).optional(),
   topic: z.string().optional(),
+  memberIds: z.array(IdSchema).optional(),
 });
 export type ChannelUpdateRequest = z.infer<typeof ChannelUpdateSchema>;
 
@@ -65,4 +66,3 @@ export const ChannelOperationParamsSchema = z.object({
   orgId: IdSchema,
   channelId: IdSchema,
 });
-

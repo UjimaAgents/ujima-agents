@@ -43,6 +43,7 @@ export const messageTool: OrchestratorTool<typeof MessageSchema> = {
         senderId: invocation.memberId,
         content,
         mentions,
+        metadata: { runId: invocation.runId },
       });
     }
 
@@ -61,6 +62,7 @@ export const messageTool: OrchestratorTool<typeof MessageSchema> = {
         senderId: invocation.memberId,
         content,
         mentions,
+        metadata: { runId: invocation.runId },
       });
     }
 
@@ -76,6 +78,7 @@ export const messageTool: OrchestratorTool<typeof MessageSchema> = {
         content,
         ignore: invocation.input.ignore === true,
         mentions,
+        metadata: { runId: invocation.runId },
       });
     }
 

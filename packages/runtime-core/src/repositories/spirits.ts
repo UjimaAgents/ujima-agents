@@ -86,6 +86,17 @@ export function getSpiritByTriple(
   return row ? rowToSpirit(row) : null;
 }
 
+export function getSpiritByRunId(
+  db: DbHandle,
+  organizationId: string,
+  runId: string,
+): Spirit | null {
+  const row = db
+    .prepare('SELECT * FROM spirits WHERE organization_id = ? AND run_id = ?')
+    .get(organizationId, runId) as Row | null;
+  return row ? rowToSpirit(row) : null;
+}
+
 export function listSpiritsForSession(
   db: DbHandle,
   organizationId: string,

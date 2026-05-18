@@ -101,6 +101,7 @@ describe('ujima-runtime daemon', () => {
       expect(exit.timedOut).toBe(false);
       // Graceful: exits via process.exit(143); some node builds may also report the signal.
       expect(exit.code === 143 || exit.signal === 'SIGTERM').toBe(true);
+      await waitFor(() => !existsSync(join(home, DIRTY_FLAG)), 5_000);
       expect(existsSync(join(home, DIRTY_FLAG))).toBe(false);
     } finally {
       if (!child.killed) child.kill('SIGKILL');
@@ -142,4 +143,12 @@ async function waitForLog(logs: string[], needle: string, timeoutMs: number): Pr
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   expect(logs.join('')).toContain(needle);
+}
+
+async function waitFor(predicate: () => boolean, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
 }

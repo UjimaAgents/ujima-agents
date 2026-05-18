@@ -37,6 +37,10 @@ function resolveHomeDir(): string {
 
 const DIRTY_FLAG_NAME = 'runtime.dirty';
 
+function mcpPermissionToolName(serverId: string, toolName: string): string {
+  return `mcp:${encodeURIComponent(serverId)}:${encodeURIComponent(toolName)}`;
+}
+
 function writeDirtyFlag(homeDir: string): void {
   try {
     mkdirSync(homeDir, { recursive: true });
@@ -126,12 +130,34 @@ async function main(): Promise<void> {
   // gate on.
   const buildPermissionContext: PermissionContextBuilder = (input) => {
     const team = teamStore.getTeam();
-      const member = repository.getMember(input.organizationId, input.memberId);
-      const role = team && member ? team.getRole(member.roleName) : undefined;
-      const agentConfig = team
-        ? (team.getAgent(input.memberId) ??
+    const member = repository.getMember(input.organizationId, input.memberId);
+    const role = team && member ? team.getRole(member.roleName) : undefined;
+    const agentConfig = team
+      ? (team.getAgent(input.memberId) ??
         (member ? team.getAgent(member.name) : undefined))
-        : undefined;
+      : undefined;
+    let permissionToolName = input.permissionToolName ?? input.toolId;
+    if (input.toolId === 'mcp') {
+      const inputRecord = input.input ?? {};
+      const serverId =
+        input.permissionMcpId ??
+        (typeof inputRecord.mcpServerId === 'string' ? inputRecord.mcpServerId : input.toolId);
+      const rawToolName =
+        typeof inputRecord.toolName === 'string'
+          ? inputRecord.toolName
+          : (input.permissionToolName ?? input.toolId);
+      permissionToolName =
+        typeof inputRecord.toolName !== 'string' && rawToolName.startsWith('mcp:')
+          ? rawToolName
+          : mcpPermissionToolName(serverId, rawToolName);
+    }
+    const allowedTools = new Set([
+      ...(role?.tools ?? []),
+      ...ALWAYS_AVAILABLE_AGENT_TOOLS,
+    ]);
+    if (input.toolId === 'mcp') {
+      allowedTools.add(permissionToolName);
+    }
 
     return {
       agent: {
@@ -141,7 +167,7 @@ async function main(): Promise<void> {
         model: member?.model ?? role?.model ?? '',
         mcp: input.permissionMcpId ?? input.toolId,
         permissions: {
-          allowed_tools: [...new Set([...(role?.tools ?? []), ...ALWAYS_AVAILABLE_AGENT_TOOLS])],
+          allowed_tools: [...allowedTools],
           blocked_tools: [],
           rate_limit: { calls_per_minute: 30, max_session_tokens: 100_000 },
         },
@@ -149,7 +175,7 @@ async function main(): Promise<void> {
         escalation: { conditions: [], escalate_to: 'human' },
       },
       mcp: { id: input.permissionMcpId ?? input.toolId },
-      toolName: input.permissionToolName ?? input.toolId,
+      toolName: permissionToolName,
       args: input.input,
       taskId: input.runId,
       sessionId: input.runId,
@@ -174,6 +200,7 @@ async function main(): Promise<void> {
           realtime,
           permissions: host.permissions,
           buildPermissionContext,
+          mcpPool: host.pool,
         }),
     },
   });

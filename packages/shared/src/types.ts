@@ -57,6 +57,7 @@ export const MCPDef = z.object({
   command: z.string().optional(),
   args: z.array(z.string()).default([]),
   env: z.record(z.string()).default({}),
+  headers: z.record(z.string()).optional(),
   url: z.string().optional(),
   /**
    * `shared` (default): one MCP process per `id`, reused across agents.
@@ -69,7 +70,7 @@ export const MCPDef = z.object({
 });
 export type MCPDef = z.infer<typeof MCPDef>;
 
-export const ExecutionMode = z.enum(['concurrent']);
+export const ExecutionMode = z.enum(['concurrent', 'slim']);
 export type ExecutionMode = z.infer<typeof ExecutionMode>;
 
 export const OrchestratorMode = z.enum(['manual', 'auto']);

@@ -1,4 +1,5 @@
 import type { Spirit } from '@ujima/shared';
+import { isLiveSpiritStatus } from './live-status.js';
 
 // ----------------------------------------------------------------------
 // ActiveSpiritRegistry — Phase 2.C.1
@@ -65,7 +66,7 @@ export class ActiveSpiritRegistry {
    */
   register(spirit: Spirit): void {
     if (spirit.role !== 'worker') return;
-    if (!isAliveStatus(spirit.status)) return;
+    if (!isLiveSpiritStatus(spirit.status)) return;
     const key = memberKey(spirit.organizationId, spirit.memberId);
     const bucket = this.entries.get(key) ?? new Map<string, ActiveSpiritEntry>();
     registrationCounter += 1;
@@ -120,6 +121,4 @@ export class ActiveSpiritRegistry {
   }
 }
 
-export function isAliveStatus(status: Spirit['status']): boolean {
-  return status === 'queued' || status === 'running' || status === 'waiting_for_approval';
-}
+export { isLiveSpiritStatus as isAliveStatus } from './live-status.js';

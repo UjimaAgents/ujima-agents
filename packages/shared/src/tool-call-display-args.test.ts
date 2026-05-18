@@ -27,8 +27,8 @@ describe('parseShellToolCallArgs', () => {
     expect(parseShellToolCallArgs({ command: 'ls' })).toEqual({ cwd: '.', command: 'ls' });
   });
 
-  it('returns null without command', () => {
-    expect(parseShellToolCallArgs({ cwd: '/a' })).toBeNull();
+  it('defaults to empty command when missing', () => {
+    expect(parseShellToolCallArgs({ cwd: '/a' })).toEqual({ cwd: '/a', command: '' });
   });
 });
 

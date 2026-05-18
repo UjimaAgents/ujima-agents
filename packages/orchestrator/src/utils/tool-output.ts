@@ -1,0 +1,114 @@
+function toObject(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  return value as Record<string, unknown>;
+}
+
+function formatMatches(matches: unknown): string | undefined {
+  if (!Array.isArray(matches)) return undefined;
+  if (matches.every((entry) => typeof entry === "string")) {
+    const lines = matches.map((entry) => String(entry)).filter(Boolean);
+    return lines.length > 0 ? lines.join("\n") : undefined;
+  }
+  const lines = matches
+    .map((entry) => {
+      const item = toObject(entry);
+      const path = typeof item?.path === "string" ? item.path : "";
+      const lineNumber = typeof item?.lineNumber === "number" ? item.lineNumber : 0;
+      const line = typeof item?.line === "string" ? item.line : "";
+      if (!path || !lineNumber) return "";
+      return `${path}:${lineNumber}${line ? `: ${line}` : ""}`;
+    })
+    .filter(Boolean);
+  return lines.length > 0 ? lines.join("\n") : undefined;
+}
+
+function formatStringArray(value: unknown): string | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const lines = value.map((entry) => (typeof entry === "string" ? entry : "")).filter(Boolean);
+  return lines.length > 0 ? lines.join("\n") : undefined;
+}
+
+function extractStringField(text: string, field: string): string | undefined {
+  const match = text.match(new RegExp(`"${field}"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"`));
+  if (!match?.[1]) return undefined;
+  try {
+    return JSON.parse(`"${match[1]}"`) as string;
+  } catch {
+    return match[1];
+  }
+}
+
+function extractTruncatedStringField(text: string, field: string): string | undefined {
+  const marker = `"${field}"`;
+  const keyIndex = text.indexOf(marker);
+  if (keyIndex === -1) return undefined;
+  const colonIndex = text.indexOf(":", keyIndex + marker.length);
+  if (colonIndex === -1) return undefined;
+  const quoteIndex = text.indexOf('"', colonIndex + 1);
+  if (quoteIndex === -1) return undefined;
+  const raw = text.slice(quoteIndex + 1).replace(/"\s*[},]?\s*$/, "");
+  if (!raw.trim()) return undefined;
+  try {
+    return JSON.parse(`"${raw.replace(/\\$/, "")}"`) as string;
+  } catch {
+    return raw.replace(/\\n/g, "\n").replace(/\\"/g, '"');
+  }
+}
+
+function formatRecord(value: unknown): string | undefined {
+  const record = toObject(value);
+  if (!record) return undefined;
+
+  const content = record.content ?? record.body ?? record.text ?? record.output;
+  if (typeof content === "string" && content.trim()) return content.trimEnd();
+
+  const diff = record.diff;
+  if (typeof diff === "string" && diff.trim()) return diff.trimEnd();
+
+  const matches = formatMatches(record.matches);
+  if (matches) return matches;
+
+  const entries = formatStringArray(record.entries);
+  if (entries) return entries;
+
+  const results = formatStringArray(record.results);
+  if (results) return results;
+
+  const stdout = typeof record.stdout === "string" ? record.stdout.trimEnd() : "";
+  const stderr = typeof record.stderr === "string" ? record.stderr.trimEnd() : "";
+  if (stdout || stderr) {
+    return [stdout ? `stdout:\n${stdout}` : "", stderr ? `stderr:\n${stderr}` : ""]
+      .filter(Boolean)
+      .join("\n\n");
+  }
+
+  const nested = toObject(record.result) ?? toObject(record.data);
+  return nested ? formatRecord(nested) : undefined;
+}
+
+export function formatReadableToolOutput(value: unknown): string | undefined {
+  if (typeof value === "string") {
+    const text = value.trim();
+    if (!text) return undefined;
+    if (!text.startsWith("{") && !text.startsWith("[")) return value;
+    try {
+      return formatReadableToolOutput(JSON.parse(text) as unknown);
+    } catch {
+      return (
+        extractStringField(text, "content") ??
+        extractStringField(text, "body") ??
+        extractStringField(text, "text") ??
+        extractStringField(text, "output") ??
+        extractStringField(text, "diff") ??
+        extractTruncatedStringField(text, "content") ??
+        extractTruncatedStringField(text, "body") ??
+        extractTruncatedStringField(text, "text") ??
+        extractTruncatedStringField(text, "output") ??
+        extractTruncatedStringField(text, "diff") ??
+        value
+      );
+    }
+  }
+
+  return formatRecord(value);
+}

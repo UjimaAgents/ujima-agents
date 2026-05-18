@@ -6,13 +6,10 @@ import { createRuntimeHost, createBufferLogger, type RuntimeHost } from '@ujima/
 import { Repository } from '@ujima/runtime-core';
 import { createClient, UjimaApiError } from '@ujima/client-sdk';
 import { createTransport, type Transport } from '../src/transport/server';
-import type { LLMProvider } from '@ujima/llm/legacy';
+import type { LanguageModel } from 'ai';
 
 const TOKEN = 'a'.repeat(64);
-
-function stubProvider(): LLMProvider {
-  throw new Error('no provider configured');
-}
+const stubLanguageModel = {} as unknown as LanguageModel;
 
 describe('transport (in-process)', () => {
   let homeDir: string;
@@ -29,7 +26,7 @@ describe('transport (in-process)', () => {
         loadAgent: async () => undefined,
         loadTeam: async () => undefined,
         resolveMCPDef: async (_w, id) => { throw new Error(`no mcp ${id}`); },
-        getProvider: stubProvider,
+        getModel: () => stubLanguageModel,
       },
       {},
     );

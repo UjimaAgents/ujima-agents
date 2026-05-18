@@ -1,40 +1,33 @@
 "use client";
 
 import {
-  Hash,
-  Clock,
-  Layers,
-  Search,
-  Plus,
-  Settings,
-  ChevronDown,
-  Command,
   Check,
+  ChevronDown,
+  Clock,
+  Command,
+  Hash,
+  Layers,
+  Plus,
+  Search,
+  Settings,
 } from "lucide-react";
 import Link from "next/link";
 import { Avatar } from "./chat/primitives";
-import { Modal } from "./modal";
 import type { BootstrapResponse } from "@ujima/api-schema";
 import type { SelectedConversation, WorkspaceRoleInput } from "../types";
-import { useState, useMemo } from "react";
-import {
-  ChannelScopeRow,
-  FieldShell,
-  TextArea,
-  TextInput,
-} from "@/components/ui/form-fields";
-import { ProviderModelFields } from "@/components/ui/provider-model-fields";
-import { Select } from "@/components/ui/select";
+import { useState, useMemo, memo } from "react";
+import { TextInput } from "@/components/ui/form-fields";
 import type { RolePresetTemplate } from "../../onboarding/types";
 import { defaultModelForProvider } from "../../onboarding/types";
-import { getSuggestedAgentName } from "../../onboarding/agent-name-suggestions";
-import { Sparkles, Bot, ArrowRight, Search as SearchIcon } from "lucide-react";
 import { resolveMemberActivity } from "../workspace-store";
 import type { ActivityState } from "../activity-state";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { AgentEditorModal } from "./sidebar/agent-editor-modal";
+import { CreateAgentModal } from "./sidebar/create-agent-modal";
+import { CreateChannelModal } from "./sidebar/create-channel-modal";
 import { WorkspaceSwitcher } from "./workspace-switcher";
 
-interface WorkspaceSidebarProps {
+export interface WorkspaceSidebarProps {
   bootstrap: BootstrapResponse;
   rolePresets: RolePresetTemplate[];
   teamSettings: {
@@ -55,6 +48,7 @@ interface WorkspaceSidebarProps {
     }[];
   } | null;
   currentWorkspaceRoot?: string;
+  goalMode: boolean;
   agentEditorTargetId?: string | null;
   onAgentEditorHandled?: () => void;
   channels: BootstrapResponse["channels"];
@@ -86,7 +80,7 @@ interface WorkspaceSidebarProps {
   }) => Promise<BootstrapResponse["members"][number] | null>;
 }
 
-function slugifyRoleName(value: string) {
+export function slugifyRoleName(value: string) {
   return value
     .trim()
     .toLowerCase()
@@ -94,7 +88,7 @@ function slugifyRoleName(value: string) {
     .replace(/^-+|-+$/g, "");
 }
 
-function roleFromTemplate(template: RolePresetTemplate): WorkspaceRoleInput {
+export function roleFromTemplate(template: RolePresetTemplate): WorkspaceRoleInput {
   return {
     id: template.name,
     name: template.name,
@@ -109,7 +103,7 @@ function roleFromTemplate(template: RolePresetTemplate): WorkspaceRoleInput {
   };
 }
 
-function customRole(title: string, instructions: string): WorkspaceRoleInput {
+export function customRole(title: string, instructions: string): WorkspaceRoleInput {
   const name = slugifyRoleName(title) || "custom-agent";
   return {
     id: name,
@@ -125,7 +119,7 @@ function customRole(title: string, instructions: string): WorkspaceRoleInput {
   };
 }
 
-interface AgentEditorDraft {
+export interface AgentEditorDraft {
   originalName: string;
   originalRoleName: string;
   memberId: string;
@@ -143,7 +137,7 @@ interface AgentEditorDraft {
   skills: string[];
 }
 
-function buildAgentEditorDraft({
+export function buildAgentEditorDraft({
   agent,
   teamSettings,
   rolePresets,
@@ -187,7 +181,7 @@ function buildAgentEditorDraft({
   } satisfies AgentEditorDraft;
 }
 
-const PERSONALITY_OPTIONS = [
+export const PERSONALITY_OPTIONS = [
   { value: "direct", label: "Direct" },
   { value: "thoughtful", label: "Thoughtful" },
   { value: "precise", label: "Precise" },
@@ -196,18 +190,18 @@ const PERSONALITY_OPTIONS = [
   { value: "pragmatic", label: "Pragmatic" },
 ] as const;
 
-function listCsvValues(value: string) {
+export function listCsvValues(value: string) {
   return value
     .split(",")
     .map((item) => item.trim())
     .filter(Boolean);
 }
 
-function joinCsvValues(values: string[]) {
+export function joinCsvValues(values: string[]) {
   return values.join(", ");
 }
 
-function uniqueSorted(values: string[]) {
+export function uniqueSorted(values: string[]) {
   return [...new Set(values.map((value) => value.trim()).filter(Boolean))].sort((a, b) =>
     a.localeCompare(b),
   );
@@ -218,6 +212,7 @@ export function WorkspaceSidebar({
   rolePresets,
   teamSettings,
   currentWorkspaceRoot,
+  goalMode,
   agentEditorTargetId,
   onAgentEditorHandled,
   channels,
@@ -233,26 +228,8 @@ export function WorkspaceSidebar({
   const [orgMenuOpen, setOrgMenuOpen] = useState(false);
   const [isChannelModalOpen, setIsChannelModalOpen] = useState(false);
   const [isAgentModalOpen, setIsAgentModalOpen] = useState(false);
-  const [newChannelName, setNewChannelName] = useState("");
-
-  // Agent Modal State
-  const [agentSearch, setAgentSearch] = useState("");
-  const [selectedTemplate, setSelectedTemplate] =
-    useState<RolePresetTemplate | null>(null);
-  const [isCustomRole, setIsCustomRole] = useState(false);
-  const [customRoleTitle, setCustomRoleTitle] = useState("");
-  const [customRoleInstructions, setCustomRoleInstructions] = useState("");
-  const [customAgentName, setCustomAgentName] = useState("");
   const initialProvider =
     bootstrap.providers.find((provider) => provider.hasKey)?.name ?? "openai";
-  const [selectedLlm, setSelectedLlm] = useState(initialProvider);
-  const [selectedModel, setSelectedModel] = useState(
-    defaultModelForProvider(initialProvider),
-  );
-  const [isSavingChannel, setIsSavingChannel] = useState(false);
-  const [isSavingAgent, setIsSavingAgent] = useState(false);
-  const [channelError, setChannelError] = useState<string | null>(null);
-  const [agentError, setAgentError] = useState<string | null>(null);
 
   const primaryChannel = useMemo(
     () =>
@@ -268,20 +245,14 @@ export function WorkspaceSidebar({
       null,
     [channels],
   );
-  const visibleChannels = channels.filter(
-    (channel) => channel.kind !== "self" && channel.kind !== "dm",
+  const visibleChannels = useMemo(
+    () => channels.filter((channel) => channel.kind !== "self" && channel.kind !== "dm"),
+    [channels],
   );
-  const agentMembers = members.filter((member) => member.kind === "agent");
-  const filteredRolePresets = useMemo(() => {
-    const query = agentSearch.trim().toLowerCase();
-    if (!query) return rolePresets;
-    return rolePresets.filter(
-      (p) =>
-        p.title.toLowerCase().includes(query) ||
-        p.description.toLowerCase().includes(query) ||
-        p.name.toLowerCase().includes(query),
-    );
-  }, [rolePresets, agentSearch]);
+  const agentMembers = useMemo(
+    () => members.filter((member) => member.kind === "agent"),
+    [members],
+  );
 
   return (
     <aside className="relative flex h-full w-full flex-col border-r border-zinc-200 bg-white dark:border-zinc-800 dark:bg-[#09090b]">
@@ -376,6 +347,8 @@ export function WorkspaceSidebar({
 
       {/* Navigation Groups */}
       <div className="relative z-10 flex-1 overflow-y-auto px-2 py-3">
+
+
         {/* Channels */}
         <div className="mb-5">
           <SidebarSectionHeader
@@ -419,6 +392,7 @@ export function WorkspaceSidebar({
                 count={conversationUnreadCounts[agent.id]}
                 active={selected.type === "agent" && selected.id === agent.id}
                 status={resolveMemberActivity(agent, memberActivity)}
+                goalMode={goalMode}
                 onClick={() =>
                   onSelect({
                     type: "agent",
@@ -453,6 +427,8 @@ export function WorkspaceSidebar({
         </div>
       </div>
 
+
+
       {/* User Footer */}
       <div className="border-t border-zinc-200 p-3 dark:border-zinc-800">
         <Link
@@ -472,93 +448,27 @@ export function WorkspaceSidebar({
         </Link>
       </div>
 
-      <Modal
+      <CreateChannelModal
         isOpen={isChannelModalOpen}
-        onClose={() => {
-          setIsChannelModalOpen(false);
-          setNewChannelName("");
-          setChannelError(null);
-        }}
-        title="Create Channel"
-      >
-        <div className="space-y-4">
-          <div>
-            <label className="text-xs font-bold text-zinc-500 uppercase tracking-wider mb-2 block">
-              Channel Name
-            </label>
-            <div className="group relative">
-              <div className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400">
-                <Hash className="h-4 w-4" />
-              </div>
-              <TextInput
-                autoFocus
-                type="text"
-                placeholder="e.g. marketing-plan"
-                value={newChannelName}
-                onChange={(e) =>
-                  setNewChannelName(
-                    e.target.value.toLowerCase().replace(/\s+/g, "-"),
-                  )
-                }
-                className="px-10 py-3 bg-zinc-50 dark:bg-zinc-900/50 dark:focus:bg-black"
-              />
-            </div>
-            <p className="mt-2 text-xs text-zinc-400 leading-relaxed">
-              Channels are where your team communicates. They’re best when
-              organized around a topic — #leads, for example.
-            </p>
-          </div>
+        onClose={() => setIsChannelModalOpen(false)}
+        onCreateChannel={onCreateChannel}
+        onSelect={onSelect}
+      />
 
-          <div className="pt-4 flex justify-end gap-3">
-            {channelError ? (
-              <p className="mr-auto text-xs text-red-600 dark:text-red-400">
-                {channelError}
-              </p>
-            ) : null}
-            <button
-              onClick={() => {
-                setIsChannelModalOpen(false);
-                setChannelError(null);
-              }}
-              className="rounded-xl px-4 py-2 text-sm font-semibold text-zinc-600 hover:bg-zinc-100 transition-colors dark:text-zinc-400 dark:hover:bg-zinc-900"
-            >
-              Cancel
-            </button>
-            <button
-              disabled={!newChannelName || isSavingChannel}
-              onClick={async () => {
-                setChannelError(null);
-                setIsSavingChannel(true);
-                try {
-                  const created = await onCreateChannel(newChannelName);
-                  if (!created) throw new Error("Unable to create channel.");
-                  setIsChannelModalOpen(false);
-                  setNewChannelName("");
-                  onSelect(created);
-                } catch (err) {
-                  setChannelError(
-                    err instanceof Error
-                      ? err.message
-                      : "Unable to create channel.",
-                  );
-                } finally {
-                  setIsSavingChannel(false);
-                }
-              }}
-              className="rounded-xl bg-violet-600 px-6 py-2 text-sm font-bold text-white shadow-lg shadow-violet-500/20 hover:bg-violet-700 transition-all disabled:opacity-50 disabled:shadow-none"
-            >
-              Create Channel
-            </button>
-          </div>
-        </div>
-      </Modal>
+      <CreateAgentModal
+        isOpen={isAgentModalOpen}
+        onClose={() => setIsAgentModalOpen(false)}
+        rolePresets={rolePresets}
+        initialProvider={initialProvider}
+        primaryChannel={primaryChannel}
+        onCreateAgent={onCreateAgent}
+        onSelect={onSelect}
+      />
 
       {agentEditorTargetId ? (
         <AgentEditorModal
           key={agentEditorTargetId}
-          agent={
-            agentMembers.find((item) => item.id === agentEditorTargetId) ?? null
-          }
+          agent={agentMembers.find((item) => item.id === agentEditorTargetId) ?? null}
           teamSettings={teamSettings}
           rolePresets={rolePresets}
           visibleChannels={visibleChannels}
@@ -567,246 +477,17 @@ export function WorkspaceSidebar({
           onUpdateAgent={onUpdateAgent}
         />
       ) : null}
-
-      <Modal
-        isOpen={isAgentModalOpen}
-        onClose={() => {
-          setIsAgentModalOpen(false);
-          setAgentSearch("");
-          setSelectedTemplate(null);
-          setIsCustomRole(false);
-          setCustomRoleTitle("");
-          setCustomRoleInstructions("");
-          setCustomAgentName("");
-          setSelectedLlm(initialProvider);
-          setSelectedModel(defaultModelForProvider(initialProvider));
-          setAgentError(null);
-        }}
-        title={
-          selectedTemplate || isCustomRole
-            ? `Configure ${selectedTemplate?.title ?? "Custom Role"}`
-            : "Add New Agent"
-        }
-      >
-        {!selectedTemplate && !isCustomRole ? (
-          <div className="space-y-4">
-            <div className="relative">
-              <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
-              <TextInput
-                type="text"
-                placeholder="Search roles (e.g. Developer, QA...)"
-                value={agentSearch}
-                onChange={(e) => setAgentSearch(e.target.value)}
-                className="pl-10 pr-4 py-2.5 bg-zinc-50 dark:bg-zinc-900/50"
-              />
-            </div>
-
-            <button
-              type="button"
-              onClick={() => {
-                setIsCustomRole(true);
-                setCustomAgentName(getSuggestedAgentName());
-                setCustomRoleTitle("");
-                setCustomRoleInstructions("");
-              }}
-              className="w-full flex items-center gap-3 rounded-xl border border-dashed border-zinc-300 bg-zinc-50 p-3 text-left transition hover:border-violet-300 hover:bg-violet-50 dark:border-zinc-700 dark:bg-zinc-900/50 dark:hover:bg-violet-500/5"
-            >
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900">
-                <Plus className="h-5 w-5" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-bold text-zinc-900 dark:text-white">
-                  Custom role
-                </p>
-                <p className="text-xs text-zinc-500 line-clamp-1">
-                  Create a role with its own instructions.
-                </p>
-              </div>
-            </button>
-
-            <div className="max-h-[350px] overflow-y-auto pr-1 space-y-2 custom-scrollbar">
-              {filteredRolePresets.map((template) => (
-                <button
-                  key={template.key}
-                  onClick={() => {
-                    setSelectedTemplate(template);
-                    setCustomAgentName(getSuggestedAgentName());
-                  }}
-                  className="w-full group flex items-start gap-3 rounded-xl border border-zinc-100 bg-white p-3 text-left transition hover:border-violet-300 hover:bg-violet-50 dark:border-zinc-800 dark:bg-zinc-950 dark:hover:bg-violet-500/5"
-                >
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-violet-600 text-white shadow-lg shadow-violet-500/20">
-                    <Bot className="h-5 w-5" />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-bold text-zinc-900 dark:text-white">
-                      {template.title}
-                    </p>
-                    <p className="text-xs text-zinc-500 line-clamp-1">
-                      {template.description}
-                    </p>
-                  </div>
-                  <ArrowRight className="h-4 w-4 text-zinc-300 transition group-hover:text-violet-500 mt-1" />
-                </button>
-              ))}
-            </div>
-          </div>
-        ) : (
-          <div className="space-y-5 animate-in slide-in-from-right-4 duration-300">
-            <div className="flex items-center gap-4 p-4 rounded-2xl bg-violet-50 dark:bg-violet-500/5 border border-violet-100 dark:border-violet-500/10">
-              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-violet-600 text-white shadow-xl shadow-violet-500/20">
-                <Sparkles className="h-6 w-6" />
-              </div>
-              <div>
-                <p className="text-sm font-bold text-violet-900 dark:text-violet-200">
-                  {selectedTemplate?.title ?? "Custom role"}
-                </p>
-              </div>
-            </div>
-
-            <div className="space-y-4">
-              {isCustomRole ? (
-                <>
-                  <div>
-                    <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-1.5 block">
-                      Role Title
-                    </label>
-                    <TextInput
-                      type="text"
-                      value={customRoleTitle}
-                      onChange={(e) => setCustomRoleTitle(e.target.value)}
-                      placeholder="e.g. Research Analyst"
-                      className="bg-zinc-50 dark:bg-zinc-900/50"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-1.5 block">
-                      Role Instructions
-                    </label>
-                    <TextArea
-                      value={customRoleInstructions}
-                      onChange={(e) =>
-                        setCustomRoleInstructions(e.target.value)
-                      }
-                      placeholder="Describe what this agent should do."
-                      className="min-h-28 bg-zinc-50 dark:bg-zinc-900/50"
-                    />
-                  </div>
-                </>
-              ) : null}
-              <div>
-                <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-1.5 block">
-                  Agent Name
-                </label>
-                <TextInput
-                  type="text"
-                  value={customAgentName}
-                  onChange={(e) => setCustomAgentName(e.target.value)}
-                  className="bg-zinc-50 dark:bg-zinc-900/50"
-                />
-              </div>
-
-              <ProviderModelFields
-                provider={selectedLlm}
-                model={selectedModel}
-                onProviderChange={setSelectedLlm}
-                onModelChange={setSelectedModel}
-                providerLabel="LLM provider"
-                modelLabel="Model"
-                providerId="agentProvider"
-                modelId="agentModel"
-              />
-
-              <div>
-                <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-1.5 block">
-                  Channels
-                </label>
-                <div className="mt-3">
-                  <ChannelScopeRow label={primaryChannel?.name ?? "general"} />
-                </div>
-              </div>
-            </div>
-
-            <div className="pt-2 flex gap-3">
-              <button
-                onClick={() => {
-                  setSelectedTemplate(null);
-                  setIsCustomRole(false);
-                  setCustomRoleTitle("");
-                  setCustomRoleInstructions("");
-                }}
-                className="flex-1 rounded-xl px-4 py-2.5 text-sm font-semibold text-zinc-600 hover:bg-zinc-100 transition-colors dark:text-zinc-400 dark:hover:bg-zinc-900"
-              >
-                Back
-              </button>
-              <button
-                onClick={async () => {
-                  const role = selectedTemplate
-                    ? roleFromTemplate(selectedTemplate)
-                    : customRole(customRoleTitle, customRoleInstructions);
-                  setAgentError(null);
-                  setIsSavingAgent(true);
-                  try {
-                    const created = await onCreateAgent({
-                      name: customAgentName,
-                      roleName: role.name,
-                      channelIds: primaryChannel ? [primaryChannel.id] : [],
-                      llm: selectedLlm,
-                      model: selectedModel,
-                      role: {
-                        ...role,
-                        channels: primaryChannel ? [primaryChannel.name] : [],
-                      },
-                    });
-                    if (!created) throw new Error("Unable to create agent.");
-                    setIsAgentModalOpen(false);
-                    setAgentSearch("");
-                    setSelectedTemplate(null);
-                    setIsCustomRole(false);
-                    setCustomRoleTitle("");
-                    setCustomRoleInstructions("");
-                    setCustomAgentName("");
-                    setSelectedLlm(initialProvider);
-                    setSelectedModel(defaultModelForProvider(initialProvider));
-                    onSelect(created);
-                  } catch (err) {
-                    setAgentError(
-                      err instanceof Error
-                        ? err.message
-                        : "Unable to create agent.",
-                    );
-                  } finally {
-                    setIsSavingAgent(false);
-                  }
-                }}
-                disabled={
-                  isSavingAgent ||
-                  !customAgentName.trim() ||
-                  (isCustomRole &&
-                    (!customRoleTitle.trim() || !customRoleInstructions.trim()))
-                }
-                className="flex-[2] rounded-xl bg-violet-600 px-6 py-2.5 text-sm font-bold text-white shadow-lg shadow-violet-500/20 hover:bg-violet-700 transition-all disabled:opacity-50 disabled:shadow-none"
-              >
-                Create Agent
-              </button>
-            </div>
-            {agentError ? (
-              <p className="text-xs text-red-600 dark:text-red-400">
-                {agentError}
-              </p>
-            ) : null}
-          </div>
-        )}
-      </Modal>
     </aside>
   );
 }
 
-function SidebarItem({
+export const SidebarItem = memo(function SidebarItem({
   icon,
   label,
   count,
   active,
   status,
+  goalMode,
   onClick,
 }: {
   icon: React.ReactNode;
@@ -814,8 +495,10 @@ function SidebarItem({
   count?: number;
   active?: boolean;
   status?: ActivityState;
+  goalMode?: boolean;
   onClick?: () => void;
 }) {
+  const useRunner = active && goalMode && status === "working";
   return (
     <div
       className={`group flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-sm transition ${
@@ -846,365 +529,110 @@ function SidebarItem({
         ) : null}
       </button>
       <div className="flex items-center gap-1.5">
-        {status === "loading" && (
+        {useRunner ? (
+          <RunningFigureIndicator />
+        ) : status === "loading" ? (
           <div className="h-2 w-2 animate-spin rounded-full border border-violet-500 border-t-transparent" />
-        )}
-        {status === "working" && (
+        ) : status === "working" ? (
           <div className="h-2 w-2 animate-pulse rounded-full bg-violet-500" />
-        )}
-        {status === "online" && (
+        ) : status === "online" ? (
           <div className="h-2 w-2 rounded-full bg-emerald-500" />
-        )}
-        {status === "idle" && (
+        ) : status === "idle" ? (
           <div className="h-2 w-2 rounded-full bg-amber-500" />
-        )}
-        {status === "offline" && (
+        ) : status === "offline" ? (
           <div className="h-2 w-2 rounded-full bg-zinc-300 dark:bg-zinc-700" />
-        )}
-        {status === "error" && (
+        ) : status === "error" ? (
           <div className="h-2 w-2 rounded-full bg-red-500" />
-        )}
+        ) : null}
       </div>
     </div>
   );
+});
+
+function RunningFigureIndicator() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      className="h-4 w-4 shrink-0 text-violet-600 dark:text-violet-400"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="1.8"
+    >
+      {/* Head */}
+      <circle cx="14" cy="4" r="1.4" fill="currentColor" stroke="none" />
+
+      {/* Torso */}
+      <line x1="13.5" y1="5.5" x2="11" y2="12">
+        <animate attributeName="y2" values="12;11.5;12;11.5;12" dur="0.6s" repeatCount="indefinite" />
+      </line>
+
+      {/* Back arm (depth via opacity) */}
+      <path strokeOpacity="0.4" d="M13 7 L10 9.5">
+        <animate attributeName="d"
+          values="M13 7 L10 9.5;M13 7 L15.5 9;M13 7 L16 10.5;M13 7 L15.5 9;M13 7 L10 9.5"
+          dur="0.6s" repeatCount="indefinite" />
+      </path>
+
+      {/* Front arm */}
+      <path d="M13 7 L16 10.5">
+        <animate attributeName="d"
+          values="M13 7 L16 10.5;M13 7 L11.5 10;M13 7 L10 9.5;M13 7 L11.5 10;M13 7 L16 10.5"
+          dur="0.6s" repeatCount="indefinite" />
+      </path>
+
+      {/* Back leg (depth via opacity) */}
+      <path strokeOpacity="0.4" d="M11 12 L8 15 L6.5 16">
+        <animate attributeName="d"
+          values="M11 12 L8 15 L6.5 16;M11 12 L12 16 L14 19;M11 12 L14.5 15.5 L16.5 18;M11 12 L12 16 L14 19;M11 12 L8 15 L6.5 16"
+          dur="0.6s" repeatCount="indefinite" />
+      </path>
+
+      {/* Front leg */}
+      <path d="M11 12 L14.5 15.5 L16.5 18">
+        <animate attributeName="d"
+          values="M11 12 L14.5 15.5 L16.5 18;M11 12 L12 16 L10 19;M11 12 L8 15 L6.5 16;M11 12 L12 16 L10 19;M11 12 L14.5 15.5 L16.5 18"
+          dur="0.6s" repeatCount="indefinite" />
+      </path>
+
+      {/* Motion lines */}
+      <g strokeOpacity="0.25" strokeWidth="1.2">
+        <line x1="6" y1="7" x2="3" y2="7.5">
+          <animate attributeName="x1" values="6;4;6" dur="0.3s" repeatCount="indefinite" />
+          <animate attributeName="x2" values="3;1;3" dur="0.3s" repeatCount="indefinite" />
+        </line>
+        <line x1="5" y1="10" x2="2.5" y2="10.5">
+          <animate attributeName="x1" values="5;3;5" dur="0.3s" repeatCount="indefinite" />
+          <animate attributeName="x2" values="2.5;0.5;2.5" dur="0.3s" repeatCount="indefinite" />
+        </line>
+      </g>
+    </svg>
+  );
 }
 
-function SidebarSectionHeader({
+export const SidebarSectionHeader = memo(function SidebarSectionHeader({
   title,
   onAdd,
 }: {
   title: string;
-  onAdd: () => void;
+  onAdd?: () => void;
 }) {
   return (
-    <div className="flex items-center justify-between px-2 text-[10px] font-bold uppercase tracking-widest text-zinc-500 dark:text-zinc-500">
-      <span>{title}</span>
-      <button
-        type="button"
-        onClick={onAdd}
-        className="rounded p-0.5 opacity-40"
-      >
-        <Plus className="h-3 w-3" />
-      </button>
+    <div className="flex items-center justify-between px-2">
+      <h3 className="text-[10px] font-bold uppercase tracking-widest text-zinc-400 dark:text-zinc-500">
+        {title}
+      </h3>
+      {onAdd && (
+        <button
+          type="button"
+          onClick={onAdd}
+          className="rounded p-0.5 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-900 dark:hover:bg-zinc-900 dark:hover:text-zinc-100"
+        >
+          <Plus className="h-3.5 w-3.5" />
+        </button>
+      )}
     </div>
   );
-}
-
-function AgentEditorModal({
-  agent,
-  teamSettings,
-  rolePresets,
-  visibleChannels,
-  onClose,
-  onSelect,
-  onUpdateAgent,
-}: {
-  agent: BootstrapResponse["members"][number] | null;
-  teamSettings: WorkspaceSidebarProps["teamSettings"];
-  rolePresets: RolePresetTemplate[];
-  visibleChannels: BootstrapResponse["channels"];
-  onClose: () => void;
-  onSelect: (conv: SelectedConversation) => void;
-  onUpdateAgent: WorkspaceSidebarProps["onUpdateAgent"];
-}) {
-  const [draft, setDraft] = useState<AgentEditorDraft | null>(() =>
-    agent ? buildAgentEditorDraft({ agent, teamSettings, rolePresets, channels: visibleChannels }) : null,
-  );
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const availableTools = useMemo(() => {
-    if (!draft) return [];
-    return uniqueSorted([
-      ...rolePresets.flatMap((preset) => preset.tools ?? []),
-      ...(teamSettings?.roles.flatMap((role) => role.tools ?? []) ?? []),
-      ...draft.tools,
-    ]);
-  }, [draft, rolePresets, teamSettings?.roles]);
-
-  if (!agent || !draft) return null;
-
-  const patchDraft = (patch: Partial<AgentEditorDraft>) => {
-    setDraft((current) => (current ? { ...current, ...patch } : current));
-  };
-
-  const toggleTool = (tool: string) => {
-    setDraft((current) => {
-      if (!current) return current;
-      const exists = current.tools.includes(tool);
-      return {
-        ...current,
-        tools: exists
-          ? current.tools.filter((item) => item !== tool)
-          : uniqueSorted([...current.tools, tool]),
-      };
-    });
-  };
-
-  const toggleChannel = (channelId: string) => {
-    setDraft((current) => {
-      if (!current) return current;
-      const channels = current.channels.includes(channelId)
-        ? current.channels.filter((id) => id !== channelId)
-        : [...current.channels, channelId];
-      return { ...current, channels };
-    });
-  };
-
-  return (
-    <Modal isOpen onClose={onClose} title="Edit Agent">
-      <div className="space-y-5">
-        <div className="flex items-center gap-4 rounded-2xl border border-zinc-200 bg-zinc-50 p-4 dark:border-zinc-800 dark:bg-zinc-900/50">
-          <Avatar name={draft.name} size="lg" />
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-bold text-zinc-900 dark:text-white">
-              {draft.name}
-            </p>
-            <p className="mt-0.5 truncate text-xs text-zinc-500 dark:text-zinc-400">
-              {draft.roleName} · {draft.personalityName}
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={() =>
-              onSelect({
-                type: "agent",
-                id: draft.memberId,
-                name: draft.name,
-              })
-            }
-            className="inline-flex items-center gap-2 rounded-xl border border-zinc-200 bg-white px-3 py-2 text-xs font-semibold text-zinc-700 transition hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200 dark:hover:bg-zinc-900"
-          >
-            Open chat
-          </button>
-        </div>
-
-        <div className="grid gap-4 md:grid-cols-2">
-          <FieldShell label="Agent name" htmlFor="agentName">
-            <TextInput
-              id="agentName"
-              value={draft.name}
-              onChange={(event) => patchDraft({ name: event.target.value })}
-            />
-          </FieldShell>
-
-          <FieldShell label="Role name" htmlFor="agentRoleName">
-            <TextInput
-              id="agentRoleName"
-              value={draft.roleName}
-              onChange={(event) => patchDraft({ roleName: event.target.value })}
-            />
-          </FieldShell>
-        </div>
-
-        <FieldShell label="Personality" htmlFor="agentPersonality">
-          <Select
-            id="agentPersonality"
-            value={draft.personalityName}
-            onChange={(event) =>
-              patchDraft({ personalityName: event.target.value })
-            }
-            options={[...PERSONALITY_OPTIONS]}
-            placeholder="Select personality"
-          />
-        </FieldShell>
-
-        <ProviderModelFields
-          provider={draft.llm}
-          model={draft.model}
-          onProviderChange={(provider) =>
-            patchDraft({
-              llm: provider,
-              model: defaultModelForProvider(provider),
-            })
-          }
-          onModelChange={(model) => patchDraft({ model })}
-          providerLabel="LLM provider"
-          modelLabel="Model"
-          providerId="agentEditProvider"
-          modelId="agentEditModel"
-        />
-
-        <div className="grid gap-4 md:grid-cols-2">
-          <FieldShell label="Role title" htmlFor="agentRoleTitle">
-            <TextInput
-              id="agentRoleTitle"
-              value={draft.title}
-              onChange={(event) => patchDraft({ title: event.target.value })}
-            />
-          </FieldShell>
-
-          <FieldShell label="Role description" htmlFor="agentRoleDescription">
-            <TextInput
-              id="agentRoleDescription"
-              value={draft.description}
-              onChange={(event) => patchDraft({ description: event.target.value })}
-            />
-          </FieldShell>
-        </div>
-
-        <FieldShell label="Role instructions" htmlFor="agentInstructions">
-          <TextArea
-            id="agentInstructions"
-            className="min-h-28"
-            value={draft.instructions}
-            onChange={(event) => patchDraft({ instructions: event.target.value })}
-          />
-        </FieldShell>
-
-        <div className="grid gap-4">
-          <FieldShell
-            label="Workspace scopes"
-            htmlFor="agentWorkspaceScopes"
-            hint="Comma-separated paths"
-          >
-            <TextInput
-              id="agentWorkspaceScopes"
-              value={joinCsvValues(draft.workspaceScopes)}
-              onChange={(event) =>
-                patchDraft({ workspaceScopes: listCsvValues(event.target.value) })
-              }
-            />
-          </FieldShell>
-
-          <FieldShell label="Tools" htmlFor="agentTools" hint="Select available tools, or type custom values">
-            <div className="space-y-3">
-              <div className="flex flex-wrap gap-2">
-                {availableTools.length > 0 ? (
-                  availableTools.map((tool) => {
-                    const selected = draft.tools.includes(tool);
-                    return (
-                      <button
-                        key={tool}
-                        type="button"
-                        onClick={() => toggleTool(tool)}
-                        className={`rounded-full border px-3 py-1 text-xs font-semibold transition ${
-                          selected
-                            ? "border-violet-500 bg-violet-100 text-violet-700 dark:border-violet-400 dark:bg-violet-500/20 dark:text-violet-200"
-                            : "border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300 dark:hover:bg-zinc-900"
-                        }`}
-                        aria-pressed={selected}
-                      >
-                        {tool}
-                      </button>
-                    );
-                  })
-                ) : (
-                  <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                    No tools from presets or team settings.
-                  </p>
-                )}
-              </div>
-              <TextInput
-                id="agentTools"
-                value={joinCsvValues(draft.tools)}
-                onChange={(event) =>
-                  patchDraft({ tools: uniqueSorted(listCsvValues(event.target.value)) })
-                }
-              />
-            </div>
-          </FieldShell>
-
-          <FieldShell label="Skills" htmlFor="agentSkills" hint="Comma-separated skill names">
-            <TextInput
-              id="agentSkills"
-              value={joinCsvValues(draft.skills)}
-              onChange={(event) => patchDraft({ skills: listCsvValues(event.target.value) })}
-            />
-          </FieldShell>
-        </div>
-
-        <div>
-          <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-            Channels
-          </p>
-          <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-            Select where this agent can participate.
-          </p>
-          <div className="mt-3 grid gap-2">
-            {visibleChannels.map((channel) => (
-              <label
-                key={channel.id}
-                className="flex items-center gap-3 rounded-xl border border-zinc-200 px-4 py-3 text-sm dark:border-zinc-800"
-              >
-                <input
-                  type="checkbox"
-                  checked={draft.channels.includes(channel.id)}
-                  onChange={() => toggleChannel(channel.id)}
-                  className="h-4 w-4 rounded border-zinc-300 text-violet-600 focus:ring-violet-500"
-                />
-                <span className="font-medium text-zinc-700 dark:text-zinc-200">
-                  {channel.name}
-                </span>
-              </label>
-            ))}
-          </div>
-        </div>
-
-        {error ? <p className="text-xs text-red-600 dark:text-red-400">{error}</p> : null}
-
-        <div className="flex items-center justify-between gap-3 pt-1">
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-xl px-4 py-2 text-sm font-semibold text-zinc-600 transition hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-900"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            disabled={saving}
-            onClick={async () => {
-              setError(null);
-              setSaving(true);
-              try {
-                const updated = await onUpdateAgent({
-                  previousAgentId: draft.memberId,
-                  previousRoleName: draft.originalRoleName,
-                  memberId: draft.memberId,
-                  name: draft.name.trim(),
-                  roleName: draft.roleName.trim(),
-                  personalityName: draft.personalityName.trim() || "direct",
-                  channelIds: draft.channels,
-                  llm: draft.llm.trim(),
-                  model: draft.model.trim(),
-                  role: {
-                    name: draft.roleName.trim(),
-                    title: draft.title.trim() || draft.roleName.trim(),
-                    description: draft.description.trim(),
-                    instructions: draft.instructions.trim(),
-                    kind: "agent",
-                    provider: draft.llm.trim(),
-                    model: draft.model.trim(),
-                    workspaceScopes: draft.workspaceScopes,
-                    tools: draft.tools,
-                    channels: draft.channels
-                      .map((channelId) => visibleChannels.find((channel) => channel.id === channelId)?.name)
-                      .filter((channelName): channelName is string => Boolean(channelName)),
-                    skills: draft.skills,
-                  },
-                });
-                if (!updated) throw new Error("Unable to update agent.");
-                onClose();
-                onSelect({
-                  type: "agent",
-                  id: updated.id,
-                  name: updated.name,
-                });
-              } catch (err) {
-                setError(
-                  err instanceof Error ? err.message : "Unable to update agent.",
-                );
-              } finally {
-                setSaving(false);
-              }
-            }}
-            className="rounded-xl bg-violet-600 px-6 py-2 text-sm font-bold text-white shadow-lg shadow-violet-500/20 transition hover:bg-violet-700 disabled:opacity-50 disabled:shadow-none"
-          >
-            Save changes
-          </button>
-        </div>
-      </div>
-    </Modal>
-  );
-}
+});

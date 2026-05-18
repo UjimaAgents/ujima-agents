@@ -15,6 +15,7 @@ import { ACTIVE_WORKSPACE_SETTING_KEY } from '@ujima/orchestrator';
 import { z } from 'zod';
 import { requireOrgSession } from './org-auth.js';
 import { readSessionToken } from '../session-token.js';
+import { apiError, errorMessage } from './route-errors.js';
 
 const WorkspaceIdParamsSchema = z.object({ id: z.string().min(1) });
 const WorkspaceRemovedResponseSchema = z.object({ removed: z.boolean() });
@@ -129,7 +130,7 @@ export function registerWorkspaceRoutes(
         workspaceRoot: teamSettings.workspace.root,
       };
     } catch (err) {
-      const message = errMessage(err);
+      const message = errorMessage(err);
       const status = message.includes('not found') ? 404 : 400;
       return replyError(reply, status, status === 404 ? 'ERR_NOT_FOUND' : 'ERR_BAD_REQUEST', message);
     }
@@ -161,7 +162,7 @@ export function registerWorkspaceRoutes(
     try {
       return toWorkspaceDto(host.workspaces.update(id, req.body));
     } catch (err) {
-      return replyError(reply, 404, 'ERR_NOT_FOUND', errMessage(err));
+      return apiError(reply, 404, errorMessage(err));
     }
   });
 
@@ -188,7 +189,7 @@ export function registerWorkspaceRoutes(
       return replyError(reply, 404, 'ERR_NOT_FOUND', `workspace "${id}" not found`);
     }
     const ws = host.workspaces.get(id);
-    if (!ws) return replyError(reply, 404, 'ERR_NOT_FOUND', `workspace "${id}" not found`);
+    if (!ws) return apiError(reply, 404, `workspace "${id}" not found`);
     return toWorkspaceDto(ws);
   });
 
@@ -304,10 +305,6 @@ function toWorkspaceDto(ws: { id: string; root_path: string | null; label: strin
 
 function replyError(reply: FastifyReply, status: number, code: string, message: string): FastifyReply {
   return reply.status(status).send({ code, message });
-}
-
-function errMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }
 
 function pathsMatch(a: string | null, b: string): boolean {

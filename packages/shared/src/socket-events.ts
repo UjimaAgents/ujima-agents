@@ -42,6 +42,7 @@ export const SocketEventNames = Object.freeze({
   runStarted: 'run:started',
   runUpdated: 'run:updated',
   runCompleted: 'run:completed',
+  runChunk: 'run:chunk',
   memberUpdated: 'member:updated',
   memberAlerted: 'member.alerted',
   memberAlertFailed: 'member.alert_failed',
@@ -105,6 +106,16 @@ export const RunEventSchema = z.object({
   run: RunStateSchema,
 });
 export type RunEvent = z.infer<typeof RunEventSchema>;
+
+export const RunChunkEventSchema = z.object({
+  organizationId: IdSchema,
+  runId: IdSchema,
+  threadId: IdSchema,
+  agentId: IdSchema,
+  kind: z.enum(['text', 'reasoning']),
+  delta: z.string(),
+});
+export type RunChunkEvent = z.infer<typeof RunChunkEventSchema>;
 
 export const MemberUpdatedEventSchema = z.object({
   organizationId: IdSchema,
@@ -202,6 +213,7 @@ export const SocketEventSchemas = Object.freeze({
   [SocketEventNames.runStarted]: RunEventSchema,
   [SocketEventNames.runUpdated]: RunEventSchema,
   [SocketEventNames.runCompleted]: RunEventSchema,
+  [SocketEventNames.runChunk]: RunChunkEventSchema,
   [SocketEventNames.memberUpdated]: MemberUpdatedEventSchema,
   [SocketEventNames.memberAlerted]: MemberAlertedEventSchema,
   [SocketEventNames.memberAlertFailed]: MemberAlertFailedEventSchema,
