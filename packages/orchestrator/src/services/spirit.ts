@@ -204,6 +204,16 @@ export interface RunSpiritOutcome {
   iterations: number;
   toolCalls: number;
   tokensUsed: number;
+  /**
+   * Name of the highest-precedence terminating tool that fired in this
+   * run, or `null` if none fired. Publishing tools (`message`,
+   * `channel.post`, `channel.reply`, `channel.dm`, `channel.handoff`)
+   * indicate the agent already delivered its reply via tool call, so
+   * callers must NOT treat an empty `finalText` as a failure.
+   * `channel.pass` is reported here too — it terminates the run but
+   * publishes nothing.
+   */
+  terminatingTool: string | null;
 }
 
 export interface RunDetailAggregate {
@@ -250,7 +260,13 @@ export interface SpiritAlertInput {
 
 export interface SpiritSupervisorReplyOutcome {
   taskSessionId: string;
-  message: Message;
+  /**
+   * The message we published from this dispatcher. `null` when the
+   * supervisor already published its reply via a terminating tool
+   * (e.g. `channel.reply`) — in that case the tool wrote the visible
+   * message and the dispatcher emits nothing on top.
+   */
+  message: Message | null;
   fallback: boolean;
   reason: string;
 }
@@ -919,12 +935,22 @@ export class SpiritService {
         lastText || undefined,
       );
 
+      // Persisted run-steps act as a safety net when provider/SDK
+      // result shapes drop tool names from the final step object —
+      // the tool service writes the canonical id after each call.
+      const persistedRunSteps = spirit.runId
+        ? this.repo.listRunSteps?.(input.organizationId, spirit.runId) ?? []
+        : [];
+      const terminatingTool =
+        findTerminatingTool(result) ?? findTerminatingToolFromRunSteps(persistedRunSteps);
+
       return {
         spirit: completed,
         finalText: lastText,
         iterations: totalTurns,
         toolCalls: totalToolCalls,
         tokensUsed: totalTokens,
+        terminatingTool,
       };
     } catch (err) {
       if (findToolApprovalRequiredError(err)) {
@@ -946,12 +972,18 @@ export class SpiritService {
           }
         }
         this.emit(SocketEventNames.spiritUpdated, waiting);
+        // Approval-paused turns: a tool fired but its result is
+        // deferred, so we can only consult persisted run-steps here.
+        const pausedRunSteps = spirit.runId
+          ? this.repo.listRunSteps?.(input.organizationId, spirit.runId) ?? []
+          : [];
         return {
           spirit: waiting,
           finalText: lastText,
           iterations: totalTurns,
           toolCalls: totalToolCalls,
           tokensUsed: totalTokens,
+          terminatingTool: findTerminatingToolFromRunSteps(pausedRunSteps),
         };
       }
       const message = errorMessage(err);
@@ -1061,12 +1093,26 @@ export class SpiritService {
       });
       // L7 — mandatory-reply for supervisor turns. When a
       // `@mention` lands and the supervisor produces no reply
-      // text, the fallback summary masks a real failure (the
-      // human asked, the agent didn't answer). For mention
-      // wakes we surface the failure event INSTEAD of publishing
-      // the canned status fallback.
+      // text AND no terminating tool fired, the fallback summary
+      // masks a real failure (the human asked, the agent didn't
+      // answer). For mention wakes we surface the failure event
+      // INSTEAD of publishing the canned status fallback.
+      //
+      // Why also check `terminatingTool`: under the read-all/
+      // speak-when-useful palette, supervisors reply via
+      // terminating tools (`channel.reply`, `channel.post`,
+      // `channel.dm`, `message`) which intentionally leave
+      // `finalText` empty — the tool already wrote the visible
+      // reply. Without this gate, every tool-based mention reply
+      // gets misclassified as `must_reply_failed` and the canned
+      // fallback overwrites the real answer. `channel.pass` is a
+      // terminator that publishes nothing, so it stays a failure
+      // (and the palette layer above strips it anyway when the
+      // wake reason is `mention`).
       const replyText = outcome.finalText.trim();
-      if (!replyText && input.wakeReason === 'mention') {
+      const publishedViaTool =
+        outcome.terminatingTool !== null && outcome.terminatingTool !== 'channel.pass';
+      if (!replyText && !publishedViaTool && input.wakeReason === 'mention') {
         this.realtime.emit(
           SocketEventNames.memberMustReplyFailed,
           {
@@ -1091,6 +1137,17 @@ export class SpiritService {
           message: failureMessage,
           fallback: true,
           reason: 'must_reply_failed',
+        };
+      }
+      // If the supervisor already published its reply via a
+      // terminating tool, the tool wrote the message — emit no
+      // additional fallback/status text on top.
+      if (publishedViaTool) {
+        return {
+          taskSessionId,
+          message: null,
+          fallback: false,
+          reason: 'ok',
         };
       }
       const finalText = replyText || `Currently on step ${session.status} of #${session.slug}.`;
