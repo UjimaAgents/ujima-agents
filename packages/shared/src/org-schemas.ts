@@ -214,8 +214,22 @@ export const MessageAttachmentSchema = z.object({
 });
 export type MessageAttachment = z.infer<typeof MessageAttachmentSchema>;
 
+export const HandoffMetadataSchema = z.object({
+  from: IdSchema,
+  to: IdSchema,
+  reason: z.string().min(1).max(120),
+  complete: z.boolean().default(false),
+});
+export type HandoffMetadata = z.infer<typeof HandoffMetadataSchema>;
+
 export const MessageMetadataSchema = z.object({
   goalMode: z.boolean().optional(),
+  /**
+   * Set by the `channel.handoff` tool. `complete: true` signals
+   * the chain terminated (replaces the old `'Acknowledged.'`
+   * literal termination protocol).
+   */
+  handoff: HandoffMetadataSchema.optional(),
 }).optional();
 export type MessageMetadata = z.infer<typeof MessageMetadataSchema>;
 
@@ -236,6 +250,12 @@ export const MessageSchema = z.object({
   toolCalls: z.array(MessageToolCallSchema).default([]),
   attachments: z.array(AttachmentSchema).default([]),
   metadata: MessageMetadataSchema,
+  /**
+   * L10 — client-supplied idempotency key. Optional. When present
+   * the daemon dedupes against the (org, sender, clientMessageId)
+   * triple so retried POSTs are no-ops.
+   */
+  clientMessageId: IdSchema.optional(),
   createdAt: TimestampSchema,
   editedAt: TimestampSchema.optional(),
   deletedAt: TimestampSchema.optional(),
@@ -310,6 +330,24 @@ export const RunStateSchema = z.object({
   summary: z.string().default(''),
   startedAt: TimestampSchema,
   endedAt: TimestampSchema.optional(),
+  // Why this run was created. Drives mandatory-reply enforcement and
+  // observability. `mention` runs cannot terminate via `channel.pass`
+  // or `self.note` (policy rejects both). Persisted as a string so a
+  // future enum value doesn't break the schema parser on old rows.
+  wakeReason: z.string().nullable().optional(),
+  // The terminating tool the run ended with. One of the entries in
+  // RUN_TERMINATING_TOOL_NAMES, or `null` when the run ended via the
+  // free-text reply path. Useful for metrics: count runs by
+  // terminatingTool x wakeReason to compute pass-rate / reply-rate.
+  terminatingTool: z.string().nullable().optional(),
+  // The message id that triggered this wake. Optional because programmatic
+  // run creation (task-sessions, debugging) need not carry one.
+  sourceMessageId: z.string().nullable().optional(),
+  // Who triggered the wake (the human or agent who tagged this agent).
+  // Required for accurate attribution on `member.must_reply_failed` —
+  // without it, the failure event always points back at the agent
+  // itself, which makes triage useless.
+  byMemberId: z.string().nullable().optional(),
 });
 export type RunState = z.infer<typeof RunStateSchema>;
 

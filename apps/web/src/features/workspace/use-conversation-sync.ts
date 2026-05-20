@@ -237,6 +237,10 @@ export function useConversationSync(
       const sender = bootstrap.auth.member;
       const tempId = `temp:${crypto.randomUUID()}`;
       const now = new Date().toISOString();
+      // L10 — same key is used as the optimistic temp id and the
+      // idempotency token. Network glitches that retry this fetch
+      // re-send the same clientMessageId, so the daemon dedupes.
+      const clientMessageId = crypto.randomUUID();
       addPendingMessage({
         id: tempId,
         senderId: sender.id,
@@ -263,6 +267,7 @@ export function useConversationSync(
             parentMessageId,
             attachmentIds,
             metadata,
+            clientMessageId,
           ),
         ),
       });
@@ -563,6 +568,19 @@ function handleStreamEvent(
       actions.setConversationError(failure.error);
       actions.setMemberActivity(failure.memberId, "error");
       actions.appendActivity(memberAlertFailedToActivity(failure));
+      return;
+    }
+    case "member.must_reply_failed": {
+      // L7/L12 — agent was @mentioned and produced no posting tool.
+      // Surface as conversation error so the human gets a visible
+      // signal that the contract was violated. Detailed rendering
+      // can come later; for now flagging the activity is enough.
+      const body = envelope.payload as { memberId?: unknown };
+      const memberId = typeof body.memberId === "string" ? body.memberId : undefined;
+      if (memberId) {
+        actions.setMemberActivity(memberId, "error");
+      }
+      actions.setConversationError("Agent was @mentioned but did not reply.");
       return;
     }
     case "member:updated": {

@@ -230,6 +230,25 @@ export function registerConversationRoutes(
         return reply.code(403).send({ code: 'ERR_FORBIDDEN', message: 'Unauthorized for this organization.' });
       }
       const senderId = authState.member.id;
+      // L10 — client-supplied idempotency key. If the client sent
+      // `clientMessageId` and a message with the same
+      // (org, sender, clientMessageId) already exists, return it
+      // instead of re-posting. Retried HTTP POSTs (network glitches)
+      // no longer double-wake the channel.
+      const clientMessageId =
+        typeof req.body.clientMessageId === 'string' && req.body.clientMessageId.length > 0
+          ? req.body.clientMessageId
+          : undefined;
+      if (clientMessageId) {
+        const existing = repo.findMessageByClientId?.(
+          req.body.organizationId,
+          senderId,
+          clientMessageId,
+        );
+        if (existing) {
+          return existing;
+        }
+      }
       const message =
         'recipientId' in req.body
           ? conversations.sendDirectMessage({
@@ -241,11 +260,13 @@ export function registerConversationRoutes(
               parentMessageId: req.body.parentMessageId,
               ignore: req.body.ignore,
               metadata: req.body.metadata,
+              clientMessageId,
             })
           : conversations.sendMessage({
               ...req.body,
               senderId,
               metadata: req.body.metadata,
+              clientMessageId,
             });
       if (taskPromoter && message.kind === 'human' && message.channelId) {
         try {

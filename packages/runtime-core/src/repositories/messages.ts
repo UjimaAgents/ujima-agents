@@ -15,6 +15,17 @@ export interface PaginatedMessages {
 export function saveMessage(db: DbHandle, message: Message): Message {
   const payload = MessageSchema.parse(message);
 
+  // L10 — persist the client-supplied idempotency key into the
+  // metadata JSON blob so `findMessageByClientId` can recover it
+  // on retry. We deliberately do not add a SQL column today; the
+  // JSON-scan path is enough for the retry-glitch use case and
+  // avoids a migration. Keep the blob shape:
+  //   { ...metadata, clientMessageId: '...' }
+  const metadataBlob: Record<string, unknown> = {
+    ...(payload.metadata ?? {}),
+    ...(payload.clientMessageId ? { clientMessageId: payload.clientMessageId } : {}),
+  };
+
   db.prepare(
     `INSERT INTO messages (
       id,
@@ -45,7 +56,7 @@ export function saveMessage(db: DbHandle, message: Message): Message {
     payload.content,
     JSON.stringify(payload.mentions),
     JSON.stringify(payload.toolCalls ?? []),
-    JSON.stringify(payload.metadata ?? {}),
+    JSON.stringify(metadataBlob),
     payload.createdAt,
     payload.editedAt ?? null,
     payload.deletedAt ?? null,
@@ -56,6 +67,15 @@ export function saveMessage(db: DbHandle, message: Message): Message {
 
 export function updateMessage(db: DbHandle, message: Message): Message {
   const payload = MessageSchema.parse(message);
+
+  // B4 fix — preserve `clientMessageId` inside the stored metadata
+  // blob on update, matching the saveMessage path. Without this,
+  // any edit / re-publish / compaction strips the idempotency
+  // token and a subsequent retry would no longer dedupe.
+  const metadataBlob: Record<string, unknown> = {
+    ...(payload.metadata ?? {}),
+    ...(payload.clientMessageId ? { clientMessageId: payload.clientMessageId } : {}),
+  };
 
   db.prepare(
     `UPDATE messages
@@ -82,7 +102,7 @@ export function updateMessage(db: DbHandle, message: Message): Message {
     payload.content,
     JSON.stringify(payload.mentions),
     JSON.stringify(payload.toolCalls ?? []),
-    JSON.stringify(payload.metadata ?? {}),
+    JSON.stringify(metadataBlob),
     payload.editedAt ?? null,
     payload.deletedAt ?? null,
     payload.organizationId,
@@ -102,6 +122,37 @@ export function getMessage(
     .get(organizationId, messageId) as Row | null;
 
   if (!row) return null;
+  const attachments = listMessageAttachmentsForMessageIds(db, [messageId]).get(messageId);
+  return rowToMessage(row, attachments);
+}
+
+/**
+ * L10 — idempotency lookup. Searches for a previously saved message
+ * whose metadata JSON blob carries the same `clientMessageId` from
+ * the same sender in the same org. Uses SQLite's json_extract so
+ * the scan is bounded by the (org, sender) prefix on the messages
+ * table; even on busy orgs this is cheap because clientMessageId
+ * dedup only runs when the client explicitly sends one (so only
+ * for retried POSTs).
+ */
+export function findMessageByClientId(
+  db: DbHandle,
+  organizationId: string,
+  senderId: string,
+  clientMessageId: string,
+): Message | null {
+  const row = db
+    .prepare(
+      `SELECT * FROM messages
+       WHERE organization_id = ? AND sender_id = ?
+         AND json_extract(metadata, '$.clientMessageId') = ?
+       ORDER BY created_at DESC, id DESC
+       LIMIT 1`,
+    )
+    .get(organizationId, senderId, clientMessageId) as Row | null;
+
+  if (!row) return null;
+  const messageId = rowString(row, 'id');
   const attachments = listMessageAttachmentsForMessageIds(db, [messageId]).get(messageId);
   return rowToMessage(row, attachments);
 }
@@ -308,7 +359,7 @@ export function deleteMessages(
 function rowToMessage(row: Row, attachments: Attachment[] = []): Message {
   const kind = rowString(row, 'kind');
   const content = rowString(row, 'content');
-  const metadata = metadataFromRow(row.metadata);
+  const { metadata, clientMessageId } = parseRowMetadata(row.metadata);
   return MessageSchema.parse({
     id: rowString(row, 'id'),
     organizationId: rowString(row, 'organization_id'),
@@ -323,20 +374,48 @@ function rowToMessage(row: Row, attachments: Attachment[] = []): Message {
     toolCalls: parseJsonArrayRaw(row.tool_calls),
     attachments,
     ...(metadata ? { metadata } : {}),
+    ...(clientMessageId ? { clientMessageId } : {}),
     createdAt: rowString(row, 'created_at'),
     editedAt: optionalRowString(row, 'edited_at'),
     deletedAt: optionalRowString(row, 'deleted_at'),
   });
 }
 
-function metadataFromRow(raw: unknown): Message['metadata'] {
-  if (typeof raw !== 'string' || raw.length === 0 || raw === '{}') return undefined;
+/**
+ * Split the stored metadata blob into the structured metadata
+ * (parsed by MessageMetadataSchema) and the top-level
+ * `clientMessageId` field. L10 — clientMessageId is persisted
+ * inside the same blob to avoid a SQL migration, but exposed as
+ * a top-level field on the parsed Message.
+ */
+function parseRowMetadata(raw: unknown): {
+  metadata: Message['metadata'];
+  clientMessageId?: string;
+} {
+  if (typeof raw !== 'string' || raw.length === 0 || raw === '{}') {
+    return { metadata: undefined };
+  }
   try {
-    const result = MessageMetadataSchema.safeParse(JSON.parse(raw));
-    if (!result.success || result.data === undefined) return undefined;
-    return Object.keys(result.data).length > 0 ? result.data : undefined;
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const clientMessageId =
+      typeof parsed.clientMessageId === 'string' && parsed.clientMessageId.length > 0
+        ? parsed.clientMessageId
+        : undefined;
+    // Strip clientMessageId out before letting the metadata schema
+    // see it — the schema doesn't declare it, and `.strict()` is
+    // not used so unknown keys are dropped silently, but being
+    // explicit keeps the contract clear.
+    const { clientMessageId: _, ...rest } = parsed;
+    void _;
+    const result = MessageMetadataSchema.safeParse(rest);
+    if (!result.success || result.data === undefined) {
+      return { metadata: undefined, clientMessageId };
+    }
+    const metadata =
+      Object.keys(result.data).length > 0 ? result.data : undefined;
+    return { metadata, clientMessageId };
   } catch {
-    return undefined;
+    return { metadata: undefined };
   }
 }
 

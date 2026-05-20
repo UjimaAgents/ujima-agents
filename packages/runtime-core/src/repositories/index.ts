@@ -94,6 +94,7 @@ import {
 } from './attachments.js';
 import {
   deleteMessages as removeMessages,
+  findMessageByClientId as readMessageByClientId,
   getLatestHumanMessageInThread as readLatestHumanMessageInThread,
   getMessage as readMessage,
   countMessagesSince as readMessageCountSince,
@@ -296,6 +297,17 @@ export class Repository {
   updateMessage = (message: Message): Message => writeMessageUpdate(this.db, message);
   getMessage = (organizationId: string, messageId: string): Message | null =>
     readMessage(this.db, organizationId, messageId);
+  /**
+   * L10 — idempotency lookup. Returns a previously saved message
+   * with the same (org, sender, clientMessageId) triple, or null.
+   * Backed by a json_extract scan on the metadata blob.
+   */
+  findMessageByClientId = (
+    organizationId: string,
+    senderId: string,
+    clientMessageId: string,
+  ): Message | null =>
+    readMessageByClientId(this.db, organizationId, senderId, clientMessageId);
   getLatestHumanMessageInThread = (organizationId: string, threadId: string): Message | null =>
     readLatestHumanMessageInThread(this.db, organizationId, threadId);
   saveAttachment = (attachment: Attachment): Attachment => writeAttachment(this.db, attachment);

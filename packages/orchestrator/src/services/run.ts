@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import { normalizeProviderKey } from '@ujima/framework';
 import {
   AGENT_KIND,
   MessageSchema,
@@ -12,6 +11,7 @@ import {
   type RunState,
   type Message,
   type RunStep,
+  type WakeReason,
 } from '@ujima/shared';
 import type { AiService } from '../ai-service.js';
 import { requireTeam } from '../utils/require-team.js';
@@ -24,7 +24,11 @@ import { applyDashboardTeamOverrides } from './dashboard-team-overrides.js';
 import { appendGoalArtifactToolCall } from './goal-artifact-card.js';
 import { ToolApprovalRequiredError } from './tool-loop-result.js';
 import { extractReasoningChunk } from '../utils/extract-reasoning.js';
-import { runUsedThreadPublishingTool } from './run-reply-guard.js';
+import {
+  findTerminatingTool,
+  findTerminatingToolFromRunSteps,
+  runUsedChannelPass,
+} from './run-reply-guard.js';
 import { goalModeEnabledFromMessage, goalModeSystemPromptSuffix } from './goal-mode-prompt.js';
 
 export interface CreateRunInput {
@@ -32,6 +36,12 @@ export interface CreateRunInput {
   agentId: string;
   threadId: string;
   summary?: string;
+  /** Why this run was woken — drives mandatory-reply enforcement. */
+  wakeReason?: WakeReason;
+  /** Message id that triggered this run, when applicable. */
+  sourceMessageId?: string;
+  /** Who triggered the wake (for mandatory-reply failure attribution). */
+  byMemberId?: string;
 }
 
 export interface RunDetailAggregate {
@@ -94,6 +104,10 @@ export class RunService {
       step: 'queued',
       summary: input.summary ?? 'Run queued',
       startedAt: new Date().toISOString(),
+      wakeReason: input.wakeReason ?? null,
+      sourceMessageId: input.sourceMessageId ?? null,
+      byMemberId: input.byMemberId ?? null,
+      terminatingTool: null,
     });
 
     this.repo.saveRun(run);
@@ -365,10 +379,12 @@ export class RunService {
       return this.failRun(run, `Agent not found: ${member.id}`);
     }
 
-    const providerName = normalizeProviderKey(member.llm ?? role.provider ?? '');
-    if (providerName && !this.repo.getProviderCredential(run.organizationId, providerName)) {
-      return this.failRun(run, `Provider key missing for "${providerName}"`);
-    }
+    // Provider credential check intentionally not pre-flighted here.
+    // `resolveSpiritModel` walks the configured providers and falls
+    // back to any provider with a usable API key, so a missing key
+    // on the role's preferred provider is no longer a hard failure.
+    // If NO provider has a key, `generateRunReply` will throw and
+    // the run-fail path below handles the error.
 
     const preCancel = this.repo.getRun(run.organizationId, run.id);
     if (preCancel?.status === 'cancelled') {
@@ -443,11 +459,142 @@ export class RunService {
         return this.waitForApproval(running, 'Waiting for approval');
       }
 
+      // Run-termination decision tree (replaces the old
+      // `result.text || 'Acknowledged.'` forced-reply). Branches:
+      //   1. Channel.pass + non-empty text  → drop the text (L12),
+      //      emit `agent.passed_with_text` for audit. Run completes
+      //      silently with `terminatingTool = 'channel.pass'`.
+      //   2. Channel.pass only              → no publish, emit
+      //      `run.silent_completion`.
+      //   3. Other terminating tool fired   → tool already published;
+      //      record `terminatingTool`, complete.
+      //   4. No terminating tool + text     → publish text (happy
+      //      path), `terminatingTool = null`.
+      //   5. No terminating tool + empty text:
+      //        - wakeReason === 'mention' → FAIL the run with
+      //          `member.must_reply_failed`; the mandatory-reply
+      //          contract requires a posting tool.
+      //        - otherwise → emit `run.empty_completion` and complete
+      //          silently. No more `'Acknowledged.'` fallback.
       const text = result.text.trim();
-      const reply = text || 'Acknowledged.';
+      const terminatingTool =
+        findTerminatingTool(result) ??
+        findTerminatingToolFromRunSteps(
+          this.repo.listRunSteps?.(run.organizationId, run.id) ?? [],
+        );
+      const usedPass = runUsedChannelPass(result);
       const reasoningContent = extractReasoningChunk(result);
-      const skipFinalThreadMessage = runUsedThreadPublishingTool(result);
-      if (run.threadId && !skipFinalThreadMessage) {
+      const channelId = run.threadId
+        ? this.repo.getThread(run.organizationId, run.threadId)?.channelId
+        : undefined;
+      const wakeReason = (running.wakeReason ?? null) as WakeReason | null;
+      const now = new Date().toISOString();
+
+      if (usedPass && text.length > 0) {
+        // L12 — sycophantic pass: model called channel.pass AND
+        // emitted prose. The tool is authoritative; drop the text.
+        this.realtime.emit(
+          SocketEventNames.agentPassedWithText,
+          {
+            organizationId: run.organizationId,
+            channelId,
+            threadId: run.threadId,
+            memberId: run.agentId,
+            runId: run.id,
+            droppedText: text,
+            occurredAt: now,
+          },
+          this.getRooms(run),
+        );
+      }
+
+      if (usedPass && !terminatingTool) {
+        // Shouldn't happen — findTerminatingTool returns the first
+        // terminating tool found, and channel.pass is in the set.
+        // Defensive: treat as silent completion.
+      }
+
+      if (terminatingTool === 'channel.pass') {
+        this.repo.saveRun({
+          ...running,
+          terminatingTool: 'channel.pass',
+        });
+        this.realtime.emit(
+          SocketEventNames.runSilentCompletion,
+          {
+            organizationId: run.organizationId,
+            runId: run.id,
+            memberId: run.agentId,
+            wakeReason: wakeReason ?? undefined,
+            occurredAt: now,
+          },
+          this.getRooms(run),
+        );
+        return this.completeRun(running, 'passed', 'channel.pass');
+      }
+
+      if (terminatingTool) {
+        // A posting tool already published the visible reply
+        // (message / channel.reply / channel.post / channel.dm /
+        // channel.handoff). Just record the terminator and complete.
+        return this.completeRun(running, terminatingTool, terminatingTool);
+      }
+
+      // No terminating tool fired.
+      if (text.length === 0) {
+        if (wakeReason === 'mention') {
+          // Mandatory-reply violation. Auto-fail the run; emit the
+          // failure event so the human gets a visible signal.
+          //
+          // B2 fix — read `byMemberId` from the run row (persisted at
+          // createRun time). Without this, attribution would always
+          // point back at the agent itself, making the event useless
+          // for triage.
+          //
+          // B3 fix — `messageId` must satisfy `IdSchema.min(1)`.
+          // For mention-wake runs we always have a sourceMessageId
+          // because wakeMemberWithFailureEvents requires one to enter
+          // this branch. Defend with an early `failRun` (no emit) for
+          // programmatic runs that somehow reach here without it —
+          // the alternative (empty string) would crash the realtime
+          // emit on schema parse.
+          const byMemberId = running.byMemberId ?? run.agentId;
+          const messageId = running.sourceMessageId;
+          if (messageId) {
+            this.realtime.emit(
+              SocketEventNames.memberMustReplyFailed,
+              {
+                organizationId: run.organizationId,
+                runId: run.id,
+                memberId: run.agentId,
+                byMemberId,
+                channelId,
+                threadId: run.threadId,
+                messageId,
+                occurredAt: now,
+              },
+              this.getRooms(run),
+            );
+          }
+          return this.failRun(running, 'must_reply_failed: agent was @mentioned but did not reply');
+        }
+        // Non-mention empty completion. Log and finish silently.
+        this.realtime.emit(
+          SocketEventNames.runEmptyCompletion,
+          {
+            organizationId: run.organizationId,
+            runId: run.id,
+            memberId: run.agentId,
+            wakeReason: wakeReason ?? undefined,
+            occurredAt: now,
+          },
+          this.getRooms(run),
+        );
+        return this.completeRun(running, 'empty', null);
+      }
+
+      // Happy path: free-text reply, no tool, non-empty text.
+      if (run.threadId) {
         const goalArtifactToolCall = await appendGoalArtifactToolCall(
           result.steps.flatMap((step: (typeof result.steps)[number]) => step?.toolCalls ?? []),
           team.workspace.root,
@@ -457,19 +604,19 @@ export class RunService {
             id: randomUUID(),
             organizationId: run.organizationId,
             threadId: run.threadId,
-            channelId: this.repo.getThread(run.organizationId, run.threadId)?.channelId,
+            channelId,
             senderId: run.agentId,
             senderKind: AGENT_KIND,
             kind: AGENT_KIND,
-            content: reply,
+            content: text,
             ...(goalArtifactToolCall ? { toolCalls: [goalArtifactToolCall] } : {}),
             ...(reasoningContent ? { reasoningContent } : {}),
-            createdAt: new Date().toISOString(),
+            createdAt: now,
           }),
         );
       }
 
-      return this.completeRun(running, reply);
+      return this.completeRun(running, text, null);
     } catch (error) {
       if (error instanceof ToolApprovalRequiredError) {
         if (this.consumeDeferredApprovalResume(run.organizationId, run.id)) {
@@ -488,13 +635,18 @@ export class RunService {
     }
   }
 
-  private completeRun(run: RunState, summary: string): RunState {
+  private completeRun(
+    run: RunState,
+    summary: string,
+    terminatingTool: string | null,
+  ): RunState {
     const completed = this.repo.saveRun({
       ...run,
       status: 'completed',
       step: 'completed',
       summary,
       endedAt: new Date().toISOString(),
+      terminatingTool,
     });
 
     this.realtime.emit(

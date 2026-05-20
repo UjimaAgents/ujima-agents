@@ -815,8 +815,375 @@ describe('RunService', () => {
     const result = await (service as any).advanceRun(run);
 
     expect(result.status).toBe('completed');
-    expect(result.summary).toBe('Acknowledged in prose.');
+    // New behaviour (Phase 1 loophole-fix): when a terminating tool
+    // already published the visible reply, the run records the tool
+    // id as the summary (and as terminatingTool) rather than echoing
+    // the model's prose. The thread is NOT re-published (messages
+    // stays empty).
+    expect(result.summary).toBe('channel.dm');
+    expect(result.terminatingTool).toBe('channel.dm');
     expect(messages).toEqual([]);
+  });
+
+  it('completes a mention run when a persisted channel.reply already posted', async () => {
+    const organizationId = 'org-1';
+    const runId = 'run-persisted-reply-1';
+    const agentId = 'Quinn Mason';
+    const threadId = 'thread-1';
+    const emitted: { event: string; payload: any }[] = [];
+    const messages: string[] = [];
+    let run: any = {
+      id: runId,
+      organizationId,
+      agentId,
+      threadId,
+      status: 'queued',
+      step: 'queued',
+      summary: 'Run queued',
+      startedAt: '2026-05-04T19:07:08.071Z',
+      wakeReason: 'mention',
+      sourceMessageId: 'msg-trigger-1',
+      byMemberId: 'human-1',
+    };
+    const repo = {
+      getMember: () => ({
+        id: agentId,
+        organizationId,
+        name: agentId,
+        kind: AGENT_KIND,
+        roleName: 'backend-engineer',
+      }),
+      saveRun: (next: any) => {
+        run = next;
+        return next;
+      },
+      getRun: () => run,
+      getProviderCredential: () => null,
+      getWorkspaceSetting: () => null,
+      listMembers: () => [],
+      listPendingApprovals: () => [],
+      listMessages: () => ({ data: [], hasMore: false }),
+      listRunSteps: () => [
+        {
+          id: 'step-1',
+          organizationId,
+          runId,
+          threadId,
+          agentId,
+          toolCallId: 'tool-call-1',
+          toolId: 'channel.reply',
+          action: 'message',
+          resourceType: 'message',
+          resourcePath: '',
+          input: {},
+          output: {},
+          status: 'ok',
+          createdAt: '2026-05-04T19:07:09.071Z',
+        },
+      ],
+      getLatestHumanMessageInThread: () => null,
+      getSpiritByRunId: () => null,
+      getThread: () => ({ channelId: 'channel-1' }),
+    } as never;
+    const service = new RunService(
+      {
+        getTeam: () =>
+          loadAgentTeam({
+            name: 'Timetotest',
+            workspace: { root: '/Users/mac/Documents/Work/Timetotest' },
+            roles: [
+              {
+                name: 'backend-engineer',
+                title: 'Backend Engineer',
+                instructions: 'Work on backend.',
+                tools: ['shell'],
+              },
+            ],
+            agents: [{ name: agentId, roleName: 'backend-engineer' }],
+          }),
+        setTeam: () => undefined,
+      } as never,
+      repo,
+      { emit: (event: string, payload: any) => emitted.push({ event, payload }) } as never,
+      { publishMessage: (message: any) => messages.push(message.content) } as never,
+      {
+        generateRunReply: async () => ({
+          text: '',
+          toolResults: [],
+          steps: [{ toolResults: [{ toolCallId: 'tool-call-1', output: {} }] }],
+        }),
+      } as never,
+      {
+        allowRun: () => undefined,
+        invoke: async () => ({ ok: true }),
+      } as never,
+    );
+
+    const result = await (service as any).advanceRun(run);
+
+    expect(result.status).toBe('completed');
+    expect(result.summary).toBe('channel.reply');
+    expect(result.terminatingTool).toBe('channel.reply');
+    expect(messages).toEqual([]);
+    expect(emitted.find((e) => e.event === 'member.must_reply_failed')).toBeUndefined();
+  });
+
+  // L12 — sycophantic pass: when the model calls channel.pass AND
+  // also emits assistant prose, the runtime drops the prose, emits
+  // agent.passed_with_text for audit, and completes silent.
+  it('drops assistant text and emits agent.passed_with_text when channel.pass fires alongside prose (L12)', async () => {
+    const organizationId = 'org-1';
+    const runId = 'run-pass-1';
+    const agentId = 'Quinn Mason';
+    const threadId = 'thread-1';
+    const messages: string[] = [];
+    const emitted: { event: string; payload: any }[] = [];
+    let run: any = {
+      id: runId,
+      organizationId,
+      agentId,
+      threadId,
+      status: 'queued',
+      step: 'queued',
+      summary: 'Run queued',
+      startedAt: '2026-05-04T19:07:08.071Z',
+      wakeReason: 'channel-read',
+    };
+    const repo = {
+      getMember: () => ({
+        id: agentId,
+        organizationId,
+        name: agentId,
+        kind: AGENT_KIND,
+        roleName: 'backend-engineer',
+      }),
+      saveRun: (next: any) => {
+        run = next;
+        return next;
+      },
+      getRun: () => run,
+      getProviderCredential: () => null,
+      getWorkspaceSetting: () => null,
+      listMembers: () => [],
+      listPendingApprovals: () => [],
+      listMessages: () => ({ data: [], hasMore: false }),
+      getLatestHumanMessageInThread: () => null,
+      getSpiritByRunId: () => null,
+      getThread: () => ({ channelId: 'channel-1' }),
+    } as never;
+    const service = new RunService(
+      {
+        getTeam: () =>
+          loadAgentTeam({
+            name: 'Timetotest',
+            workspace: { root: '/Users/mac/Documents/Work/Timetotest' },
+            roles: [
+              {
+                name: 'backend-engineer',
+                title: 'Backend Engineer',
+                instructions: 'Work on backend.',
+                tools: ['shell'],
+              },
+            ],
+            agents: [{ name: agentId, roleName: 'backend-engineer' }],
+          }),
+        setTeam: () => undefined,
+      } as never,
+      repo,
+      { emit: (event: string, payload: any) => emitted.push({ event, payload }) } as never,
+      { publishMessage: (message: any) => messages.push(message.content) } as never,
+      {
+        generateRunReply: async () => ({
+          // Sycophantic: prose AND channel.pass.
+          text: 'I think I should help here actually.',
+          toolResults: [{ toolName: 'channel.pass', output: { status: 'passed', reason: 'not_addressed_to_me' } }],
+          steps: [
+            { toolCalls: [{ toolName: 'channel.pass', input: { reason: 'not_addressed_to_me' } }] },
+          ],
+        }),
+      } as never,
+      {
+        allowRun: () => undefined,
+        invoke: async () => ({ ok: true }),
+      } as never,
+    );
+
+    const result = await (service as any).advanceRun(run);
+
+    expect(result.status).toBe('completed');
+    expect(result.terminatingTool).toBe('channel.pass');
+    // Prose was dropped; channel got nothing.
+    expect(messages).toEqual([]);
+    // Audit event fired with the dropped text preserved.
+    const audit = emitted.find((e) => e.event === 'agent:passed_with_text');
+    expect(audit).toBeDefined();
+    expect(audit?.payload.droppedText).toBe('I think I should help here actually.');
+    // Silent-completion event also fired.
+    expect(emitted.some((e) => e.event === 'run:silent_completion')).toBe(true);
+  });
+
+  // B2 + B3 — when a mention-wake run produces no text and no
+  // terminating tool, auto-fail with `member.must_reply_failed`,
+  // attribute to the persisted byMemberId (not run.agentId), and
+  // skip the emit entirely if sourceMessageId is missing (which
+  // would crash the schema parse).
+  it('auto-fails on mandatory-reply violation, reads byMemberId from run row (B2/B3)', async () => {
+    const organizationId = 'org-1';
+    const runId = 'run-mention-fail-1';
+    const agentId = 'Quinn Mason';
+    const threadId = 'thread-1';
+    const emitted: { event: string; payload: any }[] = [];
+    let run: any = {
+      id: runId,
+      organizationId,
+      agentId,
+      threadId,
+      status: 'queued',
+      step: 'queued',
+      summary: 'Run queued',
+      startedAt: '2026-05-04T19:07:08.071Z',
+      wakeReason: 'mention',
+      sourceMessageId: 'msg-trigger-1',
+      byMemberId: 'human-1',
+    };
+    const repo = {
+      getMember: () => ({
+        id: agentId,
+        organizationId,
+        name: agentId,
+        kind: AGENT_KIND,
+        roleName: 'backend-engineer',
+      }),
+      saveRun: (next: any) => {
+        run = next;
+        return next;
+      },
+      getRun: () => run,
+      getProviderCredential: () => null,
+      getWorkspaceSetting: () => null,
+      listMembers: () => [],
+      listPendingApprovals: () => [],
+      listMessages: () => ({ data: [], hasMore: false }),
+      getLatestHumanMessageInThread: () => null,
+      getSpiritByRunId: () => null,
+      getThread: () => ({ channelId: 'channel-1' }),
+    } as never;
+    const service = new RunService(
+      {
+        getTeam: () =>
+          loadAgentTeam({
+            name: 'Timetotest',
+            workspace: { root: '/Users/mac/Documents/Work/Timetotest' },
+            roles: [
+              {
+                name: 'backend-engineer',
+                title: 'Backend Engineer',
+                instructions: 'Work on backend.',
+                tools: ['shell'],
+              },
+            ],
+            agents: [{ name: agentId, roleName: 'backend-engineer' }],
+          }),
+        setTeam: () => undefined,
+      } as never,
+      repo,
+      { emit: (event: string, payload: any) => emitted.push({ event, payload }) } as never,
+      { publishMessage: () => undefined } as never,
+      {
+        generateRunReply: async () => ({
+          // Model produced nothing — neither a tool call nor text.
+          text: '',
+          toolResults: [],
+          steps: [],
+        }),
+      } as never,
+      {
+        allowRun: () => undefined,
+        invoke: async () => ({ ok: true }),
+      } as never,
+    );
+
+    const result = await (service as any).advanceRun(run);
+
+    expect(result.status).toBe('failed');
+    const mustReply = emitted.find((e) => e.event === 'member.must_reply_failed');
+    expect(mustReply).toBeDefined();
+    // B2: byMemberId comes from the run row, NOT from run.agentId.
+    expect(mustReply?.payload.byMemberId).toBe('human-1');
+    // B3: messageId is the real sourceMessageId, not ''.
+    expect(mustReply?.payload.messageId).toBe('msg-trigger-1');
+  });
+
+  it('skips must_reply_failed emit when sourceMessageId is missing (B3 schema guard)', async () => {
+    const organizationId = 'org-1';
+    const runId = 'run-mention-bad-1';
+    const agentId = 'Quinn Mason';
+    const threadId = 'thread-1';
+    const emitted: { event: string; payload: any }[] = [];
+    let run: any = {
+      id: runId,
+      organizationId,
+      agentId,
+      threadId,
+      status: 'queued',
+      step: 'queued',
+      summary: 'Run queued',
+      startedAt: '2026-05-04T19:07:08.071Z',
+      wakeReason: 'mention',
+      sourceMessageId: null, // Defensive: this should not crash.
+      byMemberId: 'human-1',
+    };
+    const repo = {
+      getMember: () => ({
+        id: agentId,
+        organizationId,
+        name: agentId,
+        kind: AGENT_KIND,
+        roleName: 'backend-engineer',
+      }),
+      saveRun: (next: any) => {
+        run = next;
+        return next;
+      },
+      getRun: () => run,
+      getProviderCredential: () => null,
+      getWorkspaceSetting: () => null,
+      listMembers: () => [],
+      listPendingApprovals: () => [],
+      listMessages: () => ({ data: [], hasMore: false }),
+      getLatestHumanMessageInThread: () => null,
+      getSpiritByRunId: () => null,
+      getThread: () => ({ channelId: 'channel-1' }),
+    } as never;
+    const service = new RunService(
+      {
+        getTeam: () =>
+          loadAgentTeam({
+            name: 'Timetotest',
+            workspace: { root: '/Users/mac/Documents/Work/Timetotest' },
+            roles: [
+              { name: 'backend-engineer', title: 'Backend', instructions: '.', tools: ['shell'] },
+            ],
+            agents: [{ name: agentId, roleName: 'backend-engineer' }],
+          }),
+        setTeam: () => undefined,
+      } as never,
+      repo,
+      { emit: (event: string, payload: any) => emitted.push({ event, payload }) } as never,
+      { publishMessage: () => undefined } as never,
+      {
+        generateRunReply: async () => ({ text: '', toolResults: [], steps: [] }),
+      } as never,
+      { allowRun: () => undefined, invoke: async () => ({ ok: true }) } as never,
+    );
+
+    const result = await (service as any).advanceRun(run);
+
+    // Still fails the run (mandatory-reply violation), but the emit
+    // is skipped because messageId would have been empty and schema
+    // would throw.
+    expect(result.status).toBe('failed');
+    expect(emitted.find((e) => e.event === 'member.must_reply_failed')).toBeUndefined();
   });
 
   it('cancelRun marks an active run as cancelled and emits completion', () => {

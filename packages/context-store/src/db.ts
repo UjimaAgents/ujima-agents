@@ -732,6 +732,17 @@ const MIGRATIONS: { id: string; up: string }[] = [
         ON mcp_tool_cache(organization_id);
     `,
   },
+  {
+    id: '020_run_wake_metadata',
+    up: `
+      ALTER TABLE runs ADD COLUMN terminating_tool TEXT;
+      ALTER TABLE runs ADD COLUMN wake_reason TEXT;
+      ALTER TABLE runs ADD COLUMN source_message_id TEXT;
+      ALTER TABLE runs ADD COLUMN by_member_id TEXT;
+      CREATE INDEX IF NOT EXISTS idx_runs_org_termination_wake_created
+        ON runs(organization_id, terminating_tool, wake_reason, started_at);
+    `,
+  },
 ];
 
 export interface DbOptions {

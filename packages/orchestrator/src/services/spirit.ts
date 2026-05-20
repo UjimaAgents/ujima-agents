@@ -28,6 +28,7 @@ import {
   type Spirit,
   type SpiritRole,
   type TaskSession,
+  type WakeReason,
   AGENT_KIND,
 } from '@ujima/shared';
 import {
@@ -181,6 +182,14 @@ export interface SpiritAlertInput {
   threadId: string;
   byMemberId: string;
   reason: string;
+  /**
+   * L7 — typed wake reason. When `wakeReason === 'mention'` the
+   * supervisor turn is held to the same mandatory-reply contract
+   * as the worker path: `channel.pass` / `self.note` are rejected
+   * by policy, and a supervisor turn that ends without publishing
+   * is fail-converted.
+   */
+  wakeReason?: WakeReason;
 }
 
 export interface SpiritSupervisorReplyOutcome {
@@ -304,12 +313,30 @@ export class SpiritService {
     if (!target) {
       return { kind: 'no-active-spirit' };
     }
-    if (this.shouldDebounceSupervisorAlert(input.organizationId, input.memberId, target.taskSessionId)) {
+    // L7 — when the wake is `@mention`, include the messageId in
+    // the debounce key so legitimate fast hand-offs (A→B→A in <2s)
+    // aren't silently swallowed by the supervisor debounce window.
+    // Channel-read wakes keep the original key so heavy broad-wake
+    // chatter is still debounced.
+    const debounceMessageKey = input.wakeReason === 'mention' ? input.messageId : undefined;
+    if (
+      this.shouldDebounceSupervisorAlert(
+        input.organizationId,
+        input.memberId,
+        target.taskSessionId,
+        debounceMessageKey,
+      )
+    ) {
       return { kind: 'debounced' };
     }
 
     this.supervisorLastAlertAt.set(
-      this.supervisorDebounceKey(input.organizationId, input.memberId, target.taskSessionId),
+      this.supervisorDebounceKey(
+        input.organizationId,
+        input.memberId,
+        target.taskSessionId,
+        debounceMessageKey,
+      ),
       Date.now(),
     );
 
@@ -636,7 +663,21 @@ export class SpiritService {
     }
     this.emit(SocketEventNames.spiritUpdated, running);
 
-    const allowedToolIds = this.resolveToolAllowlist(teamRole.tools, role, input.toolAllowlist);
+    // Mandatory-reply enforcement at the palette layer (matches
+    // ai-service.ts wake-run path): when the supervisor turn is
+    // triggered by a mention wake, strip channel.pass and
+    // self.note so the model cannot opt out of replying.
+    const resolvedAllowlist = this.resolveToolAllowlist(teamRole.tools, role, input.toolAllowlist);
+    const supervisorRunRow =
+      spirit.runId !== undefined
+        ? this.repo.getRun(input.organizationId, spirit.runId)
+        : undefined;
+    const supervisorMandatoryReply = supervisorRunRow?.wakeReason === 'mention';
+    const allowedToolIds = supervisorMandatoryReply
+      ? resolvedAllowlist.filter(
+          (toolId) => toolId !== 'channel.pass' && toolId !== 'self.note',
+        )
+      : resolvedAllowlist;
     const builtInToolDefs = this.buildToolDefinitions(allowedToolIds, {
       organizationId: input.organizationId,
       runId: spirit.runId ?? spirit.id,
@@ -648,6 +689,7 @@ export class SpiritService {
       // the role's allowlist happens to declare.
       spiritRole: role,
       team,
+      repo: this.repo,
     });
     // Attached MCP tools layer ON TOP of the built-in palette. The
     // model sees one unified tool set; the namespacing keeps tool
@@ -677,6 +719,10 @@ export class SpiritService {
         stopWhen: stepCountIs(maxIterations),
         ...(this.maxOutputTokens !== undefined ? { maxOutputTokens: this.maxOutputTokens } : {}),
         temperature: this.temperature,
+        // Force step-0 tool call so the spirit commits to either a
+        // visible action or `channel.pass` quickly. Continuation
+        // steps stay `auto` so multi-tool sequences are unaffected.
+        toolChoice: 'required-first-step',
         loadInterruptMessages: () => {
           const page = this.repo
             .listChannelMessages(input.organizationId, session.channelId, { limit: 100 })
@@ -892,6 +938,30 @@ export class SpiritService {
     const sourceMessage = this.repo.getMessage(input.organizationId, input.messageId);
     const goalModeSuffix = goalModeSystemPromptSuffix(goalModeEnabledFromMessage(sourceMessage));
 
+    // B1 fix — persist wakeReason / byMemberId / sourceMessageId on
+    // the spirit's run row BEFORE the supervisor turn fires. This is
+    // what ToolServiceImpl reads to enforce the mandatory-reply
+    // contract (policy.ts rejects channel.pass and self.note when
+    // wakeReason === 'mention'). Without this, supervisor turns
+    // silently bypass the contract.
+    if (input.wakeReason) {
+      const supervisorSpirit = this.repo
+        .listActiveSpiritsForMember(input.organizationId, input.memberId)
+        .find((s) => s.taskSessionId === taskSessionId);
+      const runId = supervisorSpirit?.runId;
+      if (runId) {
+        const run = this.repo.getRun(input.organizationId, runId);
+        if (run) {
+          this.repo.saveRun({
+            ...run,
+            wakeReason: input.wakeReason,
+            sourceMessageId: input.messageId,
+            byMemberId: input.byMemberId,
+          });
+        }
+      }
+    }
+
     try {
       const outcome = await this.run({
         organizationId: input.organizationId,
@@ -907,8 +977,42 @@ export class SpiritService {
         supervisorTurnCount: session.supervisorTurnCount + 1,
         updatedAt: new Date().toISOString(),
       });
-      const replyText = outcome.finalText.trim() || `Currently on step ${session.status} of #${session.slug}.`;
-      const message = this.publishSupervisorReply(taskSessionId, input, replyText, false);
+      // L7 — mandatory-reply for supervisor turns. When a
+      // `@mention` lands and the supervisor produces no reply
+      // text, the fallback summary masks a real failure (the
+      // human asked, the agent didn't answer). For mention
+      // wakes we surface the failure event INSTEAD of publishing
+      // the canned status fallback.
+      const replyText = outcome.finalText.trim();
+      if (!replyText && input.wakeReason === 'mention') {
+        this.realtime.emit(
+          SocketEventNames.memberMustReplyFailed,
+          {
+            organizationId: input.organizationId,
+            runId: outcome.spirit.runId ?? input.messageId,
+            memberId: input.memberId,
+            byMemberId: input.byMemberId,
+            channelId: input.channelId,
+            threadId: input.threadId,
+            messageId: input.messageId,
+            occurredAt: new Date().toISOString(),
+          },
+          [orgRoom(input.organizationId), memberRoom(input.memberId)],
+        );
+        const failureMessage = this.publishSupervisorFallback(
+          taskSessionId,
+          input,
+          'mandatory-reply violated: supervisor produced no answer to a @mention',
+        );
+        return {
+          taskSessionId,
+          message: failureMessage,
+          fallback: true,
+          reason: 'must_reply_failed',
+        };
+      }
+      const finalText = replyText || `Currently on step ${session.status} of #${session.slug}.`;
+      const message = this.publishSupervisorReply(taskSessionId, input, finalText, false);
       return { taskSessionId, message, fallback: false, reason: 'ok' };
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
@@ -1002,17 +1106,24 @@ export class SpiritService {
     return `${organizationId}:${memberId}:${taskSessionId}:supervisor`;
   }
 
-  private supervisorDebounceKey(organizationId: string, memberId: string, taskSessionId: string): string {
-    return `${organizationId}:${memberId}:${taskSessionId}`;
+  private supervisorDebounceKey(
+    organizationId: string,
+    memberId: string,
+    taskSessionId: string,
+    messageId?: string,
+  ): string {
+    const base = `${organizationId}:${memberId}:${taskSessionId}`;
+    return messageId ? `${base}:msg:${messageId}` : base;
   }
 
   private shouldDebounceSupervisorAlert(
     organizationId: string,
     memberId: string,
     taskSessionId: string,
+    messageId?: string,
   ): boolean {
     const last = this.supervisorLastAlertAt.get(
-      this.supervisorDebounceKey(organizationId, memberId, taskSessionId),
+      this.supervisorDebounceKey(organizationId, memberId, taskSessionId, messageId),
     );
     if (last === undefined) return false;
     return Date.now() - last < this.supervisorDebounceMs;
@@ -1200,6 +1311,7 @@ export class SpiritService {
       taskSessionId: string;
       spiritRole: SpiritRole;
       team: AgentTeamHandle;
+      repo?: ApiRepository;
     },
   ): ToolSet {
     return buildToolDefinitions(toolIds, ctx.team, this.tools, ctx);

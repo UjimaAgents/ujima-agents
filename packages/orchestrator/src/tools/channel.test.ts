@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   channelDmTool,
+  channelHandoffTool,
   channelListTool,
+  channelPassTool,
   channelPostTool,
   channelReadTool,
   channelReplyTool,
@@ -164,18 +166,118 @@ describe('channel.* tools — toInvocation()', () => {
   });
 });
 
-// Regression: ALWAYS_AVAILABLE_AGENT_TOOLS should stay tiny. Only self.note
-// is unconditional; chat tools must remain in the role's normal `tools`
-// declaration so the role surface stays explicit.
+// Regression: ALWAYS_AVAILABLE_AGENT_TOOLS includes the baseline
+// conversational primitives every agent needs, regardless of role
+// config. Without these, an agent whose role declares no `tools`
+// ends up with an empty palette and the model improvises (Gemini
+// emits tool-call syntax as prose). `channel.handoff` stays OPT-IN
+// (must be in role.tools) because it's a workflow primitive, not
+// a baseline conversational one.
 describe('ALWAYS_AVAILABLE_AGENT_TOOLS', () => {
-  it('contains exactly self.note (no chat tools leak past the role allowlist)', () => {
-    expect([...ALWAYS_AVAILABLE_AGENT_TOOLS]).toEqual(['self.note']);
+  it('contains the baseline conversational primitives plus the silent-outcome and self-note tools', () => {
+    expect([...ALWAYS_AVAILABLE_AGENT_TOOLS].sort()).toEqual(
+      [
+        'channel.dm',
+        'channel.list',
+        'channel.pass',
+        'channel.post',
+        'channel.read',
+        'channel.reply',
+        'message',
+        'self.note',
+      ].sort(),
+    );
   });
 
-  it.each(['channel.post', 'channel.reply', 'channel.dm', 'channel.list', 'channel.read'])(
-    'does not include %s',
+  it.each(['channel.handoff'])(
+    'does NOT include %s (workflow opt-in via role.tools)',
     (toolId) => {
       expect([...ALWAYS_AVAILABLE_AGENT_TOOLS]).not.toContain(toolId);
     },
   );
+});
+
+// L13 — `already_handled` and `duplicate_reply` reasons require a
+// non-empty `note`, so the model has to demonstrate it actually
+// checked rather than collapsing every silence to
+// `not_addressed_to_me`.
+describe('channelPassTool schema refine (L13)', () => {
+  it('rejects reason="already_handled" without a note', () => {
+    const parsed = channelPassTool.schema.safeParse({ reason: 'already_handled' });
+    expect(parsed.success).toBe(false);
+  });
+
+  it('rejects reason="duplicate_reply" with an empty note', () => {
+    const parsed = channelPassTool.schema.safeParse({
+      reason: 'duplicate_reply',
+      note: '   ',
+    });
+    expect(parsed.success).toBe(false);
+  });
+
+  it('accepts reason="already_handled" with a real note AND citation', () => {
+    const parsed = channelPassTool.schema.safeParse({
+      reason: 'already_handled',
+      note: 'agent-2 just posted the same answer in this thread',
+      cited_message_ids: ['msg-agent2-reply-001'],
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  it('rejects reason="already_handled" when cited_message_ids is missing (hallucination guard)', () => {
+    const parsed = channelPassTool.schema.safeParse({
+      reason: 'already_handled',
+      note: 'agent-2 just posted the same answer in this thread',
+      // No cited_message_ids — the schema requires it for this reason
+      // so the model has to ground the claim in a real message id.
+    });
+    expect(parsed.success).toBe(false);
+  });
+
+  it('rejects reason="duplicate_reply" when cited_message_ids is missing', () => {
+    const parsed = channelPassTool.schema.safeParse({
+      reason: 'duplicate_reply',
+      note: 'I already answered this earlier',
+    });
+    expect(parsed.success).toBe(false);
+  });
+
+  it('accepts reason="not_addressed_to_me" without a note', () => {
+    const parsed = channelPassTool.schema.safeParse({ reason: 'not_addressed_to_me' });
+    expect(parsed.success).toBe(true);
+  });
+});
+
+// channel.handoff stamps [HANDOFF]/[DONE] on the published content
+// from the tool side (L6) — the model never types the literal token.
+describe('channelHandoffTool', () => {
+  it('toInvocation does not emit resourcePath', () => {
+    const inv = channelHandoffTool.toInvocation({
+      to: 'bob',
+      reason: 'Please verify the API contract',
+      deliverable: 'Confirm signature shape',
+    });
+    expect(inv.resourcePath).toBeUndefined();
+    expect(inv.permissionMcpId).toBe('channels');
+    expect(inv.action).toBe('message');
+  });
+
+  it('schema accepts complete: true', () => {
+    const parsed = channelHandoffTool.schema.safeParse({
+      to: 'bob',
+      reason: 'Done',
+      deliverable: 'All clear',
+      complete: true,
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  it('schema rejects empty deliverable', () => {
+    const parsed = channelHandoffTool.schema.safeParse({
+      to: 'bob',
+      reason: 'Done',
+      deliverable: '',
+    });
+    expect(parsed.success).toBe(false);
+  });
 });

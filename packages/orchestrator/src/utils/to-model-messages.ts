@@ -9,6 +9,7 @@ import type { FilePart, ImagePart, LanguageModel, ModelMessage, TextPart, ToolSe
 import { z } from 'zod';
 import type { ToolService } from '../services/tool-service.js';
 import type { OrchestratorTool } from '../tools/types.js';
+import type { RepositoryReader } from '../services/repository-reader.js';
 import { ORCHESTRATOR_TOOLS } from '../tools/index.js';
 import { toModelToolName } from '../tools/names.js';
 import { ToolApprovalRequiredError, toModelToolOutput } from '../services/tool-loop-result.js';
@@ -115,6 +116,16 @@ function resolveHomeDir(): string {
 
 // Fix #7: Shared model-resolution ladder.
 // Walk: member → agent → role → provider → modelId → apiKey → LanguageModel.
+//
+// Provider-fallback (Option 1, runtime-fallback): when the role's
+// configured provider has no API key in this org, walk
+// `team.providers` and pick the first provider that DOES have a
+// key. This decouples agent config from a specific provider —
+// adding a Gemini key auto-propagates to all agents that were
+// configured for DeepSeek, without per-role migration. The
+// fallback provider's `defaultModel` is used because the role's
+// configured `model` field belongs to the original provider and
+// almost certainly isn't a valid id on the new one.
 export function resolveSpiritModel(params: {
   organizationId: string;
   memberId: string;
@@ -137,35 +148,105 @@ export function resolveSpiritModel(params: {
   if (!teamRole) {
     throw new Error(`Role not found: ${agent.roleName}`);
   }
-  const providerName = params.resolveProviderName(
+  const preferredProviderName = params.resolveProviderName(
     { llm: params.member.llm },
     { provider: teamRole.provider },
   );
-  if (!providerName) {
+  if (!preferredProviderName) {
     throw new Error(`Provider not resolved for member "${params.memberId}"`);
   }
-  const provider = params.team.getProvider(providerName);
-  if (!provider) {
-    throw new Error(`Provider not found: ${providerName}`);
+
+  // Try the preferred provider first, then fall back to any other
+  // team-configured provider that has a key. Iteration order over
+  // `team.providers` is the config-declaration order, which is
+  // deterministic.
+  const tried: { name: string; rejected: string }[] = [];
+  const candidates: string[] = [preferredProviderName];
+  for (const candidate of Object.keys(params.team.providers)) {
+    if (candidate !== preferredProviderName && !candidates.includes(candidate)) {
+      candidates.push(candidate);
+    }
   }
-  const modelId = params.resolveModelId(
-    { model: teamRole.model },
-    provider,
-    params.role,
+
+  for (const providerName of candidates) {
+    const provider = params.team.getProvider(providerName);
+    if (!provider) {
+      tried.push({ name: providerName, rejected: 'provider not configured' });
+      continue;
+    }
+    const apiKey = params.getProviderCredential(params.organizationId, providerName);
+    if (!apiKey) {
+      tried.push({ name: providerName, rejected: 'no API key' });
+      continue;
+    }
+
+    // Use the role's configured model only when we're on the
+    // originally-requested provider. After fallback, the role's
+    // model id won't be valid on the new provider — pick its
+    // defaultModel instead. If the provider config didn't declare
+    // a defaultModel either, fall back to a built-in per-kind
+    // default so a Google key with no `defaultModel` set in
+    // team.config still works.
+    const teamRoleForModel =
+      providerName === preferredProviderName ? { model: teamRole.model } : { model: undefined };
+    const providerForResolve =
+      providerName === preferredProviderName
+        ? provider
+        : { ...provider, defaultModel: provider.defaultModel ?? defaultModelIdForKind(provider.kind) };
+    const modelId = params.resolveModelId(teamRoleForModel, providerForResolve, params.role);
+    if (!modelId) {
+      tried.push({ name: providerName, rejected: 'no model id resolved (provider config is missing defaultModel and there is no built-in default for this kind)' });
+      continue;
+    }
+
+    if (providerName !== preferredProviderName) {
+      // Single line to make the fallback observable in logs.
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[ujima] provider fallback: org "${params.organizationId}" preferred "${preferredProviderName}" unusable, falling back to "${providerName}" (model "${modelId}")`,
+      );
+    }
+    return selectLanguageModel({
+      kind: provider.kind,
+      modelId,
+      apiKey,
+      baseUrl: provider.baseUrl,
+    });
+  }
+
+  const triedSummary = tried.map((t) => `${t.name} (${t.rejected})`).join('; ');
+  throw new Error(
+    `No usable provider for member "${params.memberId}". Tried: ${triedSummary}`,
   );
-  if (!modelId) {
-    throw new Error(`Provider "${providerName}" has no model id`);
+}
+
+/**
+ * Built-in default model per provider kind, used when the team
+ * config's `providers.<name>.defaultModel` is empty. Lets a user
+ * who pasted just an API key (via the UI) end up with a working
+ * model id without needing to also write defaultModel into config.
+ *
+ * These defaults are intentionally conservative (fast/cheap
+ * variants) — power users override via `provider.defaultModel`
+ * in team config or via `role.model`.
+ */
+function defaultModelIdForKind(kind: string): string | undefined {
+  switch (kind) {
+    case 'google':
+      return 'gemini-2.5-flash';
+    case 'openai':
+      return 'gpt-4o';
+    case 'anthropic':
+      return 'claude-sonnet-4-6';
+    case 'deepseek':
+      return 'deepseek-chat';
+    case 'xai':
+      return 'grok-3';
+    case 'mistral':
+      return 'mistral-large-latest';
+    default:
+      return undefined;
   }
-  const apiKey = params.getProviderCredential(params.organizationId, providerName);
-  if (!apiKey) {
-    throw new Error(`Provider key missing for "${providerName}"`);
-  }
-  return selectLanguageModel({
-    kind: provider.kind,
-    modelId,
-    apiKey,
-    baseUrl: provider.baseUrl,
-  });
 }
 
 // Fix #7: Default provider-name resolver (uses role.provider directly).
@@ -208,6 +289,13 @@ export interface BuildToolDefContext {
   toolId: string;
   taskSessionId?: string;
   spiritRole?: SpiritRole;
+  /**
+   * Optional reader handle so per-invocation `OrchestratorTool.buildSchema`
+   * factories (e.g. `channel.handoff` recipient enum) can resolve
+   * roster state at tool-build time. Optional for backwards
+   * compatibility with narrower call sites.
+   */
+  repo?: RepositoryReader;
 }
 
 export function buildToolDefinition(
@@ -218,9 +306,21 @@ export function buildToolDefinition(
   ctx: BuildToolDefContext,
 ) {
   if (def) {
+    // If the tool exposes a per-invocation schema factory, use it
+    // — this is how `channel.handoff` constrains `to:` to the actual
+    // org roster at decode time. Falls back to the static schema
+    // when no factory or when no repo handle was plumbed through.
+    const inputSchema =
+      def.buildSchema && ctx.repo
+        ? def.buildSchema({
+            organizationId: ctx.organizationId,
+            memberId: ctx.memberId,
+            repo: ctx.repo,
+          })
+        : def.schema;
     return tool({
       description: team.tools[toolId]?.description ?? `${toolId} tool`,
-      inputSchema: def.schema,
+      inputSchema,
       execute: async (rawArgs, { toolCallId }) => {
         try {
           const invocationData = def.toInvocation(rawArgs);

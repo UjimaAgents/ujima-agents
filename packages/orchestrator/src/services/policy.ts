@@ -1,7 +1,7 @@
 import { existsSync, realpathSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { AgentTeamHandle } from '@ujima/framework';
-import type { ToolAction, SpiritRole } from '@ujima/shared';
+import type { ToolAction, SpiritRole, WakeReason } from '@ujima/shared';
 import { isSensitiveWorkspacePath } from '@ujima/shared/workspace-file-filters';
 import { assertWorkspaceBoundary, isPathInsideRoot } from '@ujima/shared/workspace';
 
@@ -11,24 +11,88 @@ export interface PolicyResult {
   reason?: string;
 }
 
+export interface CheckToolPolicyOptions {
+  spiritRole?: SpiritRole;
+  /**
+   * Why the run was woken. When `wakeReason === 'mention'` the
+   * mandatory-reply contract kicks in: `channel.pass` and
+   * `self.note` are both rejected so the agent has to call a
+   * posting tool. Other reasons leave both tools available.
+   */
+  wakeReason?: WakeReason | null;
+}
+
 export function checkToolPolicy(
   team: AgentTeamHandle,
   roleName: string,
   toolId: string,
   action: ToolAction,
   resourcePath?: string,
-  options: { spiritRole?: SpiritRole } = {},
+  options: CheckToolPolicyOptions = {},
 ): PolicyResult {
   const role = team.getRole(roleName);
   if (!role) {
     return { allowed: false, requiresApproval: false, reason: `Unknown role: ${roleName}` };
   }
 
+  // L3 — mandatory-reply enforcement. A `@mention`ed run is a
+  // contract: someone tagged this agent and expects a posted reply.
+  // Allowing `channel.pass` or `self.note` would let the model
+  // silently slip out of the obligation. Reject both BEFORE the
+  // blanket allows below so the contract holds regardless of role.
+  if (options.wakeReason === 'mention') {
+    if (toolId === 'channel.pass') {
+      return {
+        allowed: false,
+        requiresApproval: false,
+        reason:
+          'mandatory-reply: you were @mentioned, channel.pass is not allowed. Reply via channel.reply, channel.dm, or message.',
+      };
+    }
+    if (toolId === 'self.note') {
+      return {
+        allowed: false,
+        requiresApproval: false,
+        reason:
+          'mandatory-reply: you were @mentioned, self.note is not allowed. Reply via channel.reply, channel.dm, or message.',
+      };
+    }
+  }
+
   // self.note is the agent's private scratchpad. Per the channels-as-substrate
   // principle, an agent must always be able to think to itself — even if its
   // role doesn't explicitly list `self.note` in `tools`. Always allowed,
-  // never approval-gated.
+  // never approval-gated — EXCEPT for the `wakeReason === 'mention'`
+  // case above, which already returned.
   if (toolId === 'self.note') {
+    return { allowed: true, requiresApproval: false };
+  }
+
+  // channel.pass is the always-available silent-outcome tool. Every
+  // agent must be able to stand down regardless of role config, so
+  // we don't gate on `role.tools.includes('channel.pass')`. The
+  // mandatory-reply check above already rejects pass for mention runs.
+  if (toolId === 'channel.pass') {
+    return { allowed: true, requiresApproval: false };
+  }
+
+  // Posting tools and channel-read tools are baseline conversational
+  // primitives that mirror ALWAYS_AVAILABLE_AGENT_TOOLS — every agent
+  // gets them in its palette regardless of `role.tools` declarations.
+  // Without this early-allow, the model successfully calls one of
+  // these tools (because it's in the palette) and then the
+  // `role.tools.includes(toolId)` check below rejects it because
+  // the role config didn't redundantly list it. The IAM matrix
+  // (one layer up, via the permissions middleware) is the place
+  // to add finer-grained gating like "junior-qa cannot DM senior-*".
+  if (
+    toolId === 'channel.reply' ||
+    toolId === 'channel.post' ||
+    toolId === 'channel.dm' ||
+    toolId === 'channel.read' ||
+    toolId === 'channel.list' ||
+    toolId === 'message'
+  ) {
     return { allowed: true, requiresApproval: false };
   }
 

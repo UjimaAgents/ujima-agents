@@ -22,6 +22,10 @@ function rowToRun(row: Row): RunState {
     summary: rowString(row, 'summary'),
     startedAt: rowString(row, 'started_at'),
     endedAt: optionalRowString(row, 'ended_at'),
+    wakeReason: optionalRowString(row, 'wake_reason') ?? null,
+    terminatingTool: optionalRowString(row, 'terminating_tool') ?? null,
+    sourceMessageId: optionalRowString(row, 'source_message_id') ?? null,
+    byMemberId: optionalRowString(row, 'by_member_id') ?? null,
   });
 }
 
@@ -29,13 +33,31 @@ export function saveRun(db: DbHandle, run: RunState): RunState {
   const payload = RunStateSchema.parse(run);
 
   db.prepare(
-    `INSERT INTO runs (id, organization_id, agent_id, thread_id, status, step, summary, started_at, ended_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO runs (
+       id,
+       organization_id,
+       agent_id,
+       thread_id,
+       status,
+       step,
+       summary,
+       started_at,
+       ended_at,
+       terminating_tool,
+       wake_reason,
+       source_message_id,
+       by_member_id
+     )
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
        status = excluded.status,
        step = excluded.step,
        summary = excluded.summary,
-       ended_at = excluded.ended_at`,
+       ended_at = excluded.ended_at,
+       terminating_tool = excluded.terminating_tool,
+       wake_reason = excluded.wake_reason,
+       source_message_id = excluded.source_message_id,
+       by_member_id = excluded.by_member_id`,
   ).run(
     payload.id,
     payload.organizationId,
@@ -46,6 +68,10 @@ export function saveRun(db: DbHandle, run: RunState): RunState {
     payload.summary,
     payload.startedAt,
     payload.endedAt ?? null,
+    payload.terminatingTool ?? null,
+    payload.wakeReason ?? null,
+    payload.sourceMessageId ?? null,
+    payload.byMemberId ?? null,
   );
 
   return payload;

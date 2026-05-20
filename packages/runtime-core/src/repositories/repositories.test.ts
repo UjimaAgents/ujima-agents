@@ -482,6 +482,56 @@ test('listPendingApprovals enriches threadId from parent run when DB row has no 
   expect(pending[0]?.threadId).toBe(threadId);
 });
 
+test('runs persist wake metadata used by mandatory reply policy', () => {
+  const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
+  const orgId = randomUUID();
+  const now = new Date().toISOString();
+  const runId = randomUUID();
+
+  repo.saveOrganization(
+    OrganizationSchema.parse({
+      id: orgId,
+      name: 'Wake Metadata Org',
+      workspace: { root: '/tmp/wake-metadata-org', roleScopes: {} },
+    }),
+  );
+
+  repo.saveRun(
+    RunStateSchema.parse({
+      id: runId,
+      organizationId: orgId,
+      agentId: 'agent-1',
+      threadId: 'general',
+      status: 'running',
+      step: 'running',
+      summary: 'mention wake',
+      startedAt: now,
+      wakeReason: 'mention',
+      sourceMessageId: 'message-1',
+      byMemberId: 'human-1',
+      terminatingTool: null,
+    }),
+  );
+
+  repo.saveRun(
+    RunStateSchema.parse({
+      ...repo.getRun(orgId, runId)!,
+      status: 'completed',
+      step: 'completed',
+      summary: 'replied',
+      endedAt: now,
+      terminatingTool: 'channel.reply',
+    }),
+  );
+
+  expect(repo.getRun(orgId, runId)).toMatchObject({
+    wakeReason: 'mention',
+    sourceMessageId: 'message-1',
+    byMemberId: 'human-1',
+    terminatingTool: 'channel.reply',
+  });
+});
+
 // Regression for two listChannels() bugs:
 //   (A) Pagination drift — filtering self/dm in JS *after* paging meant
 //       hasMore/nextCursor were computed against the unfiltered set, so once
