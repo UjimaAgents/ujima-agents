@@ -442,6 +442,66 @@ describe('workspace-root REST gating', () => {
       name: 'ready-agent-renamed',
     });
   });
+
+  // Regression: the dedupe/access fast-path ran requireThreadAccess
+  // BEFORE sendDirectMessage → sendSelfNote got a chance to lazily
+  // create `self:<senderId>`. For a first-ever self-message with
+  // clientMessageId set, the access check threw `Thread not found`
+  // and the message never posted. The route now skips the access
+  // check for `recipientId === 'self'` (self channels are
+  // sender-owned by construction; sendSelfNote materialises the
+  // channel and thread on demand).
+  it('accepts a first-ever self direct message that carries a clientMessageId', async () => {
+    // Pre-condition: the owner's self channel does NOT exist yet.
+    expect(repo.getChannel(readyOrganizationId, 'self:ready-owner')).toBeNull();
+    expect(repo.getThread(readyOrganizationId, 'self:ready-owner')).toBeNull();
+
+    const response = await fetch(`${baseUrl}/api/messages`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${TOKEN}`,
+        'x-ujima-session': readyOwnerSessionToken,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        organizationId: readyOrganizationId,
+        senderId: 'ready-owner',
+        recipientId: 'self',
+        content: 'first self note via idempotency path',
+        clientMessageId: 'self-note-first-send',
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { id: string; threadId: string; content: string };
+    expect(body.threadId).toBe('self:ready-owner');
+    expect(body.content).toBe('first self note via idempotency path');
+
+    // sendSelfNote should have materialised both rows on the way through.
+    expect(repo.getChannel(readyOrganizationId, 'self:ready-owner')).not.toBeNull();
+    expect(repo.getThread(readyOrganizationId, 'self:ready-owner')).not.toBeNull();
+
+    // Retrying with the same clientMessageId returns the same message
+    // (dedupe still works — the access bypass didn't break it).
+    const retry = await fetch(`${baseUrl}/api/messages`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${TOKEN}`,
+        'x-ujima-session': readyOwnerSessionToken,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        organizationId: readyOrganizationId,
+        senderId: 'ready-owner',
+        recipientId: 'self',
+        content: 'first self note via idempotency path',
+        clientMessageId: 'self-note-first-send',
+      }),
+    });
+    expect(retry.status).toBe(200);
+    const retryBody = (await retry.json()) as { id: string };
+    expect(retryBody.id).toBe(body.id);
+  });
 });
 
 function memberUpdateBody(overrides: Record<string, unknown> = {}) {
