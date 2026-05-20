@@ -73,6 +73,10 @@ export function checkToolPolicy(
     };
   }
 
+  if (toolId === 'schedule') {
+    return { allowed: true, requiresApproval: false };
+  }
+
   // channel.* tools (post / reply / dm / list / read) operate on the
   // messaging substrate — channel ids and message ids are NOT filesystem
   // paths, so workspace-boundary and per-role scope checks don't apply.

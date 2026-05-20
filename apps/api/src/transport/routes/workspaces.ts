@@ -211,6 +211,25 @@ export function registerWorkspaceRoutes(
     if (!workspaceAccessibleToOrganization(host, session.repo, session.organization, id)) {
       return replyError(reply, 404, 'ERR_NOT_FOUND', `workspace "${id}" not found`);
     }
+
+    const linkedIds = readLinkedWorkspaceIds(session.repo, session.organization.id);
+    if (linkedIds.delete(id)) {
+      if (linkedIds.size > 0) {
+        session.repo.saveWorkspaceSetting(
+          session.organization.id,
+          ORGANIZATION_WORKSPACE_IDS_KEY,
+          JSON.stringify([...linkedIds]),
+        );
+      } else {
+        session.repo.deleteWorkspaceSetting(session.organization.id, ORGANIZATION_WORKSPACE_IDS_KEY);
+      }
+    }
+
+    const activeId = session.repo.getWorkspaceSetting(session.organization.id, ACTIVE_WORKSPACE_SETTING_KEY);
+    if (activeId === id) {
+      session.repo.deleteWorkspaceSetting(session.organization.id, ACTIVE_WORKSPACE_SETTING_KEY);
+    }
+
     return { removed: host.workspaces.remove(id) };
   });
 }
@@ -314,8 +333,13 @@ function resolveCurrentWorkspace(
     }
   }
 
+  const current = host.workspaces.get(`ws_${organization.id}`);
+  if (current?.root_path) {
+    return { root: current.root_path, id: current.id };
+  }
+
   return {
-    root: organization.workspace.root || null,
+    root: organization.workspace.root ?? null,
     id: activeId,
   };
 }

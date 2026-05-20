@@ -46,6 +46,7 @@ export {
   SpiritService,
   SupervisorTodoService,
   SchedulerService,
+  createScheduledJobRecord,
   computeNextCronRun,
   parseCronExpression,
   resolveScheduledJobNextRunAt,

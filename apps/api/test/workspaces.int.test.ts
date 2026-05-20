@@ -6,6 +6,7 @@ import { createBufferLogger, createRuntimeHost, Repository, type RuntimeHost } f
 import {
   AuthService,
   BootstrapService,
+  ACTIVE_WORKSPACE_SETTING_KEY,
   OnboardingService,
   SettingsService,
   createTeamStore,
@@ -26,6 +27,7 @@ describe('workspace routes', () => {
   let baseUrl: string;
   let sessionToken: string;
   let organizationId: string;
+  let repo: Repository;
 
   beforeAll(async () => {
     homeDir = await mkdtemp(join(tmpdir(), 'ujima-workspaces-'));
@@ -43,7 +45,7 @@ describe('workspace routes', () => {
       {},
     );
 
-    const repo = new Repository(host.db.raw);
+    repo = new Repository(host.db.raw);
     const teamStore = createTeamStore();
     const auth = new AuthService(repo);
     const bootstrap = new BootstrapService(repo, teamStore, auth);
@@ -207,5 +209,55 @@ describe('workspace routes', () => {
     } finally {
       await rm(otherHome, { recursive: true, force: true });
     }
+  });
+
+  it('clears the active workspace setting when deleting the active workspace', async () => {
+    const otherHome = tmpdir();
+    const createResponse = await fetch(`${baseUrl}/api/workspaces`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${TOKEN}`,
+        'content-type': 'application/json',
+        'x-ujima-session': sessionToken,
+      },
+      body: JSON.stringify({
+        root_path: otherHome,
+        label: 'Active workspace',
+      }),
+    });
+    expect(createResponse.status).toBe(200);
+    const created = (await createResponse.json()) as { id: string };
+
+    const activateResponse = await fetch(
+      `${baseUrl}/api/workspaces/${encodeURIComponent(created.id)}/activate`,
+      {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${TOKEN}`,
+          'x-ujima-session': sessionToken,
+        },
+      },
+    );
+    expect(activateResponse.status).toBe(200);
+
+    const deleteResponse = await fetch(`${baseUrl}/api/workspaces/${encodeURIComponent(created.id)}`, {
+      method: 'DELETE',
+      headers: {
+        authorization: `Bearer ${TOKEN}`,
+        'x-ujima-session': sessionToken,
+      },
+    });
+    expect(deleteResponse.status).toBe(200);
+    expect(repo.getWorkspaceSetting(organizationId, ACTIVE_WORKSPACE_SETTING_KEY)).toBeNull();
+
+    const listResponse = await fetch(`${baseUrl}/api/workspaces`, {
+      headers: {
+        authorization: `Bearer ${TOKEN}`,
+        'x-ujima-session': sessionToken,
+      },
+    });
+    expect(listResponse.status).toBe(200);
+    const body = (await listResponse.json()) as { current_workspace_id: string | null };
+    expect(body.current_workspace_id).not.toBe(created.id);
   });
 });

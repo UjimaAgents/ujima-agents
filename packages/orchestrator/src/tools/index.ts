@@ -13,6 +13,7 @@ import { jobKillTool, jobOutputTool } from './job-tools.js';
 import { downloadTool, fetchTool } from './web-tools.js';
 import { shellTool } from './shell.js';
 import { messageTool } from './message.js';
+import { scheduleTool } from './schedule.js';
 import { webSearchTool } from './web-search.js';
 import {
   supervisorTodoAddTool,
@@ -50,6 +51,7 @@ export const ORCHESTRATOR_TOOLS = {
   web_search: webSearchTool,
   'self.note': selfNoteTool,
   message: messageTool,
+  schedule: scheduleTool,
   'supervisor.todo.add': supervisorTodoAddTool,
   'supervisor.todo.check': supervisorTodoCheckTool,
   'supervisor.todo.list': supervisorTodoListTool,

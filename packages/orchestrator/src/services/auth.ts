@@ -216,13 +216,10 @@ export class AuthService {
   }
 
   listAccessibleOrganizations(sessionToken?: string | null): Organization[] {
-    if (!sessionToken) return [];
-    const record = this.repo.getAuthSessionByTokenHash(hashSessionToken(sessionToken));
-    if (!record || record.session.revokedAt) return [];
-    const user = this.repo.getAuthUserById(record.session.userId);
-    if (!user) return [];
+    const state = this.getAuthState(sessionToken);
+    if (!state.authenticated || !state.user) return [];
     return this.repo.listOrganizationsForUser(
-      user.email.trim().toLowerCase(),
+      state.user.email.trim().toLowerCase(),
     ).map((org) => ({ id: org.id, name: org.name } as Organization));
   }
 

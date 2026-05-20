@@ -79,6 +79,7 @@ export type {
 export type { CreateRunInput } from './spirit.js';
 export {
   SchedulerService,
+  createScheduledJobRecord,
   computeNextCronRun,
   parseCronExpression,
   resolveScheduledJobNextRunAt,

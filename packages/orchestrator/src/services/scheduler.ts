@@ -1,4 +1,5 @@
-import { SocketEventNames } from '@ujima/shared';
+import { randomUUID } from 'node:crypto';
+import { SocketEventNames, channelRoom, orgRoom, type ScheduledJob } from '@ujima/shared';
 import type { ApiRepository } from './repository-reader.js';
 import type { ConversationService } from './conversation.js';
 import type { RealtimeService } from './context.js';
@@ -28,6 +29,37 @@ export function resolveScheduledJobNextRunAt(
   }
 
   return computeNextCronRun(cronExpression, now)?.toISOString() ?? existing.nextRunAt;
+}
+
+export function createScheduledJobRecord(input: {
+  organizationId: string;
+  memberId: string;
+  name: string;
+  cronExpression: string;
+  prompt: string;
+  channelId?: string;
+  now?: Date;
+}): ScheduledJob {
+  const now = input.now ?? new Date();
+  const nextRunAt = computeNextCronRun(input.cronExpression, now);
+  if (!nextRunAt) {
+    throw new Error('Invalid cron expression.');
+  }
+
+  return {
+    id: randomUUID(),
+    organizationId: input.organizationId,
+    name: input.name,
+    cronExpression: input.cronExpression,
+    prompt: input.prompt,
+    channelId: input.channelId,
+    memberId: input.memberId,
+    status: 'active',
+    nextRunAt: nextRunAt.toISOString(),
+    runCount: 0,
+    createdAt: now.toISOString(),
+    updatedAt: now.toISOString(),
+  } as ScheduledJob;
 }
 
 /** Parse a 5-field cron expression and return the next Date at or after `from` that matches. */
@@ -116,6 +148,7 @@ export class SchedulerService {
   private timer: ReturnType<typeof setInterval> | null = null;
   private readonly pollIntervalMs: number;
   private running = false;
+  private tickInFlight = false;
 
   constructor(
     private readonly repo: ApiRepository,
@@ -129,8 +162,8 @@ export class SchedulerService {
   start(): void {
     if (this.running) return;
     this.running = true;
-    this.timer = setInterval(() => this.tick(), this.pollIntervalMs);
-    queueMicrotask(() => this.tick());
+    this.timer = setInterval(() => void this.tick(), this.pollIntervalMs);
+    queueMicrotask(() => void this.tick());
   }
 
   stop(): void {
@@ -143,6 +176,8 @@ export class SchedulerService {
 
   private async tick(): Promise<void> {
     if (!this.running) return;
+    if (this.tickInFlight) return;
+    this.tickInFlight = true;
     try {
       const due = this.repo.listDueJobsGlobally();
       const now = new Date();
@@ -185,6 +220,8 @@ export class SchedulerService {
       }
     } catch {
       // Swallow tick-level errors so the loop continues
+    } finally {
+      this.tickInFlight = false;
     }
   }
 
@@ -192,14 +229,14 @@ export class SchedulerService {
     organizationId: string;
     channelId?: string;
     prompt: string;
-    memberId: string;
     name: string;
   }): Promise<void> {
     // Ensure the scheduler sender member exists
-    const sender = this.repo.getMember(job.organizationId, CRON_SENDER_ID);
+    const senderId = this.schedulerMemberId(job.organizationId);
+    const sender = this.repo.getMember(job.organizationId, senderId);
     if (!sender) {
       this.repo.saveMember({
-        id: CRON_SENDER_ID,
+        id: senderId,
         organizationId: job.organizationId,
         name: 'Scheduler',
         kind: 'agent',
@@ -214,7 +251,7 @@ export class SchedulerService {
         organizationId: job.organizationId,
         channelId: job.channelId,
         threadId: job.channelId,
-        senderId: CRON_SENDER_ID,
+        senderId,
         content: `**⏰ Scheduled: ${job.name}**\n\n${job.prompt}`,
       });
     }
@@ -224,6 +261,10 @@ export class SchedulerService {
       jobName: job.name,
       channelId: job.channelId,
       prompt: job.prompt,
-    });
+    }, [orgRoom(job.organizationId), ...(job.channelId ? [channelRoom(job.channelId)] : [])]);
+  }
+
+  private schedulerMemberId(organizationId: string): string {
+    return `${CRON_SENDER_ID}:${organizationId}`;
   }
 }

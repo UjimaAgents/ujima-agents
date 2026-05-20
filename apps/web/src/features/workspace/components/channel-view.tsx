@@ -32,7 +32,6 @@ import { runToActivity } from "../activity-events";
 import { pendingApprovalVisibleInChannelView, queueApprovals } from "../approval-thread-filter";
 import { ReasoningTracePanel } from "./reasoning-trace-panel";
 import { buildTabCounts, collectBlockedRunReasons, collectConversationAttachments, isLiveRun } from "../feed-selectors";
-import { parseScheduleCommand } from "../parse-schedule-command";
 
 const CHANNEL_TABS: ChatTab[] = [
   { id: "conversation", label: "Conversation" },
@@ -634,28 +633,13 @@ export function ChannelView({
           onGoalModeChange={onGoalModeChange}
           onCommand={async (command, content) => {
             if (command === "schedule") {
-              const parsed = parseScheduleCommand(content ?? "");
-              if (!parsed) {
-                throw new Error("Usage: /schedule <cron> <prompt> — e.g. /schedule 0 9 * * 1-5 Standup");
+              const prompt = content?.replace(/^\/schedule\s*/i, "").trim();
+              if (!prompt) {
+                throw new Error("Usage: /schedule do this");
               }
-              const { cronExpression, prompt } = parsed;
-              const res = await fetch("/api/schedules", {
-                method: "POST",
-                body: JSON.stringify({
-                  name: prompt.slice(0, 60),
-                  cronExpression,
-                  prompt,
-                  channelId: conversation.type === "channel" ? conversation.id : undefined,
-                }),
-              });
-              if (!res.ok) {
-                const err = await res.json().catch(() => ({ message: "Unknown error" }));
-                throw new Error(err.message || "Failed to create schedule");
-              }
-              const data = await res.json();
-              await feed.sendMessage(
-                `📅 Scheduled **"${data.job.name}"** with cron \`${cronExpression}\``,
-              );
+              await feed.sendMessage(`Please use the schedule tool for this request: ${prompt}`);
+              setReplyTo(null);
+              scrollToLatest("auto");
               return;
             }
             await feed.archiveConversation(command);

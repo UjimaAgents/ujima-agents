@@ -5,6 +5,7 @@ import {
   resolveScheduledJobNextRunAt,
   SchedulerService,
 } from './scheduler.js';
+import { channelRoom, orgRoom, SocketEventNames } from '@ujima/shared';
 import type { ApiRepository } from './repository-reader.js';
 import type { ConversationService } from './conversation.js';
 import type { RealtimeService } from './context.js';
@@ -134,14 +135,21 @@ describe('SchedulerService', () => {
   let mockConversations: ConversationService;
   let mockRealtime: RealtimeService;
   let scheduler: SchedulerService;
+  let members: Map<string, { id: string; organizationId: string }>;
 
   beforeEach(() => {
+    members = new Map();
     mockRepo = {
       listDueJobsGlobally: vi.fn().mockReturnValue([]),
       saveScheduledJob: vi.fn(),
       getScheduledJob: vi.fn(),
-      getMember: vi.fn().mockReturnValue(null),
-      saveMember: vi.fn(),
+      getMember: vi.fn((organizationId: string, memberId: string) =>
+        members.get(`${organizationId}:${memberId}`) ?? null,
+      ),
+      saveMember: vi.fn((member) => {
+        members.set(`${member.organizationId}:${member.id}`, member);
+        return member;
+      }),
     } as unknown as ApiRepository;
 
     mockConversations = {
@@ -225,11 +233,114 @@ describe('SchedulerService', () => {
         expect.objectContaining({
           organizationId: 'org-1',
           channelId: 'channel-1',
+          senderId: '__ujima_scheduler__:org-1',
           content: expect.stringContaining('Standup'),
         }),
       );
     }, { timeout: 2000 });
+    expect(mockRealtime.emit).toHaveBeenCalledWith(
+      SocketEventNames.scheduledJobExecuted,
+      expect.objectContaining({
+        organizationId: 'org-1',
+        jobName: 'Standup',
+        channelId: 'channel-1',
+      }),
+      [orgRoom('org-1'), channelRoom('channel-1')],
+    );
     scheduler.stop();
+  });
+
+  it('namespaces the scheduler sender per organization', async () => {
+    const now = new Date().toISOString();
+    mockRepo.listDueJobsGlobally = vi.fn().mockReturnValue([
+      {
+        id: 'job-a',
+        organizationId: 'org-1',
+        name: 'A',
+        cronExpression: '0 9 * * *',
+        prompt: 'one',
+        channelId: 'channel-1',
+        memberId: 'member-1',
+        status: 'active' as const,
+        nextRunAt: now,
+        runCount: 0,
+        createdAt: now,
+        updatedAt: now,
+      },
+      {
+        id: 'job-b',
+        organizationId: 'org-2',
+        name: 'B',
+        cronExpression: '0 9 * * *',
+        prompt: 'two',
+        channelId: 'channel-2',
+        memberId: 'member-2',
+        status: 'active' as const,
+        nextRunAt: now,
+        runCount: 0,
+        createdAt: now,
+        updatedAt: now,
+      },
+    ]);
+
+    scheduler.start();
+
+    await vi.waitFor(() => {
+      expect(mockConversations.sendMessage).toHaveBeenCalledTimes(2);
+    }, { timeout: 2000 });
+
+    expect(vi.mocked(mockRepo.saveMember).mock.calls.map(([member]) => member.id)).toEqual([
+      '__ujima_scheduler__:org-1',
+      '__ujima_scheduler__:org-2',
+    ]);
+    scheduler.stop();
+  });
+
+  it('does not overlap ticks while a job is still running', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2025-01-15T09:00:00'));
+
+    let resolveSend!: () => void;
+    const sendPromise = new Promise<void>((resolve) => {
+      resolveSend = resolve;
+    });
+    vi.mocked(mockConversations.sendMessage).mockReturnValue(sendPromise);
+
+    const dueJob = {
+      id: 'job-overlap',
+      organizationId: 'org-1',
+      name: 'Overlap',
+      cronExpression: '0 9 * * *',
+      prompt: 'Hold the line',
+      channelId: 'channel-1',
+      memberId: 'member-1',
+      status: 'active' as const,
+      nextRunAt: new Date('2025-01-15T09:00:00').toISOString(),
+      runCount: 0,
+      createdAt: new Date('2025-01-15T09:00:00').toISOString(),
+      updatedAt: new Date('2025-01-15T09:00:00').toISOString(),
+    };
+    mockRepo.listDueJobsGlobally = vi.fn().mockReturnValue([dueJob]);
+
+    scheduler = new SchedulerService(mockRepo, mockConversations, mockRealtime, {
+      pollIntervalMs: 5,
+    });
+    scheduler.start();
+
+    await vi.waitFor(() => {
+      expect(mockConversations.sendMessage).toHaveBeenCalledTimes(1);
+    }, { timeout: 2000 });
+
+    await vi.advanceTimersByTimeAsync(50);
+    expect(mockConversations.sendMessage).toHaveBeenCalledTimes(1);
+
+    resolveSend();
+    await vi.waitFor(() => {
+      expect(mockRepo.saveScheduledJob).toHaveBeenCalledTimes(1);
+    }, { timeout: 2000 });
+
+    scheduler.stop();
+    vi.useRealTimers();
   });
 
   it('handles job execution errors and advances nextRunAt', async () => {

@@ -188,6 +188,17 @@ export function getWorkspaceSetting(
   return row ? rowString(row, 'value') : null;
 }
 
+export function deleteWorkspaceSetting(
+  db: DbHandle,
+  organizationId: string,
+  key: string,
+): void {
+  db.prepare('DELETE FROM workspace_settings WHERE organization_id = ? AND key = ?').run(
+    organizationId,
+    key,
+  );
+}
+
 export function findOrganizationIdByWorkspaceSetting(
   db: DbHandle,
   key: string,

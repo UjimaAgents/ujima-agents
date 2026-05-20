@@ -1,7 +1,11 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { randomUUID } from 'node:crypto';
 import type { Repository } from '@ujima/runtime-core';
-import { computeNextCronRun, resolveScheduledJobNextRunAt, type AuthService } from '@ujima/orchestrator';
+import {
+  createScheduledJobRecord,
+  resolveScheduledJobNextRunAt,
+  type AuthService,
+} from '@ujima/orchestrator';
+import { ScheduledJobSchema } from '@ujima/shared';
 import { readSessionToken } from '../session-token.js';
 import {
   CreateScheduledJobRequestSchema,
@@ -13,7 +17,6 @@ import {
   type CreateScheduledJobRequest,
   type UpdateScheduledJobRequest,
 } from '@ujima/api-schema';
-import { ScheduledJobSchema } from '@ujima/shared';
 
 interface ScheduleRouteDeps {
   repo: Repository;
@@ -33,28 +36,22 @@ export function registerScheduleRoutes(api: FastifyInstance, deps: ScheduleRoute
     if (!authState.member || !authState.user) {
       return reply.status(401).send({ code: 'ERR_UNAUTHORIZED', message: 'Unauthorized' });
     }
-    const now = new Date();
-    const nextRunAt = computeNextCronRun(req.body.cronExpression, now);
-    if (!nextRunAt) {
+    let job;
+    try {
+      job = createScheduledJobRecord({
+        organizationId: authState.user.organizationId,
+        memberId: authState.member.id,
+        name: req.body.name,
+        cronExpression: req.body.cronExpression,
+        prompt: req.body.prompt,
+        channelId: req.body.channelId,
+      });
+    } catch (error) {
       return reply.status(400).send({
         code: 'ERR_BAD_REQUEST',
-        message: 'Invalid cron expression.',
+        message: error instanceof Error ? error.message : 'Invalid cron expression.',
       });
     }
-    const job = ScheduledJobSchema.parse({
-      id: randomUUID(),
-      organizationId: authState.user.organizationId,
-      name: req.body.name,
-      cronExpression: req.body.cronExpression,
-      prompt: req.body.prompt,
-      channelId: req.body.channelId,
-      memberId: authState.member.id,
-      status: 'active',
-      nextRunAt: nextRunAt.toISOString(),
-      runCount: 0,
-      createdAt: now.toISOString(),
-      updatedAt: now.toISOString(),
-    });
     deps.repo.saveScheduledJob(job);
     return reply.status(201).send({ job });
   });

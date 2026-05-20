@@ -62,8 +62,8 @@ const SLASH_COMMANDS: Array<{
   },
   {
     command: "schedule",
-    label: "/schedule <cron> <prompt>",
-    description: "Schedule a recurring job with a cron expression.",
+    label: "/schedule do this",
+    description: "Ask the agent to schedule a follow-up.",
   },
   {
     command: "summarize",
@@ -1038,13 +1038,15 @@ export function ChatInput({
                   type="button"
                   disabled={isSending || isCommanding || uploading || (!hasDraft && !exactSlashCommand && !canConfirmClear)}
                   onClick={() => void submitComposer()}
-                  aria-label={
+                aria-label={
                     canConfirmClear
                       ? "Confirm clear conversation"
                       : exactSlashCommand === "clear"
                         ? "Clear conversation"
                         : exactSlashCommand === "summarize"
                           ? "Run summarize"
+                          : exactSlashCommand === "schedule"
+                            ? "Ask agent to schedule"
                           : "Send message"
                   }
                   className="flex h-7 w-7 items-center justify-center rounded-lg bg-violet-600 text-white shadow-lg shadow-violet-500/20 transition hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-50"

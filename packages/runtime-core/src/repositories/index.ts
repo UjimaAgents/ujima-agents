@@ -107,6 +107,7 @@ import {
 import type { SecretStore } from '../secret-store.js';
 import { createInMemorySecretStore } from '../secret-store.js';
 import {
+  deleteWorkspaceSetting as removeWorkspaceSetting,
   deleteProviderCredential as removeProviderCredential,
   findOrganizationIdByWorkspaceSetting as readOrganizationIdByWorkspaceSetting,
   getWorkspaceSetting as readWorkspaceSetting,
@@ -206,6 +207,8 @@ export class Repository {
     writeWorkspaceSetting(this.db, organizationId, key, value);
   getWorkspaceSetting = (organizationId: string, key: string): string | null =>
     readWorkspaceSetting(this.db, organizationId, key);
+  deleteWorkspaceSetting = (organizationId: string, key: string): void =>
+    removeWorkspaceSetting(this.db, organizationId, key);
   findOrganizationIdByWorkspaceSetting = (key: string, value: string): string | null =>
     readOrganizationIdByWorkspaceSetting(this.db, key, value);
   saveProviderCredential = (

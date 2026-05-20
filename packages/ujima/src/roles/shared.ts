@@ -19,6 +19,7 @@ export const DEFAULT_ROLE_TOOLS = [
   "channel.dm",
   "channel.list",
   "channel.read",
+  "schedule",
   "self.note",
   "mcp"
 ] as const;
