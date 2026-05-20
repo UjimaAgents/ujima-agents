@@ -905,4 +905,63 @@ describe('E3 channels and mentions', () => {
       'first to commit',
     );
   });
+
+  // Access-control regression: the clientMessageId fast-path used to
+  // return the cached row BEFORE any writable-channel / thread-access
+  // validation ran. A member who posted with key X, then lost channel
+  // access (member removed, channel archived), could re-POST the same
+  // key and still receive the cached message — an access-control
+  // leak. Now `requireWritableChannel` runs FIRST, so the second send
+  // rejects with the same error a fresh send would, regardless of
+  // whether a cached row exists under that key.
+  it('rejects a clientMessageId replay against a channel that has since been archived', async () => {
+    const fixture = await createFixture({ agentNames: ['frontend-alice'] });
+    tempDirs.push(fixture.archiveRoot);
+    const realtime = createRealtimeCollector();
+    const conversations = new ConversationService(fixture.repo, realtime);
+
+    fixture.repo.ensureThread({
+      id: 'general',
+      organizationId: fixture.organizationId,
+      channelId: 'general',
+      title: 'general',
+      memberIds: [fixture.ownerId, 'frontend-alice'],
+      createdAt: new Date().toISOString(),
+    });
+
+    const sharedClientMessageId = 'retry-after-archive';
+
+    const first = conversations.sendMessage({
+      organizationId: fixture.organizationId,
+      threadId: 'general',
+      channelId: 'general',
+      senderId: fixture.ownerId,
+      content: 'before archive',
+      clientMessageId: sharedClientMessageId,
+    });
+    expect(first.content).toBe('before archive');
+
+    // Archive the channel — `requireActiveChannel` rejects archived
+    // channels, which is what `requireWritableChannel` reaches before
+    // the dedupe shortcut now runs.
+    const general = fixture.repo.getChannel(fixture.organizationId, 'general')!;
+    fixture.repo.saveChannel({
+      ...general,
+      archivedAt: new Date().toISOString(),
+    });
+
+    // The retry must NOT hand back the cached row. Pre-fix the
+    // shortcut returned `first` here; post-fix the writability check
+    // throws before the lookup runs.
+    expect(() =>
+      conversations.sendMessage({
+        organizationId: fixture.organizationId,
+        threadId: 'general',
+        channelId: 'general',
+        senderId: fixture.ownerId,
+        content: 'after archive',
+        clientMessageId: sharedClientMessageId,
+      }),
+    ).toThrow(/Channel is archived/);
+  });
 });

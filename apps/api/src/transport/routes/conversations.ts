@@ -231,15 +231,31 @@ export function registerConversationRoutes(
               req.body.parentMessageId,
             )
           : req.body.threadId;
-      if (clientMessageId) {
-        const existing = requestedThreadId
-          ? repo.findMessageByClientId?.(
-              req.body.organizationId,
-              senderId,
-              requestedThreadId,
-              clientMessageId,
-            )
-          : null;
+      if (clientMessageId && requestedThreadId) {
+        // Access-control regression guard: the dedupe fast-path used
+        // to return the cached row BEFORE any thread/channel access
+        // check ran. A member who posted with clientMessageId X,
+        // then got removed from the channel (or a DM thread they
+        // were once a participant of), could re-POST the same key
+        // and still receive the cached message — leaking content
+        // they no longer have access to.
+        //
+        // Revalidate access against the CURRENT membership before
+        // honoring the cache. Falls through to the regular send
+        // path on mismatch — `sendMessage` / `sendDirectMessage`
+        // will run the same check again and reject with the same
+        // error, so this stays the only gate either way.
+        conversations.requireThreadAccess(
+          req.body.organizationId,
+          requestedThreadId,
+          senderId,
+        );
+        const existing = repo.findMessageByClientId?.(
+          req.body.organizationId,
+          senderId,
+          requestedThreadId,
+          clientMessageId,
+        );
         if (existing && existing.threadId === requestedThreadId) {
           return existing;
         }
@@ -278,6 +294,15 @@ export function registerConversationRoutes(
       }
       return message;
     } catch (err) {
+      const message = errorMessage(err);
+      // requireThreadAccess (and the channel-write guards inside
+      // sendMessage / sendDirectMessage) surface access denials as
+      // `Forbidden: ...`. The schema declares 403 as a valid
+      // response — translate to it instead of falling through to a
+      // generic 400.
+      if (message.startsWith('Forbidden')) {
+        return apiError(reply, 403, message);
+      }
       return routeError(reply, err, {
         notFound: ['Organization not found', 'Sender not found', 'Channel not found', 'Recipient not found'],
         workspaceRoot: true,

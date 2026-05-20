@@ -592,6 +592,13 @@ export class ConversationService {
       throw new Error(`Sender not found: ${input.senderId}`);
     }
 
+    // Resolve writability FIRST so the dedupe fast-path below can't
+    // hand back a cached message to a sender who has since lost
+    // channel access. Mirrors the transport-layer guard.
+    const channel = input.channelId
+      ? this.requireWritableChannel(input.organizationId, input.channelId, sender.id)
+      : null;
+
     // L10 — if a clientMessageId is provided and a message with the
     // same thread-scoped idempotency key already exists, short-circuit
     // and return it.
@@ -606,10 +613,6 @@ export class ConversationService {
         return existing;
       }
     }
-
-    const channel = input.channelId
-      ? this.requireWritableChannel(input.organizationId, input.channelId, sender.id)
-      : null;
 
     this.repo.ensureThread({
       id: input.threadId,
