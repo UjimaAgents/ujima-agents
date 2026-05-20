@@ -53,3 +53,6 @@ logs
 *.vsix
 **/.stage/
 ujima_agents_runtime_plan.md
+apps/api/.playwright-mcp/page-2026-05-20T16-55-01-988Z.yml
+apps/api/.playwright-mcp/page-2026-05-20T16-55-23-590Z.yml
+apps/api/.playwright-mcp/page-2026-05-20T16-55-28-120Z.yml

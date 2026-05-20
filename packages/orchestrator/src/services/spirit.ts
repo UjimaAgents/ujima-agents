@@ -684,27 +684,12 @@ export class SpiritService {
       });
     }
 
-    const system = buildAgentSystemPrompt(
-      team.workspace.root,
-      organization.name,
-      member.id,
-      member.name,
-      session.channelId,
-      agent,
-      teamRole,
-      this.repo
-        .listMembers(input.organizationId)
-        .filter((current) => current.id !== member.id),
-      team.agents,
-      team.channels,
-      organization.organizationChart,
-    );
-    const systemPromptSuffix = this.resolveGoalSystemPromptSuffix(
-      input.organizationId,
-      input.taskSessionId,
-      input.systemPromptSuffix,
-    );
-    const systemPrompt = systemPromptSuffix ? `${system}\n\n${systemPromptSuffix}` : system;
+    // System prompt is built later (after the tool palette is
+    // resolved) so the "Available tools:" line can reflect the actual
+    // ids handed to runAgentLoop, including MCP tools. Building it
+    // here with only `role.tools` produces "Available tools: none"
+    // for roles whose config has no tools array, and the model takes
+    // that line as ground truth and denies tools it actually has.
 
     // All validation passed. Now commit the spirit.
     const spirit = this.spawn({
@@ -768,7 +753,7 @@ export class SpiritService {
     // Attached MCP tools layer ON TOP of the built-in palette. The
     // model sees one unified tool set; the namespacing keeps tool
     // ids unambiguous and the dispatch routes to the right server.
-    const mcpToolDefs = await this.buildMcpToolDefinitions({
+    const { toolSet: mcpToolDefs, servers: attachedMcpServers } = await this.buildMcpToolDefinitions({
       organizationId: input.organizationId,
       memberId: input.memberId,
       runId: spirit.runId ?? spirit.id,
@@ -777,6 +762,38 @@ export class SpiritService {
       role,
     });
     const toolDefs: ToolSet = { ...builtInToolDefs, ...mcpToolDefs };
+
+    // Now that the full palette is resolved, build the system prompt
+    // with the exact tool ids the model will see. The
+    // "Available tools:" line must match the AI-SDK schema or the
+    // model can deny tools it actually has (the original report:
+    // Phoebe with a Playwright MCP attached saying "I don't have a
+    // Playwright tool" because role.tools was [] and the prompt said
+    // "Available tools: none").
+    const availableToolIds = Object.keys(toolDefs);
+    const system = buildAgentSystemPrompt(
+      team.workspace.root,
+      organization.name,
+      member.id,
+      member.name,
+      session.channelId,
+      agent,
+      teamRole,
+      this.repo
+        .listMembers(input.organizationId)
+        .filter((current) => current.id !== member.id),
+      team.agents,
+      team.channels,
+      organization.organizationChart,
+      availableToolIds,
+      attachedMcpServers.map((s) => ({ name: s.serverName, toolNames: s.toolNames })),
+    );
+    const systemPromptSuffix = this.resolveGoalSystemPromptSuffix(
+      input.organizationId,
+      input.taskSessionId,
+      input.systemPromptSuffix,
+    );
+    const systemPrompt = systemPromptSuffix ? `${system}\n\n${systemPromptSuffix}` : system;
 
     const maxIterations = input.maxIterations ?? this.maxIterationsPerRun;
     let totalTurns = 0;
@@ -2526,16 +2543,23 @@ export class SpiritService {
    * (member, role). Tool ids are namespaced with the display slug and
    * a stable server-id hash so similar server names cannot overwrite
    * each other in the flattened AI SDK tool palette.
+   *
+   * Public so callers that don't own a `SpiritService` instance can
+   * still resolve the same palette — specifically `AiService`, which
+   * handles the wake-run path (advanceRun) and would otherwise build
+   * a tool palette without MCP tools, leaving the model with no
+   * playwright/etc. tools and a system prompt that says "Available
+   * tools: none".
    */
-  private async buildMcpToolDefinitions(ctx: {
+  async buildMcpToolDefinitions(ctx: {
     organizationId: string;
     memberId: string;
     runId: string;
     threadId: string;
     taskSessionId: string;
     role: SpiritRole;
-  }): Promise<ToolSet> {
-    if (!this.mcpPool || !this.mcpResolver) return {} as ToolSet;
+  }): Promise<{ toolSet: ToolSet; servers: McpServerSummary[] }> {
+    if (!this.mcpPool || !this.mcpResolver) return { toolSet: {} as ToolSet, servers: [] };
     let resolutions: SpiritMcpResolution[];
     try {
       resolutions = await this.mcpResolver({
@@ -2544,9 +2568,9 @@ export class SpiritService {
         role: ctx.role,
       });
     } catch {
-      return {} as ToolSet;
+      return { toolSet: {} as ToolSet, servers: [] };
     }
-    if (resolutions.length === 0) return {} as ToolSet;
+    if (resolutions.length === 0) return { toolSet: {} as ToolSet, servers: [] };
 
     type ToolEntry = readonly [
       string,
@@ -2565,6 +2589,7 @@ export class SpiritService {
       },
     ];
     const entries: ToolEntry[] = [];
+    const servers: McpServerSummary[] = [];
     const usedToolIds = new Set<string>();
     const pool = this.mcpPool;
     for (const resolution of resolutions) {
@@ -2588,6 +2613,13 @@ export class SpiritService {
         toolList = this.repo.getMcpToolCache(ctx.organizationId, resolution.serverId)?.tools ?? [];
       }
       const nsSlug = buildMcpNamespace(resolution.serverName, resolution.serverId);
+      if (toolList.length > 0) {
+        servers.push({
+          serverName: resolution.serverName,
+          serverId: resolution.serverId,
+          toolNames: toolList.map((t) => t.name),
+        });
+      }
       for (const t of toolList) {
         const baseToolId = `mcp__${nsSlug}__${sanitizeMcpToolName(t.name)}`;
         const aiToolId = uniqueMcpToolId(baseToolId, resolution.serverId, t.name, usedToolIds);
@@ -2610,7 +2642,7 @@ export class SpiritService {
     // `tool({...})` keeps its generic resolved — collecting them into a
     // Record<string, ReturnType<typeof tool>> first collapses the
     // generic to `Tool<never, never>` and breaks assignment.
-    return Object.fromEntries(
+    const toolSet = Object.fromEntries(
       entries.map(([aiToolId, entry]) => [
         aiToolId,
         tool({
@@ -2648,7 +2680,20 @@ export class SpiritService {
         }),
       ]),
     ) as ToolSet;
+    return { toolSet, servers };
   }
+}
+
+/**
+ * Per-MCP-server tool summary, threaded through to the system prompt
+ * so the model sees a clear "Attached MCP servers" block with friendly
+ * names and original tool names — instead of having to infer that
+ * `mcp__playwright_<hash>__browser_close` belongs to Playwright.
+ */
+export interface McpServerSummary {
+  serverName: string;
+  serverId: string;
+  toolNames: string[];
 }
 
 /**

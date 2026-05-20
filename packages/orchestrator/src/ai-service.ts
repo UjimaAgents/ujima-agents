@@ -38,12 +38,46 @@ export interface GenerateRunReplyInput {
   onChunk?: (chunk: AgentLoopChunk) => PromiseLike<void> | void;
 }
 
+/**
+ * Resolves the MCP tool palette for a given (org, member, role). Late-
+ * bound via `AiService.setMcpToolResolver` after construction to break
+ * the AiService ↔ SpiritService construction cycle — both can't be
+ * constructed first, so we wire the resolver post-hoc once both exist.
+ * When the resolver is unset, MCP tools simply don't appear in the
+ * wake-run palette (legacy behavior).
+ */
+export interface ResolvedMcpServerSummary {
+  serverName: string;
+  serverId: string;
+  toolNames: string[];
+}
+
+export type McpToolResolver = (ctx: {
+  organizationId: string;
+  memberId: string;
+  runId: string;
+  threadId: string;
+  taskSessionId: string;
+  role: SpiritRole;
+}) => Promise<{ toolSet: ToolSet; servers: ResolvedMcpServerSummary[] }>;
+
 export class AiService {
+  private mcpToolResolver?: McpToolResolver;
+
   constructor(
     private readonly teamStore: TeamStore,
     private readonly repo: RepositoryReader,
     private readonly tools: ToolService,
   ) {}
+
+  /**
+   * Plug in the MCP tool palette resolver. Production wiring sets this
+   * to `spirits.buildMcpToolDefinitions.bind(spirits)` after both
+   * services exist (see services/index.ts).
+   */
+  setMcpToolResolver(resolver: McpToolResolver | undefined): void {
+    this.mcpToolResolver = resolver;
+  }
 
   async generateRunReply(
     input: GenerateRunReplyInput,
@@ -108,7 +142,7 @@ export class AiService {
       ? role.tools.filter((toolId) => toolId !== 'channel.pass' && toolId !== 'self.note')
       : role.tools;
     const toolIds = [...new Set([...roleTools, ...baseAlwaysAvailable])];
-    const toolDefs = buildToolDefinitions(toolIds, team, this.tools, {
+    const builtInToolDefs = buildToolDefinitions(toolIds, team, this.tools, {
       organizationId: input.organizationId,
       runId: input.runId,
       memberId: input.agentId,
@@ -116,6 +150,36 @@ export class AiService {
       repo: this.repo,
     }) as ToolSet;
 
+    // Attached MCPs layer on top of the built-in palette so wake-run
+    // agents (this code path) get the same tools that the spirit-run
+    // path has been getting all along. Without this, a member with a
+    // Playwright MCP attached wakes via @mention and the model sees
+    // only channel.* tools, so it (correctly) tells the user it has
+    // no Playwright tool. The resolver is late-bound at startup.
+    const mcpResolution = this.mcpToolResolver
+      ? await this.mcpToolResolver({
+          organizationId: input.organizationId,
+          memberId: input.agentId,
+          runId: input.runId,
+          threadId: input.threadId,
+          // Wake-run path has no task session of its own — the run
+          // row carries `threadId` as the conversational anchor and
+          // any task linkage lives there. Pass an empty string so
+          // tools that don't need a session aren't blocked.
+          taskSessionId: '',
+          role: 'worker',
+        })
+      : { toolSet: {} as ToolSet, servers: [] };
+    const mcpToolDefs = mcpResolution.toolSet;
+    const attachedMcpServers = mcpResolution.servers;
+    const toolDefs: ToolSet = { ...builtInToolDefs, ...mcpToolDefs };
+
+    // The "Available tools:" line in the system prompt is what some
+    // models actually read when deciding whether they CAN call a tool.
+    // Pass the FULL resolved palette (baseline + role + MCP namespaced
+    // ids) so the prompt matches the AI-SDK schema; otherwise the
+    // model can deny tools it actually has.
+    const availableToolIds = Object.keys(toolDefs);
     const system = buildAgentSystemPrompt(
       team.workspace.root,
       organization.name,
@@ -130,6 +194,8 @@ export class AiService {
       team.agents,
       team.channels,
       organization.organizationChart,
+      availableToolIds,
+      attachedMcpServers.map((s) => ({ name: s.serverName, toolNames: s.toolNames })),
     );
 
     const initialThreadMessages = this.repo.listMessages(input.organizationId, input.threadId, undefined, 20).data;

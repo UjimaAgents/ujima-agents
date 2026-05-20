@@ -16,8 +16,21 @@ export const MESSAGE_TOOL_USAGE_GUIDANCE = [
   'Use ignore: true on dm messages when you want a private acknowledgement without waking the recipient or posting public channel follow-up.',
 ] as const;
 
-function listTools(role: RoleConfig): string {
-  return role.tools.length ? role.tools.join(', ') : 'none';
+function listToolsLine(toolIds: readonly string[]): string {
+  return toolIds.length ? toolIds.join(', ') : 'none';
+}
+
+function formatAttachedMcpServers(
+  servers: readonly { name: string; toolNames: readonly string[] }[] | undefined,
+): string {
+  if (!servers || servers.length === 0) return '';
+  const lines = servers.map((server) => {
+    const tools = server.toolNames.join(', ');
+    return `- ${server.name}: ${tools}`;
+  });
+  return ['Attached MCP servers (you DO have these — call them via their AI-SDK ids in `Available tools`):', ...lines].join(
+    '\n',
+  );
 }
 
 function listScopes(role: RoleConfig): string {
@@ -137,6 +150,29 @@ export function buildAgentSystemPrompt(
   agents: AgentConfig[] = [],
   channels: Channel[] = [],
   organizationChart: OrganizationChart = { reportsTo: {} },
+  /**
+   * Final resolved tool ids — `role.tools` ∪ baseline ALWAYS_AVAILABLE
+   * conversational tools ∪ MCP-attached tool ids (namespaced). The
+   * prompt's "Available tools:" line is the only signal some models
+   * use to decide whether they CAN call a tool; if this is empty or
+   * stale, agents will deny having tools the AI-SDK palette actually
+   * provides (e.g. saying "I don't have a Playwright tool" while
+   * `mcp__playwright__*` is wired in). Callers MUST pass the exact
+   * tool ids they hand to `runAgentLoop`. Defaults to `role.tools`
+   * for backwards compatibility with tests that don't construct an
+   * MCP palette, but production callers should always set it.
+   */
+  availableToolIds?: readonly string[],
+  /**
+   * MCP servers attached to this member, threaded through so the prompt
+   * can render a human-friendly block ("Attached MCP servers: …"). The
+   * `availableToolIds` list contains the namespaced AI-SDK ids
+   * (e.g. `mcp__playwright_<hash>__browser_close`) which are accurate
+   * but cryptic — some models scan for the literal server name when
+   * asked "do you have <foo>?" and miss it through the namespace. This
+   * block calls out each server by its real name.
+   */
+  attachedMcpServers?: readonly { name: string; toolNames: readonly string[] }[],
 ): string {
   const accessibleChannels = role.channels.length
     ? channels.filter((channel) => role.channels.includes(channel.name))
@@ -172,7 +208,8 @@ export function buildAgentSystemPrompt(
     `Workspace root: ${workspaceRoot}`,
     `Allowed scopes: ${listScopes(role)}`,
     formatWorkspaceLayout(workspaceRoot),
-    `Available tools: ${listTools(role)}`,
+    `Available tools: ${listToolsLine(availableToolIds ?? role.tools)}`,
+    formatAttachedMcpServers(attachedMcpServers),
     `Available channels: ${listChannels(role)}`,
   ]
     .filter(Boolean)

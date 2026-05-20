@@ -463,6 +463,14 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
       mcpPool: context.mcpPool,
     },
   );
+
+  // Plug SpiritService's MCP tool resolver into AiService now that
+  // both exist. This is what gives the wake-run path (advanceRun ->
+  // generateRunReply) access to MCP tools — without it, an agent with
+  // a Playwright MCP attached wakes via @mention and answers "I don't
+  // have a Playwright tool" because the AI-SDK palette and the system
+  // prompt only ever saw the baseline channel tools.
+  ai.setMcpToolResolver((ctx) => spirits.buildMcpToolDefinitions(ctx));
   const runs = spirits;
   resumeRun = async (orgId, runId, allowRun = true, approvalScope) =>
     spirits.resumeAfterApproval(orgId, runId, allowRun, approvalScope);
