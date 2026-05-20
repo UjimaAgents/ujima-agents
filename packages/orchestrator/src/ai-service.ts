@@ -161,23 +161,21 @@ export class AiService {
     // scoped `'supervisor'`-only would be silently invisible to the
     // model — and `ToolServiceImpl.executeMcpTool` (which re-reads
     // attachments by role at invocation time) would reject the call
-    // even if the model tried. Look up any live spirit for this
-    // member; prefer one that matches the current run, otherwise fall
-    // back to whatever active spirit the member has. Default to
-    // `'worker'` when no spirit exists (the regular wake-run path).
+    // even if the model tried.
+    //
+    // Lookup MUST be role-agnostic. The earlier implementation used
+    // `listActiveSpiritsForMember`, which filters to `role = 'worker'`
+    // in SQL — so supervisor spirits never showed up and any
+    // supervisor wake reaching this path still resolved to the worker
+    // palette. `getSpiritByRunId` is keyed directly on `runs.run_id`
+    // and returns whichever role (worker or supervisor) owns the row.
     let resolvedRole: SpiritRole = 'worker';
     let resolvedTaskSessionId = '';
-    if (this.repo.listActiveSpiritsForMember) {
-      const activeSpirits = this.repo.listActiveSpiritsForMember(
-        input.organizationId,
-        input.agentId,
-      );
-      const matchingSpirit =
-        activeSpirits.find((spirit) => spirit.runId === input.runId) ??
-        activeSpirits[0];
-      if (matchingSpirit) {
-        resolvedRole = matchingSpirit.role;
-        resolvedTaskSessionId = matchingSpirit.taskSessionId;
+    if (this.repo.getSpiritByRunId) {
+      const spirit = this.repo.getSpiritByRunId(input.organizationId, input.runId);
+      if (spirit) {
+        resolvedRole = spirit.role;
+        resolvedTaskSessionId = spirit.taskSessionId;
       }
     }
 
