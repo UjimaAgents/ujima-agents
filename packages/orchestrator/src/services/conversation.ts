@@ -1342,6 +1342,20 @@ export class ConversationService {
     const kept = existing.filter((t) => t >= windowStart);
     kept.push(now);
     this.pairMentionWindows.set(key, kept);
+    // QA flagged: without eviction of empty keys, every distinct
+    // (org, thread, from, to) 4-tuple lives forever. Walk the map
+    // periodically (cheap when sizes are small) and delete keys
+    // whose newest timestamp has fallen outside the window. Bound
+    // the walk by sampling — only sweep when the map crosses a
+    // threshold so the cost stays O(1) amortised.
+    if (this.pairMentionWindows.size > 1024) {
+      for (const [k, timestamps] of this.pairMentionWindows) {
+        const last = timestamps[timestamps.length - 1];
+        if (last === undefined || last < windowStart) {
+          this.pairMentionWindows.delete(k);
+        }
+      }
+    }
     return kept.length;
   }
 

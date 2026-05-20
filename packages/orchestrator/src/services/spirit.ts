@@ -1737,7 +1737,23 @@ export class SpiritService {
       const text = (result.text || streamedText).trim();
       const reasoningContent = extractReasoningChunk(result) ?? (streamedReasoning.trim() || undefined);
       const runSteps = this.repo.listRunSteps?.(run.organizationId, run.id) ?? [];
-      const terminatingTool = findTerminatingTool(result) ?? findTerminatingToolFromRunSteps(runSteps);
+      const detectedTerminatingTool =
+        findTerminatingTool(result) ?? findTerminatingToolFromRunSteps(runSteps);
+      // Preserve any silent terminator that a mid-run side-effect
+      // already persisted onto the run row (mirror-loop guard fires
+      // `tryMirrorSuppress` which writes `terminatingTool='channel.ack'`).
+      // Without this preservation step, the freshly-computed
+      // `detected` value (which sees the model's original
+      // `channel.reply` toolcall via `result.steps`) would clobber
+      // the silent terminator on the way through `completeRun`,
+      // and metrics would report a publish that never happened.
+      const persistedRunRow = this.repo.getRun(run.organizationId, run.id);
+      const persistedTerminator = persistedRunRow?.terminatingTool;
+      const persistedIsSilent =
+        persistedTerminator === 'channel.ack' || persistedTerminator === 'channel.pass';
+      const terminatingTool: string | null = persistedIsSilent
+        ? persistedTerminator
+        : detectedTerminatingTool;
       const usedPass = runUsedChannelPass(result) || terminatingTool === 'channel.pass';
       const finalThreadId = run.threadId;
       const channelId = finalThreadId

@@ -51,11 +51,29 @@ const COMMITMENT_PATTERNS: RegExp[] = [
   // Future tense first-person ("I'll draft", "I will deliver",
   // "I am going to write", "I'm going to set up").
   /\bi(?:'ll| will| am going to| am about to|'m going to|'m about to)\s+(\w[\w\s-]{2,80}?)(?:[.,!?\n]|$)/i,
-  // Active commitment ("Starting now on X", "Beginning work on X").
-  /\b(?:starting|beginning|kicking off)\s+(?:now\s+)?(?:on|with)\s+(\w[\w\s-]{2,80}?)(?:[.,!?\n]|$)/i,
+  // Active commitment ("Starting now on X", "Beginning work on X",
+  // "Kicking off the refactor"). The optional `work\s+` between the
+  // verb and the connector is what catches "beginning work on X".
+  /\b(?:starting|beginning|kicking off)\s+(?:work\s+)?(?:now\s+)?(?:on|with|the)\s+(\w[\w\s-]{2,80}?)(?:[.,!?\n]|$)/i,
   // "Drafting / writing / preparing X now" — present-progressive
   // promises of imminent output.
   /\b(?:drafting|writing|preparing|building|setting up|implementing)\s+(\w[\w\s-]{2,80}?)(?:\s+now)?(?:[.,!?\n]|$)/i,
+];
+
+// Past-tense completion announcements with a deliverable. The
+// dogfood scenario that surfaced this: Layla said "I have drafted
+// the BRD based on your test results and saved it to
+// `ai/memory-bank/site-setup.md`. It is now available for your
+// review." — no future-tense commitment fired earlier, but the
+// human still wants the artifact + delivery to land on the rail.
+// Match shape: completion verb + (optional connector text) + path-
+// like token. The captured group is the path or named output.
+const COMPLETION_PATTERNS: RegExp[] = [
+  // "I have drafted X" / "I've created Y" / "I drafted Z" + saved/to + path
+  /\bi(?:'ve| have| just)?\s+(?:drafted|written|created|prepared|built|set up|implemented|finished|completed|delivered|published|published|posted)\b[\s\S]{0,200}?(?:saved (?:it|the\w*)? )?(?:to|at|in|on)\s+`?([A-Za-z0-9_./-]+\.[A-Za-z0-9]+)`?/i,
+  // "saved to <path>" / "saved at <path>" / "available at <path>" — bare
+  // completion lines with no leading "I".
+  /\b(?:saved|stored|available|uploaded|wrote|delivered)\s+(?:to|at|in|on)\s+`?([A-Za-z0-9_./-]+\.[A-Za-z0-9]+)`?/i,
 ];
 
 // Reject "verb-but-not-a-commitment" patterns. Pure acks
@@ -84,17 +102,69 @@ const NON_NOUN_TOKENS = new Set([
 ]);
 
 function containsNounIshToken(text: string): boolean {
-  const tokens = text
-    .toLowerCase()
-    .replace(/[^a-z0-9_\-\s]/g, ' ')
+  // Default minimum length is 4. Short uppercase acronyms (BRD, PRD,
+  // API, MVP, RFC, KPI) are legitimate nouns — keep them by special-
+  // casing length-3 ALL-CAPS tokens before lowercasing. Without this,
+  // "Drafting the BRD now" would have only stopwords + a 3-char
+  // acronym left after filtering and would (incorrectly) be rejected.
+  const rawTokens = text
+    .replace(/[^A-Za-z0-9_\-\s]/g, ' ')
     .split(/\s+/)
-    .filter((token) => token.length >= 4);
-  return tokens.some((token) => !NON_NOUN_TOKENS.has(token));
+    .filter((token) => token.length > 0);
+  for (const raw of rawTokens) {
+    const lower = raw.toLowerCase();
+    const isShortAcronym = raw.length === 3 && raw === raw.toUpperCase();
+    if (raw.length < 4 && !isShortAcronym) continue;
+    if (NON_NOUN_TOKENS.has(lower)) continue;
+    return true;
+  }
+  return false;
 }
 
 export interface ExtractedCommitment {
   deliverableSummary: string;
   rawMatch: string;
+}
+
+export interface ExtractedCompletion {
+  deliverableSummary: string;
+  artifactPath: string;
+}
+
+/**
+ * Extract a past-tense completion announcement with a file path
+ * ("I have drafted the BRD and saved it to `ai/memory-bank/site-
+ * setup.md`"). Returns the path as the deliverable summary so the
+ * goals rail shows what was actually produced — not just what was
+ * promised. Without this, agents that go straight to producing
+ * work (no "I'll draft X" announcement first) leave no trace on
+ * the rail.
+ */
+export function extractCompletion(body: string): ExtractedCompletion | null {
+  if (!body) return null;
+  const trimmed = body.trim();
+  if (trimmed.length === 0 || trimmed.length > 4000) return null;
+  // Skip wholly-quoted bodies (replies that quote upstream work).
+  const nonQuotedLines = trimmed
+    .split(/\r?\n/)
+    .filter((line) => !line.startsWith('>') && !line.startsWith('|'));
+  if (nonQuotedLines.length === 0) return null;
+  for (const pattern of COMPLETION_PATTERNS) {
+    const match = pattern.exec(trimmed);
+    if (match && typeof match[1] === 'string') {
+      const artifactPath = match[1].trim();
+      if (artifactPath.length < 3) continue;
+      // Reject URLs and absolute filesystem paths outside the
+      // workspace — those are out-of-scope for the goals rail.
+      if (/^https?:\/\//i.test(artifactPath)) continue;
+      if (artifactPath.startsWith('/') && !artifactPath.startsWith('/tmp/')) continue;
+      return {
+        deliverableSummary: artifactPath,
+        artifactPath,
+      };
+    }
+  }
+  return null;
 }
 
 export function extractCommitment(body: string): ExtractedCommitment | null {
@@ -189,8 +259,13 @@ export class CommitmentService {
       // fails on retired agents) and would cycle forever.
       const sender = this.repo.getMember(message.organizationId, message.senderId);
       if (!sender || sender.retiredAt) return;
-      const extracted = extractCommitment(message.content);
-      if (!extracted) return;
+      // Try future-tense commitment first; fall back to past-tense
+      // completion so delivered work (Layla announcing "I have
+      // drafted X to /path") still lands on the rail even when no
+      // commitment was announced beforehand.
+      const futureCommitment = extractCommitment(message.content);
+      const completion = futureCommitment ? null : extractCompletion(message.content);
+      if (!futureCommitment && !completion) return;
       const channel = this.repo.getChannel(message.organizationId, message.channelId);
       if (!channel) return;
       // Don't open commitments on private self-channels (workspace
@@ -199,19 +274,29 @@ export class CommitmentService {
 
       const taskSession = this.ensureTaskSession(message, channel);
       const now = new Date().toISOString();
-      const dueAt = new Date(Date.now() + this.defaultDueOffsetMs).toISOString();
+      const isCompletion = completion !== null;
+      const dueAt = isCompletion
+        ? undefined
+        : new Date(Date.now() + this.defaultDueOffsetMs).toISOString();
+      const deliverable =
+        futureCommitment?.deliverableSummary ?? completion?.deliverableSummary ?? '';
+      const notes = futureCommitment?.rawMatch ?? completion?.artifactPath ?? '';
       const todo: Todo = TodoSchema.parse({
         id: randomUUID(),
         organizationId: message.organizationId,
         taskSessionId: taskSession?.id,
         runId: undefined,
         memberId: message.senderId,
-        title: extracted.deliverableSummary.slice(0, 120),
-        status: 'in_progress',
-        notes: extracted.rawMatch,
+        title: deliverable.slice(0, 120),
+        // Past-tense completions land directly as `completed` so the
+        // rail can show them as delivered (and the sweeper won't
+        // re-wake the owner). Future-tense commitments start as
+        // `in_progress`.
+        status: isCompletion ? 'completed' : 'in_progress',
+        notes,
         channelId: message.channelId,
         sourceMessageId: message.id,
-        deliverableSummary: extracted.deliverableSummary,
+        deliverableSummary: deliverable,
         dueAt,
         lastProgressAt: now,
         createdAt: now,

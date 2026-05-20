@@ -112,13 +112,21 @@ export function ChannelGoalsStrip({
         const ownerName = memberNameLookup(todo.memberId) ?? todo.memberId;
         const dueLabel = todo.dueAt ? formatDue(todo.dueAt) : undefined;
         const ageLabel = todo.lastProgressAt ? formatAge(todo.lastProgressAt) : undefined;
-        const badgeTone = todo.status === "blocked" ? "border-rose-300 bg-rose-100 text-rose-800 dark:border-rose-800 dark:bg-rose-950 dark:text-rose-200" : "border-zinc-200 bg-white text-zinc-700 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200";
+        const isCompleted = todo.status === "completed";
+        const badgeTone = todo.status === "blocked"
+          ? "border-rose-300 bg-rose-100 text-rose-800 dark:border-rose-800 dark:bg-rose-950 dark:text-rose-200"
+          : isCompleted
+            ? "border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-200"
+            : "border-zinc-200 bg-white text-zinc-700 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200";
         return (
           <span
             key={todo.id}
             className={`flex shrink-0 items-center gap-1 rounded-md border px-2 py-0.5 ${badgeTone}`}
             title={todo.deliverableSummary ?? todo.title}
           >
+            {isCompleted ? (
+              <span className="text-emerald-600 dark:text-emerald-300">✓</span>
+            ) : null}
             <span className="font-semibold">{ownerName}</span>
             <span className="text-zinc-500 dark:text-zinc-400">·</span>
             <span className="truncate" style={{ maxWidth: "16rem" }}>

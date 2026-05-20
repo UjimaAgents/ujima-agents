@@ -102,76 +102,66 @@ export interface MirrorDetectionResult {
 }
 
 /**
- * Detect a mirror chain. Returns `triggered: true` only when:
- *  - the candidate body has ≥ {@link similarityThreshold} Jaccard
- *    overlap with at least one recent message from this agent
- *    (self-mirror) or its immediate counterparty (pair-mirror), AND
- *  - the last {@link windowSize} agent-authored messages in the
- *    window are pairwise similar above the threshold (chain shape,
- *    not a one-off ack).
+ * Detect a mirror chain. Returns `triggered: true` when the recent
+ * agent-authored messages form a vacuous-acknowledgement chain that
+ * the candidate body would extend.
+ *
+ * The signal we actually care about is "N parties keep responding
+ * with content-free acks." Token-level similarity (Jaccard / cosine)
+ * is too strict — Gemini-flash mirrors at the message-TEMPLATE level
+ * (`"Understood, @X. I will [verb]…"`), not at the token level, so
+ * paraphrased acks score below any reasonable threshold while still
+ * being functionally identical from the user's perspective. The
+ * cheaper and more accurate signal: did the last N agent messages
+ * AND the candidate ALL classify as `isVacuousAck`? If yes, the
+ * conversation is a vacuous-ack chain regardless of the exact tokens.
  *
  * Caller is responsible for the consequences (suppress publish,
- * record `channel.pass` with reason, emit UI event). This helper is
- * a pure function — no side effects, no I/O.
+ * record `channel.ack`, emit `mirror:suppressed`). This helper is a
+ * pure function — no side effects, no I/O.
  */
 export function detectMirrorChain(input: MirrorDetectionInput): MirrorDetectionResult {
-  const threshold = input.similarityThreshold ?? 0.75;
   const windowSize = input.windowSize ?? 3;
   const candidate = input.candidateBody.trim();
   if (candidate.length === 0) {
     return { triggered: false, similarityScore: 0, reason: null };
   }
 
-  const candidateTokens = tokenize(candidate);
-  if (candidateTokens.size < 3) {
-    // Too few tokens to compare meaningfully ("ok", "thx") — not a
-    // mirror, just brevity.
+  // Candidate must itself be a vacuous ack — a substantive body
+  // never trips the mirror guard even if the recent window is.
+  if (!isVacuousAck(candidate)) {
     return { triggered: false, similarityScore: 0, reason: null };
   }
 
-  // Look at the last `windowSize` agent messages, oldest of the
-  // window first.
+  // Look at the last `windowSize` agent messages, oldest first.
   const window = input.recentAgentMessages.slice(-windowSize);
   if (window.length < windowSize) {
     return { triggered: false, similarityScore: 0, reason: null };
   }
 
-  const tokenized = window.map((m) => ({
-    senderId: m.senderId,
-    tokens: tokenize(m.content),
-  }));
-
-  // Compare candidate to the most recent window entry. If it's
-  // below threshold, no chain.
-  const lastEntry = tokenized[tokenized.length - 1];
-  if (!lastEntry) {
+  // Every message in the window must also be a vacuous ack — even
+  // one substantive turn breaks the chain.
+  const allVacuous = window.every((m) => isVacuousAck(m.content));
+  if (!allVacuous) {
     return { triggered: false, similarityScore: 0, reason: null };
   }
-  const candidateVsLast = jaccard(candidateTokens, lastEntry.tokens);
-  if (candidateVsLast < threshold) {
-    return { triggered: false, similarityScore: candidateVsLast, reason: null };
-  }
 
-  // Verify the window itself is a chain — every consecutive pair
-  // within the window is also above threshold. This catches the
-  // "N+1 turns of the same shape" pattern and avoids tripping on a
-  // single off-topic mirror that immediately follows a different
-  // conversation.
-  for (let i = 1; i < tokenized.length; i += 1) {
-    const prev = tokenized[i - 1];
-    const curr = tokenized[i];
-    if (!prev || !curr) continue;
-    const sim = jaccard(prev.tokens, curr.tokens);
-    if (sim < threshold) {
-      return { triggered: false, similarityScore: sim, reason: null };
-    }
-  }
+  // Score = average Jaccard across the window, reported for
+  // observability only. The trigger decision is the vacuous-ack
+  // chain above; Jaccard is just a metric.
+  const tokenizedWindow = window.map((m) => tokenize(m.content));
+  const candidateTokens = tokenize(candidate);
+  const lastEntry = tokenizedWindow[tokenizedWindow.length - 1];
+  const similarityScore = lastEntry ? jaccard(candidateTokens, lastEntry) : 0;
 
-  // The chain is real. Classify the mirror as self vs pair.
+  // Classify self vs pair: if the most recent window entry was the
+  // same agent that's now about to post the candidate, it's a self-
+  // mirror; otherwise it's a pair-mirror (the more common shape).
+  const lastSender = window[window.length - 1]?.senderId;
   const reason: MirrorDetectionResult['reason'] =
-    lastEntry.senderId === input.selfMemberId ? 'self-mirror' : 'pair-mirror';
+    lastSender === input.selfMemberId ? 'self-mirror' : 'pair-mirror';
 
-  return { triggered: true, similarityScore: candidateVsLast, reason };
+  return { triggered: true, similarityScore, reason };
 }
 
 /**
@@ -210,8 +200,52 @@ export function isVacuousAck(body: string): boolean {
   if (trimmed.includes('```') || trimmed.includes('http://') || trimmed.includes('https://')) {
     return false;
   }
-  return VACUOUS_ACK_OPENERS.some((opener) => trimmed.startsWith(opener));
+  const opener = VACUOUS_ACK_OPENERS.find((candidate) => trimmed.startsWith(candidate));
+  if (!opener) return false;
+  // QA flagged: a reply that OPENS with "Got it" but then carries
+  // substantive content ("Got it, sending the file now: /tmp/x.pdf")
+  // was being classified as vacuous, which dropped the auto-re-
+  // mention and sent the counterparty a soft `channel-read` wake.
+  // The substantive payload then went unanswered.
+  //
+  // The fix: the residue (post-opener portion of the body) is
+  // *substantive* when it contains either:
+  //  (a) a path-like, filename-like, or URL-like token, or
+  //  (b) an action verb that implies imminent work
+  //      (sending, drafting, writing, building, posting, deploying,
+  //       fixing, working, running, deleting, removing, etc.) —
+  //      these signal the agent has committed to doing something
+  //      beyond just acknowledging.
+  // Otherwise the residue is template filler ("I will continue to
+  // await your reply on the BRD") and the message is vacuous.
+  const residue = trimmed.slice(opener.length);
+  if (residue.length === 0) return true;
+  // Path-like / filename-like tokens.
+  if (/\/\S+/.test(residue) || /\.\w{1,5}(\b|$)/.test(residue)) return false;
+  // Numeric ids / version numbers — agent is referencing specific state.
+  if (/\b\d{3,}\b/.test(residue)) return false;
+  // Substantive action verbs.
+  for (const verb of SUBSTANTIVE_ACTION_VERBS) {
+    if (new RegExp(`\\b${verb}\\b`).test(residue)) return false;
+  }
+  return true;
 }
+
+// Verbs that, if present in the post-opener residue, mean the body
+// is announcing imminent work — NOT a vacuous acknowledgement.
+// Bias toward false-vacuous (let through a few extra mention-fanout
+// turns) rather than false-substantive (suppress a real reply).
+const SUBSTANTIVE_ACTION_VERBS = [
+  'sending', 'send', 'drafting', 'draft', 'drafted', 'writing', 'wrote',
+  'building', 'built', 'preparing', 'prepared', 'implementing', 'implemented',
+  'posting', 'posted', 'pushing', 'pushed', 'deploying', 'deployed',
+  'fixing', 'fixed', 'running', 'ran', 'reviewing', 'reviewed',
+  'deleting', 'deleted', 'removing', 'removed', 'updating', 'updated',
+  'finishing', 'finishedreply', 'completing', 'completed', 'shipping', 'shipped',
+  'addressing', 'addressed', 'resolving', 'resolved', 'opening', 'opened',
+  'merging', 'merged', 'closing', 'closed', 'starting', 'started',
+  'creating', 'created', 'investigating', 'investigated', 'debugging', 'debugged',
+];
 
 /**
  * High-level "should this posting tool suppress publish?" decision

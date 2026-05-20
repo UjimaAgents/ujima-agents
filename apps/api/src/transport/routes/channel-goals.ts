@@ -63,10 +63,12 @@ export function registerChannelGoalsRoutes(
       if (!repo.listTodosForChannel) {
         return { todos: [], taskSessionIds: [] };
       }
-      // Active commitments only — the rail surface should show
-      // things still in motion, not historical artifacts. The UI can
-      // request `?status=expired` later if we surface a "missed
-      // deadlines" tab; that's outside this endpoint's scope today.
+      // Surface in-flight work AND recently-completed deliverables.
+      // Completed todos are filtered to those whose `updated_at` is
+      // within the last 24h so the rail shows the artifact that was
+      // just delivered (e.g. Layla's "I drafted the BRD to
+      // ai/memory-bank/site-setup.md" past-tense completion). The
+      // UI can render completed entries with a distinct "done" badge.
       const open = repo.listTodosForChannel(req.query.organizationId, req.params.id, {
         status: 'in_progress',
       });
@@ -76,7 +78,12 @@ export function registerChannelGoalsRoutes(
       const blocked = repo.listTodosForChannel(req.query.organizationId, req.params.id, {
         status: 'blocked',
       });
-      const todos = [...open, ...pending, ...blocked];
+      const completed = repo.listTodosForChannel(req.query.organizationId, req.params.id, {
+        status: 'completed',
+      });
+      const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      const recentlyCompleted = completed.filter((todo) => todo.updatedAt >= cutoff);
+      const todos = [...open, ...pending, ...blocked, ...recentlyCompleted];
       const taskSessionIds = Array.from(
         new Set(todos.map((todo) => todo.taskSessionId).filter(Boolean) as string[]),
       );
