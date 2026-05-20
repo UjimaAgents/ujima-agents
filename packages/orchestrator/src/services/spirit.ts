@@ -36,7 +36,6 @@ import {
 import {
   MESSAGE_TOOL_USAGE_GUIDANCE,
   buildAgentSystemPrompt,
-  normalizeProviderKey,
   type AgentTeamHandle,
 } from '@ujima/framework';
 import { requireOrganization } from '../utils/require-organization.js';
@@ -1593,10 +1592,17 @@ export class SpiritService {
       return this.failRun(run, `Agent not found: ${member.id}`);
     }
 
-    const providerName = normalizeProviderKey(member.llm ?? role.provider ?? '');
-    if (providerName && !this.repo.getProviderCredential(run.organizationId, providerName)) {
-      return this.failRun(run, `Provider key missing for "${providerName}"`);
-    }
+    // No strict pre-flight on the *preferred* provider's key — that
+    // short-circuits the runtime fallback in `resolveSpiritModel`,
+    // which walks every team-configured provider with a key and
+    // picks the first usable one. The fallback is the whole point of
+    // letting an org swap providers without per-role migration; the
+    // old gate here turned a recoverable "no key for the preferred
+    // provider" state into a hard run failure even when other
+    // providers were ready to serve. If *no* provider has a key,
+    // `resolveSpiritModel` throws a clear "No usable provider for
+    // member ..." error and the outer catch below converts that to
+    // `failRun` with the same friendly summary.
 
     const preCancel = this.repo.getRun(run.organizationId, run.id);
     if (preCancel?.status === 'cancelled') {
