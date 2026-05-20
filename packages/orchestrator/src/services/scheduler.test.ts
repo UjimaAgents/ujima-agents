@@ -304,7 +304,9 @@ describe('SchedulerService', () => {
     const sendPromise = new Promise<void>((resolve) => {
       resolveSend = resolve;
     });
-    vi.mocked(mockConversations.sendMessage).mockReturnValue(sendPromise);
+    vi.mocked(mockConversations.sendMessage).mockImplementation(
+      (() => sendPromise) as unknown as ConversationService['sendMessage'],
+    );
 
     const dueJob = {
       id: 'job-overlap',

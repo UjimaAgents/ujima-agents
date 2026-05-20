@@ -38,16 +38,18 @@ export const scheduleTool: OrchestratorTool<typeof ScheduleSchema> = {
     input: args,
   }),
   execute: ({ invocation, repo }) => {
-    if (invocation.input.action === 'list') {
+    const args = ScheduleSchema.parse(invocation.input);
+
+    if (args.action === 'list') {
       return { jobs: repo.listScheduledJobs(invocation.organizationId) };
     }
 
-    if (invocation.input.action === 'cancel') {
-      const job = repo.getScheduledJob(invocation.organizationId, invocation.input.job_id);
+    if (args.action === 'cancel') {
+      const job = repo.getScheduledJob(invocation.organizationId, args.job_id);
       if (!job) {
         return { removed: false };
       }
-      repo.deleteScheduledJob(invocation.organizationId, invocation.input.job_id);
+      repo.deleteScheduledJob(invocation.organizationId, args.job_id);
       return { removed: true, job };
     }
 
@@ -57,10 +59,10 @@ export const scheduleTool: OrchestratorTool<typeof ScheduleSchema> = {
     const job = createScheduledJobRecord({
       organizationId: invocation.organizationId,
       memberId: invocation.memberId,
-      name: invocation.input.name?.trim() || defaultScheduleName(invocation.input.prompt),
-      cronExpression: invocation.input.cron_expression,
-      prompt: invocation.input.prompt,
-      channelId: invocation.input.channel_id ?? threadChannelId ?? undefined,
+      name: args.name?.trim() || defaultScheduleName(args.prompt),
+      cronExpression: args.cron_expression,
+      prompt: args.prompt,
+      channelId: args.channel_id ?? threadChannelId ?? undefined,
     });
     repo.saveScheduledJob(job);
     return { job };
