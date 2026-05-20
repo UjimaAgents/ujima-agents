@@ -156,18 +156,44 @@ export class AiService {
     // Playwright MCP attached wakes via @mention and the model sees
     // only channel.* tools, so it (correctly) tells the user it has
     // no Playwright tool. The resolver is late-bound at startup.
+    // Resolve the SpiritRole this wake actually belongs to. Without
+    // this, the resolver defaults to `'worker'` and any MCP attachment
+    // scoped `'supervisor'`-only would be silently invisible to the
+    // model — and `ToolServiceImpl.executeMcpTool` (which re-reads
+    // attachments by role at invocation time) would reject the call
+    // even if the model tried. Look up any live spirit for this
+    // member; prefer one that matches the current run, otherwise fall
+    // back to whatever active spirit the member has. Default to
+    // `'worker'` when no spirit exists (the regular wake-run path).
+    let resolvedRole: SpiritRole = 'worker';
+    let resolvedTaskSessionId = '';
+    if (this.repo.listActiveSpiritsForMember) {
+      const activeSpirits = this.repo.listActiveSpiritsForMember(
+        input.organizationId,
+        input.agentId,
+      );
+      const matchingSpirit =
+        activeSpirits.find((spirit) => spirit.runId === input.runId) ??
+        activeSpirits[0];
+      if (matchingSpirit) {
+        resolvedRole = matchingSpirit.role;
+        resolvedTaskSessionId = matchingSpirit.taskSessionId;
+      }
+    }
+
     const mcpResolution = this.mcpToolResolver
       ? await this.mcpToolResolver({
           organizationId: input.organizationId,
           memberId: input.agentId,
           runId: input.runId,
           threadId: input.threadId,
-          // Wake-run path has no task session of its own — the run
-          // row carries `threadId` as the conversational anchor and
-          // any task linkage lives there. Pass an empty string so
-          // tools that don't need a session aren't blocked.
-          taskSessionId: '',
-          role: 'worker',
+          // Preserve the task session id so MCP tools that need one
+          // (audit linkage, per-task isolation) still get it. Empty
+          // string when there's no active spirit/task — the value is
+          // only used by tool runtime code that already handles the
+          // bare-wake case.
+          taskSessionId: resolvedTaskSessionId,
+          role: resolvedRole,
         })
       : { toolSet: {} as ToolSet, servers: [] };
     const mcpToolDefs = mcpResolution.toolSet;

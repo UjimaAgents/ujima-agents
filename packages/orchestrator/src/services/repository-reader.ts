@@ -106,6 +106,15 @@ export interface RepositoryReader {
    * compatibility with narrower repo surfaces (mocks, tests).
    */
   getRun?(organizationId: string, runId: string): RunState | null;
+  /**
+   * Optional lookup so the wake-run path can pick the correct
+   * `SpiritRole` (worker vs. supervisor) when resolving MCP
+   * attachments. Without this, the resolver defaults to `'worker'`
+   * and a supervisor-only attachment is silently dropped. Optional
+   * for the same reason as `getRun?` — narrower mocks/tests don't
+   * need to implement it.
+   */
+  listActiveSpiritsForMember?(organizationId: string, memberId: string): Spirit[];
 }
 
 /**

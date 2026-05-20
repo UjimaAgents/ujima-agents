@@ -27,7 +27,22 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     );
     const body = await response.json().catch(() => null);
 
+    // The daemon now returns 502 with a full TestMcpResponse body
+    // (`{ ok: false, tools: [], error, testedAt }`) when the upstream
+    // MCP child fails — the structured diagnostics are useful to the UI
+    // even though the status is non-2xx. Forward the body verbatim when
+    // it looks like a TestMcpResponse; otherwise collapse to the
+    // standard ApiError shape (e.g. 401 / 404 / 500 from the daemon).
     if (!response.ok) {
+      if (
+        body !== null &&
+        typeof body === "object" &&
+        "ok" in body &&
+        "tools" in body &&
+        "testedAt" in body
+      ) {
+        return NextResponse.json(body, { status: response.status });
+      }
       return NextResponse.json(
         parseApiError(body, "Unable to test MCP server."),
         { status: response.status },
