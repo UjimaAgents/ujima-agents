@@ -170,6 +170,69 @@ describe('resolveSpiritModel provider-fallback (Option 1)', () => {
     ).not.toThrow();
   });
 
+  // Regression: pre-fix, `resolveSpiritModel` cleared `teamRole.model`
+  // on fallback but `member.model` was still preferred by ai-service's
+  // closure (`member.model ?? r.model ?? p.defaultModel`). Since
+  // `member.model` is provider-specific to the original provider, the
+  // fallback path would feed an invalid id to the new provider and
+  // run startup would fail. The new contract passes an `isFallback`
+  // flag so resolvers can ignore member overrides on fallback.
+  it('signals isFallback=true on the fallback provider call so member overrides can be ignored', () => {
+    const team = buildTeam({
+      agentName: 'agent-1',
+      roleName: 'engineer',
+      rolePreferredProvider: 'deepseek',
+      roleModel: 'deepseek-v4-flash',
+      providers: {
+        deepseek: { kind: 'deepseek', defaultModel: 'deepseek-v4-flash' },
+        google: { kind: 'google', defaultModel: 'gemini-2.5-flash' },
+      },
+    });
+    const getKey = vi.fn((_org: string, providerName: string) =>
+      providerName === 'google' ? 'google-key' : null,
+    );
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    // Closure that mirrors ai-service's bug-prone shape: prefer
+    // member.model first. With the new `isFallback` flag honored
+    // correctly, it must skip the member override on the fallback
+    // provider call.
+    const memberModel = 'deepseek-v4-pro'; // provider-specific to deepseek
+    const resolveModelId = vi.fn(
+      (
+        r: { model?: string },
+        p: { defaultModel?: string },
+        _role: 'worker' | 'supervisor',
+        isFallback: boolean,
+      ): string | undefined =>
+        (isFallback ? undefined : memberModel) ?? r.model ?? p.defaultModel,
+    );
+
+    resolveSpiritModel({
+      organizationId: 'org-1',
+      memberId: 'agent-1',
+      role: 'worker',
+      member: { id: 'agent-1', name: 'agent-1', model: memberModel },
+      team,
+      getProviderCredential: getKey,
+      resolveProviderName: defaultResolveProviderName,
+      resolveModelId,
+    });
+
+    // Deepseek is rejected at the credential lookup (no API key)
+    // BEFORE `resolveModelId` runs, so only the google branch reaches
+    // the resolver. `isFallback` must be `true` for that call.
+    expect(resolveModelId).toHaveBeenCalledTimes(1);
+    const googleCall = resolveModelId.mock.calls[0]!;
+    expect((googleCall[1] as { defaultModel?: string }).defaultModel).toBe('gemini-2.5-flash');
+    expect(googleCall[3]).toBe(true);
+
+    // The closure's return on the google call must be the google
+    // defaultModel (NOT the deepseek-specific member.model), proving
+    // the isFallback flag is honored end-to-end.
+    expect(resolveModelId.mock.results[0]?.value).toBe('gemini-2.5-flash');
+  });
+
   it('throws a clear error when NO provider has a key', () => {
     const team = buildTeam({
       agentName: 'agent-1',

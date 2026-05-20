@@ -76,7 +76,15 @@ export class AiService {
       team,
       getProviderCredential: (orgId, key) => this.repo.getProviderCredential(orgId, key),
       resolveProviderName: (m, r) => normalizeProviderKey(m.llm ?? r.provider ?? ''),
-      resolveModelId: (r, p) => member.model ?? r.model ?? p.defaultModel,
+      // `member.model` is provider-specific to the agent's preferred
+      // provider. When `resolveSpiritModel` falls back to a different
+      // provider (e.g. the preferred one has no key), that override
+      // almost certainly isn't a valid id on the new provider —
+      // ignore it on fallback and let the provider/default chain
+      // resolve a usable id. The same rule applies to `r.model`,
+      // which `resolveSpiritModel` already clears on fallback.
+      resolveModelId: (r, p, _role, isFallback) =>
+        (isFallback ? undefined : member.model) ?? r.model ?? p.defaultModel,
     });
 
     // Mandatory-reply enforcement at the tool-palette layer.

@@ -138,6 +138,14 @@ export function resolveSpiritModel(params: {
     teamRole: { model?: string },
     provider: { defaultModel?: string; supervisorModel?: string; supervisor_model?: string },
     role: SpiritRole,
+    /**
+     * `true` when we are NOT on the originally-requested provider (the
+     * preferred one was rejected, e.g. missing API key). Resolvers that
+     * honor per-member or per-role model overrides MUST ignore those
+     * overrides when this flag is set — those ids are provider-specific
+     * and almost certainly won't resolve on the fallback provider.
+     */
+    isFallback: boolean,
   ) => string | undefined;
 }): LanguageModel {
   const agent = params.team.getAgent(params.member.id) ?? params.team.getAgent(params.member.name);
@@ -187,13 +195,17 @@ export function resolveSpiritModel(params: {
     // a defaultModel either, fall back to a built-in per-kind
     // default so a Google key with no `defaultModel` set in
     // team.config still works.
-    const teamRoleForModel =
-      providerName === preferredProviderName ? { model: teamRole.model } : { model: undefined };
-    const providerForResolve =
-      providerName === preferredProviderName
-        ? provider
-        : { ...provider, defaultModel: provider.defaultModel ?? defaultModelIdForKind(provider.kind) };
-    const modelId = params.resolveModelId(teamRoleForModel, providerForResolve, params.role);
+    const isFallback = providerName !== preferredProviderName;
+    const teamRoleForModel = isFallback ? { model: undefined } : { model: teamRole.model };
+    const providerForResolve = isFallback
+      ? { ...provider, defaultModel: provider.defaultModel ?? defaultModelIdForKind(provider.kind) }
+      : provider;
+    const modelId = params.resolveModelId(
+      teamRoleForModel,
+      providerForResolve,
+      params.role,
+      isFallback,
+    );
     if (!modelId) {
       tried.push({ name: providerName, rejected: 'no model id resolved (provider config is missing defaultModel and there is no built-in default for this kind)' });
       continue;
@@ -260,10 +272,15 @@ export function defaultResolveProviderName(
 }
 
 // Fix #7: Default model-ID resolver using the cheaper-tier picker.
+// `isFallback` is accepted to satisfy the contract but ignored here —
+// this resolver only reads `teamRole.model` (already cleared on
+// fallback by `resolveSpiritModel`) and `provider.*`, neither of
+// which is member-specific.
 export function defaultResolveModelId(
   teamRole: { model?: string },
   provider: { defaultModel?: string; supervisorModel?: string; supervisor_model?: string },
   role: SpiritRole,
+  _isFallback?: boolean,
 ): string | undefined {
   const baseModel = teamRole.model ?? provider.defaultModel;
   if (role !== 'supervisor') return baseModel;

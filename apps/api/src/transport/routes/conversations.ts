@@ -231,8 +231,6 @@ export function registerConversationRoutes(
               req.body.parentMessageId,
             )
           : req.body.threadId;
-      const isSelfDm =
-        'recipientId' in req.body && req.body.recipientId === 'self';
       if (clientMessageId && requestedThreadId) {
         // Access-control regression guard: the dedupe fast-path used
         // to return the cached row BEFORE any thread/channel access
@@ -248,28 +246,35 @@ export function registerConversationRoutes(
         // will run the same check again and reject with the same
         // error, so this stays the only gate either way.
         //
-        // Self-DMs are exempt: `self:<senderId>` is sender-owned by
-        // construction (no access mismatch is possible), and the
-        // channel/thread are lazily created inside `sendSelfNote`
-        // on the first send. Calling `requireThreadAccess` here on
-        // a first-ever self note would throw `Thread not found`
-        // before the channel exists, breaking the initial post via
-        // the idempotency path.
-        if (!isSelfDm) {
+        // First-ever DMs (self or peer-to-peer) are exempt because
+        // their channel + thread are lazily created inside
+        // `sendDirectMessage` / `sendSelfNote` on the first call.
+        // Calling `requireThreadAccess` here on a thread that has
+        // no row AND no backing channel would throw
+        // `Thread not found` and block the initial post — even
+        // though no cached message can exist on a thread that
+        // doesn't exist yet. We detect the "first-ever" case by
+        // checking the persisted state (`getThread` + `getChannel`,
+        // matching what `requireThreadAccess` itself walks); when
+        // either exists, the preflight runs as normal.
+        const threadOrChannelExists =
+          repo.getThread(req.body.organizationId, requestedThreadId) !== null ||
+          repo.getChannel(req.body.organizationId, requestedThreadId) !== null;
+        if (threadOrChannelExists) {
           conversations.requireThreadAccess(
             req.body.organizationId,
             requestedThreadId,
             senderId,
           );
-        }
-        const existing = repo.findMessageByClientId?.(
-          req.body.organizationId,
-          senderId,
-          requestedThreadId,
-          clientMessageId,
-        );
-        if (existing && existing.threadId === requestedThreadId) {
-          return existing;
+          const existing = repo.findMessageByClientId?.(
+            req.body.organizationId,
+            senderId,
+            requestedThreadId,
+            clientMessageId,
+          );
+          if (existing && existing.threadId === requestedThreadId) {
+            return existing;
+          }
         }
       }
       const message =
