@@ -6,6 +6,7 @@ import {
   FolderKanban,
   Layers,
   MessageSquare,
+  Plug,
   Server,
   ShieldCheck,
   Users,
@@ -14,6 +15,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { useSearchParams } from "next/navigation";
 import type { BootstrapResponse, OrganizationSettingsResponse, ProviderStatus } from "@ujima/api-schema";
+import type { McpServerPublic } from "@ujima/shared";
 import { GeneralTab } from "./general-tab";
 import { AgentsTab } from "./agents-tab";
 import { ChannelsTab } from "./channels-tab";
@@ -22,8 +24,18 @@ import { PoliciesTab } from "./policies-tab";
 import { ProvidersTab } from "./providers-tab";
 import { SchedulesTab } from "./schedules-tab";
 import { WorkspacesTab } from "./workspaces-tab";
+import { McpsTab } from "./mcps-tab";
 
-type SettingsTabId = "general" | "agents" | "channels" | "org-chart" | "policies" | "providers" | "schedules" | "workspaces";
+type SettingsTabId =
+  | "general"
+  | "agents"
+  | "channels"
+  | "org-chart"
+  | "policies"
+  | "providers"
+  | "schedules"
+  | "workspaces"
+  | "mcps";
 
 interface SettingsTab {
   id: SettingsTabId;
@@ -40,6 +52,7 @@ const TABS: SettingsTab[] = [
   { id: "providers", label: "Providers", icon: Server },
   { id: "schedules", label: "Schedules", icon: Clock },
   { id: "workspaces", label: "Workspaces", icon: Layers },
+  { id: "mcps", label: "MCPs", icon: Plug },
 ];
 
 export interface TeamSettingsData {
@@ -71,11 +84,13 @@ export function OrganizationSettingsPage({
   orgSettings,
   teamSettings,
   providers,
+  mcpServers,
 }: {
   bootstrap: BootstrapResponse;
   orgSettings: OrganizationSettingsResponse | null;
   teamSettings: TeamSettingsData | null;
   providers: ProviderStatus[];
+  mcpServers: McpServerPublic[];
 }) {
   const searchParams = useSearchParams();
   const [activeTab, setActiveTab] = useState<SettingsTabId>(() => {
@@ -86,8 +101,10 @@ export function OrganizationSettingsPage({
   const [orgSettingsState, setOrgSettingsState] = useState(orgSettings);
   const [teamSettingsState] = useState(teamSettings);
   const [providersState, setProvidersState] = useState(providers);
+  const [mcpServersState, setMcpServersState] = useState(mcpServers);
 
   const orgId = bootstrap.organization?.id ?? "";
+  const createdBy = bootstrap.auth.member?.id ?? "";
   const auth = bootstrap.auth;
   const channels = orgSettingsState?.channels ?? bootstrap.channels ?? [];
   const members = orgSettingsState?.members ?? bootstrap.members ?? [];
@@ -110,7 +127,7 @@ export function OrganizationSettingsPage({
               Organization Settings
             </h1>
             <p className="mt-4 max-w-2xl text-sm leading-7 text-zinc-600 dark:text-zinc-300">
-              Manage your organization, team, agents, channels, schedules, workspaces, policies, and providers.
+              Manage your organization, team, agents, channels, schedules, workspaces, policies, providers, and MCP servers.
             </p>
           </div>
           <Link
@@ -199,6 +216,15 @@ export function OrganizationSettingsPage({
               currentWorkspaceRoot={
                 teamSettingsState?.workspace?.root ?? bootstrap.team?.workspaceRoot
               }
+            />
+          )}
+          {activeTab === "mcps" && (
+            <McpsTab
+              orgId={orgId}
+              createdBy={createdBy}
+              servers={mcpServersState}
+              members={members}
+              onServersChange={setMcpServersState}
             />
           )}
         </div>
