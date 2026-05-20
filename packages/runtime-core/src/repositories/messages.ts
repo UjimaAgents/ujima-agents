@@ -19,52 +19,98 @@ export function saveMessage(db: DbHandle, message: Message): Message {
   // metadata JSON blob so `findMessageByClientId` can recover it
   // on retry. We deliberately do not add a SQL column today; the
   // JSON-scan path is enough for the retry-glitch use case and
-  // avoids a migration. Keep the blob shape:
+  // avoids a larger schema migration. Keep the blob shape:
   //   { ...metadata, clientMessageId: '...' }
+  //
+  // Race-safety: migration 021 created a UNIQUE partial index on
+  // (organization_id, sender_id, json_extract(metadata,
+  // '$.clientMessageId')). Two concurrent inserts with the same
+  // (org, sender, clientMessageId) will both pass the application
+  // lookup but only one will commit — the other hits
+  // SQLITE_CONSTRAINT, and we recover by returning the row that
+  // won the race. This matches the lookup-hit semantics in
+  // conversations.ts (request returns the existing message,
+  // wake-fanout fires only once).
   const metadataBlob: Record<string, unknown> = {
     ...(payload.metadata ?? {}),
     ...(payload.clientMessageId ? { clientMessageId: payload.clientMessageId } : {}),
   };
 
-  db.prepare(
-    `INSERT INTO messages (
-      id,
-      organization_id,
-      thread_id,
-      channel_id,
-      parent_message_id,
-      sender_id,
-      sender_kind,
-      kind,
-      content,
-      reasoning_content,
-      mentions,
-      tool_calls,
-      metadata,
-      created_at,
-      edited_at,
-      deleted_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    payload.id,
-    payload.organizationId,
-    payload.threadId,
-    payload.channelId ?? null,
-    payload.parentMessageId ?? null,
-    payload.senderId,
-    payload.senderKind,
-    payload.kind,
-    payload.content,
-    payload.reasoningContent ?? null,
-    JSON.stringify(payload.mentions),
-    JSON.stringify(payload.toolCalls ?? []),
-    JSON.stringify(metadataBlob),
-    payload.createdAt,
-    payload.editedAt ?? null,
-    payload.deletedAt ?? null,
-  );
+  try {
+    db.prepare(
+      `INSERT INTO messages (
+        id,
+        organization_id,
+        thread_id,
+        channel_id,
+        parent_message_id,
+        sender_id,
+        sender_kind,
+        kind,
+        content,
+        reasoning_content,
+        mentions,
+        tool_calls,
+        metadata,
+        created_at,
+        edited_at,
+        deleted_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      payload.id,
+      payload.organizationId,
+      payload.threadId,
+      payload.channelId ?? null,
+      payload.parentMessageId ?? null,
+      payload.senderId,
+      payload.senderKind,
+      payload.kind,
+      payload.content,
+      payload.reasoningContent ?? null,
+      JSON.stringify(payload.mentions),
+      JSON.stringify(payload.toolCalls ?? []),
+      JSON.stringify(metadataBlob),
+      payload.createdAt,
+      payload.editedAt ?? null,
+      payload.deletedAt ?? null,
+    );
+    return payload;
+  } catch (error) {
+    if (isUniqueConstraintViolation(error) && payload.clientMessageId) {
+      // Another concurrent insert won the race for this
+      // clientMessageId. Recover by returning the winner — same
+      // semantics as the lookup-hit path. No wake fanout from
+      // this caller because we're not the one who inserted.
+      const winner = findMessageByClientId(
+        db,
+        payload.organizationId,
+        payload.senderId,
+        payload.threadId,
+        payload.clientMessageId,
+      );
+      if (winner) return winner;
+    }
+    throw error;
+  }
+}
 
-  return payload;
+/**
+ * SQLite UNIQUE constraint detection. Bun's sqlite + better-sqlite3
+ * both surface the constraint as a regular Error with the code
+ * `SQLITE_CONSTRAINT_UNIQUE` (or the broader `SQLITE_CONSTRAINT`).
+ * String-matching the message keeps this driver-agnostic.
+ */
+function isUniqueConstraintViolation(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const err = error as { code?: unknown; message?: unknown };
+  if (typeof err.code === 'string') {
+    if (err.code === 'SQLITE_CONSTRAINT_UNIQUE') return true;
+    if (err.code === 'SQLITE_CONSTRAINT') return true;
+  }
+  if (typeof err.message === 'string') {
+    if (/UNIQUE\s+constraint\s+failed/i.test(err.message)) return true;
+  }
+  return false;
 }
 
 export function updateMessage(db: DbHandle, message: Message): Message {

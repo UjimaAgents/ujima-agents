@@ -276,12 +276,17 @@ export function useConversationSync(
       }
 
       const sender = bootstrap.auth.member;
-      const tempId = `temp:${crypto.randomUUID()}`;
       const now = new Date().toISOString();
-      // L10 — same key is used as the optimistic temp id and the
-      // idempotency token. Network glitches that retry this fetch
-      // re-send the same clientMessageId, so the daemon dedupes.
+      // L10 — bind the idempotency token to the pending-message
+      // identity by deriving the tempId FROM the clientMessageId,
+      // not generating them independently. Any retry path that
+      // re-issues this send (transport-level fetch retry, future
+      // user-visible "retry failed message" affordance) reuses the
+      // same clientMessageId, so the daemon dedupes correctly.
+      // Migration 021 enforces the dedupe at the DB layer too —
+      // even concurrent retries can't double-insert.
       const clientMessageId = crypto.randomUUID();
+      const tempId = `temp:${clientMessageId}`;
       addPendingMessage({
         id: tempId,
         senderId: sender.id,

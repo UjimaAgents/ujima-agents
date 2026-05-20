@@ -201,7 +201,6 @@ export function resolveSpiritModel(params: {
 
     if (providerName !== preferredProviderName) {
       // Single line to make the fallback observable in logs.
-      // eslint-disable-next-line no-console
       console.warn(
         `[ujima] provider fallback: org "${params.organizationId}" preferred "${preferredProviderName}" unusable, falling back to "${providerName}" (model "${modelId}")`,
       );

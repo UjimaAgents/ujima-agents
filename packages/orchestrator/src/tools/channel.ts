@@ -4,7 +4,6 @@ import {
   AGENT_KIND,
   ChannelPassReasonSchema,
   MessageSchema,
-  SocketEventNames,
   channelRoom,
   getDirectMessageThreadId,
   memberRoom,

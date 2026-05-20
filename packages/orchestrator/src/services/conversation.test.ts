@@ -872,7 +872,7 @@ describe('ConversationService alertChannelReaders (L5)', () => {
 // Without this, threads ping-pong-amplify mentions every step.
 describe('ConversationService smart parent-mention inheritance (L8)', () => {
   it('inherits only the parent sender, not the parent transitive mentions', async () => {
-    const { service, repo, savedMentions } = createConversationFixture();
+    const { service, repo } = createConversationFixture();
 
     // Parent message: human-1 sends, tags agent-1 AND agent-2.
     const parent = service.sendMessage({

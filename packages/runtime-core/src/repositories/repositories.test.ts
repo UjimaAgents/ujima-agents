@@ -489,6 +489,70 @@ test('client message id lookup is scoped to the requested thread', () => {
   expect(repo.findMessageByClientId(orgId, senderId, 'thread-c', 'retry-token-1')).toBeNull();
 });
 
+// L10 race-safety: migration 021 enforces uniqueness in the DB.
+// Two inserts with the same (org, sender, thread, clientMessageId)
+// triple must dedupe — saveMessage catches the UNIQUE constraint
+// and returns the existing row instead of bubbling the error.
+test('saveMessage is race-safe on duplicate clientMessageId (returns winner instead of throwing)', () => {
+  const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
+  const orgId = randomUUID();
+  repo.saveOrganization(
+    OrganizationSchema.parse({
+      id: orgId,
+      name: 'Race Org',
+      workspace: { root: '/tmp/race-org', roleScopes: {} },
+    }),
+  );
+  const senderId = 'owner';
+  const sharedClientMessageId = 'concurrent-retry-token';
+
+  const first = repo.saveMessage(
+    MessageSchema.parse({
+      id: 'msg-winner',
+      organizationId: orgId,
+      threadId: 'thread-1',
+      channelId: 'thread-1',
+      senderId,
+      senderKind: 'human',
+      kind: 'human',
+      content: 'first to commit',
+      mentions: [],
+      clientMessageId: sharedClientMessageId,
+      createdAt: '2026-05-04T19:07:01.000Z',
+    }),
+  );
+  expect(first.id).toBe('msg-winner');
+
+  // Second concurrent attempt with the SAME triple — different
+  // message id (because it was generated server-side for a
+  // retried POST), same dedupe key.
+  const second = repo.saveMessage(
+    MessageSchema.parse({
+      id: 'msg-loser',
+      organizationId: orgId,
+      threadId: 'thread-1',
+      channelId: 'thread-1',
+      senderId,
+      senderKind: 'human',
+      kind: 'human',
+      content: 'second arrival',
+      mentions: [],
+      clientMessageId: sharedClientMessageId,
+      createdAt: '2026-05-04T19:07:01.050Z',
+    }),
+  );
+  // Recovery: caller gets the WINNER, not the loser's payload.
+  expect(second.id).toBe('msg-winner');
+  expect(second.content).toBe('first to commit');
+
+  // Only one row persisted.
+  expect(
+    repo.listMessages(orgId, 'thread-1').data.filter(
+      (m) => (m as { clientMessageId?: string }).clientMessageId === sharedClientMessageId,
+    ),
+  ).toHaveLength(1);
+});
+
 test('hasApprovalGrant matches legacy shell scopes against canonical JSON scopes', () => {
   const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
   const orgId = randomUUID();

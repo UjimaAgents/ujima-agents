@@ -749,6 +749,33 @@ const MIGRATIONS: { id: string; up: string }[] = [
         ON runs(organization_id, terminating_tool, wake_reason, started_at);
     `,
   },
+  {
+    // L10 fix follow-up: enforce per-org+sender+clientMessageId
+    // uniqueness AT THE DATABASE LAYER so concurrent retries with the
+    // same clientMessageId can't both pass the application-level
+    // lookup and both insert. The unique key lives inside the
+    // metadata JSON blob (clientMessageId is not a column — by
+    // design, to avoid a larger schema migration), and we use a
+    // partial expression index so messages WITHOUT a
+    // clientMessageId (the common case for agent posts) are not
+    // constrained.
+    //
+    // On collision the application catches the SQLITE_CONSTRAINT
+    // and returns the existing row, matching the lookup-hit
+    // behaviour in conversations.ts. Read-then-insert is now
+    // race-safe.
+    id: '021_messages_client_message_id_unique',
+    up: `
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_client_dedupe
+        ON messages(
+          organization_id,
+          sender_id,
+          thread_id,
+          json_extract(metadata, '$.clientMessageId')
+        )
+        WHERE json_extract(metadata, '$.clientMessageId') IS NOT NULL;
+    `,
+  },
 ];
 
 export interface DbOptions {
