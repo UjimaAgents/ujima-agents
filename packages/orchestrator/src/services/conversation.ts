@@ -39,6 +39,7 @@ import type {
   PaginatedMessages,
 } from './repository-reader.js';
 import { requireOrganization } from '../utils/require-organization.js';
+import { isVacuousAck, shouldSuppressForMirror } from './mirror-guard.js';
 
 const ATTACHMENT_FILE_LIMIT_BYTES = 25 * 1024 * 1024;
 const ATTACHMENT_MESSAGE_LIMIT_BYTES = 100 * 1024 * 1024;
@@ -82,11 +83,28 @@ export interface MemberAlertInput {
   wakeReason: WakeReason;
 }
 
+/**
+ * Optional post-publish hook fired after a message is successfully
+ * persisted and broadcast. Used by the commitment service to extract
+ * "I'll draft X" promises from agent messages and create durable
+ * todos. Failures inside the hook do NOT roll the publish back —
+ * keeping the chat surface live is more important than the side-
+ * effect succeeding.
+ */
+export type PublishMessageHook = (message: Message) => Promise<void> | void;
+
 export interface ConversationServiceOptions {
   archiveStore?: ArchivedChannelMessageStore;
   onMemberAlerted?: (input: MemberAlertInput) => Promise<void> | void;
   mentionFanoutCap?: number;
   mentionWindowMs?: number;
+  /**
+   * Hook fired after a message is published. Late-bound from
+   * services/index.ts so the commitment service can react to agent
+   * "I'll draft X" promises without conversation.ts knowing about
+   * it directly. Multiple hooks supported; failures swallowed.
+   */
+  onMessagePublished?: PublishMessageHook;
 }
 
 export class ConversationService {
@@ -103,6 +121,19 @@ export class ConversationService {
   private readonly channelReadCap: number;
   private readonly channelReadWindowMs: number;
   private readonly channelReadWindows = new Map<string, number[]>();
+  // Bet 3 — per-pair mention back-pressure. Keyed by
+  // `${orgId}|${threadId}|${fromMember}|${toMember}` with a sliding
+  // window of recent wake timestamps. When a pair exchanges more
+  // than `pairMentionCap` mentions within `pairMentionWindowMs`,
+  // the next wake is demoted to `channel-read` so the recipient
+  // can `channel.pass` cleanly instead of being forced into another
+  // mandatory-reply turn. Resets on any third-party activity in
+  // the thread (the recipient gets a fresh quota when content
+  // actually changes).
+  private readonly pairMentionWindows = new Map<string, number[]>();
+  private readonly pairMentionCap = 3;
+  private readonly pairMentionWindowMs = 90_000;
+  private messagePublishedHook?: PublishMessageHook;
 
   constructor(
     private readonly repo: ConversationRepository,
@@ -115,6 +146,18 @@ export class ConversationService {
     this.mentionWindowMs = options.mentionWindowMs ?? 60_000;
     this.channelReadCap = 100;
     this.channelReadWindowMs = 60_000;
+    this.messagePublishedHook = options.onMessagePublished;
+  }
+
+  /**
+   * Plug in (or replace) the post-publish hook. Used by
+   * services/index.ts to late-bind `CommitmentService` after both
+   * services exist (commitment-service needs the conversations
+   * instance, conversations needs the hook — same chicken-and-egg
+   * we resolved for AiService.setMcpToolResolver).
+   */
+  setMessagePublishedHook(hook: PublishMessageHook | undefined): void {
+    this.messagePublishedHook = hook;
   }
 
   listChannels(organizationId: string, cursor?: string, limit?: number) {
@@ -368,6 +411,13 @@ export class ConversationService {
       // we skip them here to avoid double-fire.
       void this.alertChannelReaders(emittedMessage, channel, resolvedMentions);
     }
+    // Post-publish hook (Bet 4 — commitment extraction). Fire-and-
+    // forget; a hook failure must never roll back the publish.
+    if (this.messagePublishedHook) {
+      void Promise.resolve()
+        .then(() => this.messagePublishedHook?.(emittedMessage))
+        .catch(() => undefined);
+    }
     return emittedMessage;
   }
 
@@ -491,6 +541,144 @@ export class ConversationService {
       [
         orgRoom(input.organizationId),
         memberRoom(input.memberId),
+        ...(input.channelId ? [channelRoom(input.channelId)] : []),
+        ...(input.threadId ? [threadRoom(input.threadId)] : []),
+      ],
+    );
+  }
+
+  /**
+   * Silent ack from a mandatory-reply turn. No channel message
+   * published; the UI affordance shows "Agent X acknowledged"
+   * without producing wake-able text that would re-loop the chain.
+   */
+  emitAgentAck(input: {
+    organizationId: string;
+    memberId: string;
+    runId: string;
+    channelId?: string;
+    threadId?: string;
+    note?: string;
+  }): void {
+    this.realtime.emit(
+      SocketEventNames.agentAck,
+      {
+        organizationId: input.organizationId,
+        channelId: input.channelId,
+        threadId: input.threadId,
+        memberId: input.memberId,
+        runId: input.runId,
+        ...(input.note !== undefined ? { note: input.note } : {}),
+        occurredAt: new Date().toISOString(),
+      },
+      [
+        orgRoom(input.organizationId),
+        memberRoom(input.memberId),
+        ...(input.channelId ? [channelRoom(input.channelId)] : []),
+        ...(input.threadId ? [threadRoom(input.threadId)] : []),
+      ],
+    );
+  }
+
+  emitMirrorSuppressed(input: {
+    organizationId: string;
+    memberId: string;
+    runId: string;
+    channelId?: string;
+    threadId?: string;
+    suppressedText: string;
+    similarityScore: number;
+  }): void {
+    this.realtime.emit(
+      SocketEventNames.mirrorSuppressed,
+      {
+        organizationId: input.organizationId,
+        channelId: input.channelId,
+        threadId: input.threadId,
+        memberId: input.memberId,
+        runId: input.runId,
+        suppressedText: input.suppressedText,
+        similarityScore: input.similarityScore,
+        occurredAt: new Date().toISOString(),
+      },
+      [
+        orgRoom(input.organizationId),
+        memberRoom(input.memberId),
+        ...(input.channelId ? [channelRoom(input.channelId)] : []),
+        ...(input.threadId ? [threadRoom(input.threadId)] : []),
+      ],
+    );
+  }
+
+  /**
+   * Check whether an agent's posting-tool body would form a mirror
+   * chain in the target thread, and if so emit the suppression
+   * event + persist the run's terminating tool as `channel.ack`.
+   * Returns true when the caller should SKIP publishing.
+   *
+   * Centralised here so channel.reply / channel.post / channel.dm /
+   * message all use the same gate. The check is read-only against
+   * the most recent thread messages — no LLM call.
+   */
+  tryMirrorSuppress(input: {
+    organizationId: string;
+    runId: string;
+    senderId: string;
+    threadId: string;
+    channelId?: string;
+    body: string;
+  }): boolean {
+    const recent = this.repo
+      .listMessages(input.organizationId, input.threadId, undefined, 12)
+      .data
+      .filter((message) => message.kind === 'agent')
+      .map((message) => ({ senderId: message.senderId, content: message.content }));
+    const result = shouldSuppressForMirror({
+      candidateBody: input.body,
+      recentAgentMessages: recent,
+      selfMemberId: input.senderId,
+    });
+    if (!result.suppress) return false;
+    const run = this.repo.getRun?.(input.organizationId, input.runId);
+    if (run) {
+      this.repo.saveRun?.({
+        ...run,
+        terminatingTool: 'channel.ack',
+      });
+    }
+    this.emitMirrorSuppressed({
+      organizationId: input.organizationId,
+      memberId: input.senderId,
+      runId: input.runId,
+      channelId: input.channelId,
+      threadId: input.threadId,
+      suppressedText: input.body,
+      similarityScore: result.similarityScore,
+    });
+    return true;
+  }
+
+  emitEchoSuppressed(input: {
+    organizationId: string;
+    fromMemberId: string;
+    toMemberId: string;
+    channelId?: string;
+    threadId?: string;
+    countInWindow: number;
+  }): void {
+    this.realtime.emit(
+      SocketEventNames.echoSuppressed,
+      {
+        organizationId: input.organizationId,
+        channelId: input.channelId,
+        threadId: input.threadId,
+        fromMemberId: input.fromMemberId,
+        toMemberId: input.toMemberId,
+        countInWindow: input.countInWindow,
+        occurredAt: new Date().toISOString(),
+      },
+      [
+        orgRoom(input.organizationId),
         ...(input.channelId ? [channelRoom(input.channelId)] : []),
         ...(input.threadId ? [threadRoom(input.threadId)] : []),
       ],
@@ -640,7 +828,21 @@ export class ConversationService {
       // entirely. Three-party hand-offs (A→B→C→A) must include
       // explicit @-mentions in the new message body; the
       // rewritten prompt documents this requirement.
-      mentions.add(parent.senderId);
+      //
+      // Bet 3 — vacuous-ack suppression: when the new body is a
+      // pure acknowledgement ("Understood", "I'll await", etc.)
+      // and the explicit mentions list is empty, do NOT inherit
+      // the parent sender as a mention. The reply still publishes,
+      // but the counterparty wakes as `channel-read` instead of
+      // `mention`, restoring `channel.pass` to the palette and
+      // letting them gracefully exit the chain. Without this, two
+      // agents auto-re-mention each other on every "noted" turn
+      // and the loop never terminates.
+      const explicitlyMentions = (input.mentions ?? []).length > 0;
+      const bodyIsVacuousAck = isVacuousAck(input.content);
+      if (!(bodyIsVacuousAck && !explicitlyMentions)) {
+        mentions.add(parent.senderId);
+      }
     }
 
     const message = MessageSchema.parse({
@@ -1091,9 +1293,56 @@ export class ConversationService {
         continue;
       }
 
-      fanout.push(this.alertMember(message, member.id, channel, 'mention'));
+      // Bet 3 — per-pair back-pressure. If `from→to` has already
+      // fired the per-pair cap within the window, demote to
+      // channel-read so the recipient can `channel.pass` instead
+      // of being forced into another mandatory reply. Emit an
+      // observability event so the UI can show "X and Y are
+      // looping — wakes demoted".
+      const countInWindow = this.recordPairMentionWake(
+        message.organizationId,
+        message.threadId,
+        message.senderId,
+        member.id,
+      );
+      const wakeReason: WakeReason =
+        countInWindow > this.pairMentionCap ? 'channel-read' : 'mention';
+      if (wakeReason === 'channel-read') {
+        this.emitEchoSuppressed({
+          organizationId: message.organizationId,
+          fromMemberId: message.senderId,
+          toMemberId: member.id,
+          channelId: channel?.id,
+          threadId: message.threadId,
+          countInWindow,
+        });
+      }
+
+      fanout.push(this.alertMember(message, member.id, channel, wakeReason));
     }
     await Promise.all(fanout);
+  }
+
+  /**
+   * Record a (from→to) mention wake in the per-pair window and
+   * return the count of wakes in the window AFTER recording this
+   * one. Caller compares against `pairMentionCap` to decide whether
+   * to demote.
+   */
+  private recordPairMentionWake(
+    organizationId: string,
+    threadId: string,
+    fromMemberId: string,
+    toMemberId: string,
+  ): number {
+    const key = `${organizationId}|${threadId}|${fromMemberId}|${toMemberId}`;
+    const now = Date.now();
+    const windowStart = now - this.pairMentionWindowMs;
+    const existing = this.pairMentionWindows.get(key) ?? [];
+    const kept = existing.filter((t) => t >= windowStart);
+    kept.push(now);
+    this.pairMentionWindows.set(key, kept);
+    return kept.length;
   }
 
   private async alertMember(

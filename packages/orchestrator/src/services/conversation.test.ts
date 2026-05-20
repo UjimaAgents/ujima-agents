@@ -884,14 +884,18 @@ describe('ConversationService smart parent-mention inheritance (L8)', () => {
     });
     await new Promise((resolve) => setImmediate(resolve));
 
-    // Agent-1 replies. Parent.mentions = [agent-1, agent-2] but the
-    // new behaviour should ONLY carry parent.senderId = human-1.
+    // Agent-1 replies with substantive content. Parent.mentions
+    // = [agent-1, agent-2] but the new behaviour should ONLY carry
+    // parent.senderId = human-1. NOTE: vacuous acks ("Got it.")
+    // are intentionally exempt from inheritance now (Bet 3 — kills
+    // the echo loop); use a content-bearing reply to test
+    // inheritance.
     const reply = service.sendMessage({
       organizationId: 'org-1',
       threadId: 'general',
       channelId: 'general',
       senderId: 'agent-1',
-      content: 'Got it.',
+      content: 'Looking at the code now — flagged a race in the wake fanout.',
       parentMessageId: parent.id,
     });
     await new Promise((resolve) => setImmediate(resolve));
@@ -903,5 +907,38 @@ describe('ConversationService smart parent-mention inheritance (L8)', () => {
       .map((mention) => mention.memberId)
       .sort();
     expect(replyMentions).toEqual(['human-1']);
+  });
+
+  // Bet 3 — vacuous acks ("Got it", "Understood", "I'll await")
+  // intentionally DO NOT inherit the parent sender as a mention.
+  // Without this, two agents bouncing acknowledgements at each
+  // other would auto-re-mention on every turn and the loop would
+  // never terminate.
+  it('does NOT inherit the parent sender when the reply is a vacuous acknowledgement', async () => {
+    const { service, repo } = createConversationFixture();
+
+    const parent = service.sendMessage({
+      organizationId: 'org-1',
+      threadId: 'general',
+      channelId: 'general',
+      senderId: 'human-1',
+      content: 'Please draft the BRD.',
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    const reply = service.sendMessage({
+      organizationId: 'org-1',
+      threadId: 'general',
+      channelId: 'general',
+      senderId: 'agent-1',
+      content: 'Understood. I will get on it.',
+      parentMessageId: parent.id,
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    const replyMentions = repo
+      .listMessageMentions(reply.id)
+      .map((mention) => mention.memberId);
+    expect(replyMentions).toEqual([]);
   });
 });

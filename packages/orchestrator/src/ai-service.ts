@@ -6,6 +6,7 @@ import type { RepositoryReader } from './services/repository-reader.js';
 import type { TeamStore } from './services/team-store.js';
 import type { ToolService } from './services/tool-service.js';
 import { ALWAYS_AVAILABLE_AGENT_TOOLS } from './tools/index.js';
+import { isMirrorFragileModel } from './services/mirror-guard.js';
 import {
   toModelMessages,
   resolveSpiritModel,
@@ -132,6 +133,12 @@ export class AiService {
     // of how the role config declares its `tools`.
     const wakeReasonForPalette = (this.repo.getRun?.(input.organizationId, input.runId)
       ?.wakeReason ?? null) as string | null;
+    // Mandatory-reply applies only to genuine `mention` wakes. The
+    // scheduler-driven `self-followup` reason (Bet 4) is the agent
+    // being asked to deliver on its own commitment — it must NOT be
+    // forced to post via `channel.reply`; declaring a blocker via
+    // `supervisor.todo.update` or calling `channel.pass` are both
+    // legitimate outcomes there.
     const mandatoryReplyMode = wakeReasonForPalette === 'mention';
     const baseAlwaysAvailable = mandatoryReplyMode
       ? ALWAYS_AVAILABLE_AGENT_TOOLS.filter(
@@ -269,15 +276,46 @@ export class AiService {
     // paraphrase it back as message content). Points the model at
     // the <thread-state> block above so it grounds its decision in
     // facts instead of inventing them.
-    const wakeRunScaffold = [
+    //
+    // `channel.ack` is the silent terminator for mandatory-reply
+    // turns with nothing to add — it satisfies the mention contract
+    // without producing wake-able channel text (which is what fuses
+    // the "Understood / I'll await" echo loop). Mention this
+    // option explicitly so the model knows it's the right move when
+    // it would otherwise paraphrase the previous turn.
+    const wakeRunScaffold: string[] = [
       'Before you pick a tool, read the <thread-state> block in the most recent user message.',
       'Treat its <agents-not-yet-responded> and <you-explicitly-addressed> / <you-implicitly-addressed> fields as ground truth — they are computed from the actual channel state, not from your reading.',
-      'If <you-explicitly-addressed>true</you-explicitly-addressed>, you must reply via a posting tool.',
-      'If <you-explicitly-addressed>false</you-explicitly-addressed> AND <you-implicitly-addressed>false</you-implicitly-addressed>, call channel.pass and stop. Do not post any message — not a short acknowledgement, not a status update, not a hand-off announcement. The audit log already records that you considered the thread.',
-      'When you call channel.pass, the reason must match thread-state facts. Do not write filler in the note field.',
-    ].join('\n');
+      // Decision-tree terminator: name each tool by its function, not
+      // by quoting model-emittable strings. Quoting "noted" or "I'll
+      // await" inline causes Claude/GPT to pattern-match the example
+      // as a canonical exemplar and emit it through channel.ack even
+      // when richer replies were warranted. The function-first
+      // framing reads identically to flash-class models but doesn't
+      // give stronger models a literal phrase to copy.
+      'channel.ack = you were addressed but have no new information, question, or status to add. channel.pass = you were not addressed at all. channel.reply = you have substantive content (an answer, an artifact, a question, a status that changes the picture).',
+      'If <you-explicitly-addressed>true</you-explicitly-addressed>, you must terminate via a tool. Use channel.reply ONLY when you have substantive content per the definition above; otherwise use channel.ack with an empty body. Acknowledging via channel.reply with paraphrased filler is treated as a missed reply.',
+      'If <you-explicitly-addressed>false</you-explicitly-addressed> AND <you-implicitly-addressed>false</you-implicitly-addressed>, call channel.pass and stop. Do not post any message. The audit log already records that you considered the thread.',
+      'When you call channel.pass, the note field must reference a specific fact from <thread-state>. Empty notes and generic phrasing are rejected.',
+      'An auto-re-mention closing a hand-off does NOT count as being addressed. If the previous message is a plain acknowledgement of YOUR work and contains no new question, treat the chain as complete — call channel.handoff with complete:true (if you initiated the chain) or channel.ack (if you are receiving the acknowledgement).',
+    ];
+    // Provider-aware anti-mirror line. Smaller/faster models
+    // (gemini-*-flash today; others may join) aggressively mirror
+    // the dominant surface form in recent context. When the prior
+    // turn is "Understood, @X. I'll await", the model emits the
+    // same shape almost reflexively regardless of the system
+    // prompt's positive framing. The line below names the
+    // pathology and gives the model the structural exit.
+    const resolvedModelId = (model as { modelId?: unknown }).modelId;
+    const modelIdString = typeof resolvedModelId === 'string' ? resolvedModelId : '';
+    if (isMirrorFragileModel(modelIdString)) {
+      wakeRunScaffold.unshift(
+        'IMPORTANT — anti-mirror rule: Do NOT paraphrase the previous message. If your intended reply restates what the previous turn already said, differs only by swapping names, or amounts to "noted / understood / I will await", call channel.ack with no body. Filler acknowledgements waste team attention and trigger redundant wakes.',
+      );
+    }
+    const wakeRunScaffoldText = wakeRunScaffold.join('\n');
     const goalSuffix = input.systemPromptSuffix;
-    const combinedSuffix = [goalSuffix, wakeRunScaffold].filter(Boolean).join('\n\n');
+    const combinedSuffix = [goalSuffix, wakeRunScaffoldText].filter(Boolean).join('\n\n');
     const systemPrompt = combinedSuffix ? `${system}\n\n${combinedSuffix}` : system;
 
     return runAgentLoop({

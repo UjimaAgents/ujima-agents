@@ -776,6 +776,42 @@ const MIGRATIONS: { id: string; up: string }[] = [
         WHERE json_extract(metadata, '$.clientMessageId') IS NOT NULL;
     `,
   },
+  {
+    // Bet 4 — durable commitment fields on todos. Promise extractor
+    // populates these on agent self-commitments ("I'll draft X"); the
+    // scheduler reads `last_progress_at` to re-wake idle owners and
+    // `due_at` to surface deadline-letter system messages. All
+    // nullable so existing supervisor.todo.* writes keep working.
+    id: '022_todos_commitment_fields',
+    up: `
+      ALTER TABLE todos ADD COLUMN channel_id TEXT;
+      ALTER TABLE todos ADD COLUMN source_message_id TEXT;
+      ALTER TABLE todos ADD COLUMN deliverable_summary TEXT;
+      ALTER TABLE todos ADD COLUMN due_at TEXT;
+      ALTER TABLE todos ADD COLUMN last_progress_at TEXT;
+      CREATE INDEX IF NOT EXISTS idx_todos_channel
+        ON todos(organization_id, channel_id, status);
+      CREATE INDEX IF NOT EXISTS idx_todos_due_at
+        ON todos(organization_id, status, due_at);
+    `,
+  },
+  {
+    // Bet 4 follow-up — `listIdleCommitments` filters
+    // `status IN (...) AND deliverable_summary IS NOT NULL`
+    // and orders by `last_progress_at`. The migration-022 indexes
+    // (channel-scoped and due-scoped) don't cover that access pattern;
+    // the sweeper was doing a full-table scan + tempfile sort. This
+    // index covers the hot path directly. The
+    // `WHERE deliverable_summary IS NOT NULL` clause makes it a
+    // partial index so the size stays small (commitment todos only,
+    // not supervisor.todo.* rows).
+    id: '023_todos_idle_progress_index',
+    up: `
+      CREATE INDEX IF NOT EXISTS idx_todos_idle_progress
+        ON todos(status, last_progress_at)
+        WHERE deliverable_summary IS NOT NULL;
+    `,
+  },
 ];
 
 export interface DbOptions {

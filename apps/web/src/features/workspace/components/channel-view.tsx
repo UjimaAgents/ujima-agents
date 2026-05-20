@@ -32,6 +32,7 @@ import { runToActivity } from "../activity-events";
 import { pendingApprovalVisibleInChannelView, queueApprovals } from "../approval-thread-filter";
 import { ReasoningTracePanel } from "./reasoning-trace-panel";
 import { buildTabCounts, collectBlockedRunReasons, collectConversationAttachments, isLiveRun } from "../feed-selectors";
+import { ChannelGoalsStrip } from "./channel-goals-strip";
 
 const CHANNEL_TABS: ChatTab[] = [
   { id: "conversation", label: "Conversation" },
@@ -480,6 +481,13 @@ export function ChannelView({
           activeTab={activeTab}
           onTabChange={handleTabChange}
         />
+        {conversation.type === "channel" && organizationId ? (
+          <ChannelGoalsStrip
+            organizationId={organizationId}
+            channelId={conversation.id}
+            memberNameLookup={(memberId) => memberById.get(memberId)?.name}
+          />
+        ) : null}
         {activeTab === "conversation" ? (
           <div className="relative flex flex-1 min-h-0 flex-col">
             <ChatMessageList ref={listRef} onScroll={handleScroll}>

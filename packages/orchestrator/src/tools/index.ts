@@ -1,5 +1,6 @@
 import type { OrchestratorTool } from './types.js';
 import {
+  channelAckTool,
   channelDmTool,
   channelHandoffTool,
   channelListTool,
@@ -37,6 +38,7 @@ export const ORCHESTRATOR_TOOLS = {
   'channel.list': channelListTool,
   'channel.read': channelReadTool,
   'channel.pass': channelPassTool,
+  'channel.ack': channelAckTool,
   'channel.handoff': channelHandoffTool,
   filesystem: filesystemTool,
   view: viewTool,
@@ -80,15 +82,32 @@ export const ORCHESTRATOR_TOOLS = {
 // `channel.pass` and `self.note` from this set at wake-time in
 // ai-service.ts, keeping the posting tools available so the agent
 // can comply.
+//
+// Read-only workspace tools (`view`, `ls`, `glob`, `grep`) are
+// baseline because the product mental model is "an employee with a
+// workspace" — every agent can look at the files the channel
+// references. Writes (`filesystem`, `edit`, `multiedit`, `write`,
+// `shell`, `download`) stay opt-in via `role.tools` because those
+// are real authority, not perception. Workspace-boundary enforcement
+// in `policy.ts` (`assertWorkspaceBoundary` + `isSensitiveWorkspacePath`)
+// still gates reads, so `.env`/`.git/config`-class paths remain
+// approval-gated. `channel.ack` is the silent terminator used to
+// satisfy the mandatory-reply contract without producing a wake-able
+// message (Bet 3 — kills the echo-loop pathology).
 export const ALWAYS_AVAILABLE_AGENT_TOOLS = Object.freeze([
   'self.note',
   'channel.pass',
+  'channel.ack',
   'channel.reply',
   'channel.post',
   'channel.dm',
   'message',
   'channel.read',
   'channel.list',
+  'view',
+  'ls',
+  'glob',
+  'grep',
 ] as const);
 
 // Supervisor's strict tool allowlist — read-only / annotation-only tools

@@ -938,25 +938,34 @@ export class SpiritService {
       const persistedRunSteps = spirit.runId
         ? this.repo.listRunSteps?.(input.organizationId, spirit.runId) ?? []
         : [];
-      const terminatingTool =
+      const detectedTerminatingTool =
         findTerminatingTool(result) ?? findTerminatingToolFromRunSteps(persistedRunSteps);
-      if (spirit.runId) {
-        const run = this.repo.getRun(input.organizationId, spirit.runId);
-        if (run) {
-          // Persist `terminatingTool` on the row so /runs/:id and
-          // list/detail endpoints report it correctly. Without this,
-          // metrics that count runs by `terminatingTool x wakeReason`
-          // (pass-rate, reply-rate) read null for every successful
-          // `channel.reply` / `channel.pass` turn.
-          this.repo.saveRun({
-            ...run,
-            status: 'completed',
-            step: 'completed',
-            summary: lastText || run.summary,
-            endedAt: new Date().toISOString(),
-            terminatingTool,
-          });
-        }
+      // Resolve the final terminator, preserving any silent
+      // terminator a mid-run side-effect (mirror-loop guard, vacuous-
+      // ack suppression) already wrote onto the run row. Without this
+      // preservation step, the freshly-computed `detected` value
+      // (which sees the model's original `channel.reply` toolcall via
+      // `result.steps`) would clobber the `channel.ack` that the
+      // mirror-suppress flow persisted earlier — and metrics would
+      // report a publish that never actually went through.
+      const persistedRun = spirit.runId
+        ? this.repo.getRun(input.organizationId, spirit.runId)
+        : null;
+      const persistedTerminator = persistedRun?.terminatingTool;
+      const persistedIsSilent =
+        persistedTerminator === 'channel.ack' || persistedTerminator === 'channel.pass';
+      const terminatingTool = persistedIsSilent
+        ? persistedTerminator
+        : detectedTerminatingTool;
+      if (persistedRun) {
+        this.repo.saveRun({
+          ...persistedRun,
+          status: 'completed',
+          step: 'completed',
+          summary: lastText || persistedRun.summary,
+          endedAt: new Date().toISOString(),
+          terminatingTool,
+        });
       }
       this.emit(SocketEventNames.spiritCompleted, completed);
       this.maybeFinalizeTaskSession(
@@ -1142,8 +1151,19 @@ export class SpiritService {
       // (and the palette layer above strips it anyway when the
       // wake reason is `mention`).
       const replyText = outcome.finalText.trim();
+      // A run "satisfied" mandatory-reply when it ended via any
+      // *publishing* terminator. `channel.pass` is explicit silence
+      // (rejected by policy for mention wakes anyway), and
+      // `channel.ack` is silent-acknowledge (no message published);
+      // neither counts as a real reply, so both must trigger the
+      // `must_reply_failed` event when they appear on a mention
+      // wake. Without excluding `channel.ack` here a supervisor
+      // could loophole every mention with an ack and the human
+      // would never see the failure surface.
       const publishedViaTool =
-        outcome.terminatingTool !== null && outcome.terminatingTool !== 'channel.pass';
+        outcome.terminatingTool !== null &&
+        outcome.terminatingTool !== 'channel.pass' &&
+        outcome.terminatingTool !== 'channel.ack';
       if (!replyText && !publishedViaTool && input.wakeReason === 'mention') {
         this.realtime.emit(
           SocketEventNames.memberMustReplyFailed,

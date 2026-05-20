@@ -36,7 +36,15 @@ export interface SupervisorTodoCheckInput {
 
 export interface SupervisorTodoListInput {
   organizationId: string;
-  taskSessionId: string;
+  /**
+   * One of `taskSessionId` or `channelId` is required. Bet 2 added
+   * `channelId` so the goals rail (and any future channel-scoped UI)
+   * can list "open work in this channel" without first looking up
+   * the task session. Write paths (add/check) remain session-scoped
+   * — the channel-scoped read just unions across sessions.
+   */
+  taskSessionId?: string;
+  channelId?: string;
   status?: TodoStatus;
   memberId?: string;
 }
@@ -86,6 +94,17 @@ export class SupervisorTodoService {
   }
 
   list(input: SupervisorTodoListInput): Todo[] {
+    if (input.channelId && this.repo.listTodosForChannel) {
+      return this.repo.listTodosForChannel(input.organizationId, input.channelId, {
+        status: input.status,
+        memberId: input.memberId,
+      });
+    }
+    if (!input.taskSessionId) {
+      throw new Error(
+        'SupervisorTodoService.list requires either taskSessionId or channelId',
+      );
+    }
     return this.repo.listTodosForSession(input.organizationId, input.taskSessionId, {
       status: input.status,
       memberId: input.memberId,
