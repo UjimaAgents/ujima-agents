@@ -1,7 +1,9 @@
 import type { OrchestratorTool } from './types.js';
 import {
   channelDmTool,
+  channelHandoffTool,
   channelListTool,
+  channelPassTool,
   channelPostTool,
   channelReadTool,
   channelReplyTool,
@@ -34,6 +36,8 @@ export const ORCHESTRATOR_TOOLS = {
   'channel.dm': channelDmTool,
   'channel.list': channelListTool,
   'channel.read': channelReadTool,
+  'channel.pass': channelPassTool,
+  'channel.handoff': channelHandoffTool,
   filesystem: filesystemTool,
   view: viewTool,
   write: writeTool,
@@ -58,9 +62,34 @@ export const ORCHESTRATOR_TOOLS = {
 // Tools an agent always has access to, regardless of its role's `tools`
 // allowlist.
 //
-// `self.note` is the only unconditional tool: the agent must always be
-// able to think to itself. Chat tools stay in the normal role bundle.
-export const ALWAYS_AVAILABLE_AGENT_TOOLS = Object.freeze(['self.note'] as const);
+// Includes the conversation primitives every agent should be able to
+// reach on any wake: read the channel, post a reply, post a fresh
+// message, send a DM, plus the silent-outcome and private-note
+// tools. Without these in the always-available list, an agent whose
+// role config has `tools: []` ends up with an empty palette and the
+// model either fails or improvises tool-call syntax as prose text
+// (Gemini does this). Keeping these tools always-on means the
+// runtime knows the model's intent through structured tool calls
+// instead of having to guess from free-text output.
+//
+// `channel.handoff` stays OPT-IN (must be declared in role.tools)
+// because hand-offs are a workflow primitive, not a baseline
+// conversational primitive.
+//
+// Mandatory-reply enforcement (the @mention contract) strips
+// `channel.pass` and `self.note` from this set at wake-time in
+// ai-service.ts, keeping the posting tools available so the agent
+// can comply.
+export const ALWAYS_AVAILABLE_AGENT_TOOLS = Object.freeze([
+  'self.note',
+  'channel.pass',
+  'channel.reply',
+  'channel.post',
+  'channel.dm',
+  'message',
+  'channel.read',
+  'channel.list',
+] as const);
 
 // Supervisor's strict tool allowlist — read-only / annotation-only tools
 // plus the same channel surface we let workers use.
@@ -83,6 +112,8 @@ export const SUPERVISOR_TOOL_ALLOWLIST = Object.freeze([
   'channel.post',
   'channel.dm',
   'channel.reply',
+  'channel.pass',
+  'channel.handoff',
   'view',
   'ls',
   'glob',

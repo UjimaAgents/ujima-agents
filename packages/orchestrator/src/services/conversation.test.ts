@@ -3,6 +3,7 @@ import {
   ChannelSchema,
   ConversationThreadSchema,
   MemberSchema,
+  MessageSchema,
   OrganizationSchema,
   SocketEventNames,
   decodeCursor,
@@ -65,6 +66,7 @@ function createConversationFixture() {
   const savedMessages: unknown[] = [];
   const savedMentions: { messageId: string; memberId: string }[] = [];
   const alerts: string[] = [];
+  const alertWakeReasons: { memberId: string; wakeReason: string }[] = [];
   const emits: { event: string }[] = [];
   const channels = new Map([[channel.id, channel]]);
   const threads = new Map([[thread.id, thread]]);
@@ -208,11 +210,13 @@ function createConversationFixture() {
   } as never, {
     onMemberAlerted: (input) => {
       alerts.push(input.memberId);
+      alertWakeReasons.push({ memberId: input.memberId, wakeReason: input.wakeReason });
     },
   });
 
   return {
     alerts,
+    alertWakeReasons,
     channel,
     emits,
     members,
@@ -251,6 +255,29 @@ describe('ConversationService @all mentions', () => {
     ]);
     expect(alerts.sort()).toEqual(['agent-1', 'agent-2']);
     expect(emits.some((entry) => entry.event === SocketEventNames.memberAlerted)).toBe(true);
+  });
+
+  // Regression: `@all` is treated as N personal mentions of every
+  // channel member. Each agent gets wakeReason='mention' so the
+  // mandatory-reply enforcement (palette layer in ai-service.ts)
+  // forces them to engage.
+  it('uses wakeReason="mention" for @all fanouts (mandatory reply enforced)', async () => {
+    const { alertWakeReasons, service, thread } = createConversationFixture();
+
+    service.sendMessage({
+      organizationId: 'org-1',
+      threadId: thread.id,
+      channelId: 'general',
+      senderId: 'human-1',
+      content: 'Hey @all what are you working on?',
+    });
+
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(alertWakeReasons.length).toBeGreaterThan(0);
+    for (const alert of alertWakeReasons) {
+      expect(alert.wakeReason).toBe('mention');
+    }
   });
 
   it('does not fan out @all from agent-authored messages', async () => {
@@ -352,14 +379,19 @@ describe('ConversationService @all mentions', () => {
     expect(alerts).toEqual(['agent-2']);
   });
 
-  it('skips DM wake fanout when the message is exactly "Acknowledged."', async () => {
+  it('skips DM wake fanout when the message is a completed channel.handoff (replaces old "Acknowledged." protocol)', async () => {
     const { alerts, service } = createConversationFixture();
 
     const message = await service.sendDirectMessage({
       organizationId: 'org-1',
       senderId: 'agent-1',
       recipientId: 'agent-2',
-      content: 'Acknowledged.',
+      content: 'Wrapping up.\n\n[DONE]',
+      metadata: {
+        // Loophole-fix L4 / handoff: terminator is the metadata
+        // flag, not a literal token in the body.
+        handoff: { from: 'agent-1', to: 'agent-2', reason: 'wrap-up', complete: true },
+      } as unknown as { goalMode?: boolean },
     });
 
     await new Promise((resolve) => setImmediate(resolve));
@@ -368,14 +400,14 @@ describe('ConversationService @all mentions', () => {
     expect(alerts).toEqual([]);
   });
 
-  it('wakes the other agent when "Acknowledged." has extra text after it', async () => {
+  it('wakes the other agent on a normal DM reply (no handoff metadata)', async () => {
     const { alerts, service } = createConversationFixture();
 
     await service.sendDirectMessage({
       organizationId: 'org-1',
       senderId: 'agent-1',
       recipientId: 'agent-2',
-      content: 'Acknowledged. What is the deadline for the API?',
+      content: 'What is the deadline for the API?',
     });
 
     await new Promise((resolve) => setImmediate(resolve));
@@ -599,7 +631,7 @@ describe('ConversationService @all mentions', () => {
     expect(stored.data.some((message) => message.content.startsWith('[[CONVERSATION_COMPACTED_V1]]'))).toBe(
       true,
     );
-    expect(emits).toHaveLength(502);
+    expect(emits.filter((entry) => entry.event === SocketEventNames.channelMessage)).toHaveLength(502);
   });
 
   it('folds earlier conversation summaries into later compactions', async () => {
@@ -732,5 +764,144 @@ describe('ConversationService channel thread bootstrap', () => {
       channelId: channel.id,
       title: channel.name,
     });
+  });
+});
+
+// L5 — broad-wake (`alertChannelReaders`) must fire on human posts
+// in public channels (`general` and `group`) and MUST bypass
+// system-authored messages (kind system / senderId 'system').
+// Otherwise the throttle-notification system message itself
+// re-triggers broad-wake → infinite loop.
+describe('ConversationService alertChannelReaders (L5)', () => {
+  function withGroupChannel() {
+    const fixture = createConversationFixture();
+    const groupChannel = ChannelSchema.parse({
+      id: 'design-group',
+      organizationId: fixture.organization.id,
+      name: 'design-group',
+      kind: 'group',
+      topic: '',
+      memberIds: fixture.members.map((m) => m.id),
+      createdAt: '2026-05-03T10:00:00.000Z',
+    });
+    fixture.channels.set(groupChannel.id, groupChannel);
+    fixture.threads.set(groupChannel.id, ConversationThreadSchema.parse({
+      id: groupChannel.id,
+      organizationId: fixture.organization.id,
+      channelId: groupChannel.id,
+      memberIds: groupChannel.memberIds,
+      title: 'design-group',
+      createdAt: '2026-05-03T10:00:00.000Z',
+    }));
+    return { ...fixture, groupChannel };
+  }
+
+  it('wakes every non-sender agent on a human post in a group channel', async () => {
+    const { alerts, service, groupChannel } = withGroupChannel();
+
+    service.sendMessage({
+      organizationId: 'org-1',
+      threadId: groupChannel.id,
+      channelId: groupChannel.id,
+      senderId: 'human-1',
+      content: 'Heads up everyone',
+    });
+
+    await new Promise((resolve) => setImmediate(resolve));
+    // Both agents in the channel wake; the human sender is skipped.
+    expect(alerts.sort()).toEqual(['agent-1', 'agent-2']);
+  });
+
+  it('wakes every non-sender agent on a human post in #general', async () => {
+    const { alerts, service } = createConversationFixture();
+
+    service.sendMessage({
+      organizationId: 'org-1',
+      threadId: 'general',
+      channelId: 'general',
+      senderId: 'human-1',
+      content: 'Can someone take a look?',
+    });
+
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(alerts.sort()).toEqual(['agent-1', 'agent-2']);
+  });
+
+  it('does NOT broad-wake on system messages (kind=system bypass)', async () => {
+    const { alerts, service, groupChannel } = withGroupChannel();
+
+    // System-authored throttle notification (the exact shape that
+    // would otherwise feedback-loop the broad-wake).
+    service.publishMessage(
+      MessageSchema.parse({
+        id: 'sys-throttle-1',
+        organizationId: 'org-1',
+        threadId: groupChannel.id,
+        channelId: groupChannel.id,
+        senderId: 'system',
+        senderKind: 'human',
+        kind: 'system',
+        content: 'member.alert_throttled: …',
+        createdAt: '2026-05-03T10:00:00.000Z',
+      }),
+      [],
+    );
+
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(alerts).toEqual([]);
+  });
+
+  it('does NOT broad-wake on agent-authored posts (mention-only fanout for agents)', async () => {
+    const { alerts, service, groupChannel } = withGroupChannel();
+
+    service.sendMessage({
+      organizationId: 'org-1',
+      threadId: groupChannel.id,
+      channelId: groupChannel.id,
+      senderId: 'agent-1',
+      content: 'Posted by an agent with no mention',
+    });
+
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(alerts).toEqual([]);
+  });
+});
+
+// L8 — Smart parent-mention inheritance. Only `parent.senderId` is
+// re-included on a reply; transitive `parent.mentions` are dropped.
+// Without this, threads ping-pong-amplify mentions every step.
+describe('ConversationService smart parent-mention inheritance (L8)', () => {
+  it('inherits only the parent sender, not the parent transitive mentions', async () => {
+    const { service, repo } = createConversationFixture();
+
+    // Parent message: human-1 sends, tags agent-1 AND agent-2.
+    const parent = service.sendMessage({
+      organizationId: 'org-1',
+      threadId: 'general',
+      channelId: 'general',
+      senderId: 'human-1',
+      content: 'Hey @Mia and @Noah, look at this.',
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    // Agent-1 replies. Parent.mentions = [agent-1, agent-2] but the
+    // new behaviour should ONLY carry parent.senderId = human-1.
+    const reply = service.sendMessage({
+      organizationId: 'org-1',
+      threadId: 'general',
+      channelId: 'general',
+      senderId: 'agent-1',
+      content: 'Got it.',
+      parentMessageId: parent.id,
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    // Reply's explicit mention set: only the parent sender (human-1).
+    // agent-2 (who was tagged in parent) is NOT re-included.
+    const replyMentions = repo
+      .listMessageMentions(reply.id)
+      .map((mention) => mention.memberId)
+      .sort();
+    expect(replyMentions).toEqual(['human-1']);
   });
 });

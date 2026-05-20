@@ -58,7 +58,22 @@ export interface ConversationSyncResult {
   };
   loading: boolean;
   error?: string;
-  sendMessage(content: string, parentMessageId?: string, attachmentIds?: string[], metadata?: { goalMode?: boolean }): Promise<void>;
+  sendMessage(
+    content: string,
+    parentMessageId?: string,
+    attachmentIds?: string[],
+    metadata?: { goalMode?: boolean },
+    /**
+     * Retry/resend hook: when present, sendMessage reuses this
+     * idempotency key (and the matching `temp:<id>` pending entry)
+     * instead of allocating a fresh one. Bind it to the user-visible
+     * draft, not to the call site, so a "Retry" button hits the same
+     * dedupe key the original send did. Migration 021's UNIQUE partial
+     * index on `messages(org, sender, thread, clientMessageId)`
+     * enforces the contract at the DB layer.
+     */
+    options?: { clientMessageId?: string },
+  ): Promise<void>;
   archiveConversation(mode: "summarize" | "clear"): Promise<void>;
 }
 
@@ -269,15 +284,32 @@ export function useConversationSync(
     return activityStateToStatus(activityState);
   }, [activeRun, conversation.id, conversation.type, loading, memberActivity, selectedMember?.presence]);
 
-  const sendMessage = useCallback(
-    async (content: string, parentMessageId?: string, attachmentIds?: string[], metadata?: { goalMode?: boolean }) => {
+  const sendMessage = useCallback<ConversationSyncResult["sendMessage"]>(
+    async (content, parentMessageId, attachmentIds, metadata, options) => {
       if (!transport || !bootstrap.auth.member) {
         throw new Error("Sign in before sending messages.");
       }
 
       const sender = bootstrap.auth.member;
-      const tempId = `temp:${crypto.randomUUID()}`;
       const now = new Date().toISOString();
+      // L10 — bind the idempotency token to the pending-message
+      // identity by deriving the tempId FROM the clientMessageId,
+      // not generating them independently. A retry path (transport
+      // hiccup or future user-visible "Retry" affordance) MUST pass
+      // the original clientMessageId via `options.clientMessageId` so
+      // the daemon dedupes correctly. Without the threaded id, a
+      // resend allocates a fresh key and the dedupe contract breaks.
+      // Migration 021's UNIQUE partial index on
+      // (org, sender, thread, clientMessageId) backs this at the DB
+      // layer for concurrent retries.
+      const clientMessageId = options?.clientMessageId ?? crypto.randomUUID();
+      const tempId = `temp:${clientMessageId}`;
+      // Retries reuse the same tempId. The earlier failed attempt
+      // calls `removeMessage(tempId)` in its error branch, so the
+      // pending entry is gone by the time a retry lands and we add
+      // it back fresh. If a caller resends without removing first
+      // (e.g. a "stuck pending" affordance), Pinia/Zustand stores
+      // typically upsert by id — add-then-overwrite is benign.
       addPendingMessage({
         id: tempId,
         senderId: sender.id,
@@ -304,6 +336,7 @@ export function useConversationSync(
             parentMessageId,
             attachmentIds,
             metadata,
+            clientMessageId,
           ),
         ),
       });
@@ -577,6 +610,19 @@ function handleStreamEvent(
       actions.setConversationError(failure.error);
       actions.setMemberActivity(failure.memberId, "error");
       actions.appendActivity(memberAlertFailedToActivity(failure));
+      return;
+    }
+    case "member.must_reply_failed": {
+      // L7/L12 — agent was @mentioned and produced no posting tool.
+      // Surface as conversation error so the human gets a visible
+      // signal that the contract was violated. Detailed rendering
+      // can come later; for now flagging the activity is enough.
+      const body = envelope.payload as { memberId?: unknown };
+      const memberId = typeof body.memberId === "string" ? body.memberId : undefined;
+      if (memberId) {
+        actions.setMemberActivity(memberId, "error");
+      }
+      actions.setConversationError("Agent was @mentioned but did not reply.");
       return;
     }
     case "member:updated": {

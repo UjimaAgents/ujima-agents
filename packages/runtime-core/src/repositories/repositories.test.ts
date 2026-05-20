@@ -444,6 +444,115 @@ test('getLatestHumanMessageInThread returns newest human by timestamp', () => {
   expect(latest?.metadata).toEqual({ goalMode: true });
 });
 
+test('client message id lookup is scoped to the requested thread', () => {
+  const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
+  const orgId = randomUUID();
+  const senderId = 'owner';
+
+  repo.saveMessage(
+    MessageSchema.parse({
+      id: 'message-thread-a',
+      organizationId: orgId,
+      threadId: 'thread-a',
+      channelId: 'thread-a',
+      senderId,
+      senderKind: 'human',
+      kind: 'human',
+      content: 'first thread',
+      mentions: [],
+      clientMessageId: 'retry-token-1',
+      createdAt: '2026-05-04T19:07:01.000Z',
+    }),
+  );
+  repo.saveMessage(
+    MessageSchema.parse({
+      id: 'message-thread-b',
+      organizationId: orgId,
+      threadId: 'thread-b',
+      channelId: 'thread-b',
+      senderId,
+      senderKind: 'human',
+      kind: 'human',
+      content: 'second thread',
+      mentions: [],
+      clientMessageId: 'retry-token-1',
+      createdAt: '2026-05-04T19:07:02.000Z',
+    }),
+  );
+
+  expect(repo.findMessageByClientId(orgId, senderId, 'thread-a', 'retry-token-1')?.id).toBe(
+    'message-thread-a',
+  );
+  expect(repo.findMessageByClientId(orgId, senderId, 'thread-b', 'retry-token-1')?.id).toBe(
+    'message-thread-b',
+  );
+  expect(repo.findMessageByClientId(orgId, senderId, 'thread-c', 'retry-token-1')).toBeNull();
+});
+
+// L10 race-safety: migration 021 enforces uniqueness in the DB.
+// Two inserts with the same (org, sender, thread, clientMessageId)
+// triple must dedupe — saveMessage catches the UNIQUE constraint
+// and returns the existing row instead of bubbling the error.
+test('saveMessage is race-safe on duplicate clientMessageId (returns winner instead of throwing)', () => {
+  const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
+  const orgId = randomUUID();
+  repo.saveOrganization(
+    OrganizationSchema.parse({
+      id: orgId,
+      name: 'Race Org',
+      workspace: { root: '/tmp/race-org', roleScopes: {} },
+    }),
+  );
+  const senderId = 'owner';
+  const sharedClientMessageId = 'concurrent-retry-token';
+
+  const first = repo.saveMessage(
+    MessageSchema.parse({
+      id: 'msg-winner',
+      organizationId: orgId,
+      threadId: 'thread-1',
+      channelId: 'thread-1',
+      senderId,
+      senderKind: 'human',
+      kind: 'human',
+      content: 'first to commit',
+      mentions: [],
+      clientMessageId: sharedClientMessageId,
+      createdAt: '2026-05-04T19:07:01.000Z',
+    }),
+  );
+  expect(first.id).toBe('msg-winner');
+
+  // Second concurrent attempt with the SAME triple — different
+  // message id (because it was generated server-side for a
+  // retried POST), same dedupe key.
+  const second = repo.saveMessage(
+    MessageSchema.parse({
+      id: 'msg-loser',
+      organizationId: orgId,
+      threadId: 'thread-1',
+      channelId: 'thread-1',
+      senderId,
+      senderKind: 'human',
+      kind: 'human',
+      content: 'second arrival',
+      mentions: [],
+      clientMessageId: sharedClientMessageId,
+      createdAt: '2026-05-04T19:07:01.050Z',
+    }),
+  );
+  // Recovery: caller gets the WINNER, not the loser's payload.
+  expect(second.id).toBe('msg-winner');
+  expect(second.content).toBe('first to commit');
+
+  // Only one row persisted.
+  expect(
+    repo.listMessages(orgId, 'thread-1').data.filter(
+      (m) => (m as { clientMessageId?: string }).clientMessageId === sharedClientMessageId,
+    ),
+  ).toHaveLength(1);
+});
+
 test('hasApprovalGrant matches legacy shell scopes against canonical JSON scopes', () => {
   const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
   const orgId = randomUUID();
@@ -539,6 +648,56 @@ test('listPendingApprovals enriches threadId from parent run when DB row has no 
   const pending = repo.listPendingApprovals(orgId);
   expect(pending).toHaveLength(1);
   expect(pending[0]?.threadId).toBe(threadId);
+});
+
+test('runs persist wake metadata used by mandatory reply policy', () => {
+  const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
+  const orgId = randomUUID();
+  const now = new Date().toISOString();
+  const runId = randomUUID();
+
+  repo.saveOrganization(
+    OrganizationSchema.parse({
+      id: orgId,
+      name: 'Wake Metadata Org',
+      workspace: { root: '/tmp/wake-metadata-org', roleScopes: {} },
+    }),
+  );
+
+  repo.saveRun(
+    RunStateSchema.parse({
+      id: runId,
+      organizationId: orgId,
+      agentId: 'agent-1',
+      threadId: 'general',
+      status: 'running',
+      step: 'running',
+      summary: 'mention wake',
+      startedAt: now,
+      wakeReason: 'mention',
+      sourceMessageId: 'message-1',
+      byMemberId: 'human-1',
+      terminatingTool: null,
+    }),
+  );
+
+  repo.saveRun(
+    RunStateSchema.parse({
+      ...repo.getRun(orgId, runId)!,
+      status: 'completed',
+      step: 'completed',
+      summary: 'replied',
+      endedAt: now,
+      terminatingTool: 'channel.reply',
+    }),
+  );
+
+  expect(repo.getRun(orgId, runId)).toMatchObject({
+    wakeReason: 'mention',
+    sourceMessageId: 'message-1',
+    byMemberId: 'human-1',
+    terminatingTool: 'channel.reply',
+  });
 });
 
 // Regression for two listChannels() bugs:

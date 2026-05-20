@@ -442,6 +442,126 @@ describe('workspace-root REST gating', () => {
       name: 'ready-agent-renamed',
     });
   });
+
+  // Regression: the dedupe/access fast-path ran requireThreadAccess
+  // BEFORE sendDirectMessage → sendSelfNote got a chance to lazily
+  // create `self:<senderId>`. For a first-ever self-message with
+  // clientMessageId set, the access check threw `Thread not found`
+  // and the message never posted. The route now skips the access
+  // check for `recipientId === 'self'` (self channels are
+  // sender-owned by construction; sendSelfNote materialises the
+  // channel and thread on demand).
+  it('accepts a first-ever self direct message that carries a clientMessageId', async () => {
+    // Pre-condition: the owner's self channel does NOT exist yet.
+    expect(repo.getChannel(readyOrganizationId, 'self:ready-owner')).toBeNull();
+    expect(repo.getThread(readyOrganizationId, 'self:ready-owner')).toBeNull();
+
+    const response = await fetch(`${baseUrl}/api/messages`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${TOKEN}`,
+        'x-ujima-session': readyOwnerSessionToken,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        organizationId: readyOrganizationId,
+        senderId: 'ready-owner',
+        recipientId: 'self',
+        content: 'first self note via idempotency path',
+        clientMessageId: 'self-note-first-send',
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { id: string; threadId: string; content: string };
+    expect(body.threadId).toBe('self:ready-owner');
+    expect(body.content).toBe('first self note via idempotency path');
+
+    // sendSelfNote should have materialised both rows on the way through.
+    expect(repo.getChannel(readyOrganizationId, 'self:ready-owner')).not.toBeNull();
+    expect(repo.getThread(readyOrganizationId, 'self:ready-owner')).not.toBeNull();
+
+    // Retrying with the same clientMessageId returns the same message
+    // (dedupe still works — the access bypass didn't break it).
+    const retry = await fetch(`${baseUrl}/api/messages`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${TOKEN}`,
+        'x-ujima-session': readyOwnerSessionToken,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        organizationId: readyOrganizationId,
+        senderId: 'ready-owner',
+        recipientId: 'self',
+        content: 'first self note via idempotency path',
+        clientMessageId: 'self-note-first-send',
+      }),
+    });
+    expect(retry.status).toBe(200);
+    const retryBody = (await retry.json()) as { id: string };
+    expect(retryBody.id).toBe(body.id);
+  });
+
+  // Regression: the same dedupe/access fast-path also broke first-
+  // ever peer-to-peer DMs. The synthetic `dm:a:b` thread id is lazily
+  // provisioned inside `sendDirectMessage` on the first call — so
+  // pre-fix, `requireThreadAccess` threw `Thread not found` before
+  // the thread (or channel) existed. The route now skips the access
+  // preflight when neither the thread nor its backing channel exist
+  // yet (no cached message can exist on a thread that doesn't exist).
+  it('accepts a first-ever peer-to-peer direct message that carries a clientMessageId', async () => {
+    const dmThreadId = 'dm:ready-agent:ready-owner';
+    // Pre-condition: the DM channel/thread does NOT exist yet.
+    expect(repo.getChannel(readyOrganizationId, dmThreadId)).toBeNull();
+    expect(repo.getThread(readyOrganizationId, dmThreadId)).toBeNull();
+
+    const response = await fetch(`${baseUrl}/api/messages`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${TOKEN}`,
+        'x-ujima-session': readyOwnerSessionToken,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        organizationId: readyOrganizationId,
+        senderId: 'ready-owner',
+        recipientId: 'ready-agent',
+        content: 'first ever dm via idempotency path',
+        clientMessageId: 'dm-first-send',
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { id: string; threadId: string; content: string };
+    expect(body.threadId).toBe(dmThreadId);
+    expect(body.content).toBe('first ever dm via idempotency path');
+
+    // sendDirectMessage should have materialised both rows on the way through.
+    expect(repo.getChannel(readyOrganizationId, dmThreadId)).not.toBeNull();
+    expect(repo.getThread(readyOrganizationId, dmThreadId)).not.toBeNull();
+
+    // Retry with the same clientMessageId dedupes (and now the
+    // preflight access check DOES run because the thread exists).
+    const retry = await fetch(`${baseUrl}/api/messages`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${TOKEN}`,
+        'x-ujima-session': readyOwnerSessionToken,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        organizationId: readyOrganizationId,
+        senderId: 'ready-owner',
+        recipientId: 'ready-agent',
+        content: 'first ever dm via idempotency path',
+        clientMessageId: 'dm-first-send',
+      }),
+    });
+    expect(retry.status).toBe(200);
+    const retryBody = (await retry.json()) as { id: string };
+    expect(retryBody.id).toBe(body.id);
+  });
 });
 
 function memberUpdateBody(overrides: Record<string, unknown> = {}) {

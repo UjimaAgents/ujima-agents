@@ -19,6 +19,13 @@ const ThreadMessageCreateSchema = z.object({
   attachmentIds: z.array(IdSchema).default([]),
   parentMessageId: IdSchema.optional(),
   metadata: MessageCreateMetadataSchema,
+  /**
+   * Client-supplied dedupe key. The daemon stores it on the persisted
+   * message and rejects retries that arrive with the same triple of
+   * (org, thread, sender, clientMessageId). Optional for backwards
+   * compatibility; new clients should always send it.
+   */
+  clientMessageId: IdSchema.optional(),
 }).strict();
 
 const DirectMessageCreateSchema = z.object({
@@ -30,6 +37,7 @@ const DirectMessageCreateSchema = z.object({
   ignore: z.boolean().optional(),
   parentMessageId: IdSchema.optional(),
   metadata: MessageCreateMetadataSchema,
+  clientMessageId: IdSchema.optional(),
 }).strict();
 
 export const MessageCreateSchema = z.union([ThreadMessageCreateSchema, DirectMessageCreateSchema]);
