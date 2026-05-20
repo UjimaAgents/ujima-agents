@@ -826,4 +826,83 @@ describe('E3 channels and mentions', () => {
     const allIds = [...page1.data.map((m) => m.id), ...page2.data.map((m) => m.id)].sort();
     expect(allIds).toEqual(['msg-archived-c', 'msg-live-a', 'msg-live-b']);
   });
+
+  // Race-safety regression: when two concurrent POSTs share a
+  // clientMessageId, `findMessageByClientId` may report "no existing"
+  // for both. The first commit wins migration 021's UNIQUE partial
+  // index; the second's saveMessage recovers by returning the WINNER
+  // row (different `id`, since the request gets a fresh server-side
+  // uuid). publishMessage must detect that dedupe and return early
+  // — otherwise mention replacement, attachment linking, realtime
+  // emit, and wake fanout all reference an id that was never
+  // persisted, and worse, double-notify agents whose first wake
+  // already fired for the winner.
+  it('publishMessage skips realtime emit + side effects on a clientMessageId dedupe', async () => {
+    const fixture = await createFixture({ agentNames: ['frontend-alice'] });
+    tempDirs.push(fixture.archiveRoot);
+    const realtime = createRealtimeCollector();
+    const conversations = new ConversationService(fixture.repo, realtime);
+
+    fixture.repo.ensureThread({
+      id: 'general',
+      organizationId: fixture.organizationId,
+      channelId: 'general',
+      title: 'general',
+      memberIds: [fixture.ownerId, 'frontend-alice'],
+      createdAt: new Date().toISOString(),
+    });
+
+    const sharedClientMessageId = 'retry-token-race';
+
+    const winner = conversations.publishMessage(
+      MessageSchema.parse({
+        id: 'msg-winner',
+        organizationId: fixture.organizationId,
+        threadId: 'general',
+        channelId: 'general',
+        senderId: fixture.ownerId,
+        senderKind: 'human',
+        kind: 'human',
+        content: 'first to commit',
+        mentions: [],
+        clientMessageId: sharedClientMessageId,
+        createdAt: '2026-05-04T19:07:01.000Z',
+      }),
+      [],
+    );
+    const eventsAfterWinner = realtime.events.length;
+    expect(winner.id).toBe('msg-winner');
+    expect(eventsAfterWinner).toBeGreaterThan(0);
+
+    // Second arrival with the SAME idempotency key but a fresh
+    // server-generated id — emulates the loser of a concurrent retry.
+    const loser = conversations.publishMessage(
+      MessageSchema.parse({
+        id: 'msg-loser',
+        organizationId: fixture.organizationId,
+        threadId: 'general',
+        channelId: 'general',
+        senderId: fixture.ownerId,
+        senderKind: 'human',
+        kind: 'human',
+        content: 'second arrival',
+        mentions: [],
+        clientMessageId: sharedClientMessageId,
+        createdAt: '2026-05-04T19:07:01.050Z',
+      }),
+      [],
+    );
+
+    // The dedupe must return the winner row (not the loser's payload).
+    expect(loser.id).toBe('msg-winner');
+    expect(loser.content).toBe('first to commit');
+    // No additional realtime emit fired for the deduped attempt —
+    // agents that already woke for the winner must NOT be re-woken.
+    expect(realtime.events.length).toBe(eventsAfterWinner);
+    // Only one persisted row — the winner.
+    expect(fixture.repo.getMessage(fixture.organizationId, 'msg-loser')).toBeNull();
+    expect(fixture.repo.getMessage(fixture.organizationId, 'msg-winner')?.content).toBe(
+      'first to commit',
+    );
+  });
 });

@@ -1013,6 +1013,25 @@ describe('SpiritService alert dispatch — Phase 2.C', () => {
     // `message: null` signals "the terminating tool already wrote
     // the visible reply; the dispatcher published nothing on top".
     expect(dispatch.outcome.message).toBeNull();
+
+    // Persisted-state regression: the completed run row MUST carry
+    // `terminatingTool: 'channel.reply'` so `/runs/:id` and the
+    // list/detail endpoints report it, and pass-rate / reply-rate
+    // metrics (terminatingTool x wakeReason) read the right value.
+    // Pre-fix, the run save only wrote status/step/summary/endedAt
+    // and dropped this field.
+    const supervisorSpirit = fixture.repo.getSpiritByTriple(
+      fixture.organizationId,
+      session.id,
+      'frontend-alice',
+      'supervisor',
+    );
+    expect(supervisorSpirit).not.toBeNull();
+    const supervisorRunId = supervisorSpirit!.runId;
+    expect(supervisorRunId).toBeDefined();
+    const supervisorRun = fixture.repo.getRun(fixture.organizationId, supervisorRunId!);
+    expect(supervisorRun?.terminatingTool).toBe('channel.reply');
+    expect(supervisorRun?.status).toBe('completed');
   });
 
   it('caps supervisor turns per session and posts deterministic fallback after the cap', async () => {

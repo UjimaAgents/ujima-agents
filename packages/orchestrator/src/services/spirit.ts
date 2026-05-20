@@ -916,15 +916,29 @@ export class SpiritService {
       });
       this.repo.saveSpirit(completed);
       this.registry.unregister(completed.organizationId, completed.memberId, completed.id);
+      // Persisted run-steps act as a safety net when provider/SDK
+      // result shapes drop tool names from the final step object —
+      // the tool service writes the canonical id after each call.
+      const persistedRunSteps = spirit.runId
+        ? this.repo.listRunSteps?.(input.organizationId, spirit.runId) ?? []
+        : [];
+      const terminatingTool =
+        findTerminatingTool(result) ?? findTerminatingToolFromRunSteps(persistedRunSteps);
       if (spirit.runId) {
         const run = this.repo.getRun(input.organizationId, spirit.runId);
         if (run) {
+          // Persist `terminatingTool` on the row so /runs/:id and
+          // list/detail endpoints report it correctly. Without this,
+          // metrics that count runs by `terminatingTool x wakeReason`
+          // (pass-rate, reply-rate) read null for every successful
+          // `channel.reply` / `channel.pass` turn.
           this.repo.saveRun({
             ...run,
             status: 'completed',
             step: 'completed',
             summary: lastText || run.summary,
             endedAt: new Date().toISOString(),
+            terminatingTool,
           });
         }
       }
@@ -934,15 +948,6 @@ export class SpiritService {
         completed.taskSessionId,
         lastText || undefined,
       );
-
-      // Persisted run-steps act as a safety net when provider/SDK
-      // result shapes drop tool names from the final step object —
-      // the tool service writes the canonical id after each call.
-      const persistedRunSteps = spirit.runId
-        ? this.repo.listRunSteps?.(input.organizationId, spirit.runId) ?? []
-        : [];
-      const terminatingTool =
-        findTerminatingTool(result) ?? findTerminatingToolFromRunSteps(persistedRunSteps);
 
       return {
         spirit: completed,
@@ -960,6 +965,12 @@ export class SpiritService {
           updatedAt: new Date().toISOString(),
         });
         this.repo.saveSpirit(waiting);
+        // Approval-paused turns: a tool fired but its result is
+        // deferred, so we can only consult persisted run-steps here.
+        const pausedRunSteps = spirit.runId
+          ? this.repo.listRunSteps?.(input.organizationId, spirit.runId) ?? []
+          : [];
+        const pausedTerminatingTool = findTerminatingToolFromRunSteps(pausedRunSteps);
         if (spirit.runId) {
           const run = this.repo.getRun(input.organizationId, spirit.runId);
           if (run) {
@@ -968,22 +979,18 @@ export class SpiritService {
               status: 'waiting_for_approval',
               step: 'waiting_for_approval',
               summary: pendingApprovalRunSummary(this.repo, input.organizationId, spirit.runId),
+              terminatingTool: pausedTerminatingTool,
             });
           }
         }
         this.emit(SocketEventNames.spiritUpdated, waiting);
-        // Approval-paused turns: a tool fired but its result is
-        // deferred, so we can only consult persisted run-steps here.
-        const pausedRunSteps = spirit.runId
-          ? this.repo.listRunSteps?.(input.organizationId, spirit.runId) ?? []
-          : [];
         return {
           spirit: waiting,
           finalText: lastText,
           iterations: totalTurns,
           toolCalls: totalToolCalls,
           tokensUsed: totalTokens,
-          terminatingTool: findTerminatingToolFromRunSteps(pausedRunSteps),
+          terminatingTool: pausedTerminatingTool,
         };
       }
       const message = errorMessage(err);
@@ -996,6 +1003,14 @@ export class SpiritService {
       });
       this.repo.saveSpirit(failed);
       this.registry.unregister(failed.organizationId, failed.memberId, failed.id);
+      // Mirror terminatingTool on the failure path too — a turn can
+      // fail after a tool fired (e.g. policy block on a later step),
+      // and postmortem analysis benefits from seeing that the agent
+      // *did* terminate via a specific tool before the run died.
+      const failedRunSteps = spirit.runId
+        ? this.repo.listRunSteps?.(input.organizationId, spirit.runId) ?? []
+        : [];
+      const failedTerminatingTool = findTerminatingToolFromRunSteps(failedRunSteps);
       if (spirit.runId) {
         const run = this.repo.getRun(input.organizationId, spirit.runId);
         if (run) {
@@ -1005,6 +1020,7 @@ export class SpiritService {
             step: 'failed',
             summary: message,
             endedAt: new Date().toISOString(),
+            terminatingTool: failedTerminatingTool,
           });
         }
       }

@@ -313,7 +313,20 @@ export class ConversationService {
         editedAt: new Date().toISOString(),
       });
     } else {
-      this.repo.saveMessage(finalMessage);
+      // L10 — race-safe dedupe: when two concurrent POSTs share a
+      // clientMessageId and both pass the `findMessageByClientId`
+      // pre-flight, only one wins the UNIQUE partial index. The
+      // loser's saveMessage returns the *winner's* row (different
+      // `id`, since each request generates a fresh server-side
+      // uuid). When that happens we MUST NOT keep going: mention
+      // replacement, attachment linking, realtime emit, and wake
+      // fanout would all reference an id that was never persisted,
+      // and worse, would double-notify agents whose first wake
+      // fired when the winner committed.
+      const saved = this.repo.saveMessage(finalMessage);
+      if (saved.id !== finalMessage.id) {
+        return saved;
+      }
     }
     this.repo.replaceMessageMentions(finalMessage.id, resolvedMentions);
     if (linkedAttachmentIds.length > 0) {
