@@ -358,18 +358,26 @@ export function registerConversationRoutes(
   });
 }
 
-function resolveDirectMessageThreadId(
+/** Exported for unit tests. */
+export function resolveDirectMessageThreadId(
   repo: Repository,
   organizationId: string,
   senderId: string,
   recipientId: string,
   parentMessageId?: string,
 ): string | undefined {
-  if (parentMessageId) {
-    return repo.getMessage(organizationId, parentMessageId)?.threadId;
-  }
+  // Self-DMs always resolve to `self:<senderId>`, regardless of any
+  // `parentMessageId` the caller passes. `ConversationService.sendSelfNote`
+  // already routes self-notes to that channel, so the route's dedupe
+  // lookup and access check MUST target the same thread — otherwise
+  // a retried self-message carrying a stale parentMessageId dedupes
+  // against the parent's thread (creating duplicate self-notes) or
+  // 403s after the sender loses access to that parent thread.
   if (recipientId === 'self') {
     return `self:${senderId}`;
+  }
+  if (parentMessageId) {
+    return repo.getMessage(organizationId, parentMessageId)?.threadId;
   }
   return getDirectMessageThreadId(senderId, recipientId);
 }
