@@ -786,6 +786,10 @@ function runMigrations(db: DbHandle): void {
       insert.run(m.id, Date.now());
       continue;
     }
+    if (m.id === '020_run_wake_metadata' && !hasTable(db, 'runs')) {
+      insert.run(m.id, Date.now());
+      continue;
+    }
     db.exec('BEGIN');
     try {
       db.exec(m.up);
@@ -805,4 +809,11 @@ export function nowMs(): number {
 function hasColumn(db: DbHandle, table: string, column: string): boolean {
   const rows = db.prepare(`PRAGMA table_info(${table})`).all() as { name?: unknown }[];
   return rows.some((row) => row.name === column);
+}
+
+function hasTable(db: DbHandle, table: string): boolean {
+  const row = db
+    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
+    .get(table) as { name?: unknown } | undefined;
+  return row?.name === table;
 }

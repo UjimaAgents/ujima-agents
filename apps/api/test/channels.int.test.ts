@@ -214,15 +214,15 @@ describe('E3 channels and mentions', () => {
     ).toThrow(/channel not found/i);
   });
 
-  it('fans out mentions, wakes only the mentioned agent, and replies in the same channel', async () => {
+  it('fans out mentions, wakes channel readers, and replies in the same channel', async () => {
     const fixture = await createFixture({ agentNames: ['frontend-alice', 'frontend-bob'] });
     tempDirs.push(fixture.archiveRoot);
     const realtime = createRealtimeCollector();
-    const alerted: string[] = [];
+    const alerted: Array<{ memberId: string; wakeReason?: string }> = [];
     let conversations!: ConversationService;
     conversations = new ConversationService(fixture.repo, realtime, {
       onMemberAlerted: async (input) => {
-        alerted.push(input.memberId);
+        alerted.push({ memberId: input.memberId, wakeReason: input.wakeReason });
         await conversations.postToChannel({
           organizationId: input.organizationId,
           senderId: input.memberId,
@@ -241,12 +241,17 @@ describe('E3 channels and mentions', () => {
 
     await waitFor(() => {
       const messages = fixture.repo.listChannelMessages(fixture.organizationId, 'general', { limit: 10 }).data;
-      expect(messages).toHaveLength(2);
+      expect(messages).toHaveLength(3);
       expect(messages.some((message) => message.senderId === 'frontend-alice')).toBe(true);
+      expect(messages.some((message) => message.senderId === 'frontend-bob')).toBe(true);
       expect(messages.some((message) => message.content === 'ack from frontend-alice')).toBe(true);
+      expect(messages.some((message) => message.content === 'ack from frontend-bob')).toBe(true);
     });
 
-    expect(alerted).toEqual(['frontend-alice']);
+    expect(alerted).toEqual([
+      { memberId: 'frontend-alice', wakeReason: 'mention' },
+      { memberId: 'frontend-bob', wakeReason: 'channel-read' },
+    ]);
     const mentions = fixture.repo.listMessageMentions(initial.id);
     expect(mentions).toHaveLength(1);
     expect(mentions[0]?.memberId).toBe('frontend-alice');
