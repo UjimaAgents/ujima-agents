@@ -13,7 +13,7 @@ import { presenceToActivityState } from "./activity-state";
 
 export type WorkspaceChannel = BootstrapResponse["channels"][number];
 export type WorkspaceMember = BootstrapResponse["members"][number];
-export type WorkspaceTab = "conversation" | "approvals" | "files" | "activity" | "tasks";
+export type WorkspaceTab = "conversation" | "approvals" | "files" | "activity" | "tasks" | "members";
 export type WorkspaceDetailsTab = "Reasoning trace" | "Changes" | "Metadata";
 
 interface WorkspaceState {
@@ -31,6 +31,7 @@ interface WorkspaceState {
   messages: ChatMessageData[];
   approvals: ApprovalCardData[];
   runs: RunState[];
+  activitySequence: number;
   activity: ActivityEvent[];
   loading: boolean;
   conversationKey?: string;
@@ -59,6 +60,7 @@ interface WorkspaceState {
   hydrateMessages(messages: Message[], toMessage: (message: Message) => ChatMessageData, toActivity: (message: Message) => ActivityEvent): void;
   addPendingMessage(message: ChatMessageData): void;
   receiveMessage(tempId: string | undefined, message: Message, toMessage: (message: Message) => ChatMessageData, toActivity: (message: Message) => ActivityEvent): void;
+  appendRunChunk(message: ChatMessageData | undefined, activity: ActivityEvent): void;
   removeMessage(id: string): void;
   upsertApproval(approval: ApprovalRequest, toCard: (approval: ApprovalRequest, state: Pick<WorkspaceState, "members">) => ApprovalCardData, toActivity: (approval: ApprovalRequest) => ActivityEvent): void;
   upsertRun(run: RunState, toActivity: (run: RunState) => ActivityEvent): void;
@@ -66,6 +68,7 @@ interface WorkspaceState {
 }
 
 const DETAILS_AUTO_OPEN_DISMISSED_KEY = "ujima.workspace.detailsAutoOpenDismissed";
+const MAX_LIVE_ACTIVITY_EVENTS = 2_000;
 
 const EMPTY_ACTIVITY = {
   sidebarWidth: 25,
@@ -82,6 +85,7 @@ const EMPTY_ACTIVITY = {
   messages: [],
   approvals: [],
   runs: [],
+  activitySequence: 0,
   activity: [],
   loading: true,
   conversationKey: undefined,
@@ -121,6 +125,38 @@ function mergeChatMessages(current: ChatMessageData[], incoming: ChatMessageData
   return [...map.values()].sort((a, b) => Date.parse(a.createdAt ?? "") - Date.parse(b.createdAt ?? ""));
 }
 
+function ensureReplyPreviews(messages: ChatMessageData[]): ChatMessageData[] {
+  const byId = new Map(messages.map((message) => [message.id, message]));
+  let changed = false;
+  const next = messages.map((message) => {
+    if (message.replyPreview || !message.parentMessageId) return message;
+    const parent = byId.get(message.parentMessageId);
+    if (!parent) return message;
+    changed = true;
+    return {
+      ...message,
+      replyPreview: {
+        name: parent.name,
+        content: parent.content,
+      },
+    };
+  });
+  return changed ? next : messages;
+}
+
+function pruneStreamingMessage(current: ChatMessageData[], incoming: ChatMessageData): ChatMessageData[] {
+  if (incoming.kind !== "agent" || incoming.pending || !incoming.streamRunId) return current;
+  const rid = incoming.streamRunId;
+  return current.filter(
+    (message) =>
+      !(
+        message.streamRunId &&
+        message.streamRunId === rid &&
+        message.threadId === incoming.threadId
+      ),
+  );
+}
+
 function mergeApprovals(current: ApprovalCardData[], incoming: ApprovalCardData[]): ApprovalCardData[] {
   const map = new Map<string, ApprovalCardData>();
   for (const item of current) map.set(item.id, item);
@@ -129,18 +165,73 @@ function mergeApprovals(current: ApprovalCardData[], incoming: ApprovalCardData[
 }
 
 function mergeRuns(current: RunState[], incoming: RunState[]): RunState[] {
-  const map = new Map<string, RunState>();
-  for (const run of current) map.set(run.id, run);
-  for (const run of incoming) map.set(run.id, run);
-  return [...map.values()].sort(
-    (a, b) => Date.parse(a.startedAt) - Date.parse(b.startedAt),
-  );
+  let next = current;
+  for (const run of incoming) {
+    const index = next.findIndex((item) => item.id === run.id);
+    if (index === -1) {
+      next = next === current ? [...current, run] : [...next, run];
+      continue;
+    }
+    if (sameRecord(next[index], run)) continue;
+    next = next === current ? [...current] : next;
+    next[index] = run;
+  }
+  return next;
 }
 
-function appendActivity(current: ActivityEvent[], incoming: ActivityEvent[]): ActivityEvent[] {
-  const map = new Map<string, ActivityEvent>();
-  for (const event of [...current, ...incoming]) map.set(event.event_id, event);
-  return [...map.values()].slice(-200);
+function appendSequencedEvents(
+  state: Pick<WorkspaceState, "activitySequence" | "activity">,
+  events: ActivityEvent[],
+): Pick<WorkspaceState, "activitySequence" | "activity"> {
+  if (events.length === 0) return state;
+  const seen = new Set(state.activity.map((event) => event.event_id));
+  const stamped = events.map((event, index) => ({
+    ...event,
+    order: state.activitySequence + index,
+  })).filter((event) => !seen.has(event.event_id));
+  if (stamped.length === 0) return state;
+  const activity = state.activity.length + stamped.length > MAX_LIVE_ACTIVITY_EVENTS
+    ? [...state.activity, ...stamped].slice(-MAX_LIVE_ACTIVITY_EVENTS)
+    : [...state.activity, ...stamped];
+  return {
+    activitySequence: state.activitySequence + stamped.length,
+    activity,
+  };
+}
+
+function mergeRunChunkMessages(
+  current: ChatMessageData[],
+  items: { message?: ChatMessageData }[],
+): ChatMessageData[] {
+  let messages = current;
+  for (const item of items) {
+    const message = item.message;
+    if (!message) continue;
+    const hasFinalMessage = message.streamRunId
+      ? messages.some(
+          (entry) =>
+            entry.id !== message.id &&
+            entry.streamRunId === message.streamRunId &&
+            entry.threadId === message.threadId,
+        )
+      : false;
+    if (hasFinalMessage) continue;
+    const index = messages.findIndex((entry) => entry.id === message.id);
+    if (index === -1) {
+      messages = messages === current ? [...current, message] : [...messages, message];
+      continue;
+    }
+    const existing = messages[index];
+    const next = messages === current ? [...current] : messages;
+    next[index] = {
+      ...existing,
+      content: `${existing.content}${message.content}`,
+      createdAt: message.createdAt,
+      time: message.time,
+    };
+    messages = next;
+  }
+  return messages;
 }
 
 export function sameConversation(
@@ -148,6 +239,53 @@ export function sameConversation(
   right?: SelectedConversation,
 ): boolean {
   return !!left && !!right && left.type === right.type && left.id === right.id;
+}
+
+export function normalizeConversationSelection(
+  conversation: SelectedConversation | undefined,
+  channels: WorkspaceChannel[],
+  members: WorkspaceMember[],
+): SelectedConversation | undefined {
+  if (!conversation) return undefined;
+
+  if (conversation.type === "channel") {
+    const channel = channels.find((entry) => entry.id === conversation.id);
+    if (!channel || channel.name === conversation.name) return conversation;
+    return { ...conversation, name: channel.name };
+  }
+
+  const member = members.find((entry) => entry.id === conversation.id);
+  if (!member || member.name === conversation.name) return conversation;
+  return { ...conversation, name: member.name };
+}
+
+export function mergeConversationUnreadCounts(
+  current: Record<string, number>,
+  incoming: Record<string, number> | undefined,
+  channels: WorkspaceChannel[],
+  members: WorkspaceMember[],
+): Record<string, number> {
+  const validIds = new Set([
+    ...channels.map((channel) => channel.id),
+    ...members.map((member) => member.id),
+  ]);
+  const next: Record<string, number> = {};
+
+  for (const [conversationId, count] of Object.entries(current)) {
+    if (validIds.has(conversationId)) {
+      next[conversationId] = count;
+    }
+  }
+
+  if (incoming) {
+    for (const [conversationId, count] of Object.entries(incoming)) {
+      if (!(conversationId in next) && validIds.has(conversationId)) {
+        next[conversationId] = count;
+      }
+    }
+  }
+
+  return sameRecord(next, current) ? current : next;
 }
 
 function sameItems<T extends { id: string }>(current: T[], incoming: T[]): boolean {
@@ -192,12 +330,22 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
     set((state) => {
       const nextChannels = sameItems(state.channels, channels) ? state.channels : mergeChannels(state.channels, channels);
       const nextMembers = sameItems(state.members, members) ? state.members : mergeMembers(state.members, members);
-      const nextUnreadCounts =
-        conversationUnreadCounts && !sameRecord(state.conversationUnreadCounts, conversationUnreadCounts)
-          ? conversationUnreadCounts
-          : state.conversationUnreadCounts;
-      const currentSelection = state.selectedConversation;
-      const passed = selectedConversation;
+      const nextUnreadCounts = mergeConversationUnreadCounts(
+        state.conversationUnreadCounts,
+        conversationUnreadCounts,
+        nextChannels,
+        nextMembers,
+      );
+      const currentSelection = normalizeConversationSelection(
+        state.selectedConversation,
+        nextChannels,
+        nextMembers,
+      );
+      const passed = normalizeConversationSelection(
+        selectedConversation,
+        nextChannels,
+        nextMembers,
+      );
       const passedValid =
         passed &&
         (passed.type === "channel"
@@ -212,11 +360,16 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
         (passedValid ? passed : undefined) ??
         (selectionExists ? currentSelection : undefined) ??
         resolveDefaultConversation(nextChannels);
+      const selectionUnchanged =
+        !state.selectedConversation && !nextSelection
+          ? true
+          : sameConversation(state.selectedConversation, nextSelection) &&
+            state.selectedConversation?.name === nextSelection?.name;
       if (
         nextChannels === state.channels &&
         nextMembers === state.members &&
         nextUnreadCounts === state.conversationUnreadCounts &&
-        sameConversation(currentSelection, nextSelection)
+        selectionUnchanged
       ) {
         return state;
       }
@@ -271,10 +424,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
     }),
   clearConversationUnreadCount: (conversationId) =>
     set((state) => {
-      if (!(conversationId in state.conversationUnreadCounts)) return state;
-      const next = { ...state.conversationUnreadCounts };
-      delete next[conversationId];
-      return { conversationUnreadCounts: next };
+      if (state.conversationUnreadCounts[conversationId] === 0) return state;
+      return {
+        conversationUnreadCounts: {
+          ...state.conversationUnreadCounts,
+          [conversationId]: 0,
+        },
+      };
     }),
   resetConversationFeed: (conversationKey) =>
     set((state) =>
@@ -284,6 +440,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
             messages: [],
             approvals: [],
             runs: [],
+            activitySequence: 0,
             activity: [],
             loading: true,
             conversationKey,
@@ -306,12 +463,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
           }
         }
       }
+      const mergedMessages = ensureReplyPreviews(mergeChatMessages(state.messages, converted));
       return {
-        messages: mergeChatMessages(state.messages, converted),
-        activity: appendActivity(
-          state.activity,
-          messages.map((message) => toActivity(message)),
-        ),
+        messages: mergedMessages,
+        ...appendSequencedEvents(state, messages.map((message) => toActivity(message))),
       };
     }),
   addPendingMessage: (message) =>
@@ -332,13 +487,21 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
           );
       if (withoutTemp.some((item) => item.id === nextMessage.id)) {
         return {
-          messages: withoutTemp,
-          activity: appendActivity(state.activity, [toActivity(message)]),
+          messages: ensureReplyPreviews(pruneStreamingMessage(withoutTemp, nextMessage)),
+          ...appendSequencedEvents(state, [toActivity(message)]),
         };
       }
       return {
-        messages: mergeChatMessages(withoutTemp, [nextMessage]),
-        activity: appendActivity(state.activity, [toActivity(message)]),
+        messages: ensureReplyPreviews(mergeChatMessages(pruneStreamingMessage(withoutTemp, nextMessage), [nextMessage])),
+        ...appendSequencedEvents(state, [toActivity(message)]),
+      };
+    }),
+  appendRunChunk: (message, activity) =>
+    set((state) => {
+      const messages = mergeRunChunkMessages(state.messages, message ? [{ message }] : []);
+      return {
+        ...(messages === state.messages ? {} : { messages }),
+        ...appendSequencedEvents(state, [activity]),
       };
     }),
   removeMessage: (id) =>
@@ -346,15 +509,14 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   upsertApproval: (approval, toCard, toActivity) =>
     set((state) => ({
       approvals: mergeApprovals(state.approvals, [toCard(approval, state)]),
-      activity: appendActivity(state.activity, [toActivity(approval)]),
+      ...appendSequencedEvents(state, [toActivity(approval)]),
     })),
   upsertRun: (run, toActivity) =>
     set((state) => ({
       runs: mergeRuns(state.runs, [run]),
-      activity: appendActivity(state.activity, [toActivity(run)]),
+      ...appendSequencedEvents(state, [toActivity(run)]),
     })),
-  appendActivity: (event) =>
-    set((state) => ({ activity: appendActivity(state.activity, [event]) })),
+  appendActivity: (event) => set((state) => appendSequencedEvents(state, [event])),
 }));
 
 function readDetailsAutoOpenDismissed(): boolean {

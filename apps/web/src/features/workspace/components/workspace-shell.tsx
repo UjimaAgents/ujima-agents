@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import {
   getDirectMessageThreadId,
   SocketEventNames,
+  type RunState,
   type SocketEventName,
 } from "@ujima/shared/browser";
 import { WorkspaceSidebar } from "./workspace-sidebar";
@@ -15,6 +16,11 @@ import { resolveSelectedConversationFromSearchParams } from "../conversation-rou
 import type { SelectedConversation, WorkspaceRoleInput } from "../types";
 import { useWorkspaceStore } from "../workspace-store";
 import type { RolePresetTemplate } from "../../onboarding/types";
+import {
+  goalModePreferenceKey,
+  readGoalModePreference,
+  writeGoalModePreference,
+} from "../goal-mode";
 
 export const WORKSPACE_MAIN_GRID_TRANSITION =
   "transition-[grid-template-columns] duration-300 ease-out motion-reduce:transition-none motion-reduce:duration-0";
@@ -51,6 +57,7 @@ export function WorkspaceShell(props: {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [agentEditorTargetId, setAgentEditorTargetId] = useState<string | null>(null);
+  const [goalMode, setGoalMode] = useState(false);
   const sidebarWidth = useWorkspaceStore((state) => state.sidebarWidth);
   const selected = useWorkspaceStore((state) => state.selectedConversation);
   const channels = useWorkspaceStore((state) => state.channels);
@@ -66,6 +73,7 @@ export function WorkspaceShell(props: {
   const incrementConversationUnreadCount = useWorkspaceStore((state) => state.incrementConversationUnreadCount);
   const setMemberActivity = useWorkspaceStore((state) => state.setMemberActivity);
   const seenApprovalNotifications = useRef(new Set<string>());
+  const goalModeSyncing = useRef(false);
 
   const defaultConversation = useMemo(() => {
     if (initialConversation) return initialConversation;
@@ -84,6 +92,25 @@ export function WorkspaceShell(props: {
   );
 
   const resolvedSelected = urlConversation ?? selected ?? defaultConversation;
+  const goalModeKey = useMemo(
+    () => goalModePreferenceKey(bootstrap.organization?.id, resolvedSelected.id),
+    [bootstrap.organization?.id, resolvedSelected.id],
+  );
+
+  useEffect(() => {
+    goalModeSyncing.current = true;
+    queueMicrotask(() => {
+      setGoalMode(readGoalModePreference(goalModeKey));
+    });
+  }, [goalModeKey]);
+
+  useEffect(() => {
+    if (goalModeSyncing.current) {
+      goalModeSyncing.current = false;
+      return;
+    }
+    writeGoalModePreference(goalModeKey, goalMode);
+  }, [goalMode, goalModeKey]);
 
   const handleSelect = useCallback(
     (conversation: SelectedConversation) => {
@@ -206,11 +233,18 @@ export function WorkspaceShell(props: {
       conversationUnreadCounts: bootstrap.conversationUnreadCounts,
       selectedConversation: resolvedSelected,
     });
+    for (const run of bootstrap.activeRuns) {
+      if (isLiveRunStatus(run.status)) {
+        setMemberActivity(run.agentId, "working");
+      }
+    }
   }, [
+    bootstrap.activeRuns,
     bootstrap.channels,
     bootstrap.conversationUnreadCounts,
     bootstrap.members,
     resolvedSelected,
+    setMemberActivity,
     syncWorkspace,
   ]);
 
@@ -301,6 +335,7 @@ export function WorkspaceShell(props: {
           bootstrap={bootstrap}
           rolePresets={props.rolePresets}
           teamSettings={props.teamSettings}
+          goalMode={goalMode}
           channels={channels}
           members={members}
           memberActivity={memberActivity}
@@ -322,6 +357,8 @@ export function WorkspaceShell(props: {
             bootstrap={bootstrap}
             conversation={resolvedSelected}
             members={members}
+            goalMode={goalMode}
+            onGoalModeChange={setGoalMode}
             onOpenAgentEditor={() => {
               if (resolvedSelected.type === "agent") {
                 setAgentEditorTargetId(resolvedSelected.id);
@@ -347,21 +384,24 @@ export function DragHandle({
     (event: React.PointerEvent) => {
       event.preventDefault();
       dragging.current = true;
-      const startX = event.clientX;
-      const handle = event.currentTarget;
-      const parent = handle.parentElement;
-      if (!parent?.parentElement) return;
-      const startPct = parseFloat(getComputedStyle(parent).width);
+      const handle = event.currentTarget as HTMLDivElement;
+      const sidebar = handle.parentElement;
+      const container = sidebar?.parentElement;
+      if (!sidebar || !container) return;
+      const pointerId = event.pointerId;
+      handle.setPointerCapture(pointerId);
       document.body.style.cursor = "col-resize";
       document.body.style.userSelect = "none";
 
       const onMove = (e: PointerEvent) => {
         if (!dragging.current) return;
-        const container = parent.parentElement;
-        if (!container) return;
-        const parentWidth = container.getBoundingClientRect().width;
-        const dx = e.clientX - startX;
-        const pct = Math.max(15, Math.min(50, startPct + (dx / parentWidth) * 100));
+        const { left, right, width } = container.getBoundingClientRect();
+        const rawPct =
+          side === "right"
+            ? ((right - e.clientX) / width) * 100
+            : ((e.clientX - left) / width) * 100;
+        const minPct = side === "right" ? 33 : 15;
+        const pct = Math.max(minPct, Math.min(50, rawPct));
         onResize(pct);
       };
 
@@ -369,19 +409,24 @@ export function DragHandle({
         dragging.current = false;
         document.body.style.cursor = "";
         document.body.style.userSelect = "";
+        if (handle.hasPointerCapture(pointerId)) {
+          handle.releasePointerCapture(pointerId);
+        }
         window.removeEventListener("pointermove", onMove);
         window.removeEventListener("pointerup", onUp);
+        window.removeEventListener("pointercancel", onUp);
       };
 
       window.addEventListener("pointermove", onMove);
       window.addEventListener("pointerup", onUp);
+      window.addEventListener("pointercancel", onUp);
     },
-    [onResize],
+    [onResize, side],
   );
 
   return (
     <div
-      className="relative w-1 shrink-0 cursor-col-resize bg-transparent hover:bg-violet-500/20 transition-colors group"
+      className="relative w-1 shrink-0 cursor-col-resize touch-none bg-transparent transition-colors hover:bg-violet-500/20 group"
       data-side={side}
       onPointerDown={onPointerDown}
     >
@@ -426,13 +471,17 @@ function updateRunActivity(
   payload: unknown,
   setMemberActivity: (memberId: string, activity: "working" | "error" | "idle" | "online" | "offline" | "loading") => void,
 ): void {
-  const run = (payload as { run?: { agentId?: string; status?: string } })?.run;
+  const run = (payload as { run?: Pick<RunState, "agentId" | "status"> })?.run;
   if (!run?.agentId) return;
-  if (run.status === "running") {
+  if (isLiveRunStatus(run.status)) {
     setMemberActivity(run.agentId, "working");
   } else if (run.status === "completed" || run.status === "failed" || run.status === "cancelled") {
     setMemberActivity(run.agentId, "idle");
   }
+}
+
+function isLiveRunStatus(status: RunState["status"] | undefined): boolean {
+  return status === "queued" || status === "running" || status === "waiting_for_approval";
 }
 
 function resolveNotificationConversationId(

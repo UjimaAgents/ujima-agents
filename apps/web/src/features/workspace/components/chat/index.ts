@@ -7,7 +7,7 @@ export type { ChatHeaderProps } from "./chat-header";
 export { ChatTabs } from "./chat-tabs";
 export type { ChatTab } from "./chat-tabs";
 
-export { ChatMessage, ChatMessageList } from "./chat-message";
+export { ChatMessage, ChatMessageList, getGoalArtifactCard } from "./chat-message";
 export type { ChatMessageData } from "./chat-message";
 export { AttachmentGrid } from "./attachment-grid";
 

@@ -1,9 +1,10 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ChevronDown, ShieldAlert } from "lucide-react";
 import { MarkdownInline } from "../markdown";
 import { shellInvocationDisplayLine, type ParsedFilesystemScope } from "@ujima/shared/browser";
 import { FilesystemToolPane } from "./filesystem-tool-pane";
 import { TerminalPane } from "./terminal-pane";
+import { ExpandableOutput } from "./expandable-output";
 
 export interface ApprovalCardData {
   id: string;
@@ -28,12 +29,13 @@ export interface ApprovalCardData {
   createdAt?: string;
   approvalsNeeded: number;
   reviewers?: { color: string }[];
+  error?: string;
 }
 
 /** Indent to align with body text past the shield icon (w-8 + gap-3). */
 const BODY_INDENT = "pl-11";
 
-export function ApprovalCard({
+export const ApprovalCard = memo(function ApprovalCard({
   data,
   resolving,
   onResolve,
@@ -106,7 +108,10 @@ export function ApprovalCard({
   }
 
   return (
-    <div className="rounded-xl border border-zinc-200 bg-zinc-50/90 px-4 py-3 shadow-sm backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/60">
+    <div
+      key={data.id}
+      className="animate-approval-in rounded-xl border border-zinc-200 bg-zinc-50/90 px-4 py-3 shadow-sm backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/60"
+    >
       <div className="flex gap-3">
         <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-violet-200 bg-violet-50 dark:border-violet-500/20 dark:bg-violet-500/10">
           <ShieldAlert className="h-4 w-4 text-violet-600 dark:text-violet-300" />
@@ -131,6 +136,9 @@ export function ApprovalCard({
               className="mt-0.5 block text-[10px] text-zinc-500 dark:text-zinc-400"
             />
           ) : null}
+          {data.error ? (
+            <p className="mt-1 text-[10px] font-medium text-red-600 dark:text-red-300">{data.error}</p>
+          ) : null}
           {data.shellScope ? (
             <TerminalPane
               className="mt-2"
@@ -149,9 +157,13 @@ export function ApprovalCard({
               }
             />
           ) : data.commandPreview ? (
-            <pre className="mt-1.5 max-h-28 overflow-y-auto rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-[10px] font-mono leading-relaxed whitespace-pre-wrap text-zinc-800 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-200">
-              {data.commandPreview}
-            </pre>
+            <div className="mt-1.5 rounded-lg border border-zinc-200 dark:border-zinc-800">
+              <ExpandableOutput>
+                <pre className="px-2 py-1.5 text-[10px] font-mono leading-relaxed whitespace-pre-wrap break-words text-zinc-800 dark:text-zinc-200">
+                  {data.commandPreview}
+                </pre>
+              </ExpandableOutput>
+            </div>
           ) : null}
         </div>
       </div>
@@ -221,4 +233,4 @@ export function ApprovalCard({
       )}
     </div>
   );
-}
+});

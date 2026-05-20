@@ -1,10 +1,31 @@
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { loadAgentTeam } from '@ujima/framework';
-import { AGENT_KIND } from '@ujima/shared';
-import { RunService } from './run.js';
+import { AGENT_KIND, SocketEventNames, type RunChunkEvent, type RunState } from '@ujima/shared';
+import { SpiritService } from './spirit.js';
 import { ToolApprovalRequiredError } from './tool-loop-result.js';
+import { appendGoalArtifactToolCall } from './goal-artifact-card.js';
 
-describe('RunService', () => {
+function expectRunState(result: RunState | unknown): asserts result is RunState {
+  if (!result || typeof result !== 'object' || !('startedAt' in result) || !('status' in result)) {
+    throw new Error('expected a RunState result');
+  }
+}
+
+function createSpiritRunService(
+  teamStore: ConstructorParameters<typeof SpiritService>[0],
+  repo: ConstructorParameters<typeof SpiritService>[1],
+  realtime: ConstructorParameters<typeof SpiritService>[2],
+  conversations: NonNullable<ConstructorParameters<typeof SpiritService>[4]>['conversations'],
+  ai: NonNullable<ConstructorParameters<typeof SpiritService>[4]>['ai'],
+  tools: ConstructorParameters<typeof SpiritService>[3],
+) {
+  return new SpiritService(teamStore, repo, realtime, tools, { conversations, ai });
+}
+
+describe('SpiritService run path', () => {
   it('resumes after approval even when approval resolves before the run enters waiting state', async () => {
     const organizationId = 'org-1';
     const runId = 'run-1';
@@ -66,7 +87,7 @@ describe('RunService', () => {
       },
     };
 
-    const service = new RunService(
+    const service = createSpiritRunService(
       {
         getTeam: () => team,
         setTeam: (next: typeof team) => {
@@ -168,7 +189,7 @@ describe('RunService', () => {
       getSpiritByRunId: () => null,
       getThread: () => ({ channelId: 'channel-1' }),
     } as never;
-    const service = new RunService(
+    const service = createSpiritRunService(
       {
         getTeam: () =>
           loadAgentTeam({
@@ -210,7 +231,413 @@ describe('RunService', () => {
     });
 
     expect(capturedSuffix).toContain('Goal Mode (Active)');
-    expect(capturedSuffix).toContain('goal artifact file');
+    expect(capturedSuffix).toContain('Markdown README only');
+  });
+
+  it('keeps goal artifacts visible even when the run result omits the write tool call shape', async () => {
+    const organizationId = 'org-1';
+    const runId = 'run-1';
+    const agentId = 'Quinn Mason';
+    const threadId = 'thread-1';
+    const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), 'ujima-goal-'));
+    await mkdir(path.join(workspaceRoot, '.ujima-goals'), { recursive: true });
+    await writeFile(
+      path.join(workspaceRoot, '.ujima-goals', 'plan.md'),
+      '# Goal\n\nStatus: in_progress\n',
+    );
+
+    const messages: any[] = [];
+    const runSteps = [
+      {
+        id: 'step-1',
+        organizationId,
+        runId,
+        threadId,
+        agentId,
+        toolCallId: 'tool-call-2',
+        toolId: 'filesystem',
+        action: 'write',
+        resourceType: 'file',
+        resourcePath: '.ujima-goals/plan.md',
+        input: { action: 'write', resourcePath: '.ujima-goals/plan.md' },
+        output: { success: true },
+        status: 'ok',
+        createdAt: '2026-05-04T19:07:09.071Z',
+      },
+    ];
+    let run: any = {
+      id: runId,
+      organizationId,
+      agentId,
+      threadId,
+      status: 'queued',
+      step: 'queued',
+      summary: 'Run queued',
+      startedAt: '2026-05-04T19:07:08.071Z',
+    };
+
+    const repo = {
+      getMember: () => ({
+        id: agentId,
+        organizationId,
+        name: agentId,
+        kind: AGENT_KIND,
+        roleName: 'backend-engineer',
+      }),
+      saveRun: (next: any) => {
+        run = next;
+        return next;
+      },
+      getRun: () => run,
+      getProviderCredential: () => null,
+      getWorkspaceSetting: () => null,
+      listMembers: () => [],
+      listPendingApprovals: () => [],
+      listRunSteps: () => runSteps,
+      listMessages: () => ({ data: [], hasMore: false }),
+      getLatestHumanMessageInThread: () => null,
+      getSpiritByRunId: () => null,
+      getThread: () => ({ channelId: 'channel-1' }),
+    } as never;
+
+    const service = createSpiritRunService(
+      {
+        getTeam: () =>
+          loadAgentTeam({
+            name: 'Timetotest',
+            workspace: { root: workspaceRoot },
+            roles: [
+              {
+                name: 'backend-engineer',
+                title: 'Backend Engineer',
+                instructions: 'Work on backend.',
+                tools: ['shell'],
+              },
+            ],
+            agents: [{ name: agentId, roleName: 'backend-engineer' }],
+          }),
+        setTeam: () => undefined,
+      } as never,
+      repo,
+      { emit: () => undefined } as never,
+      { publishMessage: (message: any) => messages.push(message) } as never,
+      {
+        generateRunReply: async () => ({
+          text: 'Done.',
+          toolResults: [],
+          steps: [{ text: 'Drafted.' }],
+        }),
+      } as never,
+      { allowRun: () => undefined, invoke: async () => ({ ok: true }) } as never,
+    );
+
+    const result = await (service as any).advanceRun(run);
+
+    expect(result.status).toBe('completed');
+    expect(messages).toHaveLength(3);
+    expect(messages[0].content).toBe('Drafted.');
+    expect(messages[0].toolCalls ?? []).toHaveLength(0);
+    expect(messages[1].content).toBe('Done.');
+    expect(messages[1].toolCalls ?? []).toHaveLength(0);
+    expect(messages[2].toolCalls.some((toolCall: any) => toolCall.toolName === 'card.goal.file')).toBe(true);
+  });
+
+  it('builds persisted goal cards for workspace write tool HTML files', async () => {
+    const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), 'ujima-goal-'));
+    await mkdir(path.join(workspaceRoot, '.ujima-goals'), { recursive: true });
+    await writeFile(
+      path.join(workspaceRoot, '.ujima-goals', 'plan.html'),
+      '<!doctype html><html><body><h1>Goal</h1></body></html>',
+    );
+
+    const card = await appendGoalArtifactToolCall(
+      [{ toolName: 'write', args: { resourcePath: '.ujima-goals/plan.html' } }],
+      workspaceRoot,
+    );
+
+    expect(card?.toolName).toBe('card.goal.file');
+    expect(card?.args.goalFilePath).toBe('.ujima-goals/plan.html');
+    expect(card?.args.artifactFormat).toBe('html');
+  });
+
+  it('does not publish tool-turn placeholders for goal-file writes', async () => {
+    const organizationId = 'org-1';
+    const runId = 'run-1';
+    const agentId = 'Quinn Mason';
+    const threadId = 'thread-1';
+    const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), 'ujima-goal-'));
+    await mkdir(path.join(workspaceRoot, '.ujima-goals'), { recursive: true });
+    await writeFile(
+      path.join(workspaceRoot, '.ujima-goals', 'plan.md'),
+      '# Goal\n\nStatus: in_progress\n',
+    );
+
+    const messages: any[] = [];
+    let run: any = {
+      id: runId,
+      organizationId,
+      agentId,
+      threadId,
+      status: 'queued',
+      step: 'queued',
+      summary: 'Run queued',
+      startedAt: '2026-05-04T19:07:08.071Z',
+    };
+
+    const repo = {
+      getMember: () => ({
+        id: agentId,
+        organizationId,
+        name: agentId,
+        kind: AGENT_KIND,
+        roleName: 'backend-engineer',
+      }),
+      saveRun: (next: any) => {
+        run = next;
+        return next;
+      },
+      getRun: () => run,
+      getProviderCredential: () => null,
+      getWorkspaceSetting: () => null,
+      listMembers: () => [],
+      listPendingApprovals: () => [],
+      listRunSteps: () => [
+        {
+          id: 'step-1',
+          organizationId,
+          runId,
+          threadId,
+          agentId,
+          toolCallId: 'tool-call-2',
+          toolId: 'filesystem',
+          action: 'write',
+          resourceType: 'file',
+          resourcePath: '.ujima-goals/plan.md',
+          input: { action: 'write', resourcePath: '.ujima-goals/plan.md' },
+          output: { success: true },
+          status: 'ok',
+          createdAt: '2026-05-04T19:07:09.071Z',
+        },
+      ],
+      listMessages: () => ({ data: [], hasMore: false }),
+      getLatestHumanMessageInThread: () => null,
+      getSpiritByRunId: () => null,
+      getThread: () => ({ channelId: 'channel-1' }),
+    } as never;
+
+    const service = createSpiritRunService(
+      {
+        getTeam: () =>
+          loadAgentTeam({
+            name: 'Timetotest',
+            workspace: { root: workspaceRoot },
+            roles: [
+              {
+                name: 'backend-engineer',
+                title: 'Backend Engineer',
+                instructions: 'Work on backend.',
+                tools: ['shell'],
+              },
+            ],
+            agents: [{ name: agentId, roleName: 'backend-engineer' }],
+          }),
+        setTeam: () => undefined,
+      } as never,
+      repo,
+      { emit: () => undefined } as never,
+      { publishMessage: (message: any) => messages.push(message) } as never,
+      {
+        generateRunReply: async () => ({
+          text: 'Done.',
+          toolResults: [],
+          steps: [
+            {
+              toolCalls: [
+                {
+                  toolCallId: 'tool-call-2',
+                  toolName: 'filesystem',
+                  input: { action: 'write', resourcePath: '.ujima-goals/plan.md' },
+                },
+              ],
+              toolResults: [{ toolCallId: 'tool-call-2', output: { success: true } }],
+            },
+          ],
+        }),
+      } as never,
+      { allowRun: () => undefined, invoke: async () => ({ ok: true }) } as never,
+    );
+
+    await (service as any).advanceRun(run);
+
+    expect(messages.some((message) => message.content.includes('[tool turn —'))).toBe(false);
+    expect(messages.some((message) => message.toolCalls?.some((toolCall: any) => toolCall.toolName === 'card.goal.file'))).toBe(true);
+  });
+
+  it('persists each non-reasoning assistant step as a chat message', async () => {
+    const organizationId = 'org-1';
+    const runId = 'run-1';
+    const agentId = 'Quinn Mason';
+    const threadId = 'thread-1';
+    const messages: string[] = [];
+    let run: RunState = {
+      id: runId,
+      organizationId,
+      agentId,
+      threadId,
+      status: 'queued',
+      step: 'queued',
+      summary: 'Run queued',
+      startedAt: '2026-05-04T19:07:08.071Z',
+    };
+    const repo = {
+      getMember: () => ({
+        id: agentId,
+        organizationId,
+        name: agentId,
+        kind: AGENT_KIND,
+        roleName: 'backend-engineer',
+      }),
+      saveRun: (next: RunState) => {
+        run = next;
+        return next;
+      },
+      getRun: () => run,
+      getProviderCredential: () => null,
+      getWorkspaceSetting: () => null,
+      listMembers: () => [],
+      listPendingApprovals: () => [],
+      listMessages: () => ({ data: [], hasMore: false }),
+      getLatestHumanMessageInThread: () => null,
+      getSpiritByRunId: () => null,
+      getThread: () => ({ channelId: 'channel-1' }),
+    } as never;
+
+    const service = createSpiritRunService(
+      {
+        getTeam: () =>
+          loadAgentTeam({
+            name: 'Timetotest',
+            workspace: { root: '/workspace' },
+            roles: [
+              {
+                name: 'backend-engineer',
+                title: 'Backend Engineer',
+                instructions: 'Work on backend.',
+                tools: ['shell'],
+              },
+            ],
+            agents: [{ name: agentId, roleName: 'backend-engineer' }],
+          }),
+        setTeam: () => undefined,
+      } as never,
+      repo,
+      { emit: () => undefined } as never,
+      { publishMessage: (message: any) => messages.push(message.content) } as never,
+      {
+        generateRunReply: async () => ({
+          text: 'Second pass',
+          toolResults: [],
+          steps: [{ text: 'First pass' }, { text: 'Second pass' }],
+        }),
+      } as never,
+      { allowRun: () => undefined, invoke: async () => ({ ok: true }) } as never,
+    );
+
+    const result = await (service as any).advanceRun(run);
+
+    expect(result.status).toBe('completed');
+    expect(messages).toEqual(['First pass', 'Second pass']);
+  });
+
+  it('streams agent chunks to realtime while the run is still executing', async () => {
+    const organizationId = 'org-1';
+    const runId = 'run-1';
+    const agentId = 'Quinn Mason';
+    const threadId = 'thread-1';
+    const emits: { event: string; payload: unknown }[] = [];
+    let run: RunState = {
+      id: runId,
+      organizationId,
+      agentId,
+      threadId,
+      status: 'queued',
+      step: 'queued',
+      summary: 'Run queued',
+      startedAt: '2026-05-04T19:07:08.071Z',
+    };
+    const repo = {
+      getMember: () => ({
+        id: agentId,
+        organizationId,
+        name: agentId,
+        kind: AGENT_KIND,
+        roleName: 'backend-engineer',
+      }),
+      saveRun: (next: RunState) => {
+        run = next;
+        return next;
+      },
+      getRun: () => run,
+      getProviderCredential: () => null,
+      getWorkspaceSetting: () => null,
+      listMembers: () => [],
+      listPendingApprovals: () => [],
+      listMessages: () => ({ data: [], hasMore: false }),
+      getLatestHumanMessageInThread: () => null,
+      getSpiritByRunId: () => null,
+      getThread: () => ({ channelId: 'channel-1' }),
+    } as never;
+
+    const service = createSpiritRunService(
+      {
+        getTeam: () =>
+          loadAgentTeam({
+            name: 'Timetotest',
+            workspace: { root: '/workspace' },
+            roles: [
+              {
+                name: 'backend-engineer',
+                title: 'Backend Engineer',
+                instructions: 'Work on backend.',
+                tools: ['shell'],
+              },
+            ],
+            agents: [{ name: agentId, roleName: 'backend-engineer' }],
+          }),
+        setTeam: () => undefined,
+      } as never,
+      repo,
+      { emit: (event: string, payload: unknown) => emits.push({ event, payload }) } as never,
+      { publishMessage: () => undefined } as never,
+      {
+        generateRunReply: async (input: {
+          onChunk?: (chunk: { kind: 'text' | 'reasoning'; delta: string }) => PromiseLike<void> | void;
+        }) => {
+          await input.onChunk?.({ kind: 'reasoning', delta: 'Thinking…' });
+          await input.onChunk?.({ kind: 'text', delta: 'Hello' });
+          return { text: 'Hello', toolResults: [], steps: [] };
+        },
+      } as never,
+      { allowRun: () => undefined, invoke: async () => ({ ok: true }) } as never,
+    );
+
+    const result = await (service as any).advanceRun(run);
+
+    expect(result.status).toBe('completed');
+    expect(
+      emits.some(({ event, payload }) => {
+        if (event !== SocketEventNames.runChunk) return false;
+        const chunk = payload as RunChunkEvent;
+        return chunk.kind === 'reasoning' && chunk.delta === 'Thinking…';
+      }),
+    ).toBe(true);
+    expect(
+      emits.some(({ event, payload }) => {
+        if (event !== SocketEventNames.runChunk) return false;
+        const chunk = payload as RunChunkEvent;
+        return chunk.kind === 'text' && chunk.delta === 'Hello';
+      }),
+    ).toBe(true);
   });
 
   it('replays approved tools before the next turn when approval lands mid-run', async () => {
@@ -272,7 +699,7 @@ describe('RunService', () => {
       getThread: () => ({ channelId: 'channel-1' }),
     } as never;
 
-    const service = new RunService(
+    const service = createSpiritRunService(
       {
         getTeam: () =>
           loadAgentTeam({
@@ -364,7 +791,7 @@ describe('RunService', () => {
       getSpiritByRunId: () => null,
       getThread: () => ({ channelId: 'channel-1' }),
     } as never;
-    const service = new RunService(
+    const service = createSpiritRunService(
       {
         getTeam: () =>
           loadAgentTeam({
@@ -403,6 +830,7 @@ describe('RunService', () => {
 
     const result = await service.resumeAfterApproval(organizationId, runId, false);
 
+    expectRunState(result);
     expect(result.status).toBe('failed');
     expect(result.summary).toBe('Approval rejected by user');
     expect(run.status).toBe('failed');
@@ -468,7 +896,7 @@ describe('RunService', () => {
       getThread: () => ({ channelId: 'channel-1' }),
     } as never;
 
-    const service = new RunService(
+    const service = createSpiritRunService(
       {
         getTeam: () =>
           loadAgentTeam({
@@ -513,6 +941,7 @@ describe('RunService', () => {
 
     const result = await service.resumeAfterApproval(organizationId, runId, true);
 
+    expectRunState(result);
     expect(result.status).toBe('completed');
     expect(toolInvoked).toBe(true);
     expect(generateCalls).toBe(1);
@@ -593,7 +1022,7 @@ describe('RunService', () => {
       getThread: () => ({ channelId: 'channel-1' }),
     } as never;
 
-    const service = new RunService(
+    const service = createSpiritRunService(
       {
         getTeam: () =>
           loadAgentTeam({
@@ -638,6 +1067,7 @@ describe('RunService', () => {
 
     const result = await service.resumeAfterApproval(organizationId, runId, true);
 
+    expectRunState(result);
     expect(calls).toEqual(['tool-call-1', 'tool-call-2']);
     expect(result.status).toBe('completed');
     expect(result.summary).toBe('Done.');
@@ -707,7 +1137,7 @@ describe('RunService', () => {
       },
     };
 
-    const service = new RunService(
+    const service = createSpiritRunService(
       {
         getTeam: () => team,
         setTeam: () => undefined,
@@ -778,7 +1208,7 @@ describe('RunService', () => {
       getSpiritByRunId: () => null,
       getThread: () => ({ channelId: 'channel-1' }),
     } as never;
-    const service = new RunService(
+    const service = createSpiritRunService(
       {
         getTeam: () =>
           loadAgentTeam({
@@ -885,7 +1315,7 @@ describe('RunService', () => {
       getSpiritByRunId: () => null,
       getThread: () => ({ channelId: 'channel-1' }),
     } as never;
-    const service = new RunService(
+    const service = createSpiritRunService(
       {
         getTeam: () =>
           loadAgentTeam({
@@ -971,7 +1401,7 @@ describe('RunService', () => {
       getSpiritByRunId: () => null,
       getThread: () => ({ channelId: 'channel-1' }),
     } as never;
-    const service = new RunService(
+    const service = createSpiritRunService(
       {
         getTeam: () =>
           loadAgentTeam({
@@ -1068,7 +1498,7 @@ describe('RunService', () => {
       getSpiritByRunId: () => null,
       getThread: () => ({ channelId: 'channel-1' }),
     } as never;
-    const service = new RunService(
+    const service = createSpiritRunService(
       {
         getTeam: () =>
           loadAgentTeam({
@@ -1155,7 +1585,7 @@ describe('RunService', () => {
       getSpiritByRunId: () => null,
       getThread: () => ({ channelId: 'channel-1' }),
     } as never;
-    const service = new RunService(
+    const service = createSpiritRunService(
       {
         getTeam: () =>
           loadAgentTeam({
@@ -1205,9 +1635,10 @@ describe('RunService', () => {
         run = next;
         return next;
       },
+      getThread: () => ({ channelId: 'channel-1' }),
     } as never;
     let completions = 0;
-    const service = new RunService(
+    const service = createSpiritRunService(
       {
         getTeam: () =>
           loadAgentTeam({

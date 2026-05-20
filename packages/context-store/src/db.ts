@@ -656,7 +656,13 @@ const MIGRATIONS: { id: string; up: string }[] = [
     `,
   },
   {
-    id: '019_mcp_registry',
+    id: '019_message_reasoning_content',
+    up: `
+      ALTER TABLE messages ADD COLUMN reasoning_content TEXT;
+    `,
+  },
+  {
+    id: '020_mcp_registry',
     up: `
       -- Phase 3 (MCP) — registry of MCP servers known to an organisation.
       -- A "server" is a stdio command, SSE endpoint, or HTTP-streamable
@@ -787,6 +793,10 @@ function runMigrations(db: DbHandle): void {
       continue;
     }
     if (m.id === '020_run_wake_metadata' && !hasTable(db, 'runs')) {
+      insert.run(m.id, Date.now());
+      continue;
+    }
+    if (m.id === '019_message_reasoning_content' && hasColumn(db, 'messages', 'reasoning_content')) {
       insert.run(m.id, Date.now());
       continue;
     }

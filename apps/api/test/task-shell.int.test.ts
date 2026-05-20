@@ -11,7 +11,6 @@ import {
   AiService,
   ConversationService,
   OnboardingService,
-  RunService,
   SpiritService,
   TaskPromoterService,
   TaskSessionService,
@@ -158,13 +157,14 @@ async function createFixture(opts: FixtureOptions = {}) {
     allowRun: () => undefined,
     invoke: async () => ({ ok: true, output: { status: 'completed', result: 'ok' } }),
   };
+  const ai = new AiService(teamStore, repo, tools);
   const spirits = new SpiritService(teamStore, repo, noopRealtime(), tools, {
-    modelResolver: opts.modelResolver,
     conversations,
+    ai,
+    modelResolver: opts.modelResolver,
   });
   const taskSessions = new TaskSessionService(repo, conversations, spirits);
-  const ai = new AiService(teamStore, repo, tools);
-  const runs = new RunService(teamStore, repo, noopRealtime(), conversations, ai, tools);
+  const runs = spirits;
   const taskPromoter = new TaskPromoterService(repo, runs, {
     teamStore,
     taskSessions,

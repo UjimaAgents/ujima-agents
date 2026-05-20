@@ -20,7 +20,6 @@ import { ConversationService } from './conversation.js';
 import { McpRegistryService } from './mcp-registry.js';
 import { OnboardingService } from './onboarding.js';
 import type { ApiRepository } from './repository-reader.js';
-import { RunService } from './run.js';
 import { SettingsService } from './settings.js';
 import { SpiritService, type ModelResolver, type SpiritMcpPool } from './spirit.js';
 import { SupervisorTodoService } from './supervisor-todo.js';
@@ -76,8 +75,7 @@ export type {
   OnboardingInput,
   OnboardingResult,
 } from './onboarding.js';
-export { RunService } from './run.js';
-export type { CreateRunInput } from './run.js';
+export type { CreateRunInput } from './spirit.js';
 export { SettingsService } from './settings.js';
 export type {
   OrganizationSettingsResponse,
@@ -173,7 +171,7 @@ export interface ApiServices {
   tools: ToolService;
   conversations: ConversationService;
   retention: ChannelRetentionService;
-  runs: RunService;
+  runs: SpiritService;
   approvals: ApprovalService;
   auth: AuthService;
   bootstrap: BootstrapService;
@@ -205,7 +203,7 @@ interface WakeMemberInput {
 
 interface WakeMemberDeps {
   spirits: Pick<SpiritService, 'handleAlert'>;
-  runs: Pick<RunService, 'createRun'>;
+  runs: Pick<SpiritService, 'createRun'>;
   realtime: Pick<ApiServiceContext['realtime'], 'emit'>;
   repo: Pick<ApiRepository, 'findActiveRunForMemberThread'>;
 }
@@ -337,7 +335,7 @@ export async function wakeMemberWithFailureEvents(
       return;
     }
 
-    let run: Awaited<ReturnType<RunService['createRun']>>;
+    let run: Awaited<ReturnType<SpiritService['createRun']>>;
     try {
       run = await deps.runs.createRun({
         organizationId: input.organizationId,
@@ -448,14 +446,6 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
 
   const ai = new AiService(context.teamStore, context.repo, tools);
 
-  const runs = new RunService(
-    context.teamStore,
-    context.repo,
-    context.realtime,
-    conversations,
-    ai,
-    tools,
-  );
   // Phase 2.C.1 — single shared in-memory registry. SpiritService writes
   // (spawn/retire/complete) and reads on every alert.
   const activeSpirits = new ActiveSpiritRegistry();
@@ -467,15 +457,15 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     tools,
     {
       conversations,
+      ai,
       modelResolver: context.spiritModelResolver,
       registry: activeSpirits,
       mcpPool: context.mcpPool,
     },
   );
-  resumeRun = async (orgId, runId, allowRun = true, approvalScope) => {
-    const spiritResult = await spirits.resumeAfterApproval(orgId, runId, allowRun, approvalScope);
-    return spiritResult ?? runs.resumeAfterApproval(orgId, runId, allowRun, approvalScope);
-  };
+  const runs = spirits;
+  resumeRun = async (orgId, runId, allowRun = true, approvalScope) =>
+    spirits.resumeAfterApproval(orgId, runId, allowRun, approvalScope);
   // Hydrate the in-memory registry from persisted spirits BEFORE alert
   // handling begins. Without this, a daemon restart would see an empty
   // registry and fall through to regular wake runs for already-active work.
@@ -489,7 +479,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   // would spawn a duplicate run that defeats the debounce.
   wakeMember = async (input) => {
     await wakeMemberWithFailureEvents(
-      { spirits, runs, realtime: context.realtime, repo: context.repo },
+      { spirits, runs: spirits, realtime: context.realtime, repo: context.repo },
       input,
     );
   };
@@ -499,7 +489,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   const onboarding = new OnboardingService(context.repo, context.teamStore);
   const settings = new SettingsService(context.repo, context.teamStore);
   const taskSessions = new TaskSessionService(context.repo, conversations, spirits);
-  const taskPromoter = new TaskPromoterService(context.repo, runs, {
+  const taskPromoter = new TaskPromoterService(context.repo, spirits, {
     teamStore: context.teamStore,
     taskSessions,
     conversations,

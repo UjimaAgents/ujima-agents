@@ -11,6 +11,8 @@ import {
 } from './channel.js';
 import { filesystemTool } from './filesystem.js';
 import { grepTool } from './grep.js';
+import { jobKillTool, jobOutputTool } from './job-tools.js';
+import { downloadTool, fetchTool } from './web-tools.js';
 import { shellTool } from './shell.js';
 import { messageTool } from './message.js';
 import { webSearchTool } from './web-search.js';
@@ -19,6 +21,14 @@ import {
   supervisorTodoCheckTool,
   supervisorTodoListTool,
 } from './supervisor-todo.js';
+import {
+  editTool,
+  globTool,
+  lsTool,
+  multieditTool,
+  viewTool,
+  writeTool,
+} from './workspace-tools.js';
 
 export const ORCHESTRATOR_TOOLS = {
   'channel.post': channelPostTool,
@@ -29,8 +39,18 @@ export const ORCHESTRATOR_TOOLS = {
   'channel.pass': channelPassTool,
   'channel.handoff': channelHandoffTool,
   filesystem: filesystemTool,
+  view: viewTool,
+  write: writeTool,
+  edit: editTool,
+  multiedit: multieditTool,
+  ls: lsTool,
+  glob: globTool,
   grep: grepTool,
   shell: shellTool,
+  fetch: fetchTool,
+  download: downloadTool,
+  job_output: jobOutputTool,
+  job_kill: jobKillTool,
   web_search: webSearchTool,
   'self.note': selfNoteTool,
   message: messageTool,
@@ -94,6 +114,11 @@ export const SUPERVISOR_TOOL_ALLOWLIST = Object.freeze([
   'channel.reply',
   'channel.pass',
   'channel.handoff',
+  'view',
+  'ls',
+  'glob',
+  'fetch',
+  'job_output',
   'web_search',
   'supervisor.todo.add',
   'supervisor.todo.check',

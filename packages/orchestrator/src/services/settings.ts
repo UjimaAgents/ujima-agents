@@ -10,6 +10,7 @@ import { upsertDashboardTeamOverride } from './dashboard-team-overrides.js';
 import { persistTeamConfig } from './config-sync.js';
 import { requireTeam } from '../utils/require-team.js';
 import { requireOrganization } from '../utils/require-organization.js';
+import { visiblePublicChannels } from './channel-visibility.js';
 
 export interface TeamSettingsResponse {
   name: string;
@@ -75,6 +76,7 @@ export interface UpdateChannelInput {
   channelId: string;
   name?: string;
   topic?: string;
+  memberIds?: string[];
 }
 
 export interface ProviderTestResult {
@@ -134,20 +136,6 @@ function validateOrganizationChart(
       );
     }
   }
-}
-
-// Hide private channel kinds from settings/onboarding payloads:
-//   - `self` — agent private scratchpads
-//   - `dm`   — private 2-member conversations
-// Both must be reached via member-scoped `listVisibleChannels` (the
-// channel.list tool path), never via global settings/snapshot endpoints.
-//
-// This helper is now a defence-in-depth pass — `repo.listChannels(...,
-// ['self', 'dm'])` already filters at the SQL layer below, so the helper's
-// job is to keep the payload safe even if a future caller swaps to a
-// pre-filtered call accidentally.
-function visibleChannels(channels: Channel[]): Channel[] {
-  return channels.filter((channel) => channel.kind !== 'self' && channel.kind !== 'dm');
 }
 
 export class SettingsService {
@@ -414,13 +402,18 @@ export class SettingsService {
       throw new Error(`Channel not found: ${input.channelId}`);
     }
 
-    return this.repo.saveChannel(
+    this.repo.saveChannel(
       ChannelSchema.parse({
         ...existing,
         name: input.name ?? existing.name,
         topic: input.topic !== undefined ? input.topic : existing.topic,
       }),
     );
+    if (input.memberIds !== undefined) {
+      this.repo.setChannelMembers(existing.id, [...new Set(input.memberIds)].sort());
+    }
+
+    return this.repo.getChannel(input.organizationId, existing.id) ?? existing;
   }
 
   deleteChannel(organizationId: string, channelId: string): void {
@@ -441,7 +434,7 @@ export class SettingsService {
     return {
       organization,
       members: this.repo.listMembers(organizationId),
-      channels: visibleChannels(visibleChannelsFromRepo(this.repo, organizationId)),
+      channels: visiblePublicChannels(visibleChannelsFromRepo(this.repo, organizationId)),
     };
   }
 
@@ -491,7 +484,7 @@ export class SettingsService {
     return {
       organization: updated,
       members: this.repo.listMembers(input.organizationId),
-      channels: visibleChannels(visibleChannelsFromRepo(this.repo, input.organizationId)),
+      channels: visiblePublicChannels(visibleChannelsFromRepo(this.repo, input.organizationId)),
     };
   }
 

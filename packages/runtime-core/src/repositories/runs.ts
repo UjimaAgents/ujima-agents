@@ -117,6 +117,20 @@ export function findActiveRunForMemberThread(
   return row ? rowToRun(row) : null;
 }
 
+export function listActiveRuns(db: DbHandle, organizationId: string): RunState[] {
+  const placeholders = ACTIVE_RUN_STATUSES.map(() => '?').join(', ');
+  const rows = db
+    .prepare(
+      `SELECT * FROM runs
+       WHERE organization_id = ?
+         AND status IN (${placeholders})
+       ORDER BY started_at DESC, id DESC`,
+    )
+    .all(organizationId, ...ACTIVE_RUN_STATUSES) as Row[];
+
+  return rows.map(rowToRun);
+}
+
 export function listRuns(
   db: DbHandle,
   organizationId: string,

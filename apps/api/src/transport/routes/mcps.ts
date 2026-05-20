@@ -17,6 +17,7 @@ import {
 } from '@ujima/api-schema';
 import type { AuthService, McpRegistryService } from '@ujima/orchestrator';
 import { requireOrgSession } from './org-auth.js';
+import { apiError } from './route-errors.js';
 
 // REST surface for the MCP registry (Phase 3 of the MCP integration).
 //
@@ -354,9 +355,5 @@ export function mapMcpRouteError(err: unknown): {
 
 function handle(reply: FastifyReply, err: unknown): FastifyReply {
   const { status, code, message } = mapMcpRouteError(err);
-  return replyError(reply, status, code, message);
-}
-
-function replyError(reply: FastifyReply, status: number, code: string, message: string): FastifyReply {
-  return reply.status(status).send({ code, message });
+  return apiError(reply, status, message, code);
 }

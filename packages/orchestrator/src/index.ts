@@ -41,7 +41,6 @@ export {
   ConfigSyncService,
   ConversationService,
   OnboardingService,
-  RunService,
   SettingsService,
   McpRegistryService,
   SpiritService,

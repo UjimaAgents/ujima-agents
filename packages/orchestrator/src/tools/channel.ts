@@ -182,6 +182,7 @@ export const channelPostTool: OrchestratorTool<typeof ChannelPostSchema> = {
       mentions: Array.isArray(invocation.input.mentions)
         ? invocation.input.mentions.filter((value): value is string => typeof value === 'string')
         : [],
+      metadata: { runId: invocation.runId },
     }),
 };
 
@@ -205,6 +206,7 @@ export const channelReplyTool: OrchestratorTool<typeof ChannelReplySchema> = {
       mentions: Array.isArray(invocation.input.mentions)
         ? invocation.input.mentions.filter((value): value is string => typeof value === 'string')
       : [],
+      metadata: { runId: invocation.runId },
     }),
 };
 
@@ -228,6 +230,7 @@ export const channelDmTool: OrchestratorTool<typeof ChannelDmSchema> = {
       mentions: Array.isArray(invocation.input.mentions)
         ? invocation.input.mentions.filter((value): value is string => typeof value === 'string')
         : [],
+      metadata: { runId: invocation.runId },
     }),
 };
 

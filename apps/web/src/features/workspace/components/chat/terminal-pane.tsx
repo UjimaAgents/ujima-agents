@@ -4,8 +4,8 @@ import {
   TERMINAL_PANEL,
   TERMINAL_PROMPT,
   TERMINAL_SECTION,
-  terminalOutputAreaClass,
 } from "./terminal-chrome";
+import { ExpandableOutput } from "./expandable-output";
 
 export function TerminalPane({
   className = "",
@@ -34,18 +34,33 @@ export function TerminalPane({
     <div className={`${TERMINAL_PANEL} ${className}`}>
       <div className={TERMINAL_SECTION}>
         <div className={TERMINAL_CWD}>{cwd}</div>
-        <div className={TERMINAL_COMMAND_ROW}>
+        <button
+          type="button"
+          onClick={() => {
+            navigator.clipboard.writeText(commandLine);
+          }}
+          className={`${TERMINAL_COMMAND_ROW} group/cmd flex items-center gap-1.5 text-left transition-colors hover:text-violet-600 dark:hover:text-violet-400`}
+          title="Click to copy command"
+        >
           <span className={TERMINAL_PROMPT}>$ </span>
-          <span>{commandLine}</span>
-        </div>
+          <span className="break-all">{commandLine}</span>
+        </button>
       </div>
       {showOutputRegion ? (
-        <div className={terminalOutputAreaClass(outputTone)}>
-          {showBody ? trimmed : null}
-          {showPlaceholder ? (
-            <span className="text-foreground/45">{outputPlaceholder}</span>
-          ) : null}
-        </div>
+        <ExpandableOutput>
+          <div
+            className={`px-3 py-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-words ${
+              outputTone === "error"
+                ? "text-red-700 dark:text-red-300/90"
+                : "text-foreground/85"
+            }`}
+          >
+            {showBody ? trimmed : null}
+            {showPlaceholder ? (
+              <span className="text-foreground/45">{outputPlaceholder}</span>
+            ) : null}
+          </div>
+        </ExpandableOutput>
       ) : null}
     </div>
   );

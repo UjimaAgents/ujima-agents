@@ -26,7 +26,6 @@ import type {
   TodoStatus,
   WorkspaceMember,
 } from '@ujima/shared';
-import { ApprovalRequestSchema } from '@ujima/shared';
 import {
   findAuthUsersByEmail as readAuthUsersByEmail,
   getAuthSessionByTokenHash as readAuthSessionByTokenHash,
@@ -123,6 +122,7 @@ import {
 import {
   findActiveRunForMemberThread as readActiveRunForMemberThread,
   getRun as readRun,
+  listActiveRuns as readActiveRuns,
   listRuns as readRuns,
   listThreadRuns as readThreadRuns,
   saveRun as writeRun,
@@ -387,6 +387,7 @@ export class Repository {
     agentId: string,
     threadId: string,
   ): RunState | null => readActiveRunForMemberThread(this.db, organizationId, agentId, threadId);
+  listActiveRuns = (organizationId: string): RunState[] => readActiveRuns(this.db, organizationId);
   saveRunStep = (step: RunStep): RunStep => writeRunStep(this.db, step);
   listRunSteps = (organizationId: string, runId: string): RunStep[] =>
     readRunSteps(this.db, organizationId, runId);
@@ -433,14 +434,7 @@ export class Repository {
   deleteApproval = (organizationId: string, approvalId: string): void =>
     deleteApprovalRecord(this.db, organizationId, approvalId);
   listPendingApprovals = (organizationId: string): ApprovalRequest[] => {
-    const list = readPendingApprovals(this.db, organizationId);
-    return list.map((approval) => {
-      if (approval.threadId) return approval;
-      if (!approval.runId) return approval;
-      const run = readRun(this.db, organizationId, approval.runId);
-      if (!run?.threadId) return approval;
-      return ApprovalRequestSchema.parse({ ...approval, threadId: run.threadId });
-    });
+    return readPendingApprovals(this.db, organizationId);
   };
   hasApprovalGrant = (input: {
     organizationId: string;

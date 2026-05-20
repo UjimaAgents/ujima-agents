@@ -1,11 +1,17 @@
 import { streamText, type LanguageModel, type ModelMessage, type ToolSet } from 'ai';
 import { RUN_TERMINATING_TOOL_NAMES } from './run-reply-guard.js';
+import { findToolApprovalRequiredError } from './tool-loop-result.js';
 
 export interface AgentLoopStep {
   text?: string;
   toolCalls?: { toolCallId?: string; toolName?: string; input?: unknown }[];
   toolResults?: { toolCallId?: string; output?: unknown }[];
   [key: string]: unknown;
+}
+
+export interface AgentLoopChunk {
+  kind: 'text' | 'reasoning';
+  delta: string;
 }
 
 export interface AgentLoopResult {
@@ -23,11 +29,11 @@ export interface AgentLoopResult {
  * For wake-triggered runs we use `required-first-step`: the *first*
  * inner step is forced to call a tool (so the model picks
  * `channel.pass` or a posting tool fast), and subsequent steps go
- * back to `auto` to keep multi-step read→write→reply work fluid.
+ * back to `auto` to keep multi-step read->write->reply work fluid.
  *
  * Setting AI-SDK's `toolChoice` globally would force a tool on
- * every step — that's what L1/L2 in the runtime plan flagged as a
- * loop spinner. The per-step strategy fixes it.
+ * every step. The per-step strategy avoids that loop while still
+ * making the first decision explicit.
  */
 export type AgentLoopToolChoice = 'auto' | 'required-first-step';
 
@@ -40,8 +46,7 @@ export async function runAgentLoop(input: {
    * Optional extra stop predicate. The loop ALSO stops on its own
    * when any prior step called a tool in
    * {@link RUN_TERMINATING_TOOL_NAMES}, because those tools either
-   * publish a visible reply or explicitly silence the run — there is
-   * no further work to do.
+   * publish a visible reply or explicitly silence the run.
    */
   stopWhen: NonNullable<Parameters<typeof streamText>[0]['stopWhen']>;
   maxOutputTokens?: number;
@@ -49,17 +54,15 @@ export async function runAgentLoop(input: {
   toolChoice?: AgentLoopToolChoice;
   abortSignal?: AbortSignal;
   loadInterruptMessages?: (step: AgentLoopStep) => Promise<ModelMessage[]> | ModelMessage[];
+  onChunk?: (chunk: AgentLoopChunk) => PromiseLike<void> | void;
 }): Promise<AgentLoopResult> {
   const steps: AgentLoopStep[] = [];
   const messages = [...input.messages];
   const toolChoiceStrategy: AgentLoopToolChoice = input.toolChoice ?? 'auto';
   const userStopWhen = input.stopWhen;
+  const onChunk = input.onChunk;
   let sawModelOutputStreamPart = false;
 
-  // Composed stop predicate: stop when the user predicate fires, OR
-  // when any prior step's toolCalls include a terminating tool. This
-  // is the missing half of L1 — without it, the AI-SDK loop keeps
-  // running after `channel.pass` and `channel.handoff` calls.
   const stopWhen: NonNullable<Parameters<typeof streamText>[0]['stopWhen']> = (info) => {
     for (const step of steps) {
       const calls = Array.isArray(step.toolCalls) ? step.toolCalls : [];
@@ -90,12 +93,20 @@ export async function runAgentLoop(input: {
       ...(input.maxOutputTokens !== undefined ? { maxOutputTokens: input.maxOutputTokens } : {}),
       ...(input.temperature !== undefined ? { temperature: input.temperature } : {}),
       ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),
+      ...(onChunk
+        ? {
+            onChunk: async ({ chunk }) => {
+              if (chunk.type === 'text-delta') {
+                await onChunk({ kind: 'text', delta: chunk.text });
+                return;
+              }
+              if (chunk.type === 'reasoning-delta') {
+                await onChunk({ kind: 'reasoning', delta: chunk.text });
+              }
+            },
+          }
+        : {}),
       prepareStep: async ({ stepNumber, messages: nextMessages }) => {
-        // L2: per-step toolChoice. Force `required` on step 0 only
-        // when the caller asked for the wake-run strategy; otherwise
-        // leave it `auto` (the SDK default). Setting toolChoice on
-        // every step would force a tool on continuation steps and
-        // make the loop spin until token-cap.
         const stepToolChoice =
           strategy === 'required-first-step' && stepNumber === 0
             ? ('required' as const)
@@ -120,14 +131,18 @@ export async function runAgentLoop(input: {
         steps.push(loopStep);
       },
     });
+
     for await (const part of result.fullStream) {
       if (part.type === 'error') {
+        const approvalError = findToolApprovalRequiredError(part.error);
+        if (approvalError) throw approvalError;
         throw part.error;
       }
       if (isModelOutputStreamPart(part)) {
         sawModelOutputStreamPart = true;
       }
     }
+
     const [text, usage] = await Promise.all([result.text, result.usage]);
     const toolResults = steps.flatMap((step) => step.toolResults ?? []);
     return { text, steps, toolResults, usage } as unknown as AgentLoopResult;

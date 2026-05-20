@@ -13,9 +13,10 @@ import {
 } from '@ujima/shared';
 import type { ConversationService } from './conversation.js';
 import type { ApiRepository } from './repository-reader.js';
-import type { RunService } from './run.js';
 import type { TaskSessionService } from './task-session.js';
 import type { TeamStore } from './team-store.js';
+import type { SpiritService } from './spirit.js';
+import { errorMessage } from '../utils/error-message.js';
 
 export interface TaskPromotionInput {
   organizationId: string;
@@ -126,7 +127,7 @@ export class TaskPromoterService {
 
   constructor(
     private readonly repo: ApiRepository,
-    private readonly runs: RunService,
+    private readonly spirits: Pick<SpiritService, 'createRun'>,
     options: TaskPromoterServiceOptions = {},
   ) {
     this.teamStore = options.teamStore;
@@ -160,7 +161,7 @@ export class TaskPromoterService {
     }
 
     const threadId = input.threadId ?? input.channelId;
-    const run = await this.runs.createRun({
+    const run = await this.spirits.createRun({
       organizationId: input.organizationId,
       agentId: assignee,
       threadId,
@@ -383,7 +384,7 @@ export class TaskPromoterService {
         void taskSessions
           .start(input.organizationId, detail.session.id, { runFirstTurn: true })
           .catch((err) => {
-            const messageText = err instanceof Error ? err.message : String(err);
+            const messageText = errorMessage(err);
             taskSessions.updateStatus(input.organizationId, detail.session.id, 'failed', {
               summary: `Task session auto-start failed: ${messageText}`,
               completedAt: new Date().toISOString(),
@@ -480,7 +481,7 @@ export class TaskPromoterService {
       return TaskPromotionDecisionSchema.parse({
         decision: 'skip',
         confidence: 0,
-        rationale: `promoter fallback: ${err instanceof Error ? err.message : String(err)}`,
+        rationale: `promoter fallback: ${errorMessage(err)}`,
       });
     }
   }

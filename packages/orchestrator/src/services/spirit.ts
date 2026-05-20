@@ -25,6 +25,8 @@ import {
   type Message,
   type MessageToolCall,
   type McpToolDescriptor,
+  type RunStep,
+  type RunState,
   type Spirit,
   type SpiritRole,
   type TaskSession,
@@ -34,11 +36,12 @@ import {
 import {
   MESSAGE_TOOL_USAGE_GUIDANCE,
   buildAgentSystemPrompt,
+  normalizeProviderKey,
   type AgentTeamHandle,
 } from '@ujima/framework';
 import { requireOrganization } from '../utils/require-organization.js';
 import { requireTeam } from '../utils/require-team.js';
-import { runAgentLoop } from './agent-loop.js';
+import { runAgentLoop, type AgentLoopChunk } from './agent-loop.js';
 import {
   toModelMessages,
   resolveSpiritModel,
@@ -50,19 +53,30 @@ import {
   ALWAYS_AVAILABLE_AGENT_TOOLS,
   SUPERVISOR_TOOL_ALLOWLIST,
 } from '../tools/index.js';
-import { ActiveSpiritRegistry, isAliveStatus, type ActiveSpiritEntry } from './active-spirit-registry.js';
+import { ActiveSpiritRegistry, type ActiveSpiritEntry } from './active-spirit-registry.js';
 import type { ConversationService } from './conversation.js';
 import type { RealtimeService } from './context.js';
 import type { ApiRepository } from './repository-reader.js';
 import type { TeamStore } from './team-store.js';
 import type { ToolService } from './tool-service.js';
-import { ToolApprovalRequiredError, toModelToolOutput } from './tool-loop-result.js';
+import { findToolApprovalRequiredError, toModelToolErrorOutput, toModelToolOutput } from './tool-loop-result.js';
 import { extractReasoningChunk } from '../utils/extract-reasoning.js';
+import { errorMessage } from '../utils/error-message.js';
 import { buildRunTranscript } from '../utils/run-transcript.js';
 import type { ToolInvocationInput } from './tool-service.js';
 import { materializeMcpDef, mcpPermissionToolName, type McpRuntimePool } from './mcp-runtime.js';
-import { appendGoalArtifactToolCall } from './goal-artifact-card.js';
+import { appendGoalArtifactToolCall, buildGoalArtifactMessage } from './goal-artifact-card.js';
 import { goalModeEnabledFromMessage, goalModeSystemPromptSuffix } from './goal-mode-prompt.js';
+import { pendingApprovalRunSummary } from './approval-summary.js';
+import { applyDashboardTeamOverrides } from './dashboard-team-overrides.js';
+import { isLiveRunStatus, isLiveSpiritStatus } from './live-status.js';
+import type { AiService } from '../ai-service.js';
+import {
+  findTerminatingTool,
+  findTerminatingToolFromRunSteps,
+  runUsedChannelPass,
+  runUsedThreadPublishingTool,
+} from './run-reply-guard.js';
 import {
   createMessageCursor,
   isMessageAfterCursor,
@@ -97,6 +111,11 @@ export interface SpiritServiceOptions {
    * Optional publisher for task-session summaries; otherwise SpiritService writes system messages directly.
    */
   conversations?: ConversationService;
+  /**
+   * Optional direct-run adapter. When present, SpiritService can own the
+   * thread-run path instead of a separate RunService implementation.
+   */
+  ai?: AiService;
   /**
    * Inject an MCP pool so spirit runs can call the agent's attached
    * MCP servers. When omitted, MCP tools are simply absent from the
@@ -150,6 +169,19 @@ export interface SpawnSpiritInput {
   role?: SpiritRole;
 }
 
+export interface CreateRunInput {
+  organizationId: string;
+  agentId: string;
+  threadId: string;
+  summary?: string;
+  /** Why this run was woken — drives mandatory-reply enforcement. */
+  wakeReason?: WakeReason;
+  /** Message id that triggered this run, when applicable. */
+  sourceMessageId?: string;
+  /** Who triggered the wake (for mandatory-reply failure attribution). */
+  byMemberId?: string;
+}
+
 export interface RunSpiritInput {
   organizationId: string;
   taskSessionId: string;
@@ -172,6 +204,30 @@ export interface RunSpiritOutcome {
   iterations: number;
   toolCalls: number;
   tokensUsed: number;
+}
+
+export interface RunDetailAggregate {
+  count: number;
+  pending: number;
+}
+
+export interface RunTraceDetail {
+  run: RunState;
+  approvals: ReturnType<ApiRepository['listPendingApprovals']>;
+  messages: Message[];
+  steps: RunStep[];
+  message?: Message;
+}
+
+export interface RunDetail {
+  run: RunState;
+  approvals: ReturnType<ApiRepository['listPendingApprovals']>;
+  messages: ReturnType<ApiRepository['listMessages']>['data'];
+  steps: RunStep[];
+  message?: Message;
+  activeAgents: { memberId: string; statusLabel: string }[];
+  tokens: { perMemberId: Record<string, number> };
+  tools: Record<string, RunDetailAggregate>;
 }
 
 export interface SpiritAlertInput {
@@ -214,12 +270,15 @@ export class SpiritService {
   private readonly modelResolver: ModelResolver;
   private readonly registry: ActiveSpiritRegistry;
   private readonly conversations?: ConversationService;
+  private readonly ai?: AiService;
   private readonly mcpPool?: SpiritMcpPool;
   private readonly mcpResolver?: SpiritMcpResolver;
   private readonly supervisorDebounceMs: number;
   private readonly supervisorTurnCapPerSession: number;
   private readonly supervisorMutexes = new Map<string, Promise<unknown>>();
   private readonly supervisorLastAlertAt = new Map<string, number>();
+  private readonly deferredApprovalResumes = new Set<string>();
+  private readonly runAbortControllers = new Map<string, AbortController>();
 
   constructor(
     private readonly teamStore: TeamStore,
@@ -234,6 +293,7 @@ export class SpiritService {
     this.modelResolver = options.modelResolver ?? this.defaultModelResolver();
     this.registry = options.registry ?? new ActiveSpiritRegistry();
     this.conversations = options.conversations;
+    this.ai = options.ai;
     this.mcpPool = options.mcpPool;
     this.mcpResolver = options.mcpResolver ?? this.defaultMcpResolver();
     this.supervisorDebounceMs = options.supervisorDebounceMs ?? DEFAULT_SUPERVISOR_DEBOUNCE_MS;
@@ -490,10 +550,10 @@ export class SpiritService {
       status,
       lastError: options.error ?? existing.lastError,
       updatedAt: now,
-      endedAt: isAliveStatus(status) ? existing.endedAt : (existing.endedAt ?? now),
+      endedAt: isLiveSpiritStatus(status) ? existing.endedAt : (existing.endedAt ?? now),
     });
     this.repo.saveSpirit(updated);
-    if (isAliveStatus(status)) {
+    if (isLiveSpiritStatus(status)) {
       this.registry.register(updated);
     } else {
       this.registry.unregister(updated.organizationId, updated.memberId, updated.id);
@@ -597,9 +657,7 @@ export class SpiritService {
     // to do before spawn.)
     const recent = this.repo
       .listChannelMessages(input.organizationId, session.channelId, { limit: 20 })
-      .data
-      .slice()
-      .reverse();
+      .data;
     const messages = toModelMessages(recent, member.id);
     const interruptCursor = createMessageCursor(recent);
     if (input.extraPrompt) {
@@ -615,6 +673,7 @@ export class SpiritService {
       team.workspace.root,
       organization.name,
       member.id,
+      member.name,
       session.channelId,
       agent,
       teamRole,
@@ -709,6 +768,7 @@ export class SpiritService {
     let totalToolCalls = 0;
     let totalTokens = 0;
     let lastText = '';
+    let streamedReasoning = '';
 
     try {
       const result = await runAgentLoop({
@@ -723,12 +783,22 @@ export class SpiritService {
         // visible action or `channel.pass` quickly. Continuation
         // steps stay `auto` so multi-tool sequences are unaffected.
         toolChoice: 'required-first-step',
+        onChunk: (chunk) => {
+          if (chunk.kind === 'reasoning') streamedReasoning += chunk.delta;
+          this.emitRunChunk(
+            {
+              organizationId: input.organizationId,
+              runId: spirit.runId ?? spirit.id,
+              threadId: session.channelId,
+              agentId: input.memberId,
+            },
+            chunk,
+          );
+        },
         loadInterruptMessages: () => {
           const page = this.repo
             .listChannelMessages(input.organizationId, session.channelId, { limit: 100 })
-            .data
-            .slice()
-            .reverse();
+            .data;
           const interrupts = page.filter(
             (message) =>
               message.kind === 'human' &&
@@ -749,7 +819,7 @@ export class SpiritService {
       // calls, with tool-call cards inlined. This keeps the channel
       // history readable as a turn-by-turn timeline.
       let lastMessageId: string | undefined;
-      for (const step of steps) {
+      for (const [index, step] of steps.entries()) {
         totalTurns += 1;
         const stepText = typeof step.text === 'string' ? step.text : '';
         const stepToolCalls = Array.isArray(step.toolCalls) ? step.toolCalls : [];
@@ -766,7 +836,12 @@ export class SpiritService {
           team.workspace.root,
         );
         const messageToolCalls = goalArtifactToolCall ? [...toolCalls, goalArtifactToolCall] : toolCalls;
-        const reasoningContent = extractReasoningChunk(step);
+        const reasoningContent =
+          extractReasoningChunk(step) ??
+          (index === steps.length - 1 ? streamedReasoning.trim() || undefined : undefined);
+        if (!stepText && !goalArtifactToolCall) {
+          continue;
+        }
         const message = MessageSchema.parse({
           id: randomUUID(),
           organizationId: input.organizationId,
@@ -775,8 +850,9 @@ export class SpiritService {
           senderId: member.id,
           senderKind: AGENT_KIND,
           kind: AGENT_KIND,
-          content: stepText || `[tool turn — ${stepToolCalls.length} call(s)]`,
+          content: stepText || 'Goal artifact updated.',
           toolCalls: messageToolCalls,
+          metadata: { runId: spirit.runId ?? spirit.id },
           ...(reasoningContent ? { reasoningContent } : {}),
           createdAt: new Date().toISOString(),
         });
@@ -851,7 +927,7 @@ export class SpiritService {
         tokensUsed: totalTokens,
       };
     } catch (err) {
-      if (err instanceof ToolApprovalRequiredError) {
+      if (findToolApprovalRequiredError(err)) {
         const waiting: Spirit = SpiritSchema.parse({
           ...running,
           status: 'waiting_for_approval',
@@ -865,7 +941,7 @@ export class SpiritService {
               ...run,
               status: 'waiting_for_approval',
               step: 'waiting_for_approval',
-              summary: 'Waiting for approval',
+              summary: pendingApprovalRunSummary(this.repo, input.organizationId, spirit.runId),
             });
           }
         }
@@ -878,7 +954,7 @@ export class SpiritService {
           tokensUsed: totalTokens,
         };
       }
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errorMessage(err);
       const failed: Spirit = SpiritSchema.parse({
         ...running,
         status: 'failed',
@@ -914,7 +990,10 @@ export class SpiritService {
     const session = this.repo.getTaskSession(organizationId, taskSessionId) as TaskSession | null;
     const originMessageId = session?.origin?.messageId;
     const originMessage = originMessageId ? this.repo.getMessage(organizationId, originMessageId) : null;
-    const goalSuffix = goalModeSystemPromptSuffix(goalModeEnabledFromMessage(originMessage));
+    const goalSuffix = goalModeSystemPromptSuffix({
+      goalMode: goalModeEnabledFromMessage(originMessage),
+      messageContent: originMessage?.content,
+    });
     if (goalSuffix && systemPromptSuffix) {
       return `${systemPromptSuffix}\n\n${goalSuffix}`;
     }
@@ -936,7 +1015,10 @@ export class SpiritService {
     }
 
     const sourceMessage = this.repo.getMessage(input.organizationId, input.messageId);
-    const goalModeSuffix = goalModeSystemPromptSuffix(goalModeEnabledFromMessage(sourceMessage));
+    const goalModeSuffix = goalModeSystemPromptSuffix({
+      goalMode: goalModeEnabledFromMessage(sourceMessage),
+      messageContent: sourceMessage?.content,
+    });
 
     // B1 fix — persist wakeReason / byMemberId / sourceMessageId on
     // the spirit's run row BEFORE the supervisor turn fires. This is
@@ -1134,44 +1216,267 @@ export class SpiritService {
     runId: string,
     allowRun = true,
     approvalScope?: string,
-  ): Promise<RunSpiritOutcome | Spirit | null> {
+  ): Promise<RunSpiritOutcome | Spirit | RunState | null> {
     const spirit = this.findActiveSpiritByRunId(organizationId, runId);
-    if (!spirit) return null;
+    if (spirit) {
+      if (allowRun) {
+        this.tools.allowRun(organizationId, runId, approvalScope);
+      } else {
+        const failed = this.updateStatus(organizationId, spirit.id, 'failed', {
+          error: 'Approval rejected by user',
+        });
+        const run = this.repo.getRun(organizationId, runId);
+        if (run) {
+          this.repo.saveRun({
+            ...run,
+            status: 'failed',
+            step: 'failed',
+            summary: 'Approval rejected by user',
+            endedAt: run.endedAt ?? new Date().toISOString(),
+          });
+        }
+        return failed;
+      }
 
+      if (spirit.status === 'running') {
+        return spirit;
+      }
+
+      if (spirit.status !== 'waiting_for_approval') {
+        return spirit;
+      }
+
+      await this.executePendingApprovedTools(spirit);
+      return this.run({
+        organizationId,
+        taskSessionId: spirit.taskSessionId,
+        memberId: spirit.memberId,
+        role: spirit.role,
+      });
+    }
+
+    const run = this.repo.getRun(organizationId, runId);
+    if (!run) return null;
     if (allowRun) {
       this.tools.allowRun(organizationId, runId, approvalScope);
     } else {
-      const failed = this.updateStatus(organizationId, spirit.id, 'failed', {
-        error: 'Approval rejected by user',
-      });
-      const run = this.repo.getRun(organizationId, runId);
-      if (run) {
-        this.repo.saveRun({
-          ...run,
-          status: 'failed',
-          step: 'failed',
-          summary: 'Approval rejected by user',
-          endedAt: run.endedAt ?? new Date().toISOString(),
-        });
+      return this.failRun(run, 'Approval rejected by user');
+    }
+
+    if (run.status === 'running') {
+      const key = this.runKey(organizationId, runId);
+      if (this.runAbortControllers.has(key)) {
+        this.deferredApprovalResumes.add(key);
+        return run;
       }
-      return failed;
+      const afterApprovedTools = await this.executePendingApprovedRunTools(run);
+      return this.advanceRun(afterApprovedTools);
     }
 
-    if (spirit.status === 'running') {
-      return spirit;
+    if (run.status !== 'waiting_for_approval') {
+      return run;
     }
 
-    if (spirit.status !== 'waiting_for_approval') {
-      return spirit;
-    }
-
-    await this.executePendingApprovedTools(spirit);
-    return this.run({
-      organizationId,
-      taskSessionId: spirit.taskSessionId,
-      memberId: spirit.memberId,
-      role: spirit.role,
+    const afterApprovedTools = await this.executePendingApprovedRunTools(run);
+    return this.advanceRun({
+      ...afterApprovedTools,
+      status: 'running',
+      step: 'running',
+      summary: 'Run resumed after approval',
     });
+  }
+
+  async createRun(input: CreateRunInput): Promise<RunState> {
+    if (!this.ai) {
+      throw new Error('Run execution is not wired into SpiritService');
+    }
+
+    const member = this.repo.getMember(input.organizationId, input.agentId);
+    if (!member) {
+      throw new Error(`Member not found: ${input.agentId}`);
+    }
+    if (member.kind !== AGENT_KIND) {
+      throw new Error(`Member "${input.agentId}" is not an agent`);
+    }
+    if (member.retiredAt) {
+      throw new Error(`Member "${input.agentId}" is retired`);
+    }
+
+    const run = RunStateSchema.parse({
+      id: randomUUID(),
+      organizationId: input.organizationId,
+      agentId: input.agentId,
+      threadId: input.threadId,
+      status: 'queued',
+      step: 'queued',
+      summary: input.summary ?? 'Run queued',
+      startedAt: new Date().toISOString(),
+      wakeReason: input.wakeReason ?? null,
+      sourceMessageId: input.sourceMessageId ?? null,
+      byMemberId: input.byMemberId ?? null,
+      terminatingTool: null,
+    });
+
+    this.repo.saveRun(run);
+    this.realtime.emit(
+      SocketEventNames.runStarted,
+      { organizationId: input.organizationId, run },
+      [
+        orgRoom(input.organizationId),
+        threadRoom(input.threadId),
+        memberRoom(input.agentId),
+        runRoom(run.id),
+      ],
+    );
+
+    try {
+      return await this.advanceRun(run);
+    } catch (error) {
+      const latest = this.repo.getRun(run.organizationId, run.id);
+      if (latest?.status === 'cancelled') {
+        return latest;
+      }
+      if (findToolApprovalRequiredError(error)) {
+        return this.waitForApproval(run, pendingApprovalRunSummary(this.repo, run.organizationId, run.id));
+      }
+      return this.failRun(run, (error as Error).message);
+    }
+  }
+
+  listRuns(organizationId: string, cursor?: string, limit?: number) {
+    return this.repo.listRuns(organizationId, cursor, limit);
+  }
+
+  listThreadTraces(organizationId: string, threadId: string, cursor?: string, limit?: number) {
+    const page = this.repo.listThreadRuns(organizationId, threadId, cursor, limit);
+    return {
+      ...page,
+      data: page.data.flatMap((run) => {
+        const detail = this.getRunTraceDetail(organizationId, run.id);
+        return detail ? [detail] : [];
+      }),
+    };
+  }
+
+  getRun(organizationId: string, runId: string) {
+    return this.repo.getRun(organizationId, runId);
+  }
+
+  getRunTraceDetail(organizationId: string, runId: string) {
+    const run = this.repo.getRun(organizationId, runId);
+    if (!run) {
+      return null;
+    }
+
+    const approvals = this.repo
+      .listPendingApprovals(organizationId)
+      .filter((approval) => approval.runId === runId);
+    const messages = run.threadId ? this.listAllThreadMessages(organizationId, run.threadId) : [];
+    const steps = this.repo.listRunSteps?.(organizationId, runId) ?? [];
+    const message = [...messages]
+      .reverse()
+      .find(
+        (item) =>
+          item.metadata?.runId === run.id &&
+          item.senderId === run.agentId &&
+          item.senderKind === AGENT_KIND &&
+          item.kind === AGENT_KIND,
+      );
+
+    return {
+      run,
+      approvals,
+      messages,
+      steps,
+      ...(message ? { message } : {}),
+    };
+  }
+
+  cancelRun(organizationId: string, runId: string): RunState {
+    const run = this.repo.getRun(organizationId, runId);
+    if (!run) {
+      throw new Error(`Run not found: ${runId}`);
+    }
+    if (['completed', 'failed', 'cancelled'].includes(run.status)) {
+      return run;
+    }
+
+    const key = this.runKey(organizationId, runId);
+    this.deferredApprovalResumes.delete(key);
+
+    const cancelled = this.repo.saveRun({
+      ...run,
+      status: 'cancelled',
+      step: 'cancelled',
+      summary: 'Stopped by user',
+      endedAt: new Date().toISOString(),
+    });
+
+    this.realtime.emit(
+      SocketEventNames.runCompleted,
+      { organizationId: run.organizationId, run: cancelled },
+      this.getRooms(run),
+    );
+
+    this.runAbortControllers.get(key)?.abort();
+    this.runAbortControllers.delete(key);
+
+    return cancelled;
+  }
+
+  getRunDetail(organizationId: string, runId: string): RunDetail | null {
+    const trace = this.getRunTraceDetail(organizationId, runId);
+    if (!trace) return null;
+    const { run, approvals, messages, steps, message } = trace;
+
+    const spirit = this.repo.getSpiritByRunId(organizationId, runId);
+    if (!spirit) {
+      return {
+        run,
+        approvals,
+        messages,
+        steps,
+        ...(message ? { message } : {}),
+        activeAgents: isLiveRunStatus(run.status)
+          ? [{ memberId: run.agentId, statusLabel: run.status }]
+          : [],
+        tokens: { perMemberId: { [run.agentId]: 0 } },
+        tools: aggregateToolUsage(messages),
+      } satisfies RunDetail;
+    }
+
+    const session = this.repo.getTaskSession(organizationId, spirit.taskSessionId);
+    const sessionSpirits = this.repo.listSpiritsForSession(organizationId, spirit.taskSessionId);
+    const runIds = new Set(sessionSpirits.map((current) => current.runId).filter(Boolean));
+    const sessionApprovals = this.repo
+      .listPendingApprovals(organizationId)
+      .filter((approval) => approval.runId && runIds.has(approval.runId));
+    const sessionMessages = session
+      ? this.listAllChannelMessages(organizationId, session.channelId)
+      : messages;
+
+    const activeAgents = sessionSpirits
+      .filter((current) => isLiveRunStatus(current.status))
+      .map((current) => ({
+        memberId: current.memberId,
+        statusLabel: current.role === 'supervisor' ? `supervisor:${current.status}` : current.status,
+      }));
+
+    const perMemberId: Record<string, number> = {};
+    for (const current of sessionSpirits) {
+      perMemberId[current.memberId] = (perMemberId[current.memberId] ?? 0) + current.tokensUsed;
+    }
+
+    return {
+      run,
+      approvals: sessionApprovals,
+      messages: sessionMessages,
+      steps,
+      ...(message ? { message } : {}),
+      activeAgents,
+      tokens: { perMemberId },
+      tools: aggregateToolUsage(sessionMessages),
+    } satisfies RunDetail;
   }
 
   // ------------------------------------------------------------------
@@ -1187,6 +1492,524 @@ export class SpiritService {
       if (spirit) return spirit;
     }
     return null;
+  }
+
+  private async advanceRun(run: RunState): Promise<RunState> {
+    const currentRun = this.repo.getRun(run.organizationId, run.id);
+    if (currentRun && ['completed', 'failed', 'cancelled'].includes(currentRun.status)) {
+      return currentRun;
+    }
+
+    applyDashboardTeamOverrides(this.repo, run.organizationId, this.teamStore);
+    const team = requireTeam(this.teamStore);
+    const member = this.repo.getMember(run.organizationId, run.agentId);
+    if (!member) {
+      throw new Error(`Member not found: ${run.agentId}`);
+    }
+    if (member.retiredAt) {
+      return this.failRun(run, `Agent retired: ${run.agentId}`);
+    }
+
+    const role = team.getRole(member.roleName);
+    if (!role) {
+      throw new Error(`Role not found: ${member.roleName}`);
+    }
+
+    const agent = team.getAgent(member.id) ?? team.getAgent(member.name);
+    if (!agent) {
+      return this.failRun(run, `Agent not found: ${member.id}`);
+    }
+
+    const providerName = normalizeProviderKey(member.llm ?? role.provider ?? '');
+    if (providerName && !this.repo.getProviderCredential(run.organizationId, providerName)) {
+      return this.failRun(run, `Provider key missing for "${providerName}"`);
+    }
+
+    const preCancel = this.repo.getRun(run.organizationId, run.id);
+    if (preCancel?.status === 'cancelled') {
+      return preCancel;
+    }
+
+    const running = this.repo.saveRun({
+      ...run,
+      status: 'running',
+      step: 'running',
+      summary: 'Run executing',
+    });
+
+    const postCancel = this.repo.getRun(run.organizationId, run.id);
+    if (postCancel?.status === 'cancelled') {
+      return postCancel;
+    }
+
+    this.realtime.emit(
+      SocketEventNames.runUpdated,
+      { organizationId: run.organizationId, run: running },
+      this.getRooms(running),
+    );
+
+    const abortKey = this.runKey(run.organizationId, run.id);
+    const abortController = new AbortController();
+    this.runAbortControllers.set(abortKey, abortController);
+
+    try {
+      const goalModeActive = this.isGoalModeActive(run.organizationId, run.threadId ?? '');
+      const systemPromptSuffix = goalModeSystemPromptSuffix({
+        goalMode: goalModeActive,
+        messageContent: this.repo.getLatestHumanMessageInThread(run.organizationId, run.threadId ?? '')?.content,
+      });
+      let streamedText = '';
+      let streamedReasoning = '';
+      const ai = this.ai;
+      if (!ai) {
+        throw new Error('Run execution is not wired into SpiritService');
+      }
+      const result = await ai.generateRunReply({
+        organizationId: run.organizationId,
+        agentId: run.agentId,
+        threadId: run.threadId ?? '',
+        runId: run.id,
+        summary: run.summary,
+        systemPromptSuffix,
+        abortSignal: abortController.signal,
+        onChunk: (chunk) => {
+          if (chunk.kind === 'text') streamedText += chunk.delta;
+          if (chunk.kind === 'reasoning') streamedReasoning += chunk.delta;
+          this.emitRunChunk(
+            {
+              organizationId: running.organizationId,
+              runId: running.id,
+              threadId: running.threadId,
+              agentId: running.agentId,
+            },
+            chunk,
+          );
+        },
+      });
+
+      const latestRun = this.repo.getRun(run.organizationId, run.id);
+      if (latestRun && latestRun.status !== 'running') {
+        return latestRun;
+      }
+
+      if (this.consumeDeferredApprovalResume(run.organizationId, run.id)) {
+        const afterApprovedTools = await this.executePendingApprovedRunTools(running);
+        return this.advanceRun(afterApprovedTools);
+      }
+
+      const statuses = [
+        ...result.toolResults,
+        ...result.steps.flatMap((step: (typeof result.steps)[number]) => step?.toolResults ?? []),
+      ]
+        .map((toolResult) => (toolResult?.output as { status?: string } | undefined)?.status)
+        .filter((status): status is string => typeof status === 'string');
+      if (statuses.includes('blocked')) {
+        return this.failRun(running, 'Tool action blocked');
+      }
+
+      if (statuses.includes('waiting_for_approval')) {
+        return this.waitForApproval(running, pendingApprovalRunSummary(this.repo, running.organizationId, running.id));
+      }
+
+      const pendingApprovalExists = this.repo
+        .listPendingApprovals(run.organizationId)
+        .some((approval) => approval.runId === run.id);
+      if (pendingApprovalExists) {
+        return this.waitForApproval(running, pendingApprovalRunSummary(this.repo, running.organizationId, running.id));
+      }
+
+      const text = (result.text || streamedText).trim();
+      const reasoningContent = extractReasoningChunk(result) ?? (streamedReasoning.trim() || undefined);
+      const runSteps = this.repo.listRunSteps?.(run.organizationId, run.id) ?? [];
+      const terminatingTool = findTerminatingTool(result) ?? findTerminatingToolFromRunSteps(runSteps);
+      const usedPass = runUsedChannelPass(result) || terminatingTool === 'channel.pass';
+      const finalThreadId = run.threadId;
+      const channelId = finalThreadId
+        ? this.repo.getThread(run.organizationId, finalThreadId)?.channelId
+        : undefined;
+      const wakeReason = (running.wakeReason ?? null) as WakeReason | null;
+      const now = new Date().toISOString();
+      const goalToolCalls = result.steps.flatMap((step: (typeof result.steps)[number]) => step?.toolCalls ?? []);
+      const goalArtifactToolCall =
+        (await appendGoalArtifactToolCall(goalToolCalls, team.workspace.root)) ??
+        (await appendGoalArtifactToolCall(
+          runSteps.map((step) => ({
+            toolName: step.toolId,
+            input: {
+              action: step.action,
+              resourcePath: step.resourcePath,
+              ...step.input,
+            },
+          })),
+          team.workspace.root,
+        ));
+
+      if (usedPass && text.length > 0) {
+        this.realtime.emit(
+          SocketEventNames.agentPassedWithText,
+          {
+            organizationId: run.organizationId,
+            channelId,
+            threadId: run.threadId,
+            memberId: run.agentId,
+            runId: run.id,
+            droppedText: text,
+            occurredAt: now,
+          },
+          this.getRooms(running),
+        );
+      }
+
+      if (terminatingTool === 'channel.pass') {
+        this.realtime.emit(
+          SocketEventNames.runSilentCompletion,
+          {
+            organizationId: run.organizationId,
+            runId: run.id,
+            memberId: run.agentId,
+            wakeReason: wakeReason ?? undefined,
+            occurredAt: now,
+          },
+          this.getRooms(running),
+        );
+        return this.completeRun(running, 'passed', 'channel.pass');
+      }
+
+      if (!terminatingTool && text.length === 0 && !goalArtifactToolCall) {
+        if (wakeReason === 'mention') {
+          const byMemberId = running.byMemberId ?? run.agentId;
+          const messageId = running.sourceMessageId;
+          if (messageId) {
+            this.realtime.emit(
+              SocketEventNames.memberMustReplyFailed,
+              {
+                organizationId: run.organizationId,
+                runId: run.id,
+                memberId: run.agentId,
+                byMemberId,
+                channelId,
+                threadId: run.threadId,
+                messageId,
+                occurredAt: now,
+              },
+              this.getRooms(running),
+            );
+          }
+          return this.failRun(running, 'must_reply_failed: agent was @mentioned but did not reply');
+        }
+        this.realtime.emit(
+          SocketEventNames.runEmptyCompletion,
+          {
+            organizationId: run.organizationId,
+            runId: run.id,
+            memberId: run.agentId,
+            wakeReason: wakeReason ?? undefined,
+            occurredAt: now,
+          },
+          this.getRooms(running),
+        );
+        return this.completeRun(running, 'empty', null);
+      }
+
+      const reply = text || 'Goal artifact updated.';
+      const skipFinalThreadMessage = terminatingTool !== null || runUsedThreadPublishingTool(result);
+      let publishedMessages = 0;
+      let publishedGoalArtifact = false;
+      let lastPublishedContent: string | undefined;
+      for (const [index, step] of result.steps.entries()) {
+        const stepText = typeof step.text === 'string' ? step.text.trim() : '';
+        const stepToolCalls = Array.isArray(step.toolCalls) ? step.toolCalls : [];
+        if (!stepText && stepToolCalls.length === 0) {
+          continue;
+        }
+
+        // Skip per-step text publication when this step used a thread-publishing
+        // tool (message, channel.reply, channel.post, etc.) — the tool already
+        // wrote to the thread, so re-publishing stepText would double-post.
+        const stepUsedPublishingTool = runUsedThreadPublishingTool({ steps: [step] });
+
+        const stepGoalArtifactToolCall =
+          (await appendGoalArtifactToolCall(stepToolCalls, team.workspace.root)) ??
+          (await appendGoalArtifactToolCall(
+            (this.repo.listRunSteps?.(run.organizationId, run.id) ?? [])
+              .filter((step) => step.toolCallId === stepToolCalls.at(-1)?.toolCallId)
+              .map((step) => ({
+                toolName: step.toolId,
+                input: {
+                  action: step.action,
+                  resourcePath: step.resourcePath,
+                  ...step.input,
+                },
+              })),
+            team.workspace.root,
+          ));
+        if (stepGoalArtifactToolCall) {
+          publishedGoalArtifact = true;
+        }
+        const toolCalls = [...stepToolCalls, ...(stepGoalArtifactToolCall ? [stepGoalArtifactToolCall] : [])];
+        const stepReasoning = extractReasoningChunk(step) ?? (index === result.steps.length - 1 ? reasoningContent : undefined);
+        const threadId = run.threadId;
+        if (!threadId) {
+          continue;
+        }
+        const channelId = this.repo.getThread(run.organizationId, threadId)?.channelId;
+        if (stepUsedPublishingTool && !stepGoalArtifactToolCall) {
+          continue;
+        }
+        if (!stepText && !stepGoalArtifactToolCall) {
+          continue;
+        }
+        const content = stepText || 'Goal artifact updated.';
+        this.conversations?.publishMessage(
+          MessageSchema.parse({
+            id: randomUUID(),
+            organizationId: run.organizationId,
+            threadId,
+            ...(channelId ? { channelId } : {}),
+            senderId: run.agentId,
+            senderKind: AGENT_KIND,
+            kind: AGENT_KIND,
+            content,
+            metadata: { runId: run.id },
+            ...(toolCalls.length > 0 ? { toolCalls } : {}),
+            ...(stepReasoning ? { reasoningContent: stepReasoning } : {}),
+            createdAt: new Date().toISOString(),
+          }),
+        );
+        publishedMessages += 1;
+        lastPublishedContent = content;
+      }
+
+      const finalArtifactMessageNeeded = !!goalArtifactToolCall && !publishedGoalArtifact;
+      const shouldPublishFinalMessage =
+        !!finalThreadId &&
+        !skipFinalThreadMessage &&
+        (publishedMessages === 0 || reply !== lastPublishedContent || finalArtifactMessageNeeded);
+      if (finalThreadId && shouldPublishFinalMessage) {
+        const channelId = this.repo.getThread(run.organizationId, finalThreadId)?.channelId;
+        this.conversations?.publishMessage(
+          MessageSchema.parse({
+            id: randomUUID(),
+            organizationId: run.organizationId,
+            threadId: finalThreadId,
+            ...(channelId ? { channelId } : {}),
+            senderId: run.agentId,
+            senderKind: AGENT_KIND,
+            kind: AGENT_KIND,
+            content: reply,
+            metadata: { runId: run.id },
+            ...(reasoningContent ? { reasoningContent } : {}),
+            createdAt: new Date().toISOString(),
+          }),
+        );
+      }
+
+      if (finalThreadId && finalArtifactMessageNeeded) {
+        const goalArtifactMessage = buildGoalArtifactMessage({
+          goalArtifactToolCall,
+          organizationId: run.organizationId,
+          threadId: finalThreadId,
+          channelId: this.repo.getThread(run.organizationId, finalThreadId)?.channelId,
+          senderId: run.agentId,
+          senderKind: AGENT_KIND,
+          kind: AGENT_KIND,
+          runId: run.id,
+          content: reply,
+        });
+        if (goalArtifactMessage) {
+          this.conversations?.publishMessage(goalArtifactMessage);
+        }
+      }
+
+      return this.completeRun(running, terminatingTool ?? reply, terminatingTool);
+    } catch (error) {
+      if (findToolApprovalRequiredError(error)) {
+        if (this.consumeDeferredApprovalResume(run.organizationId, run.id)) {
+          const afterApprovedTools = await this.executePendingApprovedRunTools(running);
+          return this.advanceRun(afterApprovedTools);
+        }
+        return this.waitForApproval(running, pendingApprovalRunSummary(this.repo, running.organizationId, running.id));
+      }
+      const latestAfterError = this.repo.getRun(run.organizationId, run.id);
+      if (latestAfterError?.status === 'cancelled') {
+        return latestAfterError;
+      }
+      return this.failRun(running, (error as Error).message);
+    } finally {
+      this.runAbortControllers.delete(abortKey);
+    }
+  }
+
+  private completeRun(run: RunState, summary: string, terminatingTool: string | null = null): RunState {
+    const completed = this.repo.saveRun({
+      ...run,
+      status: 'completed',
+      step: 'completed',
+      summary,
+      terminatingTool,
+      endedAt: new Date().toISOString(),
+    });
+
+    this.realtime.emit(
+      SocketEventNames.runCompleted,
+      { organizationId: run.organizationId, run: completed },
+      this.getRooms(run),
+    );
+
+    return completed;
+  }
+
+  private waitForApproval(run: RunState, summary: string): RunState {
+    const waiting = this.repo.saveRun({
+      ...run,
+      status: 'waiting_for_approval',
+      step: 'waiting_for_approval',
+      summary,
+    });
+
+    this.realtime.emit(
+      SocketEventNames.runUpdated,
+      { organizationId: run.organizationId, run: waiting },
+      this.getRooms(run),
+    );
+
+    return waiting;
+  }
+
+  private failRun(run: RunState, summary: string): RunState {
+    const failed = this.repo.saveRun({
+      ...run,
+      status: 'failed',
+      step: 'failed',
+      summary,
+      endedAt: new Date().toISOString(),
+    });
+
+    this.realtime.emit(
+      SocketEventNames.runCompleted,
+      { organizationId: run.organizationId, run: failed },
+      this.getRooms(run),
+    );
+
+    return failed;
+  }
+
+  private getRooms(run: RunState) {
+    const rooms = [orgRoom(run.organizationId), memberRoom(run.agentId), runRoom(run.id)];
+    if (run.threadId) {
+      rooms.push(threadRoom(run.threadId));
+      const channelId = this.repo.getThread(run.organizationId, run.threadId)?.channelId;
+      if (channelId) {
+        rooms.push(channelRoom(channelId));
+      }
+    }
+    return rooms;
+  }
+
+  private emitRunChunk(
+    run: { organizationId: string; runId: string; threadId?: string; agentId: string },
+    chunk: AgentLoopChunk,
+  ): void {
+    if (!run.threadId || !chunk.delta) {
+      return;
+    }
+
+    const rooms = [orgRoom(run.organizationId), memberRoom(run.agentId), runRoom(run.runId), threadRoom(run.threadId)];
+    const channelId = this.repo.getThread(run.organizationId, run.threadId)?.channelId;
+    if (channelId) {
+      rooms.push(channelRoom(channelId));
+    }
+
+    this.realtime.emit(
+      SocketEventNames.runChunk,
+      {
+        organizationId: run.organizationId,
+        runId: run.runId,
+        threadId: run.threadId,
+        agentId: run.agentId,
+        kind: chunk.kind,
+        delta: chunk.delta,
+      },
+      rooms,
+    );
+  }
+
+  private listAllThreadMessages(organizationId: string, threadId: string): Message[] {
+    const messages: Message[] = [];
+    let cursor: string | undefined = undefined;
+    do {
+      const page = this.repo.listMessages(organizationId, threadId, cursor, 100);
+      messages.push(...page.data);
+      cursor = page.nextCursor;
+    } while (cursor);
+    return messages;
+  }
+
+  private listAllChannelMessages(organizationId: string, channelId: string): Message[] {
+    const messages: Message[] = [];
+    let cursor: string | undefined = undefined;
+    do {
+      const page = this.repo.listChannelMessages(organizationId, channelId, { cursor, limit: 100 });
+      messages.push(...page.data);
+      cursor = page.nextCursor;
+    } while (cursor);
+    return messages;
+  }
+
+  private async executePendingApprovedRunTools(run: RunState): Promise<RunState> {
+    const pendingApprovalToolCallIds = new Set(
+      this.repo
+        .listPendingApprovals(run.organizationId)
+        .filter((approval) => approval.runId === run.id && approval.toolCallId)
+        .map((approval) => approval.toolCallId as string),
+    );
+    const pendingSteps = this.repo
+      .listRunSteps?.(run.organizationId, run.id) ?? [];
+    for (const step of pendingSteps.filter((item) => {
+      const output = item.output as { status?: unknown } | undefined;
+      return output?.status === 'waiting_for_approval' && !pendingApprovalToolCallIds.has(item.toolCallId);
+    })) {
+      const invocation: ToolInvocationInput = {
+        organizationId: step.organizationId,
+        runId: step.runId,
+        memberId: step.agentId,
+        threadId: step.threadId,
+        toolCallId: step.toolCallId,
+        toolId: step.toolId,
+        action: step.action,
+        resourceType: step.resourceType,
+        resourcePath: step.resourcePath || undefined,
+        input: step.input,
+        bypassPermission: true,
+      };
+
+      try {
+        await this.tools.invoke(invocation);
+      } catch {
+        // Tool failures are already persisted by ToolService; keep going.
+      }
+    }
+    return run;
+  }
+
+  private runKey(organizationId: string, runId: string): string {
+    return `${organizationId}:${runId}`;
+  }
+
+  private consumeDeferredApprovalResume(organizationId: string, runId: string): boolean {
+    const key = this.runKey(organizationId, runId);
+    if (!this.deferredApprovalResumes.has(key)) {
+      return false;
+    }
+    this.deferredApprovalResumes.delete(key);
+    return true;
+  }
+
+  private isGoalModeActive(organizationId: string, threadId: string): boolean {
+    if (!threadId) return false;
+    return goalModeEnabledFromMessage(
+      this.repo.getLatestHumanMessageInThread(organizationId, threadId),
+    );
   }
 
   /**
@@ -1383,7 +2206,7 @@ export class SpiritService {
     if (workers.length === 0) {
       return;
     }
-    if (workers.some((spirit) => LIVE_SPIRIT_STATUSES.has(spirit.status))) {
+    if (workers.some((spirit) => isLiveSpiritStatus(spirit.status))) {
       return;
     }
 
@@ -1419,12 +2242,10 @@ export class SpiritService {
       return trimmedPreferred;
     }
 
-    const latestWithMessage = workers
-      .slice()
-      .reverse()
-      .find((spirit) => spirit.lastMessageId && this.repo.getMessage(organizationId, spirit.lastMessageId));
-    if (latestWithMessage?.lastMessageId) {
-      const latestMessage = this.repo.getMessage(organizationId, latestWithMessage.lastMessageId);
+    for (const spirit of workers.slice().reverse()) {
+      const latestMessage = spirit.lastMessageId
+        ? this.repo.getMessage(organizationId, spirit.lastMessageId)
+        : null;
       const content = latestMessage?.content.trim();
       if (content) {
         return content;
@@ -1436,9 +2257,12 @@ export class SpiritService {
       return failed.lastError;
     }
 
+    const membersById = new Map(
+      this.repo.listMembers(organizationId).map((member) => [member.id, member]),
+    );
     const completedNames = workers
       .filter((spirit) => spirit.status === 'completed')
-      .map((spirit) => this.repo.getMember(organizationId, spirit.memberId)?.name ?? spirit.memberId);
+      .map((spirit) => membersById.get(spirit.memberId)?.name ?? spirit.memberId);
     if (completedNames.length > 0) {
       return `Completed by ${completedNames.join(', ')}`;
     }
@@ -1739,12 +2563,7 @@ export class SpiritService {
               });
               return toModelToolOutput(result);
             } catch (error) {
-              if (error instanceof ToolApprovalRequiredError) {
-                throw error;
-              }
-              return {
-                error: error instanceof Error ? error.message : String(error),
-              };
+              return toModelToolErrorOutput(error);
             }
           },
         }),
@@ -1833,7 +2652,6 @@ function mcpToolInputSchema(
   return z.record(z.string(), z.unknown());
 }
 
-const LIVE_SPIRIT_STATUSES = new Set(['queued', 'running', 'waiting_for_approval']);
 const TERMINAL_TASK_SESSION_STATUSES = new Set(['completed', 'failed', 'cancelled']);
 
 function deriveTaskSessionOutcome(
@@ -1876,4 +2694,23 @@ function isToolCardError(result: unknown): boolean {
   if (!result || typeof result !== 'object') return false;
   const value = result as { error?: unknown; status?: unknown; isError?: unknown };
   return value.isError === true || typeof value.error === 'string' || value.status === 'blocked';
+}
+
+function aggregateToolUsage(
+  messages: readonly { toolCalls?: readonly { toolName?: string; result?: unknown }[] }[],
+): Record<string, RunDetailAggregate> {
+  const tools: Record<string, RunDetailAggregate> = {};
+  for (const message of messages) {
+    for (const toolCall of message.toolCalls ?? []) {
+      const toolName = toolCall.toolName ?? 'unknown';
+      const current = tools[toolName] ?? { count: 0, pending: 0 };
+      current.count += 1;
+      const output = toolCall.result as { status?: string } | undefined;
+      if (output?.status && output.status !== 'completed') {
+        current.pending += 1;
+      }
+      tools[toolName] = current;
+    }
+  }
+  return tools;
 }

@@ -6,8 +6,8 @@ export const CONVERSATION_SUMMARY_MARKER = "[[CONVERSATION_SUMMARY_V1]]";
 export const CONVERSATION_COMPACTED_MARKER = "[[CONVERSATION_COMPACTED_V1]]";
 export const CONVERSATION_ARCHIVE_MARKER = "[[CONVERSATION_ARCHIVE_V1]]";
 const README_SUMMARY_GUIDANCE = [
-  "> README-style compact summary -- durable context from earlier in the conversation.",
-  "> Skim the headings, dive into what matters. Details that don't carry forward are safe to forget.",
+  "> README-style compact summary -- your durable context from earlier in the conversation.",
+  "> Treat these notes as your own continuity. Details that don't carry forward are safe to forget.",
 ] as const;
 
 export function formatTimestampedContent(
@@ -111,7 +111,7 @@ export function buildSelfNoteSummary(messages: Message[]): string {
       {
         heading: "What I was working on",
         bullets: [
-          "Earlier self-notes below capture the working context. The raw recent notes have the latest thinking.",
+          "Earlier self-notes below are part of your own working context. The raw recent notes have the latest thinking.",
         ],
       },
       {
@@ -137,6 +137,7 @@ export function buildSelfNoteSummary(messages: Message[]): string {
 }
 
 export function buildConversationSummary(messages: Message[]): string {
+  const facts = summarizeActionableConversation(messages);
   return buildStructuredConversationSummary({
     marker: CONVERSATION_SUMMARY_MARKER,
     title: `Compacted ${messages.length} earlier messages.`,
@@ -144,25 +145,19 @@ export function buildConversationSummary(messages: Message[]): string {
     sections: [
       {
         heading: "Current discussion",
-        bullets: [
-          "Keep the recent raw window intact while older context is rolled into this summary.",
-        ],
+        bullets: facts.context,
       },
       {
         heading: "Decisions",
-        bullets: [
-          "Older messages were compacted deterministically without model output.",
-        ],
+        bullets: facts.decisions,
       },
       {
         heading: "Open questions",
-        bullets: [
-          "Review the live tail for the freshest replies and follow-ups.",
-        ],
+        bullets: facts.openQuestions,
       },
       {
-        heading: "Stale or superseded items",
-        bullets: ["Source messages in this batch are marked as compacted."],
+        heading: "Next actions",
+        bullets: facts.nextActions,
       },
     ],
   });
@@ -200,4 +195,54 @@ export function buildConversationArchiveSummary(messages: Message[]): string {
 
 function oneLine(content: string): string {
   return content.replace(/\s+/g, " ").trim().slice(0, 280);
+}
+
+function summarizeActionableConversation(messages: Message[]): {
+  context: string[];
+  decisions: string[];
+  openQuestions: string[];
+  nextActions: string[];
+} {
+  const humanOrAgent = messages.filter((message) => message.kind !== "system");
+  return {
+    context: firstDistinct(
+      humanOrAgent.map((message) => `${message.senderId}: ${oneLine(message.content)}`),
+      5,
+      "No durable context extracted from the compacted window.",
+    ),
+    decisions: firstDistinct(
+      humanOrAgent
+        .map((message) => oneLine(message.content))
+        .filter((line) => /\b(decided|decision|ship|use|keep|remove|rename|must|should|don't|do not|prefer)\b/i.test(line)),
+      6,
+      "No explicit decisions found in the compacted window.",
+    ),
+    openQuestions: firstDistinct(
+      humanOrAgent
+        .map((message) => oneLine(message.content))
+        .filter((line) => line.includes("?") || /\b(blocked|unclear|todo|still|need|needs|fix|missing|verify)\b/i.test(line)),
+      6,
+      "No open questions found in the compacted window.",
+    ),
+    nextActions: firstDistinct(
+      humanOrAgent
+        .map((message) => oneLine(message.content))
+        .filter((line) => /\b(next|todo|fix|implement|run|verify|test|build|push|update|check)\b/i.test(line)),
+      6,
+      "No explicit next actions found in the compacted window.",
+    ),
+  };
+}
+
+function firstDistinct(lines: string[], limit: number, fallback: string): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const line of lines) {
+    const clean = line.trim();
+    if (!clean || seen.has(clean)) continue;
+    seen.add(clean);
+    out.push(clean);
+    if (out.length >= limit) break;
+  }
+  return out.length ? out : [fallback];
 }

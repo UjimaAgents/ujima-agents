@@ -1,3 +1,5 @@
+import { formatReadableToolOutput } from "./tool-output.js";
+
 export function buildRunTranscript(
   steps: {
     createdAt: string;
@@ -30,6 +32,9 @@ export function buildRunTranscript(
 }
 
 function formatStepOutput(value: unknown): string {
+  const formatted = formatReadableToolOutput(value);
+  if (formatted) return truncate(formatted);
+
   if (!value || typeof value !== 'object') return String(value ?? '');
   const output = value as { stdout?: unknown; stderr?: unknown };
   const stdout = typeof output.stdout === 'string' ? output.stdout.trim() : '';

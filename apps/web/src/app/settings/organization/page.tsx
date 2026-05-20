@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { getServerBootstrap, getServerTeamSettings, daemonJson, getSessionTokenFromCookie } from "@/server/ujima-daemon";
-import type { OrganizationSettingsResponse, ProviderStatus } from "@ujima/api-schema";
+import type { McpServerListResponse, OrganizationSettingsResponse, ProviderStatus } from "@ujima/api-schema";
 import { OrganizationSettingsPage } from "@/features/settings/organization/components/organization-settings";
 import type { TeamSettingsData } from "@/features/settings/organization/components/organization-settings";
 
@@ -54,12 +54,23 @@ export default async function OrganizationSettingsRoute() {
       ).catch(() => [])
     : [];
 
+  const mcpServers = orgId
+    ? await daemonJson<McpServerListResponse>(
+        `/api/settings/mcps?organizationId=${encodeURIComponent(orgId)}`,
+        {},
+        sessionToken,
+      )
+        .then((response) => response.servers)
+        .catch(() => [])
+    : [];
+
   return (
     <OrganizationSettingsPage
       bootstrap={bootstrap}
       orgSettings={orgSettings}
       teamSettings={teamSettings}
       providers={providers}
+      mcpServers={mcpServers}
     />
   );
 }

@@ -204,6 +204,10 @@ function shouldForwardEvent(
       const body = payload as { run?: { threadId?: string } };
       return typeof body.run?.threadId === "string" && threadIds.has(body.run.threadId);
     }
+    case SocketEventNames.runChunk: {
+      const body = payload as { threadId?: string };
+      return typeof body.threadId === "string" && threadIds.has(body.threadId);
+    }
     case SocketEventNames.toolCalled:
     case SocketEventNames.toolResult: {
       const body = payload as { threadId?: string };

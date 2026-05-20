@@ -12,7 +12,7 @@ import type { OrchestratorTool } from '../tools/types.js';
 import type { RepositoryReader } from '../services/repository-reader.js';
 import { ORCHESTRATOR_TOOLS } from '../tools/index.js';
 import { toModelToolName } from '../tools/names.js';
-import { ToolApprovalRequiredError, toModelToolOutput } from '../services/tool-loop-result.js';
+import { toModelToolErrorOutput, toModelToolOutput } from '../services/tool-loop-result.js';
 import { isCompactionSummarySystemMessage } from '../services/conversation-summary.js';
 
 export function toModelMessages(messages: Message[], selfId?: string): ModelMessage[] {
@@ -337,12 +337,7 @@ export function buildToolDefinition(
           });
           return toModelToolOutput(result);
         } catch (error) {
-          if (error instanceof ToolApprovalRequiredError) {
-            throw error;
-          }
-          return {
-            error: error instanceof Error ? error.message : String(error),
-          };
+          return toModelToolErrorOutput(error);
         }
       },
     });
@@ -369,12 +364,7 @@ export function buildToolDefinition(
         });
         return toModelToolOutput(result);
       } catch (error) {
-        if (error instanceof ToolApprovalRequiredError) {
-          throw error;
-        }
-        return {
-          error: error instanceof Error ? error.message : String(error),
-        };
+        return toModelToolErrorOutput(error);
       }
     },
   });

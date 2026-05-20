@@ -57,7 +57,12 @@ export function pendingApprovalVisibleInChannelView(
   if (conversation.type === "agent") {
     const requesterId = requestingMemberId(approval);
     if (!requesterId || requesterId !== conversation.id) return false;
-    if (approval.threadId && currentThreadId && approval.threadId !== currentThreadId) {
+    // Approval scoped to a different DM thread than the tab we're viewing — hide (another inbox).
+    if (
+      approval.threadId?.startsWith("dm:") &&
+      currentThreadId &&
+      approval.threadId !== currentThreadId
+    ) {
       return false;
     }
     if (approval.threadId && currentThreadId && approval.threadId === currentThreadId) {
@@ -65,7 +70,13 @@ export function pendingApprovalVisibleInChannelView(
     }
     if (approval.runId && currentThreadId) {
       const run = runs.find((r) => r.id === approval.runId);
-      if (run?.threadId) return run.threadId === currentThreadId;
+      if (run?.threadId) {
+        if (run.threadId === currentThreadId) return true;
+        // Same agent, run tied to another person's DM — hide from this DM tab.
+        if (run.threadId.startsWith("dm:")) return false;
+        // Run on a channel/task thread — owner still reviews from this agent's DM.
+        return true;
+      }
     }
     return true;
   }

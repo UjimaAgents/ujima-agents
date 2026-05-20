@@ -304,6 +304,65 @@ test('message metadata (goalMode) round-trips through save, list, get, and updat
   expect(repo.getMessage(orgId, messageId)?.metadata).toEqual({ goalMode: false });
 });
 
+test('message reasoning content round-trips through save, list, get, and update', () => {
+  const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
+  const orgId = randomUUID();
+  const now = new Date().toISOString();
+  const messageId = randomUUID();
+
+  repo.saveOrganization(
+    OrganizationSchema.parse({
+      id: orgId,
+      name: 'Reasoning Org',
+      workspace: { root: '/tmp/reasoning-org', roleScopes: {} },
+    }),
+  );
+  repo.saveChannel({
+    id: 'general',
+    organizationId: orgId,
+    name: 'general',
+    kind: 'general',
+    topic: '',
+    memberIds: [],
+  });
+  repo.ensureThread({
+    id: 'general',
+    organizationId: orgId,
+    channelId: 'general',
+    title: 'general',
+    memberIds: [],
+    createdAt: now,
+  });
+
+  const saved = repo.saveMessage(
+    MessageSchema.parse({
+      id: messageId,
+      organizationId: orgId,
+      threadId: 'general',
+      channelId: 'general',
+      senderId: 'agent',
+      senderKind: 'agent',
+      kind: 'agent',
+      content: 'Visible reply',
+      reasoningContent: 'Private reasoning',
+      mentions: [],
+      createdAt: now,
+    }),
+  );
+  expect(saved.reasoningContent).toBe('Private reasoning');
+  expect(repo.getMessage(orgId, messageId)?.reasoningContent).toBe('Private reasoning');
+  expect(repo.listMessages(orgId, 'general', undefined, 10).data[0]?.reasoningContent).toBe('Private reasoning');
+
+  repo.updateMessage(
+    MessageSchema.parse({
+      ...saved,
+      reasoningContent: 'Updated reasoning',
+      editedAt: new Date().toISOString(),
+    }),
+  );
+  expect(repo.getMessage(orgId, messageId)?.reasoningContent).toBe('Updated reasoning');
+});
+
 test('getLatestHumanMessageInThread returns newest human by timestamp', () => {
   const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
   const orgId = randomUUID();
@@ -658,6 +717,47 @@ test('bootstrap snapshot drops self and dm channels', async () => {
   expect(visibleIds).toContain('general');
   expect(visibleIds).not.toContain('self_alex');
   expect(visibleIds).not.toContain('dm_alex_quinn');
+});
+
+test('channel membership stays mirrored and reads tolerate drift', () => {
+  const db = openDatabase({ dbPath: ':memory:' });
+  const repo = new Repository(db);
+  const orgId = randomUUID();
+
+  repo.saveOrganization(
+    OrganizationSchema.parse({
+      id: orgId,
+      name: 'Membership Org',
+      workspace: { root: '/tmp/membership-org', roleScopes: {} },
+    }),
+  );
+  repo.saveChannel({
+    id: 'general',
+    organizationId: orgId,
+    name: 'general',
+    kind: 'general',
+    topic: '',
+    memberIds: [],
+  });
+  repo.ensureThread({
+    id: 'general',
+    organizationId: orgId,
+    channelId: 'general',
+    title: 'general',
+    memberIds: [],
+    createdAt: '2026-04-27T08:00:00.000Z',
+  });
+
+  repo.setChannelMembers('general', ['ava']);
+  const mirroredThreadMembers = db
+    .prepare('SELECT member_id FROM thread_members WHERE thread_id = ? ORDER BY member_id ASC')
+    .all('general') as { member_id: string }[];
+  expect(mirroredThreadMembers.map((row) => row.member_id)).toEqual(['ava']);
+
+  db.prepare('DELETE FROM channel_members WHERE channel_id = ?').run('general');
+  db.prepare('INSERT INTO channel_members (channel_id, member_id) VALUES (?, ?)').run('general', 'phoebe');
+
+  expect(repo.getChannel(orgId, 'general')?.memberIds).toEqual(['ava', 'phoebe']);
 });
 
 // Regression: paginators used to cursor only on `created_at`, so two rows

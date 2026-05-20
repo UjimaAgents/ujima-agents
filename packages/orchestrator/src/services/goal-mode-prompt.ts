@@ -1,5 +1,5 @@
 /**
- * System prompt suffix when `metadata.goalMode` is set on the human message.
+ * Goal-mode prompt suffixes.
  * Kept in a separate module so copy can change without touching send plumbing.
  */
 
@@ -16,7 +16,8 @@ You are operating in **Goal Mode**. This is a chat mode, not a separate workflow
 
 ### Goal Artifacts
 Create and maintain a goal artifact file inside the \`.ujima-goals/\` directory at the workspace root:
-- **File format:** choose the format that best fits the work. Prefer HTML when the goal needs a richer rendered artifact; use Markdown README when text is enough.
+- **File format:** use Markdown README only for now.
+file name should be the title of the plan eg "zzz-xxx.md"
 - **Contents:** keep the artifact lightweight but current. Include the goal, a short plan, task breakdown, owners, progress notes, completion status, and any important decisions.
 - **Keep it updated.** Revise the artifact as the goal evolves so it always reflects the current plan and progress.
 - **Edit the artifact directly.** Use your normal filesystem editing tools to create, patch, and refine the file iteratively until it is good enough.
@@ -35,12 +36,37 @@ Create and maintain a goal artifact file inside the \`.ujima-goals/\` directory 
 Remember: you still have all your normal tools available. Goal Mode just changes how you approach the work — more structured, more documented, more collaborative.
 `.trim();
 
-export function goalModeSystemPromptSuffix(goalMode: boolean | undefined): string | undefined {
-  return goalMode ? GOAL_MODE_SYSTEM_PROMPT : undefined;
+export const GOAL_MODE_INACTIVE_SYSTEM_PROMPT = `
+## Goal Mode (Inactive)
+
+The user may ask about goals, planning a goal, starting a goal, or editing a goal.
+If they do, be explicit that Goal Mode is not active right now and that they need to turn it on before you can manage a goal artifact or follow goal-mode workflow.
+Keep the answer short and helpful.
+`.trim();
+
+export function goalModeSystemPromptSuffix(input: {
+  goalMode: boolean | undefined;
+  messageContent?: string | null;
+}): string | undefined {
+  if (input.goalMode) return GOAL_MODE_SYSTEM_PROMPT;
+  if (isGoalIntent(input.messageContent)) return GOAL_MODE_INACTIVE_SYSTEM_PROMPT;
+  return undefined;
 }
 
 export function goalModeEnabledFromMessage(
   message: { metadata?: { goalMode?: boolean } } | null | undefined,
 ): boolean {
   return message?.metadata?.goalMode === true;
+}
+
+function isGoalIntent(content: string | null | undefined): boolean {
+  const text = content?.toLowerCase().trim();
+  if (!text) return false;
+  return (
+    text.includes('goal mode') ||
+    /\bgoal(s)?\b/.test(text) ||
+    /\b(start|create|edit|update|continue)\b.*\bgoal\b/.test(text) ||
+    /\bgoal\b.*\b(start|create|edit|update|continue)\b/.test(text) ||
+    text.includes('/goal')
+  );
 }

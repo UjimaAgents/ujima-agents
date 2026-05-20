@@ -20,18 +20,21 @@ import {
   ORCHESTRATOR_TOOLS,
   SUPERVISOR_TOOL_ALLOWLIST,
 } from "../tools/index.js";
-import type {
-  ToolInvocationInput,
-  ToolInvocationResult,
-  ToolService,
+import {
+  approvalWaitResult,
+  buildToolApprovalScope,
+  type ToolInvocationInput,
+  type ToolInvocationResult,
+  type ToolService,
 } from "./tool-service.js";
 import {
   ERR_PATH_ESCAPE,
   createMemberPathResolver,
   isPathEscapeError,
 } from "./workspace-root.js";
-import { buildShellApprovalScope, normalizeShellScope } from "./shell-scope.js";
+import { normalizeShellScope } from "./shell-scope.js";
 import { materializeMcpDef, type McpRuntimePool } from "./mcp-runtime.js";
+import { formatReadableToolOutput } from "../utils/tool-output.js";
 
 /** Merge top-level invocation fields into `input` for client / reasoning-trace payloads. */
 function toolCallArgsForClient(inv: ToolInvocationInput): Record<string, unknown> {
@@ -273,7 +276,7 @@ export class ToolServiceImpl implements ToolService {
       };
     }
 
-    const approvalScope = this.buildApprovalScope(preparedInvocation);
+    const approvalScope = buildToolApprovalScope(preparedInvocation);
 
     if (
       policy.requiresApproval &&
@@ -310,11 +313,7 @@ export class ToolServiceImpl implements ToolService {
         });
       }
 
-      return {
-        ok: false,
-        requiresApprovalId: approval.id,
-        output: { status: "waiting_for_approval", approvalId: approval.id },
-      };
+      return approvalWaitResult(approval.id);
     }
 
     try {
@@ -575,30 +574,22 @@ export class ToolServiceImpl implements ToolService {
     return rooms;
   }
 
-  private buildApprovalScope(invocation: ToolInvocationInput): string {
-    if (invocation.toolId === "shell") {
-      return buildShellApprovalScope({
-        input: invocation.input ?? {},
-        resourcePath: invocation.resourcePath,
-      });
-    }
-    if (invocation.toolId === "filesystem" && invocation.action === "write") {
-      return `filesystem:${JSON.stringify({
-        action: invocation.action,
-        resourcePath: invocation.resourcePath,
-        patch: invocation.input?.patch,
-        content: invocation.input?.content,
-      })}`;
-    }
-    return `${invocation.toolId}:${invocation.action}:${invocation.resourcePath ?? ""}`;
-  }
-
   private async prepareInvocation(
     invocation: ToolInvocationInput,
     roleName: string,
     team: AgentTeamHandle,
   ): Promise<ToolInvocationInput> {
-    if (invocation.toolId !== "filesystem" && invocation.toolId !== "shell") {
+    if (
+      invocation.toolId !== "filesystem" &&
+      invocation.toolId !== "shell" &&
+      invocation.toolId !== "view" &&
+      invocation.toolId !== "write" &&
+      invocation.toolId !== "edit" &&
+      invocation.toolId !== "multiedit" &&
+      invocation.toolId !== "ls" &&
+      invocation.toolId !== "glob" &&
+      invocation.toolId !== "download"
+    ) {
       return invocation;
     }
 
@@ -610,7 +601,16 @@ export class ToolServiceImpl implements ToolService {
       roleName,
     );
 
-    if (invocation.toolId === "filesystem") {
+    if (
+      invocation.toolId === "filesystem" ||
+      invocation.toolId === "view" ||
+      invocation.toolId === "write" ||
+      invocation.toolId === "edit" ||
+      invocation.toolId === "multiedit" ||
+      invocation.toolId === "ls" ||
+      invocation.toolId === "glob" ||
+      invocation.toolId === "download"
+    ) {
       if (!invocation.resourcePath) {
         return invocation;
       }
@@ -676,10 +676,15 @@ export class ToolServiceImpl implements ToolService {
   }
 }
 
-function summarizeToolOutput(value: unknown): unknown {
+export function summarizeToolOutput(value: unknown): unknown {
+  const output = value as { status?: unknown; stdout?: unknown; stderr?: unknown } | undefined;
+  const formatted = formatReadableToolOutput(value);
+  if (formatted) return truncateText(formatted);
+
+  if (output && typeof output.status === "string") return value;
+
   if (!value || typeof value !== "object") return value;
-  const output = value as { stdout?: unknown; stderr?: unknown };
-  if (typeof output.stdout === "string" || typeof output.stderr === "string") {
+  if (typeof output?.stdout === "string" || typeof output?.stderr === "string") {
     return {
       stdout: truncateText(output.stdout),
       stderr: truncateText(output.stderr),

@@ -16,6 +16,44 @@
   --color-foreground: var(--foreground);
   --font-sans: "Arial", "Helvetica", sans-serif;
   --font-mono: "SFMono-Regular", "Consolas", "Liberation Mono", monospace;
+
+  --animate-approval-in: approval-in 0.3s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+  --animate-in: in 0.25s ease-out forwards;
+
+  @keyframes approval-in {
+    from {
+      opacity: 0;
+      transform: translateY(12px) scale(0.96);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+
+  @keyframes in {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  --animate-slide-in-right: slide-in-right 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+
+  @keyframes slide-in-right {
+    from {
+      transform: translateX(100%);
+    }
+    to {
+      transform: translateX(0);
+    }
+  }
+
+
 }
 
 body {

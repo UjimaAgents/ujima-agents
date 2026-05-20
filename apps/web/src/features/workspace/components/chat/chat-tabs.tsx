@@ -1,3 +1,5 @@
+import { memo } from "react";
+
 export interface ChatTab {
   id: string;
   label: string;
@@ -5,7 +7,7 @@ export interface ChatTab {
   countVariant?: "default" | "warning";
 }
 
-export function ChatTabs({
+export const ChatTabs = memo(function ChatTabs({
   tabs,
   activeTab,
   onTabChange,
@@ -45,4 +47,4 @@ export function ChatTabs({
       ))}
     </div>
   );
-}
+});

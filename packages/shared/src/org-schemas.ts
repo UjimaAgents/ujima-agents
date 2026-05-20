@@ -230,6 +230,8 @@ export const MessageMetadataSchema = z.object({
    * literal termination protocol).
    */
   handoff: HandoffMetadataSchema.optional(),
+  /** Correlates persisted agent replies with in-flight `run:chunk` streaming bubbles. */
+  runId: IdSchema.optional(),
 }).optional();
 export type MessageMetadata = z.infer<typeof MessageMetadataSchema>;
 

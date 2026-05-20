@@ -1,7 +1,7 @@
 import { isLoopFinished, type ToolSet } from 'ai';
 import { buildAgentSystemPrompt, normalizeProviderKey } from '@ujima/framework';
-import type { Message, SpiritRole } from '@ujima/shared';
-import { runAgentLoop } from './services/agent-loop.js';
+import { DEFAULT_SPIRIT_TEMPERATURE, type Message, type SpiritRole } from '@ujima/shared';
+import { runAgentLoop, type AgentLoopChunk } from './services/agent-loop.js';
 import type { RepositoryReader } from './services/repository-reader.js';
 import type { TeamStore } from './services/team-store.js';
 import type { ToolService } from './services/tool-service.js';
@@ -35,6 +35,7 @@ export interface GenerateRunReplyInput {
   summary?: string;
   systemPromptSuffix?: string;
   abortSignal?: AbortSignal;
+  onChunk?: (chunk: AgentLoopChunk) => PromiseLike<void> | void;
 }
 
 export class AiService {
@@ -111,6 +112,7 @@ export class AiService {
       team.workspace.root,
       organization.name,
       member.id,
+      member.name,
       input.threadId,
       agent,
       role,
@@ -187,17 +189,17 @@ export class AiService {
       tools: toolDefs,
       stopWhen: isLoopFinished(),
       maxOutputTokens: 1200,
-      // Lower temperature for wake runs: at 0.2 the model is more
-      // willing to commit to `channel.pass` instead of pretending it
-      // has something to say. DEFAULT_SPIRIT_TEMPERATURE leaves the
-      // task path unchanged.
-      temperature: 0.2,
+      // Lower temperature for mandatory mention wakes: at 0.2 the model is
+      // more willing to commit to a structured posting tool. Other runs keep
+      // the shared default.
+      temperature: mandatoryReplyMode ? 0.2 : DEFAULT_SPIRIT_TEMPERATURE,
       // L1/L2: force a tool call on the FIRST step only so the model
       // picks `channel.pass` or a posting tool fast. Continuation
       // steps go back to `auto` so multi-step read→write→reply
       // sequences still work.
       toolChoice: 'required-first-step',
       abortSignal: input.abortSignal,
+      onChunk: input.onChunk,
       loadInterruptMessages: () => {
         const interrupts = this.loadRunInterrupts(input, interruptCursor);
         return toModelMessages(interrupts, input.agentId);
