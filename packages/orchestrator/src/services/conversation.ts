@@ -580,11 +580,13 @@ export class ConversationService {
     }
 
     // L10 — if a clientMessageId is provided and a message with the
-    // same triple already exists, short-circuit and return it.
+    // same thread-scoped idempotency key already exists, short-circuit
+    // and return it.
     if (input.clientMessageId) {
       const existing = this.repo.findMessageByClientId?.(
         input.organizationId,
         input.senderId,
+        input.threadId,
         input.clientMessageId,
       );
       if (existing) {
@@ -720,23 +722,13 @@ export class ConversationService {
       throw new Error(`Sender not found: ${input.senderId}`);
     }
 
-    if (input.clientMessageId) {
-      const existing = this.repo.findMessageByClientId?.(
-        input.organizationId,
-        input.senderId,
-        input.clientMessageId,
-      );
-      if (existing) {
-        return existing;
-      }
-    }
-
     if (input.recipientId === 'self') {
       return this.sendSelfNote({
         organizationId: input.organizationId,
         memberId: input.senderId,
         body: input.content,
         attachmentIds: input.attachmentIds,
+        clientMessageId: input.clientMessageId,
       });
     }
 
@@ -747,6 +739,26 @@ export class ConversationService {
 
     const [firstId, secondId] = [sender.id, recipient.id].sort();
     const channelId = `dm:${firstId}:${secondId}`;
+    let threadId = channelId;
+    let replyChannelId = channelId;
+    if (input.parentMessageId) {
+      const parent = this.requireMessage(input.organizationId, input.parentMessageId);
+      threadId = parent.threadId;
+      replyChannelId = parent.channelId ?? channelId;
+    }
+
+    if (input.clientMessageId) {
+      const existing = this.repo.findMessageByClientId?.(
+        input.organizationId,
+        input.senderId,
+        threadId,
+        input.clientMessageId,
+      );
+      if (existing) {
+        return existing;
+      }
+    }
+
     const dmChannelName = [sender.name, recipient.name].sort().join(' / ');
     const now = new Date().toISOString();
 
@@ -769,15 +781,6 @@ export class ConversationService {
       createdAt: now,
     });
 
-    let threadId = channelId;
-    let replyChannelId = channelId;
-
-    if (input.parentMessageId) {
-      const parent = this.requireMessage(input.organizationId, input.parentMessageId);
-      threadId = parent.threadId;
-      replyChannelId = parent.channelId ?? channelId;
-    }
-
     const message = MessageSchema.parse({
       id: randomUUID(),
       organizationId: input.organizationId,
@@ -790,6 +793,7 @@ export class ConversationService {
       content: input.content,
       mentions: input.mentions ?? [],
       ...(input.metadata ? { metadata: input.metadata } : {}),
+      ...(input.clientMessageId ? { clientMessageId: input.clientMessageId } : {}),
       createdAt: now,
     });
 
@@ -873,6 +877,7 @@ export class ConversationService {
     memberId: string;
     body: string;
     attachmentIds?: string[];
+    clientMessageId?: string;
   }) {
     requireOrganization(this.repo, input.organizationId);
     const member = this.repo.getMember(input.organizationId, input.memberId);
@@ -902,6 +907,18 @@ export class ConversationService {
       createdAt: new Date().toISOString(),
     });
 
+    if (input.clientMessageId) {
+      const existing = this.repo.findMessageByClientId?.(
+        input.organizationId,
+        member.id,
+        channelId,
+        input.clientMessageId,
+      );
+      if (existing) {
+        return existing;
+      }
+    }
+
     const message = MessageSchema.parse({
       id: randomUUID(),
       organizationId: input.organizationId,
@@ -911,6 +928,7 @@ export class ConversationService {
       senderKind: member.kind,
       kind: member.kind,
       content: input.body,
+      ...(input.clientMessageId ? { clientMessageId: input.clientMessageId } : {}),
       createdAt: new Date().toISOString(),
     });
 

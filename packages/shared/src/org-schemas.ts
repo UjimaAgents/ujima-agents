@@ -252,8 +252,8 @@ export const MessageSchema = z.object({
   metadata: MessageMetadataSchema,
   /**
    * L10 — client-supplied idempotency key. Optional. When present
-   * the daemon dedupes against the (org, sender, clientMessageId)
-   * triple so retried POSTs are no-ops.
+   * the daemon dedupes against the (org, sender, thread, clientMessageId)
+   * tuple so retried POSTs are no-ops.
    */
   clientMessageId: IdSchema.optional(),
   createdAt: TimestampSchema,

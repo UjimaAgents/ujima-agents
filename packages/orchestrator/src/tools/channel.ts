@@ -321,7 +321,7 @@ export const channelPassTool: OrchestratorTool<typeof ChannelPassSchema> = {
     input: args,
   }),
   execute: ({ invocation, repo, conversations }) => {
-    const reason = String(invocation.input.reason);
+    const reason = ChannelPassReasonSchema.parse(invocation.input.reason);
     const note =
       typeof invocation.input.note === 'string' ? String(invocation.input.note) : undefined;
     const citedMessageIds = Array.isArray(invocation.input.cited_message_ids)
@@ -354,7 +354,7 @@ export const channelPassTool: OrchestratorTool<typeof ChannelPassSchema> = {
       runId: invocation.runId,
       channelId,
       threadId,
-      reason: reason as 'not_addressed_to_me',
+      reason,
       note,
     });
 
@@ -371,7 +371,7 @@ export const channelPassTool: OrchestratorTool<typeof ChannelPassSchema> = {
           agentId: invocation.memberId,
           agentName: agentMember?.name,
           threadId,
-          reason: reason as Parameters<typeof verifyChannelPass>[0]['reason'],
+          reason,
           citedMessageIds,
           quotedText,
           sourceMessageId: run?.sourceMessageId ?? undefined,

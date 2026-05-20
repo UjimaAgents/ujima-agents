@@ -129,27 +129,28 @@ export function getMessage(
 /**
  * L10 — idempotency lookup. Searches for a previously saved message
  * whose metadata JSON blob carries the same `clientMessageId` from
- * the same sender in the same org. Uses SQLite's json_extract so
- * the scan is bounded by the (org, sender) prefix on the messages
- * table; even on busy orgs this is cheap because clientMessageId
- * dedup only runs when the client explicitly sends one (so only
- * for retried POSTs).
+ * the same sender in the same org and thread. Uses SQLite's
+ * json_extract so the scan is bounded by the (org, sender, thread)
+ * prefix on the messages table; even on busy orgs this is cheap
+ * because clientMessageId dedup only runs when the client explicitly
+ * sends one (so only for retried POSTs).
  */
 export function findMessageByClientId(
   db: DbHandle,
   organizationId: string,
   senderId: string,
+  threadId: string,
   clientMessageId: string,
 ): Message | null {
   const row = db
     .prepare(
       `SELECT * FROM messages
-       WHERE organization_id = ? AND sender_id = ?
+       WHERE organization_id = ? AND sender_id = ? AND thread_id = ?
          AND json_extract(metadata, '$.clientMessageId') = ?
        ORDER BY created_at DESC, id DESC
        LIMIT 1`,
     )
-    .get(organizationId, senderId, clientMessageId) as Row | null;
+    .get(organizationId, senderId, threadId, clientMessageId) as Row | null;
 
   if (!row) return null;
   const messageId = rowString(row, 'id');

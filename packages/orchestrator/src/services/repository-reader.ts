@@ -129,8 +129,8 @@ export interface ConversationRepository extends RepositoryReader {
   getMessage(organizationId: string, messageId: string): Message | null;
   /**
    * L10 — idempotency lookup. Returns a previously persisted
-   * message with the same (org, sender, clientMessageId) triple,
-   * or null. Optional on the interface so older repository
+   * message with the same (org, sender, thread, clientMessageId)
+   * tuple, or null. Optional on the interface so older repository
    * implementations don't have to implement it immediately — the
    * conversation service treats `undefined` as "no idempotency
    * support" and falls back to the always-insert path.
@@ -138,6 +138,7 @@ export interface ConversationRepository extends RepositoryReader {
   findMessageByClientId?(
     organizationId: string,
     senderId: string,
+    threadId: string,
     clientMessageId: string,
   ): Message | null;
   getLatestHumanMessageInThread(organizationId: string, threadId: string): Message | null;

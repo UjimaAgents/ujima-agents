@@ -1,6 +1,13 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
-import { createPaginatedSchema, ChannelSchema, IdSchema, MessageSchema, PaginationQuerySchema } from '@ujima/shared';
+import {
+  createPaginatedSchema,
+  ChannelSchema,
+  IdSchema,
+  MessageSchema,
+  PaginationQuerySchema,
+  getDirectMessageThreadId,
+} from '@ujima/shared';
 import { ApiErrorSchema, MessageCreateSchema, OrganizationQuerySchema } from '@ujima/api-schema';
 import type { Repository } from '@ujima/runtime-core';
 import type { AuthService, ConversationService, TaskPromoterService } from '@ujima/orchestrator';
@@ -231,21 +238,35 @@ export function registerConversationRoutes(
       }
       const senderId = authState.member.id;
       // L10 — client-supplied idempotency key. If the client sent
-      // `clientMessageId` and a message with the same
-      // (org, sender, clientMessageId) already exists, return it
-      // instead of re-posting. Retried HTTP POSTs (network glitches)
-      // no longer double-wake the channel.
+      // `clientMessageId` and a message with the same thread-scoped
+      // idempotency key already exists, return it instead of
+      // re-posting. Retried HTTP POSTs (network glitches) no longer
+      // double-wake the channel, while the same key can still be used
+      // independently in another thread.
       const clientMessageId =
         typeof req.body.clientMessageId === 'string' && req.body.clientMessageId.length > 0
           ? req.body.clientMessageId
           : undefined;
+      const requestedThreadId =
+        'recipientId' in req.body
+          ? resolveDirectMessageThreadId(
+              repo,
+              req.body.organizationId,
+              senderId,
+              req.body.recipientId,
+              req.body.parentMessageId,
+            )
+          : req.body.threadId;
       if (clientMessageId) {
-        const existing = repo.findMessageByClientId?.(
-          req.body.organizationId,
-          senderId,
-          clientMessageId,
-        );
-        if (existing) {
+        const existing = requestedThreadId
+          ? repo.findMessageByClientId?.(
+              req.body.organizationId,
+              senderId,
+              requestedThreadId,
+              clientMessageId,
+            )
+          : null;
+        if (existing && existing.threadId === requestedThreadId) {
           return existing;
         }
       }
@@ -349,6 +370,22 @@ export function registerConversationRoutes(
       return notFound(reply, message);
     }
   });
+}
+
+function resolveDirectMessageThreadId(
+  repo: Repository,
+  organizationId: string,
+  senderId: string,
+  recipientId: string,
+  parentMessageId?: string,
+): string | undefined {
+  if (parentMessageId) {
+    return repo.getMessage(organizationId, parentMessageId)?.threadId;
+  }
+  if (recipientId === 'self') {
+    return `self:${senderId}`;
+  }
+  return getDirectMessageThreadId(senderId, recipientId);
 }
 
 function notFound(reply: FastifyReply, message: string): FastifyReply {

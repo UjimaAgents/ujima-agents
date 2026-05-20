@@ -385,6 +385,51 @@ test('getLatestHumanMessageInThread returns newest human by timestamp', () => {
   expect(latest?.metadata).toEqual({ goalMode: true });
 });
 
+test('client message id lookup is scoped to the requested thread', () => {
+  const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
+  const orgId = randomUUID();
+  const senderId = 'owner';
+
+  repo.saveMessage(
+    MessageSchema.parse({
+      id: 'message-thread-a',
+      organizationId: orgId,
+      threadId: 'thread-a',
+      channelId: 'thread-a',
+      senderId,
+      senderKind: 'human',
+      kind: 'human',
+      content: 'first thread',
+      mentions: [],
+      clientMessageId: 'retry-token-1',
+      createdAt: '2026-05-04T19:07:01.000Z',
+    }),
+  );
+  repo.saveMessage(
+    MessageSchema.parse({
+      id: 'message-thread-b',
+      organizationId: orgId,
+      threadId: 'thread-b',
+      channelId: 'thread-b',
+      senderId,
+      senderKind: 'human',
+      kind: 'human',
+      content: 'second thread',
+      mentions: [],
+      clientMessageId: 'retry-token-1',
+      createdAt: '2026-05-04T19:07:02.000Z',
+    }),
+  );
+
+  expect(repo.findMessageByClientId(orgId, senderId, 'thread-a', 'retry-token-1')?.id).toBe(
+    'message-thread-a',
+  );
+  expect(repo.findMessageByClientId(orgId, senderId, 'thread-b', 'retry-token-1')?.id).toBe(
+    'message-thread-b',
+  );
+  expect(repo.findMessageByClientId(orgId, senderId, 'thread-c', 'retry-token-1')).toBeNull();
+});
+
 test('hasApprovalGrant matches legacy shell scopes against canonical JSON scopes', () => {
   const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
   const orgId = randomUUID();

@@ -246,6 +246,39 @@ describe('channelPassTool schema refine (L13)', () => {
     const parsed = channelPassTool.schema.safeParse({ reason: 'not_addressed_to_me' });
     expect(parsed.success).toBe(true);
   });
+
+  it('emits the actual validated pass reason', async () => {
+    let emittedReason: string | undefined;
+    const result = await channelPassTool.execute({
+      invocation: {
+        organizationId: 'org-1',
+        runId: 'run-1',
+        memberId: 'agent-1',
+        toolCallId: 'call-1',
+        toolId: 'channel.pass',
+        action: 'message',
+        resourceType: 'message',
+        input: { reason: 'out_of_scope', note: 'This belongs to another role.' },
+        threadId: 'thread-1',
+      } as never,
+      repo: {
+        getRun: () => ({ id: 'run-1', threadId: 'thread-1', sourceMessageId: null }),
+        saveRun: () => undefined,
+        getThread: () => ({ channelId: 'general' }),
+        getMember: () => ({ id: 'agent-1', name: 'Agent One' }),
+      } as never,
+      team: {} as never,
+      conversations: {
+        emitAgentPassed: (input: { reason: string }) => {
+          emittedReason = input.reason;
+        },
+        emitDecisionVerification: () => undefined,
+      } as never,
+    });
+
+    expect(emittedReason).toBe('out_of_scope');
+    expect(result).toMatchObject({ status: 'passed', reason: 'out_of_scope' });
+  });
 });
 
 // channel.handoff stamps [HANDOFF]/[DONE] on the published content

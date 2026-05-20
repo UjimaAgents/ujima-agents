@@ -299,15 +299,16 @@ export class Repository {
     readMessage(this.db, organizationId, messageId);
   /**
    * L10 — idempotency lookup. Returns a previously saved message
-   * with the same (org, sender, clientMessageId) triple, or null.
+   * with the same (org, sender, thread, clientMessageId) tuple, or null.
    * Backed by a json_extract scan on the metadata blob.
    */
   findMessageByClientId = (
     organizationId: string,
     senderId: string,
+    threadId: string,
     clientMessageId: string,
   ): Message | null =>
-    readMessageByClientId(this.db, organizationId, senderId, clientMessageId);
+    readMessageByClientId(this.db, organizationId, senderId, threadId, clientMessageId);
   getLatestHumanMessageInThread = (organizationId: string, threadId: string): Message | null =>
     readLatestHumanMessageInThread(this.db, organizationId, threadId);
   saveAttachment = (attachment: Attachment): Attachment => writeAttachment(this.db, attachment);
