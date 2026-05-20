@@ -132,6 +132,7 @@ export function McpsTab({
   const [attachServerId, setAttachServerId] = useState("");
   const [attachScope, setAttachScope] = useState<McpAttachmentScope>("worker");
   const [attachments, setAttachments] = useState<AgentMcpAttachment[]>([]);
+  const [attachmentsAgentId, setAttachmentsAgentId] = useState("");
 
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -176,6 +177,7 @@ export function McpsTab({
     async (agentId: string) => {
       if (!agentId) {
         setAttachments([]);
+        setAttachmentsAgentId("");
         return;
       }
       const response = await fetch(
@@ -187,12 +189,15 @@ export function McpsTab({
       }
       const data = (await response.json()) as AgentMcpAttachmentsResponse;
       setAttachments(data.attachments);
+      setAttachmentsAgentId(agentId);
     },
     [orgId],
   );
 
   const handleAgentChange = (agentId: string) => {
     setAttachAgentId(agentId);
+    setAttachments([]);
+    setAttachmentsAgentId(agentId);
   };
 
   useEffect(() => {
@@ -208,7 +213,10 @@ export function McpsTab({
           throw new Error(body?.message ?? "Failed to load attachments.");
         }
         const data = (await response.json()) as AgentMcpAttachmentsResponse;
-        if (!ignore) setAttachments(data.attachments);
+        if (!ignore) {
+          setAttachments(data.attachments);
+          setAttachmentsAgentId(activeAgentId);
+        }
       } catch (err) {
         if (!ignore) setError(err instanceof Error ? err.message : "Failed to load attachments.");
       }
@@ -219,7 +227,7 @@ export function McpsTab({
     };
   }, [orgId, activeAgentId]);
 
-  const displayedAttachments = activeAgentId ? attachments : [];
+  const displayedAttachments = activeAgentId && attachmentsAgentId === activeAgentId ? attachments : [];
 
   const startEdit = (server: McpServerPublic) => {
     setShowNewForm(false);
