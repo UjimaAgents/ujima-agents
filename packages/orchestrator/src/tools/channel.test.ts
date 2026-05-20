@@ -313,4 +313,61 @@ describe('channelHandoffTool', () => {
     });
     expect(parsed.success).toBe(false);
   });
+
+  // Regression: the handoff message was published with
+  // `metadata.handoff` but no `runId`. Run-detail views key off
+  // `metadata.runId` to associate a tool-posted message with its
+  // originating run — without it, `/runs/:id` shows no visible
+  // reply even though the tool posted one. The other terminating
+  // channel tools (channel.reply / .post / .dm) all set runId in
+  // metadata; channel.handoff must match.
+  it('execute stamps metadata.runId on the published handoff message', async () => {
+    let captured: { metadata?: Record<string, unknown> } | undefined;
+    await channelHandoffTool.execute({
+      invocation: {
+        organizationId: 'org-1',
+        runId: 'run-handoff-1',
+        memberId: 'alice',
+        threadId: 'thread-1',
+        toolCallId: 'call-1',
+        toolId: 'channel.handoff',
+        action: 'message',
+        resourceType: 'message',
+        input: {
+          to: 'bob',
+          reason: 'Hand it off',
+          deliverable: 'See the diff',
+        },
+      } as never,
+      team: {} as never,
+      repo: {
+        getRun: () => null,
+        getThread: () => ({ id: 'thread-1', channelId: 'channel-general' }),
+        getMember: (_orgId: string, memberId: string) =>
+          memberId === 'bob'
+            ? { id: 'bob', name: 'Bob', kind: 'agent' }
+            : memberId === 'alice'
+              ? { id: 'alice', name: 'Alice', kind: 'agent' }
+              : null,
+        listMembers: () => [],
+        saveRun: () => undefined,
+      } as never,
+      conversations: {
+        publishMessage: (message: { metadata?: Record<string, unknown> }) => {
+          captured = message;
+          return message;
+        },
+        emitAgentHandoff: () => undefined,
+      } as never,
+    });
+
+    expect(captured?.metadata).toMatchObject({
+      runId: 'run-handoff-1',
+      handoff: {
+        from: 'alice',
+        to: 'bob',
+        complete: false,
+      },
+    });
+  });
 });

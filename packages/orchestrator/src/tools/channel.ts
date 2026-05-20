@@ -490,7 +490,13 @@ export const channelHandoffTool: OrchestratorTool<typeof ChannelHandoffSchema> =
       kind: senderKind,
       content: body,
       mentions: [recipient.id],
+      // `runId` mirrors the per-step persistence in spirit.ts and the
+      // other terminating channel tools (channel.reply / .post / .dm).
+      // Without it, run-detail views can't associate the handoff
+      // message with its originating run, so `/runs/:id` shows no
+      // visible reply even though the tool posted one.
       metadata: {
+        runId: invocation.runId,
         handoff: {
           from: invocation.memberId,
           to: recipient.id,
