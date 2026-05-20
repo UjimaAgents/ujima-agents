@@ -1,7 +1,7 @@
 "use client";
 
 import { Plus, Trash2 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import type {
   AgentMcpAttachmentsResponse,
   CreateMcpServerRequest,
@@ -193,17 +193,12 @@ export function McpsTab({
 
   const handleAgentChange = (agentId: string) => {
     setAttachAgentId(agentId);
-  };
-
-  useEffect(() => {
-    if (!orgId || !activeAgentId) {
-      setAttachments([]);
-      return;
-    }
-    void loadAttachments(activeAgentId).catch((err) => {
+    void loadAttachments(agentId).catch((err) => {
       setError(err instanceof Error ? err.message : "Failed to load attachments.");
     });
-  }, [orgId, activeAgentId, loadAttachments]);
+  };
+
+  const displayedAttachments = activeAgentId ? attachments : [];
 
   const startEdit = (server: McpServerPublic) => {
     setShowNewForm(false);
@@ -364,6 +359,7 @@ export function McpsTab({
         throw new Error(body?.message ?? "Failed to delete MCP server.");
       }
       updateServers(servers.filter((server) => server.id !== serverId));
+      if (activeAgentId) await loadAttachments(activeAgentId);
       if (editingId === serverId) cancelForm();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to delete MCP server.");
@@ -386,6 +382,9 @@ export function McpsTab({
         throw new Error(body?.message ?? "MCP test failed.");
       }
       const result = (await response.json()) as TestMcpResponse;
+      if (!result.ok) {
+        throw new Error(result.error ?? "MCP test failed.");
+      }
       setToolCounts((prev) => ({ ...prev, [serverId]: result.tools.length }));
       setToolsByServer((prev) => ({ ...prev, [serverId]: result.tools }));
       setExpandedToolsId(serverId);
@@ -830,10 +829,31 @@ export function McpsTab({
       </section>
 
       <section className="space-y-3 border-t border-zinc-200 pt-6 dark:border-zinc-800">
-        <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Agent attachments</h3>
-        <p className="text-sm text-zinc-500 dark:text-zinc-400">
-          Attach MCP servers to agents with worker, supervisor, or both scope.
-        </p>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Agent attachments</h3>
+            <p className="text-sm text-zinc-500 dark:text-zinc-400">
+              Attach MCP servers to agents with worker, supervisor, or both scope.
+            </p>
+          </div>
+          {activeAgentId ? (
+            <button
+              type="button"
+              disabled={busy === "load-attachments"}
+              onClick={() => {
+                setBusy("load-attachments");
+                void loadAttachments(activeAgentId)
+                  .catch((err) => {
+                    setError(err instanceof Error ? err.message : "Failed to load attachments.");
+                  })
+                  .finally(() => setBusy(null));
+              }}
+              className="rounded-lg border border-zinc-200 px-3 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-900"
+            >
+              {busy === "load-attachments" ? "Loading…" : "Refresh"}
+            </button>
+          ) : null}
+        </div>
 
         {agents.length === 0 ? (
           <p className="text-sm text-zinc-500 dark:text-zinc-400">No agents in this organization yet.</p>
@@ -845,7 +865,9 @@ export function McpsTab({
                 <div className="mt-3">
                   <Select
                     value={activeAgentId}
-                    onChange={(event) => handleAgentChange(event.target.value)}
+                    onChange={(event) => {
+                      handleAgentChange(event.target.value);
+                    }}
                     options={agents.map((agent) => ({ value: agent.id, label: agent.name }))}
                   />
                 </div>
@@ -884,11 +906,11 @@ export function McpsTab({
               </button>
             </div>
 
-            {attachments.length === 0 ? (
+            {displayedAttachments.length === 0 ? (
               <p className="text-sm text-zinc-500 dark:text-zinc-400">No MCP servers attached to this agent.</p>
             ) : (
               <ul className="divide-y divide-zinc-200 dark:divide-zinc-800">
-                {attachments.map((attachment) => {
+                {displayedAttachments.map((attachment) => {
                   const server = servers.find((entry) => entry.id === attachment.mcpServerId);
                   return (
                     <li key={attachment.id} className="flex items-center justify-between gap-3 py-2">
