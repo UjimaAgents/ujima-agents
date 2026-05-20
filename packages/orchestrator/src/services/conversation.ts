@@ -11,8 +11,11 @@ import {
   orgRoom,
   threadRoom,
   type Channel,
+  type ChannelPassReason,
   type Message,
   type MessageMention,
+  type WakeReason,
+  type WakeSuppressedReason,
 } from '@ujima/shared';
 import type { RealtimeService } from './context.js';
 import { selfChannelId } from './member-channels.js';
@@ -71,6 +74,12 @@ export interface MemberAlertInput {
   messageId: string;
   byMemberId: string;
   reason: string;
+  /**
+   * Typed wake reason that drives mandatory-reply enforcement
+   * and observability. The free-form `reason` above is kept for
+   * backwards compatibility with existing realtime payloads.
+   */
+  wakeReason: WakeReason;
 }
 
 export interface ConversationServiceOptions {
@@ -86,6 +95,14 @@ export class ConversationService {
   private readonly mentionFanoutCap: number;
   private readonly mentionWindowMs: number;
   private readonly mentionWindows = new Map<string, number[]>();
+  // L11 — channel-read quota is a SEPARATE bucket from the mention
+  // quota so ordinary broad-wake chatter doesn't exhaust the
+  // mention/DM/handoff circuit-breaker. Cap is intentionally
+  // generous (100 / 60s per member/channel) since broad-wake is
+  // the expected steady-state load.
+  private readonly channelReadCap: number;
+  private readonly channelReadWindowMs: number;
+  private readonly channelReadWindows = new Map<string, number[]>();
 
   constructor(
     private readonly repo: ConversationRepository,
@@ -96,6 +113,8 @@ export class ConversationService {
     this.onMemberAlerted = options.onMemberAlerted;
     this.mentionFanoutCap = options.mentionFanoutCap ?? 10;
     this.mentionWindowMs = options.mentionWindowMs ?? 60_000;
+    this.channelReadCap = 100;
+    this.channelReadWindowMs = 60_000;
   }
 
   listChannels(organizationId: string, cursor?: string, limit?: number) {
@@ -294,7 +313,20 @@ export class ConversationService {
         editedAt: new Date().toISOString(),
       });
     } else {
-      this.repo.saveMessage(finalMessage);
+      // L10 — race-safe dedupe: when two concurrent POSTs share a
+      // clientMessageId and both pass the `findMessageByClientId`
+      // pre-flight, only one wins the UNIQUE partial index. The
+      // loser's saveMessage returns the *winner's* row (different
+      // `id`, since each request generates a fresh server-side
+      // uuid). When that happens we MUST NOT keep going: mention
+      // replacement, attachment linking, realtime emit, and wake
+      // fanout would all reference an id that was never persisted,
+      // and worse, would double-notify agents whose first wake
+      // fired when the winner committed.
+      const saved = this.repo.saveMessage(finalMessage);
+      if (saved.id !== finalMessage.id) {
+        return saved;
+      }
     }
     this.repo.replaceMessageMentions(finalMessage.id, resolvedMentions);
     if (linkedAttachmentIds.length > 0) {
@@ -329,8 +361,215 @@ export class ConversationService {
       if (!options?.suppressDmAlerts && !this.shouldSuppressDmWake(emittedMessage, channel)) {
         void this.alertDirectMessageParticipants(emittedMessage, channel);
       }
+      // Phase 2 — broad-read fanout for public channels. Every agent
+      // in the channel (or every org agent for empty-roster channels)
+      // wakes on human-authored, non-system messages. Mentioned
+      // agents are already alerted above with reason='mention';
+      // we skip them here to avoid double-fire.
+      void this.alertChannelReaders(emittedMessage, channel, resolvedMentions);
     }
     return emittedMessage;
+  }
+
+  /**
+   * Channel-read broadcast fanout (Phase 2). Wakes every agent in
+   * the channel with `wakeReason='channel-read'` so they can each
+   * decide whether to `channel.pass` or post a reply.
+   *
+   * Bypass rules (L5 + decisions):
+   *   - Only when sender is a human, non-system message
+   *   - Only public channels (`general` / `group`; not self/dm/task-run)
+   *   - Empty-roster channels expand to all org agents
+   *   - Sender, mentioned agents (covered by mention fanout),
+   *     retired agents, and non-agents are skipped
+   */
+  private async alertChannelReaders(
+    message: Message,
+    channel: Channel | null,
+    mentions: MessageMention[],
+  ): Promise<void> {
+    if (!channel) return;
+    if (channel.kind !== 'general' && channel.kind !== 'group') return;
+    // L5 — system messages must never broad-wake. The throttle
+    // notification itself is published with senderKind='human' but
+    // senderId='system' / kind='system'. Without these guards a
+    // throttle event would broad-wake the channel and re-throttle
+    // itself in an unbounded loop.
+    if (message.senderKind !== 'human') return;
+    if (message.kind === 'system') return;
+    if (message.senderId === 'system') return;
+
+    const alreadyMentioned = new Set(mentions.map((m) => m.memberId));
+
+    // Empty roster = "everyone reads" (resolved decision). Walk
+    // every org agent. Non-empty roster = walk only enrolled
+    // members.
+    const candidates =
+      channel.memberIds.length === 0
+        ? this.repo.listMembers(message.organizationId)
+        : channel.memberIds
+            .map((memberId) => this.repo.getMember(message.organizationId, memberId))
+            .filter((member): member is NonNullable<typeof member> => member !== null);
+
+    const fanout: Promise<void>[] = [];
+    for (const member of candidates) {
+      if (member.kind !== AGENT_KIND) {
+        this.emitWakeSuppressed(message, channel, member.id, 'non-agent-member');
+        continue;
+      }
+      if (member.retiredAt) {
+        this.emitWakeSuppressed(message, channel, member.id, 'retired');
+        continue;
+      }
+      if (member.id === message.senderId) {
+        this.emitWakeSuppressed(message, channel, member.id, 'sender-self');
+        continue;
+      }
+      if (alreadyMentioned.has(member.id)) {
+        // Already covered by alertMentionedMembers with reason='mention'.
+        continue;
+      }
+      // Per-`(member, channelId)` channel-read quota bucket
+      // (L11). Separate from the mention bucket so ordinary
+      // channel chatter doesn't starve the mention-fanout quota.
+      if (!this.consumeChannelReadQuota(message.organizationId, member.id, channel.id)) {
+        this.emitWakeSuppressed(message, channel, member.id, 'quota');
+        continue;
+      }
+      fanout.push(this.alertMember(message, member.id, channel, 'channel-read'));
+    }
+    await Promise.all(fanout);
+  }
+
+  private emitWakeSuppressed(
+    message: Message,
+    channel: Channel | null,
+    memberId: string,
+    reason: WakeSuppressedReason,
+  ): void {
+    this.realtime.emit(
+      SocketEventNames.wakeSuppressed,
+      {
+        organizationId: message.organizationId,
+        channelId: channel?.id,
+        threadId: message.threadId,
+        memberId,
+        messageId: message.id,
+        reason,
+        occurredAt: new Date().toISOString(),
+      },
+      [orgRoom(message.organizationId), memberRoom(memberId)],
+    );
+  }
+
+  /**
+   * Realtime emit for `channel.pass` tool execution. Called by the
+   * tool's `execute` method via the ConversationService instance
+   * passed into the tool context.
+   */
+  emitAgentPassed(input: {
+    organizationId: string;
+    memberId: string;
+    runId: string;
+    channelId?: string;
+    threadId?: string;
+    reason: ChannelPassReason;
+    note?: string;
+  }): void {
+    this.realtime.emit(
+      SocketEventNames.agentPassed,
+      {
+        organizationId: input.organizationId,
+        channelId: input.channelId,
+        threadId: input.threadId,
+        memberId: input.memberId,
+        runId: input.runId,
+        reason: input.reason,
+        ...(input.note !== undefined ? { note: input.note } : {}),
+        occurredAt: new Date().toISOString(),
+      },
+      [
+        orgRoom(input.organizationId),
+        memberRoom(input.memberId),
+        ...(input.channelId ? [channelRoom(input.channelId)] : []),
+        ...(input.threadId ? [threadRoom(input.threadId)] : []),
+      ],
+    );
+  }
+
+  /**
+   * Shadow-mode verification result for a `channel.pass` decision.
+   * Emitted as a `decision:verification_result` socket event for
+   * audit/metrics, no runtime enforcement.
+   */
+  emitDecisionVerification(input: {
+    organizationId: string;
+    memberId: string;
+    runId: string;
+    channelId?: string;
+    threadId?: string;
+    decision: 'channel.pass';
+    claimedReason: string;
+    verified: boolean;
+    failureKinds: readonly string[];
+  }): void {
+    this.realtime.emit(
+      SocketEventNames.decisionVerification,
+      {
+        organizationId: input.organizationId,
+        channelId: input.channelId,
+        threadId: input.threadId,
+        memberId: input.memberId,
+        runId: input.runId,
+        decision: input.decision,
+        claimedReason: input.claimedReason,
+        verified: input.verified,
+        failureKinds: [...input.failureKinds],
+        occurredAt: new Date().toISOString(),
+      },
+      [
+        orgRoom(input.organizationId),
+        memberRoom(input.memberId),
+        ...(input.channelId ? [channelRoom(input.channelId)] : []),
+        ...(input.threadId ? [threadRoom(input.threadId)] : []),
+      ],
+    );
+  }
+
+  /** Realtime emit for `channel.handoff` tool execution. */
+  emitAgentHandoff(input: {
+    organizationId: string;
+    runId: string;
+    messageId: string;
+    channelId?: string;
+    threadId?: string;
+    fromMemberId: string;
+    toMemberId: string;
+    reason: string;
+    complete: boolean;
+  }): void {
+    this.realtime.emit(
+      SocketEventNames.agentHandoff,
+      {
+        organizationId: input.organizationId,
+        channelId: input.channelId,
+        threadId: input.threadId,
+        fromMemberId: input.fromMemberId,
+        toMemberId: input.toMemberId,
+        runId: input.runId,
+        messageId: input.messageId,
+        complete: input.complete,
+        reason: input.reason,
+        occurredAt: new Date().toISOString(),
+      },
+      [
+        orgRoom(input.organizationId),
+        memberRoom(input.fromMemberId),
+        memberRoom(input.toMemberId),
+        ...(input.channelId ? [channelRoom(input.channelId)] : []),
+        ...(input.threadId ? [threadRoom(input.threadId)] : []),
+      ],
+    );
   }
 
   sendMessage(input: {
@@ -343,6 +582,8 @@ export class ConversationService {
     parentMessageId?: string;
     attachmentIds?: string[];
     metadata?: { runId?: string; goalMode?: boolean };
+    /** L10 — client-supplied idempotency key. */
+    clientMessageId?: string;
   }) {
     requireOrganization(this.repo, input.organizationId);
 
@@ -351,9 +592,27 @@ export class ConversationService {
       throw new Error(`Sender not found: ${input.senderId}`);
     }
 
+    // Resolve writability FIRST so the dedupe fast-path below can't
+    // hand back a cached message to a sender who has since lost
+    // channel access. Mirrors the transport-layer guard.
     const channel = input.channelId
       ? this.requireWritableChannel(input.organizationId, input.channelId, sender.id)
       : null;
+
+    // L10 — if a clientMessageId is provided and a message with the
+    // same thread-scoped idempotency key already exists, short-circuit
+    // and return it.
+    if (input.clientMessageId) {
+      const existing = this.repo.findMessageByClientId?.(
+        input.organizationId,
+        input.senderId,
+        input.threadId,
+        input.clientMessageId,
+      );
+      if (existing) {
+        return existing;
+      }
+    }
 
     this.repo.ensureThread({
       id: input.threadId,
@@ -369,14 +628,19 @@ export class ConversationService {
     if (input.parentMessageId) {
       const parent = this.requireMessage(input.organizationId, input.parentMessageId);
 
-      const parentSender = this.repo.getMember(input.organizationId, parent.senderId);
-      if (parentSender?.kind === AGENT_KIND) {
-        mentions.add(parent.senderId);
-      }
-
-      for (const mention of this.repo.listMessageMentions(parent.id)) {
-        mentions.add(mention.memberId);
-      }
+      // L8 — smart parent-mention inheritance. The original
+      // behaviour inherited the FULL parent.mentions set, which
+      // turned every threaded reply into a fanout amplifier: a
+      // 5-step thread re-pinged everyone tagged anywhere upstream.
+      //
+      // New rule: always carry forward `parent.senderId` (so
+      // task-promoter assignment threading and supervisor-reply
+      // re-alerts keep working — both rely on the parent sender
+      // being mentioned). Drop transitive parent.mentions
+      // entirely. Three-party hand-offs (A→B→C→A) must include
+      // explicit @-mentions in the new message body; the
+      // rewritten prompt documents this requirement.
+      mentions.add(parent.senderId);
     }
 
     const message = MessageSchema.parse({
@@ -391,6 +655,7 @@ export class ConversationService {
       content: input.content,
       mentions: [...mentions],
       ...(input.metadata ? { metadata: input.metadata } : {}),
+      ...(input.clientMessageId ? { clientMessageId: input.clientMessageId } : {}),
       createdAt: new Date().toISOString(),
     });
 
@@ -462,6 +727,8 @@ export class ConversationService {
     ignore?: boolean;
     attachmentIds?: string[];
     metadata?: { runId?: string; goalMode?: boolean };
+    /** L10 — client-supplied idempotency key. */
+    clientMessageId?: string;
   }) {
     requireOrganization(this.repo, input.organizationId);
 
@@ -476,6 +743,7 @@ export class ConversationService {
         memberId: input.senderId,
         body: input.content,
         attachmentIds: input.attachmentIds,
+        clientMessageId: input.clientMessageId,
       });
     }
 
@@ -486,6 +754,26 @@ export class ConversationService {
 
     const [firstId, secondId] = [sender.id, recipient.id].sort();
     const channelId = `dm:${firstId}:${secondId}`;
+    let threadId = channelId;
+    let replyChannelId = channelId;
+    if (input.parentMessageId) {
+      const parent = this.requireMessage(input.organizationId, input.parentMessageId);
+      threadId = parent.threadId;
+      replyChannelId = parent.channelId ?? channelId;
+    }
+
+    if (input.clientMessageId) {
+      const existing = this.repo.findMessageByClientId?.(
+        input.organizationId,
+        input.senderId,
+        threadId,
+        input.clientMessageId,
+      );
+      if (existing) {
+        return existing;
+      }
+    }
+
     const dmChannelName = [sender.name, recipient.name].sort().join(' / ');
     const now = new Date().toISOString();
 
@@ -508,15 +796,6 @@ export class ConversationService {
       createdAt: now,
     });
 
-    let threadId = channelId;
-    let replyChannelId = channelId;
-
-    if (input.parentMessageId) {
-      const parent = this.requireMessage(input.organizationId, input.parentMessageId);
-      threadId = parent.threadId;
-      replyChannelId = parent.channelId ?? channelId;
-    }
-
     const message = MessageSchema.parse({
       id: randomUUID(),
       organizationId: input.organizationId,
@@ -529,6 +808,7 @@ export class ConversationService {
       content: input.content,
       mentions: input.mentions ?? [],
       ...(input.metadata ? { metadata: input.metadata } : {}),
+      ...(input.clientMessageId ? { clientMessageId: input.clientMessageId } : {}),
       createdAt: now,
     });
 
@@ -612,6 +892,7 @@ export class ConversationService {
     memberId: string;
     body: string;
     attachmentIds?: string[];
+    clientMessageId?: string;
   }) {
     requireOrganization(this.repo, input.organizationId);
     const member = this.repo.getMember(input.organizationId, input.memberId);
@@ -641,6 +922,18 @@ export class ConversationService {
       createdAt: new Date().toISOString(),
     });
 
+    if (input.clientMessageId) {
+      const existing = this.repo.findMessageByClientId?.(
+        input.organizationId,
+        member.id,
+        channelId,
+        input.clientMessageId,
+      );
+      if (existing) {
+        return existing;
+      }
+    }
+
     const message = MessageSchema.parse({
       id: randomUUID(),
       organizationId: input.organizationId,
@@ -650,6 +943,7 @@ export class ConversationService {
       senderKind: member.kind,
       kind: member.kind,
       content: input.body,
+      ...(input.clientMessageId ? { clientMessageId: input.clientMessageId } : {}),
       createdAt: new Date().toISOString(),
     });
 
@@ -797,7 +1091,7 @@ export class ConversationService {
         continue;
       }
 
-      fanout.push(this.alertMember(message, member.id, channel, mention.kind));
+      fanout.push(this.alertMember(message, member.id, channel, 'mention'));
     }
     await Promise.all(fanout);
   }
@@ -806,12 +1100,24 @@ export class ConversationService {
     message: Message,
     memberId: string,
     channel: Channel | null,
-    reason: string,
+    reason: WakeReason | string,
   ): Promise<void> {
     const member = this.repo.getMember(message.organizationId, memberId);
     if (!member || member.kind !== 'agent' || member.retiredAt) {
       return;
     }
+
+    // Derive the typed wake reason. Callers in this file pass
+    // typed values directly; legacy callers may pass a
+    // MessageMentionKindSchema value — those default to 'mention'.
+    const wakeReason: WakeReason =
+      reason === 'mention' ||
+      reason === 'dm' ||
+      reason === 'channel-read' ||
+      reason === 'handoff' ||
+      reason === 'parent-thread'
+        ? reason
+        : 'mention';
 
     this.realtime.emit(
       SocketEventNames.memberAlerted,
@@ -822,7 +1128,7 @@ export class ConversationService {
         threadId: message.threadId,
         messageId: message.id,
         byMemberId: message.senderId,
-        reason,
+        reason: String(reason),
       },
       [memberRoom(member.id)],
     );
@@ -834,7 +1140,8 @@ export class ConversationService {
       threadId: message.threadId,
       messageId: message.id,
       byMemberId: message.senderId,
-      reason,
+      reason: String(reason),
+      wakeReason,
     });
   }
 
@@ -847,7 +1154,7 @@ export class ConversationService {
     await Promise.all(
       recipients.map(async (recipientId) => {
         try {
-          await this.alertMember(message, recipientId, channel, 'dm');
+          await this.alertMember(message, recipientId, channel, 'dm' as WakeReason);
         } catch (error) {
           console.warn('DM participant alert failed', {
             organizationId: message.organizationId,
@@ -861,9 +1168,16 @@ export class ConversationService {
   }
 
   private shouldSuppressDmWake(message: Message, channel: Channel | null): boolean {
+    // L4 — `Acknowledged.` is no longer the termination protocol;
+    // the new termination is `channel.handoff({ complete: true })`
+    // which already short-circuits the run loop and never reaches
+    // this path. DM-wake suppression stays in for future
+    // metadata-based terminators but no longer pattern-matches on
+    // the literal token.
     if (!channel || channel.kind !== 'dm') return false;
     if (message.kind !== AGENT_KIND) return false;
-    return /^Acknowledged[.!?]?\s*$/i.test(message.content.trim());
+    const handoff = (message.metadata as { handoff?: { complete?: boolean } } | undefined)?.handoff;
+    return handoff?.complete === true;
   }
 
   private publishMentionThrottledSystemMessage(
@@ -901,6 +1215,30 @@ export class ConversationService {
     }
     recent.push(now);
     this.mentionWindows.set(key, recent);
+    return true;
+  }
+
+  /**
+   * L11 — channel-read quota keyed on `(org, member, channelId)`.
+   * Separate from the mention bucket so a heavy broad-wake channel
+   * doesn't starve the mention circuit-breaker. Cap is intentionally
+   * generous because broad-wake is the steady-state.
+   */
+  private consumeChannelReadQuota(
+    organizationId: string,
+    memberId: string,
+    channelId: string,
+  ): boolean {
+    const key = `${organizationId}:${memberId}:${channelId}`;
+    const now = Date.now();
+    const cutoff = now - this.channelReadWindowMs;
+    const recent = (this.channelReadWindows.get(key) ?? []).filter((sample) => sample > cutoff);
+    if (recent.length >= this.channelReadCap) {
+      this.channelReadWindows.set(key, recent);
+      return false;
+    }
+    recent.push(now);
+    this.channelReadWindows.set(key, recent);
     return true;
   }
 

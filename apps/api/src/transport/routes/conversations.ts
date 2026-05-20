@@ -1,6 +1,13 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
-import { createPaginatedSchema, ChannelSchema, IdSchema, MessageSchema, PaginationQuerySchema } from '@ujima/shared';
+import {
+  createPaginatedSchema,
+  ChannelSchema,
+  IdSchema,
+  MessageSchema,
+  PaginationQuerySchema,
+  getDirectMessageThreadId,
+} from '@ujima/shared';
 import { ApiErrorSchema, MessageCreateSchema, OrganizationQuerySchema } from '@ujima/api-schema';
 import type { Repository } from '@ujima/runtime-core';
 import type { AuthService, AuthState, ConversationService, TaskPromoterService } from '@ujima/orchestrator';
@@ -204,6 +211,72 @@ export function registerConversationRoutes(
       const authState = requireConversationSession(auth, req, reply, req.body.organizationId);
       if ('code' in authState) return authState;
       const senderId = authState.member.id;
+      // L10 — client-supplied idempotency key. If the client sent
+      // `clientMessageId` and a message with the same thread-scoped
+      // idempotency key already exists, return it instead of
+      // re-posting. Retried HTTP POSTs (network glitches) no longer
+      // double-wake the channel, while the same key can still be used
+      // independently in another thread.
+      const clientMessageId =
+        typeof req.body.clientMessageId === 'string' && req.body.clientMessageId.length > 0
+          ? req.body.clientMessageId
+          : undefined;
+      const requestedThreadId =
+        'recipientId' in req.body
+          ? resolveDirectMessageThreadId(
+              repo,
+              req.body.organizationId,
+              senderId,
+              req.body.recipientId,
+              req.body.parentMessageId,
+            )
+          : req.body.threadId;
+      if (clientMessageId && requestedThreadId) {
+        // Access-control regression guard: the dedupe fast-path used
+        // to return the cached row BEFORE any thread/channel access
+        // check ran. A member who posted with clientMessageId X,
+        // then got removed from the channel (or a DM thread they
+        // were once a participant of), could re-POST the same key
+        // and still receive the cached message — leaking content
+        // they no longer have access to.
+        //
+        // Revalidate access against the CURRENT membership before
+        // honoring the cache. Falls through to the regular send
+        // path on mismatch — `sendMessage` / `sendDirectMessage`
+        // will run the same check again and reject with the same
+        // error, so this stays the only gate either way.
+        //
+        // First-ever DMs (self or peer-to-peer) are exempt because
+        // their channel + thread are lazily created inside
+        // `sendDirectMessage` / `sendSelfNote` on the first call.
+        // Calling `requireThreadAccess` here on a thread that has
+        // no row AND no backing channel would throw
+        // `Thread not found` and block the initial post — even
+        // though no cached message can exist on a thread that
+        // doesn't exist yet. We detect the "first-ever" case by
+        // checking the persisted state (`getThread` + `getChannel`,
+        // matching what `requireThreadAccess` itself walks); when
+        // either exists, the preflight runs as normal.
+        const threadOrChannelExists =
+          repo.getThread(req.body.organizationId, requestedThreadId) !== null ||
+          repo.getChannel(req.body.organizationId, requestedThreadId) !== null;
+        if (threadOrChannelExists) {
+          conversations.requireThreadAccess(
+            req.body.organizationId,
+            requestedThreadId,
+            senderId,
+          );
+          const existing = repo.findMessageByClientId?.(
+            req.body.organizationId,
+            senderId,
+            requestedThreadId,
+            clientMessageId,
+          );
+          if (existing && existing.threadId === requestedThreadId) {
+            return existing;
+          }
+        }
+      }
       const message =
         'recipientId' in req.body
           ? conversations.sendDirectMessage({
@@ -215,11 +288,13 @@ export function registerConversationRoutes(
               parentMessageId: req.body.parentMessageId,
               ignore: req.body.ignore,
               metadata: req.body.metadata,
+              clientMessageId,
             })
           : conversations.sendMessage({
               ...req.body,
               senderId,
               metadata: req.body.metadata,
+              clientMessageId,
             });
       if (taskPromoter && message.kind === 'human' && message.channelId) {
         try {
@@ -236,6 +311,15 @@ export function registerConversationRoutes(
       }
       return message;
     } catch (err) {
+      const message = errorMessage(err);
+      // requireThreadAccess (and the channel-write guards inside
+      // sendMessage / sendDirectMessage) surface access denials as
+      // `Forbidden: ...`. The schema declares 403 as a valid
+      // response — translate to it instead of falling through to a
+      // generic 400.
+      if (message.startsWith('Forbidden')) {
+        return apiError(reply, 403, message);
+      }
       return routeError(reply, err, {
         notFound: ['Organization not found', 'Sender not found', 'Channel not found', 'Recipient not found'],
         workspaceRoot: true,
@@ -289,6 +373,30 @@ export function registerConversationRoutes(
       return apiError(reply, 404, message);
     }
   });
+}
+
+/** Exported for unit tests. */
+export function resolveDirectMessageThreadId(
+  repo: Repository,
+  organizationId: string,
+  senderId: string,
+  recipientId: string,
+  parentMessageId?: string,
+): string | undefined {
+  // Self-DMs always resolve to `self:<senderId>`, regardless of any
+  // `parentMessageId` the caller passes. `ConversationService.sendSelfNote`
+  // already routes self-notes to that channel, so the route's dedupe
+  // lookup and access check MUST target the same thread — otherwise
+  // a retried self-message carrying a stale parentMessageId dedupes
+  // against the parent's thread (creating duplicate self-notes) or
+  // 403s after the sender loses access to that parent thread.
+  if (recipientId === 'self') {
+    return `self:${senderId}`;
+  }
+  if (parentMessageId) {
+    return repo.getMessage(organizationId, parentMessageId)?.threadId;
+  }
+  return getDirectMessageThreadId(senderId, recipientId);
 }
 
 function requireConversationSession(

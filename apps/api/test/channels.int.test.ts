@@ -214,15 +214,15 @@ describe('E3 channels and mentions', () => {
     ).toThrow(/channel not found/i);
   });
 
-  it('fans out mentions, wakes only the mentioned agent, and replies in the same channel', async () => {
+  it('fans out mentions, wakes channel readers, and replies in the same channel', async () => {
     const fixture = await createFixture({ agentNames: ['frontend-alice', 'frontend-bob'] });
     tempDirs.push(fixture.archiveRoot);
     const realtime = createRealtimeCollector();
-    const alerted: string[] = [];
+    const alerted: Array<{ memberId: string; wakeReason?: string }> = [];
     let conversations!: ConversationService;
     conversations = new ConversationService(fixture.repo, realtime, {
       onMemberAlerted: async (input) => {
-        alerted.push(input.memberId);
+        alerted.push({ memberId: input.memberId, wakeReason: input.wakeReason });
         await conversations.postToChannel({
           organizationId: input.organizationId,
           senderId: input.memberId,
@@ -241,12 +241,17 @@ describe('E3 channels and mentions', () => {
 
     await waitFor(() => {
       const messages = fixture.repo.listChannelMessages(fixture.organizationId, 'general', { limit: 10 }).data;
-      expect(messages).toHaveLength(2);
+      expect(messages).toHaveLength(3);
       expect(messages.some((message) => message.senderId === 'frontend-alice')).toBe(true);
+      expect(messages.some((message) => message.senderId === 'frontend-bob')).toBe(true);
       expect(messages.some((message) => message.content === 'ack from frontend-alice')).toBe(true);
+      expect(messages.some((message) => message.content === 'ack from frontend-bob')).toBe(true);
     });
 
-    expect(alerted).toEqual(['frontend-alice']);
+    expect(alerted).toEqual([
+      { memberId: 'frontend-alice', wakeReason: 'mention' },
+      { memberId: 'frontend-bob', wakeReason: 'channel-read' },
+    ]);
     const mentions = fixture.repo.listMessageMentions(initial.id);
     expect(mentions).toHaveLength(1);
     expect(mentions[0]?.memberId).toBe('frontend-alice');
@@ -820,5 +825,143 @@ describe('E3 channels and mentions', () => {
 
     const allIds = [...page1.data.map((m) => m.id), ...page2.data.map((m) => m.id)].sort();
     expect(allIds).toEqual(['msg-archived-c', 'msg-live-a', 'msg-live-b']);
+  });
+
+  // Race-safety regression: when two concurrent POSTs share a
+  // clientMessageId, `findMessageByClientId` may report "no existing"
+  // for both. The first commit wins migration 021's UNIQUE partial
+  // index; the second's saveMessage recovers by returning the WINNER
+  // row (different `id`, since the request gets a fresh server-side
+  // uuid). publishMessage must detect that dedupe and return early
+  // — otherwise mention replacement, attachment linking, realtime
+  // emit, and wake fanout all reference an id that was never
+  // persisted, and worse, double-notify agents whose first wake
+  // already fired for the winner.
+  it('publishMessage skips realtime emit + side effects on a clientMessageId dedupe', async () => {
+    const fixture = await createFixture({ agentNames: ['frontend-alice'] });
+    tempDirs.push(fixture.archiveRoot);
+    const realtime = createRealtimeCollector();
+    const conversations = new ConversationService(fixture.repo, realtime);
+
+    fixture.repo.ensureThread({
+      id: 'general',
+      organizationId: fixture.organizationId,
+      channelId: 'general',
+      title: 'general',
+      memberIds: [fixture.ownerId, 'frontend-alice'],
+      createdAt: new Date().toISOString(),
+    });
+
+    const sharedClientMessageId = 'retry-token-race';
+
+    const winner = conversations.publishMessage(
+      MessageSchema.parse({
+        id: 'msg-winner',
+        organizationId: fixture.organizationId,
+        threadId: 'general',
+        channelId: 'general',
+        senderId: fixture.ownerId,
+        senderKind: 'human',
+        kind: 'human',
+        content: 'first to commit',
+        mentions: [],
+        clientMessageId: sharedClientMessageId,
+        createdAt: '2026-05-04T19:07:01.000Z',
+      }),
+      [],
+    );
+    const eventsAfterWinner = realtime.events.length;
+    expect(winner.id).toBe('msg-winner');
+    expect(eventsAfterWinner).toBeGreaterThan(0);
+
+    // Second arrival with the SAME idempotency key but a fresh
+    // server-generated id — emulates the loser of a concurrent retry.
+    const loser = conversations.publishMessage(
+      MessageSchema.parse({
+        id: 'msg-loser',
+        organizationId: fixture.organizationId,
+        threadId: 'general',
+        channelId: 'general',
+        senderId: fixture.ownerId,
+        senderKind: 'human',
+        kind: 'human',
+        content: 'second arrival',
+        mentions: [],
+        clientMessageId: sharedClientMessageId,
+        createdAt: '2026-05-04T19:07:01.050Z',
+      }),
+      [],
+    );
+
+    // The dedupe must return the winner row (not the loser's payload).
+    expect(loser.id).toBe('msg-winner');
+    expect(loser.content).toBe('first to commit');
+    // No additional realtime emit fired for the deduped attempt —
+    // agents that already woke for the winner must NOT be re-woken.
+    expect(realtime.events.length).toBe(eventsAfterWinner);
+    // Only one persisted row — the winner.
+    expect(fixture.repo.getMessage(fixture.organizationId, 'msg-loser')).toBeNull();
+    expect(fixture.repo.getMessage(fixture.organizationId, 'msg-winner')?.content).toBe(
+      'first to commit',
+    );
+  });
+
+  // Access-control regression: the clientMessageId fast-path used to
+  // return the cached row BEFORE any writable-channel / thread-access
+  // validation ran. A member who posted with key X, then lost channel
+  // access (member removed, channel archived), could re-POST the same
+  // key and still receive the cached message — an access-control
+  // leak. Now `requireWritableChannel` runs FIRST, so the second send
+  // rejects with the same error a fresh send would, regardless of
+  // whether a cached row exists under that key.
+  it('rejects a clientMessageId replay against a channel that has since been archived', async () => {
+    const fixture = await createFixture({ agentNames: ['frontend-alice'] });
+    tempDirs.push(fixture.archiveRoot);
+    const realtime = createRealtimeCollector();
+    const conversations = new ConversationService(fixture.repo, realtime);
+
+    fixture.repo.ensureThread({
+      id: 'general',
+      organizationId: fixture.organizationId,
+      channelId: 'general',
+      title: 'general',
+      memberIds: [fixture.ownerId, 'frontend-alice'],
+      createdAt: new Date().toISOString(),
+    });
+
+    const sharedClientMessageId = 'retry-after-archive';
+
+    const first = conversations.sendMessage({
+      organizationId: fixture.organizationId,
+      threadId: 'general',
+      channelId: 'general',
+      senderId: fixture.ownerId,
+      content: 'before archive',
+      clientMessageId: sharedClientMessageId,
+    });
+    expect(first.content).toBe('before archive');
+
+    // Archive the channel — `requireActiveChannel` rejects archived
+    // channels, which is what `requireWritableChannel` reaches before
+    // the dedupe shortcut now runs.
+    const general = fixture.repo.getChannel(fixture.organizationId, 'general')!;
+    fixture.repo.saveChannel({
+      ...general,
+      archivedAt: new Date().toISOString(),
+    });
+
+    // The retry must NOT hand back the cached row. Pre-fix the
+    // shortcut returned `first` here; post-fix the writability check
+    // throws before the lookup runs.
+    expect(() =>
+      conversations.sendMessage({
+        organizationId: fixture.organizationId,
+        threadId: 'general',
+        channelId: 'general',
+        senderId: fixture.ownerId,
+        content: 'after archive',
+        clientMessageId: sharedClientMessageId,
+      }),
+    ).toThrow(/Channel is archived/);
   });
 });

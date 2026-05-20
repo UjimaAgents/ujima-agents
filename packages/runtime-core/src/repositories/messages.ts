@@ -15,49 +15,115 @@ export interface PaginatedMessages {
 export function saveMessage(db: DbHandle, message: Message): Message {
   const payload = MessageSchema.parse(message);
 
-  db.prepare(
-    `INSERT INTO messages (
-      id,
-      organization_id,
-      thread_id,
-      channel_id,
-      parent_message_id,
-      sender_id,
-      sender_kind,
-      kind,
-      content,
-      reasoning_content,
-      mentions,
-      tool_calls,
-      metadata,
-      created_at,
-      edited_at,
-      deleted_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    payload.id,
-    payload.organizationId,
-    payload.threadId,
-    payload.channelId ?? null,
-    payload.parentMessageId ?? null,
-    payload.senderId,
-    payload.senderKind,
-    payload.kind,
-    payload.content,
-    payload.reasoningContent ?? null,
-    JSON.stringify(payload.mentions),
-    JSON.stringify(payload.toolCalls ?? []),
-    JSON.stringify(payload.metadata ?? {}),
-    payload.createdAt,
-    payload.editedAt ?? null,
-    payload.deletedAt ?? null,
-  );
+  // L10 — persist the client-supplied idempotency key into the
+  // metadata JSON blob so `findMessageByClientId` can recover it
+  // on retry. We deliberately do not add a SQL column today; the
+  // JSON-scan path is enough for the retry-glitch use case and
+  // avoids a larger schema migration. Keep the blob shape:
+  //   { ...metadata, clientMessageId: '...' }
+  //
+  // Race-safety: migration 021 created a UNIQUE partial index on
+  // (organization_id, sender_id, json_extract(metadata,
+  // '$.clientMessageId')). Two concurrent inserts with the same
+  // (org, sender, clientMessageId) will both pass the application
+  // lookup but only one will commit — the other hits
+  // SQLITE_CONSTRAINT, and we recover by returning the row that
+  // won the race. This matches the lookup-hit semantics in
+  // conversations.ts (request returns the existing message,
+  // wake-fanout fires only once).
+  const metadataBlob: Record<string, unknown> = {
+    ...(payload.metadata ?? {}),
+    ...(payload.clientMessageId ? { clientMessageId: payload.clientMessageId } : {}),
+  };
 
-  return payload;
+  try {
+    db.prepare(
+      `INSERT INTO messages (
+        id,
+        organization_id,
+        thread_id,
+        channel_id,
+        parent_message_id,
+        sender_id,
+        sender_kind,
+        kind,
+        content,
+        reasoning_content,
+        mentions,
+        tool_calls,
+        metadata,
+        created_at,
+        edited_at,
+        deleted_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      payload.id,
+      payload.organizationId,
+      payload.threadId,
+      payload.channelId ?? null,
+      payload.parentMessageId ?? null,
+      payload.senderId,
+      payload.senderKind,
+      payload.kind,
+      payload.content,
+      payload.reasoningContent ?? null,
+      JSON.stringify(payload.mentions),
+      JSON.stringify(payload.toolCalls ?? []),
+      JSON.stringify(metadataBlob),
+      payload.createdAt,
+      payload.editedAt ?? null,
+      payload.deletedAt ?? null,
+    );
+    return payload;
+  } catch (error) {
+    if (isUniqueConstraintViolation(error) && payload.clientMessageId) {
+      // Another concurrent insert won the race for this
+      // clientMessageId. Recover by returning the winner — same
+      // semantics as the lookup-hit path. No wake fanout from
+      // this caller because we're not the one who inserted.
+      const winner = findMessageByClientId(
+        db,
+        payload.organizationId,
+        payload.senderId,
+        payload.threadId,
+        payload.clientMessageId,
+      );
+      if (winner) return winner;
+    }
+    throw error;
+  }
+}
+
+/**
+ * SQLite UNIQUE constraint detection. Bun's sqlite + better-sqlite3
+ * both surface the constraint as a regular Error with the code
+ * `SQLITE_CONSTRAINT_UNIQUE` (or the broader `SQLITE_CONSTRAINT`).
+ * String-matching the message keeps this driver-agnostic.
+ */
+function isUniqueConstraintViolation(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const err = error as { code?: unknown; message?: unknown };
+  if (typeof err.code === 'string') {
+    if (err.code === 'SQLITE_CONSTRAINT_UNIQUE') return true;
+    if (err.code === 'SQLITE_CONSTRAINT') return true;
+  }
+  if (typeof err.message === 'string') {
+    if (/UNIQUE\s+constraint\s+failed/i.test(err.message)) return true;
+  }
+  return false;
 }
 
 export function updateMessage(db: DbHandle, message: Message): Message {
   const payload = MessageSchema.parse(message);
+
+  // B4 fix — preserve `clientMessageId` inside the stored metadata
+  // blob on update, matching the saveMessage path. Without this,
+  // any edit / re-publish / compaction strips the idempotency
+  // token and a subsequent retry would no longer dedupe.
+  const metadataBlob: Record<string, unknown> = {
+    ...(payload.metadata ?? {}),
+    ...(payload.clientMessageId ? { clientMessageId: payload.clientMessageId } : {}),
+  };
 
   db.prepare(
     `UPDATE messages
@@ -86,7 +152,7 @@ export function updateMessage(db: DbHandle, message: Message): Message {
     payload.reasoningContent ?? null,
     JSON.stringify(payload.mentions),
     JSON.stringify(payload.toolCalls ?? []),
-    JSON.stringify(payload.metadata ?? {}),
+    JSON.stringify(metadataBlob),
     payload.editedAt ?? null,
     payload.deletedAt ?? null,
     payload.organizationId,
@@ -106,6 +172,38 @@ export function getMessage(
     .get(organizationId, messageId) as Row | null;
 
   if (!row) return null;
+  const attachments = listMessageAttachmentsForMessageIds(db, [messageId]).get(messageId);
+  return rowToMessage(row, attachments);
+}
+
+/**
+ * L10 — idempotency lookup. Searches for a previously saved message
+ * whose metadata JSON blob carries the same `clientMessageId` from
+ * the same sender in the same org and thread. Uses SQLite's
+ * json_extract so the scan is bounded by the (org, sender, thread)
+ * prefix on the messages table; even on busy orgs this is cheap
+ * because clientMessageId dedup only runs when the client explicitly
+ * sends one (so only for retried POSTs).
+ */
+export function findMessageByClientId(
+  db: DbHandle,
+  organizationId: string,
+  senderId: string,
+  threadId: string,
+  clientMessageId: string,
+): Message | null {
+  const row = db
+    .prepare(
+      `SELECT * FROM messages
+       WHERE organization_id = ? AND sender_id = ? AND thread_id = ?
+         AND json_extract(metadata, '$.clientMessageId') = ?
+       ORDER BY created_at DESC, id DESC
+       LIMIT 1`,
+    )
+    .get(organizationId, senderId, threadId, clientMessageId) as Row | null;
+
+  if (!row) return null;
+  const messageId = rowString(row, 'id');
   const attachments = listMessageAttachmentsForMessageIds(db, [messageId]).get(messageId);
   return rowToMessage(row, attachments);
 }
@@ -312,7 +410,7 @@ export function deleteMessages(
 function rowToMessage(row: Row, attachments: Attachment[] = []): Message {
   const kind = rowString(row, 'kind');
   const content = rowString(row, 'content');
-  const metadata = metadataFromRow(row.metadata);
+  const { metadata, clientMessageId } = parseRowMetadata(row.metadata);
   return MessageSchema.parse({
     id: rowString(row, 'id'),
     organizationId: rowString(row, 'organization_id'),
@@ -328,20 +426,48 @@ function rowToMessage(row: Row, attachments: Attachment[] = []): Message {
     toolCalls: parseJsonArrayRaw(row.tool_calls),
     attachments,
     ...(metadata ? { metadata } : {}),
+    ...(clientMessageId ? { clientMessageId } : {}),
     createdAt: rowString(row, 'created_at'),
     editedAt: optionalRowString(row, 'edited_at'),
     deletedAt: optionalRowString(row, 'deleted_at'),
   });
 }
 
-function metadataFromRow(raw: unknown): Message['metadata'] {
-  if (typeof raw !== 'string' || raw.length === 0 || raw === '{}') return undefined;
+/**
+ * Split the stored metadata blob into the structured metadata
+ * (parsed by MessageMetadataSchema) and the top-level
+ * `clientMessageId` field. L10 — clientMessageId is persisted
+ * inside the same blob to avoid a SQL migration, but exposed as
+ * a top-level field on the parsed Message.
+ */
+function parseRowMetadata(raw: unknown): {
+  metadata: Message['metadata'];
+  clientMessageId?: string;
+} {
+  if (typeof raw !== 'string' || raw.length === 0 || raw === '{}') {
+    return { metadata: undefined };
+  }
   try {
-    const result = MessageMetadataSchema.safeParse(JSON.parse(raw));
-    if (!result.success || result.data === undefined) return undefined;
-    return Object.keys(result.data).length > 0 ? result.data : undefined;
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const clientMessageId =
+      typeof parsed.clientMessageId === 'string' && parsed.clientMessageId.length > 0
+        ? parsed.clientMessageId
+        : undefined;
+    // Strip clientMessageId out before letting the metadata schema
+    // see it — the schema doesn't declare it, and `.strict()` is
+    // not used so unknown keys are dropped silently, but being
+    // explicit keeps the contract clear.
+    const { clientMessageId: _, ...rest } = parsed;
+    void _;
+    const result = MessageMetadataSchema.safeParse(rest);
+    if (!result.success || result.data === undefined) {
+      return { metadata: undefined, clientMessageId };
+    }
+    const metadata =
+      Object.keys(result.data).length > 0 ? result.data : undefined;
+    return { metadata, clientMessageId };
   } catch {
-    return undefined;
+    return { metadata: undefined };
   }
 }
 

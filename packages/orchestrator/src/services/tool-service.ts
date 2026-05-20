@@ -1,4 +1,4 @@
-import type { ResourceType, ToolAction, SpiritRole } from '@ujima/shared';
+import type { ResourceType, ToolAction, SpiritRole, WakeReason } from '@ujima/shared';
 import type { PermissionMiddleware, PermissionCheckInput } from '@ujima/permissions';
 import { buildShellApprovalScope } from './shell-scope.js';
 
@@ -31,6 +31,13 @@ export interface ToolInvocationInput {
    * invocation path (which is treated the same as `'worker'`).
    */
   spiritRole?: SpiritRole;
+  /**
+   * Why the run that originated this invocation was woken. Plumbed
+   * down so `checkToolPolicy` can enforce the mandatory-reply
+   * contract on `wakeReason === 'mention'`. Resolved at
+   * ToolServiceImpl from the run row when not supplied.
+   */
+  wakeReason?: WakeReason | null;
 }
 
 export interface ToolInvocationResult {

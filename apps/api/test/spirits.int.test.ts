@@ -925,6 +925,115 @@ describe('SpiritService alert dispatch — Phase 2.C', () => {
     expect(lastCall.input.role).toBe('supervisor');
   });
 
+  // Regression: pre-fix, runSupervisorAlertTurn decided success purely
+  // from `outcome.finalText.trim()`. Under the read-all/speak-when-useful
+  // palette the supervisor replies via `channel.reply` (a terminating
+  // tool), which intentionally leaves `finalText` empty — the tool
+  // already wrote the visible message. Without the terminating-tool
+  // gate, every tool-based mention reply gets misclassified as
+  // `must_reply_failed` and the canned fallback overwrites the real
+  // answer. This test pins the corrected behaviour.
+  it('mention turn that replies via channel.reply is NOT classified as must_reply_failed', async () => {
+    const replyToolModel = new MockLanguageModelV3({
+      doStream: async () => ({
+        stream: simulateReadableStream<LanguageModelV3StreamPart>({
+          chunks: [
+            {
+              type: 'tool-call',
+              toolCallId: 'call-reply-1',
+              toolName: 'channel.reply',
+              input: JSON.stringify({ body: 'On it — rolling out auth.' }),
+            },
+            {
+              type: 'finish',
+              usage: v3Usage(8, 4),
+              finishReason: { unified: 'tool-calls' as const, raw: 'tool-calls' },
+            },
+          ],
+        }),
+      }),
+    }) as unknown as LanguageModel;
+
+    const fixture = await createFixture({
+      staticModel: replyToolModel,
+      // Stub tool service — we only care that the dispatcher SEES the
+      // terminating tool fired in `result.steps`. We don't need an
+      // actual message published for the gate logic itself.
+      toolInvoke: async () => ({
+        ok: true,
+        output: { status: 'completed', result: 'noop' },
+      }),
+    });
+    tempDirs.push(fixture.archiveRoot);
+
+    const { session } = fixture.taskSessions.create({
+      organizationId: fixture.organizationId,
+      requestedBy: fixture.ownerId,
+      prompt: 'Ship auth',
+      team: ['frontend-alice'],
+    });
+    fixture.spirits.spawn({
+      organizationId: fixture.organizationId,
+      taskSessionId: session.id,
+      memberId: 'frontend-alice',
+    });
+    const sp = fixture.repo.getSpiritByTriple(
+      fixture.organizationId,
+      session.id,
+      'frontend-alice',
+      'worker',
+    )!;
+    fixture.spirits.updateStatus(fixture.organizationId, sp.id, 'running');
+
+    const general = fixture.repo.getChannel(fixture.organizationId, 'general')!;
+    const askMessage = fixture.conversations.postToChannel({
+      organizationId: fixture.organizationId,
+      senderId: fixture.ownerId,
+      channelId: general.id,
+      body: '@frontend-alice status?',
+    });
+
+    const dispatch = await fixture.spirits.handleAlert({
+      organizationId: fixture.organizationId,
+      memberId: 'frontend-alice',
+      messageId: askMessage.id,
+      channelId: general.id,
+      threadId: askMessage.threadId,
+      byMemberId: fixture.ownerId,
+      reason: 'mention',
+      wakeReason: 'mention',
+    });
+
+    expect(dispatch.kind).toBe('replied');
+    if (dispatch.kind !== 'replied') throw new Error('expected replied');
+    // The dispatcher must NOT misclassify this as must_reply_failed
+    // and must NOT publish a fallback on top of the tool reply.
+    expect(dispatch.outcome.fallback).toBe(false);
+    expect(dispatch.outcome.reason).toBe('ok');
+    // `message: null` signals "the terminating tool already wrote
+    // the visible reply; the dispatcher published nothing on top".
+    expect(dispatch.outcome.message).toBeNull();
+
+    // Persisted-state regression: the completed run row MUST carry
+    // `terminatingTool: 'channel.reply'` so `/runs/:id` and the
+    // list/detail endpoints report it, and pass-rate / reply-rate
+    // metrics (terminatingTool x wakeReason) read the right value.
+    // Pre-fix, the run save only wrote status/step/summary/endedAt
+    // and dropped this field.
+    const supervisorSpirit = fixture.repo.getSpiritByTriple(
+      fixture.organizationId,
+      session.id,
+      'frontend-alice',
+      'supervisor',
+    );
+    expect(supervisorSpirit).not.toBeNull();
+    const supervisorRunId = supervisorSpirit!.runId;
+    expect(supervisorRunId).toBeDefined();
+    const supervisorRun = fixture.repo.getRun(fixture.organizationId, supervisorRunId!);
+    expect(supervisorRun?.terminatingTool).toBe('channel.reply');
+    expect(supervisorRun?.status).toBe('completed');
+  });
+
   it('caps supervisor turns per session and posts deterministic fallback after the cap', async () => {
     const fixture = await createFixture({
       staticModel: makeTextOnlyModel('Status update.'),

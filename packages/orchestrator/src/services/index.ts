@@ -7,6 +7,7 @@ import {
   orgRoom,
   threadRoom,
   type MemberAlertFailureStage,
+  type WakeReason,
 } from '@ujima/shared';
 import { AiService } from '../ai-service.js';
 import { ActiveSpiritRegistry } from './active-spirit-registry.js';
@@ -204,6 +205,12 @@ interface WakeMemberInput {
   messageId: string;
   byMemberId: string;
   reason: string;
+  /**
+   * Typed wake reason — drives mandatory-reply enforcement
+   * downstream (policy rejects `channel.pass`/`self.note` for
+   * `wakeReason === 'mention'`).
+   */
+  wakeReason: WakeReason;
 }
 
 interface WakeMemberDeps {
@@ -211,6 +218,39 @@ interface WakeMemberDeps {
   runs: Pick<SpiritService, 'createRun'>;
   realtime: Pick<ApiServiceContext['realtime'], 'emit'>;
   repo: Pick<ApiRepository, 'findActiveRunForMemberThread'>;
+}
+
+/**
+ * L10 — per-`(org, member, threadId)` async mutex around the
+ * findActiveRunForMemberThread → createRun TOCTOU window. Without
+ * this, two near-simultaneous broad-wake alerts for the same agent
+ * on the same thread both observe "no active run" and each spawn
+ * a fresh run, leaving two concurrent runs reading the same thread
+ * state. Module-scoped so daemon-wide ordering is preserved across
+ * the service builder.
+ */
+const createRunMutexes = new Map<string, Promise<unknown>>();
+
+function createRunMutexKey(input: WakeMemberInput): string {
+  return `${input.organizationId}:${input.memberId}:${input.threadId}`;
+}
+
+async function withCreateRunMutex<T>(
+  input: WakeMemberInput,
+  body: () => Promise<T>,
+): Promise<T> {
+  const key = createRunMutexKey(input);
+  const previous = createRunMutexes.get(key) ?? Promise.resolve();
+  const next = previous.then(body, body);
+  createRunMutexes.set(
+    key,
+    next.catch(() => undefined).finally(() => {
+      if (createRunMutexes.get(key) === next) {
+        createRunMutexes.delete(key);
+      }
+    }),
+  );
+  return next;
 }
 
 function errMessage(error: unknown): string {
@@ -264,6 +304,7 @@ export async function wakeMemberWithFailureEvents(
       threadId: input.threadId,
       byMemberId: input.byMemberId,
       reason: input.reason,
+      wakeReason: input.wakeReason,
     });
   } catch (error) {
     emitMemberAlertFailed(
@@ -275,41 +316,63 @@ export async function wakeMemberWithFailureEvents(
     return;
   }
 
+  // Emit a spirit-dispatch observability event regardless of kind so
+  // `debounced` and `no-active-spirit` are no longer invisible.
+  deps.realtime.emit(
+    SocketEventNames.spiritDispatch,
+    {
+      organizationId: input.organizationId,
+      memberId: input.memberId,
+      kind: dispatch.kind,
+      occurredAt: new Date().toISOString(),
+    },
+    [orgRoom(input.organizationId), memberRoom(input.memberId)],
+  );
+
   if (dispatch.kind !== 'no-active-spirit') {
     return;
   }
 
-  const activeRun = deps.repo.findActiveRunForMemberThread(
-    input.organizationId,
-    input.memberId,
-    input.threadId,
-  );
-  if (activeRun) {
-    return;
-  }
-
-  let run: Awaited<ReturnType<SpiritService['createRun']>>;
-  try {
-    run = await deps.runs.createRun({
-      organizationId: input.organizationId,
-      agentId: input.memberId,
-      threadId: input.threadId,
-      summary: `Mentioned by ${input.byMemberId} via ${input.reason} on message ${input.messageId}`,
-    });
-  } catch (error) {
-    emitMemberAlertFailed(deps.realtime, input, 'run_create', errMessage(error));
-    return;
-  }
-
-  if (run.status === 'failed') {
-    emitMemberAlertFailed(
-      deps.realtime,
-      input,
-      'run_failed',
-      run.summary || 'Run failed',
-      run.id,
+  // L10 — serialize the findActiveRunForMemberThread → createRun
+  // window per `(org, member, threadId)` so two near-simultaneous
+  // broad-wake alerts can't both observe "no run" and each spawn
+  // their own.
+  await withCreateRunMutex(input, async () => {
+    const activeRun = deps.repo.findActiveRunForMemberThread(
+      input.organizationId,
+      input.memberId,
+      input.threadId,
     );
-  }
+    if (activeRun) {
+      return;
+    }
+
+    let run: Awaited<ReturnType<SpiritService['createRun']>>;
+    try {
+      run = await deps.runs.createRun({
+        organizationId: input.organizationId,
+        agentId: input.memberId,
+        threadId: input.threadId,
+        summary: `Wake (${input.wakeReason}) by ${input.byMemberId} on message ${input.messageId}`,
+        wakeReason: input.wakeReason,
+        sourceMessageId: input.messageId,
+        byMemberId: input.byMemberId,
+      });
+    } catch (error) {
+      emitMemberAlertFailed(deps.realtime, input, 'run_create', errMessage(error));
+      return;
+    }
+
+    if (run.status === 'failed') {
+      emitMemberAlertFailed(
+        deps.realtime,
+        input,
+        'run_failed',
+        run.summary || 'Run failed',
+        run.id,
+      );
+    }
+  });
 }
 
 export function createApiServices(context: ApiServicesContext): ApiServices {
@@ -326,6 +389,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     messageId: string;
     byMemberId: string;
     reason: string;
+    wakeReason: WakeReason;
   }) => Promise<void> | void = () => undefined;
 
   const conversations = new ConversationService(context.repo, context.realtime, {

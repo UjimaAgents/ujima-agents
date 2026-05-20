@@ -100,6 +100,13 @@ export interface RepositoryReader {
   ): PaginatedMessages;
   getProviderCredential(organizationId: string, providerName: string): string | null;
   listRunSteps?(organizationId: string, runId: string): RunStep[];
+  /**
+   * Optional lookup so ai-service can read the wake-trigger
+   * sourceMessageId off the run row to anchor the
+   * `<thread-state>` injection. Optional for backwards
+   * compatibility with narrower repo surfaces (mocks, tests).
+   */
+  getRun?(organizationId: string, runId: string): RunState | null;
 }
 
 /**
@@ -121,6 +128,20 @@ export interface ConversationRepository extends RepositoryReader {
   getThread(organizationId: string, threadId: string): ConversationThread | null;
   ensureThread(thread: ConversationThread): ConversationThread;
   getMessage(organizationId: string, messageId: string): Message | null;
+  /**
+   * L10 — idempotency lookup. Returns a previously persisted
+   * message with the same (org, sender, thread, clientMessageId)
+   * tuple, or null. Optional on the interface so older repository
+   * implementations don't have to implement it immediately — the
+   * conversation service treats `undefined` as "no idempotency
+   * support" and falls back to the always-insert path.
+   */
+  findMessageByClientId?(
+    organizationId: string,
+    senderId: string,
+    threadId: string,
+    clientMessageId: string,
+  ): Message | null;
   getLatestHumanMessageInThread(organizationId: string, threadId: string): Message | null;
   listMessages(
     organizationId: string,

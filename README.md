@@ -228,6 +228,14 @@ graph TD
 
 If you are developing Ujima itself or building custom extensions:
 
+For local browser testing or Codex Run actions, use the combined dev launcher:
+
+```bash
+bun run dev:local
+```
+
+This builds the API package dependency graph first, then starts the local API on `http://localhost:7511` and the web app on `http://localhost:3452`. The pre-start build keeps runtime packages such as `@ujima/orchestrator` in sync with source changes because the API imports workspace packages from their compiled `dist` entrypoints.
+
 ### Running Tests
 To run unit and integration tests across the packages:
 ```bash

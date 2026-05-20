@@ -53,3 +53,4 @@ logs
 # VS Code extension build artifacts (rebuild with package script; do not commit binaries)
 *.vsix
 **/.stage/
+ujima_agents_runtime_plan.md

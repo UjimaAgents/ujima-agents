@@ -45,6 +45,7 @@ export function buildConversationMessagePayload(
   parentMessageId?: string,
   attachmentIds?: string[],
   metadata?: { goalMode?: boolean },
+  clientMessageId?: string,
 ):
   | {
       organizationId: string;
@@ -54,6 +55,7 @@ export function buildConversationMessagePayload(
       attachmentIds?: string[];
       parentMessageId?: string;
       metadata?: { goalMode?: boolean };
+      clientMessageId?: string;
     }
   | {
       organizationId: string;
@@ -64,6 +66,7 @@ export function buildConversationMessagePayload(
       attachmentIds?: string[];
       parentMessageId?: string;
       metadata?: { goalMode?: boolean };
+      clientMessageId?: string;
     } {
   if (transport.recipientId) {
     return {
@@ -74,6 +77,7 @@ export function buildConversationMessagePayload(
       attachmentIds,
       parentMessageId,
       ...(metadata ? { metadata } : {}),
+      ...(clientMessageId ? { clientMessageId } : {}),
     };
   }
 
@@ -86,6 +90,7 @@ export function buildConversationMessagePayload(
     attachmentIds,
     parentMessageId,
     ...(metadata ? { metadata } : {}),
+    ...(clientMessageId ? { clientMessageId } : {}),
   };
 }
 

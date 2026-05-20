@@ -12,6 +12,7 @@
   "scripts": {
     "build": "turbo run build",
     "dev": "turbo run dev --concurrency=100",
+    "dev:local": "bash scripts/dev-local.sh",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
     "test": "vitest run --minWorkers=1 --maxWorkers=4",

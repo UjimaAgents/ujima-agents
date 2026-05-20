@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { SocketEventNames } from '@ujima/shared';
+import { SocketEventNames, type RunState } from '@ujima/shared';
 import { wakeMemberWithFailureEvents } from './index.js';
 
 const noopRepo = {
@@ -14,6 +14,7 @@ const baseInput = {
   messageId: 'msg-1',
   byMemberId: 'human-1',
   reason: 'mention',
+  wakeReason: 'mention' as const,
 };
 
 describe('wakeMemberWithFailureEvents', () => {
@@ -72,9 +73,13 @@ describe('wakeMemberWithFailureEvents', () => {
       baseInput,
     );
 
-    expect(emit).toHaveBeenCalledTimes(1);
-    expect(emit.mock.calls[0]?.[0]).toBe(SocketEventNames.memberAlertFailed);
-    expect(emit.mock.calls[0]?.[1]).toMatchObject({
+    // Loophole-fix Phase 4 — every wake also emits `spirit:dispatch`
+    // for observability (was previously invisible). The mandatory
+    // failure event is the LAST call when run_failed.
+    expect(emit).toHaveBeenCalledTimes(2);
+    expect(emit.mock.calls[0]?.[0]).toBe(SocketEventNames.spiritDispatch);
+    expect(emit.mock.calls[1]?.[0]).toBe(SocketEventNames.memberAlertFailed);
+    expect(emit.mock.calls[1]?.[1]).toMatchObject({
       stage: 'run_failed',
       runId: 'run-1',
       error: 'Tool action blocked',
@@ -99,9 +104,10 @@ describe('wakeMemberWithFailureEvents', () => {
       baseInput,
     );
 
-    expect(emit).toHaveBeenCalledTimes(1);
-    expect(emit.mock.calls[0]?.[0]).toBe(SocketEventNames.memberAlertFailed);
-    expect(emit.mock.calls[0]?.[1]).toMatchObject({
+    expect(emit).toHaveBeenCalledTimes(2);
+    expect(emit.mock.calls[0]?.[0]).toBe(SocketEventNames.spiritDispatch);
+    expect(emit.mock.calls[1]?.[0]).toBe(SocketEventNames.memberAlertFailed);
+    expect(emit.mock.calls[1]?.[1]).toMatchObject({
       stage: 'run_create',
       error: 'database locked',
     });
@@ -134,6 +140,62 @@ describe('wakeMemberWithFailureEvents', () => {
       baseInput,
     );
     expect(createRun).not.toHaveBeenCalled();
-    expect(emit).not.toHaveBeenCalled();
+    // spirit:dispatch is always emitted now (Phase 4 observability),
+    // even when there's an active run and we short-circuit out.
+    expect(emit).toHaveBeenCalledTimes(1);
+    expect(emit.mock.calls[0]?.[0]).toBe(SocketEventNames.spiritDispatch);
+  });
+
+  // L10 — when two near-simultaneous wakes hit the same
+  // (org, member, threadId), the createRun mutex must serialize
+  // them so only ONE run is spawned. Without the mutex,
+  // findActiveRunForMemberThread is TOCTOU and both callers see
+  // "no run" and each fire createRun.
+  it('coalesces two concurrent wakes into a single createRun (L10 mutex)', async () => {
+    const emit = vi.fn();
+    // Track the side-effects across calls. The first createRun
+    // should "create" a run; subsequent findActiveRunForMemberThread
+    // calls should see it (simulating real repo behaviour where
+    // saveRun → next find returns the row).
+    let activeRun: RunState | null = null;
+    const createRun = vi.fn(async () => {
+      // Tiny artificial delay to widen the race window.
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      activeRun = {
+        id: 'run-coalesce',
+        organizationId: baseInput.organizationId,
+        agentId: baseInput.memberId,
+        threadId: baseInput.threadId,
+        status: 'running',
+        step: 'running',
+        summary: 'running',
+        startedAt: new Date().toISOString(),
+      };
+      return {
+        ...activeRun,
+        status: 'queued' as const,
+        step: 'queued',
+        summary: 'queued',
+      };
+    });
+    const repo = {
+      findActiveRunForMemberThread: vi.fn(() => activeRun),
+    };
+    const deps = {
+      spirits: {
+        handleAlert: vi.fn(async () => ({ kind: 'no-active-spirit' as const })),
+      },
+      runs: { createRun },
+      realtime: { emit },
+      repo,
+    };
+
+    // Two concurrent calls. Mutex must serialize → only one createRun.
+    await Promise.all([
+      wakeMemberWithFailureEvents(deps, baseInput),
+      wakeMemberWithFailureEvents(deps, baseInput),
+    ]);
+
+    expect(createRun).toHaveBeenCalledTimes(1);
   });
 });

@@ -319,7 +319,14 @@ describe('checkToolPolicy', () => {
       ).toEqual({ allowed: true, requiresApproval: false });
     });
 
-    it('channel.* tools still respect the role.tools allowlist', () => {
+    it('channel.* posting and read tools are baseline-allowed regardless of role.tools', () => {
+      // Design choice: channel.post / channel.reply / channel.dm /
+      // channel.read / channel.list / message are baseline
+      // conversational primitives. Every agent gets them in its
+      // palette (via ALWAYS_AVAILABLE_AGENT_TOOLS) regardless of
+      // what role.tools declares. Fine-grained access restrictions
+      // (e.g., "junior-qa can't DM senior-*") belong to the
+      // permissions middleware, NOT the role.tools allowlist.
       const team = loadAgentTeam({
         name: 'Channel Org',
         workspace: { root: workspaceRoot },
@@ -330,11 +337,11 @@ describe('checkToolPolicy', () => {
           {
             name: 'silent-role',
             title: 'Silent',
-            instructions: 'No channel access.',
+            instructions: 'Role with no channel tools listed.',
             provider: 'openai',
             model: 'gpt-5.4',
             workspaceScopes: ['apps/web'],
-            tools: ['filesystem'], // explicitly no channel.*
+            tools: ['filesystem'], // role doesn't list channel.* — should still be allowed
             channels: ['general'],
           },
         ],
@@ -342,9 +349,12 @@ describe('checkToolPolicy', () => {
         channels: [{ name: 'general', kind: 'general', topic: 'General' }],
       } as Record<string, unknown>);
 
-      expect(
-        checkToolPolicy(team, 'silent-role', 'channel.post', 'message'),
-      ).toMatchObject({ allowed: false, reason: expect.stringContaining('cannot use tool') });
+      // All baseline conversational tools are allowed for every role.
+      for (const toolId of ['channel.post', 'channel.reply', 'channel.dm', 'channel.read', 'channel.list', 'message']) {
+        expect(
+          checkToolPolicy(team, 'silent-role', toolId, 'message'),
+        ).toEqual({ allowed: true, requiresApproval: false });
+      }
     });
 
     it('self.note is always allowed even when the role does not list it', () => {
@@ -377,5 +387,89 @@ describe('checkToolPolicy', () => {
       ).toEqual({ allowed: true, requiresApproval: false });
     });
 
+  });
+
+  describe('mandatory-reply enforcement (L3)', () => {
+    function buildTeam(): AgentTeamHandle {
+      return loadAgentTeam({
+        name: 'Mention Org',
+        workspace: { root: workspaceRoot },
+        providers: {
+          openai: { kind: 'openai', defaultModel: 'gpt-5.4', models: ['gpt-5.4'] },
+        },
+        roles: [
+          {
+            name: 'engineer',
+            title: 'Engineer',
+            instructions: 'Reply when tagged.',
+            provider: 'openai',
+            model: 'gpt-5.4',
+            workspaceScopes: ['apps/web'],
+            tools: ['filesystem', 'channel.read', 'channel.reply'],
+            channels: ['general'],
+          },
+        ],
+        agents: [],
+        channels: [{ name: 'general', kind: 'general', topic: 'General' }],
+      } as Record<string, unknown>);
+    }
+
+    it('rejects channel.pass when wakeReason === mention', () => {
+      const team = buildTeam();
+      const result = checkToolPolicy(team, 'engineer', 'channel.pass', 'message', undefined, {
+        wakeReason: 'mention',
+      });
+      expect(result.allowed).toBe(false);
+      expect(result.reason).toMatch(/mandatory-reply/);
+    });
+
+    it('rejects self.note when wakeReason === mention (escape-hatch closed)', () => {
+      const team = buildTeam();
+      const result = checkToolPolicy(team, 'engineer', 'self.note', 'message', undefined, {
+        wakeReason: 'mention',
+      });
+      expect(result.allowed).toBe(false);
+      expect(result.reason).toMatch(/mandatory-reply/);
+    });
+
+    it('allows channel.pass for non-mention wake reasons', () => {
+      const team = buildTeam();
+      expect(
+        checkToolPolicy(team, 'engineer', 'channel.pass', 'message', undefined, {
+          wakeReason: 'channel-read',
+        }),
+      ).toEqual({ allowed: true, requiresApproval: false });
+      expect(
+        checkToolPolicy(team, 'engineer', 'channel.pass', 'message', undefined, {
+          wakeReason: 'dm',
+        }),
+      ).toEqual({ allowed: true, requiresApproval: false });
+      // Programmatic runs without wakeReason also pass through.
+      expect(
+        checkToolPolicy(team, 'engineer', 'channel.pass', 'message'),
+      ).toEqual({ allowed: true, requiresApproval: false });
+    });
+
+    it('allows self.note for non-mention wake reasons', () => {
+      const team = buildTeam();
+      expect(
+        checkToolPolicy(team, 'engineer', 'self.note', 'message', undefined, {
+          wakeReason: 'channel-read',
+        }),
+      ).toEqual({ allowed: true, requiresApproval: false });
+    });
+
+    it('keeps channel.reply available for mention runs (the contract IS to reply)', () => {
+      const team = buildTeam();
+      const result = checkToolPolicy(
+        team,
+        'engineer',
+        'channel.reply',
+        'message',
+        undefined,
+        { wakeReason: 'mention' },
+      );
+      expect(result.allowed).toBe(true);
+    });
   });
 });

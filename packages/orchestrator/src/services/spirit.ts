@@ -30,6 +30,7 @@ import {
   type Spirit,
   type SpiritRole,
   type TaskSession,
+  type WakeReason,
   AGENT_KIND,
 } from '@ujima/shared';
 import {
@@ -70,7 +71,12 @@ import { pendingApprovalRunSummary } from './approval-summary.js';
 import { applyDashboardTeamOverrides } from './dashboard-team-overrides.js';
 import { isLiveRunStatus, isLiveSpiritStatus } from './live-status.js';
 import type { AiService } from '../ai-service.js';
-import { runUsedThreadPublishingTool } from './run-reply-guard.js';
+import {
+  findTerminatingTool,
+  findTerminatingToolFromRunSteps,
+  runUsedChannelPass,
+  runUsedThreadPublishingTool,
+} from './run-reply-guard.js';
 import {
   createMessageCursor,
   isMessageAfterCursor,
@@ -168,6 +174,12 @@ export interface CreateRunInput {
   agentId: string;
   threadId: string;
   summary?: string;
+  /** Why this run was woken — drives mandatory-reply enforcement. */
+  wakeReason?: WakeReason;
+  /** Message id that triggered this run, when applicable. */
+  sourceMessageId?: string;
+  /** Who triggered the wake (for mandatory-reply failure attribution). */
+  byMemberId?: string;
 }
 
 export interface RunSpiritInput {
@@ -192,6 +204,16 @@ export interface RunSpiritOutcome {
   iterations: number;
   toolCalls: number;
   tokensUsed: number;
+  /**
+   * Name of the highest-precedence terminating tool that fired in this
+   * run, or `null` if none fired. Publishing tools (`message`,
+   * `channel.post`, `channel.reply`, `channel.dm`, `channel.handoff`)
+   * indicate the agent already delivered its reply via tool call, so
+   * callers must NOT treat an empty `finalText` as a failure.
+   * `channel.pass` is reported here too — it terminates the run but
+   * publishes nothing.
+   */
+  terminatingTool: string | null;
 }
 
 export interface RunDetailAggregate {
@@ -226,11 +248,25 @@ export interface SpiritAlertInput {
   threadId: string;
   byMemberId: string;
   reason: string;
+  /**
+   * L7 — typed wake reason. When `wakeReason === 'mention'` the
+   * supervisor turn is held to the same mandatory-reply contract
+   * as the worker path: `channel.pass` / `self.note` are rejected
+   * by policy, and a supervisor turn that ends without publishing
+   * is fail-converted.
+   */
+  wakeReason?: WakeReason;
 }
 
 export interface SpiritSupervisorReplyOutcome {
   taskSessionId: string;
-  message: Message;
+  /**
+   * The message we published from this dispatcher. `null` when the
+   * supervisor already published its reply via a terminating tool
+   * (e.g. `channel.reply`) — in that case the tool wrote the visible
+   * message and the dispatcher emits nothing on top.
+   */
+  message: Message | null;
   fallback: boolean;
   reason: string;
 }
@@ -353,12 +389,30 @@ export class SpiritService {
     if (!target) {
       return { kind: 'no-active-spirit' };
     }
-    if (this.shouldDebounceSupervisorAlert(input.organizationId, input.memberId, target.taskSessionId)) {
+    // L7 — when the wake is `@mention`, include the messageId in
+    // the debounce key so legitimate fast hand-offs (A→B→A in <2s)
+    // aren't silently swallowed by the supervisor debounce window.
+    // Channel-read wakes keep the original key so heavy broad-wake
+    // chatter is still debounced.
+    const debounceMessageKey = input.wakeReason === 'mention' ? input.messageId : undefined;
+    if (
+      this.shouldDebounceSupervisorAlert(
+        input.organizationId,
+        input.memberId,
+        target.taskSessionId,
+        debounceMessageKey,
+      )
+    ) {
       return { kind: 'debounced' };
     }
 
     this.supervisorLastAlertAt.set(
-      this.supervisorDebounceKey(input.organizationId, input.memberId, target.taskSessionId),
+      this.supervisorDebounceKey(
+        input.organizationId,
+        input.memberId,
+        target.taskSessionId,
+        debounceMessageKey,
+      ),
       Date.now(),
     );
 
@@ -684,7 +738,21 @@ export class SpiritService {
     }
     this.emit(SocketEventNames.spiritUpdated, running);
 
-    const allowedToolIds = this.resolveToolAllowlist(teamRole.tools, role, input.toolAllowlist);
+    // Mandatory-reply enforcement at the palette layer (matches
+    // ai-service.ts wake-run path): when the supervisor turn is
+    // triggered by a mention wake, strip channel.pass and
+    // self.note so the model cannot opt out of replying.
+    const resolvedAllowlist = this.resolveToolAllowlist(teamRole.tools, role, input.toolAllowlist);
+    const supervisorRunRow =
+      spirit.runId !== undefined
+        ? this.repo.getRun(input.organizationId, spirit.runId)
+        : undefined;
+    const supervisorMandatoryReply = supervisorRunRow?.wakeReason === 'mention';
+    const allowedToolIds = supervisorMandatoryReply
+      ? resolvedAllowlist.filter(
+          (toolId) => toolId !== 'channel.pass' && toolId !== 'self.note',
+        )
+      : resolvedAllowlist;
     const builtInToolDefs = this.buildToolDefinitions(allowedToolIds, {
       organizationId: input.organizationId,
       runId: spirit.runId ?? spirit.id,
@@ -696,6 +764,7 @@ export class SpiritService {
       // the role's allowlist happens to declare.
       spiritRole: role,
       team,
+      repo: this.repo,
     });
     // Attached MCP tools layer ON TOP of the built-in palette. The
     // model sees one unified tool set; the namespacing keeps tool
@@ -726,6 +795,10 @@ export class SpiritService {
         stopWhen: stepCountIs(maxIterations),
         ...(this.maxOutputTokens !== undefined ? { maxOutputTokens: this.maxOutputTokens } : {}),
         temperature: this.temperature,
+        // Force step-0 tool call so the spirit commits to either a
+        // visible action or `channel.pass` quickly. Continuation
+        // steps stay `auto` so multi-tool sequences are unaffected.
+        toolChoice: 'required-first-step',
         onChunk: (chunk) => {
           if (chunk.kind === 'reasoning') streamedReasoning += chunk.delta;
           this.emitRunChunk(
@@ -843,15 +916,29 @@ export class SpiritService {
       });
       this.repo.saveSpirit(completed);
       this.registry.unregister(completed.organizationId, completed.memberId, completed.id);
+      // Persisted run-steps act as a safety net when provider/SDK
+      // result shapes drop tool names from the final step object —
+      // the tool service writes the canonical id after each call.
+      const persistedRunSteps = spirit.runId
+        ? this.repo.listRunSteps?.(input.organizationId, spirit.runId) ?? []
+        : [];
+      const terminatingTool =
+        findTerminatingTool(result) ?? findTerminatingToolFromRunSteps(persistedRunSteps);
       if (spirit.runId) {
         const run = this.repo.getRun(input.organizationId, spirit.runId);
         if (run) {
+          // Persist `terminatingTool` on the row so /runs/:id and
+          // list/detail endpoints report it correctly. Without this,
+          // metrics that count runs by `terminatingTool x wakeReason`
+          // (pass-rate, reply-rate) read null for every successful
+          // `channel.reply` / `channel.pass` turn.
           this.repo.saveRun({
             ...run,
             status: 'completed',
             step: 'completed',
             summary: lastText || run.summary,
             endedAt: new Date().toISOString(),
+            terminatingTool,
           });
         }
       }
@@ -868,6 +955,7 @@ export class SpiritService {
         iterations: totalTurns,
         toolCalls: totalToolCalls,
         tokensUsed: totalTokens,
+        terminatingTool,
       };
     } catch (err) {
       if (findToolApprovalRequiredError(err)) {
@@ -877,6 +965,12 @@ export class SpiritService {
           updatedAt: new Date().toISOString(),
         });
         this.repo.saveSpirit(waiting);
+        // Approval-paused turns: a tool fired but its result is
+        // deferred, so we can only consult persisted run-steps here.
+        const pausedRunSteps = spirit.runId
+          ? this.repo.listRunSteps?.(input.organizationId, spirit.runId) ?? []
+          : [];
+        const pausedTerminatingTool = findTerminatingToolFromRunSteps(pausedRunSteps);
         if (spirit.runId) {
           const run = this.repo.getRun(input.organizationId, spirit.runId);
           if (run) {
@@ -885,6 +979,7 @@ export class SpiritService {
               status: 'waiting_for_approval',
               step: 'waiting_for_approval',
               summary: pendingApprovalRunSummary(this.repo, input.organizationId, spirit.runId),
+              terminatingTool: pausedTerminatingTool,
             });
           }
         }
@@ -895,6 +990,7 @@ export class SpiritService {
           iterations: totalTurns,
           toolCalls: totalToolCalls,
           tokensUsed: totalTokens,
+          terminatingTool: pausedTerminatingTool,
         };
       }
       const message = errorMessage(err);
@@ -907,6 +1003,14 @@ export class SpiritService {
       });
       this.repo.saveSpirit(failed);
       this.registry.unregister(failed.organizationId, failed.memberId, failed.id);
+      // Mirror terminatingTool on the failure path too — a turn can
+      // fail after a tool fired (e.g. policy block on a later step),
+      // and postmortem analysis benefits from seeing that the agent
+      // *did* terminate via a specific tool before the run died.
+      const failedRunSteps = spirit.runId
+        ? this.repo.listRunSteps?.(input.organizationId, spirit.runId) ?? []
+        : [];
+      const failedTerminatingTool = findTerminatingToolFromRunSteps(failedRunSteps);
       if (spirit.runId) {
         const run = this.repo.getRun(input.organizationId, spirit.runId);
         if (run) {
@@ -916,6 +1020,7 @@ export class SpiritService {
             step: 'failed',
             summary: message,
             endedAt: new Date().toISOString(),
+            terminatingTool: failedTerminatingTool,
           });
         }
       }
@@ -963,6 +1068,30 @@ export class SpiritService {
       messageContent: sourceMessage?.content,
     });
 
+    // B1 fix — persist wakeReason / byMemberId / sourceMessageId on
+    // the spirit's run row BEFORE the supervisor turn fires. This is
+    // what ToolServiceImpl reads to enforce the mandatory-reply
+    // contract (policy.ts rejects channel.pass and self.note when
+    // wakeReason === 'mention'). Without this, supervisor turns
+    // silently bypass the contract.
+    if (input.wakeReason) {
+      const supervisorSpirit = this.repo
+        .listActiveSpiritsForMember(input.organizationId, input.memberId)
+        .find((s) => s.taskSessionId === taskSessionId);
+      const runId = supervisorSpirit?.runId;
+      if (runId) {
+        const run = this.repo.getRun(input.organizationId, runId);
+        if (run) {
+          this.repo.saveRun({
+            ...run,
+            wakeReason: input.wakeReason,
+            sourceMessageId: input.messageId,
+            byMemberId: input.byMemberId,
+          });
+        }
+      }
+    }
+
     try {
       const outcome = await this.run({
         organizationId: input.organizationId,
@@ -978,8 +1107,67 @@ export class SpiritService {
         supervisorTurnCount: session.supervisorTurnCount + 1,
         updatedAt: new Date().toISOString(),
       });
-      const replyText = outcome.finalText.trim() || `Currently on step ${session.status} of #${session.slug}.`;
-      const message = this.publishSupervisorReply(taskSessionId, input, replyText, false);
+      // L7 — mandatory-reply for supervisor turns. When a
+      // `@mention` lands and the supervisor produces no reply
+      // text AND no terminating tool fired, the fallback summary
+      // masks a real failure (the human asked, the agent didn't
+      // answer). For mention wakes we surface the failure event
+      // INSTEAD of publishing the canned status fallback.
+      //
+      // Why also check `terminatingTool`: under the read-all/
+      // speak-when-useful palette, supervisors reply via
+      // terminating tools (`channel.reply`, `channel.post`,
+      // `channel.dm`, `message`) which intentionally leave
+      // `finalText` empty — the tool already wrote the visible
+      // reply. Without this gate, every tool-based mention reply
+      // gets misclassified as `must_reply_failed` and the canned
+      // fallback overwrites the real answer. `channel.pass` is a
+      // terminator that publishes nothing, so it stays a failure
+      // (and the palette layer above strips it anyway when the
+      // wake reason is `mention`).
+      const replyText = outcome.finalText.trim();
+      const publishedViaTool =
+        outcome.terminatingTool !== null && outcome.terminatingTool !== 'channel.pass';
+      if (!replyText && !publishedViaTool && input.wakeReason === 'mention') {
+        this.realtime.emit(
+          SocketEventNames.memberMustReplyFailed,
+          {
+            organizationId: input.organizationId,
+            runId: outcome.spirit.runId ?? input.messageId,
+            memberId: input.memberId,
+            byMemberId: input.byMemberId,
+            channelId: input.channelId,
+            threadId: input.threadId,
+            messageId: input.messageId,
+            occurredAt: new Date().toISOString(),
+          },
+          [orgRoom(input.organizationId), memberRoom(input.memberId)],
+        );
+        const failureMessage = this.publishSupervisorFallback(
+          taskSessionId,
+          input,
+          'mandatory-reply violated: supervisor produced no answer to a @mention',
+        );
+        return {
+          taskSessionId,
+          message: failureMessage,
+          fallback: true,
+          reason: 'must_reply_failed',
+        };
+      }
+      // If the supervisor already published its reply via a
+      // terminating tool, the tool wrote the message — emit no
+      // additional fallback/status text on top.
+      if (publishedViaTool) {
+        return {
+          taskSessionId,
+          message: null,
+          fallback: false,
+          reason: 'ok',
+        };
+      }
+      const finalText = replyText || `Currently on step ${session.status} of #${session.slug}.`;
+      const message = this.publishSupervisorReply(taskSessionId, input, finalText, false);
       return { taskSessionId, message, fallback: false, reason: 'ok' };
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
@@ -1073,17 +1261,24 @@ export class SpiritService {
     return `${organizationId}:${memberId}:${taskSessionId}:supervisor`;
   }
 
-  private supervisorDebounceKey(organizationId: string, memberId: string, taskSessionId: string): string {
-    return `${organizationId}:${memberId}:${taskSessionId}`;
+  private supervisorDebounceKey(
+    organizationId: string,
+    memberId: string,
+    taskSessionId: string,
+    messageId?: string,
+  ): string {
+    const base = `${organizationId}:${memberId}:${taskSessionId}`;
+    return messageId ? `${base}:msg:${messageId}` : base;
   }
 
   private shouldDebounceSupervisorAlert(
     organizationId: string,
     memberId: string,
     taskSessionId: string,
+    messageId?: string,
   ): boolean {
     const last = this.supervisorLastAlertAt.get(
-      this.supervisorDebounceKey(organizationId, memberId, taskSessionId),
+      this.supervisorDebounceKey(organizationId, memberId, taskSessionId, messageId),
     );
     if (last === undefined) return false;
     return Date.now() - last < this.supervisorDebounceMs;
@@ -1189,6 +1384,10 @@ export class SpiritService {
       step: 'queued',
       summary: input.summary ?? 'Run queued',
       startedAt: new Date().toISOString(),
+      wakeReason: input.wakeReason ?? null,
+      sourceMessageId: input.sourceMessageId ?? null,
+      byMemberId: input.byMemberId ?? null,
+      terminatingTool: null,
     });
 
     this.repo.saveRun(run);
@@ -1493,14 +1692,21 @@ export class SpiritService {
       }
 
       const text = (result.text || streamedText).trim();
-      const reply = text || 'Acknowledged.';
       const reasoningContent = extractReasoningChunk(result) ?? (streamedReasoning.trim() || undefined);
-      const skipFinalThreadMessage = runUsedThreadPublishingTool(result);
+      const runSteps = this.repo.listRunSteps?.(run.organizationId, run.id) ?? [];
+      const terminatingTool = findTerminatingTool(result) ?? findTerminatingToolFromRunSteps(runSteps);
+      const usedPass = runUsedChannelPass(result) || terminatingTool === 'channel.pass';
+      const finalThreadId = run.threadId;
+      const channelId = finalThreadId
+        ? this.repo.getThread(run.organizationId, finalThreadId)?.channelId
+        : undefined;
+      const wakeReason = (running.wakeReason ?? null) as WakeReason | null;
+      const now = new Date().toISOString();
       const goalToolCalls = result.steps.flatMap((step: (typeof result.steps)[number]) => step?.toolCalls ?? []);
       const goalArtifactToolCall =
         (await appendGoalArtifactToolCall(goalToolCalls, team.workspace.root)) ??
         (await appendGoalArtifactToolCall(
-          (this.repo.listRunSteps?.(run.organizationId, run.id) ?? []).map((step) => ({
+          runSteps.map((step) => ({
             toolName: step.toolId,
             input: {
               action: step.action,
@@ -1510,6 +1716,76 @@ export class SpiritService {
           })),
           team.workspace.root,
         ));
+
+      if (usedPass && text.length > 0) {
+        this.realtime.emit(
+          SocketEventNames.agentPassedWithText,
+          {
+            organizationId: run.organizationId,
+            channelId,
+            threadId: run.threadId,
+            memberId: run.agentId,
+            runId: run.id,
+            droppedText: text,
+            occurredAt: now,
+          },
+          this.getRooms(running),
+        );
+      }
+
+      if (terminatingTool === 'channel.pass') {
+        this.realtime.emit(
+          SocketEventNames.runSilentCompletion,
+          {
+            organizationId: run.organizationId,
+            runId: run.id,
+            memberId: run.agentId,
+            wakeReason: wakeReason ?? undefined,
+            occurredAt: now,
+          },
+          this.getRooms(running),
+        );
+        return this.completeRun(running, 'passed', 'channel.pass');
+      }
+
+      if (!terminatingTool && text.length === 0 && !goalArtifactToolCall) {
+        if (wakeReason === 'mention') {
+          const byMemberId = running.byMemberId ?? run.agentId;
+          const messageId = running.sourceMessageId;
+          if (messageId) {
+            this.realtime.emit(
+              SocketEventNames.memberMustReplyFailed,
+              {
+                organizationId: run.organizationId,
+                runId: run.id,
+                memberId: run.agentId,
+                byMemberId,
+                channelId,
+                threadId: run.threadId,
+                messageId,
+                occurredAt: now,
+              },
+              this.getRooms(running),
+            );
+          }
+          return this.failRun(running, 'must_reply_failed: agent was @mentioned but did not reply');
+        }
+        this.realtime.emit(
+          SocketEventNames.runEmptyCompletion,
+          {
+            organizationId: run.organizationId,
+            runId: run.id,
+            memberId: run.agentId,
+            wakeReason: wakeReason ?? undefined,
+            occurredAt: now,
+          },
+          this.getRooms(running),
+        );
+        return this.completeRun(running, 'empty', null);
+      }
+
+      const reply = text || 'Goal artifact updated.';
+      const skipFinalThreadMessage = terminatingTool !== null || runUsedThreadPublishingTool(result);
       let publishedMessages = 0;
       let publishedGoalArtifact = false;
       let lastPublishedContent: string | undefined;
@@ -1577,7 +1853,6 @@ export class SpiritService {
         lastPublishedContent = content;
       }
 
-      const finalThreadId = run.threadId;
       const finalArtifactMessageNeeded = !!goalArtifactToolCall && !publishedGoalArtifact;
       const shouldPublishFinalMessage =
         !!finalThreadId &&
@@ -1619,7 +1894,7 @@ export class SpiritService {
         }
       }
 
-      return this.completeRun(running, reply);
+      return this.completeRun(running, terminatingTool ?? reply, terminatingTool);
     } catch (error) {
       if (findToolApprovalRequiredError(error)) {
         if (this.consumeDeferredApprovalResume(run.organizationId, run.id)) {
@@ -1638,12 +1913,13 @@ export class SpiritService {
     }
   }
 
-  private completeRun(run: RunState, summary: string): RunState {
+  private completeRun(run: RunState, summary: string, terminatingTool: string | null = null): RunState {
     const completed = this.repo.saveRun({
       ...run,
       status: 'completed',
       step: 'completed',
       summary,
+      terminatingTool,
       endedAt: new Date().toISOString(),
     });
 
@@ -1931,6 +2207,7 @@ export class SpiritService {
       taskSessionId: string;
       spiritRole: SpiritRole;
       team: AgentTeamHandle;
+      repo?: ApiRepository;
     },
   ): ToolSet {
     return buildToolDefinitions(toolIds, ctx.team, this.tools, ctx);

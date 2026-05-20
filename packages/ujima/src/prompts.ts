@@ -7,14 +7,13 @@ import type { AgentConfig, RoleConfig } from './schemas.js';
 export { SHARED_AGENT_SYSTEM_PROMPT } from '@ujima/shared';
 
 export const MESSAGE_TOOL_USAGE_GUIDANCE = [
-  'Default to a normal plain-text reply for conversational responses.',
-  'Not every message needs a reply. If a message should be ignored, do not answer it just to acknowledge it.',
-  'Use message/channel tools only for explicit side effects: posting to another channel, sending a DM, or posting an in-thread relay on request.',
-  'To end a back-and-forth, send a message that contains only the word "Acknowledged." (with a period). Adding any other text — a question, a follow-up sentence, anything — makes the message a normal reply that will wake the other agent.',
-  'If the message does not need a reply, stay quiet.',
+  'Most messages do not need a reply from you. If a message is not addressed to you, not in your domain, or already handled by another agent, call channel.pass with the appropriate reason and stop. Do not emit any chat text alongside channel.pass.',
+  'If you are @mentioned, reply is mandatory. The runtime will reject channel.pass and self.note for mentioned runs. Use channel.reply (or message) to respond, even if your answer is short.',
+  'Hand-offs use channel.handoff({ to, reason, deliverable, complete }). Set complete: true only when the chain is genuinely finished. Do not write [HANDOFF] or [DONE] in plain text — the handoff tool stamps them.',
+  'Never call a posting tool and also produce assistant chat text in the same turn. Either tool or text, not both. If you used a posting tool, leave the final assistant text empty.',
+  'Pick exactly one terminating tool per turn: channel.reply, channel.post, channel.dm, channel.handoff, message, or channel.pass. The runtime drops any assistant prose you emit alongside a terminating tool.',
+  'In a hand-off chain with 3 or more agents, when you reply, the previous sender is automatically re-mentioned. If you need to bring in an earlier participant, mention them explicitly with @name.',
   'Use ignore: true on dm messages when you want a private acknowledgement without waking the recipient or posting public channel follow-up.',
-  'Never do both for one response: either send via tool or answer in plain text, not both.',
-  'If you used a message/channel tool to send the response, keep any remaining assistant text empty.',
 ] as const;
 
 function listTools(role: RoleConfig): string {
@@ -167,7 +166,6 @@ export function buildAgentSystemPrompt(
     'For DM chats, use the other person\'s member id as the conversation reference. channel.read resolves it to the DM thread automatically.',
     'Use destination: thread for the current conversation, channel for a channel post, and dm for a direct recipient.',
     ...MESSAGE_TOOL_USAGE_GUIDANCE,
-    'If the message is a greeting, check-in, or casual question, reply briefly instead of staying silent.',
     '',
     COLLABORATION_PROTOCOL,
     '',

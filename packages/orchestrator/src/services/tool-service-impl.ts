@@ -7,6 +7,7 @@ import {
   runRoom,
   threadRoom,
   type AuditStatus,
+  type WakeReason,
 } from "@ujima/shared";
 import type { RealtimeService } from "./context.js";
 import type { ConversationService } from "./conversation.js";
@@ -221,6 +222,15 @@ export class ToolServiceImpl implements ToolService {
       preparedInvocation.input?.operation &&
       preparedInvocation.input.operation !== "execute";
 
+    // Resolve wakeReason: prefer the value the caller passed in on
+    // the invocation (the spirit-supervisor path threads it directly);
+    // otherwise read it from the persisted run row. Either way it
+    // flows into checkToolPolicy so the mandatory-reply gate fires.
+    const wakeReason: WakeReason | null | undefined =
+      preparedInvocation.wakeReason ??
+      (this.repo.getRun(preparedInvocation.organizationId, preparedInvocation.runId)
+        ?.wakeReason as WakeReason | null | undefined);
+
     const policy = isSubOperation
       ? { allowed: true, requiresApproval: false, reason: "sub-operation" }
       : preparedInvocation.toolId === "mcp"
@@ -231,7 +241,7 @@ export class ToolServiceImpl implements ToolService {
           preparedInvocation.toolId,
           preparedInvocation.action,
           preparedInvocation.resourcePath,
-          { spiritRole: preparedInvocation.spiritRole },
+          { spiritRole: preparedInvocation.spiritRole, wakeReason },
         );
 
     if (!policy.allowed) {
