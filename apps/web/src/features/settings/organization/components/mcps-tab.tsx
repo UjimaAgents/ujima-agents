@@ -1,7 +1,7 @@
 "use client";
 
 import { Plus, Trash2 } from "lucide-react";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type {
   AgentMcpAttachmentsResponse,
   CreateMcpServerRequest,
@@ -193,10 +193,31 @@ export function McpsTab({
 
   const handleAgentChange = (agentId: string) => {
     setAttachAgentId(agentId);
-    void loadAttachments(agentId).catch((err) => {
-      setError(err instanceof Error ? err.message : "Failed to load attachments.");
-    });
   };
+
+  useEffect(() => {
+    if (!orgId || !activeAgentId) return;
+    let ignore = false;
+    const fetchAttachments = async () => {
+      try {
+        const response = await fetch(
+          `/api/settings/agents/${encodeURIComponent(activeAgentId)}/mcps?organizationId=${encodeURIComponent(orgId)}`,
+        );
+        if (!response.ok) {
+          const body = await response.json().catch(() => null);
+          throw new Error(body?.message ?? "Failed to load attachments.");
+        }
+        const data = (await response.json()) as AgentMcpAttachmentsResponse;
+        if (!ignore) setAttachments(data.attachments);
+      } catch (err) {
+        if (!ignore) setError(err instanceof Error ? err.message : "Failed to load attachments.");
+      }
+    };
+    void fetchAttachments();
+    return () => {
+      ignore = true;
+    };
+  }, [orgId, activeAgentId]);
 
   const displayedAttachments = activeAgentId ? attachments : [];
 
@@ -359,6 +380,7 @@ export function McpsTab({
         throw new Error(body?.message ?? "Failed to delete MCP server.");
       }
       updateServers(servers.filter((server) => server.id !== serverId));
+      setAttachServerId((selectedId) => (selectedId === serverId ? "" : selectedId));
       if (activeAgentId) await loadAttachments(activeAgentId);
       if (editingId === serverId) cancelForm();
     } catch (err) {
