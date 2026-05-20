@@ -106,6 +106,17 @@ export interface RepositoryReader {
    * compatibility with narrower repo surfaces (mocks, tests).
    */
   getRun?(organizationId: string, runId: string): RunState | null;
+  /**
+   * Optional role-agnostic lookup so the wake-run path can pick the
+   * correct `SpiritRole` (worker vs. supervisor) when resolving MCP
+   * attachments. Without this, the resolver defaults to `'worker'`
+   * and a supervisor-only attachment is silently dropped. Crucially
+   * this is NOT `listActiveSpiritsForMember` — that helper filters
+   * to `role = 'worker'` in SQL, so it would still hide supervisor
+   * spirits. `getSpiritByRunId` is keyed directly on `runs.run_id`
+   * and returns whichever role owns the row.
+   */
+  getSpiritByRunId?(organizationId: string, runId: string): Spirit | null;
 }
 
 /**

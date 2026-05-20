@@ -120,6 +120,11 @@ export function listActiveSpiritsForMember(
   // there is a live worker context to answer questions about. This DB
   // query is also the recovery path the in-memory ActiveSpiritRegistry
   // uses on cold start to repopulate itself.
+  //
+  // NB: the role filter is deliberate. Callers that need a role-
+  // agnostic lookup by runId (e.g. AiService picking SpiritRole for
+  // the wake-run MCP resolver) MUST use `getSpiritByRunId` instead —
+  // that one returns any spirit owning the run, worker or supervisor.
   const rows = db
     .prepare(
       `SELECT * FROM spirits

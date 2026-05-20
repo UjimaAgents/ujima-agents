@@ -407,11 +407,23 @@ export function McpsTab({
         `/api/settings/mcps/${encodeURIComponent(serverId)}/test?organizationId=${encodeURIComponent(orgId)}`,
         { method: "POST" },
       );
+      const body = await response.json().catch(() => null);
       if (!response.ok) {
-        const body = await response.json().catch(() => null);
-        throw new Error(body?.message ?? "MCP test failed.");
+        // 502 from the proxy carries the TestMcpResponse body verbatim
+        // (`{ ok: false, error, tools: [], testedAt }`) — surface the
+        // upstream MCP stderr instead of a generic 502. Other failure
+        // statuses (401/404/500) use ApiError's `message`.
+        const errorMessage =
+          (body && typeof body === "object" && typeof (body as { error?: unknown }).error === "string"
+            ? (body as { error: string }).error
+            : undefined) ??
+          (body && typeof body === "object" && typeof (body as { message?: unknown }).message === "string"
+            ? (body as { message: string }).message
+            : undefined) ??
+          "MCP test failed.";
+        throw new Error(errorMessage);
       }
-      const result = (await response.json()) as TestMcpResponse;
+      const result = body as TestMcpResponse;
       if (!result.ok) {
         throw new Error(result.error ?? "MCP test failed.");
       }

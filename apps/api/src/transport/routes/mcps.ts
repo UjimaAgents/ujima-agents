@@ -189,6 +189,12 @@ export function registerMcpRoutes(
       querystring: McpScopedQuerySchema,
       response: {
         200: TestMcpResponseSchema,
+        // The upstream MCP child process couldn't be reached or it crashed
+        // during listTools (npm 404, bad command, transport closed). We
+        // still return the structured TestMcpResponse body — `ok` is false
+        // and `error` carries the upstream stderr — so the UI keeps full
+        // diagnostics while plain HTTP clients see a real failure status.
+        502: TestMcpResponseSchema,
         404: ApiErrorSchema,
         500: ApiErrorSchema,
       },
@@ -198,7 +204,13 @@ export function registerMcpRoutes(
       const forbidden = requireOrgSession(auth, req, reply, req.query.organizationId);
       if (forbidden) return forbidden;
       const result = await mcpRegistry.test(req.query.organizationId, req.params.id);
-      return result;
+      // The daemon reached the MCP runtime but the runtime itself reported
+      // failure (most often `npx` couldn't resolve the package, or the
+      // child closed before `listTools` returned). Surface that as a
+      // 502 — the daemon is acting as a proxy here, and a non-success
+      // body in a 200 response trips up any client that only checks
+      // `response.ok`.
+      return reply.status(result.ok ? 200 : 502).send(result);
     } catch (err) {
       return handle(reply, err);
     }
