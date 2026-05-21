@@ -643,7 +643,7 @@ export class SpiritService {
     if (!member) {
       throw new Error(`Member not found: ${input.memberId}`);
     }
-    const team = requireTeam(this.teamStore);
+    const team = requireTeam(this.teamStore, input.organizationId);
     const organization = this.repo.getOrganization(input.organizationId);
     if (!organization) {
       throw new Error(`Organization not found: ${input.organizationId}`);
@@ -1575,7 +1575,7 @@ export class SpiritService {
     }
 
     applyDashboardTeamOverrides(this.repo, run.organizationId, this.teamStore);
-    const team = requireTeam(this.teamStore);
+    const team = requireTeam(this.teamStore, run.organizationId);
     const member = this.repo.getMember(run.organizationId, run.agentId);
     if (!member) {
       throw new Error(`Member not found: ${run.agentId}`);
@@ -2470,7 +2470,7 @@ export class SpiritService {
 
   private defaultModelResolver(): ModelResolver {
     return ({ organizationId, memberId, role }) => {
-      const team = requireTeam(this.teamStore);
+      const team = requireTeam(this.teamStore, input.organizationId);
       const member = this.repo.getMember(organizationId, memberId);
       if (!member) {
         throw new Error(`Member not found: ${memberId}`);

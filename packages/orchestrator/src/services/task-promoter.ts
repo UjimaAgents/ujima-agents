@@ -429,7 +429,7 @@ export class TaskPromoterService {
           message: input.message,
           recentChannelMessages: recent,
           orgChart: this.repo.getOrganization(input.organizationId)?.organizationChart ?? {},
-          roles: this.listRoleSummaries(),
+          roles: this.listRoleSummaries(input.organizationId),
           activeRuns: this.listActiveTaskSessions(input.organizationId),
         }),
       );
@@ -471,7 +471,7 @@ export class TaskPromoterService {
           channelName: input.channel.name,
           recentChannelMessages: recent,
           orgChart: this.repo.getOrganization(input.organizationId)?.organizationChart ?? {},
-          roles: this.listRoleSummaries(),
+          roles: this.listRoleSummaries(input.organizationId),
           activeRuns: this.listActiveTaskSessions(input.organizationId),
         }),
       });
@@ -487,7 +487,7 @@ export class TaskPromoterService {
   }
 
   private resolvePromoterModel(organizationId: string): LanguageModel | null {
-    const team = this.teamStore?.getTeam();
+    const team = this.teamStore?.getTeam(organizationId);
     if (!team) {
       return null;
     }
@@ -523,8 +523,8 @@ export class TaskPromoterService {
     return null;
   }
 
-  private listRoleSummaries(): { name: string; title: string; channels: string[] }[] {
-    const team = this.teamStore?.getTeam();
+  private listRoleSummaries(organizationId: string): { name: string; title: string; channels: string[] }[] {
+    const team = this.teamStore?.getTeam(organizationId);
     if (!team) {
       return [];
     }

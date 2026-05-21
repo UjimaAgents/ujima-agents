@@ -156,7 +156,7 @@ export class ConfigSyncService {
         );
       }
       const team = loadAgentTeam(migrated.config);
-      this.teamStore.setTeam(team);
+      this.teamStore.setTeam(team, organization.id);
       applyDashboardTeamOverrides(this.repo, organization.id, this.teamStore);
       return { organizationId: organization.id, inferred: false };
     }
@@ -166,7 +166,7 @@ export class ConfigSyncService {
 
     const team = loadAgentTeam(inferred);
     persistTeamConfig(this.repo, organization.id, team);
-    this.teamStore.setTeam(team);
+    this.teamStore.setTeam(team, organization.id);
     applyDashboardTeamOverrides(this.repo, organization.id, this.teamStore);
     return { organizationId: organization.id, inferred: true };
   }
@@ -349,7 +349,7 @@ export class ConfigSyncService {
       this.repo.saveWorkspaceSetting(organizationId, CONFIG_PATH_SETTING_KEY, input.configPath);
     }
 
-    this.teamStore.setTeam(input.team);
+    this.teamStore.setTeam(input.team, organizationId);
     persistTeamConfig(this.repo, organizationId, input.team);
     applyDashboardTeamOverrides(this.repo, organizationId, this.teamStore);
 

@@ -43,7 +43,7 @@ export class BootstrapService {
     }
 
     const snapshot = this.repo.getBootstrapSnapshot(organizationId);
-    const team = this.teamStore.getTeam();
+    const team = this.teamStore.getTeam(organizationId);
     const member = snapshot.organization ? authState.member : undefined;
 
     const accessibleOrgs = authState.authenticated

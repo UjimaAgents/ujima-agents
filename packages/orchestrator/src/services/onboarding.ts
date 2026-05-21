@@ -271,7 +271,7 @@ export class OnboardingService {
       addMemberToDefaultChannels(this.repo, team, organizationId, member);
     }
 
-    this.teamStore.setTeam(team);
+    this.teamStore.setTeam(team, organizationId);
     persistTeamConfig(this.repo, organizationId, team);
 
     return {
