@@ -37,7 +37,7 @@ function readOverrides(
   if (!value) return { roles: [], agents: [] };
 
   try {
-    const team = teamStore.getTeam();
+    const team = teamStore.getTeam(organizationId);
     const members = new Map(
       repo.listMembers(organizationId).map((member) => [member.id, member] as const),
     );
@@ -68,8 +68,12 @@ function upsertBy<T>(items: T[], next: T, keyOf: (item: T) => string): T[] {
   return [...filtered, next];
 }
 
-function applyOverrides(teamStore: TeamStore, overrides: DashboardTeamOverrides): void {
-  const team = teamStore.getTeam();
+function applyOverrides(
+  teamStore: TeamStore,
+  organizationId: string,
+  overrides: DashboardTeamOverrides,
+): void {
+  const team = teamStore.getTeam(organizationId);
   if (!team) return;
 
   const allowedChannelNames = new Set(team.channels.map((channel) => channel.name));
@@ -89,7 +93,7 @@ function applyOverrides(teamStore: TeamStore, overrides: DashboardTeamOverrides)
     team.agents,
   );
 
-  teamStore.setTeam(AgentTeam({ ...team.toJSON(), roles, agents }));
+  teamStore.setTeam(AgentTeam({ ...team.toJSON(), roles, agents }), organizationId);
 }
 
 export function applyDashboardTeamOverrides(
@@ -97,7 +101,7 @@ export function applyDashboardTeamOverrides(
   organizationId: string,
   teamStore: TeamStore,
 ): void {
-  applyOverrides(teamStore, readOverrides(repo, organizationId, teamStore));
+  applyOverrides(teamStore, organizationId, readOverrides(repo, organizationId, teamStore));
 }
 
 export function upsertDashboardTeamOverride(
@@ -118,7 +122,7 @@ export function upsertDashboardTeamOverride(
     roles: input.role
       ? upsertBy(
           roles,
-          mergeRoleOverride(teamStore.getTeam()?.getRole(input.role.name), defineRole(input.role)),
+          mergeRoleOverride(teamStore.getTeam(organizationId)?.getRole(input.role.name), defineRole(input.role)),
           (role) => role.name,
         )
       : roles,
@@ -130,5 +134,5 @@ export function upsertDashboardTeamOverride(
     DASHBOARD_TEAM_OVERRIDES_KEY,
     JSON.stringify(nextOverrides),
   );
-  applyOverrides(teamStore, nextOverrides);
+  applyOverrides(teamStore, organizationId, nextOverrides);
 }

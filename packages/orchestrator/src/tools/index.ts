@@ -15,6 +15,7 @@ import { jobKillTool, jobOutputTool } from './job-tools.js';
 import { downloadTool, fetchTool } from './web-tools.js';
 import { shellTool } from './shell.js';
 import { messageTool } from './message.js';
+import { scheduleTool } from './schedule.js';
 import { webSearchTool } from './web-search.js';
 import {
   supervisorTodoAddTool,
@@ -54,6 +55,7 @@ export const ORCHESTRATOR_TOOLS = {
   web_search: webSearchTool,
   'self.note': selfNoteTool,
   message: messageTool,
+  schedule: scheduleTool,
   'supervisor.todo.add': supervisorTodoAddTool,
   'supervisor.todo.check': supervisorTodoCheckTool,
   'supervisor.todo.list': supervisorTodoListTool,
@@ -63,14 +65,15 @@ export const ORCHESTRATOR_TOOLS = {
 // allowlist.
 //
 // Includes the conversation primitives every agent should be able to
-// reach on any wake: read the channel, post a reply, post a fresh
-// message, send a DM, plus the silent-outcome and private-note
-// tools. Without these in the always-available list, an agent whose
-// role config has `tools: []` ends up with an empty palette and the
-// model either fails or improvises tool-call syntax as prose text
-// (Gemini does this). Keeping these tools always-on means the
-// runtime knows the model's intent through structured tool calls
-// instead of having to guess from free-text output.
+// reach on any wake, plus the schedule tool: read the channel, post a
+// reply, post a fresh message, send a DM, schedule follow-ups, and use
+// the silent-outcome / private-note tools. Without these in the
+// always-available list, an agent whose role config has `tools: []`
+// ends up with an empty palette and the model either fails or
+// improvises tool-call syntax as prose text (Gemini does this).
+// Keeping these tools always-on means the runtime knows the model's
+// intent through structured tool calls instead of having to guess from
+// free-text output.
 //
 // `channel.handoff` stays OPT-IN (must be declared in role.tools)
 // because hand-offs are a workflow primitive, not a baseline
@@ -89,6 +92,7 @@ export const ALWAYS_AVAILABLE_AGENT_TOOLS = Object.freeze([
   'message',
   'channel.read',
   'channel.list',
+  'schedule',
 ] as const);
 
 // Supervisor's strict tool allowlist — read-only / annotation-only tools

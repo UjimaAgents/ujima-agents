@@ -1,5 +1,5 @@
 import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
-import { AuthSessionSchema, AuthUserSchema, type AuthSession, type AuthUser, type Member } from '@ujima/shared';
+import { AuthSessionSchema, AuthUserSchema, type AuthSession, type AuthUser, type Member, type Organization } from '@ujima/shared';
 import type { ApiRepository } from './repository-reader.js';
 
 const PASSWORD_HASH_PREFIX = 'scrypt';
@@ -186,6 +186,41 @@ export class AuthService {
     if (!record) return false;
     this.repo.revokeAuthSession(record.session.id, new Date().toISOString());
     return true;
+  }
+
+  switchOrganization(
+    sessionToken: string | null | undefined,
+    organizationId: string,
+  ): AuthenticatedSession {
+    const state = this.getAuthState(sessionToken);
+    if (!state.authenticated || !state.user) {
+      throw new Error('session required');
+    }
+
+    const emailNormalized = normalizeEmail(state.user.email);
+    const credentials = this.repo.getAuthUserCredentials(organizationId, emailNormalized);
+    if (!credentials) {
+      throw new Error('you do not have access to this organization');
+    }
+
+    const member = this.repo.getMember(organizationId, credentials.user.memberId);
+    if (!member) {
+      throw new Error(`member "${credentials.user.memberId}" no longer exists`);
+    }
+
+    if (sessionToken) {
+      this.logout(sessionToken);
+    }
+
+    return this.issueSession(credentials.user, member);
+  }
+
+  listAccessibleOrganizations(sessionToken?: string | null): Organization[] {
+    const state = this.getAuthState(sessionToken);
+    if (!state.authenticated || !state.user) return [];
+    return this.repo.listOrganizationsForUser(
+      state.user.email.trim().toLowerCase(),
+    ).map((org) => ({ id: org.id, name: org.name } as Organization));
   }
 
   private issueSession(user: AuthUser, member: Member): AuthenticatedSession {

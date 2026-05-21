@@ -17,6 +17,7 @@ import type {
   Organization,
   RunState,
   RunStep,
+  ScheduledJob,
   Spirit,
   SpiritRole,
   TaskSession,
@@ -199,6 +200,12 @@ export interface ConversationRepository extends RepositoryReader {
  * runtime-core `Repository` class satisfies this structurally.
  */
 export interface ApiRepository extends ConversationRepository {
+  listOrganizationsForUser(emailNormalized: string): Organization[];
+  saveScheduledJob(job: ScheduledJob): ScheduledJob;
+  getScheduledJob(organizationId: string, jobId: string): ScheduledJob | null;
+  listScheduledJobs(organizationId: string): ScheduledJob[];
+  deleteScheduledJob(organizationId: string, jobId: string): void;
+  listDueJobsGlobally(): ScheduledJob[];
   saveRun(run: RunState): RunState;
   saveRunStep(step: RunStep): RunStep;
   listRunSteps(organizationId: string, runId: string): RunStep[];
@@ -349,5 +356,5 @@ export interface ApiRepository extends ConversationRepository {
   getAuthSessionByTokenHash(sessionTokenHash: string): StoredAuthSession | null;
   revokeAuthSession(sessionId: string, revokedAt?: string): AuthSession | null;
   touchAuthSession(sessionId: string, lastSeenAt?: string): AuthSession | null;
-  getBootstrapSnapshot(): BootstrapSnapshot;
+  getBootstrapSnapshot(organizationId?: string): BootstrapSnapshot;
 }

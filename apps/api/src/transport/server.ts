@@ -14,6 +14,7 @@ import type {
   ConversationService,
   McpRegistryService,
   OnboardingService,
+  SchedulerService,
   SettingsService,
   SpiritService,
   SupervisorTodoService,
@@ -53,6 +54,7 @@ import {registerMcpRoutes} from "./routes/mcps.js";
 import {registerWorkspaceRoutes} from "./routes/workspaces.js";
 import {registerAgentRoutes} from "./routes/agents.js";
 import {registerOauthRoutes} from "./routes/oauth.js";
+import {registerScheduleRoutes} from "./routes/schedules.js";
 
 const WS_QUEUE_CAP = 256;
 const STARTED_AT = Date.now();
@@ -79,6 +81,7 @@ export interface TransportOptions {
       auth: AuthService;
       bootstrap: BootstrapService;
       onboarding: OnboardingService;
+      scheduler?: SchedulerService;
       settings: SettingsService;
       taskPromoter: TaskPromoterService;
       taskSessions: TaskSessionService;
@@ -139,6 +142,7 @@ export function createTransport(opts: TransportOptions): Transport {
         {name: "Onboarding"},
         {name: "Runs"},
         {name: "Roles"},
+        {name: "Schedules"},
         {name: "Settings"},
         {name: "System"},
         {name: "Tasks"},
@@ -187,6 +191,7 @@ export function createTransport(opts: TransportOptions): Transport {
     path: "/events",
     cors: {origin: false},
   });
+  let scheduler: SchedulerService | undefined;
 
   fastify.get(
     "/events",
@@ -248,15 +253,19 @@ export function createTransport(opts: TransportOptions): Transport {
         }
       });
 
-      // Core Entities
-      registerWorkspaceRoutes(api, host);
       registerAgentRoutes(api, host);
       registerRoleRoutes(api);
 
-      // Orchestrator Services
       if (opts.apiServices) {
         const realtime = new RealtimeService(io, opts.apiServices.repo);
         const services = opts.apiServices.buildServices(realtime);
+
+        registerWorkspaceRoutes(api, {
+          host,
+          repo: opts.apiServices.repo,
+          auth: services.auth,
+          settings: services.settings,
+        });
 
         api.register(multipart, {
           limits: {fileSize: 25 * 1024 * 1024},
@@ -302,6 +311,12 @@ export function createTransport(opts: TransportOptions): Transport {
           auth: services.auth,
           mcpRegistry: services.mcpRegistry,
         });
+        registerScheduleRoutes(api, {
+          repo: opts.apiServices.repo,
+          auth: services.auth,
+        });
+        scheduler = services.scheduler;
+        scheduler?.start();
       }
     },
     {prefix: "/api"}
@@ -329,6 +344,7 @@ export function createTransport(opts: TransportOptions): Transport {
       logger.info("transport: listening", {url: readyUrl});
     },
     async close() {
+      scheduler?.stop();
       io.disconnectSockets(true);
       io.close();
       await fastify.close();

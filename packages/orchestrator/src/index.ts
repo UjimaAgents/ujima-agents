@@ -45,6 +45,11 @@ export {
   McpRegistryService,
   SpiritService,
   SupervisorTodoService,
+  SchedulerService,
+  createScheduledJobRecord,
+  computeNextCronRun,
+  parseCronExpression,
+  resolveScheduledJobNextRunAt,
   TaskPromoterService,
   TaskSessionService,
   taskRunChannelId,
@@ -61,6 +66,7 @@ export {
   listProviderStatuses,
   summarizeTeam,
   validateProviderKeys,
+  ACTIVE_WORKSPACE_SETTING_KEY,
 } from './services/index.js';
 export type {
   ApiRepository,
@@ -103,6 +109,7 @@ export type {
   RunSpiritOutcome,
   SpawnSpiritInput,
   SpiritServiceOptions,
+  SchedulerServiceOptions,
   AttachMcpInput,
   CreateMcpServerInput,
   ImportMcpServersInput,
@@ -120,4 +127,5 @@ export type {
   ToolInvocationResult,
   ToolService,
   UpdateOrganizationInput,
+  ActivateWorkspaceInput,
 } from './services/index.js';

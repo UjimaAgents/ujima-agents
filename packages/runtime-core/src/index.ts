@@ -12,7 +12,12 @@ export type {
   WorkspaceStore,
   WorkspaceInsert,
 } from './workspaces';
-export { createWorkspaceStore, NoWorkspaceRootError, ERR_NO_WORKSPACE_ROOT } from './workspaces';
+export {
+  createWorkspaceStore,
+  syncWorkspacesFromOrganizations,
+  NoWorkspaceRootError,
+  ERR_NO_WORKSPACE_ROOT,
+} from './workspaces';
 
 export type {
   RuntimeHost,

@@ -18,6 +18,7 @@ import type {
   Organization,
   RunState,
   RunStep,
+  ScheduledJob,
   Spirit,
   SpiritRole,
   TaskSession,
@@ -107,6 +108,7 @@ import {
 import type { SecretStore } from '../secret-store.js';
 import { createInMemorySecretStore } from '../secret-store.js';
 import {
+  deleteWorkspaceSetting as removeWorkspaceSetting,
   deleteProviderCredential as removeProviderCredential,
   findOrganizationIdByWorkspaceSetting as readOrganizationIdByWorkspaceSetting,
   getWorkspaceSetting as readWorkspaceSetting,
@@ -114,6 +116,7 @@ import {
   getOrganization as readOrganization,
   getProviderCredential as readProviderCredential,
   listOrganizations as readOrganizations,
+  listOrganizationsForUser as readOrganizationsForUser,
   listProviderCredentials as readProviderCredentials,
   saveWorkspaceSetting as writeWorkspaceSetting,
   saveOrganization as writeOrganization,
@@ -162,6 +165,13 @@ import {
   saveSpirit as writeSpirit,
 } from './spirits.js';
 import {
+  deleteScheduledJob as removeScheduledJob,
+  getScheduledJob as readScheduledJob,
+  listDueJobsGlobally as readDueJobsGlobally,
+  listScheduledJobs as readScheduledJobs,
+  saveScheduledJob as writeScheduledJob,
+} from './scheduled-jobs.js';
+import {
   deleteAgentMcpAttachment as removeAgentMcpAttachment,
   deleteMcpServer as removeMcpServer,
   getMcpServer as readMcpServer,
@@ -190,12 +200,16 @@ export class Repository {
     readOrganization(this.db, organizationId);
   getLatestOrganization = (): Organization | null => readLatestOrganization(this.db);
   listOrganizations = (): Organization[] => readOrganizations(this.db);
+  listOrganizationsForUser = (emailNormalized: string): Organization[] =>
+    readOrganizationsForUser(this.db, emailNormalized);
   saveOrganization = (organization: Organization): Organization =>
     writeOrganization(this.db, organization);
   saveWorkspaceSetting = (organizationId: string, key: string, value: string): void =>
     writeWorkspaceSetting(this.db, organizationId, key, value);
   getWorkspaceSetting = (organizationId: string, key: string): string | null =>
     readWorkspaceSetting(this.db, organizationId, key);
+  deleteWorkspaceSetting = (organizationId: string, key: string): void =>
+    removeWorkspaceSetting(this.db, organizationId, key);
   findOrganizationIdByWorkspaceSetting = (key: string, value: string): string | null =>
     readOrganizationIdByWorkspaceSetting(this.db, key, value);
   saveProviderCredential = (
@@ -507,6 +521,16 @@ export class Repository {
     options?: { notes?: string },
   ): Todo | null => writeTodoStatus(this.db, organizationId, todoId, status, options);
 
+  saveScheduledJob = (job: ScheduledJob): ScheduledJob =>
+    writeScheduledJob(this.db, job);
+  getScheduledJob = (organizationId: string, jobId: string): ScheduledJob | null =>
+    readScheduledJob(this.db, organizationId, jobId);
+  listScheduledJobs = (organizationId: string): ScheduledJob[] =>
+    readScheduledJobs(this.db, organizationId);
+  deleteScheduledJob = (organizationId: string, jobId: string): void =>
+    removeScheduledJob(this.db, organizationId, jobId);
+  listDueJobsGlobally = (): ScheduledJob[] => readDueJobsGlobally(this.db);
+
   // Generic secret-store passthrough — used by the MCP registry (env
   // maps + auth headers) and any other component that needs to put
   // sensitive material in the file-backed store without going through
@@ -552,7 +576,8 @@ export class Repository {
   getMcpToolCache = (organizationId: string, mcpServerId: string): McpToolCache | null =>
     readMcpToolCache(this.db, organizationId, mcpServerId);
 
-  getBootstrapSnapshot = (): BootstrapSnapshot => readBootstrapSnapshot(this.db);
+  getBootstrapSnapshot = (organizationId?: string): BootstrapSnapshot =>
+    readBootstrapSnapshot(this.db, organizationId);
 }
 
 export type {

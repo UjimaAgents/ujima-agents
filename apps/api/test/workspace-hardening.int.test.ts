@@ -98,9 +98,9 @@ describe('workspace-root REST gating', () => {
     const teamStore = createTeamStore();
     const missingRoot = join(homeDir, 'missing-root');
     const team = createScopedTeam(missingRoot);
-    teamStore.setTeam(team);
 
     organizationId = 'org-workspace-gate';
+    teamStore.setTeam(team, organizationId);
     repo.saveOrganization(
       OrganizationSchema.parse({
         id: organizationId,

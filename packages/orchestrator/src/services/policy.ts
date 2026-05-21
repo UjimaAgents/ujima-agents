@@ -129,6 +129,10 @@ export function checkToolPolicy(
     return { allowed: true, requiresApproval: true };
   }
 
+  if (toolId === 'schedule') {
+    return { allowed: true, requiresApproval: false };
+  }
+
   if (!role.tools.includes(toolId)) {
     return {
       allowed: false,

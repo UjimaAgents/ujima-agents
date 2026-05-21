@@ -1,6 +1,16 @@
 "use client";
 
-import { Command, Hash, Plus, Search, Settings, ChevronDown } from "lucide-react";
+import {
+  Check,
+  ChevronDown,
+  Clock,
+  Command,
+  Hash,
+  Layers,
+  Plus,
+  Search,
+  Settings,
+} from "lucide-react";
 import Link from "next/link";
 import { Avatar } from "./chat/primitives";
 import type { BootstrapResponse } from "@ujima/api-schema";
@@ -15,6 +25,7 @@ import { ThemeToggle } from "@/components/theme-toggle";
 import { AgentEditorModal } from "./sidebar/agent-editor-modal";
 import { CreateAgentModal } from "./sidebar/create-agent-modal";
 import { CreateChannelModal } from "./sidebar/create-channel-modal";
+import { WorkspaceSwitcher } from "./workspace-switcher";
 
 export interface WorkspaceSidebarProps {
   bootstrap: BootstrapResponse;
@@ -36,6 +47,7 @@ export interface WorkspaceSidebarProps {
       skills: string[];
     }[];
   } | null;
+  currentWorkspaceRoot?: string;
   goalMode: boolean;
   agentEditorTargetId?: string | null;
   onAgentEditorHandled?: () => void;
@@ -199,6 +211,7 @@ export function WorkspaceSidebar({
   bootstrap,
   rolePresets,
   teamSettings,
+  currentWorkspaceRoot,
   goalMode,
   agentEditorTargetId,
   onAgentEditorHandled,
@@ -212,6 +225,7 @@ export function WorkspaceSidebar({
   onCreateAgent,
   onUpdateAgent,
 }: WorkspaceSidebarProps) {
+  const [orgMenuOpen, setOrgMenuOpen] = useState(false);
   const [isChannelModalOpen, setIsChannelModalOpen] = useState(false);
   const [isAgentModalOpen, setIsAgentModalOpen] = useState(false);
   const initialProvider =
@@ -245,20 +259,70 @@ export function WorkspaceSidebar({
       {/* Sidebar background gradient */}
       <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-zinc-50/50 to-transparent dark:from-white/[0.02]" />
 
-      {/* Workspace Header */}
+      {/* Workspace Header / Org Switcher */}
       <div className="relative z-10 flex h-14 items-center justify-between px-4">
-        <button className="flex items-center gap-2 rounded-lg p-1.5 transition hover:bg-zinc-100 dark:hover:bg-zinc-900 text-left">
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-violet-600 to-indigo-700 text-white shadow-[0_0_15px_rgba(124,58,237,0.3)]">
-            <Command className="h-5 w-5" />
-          </div>
-          <div className="flex flex-col items-start overflow-hidden">
-            <span className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-50">
-              {bootstrap.organization?.name || "Ujima Agents"}
-            </span>
-          </div>
-          <ChevronDown className="ml-auto h-4 w-4 text-zinc-400" />
-        </button>
-        <ThemeToggle compact />
+        <div className="relative">
+          <button
+            onClick={() => setOrgMenuOpen((v) => !v)}
+            className="flex w-full max-w-[180px] items-center gap-2 rounded-lg p-1.5 transition hover:bg-zinc-100 dark:hover:bg-zinc-900 text-left"
+          >
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-violet-600 to-indigo-700 text-white shadow-[0_0_15px_rgba(124,58,237,0.3)]">
+              <Command className="h-5 w-5" />
+            </div>
+            <div className="flex flex-col items-start overflow-hidden">
+              <span className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-50">
+                {bootstrap.organization?.name || "Ujima Agents"}
+              </span>
+            </div>
+            {bootstrap.organizations?.length > 1 ? (
+              <ChevronDown className="ml-auto h-4 w-4 shrink-0 text-zinc-400" />
+            ) : null}
+          </button>
+          {orgMenuOpen && bootstrap.organizations?.length > 1 ? (
+            <>
+              <div className="fixed inset-0 z-30" onClick={() => setOrgMenuOpen(false)} />
+              <div className="absolute left-0 top-full z-40 mt-1 w-56 rounded-xl border border-zinc-200 bg-white p-1 shadow-xl dark:border-zinc-700 dark:bg-zinc-950">
+                <p className="px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
+                  Switch organization
+                </p>
+                {bootstrap.organizations.map((org) => {
+                  const active = org.id === bootstrap.organization?.id;
+                  return (
+                    <button
+                      key={org.id}
+                      onClick={async () => {
+                        setOrgMenuOpen(false);
+                        if (active) return;
+                        const res = await fetch("/api/auth/switch-org", {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ organizationId: org.id }),
+                        });
+                        if (res.ok) {
+                          window.location.href = "/workspace";
+                        }
+                      }}
+                      className={`flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-xs transition ${
+                        active
+                          ? "bg-violet-50 text-violet-800 dark:bg-violet-500/15 dark:text-violet-200"
+                          : "text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-900"
+                      }`}
+                    >
+                      <span className="flex-1 truncate font-medium">{org.name}</span>
+                      {active ? <Check className="h-3.5 w-3.5 text-violet-600" /> : null}
+                    </button>
+                  );
+                })}
+              </div>
+            </>
+          ) : null}
+        </div>
+        <div className="flex items-center gap-2">
+          <WorkspaceSwitcher
+            currentWorkspaceRoot={currentWorkspaceRoot ?? bootstrap.team?.workspaceRoot}
+          />
+          <ThemeToggle compact />
+        </div>
       </div>
 
       {/* Search */}
@@ -334,6 +398,27 @@ export function WorkspaceSidebar({
               />
             ))}
           </div>
+        </div>
+
+        {/* Quick links */}
+        <div className="mb-5 space-y-0.5">
+          <p className="px-2 text-[10px] font-bold uppercase tracking-widest text-zinc-500 dark:text-zinc-500">
+            Admin
+          </p>
+          <Link
+            href="/settings/organization?tab=schedules"
+            className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-xs font-semibold text-zinc-500 transition hover:bg-zinc-100 dark:hover:bg-zinc-900"
+          >
+            <Clock className="h-4 w-4" />
+            Schedules
+          </Link>
+          <Link
+            href="/settings/organization?tab=workspaces"
+            className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-xs font-semibold text-zinc-500 transition hover:bg-zinc-100 dark:hover:bg-zinc-900"
+          >
+            <Layers className="h-4 w-4" />
+            Workspaces
+          </Link>
         </div>
       </div>
 

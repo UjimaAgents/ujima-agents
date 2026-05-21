@@ -82,7 +82,7 @@ export class AiService {
   async generateRunReply(
     input: GenerateRunReplyInput,
   ): Promise<Awaited<ReturnType<typeof runAgentLoop>>> {
-    const team = requireTeam(this.teamStore);
+    const team = requireTeam(this.teamStore, input.organizationId);
     const organization = this.repo.getOrganization(input.organizationId);
     if (!organization) {
       throw new Error(`Organization not found: ${input.organizationId}`);

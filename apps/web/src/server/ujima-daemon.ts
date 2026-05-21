@@ -94,11 +94,21 @@ export async function daemonFetch(
     headers.set("content-type", "application/json");
   }
 
-  return fetch(`${daemonBaseUrl()}${path}`, {
-    ...init,
-    headers,
-    cache: "no-store",
-  });
+  const url = `${daemonBaseUrl()}${path}`;
+  try {
+    return await fetch(url, {
+      ...init,
+      headers,
+      cache: "no-store",
+    });
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new DaemonRequestError(
+      503,
+      "ERR_DAEMON_UNAVAILABLE",
+      `Unable to reach the Ujima daemon at ${url}. Start the API from the repo root (\`bun dev\`) and ensure it is listening on port ${DEFAULT_DAEMON_PORT}. (${reason})`,
+    );
+  }
 }
 
 export async function daemonJson<T>(

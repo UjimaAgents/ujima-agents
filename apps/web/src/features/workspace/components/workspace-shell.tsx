@@ -42,6 +42,7 @@ interface WorkspaceTeamRole {
   skills: string[];
 }
 type WorkspaceTeamSettings = {
+  workspace?: { root: string; roleScopes?: Record<string, string[]> };
   agents: { name: string; roleName: string; personalityName: string; kind: string }[];
   roles: WorkspaceTeamRole[];
 } | null;
@@ -335,6 +336,9 @@ export function WorkspaceShell(props: {
           bootstrap={bootstrap}
           rolePresets={props.rolePresets}
           teamSettings={props.teamSettings}
+          currentWorkspaceRoot={
+            props.teamSettings?.workspace?.root ?? bootstrap.team?.workspaceRoot
+          }
           goalMode={goalMode}
           channels={channels}
           members={members}

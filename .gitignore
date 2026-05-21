@@ -35,6 +35,7 @@ coverage
 *.crt
 
 # local data
+.ujima-dev-home/
 *.db
 *.db-*
 *.sqlite

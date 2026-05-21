@@ -13,6 +13,7 @@ import type { AgentDef, MCPDef, TeamDef } from '@ujima/shared';
 import type { LanguageModel } from 'ai';
 import {
   ALWAYS_AVAILABLE_AGENT_TOOLS,
+  ConfigSyncService,
   createApiServices,
   createTeamStore,
   type PermissionContextBuilder,
@@ -116,6 +117,7 @@ async function main(): Promise<void> {
   const repository = new Repository(host.db.raw, secretStore);
   closeOrphanedActiveRuns(repository);
   const teamStore = createTeamStore();
+  const configSync = new ConfigSyncService(repository, teamStore);
   const teamConfigWatcher = await startTeamConfigWatcher({
     repo: repository,
     teamStore,
@@ -129,7 +131,11 @@ async function main(): Promise<void> {
   // list so the permissions middleware has real role-scoped data to
   // gate on.
   const buildPermissionContext: PermissionContextBuilder = (input) => {
-    const team = teamStore.getTeam();
+    let team = teamStore.getTeam(input.organizationId);
+    if (!team) {
+      configSync.loadFromStoredConfig(input.organizationId);
+      team = teamStore.getTeam(input.organizationId);
+    }
     const member = repository.getMember(input.organizationId, input.memberId);
     const role = team && member ? team.getRole(member.roleName) : undefined;
     const agentConfig = team
