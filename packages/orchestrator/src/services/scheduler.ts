@@ -28,7 +28,7 @@ export function resolveScheduledJobNextRunAt(
     return existing.nextRunAt;
   }
 
-  return computeNextCronRun(cronExpression, now)?.toISOString() ?? existing.nextRunAt;
+  return computeNextCronRun(cronExpression, now)?.toISOString();
 }
 
 export function createScheduledJobRecord(input: {

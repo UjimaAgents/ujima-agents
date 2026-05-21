@@ -107,10 +107,9 @@ export function registerScheduleRoutes(api: FastifyInstance, deps: ScheduleRoute
     }
     const now = new Date();
     const nextRunAt = resolveScheduledJobNextRunAt(existing, req.body, now);
-    const needsValidNextRun =
-      req.body.cronExpression !== undefined ||
-      (req.body.status === 'active' && existing.status !== 'active');
-    if (needsValidNextRun && (req.body.status ?? existing.status) === 'active' && !nextRunAt) {
+    const cronChanged = req.body.cronExpression !== undefined;
+    const activating = (req.body.status ?? existing.status) === 'active' && existing.status !== 'active';
+    if ((cronChanged || activating) && !nextRunAt) {
       return reply.status(400).send({
         code: 'ERR_BAD_REQUEST',
         message: 'Invalid cron expression.',

@@ -128,6 +128,11 @@ describe('resolveScheduledJobNextRunAt', () => {
     expect(next).toBeDefined();
     expect(Date.parse(next!)).toBeGreaterThan(now.getTime());
   });
+
+  it('returns undefined for an invalid cron change', () => {
+    const active = { ...existing, status: 'active' };
+    expect(resolveScheduledJobNextRunAt(active, { cronExpression: 'not-a-cron' }, new Date())).toBeUndefined();
+  });
 });
 
 describe('SchedulerService', () => {

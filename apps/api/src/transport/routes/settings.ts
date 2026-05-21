@@ -86,7 +86,7 @@ export function registerSettingsRoutes(
     try {
       const forbidden = requireOrgSession(auth, req, reply, req.query.organizationId);
       if (forbidden) return forbidden;
-      return settings.getTeamSettings() as z.infer<typeof TeamSettingsResponseSchema>;
+      return settings.getTeamSettings(req.query.organizationId) as z.infer<typeof TeamSettingsResponseSchema>;
     } catch (err) {
       return routeError(reply, err, { notFound: 'Organization not found', fallback: 503 });
     }

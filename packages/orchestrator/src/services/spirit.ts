@@ -2470,7 +2470,7 @@ export class SpiritService {
 
   private defaultModelResolver(): ModelResolver {
     return ({ organizationId, memberId, role }) => {
-      const team = requireTeam(this.teamStore, input.organizationId);
+      const team = requireTeam(this.teamStore, organizationId);
       const member = this.repo.getMember(organizationId, memberId);
       if (!member) {
         throw new Error(`Member not found: ${memberId}`);
