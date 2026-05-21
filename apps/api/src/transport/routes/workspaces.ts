@@ -72,9 +72,7 @@ export function registerWorkspaceRoutes(
       current_workspace_id: current.id,
       workspaces: listWorkspacesForOrganization(host, session.repo, session.organization, current.id).map((ws) => ({
         ...toWorkspaceDto(ws),
-        is_current:
-          (current.id !== null && ws.id === current.id) ||
-          (current.root ? pathsMatch(ws.root_path, current.root) : false),
+        is_current: current.id !== null && ws.id === current.id,
       })),
     };
   });
@@ -302,13 +300,11 @@ function listWorkspacesForOrganization(
   const linkedIds = readLinkedWorkspaceIds(repo, organization.id);
   const activeId =
     repo.getWorkspaceSetting(organization.id, ACTIVE_WORKSPACE_SETTING_KEY) ?? activeWorkspaceId;
-  const orgRoot = organization.workspace.root?.trim();
 
   return host.workspaces.list().filter((workspace) => {
     if (linkedIds.has(workspace.id)) return true;
     if (activeId && workspace.id === activeId) return true;
     if (workspace.id === `ws_${organization.id}`) return true;
-    if (orgRoot && workspace.root_path && pathsMatch(workspace.root_path, orgRoot)) return true;
     return false;
   });
 }
@@ -353,10 +349,4 @@ function toWorkspaceDto(ws: { id: string; root_path: string | null; label: strin
 
 function replyError(reply: FastifyReply, status: number, code: string, message: string): FastifyReply {
   return reply.status(status).send({ code, message });
-}
-
-function pathsMatch(a: string | null, b: string): boolean {
-  if (!a) return false;
-  const normalize = (value: string) => value.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
-  return normalize(a) === normalize(b);
 }

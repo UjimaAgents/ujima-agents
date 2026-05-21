@@ -2,28 +2,14 @@ import { z } from 'zod';
 import type { OrchestratorTool } from './types.js';
 import { createScheduledJobRecord } from '../services/scheduler.js';
 
-const ScheduleCreateSchema = z.object({
-  action: z.literal('create'),
+const ScheduleSchema = z.object({
+  action: z.enum(['create', 'list', 'cancel']),
   name: z.string().min(1).optional(),
-  cron_expression: z.string().min(1),
-  prompt: z.string().min(1),
+  cron_expression: z.string().min(1).optional(),
+  prompt: z.string().min(1).optional(),
   channel_id: z.string().min(1).optional(),
+  job_id: z.string().min(1).optional(),
 });
-
-const ScheduleListSchema = z.object({
-  action: z.literal('list'),
-});
-
-const ScheduleCancelSchema = z.object({
-  action: z.literal('cancel'),
-  job_id: z.string().min(1),
-});
-
-const ScheduleSchema = z.discriminatedUnion('action', [
-  ScheduleCreateSchema,
-  ScheduleListSchema,
-  ScheduleCancelSchema,
-]);
 
 function defaultScheduleName(prompt: string): string {
   return prompt.trim().slice(0, 60);
@@ -45,12 +31,19 @@ export const scheduleTool: OrchestratorTool<typeof ScheduleSchema> = {
     }
 
     if (args.action === 'cancel') {
+      if (!args.job_id) {
+        throw new Error('job_id is required for cancel');
+      }
       const job = repo.getScheduledJob(invocation.organizationId, args.job_id);
       if (!job) {
         return { removed: false };
       }
       repo.deleteScheduledJob(invocation.organizationId, args.job_id);
       return { removed: true, job };
+    }
+
+    if (!args.cron_expression || !args.prompt) {
+      throw new Error('cron_expression and prompt are required for create');
     }
 
     const threadChannelId = invocation.threadId

@@ -60,11 +60,15 @@ describe('BootstrapService', () => {
     let snapshotOrgId: string | undefined;
     const repo = {
       getLatestOrganization: () => org1,
+      listOrganizations: () => [org1, org2],
       getOrganization: (organizationId: string) => (organizationId === org2.id ? org2 : org1),
-      getWorkspaceSetting: (organizationId: string, key: string) => {
-        if (organizationId !== org2.id || key !== 'team.config') return null;
+      getWorkspaceSetting: (_organizationId: string, key: string) => {
+        if (key !== 'team.config') return null;
         return JSON.stringify(team2.toJSON());
       },
+      listMembers: () => [],
+      listAllChannels: () => [],
+      listProviderCredentials: () => ({}),
       saveWorkspaceSetting: () => undefined,
       getBootstrapSnapshot: (organizationId?: string) => {
         snapshotOrgId = organizationId;
@@ -79,12 +83,19 @@ describe('BootstrapService', () => {
       },
     };
     const auth = {
-      getAuthState: () => ({
-        authenticated: true,
-        user: { id: 'user-1', organizationId: org2.id, memberId: member.id, email: 'sam@example.com' },
-        member,
-        session: { id: 'session-1', organizationId: org2.id, memberId: member.id, expiresAt: '2026-06-01T00:00:00.000Z' },
-      }),
+      getAuthState: (sessionToken?: string | null) => sessionToken === 'token-1'
+        ? {
+            authenticated: true,
+            user: { id: 'user-1', organizationId: org2.id, memberId: member.id, email: 'sam@example.com' },
+            member,
+            session: { id: 'session-1', organizationId: org2.id, memberId: member.id, expiresAt: '2026-06-01T00:00:00.000Z' },
+          }
+        : {
+            authenticated: false,
+            user: null,
+            member: null,
+            session: null,
+          },
       listAccessibleOrganizations: () => [org1, org2],
     };
     const teamStore = createTeamStore(team1);
@@ -96,5 +107,6 @@ describe('BootstrapService', () => {
     expect(response.organization?.id).toBe(org2.id);
     expect(response.team?.name).toBe('Session Org');
     expect(teamStore.getTeam()?.config.name).toBe('Session Org');
+    expect(service.getBootstrap().organizations.map((org) => org.id)).toEqual([org1.id, org2.id]);
   });
 });
