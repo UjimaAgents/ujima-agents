@@ -120,6 +120,9 @@ export function registerWorkspaceRoutes(
     if (!isWorkspaceOrgSession(session)) return session;
 
     const { organizationId } = session;
+    if (!workspaceAccessibleToOrganization(host, session.repo, session.organization, req.params.id)) {
+      return replyError(reply, 404, 'ERR_NOT_FOUND', `workspace "${req.params.id}" not found`);
+    }
 
     try {
       const teamSettings = settings.activateWorkspace(

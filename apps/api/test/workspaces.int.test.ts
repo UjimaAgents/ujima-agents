@@ -211,6 +211,32 @@ describe('workspace routes', () => {
     }
   });
 
+  it('rejects activation for a workspace not linked to the organization', async () => {
+    const otherHome = await mkdtemp(join(tmpdir(), 'ujima-ws-unlinked-'));
+    let workspaceId = '';
+    try {
+      const workspace = host.workspaces.create({
+        root_path: otherHome,
+        label: 'Unlinked workspace',
+      });
+      workspaceId = workspace.id;
+      const activateResponse = await fetch(
+        `${baseUrl}/api/workspaces/${encodeURIComponent(workspace.id)}/activate`,
+        {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${TOKEN}`,
+            'x-ujima-session': sessionToken,
+          },
+        },
+      );
+      expect(activateResponse.status).toBe(404);
+    } finally {
+      if (workspaceId) host.workspaces.remove(workspaceId);
+      await rm(otherHome, { recursive: true, force: true });
+    }
+  });
+
   it('clears the active workspace setting when deleting the active workspace', async () => {
     const otherHome = tmpdir();
     const createResponse = await fetch(`${baseUrl}/api/workspaces`, {

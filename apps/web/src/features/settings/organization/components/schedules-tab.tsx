@@ -109,7 +109,7 @@ export function SchedulesTab() {
       <div className="flex items-center justify-between">
         <div>
           <p className="text-sm text-zinc-600 dark:text-zinc-400">
-            Manage scheduled jobs. Use <code className="rounded bg-zinc-100 px-1.5 py-0.5 text-xs font-mono dark:bg-zinc-800">/schedule &lt;cron&gt; &lt;prompt&gt;</code> in chat to create new ones.
+            Manage scheduled jobs. Use <code className="rounded bg-zinc-100 px-1.5 py-0.5 text-xs font-mono dark:bg-zinc-800">/schedule do this</code> in chat to ask the agent to create one.
           </p>
         </div>
         <button
@@ -134,7 +134,7 @@ export function SchedulesTab() {
           <Clock className="mb-4 h-10 w-10 text-zinc-300 dark:text-zinc-600" />
           <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">No schedules yet</p>
           <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-            Type <code className="rounded bg-zinc-200 px-1 py-0.5 font-mono dark:bg-zinc-800">/schedule 0 9 * * 1-5 Standup</code> in a channel to create one.
+            Type <code className="rounded bg-zinc-200 px-1 py-0.5 font-mono dark:bg-zinc-800">/schedule standup reminder</code> in a channel to create one.
           </p>
         </div>
       ) : (

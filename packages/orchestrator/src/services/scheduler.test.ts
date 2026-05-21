@@ -143,6 +143,8 @@ describe('SchedulerService', () => {
       listDueJobsGlobally: vi.fn().mockReturnValue([]),
       saveScheduledJob: vi.fn(),
       getScheduledJob: vi.fn(),
+      getChannel: vi.fn(),
+      setChannelMembers: vi.fn(),
       getMember: vi.fn((organizationId: string, memberId: string) =>
         members.get(`${organizationId}:${memberId}`) ?? null,
       ),
@@ -247,6 +249,47 @@ describe('SchedulerService', () => {
       }),
       [orgRoom('org-1'), channelRoom('channel-1')],
     );
+    scheduler.stop();
+  });
+
+  it('adds the scheduler member to private channels before sending', async () => {
+    const now = new Date().toISOString();
+    const dueJob = {
+      id: 'job-private',
+      organizationId: 'org-1',
+      name: 'Private',
+      cronExpression: '0 9 * * *',
+      prompt: 'Run private reminder',
+      channelId: 'dm-1',
+      memberId: 'member-1',
+      status: 'active' as const,
+      nextRunAt: now,
+      runCount: 0,
+      createdAt: now,
+      updatedAt: now,
+    };
+    mockRepo.listDueJobsGlobally = vi.fn().mockReturnValue([dueJob]);
+    vi.mocked(mockRepo.getChannel).mockReturnValue({
+      id: 'dm-1',
+      organizationId: 'org-1',
+      name: 'DM',
+      kind: 'dm',
+      topic: null,
+      memberIds: ['member-1'],
+      createdAt: now,
+      updatedAt: now,
+    } as never);
+
+    scheduler.start();
+
+    await vi.waitFor(() => {
+      expect(mockConversations.sendMessage).toHaveBeenCalled();
+    }, { timeout: 2000 });
+
+    expect(mockRepo.setChannelMembers).toHaveBeenCalledWith('dm-1', [
+      '__ujima_scheduler__:org-1',
+      'member-1',
+    ]);
     scheduler.stop();
   });
 

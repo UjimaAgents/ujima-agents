@@ -67,6 +67,7 @@ import type { ToolInvocationInput } from './tool-service.js';
 import { materializeMcpDef, mcpPermissionToolName, type McpRuntimePool } from './mcp-runtime.js';
 import { appendGoalArtifactToolCall, buildGoalArtifactMessage } from './goal-artifact-card.js';
 import { goalModeEnabledFromMessage, goalModeSystemPromptSuffix } from './goal-mode-prompt.js';
+import { scheduleToolSystemPromptSuffix } from './schedule-prompt.js';
 import { pendingApprovalRunSummary } from './approval-summary.js';
 import { applyDashboardTeamOverrides } from './dashboard-team-overrides.js';
 import { isLiveRunStatus, isLiveSpiritStatus } from './live-status.js';
@@ -1627,10 +1628,18 @@ export class SpiritService {
 
     try {
       const goalModeActive = this.isGoalModeActive(run.organizationId, run.threadId ?? '');
-      const systemPromptSuffix = goalModeSystemPromptSuffix({
-        goalMode: goalModeActive,
-        messageContent: this.repo.getLatestHumanMessageInThread(run.organizationId, run.threadId ?? '')?.content,
-      });
+      const latestHumanMessage = this.repo.getLatestHumanMessageInThread(run.organizationId, run.threadId ?? '');
+      const systemPromptSuffix = [
+        goalModeSystemPromptSuffix({
+          goalMode: goalModeActive,
+          messageContent: latestHumanMessage?.content,
+        }),
+        scheduleToolSystemPromptSuffix({
+          messageContent: latestHumanMessage?.content,
+        }),
+      ]
+        .filter(Boolean)
+        .join('\n\n') || undefined;
       let streamedText = '';
       let streamedReasoning = '';
       const ai = this.ai;

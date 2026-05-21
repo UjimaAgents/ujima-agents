@@ -247,6 +247,10 @@ export class SchedulerService {
     }
 
     if (job.channelId) {
+      const channel = this.repo.getChannel(job.organizationId, job.channelId);
+      if (channel && !channel.memberIds.includes(senderId)) {
+        this.repo.setChannelMembers(job.channelId, [...channel.memberIds, senderId].sort());
+      }
       await this.conversations.sendMessage({
         organizationId: job.organizationId,
         channelId: job.channelId,

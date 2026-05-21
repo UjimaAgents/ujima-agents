@@ -184,6 +184,7 @@ describe('ALWAYS_AVAILABLE_AGENT_TOOLS', () => {
         'channel.read',
         'channel.reply',
         'message',
+        'schedule',
         'self.note',
       ].sort(),
     );

@@ -129,16 +129,16 @@ export function checkToolPolicy(
     return { allowed: true, requiresApproval: true };
   }
 
+  if (toolId === 'schedule') {
+    return { allowed: true, requiresApproval: false };
+  }
+
   if (!role.tools.includes(toolId)) {
     return {
       allowed: false,
       requiresApproval: false,
       reason: `Role "${roleName}" cannot use tool "${toolId}"`,
     };
-  }
-
-  if (toolId === 'schedule') {
-    return { allowed: true, requiresApproval: false };
   }
 
   // channel.* tools (post / reply / dm / list / read) operate on the
