@@ -307,7 +307,6 @@ export function WorkspaceSidebar({
 
   useEffect(() => {
     let cancelled = false;
-    setSchedules([]);
 
     if (!orgId) return;
 
