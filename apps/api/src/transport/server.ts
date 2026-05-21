@@ -264,7 +264,7 @@ export function createTransport(opts: TransportOptions): Transport {
           host,
           repo: opts.apiServices.repo,
           auth: services.auth,
-          settings: services.settings,
+          workspaces: services.workspaces,
         });
 
         api.register(multipart, {
@@ -289,6 +289,7 @@ export function createTransport(opts: TransportOptions): Transport {
         });
         registerAuthRoutes(api, {auth: services.auth});
         registerOnboardingRoutes(api, {
+          host,
           auth: services.auth,
           bootstrap: services.bootstrap,
           onboarding: services.onboarding,
@@ -297,6 +298,7 @@ export function createTransport(opts: TransportOptions): Transport {
           repo: opts.apiServices.repo,
           settings: services.settings,
           auth: services.auth,
+          host,
         });
         registerTaskRoutes(api, {
           host,

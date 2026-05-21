@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { GripVertical } from "lucide-react";
+import { GripVertical, MessageSquare } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   getDirectMessageThreadId,
@@ -13,6 +13,7 @@ import { WorkspaceSidebar } from "./workspace-sidebar";
 import { ChannelView } from "./channel-view";
 import type { BootstrapResponse } from "@ujima/api-schema";
 import { resolveSelectedConversationFromSearchParams } from "../conversation-routing";
+import { resolveDefaultConversation } from "../workspace-channels";
 import type { SelectedConversation, WorkspaceRoleInput } from "../types";
 import { useWorkspaceStore } from "../workspace-store";
 import type { RolePresetTemplate } from "../../onboarding/types";
@@ -76,16 +77,10 @@ export function WorkspaceShell(props: {
   const seenApprovalNotifications = useRef(new Set<string>());
   const goalModeSyncing = useRef(false);
 
-  const defaultConversation = useMemo(() => {
-    if (initialConversation) return initialConversation;
-    const generalChannel =
-      channels.find((c) => c.name === "general") ?? channels[0];
-    return {
-      type: "channel" as const,
-      id: generalChannel?.id ?? "general",
-      name: generalChannel?.name ?? "general",
-    };
-  }, [channels, initialConversation]);
+  const defaultConversation = useMemo(
+    () => initialConversation ?? resolveDefaultConversation(channels),
+    [channels, initialConversation],
+  );
 
   const urlConversation = useMemo(
     () => resolveSelectedConversationFromSearchParams(searchParams, bootstrap),
@@ -94,11 +89,15 @@ export function WorkspaceShell(props: {
 
   const resolvedSelected = urlConversation ?? selected ?? defaultConversation;
   const goalModeKey = useMemo(
-    () => goalModePreferenceKey(bootstrap.organization?.id, resolvedSelected.id),
-    [bootstrap.organization?.id, resolvedSelected.id],
+    () =>
+      resolvedSelected
+        ? goalModePreferenceKey(bootstrap.organization?.id, resolvedSelected.id)
+        : null,
+    [bootstrap.organization?.id, resolvedSelected],
   );
 
   useEffect(() => {
+    if (!goalModeKey) return;
     goalModeSyncing.current = true;
     queueMicrotask(() => {
       setGoalMode(readGoalModePreference(goalModeKey));
@@ -106,6 +105,7 @@ export function WorkspaceShell(props: {
   }, [goalModeKey]);
 
   useEffect(() => {
+    if (!goalModeKey) return;
     if (goalModeSyncing.current) {
       goalModeSyncing.current = false;
       return;
@@ -281,10 +281,11 @@ export function WorkspaceShell(props: {
       if (!conversationId) return;
 
       if (
-        (resolvedSelected.type === "channel" &&
+        resolvedSelected &&
+        ((resolvedSelected.type === "channel" &&
           envelope.event !== SocketEventNames.dmMessage &&
           resolvedSelected.id === conversationId) ||
-        (resolvedSelected.type === "agent" && resolvedSelected.id === conversationId)
+          (resolvedSelected.type === "agent" && resolvedSelected.id === conversationId))
       ) {
         return;
       }
@@ -353,19 +354,33 @@ export function WorkspaceShell(props: {
       <DragHandle onResize={setSidebarWidth} />
       <main className="flex h-full min-w-0 flex-1 overflow-hidden">
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-          <ChannelView
-            key={`${resolvedSelected.type}:${resolvedSelected.id}`}
-            bootstrap={bootstrap}
-            conversation={resolvedSelected}
-            members={members}
-            goalMode={goalMode}
-            onGoalModeChange={setGoalMode}
-            onOpenAgentEditor={() => {
-              if (resolvedSelected.type === "agent") {
-                setAgentEditorTargetId(resolvedSelected.id);
-              }
-            }}
-          />
+          {resolvedSelected ? (
+            <ChannelView
+              key={`${resolvedSelected.type}:${resolvedSelected.id}`}
+              bootstrap={bootstrap}
+              conversation={resolvedSelected}
+              members={members}
+              goalMode={goalMode}
+              onGoalModeChange={setGoalMode}
+              onOpenAgentEditor={() => {
+                if (resolvedSelected.type === "agent") {
+                  setAgentEditorTargetId(resolvedSelected.id);
+                }
+              }}
+            />
+          ) : (
+            <div className="flex h-full flex-col items-center justify-center px-6 text-center">
+              <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-zinc-100 dark:bg-zinc-800">
+                <MessageSquare className="h-7 w-7 text-zinc-400" />
+              </div>
+              <h3 className="mt-4 text-sm font-semibold text-zinc-900 dark:text-white">
+                No conversation selected
+              </h3>
+              <p className="mt-1 max-w-sm text-xs text-zinc-500">
+                Add a channel or agent from the sidebar to open a conversation.
+              </p>
+            </div>
+          )}
         </div>
       </main>
     </div>

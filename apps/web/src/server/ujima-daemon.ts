@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { cookies } from "next/headers";
-import type { BootstrapResponse, SessionAuthState } from "@ujima/api-schema";
+import type { BootstrapResponse, SessionAuthState, TeamSettingsResponse } from "@ujima/api-schema";
 import type { RolePresetTemplate } from "@/features/onboarding/types";
 
 export const WEB_SESSION_COOKIE = "ujima_web_session";
@@ -157,29 +157,9 @@ export async function getServerRolePresets(): Promise<RolePresetTemplate[]> {
 
 
 
-export async function getServerTeamSettings(organizationId?: string): Promise<{
-  name: string;
-  workspace: { root: string; roleScopes: Record<string, string[]> };
-  organizationChart: { reportsTo: Record<string, string> };
-  agents: Array<{ name: string; roleName: string; personalityName: string; kind: string }>;
-  roles: Array<{
-    id?: string;
-    name: string;
-    title: string;
-    description: string;
-    instructions: string;
-    kind: string;
-    provider?: string;
-    model?: string;
-    workspaceScopes: string[];
-    tools: string[];
-    channels: string[];
-    skills: string[];
-  }>;
-  channels: Array<{ id?: string; name: string; kind: string; topic: string; memberIds: string[] }>;
-  tools: Record<string, unknown>;
-  policies: unknown;
-}> {
+export async function getServerTeamSettings(
+  organizationId?: string,
+): Promise<TeamSettingsResponse> {
   const path = organizationId
     ? `/api/settings/team?organizationId=${encodeURIComponent(organizationId)}`
     : "/api/settings/team";

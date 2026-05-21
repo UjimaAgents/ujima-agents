@@ -102,8 +102,8 @@ export function buildStarterDraft(): OnboardingDraft {
 export const ONBOARDING_STEPS: OnboardingStep[] = [
   {
     id: "organization",
-    title: "Organization",
-    description: "Name your organization and the workspace root.",
+    title: "Workspace",
+    description: "Name your workspace and choose the project folder on disk.",
   },
   {
     id: "owner",

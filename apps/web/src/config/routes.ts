@@ -8,11 +8,11 @@ export const APP_ROUTES: AppRoute[] = [
   {
     href: "/workspace",
     label: "Workspace",
-    description: "Organization dashboard and control plane.",
+    description: "Workspace dashboard and control plane.",
   },
   {
     href: "/settings/organization",
     label: "Settings",
-    description: "Organization settings and configuration.",
+    description: "Workspace settings and configuration.",
   },
 ];

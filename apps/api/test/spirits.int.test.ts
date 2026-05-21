@@ -1753,6 +1753,7 @@ describe('TaskSessionService.create — audit fix regressions', () => {
     const services = createApiServices({
       teamStore,
       repo,
+      workspaces: host.workspaces,
       realtime: noopRealtime(),
       permissions: createPermissionMiddleware({}),
       buildPermissionContext: (input) => ({

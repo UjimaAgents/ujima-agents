@@ -7,7 +7,7 @@ import { Markdown, MarkdownInline } from "../markdown";
 import { AttachmentGrid } from "./attachment-grid";
 import { TerminalPane } from "./terminal-pane";
 import { FilesystemToolPane } from "./filesystem-tool-pane";
-import { Modal } from "../modal";
+import { Modal } from "@/components/ui/modal";
 
 const CONVERSATION_ARCHIVE_MARKER = "[[CONVERSATION_ARCHIVE_V1]]";
 const CONVERSATION_SUMMARY_MARKER = "[[CONVERSATION_SUMMARY_V1]]";
@@ -100,6 +100,17 @@ export const ChatMessage = memo(function ChatMessage({
   const handleMouseUp = useCallback(() => {
     dragStart.current = null;
   }, []);
+
+  useEffect(() => {
+    if (!menu) return;
+    const closeMenu = () => setMenu(null);
+    window.addEventListener("scroll", closeMenu, true);
+    window.addEventListener("resize", closeMenu);
+    return () => {
+      window.removeEventListener("scroll", closeMenu, true);
+      window.removeEventListener("resize", closeMenu);
+    };
+  }, [menu]);
 
   const systemLabel = message.kind === "system" ? getSystemMessageLabel(message.content) : null;
   const systemBodyMarkdown =

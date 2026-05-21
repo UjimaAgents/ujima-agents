@@ -1,26 +1,24 @@
 "use client";
 
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, Server, Trash2 } from "lucide-react";
 import { useState } from "react";
-import { TextInput } from "@/components/ui/form-fields";
-import { Select } from "@/components/ui/select";
-import { PROVIDER_OPTIONS, providerLabelFromToken } from "@/features/onboarding/provider-catalog";
-
-interface ProviderStatus {
-  name: string;
-  hasKey: boolean;
-}
-
-interface ProviderRow {
-  id: string;
-  name: string;
-  apiKey: string;
-}
-
-let nextProviderId = 1;
-function freshId() {
-  return `provider-${nextProviderId++}`;
-}
+import type { ProviderSecretsUpsertResponse, ProviderStatus } from "@ujima/api-schema";
+import { settingsFetch, settingsFetchVoid } from "@/features/settings/shared/settings-api";
+import { ConfirmDialog } from "@/features/settings/shared/confirm-dialog";
+import { SettingsErrorAlert } from "@/features/settings/shared/settings-alert";
+import {
+  SettingsBadge,
+  SettingsGhostIconButton,
+  SettingsPrimaryButton,
+  SettingsSecondaryButton,
+} from "@/features/settings/shared/settings-buttons";
+import { SettingsEmptyState } from "@/features/settings/shared/settings-empty-state";
+import { SettingsList, SettingsListRow, SettingsRowIcon } from "@/features/settings/shared/settings-list-row";
+import { SettingsTabActions } from "@/features/settings/shared/settings-layout";
+import { normalizeProviderKey, providerLabelFromToken } from "@/features/providers/catalog";
+import { isOAuthProvider } from "@/features/providers/constants";
+import { credentialStatusLabel } from "@/features/providers/provider-status-copy";
+import { ProviderFormModal } from "./providers/provider-form-modal";
 
 export function ProvidersTab({
   orgId,
@@ -31,180 +29,162 @@ export function ProvidersTab({
   providers: ProviderStatus[];
   onProvidersChange: (providers: ProviderStatus[]) => void;
 }) {
-  const [rows, setRows] = useState<ProviderRow[]>(() =>
-    providers
-      .filter((p) => p.hasKey)
-      .map((p) => ({ id: freshId(), name: p.name, apiKey: "••••••••" })),
-  );
-  const [savingId, setSavingId] = useState<string | null>(null);
-  const [testingId, setTestingId] = useState<string | null>(null);
-  const [testResult, setTestResult] = useState<{ id: string; ok: boolean; message: string } | null>(null);
+  const [showAdd, setShowAdd] = useState(false);
+  const [updateTarget, setUpdateTarget] = useState<string | null>(null);
+  const [testingName, setTestingName] = useState<string | null>(null);
+  const [testResult, setTestResult] = useState<{ name: string; ok: boolean; message: string } | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const saveProvider = async (row: ProviderRow) => {
-    if (!row.name || !row.apiKey.trim() || !orgId) return;
-    setError(null);
-    setSavingId(row.id);
-    try {
-      const response = await fetch("/api/settings/providers", {
+  const configured = providers.filter((p) => p.hasKey);
+  const usedNames = new Set(configured.map((p) => normalizeProviderKey(p.name)));
+
+  const saveProvider = async (name: string, apiKey: string) => {
+    if (!orgId) return;
+    const normalizedName = normalizeProviderKey(name);
+    const data = await settingsFetch<ProviderSecretsUpsertResponse>(
+      "/api/settings/providers",
+      {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           organizationId: orgId,
-          providerKeys: { [row.name]: row.apiKey.trim() },
+          providerKeys: { [normalizedName]: apiKey },
         }),
-      });
-      if (!response.ok) {
-        const body = await response.json().catch(() => null);
-        throw new Error(body?.message ?? "Failed to save provider.");
-      }
-      const data = await response.json();
-      onProvidersChange(data.providers);
-      setRows((prev) =>
-        prev.map((r) => (r.id === row.id ? { ...r, apiKey: "••••••••" } : r)),
-      );
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save.");
-    } finally {
-      setSavingId(null);
-    }
+      },
+      "Failed to save provider.",
+    );
+    onProvidersChange(data.providers);
   };
 
-  const deleteProvider = async (name: string, rowId: string) => {
-    if (!orgId) return;
-    setError(null);
+  const deleteProvider = async () => {
+    if (!deleteTarget || !orgId) return;
+    setDeleting(true);
     try {
-      const response = await fetch(
-        `/api/settings/providers/${encodeURIComponent(name)}?organizationId=${encodeURIComponent(orgId)}`,
+      const data = await settingsFetch<ProviderSecretsUpsertResponse>(
+        `/api/settings/providers/${encodeURIComponent(deleteTarget)}?organizationId=${encodeURIComponent(orgId)}`,
         { method: "DELETE" },
+        "Failed to delete provider.",
       );
-      if (!response.ok) {
-        const body = await response.json().catch(() => null);
-        throw new Error(body?.message ?? "Failed to delete provider.");
-      }
-      const data = await response.json();
       onProvidersChange(data.providers);
-      setRows((prev) => prev.filter((r) => r.id !== rowId));
+      setDeleteTarget(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to delete.");
+    } finally {
+      setDeleting(false);
     }
   };
 
-  const testProvider = async (name: string, rowId: string) => {
+  const testProvider = async (name: string) => {
     if (!orgId) return;
-    setTestingId(rowId);
+    setTestingName(name);
     setTestResult(null);
     try {
-      const response = await fetch(
+      const result = await settingsFetch<{ ok: boolean; message: string }>(
         `/api/settings/providers/${encodeURIComponent(name)}/test?organizationId=${encodeURIComponent(orgId)}`,
         { method: "POST" },
+        "Test failed.",
       );
-      const result = await response.json();
-      setTestResult({ id: rowId, ok: result.ok, message: result.message });
+      setTestResult({ name, ok: result.ok, message: result.message });
     } catch {
-      setTestResult({ id: rowId, ok: false, message: "Test failed." });
+      setTestResult({ name, ok: false, message: "Test failed." });
     } finally {
-      setTestingId(null);
+      setTestingName(null);
     }
   };
 
-  const addRow = () => {
-    setRows((prev) => [
-      ...prev,
-      { id: freshId(), name: "", apiKey: "" },
-    ]);
-  };
-
-  const usedProviderNames = new Set(rows.map((r) => r.name).filter(Boolean));
-
   return (
-    <div className="space-y-4">
-      <div className="flex items-start justify-between gap-4">
-        <p className="text-sm text-zinc-500 dark:text-zinc-400">
-          Configure provider API keys used by your team roles.
-        </p>
-        <button
-          type="button"
-          onClick={addRow}
-          className="inline-flex items-center gap-2 rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-violet-700"
-        >
+    <>
+      <SettingsTabActions>
+        <SettingsPrimaryButton onClick={() => setShowAdd(true)}>
           <Plus className="h-4 w-4" />
-          Add provider
-        </button>
-      </div>
+          Add
+        </SettingsPrimaryButton>
+      </SettingsTabActions>
 
-      <div className="space-y-3">
-        {rows.map((row) => (
-            <div key={row.id} className="flex flex-nowrap items-center gap-3">
-              <Select
-                value={row.name}
-                onChange={(e) =>
-                  setRows((prev) =>
-                    prev.map((r) => (r.id === row.id ? { ...r, name: e.target.value } : r)),
-                  )
-                }
-                className="w-[200px] shrink-0"
-                placeholder="Select provider"
-                options={PROVIDER_OPTIONS.filter(
-                  (opt) => !usedProviderNames.has(opt.token) || opt.token === row.name,
-                ).map((opt) => ({ value: opt.token, label: opt.label }))}
-              />
-              <TextInput
-                type="password"
-                value={row.apiKey}
-                onChange={(e) =>
-                  setRows((prev) =>
-                    prev.map((r) => (r.id === row.id ? { ...r, apiKey: e.target.value } : r)),
-                  )
-                }
-                className="min-w-0 flex-1"
-                placeholder={row.name ? `${providerLabelFromToken(row.name)} API key` : "Provider API key"}
-              />
-              {row.apiKey && row.apiKey !== "••••••••" ? (
-                <button
-                  type="button"
-                  disabled={savingId === row.id}
-                  onClick={() => saveProvider(row)}
-                  className="rounded-lg bg-violet-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-violet-700 disabled:opacity-50"
-                >
-                  {savingId === row.id ? "Saving..." : "Save"}
-                </button>
-              ) : null}
-              {row.apiKey === "••••••••" ? (
-                <button
-                  type="button"
-                  disabled={testingId === row.id}
-                  onClick={() => testProvider(row.name, row.id)}
-                  className="rounded-lg border border-zinc-200 px-4 py-2.5 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-900"
-                >
-                  {testingId === row.id ? "Testing..." : "Test"}
-                </button>
-              ) : null}
-              <button
-                type="button"
-                onClick={() => deleteProvider(row.name, row.id)}
-                className="rounded-lg border border-red-200 px-3 py-2.5 text-sm font-medium text-red-600 transition hover:bg-red-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-500/10"
-              >
-                <Trash2 className="h-4 w-4" />
-              </button>
-            </div>
-        ))}
-      </div>
-
+      {error ? <SettingsErrorAlert message={error} /> : null}
       {testResult ? (
         <p
-          className={`text-sm ${
-            testResult.ok
-              ? "text-emerald-600 dark:text-emerald-400"
-              : "text-red-600 dark:text-red-400"
-          }`}
+          className={`text-sm ${testResult.ok ? "text-emerald-600 dark:text-emerald-400" : "text-zinc-600 dark:text-zinc-400"}`}
         >
-          {testResult.ok ? "Connected" : testResult.message}
+          {testResult.ok ? `${providerLabelFromToken(testResult.name)}: Connected` : testResult.message}
         </p>
       ) : null}
 
-      {error ? (
-        <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
-      ) : null}
-    </div>
+      {configured.length === 0 ? (
+        <SettingsEmptyState
+          icon={Server}
+          title="No providers configured"
+          description="Add API keys for LLM providers used by your team."
+          action={
+            <SettingsPrimaryButton onClick={() => setShowAdd(true)}>
+              <Plus className="h-4 w-4" />
+              Add provider
+            </SettingsPrimaryButton>
+          }
+        />
+      ) : (
+        <SettingsList>
+          {configured.map((provider) => (
+            <SettingsListRow
+              key={provider.name}
+              leading={<SettingsRowIcon icon={Server} />}
+              primary={providerLabelFromToken(provider.name)}
+              secondary={credentialStatusLabel(provider.name, provider.hasKey)}
+              badge={<SettingsBadge variant="success">Active</SettingsBadge>}
+              actions={
+                <>
+                  {isOAuthProvider(provider.name) ? (
+                    <SettingsSecondaryButton onClick={() => setUpdateTarget(provider.name)}>
+                      Reconnect
+                    </SettingsSecondaryButton>
+                  ) : null}
+                  <SettingsSecondaryButton
+                    disabled={testingName === provider.name}
+                    onClick={() => void testProvider(provider.name)}
+                  >
+                    {testingName === provider.name ? "…" : "Test"}
+                  </SettingsSecondaryButton>
+                  <SettingsGhostIconButton
+                    title="Remove provider"
+                    onClick={() => setDeleteTarget(provider.name)}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </SettingsGhostIconButton>
+                </>
+              }
+            />
+          ))}
+        </SettingsList>
+      )}
+
+      <ProviderFormModal
+        isOpen={showAdd}
+        onClose={() => setShowAdd(false)}
+        usedProviderNames={usedNames}
+        onSave={saveProvider}
+        mode="add"
+      />
+
+      <ProviderFormModal
+        isOpen={Boolean(updateTarget)}
+        onClose={() => setUpdateTarget(null)}
+        usedProviderNames={usedNames}
+        onSave={saveProvider}
+        mode="update"
+        initialName={updateTarget ?? ""}
+      />
+
+      <ConfirmDialog
+        isOpen={Boolean(deleteTarget)}
+        onClose={() => setDeleteTarget(null)}
+        title="Remove provider"
+        message={`Remove ${deleteTarget ? providerLabelFromToken(deleteTarget) : "this"} credential?`}
+        confirmLabel="Remove"
+        busy={deleting}
+        onConfirm={deleteProvider}
+      />
+    </>
   );
 }

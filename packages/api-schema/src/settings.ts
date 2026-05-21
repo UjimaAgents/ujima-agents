@@ -1,11 +1,60 @@
 import {
   ChannelSchema,
   IdSchema,
+  MemberKindSchema,
   MemberSchema,
   OrganizationChartSchema,
   OrganizationSchema,
+  ToolCapabilitySchema,
+  WorkspaceConfigSchema,
 } from '@ujima/shared';
 import { z } from 'zod';
+
+const TeamSettingsRoleSchema = z.object({
+  id: z.string().min(1).optional(),
+  name: z.string().min(1),
+  title: z.string().min(1),
+  description: z.string().default(''),
+  instructions: z.string().min(1),
+  kind: MemberKindSchema.default('agent'),
+  provider: z.string().min(1).optional(),
+  model: z.string().min(1).optional(),
+  workspaceScopes: z.array(z.string().min(1)).default([]),
+  tools: z.array(z.string().min(1)).default([]),
+  channels: z.array(z.string().min(1)).default(['general']),
+  skills: z.array(z.string().min(1)).default([]),
+});
+
+const TeamSettingsAgentSchema = z.object({
+  name: z.string().min(1),
+  roleName: z.string().min(1),
+  personalityName: z.string().min(1).default('direct'),
+  kind: MemberKindSchema.default('agent'),
+});
+
+const TeamSettingsChannelSchema = ChannelSchema.extend({
+  id: z.string().min(1).optional(),
+});
+
+const TeamSettingsPolicySchema = z.object({
+  requireApprovalForWrites: z.boolean(),
+  requireApprovalForShell: z.boolean(),
+  workspaceBoundaryMode: z.string(),
+});
+
+/** Team config returned by GET /api/settings/team (providers omitted). */
+export const TeamSettingsResponseSchema = z.object({
+  name: z.string().min(1),
+  workspace: WorkspaceConfigSchema,
+  organizationChart: OrganizationChartSchema,
+  configVersion: z.number().int().positive().optional(),
+  agents: z.array(TeamSettingsAgentSchema).default([]),
+  roles: z.array(TeamSettingsRoleSchema).min(1),
+  channels: z.array(TeamSettingsChannelSchema).default([]),
+  tools: z.record(ToolCapabilitySchema).default({}),
+  policies: TeamSettingsPolicySchema,
+});
+export type TeamSettingsResponse = z.infer<typeof TeamSettingsResponseSchema>;
 
 export const ProviderStatusSchema = z.object({
   name: z.string(),
@@ -37,6 +86,7 @@ export type OrganizationSettingsQuery = z.infer<typeof OrganizationSettingsQuery
 export const OrganizationSettingsUpdateSchema = z.object({
   organizationId: IdSchema,
   organizationName: z.string().min(1).optional(),
+  workspaceRoot: z.string().min(1).optional(),
   organizationChart: OrganizationChartSchema.optional(),
 });
 export type OrganizationSettingsUpdateRequest = z.infer<typeof OrganizationSettingsUpdateSchema>;

@@ -21,6 +21,7 @@ import {
   type Member,
   type Organization,
 } from '@ujima/shared';
+import { isPathInsideRoot } from '@ujima/shared/workspace';
 import type { ApiRepository } from './repository-reader.js';
 import { ensureMemberSelfChannel } from './member-channels.js';
 import type { TeamStore } from './team-store.js';
@@ -112,6 +113,31 @@ function markConfigOwnership(
   }
 }
 
+function normalizeStoredScopes(config: Record<string, unknown>, workspaceRoot: string): boolean {
+  const roles = Array.isArray(config.roles) ? config.roles : [];
+  let changed = false;
+  for (const role of roles) {
+    if (!role || typeof role !== 'object') continue;
+    const record = role as Record<string, unknown>;
+    if (!Array.isArray(record.workspaceScopes)) continue;
+    const originalScopes = record.workspaceScopes;
+    const scopes = originalScopes
+      .filter((scope): scope is string => typeof scope === 'string' && scope.trim().length > 0)
+      .map((scope) => {
+        const resolved = resolve(workspaceRoot, scope);
+        if (isPathInsideRoot(workspaceRoot, resolved)) return scope;
+        changed = true;
+        return '.';
+      });
+    const nextScopes = [...new Set(scopes)];
+    if (nextScopes.length !== originalScopes.length || nextScopes.some((scope, index) => scope !== originalScopes[index])) {
+      record.workspaceScopes = nextScopes;
+      changed = true;
+    }
+  }
+  return changed;
+}
+
 export class ConfigSyncService {
   constructor(
     private readonly repo: ApiRepository,
@@ -148,6 +174,21 @@ export class ConfigSyncService {
         }
       }
       const migrated = migrateAgentTeamConfig(parsedStored);
+      const activeRoot = organization.workspace.root?.trim();
+      if (activeRoot) {
+        const workspace =
+          migrated.config.workspace && typeof migrated.config.workspace === 'object'
+            ? { ...(migrated.config.workspace as Record<string, unknown>) }
+            : {};
+        if (workspace.root !== activeRoot) {
+          workspace.root = activeRoot;
+          migrated.config.workspace = workspace;
+          migrated.migrated = true;
+        }
+        if (normalizeStoredScopes(migrated.config, activeRoot)) {
+          migrated.migrated = true;
+        }
+      }
       if (migrated.migrated) {
         this.repo.saveWorkspaceSetting(
           organization.id,
@@ -176,7 +217,8 @@ export class ConfigSyncService {
       input.organizationId,
       input.configPath,
     );
-    const organizationId = existingOrganization?.id ?? randomUUID();
+    const organizationId =
+      existingOrganization?.id ?? input.organizationId ?? randomUUID();
 
     const organization = OrganizationSchema.parse({
       id: organizationId,
