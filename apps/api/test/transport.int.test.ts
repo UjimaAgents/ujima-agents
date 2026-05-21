@@ -4,13 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createRuntimeHost, createBufferLogger, type RuntimeHost } from '@ujima/runtime-core';
 import { Repository } from '@ujima/runtime-core';
-import {
-  AuthService,
-  BootstrapService,
-  OnboardingService,
-  SettingsService,
-  createTeamStore,
-} from '@ujima/orchestrator';
+import { createApiServices, createTeamStore } from '@ujima/orchestrator';
 import { createClient, UjimaApiError } from '@ujima/client-sdk';
 import { createTransport, type Transport } from '../src/transport/server';
 import type { LanguageModel } from 'ai';
@@ -40,10 +34,6 @@ describe('transport (in-process)', () => {
     );
     const apiRepo = new Repository(host.db.raw);
     const teamStore = createTeamStore();
-    const auth = new AuthService(apiRepo);
-    const bootstrap = new BootstrapService(apiRepo, teamStore, auth);
-    const onboarding = new OnboardingService(apiRepo, teamStore);
-    const settings = new SettingsService(apiRepo, teamStore);
 
     transport = createTransport({
       host,
@@ -53,17 +43,15 @@ describe('transport (in-process)', () => {
       port: 0,
       apiServices: {
         repo: apiRepo,
-        buildServices: () =>
-          ({
-            conversations: {},
-            runs: {},
-            approvals: {},
-            auth,
-            bootstrap,
-            onboarding,
-            settings,
-            taskPromoter: {},
-          }) as never,
+        buildServices: (realtime) =>
+          createApiServices({
+            repo: apiRepo,
+            teamStore,
+            workspaces: host.workspaces,
+            realtime,
+            permissions: host.permissions,
+            buildPermissionContext: () => ({}),
+          }),
       },
     });
     await transport.listen();

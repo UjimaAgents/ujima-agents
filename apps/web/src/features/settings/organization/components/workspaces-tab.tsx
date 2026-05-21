@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { FolderKanban, Loader2, Plus, RefreshCw } from "lucide-react";
 import { switchToWorkspace } from "@/features/workspace/switch-workspace";
 import { SettingsErrorAlert, SettingsLoading } from "@/features/settings/shared/settings-alert";
@@ -49,23 +49,28 @@ export function WorkspacesTab({ currentWorkspaceRoot }: WorkspacesTabProps) {
   const [refreshing, setRefreshing] = useState(false);
 
   const fetchWorkspaces = useCallback(async () => {
+    setLoading(true);
     setError(null);
-    const res = await fetch("/api/workspaces");
-    if (!res.ok) {
-      const body = await res.json().catch(() => null);
-      throw new Error(body?.message || "Unable to fetch workspaces");
+    try {
+      const res = await fetch("/api/workspaces");
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.message || "Unable to fetch workspaces");
+      }
+      const data = await res.json();
+      setWorkspaces(data.workspaces ?? []);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load workspaces");
+    } finally {
+      setLoading(false);
     }
-    const data = await res.json();
-    setWorkspaces(data.workspaces ?? []);
   }, []);
 
+  const fetched = useRef(false);
   useEffect(() => {
-    setLoading(true);
-    fetchWorkspaces()
-      .catch((err) => {
-        setError(err instanceof Error ? err.message : "Failed to load workspaces");
-      })
-      .finally(() => setLoading(false));
+    if (fetched.current) return;
+    fetched.current = true;
+    void fetchWorkspaces();
   }, [fetchWorkspaces]);
 
   const handleRefresh = async () => {

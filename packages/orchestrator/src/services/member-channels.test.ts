@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { ChannelSchema, MemberSchema, OrganizationSchema } from '@ujima/shared';
+import {
+  ChannelSchema,
+  MemberSchema,
+  OrganizationSchema,
+  type Channel,
+  type ConversationThread,
+  type Member,
+} from '@ujima/shared';
 import type { ApiRepository } from './repository-reader.js';
 import { ConversationService } from './conversation.js';
 import { ensureChannelThread, ensureDirectMessageConversation } from './member-channels.js';
@@ -58,26 +65,26 @@ function createRepo(): ApiRepository {
     workspace: { root: '/workspace', roleScopes: {} },
     organizationChart: { reportsTo: {} },
   });
-  const channels = new Map<string, ReturnType<typeof ChannelSchema.parse>>();
-  const threads = new Map<string, { id: string; organizationId: string; channelId: string; memberIds: string[]; title: string; createdAt: string }>();
-  const members = new Map<string, ReturnType<typeof MemberSchema.parse>>();
+  const channels = new Map<string, Channel>();
+  const threads = new Map<string, ConversationThread>();
+  const members = new Map<string, Member>();
 
   return {
     getOrganization: () => organization,
     getChannel: (_organizationId: string, channelId: string) => channels.get(channelId) ?? null,
-    saveChannel: (channel) => {
+    saveChannel: (channel: Channel) => {
       channels.set(channel.id, channel);
       return channel;
     },
     setChannelMembers: () => undefined,
     getThread: (_organizationId: string, threadId: string) => threads.get(threadId) ?? null,
-    ensureThread: (thread) => {
+    ensureThread: (thread: ConversationThread) => {
       threads.set(thread.id, thread);
       return thread;
     },
     getMember: (_organizationId: string, memberId: string) => members.get(memberId) ?? null,
     listMembers: () => [...members.values()],
-    saveMember: (member) => {
+    saveMember: (member: Member) => {
       members.set(member.id, member);
       return member;
     },

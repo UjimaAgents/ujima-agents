@@ -9,7 +9,6 @@ import {
   createTeamStore,
   persistTeamConfig,
 } from '@ujima/orchestrator';
-import type { LLMProvider } from '@ujima/llm/legacy';
 import { createBufferLogger } from './logger.js';
 import { Repository } from './repositories/index.js';
 import { createRuntimeHost, type RuntimeHost } from './runtime-host.js';
@@ -17,10 +16,6 @@ import {
   migrateUnifiedWorkspaceOrg,
   ORGANIZATION_WORKSPACE_IDS_KEY,
 } from './workspace-org-migration.js';
-
-function stubProvider(): LLMProvider {
-  throw new Error('no provider configured');
-}
 
 describe('migrateUnifiedWorkspaceOrg', () => {
   let homeDir: string;

@@ -26,7 +26,7 @@ export interface WorkspaceCatalogRow {
 
 export interface WorkspaceOrgMigrationResult {
   migrated: boolean;
-  splits: Array<{ fromOrganizationId: string; toOrganizationId: string; workspaceId: string }>;
+  splits: { fromOrganizationId: string; toOrganizationId: string; workspaceId: string }[];
 }
 
 function readLinkedWorkspaceIds(repo: ApiRepository, organizationId: string): Set<string> {

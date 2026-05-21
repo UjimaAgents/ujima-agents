@@ -140,11 +140,11 @@ export function createWorkspaceStore(raw: DbHandle): WorkspaceStore {
   };
 }
 
-type OrganizationWorkspaceSource = {
+interface OrganizationWorkspaceSource {
   id: string;
   name: string;
   workspace: { root: string };
-};
+}
 
 /** One organization → one catalog row: `ws_{organizationId}`. */
 export function upsertOrganizationWorkspace(

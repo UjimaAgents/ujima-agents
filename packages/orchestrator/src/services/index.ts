@@ -21,7 +21,7 @@ import { McpRegistryService } from './mcp-registry.js';
 import { OnboardingService } from './onboarding.js';
 import type { ApiRepository } from './repository-reader.js';
 import { SettingsService } from './settings.js';
-import { WorkspaceService } from './workspace.js';
+import { WorkspaceService, type WorkspaceCatalog } from './workspace.js';
 import { SpiritService, type ModelResolver, type SpiritMcpPool } from './spirit.js';
 import { SupervisorTodoService } from './supervisor-todo.js';
 import { SchedulerService } from './scheduler.js';
@@ -107,6 +107,7 @@ export { WorkspaceService } from './workspace.js';
 export type {
   CreateWorkspaceInput,
   ListAccessibleWorkspacesResult,
+  WorkspaceCatalog,
   WorkspaceListItem,
 } from './workspace.js';
 export type {
@@ -181,7 +182,7 @@ export interface ApiServicesContext extends ApiServiceContext {
   permissions: PermissionMiddleware;
   buildPermissionContext: PermissionContextBuilder;
   repo: ApiRepository;
-  workspaces: import('./workspace.js').WorkspaceCatalog;
+  workspaces: WorkspaceCatalog;
   archiveRoot?: string;
   /**
    * Phase 2: optional model resolver override. Tests pass a mock that

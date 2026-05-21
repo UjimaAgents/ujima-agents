@@ -1,4 +1,4 @@
-import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { syncWorkspacesFromOrganizations, type RuntimeHost } from '@ujima/runtime-core';
 import {
@@ -49,7 +49,7 @@ export function registerWorkspaceRoutes(
   }, async (req, reply) => {
     if (!auth || !workspaces) {
       return reply.status(503).send({
-        code: 'ERR_UNAVAILABLE',
+        code: 'ERR_SHUTTING_DOWN',
         message: 'Workspace routes are not configured',
       });
     }
@@ -83,7 +83,7 @@ export function registerWorkspaceRoutes(
   }, async (req, reply) => {
     if (!auth || !workspaces) {
       return reply.status(503).send({
-        code: 'ERR_UNAVAILABLE',
+        code: 'ERR_SHUTTING_DOWN',
         message: 'Workspace routes are not configured',
       });
     }

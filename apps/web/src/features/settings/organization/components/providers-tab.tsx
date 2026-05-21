@@ -3,7 +3,7 @@
 import { Plus, Server, Trash2 } from "lucide-react";
 import { useState } from "react";
 import type { ProviderSecretsUpsertResponse, ProviderStatus } from "@ujima/api-schema";
-import { settingsFetch, settingsFetchVoid } from "@/features/settings/shared/settings-api";
+import { settingsFetch } from "@/features/settings/shared/settings-api";
 import { ConfirmDialog } from "@/features/settings/shared/confirm-dialog";
 import { SettingsErrorAlert } from "@/features/settings/shared/settings-alert";
 import {

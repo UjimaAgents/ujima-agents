@@ -20,6 +20,7 @@ import type {
   SupervisorTodoService,
   TaskPromoterService,
   TaskSessionService,
+  WorkspaceService,
 } from "@ujima/orchestrator";
 import type {UjimaEvent} from "@ujima/shared";
 import {
@@ -83,6 +84,7 @@ export interface TransportOptions {
       onboarding: OnboardingService;
       scheduler?: SchedulerService;
       settings: SettingsService;
+      workspaces: WorkspaceService;
       taskPromoter: TaskPromoterService;
       taskSessions: TaskSessionService;
       spirits: SpiritService;
