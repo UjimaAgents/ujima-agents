@@ -38,7 +38,7 @@ export default async function LoginPage() {
         >
           Go Home
         </Link>
-        <LoginForm organizationId={bootstrap.organization?.id ?? ""} />
+        <LoginForm organizations={bootstrap.organizations} />
       </div>
     </main>
   );

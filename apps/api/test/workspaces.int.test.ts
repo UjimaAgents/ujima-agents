@@ -28,6 +28,7 @@ describe('workspace routes', () => {
   let sessionToken: string;
   let organizationId: string;
   let repo: Repository;
+  let auth: AuthService;
 
   beforeAll(async () => {
     homeDir = await mkdtemp(join(tmpdir(), 'ujima-workspaces-'));
@@ -47,7 +48,7 @@ describe('workspace routes', () => {
 
     repo = new Repository(host.db.raw);
     const teamStore = createTeamStore();
-    const auth = new AuthService(repo);
+    auth = new AuthService(repo);
     const bootstrap = new BootstrapService(repo, teamStore, auth);
     const onboarding = new OnboardingService(repo, teamStore);
     const settings = new SettingsService(repo, teamStore);
@@ -208,6 +209,49 @@ describe('workspace routes', () => {
       expect(listed.workspaces.some((workspace) => workspace.id === created.id)).toBe(true);
     } finally {
       await rm(otherHome, { recursive: true, force: true });
+    }
+  });
+
+  it('does not leak shared-root workspaces across organizations', async () => {
+    const otherOrganizationId = 'org-shared-root';
+    repo.saveOrganization(
+      {
+        id: otherOrganizationId,
+        name: 'Shared Root Org',
+        workspace: { root: homeDir, roleScopes: {} },
+        organizationChart: { reportsTo: {} },
+      },
+    );
+    repo.saveMember({
+      id: 'shared-root-owner',
+      organizationId: otherOrganizationId,
+      name: 'Shared Root Owner',
+      kind: 'human',
+      roleName: 'owner',
+    });
+    const otherSessionToken = auth.registerOwnerAccount({
+      organizationId: otherOrganizationId,
+      memberId: 'shared-root-owner',
+      email: 'shared-root-owner@example.com',
+      password: 'correct horse battery staple',
+    }).sessionToken;
+
+    const sharedWorkspace = host.workspaces.create({
+      root_path: homeDir,
+      label: 'Shared root workspace',
+    });
+    try {
+      const listResponse = await fetch(`${baseUrl}/api/workspaces`, {
+        headers: {
+          authorization: `Bearer ${TOKEN}`,
+          'x-ujima-session': otherSessionToken,
+        },
+      });
+      expect(listResponse.status).toBe(200);
+      const body = (await listResponse.json()) as { workspaces: Array<{ id: string }> };
+      expect(body.workspaces.some((workspace) => workspace.id === sharedWorkspace.id)).toBe(false);
+    } finally {
+      host.workspaces.remove(sharedWorkspace.id);
     }
   });
 

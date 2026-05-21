@@ -48,7 +48,7 @@ export class BootstrapService {
 
     const accessibleOrgs = authState.authenticated
       ? this.auth.listAccessibleOrganizations(input.sessionToken)
-      : [];
+      : this.repo.listOrganizations();
 
     return {
       serviceReady: true,

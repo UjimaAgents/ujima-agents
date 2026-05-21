@@ -6,28 +6,35 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
 interface LoginFormProps {
-  organizationId: string;
+  organizations: { id: string; name: string }[];
 }
 
-export function LoginForm({ organizationId }: LoginFormProps) {
+export function LoginForm({ organizations }: LoginFormProps) {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [organizationId, setOrganizationId] = useState(organizations.length === 1 ? organizations[0]?.id ?? "" : "");
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
+  const needsChoice = organizations.length > 1;
 
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError(null);
+
+    if (needsChoice && !organizationId) {
+      setError("Choose an organization.");
+      return;
+    }
 
     startTransition(async () => {
       const response = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          organizationId,
           email,
           password,
+          organizationId: organizationId || undefined,
         }),
       });
 
@@ -56,6 +63,29 @@ export function LoginForm({ organizationId }: LoginFormProps) {
       </h1>
 
       <div className="mt-8 space-y-5">
+        {needsChoice ? (
+          <label className="block">
+            <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200">Organization</span>
+            <select
+              value={organizationId}
+              onChange={(event) => setOrganizationId(event.target.value)}
+              className="mt-2 w-full rounded-2xl border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm text-zinc-900 outline-none transition focus:border-violet-500 focus:bg-white dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100 dark:focus:bg-zinc-950"
+              required
+            >
+              <option value="">Choose an organization</option>
+              {organizations.map((organization) => (
+                <option key={organization.id} value={organization.id}>
+                  {organization.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : organizations.length === 1 ? (
+          <p className="rounded-2xl border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300">
+            Signing into {organizations[0]?.name}
+          </p>
+        ) : null}
+
         <label className="block">
           <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200">Email</span>
           <input
