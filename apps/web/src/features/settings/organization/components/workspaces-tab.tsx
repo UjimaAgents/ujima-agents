@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { FolderKanban, RefreshCw, AlertCircle, Plus, Trash2, Loader2 } from "lucide-react";
+import { Check, FolderKanban, RefreshCw, AlertCircle, Plus, Trash2, Loader2 } from "lucide-react";
 import { TextInput } from "@/components/ui/form-fields";
 import { reloadAfterWorkspaceSwitch, switchWorkspace } from "@/features/workspace/switch-workspace";
 
@@ -309,9 +309,7 @@ export function WorkspacesTab({ currentWorkspaceRoot }: WorkspacesTabProps) {
                       {ws.label || ws.id}
                     </span>
                     {current ? (
-                      <span className="rounded-full bg-violet-600 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
-                        Current
-                      </span>
+                      <Check className="ml-auto h-3.5 w-3.5 shrink-0 text-violet-600" />
                     ) : (
                       <span className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400">
                         Click to switch

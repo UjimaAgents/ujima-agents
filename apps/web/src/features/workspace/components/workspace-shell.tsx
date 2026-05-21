@@ -336,9 +336,6 @@ export function WorkspaceShell(props: {
           bootstrap={bootstrap}
           rolePresets={props.rolePresets}
           teamSettings={props.teamSettings}
-          currentWorkspaceRoot={
-            props.teamSettings?.workspace?.root ?? bootstrap.team?.workspaceRoot
-          }
           goalMode={goalMode}
           channels={channels}
           members={members}
