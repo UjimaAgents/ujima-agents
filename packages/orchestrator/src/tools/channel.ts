@@ -174,17 +174,28 @@ function resolveMemberId(
   return memberId;
 }
 
-function rosterAgentHandles(ctx: BuildSchemaContext): string[] {
+function rosterMemberHandles(
+  ctx: BuildSchemaContext,
+  filter: (member: { kind: string; retiredAt?: string | null; id: string }) => boolean,
+): string[] {
   return ctx.repo
     .listMembers(ctx.organizationId)
-    .filter((member) => member.kind === AGENT_KIND && !member.retiredAt && member.id !== ctx.memberId)
+    .filter((member) => filter(member) && !member.retiredAt && member.id !== ctx.memberId)
     .flatMap((member) =>
       member.name && member.name !== member.id ? [member.id, member.name] : [member.id],
     );
 }
 
+function rosterAgentHandles(ctx: BuildSchemaContext): string[] {
+  return rosterMemberHandles(ctx, (member) => member.kind === AGENT_KIND);
+}
+
+function rosterDmHandles(ctx: BuildSchemaContext): string[] {
+  return rosterMemberHandles(ctx, () => true);
+}
+
 function buildDmSchemaForOrg(ctx: BuildSchemaContext) {
-  const handles = rosterAgentHandles(ctx);
+  const handles = rosterDmHandles(ctx);
   if (handles.length === 0) return ChannelDmSchema;
   return ChannelDmSchema.extend({
     member_id: z.enum(handles as [string, ...string[]]),

@@ -300,11 +300,10 @@ export class SpiritService {
   private readonly supervisorLastAlertAt = new Map<string, number>();
   private readonly deferredApprovalResumes = new Set<string>();
   private readonly runAbortControllers = new Map<string, AbortController>();
-  // Late-bound hook fired when `completeRun` / `failRun` persist a
-  // terminal run row. Used by the commitment service to track empty
-  // self-followup wakes and short-circuit `due_at` after K consecutive
-  // empties. Failures inside the hook are swallowed so a flaky
-  // post-completion handler can't fail the run.
+  // Late-bound hook fired when a run reaches a terminal status
+  // (completed, failed, or cancelled). Used by the commitment service
+  // and pending-member-alert drain. Failures inside the hook are
+  // swallowed so a flaky post-terminal handler can't fail the run.
   private runCompletedHook?: (run: RunState) => Promise<void> | void;
 
   constructor(
@@ -1560,6 +1559,8 @@ export class SpiritService {
     this.runAbortControllers.get(key)?.abort();
     this.runAbortControllers.delete(key);
 
+    this.invokeRunTerminalHook(cancelled);
+
     return cancelled;
   }
 
@@ -2020,6 +2021,20 @@ export class SpiritService {
     this.runCompletedHook = hook;
   }
 
+  private invokeRunTerminalHook(run: RunState): void {
+    if (!this.runCompletedHook) return;
+    try {
+      const result = this.runCompletedHook(run);
+      if (result && typeof (result as Promise<unknown>).then === 'function') {
+        (result as Promise<unknown>).catch(() => {
+          // best-effort
+        });
+      }
+    } catch {
+      // best-effort
+    }
+  }
+
   private completeRun(run: RunState, summary: string, terminatingTool: string | null = null): RunState {
     const completed = this.repo.saveRun({
       ...run,
@@ -2036,18 +2051,7 @@ export class SpiritService {
       this.getRooms(run),
     );
 
-    if (this.runCompletedHook) {
-      try {
-        const result = this.runCompletedHook(completed);
-        if (result && typeof (result as Promise<unknown>).then === 'function') {
-          (result as Promise<unknown>).catch(() => {
-            // best-effort
-          });
-        }
-      } catch {
-        // best-effort
-      }
-    }
+    this.invokeRunTerminalHook(completed);
 
     return completed;
   }
@@ -2083,6 +2087,8 @@ export class SpiritService {
       { organizationId: run.organizationId, run: failed },
       this.getRooms(run),
     );
+
+    this.invokeRunTerminalHook(failed);
 
     return failed;
   }

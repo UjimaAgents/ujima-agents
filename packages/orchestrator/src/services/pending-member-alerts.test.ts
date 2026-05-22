@@ -63,4 +63,37 @@ describe('pending-member-alerts', () => {
     );
     expect(takePendingMemberAlert('org-1', 'agent-1', 'thread-1')).toBeUndefined();
   });
+
+  it.each(['failed', 'cancelled'] as const)(
+    'drains the latest pending alert after a terminal run with status %s',
+    async (status) => {
+      clearPendingMemberAlertsForTests();
+      const wake = vi.fn(async () => undefined);
+      enqueuePendingMemberAlert({
+        organizationId: 'org-1',
+        memberId: 'agent-1',
+        threadId: 'thread-1',
+        messageId: 'msg-queued',
+        byMemberId: 'peer-1',
+        reason: 'dm',
+        wakeReason: 'dm',
+      });
+      const run = {
+        id: 'run-1',
+        organizationId: 'org-1',
+        agentId: 'agent-1',
+        threadId: 'thread-1',
+        status,
+        step: status,
+        summary: status === 'failed' ? 'error' : 'Stopped by user',
+        startedAt: new Date().toISOString(),
+        endedAt: new Date().toISOString(),
+      } as RunState;
+
+      await drainPendingMemberAlertAfterRun(run, wake);
+
+      expect(wake).toHaveBeenCalledTimes(1);
+      expect(takePendingMemberAlert('org-1', 'agent-1', 'thread-1')).toBeUndefined();
+    },
+  );
 });

@@ -80,6 +80,24 @@ describe('channel.* tools — toInvocation()', () => {
     expect(inv.resourcePath).toBeUndefined();
   });
 
+  it('buildDmSchemaForOrg accepts human members as DM recipients', () => {
+    const schema = channelDmTool.buildSchema?.({
+      organizationId: 'org-1',
+      memberId: 'agent-1',
+      repo: {
+        listMembers: () => [
+          { id: 'agent-1', name: 'Agent One', kind: 'agent' },
+          { id: 'human-1', name: 'Pat', kind: 'human' },
+        ],
+      },
+    } as never);
+    expect(schema).toBeDefined();
+    const parsed = schema!.safeParse({ member_id: 'human-1', body: 'hi', mentions: [] });
+    expect(parsed.success).toBe(true);
+    const byName = schema!.safeParse({ member_id: 'Pat', body: 'hi', mentions: [] });
+    expect(byName.success).toBe(true);
+  });
+
   it('channel.dm forwards ignore through to the invocation payload', () => {
     const inv = channelDmTool.toInvocation({
       member_id: 'alex',
