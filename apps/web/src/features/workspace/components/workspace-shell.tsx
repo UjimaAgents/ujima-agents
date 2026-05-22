@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { GripVertical, MessageSquare } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
@@ -226,12 +226,12 @@ export function WorkspaceShell(props: {
     [appendMember, organizationId],
   );
 
-  useEffect(() => {
-    const conversationName = selected?.name?.trim();
+  useLayoutEffect(() => {
+    const conversationName = resolvedSelected?.name?.trim();
     document.title = conversationName
       ? `Ujima Agents - ${conversationName}`
       : "Ujima Agents";
-  }, [selected?.name]);
+  }, [resolvedSelected?.id, resolvedSelected?.name, resolvedSelected?.type]);
 
   useEffect(() => {
     if (!bootstrap.channels) return;

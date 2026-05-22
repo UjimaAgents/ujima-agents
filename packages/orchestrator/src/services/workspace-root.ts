@@ -54,10 +54,11 @@ export function getOrganizationWithWorkspaceRoot(
 }
 
 export function assertWorkspaceRootPathExists(workspaceRoot: string): string {
-  const resolved = resolve(workspaceRoot.trim());
-  if (!resolved) {
+  const trimmed = workspaceRoot.trim();
+  if (!trimmed) {
     throw new Error('project folder is required');
   }
+  const resolved = resolve(trimmed);
   if (!existsSync(resolved)) {
     throw new Error(`workspace root "${resolved}" does not exist on disk`);
   }

@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import { resolve } from 'node:path';
 import { AGENT_KIND, ChannelSchema, MemberSchema, PROVIDER_KINDS, type Organization, type Member, type Channel } from '@ujima/shared';
 import { AgentTeam, createAgent, defineRole, loadAgentTeam, normalizeProviderKey, type RoleConfig } from '@ujima/framework';
 import type { ApiRepository } from './repository-reader.js';
@@ -10,7 +9,10 @@ import {
   ensureChannelThread,
   ensureMemberSelfChannel,
 } from './member-channels.js';
-import { upsertWorkspaceMemberScopes } from './workspace-root.js';
+import {
+  assertWorkspaceRootPathExists,
+  upsertWorkspaceMemberScopes,
+} from './workspace-root.js';
 import { upsertDashboardTeamOverride } from './dashboard-team-overrides.js';
 import { ConfigSyncService, persistTeamConfig } from './config-sync.js';
 import { requireTeam } from '../utils/require-team.js';
@@ -504,7 +506,7 @@ export class SettingsService {
     const nextName = input.organizationName ?? organization.name;
     const nextRoot =
       input.workspaceRoot !== undefined
-        ? resolve(input.workspaceRoot.trim())
+        ? assertWorkspaceRootPathExists(input.workspaceRoot)
         : organization.workspace.root;
     const updated = this.repo.saveOrganization({
       ...organization,
