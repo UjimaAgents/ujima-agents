@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   getDirectMessageThreadId,
   isDirectMessageThread,
+  normalizeDmChannelRef,
   orgWorkspaceId,
   organizationIdFromWorkspaceId,
   parseDmThreadId,
@@ -34,5 +35,10 @@ describe('direct message threads', () => {
   it('detects dm threads', () => {
     expect(isDirectMessageThread('dm:a:b')).toBe(true);
     expect(isDirectMessageThread('thread-1')).toBe(false);
+  });
+
+  it('normalizes dm:{singleMemberId} to canonical thread ids', () => {
+    expect(normalizeDmChannelRef('dm:agent-2', 'agent-1')).toBe('dm:agent-1:agent-2');
+    expect(normalizeDmChannelRef('dm:agent-1:agent-2', 'agent-1')).toBe('dm:agent-1:agent-2');
   });
 });

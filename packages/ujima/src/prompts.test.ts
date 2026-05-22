@@ -60,7 +60,9 @@ describe('buildAgentSystemPrompt', () => {
     expect(system).toContain('Use grep, ls, and glob to find files and lines first.');
     expect(system).toContain('Background shell commands return a job id');
     expect(system).toContain('Allowed scopes: frontend');
-    expect(system).toContain('For DM chats, use the other person\'s member id as the conversation reference.');
+    expect(system).toContain(
+      'channel.read: channel id/name from the list above; DMs use dm_thread_id or peer member_id from channel.list.',
+    );
   });
 
   it('uses the member display name for the current agent prompt', () => {

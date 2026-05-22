@@ -2,7 +2,12 @@ import { existsSync } from 'node:fs';
 import { realpath } from 'node:fs/promises';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 import type { AgentTeamHandle } from '@ujima/framework';
-import type { Organization, WorkspaceMember } from '@ujima/shared';
+import {
+  formatPathEscapeError,
+  type Organization,
+  type PathEscapeReason,
+  type WorkspaceMember,
+} from '@ujima/shared';
 import type { ApiRepository } from './repository-reader.js';
 
 export const ERR_NO_WORKSPACE_ROOT = 'ERR_NO_WORKSPACE_ROOT';
@@ -87,6 +92,17 @@ export function upsertWorkspaceMemberScopes(
   });
 }
 
+function roleScopePathsMatch(
+  stored: readonly string[],
+  desired: readonly string[],
+): boolean {
+  const normalize = (paths: readonly string[]) =>
+    [...new Set(paths.map((path) => path.trim()).filter(Boolean))].sort();
+  const left = normalize(stored);
+  const right = normalize(desired);
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
 export function ensureWorkspaceMemberScopes(
   repo: ApiRepository,
   team: AgentTeamHandle,
@@ -94,18 +110,17 @@ export function ensureWorkspaceMemberScopes(
   memberId: string,
   roleName: string,
 ): WorkspaceMember {
+  const role = team.getRole(roleName);
+  const desiredScopes = role?.workspaceScopes ?? [];
   const existing = repo.getWorkspaceMember(organizationId, memberId);
   if (existing) {
-    return existing;
+    if (roleScopePathsMatch(existing.roleScopePaths, desiredScopes)) {
+      return existing;
+    }
+    return upsertWorkspaceMemberScopes(repo, organizationId, memberId, desiredScopes);
   }
 
-  const role = team.getRole(roleName);
-  return upsertWorkspaceMemberScopes(
-    repo,
-    organizationId,
-    memberId,
-    role?.workspaceScopes ?? [],
-  );
+  return upsertWorkspaceMemberScopes(repo, organizationId, memberId, desiredScopes);
 }
 
 export async function createMemberPathResolver(
@@ -137,21 +152,22 @@ export class PathEscapeError extends Error {
   readonly root: string;
   readonly scopePaths: readonly string[];
 
+  readonly reason: PathEscapeReason;
+
   constructor(params: {
     requested: string;
     resolved: string;
     root: string;
     scopePaths: readonly string[];
+    reason: PathEscapeReason;
   }) {
-    super(
-      `path escape: "${params.requested}" resolved to "${params.resolved}" which is outside "${params.root}"` +
-        (params.scopePaths.length ? ` (scopes: ${params.scopePaths.join(', ')})` : ''),
-    );
+    super(formatPathEscapeError(params));
     this.name = 'PathEscapeError';
     this.requested = params.requested;
     this.resolved = params.resolved;
     this.root = params.root;
     this.scopePaths = params.scopePaths;
+    this.reason = params.reason;
   }
 }
 
@@ -209,6 +225,7 @@ async function createPathResolver(opts: {
           resolved: resolved.boundaryPath,
           root: realRoot,
           scopePaths,
+          reason: 'workspace',
         });
       }
       if (
@@ -224,6 +241,7 @@ async function createPathResolver(opts: {
           resolved: resolved.boundaryPath,
           root: realRoot,
           scopePaths,
+          reason: 'scope',
         });
       }
       return resolved.targetPath;

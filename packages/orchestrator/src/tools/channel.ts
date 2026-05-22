@@ -7,7 +7,9 @@ import {
   channelRoom,
   getDirectMessageThreadId,
   memberRoom,
+  normalizeDmChannelRef,
   orgRoom,
+  resolveDmPeerMemberId,
   threadRoom,
 } from '@ujima/shared';
 import type { BuildSchemaContext } from './types.js';
@@ -139,12 +141,65 @@ function resolveChannelId(
   const byName = repo.listAllChannels(organizationId).find((channel) => channel.name === normalized);
   if (byName) return byName.id;
 
-  const member = repo.getMember(organizationId, normalized);
-  if (member) {
-    return getDirectMessageThreadId(currentMemberId, member.id);
+  const peerMemberId = lookupMemberId(repo, organizationId, normalized);
+  if (peerMemberId) {
+    return getDirectMessageThreadId(currentMemberId, peerMemberId);
   }
 
-  return normalized;
+  return normalizeDmChannelRef(normalized, currentMemberId);
+}
+
+function lookupMemberId(
+  repo: ApiRepository,
+  organizationId: string,
+  memberRef: string,
+): string | undefined {
+  const normalized = memberRef.trim();
+  const direct = repo.getMember(organizationId, normalized);
+  if (direct) return direct.id;
+  return repo
+    .listMembers(organizationId)
+    .find((member) => member.name.toLowerCase() === normalized.toLowerCase())?.id;
+}
+
+function resolveMemberId(
+  repo: ApiRepository,
+  organizationId: string,
+  memberRef: string,
+): string {
+  const memberId = lookupMemberId(repo, organizationId, memberRef);
+  if (!memberId) {
+    throw new Error(`Member not found: ${memberRef}`);
+  }
+  return memberId;
+}
+
+function rosterMemberHandles(
+  ctx: BuildSchemaContext,
+  filter: (member: { kind: string; retiredAt?: string | null; id: string }) => boolean,
+): string[] {
+  return ctx.repo
+    .listMembers(ctx.organizationId)
+    .filter((member) => filter(member) && !member.retiredAt && member.id !== ctx.memberId)
+    .flatMap((member) =>
+      member.name && member.name !== member.id ? [member.id, member.name] : [member.id],
+    );
+}
+
+function rosterAgentHandles(ctx: BuildSchemaContext): string[] {
+  return rosterMemberHandles(ctx, (member) => member.kind === AGENT_KIND);
+}
+
+function rosterDmHandles(ctx: BuildSchemaContext): string[] {
+  return rosterMemberHandles(ctx, () => true);
+}
+
+function buildDmSchemaForOrg(ctx: BuildSchemaContext) {
+  const handles = rosterDmHandles(ctx);
+  if (handles.length === 0) return ChannelDmSchema;
+  return ChannelDmSchema.extend({
+    member_id: z.enum(handles as [string, ...string[]]),
+  });
 }
 
 export const channelPostTool: OrchestratorTool<typeof ChannelPostSchema> = {
@@ -250,6 +305,7 @@ export const channelReplyTool: OrchestratorTool<typeof ChannelReplySchema> = {
 export const channelDmTool: OrchestratorTool<typeof ChannelDmSchema> = {
   id: 'channel.dm',
   schema: ChannelDmSchema,
+  buildSchema: buildDmSchemaForOrg,
   toInvocation: (args) => ({
     action: 'message',
     resourceType: 'message',
@@ -257,9 +313,11 @@ export const channelDmTool: OrchestratorTool<typeof ChannelDmSchema> = {
     permissionMcpId: 'channels',
     input: args,
   }),
-  execute: ({ invocation, conversations }) => {
+  execute: ({ invocation, repo, conversations }) => {
     const body = String(invocation.input.body);
-    const recipientId = String(invocation.input.member_id);
+    const recipientRef = String(invocation.input.member_id);
+    const recipientId =
+      recipientRef === 'self' ? 'self' : resolveMemberId(repo, invocation.organizationId, recipientRef);
     const dmThreadId =
       recipientId === 'self'
         ? `self:${invocation.memberId}`
@@ -300,12 +358,23 @@ export const channelListTool: OrchestratorTool<typeof ChannelListSchema> = {
     permissionMcpId: 'channels',
     input: args,
   }),
-  execute: ({ invocation, conversations }) =>
-    conversations.listVisibleChannels({
+  execute: ({ invocation, conversations }) => {
+    const channels = conversations.listVisibleChannels({
       organizationId: invocation.organizationId,
       memberId: invocation.memberId,
       scope: invocation.input.scope === 'all' ? 'all' : 'mine',
-    }),
+    });
+    return channels.map((channel) => {
+      if (channel.kind !== 'dm') {
+        return channel;
+      }
+      return {
+        ...channel,
+        dm_thread_id: channel.id,
+        dm_peer_member_id: resolveDmPeerMemberId(channel.id, invocation.memberId),
+      };
+    });
+  },
 };
 
 export const channelReadTool: OrchestratorTool<typeof ChannelReadSchema> = {
@@ -527,38 +596,13 @@ export const channelAckTool: OrchestratorTool<typeof ChannelAckSchema> = {
 // and recorded with `metadata.handoff`. The TOOL appends the
 // token, not the model — so we can't accidentally cut off a
 // follow-up tool call with a stop sequence.
-/**
- * Per-invocation handoff schema. The model's `to:` field is constrained
- * to a Zod enum of real agent ids (and their human-readable names)
- * from the org roster — phantom recipients become structurally
- * impossible at decode time, not after the fact.
- *
- * Falls back to the static `ChannelHandoffSchema` (free-form string)
- * when no repo is available (test fixtures, programmatic callers) or
- * when no valid recipients exist (1-agent org).
- */
 function buildHandoffSchemaForOrg(ctx: BuildSchemaContext) {
-  const candidates = ctx.repo
-    .listMembers(ctx.organizationId)
-    .filter((member) => member.kind === AGENT_KIND && !member.retiredAt && member.id !== ctx.memberId);
-  // Build the enum from BOTH ids and display names — the model
-  // tends to use names (matches the @-mention surface) but legacy
-  // callers pass ids. The execute path resolves either.
-  const handles = candidates.flatMap((member) => {
-    const out = [member.id];
-    if (member.name && member.name !== member.id) out.push(member.name);
-    return out;
-  });
+  const handles = rosterAgentHandles(ctx);
   if (handles.length === 0) {
     return ChannelHandoffSchema;
   }
-  return z.object({
-    to: z
-      .enum(handles as [string, ...string[]])
-      .describe('Recipient agent. Pick one of the listed agent ids or display names.'),
-    reason: z.string().min(1).max(120),
-    deliverable: z.string().min(1),
-    complete: z.boolean().optional(),
+  return ChannelHandoffSchema.extend({
+    to: z.enum(handles as [string, ...string[]]),
   });
 }
 
@@ -573,7 +617,7 @@ export const channelHandoffTool: OrchestratorTool<typeof ChannelHandoffSchema> =
     input: args,
   }),
   execute: ({ invocation, repo, conversations }) => {
-    const toMemberId = String(invocation.input.to);
+    const toRef = String(invocation.input.to);
     const reason = String(invocation.input.reason);
     const deliverable = String(invocation.input.deliverable);
     const complete = invocation.input.complete === true;
@@ -591,15 +635,7 @@ export const channelHandoffTool: OrchestratorTool<typeof ChannelHandoffSchema> =
       throw new Error(`channel.handoff: thread not found: ${threadId}`);
     }
 
-    // Resolve the recipient name into a member id so we can build the @mention.
-    const recipient =
-      repo.getMember(invocation.organizationId, toMemberId) ??
-      repo
-        .listMembers(invocation.organizationId)
-        .find((member) => member.name.toLowerCase() === toMemberId.toLowerCase());
-    if (!recipient) {
-      throw new Error(`channel.handoff: recipient not found: ${toMemberId}`);
-    }
+    const recipientId = resolveMemberId(repo, invocation.organizationId, toRef);
 
     const sender = repo.getMember(invocation.organizationId, invocation.memberId);
     const senderKind = sender?.kind ?? AGENT_KIND;
@@ -613,7 +649,7 @@ export const channelHandoffTool: OrchestratorTool<typeof ChannelHandoffSchema> =
       senderKind,
       kind: senderKind,
       content: body,
-      mentions: [recipient.id],
+      mentions: [recipientId],
       // `runId` mirrors the per-step persistence in spirit.ts and the
       // other terminating channel tools (channel.reply / .post / .dm).
       // Without it, run-detail views can't associate the handoff
@@ -623,7 +659,7 @@ export const channelHandoffTool: OrchestratorTool<typeof ChannelHandoffSchema> =
         runId: invocation.runId,
         handoff: {
           from: invocation.memberId,
-          to: recipient.id,
+          to: recipientId,
           reason,
           complete,
         },
@@ -648,7 +684,7 @@ export const channelHandoffTool: OrchestratorTool<typeof ChannelHandoffSchema> =
       channelId: thread.channelId,
       threadId,
       fromMemberId: invocation.memberId,
-      toMemberId: recipient.id,
+      toMemberId: recipientId,
       reason,
       complete,
     });

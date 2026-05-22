@@ -119,7 +119,6 @@ export function buildEnvironmentContext(): string {
 const COLLABORATION_PROTOCOL_HEADER = "## Collaboration Protocols";
 
 const COLLABORATION_PROTOCOL_SHARED_BULLETS = [
-  "- When your work produces output another agent needs, write it to the shared context store under a descriptive key so they can find it later.",
   "- When blocked on information another agent might have, @mention them in the task channel with a specific question instead of guessing.",
   "- Before starting work that overlaps with a teammate's domain, check their recent outputs in peer context and approved artifacts.",
   "- If you discover something that affects the whole team, post a concise update to the relevant channel so all agents see it.",
@@ -128,6 +127,7 @@ const COLLABORATION_PROTOCOL_SHARED_BULLETS = [
   "- When you are @mentioned reply is mandatory. The runtime rejects channel.pass and self.note for mentioned runs.",
   "- When a teammate shares useful information mid-task, acknowledge it and build on it rather than repeating their work.",
   "- Respect the org hierarchy: coordinate with your manager (reports_to) for decisions that cross team boundaries or need escalation.",
+  "- When a human delegated work to you, their thread is the command surface; close the loop there with channel.reply or channel.post when done.",
 ] as const;
 
 const COLLABORATION_PROTOCOL_CHANNEL_ONLY_BULLETS = [

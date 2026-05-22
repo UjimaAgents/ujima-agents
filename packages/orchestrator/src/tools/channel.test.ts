@@ -80,6 +80,24 @@ describe('channel.* tools — toInvocation()', () => {
     expect(inv.resourcePath).toBeUndefined();
   });
 
+  it('buildDmSchemaForOrg accepts human members as DM recipients', () => {
+    const schema = channelDmTool.buildSchema?.({
+      organizationId: 'org-1',
+      memberId: 'agent-1',
+      repo: {
+        listMembers: () => [
+          { id: 'agent-1', name: 'Agent One', kind: 'agent' },
+          { id: 'human-1', name: 'Pat', kind: 'human' },
+        ],
+      },
+    } as never);
+    expect(schema).toBeDefined();
+    const parsed = schema!.safeParse({ member_id: 'human-1', body: 'hi', mentions: [] });
+    expect(parsed.success).toBe(true);
+    const byName = schema!.safeParse({ member_id: 'Pat', body: 'hi', mentions: [] });
+    expect(byName.success).toBe(true);
+  });
+
   it('channel.dm forwards ignore through to the invocation payload', () => {
     const inv = channelDmTool.toInvocation({
       member_id: 'alex',
@@ -135,6 +153,77 @@ describe('channel.* tools — toInvocation()', () => {
       } as never,
     });
     expect(receivedChannelId).toBe('dm:agent-1:agent-2');
+  });
+
+  it('channel.read normalizes dm:{singleMemberId} to a canonical DM thread id', async () => {
+    let receivedChannelId: string | undefined;
+    await channelReadTool.execute({
+      invocation: {
+        organizationId: 'org-1',
+        runId: 'run-1',
+        memberId: 'agent-1',
+        toolCallId: 'call-1',
+        toolId: 'channel.read',
+        action: 'read',
+        resourceType: 'message',
+        input: { channel_id: 'dm:agent-2', limit: 50 },
+      } as never,
+      team: { getChannel: () => undefined } as never,
+      repo: {
+        getChannel: () => null,
+        listAllChannels: () => [],
+        getMember: () => null,
+        listMembers: () => [],
+      } as never,
+      conversations: {
+        readChannel: (input: { channelId: string }) => {
+          receivedChannelId = input.channelId;
+          return input;
+        },
+      } as never,
+    });
+    expect(receivedChannelId).toBe('dm:agent-1:agent-2');
+  });
+
+  it('channel.list annotates DM rows with dm_thread_id and dm_peer_member_id', async () => {
+    const result = await channelListTool.execute({
+      invocation: {
+        organizationId: 'org-1',
+        runId: 'run-1',
+        memberId: 'agent-1',
+        toolCallId: 'call-1',
+        toolId: 'channel.list',
+        action: 'read',
+        resourceType: 'message',
+        input: { scope: 'mine' },
+      } as never,
+      team: {} as never,
+      repo: {} as never,
+      conversations: {
+        listVisibleChannels: () => [
+          { id: 'general', name: 'general', kind: 'general', topic: '', memberIds: ['agent-1'] },
+          {
+            id: 'dm:agent-1:agent-2',
+            name: 'dm-cole',
+            kind: 'dm',
+            topic: '',
+            memberIds: ['agent-1', 'agent-2'],
+          },
+        ],
+      } as never,
+    });
+    expect(result).toEqual([
+      { id: 'general', name: 'general', kind: 'general', topic: '', memberIds: ['agent-1'] },
+      {
+        id: 'dm:agent-1:agent-2',
+        name: 'dm-cole',
+        kind: 'dm',
+        topic: '',
+        memberIds: ['agent-1', 'agent-2'],
+        dm_thread_id: 'dm:agent-1:agent-2',
+        dm_peer_member_id: 'agent-2',
+      },
+    ]);
   });
 
   // Regression: previously each channel.* tool overrode `permissionToolName`

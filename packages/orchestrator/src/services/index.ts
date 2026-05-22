@@ -20,6 +20,11 @@ import { ConversationService } from './conversation.js';
 import { CommitmentService } from './commitment-service.js';
 import { McpRegistryService } from './mcp-registry.js';
 import { OnboardingService } from './onboarding.js';
+import {
+  drainPendingMemberAlertAfterRun,
+  enqueuePendingMemberAlert,
+  type PendingMemberAlert,
+} from './pending-member-alerts.js';
 import type { ApiRepository } from './repository-reader.js';
 import { SettingsService } from './settings.js';
 import { WorkspaceService, type WorkspaceCatalog } from './workspace.js';
@@ -255,21 +260,7 @@ export interface ApiServices {
   stop(): Promise<void>;
 }
 
-interface WakeMemberInput {
-  organizationId: string;
-  memberId: string;
-  threadId: string;
-  channelId?: string;
-  messageId: string;
-  byMemberId: string;
-  reason: string;
-  /**
-   * Typed wake reason — drives mandatory-reply enforcement
-   * downstream (policy rejects `channel.pass`/`self.note` for
-   * `wakeReason === 'mention'`).
-   */
-  wakeReason: WakeReason;
-}
+type WakeMemberInput = PendingMemberAlert;
 
 interface WakeMemberDeps {
   spirits: Pick<SpiritService, 'handleAlert'>;
@@ -402,6 +393,7 @@ export async function wakeMemberWithFailureEvents(
       input.threadId,
     );
     if (activeRun) {
+      enqueuePendingMemberAlert(input);
       return;
     }
 
@@ -548,6 +540,13 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   // registry and fall through to regular wake runs for already-active work.
   spirits.bootstrapAll();
 
+  const wakeMemberDeps = {
+    spirits,
+    runs: spirits,
+    realtime: context.realtime,
+    repo: context.repo,
+  };
+
   // Wake routing — replaces the simple `runs.createRun` fan-out.
   // The dispatch result is a discriminated union; only
   // `no-active-spirit` falls through to the regular run loop. A
@@ -555,10 +554,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   // the alert (second mention in a 2s burst) — falling through there
   // would spawn a duplicate run that defeats the debounce.
   wakeMember = async (input) => {
-    await wakeMemberWithFailureEvents(
-      { spirits, runs: spirits, realtime: context.realtime, repo: context.repo },
-      input,
-    );
+    await wakeMemberWithFailureEvents(wakeMemberDeps, input);
   };
 
   const auth = new AuthService(context.repo);
@@ -604,7 +600,12 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   // track empty self-followup wakes and short-circuit `due_at` when
   // a commitment is stuck. Same chicken-and-egg pattern as
   // `setMcpToolResolver` / `setMessagePublishedHook`.
-  spirits.setRunCompletedHook((run) => commitments.onRunCompleted(run));
+  spirits.setRunCompletedHook(async (run) => {
+    await commitments.onRunCompleted(run);
+    await drainPendingMemberAlertAfterRun(run, (pending) =>
+      wakeMemberWithFailureEvents(wakeMemberDeps, pending),
+    );
+  });
   // Scheduler tick (Bet 4). Production runs it every 60s; tests
   // can pass `commitmentSweeperIntervalMs: 0` to opt out and call
   // `commitments.sweepIdle()` / `sweepExpired()` directly. The

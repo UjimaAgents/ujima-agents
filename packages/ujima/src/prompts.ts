@@ -242,10 +242,9 @@ export function buildAgentSystemPrompt(
     `Current thread ID: ${currentThreadId}`,
     'Accessible channel IDs:',
     formatChannelTargets(accessibleChannels),
-    'Direct message recipient IDs:',
+    'Direct message recipients (channel.dm — id or display name):',
     formatDirectMessageTargets(currentMemberId, members),
-    'For DM chats, use the other person\'s member id as the conversation reference. channel.read resolves it to the DM thread automatically.',
-    'Use destination: thread for the current conversation, channel for a channel post, and dm for a direct recipient.',
+    'channel.read: channel id/name from the list above; DMs use dm_thread_id or peer member_id from channel.list.',
     ...(conversationKind === 'dm'
       ? MESSAGE_TOOL_USAGE_GUIDANCE.filter(
           (line) =>
