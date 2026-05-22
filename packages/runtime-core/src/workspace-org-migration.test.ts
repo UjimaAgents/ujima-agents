@@ -111,11 +111,7 @@ describe('migrateUnifiedWorkspaceOrg', () => {
       emailNormalized: 'owner@example.com',
     });
 
-    host.workspaces.create({
-      id: defaultWorkspaceId,
-      root_path: primaryDir,
-      label: 'Primary',
-    });
+    // saveOrganization already upserts ws_<orgId> for the primary root.
     const secondary = host.workspaces.create({
       root_path: secondaryDir,
       label: 'Secondary Folder',
@@ -199,11 +195,6 @@ describe('migrateUnifiedWorkspaceOrg', () => {
       }),
     );
 
-    host.workspaces.create({
-      id: defaultWorkspaceId,
-      root_path: primaryDir,
-      label: 'Primary',
-    });
     const secondary = host.workspaces.create({
       root_path: secondaryDir,
       label: 'Secondary Folder',
@@ -263,11 +254,6 @@ describe('migrateUnifiedWorkspaceOrg', () => {
     });
     persistTeamConfig(repo, organizationId, team);
 
-    host.workspaces.create({
-      id: defaultWorkspaceId,
-      root_path: primaryDir,
-      label: 'Primary',
-    });
     const broken = host.workspaces.create({
       root_path: missingRootDir,
       label: 'Broken Folder',

@@ -135,7 +135,7 @@ function splitWorkspaceToOrganization(input: {
     ? (JSON.parse(storedTeam) as Record<string, unknown>)
     : {};
 
-  const organization = provisionOrganization({
+  provisionOrganization({
     repo,
     teamStore,
     organizationId: newOrganizationId,
