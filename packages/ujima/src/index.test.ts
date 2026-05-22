@@ -294,7 +294,7 @@ test('filesystem is stripped from persisted role tools on load', () => {
 
   expect(team.getRole('frontend-engineer')?.tools).not.toContain('filesystem');
   expect(team.getRole('frontend-engineer')?.tools).toContain('view');
-  expect(team.config.configVersion).toBe(3);
+  expect(team.config.configVersion).toBe(4);
 });
 
 test('validateAgentTeamConfig rejects agents that reference unknown roles', () => {
