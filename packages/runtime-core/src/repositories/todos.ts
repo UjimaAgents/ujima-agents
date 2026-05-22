@@ -105,9 +105,19 @@ export function listTodosForSession(
 }
 
 /**
- * List todos by channel — Bet 4 / Bet 2. Used by the goals rail and
- * by the scheduler when it needs to enumerate "open commitments in
- * this channel" without first looking up the task session.
+ * List todos by channel — Bet 4 / Bet 2 / post-review.
+ *
+ * Two paths into the result set:
+ *   1. Direct `todos.channel_id = ?` — the commitment extractor and
+ *      Tasks-tab PATCH path both write channel_id directly.
+ *   2. Indirect via `task_sessions.channel_id = ?` — historical
+ *      supervisor-created todos predate the channel_id backfill and
+ *      only carry `task_session_id`. Without this leg the goals rail
+ *      and Tasks tab would silently drop those rows.
+ *
+ * The UNION keeps the query covered by `idx_todos_channel` for the
+ * direct hit and by `idx_task_sessions_org_status` for the indirect
+ * one; rows that satisfy both paths are deduped by `id`.
  */
 export function listTodosForChannel(
   db: DbHandle,
@@ -115,17 +125,26 @@ export function listTodosForChannel(
   channelId: string,
   options: { status?: TodoStatus; memberId?: string } = {},
 ): Todo[] {
-  const params: string[] = [organizationId, channelId];
-  let query = 'SELECT * FROM todos WHERE organization_id = ? AND channel_id = ?';
+  const params: string[] = [organizationId, channelId, channelId];
+  let where = '';
   if (options.status) {
-    query += ' AND status = ?';
+    where += ' AND t.status = ?';
     params.push(options.status);
   }
   if (options.memberId) {
-    query += ' AND member_id = ?';
+    where += ' AND t.member_id = ?';
     params.push(options.memberId);
   }
-  query += ' ORDER BY created_at ASC';
+  const query = `
+    SELECT DISTINCT t.* FROM todos t
+      LEFT JOIN task_sessions s
+        ON s.id = t.task_session_id
+       AND s.organization_id = t.organization_id
+     WHERE t.organization_id = ?
+       AND (t.channel_id = ? OR s.channel_id = ?)
+       ${where}
+     ORDER BY t.created_at ASC
+  `;
   const rows = db.prepare(query).all(...params) as Row[];
   return rows.map(rowToTodo);
 }
@@ -198,6 +217,40 @@ export function claimIdleCommitment(
         ? [newLastProgressAt, newLastProgressAt, todoId]
         : [newLastProgressAt, newLastProgressAt, todoId, expectedLastProgressAt]),
     );
+  return (result.changes ?? 0) > 0;
+}
+
+/**
+ * Atomic flip from "still open and past due" → `expired`. Returns
+ * true when this caller successfully claimed the row, false when
+ * another sweep / a human update raced ahead.
+ *
+ * The deadline-letter sweep used to publish first and persist the
+ * status flip second. A crash between those steps left the row
+ * eligible for the next sweep — and the same expiration notice
+ * would publish again. With this claim helper the sweep flips the
+ * status BEFORE publishing, so a crash after publish-success but
+ * before the in-memory loop completes simply skips the row next
+ * tick (since its status is already `expired`). The worst-case
+ * outcome inverts: a publish that errors after a successful claim
+ * means one missed letter rather than a duplicate letter — the
+ * lesser of two evils.
+ */
+export function claimExpiredCommitment(
+  db: DbHandle,
+  todoId: string,
+  nowIso: string,
+): boolean {
+  const result = db
+    .prepare(
+      `UPDATE todos
+          SET status = 'expired', updated_at = ?
+        WHERE id = ?
+          AND status IN ('pending', 'in_progress', 'blocked')
+          AND due_at IS NOT NULL
+          AND due_at <= ?`,
+    )
+    .run(nowIso, todoId, nowIso);
   return (result.changes ?? 0) > 0;
 }
 

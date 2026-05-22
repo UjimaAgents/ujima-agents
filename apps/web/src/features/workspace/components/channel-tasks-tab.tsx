@@ -208,8 +208,7 @@ export function ChannelTasksTab({
     return (
       <div className="px-3 py-8 text-center text-xs text-zinc-500 dark:text-zinc-400">
         No tasks recorded for this channel yet. Agents create tasks automatically when they commit
-        to deliverables (e.g. "I will draft the BRD") or deliver work (e.g. "I have written the
-        spec to docs/spec.md").
+        to deliverables (e.g. {`"I will draft the BRD"`}) or deliver work (e.g. {`"I have written the spec to docs/spec.md"`}).
       </div>
     );
   }

@@ -758,6 +758,13 @@ export class CommitmentService {
    * Deadline-letter sweep — flip expired commitments to `expired` and
    * post a system message in the channel. Caller drives this via
    * setInterval (typically same tick as `sweepIdle`).
+   *
+   * Idempotency: each row is atomically claimed (status flipped to
+   * `expired`) BEFORE the system message publishes. If the publish
+   * errors or the daemon crashes between claim and emit, the next
+   * sweep sees the row already in `expired` status and skips it —
+   * so we may miss a letter once, but we never double-post one.
+   * Mirror of the claim-by-update pattern in `sweepIdle`.
    */
   async sweepExpired(): Promise<number> {
     if (!this.repo.listExpiredCommitments) return 0;
@@ -768,6 +775,14 @@ export class CommitmentService {
       if (!todo.channelId) continue;
       const channel = this.repo.getChannel(todo.organizationId, todo.channelId);
       if (!channel) continue;
+      // Atomic claim. If `claimExpiredCommitment` is absent (narrow
+      // test repo) fall back to the legacy publish-then-persist flow
+      // — tests with stub repos exercise the same code path they
+      // always did. Production wiring always exposes the claim.
+      if (this.repo.claimExpiredCommitment) {
+        const claimed = this.repo.claimExpiredCommitment(todo.id, now);
+        if (!claimed) continue;
+      }
       const owner = this.repo.getMember(todo.organizationId, todo.memberId);
       const ownerName = owner?.name ?? todo.memberId;
       const message = MessageSchema.parse({
@@ -786,14 +801,21 @@ export class CommitmentService {
           skipMentionResolution: true,
         });
       } catch {
-        // best-effort
+        // Publish failed AFTER the claim — the row is already
+        // `expired`, so the next sweep won't double-post. We accept
+        // the one missed letter rather than the duplicate.
       }
+      // For repos without the atomic claim, fall back to the legacy
+      // post-publish persist so tests that bypass `claimExpiredCommitment`
+      // still see status flip to `expired`.
       const expired: Todo = TodoSchema.parse({
         ...todo,
         status: 'expired',
         updatedAt: now,
       });
-      this.repo.saveTodo(expired);
+      if (!this.repo.claimExpiredCommitment) {
+        this.repo.saveTodo(expired);
+      }
       this.realtime.emit(
         SocketEventNames.commitmentExpired,
         this.toEventPayload(expired, 'expired'),

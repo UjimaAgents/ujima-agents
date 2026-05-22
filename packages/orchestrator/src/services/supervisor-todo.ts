@@ -54,6 +54,15 @@ export class SupervisorTodoService {
 
   add(input: SupervisorTodoAddInput): Todo {
     const now = new Date().toISOString();
+    // Backfill channelId from the task session so channel-scoped
+    // reads (goals rail + Tasks tab) surface supervisor-created
+    // todos. Without this, `listTodosForChannel` filters strictly on
+    // todos.channel_id and session-only todos disappear from the
+    // channel views. Best-effort — if the task session is missing or
+    // its channel id is absent, we leave channelId undefined and the
+    // legacy session-only behaviour is preserved.
+    const session = this.repo.getTaskSession(input.organizationId, input.taskSessionId);
+    const channelId = session?.channelId;
     const todo = TodoSchema.parse({
       id: randomUUID(),
       organizationId: input.organizationId,
@@ -63,6 +72,7 @@ export class SupervisorTodoService {
       title: input.body,
       status: 'pending' as TodoStatus,
       notes: input.notes ?? '',
+      channelId,
       createdAt: now,
       updatedAt: now,
     });

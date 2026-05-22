@@ -569,3 +569,94 @@ describe('CommitmentService.onRunCompleted — empty-wake counter', () => {
     expect(state.todos.get('todo-1')!.emptyWakeCount).toBe(1);
   });
 });
+
+describe('CommitmentService.sweepExpired — deadline-letter idempotency', () => {
+  // Post-review regression: the deadline-letter sweep used to publish
+  // FIRST and persist `status: 'expired'` second, so a crash between
+  // the two left the row eligible for the next sweep and the same
+  // expiration notice would publish again. The atomic
+  // `claimExpiredCommitment` flips status BEFORE the publish so a
+  // re-attempt simply skips already-claimed rows.
+
+  function buildExpiredCommitmentRepo(opts: { failClaim?: boolean } = {}) {
+    const past = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const todo: Todo = TodoSchema.parse({
+      id: 'todo-expired',
+      organizationId: 'org-1',
+      memberId: 'layla',
+      title: 'overdue commitment',
+      status: 'in_progress',
+      notes: '',
+      channelId: 'channel-1',
+      sourceMessageId: 'm-source',
+      deliverableSummary: 'overdue commitment',
+      dueAt: past,
+      emptyWakeCount: 3,
+      createdAt: past,
+      updatedAt: past,
+    });
+    const todos = new Map<string, Todo>([[todo.id, todo]]);
+    const claimedIds = new Set<string>();
+    const repo: Partial<ApiRepository> = {
+      getMember: () => ({ id: 'layla', name: 'Layla' } as never),
+      getChannel: () => ({ id: 'channel-1', name: 'general' } as never),
+      listExpiredCommitments: () => Array.from(todos.values()).filter((t) => !claimedIds.has(t.id)),
+      claimExpiredCommitment: (todoId: string, nowIso: string) => {
+        if (opts.failClaim) return false;
+        if (claimedIds.has(todoId)) return false;
+        claimedIds.add(todoId);
+        const existing = todos.get(todoId);
+        if (!existing) return false;
+        todos.set(
+          todoId,
+          TodoSchema.parse({ ...existing, status: 'expired', updatedAt: nowIso }),
+        );
+        return true;
+      },
+      saveTodo: (t) => {
+        todos.set(t.id, TodoSchema.parse(t));
+        return t;
+      },
+    };
+    return { repo: repo as ApiRepository, todos };
+  }
+
+  it('claims the row before publishing — second sweep against same rows yields zero new publishes', async () => {
+    const { repo, todos } = buildExpiredCommitmentRepo();
+    const publish = vi.fn();
+    const conversations = {
+      publishMessage: publish,
+    } as unknown as ConversationService;
+    const realtime = buildMockRealtime();
+    const service = new CommitmentService(repo, conversations, realtime, vi.fn(), {});
+
+    const first = await service.sweepExpired();
+    expect(first).toBe(1);
+    expect(publish).toHaveBeenCalledTimes(1);
+    expect(todos.get('todo-expired')!.status).toBe('expired');
+
+    // Second sweep — listExpiredCommitments filters out claimed rows,
+    // so the row is no longer offered and no new publish occurs.
+    const second = await service.sweepExpired();
+    expect(second).toBe(0);
+    expect(publish).toHaveBeenCalledTimes(1);
+  });
+
+  it('skips a row whose claim fails (another sweep raced ahead)', async () => {
+    const { repo } = buildExpiredCommitmentRepo({ failClaim: true });
+    const publish = vi.fn();
+    const conversations = {
+      publishMessage: publish,
+    } as unknown as ConversationService;
+    const service = new CommitmentService(
+      repo,
+      conversations,
+      buildMockRealtime(),
+      vi.fn(),
+      {},
+    );
+    const count = await service.sweepExpired();
+    expect(count).toBe(0);
+    expect(publish).not.toHaveBeenCalled();
+  });
+});

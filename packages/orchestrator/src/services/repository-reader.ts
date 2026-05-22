@@ -348,6 +348,16 @@ export interface ApiRepository extends ConversationRepository {
     newLastProgressAt: string,
   ): boolean;
   /**
+   * Atomic flip from "open + past due" → `expired`. Returns true on
+   * successful claim. Mirror of `claimIdleCommitment` but for the
+   * deadline-letter sweep: the sweeper claims FIRST, then publishes
+   * the system message — so a crash between persist and publish
+   * causes one missed letter (the lesser evil) rather than a
+   * duplicate one. Optional for the same test-repo reason as the
+   * other commitment helpers.
+   */
+  claimExpiredCommitment?(todoId: string, nowIso: string): boolean;
+  /**
    * Dedup lookup for the commitment extractor. Returns the most-
    * recently-created open commitment for a `(org, channel, member)`
    * triple within `sinceIso`. Optional because the existing in-memory

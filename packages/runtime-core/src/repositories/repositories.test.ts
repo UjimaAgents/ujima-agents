@@ -1,6 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { expect, test } from 'vitest';
-import { MessageSchema, OrganizationSchema, RunStateSchema, ApprovalRequestSchema } from '@ujima/shared';
+import {
+  MessageSchema,
+  OrganizationSchema,
+  RunStateSchema,
+  ApprovalRequestSchema,
+  TaskSessionSchema,
+  TodoSchema,
+} from '@ujima/shared';
 import { openDatabase } from '@ujima/context-store';
 import type { SecretStore } from '../secret-store.js';
 import { Repository } from './index.js';
@@ -1009,4 +1016,227 @@ test('listChannels paginates correctly when the boundary id contains a pipe', ()
   const page2 = repo.listChannels(orgId, page1.nextCursor, 2);
   expect(page2.data.map((channel) => channel.id)).toEqual(['alpha']);
   expect(page2.hasMore).toBe(false);
+});
+
+// ---------------------------------------------------------------------
+// Post-PR-review regression coverage.
+// ---------------------------------------------------------------------
+//
+// 1. `listTodosForChannel` used to filter strictly on `todos.channel_id`,
+//    so legacy session-scoped todos (where SupervisorTodoService.add
+//    only set `task_session_id`) silently dropped out of the goals rail
+//    and the Tasks tab. The fix joins through `task_sessions.channel_id`
+//    so we union both code paths.
+//
+// 2. `claimExpiredCommitment` is the new atomic claim — it flips the
+//    row to `expired` BEFORE the deadline-letter publishes. Without it
+//    a crash after publish but before persist would re-publish the same
+//    letter on the next sweep.
+
+test('listTodosForChannel surfaces session-scoped todos via task_sessions.channel_id', () => {
+  const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
+  const orgId = 'org-todo-rail';
+  const channelId = 'channel-1';
+  const sessionId = 'session-1';
+  const memberId = 'member-1';
+  const now = '2026-05-22T13:00:00.000Z';
+
+  repo.saveOrganization(
+    OrganizationSchema.parse({
+      id: orgId,
+      name: 'Todo Rail Org',
+      workspace: { root: '/tmp/todo-rail-org', roleScopes: {} },
+    }),
+  );
+  repo.saveTaskSession(
+    TaskSessionSchema.parse({
+      id: sessionId,
+      organizationId: orgId,
+      slug: 'todo-rail-session',
+      channelId,
+      requestedBy: memberId,
+      executionMode: 'concurrent',
+      status: 'running',
+      prompt: '',
+      summary: '',
+      teamMemberIds: [memberId],
+      origin: {},
+      promotionMetadata: {},
+      supervisorTurnCount: 0,
+      createdAt: now,
+      updatedAt: now,
+    }),
+  );
+
+  // Direct-channel todo — the commitment extractor would produce this.
+  repo.saveTodo(
+    TodoSchema.parse({
+      id: 'todo-direct',
+      organizationId: orgId,
+      memberId,
+      title: 'direct channel todo',
+      status: 'in_progress',
+      notes: '',
+      channelId,
+      createdAt: now,
+      updatedAt: now,
+    }),
+  );
+
+  // Session-only todo — legacy supervisor.todo.add path that didn't
+  // carry channel_id. Pre-fix this would NOT appear in
+  // listTodosForChannel.
+  repo.saveTodo(
+    TodoSchema.parse({
+      id: 'todo-session-only',
+      organizationId: orgId,
+      taskSessionId: sessionId,
+      memberId,
+      title: 'session-only todo',
+      status: 'pending',
+      notes: '',
+      createdAt: now,
+      updatedAt: now,
+    }),
+  );
+
+  const channelTodos = repo.listTodosForChannel(orgId, channelId);
+  const ids = channelTodos.map((t) => t.id).sort();
+  expect(ids).toEqual(['todo-direct', 'todo-session-only']);
+});
+
+test('listTodosForChannel respects status + member filters when joining session todos', () => {
+  const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
+  const orgId = 'org-todo-filters';
+  const channelId = 'channel-1';
+  const sessionId = 'session-1';
+  const now = '2026-05-22T13:00:00.000Z';
+
+  repo.saveOrganization(
+    OrganizationSchema.parse({
+      id: orgId,
+      name: 'Filter Org',
+      workspace: { root: '/tmp/filter-org', roleScopes: {} },
+    }),
+  );
+  repo.saveTaskSession(
+    TaskSessionSchema.parse({
+      id: sessionId,
+      organizationId: orgId,
+      slug: 'filter-session',
+      channelId,
+      requestedBy: 'member-a',
+      executionMode: 'concurrent',
+      status: 'running',
+      prompt: '',
+      summary: '',
+      teamMemberIds: ['member-a', 'member-b'],
+      origin: {},
+      promotionMetadata: {},
+      supervisorTurnCount: 0,
+      createdAt: now,
+      updatedAt: now,
+    }),
+  );
+  for (const [id, owner, status] of [
+    ['t1', 'member-a', 'in_progress'],
+    ['t2', 'member-b', 'in_progress'],
+    ['t3', 'member-a', 'completed'],
+  ] as const) {
+    repo.saveTodo(
+      TodoSchema.parse({
+        id,
+        organizationId: orgId,
+        taskSessionId: sessionId,
+        memberId: owner,
+        title: id,
+        status,
+        notes: '',
+        createdAt: now,
+        updatedAt: now,
+      }),
+    );
+  }
+
+  expect(
+    repo.listTodosForChannel(orgId, channelId, { status: 'in_progress' }).map((t) => t.id).sort(),
+  ).toEqual(['t1', 't2']);
+  expect(
+    repo
+      .listTodosForChannel(orgId, channelId, { status: 'in_progress', memberId: 'member-a' })
+      .map((t) => t.id),
+  ).toEqual(['t1']);
+});
+
+test('claimExpiredCommitment is idempotent: only the first call wins, repeat calls return false', () => {
+  const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
+  const orgId = 'org-claim';
+  const created = '2026-05-22T10:00:00.000Z';
+  const dueAt = '2026-05-22T11:00:00.000Z';
+  const sweepAt = '2026-05-22T12:00:00.000Z';
+
+  repo.saveOrganization(
+    OrganizationSchema.parse({
+      id: orgId,
+      name: 'Claim Org',
+      workspace: { root: '/tmp/claim-org', roleScopes: {} },
+    }),
+  );
+  repo.saveTodo(
+    TodoSchema.parse({
+      id: 'todo-deadline',
+      organizationId: orgId,
+      memberId: 'member-x',
+      title: 'past-due commitment',
+      status: 'in_progress',
+      notes: '',
+      channelId: 'channel-1',
+      deliverableSummary: 'past-due commitment',
+      dueAt,
+      createdAt: created,
+      updatedAt: created,
+    }),
+  );
+
+  expect(repo.claimExpiredCommitment('todo-deadline', sweepAt)).toBe(true);
+  // The status flipped to `expired` — a second sweep against the same
+  // sweepAt finds nothing to claim. This is the property the
+  // deadline-letter idempotency fix relies on.
+  expect(repo.claimExpiredCommitment('todo-deadline', sweepAt)).toBe(false);
+  const final = repo.getTodo(orgId, 'todo-deadline');
+  expect(final?.status).toBe('expired');
+});
+
+test('claimExpiredCommitment refuses to claim a row whose due_at is still in the future', () => {
+  const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
+  const orgId = 'org-future-due';
+  const created = '2026-05-22T10:00:00.000Z';
+  const futureDue = '2026-05-22T20:00:00.000Z';
+  const sweepAt = '2026-05-22T12:00:00.000Z';
+
+  repo.saveOrganization(
+    OrganizationSchema.parse({
+      id: orgId,
+      name: 'Future Org',
+      workspace: { root: '/tmp/future-org', roleScopes: {} },
+    }),
+  );
+  repo.saveTodo(
+    TodoSchema.parse({
+      id: 'todo-future',
+      organizationId: orgId,
+      memberId: 'member-x',
+      title: 'still ahead of due',
+      status: 'in_progress',
+      notes: '',
+      channelId: 'channel-1',
+      deliverableSummary: 'still ahead of due',
+      dueAt: futureDue,
+      createdAt: created,
+      updatedAt: created,
+    }),
+  );
+
+  expect(repo.claimExpiredCommitment('todo-future', sweepAt)).toBe(false);
+  expect(repo.getTodo(orgId, 'todo-future')?.status).toBe('in_progress');
 });
