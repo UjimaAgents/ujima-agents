@@ -42,7 +42,13 @@ If you touch package APIs, update the matching README in the same change.
 - Explain what changed and why.
 - Mention any user-facing impact.
 - Include the commands you ran.
-- Keep the diff as small as possible.
+- Keep the diff as small as possible. Aim for under 500 lines of churn; CI blocks PRs over **2000** lines (insertions + deletions, excluding lockfiles and `.vsix` artifacts).
+
+To check size locally before opening a PR:
+
+```bash
+BASE_SHA=origin/main HEAD_SHA=HEAD MAX_LINES=2000 bash .github/scripts/check-pr-size.sh
+```
 
 ## Questions
 

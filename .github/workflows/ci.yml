@@ -7,6 +7,21 @@ on:
     branches: [main]
 
 jobs:
+  pr-size:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Enforce PR size limit
+        env:
+          MAX_LINES: 2000
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: bash .github/scripts/check-pr-size.sh
+
   build:
     runs-on: ubuntu-latest
     steps:
