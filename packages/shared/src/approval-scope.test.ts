@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  approvalPersistedGrantMatches,
+  approvalScopeMatches,
+  approvalScopeMatchesPersisted,
+  canonicalizeApprovalFamilyScope,
+  canonicalizeApprovalGrantScope,
+  formatPersistedApprovalGrantReason,
   formatApprovalRelayMarkdown,
   parseApprovalDisplayScopesFromReason,
   parseFilesystemScope,
@@ -160,5 +166,54 @@ describe('shellInvocationDisplayLine', () => {
     expect(
       shellInvocationDisplayLine({ cwd: '/tmp', command: 'sh', args: ['-c', 'echo hi'] }),
     ).toBe('sh -c echo hi');
+  });
+});
+
+describe('approvalPersistedGrantMatches', () => {
+  it('matches later shell invocations under an allow_family grant', () => {
+    const familyScope = 'shell:{"cwd":"/workspace","command":"git"}';
+    const grantReason = formatPersistedApprovalGrantReason('family', familyScope, 'git family');
+    const diff = 'shell:{"cwd":"/workspace","command":"git","args":["diff"]}';
+    const status = 'shell:{"cwd":"/workspace","command":"git","args":["status"]}';
+    expect(approvalPersistedGrantMatches(grantReason, familyScope, diff)).toBe(true);
+    expect(approvalPersistedGrantMatches(grantReason, familyScope, status)).toBe(true);
+  });
+
+  it('does not treat allow_always grants as family-wide shell access', () => {
+    const exactScope = 'shell:{"cwd":"/workspace","command":"git","args":["status"]}';
+    const grantReason = formatPersistedApprovalGrantReason('grant', exactScope, 'exact');
+    const log = 'shell:{"cwd":"/workspace","command":"git","args":["log"]}';
+    expect(approvalPersistedGrantMatches(grantReason, exactScope, exactScope)).toBe(true);
+    expect(approvalPersistedGrantMatches(grantReason, exactScope, log)).toBe(false);
+  });
+
+  it('supports legacy allow_family rows stored under grant:always_allow:', () => {
+    const legacyFamilyScope = 'shell:{"cwd":"/workspace","command":"git"}';
+    const grantReason = `grant:always_allow:scope=${encodeURIComponent(legacyFamilyScope)};note=legacy`;
+    const status = 'shell:{"cwd":"/workspace","command":"git","args":["status"]}';
+    expect(approvalPersistedGrantMatches(grantReason, legacyFamilyScope, status)).toBe(true);
+  });
+});
+
+describe('approvalScopeMatches', () => {
+  it('matches legacy shell scopes to canonical JSON at grant precision', () => {
+    const legacy = 'shell:/workspace:git:["status"]';
+    const status = 'shell:{"cwd":"/workspace","command":"git","args":["status"]}';
+    const log = 'shell:{"cwd":"/workspace","command":"git","args":["log"]}';
+    expect(approvalScopeMatches(legacy, status)).toBe(true);
+    expect(approvalScopeMatches(legacy, log)).toBe(false);
+  });
+
+  it('does not treat different shell args as family-equivalent in grant mode', () => {
+    const status = 'shell:{"cwd":"/workspace","command":"git","args":["status"]}';
+    const log = 'shell:{"cwd":"/workspace","command":"git","args":["log"]}';
+    expect(canonicalizeApprovalFamilyScope(status)).toBe(canonicalizeApprovalFamilyScope(log));
+    expect(approvalScopeMatches(status, log)).toBe(false);
+    expect(
+      approvalScopeMatchesPersisted(status, canonicalizeApprovalFamilyScope(log), 'family'),
+    ).toBe(true);
+    expect(approvalScopeMatchesPersisted(status, canonicalizeApprovalGrantScope(log), 'grant')).toBe(
+      false,
+    );
   });
 });

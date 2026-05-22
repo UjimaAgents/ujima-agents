@@ -1,5 +1,5 @@
 import type { AgentTeamHandle } from '@ujima/framework';
-import { AGENT_KIND, ChannelSchema, type Channel, type Member } from '@ujima/shared';
+import { AGENT_KIND, ChannelSchema, getDirectMessageThreadId, type Channel, type Member } from '@ujima/shared';
 import type { ApiRepository } from './repository-reader.js';
 
 type MemberRef = Pick<Member, 'id' | 'name'>;
@@ -65,8 +65,7 @@ export function ensureDirectMessageConversation(
   memberA: MemberRef,
   memberB: MemberRef,
 ): string {
-  const [firstId, secondId] = [memberA.id, memberB.id].sort();
-  const channelId = `dm:${firstId}:${secondId}`;
+  const channelId = getDirectMessageThreadId(memberA.id, memberB.id);
   const dmChannelName = [memberA.name, memberB.name].sort().join(' / ');
   const now = new Date().toISOString();
 

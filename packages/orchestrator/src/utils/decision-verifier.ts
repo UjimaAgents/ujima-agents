@@ -5,7 +5,7 @@ import type {
   DecisionVerificationFailure,
 } from '@ujima/shared';
 import type { ConversationRepository } from '../services/repository-reader.js';
-import { isDirectMessageThread } from './thread-state.js';
+import { isDirectMessageThread } from '@ujima/shared';
 
 /**
  * Shadow-mode verifier for `channel.pass` decisions.

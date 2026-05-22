@@ -1,5 +1,5 @@
 import type { Member, Message } from '@ujima/shared';
-import { AGENT_KIND } from '@ujima/shared';
+import { AGENT_KIND, isDirectMessageThread } from '@ujima/shared';
 
 /**
  * Factual thread-state block injected into wake-triggered runs.
@@ -26,10 +26,6 @@ export interface BuildThreadStateInput {
   threadId?: string;
   /** How many recent messages to surface in the block. Default 6. */
   recentLimit?: number;
-}
-
-export function isDirectMessageThread(threadId: string | undefined): boolean {
-  return !!threadId?.startsWith('dm:');
 }
 
 const DEFAULT_RECENT = 6;
@@ -99,7 +95,8 @@ export function buildThreadStateBlock(input: BuildThreadStateInput): string | nu
     : false;
   let selfAddressedImplicit = implicitNameReferences.includes(selfName);
   // In a 1:1 DM, any message from the other participant is addressed to you.
-  // @mentions and name tokens are optional; channel-style pass rules do not apply.
+  // @mentions and name tokens are optional. Palette/policy/scaffold use
+  // resolveWakeReplyPolicy; this block only records factual addressing.
   if (
     isDmThread &&
     sourceMessage &&

@@ -4,16 +4,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { afterEach, describe, expect, it } from 'vitest';
-import { openDatabase } from '@ujima/context-store';
-import {
-  ConversationService,
-  OnboardingService,
-  SettingsService,
-  createTeamStore,
-} from '@ujima/orchestrator';
+import { ConversationService, SettingsService } from '@ujima/orchestrator';
 import { ChannelRetentionService } from '../../../packages/orchestrator/src/services/channel-retention.js';
-import { Repository } from '@ujima/runtime-core';
 import { MessageSchema } from '@ujima/shared';
+import { createOnboardedFixture } from './helpers/create-onboarded-fixture.js';
 
 function createRealtimeCollector() {
   const events: Array<{ event: string; payload: Record<string, unknown>; rooms: string[] }> = [];
@@ -43,54 +37,13 @@ async function waitFor(assertion: () => void | Promise<void>, timeoutMs = 1_000)
 async function createFixture(
   options: { agentNames?: string[]; archiveRoot?: string; organizationName?: string } = {},
 ) {
-  const archiveRoot = options.archiveRoot ?? (await mkdtemp(join(tmpdir(), 'ujima-e3-archive-')));
-  const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
-  const teamStore = createTeamStore();
-  const onboarding = new OnboardingService(repo, teamStore);
-  const settings = new SettingsService(repo, teamStore);
-  const result = await onboarding.onboard({
+  const base = await createOnboardedFixture({
     organizationName: options.organizationName ?? 'E3 Org',
-    ownerName: 'Owner',
-    workspaceRoot: archiveRoot,
-    providerKeys: {},
-    team: {
-      name: options.organizationName ?? 'E3 Org',
-      channels: [
-        { name: 'general', kind: 'general', topic: 'General' },
-        { name: 'frontend', kind: 'group', topic: 'Frontend' },
-      ],
-      roles: [
-        {
-          name: 'frontend-engineer',
-          title: 'Frontend Engineer',
-          instructions: 'Build frontend',
-          workspaceScopes: ['apps/web'],
-          tools: ['filesystem'],
-          channels: ['general', 'frontend'],
-        },
-      ],
-      agents: (options.agentNames ?? []).map((name) => ({
-        name,
-        roleName: 'frontend-engineer',
-        personalityName: 'direct',
-      })),
-    },
+    archiveRoot: options.archiveRoot,
+    agentNames: options.agentNames,
   });
-
-  const owner = result.members.find((member) => member.kind === 'human');
-  if (!owner) {
-    throw new Error('owner missing from onboarding result');
-  }
-
-  return {
-    archiveRoot,
-    repo,
-    teamStore,
-    onboarding,
-    settings,
-    organizationId: result.organization.id,
-    ownerId: owner.id,
-  };
+  const settings = new SettingsService(base.repo, base.teamStore);
+  return { ...base, settings };
 }
 
 describe('E3 channels and mentions', () => {

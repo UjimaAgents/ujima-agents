@@ -259,9 +259,7 @@ export interface ApiRepository extends ConversationRepository {
   listPendingApprovals(organizationId: string): ApprovalRequest[];
   hasApprovalGrant(input: {
     organizationId: string;
-    requestedBy: string;
     resourceType: ApprovalRequest['resourceType'];
-    resourcePath: string;
     action: ApprovalRequest['action'];
     approvalScope: string;
   }): boolean;

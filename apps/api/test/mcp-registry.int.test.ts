@@ -1,15 +1,8 @@
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { rm } from 'node:fs/promises';
 import { afterEach, describe, expect, it } from 'vitest';
-import { openDatabase } from '@ujima/context-store';
-import { Repository } from '@ujima/runtime-core';
-import {
-  McpRegistryService,
-  OnboardingService,
-  createTeamStore,
-} from '@ujima/orchestrator';
+import { McpRegistryService } from '@ujima/orchestrator';
 import { mapMcpRouteError } from '../src/transport/routes/mcps.js';
+import { createOnboardedFixture } from './helpers/create-onboarded-fixture.js';
 
 // Phase 3 of the MCP integration — covers the registry CRUD + JSON
 // import path + per-agent attachments + the redaction contract that
@@ -18,17 +11,8 @@ import { mapMcpRouteError } from '../src/transport/routes/mcps.js';
 // (or are exercised lazily through the spirit MCP path).
 
 async function createFixture() {
-  const archiveRoot = await mkdtemp(join(tmpdir(), 'ujima-mcp-registry-'));
-  const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
-  const teamStore = createTeamStore();
-  const onboarding = new OnboardingService(repo, teamStore);
-  const result = await onboarding.onboard({
+  const onboarded = await createOnboardedFixture({
     organizationName: 'MCP Org',
-    ownerName: 'Owner',
-    ownerEmail: 'owner@example.com',
-    ownerPassword: 'correct horse battery staple',
-    workspaceRoot: archiveRoot,
-    providerKeys: {},
     team: {
       channels: [{ name: 'general', kind: 'general', topic: 'General' }],
       roles: [
@@ -44,15 +28,9 @@ async function createFixture() {
       agents: [{ name: 'agent-x', roleName: 'engineer', personalityName: 'direct' }],
     },
   });
-  const owner = result.members.find((m) => m.kind === 'human');
-  if (!owner) throw new Error('owner missing');
-  const registry = new McpRegistryService(repo);
   return {
-    archiveRoot,
-    repo,
-    registry,
-    organizationId: result.organization.id,
-    ownerId: owner.id,
+    ...onboarded,
+    registry: new McpRegistryService(onboarded.repo),
   };
 }
 

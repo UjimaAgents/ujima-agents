@@ -13,6 +13,8 @@ import {
   type Message,
   type RunChunkEvent,
   type RunState,
+  buildMentionHandleRegistry,
+  scanMentionsInContent,
 } from "@ujima/shared/browser";
 import { BootstrapResponseSchema, type BootstrapResponse } from "@ujima/api-schema";
 import type { ApprovalCardData, ChatMessageData } from "./components/chat";
@@ -767,34 +769,21 @@ function messageToChatMessage(message: Message, members: Member[]): ChatMessageD
 }
 
 function resolveMentionNames(content: string, members: Member[]): string[] {
-  const byName = [...members.map((member) => member.name), "all"]
-    .filter((name) => name.trim().length > 0)
-    .sort((left, right) => right.length - left.length);
-  const names = new Set<string>();
-  const lower = content.toLowerCase();
-  let index = 0;
+  const registry = buildMentionHandleRegistry(
+    [
+      ...members.map((member) => ({ handle: member.name, value: member.name })),
+      { handle: "all", value: "all" },
+    ].filter((entry) => entry.handle.trim().length > 0),
+  );
 
-  while (index < content.length) {
-    const mentionIndex = content.indexOf("@", index);
-    if (mentionIndex === -1) break;
-    const remaining = lower.slice(mentionIndex + 1);
-    let matched = false;
+  scanMentionsInContent(content, registry, {
+    allowAll: true,
+    onAll: () => {
+      registry.values.add("all");
+    },
+  });
 
-    for (const name of byName) {
-      if (!remaining.startsWith(name.toLowerCase())) continue;
-      const nextChar = remaining[name.length];
-      if (nextChar && /\w/.test(nextChar)) continue;
-      names.add(name);
-      index = mentionIndex + 1 + name.length;
-      matched = true;
-      break;
-    }
-
-    if (matched) continue;
-    index = mentionIndex + 1;
-  }
-
-  return [...names];
+  return [...registry.values];
 }
 
 interface RunChunkStoreItem {

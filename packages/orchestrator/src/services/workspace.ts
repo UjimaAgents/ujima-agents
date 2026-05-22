@@ -6,9 +6,7 @@ import { assertWorkspaceRootPathExists } from './workspace-root.js';
 import type { ApiRepository } from './repository-reader.js';
 import type { TeamStore } from './team-store.js';
 import { provisionOrganization } from './provision-organization.js';
-import { orgWorkspaceId } from './workspace-org-provision.js';
-
-export { organizationIdFromWorkspaceId } from './workspace-org-provision.js';
+import { orgWorkspaceId } from '@ujima/shared';
 
 export interface WorkspaceListItem {
   id: string;

@@ -3,7 +3,7 @@ import type { ApprovalRequest } from '@ujima/shared';
 import { ApprovalService } from './approval.js';
 
 describe('ApprovalService', () => {
-  it('relays a new approval to the owner chat', () => {
+  it('persists pending approval and emits socket event', () => {
     const shellScope = 'shell:{"cwd":"/workspace","command":"pwd"}';
     const approval = {
       id: 'ap-1',
@@ -22,7 +22,6 @@ describe('ApprovalService', () => {
 
     let saved = 0;
     let emitted = 0;
-    let relayThreadId: string | undefined;
     let savedPayload: ApprovalRequest | undefined;
     const repo = {
       listPendingApprovals: () => [],
@@ -39,33 +38,10 @@ describe('ApprovalService', () => {
       getApproval: () => approval,
       resolveApproval: () => approval,
     } as never;
-    const conversations = {
-      sendDirectSystemMessage: (input: {
-        organizationId: string;
-        memberIdA: string;
-        memberIdB: string;
-        content: string;
-      }) => {
-        relayThreadId = `dm:${[input.memberIdA, input.memberIdB].sort().join(':')}`;
-        return {
-          id: 'relay-message-1',
-          organizationId: input.organizationId,
-          threadId: relayThreadId,
-          channelId: relayThreadId,
-          senderId: 'system',
-          senderKind: 'human',
-          kind: 'system',
-          content: input.content,
-          mentions: [],
-          createdAt: '2026-05-04T00:00:00.000Z',
-        };
-      },
-    } as never;
 
     const service = new ApprovalService(
       repo,
       { emit: () => { emitted++; } } as never,
-      conversations,
       () => undefined,
     );
 
@@ -121,7 +97,6 @@ describe('ApprovalService', () => {
     const service = new ApprovalService(
       repo,
       { emit: () => { emitted++; } } as never,
-      { sendDirectSystemMessage: () => undefined } as never,
       () => undefined,
     );
 
@@ -140,6 +115,167 @@ describe('ApprovalService', () => {
     expect(result.id).toBe('ap-1');
     expect(saved).toBe(0);
     expect(emitted).toBe(0);
+  });
+
+  it('does not reuse a pending approval from a different requesting agent', () => {
+    const shellScope = 'shell:{"cwd":"/workspace","command":"pwd"}';
+    const approval = {
+      id: 'ap-1',
+      organizationId: 'org-1',
+      runId: 'run-1',
+      toolCallId: 'tool-1',
+      requestedBy: 'agent-1',
+      resourceType: 'shell',
+      resourcePath: '/workspace',
+      action: 'execute',
+      status: 'pending',
+      reason: `Tool action requires approval;scope=${encodeURIComponent(shellScope)}`,
+      createdAt: '2026-05-04T00:00:00.000Z',
+      resolvedAt: undefined,
+    };
+
+    let saved: ApprovalRequest | undefined;
+    let emitted = 0;
+    const repo = {
+      listPendingApprovals: () => [approval],
+      saveApproval: (value: ApprovalRequest) => {
+        saved = value;
+        return value;
+      },
+      listMembers: () => [],
+      getRun: () => ({ threadId: 'thread-1' }),
+      getApproval: () => approval,
+      resolveApproval: () => approval,
+    } as never;
+
+    const service = new ApprovalService(
+      repo,
+      { emit: () => { emitted++; } } as never,
+      () => undefined,
+    );
+
+    const result = service.requestApproval({
+      organizationId: 'org-1',
+      runId: 'run-1',
+      toolCallId: 'tool-2',
+      requestedBy: 'agent-2',
+      resourceType: 'shell',
+      resourcePath: '/workspace',
+      action: 'execute',
+      reason: `Tool action requires approval;scope=${encodeURIComponent(shellScope)}`,
+      approvalScope: shellScope,
+    });
+
+    expect(result.id).not.toBe('ap-1');
+    expect(result.requestedBy).toBe('agent-2');
+    expect(saved?.requestedBy).toBe('agent-2');
+    expect(emitted).toBe(1);
+  });
+
+  it('reuses a pending write approval when only the file content changes', () => {
+    const oldScope = 'write:{"resourcePath":"/workspace/readme.md","content":"old"}';
+    const nextScope = 'edit:{"file_path":"/workspace/readme.md","old_string":"old","new_string":"new"}';
+    const approval = {
+      id: 'ap-1',
+      organizationId: 'org-1',
+      runId: 'run-1',
+      toolCallId: 'tool-1',
+      requestedBy: 'agent-1',
+      resourceType: 'file',
+      resourcePath: '/workspace/readme.md',
+      action: 'write',
+      status: 'pending',
+      reason: `Tool action requires approval;scope=${encodeURIComponent(oldScope)}`,
+      createdAt: '2026-05-04T00:00:00.000Z',
+      resolvedAt: undefined,
+    };
+
+    let saved = 0;
+    const repo = {
+      listPendingApprovals: () => [approval],
+      saveApproval: () => {
+        saved++;
+        return approval;
+      },
+      listMembers: () => [],
+      getRun: () => ({ threadId: 'thread-1' }),
+      getApproval: () => approval,
+      resolveApproval: () => approval,
+    } as never;
+
+    const service = new ApprovalService(
+      repo,
+      { emit: () => undefined } as never,
+      () => undefined,
+    );
+
+    const result = service.requestApproval({
+      organizationId: 'org-1',
+      runId: 'run-1',
+      toolCallId: 'tool-2',
+      requestedBy: 'agent-1',
+      resourceType: 'file',
+      resourcePath: '/workspace/readme.md',
+      action: 'write',
+      reason: `Tool action requires approval;scope=${encodeURIComponent(nextScope)}`,
+      approvalScope: nextScope,
+    });
+
+    expect(result.id).toBe('ap-1');
+    expect(saved).toBe(0);
+  });
+
+  it('does not reuse a pending download approval for a different source URL', () => {
+    const oldScope = 'download:{"resourcePath":"/tmp/report.csv","url":"https://one.example/report.csv"}';
+    const nextScope = 'download:{"resourcePath":"/tmp/report.csv","url":"https://two.example/report.csv"}';
+    const approval = {
+      id: 'ap-1',
+      organizationId: 'org-1',
+      runId: 'run-1',
+      toolCallId: 'tool-1',
+      requestedBy: 'agent-1',
+      resourceType: 'file',
+      resourcePath: '/tmp/report.csv',
+      action: 'write',
+      status: 'pending',
+      reason: `Tool action requires approval;scope=${encodeURIComponent(oldScope)}`,
+      createdAt: '2026-05-04T00:00:00.000Z',
+      resolvedAt: undefined,
+    };
+
+    let saved = 0;
+    const repo = {
+      listPendingApprovals: () => [approval],
+      saveApproval: () => {
+        saved++;
+        return approval;
+      },
+      listMembers: () => [],
+      getRun: () => ({ threadId: 'thread-1' }),
+      getApproval: () => approval,
+      resolveApproval: () => approval,
+    } as never;
+
+    const service = new ApprovalService(
+      repo,
+      { emit: () => undefined } as never,
+      () => undefined,
+    );
+
+    const result = service.requestApproval({
+      organizationId: 'org-1',
+      runId: 'run-1',
+      toolCallId: 'tool-2',
+      requestedBy: 'agent-1',
+      resourceType: 'file',
+      resourcePath: '/tmp/report.csv',
+      action: 'write',
+      reason: `Tool action requires approval;scope=${encodeURIComponent(nextScope)}`,
+      approvalScope: nextScope,
+    });
+
+    expect(result.id).not.toBe('ap-1');
+    expect(saved).toBe(1);
   });
 
   it('resolves duplicate pending approvals for the same scope together', async () => {
@@ -204,7 +340,6 @@ describe('ApprovalService', () => {
     const service = new ApprovalService(
       repo,
       { emit: () => { emitted++; } } as never,
-      { sendDirectSystemMessage: () => undefined } as never,
       () => { resumed++; },
     );
 
@@ -269,7 +404,6 @@ describe('ApprovalService', () => {
     const service = new ApprovalService(
       repo,
       { emit: () => { emitted++; } } as never,
-      { sendDirectSystemMessage: () => undefined } as never,
       async (_organizationId: string, _runId: string, allowRun?: boolean) => {
         resumedAllowRun = allowRun;
         if (allowRun === false) {
@@ -333,7 +467,6 @@ describe('ApprovalService', () => {
     const service = new ApprovalService(
       repo,
       { emit: () => undefined } as never,
-      { sendDirectSystemMessage: () => undefined } as never,
       () => undefined,
     );
 
@@ -388,7 +521,6 @@ describe('ApprovalService', () => {
     const service = new ApprovalService(
       repo,
       { emit: () => undefined } as never,
-      { sendDirectSystemMessage: () => undefined } as never,
       () => undefined,
     );
 
@@ -402,7 +534,62 @@ describe('ApprovalService', () => {
 
     expect(result.status).toBe('approved');
     expect(capturedReason).toBe(
-      `grant:always_allow:scope=${encodeURIComponent('shell:{"cwd":"/workspace","command":"git"}')};note=Always allow this git family.`,
+      `grant:always_allow_family:scope=${encodeURIComponent('shell:{"cwd":"/workspace","command":"git"}')};note=Always allow this git family.`,
+    );
+  });
+
+  it('persists an allow_always grant even when the approval reason lacks scope', async () => {
+    const approval = {
+      id: 'ap-1',
+      organizationId: 'org-1',
+      runId: 'run-1',
+      toolCallId: 'tool-1',
+      requestedBy: 'agent-1',
+      resourceType: 'file',
+      resourcePath: '/workspace/readme.md',
+      action: 'write',
+      status: 'pending',
+      reason: 'Tool action requires approval',
+      createdAt: '2026-05-04T00:00:00.000Z',
+      resolvedAt: undefined,
+    };
+    let capturedReason = '';
+    const repo = {
+      listPendingApprovals: () => [approval],
+      saveApproval: () => approval,
+      listMembers: () => [],
+      getRun: () => ({ threadId: 'thread-1' }),
+      getApproval: () => approval,
+      resolveApproval: (_orgId: string, _approvalId: string, status: 'approved' | 'rejected', reason?: string) => {
+        capturedReason = reason ?? '';
+        return {
+          ...approval,
+          status,
+          reason: reason ?? '',
+          resolvedAt: '2026-05-04T00:01:00.000Z',
+        };
+      },
+    } as never;
+
+    const service = new ApprovalService(
+      repo,
+      { emit: () => undefined } as never,
+      () => undefined,
+    );
+
+    const result = await service.resolveApproval({
+      organizationId: 'org-1',
+      approvalId: 'ap-1',
+      status: 'approved',
+      resolution: 'allow_always',
+      reason: 'Allow this write permanently.',
+    });
+
+    expect(result.status).toBe('approved');
+    expect(capturedReason).toBe(
+      `grant:always_allow:scope=${encodeURIComponent(
+        'filesystem:{"action":"write","resourcePath":"/workspace/readme.md"}',
+      )};note=Allow this write permanently.`,
     );
   });
 
@@ -464,7 +651,6 @@ describe('ApprovalService', () => {
     const service = new ApprovalService(
       repo,
       { emit: () => undefined } as never,
-      { sendDirectSystemMessage: () => undefined } as never,
       () => undefined,
     );
 

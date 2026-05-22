@@ -1,75 +1,20 @@
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { rm } from 'node:fs/promises';
 import { afterEach, describe, expect, it } from 'vitest';
-import { openDatabase } from '@ujima/context-store';
-import { Repository } from '@ujima/runtime-core';
-import {
-  ConversationService,
-  OnboardingService,
-  TaskSessionService,
-  createTeamStore,
-} from '@ujima/orchestrator';
+import { ConversationService, TaskSessionService } from '@ujima/orchestrator';
 import { MessageCardSchema } from '@ujima/shared';
-
-// Phase 1 of the unified task shell: integration coverage for the
-// `TaskSessionService.create` lifecycle, the human-only origination
-// invariant, the origin-link card on the source channel, the join
-// system message inside the new task-run channel, and the generic
-// `MessageCard` payload riding on `messages.tool_calls`.
-//
-// Worker / supervisor / promoter behaviours are explicitly out of
-// scope for these tests — they ship in Phase 2/3.
-
-function noopRealtime() {
-  return { emit: () => undefined };
-}
+import { createOnboardedFixture } from './helpers/create-onboarded-fixture.js';
+import { noopRealtime } from './helpers/noop-realtime.js';
 
 async function createFixture(opts: { agentNames?: string[] } = {}) {
-  const archiveRoot = await mkdtemp(join(tmpdir(), 'ujima-task-shell-'));
-  const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
-  const teamStore = createTeamStore();
-  const onboarding = new OnboardingService(repo, teamStore);
-  const result = await onboarding.onboard({
+  const base = await createOnboardedFixture({
     organizationName: 'Phase 1 Org',
-    ownerName: 'Owner',
-    ownerEmail: 'owner@example.com',
-    ownerPassword: 'correct horse battery staple',
-    workspaceRoot: archiveRoot,
-    providerKeys: {},
-    team: {
-      channels: [
-        { name: 'general', kind: 'general', topic: 'General' },
-        { name: 'frontend', kind: 'group', topic: 'Frontend' },
-      ],
-      roles: [
-        {
-          name: 'frontend-engineer',
-          title: 'Frontend Engineer',
-          instructions: 'Build the frontend',
-          workspaceScopes: ['apps/web'],
-          tools: ['filesystem'],
-          channels: ['general', 'frontend'],
-        },
-      ],
-      agents: (opts.agentNames ?? ['frontend-alice', 'frontend-bob']).map((name) => ({
-        name,
-        roleName: 'frontend-engineer',
-        personalityName: 'direct',
-      })),
-    },
+    agentNames: opts.agentNames ?? ['frontend-alice', 'frontend-bob'],
   });
-  const owner = result.members.find((m) => m.kind === 'human');
-  if (!owner) throw new Error('owner missing');
-  const conversations = new ConversationService(repo, noopRealtime());
-  const taskSessions = new TaskSessionService(repo, conversations);
+  const conversations = new ConversationService(base.repo, noopRealtime());
   return {
-    archiveRoot,
-    repo,
+    ...base,
     conversations,
-    taskSessions,
-    organizationId: result.organization.id,
-    ownerId: owner.id,
+    taskSessions: new TaskSessionService(base.repo, conversations),
   };
 }
 

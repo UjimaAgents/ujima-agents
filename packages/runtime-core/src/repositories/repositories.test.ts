@@ -594,6 +594,43 @@ test('saveMessage is race-safe on duplicate clientMessageId (returns winner inst
   ).toHaveLength(1);
 });
 
+test('hasApprovalGrant matches org-wide canonical scope regardless of requesting agent', () => {
+  const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
+  const orgId = randomUUID();
+  repo.saveOrganization(
+    OrganizationSchema.parse({
+      id: orgId,
+      name: 'Org-Wide Grant Org',
+      workspace: { root: '/tmp/org-wide-grant', roleScopes: {} },
+    }),
+  );
+
+  const grantScope = 'shell:{"cwd":"/workspace","command":"npm","args":["test"]}';
+  repo.saveApproval({
+    id: randomUUID(),
+    organizationId: orgId,
+    runId: randomUUID(),
+    toolCallId: randomUUID(),
+    requestedBy: 'agent-owner',
+    resourceType: 'shell',
+    resourcePath: '/workspace',
+    action: 'execute',
+    status: 'approved',
+    reason: `grant:always_allow:scope=${encodeURIComponent(grantScope)};note=owner-grant`,
+    createdAt: new Date().toISOString(),
+    resolvedAt: new Date().toISOString(),
+  });
+
+  expect(
+    repo.hasApprovalGrant({
+      organizationId: orgId,
+      resourceType: 'shell',
+      action: 'execute',
+      approvalScope: grantScope,
+    }),
+  ).toBe(true);
+});
+
 test('hasApprovalGrant matches legacy shell scopes against canonical JSON scopes', () => {
   const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
   const orgId = randomUUID();
@@ -623,23 +660,186 @@ test('hasApprovalGrant matches legacy shell scopes against canonical JSON scopes
 
   const matches = repo.hasApprovalGrant({
     organizationId: orgId,
-    requestedBy: 'agent-1',
     resourceType: 'shell',
-    resourcePath: '/workspace',
     action: 'execute',
     approvalScope: 'shell:{"cwd":"/workspace","command":"git","args":["status"]}',
   });
   const mismatch = repo.hasApprovalGrant({
     organizationId: orgId,
-    requestedBy: 'agent-1',
     resourceType: 'shell',
-    resourcePath: '/workspace',
     action: 'execute',
     approvalScope: 'shell:{"cwd":"/workspace","command":"git","args":["log"]}',
   });
 
   expect(matches).toBe(true);
   expect(mismatch).toBe(false);
+});
+
+test('hasApprovalGrant ignores write payload churn for the same file target', () => {
+  const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
+  const orgId = randomUUID();
+  repo.saveOrganization(
+    OrganizationSchema.parse({
+      id: orgId,
+      name: 'Write Grant Org',
+      workspace: { root: '/tmp/write-grant-org', roleScopes: {} },
+    }),
+  );
+
+  repo.saveApproval({
+    id: randomUUID(),
+    organizationId: orgId,
+    runId: randomUUID(),
+    toolCallId: randomUUID(),
+    requestedBy: 'agent-1',
+    resourceType: 'file',
+    resourcePath: '/repo/readme.md',
+    action: 'write',
+    status: 'approved',
+    reason: `grant:always_allow:scope=${encodeURIComponent(
+      'write:{"resourcePath":"/repo/readme.md","content":"old"}',
+    )};note=legacy`,
+    createdAt: new Date().toISOString(),
+    resolvedAt: new Date().toISOString(),
+  });
+
+  expect(
+    repo.hasApprovalGrant({
+      organizationId: orgId,
+      resourceType: 'file',
+      action: 'write',
+      approvalScope: 'edit:{"file_path":"/repo/readme.md","old_string":"old","new_string":"new"}',
+    }),
+  ).toBe(true);
+});
+
+test('hasApprovalGrant keeps download grants tied to their source URL', () => {
+  const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
+  const orgId = randomUUID();
+  repo.saveOrganization(
+    OrganizationSchema.parse({
+      id: orgId,
+      name: 'Download Grant Org',
+      workspace: { root: '/tmp/download-grant-org', roleScopes: {} },
+    }),
+  );
+
+  repo.saveApproval({
+    id: randomUUID(),
+    organizationId: orgId,
+    runId: randomUUID(),
+    toolCallId: randomUUID(),
+    requestedBy: 'agent-1',
+    resourceType: 'file',
+    resourcePath: '/tmp/report.csv',
+    action: 'write',
+    status: 'approved',
+    reason: `grant:always_allow:scope=${encodeURIComponent(
+      'download:{"resourcePath":"/tmp/report.csv","url":"https://one.example/report.csv"}',
+    )};note=legacy`,
+    createdAt: new Date().toISOString(),
+    resolvedAt: new Date().toISOString(),
+  });
+
+  expect(
+    repo.hasApprovalGrant({
+      organizationId: orgId,
+      resourceType: 'file',
+      action: 'write',
+      approvalScope: 'download:{"resourcePath":"/tmp/report.csv","url":"https://one.example/report.csv"}',
+    }),
+  ).toBe(true);
+  expect(
+    repo.hasApprovalGrant({
+      organizationId: orgId,
+      resourceType: 'file',
+      action: 'write',
+      approvalScope: 'download:{"resourcePath":"/tmp/report.csv","url":"https://two.example/report.csv"}',
+    }),
+  ).toBe(false);
+});
+
+test('hasApprovalGrant reuses allow_family shell grants for later args variants', () => {
+  const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
+  const orgId = randomUUID();
+  repo.saveOrganization(
+    OrganizationSchema.parse({
+      id: orgId,
+      name: 'Shell Family Grant Org',
+      workspace: { root: '/tmp/shell-family-grant-org', roleScopes: {} },
+    }),
+  );
+
+  const familyScope = 'shell:{"cwd":"/workspace","command":"git"}';
+  repo.saveApproval({
+    id: randomUUID(),
+    organizationId: orgId,
+    runId: randomUUID(),
+    toolCallId: randomUUID(),
+    requestedBy: 'agent-1',
+    resourceType: 'shell',
+    resourcePath: '/workspace',
+    action: 'execute',
+    status: 'approved',
+    reason: `grant:always_allow_family:scope=${encodeURIComponent(familyScope)};note=family`,
+    createdAt: new Date().toISOString(),
+    resolvedAt: new Date().toISOString(),
+  });
+
+  expect(
+    repo.hasApprovalGrant({
+      organizationId: orgId,
+      resourceType: 'shell',
+      action: 'execute',
+      approvalScope: 'shell:{"cwd":"/workspace","command":"git","args":["status"]}',
+    }),
+  ).toBe(true);
+  expect(
+    repo.hasApprovalGrant({
+      organizationId: orgId,
+      resourceType: 'shell',
+      action: 'execute',
+      approvalScope: 'shell:{"cwd":"/workspace","command":"npm","args":["test"]}',
+    }),
+  ).toBe(false);
+});
+
+test('hasApprovalGrant normalizes shell cwd aliases for the same command', () => {
+  const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
+  const orgId = randomUUID();
+  repo.saveOrganization(
+    OrganizationSchema.parse({
+      id: orgId,
+      name: 'Shell Grant Org',
+      workspace: { root: '/tmp/shell-grant-org', roleScopes: {} },
+    }),
+  );
+
+  repo.saveApproval({
+    id: randomUUID(),
+    organizationId: orgId,
+    runId: randomUUID(),
+    toolCallId: randomUUID(),
+    requestedBy: 'agent-1',
+    resourceType: 'shell',
+    resourcePath: '/workspace',
+    action: 'execute',
+    status: 'approved',
+    reason: `grant:always_allow:scope=${encodeURIComponent(
+      'shell:{"cwd":"/workspace/../workspace","command":"git","args":["status"]}',
+    )};note=legacy`,
+    createdAt: new Date().toISOString(),
+    resolvedAt: new Date().toISOString(),
+  });
+
+  expect(
+    repo.hasApprovalGrant({
+      organizationId: orgId,
+      resourceType: 'shell',
+      action: 'execute',
+      approvalScope: 'shell:{"cwd":"/workspace","command":"git","args":["status"]}',
+    }),
+  ).toBe(true);
 });
 
 test('listPendingApprovals enriches threadId from parent run when DB row has no thread_id', () => {

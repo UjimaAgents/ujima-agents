@@ -5,6 +5,8 @@ import { GripVertical, MessageSquare } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   getDirectMessageThreadId,
+  isDirectMessageThread,
+  resolveDmPeerMemberId,
   SocketEventNames,
   type RunState,
   type SocketEventName,
@@ -527,7 +529,7 @@ function resolveNotificationConversationId(
     };
     const threadId = body.threadId ?? body.message?.threadId;
     if (typeof threadId !== "string") return undefined;
-    if (threadId.startsWith("dm:")) {
+    if (isDirectMessageThread(threadId)) {
       return resolveDmConversationId(threadId, currentMemberId);
     }
     const messageChannelId = body.message?.channelId;
@@ -549,7 +551,7 @@ function resolveNotificationConversationId(
   const body = payload as { threadId?: string; run?: { threadId?: string } };
   const threadId = body.threadId ?? body.run?.threadId;
   if (typeof threadId !== "string") return undefined;
-  if (threadId.startsWith("dm:")) {
+  if (isDirectMessageThread(threadId)) {
     return resolveDmConversationId(threadId, currentMemberId);
   }
   return channels.some((channel) => channel.id === threadId) ? threadId : undefined;
@@ -561,11 +563,7 @@ function parseApprovalId(payload: unknown): string | undefined {
 }
 
 function resolveDmConversationId(threadId: string, currentMemberId: string): string | undefined {
-  if (!threadId.startsWith("dm:")) return undefined;
-  const [, firstId, secondId] = threadId.split(":", 3);
-  if (firstId === currentMemberId) return secondId;
-  if (secondId === currentMemberId) return firstId;
-  return undefined;
+  return resolveDmPeerMemberId(threadId, currentMemberId);
 }
 
 function playApprovalSound(): void {

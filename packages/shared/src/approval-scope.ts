@@ -112,6 +112,80 @@ export function parseApprovalDisplayScopesFromReason(reason: string): {
   return { shell: null, filesystem: parseFilesystemScope(scopeEncoded) ?? parseWorkspaceWriteScope(scopeEncoded) };
 }
 
+export function canonicalizeApprovalGrantScope(scope: string): string {
+  return canonicalizeApprovalScope(scope, false);
+}
+
+export function canonicalizeApprovalFamilyScope(scope: string): string {
+  return canonicalizeApprovalScope(scope, true);
+}
+
+/** True when stored and requested scopes match at grant precision (args included for shell). */
+export function approvalScopeMatches(storedScope: string, requestedScope: string): boolean {
+  return (
+    canonicalizeApprovalGrantScope(storedScope) === canonicalizeApprovalGrantScope(requestedScope)
+  );
+}
+
+/** Matches a pending approval scope against a persisted grant/family scope from resolution. */
+export function approvalScopeMatchesPersisted(
+  approvalScope: string,
+  persistedScope: string,
+  mode: 'grant' | 'family',
+): boolean {
+  if (mode === 'grant') {
+    return canonicalizeApprovalGrantScope(approvalScope) === persistedScope;
+  }
+  return (
+    canonicalizeApprovalGrantScope(approvalScope) === persistedScope ||
+    canonicalizeApprovalFamilyScope(approvalScope) === persistedScope
+  );
+}
+
+export const APPROVAL_GRANT_ALWAYS_PREFIX = 'grant:always_allow:';
+export const APPROVAL_GRANT_FAMILY_PREFIX = 'grant:always_allow_family:';
+
+export function formatPersistedApprovalGrantReason(
+  mode: 'grant' | 'family',
+  persistedScope: string,
+  note: string,
+): string {
+  const prefix = mode === 'family' ? APPROVAL_GRANT_FAMILY_PREFIX : APPROVAL_GRANT_ALWAYS_PREFIX;
+  return `${prefix}scope=${encodeURIComponent(persistedScope)};note=${note}`;
+}
+
+function persistedGrantMode(grantReason: string): 'grant' | 'family' {
+  return grantReason.includes(APPROVAL_GRANT_FAMILY_PREFIX) ? 'family' : 'grant';
+}
+
+/** True when an approved always-allow row covers the requested tool scope. */
+export function approvalPersistedGrantMatches(
+  grantReason: string,
+  storedScope: string,
+  requestedScope: string,
+): boolean {
+  const mode = persistedGrantMode(grantReason);
+  const persistedCanonical =
+    mode === 'family'
+      ? canonicalizeApprovalFamilyScope(storedScope)
+      : canonicalizeApprovalGrantScope(storedScope);
+  if (approvalScopeMatchesPersisted(requestedScope, persistedCanonical, mode)) {
+    return true;
+  }
+  // Legacy allow_family rows used grant:always_allow: with a family-shaped canonical scope.
+  if (
+    mode === 'grant' &&
+    canonicalizeApprovalFamilyScope(storedScope) === canonicalizeApprovalGrantScope(storedScope)
+  ) {
+    return approvalScopeMatchesPersisted(
+      requestedScope,
+      canonicalizeApprovalFamilyScope(storedScope),
+      'family',
+    );
+  }
+  return false;
+}
+
 /**
  * Filesystem tool approval scope from the permission gate (`filesystem:{json}`)
  * or orchestrator inner gate (`filesystem:read:/abs/path`).
@@ -214,6 +288,105 @@ function parseWorkspaceWriteScope(scope: string): ParsedFilesystemScope | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * Normalizes approval scope strings for grant matching.
+ * - Grant mode (family=false): full scope including shell args and download URLs.
+ * - Family mode (family=true): shell drops args; download keeps its URL.
+ * - Paths are posix-normalized; legacy write:/edit: shapes map to filesystem grants.
+ */
+function canonicalizeApprovalScope(scope: string, family: boolean): string {
+  const shell = parseShellScope(scope);
+  if (shell) {
+    return `shell:${JSON.stringify({
+      cwd: normalizeApprovalPath(shell.cwd),
+      command: shell.command,
+      ...(family || !shell.args?.length ? {} : { args: shell.args }),
+    })}`;
+  }
+
+  const filesystem = parseFilesystemScope(scope) ?? parseWorkspaceWriteScope(scope);
+  if (filesystem) {
+    return `filesystem:${JSON.stringify({
+      action: filesystem.action,
+      resourcePath: normalizeApprovalPath(filesystem.resourcePath),
+    })}`;
+  }
+
+  if (scope.startsWith('download:')) {
+    const payload = scope.slice('download:'.length);
+    if (payload.startsWith('{')) {
+      try {
+        const parsed = JSON.parse(payload) as {
+          resourcePath?: unknown;
+          url?: unknown;
+        };
+        const resourcePath =
+          typeof parsed.resourcePath === 'string' && parsed.resourcePath.trim()
+            ? normalizeApprovalPath(parsed.resourcePath)
+            : undefined;
+        const url = typeof parsed.url === 'string' ? parsed.url.trim() : '';
+        if (resourcePath || url) {
+          return `download:${JSON.stringify({
+            ...(resourcePath ? { resourcePath } : {}),
+            ...(url ? { url } : {}),
+          })}`;
+        }
+      } catch {
+        /* fall through */
+      }
+    }
+  }
+
+  if (scope.startsWith('job_kill:')) {
+    return 'job_kill';
+  }
+
+  if (scope.startsWith('fetch:')) {
+    const payload = scope.slice('fetch:'.length);
+    if (payload.startsWith('{')) {
+      try {
+        const parsed = JSON.parse(payload) as { url?: unknown };
+        if (typeof parsed.url === 'string' && parsed.url.trim()) {
+          return `fetch:${JSON.stringify({ url: parsed.url.trim() })}`;
+        }
+      } catch {
+        /* fall through */
+      }
+    }
+  }
+
+  const firstColon = scope.indexOf(':');
+  const secondColon = firstColon === -1 ? -1 : scope.indexOf(':', firstColon + 1);
+  if (firstColon > 0 && secondColon > firstColon) {
+    const resourceType = scope.slice(0, firstColon);
+    const action = scope.slice(firstColon + 1, secondColon);
+    const resourcePath = scope.slice(secondColon + 1).trim();
+    if (resourceType && action && resourcePath) {
+      return `${resourceType}:${action}:${normalizeApprovalPath(resourcePath)}`;
+    }
+  }
+
+  return scope;
+}
+
+/** Browser-safe posix-style path normalization (no node:path — shared ships to webview). */
+function normalizeApprovalPath(value: string): string {
+  const trimmed = value.replace(/\\/g, '/').trim() || '.';
+  const absolute = trimmed.startsWith('/');
+  const stack: string[] = [];
+  for (const part of trimmed.split('/')) {
+    if (!part || part === '.') continue;
+    if (part === '..') {
+      stack.pop();
+      continue;
+    }
+    stack.push(part);
+  }
+  const joined = stack.join('/');
+  if (absolute) return `/${joined}`;
+  return joined || '.';
 }
 
 const RELAY_FS_WRITE_BODY_MAX = 4000;

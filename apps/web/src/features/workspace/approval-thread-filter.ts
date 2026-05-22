@@ -1,3 +1,5 @@
+import { isDirectMessageThread } from "@ujima/shared/browser";
+
 /**
  * Pure helpers for binding pending approvals to the visible conversation.
  * Keeps channel view and tests aligned on the same ownership rules.
@@ -59,7 +61,7 @@ export function pendingApprovalVisibleInChannelView(
     if (!requesterId || requesterId !== conversation.id) return false;
     // Approval scoped to a different DM thread than the tab we're viewing — hide (another inbox).
     if (
-      approval.threadId?.startsWith("dm:") &&
+      isDirectMessageThread(approval.threadId) &&
       currentThreadId &&
       approval.threadId !== currentThreadId
     ) {
@@ -73,7 +75,7 @@ export function pendingApprovalVisibleInChannelView(
       if (run?.threadId) {
         if (run.threadId === currentThreadId) return true;
         // Same agent, run tied to another person's DM — hide from this DM tab.
-        if (run.threadId.startsWith("dm:")) return false;
+        if (isDirectMessageThread(run.threadId)) return false;
         // Run on a channel/task thread — owner still reviews from this agent's DM.
         return true;
       }
