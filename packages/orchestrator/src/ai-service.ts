@@ -1,6 +1,6 @@
 import { isLoopFinished, type ToolSet } from 'ai';
 import { buildAgentSystemPrompt, normalizeProviderKey } from '@ujima/framework';
-import { DEFAULT_SPIRIT_TEMPERATURE, type Message, type SpiritRole } from '@ujima/shared';
+import { DEFAULT_SPIRIT_TEMPERATURE, type Message, type SpiritRole, type WakeReason } from '@ujima/shared';
 import { runAgentLoop, type AgentLoopChunk } from './services/agent-loop.js';
 import type { RepositoryReader } from './services/repository-reader.js';
 import type { TeamStore } from './services/team-store.js';
@@ -14,6 +14,10 @@ import {
 import { requireTeam } from './utils/require-team.js';
 import { buildRunTranscript } from './utils/run-transcript.js';
 import { buildThreadStateBlock } from './utils/thread-state.js';
+import {
+  filterToolsForWakeReplyPolicy,
+  resolveWakeReplyPolicy,
+} from './utils/wake-reply-policy.js';
 import {
   createMessageCursor,
   isMessageAfterCursor,
@@ -131,16 +135,16 @@ export class AiService {
     // path to comply with the "you must reply" contract regardless
     // of how the role config declares its `tools`.
     const wakeReasonForPalette = (this.repo.getRun?.(input.organizationId, input.runId)
-      ?.wakeReason ?? null) as string | null;
-    const mandatoryReplyMode = wakeReasonForPalette === 'mention';
-    const baseAlwaysAvailable = mandatoryReplyMode
-      ? ALWAYS_AVAILABLE_AGENT_TOOLS.filter(
-          (toolId) => toolId !== 'channel.pass' && toolId !== 'self.note',
-        )
-      : ALWAYS_AVAILABLE_AGENT_TOOLS;
-    const roleTools = mandatoryReplyMode
-      ? role.tools.filter((toolId) => toolId !== 'channel.pass' && toolId !== 'self.note')
-      : role.tools;
+      ?.wakeReason ?? null) as WakeReason | null;
+    const wakeReplyPolicy = resolveWakeReplyPolicy({
+      threadId: input.threadId,
+      wakeReason: wakeReasonForPalette,
+    });
+    const baseAlwaysAvailable = filterToolsForWakeReplyPolicy(
+      ALWAYS_AVAILABLE_AGENT_TOOLS,
+      wakeReplyPolicy,
+    );
+    const roleTools = filterToolsForWakeReplyPolicy(role.tools, wakeReplyPolicy);
     const toolIds = [...new Set([...roleTools, ...baseAlwaysAvailable])];
     const builtInToolDefs = buildToolDefinitions(toolIds, team, this.tools, {
       organizationId: input.organizationId,
@@ -220,6 +224,7 @@ export class AiService {
       organization.organizationChart,
       availableToolIds,
       attachedMcpServers.map((s) => ({ name: s.serverName, toolNames: s.toolNames })),
+      wakeReplyPolicy.conversationKind,
     );
 
     const initialThreadMessages = this.repo.listMessages(input.organizationId, input.threadId, undefined, 20).data;
@@ -254,6 +259,7 @@ export class AiService {
       messages: initialThreadMessages,
       currentMember: { id: member.id, name: member.name },
       sourceMessageId,
+      threadId: input.threadId,
       members: this.repo.listMembers(input.organizationId),
     });
     if (threadStateBlock) {
@@ -269,13 +275,7 @@ export class AiService {
     // paraphrase it back as message content). Points the model at
     // the <thread-state> block above so it grounds its decision in
     // facts instead of inventing them.
-    const wakeRunScaffold = [
-      'Before you pick a tool, read the <thread-state> block in the most recent user message.',
-      'Treat its <agents-not-yet-responded> and <you-explicitly-addressed> / <you-implicitly-addressed> fields as ground truth — they are computed from the actual channel state, not from your reading.',
-      'If <you-explicitly-addressed>true</you-explicitly-addressed>, you must reply via a posting tool.',
-      'If <you-explicitly-addressed>false</you-explicitly-addressed> AND <you-implicitly-addressed>false</you-implicitly-addressed>, call channel.pass and stop. Do not post any message — not a short acknowledgement, not a status update, not a hand-off announcement. The audit log already records that you considered the thread.',
-      'When you call channel.pass, the reason must match thread-state facts. Do not write filler in the note field.',
-    ].join('\n');
+    const wakeRunScaffold = wakeReplyPolicy.scaffoldBlock;
     const goalSuffix = input.systemPromptSuffix;
     const combinedSuffix = [goalSuffix, wakeRunScaffold].filter(Boolean).join('\n\n');
     const systemPrompt = combinedSuffix ? `${system}\n\n${combinedSuffix}` : system;
@@ -290,7 +290,7 @@ export class AiService {
       // Lower temperature for mandatory mention wakes: at 0.2 the model is
       // more willing to commit to a structured posting tool. Other runs keep
       // the shared default.
-      temperature: mandatoryReplyMode ? 0.2 : DEFAULT_SPIRIT_TEMPERATURE,
+      temperature: wakeReplyPolicy.mandatoryReply ? 0.2 : DEFAULT_SPIRIT_TEMPERATURE,
       // L1/L2: force a tool call on the FIRST step only so the model
       // picks `channel.pass` or a posting tool fast. Continuation
       // steps go back to `auto` so multi-step read→write→reply

@@ -263,6 +263,40 @@ test('legacy default role tools are migrated forward on load', () => {
   expect(team.getRole('frontend-engineer')?.tools).toContain('grep');
 });
 
+test('filesystem is stripped from persisted role tools on load', () => {
+  const team = loadAgentTeam({
+    name: 'Ujima Demo',
+    workspace: {
+      root: '/tmp/ujima-org',
+      roleScopes: {},
+    },
+    organizationChart: { reportsTo: {} },
+    agents: [createAgent('pm', 'frontend-engineer', 'direct')],
+    roles: [
+      {
+        name: 'pm',
+        title: 'Product Manager',
+        instructions: ROLE_PRESETS.pm?.instructions ?? '',
+        workspaceScopes: ['.'],
+        tools: ['filesystem'],
+        channels: ['general'],
+      },
+      {
+        name: 'frontend-engineer',
+        title: 'Frontend Engineer',
+        instructions: ROLE_PRESETS.frontendEngineer?.instructions ?? '',
+        workspaceScopes: ['apps/web'],
+        tools: ['filesystem', 'view', 'write', 'edit', 'shell'],
+        channels: ['general'],
+      },
+    ],
+  });
+
+  expect(team.getRole('frontend-engineer')?.tools).not.toContain('filesystem');
+  expect(team.getRole('frontend-engineer')?.tools).toContain('view');
+  expect(team.config.configVersion).toBe(3);
+});
+
 test('validateAgentTeamConfig rejects agents that reference unknown roles', () => {
   expect(() =>
     validateAgentTeamConfig({

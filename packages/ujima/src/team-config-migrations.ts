@@ -17,6 +17,17 @@ const LEGACY_DEFAULT_ROLE_TOOLS = [
 ] as const;
 const LEGACY_DEFAULT_ROLE_TOOL_SET = new Set<string>([
   ...LEGACY_DEFAULT_ROLE_TOOLS,
+  'view',
+  'write',
+  'edit',
+  'multiedit',
+  'ls',
+  'glob',
+  'grep',
+  'fetch',
+  'download',
+  'job_output',
+  'job_kill',
   'web_search',
 ]);
 
@@ -39,6 +50,12 @@ export function upgradeLegacyDefaultRoleTools<T extends Record<string, unknown>>
     return {
       ...role,
       tools: [...DEFAULT_ROLE_TOOLS],
+    } as T;
+  }
+  if (role.tools.includes('filesystem')) {
+    return {
+      ...role,
+      tools: role.tools.filter((tool) => tool !== 'filesystem'),
     } as T;
   }
   return role;

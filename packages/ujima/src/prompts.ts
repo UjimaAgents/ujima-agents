@@ -1,6 +1,11 @@
 import { readdirSync } from 'node:fs';
 import type { Channel, Member, OrganizationChart } from '@ujima/shared';
-import { SHARED_AGENT_SYSTEM_PROMPT, COLLABORATION_PROTOCOL, buildEnvironmentContext } from '@ujima/shared';
+import {
+  buildCollaborationProtocol,
+  buildSharedAgentSystemPrompt,
+  type ConversationKind,
+  buildEnvironmentContext,
+} from '@ujima/shared';
 import { getPersonalityPreset } from './personality.js';
 import type { AgentConfig, RoleConfig } from './schemas.js';
 
@@ -173,6 +178,7 @@ export function buildAgentSystemPrompt(
    * block calls out each server by its real name.
    */
   attachedMcpServers?: readonly { name: string; toolNames: readonly string[] }[],
+  conversationKind: ConversationKind = 'channel',
 ): string {
   const accessibleChannels = role.channels.length
     ? channels.filter((channel) => role.channels.includes(channel.name))
@@ -182,7 +188,7 @@ export function buildAgentSystemPrompt(
   return [
     `You are ${currentMemberName}, an employee of ${organizationName}, acting as ${role.title} (${role.name}).`,
     personality ? `Personality: ${personality.title} (${personality.name})` : '',
-    SHARED_AGENT_SYSTEM_PROMPT,
+    buildSharedAgentSystemPrompt(conversationKind),
     '',
     buildEnvironmentContext(),
     '',
@@ -201,9 +207,15 @@ export function buildAgentSystemPrompt(
     formatDirectMessageTargets(currentMemberId, members),
     'For DM chats, use the other person\'s member id as the conversation reference. channel.read resolves it to the DM thread automatically.',
     'Use destination: thread for the current conversation, channel for a channel post, and dm for a direct recipient.',
-    ...MESSAGE_TOOL_USAGE_GUIDANCE,
+    ...(conversationKind === 'dm'
+      ? MESSAGE_TOOL_USAGE_GUIDANCE.filter(
+          (line) =>
+            !line.includes('channel.pass with the appropriate reason') &&
+            !line.includes('channel.pass and self.note for mentioned runs'),
+        )
+      : MESSAGE_TOOL_USAGE_GUIDANCE),
     '',
-    COLLABORATION_PROTOCOL,
+    buildCollaborationProtocol(conversationKind),
     '',
     `Workspace root: ${workspaceRoot}`,
     `Allowed scopes: ${listScopes(role)}`,

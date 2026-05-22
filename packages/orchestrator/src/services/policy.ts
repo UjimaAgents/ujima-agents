@@ -4,6 +4,7 @@ import type { AgentTeamHandle } from '@ujima/framework';
 import type { ToolAction, SpiritRole, WakeReason } from '@ujima/shared';
 import { isSensitiveWorkspacePath } from '@ujima/shared/workspace-file-filters';
 import { assertWorkspaceBoundary, isPathInsideRoot } from '@ujima/shared/workspace';
+import { isDirectMessageThread } from '../utils/thread-state.js';
 
 export interface PolicyResult {
   allowed: boolean;
@@ -20,6 +21,7 @@ export interface CheckToolPolicyOptions {
    * posting tool. Other reasons leave both tools available.
    */
   wakeReason?: WakeReason | null;
+  threadId?: string;
 }
 
 export function checkToolPolicy(
@@ -40,21 +42,29 @@ export function checkToolPolicy(
   // Allowing `channel.pass` or `self.note` would let the model
   // silently slip out of the obligation. Reject both BEFORE the
   // blanket allows below so the contract holds regardless of role.
-  if (options.wakeReason === 'mention') {
+  const mandatoryReply = options.wakeReason === 'mention';
+  const directMessageThread =
+    options.threadId !== undefined && isDirectMessageThread(options.threadId);
+
+  if (mandatoryReply || directMessageThread) {
     if (toolId === 'channel.pass') {
+      const reason = mandatoryReply
+        ? 'mandatory-reply: you were @mentioned, channel.pass is not allowed. Reply via channel.reply, channel.dm, or message.'
+        : 'direct-message: channel.pass is not allowed in a 1:1 DM. Reply via channel.reply, channel.dm, or message.';
       return {
         allowed: false,
         requiresApproval: false,
-        reason:
-          'mandatory-reply: you were @mentioned, channel.pass is not allowed. Reply via channel.reply, channel.dm, or message.',
+        reason,
       };
     }
     if (toolId === 'self.note') {
+      const reason = mandatoryReply
+        ? 'mandatory-reply: you were @mentioned, self.note is not allowed. Reply via channel.reply, channel.dm, or message.'
+        : 'direct-message: self.note is not allowed in a 1:1 DM when a reply is expected. Reply via channel.reply, channel.dm, or message.';
       return {
         allowed: false,
         requiresApproval: false,
-        reason:
-          'mandatory-reply: you were @mentioned, self.note is not allowed. Reply via channel.reply, channel.dm, or message.',
+        reason,
       };
     }
   }

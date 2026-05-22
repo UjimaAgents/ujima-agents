@@ -71,6 +71,7 @@ export {
   ACTIVE_WORKSPACE_SETTING_KEY,
   TEAM_CONFIG_SETTING_KEY,
   persistTeamConfig,
+  assertGrantableOwnerFromParentOrg,
   copyProviderCredentials,
   grantWorkspaceOwnerForMember,
   grantWorkspaceOwnerFromParentOrg,
@@ -79,7 +80,10 @@ export {
   ensureChannelThread,
   ensureDirectMessageConversation,
   WorkspaceService,
+  migrateUnifiedWorkspaceOrg,
+  ORGANIZATION_WORKSPACE_IDS_KEY,
 } from './services/index.js';
+export type { WorkspaceOrgMigrationResult } from './services/index.js';
 export type { WorkspaceListItem, CreateWorkspaceInput } from './services/index.js';
 export type {
   ApiRepository,

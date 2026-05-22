@@ -62,7 +62,6 @@ export const ApprovalCard = memo(function ApprovalCard({
       : data.status === "rejected"
         ? "bg-red-100 text-red-700 dark:bg-red-500/10 dark:text-red-300"
         : "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300";
-
   useEffect(() => {
     if (!allowMenuOpen) return;
     const onPointerDown = (event: PointerEvent) => {

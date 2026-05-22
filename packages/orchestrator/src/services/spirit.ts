@@ -38,6 +38,10 @@ import {
   buildAgentSystemPrompt,
   type AgentTeamHandle,
 } from '@ujima/framework';
+import {
+  filterToolsForWakeReplyPolicy,
+  resolveWakeReplyPolicy,
+} from '../utils/wake-reply-policy.js';
 import { requireOrganization } from '../utils/require-organization.js';
 import { requireTeam } from '../utils/require-team.js';
 import { runAgentLoop, type AgentLoopChunk } from './agent-loop.js';
@@ -732,12 +736,14 @@ export class SpiritService {
       spirit.runId !== undefined
         ? this.repo.getRun(input.organizationId, spirit.runId)
         : undefined;
-    const supervisorMandatoryReply = supervisorRunRow?.wakeReason === 'mention';
-    const allowedToolIds = supervisorMandatoryReply
-      ? resolvedAllowlist.filter(
-          (toolId) => toolId !== 'channel.pass' && toolId !== 'self.note',
-        )
-      : resolvedAllowlist;
+    const supervisorWakePolicy = resolveWakeReplyPolicy({
+      threadId: session.channelId,
+      wakeReason: supervisorRunRow?.wakeReason as WakeReason | undefined,
+    });
+    const allowedToolIds = filterToolsForWakeReplyPolicy(
+      resolvedAllowlist,
+      supervisorWakePolicy,
+    );
     const builtInToolDefs = this.buildToolDefinitions(allowedToolIds, {
       organizationId: input.organizationId,
       runId: spirit.runId ?? spirit.id,
@@ -788,6 +794,7 @@ export class SpiritService {
       organization.organizationChart,
       availableToolIds,
       attachedMcpServers.map((s) => ({ name: s.serverName, toolNames: s.toolNames })),
+      supervisorWakePolicy.conversationKind,
     );
     const systemPromptSuffix = this.resolveGoalSystemPromptSuffix(
       input.organizationId,
