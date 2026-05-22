@@ -17,6 +17,8 @@ import {
   ORGANIZATION_WORKSPACE_IDS_KEY,
 } from './workspace-org-migration.js';
 
+const MIGRATION_DONE_KEY = 'workspace_org_unified_v1';
+
 describe('migrateUnifiedWorkspaceOrg', () => {
   let homeDir: string;
   let primaryDir: string;
@@ -155,6 +157,73 @@ describe('migrateUnifiedWorkspaceOrg', () => {
     expect(childOwner).toBeTruthy();
     const childAuth = repo.getAuthUserByMember(newOrgId!, childOwner!.id);
     expect(childAuth?.email).toBe('owner@example.com');
+  });
+
+  it('retains legacy linkage when a split fails so migration can retry', () => {
+    const organizationId = 'org-split-failed';
+    const defaultWorkspaceId = `ws_${organizationId}`;
+    const missingRootDir = join(tmpdir(), 'ujima-ws-missing-root-never-created');
+
+    const organization = OrganizationSchema.parse({
+      id: organizationId,
+      name: 'Retry Org',
+      workspace: { root: primaryDir, roleScopes: {} },
+      organizationChart: { reportsTo: {} },
+    });
+    repo.saveOrganization(organization);
+
+    const team = loadAgentTeam({
+      name: 'Retry Org',
+      workspace: { root: primaryDir },
+      roles: [
+        {
+          name: 'lead',
+          title: 'Lead',
+          instructions: 'Lead the work.',
+          tools: [],
+        },
+      ],
+      agents: [{ name: 'lead', roleName: 'lead' }],
+      channels: [],
+      providers: {},
+    });
+    persistTeamConfig(repo, organizationId, team);
+
+    host.workspaces.create({
+      id: defaultWorkspaceId,
+      root_path: primaryDir,
+      label: 'Primary',
+    });
+    const broken = host.workspaces.create({
+      root_path: missingRootDir,
+      label: 'Broken Folder',
+    });
+
+    repo.saveWorkspaceSetting(
+      organizationId,
+      ORGANIZATION_WORKSPACE_IDS_KEY,
+      JSON.stringify([defaultWorkspaceId, broken.id]),
+    );
+
+    const teamStore = createTeamStore();
+    const orgCountBefore = repo.listOrganizations().length;
+    const result = migrateUnifiedWorkspaceOrg({
+      repo,
+      teamStore,
+      workspaces: host.workspaces,
+    });
+
+    expect(result.splits).toHaveLength(0);
+    expect(repo.listOrganizations()).toHaveLength(orgCountBefore);
+    expect(
+      repo.listOrganizations().some((org) => org.workspace.root === missingRootDir),
+    ).toBe(false);
+    expect(repo.getWorkspaceSetting(organizationId, MIGRATION_DONE_KEY)).toBeNull();
+
+    const remaining = repo.getWorkspaceSetting(organizationId, ORGANIZATION_WORKSPACE_IDS_KEY);
+    expect(remaining).toBeTruthy();
+    const parsed = JSON.parse(remaining!) as string[];
+    expect(parsed).toEqual(expect.arrayContaining([defaultWorkspaceId, broken.id]));
   });
 
   it('is idempotent when migration already ran', () => {

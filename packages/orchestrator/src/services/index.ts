@@ -149,6 +149,7 @@ export type {
 export {
   ERR_NO_WORKSPACE_ROOT,
   WorkspaceRootRequiredError,
+  assertWorkspaceRootPathExists,
   isWorkspaceRootRequiredError,
   requireOrganizationWorkspaceRoot,
 } from './workspace-root.js';

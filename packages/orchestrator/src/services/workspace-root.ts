@@ -53,17 +53,23 @@ export function getOrganizationWithWorkspaceRoot(
   return organization;
 }
 
+export function assertWorkspaceRootPathExists(workspaceRoot: string): string {
+  const resolved = resolve(workspaceRoot.trim());
+  if (!resolved) {
+    throw new Error('project folder is required');
+  }
+  if (!existsSync(resolved)) {
+    throw new Error(`workspace root "${resolved}" does not exist on disk`);
+  }
+  return resolved;
+}
+
 export function requireExistingOrganizationWorkspaceRoot(
   repo: Pick<ApiRepository, 'getOrganization'>,
   organizationId: string,
 ): Organization {
   const organization = getOrganizationWithWorkspaceRoot(repo, organizationId);
-  if (!existsSync(organization.workspace.root)) {
-    throw new WorkspaceRootRequiredError(
-      organizationId,
-      `workspace root "${organization.workspace.root}" does not exist on disk`,
-    );
-  }
+  assertWorkspaceRootPathExists(organization.workspace.root);
   return organization;
 }
 

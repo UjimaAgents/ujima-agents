@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { loadAgentTeam } from '@ujima/framework';
 import {
@@ -80,6 +81,9 @@ function splitWorkspaceToOrganization(input: {
     throw new Error(`workspace "${workspace.id}" has no root_path`);
   }
   const resolvedRoot = resolve(rootPath);
+  if (!existsSync(resolvedRoot)) {
+    throw new Error(`workspace "${workspace.id}" root "${resolvedRoot}" does not exist on disk`);
+  }
   const newOrganizationId = randomUUID();
   const name = workspaceLabel(workspace, resolvedRoot);
 
@@ -125,9 +129,31 @@ function splitWorkspaceToOrganization(input: {
   return newOrganizationId;
 }
 
+function saveLinkedWorkspaceIds(
+  repo: ApiRepository,
+  organizationId: string,
+  workspaceIds: string[],
+): void {
+  const unique = [...new Set(workspaceIds.filter((id) => id.length > 0))];
+  if (unique.length === 0) {
+    repo.deleteWorkspaceSetting(organizationId, ORGANIZATION_WORKSPACE_IDS_KEY);
+    return;
+  }
+  repo.saveWorkspaceSetting(
+    organizationId,
+    ORGANIZATION_WORKSPACE_IDS_KEY,
+    JSON.stringify(unique),
+  );
+}
+
 function cleanupLegacyWorkspaceSettings(repo: ApiRepository, organizationId: string): void {
   repo.deleteWorkspaceSetting(organizationId, ACTIVE_WORKSPACE_SETTING_KEY);
   repo.deleteWorkspaceSetting(organizationId, ORGANIZATION_WORKSPACE_IDS_KEY);
+}
+
+function markMigrationComplete(repo: ApiRepository, organizationId: string): void {
+  cleanupLegacyWorkspaceSettings(repo, organizationId);
+  repo.saveWorkspaceSetting(organizationId, MIGRATION_DONE_KEY, '1');
 }
 
 function alignOrganizationToWorkspace(
@@ -178,10 +204,18 @@ export function migrateUnifiedWorkspaceOrg(input: {
     if (needsSplit) {
       const primaryId = resolvePrimaryWorkspaceId(org, linkedIds, activeId, catalogRows);
       const extras = [...linkedIds].filter((id) => id !== primaryId);
+      const failedWorkspaceIds: string[] = [];
 
       for (const workspaceId of extras) {
         const row = workspaces.get(workspaceId);
-        if (!row?.root_path?.trim()) continue;
+        if (!row?.root_path?.trim()) {
+          failedWorkspaceIds.push(workspaceId);
+          logger?.info('workspace-org-migration: split skipped (missing root_path)', {
+            organizationId: org.id,
+            workspaceId,
+          });
+          continue;
+        }
         try {
           const newOrgId = splitWorkspaceToOrganization({
             repo,
@@ -201,6 +235,7 @@ export function migrateUnifiedWorkspaceOrg(input: {
             workspaceId,
           });
         } catch (err) {
+          failedWorkspaceIds.push(workspaceId);
           logger?.info('workspace-org-migration: split failed', {
             organizationId: org.id,
             workspaceId,
@@ -210,16 +245,24 @@ export function migrateUnifiedWorkspaceOrg(input: {
       }
 
       alignOrganizationToWorkspace(repo, workspaces, org, primaryId);
-      cleanupLegacyWorkspaceSettings(repo, org.id);
+
+      if (failedWorkspaceIds.length > 0) {
+        saveLinkedWorkspaceIds(repo, org.id, [primaryId, ...failedWorkspaceIds]);
+        logger?.info('workspace-org-migration: split incomplete, legacy linkage retained', {
+          organizationId: org.id,
+          failedWorkspaceIds,
+        });
+        continue;
+      }
+
+      markMigrationComplete(repo, org.id);
     } else {
       syncWorkspacesFromOrganizations(workspaces, [org]);
       if (activeId) {
         alignOrganizationToWorkspace(repo, workspaces, org, activeId);
       }
-      cleanupLegacyWorkspaceSettings(repo, org.id);
+      markMigrationComplete(repo, org.id);
     }
-
-    repo.saveWorkspaceSetting(org.id, MIGRATION_DONE_KEY, '1');
   }
 
   return {

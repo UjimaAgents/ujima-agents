@@ -227,6 +227,13 @@ export function WorkspaceShell(props: {
   );
 
   useEffect(() => {
+    const conversationName = selected?.name?.trim();
+    document.title = conversationName
+      ? `Ujima Agents - ${conversationName}`
+      : "Ujima Agents";
+  }, [selected?.name]);
+
+  useEffect(() => {
     if (!bootstrap.channels) return;
     syncWorkspace({
       channels: bootstrap.channels,

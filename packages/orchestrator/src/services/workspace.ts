@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import { resolve } from 'node:path';
 import {
   createStarterAgentTeamConfig,
   loadAgentTeam,
@@ -8,6 +7,7 @@ import {
 import type { Organization } from '@ujima/shared';
 import type { AuthService } from './auth.js';
 import { ConfigSyncService } from './config-sync.js';
+import { assertWorkspaceRootPathExists } from './workspace-root.js';
 import type { ApiRepository } from './repository-reader.js';
 import type { TeamStore } from './team-store.js';
 import {
@@ -138,10 +138,7 @@ export class WorkspaceService {
       throw new Error('workspace name is required');
     }
 
-    const workspaceRoot = resolve(input.workspaceRoot.trim());
-    if (!workspaceRoot) {
-      throw new Error('project folder is required');
-    }
+    const workspaceRoot = assertWorkspaceRootPathExists(input.workspaceRoot);
 
     const templateOrganizationId = authState.user.organizationId;
     const templateOrganization = this.repo.getOrganization(templateOrganizationId);
