@@ -144,6 +144,8 @@ import {
 } from './task-sessions.js';
 import {
   claimIdleCommitment as runClaimIdleCommitment,
+  findCommitmentBySourceMessage as readCommitmentBySourceMessage,
+  findOpenChannelCommitmentForMember as readOpenChannelCommitmentForMember,
   getTodo as readTodo,
   listExpiredCommitments as readExpiredCommitments,
   listIdleCommitments as readIdleCommitments,
@@ -528,6 +530,17 @@ export class Repository {
     newLastProgressAt: string,
   ): boolean =>
     runClaimIdleCommitment(this.db, todoId, expectedLastProgressAt, newLastProgressAt);
+  findOpenChannelCommitmentForMember = (
+    organizationId: string,
+    channelId: string,
+    memberId: string,
+    sinceIso: string,
+  ): Todo | null =>
+    readOpenChannelCommitmentForMember(this.db, organizationId, channelId, memberId, sinceIso);
+  findCommitmentBySourceMessage = (
+    organizationId: string,
+    sourceMessageId: string,
+  ): Todo | null => readCommitmentBySourceMessage(this.db, organizationId, sourceMessageId);
   updateTodoStatus = (
     organizationId: string,
     todoId: string,

@@ -5,6 +5,7 @@ import {
   TodoSchema,
   type Channel,
   type Message,
+  type RunState,
   type TaskSession,
   type Todo,
   orgRoom,
@@ -16,6 +17,29 @@ import type { ApiRepository } from './repository-reader.js';
 import type { ConversationService } from './conversation.js';
 import type { RealtimeService } from './context.js';
 import { AGENT_KIND } from '@ujima/shared';
+
+/**
+ * Terminators that mean "the owner published concrete progress" for
+ * the purposes of resetting the empty-wake counter. `channel.handoff`
+ * counts as progress because handing off to another member is itself
+ * forward motion on the deliverable.
+ */
+const PUBLISHING_TERMINATORS = new Set([
+  'channel.reply',
+  'channel.post',
+  'channel.dm',
+  'channel.handoff',
+  'message',
+]);
+
+/**
+ * Terminators that mean "the owner explicitly declared they have
+ * nothing to publish this turn" — `channel.pass` with a real reason.
+ * Counted as a non-empty acknowledgement: the agent didn't drop the
+ * ball, it just doesn't have new content yet. We don't increment the
+ * empty-wake counter, but we don't reset it either.
+ */
+const ACKNOWLEDGED_TERMINATORS = new Set(['channel.pass', 'channel.ack']);
 
 /**
  * Bet 4 — durable commitment service.
@@ -60,21 +84,120 @@ const COMMITMENT_PATTERNS: RegExp[] = [
   /\b(?:drafting|writing|preparing|building|setting up|implementing)\s+(\w[\w\s-]{2,80}?)(?:\s+now)?(?:[.,!?\n]|$)/i,
 ];
 
-// Past-tense completion announcements with a deliverable. The
-// dogfood scenario that surfaced this: Layla said "I have drafted
-// the BRD based on your test results and saved it to
-// `ai/memory-bank/site-setup.md`. It is now available for your
-// review." — no future-tense commitment fired earlier, but the
-// human still wants the artifact + delivery to land on the rail.
-// Match shape: completion verb + (optional connector text) + path-
-// like token. The captured group is the path or named output.
-const COMPLETION_PATTERNS: RegExp[] = [
-  // "I have drafted X" / "I've created Y" / "I drafted Z" + saved/to + path
-  /\bi(?:'ve| have| just)?\s+(?:drafted|written|created|prepared|built|set up|implemented|finished|completed|delivered|published|published|posted)\b[\s\S]{0,200}?(?:saved (?:it|the\w*)? )?(?:to|at|in|on)\s+`?([A-Za-z0-9_./-]+\.[A-Za-z0-9]+)`?/i,
-  // "saved to <path>" / "saved at <path>" / "available at <path>" — bare
-  // completion lines with no leading "I".
-  /\b(?:saved|stored|available|uploaded|wrote|delivered)\s+(?:to|at|in|on)\s+`?([A-Za-z0-9_./-]+\.[A-Za-z0-9]+)`?/i,
+// Past-tense completion detection — split into two predicates:
+//
+//  1. `COMPLETION_VERB_PATTERN` is the SIGNAL — "I have created /
+//     drafted / written / saved …". When present, the body is a
+//     delivery announcement, not a future commitment.
+//  2. `PATH_TOKEN_PATTERN` extracts the artifact path independently
+//     of the connector word. Earlier iterations of this code required
+//     the path to follow a small allowlist of prepositions ("to" /
+//     "at" / "in" / "on") which missed real-world deliveries phrased
+//     as "review it here: `<path>`" or "See `<path>`". Decoupling the
+//     verb from the path connector catches those without leaking
+//     false positives — the body still has to contain a completion
+//     verb at sentence start to be considered.
+//
+// Path token rules:
+//   - Must contain `/` (so we don't grab "Phoebe.Parker") OR end with
+//     a recognised file extension allowlist.
+//   - HTTPS URLs and absolute system paths (other than /tmp/*) are
+//     filtered downstream; they're not workspace artifacts.
+const COMPLETION_VERB_PATTERN =
+  /\bi(?:'ve| have| just)?\s+(?:drafted|written|wrote|created|prepared|built|set up|implemented|finished|completed|delivered|published|posted|compiled|saved|stored|uploaded)\b/i;
+const BARE_COMPLETION_PATTERN =
+  /\b(?:saved|stored|available|uploaded|wrote|delivered|posted)\s+(?:to|at|in|on|here)\b/i;
+const KNOWN_FILE_EXTENSIONS = new Set([
+  'md', 'mdx', 'txt', 'json', 'jsonc', 'ts', 'tsx', 'js', 'jsx',
+  'py', 'rb', 'go', 'rs', 'java', 'kt', 'swift',
+  'yaml', 'yml', 'toml', 'ini', 'env',
+  'html', 'css', 'scss', 'less',
+  'sh', 'bash', 'zsh', 'fish',
+  'pdf', 'csv', 'tsv', 'xlsx',
+  'sql',
+]);
+const PATH_TOKEN_PATTERN = /`?(\/?[A-Za-z0-9_][A-Za-z0-9_./-]*\.[A-Za-z0-9]{1,6})`?/g;
+
+function findArtifactPath(body: string): string | null {
+  // Two-stage: verb signal OR bare-completion shape ("Saved to X").
+  if (!COMPLETION_VERB_PATTERN.test(body) && !BARE_COMPLETION_PATTERN.test(body)) {
+    return null;
+  }
+  // Scan for the FIRST workspace-relative path-shaped token.
+  PATH_TOKEN_PATTERN.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = PATH_TOKEN_PATTERN.exec(body)) !== null) {
+    const candidate = match[1];
+    if (!candidate || candidate.length < 3) continue;
+    // Absolute system paths are out of scope (sensitive root scan),
+    // unless under /tmp/* which is the agreed sandbox.
+    if (candidate.startsWith('/') && !candidate.startsWith('/tmp/')) continue;
+    // URLs aren't artifacts.
+    if (/^https?:\/\//i.test(candidate)) continue;
+    // Must contain a slash (workspace path) OR end with a known
+    // file extension. Without this guard a sentence-ending "Phoebe
+    // Parker." or "Settings." trivially matches `.<extension>`.
+    const ext = candidate.split('.').pop()?.toLowerCase() ?? '';
+    const hasSlash = candidate.includes('/');
+    if (!hasSlash && !KNOWN_FILE_EXTENSIONS.has(ext)) continue;
+    return candidate;
+  }
+  return null;
+}
+
+// In-channel artifact delivery — past-tense completion *without* a
+// file path. Surfaces when the agent pastes the deliverable inline
+// instead of writing it to disk ("I have compiled the documentation
+// for X. Here is the task list: …"). These don't create their own
+// `completed` todo (there's no path to put on the rail), but they
+// DO resolve any matching open commitment for the same (channel,
+// member) — closing the loop so the rail stops showing the stale
+// "in progress" entry.
+const IN_CHANNEL_DELIVERY_PATTERNS: RegExp[] = [
+  /\bi(?:'ve| have| just)?\s+(?:compiled|drafted|written|created|prepared|built|implemented|finished|completed|delivered|posted)\b/i,
+  /\b(?:here is|here's|below is|attached is|attached are|below are|here are)\s+(?:the|my|your|our)\s+\w/i,
 ];
+
+function looksLikeInChannelDelivery(body: string): boolean {
+  if (!body) return false;
+  const trimmed = body.trim();
+  // Substantive bodies only — a 10-word "I have compiled" with no
+  // payload doesn't deliver anything.
+  if (trimmed.length < 120) return false;
+  for (const pattern of IN_CHANNEL_DELIVERY_PATTERNS) {
+    if (pattern.test(trimmed)) return true;
+  }
+  return false;
+}
+
+/**
+ * Word-overlap match between a candidate body and an open
+ * commitment's deliverable summary. ≥4-char tokens, lowercased,
+ * stopword-tolerant. Used to decide whether an in-channel delivery
+ * shaped message ("Here is the task list…") refers to the same
+ * deliverable as an existing open commitment.
+ *
+ * Threshold default 0.3 — generous because deliverable titles are
+ * extracted from sometimes-noisy first-person sentences and the
+ * follow-up message that delivers the artifact may use slightly
+ * different vocabulary ("development task list" vs "task list").
+ */
+function deliverableOverlap(body: string, deliverable: string): number {
+  const tokenize = (s: string): Set<string> =>
+    new Set(
+      s
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, ' ')
+        .split(/\s+/)
+        .filter((t) => t.length >= 4),
+    );
+  const bodyTokens = tokenize(body);
+  const deliverableTokens = tokenize(deliverable);
+  if (deliverableTokens.size === 0) return 0;
+  let hits = 0;
+  for (const t of deliverableTokens) if (bodyTokens.has(t)) hits += 1;
+  return hits / deliverableTokens.size;
+}
 
 // Reject "verb-but-not-a-commitment" patterns. Pure acks
 // ("I'll await", "I will wait", "I'll let you know"), meta-talk
@@ -149,22 +272,9 @@ export function extractCompletion(body: string): ExtractedCompletion | null {
     .split(/\r?\n/)
     .filter((line) => !line.startsWith('>') && !line.startsWith('|'));
   if (nonQuotedLines.length === 0) return null;
-  for (const pattern of COMPLETION_PATTERNS) {
-    const match = pattern.exec(trimmed);
-    if (match && typeof match[1] === 'string') {
-      const artifactPath = match[1].trim();
-      if (artifactPath.length < 3) continue;
-      // Reject URLs and absolute filesystem paths outside the
-      // workspace — those are out-of-scope for the goals rail.
-      if (/^https?:\/\//i.test(artifactPath)) continue;
-      if (artifactPath.startsWith('/') && !artifactPath.startsWith('/tmp/')) continue;
-      return {
-        deliverableSummary: artifactPath,
-        artifactPath,
-      };
-    }
-  }
-  return null;
+  const artifactPath = findArtifactPath(trimmed);
+  if (!artifactPath) return null;
+  return { deliverableSummary: artifactPath, artifactPath };
 }
 
 export function extractCommitment(body: string): ExtractedCommitment | null {
@@ -216,11 +326,32 @@ export interface CommitmentServiceOptions {
    * deadline. Defaults to 24 hours.
    */
   defaultDueOffsetMs?: number;
+  /**
+   * Lookback window for commitment dedup. When the extractor sees a
+   * commitment on a `(channel, member)` pair and there is already an
+   * open commitment for that pair created within this window, the new
+   * message updates the existing row's `last_progress_at` and
+   * `source_message_id` instead of inserting a duplicate. Defaults to
+   * 5 minutes — Layla/Phoebe ping-pong loops were creating 3+
+   * identical commitments inside 2-minute windows.
+   */
+  dedupWindowMs?: number;
+  /**
+   * Maximum number of consecutive empty self-followup wakes before
+   * the service short-circuits `due_at` to fire the deadline-letter
+   * early. Defaults to 3 — a generous heads-up before declaring the
+   * commitment stuck, but firm enough that 24h doesn't silently
+   * elapse. An "empty" wake is one whose run completed without any
+   * publishing terminator (see {@link PUBLISHING_TERMINATORS}).
+   */
+  maxEmptyWakes?: number;
 }
 
 export class CommitmentService {
   private readonly idleThresholdMs: number;
   private readonly defaultDueOffsetMs: number;
+  private readonly dedupWindowMs: number;
+  private readonly maxEmptyWakes: number;
 
   constructor(
     private readonly repo: ApiRepository,
@@ -240,6 +371,8 @@ export class CommitmentService {
   ) {
     this.idleThresholdMs = options.idleThresholdMs ?? 10 * 60 * 1000;
     this.defaultDueOffsetMs = options.defaultDueOffsetMs ?? 24 * 60 * 60 * 1000;
+    this.dedupWindowMs = options.dedupWindowMs ?? 5 * 60 * 1000;
+    this.maxEmptyWakes = options.maxEmptyWakes ?? 3;
   }
 
   /**
@@ -265,12 +398,79 @@ export class CommitmentService {
       // commitment was announced beforehand.
       const futureCommitment = extractCommitment(message.content);
       const completion = futureCommitment ? null : extractCompletion(message.content);
-      if (!futureCommitment && !completion) return;
+      const inChannelDelivery =
+        !futureCommitment && !completion && looksLikeInChannelDelivery(message.content);
+      if (!futureCommitment && !completion && !inChannelDelivery) return;
       const channel = this.repo.getChannel(message.organizationId, message.channelId);
       if (!channel) return;
       // Don't open commitments on private self-channels (workspace
       // notes) or empty-roster channels.
       if (channel.kind === 'self') return;
+
+      // Delivery resolution — both path-bearing completions and
+      // in-channel inline deliveries should close the matching open
+      // commitment for the same `(channel, member)` pair instead of
+      // leaving a stale "in progress" row alongside the delivered
+      // artifact. Path-bearing variants additionally upgrade the
+      // closed row's `deliverableSummary` to the artifact path so the
+      // rail shows the file the human can open; in-channel variants
+      // just close the row (there's no path to surface).
+      const deliverySignal = completion ?? (inChannelDelivery ? 'inline' : null);
+      if (deliverySignal && this.repo.findOpenChannelCommitmentForMember) {
+        const since = '1970-01-01T00:00:00.000Z';
+        const open = this.repo.findOpenChannelCommitmentForMember(
+          message.organizationId,
+          message.channelId,
+          message.senderId,
+          since,
+        );
+        if (open) {
+          // Decide overlap target. For path-bearing completion the
+          // *path filename* against the commitment deliverable; for
+          // inline delivery the *full message body* against the
+          // deliverable. Path-bearing has a stricter signal (same
+          // agent, same channel, fresh artifact) so the threshold is
+          // looser; inline delivery needs more vocabulary overlap.
+          const target =
+            completion?.artifactPath
+              ? completion.artifactPath.replace(/^.*\//, '').replace(/\.\w+$/, '')
+              : message.content;
+          const overlap = deliverableOverlap(target, open.deliverableSummary ?? open.title);
+          const overlapThreshold = completion ? 0.2 : 0.3;
+          if (overlap >= overlapThreshold || completion) {
+            // For completions we always close (path-bearing delivery
+            // in the same channel by the same agent is a near-certain
+            // resolution); for inline we require token overlap so
+            // unrelated substantive posts don't accidentally close a
+            // commitment.
+            const now = new Date().toISOString();
+            const closed: Todo = TodoSchema.parse({
+              ...open,
+              status: 'completed',
+              deliverableSummary: completion?.artifactPath ?? open.deliverableSummary,
+              notes: completion?.artifactPath ?? open.notes,
+              sourceMessageId: message.id,
+              lastProgressAt: now,
+              updatedAt: now,
+            });
+            this.repo.saveTodo(closed);
+            this.realtime.emit(
+              SocketEventNames.commitmentUpdated,
+              this.toEventPayload(closed, 'updated'),
+              this.roomsFor(closed, channel),
+            );
+            // For path-bearing completion we still fall through to
+            // create the standalone completed row (so the rail shows
+            // the delivered artifact even if the open commitment had
+            // unrelated wording). For inline delivery there's nothing
+            // more to do.
+            if (!completion) return;
+          }
+        }
+        // Inline delivery with no matching open commitment — nothing
+        // to do, no row to create.
+        if (!completion) return;
+      }
 
       const taskSession = this.ensureTaskSession(message, channel);
       const now = new Date().toISOString();
@@ -281,6 +481,50 @@ export class CommitmentService {
       const deliverable =
         futureCommitment?.deliverableSummary ?? completion?.deliverableSummary ?? '';
       const notes = futureCommitment?.rawMatch ?? completion?.artifactPath ?? '';
+
+      // Dedup — when the same agent restates an open commitment in
+      // the same channel within `dedupWindowMs`, update the existing
+      // row instead of creating a parallel one. Past-tense completions
+      // bypass dedup so a delivered artifact always lands as its own
+      // `completed` row on the rail. Without this, Phoebe↔Layla mirror
+      // loops produce 3+ identical "I will proceed…" todos that each
+      // trigger an independent self-followup wake cycle.
+      if (!isCompletion && this.repo.findOpenChannelCommitmentForMember) {
+        const since = new Date(Date.now() - this.dedupWindowMs).toISOString();
+        const existing = this.repo.findOpenChannelCommitmentForMember(
+          message.organizationId,
+          message.channelId,
+          message.senderId,
+          since,
+        );
+        if (existing) {
+          const refreshed: Todo = TodoSchema.parse({
+            ...existing,
+            // Roll forward to the newest message so re-wakes target
+            // the most recent context, and the goals rail surfaces
+            // the most recent restatement.
+            sourceMessageId: message.id,
+            deliverableSummary:
+              existing.deliverableSummary && existing.deliverableSummary.length >= deliverable.length
+                ? existing.deliverableSummary
+                : deliverable,
+            notes: existing.notes || notes,
+            // Restating the commitment counts as a soft "still
+            // working" signal — push lastProgressAt forward so the
+            // sweeper doesn't immediately re-wake.
+            lastProgressAt: now,
+            updatedAt: now,
+          });
+          this.repo.saveTodo(refreshed);
+          this.realtime.emit(
+            SocketEventNames.commitmentUpdated,
+            this.toEventPayload(refreshed, 'updated'),
+            this.roomsFor(refreshed, channel),
+          );
+          return;
+        }
+      }
+
       const todo: Todo = TodoSchema.parse({
         id: randomUUID(),
         organizationId: message.organizationId,
@@ -299,6 +543,7 @@ export class CommitmentService {
         deliverableSummary: deliverable,
         dueAt,
         lastProgressAt: now,
+        emptyWakeCount: 0,
         createdAt: now,
         updatedAt: now,
       });
@@ -310,6 +555,114 @@ export class CommitmentService {
       );
     } catch {
       // Best-effort — never let an extractor failure poison the publish path.
+    }
+  }
+
+  /**
+   * Post-run hook fired when a wake completes. Late-bound by
+   * `services/index.ts` via `SpiritService.setRunCompletedHook`.
+   *
+   * Two responsibilities:
+   *
+   *  1. **Empty-wake counter.** For `wakeReason === 'self-followup'`,
+   *     classify the run's terminating tool. Publishing terminators
+   *     (`channel.reply` / `channel.post` / `channel.dm` /
+   *     `channel.handoff`) reset the counter — the owner did the
+   *     work. Acknowledged terminators (`channel.pass` /
+   *     `channel.ack`) leave the counter unchanged. Anything else
+   *     (`NULL`, `self.note` only, etc.) increments it.
+   *
+   *  2. **Early deadline-letter escalation.** When the counter
+   *     reaches `maxEmptyWakes`, the commitment is "stuck" — the
+   *     owner has woken N times without publishing or even
+   *     acknowledging. We short-circuit `due_at` to fire the
+   *     deadline-letter on the next `sweepExpired` tick, instead of
+   *     waiting the full 24h. The user sees the stall surface as a
+   *     system message in the channel.
+   *
+   * Failures are swallowed — a flaky hook must never poison run
+   * completion.
+   */
+  async onRunCompleted(run: RunState): Promise<void> {
+    try {
+      if (run.status !== 'completed') return;
+      if (run.wakeReason !== 'self-followup') return;
+      if (!run.sourceMessageId) return;
+      if (!this.repo.findCommitmentBySourceMessage) return;
+
+      const todo = this.repo.findCommitmentBySourceMessage(
+        run.organizationId,
+        run.sourceMessageId,
+      );
+      if (!todo) return;
+      // Already-resolved todos shouldn't be touched — the owner
+      // closed the work via `supervisor.todo.update` or the past-
+      // tense extractor fired.
+      if (todo.status !== 'pending' && todo.status !== 'in_progress') return;
+
+      const terminator = run.terminatingTool ?? null;
+      const now = new Date().toISOString();
+
+      if (terminator && PUBLISHING_TERMINATORS.has(terminator)) {
+        // Real progress. Reset the counter.
+        if (todo.emptyWakeCount === 0) return;
+        const cleared: Todo = TodoSchema.parse({
+          ...todo,
+          emptyWakeCount: 0,
+          lastProgressAt: now,
+          updatedAt: now,
+        });
+        this.repo.saveTodo(cleared);
+        return;
+      }
+
+      if (terminator && ACKNOWLEDGED_TERMINATORS.has(terminator)) {
+        // The owner explicitly acknowledged the wake with a pass /
+        // ack. Don't reward (no counter reset) but don't escalate
+        // either — they answered the door, just didn't deliver yet.
+        return;
+      }
+
+      // Empty wake. Increment counter; escalate if past the
+      // threshold.
+      const nextCount = todo.emptyWakeCount + 1;
+      const shouldEscalate = nextCount >= this.maxEmptyWakes;
+      const updated: Todo = TodoSchema.parse({
+        ...todo,
+        emptyWakeCount: nextCount,
+        // Short-circuit due_at so sweepExpired picks this up on the
+        // next tick. Only override when the new due_at would be
+        // *sooner* than the existing one — if the commitment was
+        // already due in the next 60s, don't push it back.
+        dueAt:
+          shouldEscalate &&
+          (!todo.dueAt || new Date(todo.dueAt).getTime() > Date.now())
+            ? now
+            : todo.dueAt,
+        updatedAt: now,
+      });
+      this.repo.saveTodo(updated);
+
+      const channel = todo.channelId
+        ? this.repo.getChannel(todo.organizationId, todo.channelId)
+        : null;
+      this.realtime.emit(
+        SocketEventNames.memberEmptyWake,
+        {
+          organizationId: run.organizationId,
+          memberId: run.agentId,
+          runId: run.id,
+          channelId: todo.channelId,
+          threadId: run.threadId,
+          todoId: todo.id,
+          emptyWakeCount: nextCount,
+          escalated: shouldEscalate,
+          occurredAt: now,
+        },
+        channel ? this.roomsFor(updated, channel) : [orgRoom(todo.organizationId), memberRoom(todo.memberId)],
+      );
+    } catch {
+      // best-effort — never poison run completion
     }
   }
 

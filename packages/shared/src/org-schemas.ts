@@ -603,6 +603,13 @@ export const TodoSchema = z.object({
   deliverableSummary: z.string().optional(),
   dueAt: TimestampSchema.optional(),
   lastProgressAt: TimestampSchema.optional(),
+  // Bet 4 follow-up. Incremented on each self-followup wake that
+  // completes without a publishing terminator (no channel.reply /
+  // channel.post / channel.dm). Reset to 0 when the owner does
+  // publish concrete progress. After K consecutive empty wakes the
+  // commitment service short-circuits `due_at` to fire the deadline-
+  // letter early instead of letting the agent silently cycle for 24h.
+  emptyWakeCount: z.number().int().nonnegative().default(0),
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,
 });

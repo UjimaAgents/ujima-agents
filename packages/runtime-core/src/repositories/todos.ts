@@ -5,6 +5,13 @@ import { optionalRowString, rowString } from './common.js';
 type Row = Record<string, unknown>;
 
 function rowToTodo(row: Row): Todo {
+  const emptyWakeCountRaw = row['empty_wake_count'];
+  const emptyWakeCount =
+    typeof emptyWakeCountRaw === 'number'
+      ? emptyWakeCountRaw
+      : typeof emptyWakeCountRaw === 'string'
+        ? Number.parseInt(emptyWakeCountRaw, 10) || 0
+        : 0;
   return TodoSchema.parse({
     id: rowString(row, 'id'),
     organizationId: rowString(row, 'organization_id'),
@@ -19,6 +26,7 @@ function rowToTodo(row: Row): Todo {
     deliverableSummary: optionalRowString(row, 'deliverable_summary'),
     dueAt: optionalRowString(row, 'due_at'),
     lastProgressAt: optionalRowString(row, 'last_progress_at'),
+    emptyWakeCount,
     createdAt: rowString(row, 'created_at'),
     updatedAt: rowString(row, 'updated_at'),
   });
@@ -31,9 +39,9 @@ export function saveTodo(db: DbHandle, todo: Todo): Todo {
        id, organization_id, task_session_id, run_id, member_id,
        title, status, notes, channel_id, source_message_id,
        deliverable_summary, due_at, last_progress_at,
-       created_at, updated_at
+       empty_wake_count, created_at, updated_at
      )
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
        task_session_id = excluded.task_session_id,
        run_id = excluded.run_id,
@@ -45,6 +53,7 @@ export function saveTodo(db: DbHandle, todo: Todo): Todo {
        deliverable_summary = excluded.deliverable_summary,
        due_at = excluded.due_at,
        last_progress_at = excluded.last_progress_at,
+       empty_wake_count = excluded.empty_wake_count,
        updated_at = excluded.updated_at`,
   ).run(
     payload.id,
@@ -60,6 +69,7 @@ export function saveTodo(db: DbHandle, todo: Todo): Todo {
     payload.deliverableSummary ?? null,
     payload.dueAt ?? null,
     payload.lastProgressAt ?? null,
+    payload.emptyWakeCount,
     payload.createdAt,
     payload.updatedAt,
   );
@@ -212,6 +222,62 @@ export function listExpiredCommitments(
     )
     .all(options.nowIso, limit) as Row[];
   return rows.map(rowToTodo);
+}
+
+/**
+ * Find an open commitment for `(organizationId, channelId, memberId)`
+ * created within `sinceIso` (lookback window). Used by the commitment
+ * extractor to dedup near-identical "I will proceed…" messages that
+ * Layla/Phoebe loops produce — without this, three identical
+ * commitments fan out three independent self-followup wakes.
+ *
+ * Returns the most recently created candidate. Bounded to a single
+ * row because dedup is per-pair, not per-deliverable.
+ */
+export function findOpenChannelCommitmentForMember(
+  db: DbHandle,
+  organizationId: string,
+  channelId: string,
+  memberId: string,
+  sinceIso: string,
+): Todo | null {
+  const row = db
+    .prepare(
+      `SELECT * FROM todos
+        WHERE organization_id = ?
+          AND channel_id = ?
+          AND member_id = ?
+          AND status IN ('pending', 'in_progress')
+          AND deliverable_summary IS NOT NULL
+          AND created_at >= ?
+        ORDER BY created_at DESC
+        LIMIT 1`,
+    )
+    .get(organizationId, channelId, memberId, sinceIso) as Row | null;
+  return row ? rowToTodo(row) : null;
+}
+
+/**
+ * Find the commitment that produced a given source-message. Used by
+ * `CommitmentService.onRunCompleted` to map a self-followup run back
+ * to its originating todo so the empty-wake counter can be advanced
+ * (or reset) based on the run's terminator.
+ */
+export function findCommitmentBySourceMessage(
+  db: DbHandle,
+  organizationId: string,
+  sourceMessageId: string,
+): Todo | null {
+  const row = db
+    .prepare(
+      `SELECT * FROM todos
+        WHERE organization_id = ?
+          AND source_message_id = ?
+        ORDER BY created_at DESC
+        LIMIT 1`,
+    )
+    .get(organizationId, sourceMessageId) as Row | null;
+  return row ? rowToTodo(row) : null;
 }
 
 export function updateTodoStatus(

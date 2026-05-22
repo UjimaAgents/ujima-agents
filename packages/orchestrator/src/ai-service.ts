@@ -313,18 +313,52 @@ export class AiService {
         'IMPORTANT — anti-mirror rule: Do NOT paraphrase the previous message. If your intended reply restates what the previous turn already said, differs only by swapping names, or amounts to "noted / understood / I will await", call channel.ack with no body. Filler acknowledgements waste team attention and trigger redundant wakes.',
       );
     }
+
+    // Self-followup publish-contract. The scheduler-driven wake
+    // (Bet 4 follow-up) lands here when an open commitment has gone
+    // idle. The mandatory-reply contract is intentionally OFF for
+    // this wake reason (self.note and channel.pass stay in the
+    // palette so the model can plan or declare a blocker), but
+    // ending the turn with ONLY self.note / view / ls / grep — no
+    // publishing tool — is what produced the original Layla/Phoebe
+    // stall: five empty wakes, zero published progress, 24h until
+    // the deadline-letter fired. These lines tell the model that
+    // self.note is fine for planning mid-turn but the turn itself
+    // must end with a tool that talks to the channel.
+    if (wakeReasonForPalette === 'self-followup') {
+      wakeRunScaffold.unshift(
+        'You are waking on a commitment you made earlier in this channel. Before you stop, do one of: (a) call channel.post or channel.reply with concrete progress — a path you wrote, a result, or the actual artifact; (b) call channel.pass with a real reason ("still gathering inputs", "blocked on X") if you have no publishable progress yet; (c) call supervisor.todo.update if you need to mark the commitment blocked or completed. self.note alone is NOT a valid termination — every team member will notice you went silent on your own promise.',
+        // Multi-section deliverables (task lists, BRDs, PRDs, specs)
+        // ROUTINELY exceed the per-turn output cap when pasted inline.
+        // The model thinks it sent the artifact; the reader sees a
+        // markdown block cut off mid-bullet. The fix is structural:
+        // for anything longer than a short status update, the model
+        // must `write` to a file first and then post a one-line
+        // "delivered, see /path" follow-up. That also lets the past-
+        // tense completion extractor put the artifact path on the
+        // goals rail.
+        'For ANY deliverable longer than ~10 lines (task lists, BRDs, PRDs, specs, multi-section docs): use the `write` tool to save the artifact to a file in the workspace (e.g. ai/memory-bank/tasks/<name>.md) FIRST, then post a short channel.post that says "Delivered — see <path>". Pasting long markdown inline gets truncated at the token cap and the reader sees a half-written document.',
+      );
+    }
     const wakeRunScaffoldText = wakeRunScaffold.join('\n');
     const goalSuffix = input.systemPromptSuffix;
     const combinedSuffix = [goalSuffix, wakeRunScaffoldText].filter(Boolean).join('\n\n');
     const systemPrompt = combinedSuffix ? `${system}\n\n${combinedSuffix}` : system;
 
+    // Self-followup wakes routinely produce multi-section
+    // deliverables (the scaffold now nudges agents to write them to
+    // disk, but compacted/short messages and small deliverables still
+    // get posted inline). 1200 tokens is too tight for a task list +
+    // its delivery note; bump to 4096 so the model has room to finish
+    // even when it ignores the "write to a file first" rule.
+    const turnMaxOutputTokens = wakeReasonForPalette === 'self-followup' ? 4096 : 1200;
     return runAgentLoop({
       model,
       system: systemPrompt,
       messages,
       tools: toolDefs,
       stopWhen: isLoopFinished(),
-      maxOutputTokens: 1200,
+      maxOutputTokens: turnMaxOutputTokens,
       // Lower temperature for mandatory mention wakes: at 0.2 the model is
       // more willing to commit to a structured posting tool. Other runs keep
       // the shared default.

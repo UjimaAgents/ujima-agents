@@ -48,6 +48,7 @@ export const SocketEventNames = Object.freeze({
   memberAlerted: 'member.alerted',
   memberAlertFailed: 'member.alert_failed',
   memberMustReplyFailed: 'member.must_reply_failed',
+  memberEmptyWake: 'member.empty_wake',
   channelArchived: 'channel.archived',
   toolCalled: 'tool:called',
   toolResult: 'tool:result',
@@ -449,6 +450,23 @@ export const MemberMustReplyFailedEventSchema = z.object({
 });
 export type MemberMustReplyFailedEvent = z.infer<typeof MemberMustReplyFailedEventSchema>;
 
+// Bet 4 follow-up. Emitted when a `self-followup` wake completes
+// without a publishing terminator. `escalated: true` means the
+// commitment hit `maxEmptyWakes` and `due_at` was short-circuited
+// to fire the deadline-letter on the next sweep.
+export const MemberEmptyWakeEventSchema = z.object({
+  organizationId: IdSchema,
+  memberId: IdSchema,
+  runId: IdSchema,
+  channelId: IdSchema.optional(),
+  threadId: IdSchema.optional(),
+  todoId: IdSchema,
+  emptyWakeCount: z.number().int().nonnegative(),
+  escalated: z.boolean(),
+  occurredAt: TimestampSchema,
+});
+export type MemberEmptyWakeEvent = z.infer<typeof MemberEmptyWakeEventSchema>;
+
 export const SocketEventSchemas = Object.freeze({
   [SocketEventNames.channelMessage]: ChannelMessageEventSchema,
   [SocketEventNames.channelPresence]: ChannelPresenceEventSchema,
@@ -464,6 +482,7 @@ export const SocketEventSchemas = Object.freeze({
   [SocketEventNames.memberAlerted]: MemberAlertedEventSchema,
   [SocketEventNames.memberAlertFailed]: MemberAlertFailedEventSchema,
   [SocketEventNames.memberMustReplyFailed]: MemberMustReplyFailedEventSchema,
+  [SocketEventNames.memberEmptyWake]: MemberEmptyWakeEventSchema,
   [SocketEventNames.channelArchived]: ChannelUpdatedEventSchema,
   [SocketEventNames.toolCalled]: ToolCalledEventSchema,
   [SocketEventNames.toolResult]: ToolResultEventSchema,

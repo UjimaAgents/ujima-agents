@@ -294,6 +294,12 @@ export class SpiritService {
   private readonly supervisorLastAlertAt = new Map<string, number>();
   private readonly deferredApprovalResumes = new Set<string>();
   private readonly runAbortControllers = new Map<string, AbortController>();
+  // Late-bound hook fired when `completeRun` / `failRun` persist a
+  // terminal run row. Used by the commitment service to track empty
+  // self-followup wakes and short-circuit `due_at` after K consecutive
+  // empties. Failures inside the hook are swallowed so a flaky
+  // post-completion handler can't fail the run.
+  private runCompletedHook?: (run: RunState) => Promise<void> | void;
 
   constructor(
     private readonly teamStore: TeamStore,
@@ -1972,6 +1978,16 @@ export class SpiritService {
     }
   }
 
+  /**
+   * Plug in (or replace) the post-completion hook. Used by
+   * `services/index.ts` to late-bind `CommitmentService.onRunCompleted`
+   * after both services exist — same chicken-and-egg pattern as the
+   * MCP tool resolver. Pass `undefined` to clear.
+   */
+  setRunCompletedHook(hook: ((run: RunState) => Promise<void> | void) | undefined): void {
+    this.runCompletedHook = hook;
+  }
+
   private completeRun(run: RunState, summary: string, terminatingTool: string | null = null): RunState {
     const completed = this.repo.saveRun({
       ...run,
@@ -1987,6 +2003,19 @@ export class SpiritService {
       { organizationId: run.organizationId, run: completed },
       this.getRooms(run),
     );
+
+    if (this.runCompletedHook) {
+      try {
+        const result = this.runCompletedHook(completed);
+        if (result && typeof (result as Promise<unknown>).then === 'function') {
+          (result as Promise<unknown>).catch(() => {
+            // best-effort
+          });
+        }
+      } catch {
+        // best-effort
+      }
+    }
 
     return completed;
   }

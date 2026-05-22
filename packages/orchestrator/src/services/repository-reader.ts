@@ -340,6 +340,29 @@ export interface ApiRepository extends ConversationRepository {
     expectedLastProgressAt: string | null,
     newLastProgressAt: string,
   ): boolean;
+  /**
+   * Dedup lookup for the commitment extractor. Returns the most-
+   * recently-created open commitment for a `(org, channel, member)`
+   * triple within `sinceIso`. Optional because the existing in-memory
+   * test repository doesn't implement it — the service falls back to
+   * "always insert" if absent.
+   */
+  findOpenChannelCommitmentForMember?(
+    organizationId: string,
+    channelId: string,
+    memberId: string,
+    sinceIso: string,
+  ): Todo | null;
+  /**
+   * Reverse-lookup used by `CommitmentService.onRunCompleted` to map a
+   * self-followup run back to its originating commitment so the empty-
+   * wake counter can be updated. Optional for the same test-repo
+   * reason — the service skips counter updates when absent.
+   */
+  findCommitmentBySourceMessage?(
+    organizationId: string,
+    sourceMessageId: string,
+  ): Todo | null;
   updateTodoStatus(
     organizationId: string,
     todoId: string,

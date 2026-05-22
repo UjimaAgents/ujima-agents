@@ -812,6 +812,22 @@ const MIGRATIONS: { id: string; up: string }[] = [
         WHERE deliverable_summary IS NOT NULL;
     `,
   },
+  {
+    // Empty-wake counter for the self-followup loop. The commitment
+    // sweeper used to re-wake the owner every `idleThresholdMs`
+    // until `due_at` elapsed (24h). When the model produced no
+    // publishing terminator on each wake (only `self.note`, `ls`,
+    // etc.), the conversation silently cycled for the full 24h
+    // window. This counter is incremented on every empty self-
+    // followup completion and reset when the owner actually
+    // publishes. The service short-circuits `due_at` after K
+    // consecutive empties so the deadline-letter fires early
+    // (typical K=3, ~30min instead of 24h).
+    id: '024_todos_empty_wake_count',
+    up: `
+      ALTER TABLE todos ADD COLUMN empty_wake_count INTEGER NOT NULL DEFAULT 0;
+    `,
+  },
 ];
 
 export interface DbOptions {

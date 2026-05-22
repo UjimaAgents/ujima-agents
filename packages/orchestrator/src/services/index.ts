@@ -552,6 +552,11 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   conversations.setMessagePublishedHook((message) =>
     commitments.onAgentMessagePublished(message),
   );
+  // Late-bind the run-completed hook so the commitment service can
+  // track empty self-followup wakes and short-circuit `due_at` when
+  // a commitment is stuck. Same chicken-and-egg pattern as
+  // `setMcpToolResolver` / `setMessagePublishedHook`.
+  spirits.setRunCompletedHook((run) => commitments.onRunCompleted(run));
   // Scheduler tick (Bet 4). Production runs it every 60s; tests
   // can pass `commitmentSweeperIntervalMs: 0` to opt out and call
   // `commitments.sweepIdle()` / `sweepExpired()` directly. The
