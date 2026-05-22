@@ -188,6 +188,7 @@ describe('ALWAYS_AVAILABLE_AGENT_TOOLS', () => {
         'grep',
         'ls',
         'message',
+        'schedule',
         'self.note',
         'view',
       ].sort(),

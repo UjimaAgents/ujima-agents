@@ -31,3 +31,16 @@ export const AuthLogoutResponseSchema = z.object({
   loggedOut: z.boolean(),
 });
 export type AuthLogoutResponse = z.infer<typeof AuthLogoutResponseSchema>;
+
+export const AccessibleOrganizationsResponseSchema = z.object({
+  organizations: z.array(z.object({
+    id: IdSchema,
+    name: z.string(),
+  })),
+});
+export type AccessibleOrganizationsResponse = z.infer<typeof AccessibleOrganizationsResponseSchema>;
+
+export const AuthSwitchOrganizationRequestSchema = z.object({
+  organizationId: IdSchema,
+});
+export type AuthSwitchOrganizationRequest = z.infer<typeof AuthSwitchOrganizationRequestSchema>;

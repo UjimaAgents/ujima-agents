@@ -69,6 +69,7 @@ export const BootstrapResponseSchema = z.object({
   serviceReady: z.literal(true),
   onboardingStatus: z.enum(['pending', 'ready']),
   organization: z.object({ id: IdSchema, name: z.string() }).nullable(),
+  organizations: z.array(z.object({ id: IdSchema, name: z.string() })),
   team: TeamSummarySchema.extend({
     organizationChart: OrganizationChartSchema.optional(),
   })

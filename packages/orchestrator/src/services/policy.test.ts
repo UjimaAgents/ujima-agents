@@ -321,7 +321,7 @@ describe('checkToolPolicy', () => {
 
     it('channel.* posting and read tools are baseline-allowed regardless of role.tools', () => {
       // Design choice: channel.post / channel.reply / channel.dm /
-      // channel.read / channel.list / message are baseline
+      // channel.read / channel.list / message / schedule are baseline
       // conversational primitives. Every agent gets them in its
       // palette (via ALWAYS_AVAILABLE_AGENT_TOOLS) regardless of
       // what role.tools declares. Fine-grained access restrictions
@@ -350,7 +350,7 @@ describe('checkToolPolicy', () => {
       } as Record<string, unknown>);
 
       // All baseline conversational tools are allowed for every role.
-      for (const toolId of ['channel.post', 'channel.reply', 'channel.dm', 'channel.read', 'channel.list', 'message']) {
+      for (const toolId of ['channel.post', 'channel.reply', 'channel.dm', 'channel.read', 'channel.list', 'message', 'schedule']) {
         expect(
           checkToolPolicy(team, 'silent-role', toolId, 'message'),
         ).toEqual({ allowed: true, requiresApproval: false });

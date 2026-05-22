@@ -42,6 +42,7 @@ interface WorkspaceTeamRole {
   skills: string[];
 }
 type WorkspaceTeamSettings = {
+  workspace?: { root: string; roleScopes?: Record<string, string[]> };
   agents: { name: string; roleName: string; personalityName: string; kind: string }[];
   roles: WorkspaceTeamRole[];
 } | null;

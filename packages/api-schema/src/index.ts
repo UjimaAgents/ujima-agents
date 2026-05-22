@@ -9,6 +9,7 @@ export * from './settings.js';
 export * from './task-sessions.js';
 export * from './task-files.js';
 export * from './mcps.js';
+export * from './schedules.js';
 export * from './additive/requests.js';
 export { MODEL_OPTIONS_BY_PROVIDER, defaultModelForProvider, getModelOptionsForProvider } from './model-catalog.js';
 
@@ -65,8 +66,22 @@ export const UpdateWorkspaceRequestSchema = z.object({
 });
 export type UpdateWorkspaceRequest = z.infer<typeof UpdateWorkspaceRequestSchema>;
 
-export const ListWorkspacesResponseSchema = z.object({ workspaces: z.array(WorkspaceSchema) });
+export const WorkspaceListItemSchema = WorkspaceSchema.extend({
+  is_current: z.boolean().optional(),
+});
+
+export const ListWorkspacesResponseSchema = z.object({
+  workspaces: z.array(WorkspaceListItemSchema),
+  current_root_path: z.string().nullable().optional(),
+  current_workspace_id: z.string().nullable().optional(),
+});
 export type ListWorkspacesResponse = z.infer<typeof ListWorkspacesResponseSchema>;
+
+export const ActivateWorkspaceResponseSchema = z.object({
+  workspace: WorkspaceSchema,
+  workspaceRoot: z.string(),
+});
+export type ActivateWorkspaceResponse = z.infer<typeof ActivateWorkspaceResponseSchema>;
 
 export const StartTaskRequestSchema = z.object({
   workspace_id: z.string().min(1),

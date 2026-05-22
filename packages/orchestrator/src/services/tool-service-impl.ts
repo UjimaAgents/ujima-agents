@@ -173,7 +173,7 @@ export class ToolServiceImpl implements ToolService {
       invocation.runId,
       invocation.memberId,
     );
-    const team = requireTeam(this.teamStore);
+    const team = requireTeam(this.teamStore, invocation.organizationId);
     let preparedInvocation: ToolInvocationInput;
 
     try {
@@ -383,7 +383,7 @@ export class ToolServiceImpl implements ToolService {
     if (tool) {
       return tool.execute({
         invocation,
-        team: requireTeam(this.teamStore),
+        team: requireTeam(this.teamStore, invocation.organizationId),
         repo: this.repo,
         conversations: this.conversations,
         supervisorTodos: this.supervisorTodos,

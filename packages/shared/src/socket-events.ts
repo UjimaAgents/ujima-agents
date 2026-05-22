@@ -58,6 +58,7 @@ export const SocketEventNames = Object.freeze({
   spiritRetired: 'spirit:retired',
   spiritDispatch: 'spirit:dispatch',
   supervisorReplied: 'supervisor:replied',
+  scheduledJobExecuted: 'schedule:executed',
   agentPassed: 'agent:passed',
   agentPassedWithText: 'agent:passed_with_text',
   agentAck: 'agent:ack',
@@ -467,6 +468,14 @@ export const MemberEmptyWakeEventSchema = z.object({
 });
 export type MemberEmptyWakeEvent = z.infer<typeof MemberEmptyWakeEventSchema>;
 
+export const ScheduledJobExecutedEventSchema = z.object({
+  organizationId: IdSchema,
+  jobName: z.string().min(1),
+  channelId: IdSchema.optional(),
+  prompt: z.string(),
+});
+export type ScheduledJobExecutedEvent = z.infer<typeof ScheduledJobExecutedEventSchema>;
+
 export const SocketEventSchemas = Object.freeze({
   [SocketEventNames.channelMessage]: ChannelMessageEventSchema,
   [SocketEventNames.channelPresence]: ChannelPresenceEventSchema,
@@ -492,6 +501,7 @@ export const SocketEventSchemas = Object.freeze({
   [SocketEventNames.spiritRetired]: SpiritEventSchema,
   [SocketEventNames.spiritDispatch]: SpiritDispatchEventSchema,
   [SocketEventNames.supervisorReplied]: SupervisorRepliedEventSchema,
+  [SocketEventNames.scheduledJobExecuted]: ScheduledJobExecutedEventSchema,
   [SocketEventNames.agentPassed]: AgentPassedEventSchema,
   [SocketEventNames.agentPassedWithText]: AgentPassedWithTextEventSchema,
   [SocketEventNames.agentAck]: AgentAckEventSchema,

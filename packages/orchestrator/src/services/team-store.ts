@@ -1,15 +1,24 @@
 import type { AgentTeamHandle } from '@ujima/framework';
 
 export interface TeamStore {
-  getTeam(): AgentTeamHandle | null;
-  setTeam(team: AgentTeamHandle): void;
+  getTeam(organizationId?: string): AgentTeamHandle | null;
+  setTeam(team: AgentTeamHandle, organizationId?: string): void;
 }
 
 export function createTeamStore(initial: AgentTeamHandle | null = null): TeamStore {
-  let current = initial;
+  const teams = new Map<string, AgentTeamHandle>();
+  let current: AgentTeamHandle | null = initial;
   return {
-    getTeam: () => current,
-    setTeam: (team) => {
+    getTeam: (organizationId) => {
+      if (organizationId) {
+        return teams.get(organizationId) ?? null;
+      }
+      return current;
+    },
+    setTeam: (team, organizationId) => {
+      if (organizationId) {
+        teams.set(organizationId, team);
+      }
       current = team;
     },
   };

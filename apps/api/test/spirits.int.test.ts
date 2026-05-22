@@ -2030,10 +2030,10 @@ describe('TaskSessionService.create — audit fix regressions', () => {
       channels: [{ name: 'general', kind: 'general', topic: '' }],
       agents: [{ name: 'naughty-x', roleName: 'naughty-eng', personalityName: 'direct' }],
     });
-    teamStore.setTeam(team);
+    const orgId = 'gate-org';
+    teamStore.setTeam(team, orgId);
 
     // Persist the org + members directly so the repo reads succeed.
-    const orgId = 'gate-org';
     repo.saveOrganization(
       OrganizationSchema.parse({
         id: orgId,

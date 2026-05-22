@@ -42,7 +42,7 @@ interface MentionTrigger {
   query: string;
 }
 
-export type ComposerCommand = "summarize" | "clear" | "goal";
+export type ComposerCommand = "summarize" | "clear" | "goal" | "schedule";
 type ThreadCommand = Exclude<ComposerCommand, "goal">;
 
 const SLASH_COMMANDS: Array<{
@@ -59,6 +59,11 @@ const SLASH_COMMANDS: Array<{
     command: "goal",
     label: "/goal",
     description: "Toggle goal mode for this conversation.",
+  },
+  {
+    command: "schedule",
+    label: "/schedule do this",
+    description: "Ask the agent to schedule a follow-up.",
   },
   {
     command: "summarize",
@@ -124,6 +129,8 @@ export function getExactSlashCommand(value: string): ComposerCommand | null {
   if (trimmed === "/summarize") return "summarize";
   if (trimmed === "/clear") return "clear";
   if (trimmed === "/goal") return "goal";
+  if (trimmed.startsWith("/schedule ")) return "schedule";
+  if (trimmed === "/schedule") return "schedule";
   return null;
 }
 
@@ -533,6 +540,7 @@ export function ChatInput({
       return;
     }
 
+    const rawContent = content;
     setError(null);
     setIsCommanding(true);
     try {
@@ -1030,13 +1038,15 @@ export function ChatInput({
                   type="button"
                   disabled={isSending || isCommanding || uploading || (!hasDraft && !exactSlashCommand && !canConfirmClear)}
                   onClick={() => void submitComposer()}
-                  aria-label={
+                aria-label={
                     canConfirmClear
                       ? "Confirm clear conversation"
                       : exactSlashCommand === "clear"
                         ? "Clear conversation"
                         : exactSlashCommand === "summarize"
                           ? "Run summarize"
+                          : exactSlashCommand === "schedule"
+                            ? "Ask agent to schedule"
                           : "Send message"
                   }
                   className="flex h-7 w-7 items-center justify-center rounded-lg bg-violet-600 text-white shadow-lg shadow-violet-500/20 transition hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-50"

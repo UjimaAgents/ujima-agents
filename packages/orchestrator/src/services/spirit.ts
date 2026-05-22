@@ -66,6 +66,7 @@ import type { ToolInvocationInput } from './tool-service.js';
 import { materializeMcpDef, mcpPermissionToolName, type McpRuntimePool } from './mcp-runtime.js';
 import { appendGoalArtifactToolCall, buildGoalArtifactMessage } from './goal-artifact-card.js';
 import { goalModeEnabledFromMessage, goalModeSystemPromptSuffix } from './goal-mode-prompt.js';
+import { scheduleToolSystemPromptSuffix } from './schedule-prompt.js';
 import { pendingApprovalRunSummary } from './approval-summary.js';
 import { applyDashboardTeamOverrides } from './dashboard-team-overrides.js';
 import { isLiveRunStatus, isLiveSpiritStatus } from './live-status.js';
@@ -647,7 +648,7 @@ export class SpiritService {
     if (!member) {
       throw new Error(`Member not found: ${input.memberId}`);
     }
-    const team = requireTeam(this.teamStore);
+    const team = requireTeam(this.teamStore, input.organizationId);
     const organization = this.repo.getOrganization(input.organizationId);
     if (!organization) {
       throw new Error(`Organization not found: ${input.organizationId}`);
@@ -1616,7 +1617,7 @@ export class SpiritService {
     }
 
     applyDashboardTeamOverrides(this.repo, run.organizationId, this.teamStore);
-    const team = requireTeam(this.teamStore);
+    const team = requireTeam(this.teamStore, run.organizationId);
     const member = this.repo.getMember(run.organizationId, run.agentId);
     if (!member) {
       throw new Error(`Member not found: ${run.agentId}`);
@@ -1676,10 +1677,18 @@ export class SpiritService {
 
     try {
       const goalModeActive = this.isGoalModeActive(run.organizationId, run.threadId ?? '');
-      const systemPromptSuffix = goalModeSystemPromptSuffix({
-        goalMode: goalModeActive,
-        messageContent: this.repo.getLatestHumanMessageInThread(run.organizationId, run.threadId ?? '')?.content,
-      });
+      const latestHumanMessage = this.repo.getLatestHumanMessageInThread(run.organizationId, run.threadId ?? '');
+      const systemPromptSuffix = [
+        goalModeSystemPromptSuffix({
+          goalMode: goalModeActive,
+          messageContent: latestHumanMessage?.content,
+        }),
+        scheduleToolSystemPromptSuffix({
+          messageContent: latestHumanMessage?.content,
+        }),
+      ]
+        .filter(Boolean)
+        .join('\n\n') || undefined;
       let streamedText = '';
       let streamedReasoning = '';
       const ai = this.ai;
@@ -2549,7 +2558,7 @@ export class SpiritService {
 
   private defaultModelResolver(): ModelResolver {
     return ({ organizationId, memberId, role }) => {
-      const team = requireTeam(this.teamStore);
+      const team = requireTeam(this.teamStore, organizationId);
       const member = this.repo.getMember(organizationId, memberId);
       if (!member) {
         throw new Error(`Member not found: ${memberId}`);

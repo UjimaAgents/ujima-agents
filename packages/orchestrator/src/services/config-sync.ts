@@ -76,6 +76,7 @@ const PROVIDER_CONFIG_FIELDS = ['kind', 'defaultModel', 'baseUrl', 'models'] as 
 
 const CONFIG_PATH_SETTING_KEY = 'config_sync.path';
 export const TEAM_CONFIG_SETTING_KEY = 'team.config';
+export const ACTIVE_WORKSPACE_SETTING_KEY = 'active_workspace_id';
 
 function channelId(channel: { id?: string; name: string }): string {
   return channel.id ?? channel.name;
@@ -155,7 +156,7 @@ export class ConfigSyncService {
         );
       }
       const team = loadAgentTeam(migrated.config);
-      this.teamStore.setTeam(team);
+      this.teamStore.setTeam(team, organization.id);
       applyDashboardTeamOverrides(this.repo, organization.id, this.teamStore);
       return { organizationId: organization.id, inferred: false };
     }
@@ -165,7 +166,7 @@ export class ConfigSyncService {
 
     const team = loadAgentTeam(inferred);
     persistTeamConfig(this.repo, organization.id, team);
-    this.teamStore.setTeam(team);
+    this.teamStore.setTeam(team, organization.id);
     applyDashboardTeamOverrides(this.repo, organization.id, this.teamStore);
     return { organizationId: organization.id, inferred: true };
   }
@@ -348,7 +349,7 @@ export class ConfigSyncService {
       this.repo.saveWorkspaceSetting(organizationId, CONFIG_PATH_SETTING_KEY, input.configPath);
     }
 
-    this.teamStore.setTeam(input.team);
+    this.teamStore.setTeam(input.team, organizationId);
     persistTeamConfig(this.repo, organizationId, input.team);
     applyDashboardTeamOverrides(this.repo, organizationId, this.teamStore);
 

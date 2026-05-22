@@ -1,13 +1,15 @@
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import {
+  AccessibleOrganizationsResponseSchema,
   ApiErrorSchema,
   AuthLoginRequestSchema,
   AuthLogoutResponseSchema,
   AuthSessionResponseSchema,
+  AuthSwitchOrganizationRequestSchema,
   SessionAuthStateSchema,
 } from '@ujima/api-schema';
-import type { AuthService } from '@ujima/orchestrator';
+import type { AuthService, AuthenticatedSession } from '@ujima/orchestrator';
 import { readSessionToken } from '../session-token.js';
 import { apiError, errorMessage } from './route-errors.js';
 
@@ -47,16 +49,7 @@ export function registerAuthRoutes(
     },
   }, async (req, reply) => {
     try {
-      const session = auth.login(req.body);
-      return {
-        auth: {
-          authenticated: true as const,
-          user: session.user,
-          member: session.member,
-          session: session.session,
-        },
-        sessionToken: session.sessionToken,
-      };
+      return toSessionResponse(auth.login(req.body));
     } catch (err) {
       const message = errorMessage(err);
       if (/invalid email or password/i.test(message)) {
@@ -64,6 +57,48 @@ export function registerAuthRoutes(
       }
       return apiError(reply, 400, message);
     }
+  });
+
+  app.post('/auth/switch-org', {
+    schema: {
+      description: 'Switch the current session to another organization the user can access',
+      tags: ['Onboarding'],
+      body: AuthSwitchOrganizationRequestSchema,
+      response: {
+        200: AuthSessionResponseSchema,
+        400: ApiErrorSchema,
+        401: ApiErrorSchema,
+        403: ApiErrorSchema,
+      },
+    },
+  }, async (req, reply) => {
+    try {
+      return toSessionResponse(
+        auth.switchOrganization(readSessionToken(req), req.body.organizationId),
+      );
+    } catch (err) {
+      const message = errorMessage(err);
+      if (/session required/i.test(message)) {
+        return apiError(reply, 401, message);
+      }
+      if (/do not have access/i.test(message)) {
+        return apiError(reply, 403, message);
+      }
+      return apiError(reply, 400, message);
+    }
+  });
+
+  app.get('/auth/orgs', {
+    schema: {
+      description: 'List all organizations accessible to the current user',
+      tags: ['Onboarding'],
+      response: {
+        200: AccessibleOrganizationsResponseSchema,
+      },
+    },
+  }, async (req) => {
+    const orgs = auth.listAccessibleOrganizations(readSessionToken(req));
+    return { organizations: orgs };
   });
 
   app.post('/auth/logout', {
@@ -79,4 +114,16 @@ export function registerAuthRoutes(
       loggedOut: auth.logout(readSessionToken(req)),
     };
   });
+}
+
+function toSessionResponse(session: AuthenticatedSession) {
+  return {
+    auth: {
+      authenticated: true as const,
+      user: session.user,
+      member: session.member,
+      session: session.session,
+    },
+    sessionToken: session.sessionToken,
+  };
 }

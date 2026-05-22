@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
+import { resolve } from 'node:path';
 import { openDatabase } from '@ujima/context-store';
-import { createWorkspaceStore, NoWorkspaceRootError } from './workspaces';
+import { createWorkspaceStore, NoWorkspaceRootError, syncWorkspacesFromOrganizations } from './workspaces';
 
 describe('WorkspaceStore', () => {
   let store: ReturnType<typeof createWorkspaceStore>;
@@ -23,6 +24,14 @@ describe('WorkspaceStore', () => {
     expect(store.get(ws.id)).toBeUndefined();
   });
 
+  it('normalizes relative roots to absolute paths on create and update', () => {
+    const created = store.create({ root_path: './tmp/foo' });
+    expect(created.root_path).toBe(resolve('./tmp/foo'));
+
+    const updated = store.update(created.id, { root_path: './tmp/bar' });
+    expect(updated.root_path).toBe(resolve('./tmp/bar'));
+  });
+
   it('list returns rows in creation order', () => {
     const a = store.create({ label: 'a' });
     const b = store.create({ label: 'b' });
@@ -42,5 +51,50 @@ describe('WorkspaceStore', () => {
   it('requireReady returns workspace when root_path is set', () => {
     const ws = store.create({ root_path: '/tmp/x' });
     expect(store.requireReady(ws.id).id).toBe(ws.id);
+  });
+
+  it('syncWorkspacesFromOrganizations creates a row for each org root', () => {
+    const root = resolve('/tmp/acme');
+    syncWorkspacesFromOrganizations(store, [
+      {
+        id: 'org-1',
+        name: 'Acme',
+        workspace: { root },
+      },
+    ]);
+    const synced = store.findByRoot(root);
+    expect(synced?.label).toBe('Acme');
+    expect(synced?.id).toBe('ws_org-1');
+
+    syncWorkspacesFromOrganizations(store, [
+      {
+        id: 'org-1',
+        name: 'Acme',
+        workspace: { root },
+      },
+    ]);
+    expect(store.list()).toHaveLength(1);
+  });
+
+  it('syncWorkspacesFromOrganizations reuses org workspace id rows with legacy relative roots', () => {
+    store.create({
+      id: 'ws_org-legacy',
+      root_path: './legacy-root',
+      label: '',
+    });
+
+    syncWorkspacesFromOrganizations(store, [
+      {
+        id: 'org-legacy',
+        name: 'Legacy Org',
+        workspace: { root: './legacy-root' },
+      },
+    ]);
+
+    const rows = store.list();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.id).toBe('ws_org-legacy');
+    expect(rows[0]?.root_path).toBe(resolve('./legacy-root'));
+    expect(rows[0]?.label).toBe('Legacy Org');
   });
 });

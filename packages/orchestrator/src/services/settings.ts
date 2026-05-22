@@ -1,13 +1,18 @@
+import { existsSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { AGENT_KIND, ChannelSchema, MemberSchema, PROVIDER_KINDS, type Organization, type Member, type Channel } from '@ujima/shared';
-import { AgentTeam, createAgent, defineRole, normalizeProviderKey, type RoleConfig } from '@ujima/framework';
+import { AgentTeam, createAgent, defineRole, loadAgentTeam, normalizeProviderKey, type RoleConfig } from '@ujima/framework';
+interface WorkspaceCatalog {
+  get(id: string): { id: string; root_path: string | null } | undefined;
+}
 import type { ApiRepository } from './repository-reader.js';
 import type { TeamStore } from './team-store.js';
 import { listProviderStatuses, type ProviderStatus } from './team.js';
 import { addMemberToDefaultChannels, ensureMemberSelfChannel } from './member-channels.js';
 import { upsertWorkspaceMemberScopes } from './workspace-root.js';
 import { upsertDashboardTeamOverride } from './dashboard-team-overrides.js';
-import { persistTeamConfig } from './config-sync.js';
+import { ACTIVE_WORKSPACE_SETTING_KEY, ConfigSyncService, persistTeamConfig } from './config-sync.js';
 import { requireTeam } from '../utils/require-team.js';
 import { requireOrganization } from '../utils/require-organization.js';
 import { visiblePublicChannels } from './channel-visibility.js';
@@ -33,6 +38,11 @@ export interface UpdateOrganizationInput {
   organizationId: string;
   organizationName?: string;
   organizationChart?: { reportsTo: Record<string, string> };
+}
+
+export interface ActivateWorkspaceInput {
+  organizationId: string;
+  workspaceId: string;
 }
 
 export interface AddMemberInput {
@@ -144,8 +154,58 @@ export class SettingsService {
     private readonly teamStore: TeamStore,
   ) {}
 
-  getTeamSettings(): TeamSettingsResponse {
-    const team = requireTeam(this.teamStore);
+  private loadTeamForOrganization(organizationId: string) {
+    new ConfigSyncService(this.repo, this.teamStore).loadFromStoredConfig(organizationId);
+    return requireTeam(this.teamStore, organizationId);
+  }
+
+  activateWorkspace(
+    input: ActivateWorkspaceInput,
+    workspaces: WorkspaceCatalog,
+  ): TeamSettingsResponse {
+    const organization = requireOrganization(this.repo, input.organizationId);
+    const workspace = workspaces.get(input.workspaceId);
+    if (!workspace) {
+      throw new Error(`workspace "${input.workspaceId}" not found`);
+    }
+    if (!workspace.root_path?.trim()) {
+      throw new Error(`workspace "${input.workspaceId}" has no root_path`);
+    }
+    const resolvedRoot = resolve(workspace.root_path);
+    if (!existsSync(resolvedRoot)) {
+      throw new Error(`workspace root "${resolvedRoot}" does not exist on disk`);
+    }
+
+    this.repo.saveOrganization({
+      ...organization,
+      workspace: {
+        ...organization.workspace,
+        root: resolvedRoot,
+      },
+    });
+    this.repo.saveWorkspaceSetting(
+      input.organizationId,
+      ACTIVE_WORKSPACE_SETTING_KEY,
+      workspace.id,
+    );
+
+    const team = this.loadTeamForOrganization(input.organizationId);
+    const config = team.toJSON();
+    const updatedTeam = loadAgentTeam({
+      ...config,
+      workspace: {
+        ...config.workspace,
+        root: resolvedRoot,
+      },
+    });
+    this.teamStore.setTeam(updatedTeam, input.organizationId);
+    persistTeamConfig(this.repo, input.organizationId, updatedTeam);
+
+    return this.getTeamSettings(input.organizationId);
+  }
+
+  getTeamSettings(organizationId: string): TeamSettingsResponse {
+    const team = this.loadTeamForOrganization(organizationId);
     return {
       name: team.config.name,
       workspace: team.workspace,
@@ -159,7 +219,7 @@ export class SettingsService {
   }
 
   listProviders(organizationId: string): ProviderStatus[] {
-    const team = requireTeam(this.teamStore);
+    const team = this.loadTeamForOrganization(organizationId);
     requireOrganization(this.repo, organizationId);
     return listProviderStatuses(team, this.repo.listProviderCredentials(organizationId));
   }
@@ -168,7 +228,7 @@ export class SettingsService {
     organizationId: string,
     providerKeys: Record<string, string>,
   ): ProviderStatus[] {
-    const team = requireTeam(this.teamStore);
+    const team = this.loadTeamForOrganization(organizationId);
     requireOrganization(this.repo, organizationId);
     const normalizedProviderKeys = Object.fromEntries(
       Object.entries(providerKeys).map(([name, apiKey]) => [normalizeProviderKey(name), apiKey]),
@@ -197,7 +257,7 @@ export class SettingsService {
         config.providers[name] = { kind: name as typeof PROVIDER_KINDS[number], models: [] };
       }
       const updated = AgentTeam(config);
-      this.teamStore.setTeam(updated);
+      this.teamStore.setTeam(updated, organizationId);
       persistTeamConfig(this.repo, organizationId, updated);
     }
 
@@ -209,14 +269,14 @@ export class SettingsService {
   }
 
   deleteProvider(organizationId: string, providerName: string): ProviderStatus[] {
-    requireTeam(this.teamStore);
+    this.loadTeamForOrganization(organizationId);
     requireOrganization(this.repo, organizationId);
     this.repo.deleteProviderCredential(organizationId, normalizeProviderKey(providerName));
     return this.listProviders(organizationId);
   }
 
   testProvider(organizationId: string, providerName: string): ProviderTestResult {
-    const team = requireTeam(this.teamStore);
+    const team = this.loadTeamForOrganization(organizationId);
     requireOrganization(this.repo, organizationId);
     const providerKey = normalizeProviderKey(providerName);
 
@@ -238,7 +298,7 @@ export class SettingsService {
 
   addMember(input: AddMemberInput): Member {
     requireOrganization(this.repo, input.organizationId);
-    const team = requireTeam(this.teamStore);
+    const team = this.loadTeamForOrganization(input.organizationId);
     const existingRole = team.getRole(input.roleName);
     if (input.kind === AGENT_KIND && !input.role && !existingRole) {
       throw new Error(`Role "${input.roleName}" not found`);
@@ -269,7 +329,7 @@ export class SettingsService {
         agent: createAgent(saved.id, saved.roleName, input.personalityName ?? 'direct'),
       });
     }
-    const activeRole = this.teamStore.getTeam()?.getRole(input.roleName);
+    const activeRole = team.getRole(input.roleName);
     upsertWorkspaceMemberScopes(
       this.repo,
       input.organizationId,
@@ -292,7 +352,7 @@ export class SettingsService {
 
   updateMember(input: UpdateMemberInput): Member {
     requireOrganization(this.repo, input.organizationId);
-    const team = requireTeam(this.teamStore);
+    const team = this.loadTeamForOrganization(input.organizationId);
     const member = this.repo.getMember(input.organizationId, input.memberId);
     if (!member) {
       throw new Error(`Member not found: ${input.memberId}`);
@@ -381,7 +441,7 @@ export class SettingsService {
 
   updatePolicies(input: UpdatePoliciesInput): OrganizationSettingsResponse {
     requireOrganization(this.repo, input.organizationId);
-    const team = requireTeam(this.teamStore);
+    const team = this.loadTeamForOrganization(input.organizationId);
 
     if (input.requireApprovalForWrites !== undefined) {
       team.config.policies.requireApprovalForWrites = input.requireApprovalForWrites;

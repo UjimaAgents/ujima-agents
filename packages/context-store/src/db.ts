@@ -828,6 +828,34 @@ const MIGRATIONS: { id: string; up: string }[] = [
       ALTER TABLE todos ADD COLUMN empty_wake_count INTEGER NOT NULL DEFAULT 0;
     `,
   },
+  {
+    // Renumbered from `022_scheduled_jobs` on merge with the
+    // commitment-sweeper branch — both sides claimed migration 022.
+    // `CREATE TABLE IF NOT EXISTS` is idempotent so DBs that already
+    // applied the original 022_scheduled_jobs simply re-record this
+    // migration id (harmless dual-record); fresh DBs see one create.
+    id: '025_scheduled_jobs',
+    up: `
+      CREATE TABLE IF NOT EXISTS scheduled_jobs (
+        id               TEXT PRIMARY KEY,
+        organization_id  TEXT NOT NULL,
+        name             TEXT NOT NULL,
+        cron_expression  TEXT NOT NULL,
+        prompt           TEXT NOT NULL,
+        channel_id       TEXT,
+        member_id        TEXT NOT NULL,
+        status           TEXT NOT NULL DEFAULT 'active',
+        last_run_at      TEXT,
+        next_run_at      TEXT,
+        run_count        INTEGER NOT NULL DEFAULT 0,
+        last_error       TEXT,
+        created_at       TEXT NOT NULL,
+        updated_at       TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_scheduled_jobs_org
+        ON scheduled_jobs(organization_id, status, next_run_at);
+    `,
+  },
 ];
 
 export interface DbOptions {

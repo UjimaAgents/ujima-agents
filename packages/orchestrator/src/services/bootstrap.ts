@@ -3,6 +3,7 @@ import type { BootstrapSnapshot, ApiRepository } from './repository-reader.js';
 import type { TeamStore } from './team-store.js';
 import type { TeamSummary } from './team.js';
 import type { AuthService } from './auth.js';
+import { ConfigSyncService } from './config-sync.js';
 import { getDirectMessageThreadId } from '@ujima/shared';
 import {
   listProviderStatuses,
@@ -13,6 +14,7 @@ export interface BootstrapResponse {
   serviceReady: true;
   onboardingStatus: 'pending' | 'ready';
   organization: { id: string; name: string } | null;
+  organizations: { id: string; name: string }[];
   team: TeamSummary | null;
   providers: { name: string; hasKey: boolean }[];
   members: BootstrapSnapshot['members'];
@@ -31,10 +33,22 @@ export class BootstrapService {
   ) {}
 
   getBootstrap(input: { sessionToken?: string | null } = {}): BootstrapResponse {
-    const snapshot = this.repo.getBootstrapSnapshot();
-    const team = this.teamStore.getTeam();
     const authState = this.auth.getAuthState(input.sessionToken);
+    const organizationId = authState.authenticated && authState.user
+      ? authState.user.organizationId
+      : this.repo.getLatestOrganization()?.id;
+
+    if (organizationId) {
+      new ConfigSyncService(this.repo, this.teamStore).loadFromStoredConfig(organizationId);
+    }
+
+    const snapshot = this.repo.getBootstrapSnapshot(organizationId);
+    const team = this.teamStore.getTeam(organizationId);
     const member = snapshot.organization ? authState.member : undefined;
+
+    const accessibleOrgs = authState.authenticated
+      ? this.auth.listAccessibleOrganizations(input.sessionToken)
+      : this.repo.listOrganizations();
 
     return {
       serviceReady: true,
@@ -42,6 +56,7 @@ export class BootstrapService {
       organization: snapshot.organization
         ? { id: snapshot.organization.id, name: snapshot.organization.name }
         : null,
+      organizations: accessibleOrgs,
       team: team ? summarizeTeam(team) : null,
       providers: team ? listProviderStatuses(team, snapshot.providerCredentials) : [],
       members: snapshot.members,

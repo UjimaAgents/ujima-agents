@@ -24,6 +24,7 @@ import type { ApiRepository } from './repository-reader.js';
 import { SettingsService } from './settings.js';
 import { SpiritService, type ModelResolver, type SpiritMcpPool } from './spirit.js';
 import { SupervisorTodoService } from './supervisor-todo.js';
+import { SchedulerService } from './scheduler.js';
 import { TaskPromoterService, type TaskPromotionEvaluator } from './task-promoter.js';
 import { TaskSessionService } from './task-session.js';
 import {
@@ -58,6 +59,7 @@ export type {
   ReconcileTeamConfigResult,
   ReconcileTeamConfigStats,
 } from './config-sync.js';
+export { ACTIVE_WORKSPACE_SETTING_KEY, TEAM_CONFIG_SETTING_KEY } from './config-sync.js';
 export { ConversationService } from './conversation.js';
 export {
   SELF_NOTE_COMPACTED_MARKER,
@@ -77,11 +79,20 @@ export type {
   OnboardingResult,
 } from './onboarding.js';
 export type { CreateRunInput } from './spirit.js';
+export {
+  SchedulerService,
+  createScheduledJobRecord,
+  computeNextCronRun,
+  parseCronExpression,
+  resolveScheduledJobNextRunAt,
+} from './scheduler.js';
+export type { SchedulerServiceOptions } from './scheduler.js';
 export { SettingsService } from './settings.js';
 export type {
   OrganizationSettingsResponse,
   TeamSettingsResponse,
   UpdateOrganizationInput,
+  ActivateWorkspaceInput,
 } from './settings.js';
 export { TaskPromoterService } from './task-promoter.js';
 export { TaskSessionService, taskRunChannelId } from './task-session.js';
@@ -195,6 +206,7 @@ export interface ApiServices {
   bootstrap: BootstrapService;
   onboarding: OnboardingService;
   settings: SettingsService;
+  scheduler: SchedulerService;
   taskPromoter: TaskPromoterService;
   taskSessions: TaskSessionService;
   spirits: SpiritService;
@@ -523,6 +535,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   const auth = new AuthService(context.repo);
   const bootstrap = new BootstrapService(context.repo, context.teamStore, auth);
   const onboarding = new OnboardingService(context.repo, context.teamStore);
+  const scheduler = new SchedulerService(context.repo, conversations, context.realtime);
   const settings = new SettingsService(context.repo, context.teamStore);
   const taskSessions = new TaskSessionService(context.repo, conversations, spirits);
   const taskPromoter = new TaskPromoterService(context.repo, spirits, {
@@ -625,6 +638,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     taskPromoter,
     taskSessions,
     spirits,
+    scheduler,
     supervisorTodos,
     activeSpirits,
     mcpRegistry,

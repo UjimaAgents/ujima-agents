@@ -124,6 +124,14 @@ export const DEFAULT_TOOL_CATALOG: Record<string, ToolCapability> = {
     pathScopes: [],
     requiresApproval: false,
   },
+  schedule: {
+    id: 'schedule',
+    name: 'Schedule',
+    description: 'Create, list, or cancel recurring schedules for an organization.',
+    actions: ['read', 'execute'],
+    pathScopes: [],
+    requiresApproval: false,
+  },
   'channel.post': {
     id: 'channel.post',
     name: 'Channel Post',

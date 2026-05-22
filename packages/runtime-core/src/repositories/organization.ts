@@ -61,6 +61,23 @@ export function listOrganizations(db: DbHandle): Organization[] {
   return result;
 }
 
+export function listOrganizationsForUser(db: DbHandle, emailNormalized: string): Organization[] {
+  const rows = db
+    .prepare(
+      `SELECT o.id FROM organizations o
+       INNER JOIN auth_users u ON u.organization_id = o.id
+       WHERE u.email_normalized = ?
+       ORDER BY o.updated_at DESC`,
+    )
+    .all(emailNormalized) as Row[];
+  const result: Organization[] = [];
+  for (const row of rows) {
+    const org = getOrganization(db, rowString(row, 'id'));
+    if (org) result.push(org);
+  }
+  return result;
+}
+
 export function saveOrganization(db: DbHandle, organization: Organization): Organization {
   const timestamp = now();
   db.prepare(
@@ -169,6 +186,17 @@ export function getWorkspaceSetting(
     .get(organizationId, key) as Row | null;
 
   return row ? rowString(row, 'value') : null;
+}
+
+export function deleteWorkspaceSetting(
+  db: DbHandle,
+  organizationId: string,
+  key: string,
+): void {
+  db.prepare('DELETE FROM workspace_settings WHERE organization_id = ? AND key = ?').run(
+    organizationId,
+    key,
+  );
 }
 
 export function findOrganizationIdByWorkspaceSetting(

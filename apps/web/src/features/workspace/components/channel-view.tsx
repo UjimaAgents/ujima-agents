@@ -653,7 +653,17 @@ export function ChannelView({
           organizationId={organizationId}
           goalMode={goalMode}
           onGoalModeChange={onGoalModeChange}
-          onCommand={async (command) => {
+          onCommand={async (command, content) => {
+            if (command === "schedule") {
+              const prompt = content?.replace(/^\/schedule\s*/i, "").trim();
+              if (!prompt) {
+                throw new Error("Usage: /schedule do this");
+              }
+              await feed.sendMessage(`Please use the schedule tool for this request: ${prompt}`);
+              setReplyTo(null);
+              scrollToLatest("auto");
+              return;
+            }
             await feed.archiveConversation(command);
             setReplyTo(null);
             scrollToLatest("auto");

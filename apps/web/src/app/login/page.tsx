@@ -4,7 +4,22 @@ import { LoginForm } from "@/features/auth/components/login-form";
 import { getServerBootstrap } from "@/server/ujima-daemon";
 
 export default async function LoginPage() {
-  const bootstrap = await getServerBootstrap();
+  const bootstrap = await getServerBootstrap().catch(() => null);
+  if (!bootstrap) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-zinc-50 px-6 dark:bg-[#09090b]">
+        <div className="max-w-xl rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
+          <h1 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
+            Daemon is unavailable
+          </h1>
+          <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
+            Could not reach the Ujima API at port 7511. From the repo root, run{" "}
+            <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-900">bun dev</code> and refresh.
+          </p>
+        </div>
+      </main>
+    );
+  }
 
   if (bootstrap.onboardingStatus === "pending") {
     redirect("/onboarding");
@@ -23,7 +38,7 @@ export default async function LoginPage() {
         >
           Go Home
         </Link>
-        <LoginForm organizationId={bootstrap.organization?.id ?? ""} />
+        <LoginForm organizations={bootstrap.organizations} />
       </div>
     </main>
   );
