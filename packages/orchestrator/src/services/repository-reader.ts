@@ -9,9 +9,12 @@ import type {
   ChannelKind,
   ConfigFieldOwnership,
   ConversationThread,
+  DecisionLogEntry,
   McpServer,
   McpToolCache,
   Member,
+  MemoryEntry,
+  MemoryEntryKind,
   Message,
   MessageMention,
   Organization,
@@ -24,6 +27,7 @@ import type {
   TaskSessionStatus,
   Todo,
   TodoStatus,
+  WorkspaceFile,
   WorkspaceMember,
 } from '@ujima/shared';
 
@@ -380,6 +384,59 @@ export interface ApiRepository extends ConversationRepository {
     organizationId: string,
     sourceMessageId: string,
   ): Todo | null;
+
+  // Bet 5 — memory_entries KV. All optional because the in-memory
+  // test repos don't implement them; services degrade gracefully
+  // when absent.
+  upsertMemoryEntry?(entry: MemoryEntry): MemoryEntry;
+  recallMemoryEntries?(input: {
+    organizationId: string;
+    memberId?: string;
+    kind?: MemoryEntryKind;
+    keyPrefix?: string;
+    query?: string;
+    limit?: number;
+    touch?: boolean;
+  }): MemoryEntry[];
+  deleteMemoryEntry?(
+    organizationId: string,
+    memberId: string | null,
+    key: string,
+  ): boolean;
+  deleteExpiredMemoryEntries?(nowIso: string): number;
+
+  // Bet 4 — workspace files FTS index.
+  upsertWorkspaceFile?(
+    input: WorkspaceFile,
+    caps?: { perOrgByteCap?: number; perFileByteCap?: number },
+  ): WorkspaceFile;
+  deleteWorkspaceFile?(organizationId: string, path: string): boolean;
+  searchWorkspaceFiles?(input: {
+    organizationId: string;
+    query: string;
+    limit?: number;
+    sinceIso?: string;
+  }): {
+    path: string;
+    snippet: string;
+    rank: number;
+    writtenBy: string;
+    channelId?: string;
+    updatedAt: string;
+  }[];
+
+  // Bet 6 — append-only decision log.
+  appendDecisionLogEntry?(entry: DecisionLogEntry): DecisionLogEntry;
+  listDecisionLogForChannel?(
+    organizationId: string,
+    channelId: string,
+    limit?: number,
+  ): DecisionLogEntry[];
+  findDecisionBySourceMessage?(
+    organizationId: string,
+    sourceMessageId: string,
+  ): DecisionLogEntry | null;
+
   updateTodoStatus(
     organizationId: string,
     todoId: string,

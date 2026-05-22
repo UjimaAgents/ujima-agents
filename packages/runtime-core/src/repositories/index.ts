@@ -10,9 +10,12 @@ import type {
   ChannelKind,
   ConfigFieldOwnership,
   ConversationThread,
+  DecisionLogEntry,
   McpServer,
   McpToolCache,
   Member,
+  MemoryEntry,
+  MemoryEntryKind,
   Message,
   MessageMention,
   Organization,
@@ -25,6 +28,7 @@ import type {
   TaskSessionStatus,
   Todo,
   TodoStatus,
+  WorkspaceFile,
   WorkspaceMember,
 } from '@ujima/shared';
 import {
@@ -158,6 +162,23 @@ import {
   saveTodo as writeTodo,
   updateTodoStatus as writeTodoStatus,
 } from './todos.js';
+import {
+  deleteExpiredMemoryEntries as removeExpiredMemoryEntries,
+  deleteMemoryEntry as removeMemoryEntry,
+  recallMemoryEntries as readMemoryEntries,
+  upsertMemoryEntry as writeMemoryEntry,
+} from './memory-entries.js';
+import {
+  deleteWorkspaceFile as removeWorkspaceFile,
+  searchWorkspaceFiles as searchWorkspaceFilesByQuery,
+  upsertWorkspaceFile as writeWorkspaceFile,
+  type WorkspaceFileSearchHit,
+} from './workspace-files.js';
+import {
+  appendDecisionLogEntry as writeDecisionLogEntry,
+  findDecisionBySourceMessage as readDecisionBySourceMessage,
+  listDecisionLogForChannel as readDecisionLogForChannel,
+} from './decision-log.js';
 import {
   ensureThread as ensureThreadRecord,
   getThread as readThread,
@@ -564,6 +585,54 @@ export class Repository {
     status: TodoStatus,
     options?: { notes?: string },
   ): Todo | null => writeTodoStatus(this.db, organizationId, todoId, status, options);
+
+  // Bet 5 — memory_entries KV
+  upsertMemoryEntry = (entry: MemoryEntry): MemoryEntry =>
+    writeMemoryEntry(this.db, entry);
+  recallMemoryEntries = (input: {
+    organizationId: string;
+    memberId?: string;
+    kind?: MemoryEntryKind;
+    keyPrefix?: string;
+    query?: string;
+    limit?: number;
+    touch?: boolean;
+  }): MemoryEntry[] => readMemoryEntries(this.db, input);
+  deleteMemoryEntry = (
+    organizationId: string,
+    memberId: string | null,
+    key: string,
+  ): boolean => removeMemoryEntry(this.db, organizationId, memberId, key);
+  deleteExpiredMemoryEntries = (nowIso: string): number =>
+    removeExpiredMemoryEntries(this.db, nowIso);
+
+  // Bet 4 — workspace files FTS
+  upsertWorkspaceFile = (
+    input: WorkspaceFile,
+    caps?: { perOrgByteCap?: number; perFileByteCap?: number },
+  ): WorkspaceFile => writeWorkspaceFile(this.db, input, caps);
+  deleteWorkspaceFile = (organizationId: string, path: string): boolean =>
+    removeWorkspaceFile(this.db, organizationId, path);
+  searchWorkspaceFiles = (input: {
+    organizationId: string;
+    query: string;
+    limit?: number;
+    sinceIso?: string;
+  }): WorkspaceFileSearchHit[] => searchWorkspaceFilesByQuery(this.db, input);
+
+  // Bet 6 — decision log
+  appendDecisionLogEntry = (entry: DecisionLogEntry): DecisionLogEntry =>
+    writeDecisionLogEntry(this.db, entry);
+  listDecisionLogForChannel = (
+    organizationId: string,
+    channelId: string,
+    limit?: number,
+  ): DecisionLogEntry[] => readDecisionLogForChannel(this.db, organizationId, channelId, limit);
+  findDecisionBySourceMessage = (
+    organizationId: string,
+    sourceMessageId: string,
+  ): DecisionLogEntry | null =>
+    readDecisionBySourceMessage(this.db, organizationId, sourceMessageId);
 
   saveScheduledJob = (job: ScheduledJob): ScheduledJob =>
     writeScheduledJob(this.db, job);

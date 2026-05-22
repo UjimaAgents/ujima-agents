@@ -10,6 +10,7 @@ import {
   channelReplyTool,
   selfNoteTool,
 } from './channel.js';
+import { channelRecallTool } from './channel-recall.js';
 import { filesystemTool } from './filesystem.js';
 import { grepTool } from './grep.js';
 import { jobKillTool, jobOutputTool } from './job-tools.js';
@@ -18,6 +19,8 @@ import { shellTool } from './shell.js';
 import { messageTool } from './message.js';
 import { scheduleTool } from './schedule.js';
 import { webSearchTool } from './web-search.js';
+import { memoryForgetTool, memoryRecallTool, memoryWriteTool } from './memory.js';
+import { selfProcedureAddTool, selfProcedureRemoveTool } from './self-procedure.js';
 import {
   supervisorTodoAddTool,
   supervisorTodoCheckTool,
@@ -56,6 +59,12 @@ export const ORCHESTRATOR_TOOLS = {
   job_kill: jobKillTool,
   web_search: webSearchTool,
   'self.note': selfNoteTool,
+  'self.procedure.add': selfProcedureAddTool,
+  'self.procedure.remove': selfProcedureRemoveTool,
+  'channel.recall': channelRecallTool,
+  'memory.write': memoryWriteTool,
+  'memory.recall': memoryRecallTool,
+  'memory.forget': memoryForgetTool,
   message: messageTool,
   schedule: scheduleTool,
   'supervisor.todo.add': supervisorTodoAddTool,
@@ -99,11 +108,14 @@ export const ORCHESTRATOR_TOOLS = {
 // message (Bet 3 — kills the echo-loop pathology).
 export const ALWAYS_AVAILABLE_AGENT_TOOLS = Object.freeze([
   'self.note',
+  'self.procedure.add',
+  'self.procedure.remove',
   'channel.pass',
   'channel.ack',
   'channel.reply',
   'channel.post',
   'channel.dm',
+  'channel.recall',
   'message',
   'channel.read',
   'channel.list',
@@ -112,6 +124,9 @@ export const ALWAYS_AVAILABLE_AGENT_TOOLS = Object.freeze([
   'glob',
   'grep',
   'schedule',
+  'memory.write',
+  'memory.recall',
+  'memory.forget',
 ] as const);
 
 // Supervisor's strict tool allowlist — read-only / annotation-only tools

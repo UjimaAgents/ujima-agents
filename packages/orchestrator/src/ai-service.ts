@@ -2,7 +2,7 @@ import { isLoopFinished, type ToolSet } from 'ai';
 import { buildAgentSystemPrompt, normalizeProviderKey } from '@ujima/framework';
 import { DEFAULT_SPIRIT_TEMPERATURE, type Message, type SpiritRole } from '@ujima/shared';
 import { runAgentLoop, type AgentLoopChunk } from './services/agent-loop.js';
-import type { RepositoryReader } from './services/repository-reader.js';
+import type { ApiRepository } from './services/repository-reader.js';
 import type { TeamStore } from './services/team-store.js';
 import type { ToolService } from './services/tool-service.js';
 import { ALWAYS_AVAILABLE_AGENT_TOOLS } from './tools/index.js';
@@ -14,7 +14,14 @@ import {
 } from './utils/to-model-messages.js';
 import { requireTeam } from './utils/require-team.js';
 import { buildRunTranscript } from './utils/run-transcript.js';
+import { buildSelfFollowupContextBlock } from './utils/self-followup-context.js';
+import {
+  buildCacheableSystem,
+  buildWakeContextMessages,
+  loadProceduresForSystemPrompt,
+} from './utils/system-prompt-builder.js';
 import { buildThreadStateBlock } from './utils/thread-state.js';
+import { buildWorkspaceStateBlock } from './utils/workspace-state.js';
 import {
   createMessageCursor,
   isMessageAfterCursor,
@@ -67,7 +74,7 @@ export class AiService {
 
   constructor(
     private readonly teamStore: TeamStore,
-    private readonly repo: RepositoryReader,
+    private readonly repo: ApiRepository,
     private readonly tools: ToolService,
   ) {}
 
@@ -211,7 +218,7 @@ export class AiService {
     // ids) so the prompt matches the AI-SDK schema; otherwise the
     // model can deny tools it actually has.
     const availableToolIds = Object.keys(toolDefs);
-    const system = buildAgentSystemPrompt(
+    const baseSystemPrompt = buildAgentSystemPrompt(
       team.workspace.root,
       organization.name,
       member.id,
@@ -228,6 +235,23 @@ export class AiService {
       availableToolIds,
       attachedMcpServers.map((s) => ({ name: s.serverName, toolNames: s.toolNames })),
     );
+
+    // Bet 1 + Bet 7 — cache-stable system prompt assembly.
+    //
+    // The base system prompt + the agent's procedures.md + the base
+    // wake scaffold form Zone 1: invariant per (agent, thread). The
+    // per-wake mutations (anti-mirror line, self-followup contract)
+    // are emitted SEPARATELY as user-role messages after the cache
+    // breakpoint, so they no longer bust the Anthropic prompt cache
+    // on every wake. The CI lint at packages/orchestrator/test/
+    // cache-stability.test.ts hashes this output across wake reasons
+    // to enforce the invariant.
+    const proceduresText = await loadProceduresForSystemPrompt(team.workspace.root, member.id);
+    const { system } = buildCacheableSystem({
+      baseSystem: baseSystemPrompt,
+      proceduresText,
+      goalSuffix: input.systemPromptSuffix,
+    });
 
     const initialThreadMessages = this.repo.listMessages(input.organizationId, input.threadId, undefined, 20).data;
     const messages = toModelMessages(initialThreadMessages, input.agentId);
@@ -270,80 +294,68 @@ export class AiService {
       });
     }
 
-    // Provider-agnostic decision scaffold — positive-framed, no
-    // forbidden-phrase list (negation anchoring is a known trap)
-    // and no use of the word "silence" as a noun (the model will
-    // paraphrase it back as message content). Points the model at
-    // the <thread-state> block above so it grounds its decision in
-    // facts instead of inventing them.
-    //
-    // `channel.ack` is the silent terminator for mandatory-reply
-    // turns with nothing to add — it satisfies the mention contract
-    // without producing wake-able channel text (which is what fuses
-    // the "Understood / I'll await" echo loop). Mention this
-    // option explicitly so the model knows it's the right move when
-    // it would otherwise paraphrase the previous turn.
-    const wakeRunScaffold: string[] = [
-      'Before you pick a tool, read the <thread-state> block in the most recent user message.',
-      'Treat its <agents-not-yet-responded> and <you-explicitly-addressed> / <you-implicitly-addressed> fields as ground truth — they are computed from the actual channel state, not from your reading.',
-      // Decision-tree terminator: name each tool by its function, not
-      // by quoting model-emittable strings. Quoting "noted" or "I'll
-      // await" inline causes Claude/GPT to pattern-match the example
-      // as a canonical exemplar and emit it through channel.ack even
-      // when richer replies were warranted. The function-first
-      // framing reads identically to flash-class models but doesn't
-      // give stronger models a literal phrase to copy.
-      'channel.ack = you were addressed but have no new information, question, or status to add. channel.pass = you were not addressed at all. channel.reply = you have substantive content (an answer, an artifact, a question, a status that changes the picture).',
-      'If <you-explicitly-addressed>true</you-explicitly-addressed>, you must terminate via a tool. Use channel.reply ONLY when you have substantive content per the definition above; otherwise use channel.ack with an empty body. Acknowledging via channel.reply with paraphrased filler is treated as a missed reply.',
-      'If <you-explicitly-addressed>false</you-explicitly-addressed> AND <you-implicitly-addressed>false</you-implicitly-addressed>, call channel.pass and stop. Do not post any message. The audit log already records that you considered the thread.',
-      'When you call channel.pass, the note field must reference a specific fact from <thread-state>. Empty notes and generic phrasing are rejected.',
-      'An auto-re-mention closing a hand-off does NOT count as being addressed. If the previous message is a plain acknowledgement of YOUR work and contains no new question, treat the chain as complete — call channel.handoff with complete:true (if you initiated the chain) or channel.ack (if you are receiving the acknowledgement).',
-    ];
-    // Provider-aware anti-mirror line. Smaller/faster models
-    // (gemini-*-flash today; others may join) aggressively mirror
-    // the dominant surface form in recent context. When the prior
-    // turn is "Understood, @X. I'll await", the model emits the
-    // same shape almost reflexively regardless of the system
-    // prompt's positive framing. The line below names the
-    // pathology and gives the model the structural exit.
-    const resolvedModelId = (model as { modelId?: unknown }).modelId;
-    const modelIdString = typeof resolvedModelId === 'string' ? resolvedModelId : '';
-    if (isMirrorFragileModel(modelIdString)) {
-      wakeRunScaffold.unshift(
-        'IMPORTANT — anti-mirror rule: Do NOT paraphrase the previous message. If your intended reply restates what the previous turn already said, differs only by swapping names, or amounts to "noted / understood / I will await", call channel.ack with no body. Filler acknowledgements waste team attention and trigger redundant wakes.',
-      );
+    // Bet 3 — workspace-state ground truth. Surfaces open commitments
+    // owned by this agent, recent channel decisions (decision_log),
+    // and any persistent memory entries (Bet 5) inline so the model
+    // sees its own durable context at every wake.
+    const currentChannelIdForState = input.threadId
+      ? this.repo.getThread(input.organizationId, input.threadId)?.channelId
+      : undefined;
+    const workspaceStateBlock = buildWorkspaceStateBlock({
+      organizationId: input.organizationId,
+      memberId: member.id,
+      channelId: currentChannelIdForState,
+      repo: this.repo,
+    });
+    if (workspaceStateBlock) {
+      messages.push({
+        role: 'user',
+        content: workspaceStateBlock,
+      });
     }
 
-    // Self-followup publish-contract. The scheduler-driven wake
-    // (Bet 4 follow-up) lands here when an open commitment has gone
-    // idle. The mandatory-reply contract is intentionally OFF for
-    // this wake reason (self.note and channel.pass stay in the
-    // palette so the model can plan or declare a blocker), but
-    // ending the turn with ONLY self.note / view / ls / grep — no
-    // publishing tool — is what produced the original Layla/Phoebe
-    // stall: five empty wakes, zero published progress, 24h until
-    // the deadline-letter fired. These lines tell the model that
-    // self.note is fine for planning mid-turn but the turn itself
-    // must end with a tool that talks to the channel.
-    if (wakeReasonForPalette === 'self-followup') {
-      wakeRunScaffold.unshift(
-        'You are waking on a commitment you made earlier in this channel. Before you stop, do one of: (a) call channel.post or channel.reply with concrete progress — a path you wrote, a result, or the actual artifact; (b) call channel.pass with a real reason ("still gathering inputs", "blocked on X") if you have no publishable progress yet; (c) call supervisor.todo.update if you need to mark the commitment blocked or completed. self.note alone is NOT a valid termination — every team member will notice you went silent on your own promise.',
-        // Multi-section deliverables (task lists, BRDs, PRDs, specs)
-        // ROUTINELY exceed the per-turn output cap when pasted inline.
-        // The model thinks it sent the artifact; the reader sees a
-        // markdown block cut off mid-bullet. The fix is structural:
-        // for anything longer than a short status update, the model
-        // must `write` to a file first and then post a one-line
-        // "delivered, see /path" follow-up. That also lets the past-
-        // tense completion extractor put the artifact path on the
-        // goals rail.
-        'For ANY deliverable longer than ~10 lines (task lists, BRDs, PRDs, specs, multi-section docs): use the `write` tool to save the artifact to a file in the workspace (e.g. ai/memory-bank/tasks/<name>.md) FIRST, then post a short channel.post that says "Delivered — see <path>". Pasting long markdown inline gets truncated at the token cap and the reader sees a half-written document.',
-      );
+    // Bet 2 — self-followup context. Re-attaches the original
+    // commitment message + artifact paths + empty-wake count so a
+    // scheduler-driven wake doesn't land blind to its own promise.
+    const selfFollowupBlock = buildSelfFollowupContextBlock({
+      organizationId: input.organizationId,
+      memberId: member.id,
+      runId: input.runId,
+      sourceMessageId,
+      wakeReason: (runRow?.wakeReason ?? null) as string | null,
+      repo: this.repo,
+    });
+    if (selfFollowupBlock) {
+      messages.push({
+        role: 'user',
+        content: selfFollowupBlock,
+      });
     }
-    const wakeRunScaffoldText = wakeRunScaffold.join('\n');
-    const goalSuffix = input.systemPromptSuffix;
-    const combinedSuffix = [goalSuffix, wakeRunScaffoldText].filter(Boolean).join('\n\n');
-    const systemPrompt = combinedSuffix ? `${system}\n\n${combinedSuffix}` : system;
+
+    // Per-wake mutations land here as user-role messages — these
+    // are the lines that previously mutated `system` per wake and
+    // busted the cache. By keeping them in the messages array we
+    // get a stable system prefix every wake; the wake-context
+    // messages sit AFTER the cacheable prefix and only invalidate
+    // local cache up to themselves.
+    const resolvedModelId = (model as { modelId?: unknown }).modelId;
+    const modelIdString = typeof resolvedModelId === 'string' ? resolvedModelId : '';
+    const wakeContextMessages = buildWakeContextMessages({
+      wakeReason: wakeReasonForPalette as
+        | 'mention'
+        | 'self-followup'
+        | 'channel-read'
+        | 'dm'
+        | 'handoff'
+        | 'parent-thread'
+        | null,
+      modelIdString,
+      isMirrorFragile: isMirrorFragileModel(modelIdString),
+    });
+    for (const wakeMessage of wakeContextMessages) {
+      messages.push(wakeMessage);
+    }
+    const systemPrompt = system;
 
     // Self-followup wakes routinely produce multi-section
     // deliverables (the scaffold now nudges agents to write them to
