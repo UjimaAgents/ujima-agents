@@ -259,7 +259,7 @@ test('legacy default role tools are migrated forward on load', () => {
     ],
   });
 
-  expect(team.config.configVersion).toBe(3);
+  expect(team.config.configVersion).toBe(4);
   expect(team.getRole('frontend-engineer')?.tools).toContain('grep');
 });
 

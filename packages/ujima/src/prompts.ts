@@ -38,6 +38,45 @@ function formatAttachedMcpServers(
   );
 }
 
+/**
+ * Emit an explicit "capabilities you do NOT have" line in the
+ * system prompt. Models — especially smaller/faster ones — pattern-
+ * match the surface form of capability claims; when the prompt only
+ * lists what an agent HAS, the model often improvises confidence
+ * about things it doesn't have (the "I can edit the file" pattern).
+ * A negative-space line lets the model route requests for missing
+ * capabilities to the human or to a teammate who has them, instead
+ * of inventing an apology loop.
+ */
+function formatMissingCapabilities(availableToolIds: readonly string[] | undefined): string {
+  if (!availableToolIds) return '';
+  const have = new Set(availableToolIds);
+  // Capabilities worth flagging by absence — they're the ones agents
+  // typically claim or deny without evidence.
+  const checks: { id: string; label: string }[] = [
+    { id: 'filesystem', label: 'filesystem' },
+    { id: 'edit', label: 'edit' },
+    { id: 'write', label: 'write' },
+    { id: 'multiedit', label: 'multiedit' },
+    { id: 'shell', label: 'shell' },
+    { id: 'fetch', label: 'fetch' },
+    { id: 'download', label: 'download' },
+    { id: 'web_search', label: 'web_search' },
+  ];
+  const missing = checks.filter((c) => !have.has(c.id)).map((c) => c.label);
+  if (missing.length === 0) return '';
+  // Action-protocol framing rather than personality framing — older
+  // wording "do not pretend to" read as a behavioural instruction
+  // ("be modest about your capabilities") which smaller models
+  // generalised into hedging on tools they DO have. The current
+  // wording names the gap as a state of the world and prescribes
+  // the routing action.
+  return [
+    `Tools NOT available to you in this org: ${missing.join(', ')}.`,
+    'Requests requiring these tools must be routed — @-mention a teammate whose role includes the tool, or ask the human to enable it for your role. Do not narrate the limitation in chat as content; produce the routing tool call directly.',
+  ].join('\n');
+}
+
 function listScopes(role: RoleConfig): string {
   return role.workspaceScopes.length ? role.workspaceScopes.join(', ') : 'none';
 }
@@ -222,6 +261,7 @@ export function buildAgentSystemPrompt(
     formatWorkspaceLayout(workspaceRoot),
     `Available tools: ${listToolsLine(availableToolIds ?? role.tools)}`,
     formatAttachedMcpServers(attachedMcpServers),
+    formatMissingCapabilities(availableToolIds),
     `Available channels: ${listChannels(role)}`,
   ]
     .filter(Boolean)

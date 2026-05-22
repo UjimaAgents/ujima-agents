@@ -4,6 +4,7 @@ import type { AgentTeamHandle } from '@ujima/framework';
 import type { ToolAction, SpiritRole, WakeReason } from '@ujima/shared';
 import { isSensitiveWorkspacePath } from '@ujima/shared/workspace-file-filters';
 import { assertWorkspaceBoundary, isPathInsideRoot } from '@ujima/shared/workspace';
+import { ALWAYS_AVAILABLE_AGENT_TOOLS } from '../tools/index.js';
 import { isDirectMessageThread } from '../utils/thread-state.js';
 
 export interface PolicyResult {
@@ -139,11 +140,26 @@ export function checkToolPolicy(
     return { allowed: true, requiresApproval: true };
   }
 
+  // `schedule` is in `ALWAYS_AVAILABLE_AGENT_TOOLS` but takes
+  // `action: 'message'` (it's a control-plane tool, not a read).
+  // The fall-through at the bottom would otherwise mark it
+  // `requiresApproval: true` because action is non-`read`. Short-
+  // circuit here so the schedule tool is callable without approval.
   if (toolId === 'schedule') {
     return { allowed: true, requiresApproval: false };
   }
 
-  if (!role.tools.includes(toolId)) {
+  // Baseline tools (channel primitives, read-only workspace tools,
+  // silent terminators, `schedule`) are available to every role
+  // regardless of `role.tools`. This mirrors the palette assembled by
+  // `resolveToolAllowlist` / `ai-service.ts` so the run-time gate
+  // doesn't reject a tool the model just received in its schema.
+  // Writes (`filesystem`, `edit`, `multiedit`, `write`, `shell`)
+  // stay opt-in via `role.tools`. `schedule` is in
+  // `ALWAYS_AVAILABLE_AGENT_TOOLS` so it falls through this check
+  // without a dedicated branch.
+  const baselineToolIds = ALWAYS_AVAILABLE_AGENT_TOOLS as readonly string[];
+  if (!baselineToolIds.includes(toolId) && !role.tools.includes(toolId)) {
     return {
       allowed: false,
       requiresApproval: false,
@@ -173,13 +189,25 @@ export function checkToolPolicy(
     }
 
     if (
-      (action === 'write' || toolId === 'edit' || toolId === 'multiedit') &&
+      (action === 'write' || toolId === 'write' || toolId === 'edit' || toolId === 'multiedit') &&
       isGoalArtifactPath(team.workspace.root, resourcePath)
     ) {
       return { allowed: true, requiresApproval: false };
     }
 
-    if (!role.workspaceScopes.some((scope) => pathWithinScope(team.workspace.root, scope, resourcePath))) {
+    // When `role.workspaceScopes` is empty (the default for roles
+    // that didn't opt in), fall back to the workspace root for
+    // READ actions only. The product mental model is "every agent
+    // can look at the workspace"; writes still require an explicit
+    // scope to keep blast-radius bounded. The sensitive-path filter
+    // below still applies in both cases.
+    const effectiveScopes =
+      role.workspaceScopes.length > 0
+        ? role.workspaceScopes
+        : action === 'read'
+          ? ['.']
+          : role.workspaceScopes;
+    if (!effectiveScopes.some((scope) => pathWithinScope(team.workspace.root, scope, resourcePath))) {
       return {
         allowed: false,
         requiresApproval: false,

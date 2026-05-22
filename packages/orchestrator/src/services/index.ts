@@ -17,6 +17,7 @@ import { BootstrapService } from './bootstrap.js';
 import { ChannelRetentionService } from './channel-retention.js';
 import type { ApiServiceContext } from './context.js';
 import { ConversationService } from './conversation.js';
+import { CommitmentService } from './commitment-service.js';
 import { McpRegistryService } from './mcp-registry.js';
 import { OnboardingService } from './onboarding.js';
 import type { ApiRepository } from './repository-reader.js';
@@ -205,6 +206,23 @@ export interface ApiServicesContext extends ApiServiceContext {
    * (the spirit run path still works without MCP tools).
    */
   mcpPool?: SpiritMcpPool;
+  /**
+   * Bet 4 — how long a commitment can sit idle before the scheduler
+   * re-wakes the owner. Default is 10 minutes. Tests can shorten
+   * this dramatically.
+   */
+  commitmentIdleThresholdMs?: number;
+  /**
+   * Bet 4 — default deadline offset for commitments that the
+   * extractor finds without an explicit due. Default is 24 hours.
+   */
+  commitmentDefaultDueOffsetMs?: number;
+  /**
+   * Bet 4 — how often the commitment sweeper fires. Defaults to 60s
+   * in production. Tests can set 0 to disable auto-scheduling and
+   * call `commitments.sweepIdle()` / `sweepExpired()` directly.
+   */
+  commitmentSweeperIntervalMs?: number;
 }
 
 export interface ApiServices {
@@ -226,6 +244,16 @@ export interface ApiServices {
   supervisorTodos: SupervisorTodoService;
   activeSpirits: ActiveSpiritRegistry;
   mcpRegistry: McpRegistryService;
+  commitments: CommitmentService;
+  /**
+   * Tears down background timers (commitment sweeper, anything else
+   * createApiServices started) and awaits any in-flight sweep so
+   * a SIGTERM doesn't tear the DB handle out from under the wake
+   * path. Tests with `commitmentSweeperIntervalMs: 0` never start
+   * the timer and don't need to call this; production calls it
+   * during daemon shutdown BEFORE closing the DB.
+   */
+  stop(): Promise<void>;
 }
 
 interface WakeMemberInput {
@@ -555,6 +583,84 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   });
   const mcpRegistry = new McpRegistryService(context.repo);
 
+  // Bet 4 — durable commitment lifecycle. Extracts forward-looking
+  // promises from agent messages, parks them as `todos` rows tied to
+  // the channel + originating message, re-wakes the owner on idle,
+  // and posts a deadline-letter system message when due_at elapses.
+  const commitments = new CommitmentService(
+    context.repo,
+    conversations,
+    context.realtime,
+    async (wakeInput) => {
+      await wakeMember(wakeInput);
+    },
+    {
+      idleThresholdMs: context.commitmentIdleThresholdMs,
+      defaultDueOffsetMs: context.commitmentDefaultDueOffsetMs,
+    },
+  );
+  conversations.setMessagePublishedHook((message) =>
+    commitments.onAgentMessagePublished(message),
+  );
+  // Late-bind the run-completed hook so the commitment service can
+  // track empty self-followup wakes and short-circuit `due_at` when
+  // a commitment is stuck. Same chicken-and-egg pattern as
+  // `setMcpToolResolver` / `setMessagePublishedHook`.
+  spirits.setRunCompletedHook((run) => commitments.onRunCompleted(run));
+  // Scheduler tick (Bet 4). Production runs it every 60s; tests
+  // can pass `commitmentSweeperIntervalMs: 0` to opt out and call
+  // `commitments.sweepIdle()` / `sweepExpired()` directly. The
+  // interval is captured by `stop()` so daemon shutdown cancels it.
+  const sweepInterval =
+    context.commitmentSweeperIntervalMs ?? 60_000;
+  let commitmentSweeperHandle: ReturnType<typeof setInterval> | null = null;
+  // Track the in-flight sweep so `stop()` can await it — without
+  // this, a SIGTERM mid-sweep tears the DB handle out from under
+  // the wake path and produces half-published deadline-letters +
+  // SQLITE_MISUSE traces.
+  let inFlightSweep: Promise<unknown> | null = null;
+  const runSweepTick = async (): Promise<void> => {
+    try {
+      await commitments.sweepIdle();
+      await commitments.sweepExpired();
+    } catch {
+      // Bad row → swallow at the tick level; per-row failures are
+      // handled inside the service.
+    }
+  };
+  if (sweepInterval > 0) {
+    commitmentSweeperHandle = setInterval(() => {
+      // Skip if a previous tick is still running — guards against
+      // sweep latency exceeding the interval (would otherwise queue
+      // concurrent ticks against the same row set).
+      if (inFlightSweep) return;
+      inFlightSweep = runSweepTick().finally(() => {
+        inFlightSweep = null;
+      });
+    }, sweepInterval);
+    if (typeof (commitmentSweeperHandle as { unref?: () => void }).unref === 'function') {
+      (commitmentSweeperHandle as { unref?: () => void }).unref?.();
+    }
+  }
+
+  const stop = async (): Promise<void> => {
+    if (commitmentSweeperHandle) {
+      clearInterval(commitmentSweeperHandle);
+      commitmentSweeperHandle = null;
+    }
+    // Drain any tick currently mid-flight before returning. The
+    // daemon's shutdown sequence calls this BEFORE closing the DB
+    // handle so a sweep doesn't run against a torn-down connection.
+    if (inFlightSweep) {
+      try {
+        await inFlightSweep;
+      } catch {
+        // best-effort
+      }
+      inFlightSweep = null;
+    }
+  };
+
   return {
     ai,
     tools,
@@ -574,5 +680,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     supervisorTodos,
     activeSpirits,
     mcpRegistry,
+    commitments,
+    stop,
   };
 }

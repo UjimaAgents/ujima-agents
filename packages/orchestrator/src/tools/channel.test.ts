@@ -174,24 +174,29 @@ describe('channel.* tools — toInvocation()', () => {
 // (must be in role.tools) because it's a workflow primitive, not
 // a baseline conversational one.
 describe('ALWAYS_AVAILABLE_AGENT_TOOLS', () => {
-  it('contains the baseline conversational primitives plus the silent-outcome and self-note tools', () => {
+  it('contains the baseline conversational primitives, read-only workspace tools, and silent terminators', () => {
     expect([...ALWAYS_AVAILABLE_AGENT_TOOLS].sort()).toEqual(
       [
+        'channel.ack',
         'channel.dm',
         'channel.list',
         'channel.pass',
         'channel.post',
         'channel.read',
         'channel.reply',
+        'glob',
+        'grep',
+        'ls',
         'message',
         'schedule',
         'self.note',
+        'view',
       ].sort(),
     );
   });
 
-  it.each(['channel.handoff'])(
-    'does NOT include %s (workflow opt-in via role.tools)',
+  it.each(['channel.handoff', 'filesystem', 'edit', 'write', 'multiedit', 'shell'])(
+    'does NOT include %s (write-capable / workflow opt-in via role.tools)',
     (toolId) => {
       expect([...ALWAYS_AVAILABLE_AGENT_TOOLS]).not.toContain(toolId);
     },

@@ -48,6 +48,7 @@ export const SocketEventNames = Object.freeze({
   memberAlerted: 'member.alerted',
   memberAlertFailed: 'member.alert_failed',
   memberMustReplyFailed: 'member.must_reply_failed',
+  memberEmptyWake: 'member.empty_wake',
   channelArchived: 'channel.archived',
   toolCalled: 'tool:called',
   toolResult: 'tool:result',
@@ -60,11 +61,17 @@ export const SocketEventNames = Object.freeze({
   scheduledJobExecuted: 'schedule:executed',
   agentPassed: 'agent:passed',
   agentPassedWithText: 'agent:passed_with_text',
+  agentAck: 'agent:ack',
   decisionVerification: 'decision:verification_result',
   agentHandoff: 'agent:handoff',
   wakeSuppressed: 'wake:suppressed',
   runSilentCompletion: 'run:silent_completion',
   runEmptyCompletion: 'run:empty_completion',
+  mirrorSuppressed: 'agent:mirror_suppressed',
+  echoSuppressed: 'agent:echo_suppressed',
+  commitmentCreated: 'commitment:created',
+  commitmentUpdated: 'commitment:updated',
+  commitmentExpired: 'commitment:expired',
 });
 
 export type SocketEventName = (typeof SocketEventNames)[keyof typeof SocketEventNames];
@@ -87,6 +94,12 @@ export const WakeReasonSchema = z.enum([
   'channel-read',
   'handoff',
   'parent-thread',
+  // Bet 4 — scheduler tick. The runtime is the originator (no other
+  // human or agent triggered this wake); the agent is being asked to
+  // deliver on an existing commitment or declare a blocker. The
+  // mandatory-reply contract is NOT active for this wake reason —
+  // see `ai-service.ts` palette-strip logic.
+  'self-followup',
 ]);
 export type WakeReason = z.infer<typeof WakeReasonSchema>;
 
@@ -275,6 +288,66 @@ export const AgentHandoffEventSchema = z.object({
 });
 export type AgentHandoffEvent = z.infer<typeof AgentHandoffEventSchema>;
 
+// `channel.ack` — silent terminator the agent calls when @mentioned
+// but has nothing new to add. Satisfies the mandatory-reply contract
+// without producing a wake-able channel message.
+export const AgentAckEventSchema = z.object({
+  organizationId: IdSchema,
+  channelId: IdSchema.optional(),
+  threadId: IdSchema.optional(),
+  memberId: IdSchema,
+  runId: IdSchema,
+  note: z.string().optional(),
+  occurredAt: TimestampSchema,
+});
+export type AgentAckEvent = z.infer<typeof AgentAckEventSchema>;
+
+// Mirror-loop guard tripped: model was about to repeat the prior
+// turn near-verbatim. Reply suppressed, run terminates as
+// channel.pass with reason=`mirror_chain_detected`. UI surfaces
+// "Agent X was about to repeat itself — silenced".
+export const MirrorSuppressedEventSchema = z.object({
+  organizationId: IdSchema,
+  channelId: IdSchema.optional(),
+  threadId: IdSchema.optional(),
+  memberId: IdSchema,
+  runId: IdSchema,
+  suppressedText: z.string(),
+  similarityScore: z.number(),
+  occurredAt: TimestampSchema,
+});
+export type MirrorSuppressedEvent = z.infer<typeof MirrorSuppressedEventSchema>;
+
+// Per-pair back-pressure tripped: A→B has bounced too many
+// vacuous-mention wakes in a short window. Next wake demoted to
+// channel-read so the counterparty can `channel.pass` cleanly.
+export const EchoSuppressedEventSchema = z.object({
+  organizationId: IdSchema,
+  channelId: IdSchema.optional(),
+  threadId: IdSchema.optional(),
+  fromMemberId: IdSchema,
+  toMemberId: IdSchema,
+  countInWindow: z.number().int().nonnegative(),
+  occurredAt: TimestampSchema,
+});
+export type EchoSuppressedEvent = z.infer<typeof EchoSuppressedEventSchema>;
+
+// Commitment lifecycle — Bet 4. "I'll draft the BRD" creates one;
+// scheduler ticks re-wake the owner; deadline-letter marks it expired.
+export const CommitmentEventSchema = z.object({
+  organizationId: IdSchema,
+  channelId: IdSchema.optional(),
+  threadId: IdSchema.optional(),
+  todoId: IdSchema,
+  taskSessionId: IdSchema.optional(),
+  ownerMemberId: IdSchema,
+  deliverable: z.string(),
+  status: z.string(),
+  dueAt: z.string().optional(),
+  occurredAt: TimestampSchema,
+});
+export type CommitmentEvent = z.infer<typeof CommitmentEventSchema>;
+
 export const WakeSuppressedReasonSchema = z.enum([
   'roster',
   'self-channel',
@@ -379,6 +452,23 @@ export const MemberMustReplyFailedEventSchema = z.object({
 });
 export type MemberMustReplyFailedEvent = z.infer<typeof MemberMustReplyFailedEventSchema>;
 
+// Bet 4 follow-up. Emitted when a `self-followup` wake completes
+// without a publishing terminator. `escalated: true` means the
+// commitment hit `maxEmptyWakes` and `due_at` was short-circuited
+// to fire the deadline-letter on the next sweep.
+export const MemberEmptyWakeEventSchema = z.object({
+  organizationId: IdSchema,
+  memberId: IdSchema,
+  runId: IdSchema,
+  channelId: IdSchema.optional(),
+  threadId: IdSchema.optional(),
+  todoId: IdSchema,
+  emptyWakeCount: z.number().int().nonnegative(),
+  escalated: z.boolean(),
+  occurredAt: TimestampSchema,
+});
+export type MemberEmptyWakeEvent = z.infer<typeof MemberEmptyWakeEventSchema>;
+
 export const ScheduledJobExecutedEventSchema = z.object({
   organizationId: IdSchema,
   jobName: z.string().min(1),
@@ -402,6 +492,7 @@ export const SocketEventSchemas = Object.freeze({
   [SocketEventNames.memberAlerted]: MemberAlertedEventSchema,
   [SocketEventNames.memberAlertFailed]: MemberAlertFailedEventSchema,
   [SocketEventNames.memberMustReplyFailed]: MemberMustReplyFailedEventSchema,
+  [SocketEventNames.memberEmptyWake]: MemberEmptyWakeEventSchema,
   [SocketEventNames.channelArchived]: ChannelUpdatedEventSchema,
   [SocketEventNames.toolCalled]: ToolCalledEventSchema,
   [SocketEventNames.toolResult]: ToolResultEventSchema,
@@ -414,9 +505,15 @@ export const SocketEventSchemas = Object.freeze({
   [SocketEventNames.scheduledJobExecuted]: ScheduledJobExecutedEventSchema,
   [SocketEventNames.agentPassed]: AgentPassedEventSchema,
   [SocketEventNames.agentPassedWithText]: AgentPassedWithTextEventSchema,
+  [SocketEventNames.agentAck]: AgentAckEventSchema,
   [SocketEventNames.decisionVerification]: DecisionVerificationEventSchema,
   [SocketEventNames.agentHandoff]: AgentHandoffEventSchema,
   [SocketEventNames.wakeSuppressed]: WakeSuppressedEventSchema,
   [SocketEventNames.runSilentCompletion]: RunSilentCompletionEventSchema,
   [SocketEventNames.runEmptyCompletion]: RunEmptyCompletionEventSchema,
+  [SocketEventNames.mirrorSuppressed]: MirrorSuppressedEventSchema,
+  [SocketEventNames.echoSuppressed]: EchoSuppressedEventSchema,
+  [SocketEventNames.commitmentCreated]: CommitmentEventSchema,
+  [SocketEventNames.commitmentUpdated]: CommitmentEventSchema,
+  [SocketEventNames.commitmentExpired]: CommitmentEventSchema,
 });

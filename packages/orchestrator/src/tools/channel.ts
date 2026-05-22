@@ -167,22 +167,40 @@ export const channelPostTool: OrchestratorTool<typeof ChannelPostSchema> = {
     input: args,
   }),
   execute: ({ invocation, team, repo, conversations }) =>
-    conversations.postToChannel({
-      organizationId: invocation.organizationId,
-      senderId: invocation.memberId,
-      channelId: resolveChannelId(
+    (() => {
+      const body = String(invocation.input.body);
+      const channelId = resolveChannelId(
         team,
         repo,
         invocation.organizationId,
         invocation.memberId,
         String(invocation.input.channel_id),
-      ),
-      body: String(invocation.input.body),
-      mentions: Array.isArray(invocation.input.mentions)
-        ? invocation.input.mentions.filter((value): value is string => typeof value === 'string')
-        : [],
-      metadata: { runId: invocation.runId },
-    }),
+      );
+      // The channel's main thread shares its id by convention; for a
+      // posting tool that's the thread to scan for mirror chains.
+      const threadId = invocation.threadId ?? channelId;
+      const suppressed = conversations.tryMirrorSuppress?.({
+        organizationId: invocation.organizationId,
+        runId: invocation.runId,
+        senderId: invocation.memberId,
+        threadId,
+        channelId,
+        body,
+      });
+      if (suppressed) {
+        return { status: 'mirror_suppressed', terminator: 'channel.ack' };
+      }
+      return conversations.postToChannel({
+        organizationId: invocation.organizationId,
+        senderId: invocation.memberId,
+        channelId,
+        body,
+        mentions: Array.isArray(invocation.input.mentions)
+          ? invocation.input.mentions.filter((value): value is string => typeof value === 'string')
+          : [],
+        metadata: { runId: invocation.runId },
+      });
+    })(),
 };
 
 export const channelReplyTool: OrchestratorTool<typeof ChannelReplySchema> = {
@@ -196,17 +214,37 @@ export const channelReplyTool: OrchestratorTool<typeof ChannelReplySchema> = {
     permissionMcpId: 'channels',
     input: args,
   }),
-  execute: ({ invocation, conversations }) =>
-    conversations.replyToMessage({
+  execute: ({ invocation, repo, conversations }) => {
+    const body = String(invocation.input.body);
+    const parent = repo.getMessage(
+      invocation.organizationId,
+      String(invocation.input.message_id),
+    );
+    const threadId = parent?.threadId ?? invocation.threadId;
+    if (threadId) {
+      const suppressed = conversations.tryMirrorSuppress?.({
+        organizationId: invocation.organizationId,
+        runId: invocation.runId,
+        senderId: invocation.memberId,
+        threadId,
+        channelId: parent?.channelId ?? undefined,
+        body,
+      });
+      if (suppressed) {
+        return { status: 'mirror_suppressed', terminator: 'channel.ack' };
+      }
+    }
+    return conversations.replyToMessage({
       organizationId: invocation.organizationId,
       senderId: invocation.memberId,
       messageId: String(invocation.input.message_id),
-      body: String(invocation.input.body),
+      body,
       mentions: Array.isArray(invocation.input.mentions)
         ? invocation.input.mentions.filter((value): value is string => typeof value === 'string')
-      : [],
+        : [],
       metadata: { runId: invocation.runId },
-    }),
+    });
+  },
 };
 
 export const channelDmTool: OrchestratorTool<typeof ChannelDmSchema> = {
@@ -219,18 +257,36 @@ export const channelDmTool: OrchestratorTool<typeof ChannelDmSchema> = {
     permissionMcpId: 'channels',
     input: args,
   }),
-  execute: ({ invocation, conversations }) =>
-    conversations.sendDirectMessage({
+  execute: ({ invocation, conversations }) => {
+    const body = String(invocation.input.body);
+    const recipientId = String(invocation.input.member_id);
+    const dmThreadId =
+      recipientId === 'self'
+        ? `self:${invocation.memberId}`
+        : getDirectMessageThreadId(invocation.memberId, recipientId);
+    const suppressed = conversations.tryMirrorSuppress?.({
+      organizationId: invocation.organizationId,
+      runId: invocation.runId,
+      senderId: invocation.memberId,
+      threadId: dmThreadId,
+      channelId: dmThreadId,
+      body,
+    });
+    if (suppressed) {
+      return { status: 'mirror_suppressed', terminator: 'channel.ack' };
+    }
+    return conversations.sendDirectMessage({
       organizationId: invocation.organizationId,
       senderId: invocation.memberId,
-      recipientId: String(invocation.input.member_id),
-      content: String(invocation.input.body),
+      recipientId,
+      content: body,
       ignore: invocation.input.ignore === true,
       mentions: Array.isArray(invocation.input.mentions)
         ? invocation.input.mentions.filter((value): value is string => typeof value === 'string')
         : [],
       metadata: { runId: invocation.runId },
-    }),
+    });
+  },
 };
 
 export const channelListTool: OrchestratorTool<typeof ChannelListSchema> = {
@@ -394,6 +450,74 @@ export const channelPassTool: OrchestratorTool<typeof ChannelPassSchema> = {
     }
 
     return { status: 'passed', reason, note };
+  },
+};
+
+// `channel.ack` — silent terminator for mandatory-reply turns.
+//
+// When an agent is @mentioned but has nothing substantive to add
+// (the prior message is a status update with no question, no new
+// information, no decision needed), the model would otherwise be
+// forced to emit `channel.reply` with vacuous text — and that text
+// would itself re-mention the parent sender, waking them, looping
+// the chain. `channel.ack` lets the model satisfy the mandatory-
+// reply contract structurally: a terminating tool fired, the run
+// closes, the UI shows "Phoebe acknowledged" — and no new wake-
+// able channel message is produced.
+//
+// Unlike `channel.pass` (which requires a structured `reason` and
+// shadow-mode verification because it can be misused to opt out of
+// real questions), `channel.ack` accepts only an optional brief
+// `note` and is allowed even in mandatory-reply mode (palette-
+// stripping logic in spirit.ts/ai-service.ts must keep it
+// available; `channel.pass` and `self.note` stay stripped).
+const ChannelAckSchema = z.object({
+  note: z
+    .string()
+    .max(140)
+    .optional()
+    .describe(
+      'Optional short, private note recorded with the ack — not posted to the channel. Use when you want to leave an audit-trail justification (e.g. "noted, waiting on file from human").',
+    ),
+});
+
+export const channelAckTool: OrchestratorTool<typeof ChannelAckSchema> = {
+  id: 'channel.ack',
+  schema: ChannelAckSchema,
+  toInvocation: (args) => ({
+    action: 'message',
+    resourceType: 'message',
+    permissionMcpId: 'channels',
+    input: args,
+  }),
+  execute: ({ invocation, repo, conversations }) => {
+    const note =
+      typeof invocation.input.note === 'string' && invocation.input.note.trim().length > 0
+        ? invocation.input.note.trim()
+        : undefined;
+    const run = repo.getRun(invocation.organizationId, invocation.runId);
+    const threadId = invocation.threadId ?? run?.threadId;
+    const channelId = threadId
+      ? repo.getThread(invocation.organizationId, threadId)?.channelId
+      : undefined;
+
+    if (run) {
+      repo.saveRun({
+        ...run,
+        terminatingTool: 'channel.ack',
+      });
+    }
+
+    void conversations.emitAgentAck({
+      organizationId: invocation.organizationId,
+      memberId: invocation.memberId,
+      runId: invocation.runId,
+      channelId,
+      threadId,
+      note,
+    });
+
+    return { status: 'acked', note };
   },
 };
 

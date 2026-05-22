@@ -20,6 +20,7 @@ import {
   type ChatMessageData,
 } from "./chat";
 import { ChannelMembersTab } from "./channel-members-tab";
+import { ChannelTasksTab } from "./channel-tasks-tab";
 import { getDirectMessageThreadId, RunStateSchema, type RunState } from "@ujima/shared/browser";
 import { useWorkspaceStore } from "../workspace-store";
 import { EmptyChat } from "./empty-chat";
@@ -32,11 +33,13 @@ import { runToActivity } from "../activity-events";
 import { pendingApprovalVisibleInChannelView, queueApprovals } from "../approval-thread-filter";
 import { ReasoningTracePanel } from "./reasoning-trace-panel";
 import { buildTabCounts, collectBlockedRunReasons, collectConversationAttachments, isLiveRun } from "../feed-selectors";
+import { ChannelGoalsStrip } from "./channel-goals-strip";
 
 const CHANNEL_TABS: ChatTab[] = [
   { id: "conversation", label: "Conversation" },
   { id: "members", label: "Members" },
   { id: "approvals", label: "Approvals" },
+  { id: "tasks", label: "Tasks" },
   { id: "files", label: "Files" },
   { id: "activity", label: "Activity" },
 ];
@@ -480,6 +483,13 @@ export function ChannelView({
           activeTab={activeTab}
           onTabChange={handleTabChange}
         />
+        {conversation.type === "channel" && organizationId ? (
+          <ChannelGoalsStrip
+            organizationId={organizationId}
+            channelId={conversation.id}
+            memberNameLookup={(memberId) => memberById.get(memberId)?.name}
+          />
+        ) : null}
         {activeTab === "conversation" ? (
           <div className="relative flex flex-1 min-h-0 flex-col">
             <ChatMessageList ref={listRef} onScroll={handleScroll}>
@@ -570,7 +580,19 @@ export function ChannelView({
             <TabEmpty emptyLabel="No approvals." />
           )
         ) : activeTab === "tasks" ? (
-          taskRuns.length > 0 ? (
+          conversation.type === "channel" && organizationId ? (
+            // Channel context — render the per-channel commitments
+            // management surface (in_progress / blocked / completed /
+            // expired with human-driven status overrides). The agent
+            // context below keeps the legacy "live runs" view.
+            <TabPanel>
+              <ChannelTasksTab
+                organizationId={organizationId}
+                channelId={conversation.id}
+                memberNameLookup={(memberId) => memberById.get(memberId)?.name}
+              />
+            </TabPanel>
+          ) : taskRuns.length > 0 ? (
             <TabPanel>
               <div className="space-y-2">
                 {taskRuns.map((run) => (

@@ -1,7 +1,58 @@
 import { DEFAULT_TOOL_CATALOG } from './constants.js';
 import { DEFAULT_ROLE_TOOLS } from './roles/shared.js';
 
-export const TEAM_CONFIG_VERSION = 3;
+// Bumped from 3 → 4 to trigger the role-class default-fill migration
+// below. Empty `role.tools: []` arrays (left over from the freshly-
+// onboarded UI flow) get a class-appropriate write surface so an
+// agent that commits to "draft the BRD" can actually write the file.
+// `shell`, `download`, and `filesystem` (raw) stay strict opt-in
+// even for engineer-class — those are the real blast-radius surfaces
+// and a malformed model call shouldn't be able to run arbitrary
+// shell commands without the operator deliberately enabling it.
+export const TEAM_CONFIG_VERSION = 4;
+
+// Role-class default tool sets. Used by the v4 migration to fill
+// roles whose `tools` array is empty. The keys are matched
+// case-insensitively against the role name via `inferRoleClass`.
+//
+// Design intent: every role gets read tools (also covered by
+// ALWAYS_AVAILABLE_AGENT_TOOLS) plus class-appropriate write tools.
+// `shell` is OFF for everyone by default — when an LLM hallucinates
+// a tool call, the worst case of read is information disclosure
+// (already gated by sensitive-path filter); the worst case of shell
+// is arbitrary code execution.
+const ROLE_CLASS_DEFAULT_TOOLS = {
+  engineer: ['view', 'ls', 'glob', 'grep', 'edit', 'write', 'multiedit', 'fetch'],
+  qa: ['view', 'ls', 'glob', 'grep', 'edit', 'write', 'multiedit'],
+  pm: ['view', 'ls', 'glob', 'grep', 'edit', 'write', 'multiedit', 'web_search'],
+  designer: ['view', 'ls', 'glob', 'grep', 'edit', 'write', 'multiedit'],
+  analyst: ['view', 'ls', 'glob', 'grep', 'edit', 'write', 'web_search'],
+  reviewer: ['view', 'ls', 'glob', 'grep'],
+} as const;
+
+type RoleClass = keyof typeof ROLE_CLASS_DEFAULT_TOOLS | 'unknown';
+
+function inferRoleClass(roleName: string): RoleClass {
+  const name = roleName.toLowerCase();
+  if (/(engineer|developer|architect|devops|sre|coder|programmer)/.test(name)) {
+    return 'engineer';
+  }
+  if (/(qa|quality|tester)/.test(name)) return 'qa';
+  if (
+    /(manager|project-manage|tracker|coordinator|chief-of-staff|product-owner|scrum)/.test(name)
+  ) {
+    return 'pm';
+  }
+  if (/(designer|ux|ui|graphic)/.test(name)) return 'designer';
+  if (/(analyst|researcher|data-scien|insights)/.test(name)) return 'analyst';
+  if (/(reviewer|auditor|observer|legal|compliance)/.test(name)) return 'reviewer';
+  return 'unknown';
+}
+
+function defaultToolsForRoleClass(roleClass: RoleClass): readonly string[] | undefined {
+  if (roleClass === 'unknown') return undefined;
+  return ROLE_CLASS_DEFAULT_TOOLS[roleClass];
+}
 
 const LEGACY_DEFAULT_ROLE_TOOLS = [
   'filesystem',
@@ -61,6 +112,34 @@ export function upgradeLegacyDefaultRoleTools<T extends Record<string, unknown>>
   return role;
 }
 
+/**
+ * V4 — fill empty `role.tools: []` arrays with a class-appropriate
+ * write surface, and default empty `role.workspaceScopes: []` to
+ * `['.']` for writer-class roles so the policy gate at
+ * `policy.ts:168` doesn't reject every write path. Roles whose
+ * tools are explicitly non-empty are untouched.
+ *
+ * The user can still narrow back to `[]` via the settings UI — the
+ * migration only fires on the initial config-bump from v3 → v4.
+ */
+export function fillEmptyRoleToolsByClass<T extends Record<string, unknown>>(role: T): T {
+  if (!isRecord(role)) return role;
+  const tools = role.tools;
+  if (!Array.isArray(tools) || tools.length > 0) return role;
+  const roleName = typeof role.name === 'string' ? role.name : '';
+  const classDefaults = defaultToolsForRoleClass(inferRoleClass(roleName));
+  if (!classDefaults) return role;
+  const scopes = Array.isArray(role.workspaceScopes) ? role.workspaceScopes : [];
+  const needsScope = classDefaults.some((tool) =>
+    ['edit', 'write', 'multiedit', 'filesystem', 'shell'].includes(tool),
+  );
+  return {
+    ...role,
+    tools: [...classDefaults],
+    ...(scopes.length === 0 && needsScope ? { workspaceScopes: ['.'] } : {}),
+  } as T;
+}
+
 function migrateToV3(config: Record<string, unknown>): Record<string, unknown> {
   const roles = Array.isArray(config.roles)
     ? config.roles.map((role) => (isRecord(role) ? upgradeLegacyDefaultRoleTools(role) : role))
@@ -74,6 +153,17 @@ function migrateToV3(config: Record<string, unknown>): Record<string, unknown> {
     configVersion: TEAM_CONFIG_VERSION,
     roles,
     tools,
+  };
+}
+
+function migrateToV4(config: Record<string, unknown>): Record<string, unknown> {
+  const roles = Array.isArray(config.roles)
+    ? config.roles.map((role) => (isRecord(role) ? fillEmptyRoleToolsByClass(role) : role))
+    : config.roles;
+  return {
+    ...config,
+    configVersion: TEAM_CONFIG_VERSION,
+    roles,
   };
 }
 
@@ -93,15 +183,19 @@ export interface TeamConfigMigrationResult {
 export function migrateAgentTeamConfig(input: unknown): TeamConfigMigrationResult {
   const config = isRecord(input) ? { ...input } : {};
   const fromVersion = typeof config.configVersion === 'number' ? config.configVersion : 1;
-  const upgraded = migrateToV3(config);
+  // Chain v3 then v4 — v3 ensures the tool catalog and legacy-tool
+  // mapping is in place; v4 layers the role-class default fill on
+  // top of the result.
+  const afterV3 = migrateToV3(config);
+  const afterV4 = migrateToV4(afterV3);
   const migrated =
     fromVersion < TEAM_CONFIG_VERSION ||
     needsToolCatalogUpgrade(config) ||
-    JSON.stringify(config.roles ?? []) !== JSON.stringify(upgraded.roles ?? []) ||
-    JSON.stringify(config.tools ?? {}) !== JSON.stringify(upgraded.tools ?? {});
+    JSON.stringify(config.roles ?? []) !== JSON.stringify(afterV4.roles ?? []) ||
+    JSON.stringify(config.tools ?? {}) !== JSON.stringify(afterV4.tools ?? {});
 
   return {
-    config: upgraded,
+    config: afterV4,
     migrated,
     fromVersion,
     toVersion: TEAM_CONFIG_VERSION,

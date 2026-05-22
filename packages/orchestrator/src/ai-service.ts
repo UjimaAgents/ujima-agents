@@ -6,6 +6,7 @@ import type { RepositoryReader } from './services/repository-reader.js';
 import type { TeamStore } from './services/team-store.js';
 import type { ToolService } from './services/tool-service.js';
 import { ALWAYS_AVAILABLE_AGENT_TOOLS } from './tools/index.js';
+import { isMirrorFragileModel } from './services/mirror-guard.js';
 import {
   toModelMessages,
   resolveSpiritModel,
@@ -15,6 +16,7 @@ import { requireTeam } from './utils/require-team.js';
 import { buildRunTranscript } from './utils/run-transcript.js';
 import { buildThreadStateBlock } from './utils/thread-state.js';
 import {
+  buildWakeRunScaffold,
   filterToolsForWakeReplyPolicy,
   resolveWakeReplyPolicy,
 } from './utils/wake-reply-policy.js';
@@ -275,18 +277,31 @@ export class AiService {
     // paraphrase it back as message content). Points the model at
     // the <thread-state> block above so it grounds its decision in
     // facts instead of inventing them.
-    const wakeRunScaffold = wakeReplyPolicy.scaffoldBlock;
+    const resolvedModelId = (model as { modelId?: unknown }).modelId;
+    const modelIdString = typeof resolvedModelId === 'string' ? resolvedModelId : '';
+    const wakeRunScaffoldText = buildWakeRunScaffold({
+      policy: wakeReplyPolicy,
+      wakeReason: wakeReasonForPalette,
+      mirrorFragile: isMirrorFragileModel(modelIdString),
+    });
     const goalSuffix = input.systemPromptSuffix;
-    const combinedSuffix = [goalSuffix, wakeRunScaffold].filter(Boolean).join('\n\n');
+    const combinedSuffix = [goalSuffix, wakeRunScaffoldText].filter(Boolean).join('\n\n');
     const systemPrompt = combinedSuffix ? `${system}\n\n${combinedSuffix}` : system;
 
+    // Self-followup wakes routinely produce multi-section
+    // deliverables (the scaffold now nudges agents to write them to
+    // disk, but compacted/short messages and small deliverables still
+    // get posted inline). 1200 tokens is too tight for a task list +
+    // its delivery note; bump to 4096 so the model has room to finish
+    // even when it ignores the "write to a file first" rule.
+    const turnMaxOutputTokens = wakeReasonForPalette === 'self-followup' ? 4096 : 1200;
     return runAgentLoop({
       model,
       system: systemPrompt,
       messages,
       tools: toolDefs,
       stopWhen: isLoopFinished(),
-      maxOutputTokens: 1200,
+      maxOutputTokens: turnMaxOutputTokens,
       // Lower temperature for mandatory mention wakes: at 0.2 the model is
       // more willing to commit to a structured posting tool. Other runs keep
       // the shared default.

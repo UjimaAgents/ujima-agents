@@ -56,4 +56,15 @@ logs
 ujima_agents_runtime_plan.md
 apps/api/.playwright-mcp/page-2026-05-20T16-55-01-988Z.yml
 apps/api/.playwright-mcp/page-2026-05-20T16-55-23-590Z.yml
-apps/api/.playwright-mcp/page-2026-05-20T16-55-28-120Z.yml
+apps/api/.playwright-mcp/*
+apps/api/google_search_features_snapshot.md
+apps/api/google_search_results_snapshot.md
+apps/api/google_homepage_snapshot.md
+apps/api/people_section_snapshot.md
+apps/api/dashboard_page.md
+apps/api/job_and_pay_page.md
+apps/api/login_page_after_fill.md
+.gitignore
+apps/api/login_page_snapshot.md
+apps/api/settings_page_snapshot.md
+apps/api/settings_snapshot.md

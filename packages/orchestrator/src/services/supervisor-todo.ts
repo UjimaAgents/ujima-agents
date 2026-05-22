@@ -36,7 +36,15 @@ export interface SupervisorTodoCheckInput {
 
 export interface SupervisorTodoListInput {
   organizationId: string;
-  taskSessionId: string;
+  /**
+   * One of `taskSessionId` or `channelId` is required. Bet 2 added
+   * `channelId` so the goals rail (and any future channel-scoped UI)
+   * can list "open work in this channel" without first looking up
+   * the task session. Write paths (add/check) remain session-scoped
+   * — the channel-scoped read just unions across sessions.
+   */
+  taskSessionId?: string;
+  channelId?: string;
   status?: TodoStatus;
   memberId?: string;
 }
@@ -46,6 +54,15 @@ export class SupervisorTodoService {
 
   add(input: SupervisorTodoAddInput): Todo {
     const now = new Date().toISOString();
+    // Backfill channelId from the task session so channel-scoped
+    // reads (goals rail + Tasks tab) surface supervisor-created
+    // todos. Without this, `listTodosForChannel` filters strictly on
+    // todos.channel_id and session-only todos disappear from the
+    // channel views. Best-effort — if the task session is missing or
+    // its channel id is absent, we leave channelId undefined and the
+    // legacy session-only behaviour is preserved.
+    const session = this.repo.getTaskSession(input.organizationId, input.taskSessionId);
+    const channelId = session?.channelId;
     const todo = TodoSchema.parse({
       id: randomUUID(),
       organizationId: input.organizationId,
@@ -55,6 +72,7 @@ export class SupervisorTodoService {
       title: input.body,
       status: 'pending' as TodoStatus,
       notes: input.notes ?? '',
+      channelId,
       createdAt: now,
       updatedAt: now,
     });
@@ -86,6 +104,17 @@ export class SupervisorTodoService {
   }
 
   list(input: SupervisorTodoListInput): Todo[] {
+    if (input.channelId && this.repo.listTodosForChannel) {
+      return this.repo.listTodosForChannel(input.organizationId, input.channelId, {
+        status: input.status,
+        memberId: input.memberId,
+      });
+    }
+    if (!input.taskSessionId) {
+      throw new Error(
+        'SupervisorTodoService.list requires either taskSessionId or channelId',
+      );
+    }
     return this.repo.listTodosForSession(input.organizationId, input.taskSessionId, {
       status: input.status,
       memberId: input.memberId,
