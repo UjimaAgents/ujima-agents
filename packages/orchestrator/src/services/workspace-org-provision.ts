@@ -16,6 +16,39 @@ export function copyProviderCredentials(
   }
 }
 
+function getGrantableMemberOwner(
+  repo: ApiRepository,
+  templateOrganizationId: string,
+  templateMemberId: string,
+): GrantableMemberOwner | null {
+  const authUser = repo.getAuthUserByMember(templateOrganizationId, templateMemberId);
+  if (!authUser) return null;
+  const stored = repo.getAuthUserCredentials(
+    templateOrganizationId,
+    authUser.email.trim().toLowerCase(),
+  );
+  if (!stored) return null;
+
+  const templateMember = repo.getMember(templateOrganizationId, templateMemberId);
+  if (!templateMember || templateMember.kind !== 'human') return null;
+
+  return { stored, templateMember };
+}
+
+interface GrantableMemberOwner {
+  stored: NonNullable<ReturnType<ApiRepository['getAuthUserCredentials']>>;
+  templateMember: { name: string };
+}
+
+export function assertGrantableOwnerFromMemberOrg(
+  repo: ApiRepository,
+  templateOrganizationId: string,
+  templateMemberId: string,
+): void {
+  if (getGrantableMemberOwner(repo, templateOrganizationId, templateMemberId)) return;
+  throw new Error('current user has no login-capable human credentials for this workspace');
+}
+
 function saveWorkspaceOwner(
   repo: ApiRepository,
   stored: NonNullable<ReturnType<ApiRepository['getAuthUserCredentials']>>,
@@ -51,29 +84,17 @@ export function grantWorkspaceOwnerForMember(
   templateMemberId: string,
   newOrganizationId: string,
 ): void {
-  const authUser = repo.getAuthUserByMember(templateOrganizationId, templateMemberId);
-  if (!authUser) {
-    throw new Error('current user has no credentials for this workspace');
-  }
-  const stored = repo.getAuthUserCredentials(
-    templateOrganizationId,
-    authUser.email.trim().toLowerCase(),
-  );
-  if (!stored) {
-    throw new Error('current user credentials were not found');
-  }
-
-  const templateMember = repo.getMember(templateOrganizationId, templateMemberId);
-  if (!templateMember || templateMember.kind !== 'human') {
-    throw new Error('only human members can own a workspace');
+  const grantable = getGrantableMemberOwner(repo, templateOrganizationId, templateMemberId);
+  if (!grantable) {
+    throw new Error('current user has no login-capable human credentials for this workspace');
   }
 
   saveWorkspaceOwner(
     repo,
-    stored,
+    grantable.stored,
     newOrganizationId,
     randomUUID(),
-    templateMember.name,
+    grantable.templateMember.name,
   );
 }
 

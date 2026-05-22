@@ -292,9 +292,9 @@ function parseWorkspaceWriteScope(scope: string): ParsedFilesystemScope | null {
 
 /**
  * Normalizes approval scope strings for grant matching.
- * - Grant mode (family=false): full scope including shell args and fetch/download URLs.
- * - Family mode (family=true): shell drops args; fetch/download URLs omitted.
- * - Paths are posix-normalized; legacy write:/edit:/download: shapes map to filesystem grants.
+ * - Grant mode (family=false): full scope including shell args and download URLs.
+ * - Family mode (family=true): shell drops args; download keeps its URL.
+ * - Paths are posix-normalized; legacy write:/edit: shapes map to filesystem grants.
  */
 function canonicalizeApprovalScope(scope: string, family: boolean): string {
   const shell = parseShellScope(scope);
@@ -322,14 +322,16 @@ function canonicalizeApprovalScope(scope: string, family: boolean): string {
           resourcePath?: unknown;
           url?: unknown;
         };
-        if (typeof parsed.resourcePath === 'string' && parsed.resourcePath.trim()) {
-          return `filesystem:${JSON.stringify({
-            action: 'write',
-            resourcePath: normalizeApprovalPath(parsed.resourcePath),
+        const resourcePath =
+          typeof parsed.resourcePath === 'string' && parsed.resourcePath.trim()
+            ? normalizeApprovalPath(parsed.resourcePath)
+            : undefined;
+        const url = typeof parsed.url === 'string' ? parsed.url.trim() : '';
+        if (resourcePath || url) {
+          return `download:${JSON.stringify({
+            ...(resourcePath ? { resourcePath } : {}),
+            ...(url ? { url } : {}),
           })}`;
-        }
-        if (!family && typeof parsed.url === 'string' && parsed.url.trim()) {
-          return `download:${JSON.stringify({ url: parsed.url.trim() })}`;
         }
       } catch {
         /* fall through */

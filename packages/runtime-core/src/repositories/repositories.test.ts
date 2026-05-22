@@ -713,6 +713,52 @@ test('hasApprovalGrant ignores write payload churn for the same file target', ()
   ).toBe(true);
 });
 
+test('hasApprovalGrant keeps download grants tied to their source URL', () => {
+  const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
+  const orgId = randomUUID();
+  repo.saveOrganization(
+    OrganizationSchema.parse({
+      id: orgId,
+      name: 'Download Grant Org',
+      workspace: { root: '/tmp/download-grant-org', roleScopes: {} },
+    }),
+  );
+
+  repo.saveApproval({
+    id: randomUUID(),
+    organizationId: orgId,
+    runId: randomUUID(),
+    toolCallId: randomUUID(),
+    requestedBy: 'agent-1',
+    resourceType: 'file',
+    resourcePath: '/tmp/report.csv',
+    action: 'write',
+    status: 'approved',
+    reason: `grant:always_allow:scope=${encodeURIComponent(
+      'download:{"resourcePath":"/tmp/report.csv","url":"https://one.example/report.csv"}',
+    )};note=legacy`,
+    createdAt: new Date().toISOString(),
+    resolvedAt: new Date().toISOString(),
+  });
+
+  expect(
+    repo.hasApprovalGrant({
+      organizationId: orgId,
+      resourceType: 'file',
+      action: 'write',
+      approvalScope: 'download:{"resourcePath":"/tmp/report.csv","url":"https://one.example/report.csv"}',
+    }),
+  ).toBe(true);
+  expect(
+    repo.hasApprovalGrant({
+      organizationId: orgId,
+      resourceType: 'file',
+      action: 'write',
+      approvalScope: 'download:{"resourcePath":"/tmp/report.csv","url":"https://two.example/report.csv"}',
+    }),
+  ).toBe(false);
+});
+
 test('hasApprovalGrant reuses allow_family shell grants for later args variants', () => {
   const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
   const orgId = randomUUID();

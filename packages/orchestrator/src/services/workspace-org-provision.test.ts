@@ -3,6 +3,7 @@ import { MemberSchema } from '@ujima/shared';
 import type { ApiRepository } from './repository-reader.js';
 import {
   assertGrantableOwnerFromParentOrg,
+  assertGrantableOwnerFromMemberOrg,
   grantWorkspaceOwnerFromParentOrg,
 } from './workspace-org-provision.js';
 
@@ -55,6 +56,16 @@ function createRepoStub(input: {
 }
 
 describe('grantWorkspaceOwnerFromParentOrg', () => {
+  it('throws when the member owner has no login-capable credentials', () => {
+    const repo = createRepoStub({
+      humans: [{ id: 'human-no-auth', name: 'Human', hasAuthUser: false }],
+    });
+
+    expect(() =>
+      assertGrantableOwnerFromMemberOrg(repo, 'parent-org', 'human-no-auth'),
+    ).toThrow(/no login-capable human credentials/i);
+  });
+
   it('throws when the parent org has no grantable human owner', () => {
     const repo = createRepoStub({
       humans: [{ id: 'human-no-auth', name: 'Human', hasAuthUser: false }],

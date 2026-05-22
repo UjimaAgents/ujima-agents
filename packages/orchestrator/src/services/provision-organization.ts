@@ -7,6 +7,7 @@ import type { TeamStore } from './team-store.js';
 import { assertWorkspaceRootPathExists } from './workspace-root.js';
 import {
   assertGrantableOwnerFromParentOrg,
+  assertGrantableOwnerFromMemberOrg,
   copyProviderCredentials,
   grantWorkspaceOwnerForMember,
   grantWorkspaceOwnerFromParentOrg,
@@ -35,7 +36,6 @@ function grantOwner(
 ): void {
   const ownerMemberId = randomUUID();
   if (owner.kind === 'parent') {
-    assertGrantableOwnerFromParentOrg(repo, owner.parentOrganizationId);
     grantWorkspaceOwnerFromParentOrg(
       repo,
       owner.parentOrganizationId,
@@ -59,6 +59,26 @@ function grantOwner(
  */
 export function provisionOrganization(input: ProvisionOrganizationInput): Organization {
   const resolvedRoot = assertWorkspaceRootPathExists(input.workspaceRoot);
+  const team = loadAgentTeam({
+    ...input.teamConfig,
+    name: input.name,
+    workspace: {
+      ...(typeof input.teamConfig.workspace === 'object' && input.teamConfig.workspace
+        ? input.teamConfig.workspace
+        : {}),
+      root: resolvedRoot,
+    },
+  });
+
+  if (input.owner.kind === 'parent') {
+    assertGrantableOwnerFromParentOrg(input.repo, input.owner.parentOrganizationId);
+  } else {
+    assertGrantableOwnerFromMemberOrg(
+      input.repo,
+      input.owner.templateOrganizationId,
+      input.owner.templateMemberId,
+    );
+  }
 
   const organization = OrganizationSchema.parse({
     id: input.organizationId,
@@ -77,16 +97,6 @@ export function provisionOrganization(input: ProvisionOrganizationInput): Organi
     input.organizationId,
   );
 
-  const team = loadAgentTeam({
-    ...input.teamConfig,
-    name: input.name,
-    workspace: {
-      ...(typeof input.teamConfig.workspace === 'object' && input.teamConfig.workspace
-        ? input.teamConfig.workspace
-        : {}),
-      root: resolvedRoot,
-    },
-  });
   persistTeamConfig(input.repo, input.organizationId, team);
   const configSync = new ConfigSyncService(input.repo, input.teamStore);
   configSync.reconcileTeamConfig({

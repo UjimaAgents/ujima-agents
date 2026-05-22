@@ -225,6 +225,59 @@ describe('ApprovalService', () => {
     expect(saved).toBe(0);
   });
 
+  it('does not reuse a pending download approval for a different source URL', () => {
+    const oldScope = 'download:{"resourcePath":"/tmp/report.csv","url":"https://one.example/report.csv"}';
+    const nextScope = 'download:{"resourcePath":"/tmp/report.csv","url":"https://two.example/report.csv"}';
+    const approval = {
+      id: 'ap-1',
+      organizationId: 'org-1',
+      runId: 'run-1',
+      toolCallId: 'tool-1',
+      requestedBy: 'agent-1',
+      resourceType: 'file',
+      resourcePath: '/tmp/report.csv',
+      action: 'write',
+      status: 'pending',
+      reason: `Tool action requires approval;scope=${encodeURIComponent(oldScope)}`,
+      createdAt: '2026-05-04T00:00:00.000Z',
+      resolvedAt: undefined,
+    };
+
+    let saved = 0;
+    const repo = {
+      listPendingApprovals: () => [approval],
+      saveApproval: () => {
+        saved++;
+        return approval;
+      },
+      listMembers: () => [],
+      getRun: () => ({ threadId: 'thread-1' }),
+      getApproval: () => approval,
+      resolveApproval: () => approval,
+    } as never;
+
+    const service = new ApprovalService(
+      repo,
+      { emit: () => undefined } as never,
+      () => undefined,
+    );
+
+    const result = service.requestApproval({
+      organizationId: 'org-1',
+      runId: 'run-1',
+      toolCallId: 'tool-2',
+      requestedBy: 'agent-1',
+      resourceType: 'file',
+      resourcePath: '/tmp/report.csv',
+      action: 'write',
+      reason: `Tool action requires approval;scope=${encodeURIComponent(nextScope)}`,
+      approvalScope: nextScope,
+    });
+
+    expect(result.id).not.toBe('ap-1');
+    expect(saved).toBe(1);
+  });
+
   it('resolves duplicate pending approvals for the same scope together', async () => {
     const shellScope = 'shell:{"cwd":"/workspace","command":"pwd"}';
     interface ApprovalFixture {
