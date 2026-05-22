@@ -81,10 +81,10 @@ export const ORCHESTRATOR_TOOLS = {
 // because hand-offs are a workflow primitive, not a baseline
 // conversational primitive.
 //
-// Mandatory-reply enforcement (the @mention contract) strips
-// `channel.pass` and `self.note` from this set at wake-time in
-// ai-service.ts, keeping the posting tools available so the agent
-// can comply.
+// Mandatory-reply and DM wake policy (`resolveWakeReplyPolicy`) strips
+// `channel.pass` and `self.note` from the palette at wake-time in
+// ai-service.ts and spirit.ts, keeping posting tools available so the
+// agent can comply.
 //
 // Read-only workspace tools (`view`, `ls`, `glob`, `grep`) are
 // baseline because the product mental model is "an employee with a

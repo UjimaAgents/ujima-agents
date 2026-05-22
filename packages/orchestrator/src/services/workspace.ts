@@ -1,20 +1,12 @@
 import { randomUUID } from 'node:crypto';
-import {
-  createStarterAgentTeamConfig,
-  loadAgentTeam,
-  type ProviderConfig,
-} from '@ujima/framework';
+import { createStarterAgentTeamConfig, type ProviderConfig } from '@ujima/framework';
 import type { Organization } from '@ujima/shared';
 import type { AuthService } from './auth.js';
-import { ConfigSyncService } from './config-sync.js';
 import { assertWorkspaceRootPathExists } from './workspace-root.js';
 import type { ApiRepository } from './repository-reader.js';
 import type { TeamStore } from './team-store.js';
-import {
-  copyProviderCredentials,
-  grantWorkspaceOwnerForMember,
-  orgWorkspaceId,
-} from './workspace-org-provision.js';
+import { provisionOrganization } from './provision-organization.js';
+import { orgWorkspaceId } from './workspace-org-provision.js';
 
 export { organizationIdFromWorkspaceId } from './workspace-org-provision.js';
 
@@ -152,21 +144,21 @@ export class WorkspaceService {
       providers: providerConfigsFromCredentials(this.repo, templateOrganizationId),
     });
 
-    const team = loadAgentTeam(teamConfig);
-    const configSync = new ConfigSyncService(this.repo, this.teamStore);
-    const result = configSync.reconcileTeamConfig({
-      team,
+    const organization = provisionOrganization({
+      repo: this.repo,
+      teamStore: this.teamStore,
       organizationId: randomUUID(),
+      name: organizationName,
+      workspaceRoot,
+      teamConfig,
+      organizationChart: templateOrganization.organizationChart,
+      owner: {
+        kind: 'member',
+        templateOrganizationId,
+        templateMemberId: authState.member.id,
+      },
+      credentialSourceOrganizationId: templateOrganizationId,
     });
-    const { organization } = result;
-
-    grantWorkspaceOwnerForMember(
-      this.repo,
-      templateOrganizationId,
-      authState.member.id,
-      organization.id,
-    );
-    copyProviderCredentials(this.repo, templateOrganizationId, organization.id);
 
     const workspaceId = orgWorkspaceId(organization.id);
     const now = Date.now();

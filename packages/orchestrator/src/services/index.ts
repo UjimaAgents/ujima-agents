@@ -94,6 +94,7 @@ export {
 export type { SchedulerServiceOptions } from './scheduler.js';
 export { SettingsService } from './settings.js';
 export {
+  assertGrantableOwnerFromParentOrg,
   copyProviderCredentials,
   grantWorkspaceOwnerForMember,
   grantWorkspaceOwnerFromParentOrg,
@@ -105,6 +106,11 @@ export {
   ensureDirectMessageConversation,
 } from './member-channels.js';
 export { WorkspaceService } from './workspace.js';
+export {
+  migrateUnifiedWorkspaceOrg,
+  ORGANIZATION_WORKSPACE_IDS_KEY,
+} from './workspace-org-migration.js';
+export type { WorkspaceOrgMigrationResult } from './workspace-org-migration.js';
 export type {
   CreateWorkspaceInput,
   ListAccessibleWorkspacesResult,

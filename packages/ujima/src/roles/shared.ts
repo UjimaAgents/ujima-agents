@@ -1,5 +1,4 @@
 export const DEFAULT_ROLE_TOOLS = [
-  "filesystem",
   "view",
   "write",
   "edit",

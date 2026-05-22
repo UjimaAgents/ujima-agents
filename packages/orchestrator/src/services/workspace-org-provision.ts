@@ -86,13 +86,21 @@ export function grantWorkspaceOwnerForMember(
   );
 }
 
-export function grantWorkspaceOwnerFromParentOrg(
+interface GrantableParentOwner {
+  stored: NonNullable<ReturnType<ApiRepository['getAuthUserCredentials']>>;
+  parentMember: { id: string; name: string };
+}
+
+function findGrantableParentOwner(
   repo: ApiRepository,
   parentOrganizationId: string,
-  newOrganizationId: string,
-  ownerMemberId: string,
-): void {
-  for (const parentMember of repo.listMembers(parentOrganizationId).filter((m) => m.kind === 'human')) {
+): GrantableParentOwner | null {
+  const humans = repo.listMembers(parentOrganizationId).filter((m) => m.kind === 'human');
+  const ordered = [
+    ...humans.filter((m) => m.roleName === 'owner'),
+    ...humans.filter((m) => m.roleName !== 'owner'),
+  ];
+  for (const parentMember of ordered) {
     const authUser = repo.getAuthUserByMember(parentOrganizationId, parentMember.id);
     if (!authUser) continue;
     const stored = repo.getAuthUserCredentials(
@@ -100,7 +108,38 @@ export function grantWorkspaceOwnerFromParentOrg(
       authUser.email.trim().toLowerCase(),
     );
     if (!stored) continue;
-    saveWorkspaceOwner(repo, stored, newOrganizationId, ownerMemberId, parentMember.name);
-    return;
+    return { stored, parentMember };
   }
+  return null;
+}
+
+export function assertGrantableOwnerFromParentOrg(
+  repo: ApiRepository,
+  parentOrganizationId: string,
+): void {
+  if (findGrantableParentOwner(repo, parentOrganizationId)) return;
+  throw new Error(
+    `parent organization "${parentOrganizationId}" has no human member with login credentials to seed a workspace owner`,
+  );
+}
+
+export function grantWorkspaceOwnerFromParentOrg(
+  repo: ApiRepository,
+  parentOrganizationId: string,
+  newOrganizationId: string,
+  ownerMemberId: string,
+): void {
+  const eligible = findGrantableParentOwner(repo, parentOrganizationId);
+  if (!eligible) {
+    throw new Error(
+      `parent organization "${parentOrganizationId}" has no human member with login credentials to seed a workspace owner`,
+    );
+  }
+  saveWorkspaceOwner(
+    repo,
+    eligible.stored,
+    newOrganizationId,
+    ownerMemberId,
+    eligible.parentMember.name,
+  );
 }

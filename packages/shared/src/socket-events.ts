@@ -416,6 +416,7 @@ export type RunEmptyCompletionEvent = z.infer<typeof RunEmptyCompletionEventSche
 export const DecisionVerificationFailureSchema = z.enum([
   'not_addressed_to_me_but_self_was_mentioned',
   'not_addressed_to_me_but_name_referenced',
+  'not_addressed_to_me_in_direct_message',
   'already_handled_but_no_prior_responder',
   'already_handled_cited_message_not_found',
   'already_handled_quoted_text_not_present',

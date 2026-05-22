@@ -1,20 +1,15 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { loadAgentTeam } from '@ujima/framework';
+import type { Organization } from '@ujima/shared';
 import {
   ACTIVE_WORKSPACE_SETTING_KEY,
-  ConfigSyncService,
   TEAM_CONFIG_SETTING_KEY,
-  copyProviderCredentials,
-  grantWorkspaceOwnerFromParentOrg,
-  orgWorkspaceId,
-  persistTeamConfig,
-  type ApiRepository,
-  type TeamStore,
-} from '@ujima/orchestrator';
-import { OrganizationSchema, type Organization } from '@ujima/shared';
-import { syncWorkspacesFromOrganizations, type WorkspaceStore } from './workspaces.js';
+} from './config-sync.js';
+import type { ApiRepository } from './repository-reader.js';
+import type { TeamStore } from './team-store.js';
+import { assertGrantableOwnerFromParentOrg, orgWorkspaceId } from './workspace-org-provision.js';
+import { provisionOrganization } from './provision-organization.js';
 
 export const ORGANIZATION_WORKSPACE_IDS_KEY = 'organization_workspace_ids';
 const MIGRATION_DONE_KEY = 'workspace_org_unified_v1';
@@ -25,9 +20,65 @@ export interface WorkspaceCatalogRow {
   label: string | null;
 }
 
+export interface WorkspaceCatalogStore {
+  list(): WorkspaceCatalogRow[];
+  get(id: string): WorkspaceCatalogRow | undefined;
+  create(input: {
+    id?: string;
+    root_path?: string | null;
+    label?: string | null;
+  }): WorkspaceCatalogRow;
+  update(
+    id: string,
+    patch: Partial<Pick<WorkspaceCatalogRow, 'root_path' | 'label'>>,
+  ): WorkspaceCatalogRow | undefined;
+}
+
 export interface WorkspaceOrgMigrationResult {
   migrated: boolean;
   splits: { fromOrganizationId: string; toOrganizationId: string; workspaceId: string }[];
+}
+
+function upsertOrganizationWorkspace(
+  store: WorkspaceCatalogStore,
+  organization: { id: string; name: string; workspace: { root: string } },
+): void {
+  const root = organization.workspace?.root?.trim();
+  if (!root) return;
+
+  const workspaceId = `ws_${organization.id}`;
+  const normalizedRoot = resolve(root);
+  const label = organization.name.trim() || 'Workspace';
+  const existing = store.get(workspaceId);
+
+  if (!existing) {
+    store.create({
+      id: workspaceId,
+      root_path: normalizedRoot,
+      label,
+    });
+    return;
+  }
+
+  const patch: Partial<Pick<WorkspaceCatalogRow, 'root_path' | 'label'>> = {};
+  if (existing.root_path !== normalizedRoot) {
+    patch.root_path = normalizedRoot;
+  }
+  if (label && existing.label !== label) {
+    patch.label = label;
+  }
+  if (Object.keys(patch).length > 0) {
+    store.update(workspaceId, patch);
+  }
+}
+
+function syncWorkspacesFromOrganizations(
+  store: WorkspaceCatalogStore,
+  organizations: readonly { id: string; name: string; workspace: { root: string } }[],
+): void {
+  for (const organization of organizations) {
+    upsertOrganizationWorkspace(store, organization);
+  }
 }
 
 function readLinkedWorkspaceIds(repo: ApiRepository, organizationId: string): Set<string> {
@@ -71,7 +122,7 @@ function resolvePrimaryWorkspaceId(
 function splitWorkspaceToOrganization(input: {
   repo: ApiRepository;
   teamStore: TeamStore;
-  workspaces: WorkspaceStore;
+  workspaces: WorkspaceCatalogStore;
   parentOrganization: Organization;
   workspace: WorkspaceCatalogRow;
 }): string {
@@ -84,6 +135,8 @@ function splitWorkspaceToOrganization(input: {
   if (!existsSync(resolvedRoot)) {
     throw new Error(`workspace "${workspace.id}" root "${resolvedRoot}" does not exist on disk`);
   }
+  assertGrantableOwnerFromParentOrg(repo, parentOrganization.id);
+
   const newOrganizationId = randomUUID();
   const name = workspaceLabel(workspace, resolvedRoot);
 
@@ -91,41 +144,20 @@ function splitWorkspaceToOrganization(input: {
   const baseConfig = storedTeam
     ? (JSON.parse(storedTeam) as Record<string, unknown>)
     : {};
-  const teamConfig = {
-    ...baseConfig,
-    name,
-    workspace: {
-      root: resolvedRoot,
-      roleScopes: {} as Record<string, string[]>,
-    },
-  };
 
-  const organization = OrganizationSchema.parse({
-    id: newOrganizationId,
-    name,
-    workspace: {
-      root: resolvedRoot,
-      roleScopes: {},
-    },
-    organizationChart: parentOrganization.organizationChart,
-  });
-  repo.saveOrganization(organization);
-
-  const team = loadAgentTeam(teamConfig);
-  persistTeamConfig(repo, newOrganizationId, team);
-
-  const configSync = new ConfigSyncService(repo, teamStore);
-  configSync.reconcileTeamConfig({
-    team,
+  const organization = provisionOrganization({
+    repo,
+    teamStore,
     organizationId: newOrganizationId,
+    name,
+    workspaceRoot: resolvedRoot,
+    teamConfig: baseConfig,
+    organizationChart: parentOrganization.organizationChart,
+    owner: { kind: 'parent', parentOrganizationId: parentOrganization.id },
+    credentialSourceOrganizationId: parentOrganization.id,
   });
-
-  const newOwnerId = randomUUID();
-  grantWorkspaceOwnerFromParentOrg(repo, parentOrganization.id, newOrganizationId, newOwnerId);
-  copyProviderCredentials(repo, parentOrganization.id, newOrganizationId);
 
   syncWorkspacesFromOrganizations(workspaces, [organization]);
-
   return newOrganizationId;
 }
 
@@ -158,7 +190,7 @@ function markMigrationComplete(repo: ApiRepository, organizationId: string): voi
 
 function alignOrganizationToWorkspace(
   repo: ApiRepository,
-  workspaces: WorkspaceStore,
+  workspaces: WorkspaceCatalogStore,
   organization: Organization,
   workspaceId: string,
 ): Organization {
@@ -185,7 +217,7 @@ function alignOrganizationToWorkspace(
 export function migrateUnifiedWorkspaceOrg(input: {
   repo: ApiRepository;
   teamStore: TeamStore;
-  workspaces: WorkspaceStore;
+  workspaces: WorkspaceCatalogStore;
   logger?: { info: (msg: string, meta?: Record<string, unknown>) => void };
 }): WorkspaceOrgMigrationResult {
   const { repo, teamStore, workspaces, logger } = input;
@@ -266,7 +298,7 @@ export function migrateUnifiedWorkspaceOrg(input: {
   }
 
   return {
-    migrated: splits.length > 0 || repo.listOrganizations().length > 0,
+    migrated: splits.length > 0,
     splits,
   };
 }

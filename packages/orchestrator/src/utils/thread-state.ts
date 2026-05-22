@@ -22,8 +22,14 @@ export interface BuildThreadStateInput {
   currentMember: { id: string; name?: string };
   sourceMessageId?: string | null;
   members: Member[];
+  /** Thread id — used to detect 1:1 DM threads (`dm:…`). */
+  threadId?: string;
   /** How many recent messages to surface in the block. Default 6. */
   recentLimit?: number;
+}
+
+export function isDirectMessageThread(threadId: string | undefined): boolean {
+  return !!threadId?.startsWith('dm:');
 }
 
 const DEFAULT_RECENT = 6;
@@ -87,10 +93,20 @@ export function buildThreadStateBlock(input: BuildThreadStateInput): string | nu
     : [];
 
   const selfName = input.currentMember.name ?? input.currentMember.id;
+  const isDmThread = isDirectMessageThread(input.threadId);
   const selfAddressedExplicit = sourceMessage
     ? (sourceMessage.mentions ?? []).includes(input.currentMember.id)
     : false;
-  const selfAddressedImplicit = implicitNameReferences.includes(selfName);
+  let selfAddressedImplicit = implicitNameReferences.includes(selfName);
+  // In a 1:1 DM, any message from the other participant is addressed to you.
+  // @mentions and name tokens are optional; channel-style pass rules do not apply.
+  if (
+    isDmThread &&
+    sourceMessage &&
+    sourceMessage.senderId !== input.currentMember.id
+  ) {
+    selfAddressedImplicit = true;
+  }
 
   // ---------- render ----------
   const lines: string[] = [];
@@ -114,6 +130,7 @@ export function buildThreadStateBlock(input: BuildThreadStateInput): string | nu
 
   if (sourceMessage) {
     lines.push('  <addressing>');
+    lines.push(`    <conversation-kind>${isDmThread ? 'dm' : 'channel'}</conversation-kind>`);
     lines.push(
       `    <source-message-id>${escapeBody(sourceMessage.id)}</source-message-id>`,
     );

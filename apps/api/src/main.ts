@@ -7,7 +7,6 @@ import {
   createFileSecretStore,
   createJsonLogger,
   createRuntimeHost,
-  migrateUnifiedWorkspaceOrg,
   Repository,
 } from '@ujima/runtime-core';
 import type { AgentDef, MCPDef, TeamDef } from '@ujima/shared';
@@ -17,6 +16,7 @@ import {
   ConfigSyncService,
   createApiServices,
   createTeamStore,
+  migrateUnifiedWorkspaceOrg,
   type PermissionContextBuilder,
 } from '@ujima/orchestrator';
 import { createTransport } from './transport/server.js';

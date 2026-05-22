@@ -32,5 +32,8 @@ export {
   SHARED_AGENT_SYSTEM_PROMPT,
   buildEnvironmentContext,
   COLLABORATION_PROTOCOL,
+  buildCollaborationProtocol,
+  buildSharedAgentSystemPrompt,
   buildTeamHierarchySection,
+  type ConversationKind,
 } from "./agent-prompt.js";

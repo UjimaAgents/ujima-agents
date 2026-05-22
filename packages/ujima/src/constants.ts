@@ -63,7 +63,7 @@ export const DEFAULT_TOOL_CATALOG: Record<string, ToolCapability> = {
   grep: {
     id: 'grep',
     name: 'Grep',
-    description: 'Search visible workspace files for matching lines, then use filesystem.read for a focused window around the hit.',
+    description: 'Search visible workspace files for matching lines, then use view for a focused window around the hit.',
     actions: ['read'],
     pathScopes: ['.'],
     requiresApproval: false,

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ArrowDown } from "lucide-react";
+import { ArrowDown, Loader2 } from "lucide-react";
 import { RunTraceListResponseSchema, type RunTraceEntry } from "@ujima/api-schema";
 import { buildHistoricalTraceSteps } from "../reasoning-trace";
 import { TraceStep, type TraceStepData } from "./chat/details-sidebar";
@@ -30,6 +30,18 @@ function matchesTraceFilter(step: TraceStepData, filter: "all" | "errors" | "fil
   if (filter === "shell") return !!step.terminal;
   if (filter === "search") return !!step.webSearch;
   return true;
+}
+
+function TraceEmpty({ label, detail, loading }: { label: string; detail?: string; loading?: boolean }) {
+  return (
+    <div className="rounded-lg border border-dashed border-foreground/10 px-3 py-4 text-xs text-foreground/50">
+      <div className="flex items-center gap-2 font-medium text-foreground/60">
+        {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+        {label}
+      </div>
+      {detail ? <p className="mt-1 text-[11px] leading-4 text-foreground/40">{detail}</p> : null}
+    </div>
+  );
 }
 
 export function ReasoningTracePanel({
@@ -255,7 +267,8 @@ export function ReasoningTracePanel({
 
   const filterBar = useMemo(
     () => (
-      <div className="sticky top-0 z-10 -mx-1 flex flex-wrap gap-1.5 bg-background/95 pb-3 pt-1.5 backdrop-blur-sm px-1.5">
+      <div className="sticky top-0 z-10 -mx-1 bg-background/95 px-1.5 pb-3 pt-1.5 backdrop-blur-sm">
+        <div className="flex flex-wrap gap-1.5">
         {(["all", "errors", "files", "shell", "search"] as const).map((f) => (
           <button
             key={f}
@@ -269,6 +282,7 @@ export function ReasoningTracePanel({
             {f}
           </button>
         ))}
+        </div>
       </div>
     ),
     [filter],
@@ -307,7 +321,12 @@ export function ReasoningTracePanel({
             <TraceStep key={row.key} step={row.step} isLast={row.isLast} />
           ))}
         </div>
-        {traceEmptyLabel ? <p className="px-1 text-xs text-foreground/50">{traceEmptyLabel}</p> : null}
+        {traceEmptyLabel ? (
+          <TraceEmpty
+            label={filter === "all" ? "No trace steps yet." : `No ${filter} steps.`}
+            detail={liveSteps.length > 0 ? "The agent is active, but this filter has no matching events." : undefined}
+          />
+        ) : null}
         {loadingMore ? <p className="px-1 text-[10px] text-foreground/40">Loading older traces...</p> : null}
         {error ? <p className="px-1 text-xs text-red-500">{error}</p> : null}
         <div className="h-px w-full" aria-hidden />
@@ -321,11 +340,11 @@ export function ReasoningTracePanel({
   }
 
   if (historyEnabled && history.length === 0) {
-    return <p className="text-xs text-foreground/50">Loading traces...</p>;
+    return <TraceEmpty label="Loading traces..." loading />;
   }
 
   if (history.length === 0) {
-    return <p className="text-xs text-foreground/50">{error ?? "No trace steps."}</p>;
+    return <TraceEmpty label={error ?? "No trace steps yet."} detail="Reasoning and tool activity will appear here while the agent works." />;
   }
 
   return <div className="flex flex-col gap-4">{filterBar}{traceList}</div>;

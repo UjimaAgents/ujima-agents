@@ -228,8 +228,8 @@ export class ToolServiceImpl implements ToolService {
     // flows into checkToolPolicy so the mandatory-reply gate fires.
     const wakeReason: WakeReason | null | undefined =
       preparedInvocation.wakeReason ??
-      (this.repo.getRun(preparedInvocation.organizationId, preparedInvocation.runId)
-        ?.wakeReason as WakeReason | null | undefined);
+      (run?.wakeReason as WakeReason | null | undefined);
+    const threadId = preparedInvocation.threadId ?? run?.threadId;
 
     const policy = isSubOperation
       ? { allowed: true, requiresApproval: false, reason: "sub-operation" }
@@ -241,7 +241,7 @@ export class ToolServiceImpl implements ToolService {
           preparedInvocation.toolId,
           preparedInvocation.action,
           preparedInvocation.resourcePath,
-          { spiritRole: preparedInvocation.spiritRole, wakeReason },
+          { spiritRole: preparedInvocation.spiritRole, wakeReason, threadId },
         );
 
     if (!policy.allowed) {
@@ -250,8 +250,6 @@ export class ToolServiceImpl implements ToolService {
         status: "blocked",
         reason: policy.reason,
       });
-      const run = this.repo.getRun(preparedInvocation.organizationId, preparedInvocation.runId);
-      const threadId = preparedInvocation.threadId ?? run?.threadId;
 
       this.realtime.emit(
         SocketEventNames.toolResult,
