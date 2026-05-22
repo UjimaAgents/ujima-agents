@@ -17,6 +17,35 @@ import { apiError, errorMessage } from './route-errors.js';
 import { readSessionToken } from '../session-token.js';
 
 /**
+ * Resolve whether a todo belongs to a given channel for the purpose
+ * of the channel-scoped PATCH route. Mirrors the read-path union in
+ * `listTodosForChannel` — direct `channelId` match, OR membership via
+ * `task_sessions.channel_id` for legacy supervisor-created rows that
+ * predate the channelId backfill. Exported so the rule can be unit-
+ * tested without bringing up the full Fastify transport.
+ */
+export interface ChannelTaskMembership {
+  belongs: boolean;
+  /** True when the row matched only via the task-session join. */
+  viaSession: boolean;
+}
+export function resolveChannelTaskMembership(
+  repo: Pick<ApiRepository, 'getTaskSession'>,
+  todo: { organizationId: string; channelId?: string; taskSessionId?: string },
+  channelId: string,
+): ChannelTaskMembership {
+  if (todo.channelId === channelId) {
+    return { belongs: true, viaSession: false };
+  }
+  if (!todo.taskSessionId) return { belongs: false, viaSession: false };
+  const session = repo.getTaskSession(todo.organizationId, todo.taskSessionId);
+  if (session && session.channelId === channelId) {
+    return { belongs: true, viaSession: true };
+  }
+  return { belongs: false, viaSession: false };
+}
+
+/**
  * Per-channel Tasks tab API.
  *
  * Powers the workspace UI's channel Tasks tab. Two endpoints:
@@ -129,10 +158,14 @@ export function registerChannelTasksRoutes(
       if (!existing) {
         return apiError(reply, 404, 'Todo not found.');
       }
-      // Defence-in-depth: the path id and the todo's channel must
-      // agree, so a client can't smuggle a todo from one channel via
-      // another channel's PATCH route.
-      if (existing.channelId !== req.params.id) {
+      // Membership check — direct channelId OR via task_sessions.
+      // Mirrors the read path so a row that GET surfaces via the
+      // session join also accepts PATCH. Without the session leg,
+      // legacy session-only todos appear in the Tasks tab but
+      // Done/Block/Cancel 404 — exactly the regression this fix
+      // addresses.
+      const membership = resolveChannelTaskMembership(repo, existing, req.params.id);
+      if (!membership.belongs) {
         return apiError(reply, 404, 'Todo not in this channel.');
       }
       const now = new Date().toISOString();
@@ -140,6 +173,11 @@ export function registerChannelTasksRoutes(
         ...existing,
         status: req.body.status,
         notes: req.body.notes ?? existing.notes,
+        // Backfill channelId for legacy session-only rows on first
+        // human touch. After this update, the row takes the fast
+        // (direct) path in subsequent reads and writes — no need to
+        // follow the task_session join every time.
+        channelId: existing.channelId ?? (membership.viaSession ? req.params.id : undefined),
         // Status flips driven by humans count as progress — reset
         // the empty-wake counter so the sweeper doesn't keep
         // escalating a row the human just resolved.
