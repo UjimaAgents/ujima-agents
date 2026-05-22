@@ -76,7 +76,19 @@ describe('WorkspaceStore', () => {
     expect(store.list()).toHaveLength(1);
   });
 
-  it('syncWorkspacesFromOrganizations reuses org workspace id rows with legacy relative roots', () => {
+  it('syncWorkspacesFromOrganizations creates a row per org even when root paths match', () => {
+    const sharedRoot = resolve('/tmp/shared-project');
+    syncWorkspacesFromOrganizations(store, [
+      { id: 'org-a', name: 'Team A', workspace: { root: sharedRoot } },
+      { id: 'org-b', name: 'Team B', workspace: { root: sharedRoot } },
+    ]);
+
+    expect(store.get('ws_org-a')?.root_path).toBe(sharedRoot);
+    expect(store.get('ws_org-b')?.root_path).toBe(sharedRoot);
+    expect(store.list()).toHaveLength(2);
+  });
+
+  it('syncWorkspacesFromOrganizations updates the org workspace id row', () => {
     store.create({
       id: 'ws_org-legacy',
       root_path: './legacy-root',

@@ -11,11 +11,22 @@ import {
   ShieldCheck,
   Users,
 } from "lucide-react";
-import Link from "next/link";
-import { useState } from "react";
-import { useSearchParams } from "next/navigation";
-import type { BootstrapResponse, OrganizationSettingsResponse, ProviderStatus } from "@ujima/api-schema";
+import type {
+  BootstrapResponse,
+  OrganizationSettingsResponse,
+  ProviderStatus,
+  TeamSettingsResponse,
+} from "@ujima/api-schema";
 import type { McpServerPublic } from "@ujima/shared";
+import type { RolePresetTemplate } from "@/features/onboarding/types";
+import { SettingsLayout } from "@/features/settings/shared/settings-layout";
+import { SettingsPageHeader } from "@/features/settings/shared/settings-page-header";
+import {
+  SettingsPageProvider,
+  useSettingsPage,
+} from "@/features/settings/shared/settings-workspace-context";
+import { useSettingsTab } from "@/features/settings/shared/use-settings-tab";
+import type { SettingsNavGroup } from "@/features/settings/shared/settings-nav";
 import { GeneralTab } from "./general-tab";
 import { AgentsTab } from "./agents-tab";
 import { ChannelsTab } from "./channels-tab";
@@ -23,61 +34,61 @@ import { OrgChartTab } from "./org-chart-tab";
 import { PoliciesTab } from "./policies-tab";
 import { ProvidersTab } from "./providers-tab";
 import { SchedulesTab } from "./schedules-tab";
-import { WorkspacesTab } from "./workspaces-tab";
 import { McpsTab } from "./mcps-tab";
+import { WorkspacesTab } from "./workspaces-tab";
 
-type SettingsTabId =
+export type SettingsTabId =
   | "general"
+  | "workspaces"
   | "agents"
   | "channels"
   | "org-chart"
   | "policies"
   | "providers"
   | "schedules"
-  | "workspaces"
   | "mcps";
 
-interface SettingsTab {
-  id: SettingsTabId;
-  label: string;
-  icon: typeof Users;
-}
-
-const TABS: SettingsTab[] = [
-  { id: "general", label: "General", icon: FolderKanban },
-  { id: "agents", label: "Agents & Roles", icon: Users },
-  { id: "channels", label: "Channels", icon: MessageSquare },
-  { id: "org-chart", label: "Organization chart", icon: Building2 },
-  { id: "policies", label: "Policies", icon: ShieldCheck },
-  { id: "providers", label: "Providers", icon: Server },
-  { id: "schedules", label: "Schedules", icon: Clock },
-  { id: "workspaces", label: "Workspaces", icon: Layers },
-  { id: "mcps", label: "MCPs", icon: Plug },
+const VALID_TABS: SettingsTabId[] = [
+  "general",
+  "workspaces",
+  "agents",
+  "channels",
+  "org-chart",
+  "policies",
+  "providers",
+  "schedules",
+  "mcps",
 ];
 
-export interface TeamSettingsData {
-  name: string;
-  workspace: { root: string; roleScopes: Record<string, string[]> };
-  organizationChart: { reportsTo: Record<string, string> };
-  agents: Array<{ name: string; roleName: string; personalityName: string; kind: string }>;
-  roles: Array<{
-    id?: string;
-    name: string;
-    title: string;
-    description: string;
-    instructions: string;
-    kind: string;
-    provider?: string;
-    model?: string;
-    workspaceScopes: string[];
-    tools: string[];
-    channels: string[];
-    skills: string[];
-  }>;
-  channels: Array<{ id?: string; name: string; kind: string; topic: string; memberIds: string[] }>;
-  tools: Record<string, unknown>;
-  policies: { requireApprovalForWrites: boolean; requireApprovalForShell: boolean; workspaceBoundaryMode: string };
-}
+const NAV_GROUPS: SettingsNavGroup<SettingsTabId>[] = [
+  {
+    label: "Workspace",
+    items: [
+      { id: "general", label: "General", icon: FolderKanban },
+      { id: "workspaces", label: "Workspaces", icon: Layers },
+      { id: "policies", label: "Policies", icon: ShieldCheck },
+    ],
+  },
+  {
+    label: "Team",
+    items: [
+      { id: "agents", label: "Agents & Roles", icon: Users },
+      { id: "channels", label: "Channels", icon: MessageSquare },
+      { id: "org-chart", label: "Org chart", icon: Building2 },
+    ],
+  },
+  {
+    label: "Integrations",
+    items: [
+      { id: "providers", label: "Providers", icon: Server },
+      { id: "mcps", label: "MCPs", icon: Plug },
+    ],
+  },
+  {
+    label: "Runtime",
+    items: [{ id: "schedules", label: "Schedules", icon: Clock }],
+  },
+];
 
 export function OrganizationSettingsPage({
   bootstrap,
@@ -85,150 +96,152 @@ export function OrganizationSettingsPage({
   teamSettings,
   providers,
   mcpServers,
+  rolePresets,
 }: {
   bootstrap: BootstrapResponse;
   orgSettings: OrganizationSettingsResponse | null;
-  teamSettings: TeamSettingsData | null;
+  teamSettings: TeamSettingsResponse | null;
   providers: ProviderStatus[];
   mcpServers: McpServerPublic[];
+  rolePresets: RolePresetTemplate[];
 }) {
-  const searchParams = useSearchParams();
-  const [activeTab, setActiveTab] = useState<SettingsTabId>(() => {
-    const tabParam = searchParams?.get("tab");
-    if (tabParam && TABS.some((t) => t.id === tabParam)) return tabParam as SettingsTabId;
-    return "general";
-  });
-  const [orgSettingsState, setOrgSettingsState] = useState(orgSettings);
-  const [teamSettingsState] = useState(teamSettings);
-  const [providersState, setProvidersState] = useState(providers);
-  const [mcpServersState, setMcpServersState] = useState(mcpServers);
+  return (
+    <SettingsPageProvider
+      initial={{
+        orgSettings,
+        teamSettings,
+        members: orgSettings?.members ?? bootstrap.members ?? [],
+        channels: orgSettings?.channels ?? bootstrap.channels ?? [],
+        providers,
+        mcpServers,
+      }}
+    >
+      <OrganizationSettingsContent bootstrap={bootstrap} rolePresets={rolePresets} />
+    </SettingsPageProvider>
+  );
+}
+
+function OrganizationSettingsContent({
+  bootstrap,
+  rolePresets,
+}: {
+  bootstrap: BootstrapResponse;
+  rolePresets: RolePresetTemplate[];
+}) {
+  const { activeTab, setActiveTab } = useSettingsTab(VALID_TABS, "general");
+  const {
+    orgSettings,
+    teamSettings,
+    members,
+    channels,
+    providers,
+    setOrgSettings,
+    setMembers,
+    setChannels,
+    setProviders,
+  } = useSettingsPage();
 
   const orgId = bootstrap.organization?.id ?? "";
+  const organizationName = orgSettings?.organization.name ?? bootstrap.organization?.name ?? "";
   const createdBy = bootstrap.auth.member?.id ?? "";
   const auth = bootstrap.auth;
-  const channels = orgSettingsState?.channels ?? bootstrap.channels ?? [];
-  const members = orgSettingsState?.members ?? bootstrap.members ?? [];
-
-  const onOrgNameUpdate = (name: string) => {
-    setOrgSettingsState((prev) =>
-      prev ? { ...prev, organization: { ...prev.organization, name } } : prev,
-    );
+  const onSettingsUpdate = (patch: { name?: string; workspaceRoot?: string }) => {
+    setOrgSettings((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        organization: {
+          ...prev.organization,
+          ...(patch.name !== undefined ? { name: patch.name } : {}),
+          workspace: {
+            ...prev.organization.workspace,
+            ...(patch.workspaceRoot !== undefined ? { root: patch.workspaceRoot } : {}),
+          },
+        },
+      };
+    });
   };
 
   return (
-    <main className="space-y-6">
-      <section className="overflow-hidden rounded-[28px] border border-zinc-200 bg-white shadow-[0_18px_60px_rgba(15,23,42,0.06)] dark:border-zinc-800 dark:bg-zinc-950">
-        <div className="flex flex-col gap-6 px-6 py-7 md:flex-row md:items-start md:justify-between md:px-8">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-violet-700 dark:text-violet-300">
-              Settings
-            </p>
-            <h1 className="mt-4 text-4xl font-semibold tracking-[-0.04em] text-zinc-950 dark:text-zinc-50">
-              Organization Settings
-            </h1>
-            <p className="mt-4 max-w-2xl text-sm leading-7 text-zinc-600 dark:text-zinc-300">
-              Manage your organization, team, agents, channels, schedules, workspaces, policies, providers, and MCP servers.
-            </p>
-          </div>
-          <Link
-            href="/workspace"
-            className="inline-flex items-center gap-2 rounded-xl border border-zinc-200 bg-white px-4 py-2.5 text-sm font-semibold text-zinc-700 shadow-sm transition hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200 dark:hover:bg-zinc-900"
-          >
-            Back to workspace
-          </Link>
-        </div>
-      </section>
-
-      <div className="rounded-[24px] border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-950">
-        <div className="border-b border-zinc-200 dark:border-zinc-800">
-          <div className="flex flex-wrap gap-6">
-            {TABS.map((tab) => {
-              const Icon = tab.icon;
-              const isActive = tab.id === activeTab;
-              return (
-                <button
-                  key={tab.id}
-                  type="button"
-                  onClick={() => setActiveTab(tab.id)}
-                  className={`inline-flex items-center gap-2 border-b-2 pb-3 text-sm font-medium transition ${
-                    isActive
-                      ? "border-violet-600 text-violet-700 dark:border-violet-400 dark:text-violet-300"
-                      : "border-transparent text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200"
-                  }`}
-                >
-                  <Icon className="h-4 w-4" />
-                  {tab.label}
-                </button>
+    <>
+      <SettingsPageHeader bootstrap={bootstrap} />
+      <SettingsLayout
+        groups={NAV_GROUPS}
+        activeTab={activeTab}
+        onTabChange={setActiveTab}
+      >
+        {activeTab === "general" && (
+          <GeneralTab
+            orgId={orgId}
+            auth={auth}
+            organizationName={organizationName}
+            workspaceRoot={
+              orgSettings?.organization.workspace.root ??
+              teamSettings?.workspace.root ??
+              ""
+            }
+            onUpdate={onSettingsUpdate}
+          />
+        )}
+        {activeTab === "workspaces" && (
+          <WorkspacesTab currentWorkspaceRoot={teamSettings?.workspace.root ?? ""} />
+        )}
+        {activeTab === "agents" && (
+          <AgentsTab
+            orgId={orgId}
+            members={members}
+            teamSettings={teamSettings}
+            channels={channels}
+            providers={providers}
+            rolePresets={rolePresets}
+            onMemberUpdated={(member) => {
+              setMembers((prev) =>
+                prev.map((m) => (m.id === member.id ? { ...m, ...member } : m)),
               );
-            })}
-          </div>
-        </div>
-
-        <div className="mt-6">
-          {activeTab === "general" && (
-            <GeneralTab
-              orgId={orgId}
-              auth={auth}
-              organizationName={bootstrap.organization?.name ?? ""}
-              workspaceRoot={teamSettingsState?.workspace.root ?? ""}
-              onUpdate={onOrgNameUpdate}
-            />
-          )}
-          {activeTab === "agents" && (
-            <AgentsTab
-              orgId={orgId}
-              members={members}
-              teamSettings={teamSettingsState}
-              bootstrap={bootstrap}
-            />
-          )}
-          {activeTab === "channels" && (
-            <ChannelsTab
-              orgId={orgId}
-              channels={channels}
-            />
-          )}
-          {activeTab === "org-chart" && (
-            <OrgChartTab
-              orgId={orgId}
-              members={members}
-              organizationChart={teamSettingsState?.organizationChart ?? { reportsTo: {} }}
-            />
-          )}
-          {activeTab === "policies" && (
-            <PoliciesTab
-              orgId={orgId}
-              policies={teamSettingsState?.policies ?? { requireApprovalForWrites: true, requireApprovalForShell: true, workspaceBoundaryMode: "hard" }}
-            />
-          )}
-          {activeTab === "providers" && (
-            <ProvidersTab
-              orgId={orgId}
-              providers={providersState}
-              onProvidersChange={setProvidersState}
-            />
-          )}
-          {activeTab === "schedules" && (
-            <SchedulesTab />
-          )}
-          {activeTab === "workspaces" && (
-            <WorkspacesTab
-              currentWorkspaceRoot={
-                teamSettingsState?.workspace?.root ?? bootstrap.team?.workspaceRoot
+            }}
+            onMemberCreated={(member) => {
+              setMembers((prev) => [...prev, member]);
+            }}
+          />
+        )}
+        {activeTab === "channels" && (
+          <ChannelsTab
+            orgId={orgId}
+            channels={channels}
+            onChannelsChange={setChannels}
+          />
+        )}
+        {activeTab === "org-chart" && (
+          <OrgChartTab
+            orgId={orgId}
+            members={members}
+            organizationChart={teamSettings?.organizationChart ?? { reportsTo: {} }}
+          />
+        )}
+        {activeTab === "policies" && (
+          <PoliciesTab
+            orgId={orgId}
+            policies={
+              teamSettings?.policies ?? {
+                requireApprovalForWrites: true,
+                requireApprovalForShell: true,
+                workspaceBoundaryMode: "hard",
               }
-            />
-          )}
-          {activeTab === "mcps" && (
-            <McpsTab
-              orgId={orgId}
-              createdBy={createdBy}
-              servers={mcpServersState}
-              members={members}
-              onServersChange={setMcpServersState}
-            />
-          )}
-        </div>
-      </div>
-    </main>
+            }
+          />
+        )}
+        {activeTab === "providers" && (
+          <ProvidersTab
+            orgId={orgId}
+            providers={providers}
+            onProvidersChange={setProviders}
+          />
+        )}
+        {activeTab === "schedules" && <SchedulesTab />}
+        {activeTab === "mcps" && (
+          <McpsTab orgId={orgId} createdBy={createdBy} members={members} />
+        )}
+      </SettingsLayout>
+    </>
   );
 }

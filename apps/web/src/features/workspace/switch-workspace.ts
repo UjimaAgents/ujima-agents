@@ -1,18 +1,39 @@
-export async function switchWorkspace(workspaceId: string): Promise<string> {
-  const response = await fetch(`/api/workspaces/${encodeURIComponent(workspaceId)}/activate`, {
-    method: "POST",
-  });
-  const body = (await response.json().catch(() => null)) as
-    | { workspaceRoot?: string; message?: string }
-    | null;
+import { organizationIdFromWorkspaceId } from "./workspace-ids";
 
-  if (!response.ok) {
-    throw new Error(body?.message ?? "Unable to switch workspace.");
-  }
+export { organizationIdFromWorkspaceId, orgWorkspaceId } from "./workspace-ids";
 
-  return body?.workspaceRoot ?? "";
+export function reloadAfterWorkspaceSwitch(redirectTo?: string): void {
+  window.location.href =
+    redirectTo ?? `${window.location.pathname}${window.location.search}`;
 }
 
-export function reloadAfterWorkspaceSwitch(): void {
-  window.location.href = "/workspace";
+export async function switchOrganization(
+  organizationId: string,
+  redirectTo?: string,
+): Promise<void> {
+  const res = await fetch("/api/auth/switch-org", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ organizationId }),
+  });
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new Error(
+      (body as { message?: string } | null)?.message ?? "Unable to switch workspace",
+    );
+  }
+
+  reloadAfterWorkspaceSwitch(redirectTo);
+}
+
+export async function switchToWorkspace(
+  workspaceId: string,
+  redirectTo?: string,
+): Promise<void> {
+  const organizationId = organizationIdFromWorkspaceId(workspaceId);
+  if (!organizationId) {
+    throw new Error("Invalid workspace id");
+  }
+  await switchOrganization(organizationId, redirectTo);
 }

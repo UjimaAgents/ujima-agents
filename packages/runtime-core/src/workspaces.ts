@@ -140,43 +140,48 @@ export function createWorkspaceStore(raw: DbHandle): WorkspaceStore {
   };
 }
 
-/**
- * Ensures each organization's configured workspace root has a row in
- * `workspaces` (onboarding writes org roots before multi-workspace UI existed).
- */
+interface OrganizationWorkspaceSource {
+  id: string;
+  name: string;
+  workspace: { root: string };
+}
+
+/** One organization → one catalog row: `ws_{organizationId}`. */
+export function upsertOrganizationWorkspace(
+  store: WorkspaceStore,
+  organization: OrganizationWorkspaceSource,
+): Workspace | undefined {
+  const root = organization.workspace?.root?.trim();
+  if (!root) return undefined;
+
+  const workspaceId = `ws_${organization.id}`;
+  const normalizedRoot = resolve(root);
+  const label = organization.name.trim() || 'Workspace';
+  const existing = store.get(workspaceId);
+
+  if (!existing) {
+    return store.create({
+      id: workspaceId,
+      root_path: normalizedRoot,
+      label,
+    });
+  }
+
+  const patch: Partial<Pick<Workspace, 'root_path' | 'label'>> = {};
+  if (existing.root_path !== normalizedRoot) {
+    patch.root_path = normalizedRoot;
+  }
+  if (label && existing.label !== label) {
+    patch.label = label;
+  }
+  return Object.keys(patch).length > 0 ? store.update(workspaceId, patch) : existing;
+}
+
 export function syncWorkspacesFromOrganizations(
   store: WorkspaceStore,
-  organizations: readonly { id: string; name: string; workspace: { root: string } }[],
+  organizations: readonly OrganizationWorkspaceSource[],
 ): void {
-  for (const org of organizations) {
-    const root = org.workspace.root?.trim();
-    if (!root) continue;
-
-    const normalizedRoot = resolve(root);
-    const orgWorkspaceId = `ws_${org.id}`;
-    const existing =
-      store.findByRoot(normalizedRoot) ??
-      store.findByRoot(root) ??
-      store.get(orgWorkspaceId);
-
-    if (!existing) {
-      store.create({
-        id: orgWorkspaceId,
-        root_path: normalizedRoot,
-        label: org.name.trim() || 'Current workspace',
-      });
-      continue;
-    }
-
-    const patch: Partial<Pick<Workspace, 'root_path' | 'label'>> = {};
-    if (existing.root_path !== normalizedRoot) {
-      patch.root_path = normalizedRoot;
-    }
-    if (!existing.label?.trim() && org.name.trim()) {
-      patch.label = org.name.trim();
-    }
-    if (Object.keys(patch).length > 0) {
-      store.update(existing.id, patch);
-    }
+  for (const organization of organizations) {
+    upsertOrganizationWorkspace(store, organization);
   }
 }

@@ -1,5 +1,5 @@
 "use client";
-import { useMemo, useState, useEffect } from "react";
+import { useMemo, useState } from "react";
 import {
   AlertCircle,
   ArrowLeft,
@@ -23,11 +23,14 @@ import {
   X,
 } from "lucide-react";
 import { MIN_TEAM_AGENTS } from "../api-contract";
-import { AGENT_NAME_SUGGESTIONS, getSuggestedAgentName } from "../agent-name-suggestions";
+import { getSuggestedAgentName } from "../agent-name-suggestions";
 import { Avatar } from "../../workspace/components/chat/primitives";
 import { Select } from "@/components/ui/select";
-import { ChannelScopeRow, FieldShell, TextArea, TextInput } from "@/components/ui/form-fields";
-import { ProviderModelFields } from "@/components/ui/provider-model-fields";
+import { FieldShell, TextInput } from "@/components/ui/form-fields";
+import { ChannelFormFields } from "@/features/team/channel-form-fields";
+import { normalizeChannelName } from "@/features/team/channel-form-fields";
+import { OrgChartFields } from "@/features/team/org-chart-fields";
+import { RoleFormFields } from "@/features/team/role-form-fields";
 import {
   OWNER_MANAGER_SENTINEL,
   defaultModelForProvider,
@@ -37,7 +40,9 @@ import {
   type RolePresetTemplate,
   type TeamTabId,
 } from "../types";
-import { PROVIDER_OPTIONS, providerLabelFromToken } from "../provider-catalog";
+import { PROVIDER_OPTIONS } from "@/features/providers/catalog";
+import { ProviderCredentialField } from "@/features/providers/provider-credential-field";
+import { PolicyApprovalFields } from "@/features/providers/policy-approval-fields";
 
 interface OnboardingFormProps {
   step: OnboardingStep;
@@ -73,11 +78,11 @@ function validateStep(stepId: OnboardingStepId, draft: OnboardingDraft, activeTe
 
   if (stepId === "organization" || stepId === "review") {
     if (!draft.organizationName.trim()) {
-      errors.organizationName = "Enter your organization name.";
+      errors.organizationName = "Enter a workspace name.";
     }
 
     if (!draft.workspaceRoot.trim()) {
-      errors.workspaceRoot = "Choose or enter a workspace root.";
+      errors.workspaceRoot = "Choose or enter a project folder.";
     }
   }
 
@@ -468,26 +473,6 @@ function StepFields({
     return byIndustry.filter((template) => matchesSuggestedRole(template, query));
   }, [resolvedActiveRoleIndustry, roleSearch, starterRoleTemplates]);
 
-  useEffect(() => {
-    const handleMessage = (event: MessageEvent) => {
-      if (event.data?.type === "OAUTH_SUCCESS") {
-        const token = event.data.token;
-        if (token) {
-          onDraftChange({
-            ...draft,
-            providers: draft.providers.map((p) =>
-              p.name === "openai-codex" ? { ...p, apiKey: token } : p,
-            ),
-          });
-        } else if (event.data.error) {
-          alert("OAuth Error: " + event.data.error);
-        }
-      }
-    };
-    window.addEventListener("message", handleMessage);
-    return () => window.removeEventListener("message", handleMessage);
-  }, [draft, onDraftChange]);
-
   const openRoleEditor = (roleId?: string, templateName?: string) => {
     if (!roleId) {
     const defaultProvider = draft.providers[0]?.name || "openai";
@@ -562,7 +547,7 @@ function StepFields({
     const trimmedName = roleEditor.name.trim();
     const trimmedAgentName = roleEditor.agentName.trim();
 
-    if (!trimmedName || !trimmedAgentName) {
+    if (!trimmedName || !trimmedAgentName || roleEditor.channelIds.length === 0) {
       return;
     }
 
@@ -688,7 +673,7 @@ function StepFields({
       return;
     }
 
-    const trimmedName = channelEditor.name.trim();
+    const trimmedName = normalizeChannelName(channelEditor.name, channelEditor.mode);
     const trimmedDescription = channelEditor.description.trim();
 
     if (!trimmedName || !trimmedDescription) {
@@ -745,7 +730,7 @@ function StepFields({
         <div className="flex flex-col gap-8">
           <div className="space-y-6">
             <FieldShell
-              label="Organization name"
+              label="Workspace name"
               htmlFor="organizationName"
               hint=""
               error={showError("organizationName") ? errors.organizationName : undefined}
@@ -762,7 +747,7 @@ function StepFields({
             </FieldShell>
 
             <FieldShell
-              label="Workspace root"
+              label="Project folder"
               htmlFor="workspaceRoot"
               hint="Browse opens a native folder dialog when this app runs on your machine (local dev). Hosted installs: type an absolute path."
               error={showError("workspaceRoot") ? errors.workspaceRoot : undefined}
@@ -1142,73 +1127,46 @@ function StepFields({
 
         {activeTeamTab === "org-chart" ? (
           <TeamConfigCard title="Organization chart" description="Order the reporting structure from agent or role on the left to senior on the right.">
-            <div className="space-y-3">
-              {reportRows.map((report) => (
-                <div key={report.id} className="flex flex-nowrap items-center gap-3">
-                  <div className="min-w-0 flex-1 rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-2.5 text-sm font-medium text-zinc-900 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100">
-                    {report.subjectName}
-                  </div>
-                  <div className="flex w-10 shrink-0 items-center justify-center text-sm text-zinc-400">→</div>
-                  <Select
-                    value={report.managerName}
-                    onChange={(event) =>
-                      onDraftChange({
-                        ...draft,
-                        organizationReports: reportRows.map((item) =>
-                          item.id === report.id ? { ...item, managerName: event.target.value } : item,
-                        ),
-                      })
-                    }
-                    className="min-w-0 flex-1"
-                    options={[
-                      ...draft.roles.map((role) => ({ value: role.agentName, label: `${role.agentName} (${role.name})` })),
-                      { value: OWNER_MANAGER_SENTINEL, label: ownerLabel },
-                    ].filter((option) => option.value !== report.subjectName)}
-                  />
-                </div>
-              ))}
-            </div>
+            <OrgChartFields
+              rows={reportRows.map((report) => ({
+                key: report.id,
+                subjectLabel: report.subjectName,
+                managerValue: report.managerName,
+                managerOptions: [
+                  ...draft.roles.map((role) => ({
+                    value: role.agentName,
+                    label: `${role.agentName} (${role.name})`,
+                  })),
+                  { value: OWNER_MANAGER_SENTINEL, label: ownerLabel },
+                ].filter((option) => option.value !== report.subjectName),
+              }))}
+              onManagerChange={(reportId, managerName) =>
+                onDraftChange({
+                  ...draft,
+                  organizationReports: reportRows.map((item) =>
+                    item.id === reportId ? { ...item, managerName } : item,
+                  ),
+                })
+              }
+            />
           </TeamConfigCard>
         ) : null}
 
         {activeTeamTab === "policies" ? (
           <TeamConfigCard title="Policies" description="Configure the default approval and execution policies for the team.">
-            <div className="space-y-4">
-              <label className="flex items-center justify-between rounded-2xl border border-zinc-200 px-4 py-4 dark:border-zinc-800">
-                <span>
-                  <span className="block text-sm font-semibold text-zinc-900 dark:text-zinc-100">Require approval for writes</span>
-                  <span className="mt-1 block text-sm text-zinc-500 dark:text-zinc-400">Agent write operations must be approved before execution.</span>
-                </span>
-                <input
-                  type="checkbox"
-                  checked={draft.policies.requireApprovalForWrites}
-                  onChange={(event) =>
-                    onDraftChange({
-                      ...draft,
-                      policies: { ...draft.policies, requireApprovalForWrites: event.target.checked },
-                    })
-                  }
-                  className="h-4 w-4 rounded border-zinc-300 text-violet-600 focus:ring-violet-500"
-                />
-              </label>
-              <label className="flex items-center justify-between rounded-2xl border border-zinc-200 px-4 py-4 dark:border-zinc-800">
-                <span>
-                  <span className="block text-sm font-semibold text-zinc-900 dark:text-zinc-100">Require approval for shell</span>
-                  <span className="mt-1 block text-sm text-zinc-500 dark:text-zinc-400">Shell execution must be reviewed before commands run.</span>
-                </span>
-                <input
-                  type="checkbox"
-                  checked={draft.policies.requireApprovalForShell}
-                  onChange={(event) =>
-                    onDraftChange({
-                      ...draft,
-                      policies: { ...draft.policies, requireApprovalForShell: event.target.checked },
-                    })
-                  }
-                  className="h-4 w-4 rounded border-zinc-300 text-violet-600 focus:ring-violet-500"
-                />
-              </label>
-            </div>
+            <PolicyApprovalFields
+              variant="checkbox"
+              values={{
+                requireApprovalForWrites: draft.policies.requireApprovalForWrites,
+                requireApprovalForShell: draft.policies.requireApprovalForShell,
+              }}
+              onChange={(key, value) =>
+                onDraftChange({
+                  ...draft,
+                  policies: { ...draft.policies, [key]: value },
+                })
+              }
+            />
           </TeamConfigCard>
         ) : null}
 
@@ -1263,32 +1221,18 @@ function StepFields({
                       placeholder="Select provider"
                       options={PROVIDER_OPTIONS.map((opt) => ({ value: opt.token, label: opt.label }))}
                     />
-                    {provider.name === "openai-codex" ? (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          window.open("/api/auth/openai/login", "oauth_popup", "width=500,height=600");
-                        }}
-                        className="min-w-0 flex-1 rounded-lg bg-[#10a37f] px-4 py-2.5 text-sm font-medium text-white transition hover:bg-[#0e906f]"
-                      >
-                        {provider.apiKey ? "Signed in with OpenAI" : "Sign in with OpenAI"}
-                      </button>
-                      ) : (
-                        <TextInput
-                          type="password"
-                          value={provider.apiKey}
-                        onChange={(event) =>
-                          onDraftChange({
-                            ...draft,
-                            providers: draft.providers.map((item, itemIndex) =>
-                              itemIndex === index ? { ...item, apiKey: event.target.value } : item,
-                            ),
-                          })
-                          }
-                          className="min-w-0 flex-1"
-                          placeholder={provider.name ? `${providerLabelFromToken(provider.name)} API key` : "Provider API key"}
-                        />
-                      )}
+                    <ProviderCredentialField
+                      provider={provider.name}
+                      apiKey={provider.apiKey}
+                      onApiKeyChange={(apiKey) =>
+                        onDraftChange({
+                          ...draft,
+                          providers: draft.providers.map((item, itemIndex) =>
+                            itemIndex === index ? { ...item, apiKey } : item,
+                          ),
+                        })
+                      }
+                    />
                   </div>
                 ))}
               </div>
@@ -1299,59 +1243,40 @@ function StepFields({
         {roleEditor ? (
           <ModalShell
             title={roleEditor.mode === "create" ? "Add role" : "Edit role"}
-            description="Choose a suggested role, add an agent name, then pick a provider and model."
+            description="Choose a suggested role, add an agent name, then pick provider, model, and channels."
             onClose={() => setRoleEditor(null)}
           >
             <div className="space-y-5">
-              <FieldShell label="Role template" htmlFor="roleTemplate" hint="Pick the starter role shape first.">
-                <Select
-                  id="roleTemplate"
-                  value={roleEditor.templateName}
-                  onChange={(event) => updateRoleEditorTemplate(event.target.value)}
-                  className="w-full"
-                  options={starterRoleTemplates.map((template) => ({
-                    value: template.name,
-                    label: template.title,
-                  }))}
-                />
-              </FieldShell>
-
-              <FieldShell label="Agent name" htmlFor="agentName" hint="">
-                <TextInput
-                  id="agentName"
-                  list="agentNameSuggestions"
-                  value={roleEditor.agentName}
-                  onChange={(event) => setRoleEditor({ ...roleEditor, agentName: event.target.value })}
-                  placeholder="Frontend Engineer"
-                />
-                <datalist id="agentNameSuggestions">
-                  {AGENT_NAME_SUGGESTIONS.map((name) => (
-                    <option key={name} value={name} />
-                  ))}
-                </datalist>
-              </FieldShell>
-
-              <ProviderModelFields
-                provider={roleEditor.llm}
+              <RoleFormFields
+                templateName={roleEditor.templateName}
+                templateOptions={starterRoleTemplates}
+                onTemplateChange={updateRoleEditorTemplate}
+                agentName={roleEditor.agentName}
+                onAgentNameChange={(agentName) =>
+                  setRoleEditor((current) => (current ? { ...current, agentName } : current))
+                }
+                title={roleEditor.title}
+                onTitleChange={(title) =>
+                  setRoleEditor((current) => (current ? { ...current, title } : current))
+                }
+                instructions={roleEditor.instructions}
+                onInstructionsChange={(instructions) =>
+                  setRoleEditor((current) => (current ? { ...current, instructions } : current))
+                }
+                llm={roleEditor.llm}
                 model={roleEditor.model}
-                onProviderChange={(llm) =>
+                onLlmChange={(llm) =>
                   setRoleEditor((current) => (current ? { ...current, llm } : current))
                 }
                 onModelChange={(model) =>
                   setRoleEditor((current) => (current ? { ...current, model } : current))
                 }
-                providerLabel="LLM provider"
-                modelLabel="Model"
-                providerId="roleLlm"
-                modelId="roleModel"
+                channelIds={roleEditor.channelIds}
+                onChannelIdsChange={(channelIds) =>
+                  setRoleEditor((current) => (current ? { ...current, channelIds } : current))
+                }
+                channels={draft.channels.map((channel) => ({ id: channel.id, name: channel.name }))}
               />
-
-              <div>
-                <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Channels</p>
-                <div className="mt-3">
-                  <ChannelScopeRow label="general" />
-                </div>
-              </div>
 
               <div className="flex items-center justify-end gap-3">
                 <button
@@ -1380,22 +1305,15 @@ function StepFields({
             onClose={() => setChannelEditor(null)}
           >
             <div className="space-y-5">
-              <FieldShell label="Channel name" htmlFor="channelName" hint="">
-                <TextInput
-                  id="channelName"
-                  value={channelEditor.name}
-                  onChange={(event) => setChannelEditor({ ...channelEditor, name: event.target.value })}
-                  placeholder="general"
-                />
-              </FieldShell>
-              <FieldShell label="Description" htmlFor="channelDescription" hint="">
-                <TextArea
-                  id="channelDescription"
-                  value={channelEditor.description}
-                  onChange={(event) => setChannelEditor({ ...channelEditor, description: event.target.value })}
-                  placeholder="General discussions and updates"
-                />
-              </FieldShell>
+              <ChannelFormFields
+                mode={channelEditor.mode}
+                name={channelEditor.name}
+                description={channelEditor.description}
+                onNameChange={(name) => setChannelEditor({ ...channelEditor, name })}
+                onDescriptionChange={(description) => setChannelEditor({ ...channelEditor, description })}
+                nameId="channelName"
+                descriptionId="channelDescription"
+              />
               <div className="flex items-center justify-end gap-3">
                 <button
                   type="button"
@@ -1422,10 +1340,10 @@ function StepFields({
   return (
     <div className="space-y-5">
       <div className="grid gap-4 xl:grid-cols-[1.15fr,1.1fr,1.25fr]">
-        <ReviewSection title="Organization">
+        <ReviewSection title="Workspace">
           <p className="text-base font-semibold text-zinc-900 dark:text-zinc-100">{draft.organizationName || "Acme Product Team"}</p>
           <p className="mt-4 text-sm leading-6 text-zinc-500 dark:text-zinc-400">
-            Root: {draft.workspaceRoot || "/Users/admin/ujima/acme-product"}
+            Folder: {draft.workspaceRoot || "/Users/admin/ujima/acme-product"}
           </p>
         </ReviewSection>
 

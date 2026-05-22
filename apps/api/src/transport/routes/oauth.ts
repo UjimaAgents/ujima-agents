@@ -6,9 +6,10 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 // Since this is a local daemon for a single user, this is safe and sufficient.
 const pkceStore = new Map<string, string>();
 
-const OPENAI_CLIENT_ID = process.env.UJIMA_OPENAI_CLIENT_ID ?? '123456789'; // Placeholder standard client ID
-const OAUTH_AUTHORIZE_URL = 'https://auth0.openai.com/authorize';
-const OAUTH_TOKEN_URL = 'https://auth0.openai.com/oauth/token';
+const OPENAI_CLIENT_ID = process.env.UJIMA_OPENAI_CLIENT_ID ?? 'app_EMoamEEZ73f0CkXaXp7hrann';
+const OAUTH_AUTHORIZE_URL = 'https://auth.openai.com/oauth/authorize';
+const OAUTH_TOKEN_URL = 'https://auth.openai.com/oauth/token';
+const OAUTH_SCOPE = 'openid profile email offline_access';
 
 export function registerOauthRoutes(_app: FastifyInstance): void {
   const app = _app.withTypeProvider<ZodTypeProvider>();
@@ -27,16 +28,19 @@ export function registerOauthRoutes(_app: FastifyInstance): void {
     pkceStore.set(state, codeVerifier);
     setTimeout(() => pkceStore.delete(state), 10 * 60 * 1000);
 
-    const redirectUri = `${req.protocol}://${req.headers.host}/api/auth/openai/callback`;
+    const redirectUri = getRedirectUri(req);
 
     const authUrl = new URL(OAUTH_AUTHORIZE_URL);
     authUrl.searchParams.set('response_type', 'code');
     authUrl.searchParams.set('client_id', OPENAI_CLIENT_ID);
     authUrl.searchParams.set('redirect_uri', redirectUri);
-    authUrl.searchParams.set('scope', 'offline_access');
+    authUrl.searchParams.set('scope', OAUTH_SCOPE);
     authUrl.searchParams.set('state', state);
     authUrl.searchParams.set('code_challenge', codeChallenge);
     authUrl.searchParams.set('code_challenge_method', 'S256');
+    authUrl.searchParams.set('id_token_add_organizations', 'true');
+    authUrl.searchParams.set('codex_cli_simplified_flow', 'true');
+    authUrl.searchParams.set('originator', 'ujima');
 
     return reply.redirect(302, authUrl.toString());
   });
@@ -66,7 +70,7 @@ export function registerOauthRoutes(_app: FastifyInstance): void {
     pkceStore.delete(state);
 
     try {
-      const redirectUri = `${req.protocol}://${req.headers.host}/api/auth/openai/callback`;
+      const redirectUri = getRedirectUri(req);
       
       const tokenResponse = await fetch(OAUTH_TOKEN_URL, {
         method: 'POST',
@@ -92,6 +96,11 @@ export function registerOauthRoutes(_app: FastifyInstance): void {
       return reply.type('text/html').send(renderCallbackHtml(null, err instanceof Error ? err.message : String(err)));
     }
   });
+}
+
+function getRedirectUri(req: { protocol: string; headers: { host?: string } }) {
+  const host = req.headers.host?.replace(/^127\.0\.0\.1(?=:|$)/, 'localhost') ?? 'localhost';
+  return `${req.protocol}://${host}/api/auth/openai/callback`;
 }
 
 function renderCallbackHtml(token: string | null, error: string | null) {

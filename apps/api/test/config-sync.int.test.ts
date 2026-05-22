@@ -270,6 +270,46 @@ describe('team config reconcile', () => {
     expect(hydratedStore.getTeam()?.getRole('frontend-engineer')?.model).toBe('gpt-5.4');
   });
 
+  it('drops stale absolute dashboard role scopes after workspace root changes', async () => {
+    const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
+    const teamStore = createTeamStore();
+    const syncService = new ConfigSyncService(repo, teamStore);
+    const settings = new SettingsService(repo, teamStore);
+    const oldRoot = await mkdtemp(join(tmpdir(), 'ujima-old-root-'));
+    const newRoot = await mkdtemp(join(tmpdir(), 'ujima-new-root-'));
+    tempDirs.push(oldRoot, newRoot);
+    const configPath = join(oldRoot, 'ujima.config.js');
+
+    await writeConfigFile(configPath, teamConfig({ workspace: { root: oldRoot, roleScopes: {} } }));
+    const first = await syncService.loadAndReconcileFromFile(configPath);
+
+    settings.addMember({
+      organizationId: first.organization.id,
+      name: 'frontend-beta',
+      kind: 'agent',
+      roleName: 'frontend-engineer',
+      role: {
+        name: 'frontend-engineer',
+        title: 'Frontend Engineer',
+        instructions: 'Build the product.',
+        workspaceScopes: [oldRoot],
+        tools: ['filesystem', 'shell'],
+        channels: ['general'],
+        skills: [],
+      },
+    });
+
+    repo.saveOrganization({
+      ...first.organization,
+      workspace: { ...first.organization.workspace, root: newRoot },
+    });
+
+    const hydratedStore = createTeamStore();
+    const hydratedSyncService = new ConfigSyncService(repo, hydratedStore);
+    expect(() => hydratedSyncService.loadFromStoredConfig(first.organization.id)).not.toThrow();
+    expect(hydratedStore.getTeam()?.getRole('frontend-engineer')?.workspaceScopes).toEqual([newRoot]);
+  });
+
   it('preserves member provider and model when partial member updates omit them', async () => {
     const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
     const teamStore = createTeamStore();

@@ -20,6 +20,7 @@ import type {
   SupervisorTodoService,
   TaskPromoterService,
   TaskSessionService,
+  WorkspaceService,
 } from "@ujima/orchestrator";
 import type {UjimaEvent} from "@ujima/shared";
 import {
@@ -83,6 +84,7 @@ export interface TransportOptions {
       onboarding: OnboardingService;
       scheduler?: SchedulerService;
       settings: SettingsService;
+      workspaces: WorkspaceService;
       taskPromoter: TaskPromoterService;
       taskSessions: TaskSessionService;
       spirits: SpiritService;
@@ -264,7 +266,7 @@ export function createTransport(opts: TransportOptions): Transport {
           host,
           repo: opts.apiServices.repo,
           auth: services.auth,
-          settings: services.settings,
+          workspaces: services.workspaces,
         });
 
         api.register(multipart, {
@@ -289,6 +291,7 @@ export function createTransport(opts: TransportOptions): Transport {
         });
         registerAuthRoutes(api, {auth: services.auth});
         registerOnboardingRoutes(api, {
+          host,
           auth: services.auth,
           bootstrap: services.bootstrap,
           onboarding: services.onboarding,
@@ -297,6 +300,7 @@ export function createTransport(opts: TransportOptions): Transport {
           repo: opts.apiServices.repo,
           settings: services.settings,
           auth: services.auth,
+          host,
         });
         registerTaskRoutes(api, {
           host,

@@ -259,6 +259,7 @@ describe('workspace-root REST gating', () => {
           createApiServices({
             teamStore,
             repo,
+            workspaces: host.workspaces,
             realtime,
             permissions: host.permissions,
             buildPermissionContext,

@@ -15,9 +15,16 @@ export type {
 export {
   createWorkspaceStore,
   syncWorkspacesFromOrganizations,
+  upsertOrganizationWorkspace,
   NoWorkspaceRootError,
   ERR_NO_WORKSPACE_ROOT,
 } from './workspaces';
+
+export {
+  migrateUnifiedWorkspaceOrg,
+  ORGANIZATION_WORKSPACE_IDS_KEY,
+} from './workspace-org-migration.js';
+export type { WorkspaceOrgMigrationResult } from './workspace-org-migration.js';
 
 export type {
   RuntimeHost,

@@ -1,5 +1,6 @@
 import type { BootstrapResponse } from "@ujima/api-schema";
 import type { SelectedConversation } from "./types";
+import { isVisibleWorkspaceChannel } from "./workspace-channels";
 
 type SearchParamsLike =
   | Record<string, string | string[] | undefined>
@@ -31,7 +32,11 @@ function findChannel(
   bootstrap: BootstrapResponse,
   value: string,
 ): BootstrapResponse["channels"][number] | undefined {
-  return bootstrap.channels.find((channel) => channel.id === value || channel.name === value);
+  return bootstrap.channels.find(
+    (channel) =>
+      isVisibleWorkspaceChannel(channel) &&
+      (channel.id === value || channel.name === value),
+  );
 }
 
 export function resolveSelectedConversationFromSearchParams(

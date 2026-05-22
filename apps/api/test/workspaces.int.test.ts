@@ -6,10 +6,10 @@ import { createBufferLogger, createRuntimeHost, Repository, type RuntimeHost } f
 import {
   AuthService,
   BootstrapService,
-  ACTIVE_WORKSPACE_SETTING_KEY,
-  OnboardingService,
-  SettingsService,
+  createApiServices,
   createTeamStore,
+  OnboardingService,
+  TEAM_CONFIG_SETTING_KEY,
 } from '@ujima/orchestrator';
 import { createTransport, type Transport } from '../src/transport/server.js';
 import type { LLMProvider } from '@ujima/llm/legacy';
@@ -28,7 +28,6 @@ describe('workspace routes', () => {
   let sessionToken: string;
   let organizationId: string;
   let repo: Repository;
-  let auth: AuthService;
 
   beforeAll(async () => {
     homeDir = await mkdtemp(join(tmpdir(), 'ujima-workspaces-'));
@@ -48,10 +47,9 @@ describe('workspace routes', () => {
 
     repo = new Repository(host.db.raw);
     const teamStore = createTeamStore();
-    auth = new AuthService(repo);
+    const auth = new AuthService(repo);
     const bootstrap = new BootstrapService(repo, teamStore, auth);
     const onboarding = new OnboardingService(repo, teamStore);
-    const settings = new SettingsService(repo, teamStore);
 
     transport = createTransport({
       host,
@@ -61,18 +59,15 @@ describe('workspace routes', () => {
       port: 0,
       apiServices: {
         repo,
-        buildServices: () =>
-          ({
-            conversations: {},
-            runs: {},
-            approvals: {},
-            auth,
-            bootstrap,
-            onboarding,
-            settings,
-            taskPromoter: {},
-            scheduler: { start: () => {}, stop: () => {} },
-          }) as never,
+        buildServices: (realtime) =>
+          createApiServices({
+            repo,
+            teamStore,
+            workspaces: host.workspaces,
+            realtime,
+            permissions: host.permissions,
+            buildPermissionContext: () => ({}),
+          }),
       },
     });
     await transport.listen();
@@ -143,7 +138,7 @@ describe('workspace routes', () => {
     expect(body.code).toBe('ERR_UNAUTHORIZED');
   });
 
-  it('lists workspaces for the authenticated organization', async () => {
+  it('lists accessible workspaces with organization names as labels', async () => {
     const response = await fetch(`${baseUrl}/api/workspaces`, {
       headers: {
         authorization: `Bearer ${TOKEN}`,
@@ -152,36 +147,59 @@ describe('workspace routes', () => {
     });
     expect(response.status).toBe(200);
     const body = (await response.json()) as {
-      workspaces: Array<{ id: string; is_current?: boolean }>;
+      workspaces: Array<{ id: string; label: string | null; is_current?: boolean }>;
       current_workspace_id: string | null;
     };
-    expect(body.workspaces.length).toBeGreaterThan(0);
-    expect(body.current_root_path).toBeTruthy();
+    expect(body.workspaces).toHaveLength(1);
+    expect(body.workspaces[0]?.id).toBe(`ws_${organizationId}`);
+    expect(body.workspaces[0]?.label).toBe('Workspace Org');
+    expect(body.workspaces[0]?.is_current).toBe(true);
+    expect(body.current_workspace_id).toBe(`ws_${organizationId}`);
   });
 
-  it('requires a session to create a workspace', async () => {
+  it('creates a second workspace as a new starter organization and can switch to it', async () => {
     const otherHome = await mkdtemp(join(tmpdir(), 'ujima-ws-other-'));
+    const staleHome = await mkdtemp(join(tmpdir(), 'ujima-ws-stale-'));
     try {
-      const response = await fetch(`${baseUrl}/api/workspaces`, {
-        method: 'POST',
-        headers: {
-          authorization: `Bearer ${TOKEN}`,
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify({
-          root_path: otherHome,
-          label: 'Secondary workspace',
+      repo.saveWorkspaceSetting(
+        organizationId,
+        TEAM_CONFIG_SETTING_KEY,
+        JSON.stringify({
+          name: 'Stale Parent Config',
+          workspace: { root: homeDir, roleScopes: {} },
+          roles: [
+            {
+              name: 'stale-role',
+              title: 'Stale Role',
+              instructions: 'Old workspace role.',
+              workspaceScopes: [staleHome],
+              tools: [],
+              channels: ['general'],
+            },
+          ],
+          agents: [{ name: 'stale-agent', roleName: 'stale-role' }],
+          channels: [{ name: 'general', kind: 'general', topic: 'General' }],
+          providers: { openai: { kind: 'openai' } },
         }),
-      });
-      expect(response.status).toBe(401);
-    } finally {
-      await rm(otherHome, { recursive: true, force: true });
-    }
-  });
+      );
+      repo.saveWorkspaceSetting(
+        organizationId,
+        'dashboard.teamOverrides',
+        JSON.stringify({
+          roles: [
+            {
+              name: 'stale-role',
+              title: 'Stale Role',
+              instructions: 'Old workspace role.',
+              workspaceScopes: [staleHome],
+              tools: [],
+              channels: ['general'],
+            },
+          ],
+          agents: [],
+        }),
+      );
 
-  it('creates a workspace when authenticated', async () => {
-    const otherHome = await mkdtemp(join(tmpdir(), 'ujima-ws-other-'));
-    try {
       const createResponse = await fetch(`${baseUrl}/api/workspaces`, {
         method: 'POST',
         headers: {
@@ -191,12 +209,27 @@ describe('workspace routes', () => {
         },
         body: JSON.stringify({
           root_path: otherHome,
-          label: 'Secondary workspace',
+          label: 'Second Workspace',
         }),
       });
       expect(createResponse.status).toBe(200);
-      const created = (await createResponse.json()) as { id: string; root_path: string };
+      const created = (await createResponse.json()) as {
+        id: string;
+        root_path: string | null;
+        label: string | null;
+        is_current?: boolean;
+      };
+      expect(created.label).toBe('Second Workspace');
       expect(created.root_path).toBe(otherHome);
+      expect(created.is_current).toBe(false);
+
+      const newOrganizationId = created.id.replace(/^ws_/, '');
+      const storedTeam = repo.getWorkspaceSetting(newOrganizationId, TEAM_CONFIG_SETTING_KEY);
+      expect(storedTeam).toBeTruthy();
+      expect(storedTeam).not.toContain(staleHome);
+      expect(storedTeam).toContain(otherHome);
+      expect(repo.getWorkspaceSetting(newOrganizationId, 'dashboard.teamOverrides')).toBeNull();
+      expect(repo.getProviderCredential(newOrganizationId, 'openai')).toBe('test-key');
 
       const listResponse = await fetch(`${baseUrl}/api/workspaces`, {
         headers: {
@@ -205,129 +238,47 @@ describe('workspace routes', () => {
         },
       });
       expect(listResponse.status).toBe(200);
-      const listed = (await listResponse.json()) as { workspaces: Array<{ id: string }> };
-      expect(listed.workspaces.some((workspace) => workspace.id === created.id)).toBe(true);
-    } finally {
-      await rm(otherHome, { recursive: true, force: true });
-    }
-  });
-
-  it('does not leak shared-root workspaces across organizations', async () => {
-    const otherOrganizationId = 'org-shared-root';
-    repo.saveOrganization(
-      {
-        id: otherOrganizationId,
-        name: 'Shared Root Org',
-        workspace: { root: homeDir, roleScopes: {} },
-        organizationChart: { reportsTo: {} },
-      },
-    );
-    repo.saveMember({
-      id: 'shared-root-owner',
-      organizationId: otherOrganizationId,
-      name: 'Shared Root Owner',
-      kind: 'human',
-      roleName: 'owner',
-    });
-    const otherSessionToken = auth.registerOwnerAccount({
-      organizationId: otherOrganizationId,
-      memberId: 'shared-root-owner',
-      email: 'shared-root-owner@example.com',
-      password: 'correct horse battery staple',
-    }).sessionToken;
-
-    const sharedWorkspace = host.workspaces.create({
-      root_path: homeDir,
-      label: 'Shared root workspace',
-    });
-    try {
-      const listResponse = await fetch(`${baseUrl}/api/workspaces`, {
-        headers: {
-          authorization: `Bearer ${TOKEN}`,
-          'x-ujima-session': otherSessionToken,
-        },
-      });
-      expect(listResponse.status).toBe(200);
-      const body = (await listResponse.json()) as { workspaces: Array<{ id: string }> };
-      expect(body.workspaces.some((workspace) => workspace.id === sharedWorkspace.id)).toBe(false);
-    } finally {
-      host.workspaces.remove(sharedWorkspace.id);
-    }
-  });
-
-  it('rejects activation for a workspace not linked to the organization', async () => {
-    const otherHome = await mkdtemp(join(tmpdir(), 'ujima-ws-unlinked-'));
-    let workspaceId = '';
-    try {
-      const workspace = host.workspaces.create({
-        root_path: otherHome,
-        label: 'Unlinked workspace',
-      });
-      workspaceId = workspace.id;
-      const activateResponse = await fetch(
-        `${baseUrl}/api/workspaces/${encodeURIComponent(workspace.id)}/activate`,
-        {
-          method: 'POST',
-          headers: {
-            authorization: `Bearer ${TOKEN}`,
-            'x-ujima-session': sessionToken,
-          },
-        },
+      const listed = (await listResponse.json()) as {
+        workspaces: Array<{ id: string; label: string | null; is_current?: boolean }>;
+      };
+      expect(listed.workspaces).toHaveLength(2);
+      expect(listed.workspaces).toContainEqual(
+        expect.objectContaining({
+          id: created.id,
+          label: 'Second Workspace',
+          is_current: false,
+        }),
       );
-      expect(activateResponse.status).toBe(404);
-    } finally {
-      if (workspaceId) host.workspaces.remove(workspaceId);
-      await rm(otherHome, { recursive: true, force: true });
-    }
-  });
 
-  it('clears the active workspace setting when deleting the active workspace', async () => {
-    const otherHome = tmpdir();
-    const createResponse = await fetch(`${baseUrl}/api/workspaces`, {
-      method: 'POST',
-      headers: {
-        authorization: `Bearer ${TOKEN}`,
-        'content-type': 'application/json',
-        'x-ujima-session': sessionToken,
-      },
-      body: JSON.stringify({
-        root_path: otherHome,
-        label: 'Active workspace',
-      }),
-    });
-    expect(createResponse.status).toBe(200);
-    const created = (await createResponse.json()) as { id: string };
-
-    const activateResponse = await fetch(
-      `${baseUrl}/api/workspaces/${encodeURIComponent(created.id)}/activate`,
-      {
+      const switchResponse = await fetch(`${baseUrl}/api/auth/switch-org`, {
         method: 'POST',
         headers: {
           authorization: `Bearer ${TOKEN}`,
+          'content-type': 'application/json',
           'x-ujima-session': sessionToken,
         },
-      },
-    );
-    expect(activateResponse.status).toBe(200);
+        body: JSON.stringify({ organizationId: newOrganizationId }),
+      });
+      expect(switchResponse.status).toBe(200);
+      const switched = (await switchResponse.json()) as { sessionToken: string };
 
-    const deleteResponse = await fetch(`${baseUrl}/api/workspaces/${encodeURIComponent(created.id)}`, {
-      method: 'DELETE',
-      headers: {
-        authorization: `Bearer ${TOKEN}`,
-        'x-ujima-session': sessionToken,
-      },
-    });
-    expect(deleteResponse.status).toBe(200);
-    expect(repo.getWorkspaceSetting(organizationId, ACTIVE_WORKSPACE_SETTING_KEY)).toBeNull();
-
-    const listResponse = await fetch(`${baseUrl}/api/workspaces`, {
-      headers: {
-        authorization: `Bearer ${TOKEN}`,
-        'x-ujima-session': sessionToken,
-      },
-    });
-    expect(listResponse.status).toBe(200);
-    const body = (await listResponse.json()) as { current_workspace_id: string | null };
-    expect(body.current_workspace_id).not.toBe(created.id);
+      const bootstrapResponse = await fetch(`${baseUrl}/api/bootstrap`, {
+        headers: {
+          authorization: `Bearer ${TOKEN}`,
+          'x-ujima-session': switched.sessionToken,
+        },
+      });
+      expect(bootstrapResponse.status).toBe(200);
+      const bootstrapBody = (await bootstrapResponse.json()) as {
+        organization: { id: string; name: string } | null;
+        team: { workspaceRoot: string } | null;
+      };
+      expect(bootstrapBody.organization?.id).toBe(newOrganizationId);
+      expect(bootstrapBody.organization?.name).toBe('Second Workspace');
+      expect(bootstrapBody.team?.workspaceRoot).toBe(otherHome);
+    } finally {
+      await rm(otherHome, { recursive: true, force: true });
+      await rm(staleHome, { recursive: true, force: true });
+    }
   });
 });

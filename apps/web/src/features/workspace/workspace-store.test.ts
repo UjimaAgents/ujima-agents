@@ -34,6 +34,14 @@ describe("workspace-store helpers", () => {
 
     expect(
       normalizeConversationSelection(
+        { type: "channel", id: "missing", name: "general" },
+        channels,
+        members,
+      ),
+    ).toBeUndefined();
+
+    expect(
+      normalizeConversationSelection(
         { type: "agent", id: "ava", name: "old name" },
         channels,
         members,
@@ -50,6 +58,36 @@ describe("workspace-store helpers", () => {
         members,
       ),
     ).toEqual({ general: 0, random: 2, ava: 3 });
+  });
+
+  it("replaces workspace lists on bootstrap sync", () => {
+    useWorkspaceStore.setState({
+      channels: [{ id: "old", name: "old", kind: "general", topic: "", memberIds: [] }],
+      members: [
+        {
+          id: "old-agent",
+          organizationId: "org",
+          name: "Old",
+          kind: "agent",
+          roleName: "assistant",
+          presence: "offline",
+        },
+      ],
+      conversationUnreadCounts: {},
+      selectedConversation: undefined,
+    });
+
+    useWorkspaceStore.getState().syncWorkspace({
+      channels,
+      members,
+      selectedConversation: { type: "channel", id: "general", name: "ops" },
+    });
+
+    expect(useWorkspaceStore.getState().channels.map((channel) => channel.id)).toEqual([
+      "general",
+      "random",
+    ]);
+    expect(useWorkspaceStore.getState().members.map((member) => member.id)).toEqual(["ava"]);
   });
 
   it("keeps enough live activity for long streaming traces", () => {

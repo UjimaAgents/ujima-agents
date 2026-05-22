@@ -1,35 +1,49 @@
 "use client";
 
 import { useState } from "react";
-import { Modal } from "../modal";
-import { TextInput, TextArea, ChannelScopeRow } from "@/components/ui/form-fields";
+import { Modal } from "@/components/ui/modal";
+import { TextInput, TextArea } from "@/components/ui/form-fields";
 import { ProviderModelFields } from "@/components/ui/provider-model-fields";
 import { Search as SearchIcon, Bot, ArrowRight, Sparkles, Plus } from "lucide-react";
 import { getSuggestedAgentName } from "../../../onboarding/agent-name-suggestions";
 import { defaultModelForProvider, RolePresetTemplate } from "../../../onboarding/types";
+import { ChannelPicker, type ChannelPickerOption } from "@/features/team/channel-picker";
 import {
   roleFromTemplate,
   customRole,
 } from "../workspace-sidebar";
 import type { SelectedConversation } from "../../types";
-import type { WorkspaceSidebarProps } from "../workspace-sidebar";
+import type { CreateAgentHandler } from "@/features/team/agent-mutations";
+
+function defaultChannelIds(channels: ChannelPickerOption[], preferredId?: string) {
+  if (preferredId && channels.some((c) => c.id === preferredId)) return [preferredId];
+  const general = channels.find((c) => c.name === "general");
+  if (general) return [general.id];
+  return channels[0] ? [channels[0].id] : [];
+}
 
 interface CreateAgentModalProps {
   isOpen: boolean;
   onClose: () => void;
   rolePresets: RolePresetTemplate[];
   initialProvider: string;
-  primaryChannel: { id: string; name: string } | null;
-  onCreateAgent: WorkspaceSidebarProps["onCreateAgent"];
+  channels: ChannelPickerOption[];
+  primaryChannelId?: string;
+  onCreateAgent: CreateAgentHandler;
   onSelect: (created: SelectedConversation) => void;
 }
 
-export function CreateAgentModal({
-  isOpen,
+export function CreateAgentModal(props: CreateAgentModalProps) {
+  if (!props.isOpen) return null;
+  return <CreateAgentModalActive {...props} />;
+}
+
+function CreateAgentModalActive({
   onClose,
   rolePresets,
   initialProvider,
-  primaryChannel,
+  channels,
+  primaryChannelId,
   onCreateAgent,
   onSelect,
 }: CreateAgentModalProps) {
@@ -41,6 +55,9 @@ export function CreateAgentModal({
   const [customAgentName, setCustomAgentName] = useState("");
   const [selectedLlm, setSelectedLlm] = useState(initialProvider);
   const [selectedModel, setSelectedModel] = useState(defaultModelForProvider(initialProvider));
+  const [selectedChannelIds, setSelectedChannelIds] = useState<string[]>(() =>
+    defaultChannelIds(channels, primaryChannelId),
+  );
   const [isSavingAgent, setIsSavingAgent] = useState(false);
   const [agentError, setAgentError] = useState<string | null>(null);
 
@@ -63,6 +80,7 @@ export function CreateAgentModal({
     setCustomAgentName("");
     setSelectedLlm(initialProvider);
     setSelectedModel(defaultModelForProvider(initialProvider));
+    setSelectedChannelIds(defaultChannelIds(channels, primaryChannelId));
     setAgentError(null);
   };
 
@@ -71,9 +89,13 @@ export function CreateAgentModal({
     onClose();
   };
 
+  const channelNames = selectedChannelIds
+    .map((id) => channels.find((c) => c.id === id)?.name)
+    .filter((name): name is string => Boolean(name));
+
   return (
     <Modal
-      isOpen={isOpen}
+      isOpen
       onClose={handleClose}
       title={
         selectedTemplate || isCustomRole
@@ -191,7 +213,10 @@ export function CreateAgentModal({
             <ProviderModelFields
               provider={selectedLlm}
               model={selectedModel}
-              onProviderChange={setSelectedLlm}
+              onProviderChange={(provider) => {
+                setSelectedLlm(provider);
+                setSelectedModel(defaultModelForProvider(provider));
+              }}
               onModelChange={setSelectedModel}
               providerLabel="LLM provider"
               modelLabel="Model"
@@ -199,14 +224,11 @@ export function CreateAgentModal({
               modelId="agentModel"
             />
 
-            <div>
-              <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-1.5 block">
-                Channels
-              </label>
-              <div className="mt-3">
-                <ChannelScopeRow label={primaryChannel?.name ?? "general"} />
-              </div>
-            </div>
+            <ChannelPicker
+              channels={channels}
+              selectedIds={selectedChannelIds}
+              onChange={setSelectedChannelIds}
+            />
           </div>
 
           <div className="pt-2 flex gap-3">
@@ -232,12 +254,12 @@ export function CreateAgentModal({
                   const created = await onCreateAgent({
                     name: customAgentName,
                     roleName: role.name,
-                    channelIds: primaryChannel ? [primaryChannel.id] : [],
+                    channelIds: selectedChannelIds,
                     llm: selectedLlm,
                     model: selectedModel,
                     role: {
                       ...role,
-                      channels: primaryChannel ? [primaryChannel.name] : [],
+                      channels: channelNames.length > 0 ? channelNames : ["general"],
                     },
                   });
                   if (!created) throw new Error("Unable to create agent.");
@@ -252,6 +274,7 @@ export function CreateAgentModal({
               disabled={
                 isSavingAgent ||
                 !customAgentName.trim() ||
+                selectedChannelIds.length === 0 ||
                 (isCustomRole && (!customRoleTitle.trim() || !customRoleInstructions.trim()))
               }
               className="flex-[2] rounded-xl bg-violet-600 px-6 py-2.5 text-sm font-bold text-white shadow-lg shadow-violet-500/20 hover:bg-violet-700 transition-all disabled:opacity-50 disabled:shadow-none"

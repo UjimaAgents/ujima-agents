@@ -323,6 +323,7 @@ export interface ApiRepository extends ConversationRepository {
   listOrganizations(): Organization[];
   saveWorkspaceSetting(organizationId: string, key: string, value: string): void;
   getWorkspaceSetting(organizationId: string, key: string): string | null;
+  deleteWorkspaceSetting(organizationId: string, key: string): void;
   findOrganizationIdByWorkspaceSetting(key: string, value: string): string | null;
   saveProviderCredential(
     organizationId: string,

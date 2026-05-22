@@ -7,6 +7,7 @@ import type {
   RunState,
 } from "@ujima/shared/browser";
 import type { SelectedConversation } from "./types";
+import { resolveDefaultConversation } from "./workspace-channels";
 import type { ChatMessageData, ApprovalCardData } from "./components/chat";
 import type { ActivityState } from "./activity-state";
 import { presenceToActivityState } from "./activity-state";
@@ -90,14 +91,6 @@ const EMPTY_ACTIVITY = {
   loading: true,
   conversationKey: undefined,
 };
-
-function resolveDefaultConversation(
-  channels: WorkspaceChannel[],
-): SelectedConversation | undefined {
-  const channel = channels.find((entry) => entry.name === "general") ?? channels[0];
-  if (!channel) return undefined;
-  return { type: "channel", id: channel.id, name: channel.name };
-}
 
 function sameRecord(left: unknown, right: unknown): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
@@ -250,12 +243,14 @@ export function normalizeConversationSelection(
 
   if (conversation.type === "channel") {
     const channel = channels.find((entry) => entry.id === conversation.id);
-    if (!channel || channel.name === conversation.name) return conversation;
+    if (!channel) return undefined;
+    if (channel.name === conversation.name) return conversation;
     return { ...conversation, name: channel.name };
   }
 
   const member = members.find((entry) => entry.id === conversation.id);
-  if (!member || member.name === conversation.name) return conversation;
+  if (!member) return undefined;
+  if (member.name === conversation.name) return conversation;
   return { ...conversation, name: member.name };
 }
 
@@ -328,8 +323,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
     set((state) => (state.detailsTab === detailsTab ? state : { detailsTab })),
   syncWorkspace: ({ channels, members, conversationUnreadCounts, selectedConversation }) =>
     set((state) => {
-      const nextChannels = sameItems(state.channels, channels) ? state.channels : mergeChannels(state.channels, channels);
-      const nextMembers = sameItems(state.members, members) ? state.members : mergeMembers(state.members, members);
+      const nextChannels = sameItems(state.channels, channels) ? state.channels : channels;
+      const nextMembers = sameItems(state.members, members) ? state.members : members;
       const nextUnreadCounts = mergeConversationUnreadCounts(
         state.conversationUnreadCounts,
         conversationUnreadCounts,

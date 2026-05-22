@@ -7,6 +7,8 @@ import {
   type RoleConfig,
 } from '@ujima/framework';
 import { AGENT_KIND } from '@ujima/shared';
+import { isPathInsideRoot } from '@ujima/shared/workspace';
+import { resolve } from 'node:path';
 import type { ApiRepository } from './repository-reader.js';
 import type { TeamStore } from './team-store.js';
 
@@ -28,6 +30,17 @@ function mergeRoleOverride(baseRole: RoleConfig | undefined, role: RoleConfig): 
   });
 }
 
+function normalizeRoleScopes(role: RoleConfig, workspaceRoot: string): RoleConfig {
+  const scopes = role.workspaceScopes.map((scope) => {
+    const resolved = resolve(workspaceRoot, scope);
+    return isPathInsideRoot(workspaceRoot, resolved) ? scope : '.';
+  });
+  return {
+    ...role,
+    workspaceScopes: [...new Set(scopes)],
+  };
+}
+
 function readOverrides(
   repo: ApiRepository,
   organizationId: string,
@@ -42,12 +55,24 @@ function readOverrides(
       repo.listMembers(organizationId).map((member) => [member.id, member] as const),
     );
     const parsed = JSON.parse(value) as Partial<DashboardTeamOverrides>;
-    return {
-      roles: Array.isArray(parsed.roles)
-        ? parsed.roles.map((role) =>
+    const workspaceRoot = team?.workspace.root;
+    const roles = Array.isArray(parsed.roles)
+      ? parsed.roles.map((role) =>
+          normalizeRoleScopes(
             mergeRoleOverride(team?.getRole(role.name), defineRole(upgradeLegacyDefaultRoleTools(role))),
-          )
-        : [],
+            workspaceRoot ?? '.',
+          ),
+        )
+      : [];
+    if (Array.isArray(parsed.roles) && JSON.stringify(parsed.roles) !== JSON.stringify(roles)) {
+      repo.saveWorkspaceSetting(
+        organizationId,
+        DASHBOARD_TEAM_OVERRIDES_KEY,
+        JSON.stringify({ ...parsed, roles }),
+      );
+    }
+    return {
+      roles,
       agents: Array.isArray(parsed.agents)
         ? parsed.agents
             .map((agent) => createAgent(agent.name, agent.roleName, agent.personalityName ?? 'direct'))

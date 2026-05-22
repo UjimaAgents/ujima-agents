@@ -1,8 +1,20 @@
 import { redirect } from "next/navigation";
-import { getServerBootstrap, getServerTeamSettings, daemonJson, getSessionTokenFromCookie } from "@/server/ujima-daemon";
-import type { McpServerListResponse, OrganizationSettingsResponse, ProviderStatus } from "@ujima/api-schema";
+import {
+  getServerBootstrap,
+  getServerTeamSettings,
+  getServerRolePresets,
+  daemonJson,
+  getSessionTokenFromCookie,
+} from "@/server/ujima-daemon";
+import type {
+  McpServerListResponse,
+  OrganizationSettingsResponse,
+  ProviderStatus,
+  TeamSettingsResponse,
+} from "@ujima/api-schema";
 import { OrganizationSettingsPage } from "@/features/settings/organization/components/organization-settings";
-import type { TeamSettingsData } from "@/features/settings/organization/components/organization-settings";
+
+export const dynamic = "force-dynamic";
 
 export default async function OrganizationSettingsRoute() {
   const bootstrap = await getServerBootstrap().catch(() => null);
@@ -38,13 +50,9 @@ export default async function OrganizationSettingsRoute() {
       ).catch(() => null)
     : null;
 
-  const rawTeamSettings = await getServerTeamSettings(orgId).catch(() => null);
-  const teamSettings: TeamSettingsData | null = rawTeamSettings
-    ? {
-        ...rawTeamSettings,
-        policies: rawTeamSettings.policies as TeamSettingsData["policies"],
-      }
-    : null;
+  const teamSettings: TeamSettingsResponse | null = await getServerTeamSettings(orgId).catch(
+    () => null,
+  );
 
   const providers = orgId
     ? await daemonJson<ProviderStatus[]>(
@@ -64,6 +72,8 @@ export default async function OrganizationSettingsRoute() {
         .catch(() => [])
     : [];
 
+  const rolePresets = await getServerRolePresets().catch(() => []);
+
   return (
     <OrganizationSettingsPage
       bootstrap={bootstrap}
@@ -71,6 +81,7 @@ export default async function OrganizationSettingsRoute() {
       teamSettings={teamSettings}
       providers={providers}
       mcpServers={mcpServers}
+      rolePresets={rolePresets}
     />
   );
 }
