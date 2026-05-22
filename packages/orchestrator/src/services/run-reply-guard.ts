@@ -16,6 +16,7 @@ export const RUN_TERMINATING_TOOL_NAMES = new Set([
   'channel.reply',
   'channel.post',
   'channel.handoff',
+  'channel.ack',
   'channel.pass',
 ]);
 
@@ -101,6 +102,12 @@ const TERMINATOR_PRECEDENCE: readonly string[] = [
   'channel.reply',
   'channel.dm',
   'channel.handoff',
+  // `channel.ack` and `channel.pass` are both silent terminators (no
+  // channel message published). Precedence places real publishes
+  // first; ack > pass because ack is the explicit "I saw it, nothing
+  // to add" affordance for mandatory-reply turns, while pass is the
+  // structured "I have a justification to stay silent" decision.
+  'channel.ack',
   'channel.pass',
 ];
 

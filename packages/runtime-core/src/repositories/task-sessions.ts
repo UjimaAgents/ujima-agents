@@ -179,6 +179,30 @@ export function listTaskSessions(
   return { data, hasMore, nextCursor };
 }
 
+/**
+ * Find the most recent open task session for a channel, if one
+ * exists. Used by the commitment extractor (Bet 4) to decide whether
+ * to auto-promote the channel into a session before parking a
+ * commitment todo on it.
+ */
+export function findOpenTaskSessionForChannel(
+  db: DbHandle,
+  organizationId: string,
+  channelId: string,
+): TaskSession | null {
+  const row = db
+    .prepare(
+      `SELECT * FROM task_sessions
+        WHERE organization_id = ?
+          AND channel_id = ?
+          AND status IN ('queued', 'running', 'waiting_for_approval')
+        ORDER BY created_at DESC
+        LIMIT 1`,
+    )
+    .get(organizationId, channelId) as Row | null;
+  return row ? rowToTaskSession(row) : null;
+}
+
 export function updateTaskSessionStatus(
   db: DbHandle,
   organizationId: string,

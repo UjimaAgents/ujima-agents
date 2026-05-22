@@ -295,6 +295,12 @@ export class SpiritService {
   private readonly supervisorLastAlertAt = new Map<string, number>();
   private readonly deferredApprovalResumes = new Set<string>();
   private readonly runAbortControllers = new Map<string, AbortController>();
+  // Late-bound hook fired when `completeRun` / `failRun` persist a
+  // terminal run row. Used by the commitment service to track empty
+  // self-followup wakes and short-circuit `due_at` after K consecutive
+  // empties. Failures inside the hook are swallowed so a flaky
+  // post-completion handler can't fail the run.
+  private runCompletedHook?: (run: RunState) => Promise<void> | void;
 
   constructor(
     private readonly teamStore: TeamStore,
@@ -939,25 +945,34 @@ export class SpiritService {
       const persistedRunSteps = spirit.runId
         ? this.repo.listRunSteps?.(input.organizationId, spirit.runId) ?? []
         : [];
-      const terminatingTool =
+      const detectedTerminatingTool =
         findTerminatingTool(result) ?? findTerminatingToolFromRunSteps(persistedRunSteps);
-      if (spirit.runId) {
-        const run = this.repo.getRun(input.organizationId, spirit.runId);
-        if (run) {
-          // Persist `terminatingTool` on the row so /runs/:id and
-          // list/detail endpoints report it correctly. Without this,
-          // metrics that count runs by `terminatingTool x wakeReason`
-          // (pass-rate, reply-rate) read null for every successful
-          // `channel.reply` / `channel.pass` turn.
-          this.repo.saveRun({
-            ...run,
-            status: 'completed',
-            step: 'completed',
-            summary: lastText || run.summary,
-            endedAt: new Date().toISOString(),
-            terminatingTool,
-          });
-        }
+      // Resolve the final terminator, preserving any silent
+      // terminator a mid-run side-effect (mirror-loop guard, vacuous-
+      // ack suppression) already wrote onto the run row. Without this
+      // preservation step, the freshly-computed `detected` value
+      // (which sees the model's original `channel.reply` toolcall via
+      // `result.steps`) would clobber the `channel.ack` that the
+      // mirror-suppress flow persisted earlier — and metrics would
+      // report a publish that never actually went through.
+      const persistedRun = spirit.runId
+        ? this.repo.getRun(input.organizationId, spirit.runId)
+        : null;
+      const persistedTerminator = persistedRun?.terminatingTool;
+      const persistedIsSilent =
+        persistedTerminator === 'channel.ack' || persistedTerminator === 'channel.pass';
+      const terminatingTool = persistedIsSilent
+        ? persistedTerminator
+        : detectedTerminatingTool;
+      if (persistedRun) {
+        this.repo.saveRun({
+          ...persistedRun,
+          status: 'completed',
+          step: 'completed',
+          summary: lastText || persistedRun.summary,
+          endedAt: new Date().toISOString(),
+          terminatingTool,
+        });
       }
       this.emit(SocketEventNames.spiritCompleted, completed);
       this.maybeFinalizeTaskSession(
@@ -1143,8 +1158,19 @@ export class SpiritService {
       // (and the palette layer above strips it anyway when the
       // wake reason is `mention`).
       const replyText = outcome.finalText.trim();
+      // A run "satisfied" mandatory-reply when it ended via any
+      // *publishing* terminator. `channel.pass` is explicit silence
+      // (rejected by policy for mention wakes anyway), and
+      // `channel.ack` is silent-acknowledge (no message published);
+      // neither counts as a real reply, so both must trigger the
+      // `must_reply_failed` event when they appear on a mention
+      // wake. Without excluding `channel.ack` here a supervisor
+      // could loophole every mention with an ack and the human
+      // would never see the failure surface.
       const publishedViaTool =
-        outcome.terminatingTool !== null && outcome.terminatingTool !== 'channel.pass';
+        outcome.terminatingTool !== null &&
+        outcome.terminatingTool !== 'channel.pass' &&
+        outcome.terminatingTool !== 'channel.ack';
       if (!replyText && !publishedViaTool && input.wakeReason === 'mention') {
         this.realtime.emit(
           SocketEventNames.memberMustReplyFailed,
@@ -1726,7 +1752,23 @@ export class SpiritService {
       const text = (result.text || streamedText).trim();
       const reasoningContent = extractReasoningChunk(result) ?? (streamedReasoning.trim() || undefined);
       const runSteps = this.repo.listRunSteps?.(run.organizationId, run.id) ?? [];
-      const terminatingTool = findTerminatingTool(result) ?? findTerminatingToolFromRunSteps(runSteps);
+      const detectedTerminatingTool =
+        findTerminatingTool(result) ?? findTerminatingToolFromRunSteps(runSteps);
+      // Preserve any silent terminator that a mid-run side-effect
+      // already persisted onto the run row (mirror-loop guard fires
+      // `tryMirrorSuppress` which writes `terminatingTool='channel.ack'`).
+      // Without this preservation step, the freshly-computed
+      // `detected` value (which sees the model's original
+      // `channel.reply` toolcall via `result.steps`) would clobber
+      // the silent terminator on the way through `completeRun`,
+      // and metrics would report a publish that never happened.
+      const persistedRunRow = this.repo.getRun(run.organizationId, run.id);
+      const persistedTerminator = persistedRunRow?.terminatingTool;
+      const persistedIsSilent =
+        persistedTerminator === 'channel.ack' || persistedTerminator === 'channel.pass';
+      const terminatingTool: string | null = persistedIsSilent
+        ? persistedTerminator
+        : detectedTerminatingTool;
       const usedPass = runUsedChannelPass(result) || terminatingTool === 'channel.pass';
       const finalThreadId = run.threadId;
       const channelId = finalThreadId
@@ -1945,6 +1987,16 @@ export class SpiritService {
     }
   }
 
+  /**
+   * Plug in (or replace) the post-completion hook. Used by
+   * `services/index.ts` to late-bind `CommitmentService.onRunCompleted`
+   * after both services exist — same chicken-and-egg pattern as the
+   * MCP tool resolver. Pass `undefined` to clear.
+   */
+  setRunCompletedHook(hook: ((run: RunState) => Promise<void> | void) | undefined): void {
+    this.runCompletedHook = hook;
+  }
+
   private completeRun(run: RunState, summary: string, terminatingTool: string | null = null): RunState {
     const completed = this.repo.saveRun({
       ...run,
@@ -1960,6 +2012,19 @@ export class SpiritService {
       { organizationId: run.organizationId, run: completed },
       this.getRooms(run),
     );
+
+    if (this.runCompletedHook) {
+      try {
+        const result = this.runCompletedHook(completed);
+        if (result && typeof (result as Promise<unknown>).then === 'function') {
+          (result as Promise<unknown>).catch(() => {
+            // best-effort
+          });
+        }
+      } catch {
+        // best-effort
+      }
+    }
 
     return completed;
   }

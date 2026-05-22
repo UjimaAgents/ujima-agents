@@ -136,6 +136,7 @@ import {
   saveRunStep as writeRunStep,
 } from './run-steps.js';
 import {
+  findOpenTaskSessionForChannel as readOpenTaskSessionForChannel,
   getTaskSession as readTaskSession,
   getTaskSessionByChannel as readTaskSessionByChannel,
   getTaskSessionBySlug as readTaskSessionBySlug,
@@ -145,7 +146,14 @@ import {
   type PaginatedTaskSessions,
 } from './task-sessions.js';
 import {
+  claimExpiredCommitment as runClaimExpiredCommitment,
+  claimIdleCommitment as runClaimIdleCommitment,
+  findCommitmentBySourceMessage as readCommitmentBySourceMessage,
+  findOpenChannelCommitmentForMember as readOpenChannelCommitmentForMember,
   getTodo as readTodo,
+  listExpiredCommitments as readExpiredCommitments,
+  listIdleCommitments as readIdleCommitments,
+  listTodosForChannel as readTodosForChannel,
   listTodosForSession as readTodosForSession,
   saveTodo as writeTodo,
   updateTodoStatus as writeTodoStatus,
@@ -422,6 +430,11 @@ export class Repository {
     readTaskSessionBySlug(this.db, organizationId, slug);
   getTaskSessionByChannel = (organizationId: string, channelId: string): TaskSession | null =>
     readTaskSessionByChannel(this.db, organizationId, channelId);
+  findOpenTaskSessionForChannel = (
+    organizationId: string,
+    channelId: string,
+  ): TaskSession | null =>
+    readOpenTaskSessionForChannel(this.db, organizationId, channelId);
   listTaskSessions = (
     organizationId: string,
     options?: { cursor?: string; limit?: number; status?: TaskSessionStatus },
@@ -514,6 +527,37 @@ export class Repository {
     taskSessionId: string,
     options?: { status?: TodoStatus; memberId?: string },
   ): Todo[] => readTodosForSession(this.db, organizationId, taskSessionId, options);
+  listTodosForChannel = (
+    organizationId: string,
+    channelId: string,
+    options?: { status?: TodoStatus; memberId?: string },
+  ): Todo[] => readTodosForChannel(this.db, organizationId, channelId, options);
+  listIdleCommitments = (options: {
+    idleSinceIso: string;
+    statuses?: readonly TodoStatus[];
+    limit?: number;
+  }): Todo[] => readIdleCommitments(this.db, options);
+  listExpiredCommitments = (options: { nowIso: string; limit?: number }): Todo[] =>
+    readExpiredCommitments(this.db, options);
+  claimIdleCommitment = (
+    todoId: string,
+    expectedLastProgressAt: string | null,
+    newLastProgressAt: string,
+  ): boolean =>
+    runClaimIdleCommitment(this.db, todoId, expectedLastProgressAt, newLastProgressAt);
+  claimExpiredCommitment = (todoId: string, nowIso: string): boolean =>
+    runClaimExpiredCommitment(this.db, todoId, nowIso);
+  findOpenChannelCommitmentForMember = (
+    organizationId: string,
+    channelId: string,
+    memberId: string,
+    sinceIso: string,
+  ): Todo | null =>
+    readOpenChannelCommitmentForMember(this.db, organizationId, channelId, memberId, sinceIso);
+  findCommitmentBySourceMessage = (
+    organizationId: string,
+    sourceMessageId: string,
+  ): Todo | null => readCommitmentBySourceMessage(this.db, organizationId, sourceMessageId);
   updateTodoStatus = (
     organizationId: string,
     todoId: string,

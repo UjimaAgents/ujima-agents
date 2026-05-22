@@ -181,6 +181,15 @@ export interface ConversationRepository extends RepositoryReader {
   listMessageMentions(messageId: string): MessageMention[];
   deleteMessageMentions(messageId: string): void;
   getRun(organizationId: string, runId: string): RunState | null;
+  /**
+   * Optional run-row write surface used by the mirror-loop guard
+   * (Bet 1.5): when a posting tool's body would trip the mirror
+   * detector, ConversationService overrides the run's terminator
+   * to `channel.ack` and suppresses publish. Optional so narrower
+   * conversation mocks aren't forced to implement it — the guard
+   * silently no-ops in that case.
+   */
+  saveRun?(run: RunState): RunState;
   findActiveRunForMemberThread(
     organizationId: string,
     agentId: string,
@@ -224,6 +233,10 @@ export interface ApiRepository extends ConversationRepository {
   getTaskSession(organizationId: string, taskSessionId: string): TaskSession | null;
   getTaskSessionBySlug(organizationId: string, slug: string): TaskSession | null;
   getTaskSessionByChannel(organizationId: string, channelId: string): TaskSession | null;
+  findOpenTaskSessionForChannel?(
+    organizationId: string,
+    channelId: string,
+  ): TaskSession | null;
   listTaskSessions(
     organizationId: string,
     options?: { cursor?: string; limit?: number; status?: TaskSessionStatus },
@@ -311,6 +324,62 @@ export interface ApiRepository extends ConversationRepository {
     taskSessionId: string,
     options?: { status?: TodoStatus; memberId?: string },
   ): Todo[];
+  listTodosForChannel?(
+    organizationId: string,
+    channelId: string,
+    options?: { status?: TodoStatus; memberId?: string },
+  ): Todo[];
+  listIdleCommitments?(options: {
+    idleSinceIso: string;
+    statuses?: readonly TodoStatus[];
+    limit?: number;
+  }): Todo[];
+  listExpiredCommitments?(options: { nowIso: string; limit?: number }): Todo[];
+  /**
+   * Atomic claim-by-update for the commitment sweeper (Bet 4
+   * follow-up). Returns true when this caller successfully claimed
+   * the row by advancing `last_progress_at`; false when another
+   * sweep (or a human update) raced ahead. Optional because tests
+   * with narrower mocks skip the sweeper entirely.
+   */
+  claimIdleCommitment?(
+    todoId: string,
+    expectedLastProgressAt: string | null,
+    newLastProgressAt: string,
+  ): boolean;
+  /**
+   * Atomic flip from "open + past due" → `expired`. Returns true on
+   * successful claim. Mirror of `claimIdleCommitment` but for the
+   * deadline-letter sweep: the sweeper claims FIRST, then publishes
+   * the system message — so a crash between persist and publish
+   * causes one missed letter (the lesser evil) rather than a
+   * duplicate one. Optional for the same test-repo reason as the
+   * other commitment helpers.
+   */
+  claimExpiredCommitment?(todoId: string, nowIso: string): boolean;
+  /**
+   * Dedup lookup for the commitment extractor. Returns the most-
+   * recently-created open commitment for a `(org, channel, member)`
+   * triple within `sinceIso`. Optional because the existing in-memory
+   * test repository doesn't implement it — the service falls back to
+   * "always insert" if absent.
+   */
+  findOpenChannelCommitmentForMember?(
+    organizationId: string,
+    channelId: string,
+    memberId: string,
+    sinceIso: string,
+  ): Todo | null;
+  /**
+   * Reverse-lookup used by `CommitmentService.onRunCompleted` to map a
+   * self-followup run back to its originating commitment so the empty-
+   * wake counter can be updated. Optional for the same test-repo
+   * reason — the service skips counter updates when absent.
+   */
+  findCommitmentBySourceMessage?(
+    organizationId: string,
+    sourceMessageId: string,
+  ): Todo | null;
   updateTodoStatus(
     organizationId: string,
     todoId: string,
