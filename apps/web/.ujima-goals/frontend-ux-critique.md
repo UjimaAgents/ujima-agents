@@ -16,9 +16,9 @@ Conduct an extensive UX critique of the Ujima web frontend (`apps/web`), identif
 
 | Task | Owner | Status |
 |------|-------|--------|
-| **HP-1: Wire sidebar search** | Ethan Parker | Pending |
-| **HP-2: Keyboard nav on chat tabs** | Ethan Parker | Pending |
-| **HP-3: Virtualizer dynamic height** | Ethan Parker | Pending |
+| **HP-1: Wire sidebar search** | Ethan Parker | ✅ Complete |
+| **HP-2: Keyboard nav on chat tabs** | Ethan Parker | ✅ Complete |
+| **HP-3: Virtualizer dynamic height** | Ethan Parker | ✅ Complete |
 | **HP-4: Responsive layout** | Ethan Parker | Pending |
 
 ---

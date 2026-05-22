@@ -12,13 +12,13 @@ import {
   Paperclip,
   Plus,
   Send,
-  Smile,
   Square,
   X,
 } from "lucide-react";
 import { AttachmentSchema, type AttachmentCategory } from "@ujima/shared/browser";
 import type { ChatMessageData } from "./chat-message";
 import { MarkdownInline } from "../markdown";
+import { WORKSPACE_DOCK_HEIGHT_CLASS } from "../../workspace-dock";
 
 export interface MentionSuggestion {
   id: string;
@@ -158,7 +158,6 @@ export function ChatInput({
   placeholder = "Type a message...",
   onSend,
   onCommand,
-  statusHint,
   inlineError,
   mentionSuggestions = [],
   replyTo,
@@ -173,7 +172,6 @@ export function ChatInput({
   organizationId?: string;
   onSend: (content: string, attachmentIds?: string[], metadata?: { goalMode?: boolean }) => Promise<void> | void;
   onCommand: (command: ThreadCommand, rawContent?: string) => Promise<void> | void;
-  statusHint?: string;
   inlineError?: string;
   mentionSuggestions?: MentionSuggestion[];
   replyTo?: ChatMessageData | null;
@@ -197,23 +195,10 @@ export function ChatInput({
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
-  const [emojiMenuOpen, setEmojiMenuOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const emojiMenuRef = useRef<HTMLDivElement>(null);
-  const emojiToggleRef = useRef<HTMLButtonElement>(null);
   const attachmentsRef = useRef<UploadedAttachment[]>([]);
   const uploadControllersRef = useRef(new Map<string, AbortController>());
-  const emojiOptions = [
-    "😀", "😃", "😄", "😁", "😆", "😅", "🤣", "😂",
-    "🙂", "🙃", "😉", "😊", "😍", "😘", "😎", "🤩",
-    "🤔", "😴", "😭", "😡", "🤯", "🥳", "😇", "🤗",
-    "👍", "👎", "👏", "🙌", "🤝", "🙏", "💪", "🤞",
-    "❤️", "🧡", "💛", "💚", "💙", "💜", "🖤", "🤍",
-    "🔥", "✨", "💥", "💫", "💡", "✅", "❌", "⚡",
-    "🎉", "🎊", "🥂", "🍾", "🎯", "🚀", "🧠", "📌",
-    "📎", "📝", "💬", "📣", "👀", "👋", "🌟", "☕",
-  ];
 
   function revokePreviewUrl(attachment: UploadedAttachment) {
     if (attachment.previewUrl?.startsWith("blob:")) {
@@ -229,24 +214,6 @@ export function ChatInput({
   useEffect(() => {
     attachmentsRef.current = attachments;
   }, [attachments]);
-  useEffect(() => {
-    if (!emojiMenuOpen) return;
-    const onPointerDown = (event: PointerEvent) => {
-      const target = event.target as Node;
-      if (emojiMenuRef.current?.contains(target)) return;
-      if (emojiToggleRef.current?.contains(target)) return;
-      setEmojiMenuOpen(false);
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setEmojiMenuOpen(false);
-    };
-    window.addEventListener("pointerdown", onPointerDown);
-    window.addEventListener("keydown", onKeyDown);
-    return () => {
-      window.removeEventListener("pointerdown", onPointerDown);
-      window.removeEventListener("keydown", onKeyDown);
-    };
-  }, [emojiMenuOpen]);
   useEffect(() => {
     return () => {
       for (const attachment of attachmentsRef.current) {
@@ -472,21 +439,6 @@ export function ChatInput({
     setContent(next);
     setSelection({ start: nextCaret, end: nextCaret });
     setActiveMentionIndex(0);
-    setEmojiMenuOpen(false);
-    requestAnimationFrame(() => {
-      textareaRef.current?.focus();
-      textareaRef.current?.setSelectionRange(nextCaret, nextCaret);
-    });
-  };
-
-  const insertEmoji = (emoji: string) => {
-    const before = content.slice(0, selection.start);
-    const after = content.slice(selection.end);
-    const next = `${before}${emoji}${after}`;
-    const nextCaret = before.length + emoji.length;
-    setContent(next);
-    setSelection({ start: nextCaret, end: nextCaret });
-    setEmojiMenuOpen(false);
     requestAnimationFrame(() => {
       textareaRef.current?.focus();
       textareaRef.current?.setSelectionRange(nextCaret, nextCaret);
@@ -506,7 +458,6 @@ export function ChatInput({
       }
       setContent("");
       setSelection({ start: 0, end: 0 });
-      setEmojiMenuOpen(false);
       setAttachments([]);
       setUploadProgress(0);
     } catch (err) {
@@ -524,7 +475,6 @@ export function ChatInput({
       setContent("");
       setSelection({ start: 0, end: 0 });
       setClearConfirmation(false);
-      setEmojiMenuOpen(false);
       requestAnimationFrame(() => {
         textareaRef.current?.focus();
       });
@@ -552,7 +502,6 @@ export function ChatInput({
       setAttachments([]);
       setUploadProgress(0);
       setClearConfirmation(false);
-      setEmojiMenuOpen(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to run command.");
     } finally {
@@ -594,9 +543,9 @@ export function ChatInput({
   };
 
   return (
-    <div className="shrink-0 px-4 py-2 border-t border-zinc-200 dark:border-zinc-800">
+    <div className="shrink-0 px-3 pt-1.5 pb-0">
       <div
-        className={`relative group ${isDragging ? "ring-2 ring-violet-400/50 ring-offset-2 ring-offset-transparent" : ""}`}
+        className={`relative group ${isDragging ? "ring-2 ring-zinc-300/80 ring-offset-2 ring-offset-transparent dark:ring-zinc-600" : ""}`}
         onDragEnter={(event) => {
           event.preventDefault();
           handleDrag(true);
@@ -665,10 +614,9 @@ export function ChatInput({
           className="hidden"
           onChange={handleAttachmentInput}
         />
-        <div className="pointer-events-none absolute inset-0 rounded-xl bg-gradient-to-r from-violet-500/10 to-indigo-500/10 blur-lg opacity-0 transition-opacity group-focus-within:opacity-100" />
-        <div className={`relative z-10 flex flex-col rounded-xl border transition-all focus-within:border-violet-500 focus-within:bg-white focus-within:ring-1 focus-within:ring-violet-500 dark:focus-within:bg-[#09090b] ${goalMode ? "border-violet-400/50 bg-violet-50/30 dark:border-violet-500/30 dark:bg-violet-500/5" : "border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/50"}`}>
+        <div className={`relative z-10 flex flex-col rounded-lg border border-zinc-200 bg-zinc-50 transition-all focus-within:border-zinc-300 focus-within:bg-white focus-within:ring-1 focus-within:ring-zinc-200/80 dark:border-zinc-800 dark:bg-zinc-900/50 dark:focus-within:border-zinc-600 dark:focus-within:bg-[#09090b] dark:focus-within:ring-zinc-800/80 ${goalMode ? "bg-zinc-100/80 dark:bg-zinc-900/80" : ""}`}>
           {replyTo && (
-            <div className="flex items-center gap-2 rounded-t-xl border-b border-zinc-200 bg-violet-50/50 px-3 py-1.5 dark:border-zinc-800 dark:bg-violet-500/5">
+            <div className="flex items-center gap-2 rounded-t-lg border-b border-zinc-200 bg-violet-50/50 px-2 py-1 dark:border-zinc-800 dark:bg-violet-500/5">
               <div className="flex-1 min-w-0">
                 <p className="truncate text-[10px] font-semibold text-violet-700 dark:text-violet-300">
                   Replying to {replyTo.name}
@@ -719,8 +667,106 @@ export function ChatInput({
               </div>
             </div>
           ) : null}
-          <textarea
+          {attachments.length > 0 ? (
+            <div className="border-t border-zinc-200 px-2 py-1.5 dark:border-zinc-800">
+              <div className="flex gap-2 overflow-x-auto pb-1">
+                {attachments.map((attachment) => {
+                  const Icon = getAttachmentIcon(attachment.category);
+                  return (
+                    <div
+                      key={attachment.id}
+                      className={`relative shrink-0 overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-950/50 ${
+                        attachment.category === "image" ? "h-24 w-24" : "w-56"
+                      } ${attachment.uploading ? "opacity-80" : ""}`}
+                    >
+                      {attachment.category === "image" ? (
+                        <>
+                          {/* eslint-disable-next-line @next/next/no-img-element -- blob or cookie-backed API URL */}
+                          <img
+                          src={attachment.previewUrl ?? thumbnailUrl(attachment.id)}
+                          alt={attachment.filename}
+                          className="h-full w-full object-cover"
+                        />
+                        </>
+                      ) : (
+                        <div className="flex h-full items-center gap-3 px-3 py-2">
+                          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-violet-500/10 text-violet-600 dark:text-violet-300">
+                            <Icon className="h-5 w-5" />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-xs font-semibold text-zinc-800 dark:text-zinc-100">
+                              {attachment.filename}
+                            </p>
+                            <p className="text-[10px] text-zinc-500 dark:text-zinc-400">
+                              {formatAttachmentSize(attachment.sizeBytes)}
+                            </p>
+                          </div>
+                        </div>
+                      )}
+                      {attachment.uploading ? (
+                        <div className="absolute inset-0 flex items-center justify-center bg-black/20 text-white">
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        </div>
+                      ) : null}
+                      <button
+                        type="button"
+                        onClick={() => removeAttachment(attachment.id)}
+                        className="absolute right-1 top-1 rounded-full bg-black/60 p-1 text-white backdrop-blur transition hover:bg-black/80"
+                        aria-label={`Remove ${attachment.filename}`}
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+              {uploading ? (
+                <div className="mt-2">
+                  <div className="mb-1 flex items-center gap-2 text-[10px] text-zinc-500 dark:text-zinc-400">
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    Uploading attachments...
+                  </div>
+                  <div className="h-1 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800">
+                    <div
+                      className="h-full rounded-full bg-violet-600 transition-all"
+                      style={{ width: `${uploadProgress}%` }}
+                    />
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+          <div className={`relative flex ${WORKSPACE_DOCK_HEIGHT_CLASS} items-center gap-1.5 px-2`}>
+            <div className="flex shrink-0 items-center gap-1.5">
+              <button
+                type="button"
+                aria-label="Open commands"
+                title="Open commands"
+                onClick={() => {
+                  setContent((value) => (value.trim().length === 0 ? "/" : value));
+                  setClearConfirmation(false);
+                  requestAnimationFrame(() => {
+                    textareaRef.current?.focus();
+                    textareaRef.current?.setSelectionRange(1, 1);
+                  });
+                }}
+                className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300"
+              >
+                <Plus className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
+                aria-label="Attach file"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploading}
+                className="text-zinc-400 hover:text-zinc-600 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:text-zinc-300"
+              >
+                <Paperclip className="h-4 w-4" />
+              </button>
+            </div>
+            <textarea
             ref={textareaRef}
+            rows={1}
             placeholder={placeholder}
             value={content}
             onChange={(event) => {
@@ -833,10 +879,10 @@ export function ChatInput({
                 void submitComposer();
               }
             }}
-            className="w-full bg-transparent px-3 py-2.5 text-sm focus:outline-none resize-none min-h-[56px]"
+            className="max-h-8 min-h-0 min-w-0 flex-1 resize-none self-center overflow-y-auto bg-transparent py-0 text-sm leading-5 focus:outline-none"
           />
           {mentionMenuOpen ? (
-            <div className="mx-2 mt-1 max-h-44 overflow-y-auto rounded-lg border border-zinc-200 bg-white p-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-950">
+            <div className="absolute bottom-full left-0 right-0 z-20 mb-1 max-h-44 overflow-y-auto rounded-lg border border-zinc-200 bg-white p-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-950">
               {filteredMentionSuggestions.map((suggestion, index) => (
                 <button
                   key={suggestion.id}
@@ -861,148 +907,7 @@ export function ChatInput({
               ))}
             </div>
           ) : null}
-          {emojiMenuOpen ? (
-            <div
-              ref={emojiMenuRef}
-              className="absolute bottom-[68px] left-3 z-20 w-72 rounded-xl border border-zinc-200 bg-white p-2 shadow-xl transition dark:border-zinc-700 dark:bg-zinc-950"
-            >
-              <div className="mb-2 flex items-center justify-between px-1">
-                <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-zinc-500 dark:text-zinc-400">
-                  Emoji
-                </p>
-                <button
-                  type="button"
-                  onClick={() => setEmojiMenuOpen(false)}
-                  className="rounded-md px-1.5 py-0.5 text-[10px] text-zinc-500 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-900"
-                >
-                  Close
-                </button>
-              </div>
-              <div className="grid max-h-64 grid-cols-8 gap-1 overflow-y-auto pr-1">
-                {emojiOptions.map((emoji) => (
-                  <button
-                    key={emoji}
-                    type="button"
-                    onMouseDown={(event) => {
-                      event.preventDefault();
-                      insertEmoji(emoji);
-                    }}
-                    className="flex h-9 w-9 items-center justify-center rounded-lg text-lg transition hover:bg-zinc-100 dark:hover:bg-zinc-900"
-                    aria-label={`Insert ${emoji}`}
-                  >
-                    {emoji}
-                  </button>
-                ))}
-              </div>
-            </div>
-          ) : null}
-          {attachments.length > 0 ? (
-            <div className="border-t border-zinc-200 px-3 py-2 dark:border-zinc-800">
-              <div className="flex gap-2 overflow-x-auto pb-1">
-                {attachments.map((attachment) => {
-                  const Icon = getAttachmentIcon(attachment.category);
-                  return (
-                    <div
-                      key={attachment.id}
-                      className={`relative shrink-0 overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-950/50 ${
-                        attachment.category === "image" ? "h-24 w-24" : "w-56"
-                      } ${attachment.uploading ? "opacity-80" : ""}`}
-                    >
-                      {attachment.category === "image" ? (
-                        <>
-                          {/* eslint-disable-next-line @next/next/no-img-element -- blob or cookie-backed API URL */}
-                          <img
-                          src={attachment.previewUrl ?? thumbnailUrl(attachment.id)}
-                          alt={attachment.filename}
-                          className="h-full w-full object-cover"
-                        />
-                        </>
-                      ) : (
-                        <div className="flex h-full items-center gap-3 px-3 py-2">
-                          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-violet-500/10 text-violet-600 dark:text-violet-300">
-                            <Icon className="h-5 w-5" />
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <p className="truncate text-xs font-semibold text-zinc-800 dark:text-zinc-100">
-                              {attachment.filename}
-                            </p>
-                            <p className="text-[10px] text-zinc-500 dark:text-zinc-400">
-                              {formatAttachmentSize(attachment.sizeBytes)}
-                            </p>
-                          </div>
-                        </div>
-                      )}
-                      {attachment.uploading ? (
-                        <div className="absolute inset-0 flex items-center justify-center bg-black/20 text-white">
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        </div>
-                      ) : null}
-                      <button
-                        type="button"
-                        onClick={() => removeAttachment(attachment.id)}
-                        className="absolute right-1 top-1 rounded-full bg-black/60 p-1 text-white backdrop-blur transition hover:bg-black/80"
-                        aria-label={`Remove ${attachment.filename}`}
-                      >
-                        <X className="h-3 w-3" />
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-              {uploading ? (
-                <div className="mt-2">
-                  <div className="mb-1 flex items-center gap-2 text-[10px] text-zinc-500 dark:text-zinc-400">
-                    <Loader2 className="h-3 w-3 animate-spin" />
-                    Uploading attachments...
-                  </div>
-                  <div className="h-1 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800">
-                    <div
-                      className="h-full rounded-full bg-violet-600 transition-all"
-                      style={{ width: `${uploadProgress}%` }}
-                    />
-                  </div>
-                </div>
-              ) : null}
-            </div>
-          ) : null}
-          <div className="flex items-center justify-between border-t border-zinc-200 px-3 py-1.5 dark:border-zinc-800">
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                aria-label="Open commands"
-                title="Open commands"
-                onClick={() => {
-                  setContent((value) => (value.trim().length === 0 ? "/" : value));
-                  setClearConfirmation(false);
-                  requestAnimationFrame(() => {
-                    textareaRef.current?.focus();
-                    textareaRef.current?.setSelectionRange(1, 1);
-                  });
-                }}
-                className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300"
-              >
-                <Plus className="h-4 w-4" />
-              </button>
-              <button
-                type="button"
-                aria-label="Add emoji"
-                ref={emojiToggleRef}
-                onClick={() => setEmojiMenuOpen((value) => !value)}
-                className={`text-zinc-400 transition hover:text-zinc-600 dark:hover:text-zinc-300 ${emojiMenuOpen ? "text-violet-600 dark:text-violet-300" : ""}`}
-              >
-                <Smile className="h-4 w-4" />
-              </button>
-              <button
-                type="button"
-                aria-label="Attach file"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={uploading}
-                className="text-zinc-400 hover:text-zinc-600 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:text-zinc-300"
-              >
-                <Paperclip className="h-4 w-4" />
-              </button>
-            </div>
-            <div className="flex items-center gap-2">
+            <div className="flex shrink-0 items-center gap-1.5">
               {goalMode ? (
                 <button
                   type="button"
@@ -1023,7 +928,7 @@ export function ChatInput({
                   title="Stop agent run"
                   onClick={() => void stopRun()}
                   disabled={isStopping}
-                  className="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-red-600 text-white shadow-lg shadow-red-500/20 transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-red-600 text-white shadow-lg shadow-red-500/20 transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {isStopping ? (
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -1039,7 +944,7 @@ export function ChatInput({
                   title="Stop agent run"
                   onClick={() => void stopRun()}
                   disabled={isStopping}
-                  className="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-red-600 text-white shadow-lg shadow-red-500/20 transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-red-600 text-white shadow-lg shadow-red-500/20 transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {isStopping ? (
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -1063,7 +968,7 @@ export function ChatInput({
                             ? "Ask agent to schedule"
                           : "Send message"
                   }
-                  className="flex h-7 w-7 items-center justify-center rounded-lg bg-violet-600 text-white shadow-lg shadow-violet-500/20 transition hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="flex h-7 w-7 items-center justify-center rounded-md bg-violet-600 text-white shadow-lg shadow-violet-500/20 transition hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {working ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
                 </button>
@@ -1073,9 +978,6 @@ export function ChatInput({
         </div>
         {error ? (
           <p className="mt-2 text-xs text-red-600 dark:text-red-400">{error}</p>
-        ) : null}
-        {statusHint?.trim() ? (
-          <p className="mt-1.5 px-1 text-[10px] text-zinc-400 dark:text-zinc-500">{statusHint}</p>
         ) : null}
       </div>
     </div>
