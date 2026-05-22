@@ -137,6 +137,77 @@ describe('channel.* tools — toInvocation()', () => {
     expect(receivedChannelId).toBe('dm:agent-1:agent-2');
   });
 
+  it('channel.read normalizes dm:{singleMemberId} to a canonical DM thread id', async () => {
+    let receivedChannelId: string | undefined;
+    await channelReadTool.execute({
+      invocation: {
+        organizationId: 'org-1',
+        runId: 'run-1',
+        memberId: 'agent-1',
+        toolCallId: 'call-1',
+        toolId: 'channel.read',
+        action: 'read',
+        resourceType: 'message',
+        input: { channel_id: 'dm:agent-2', limit: 50 },
+      } as never,
+      team: { getChannel: () => undefined } as never,
+      repo: {
+        getChannel: () => null,
+        listAllChannels: () => [],
+        getMember: () => null,
+        listMembers: () => [],
+      } as never,
+      conversations: {
+        readChannel: (input: { channelId: string }) => {
+          receivedChannelId = input.channelId;
+          return input;
+        },
+      } as never,
+    });
+    expect(receivedChannelId).toBe('dm:agent-1:agent-2');
+  });
+
+  it('channel.list annotates DM rows with dm_thread_id and dm_peer_member_id', async () => {
+    const result = await channelListTool.execute({
+      invocation: {
+        organizationId: 'org-1',
+        runId: 'run-1',
+        memberId: 'agent-1',
+        toolCallId: 'call-1',
+        toolId: 'channel.list',
+        action: 'read',
+        resourceType: 'message',
+        input: { scope: 'mine' },
+      } as never,
+      team: {} as never,
+      repo: {} as never,
+      conversations: {
+        listVisibleChannels: () => [
+          { id: 'general', name: 'general', kind: 'general', topic: '', memberIds: ['agent-1'] },
+          {
+            id: 'dm:agent-1:agent-2',
+            name: 'dm-cole',
+            kind: 'dm',
+            topic: '',
+            memberIds: ['agent-1', 'agent-2'],
+          },
+        ],
+      } as never,
+    });
+    expect(result).toEqual([
+      { id: 'general', name: 'general', kind: 'general', topic: '', memberIds: ['agent-1'] },
+      {
+        id: 'dm:agent-1:agent-2',
+        name: 'dm-cole',
+        kind: 'dm',
+        topic: '',
+        memberIds: ['agent-1', 'agent-2'],
+        dm_thread_id: 'dm:agent-1:agent-2',
+        dm_peer_member_id: 'agent-2',
+      },
+    ]);
+  });
+
   // Regression: previously each channel.* tool overrode `permissionToolName`
   // to a short name (`post`, `reply`, `dm`, `list`, `read`). The permissions
   // middleware checks `toolName` against the role's `allowed_tools`, which

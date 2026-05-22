@@ -38,3 +38,17 @@ export function resolveDmPeerMemberId(threadId: string, currentMemberId: string)
   if (parsed.participantB === currentMemberId) return parsed.participantA;
   return undefined;
 }
+
+export function normalizeDmChannelRef(channelRef: string, currentMemberId: string): string {
+  const trimmed = channelRef.trim();
+  if (parseDmThreadId(trimmed)) {
+    return trimmed;
+  }
+
+  const singleParticipant = /^dm:([^:]+)$/i.exec(trimmed);
+  if (singleParticipant?.[1]) {
+    return getDirectMessageThreadId(currentMemberId, singleParticipant[1]);
+  }
+
+  return trimmed;
+}

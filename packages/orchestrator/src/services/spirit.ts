@@ -32,6 +32,7 @@ import {
   type TaskSession,
   type WakeReason,
   AGENT_KIND,
+  isDirectMessageThread,
 } from '@ujima/shared';
 import {
   MESSAGE_TOOL_USAGE_GUIDANCE,
@@ -399,12 +400,9 @@ export class SpiritService {
     if (!target) {
       return { kind: 'no-active-spirit' };
     }
-    // L7 — when the wake is `@mention`, include the messageId in
-    // the debounce key so legitimate fast hand-offs (A→B→A in <2s)
-    // aren't silently swallowed by the supervisor debounce window.
-    // Channel-read wakes keep the original key so heavy broad-wake
-    // chatter is still debounced.
-    const debounceMessageKey = input.wakeReason === 'mention' ? input.messageId : undefined;
+    // L7 — mention/DM wakes key debounce by messageId; other wakes coalesce per session.
+    const debounceMessageKey =
+      input.wakeReason === 'mention' || input.wakeReason === 'dm' ? input.messageId : undefined;
     if (
       this.shouldDebounceSupervisorAlert(
         input.organizationId,
@@ -1138,7 +1136,7 @@ export class SpiritService {
         memberId: input.memberId,
         role: 'supervisor',
         maxIterations: 2,
-        extraPrompt: this.buildSupervisorAlertContext(input),
+        extraPrompt: this.buildSupervisorAlertContext(taskSessionId, input),
         systemPromptSuffix: goalModeSuffix,
       });
       this.repo.saveTaskSession({
@@ -1226,18 +1224,36 @@ export class SpiritService {
     }
   }
 
-  private buildSupervisorAlertContext(input: SpiritAlertInput): string {
+  private buildSupervisorAlertContext(
+    taskSessionId: string,
+    input: SpiritAlertInput,
+  ): string {
+    const session = this.repo.getTaskSession(input.organizationId, taskSessionId);
     const sourceMessage = this.repo.getMessage(input.organizationId, input.messageId);
     const body = sourceMessage?.content ?? '';
+    const fromMember = this.repo.getMember(input.organizationId, input.byMemberId);
+    let commandSurface = '';
+    if (session) {
+      const requester = this.repo.getMember(input.organizationId, session.requestedBy);
+      const parts = [`requested by ${requester?.name ?? session.requestedBy}`];
+      if (session.origin.channelId) {
+        const channel = this.repo.getChannel(input.organizationId, session.origin.channelId);
+        parts.push(`channel ${channel?.name ?? session.origin.channelId}`);
+      }
+      if (session.origin.threadId) parts.push(`thread ${session.origin.threadId}`);
+      if (session.origin.messageId) parts.push(`origin message ${session.origin.messageId}`);
+      commandSurface = parts.join('; ');
+    }
+
     return [
       'You are answering a quick supervisor question or carrying out a direct action request.',
       ...MESSAGE_TOOL_USAGE_GUIDANCE,
       'If the request is only asking for status, give a short one-paragraph update.',
-      '',
       `Reason: ${input.reason}`,
-      `From: ${input.byMemberId}`,
-      sourceMessage ? `In channel: ${sourceMessage.channelId ?? 'dm'}` : '',
-      body ? `Question: ${body}` : '',
+      `From: ${fromMember?.name ?? input.byMemberId}`,
+      commandSurface ? `Human command surface: ${commandSurface}` : '',
+      sourceMessage ? `Alert thread: ${sourceMessage.channelId ?? input.threadId}` : '',
+      body ? `Message: ${body}` : '',
     ]
       .filter((line) => line.length > 0)
       .join('\n');
@@ -2203,7 +2219,7 @@ export class SpiritService {
     const check = (surfaceId: string): boolean => {
       const ch = getChannel.call(this.repo, organizationId, surfaceId);
       if (!ch) return false;
-      return ch.kind === 'general' || ch.kind === 'group' || ch.kind === 'dm';
+      return ch.kind === 'general' || ch.kind === 'group';
     };
     if (check(threadId)) return true;
     if (channelId && channelId !== threadId && check(channelId)) return true;
@@ -2239,6 +2255,13 @@ export class SpiritService {
 
     const direct = active.find((entry) => matchesSurface(entry));
     if (direct) return direct;
+
+    if (
+      isDirectMessageThread(threadId) ||
+      (channelId !== undefined && isDirectMessageThread(channelId))
+    ) {
+      return null;
+    }
 
     if (this.isBroadOrgChannelSurface(organizationId, threadId, channelId)) {
       return active[0] ?? null;

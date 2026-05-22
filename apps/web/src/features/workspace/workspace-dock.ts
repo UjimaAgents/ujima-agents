@@ -1,4 +1,3 @@
-/** Shared footer dock height so sidebar profile and chat composer toolbar align. */
 export const WORKSPACE_DOCK_HEIGHT_CLASS = "h-12";
 
 export const WORKSPACE_DOCK_BORDER_CLASS =

@@ -1,3 +1,4 @@
+import { formatPathEscapeError, type PathEscapeReason } from '@ujima/shared';
 import { realpath } from 'node:fs/promises';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 
@@ -17,16 +18,21 @@ export class PathEscapeError extends Error {
   readonly resolved: string;
   readonly root: string;
   readonly scopePaths: readonly string[];
-  constructor(params: { requested: string; resolved: string; root: string; scopePaths: readonly string[] }) {
-    super(
-      `path escape: "${params.requested}" resolved to "${params.resolved}" which is outside "${params.root}"` +
-        (params.scopePaths.length ? ` (scopes: ${params.scopePaths.join(', ')})` : ''),
-    );
+  readonly reason: PathEscapeReason;
+  constructor(params: {
+    requested: string;
+    resolved: string;
+    root: string;
+    scopePaths: readonly string[];
+    reason: PathEscapeReason;
+  }) {
+    super(formatPathEscapeError(params));
     this.name = 'PathEscapeError';
     this.requested = params.requested;
     this.resolved = params.resolved;
     this.root = params.root;
     this.scopePaths = params.scopePaths;
+    this.reason = params.reason;
   }
 }
 
@@ -100,6 +106,7 @@ export async function createPathResolver(opts: PathResolveOptions): Promise<Path
           resolved: resolved.boundaryPath,
           root: realRoot,
           scopePaths,
+          reason: 'workspace',
         });
       }
       if (
@@ -115,6 +122,7 @@ export async function createPathResolver(opts: PathResolveOptions): Promise<Path
           resolved: resolved.boundaryPath,
           root: realRoot,
           scopePaths,
+          reason: 'scope',
         });
       }
       return resolved.targetPath;
