@@ -66,8 +66,25 @@ export {
   listProviderStatuses,
   summarizeTeam,
   validateProviderKeys,
-  ACTIVE_WORKSPACE_SETTING_KEY,
 } from './services/index.js';
+export {
+  ACTIVE_WORKSPACE_SETTING_KEY,
+  TEAM_CONFIG_SETTING_KEY,
+  persistTeamConfig,
+  assertGrantableOwnerFromParentOrg,
+  copyProviderCredentials,
+  grantWorkspaceOwnerForMember,
+  grantWorkspaceOwnerFromParentOrg,
+  orgWorkspaceId,
+  organizationIdFromWorkspaceId,
+  ensureChannelThread,
+  ensureDirectMessageConversation,
+  WorkspaceService,
+  migrateUnifiedWorkspaceOrg,
+  ORGANIZATION_WORKSPACE_IDS_KEY,
+} from './services/index.js';
+export type { WorkspaceOrgMigrationResult } from './services/index.js';
+export type { WorkspaceListItem, CreateWorkspaceInput } from './services/index.js';
 export type {
   ApiRepository,
   ApiServices,
@@ -127,5 +144,4 @@ export type {
   ToolInvocationResult,
   ToolService,
   UpdateOrganizationInput,
-  ActivateWorkspaceInput,
 } from './services/index.js';

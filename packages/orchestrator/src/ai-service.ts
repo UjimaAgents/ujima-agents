@@ -1,6 +1,6 @@
 import { isLoopFinished, type ToolSet } from 'ai';
 import { buildAgentSystemPrompt, normalizeProviderKey } from '@ujima/framework';
-import { DEFAULT_SPIRIT_TEMPERATURE, type Message, type SpiritRole } from '@ujima/shared';
+import { DEFAULT_SPIRIT_TEMPERATURE, type Message, type SpiritRole, type WakeReason } from '@ujima/shared';
 import { runAgentLoop, type AgentLoopChunk } from './services/agent-loop.js';
 import type { ApiRepository } from './services/repository-reader.js';
 import type { TeamStore } from './services/team-store.js';
@@ -22,6 +22,10 @@ import {
 } from './utils/system-prompt-builder.js';
 import { buildThreadStateBlock } from './utils/thread-state.js';
 import { buildWorkspaceStateBlock } from './utils/workspace-state.js';
+import {
+  filterToolsForWakeReplyPolicy,
+  resolveWakeReplyPolicy,
+} from './utils/wake-reply-policy.js';
 import {
   createMessageCursor,
   isMessageAfterCursor,
@@ -139,22 +143,16 @@ export class AiService {
     // path to comply with the "you must reply" contract regardless
     // of how the role config declares its `tools`.
     const wakeReasonForPalette = (this.repo.getRun?.(input.organizationId, input.runId)
-      ?.wakeReason ?? null) as string | null;
-    // Mandatory-reply applies only to genuine `mention` wakes. The
-    // scheduler-driven `self-followup` reason (Bet 4) is the agent
-    // being asked to deliver on its own commitment — it must NOT be
-    // forced to post via `channel.reply`; declaring a blocker via
-    // `supervisor.todo.update` or calling `channel.pass` are both
-    // legitimate outcomes there.
-    const mandatoryReplyMode = wakeReasonForPalette === 'mention';
-    const baseAlwaysAvailable = mandatoryReplyMode
-      ? ALWAYS_AVAILABLE_AGENT_TOOLS.filter(
-          (toolId) => toolId !== 'channel.pass' && toolId !== 'self.note',
-        )
-      : ALWAYS_AVAILABLE_AGENT_TOOLS;
-    const roleTools = mandatoryReplyMode
-      ? role.tools.filter((toolId) => toolId !== 'channel.pass' && toolId !== 'self.note')
-      : role.tools;
+      ?.wakeReason ?? null) as WakeReason | null;
+    const wakeReplyPolicy = resolveWakeReplyPolicy({
+      threadId: input.threadId,
+      wakeReason: wakeReasonForPalette,
+    });
+    const baseAlwaysAvailable = filterToolsForWakeReplyPolicy(
+      ALWAYS_AVAILABLE_AGENT_TOOLS,
+      wakeReplyPolicy,
+    );
+    const roleTools = filterToolsForWakeReplyPolicy(role.tools, wakeReplyPolicy);
     const toolIds = [...new Set([...roleTools, ...baseAlwaysAvailable])];
     const builtInToolDefs = buildToolDefinitions(toolIds, team, this.tools, {
       organizationId: input.organizationId,
@@ -234,6 +232,7 @@ export class AiService {
       organization.organizationChart,
       availableToolIds,
       attachedMcpServers.map((s) => ({ name: s.serverName, toolNames: s.toolNames })),
+      wakeReplyPolicy.conversationKind,
     );
 
     // Bet 1 + Bet 7 — cache-stable system prompt assembly.
@@ -251,6 +250,12 @@ export class AiService {
       baseSystem: baseSystemPrompt,
       proceduresText,
       goalSuffix: input.systemPromptSuffix,
+      // Use the DM vs channel scaffold from the wake-reply policy
+      // (introduced by main as `wake-reply-policy.ts`). Per-thread
+      // stable, so it remains in the cacheable prefix; the wake-
+      // reason-dependent anti-mirror + self-followup lines below
+      // are emitted as user-role messages and DON'T bust the cache.
+      baseScaffold: wakeReplyPolicy.scaffoldBlock,
     });
 
     const initialThreadMessages = this.repo.listMessages(input.organizationId, input.threadId, undefined, 20).data;
@@ -285,6 +290,7 @@ export class AiService {
       messages: initialThreadMessages,
       currentMember: { id: member.id, name: member.name },
       sourceMessageId,
+      threadId: input.threadId,
       members: this.repo.listMembers(input.organizationId),
     });
     if (threadStateBlock) {
@@ -332,23 +338,18 @@ export class AiService {
       });
     }
 
-    // Per-wake mutations land here as user-role messages — these
-    // are the lines that previously mutated `system` per wake and
-    // busted the cache. By keeping them in the messages array we
-    // get a stable system prefix every wake; the wake-context
-    // messages sit AFTER the cacheable prefix and only invalidate
-    // local cache up to themselves.
+    // Bet 1 — per-wake mutations land here as user-role messages.
+    // These are the lines that previously mutated `system` per wake
+    // and busted the cache (anti-mirror for gemini-flash, self-
+    // followup publish contract for scheduler wakes). The base
+    // scaffold (DM vs channel) is per-thread stable and is folded
+    // into the cacheable system prompt above via the
+    // `policy.scaffoldBlock` route; only the wake-reason-specific
+    // additions live below the cache breakpoint.
     const resolvedModelId = (model as { modelId?: unknown }).modelId;
     const modelIdString = typeof resolvedModelId === 'string' ? resolvedModelId : '';
     const wakeContextMessages = buildWakeContextMessages({
-      wakeReason: wakeReasonForPalette as
-        | 'mention'
-        | 'self-followup'
-        | 'channel-read'
-        | 'dm'
-        | 'handoff'
-        | 'parent-thread'
-        | null,
+      wakeReason: wakeReasonForPalette,
       modelIdString,
       isMirrorFragile: isMirrorFragileModel(modelIdString),
     });
@@ -374,7 +375,7 @@ export class AiService {
       // Lower temperature for mandatory mention wakes: at 0.2 the model is
       // more willing to commit to a structured posting tool. Other runs keep
       // the shared default.
-      temperature: mandatoryReplyMode ? 0.2 : DEFAULT_SPIRIT_TEMPERATURE,
+      temperature: wakeReplyPolicy.mandatoryReply ? 0.2 : DEFAULT_SPIRIT_TEMPERATURE,
       // L1/L2: force a tool call on the FIRST step only so the model
       // picks `channel.pass` or a posting tool fast. Continuation
       // steps go back to `auto` so multi-step read→write→reply

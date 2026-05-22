@@ -4,7 +4,7 @@ import { AppShell } from "@/components/app-shell";
 import { ThemeProvider } from "@/components/theme-provider";
 
 export const metadata: Metadata = {
-  title: "Ujima Web",
+  title: "Ujima Agents",
   description: "Ujima Agents web onboarding and control plane UI",
 };
 

@@ -22,6 +22,7 @@ import { McpRegistryService } from './mcp-registry.js';
 import { OnboardingService } from './onboarding.js';
 import type { ApiRepository } from './repository-reader.js';
 import { SettingsService } from './settings.js';
+import { WorkspaceService, type WorkspaceCatalog } from './workspace.js';
 import { SpiritService, type ModelResolver, type SpiritMcpPool } from './spirit.js';
 import { SupervisorTodoService } from './supervisor-todo.js';
 import { SchedulerService } from './scheduler.js';
@@ -59,7 +60,11 @@ export type {
   ReconcileTeamConfigResult,
   ReconcileTeamConfigStats,
 } from './config-sync.js';
-export { ACTIVE_WORKSPACE_SETTING_KEY, TEAM_CONFIG_SETTING_KEY } from './config-sync.js';
+export {
+  ACTIVE_WORKSPACE_SETTING_KEY,
+  TEAM_CONFIG_SETTING_KEY,
+  persistTeamConfig,
+} from './config-sync.js';
 export { ConversationService } from './conversation.js';
 export {
   SELF_NOTE_COMPACTED_MARKER,
@@ -88,11 +93,34 @@ export {
 } from './scheduler.js';
 export type { SchedulerServiceOptions } from './scheduler.js';
 export { SettingsService } from './settings.js';
+export {
+  assertGrantableOwnerFromParentOrg,
+  copyProviderCredentials,
+  grantWorkspaceOwnerForMember,
+  grantWorkspaceOwnerFromParentOrg,
+  orgWorkspaceId,
+  organizationIdFromWorkspaceId,
+} from './workspace-org-provision.js';
+export {
+  ensureChannelThread,
+  ensureDirectMessageConversation,
+} from './member-channels.js';
+export { WorkspaceService } from './workspace.js';
+export {
+  migrateUnifiedWorkspaceOrg,
+  ORGANIZATION_WORKSPACE_IDS_KEY,
+} from './workspace-org-migration.js';
+export type { WorkspaceOrgMigrationResult } from './workspace-org-migration.js';
+export type {
+  CreateWorkspaceInput,
+  ListAccessibleWorkspacesResult,
+  WorkspaceCatalog,
+  WorkspaceListItem,
+} from './workspace.js';
 export type {
   OrganizationSettingsResponse,
   TeamSettingsResponse,
   UpdateOrganizationInput,
-  ActivateWorkspaceInput,
 } from './settings.js';
 export { TaskPromoterService } from './task-promoter.js';
 export { TaskSessionService, taskRunChannelId } from './task-session.js';
@@ -128,6 +156,7 @@ export type {
 export {
   ERR_NO_WORKSPACE_ROOT,
   WorkspaceRootRequiredError,
+  assertWorkspaceRootPathExists,
   isWorkspaceRootRequiredError,
   requireOrganizationWorkspaceRoot,
 } from './workspace-root.js';
@@ -161,6 +190,7 @@ export interface ApiServicesContext extends ApiServiceContext {
   permissions: PermissionMiddleware;
   buildPermissionContext: PermissionContextBuilder;
   repo: ApiRepository;
+  workspaces: WorkspaceCatalog;
   archiveRoot?: string;
   /**
    * Phase 2: optional model resolver override. Tests pass a mock that
@@ -206,6 +236,7 @@ export interface ApiServices {
   bootstrap: BootstrapService;
   onboarding: OnboardingService;
   settings: SettingsService;
+  workspaces: WorkspaceService;
   scheduler: SchedulerService;
   taskPromoter: TaskPromoterService;
   taskSessions: TaskSessionService;
@@ -537,6 +568,12 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   const onboarding = new OnboardingService(context.repo, context.teamStore);
   const scheduler = new SchedulerService(context.repo, conversations, context.realtime);
   const settings = new SettingsService(context.repo, context.teamStore);
+  const workspaces = new WorkspaceService(
+    context.repo,
+    context.teamStore,
+    context.workspaces,
+    auth,
+  );
   const taskSessions = new TaskSessionService(context.repo, conversations, spirits);
   const taskPromoter = new TaskPromoterService(context.repo, spirits, {
     teamStore: context.teamStore,
@@ -635,6 +672,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     bootstrap,
     onboarding,
     settings,
+    workspaces,
     taskPromoter,
     taskSessions,
     spirits,

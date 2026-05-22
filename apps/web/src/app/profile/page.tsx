@@ -27,7 +27,7 @@ export default async function ProfilePage() {
               {member.name}
             </h1>
             <p className="mt-4 max-w-2xl text-sm leading-7 text-zinc-600 dark:text-zinc-300">
-              Manage your account details and current organization context here.
+              Manage your account details and current workspace context here.
             </p>
           </div>
 
@@ -43,8 +43,8 @@ export default async function ProfilePage() {
           <InfoRow icon={ShieldCheck} label="Presence" value={member.presence} />
         </Panel>
 
-        <Panel title="Organization">
-          <InfoRow icon={ShieldCheck} label="Organization" value={bootstrap.organization?.name ?? "Unavailable"} />
+        <Panel title="Workspace">
+          <InfoRow icon={ShieldCheck} label="Workspace" value={bootstrap.organization?.name ?? "Unavailable"} />
           <InfoRow
             icon={CalendarClock}
             label="Onboarding status"
@@ -52,7 +52,7 @@ export default async function ProfilePage() {
           />
           <InfoRow
             icon={CalendarClock}
-            label="Workspace root"
+            label="Project folder"
             value={bootstrap.team?.workspaceRoot ?? "Unavailable"}
           />
         </Panel>

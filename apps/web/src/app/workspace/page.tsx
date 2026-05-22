@@ -7,6 +7,7 @@ import {
 } from "@/server/ujima-daemon";
 import { WorkspaceShell } from "@/features/workspace/components/workspace-shell";
 import { resolveSelectedConversationFromSearchParams } from "@/features/workspace/conversation-routing";
+import { resolveDefaultConversation } from "@/features/workspace/workspace-channels";
 
 export default async function WorkspacePage({
   searchParams,
@@ -43,18 +44,10 @@ export default async function WorkspacePage({
     redirect("/login");
   }
 
-  const fallbackChannel =
-    bootstrap.channels.find((c) => c.name === "general") ?? bootstrap.channels[0];
   const resolvedSearchParams = await Promise.resolve(searchParams);
   const initialConversation =
     resolveSelectedConversationFromSearchParams(resolvedSearchParams, bootstrap) ??
-    (fallbackChannel
-      ? {
-          type: "channel" as const,
-          id: fallbackChannel.id,
-          name: fallbackChannel.name,
-        }
-      : undefined);
+    resolveDefaultConversation(bootstrap.channels);
 
   return (
     <WorkspaceShell

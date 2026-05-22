@@ -1,6 +1,7 @@
 import type { SqliteDbHandle as DbHandle } from '@ujima/context-store';
 import { normalizeProviderKey } from '@ujima/framework';
 import { OrganizationSchema, type Organization } from '@ujima/shared';
+import { resolve } from 'node:path';
 import { now, parseJsonObject, rowString } from './common.js';
 
 type Row = Record<string, unknown>;
@@ -9,6 +10,23 @@ function providerRows(db: DbHandle, organizationId: string): Row[] {
   return db
     .prepare('SELECT provider_name, key_ref FROM provider_credentials WHERE organization_id = ?')
     .all(organizationId) as Row[];
+}
+
+function upsertWorkspaceRow(db: DbHandle, organization: Organization, timestamp: number): void {
+  db.prepare(
+    `INSERT INTO workspaces (id, root_path, label, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       root_path = excluded.root_path,
+       label = excluded.label,
+       updated_at = excluded.updated_at`,
+  ).run(
+    `ws_${organization.id}`,
+    resolve(organization.workspace.root.trim()),
+    organization.name.trim() || 'Workspace',
+    timestamp,
+    timestamp,
+  );
 }
 
 export function getOrganization(db: DbHandle, organizationId: string): Organization | null {
@@ -80,6 +98,7 @@ export function listOrganizationsForUser(db: DbHandle, emailNormalized: string):
 
 export function saveOrganization(db: DbHandle, organization: Organization): Organization {
   const timestamp = now();
+  const workspaceTimestamp = Date.now();
   db.prepare(
     `INSERT INTO organizations (id, name, workspace_root, workspace_role_scopes, organization_chart_json, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -98,6 +117,7 @@ export function saveOrganization(db: DbHandle, organization: Organization): Orga
     timestamp,
     timestamp,
   );
+  upsertWorkspaceRow(db, organization, workspaceTimestamp);
 
   return organization;
 }

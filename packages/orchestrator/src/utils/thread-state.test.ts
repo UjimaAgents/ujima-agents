@@ -127,6 +127,30 @@ describe('buildThreadStateBlock', () => {
     expect(block).toContain('<agents-who-already-responded>none</agents-who-already-responded>');
   });
 
+  it('treats peer messages in a DM thread as implicitly addressed', () => {
+    const source = buildMessage({
+      id: 'msg-dm-1',
+      senderId: 'human-1',
+      senderKind: 'human',
+      kind: 'human',
+      content: 'review the frontend web for ujima and critique the UX extensively',
+      createdAt: '2026-05-19T10:00:00.000Z',
+    });
+    const block = buildThreadStateBlock({
+      messages: [source],
+      currentMember: { id: 'agent-ada', name: 'Ethan Parker' },
+      sourceMessageId: 'msg-dm-1',
+      threadId: 'dm:agent-ada:human-1',
+      members: [
+        buildMember({ id: 'human-1', name: 'Precious Vincent', kind: 'human', roleName: 'lead' }),
+        buildMember({ id: 'agent-ada', name: 'Ethan Parker', kind: 'agent', roleName: 'engineer' }),
+      ],
+    });
+    expect(block).toContain('<conversation-kind>dm</conversation-kind>');
+    expect(block).toContain('<you-implicitly-addressed>true</you-implicitly-addressed>');
+    expect(block).toContain('<you-explicitly-addressed>false</you-explicitly-addressed>');
+  });
+
   it('returns "none" for empty mention/responder sets', () => {
     const source = buildMessage({
       id: 'msg-1',

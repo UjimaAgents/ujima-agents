@@ -259,6 +259,7 @@ describe('workspace-root REST gating', () => {
           createApiServices({
             teamStore,
             repo,
+            workspaces: host.workspaces,
             realtime,
             permissions: host.permissions,
             buildPermissionContext,
@@ -625,7 +626,7 @@ describe('workspace path hardening', () => {
             title: 'Frontend Engineer',
             instructions: 'Stay in apps/web.',
             workspaceScopes: ['apps/web'],
-            tools: ['filesystem', 'shell'],
+            tools: ['write', 'shell'],
             channels: ['general'],
           },
         ],
@@ -672,7 +673,7 @@ describe('workspace path hardening', () => {
         runId: 'run-scope',
         memberId: 'frontend-alice',
         toolCallId: 'tc-scope',
-        toolId: 'filesystem',
+        toolId: 'view',
         action: 'read',
         resourceType: 'file',
         resourcePath: 'apps/api/server.ts',
@@ -694,7 +695,7 @@ describe('workspace path hardening', () => {
         runId: 'run-symlink',
         memberId: 'frontend-alice',
         toolCallId: 'tc-symlink',
-        toolId: 'filesystem',
+        toolId: 'view',
         action: 'read',
         resourceType: 'file',
         resourcePath: 'apps/web/outside-link/secret.txt',
@@ -810,23 +811,17 @@ describe('workspace path hardening', () => {
 
     fixture.tools.allowRun(fixture.organizationId, 'run-new-file');
 
-    const patch = `--- /dev/null
-+++ b/apps/web/new-file.ts
-@@ -0,0 +1,1 @@
-+export const created = true;
-`;
-
     const writeResult = await fixture.tools.invoke({
       organizationId: fixture.organizationId,
       runId: 'run-new-file',
       memberId: 'frontend-alice',
       toolCallId: 'tc-new-file',
-      toolId: 'filesystem',
+      toolId: 'write',
       action: 'write',
       resourceType: 'file',
       resourcePath: 'apps/web/new-file.ts',
       input: {
-        patch,
+        content: 'export const created = true;\n',
       },
     });
 
@@ -847,7 +842,7 @@ describe('workspace path hardening', () => {
       runId: 'run-backfill',
       memberId: 'frontend-alice',
       toolCallId: 'tc-backfill',
-      toolId: 'filesystem',
+      toolId: 'view',
       action: 'read',
       resourceType: 'file',
       resourcePath: 'apps/web/index.ts',

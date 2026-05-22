@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Modal } from "../modal";
+import { Modal } from "@/components/ui/modal";
 import { TextInput } from "@/components/ui/form-fields";
 import { Hash } from "lucide-react";
 import type { SelectedConversation } from "../../types";

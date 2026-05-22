@@ -1,9 +1,9 @@
-import { randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { AgentTeamConfigSchema, RoleConfigSchema } from '@ujima/framework';
 import type { Repository } from '@ujima/runtime-core';
-import { ChannelSchema, IdSchema, MemberSchema } from '@ujima/shared';
+import { AGENT_KIND, ChannelSchema, IdSchema, MemberSchema } from '@ujima/shared';
+import { ensureDirectMessageConversation } from '@ujima/orchestrator';
 import {
   ApiErrorSchema,
   ChannelOperationParamsSchema,
@@ -23,6 +23,7 @@ import { z } from 'zod';
 import {
   assertReadyWorkspaceRoot,
 } from './workspace-root.js';
+import { readSessionToken } from '../session-token.js';
 import { requireOrgSession } from './org-auth.js';
 import { apiError, errorMessage, routeError, workspaceRootError } from './route-errors.js';
 
@@ -292,6 +293,7 @@ export function registerSettingsRoutes(
       assertReadyWorkspaceRoot(repo, req.params.orgId);
       const forbidden = requireOrgSession(auth, req, reply, req.params.orgId);
       if (forbidden) return forbidden;
+      const authState = auth.getAuthState(readSessionToken(req));
       const member = settings.addMember({
         organizationId: req.params.orgId,
         name: req.body.name,
@@ -303,6 +305,14 @@ export function registerSettingsRoutes(
         personalityName: req.body.personalityName,
         role: req.body.role,
       });
+      if (member.kind === AGENT_KIND && authState.member) {
+        ensureDirectMessageConversation(
+          repo,
+          req.params.orgId,
+          authState.member,
+          member,
+        );
+      }
       return member;
     } catch (err) {
       return routeError(reply, err, { notFound: 'Organization not found', workspaceRoot: true });
@@ -365,16 +375,11 @@ export function registerSettingsRoutes(
       assertReadyWorkspaceRoot(repo, req.params.orgId);
       const forbidden = requireOrgSession(auth, req, reply, req.params.orgId);
       if (forbidden) return forbidden;
-      return repo.saveChannel(
-        ChannelSchema.parse({
-          id: randomUUID(),
-          organizationId: req.params.orgId,
-          name: req.body.name.trim(),
-          kind: 'group',
-          topic: req.body.topic ?? '',
-          memberIds: [],
-        }),
-      );
+      return settings.addChannel({
+        organizationId: req.params.orgId,
+        name: req.body.name.trim(),
+        topic: req.body.topic,
+      });
     } catch (err) {
       return routeError(reply, err, { notFound: 'Organization not found', workspaceRoot: true });
     }

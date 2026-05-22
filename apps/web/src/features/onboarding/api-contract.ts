@@ -1,5 +1,5 @@
 import type { OnboardingRequest } from "@ujima/api-schema";
-import { normalizeProviderToken } from "./provider-catalog";
+import { normalizeProviderKey, normalizeProviderToken } from "@/features/providers/catalog";
 import { OWNER_MANAGER_SENTINEL, type OnboardingDraft } from "./types";
 
 export const MIN_TEAM_AGENTS = 2;
@@ -20,7 +20,7 @@ const PROVIDER_NAME_MAP: Record<string, string> = {
 };
 
 export function normalizeProviderName(value: string) {
-  const normalized = normalizeProviderToken(value);
+  const normalized = normalizeProviderKey(value);
   return PROVIDER_NAME_MAP[normalized] ?? "openrouter";
 }
 

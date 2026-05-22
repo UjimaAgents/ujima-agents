@@ -44,7 +44,7 @@ describe('checkToolPolicy', () => {
           provider: 'openai',
           model: 'gpt-5.4',
           workspaceScopes: ['apps/web'],
-          tools: ['filesystem'],
+          tools: [],
           channels: ['general'],
         },
       ],
@@ -56,7 +56,7 @@ describe('checkToolPolicy', () => {
       checkToolPolicy(
         team,
         'frontend-engineer',
-        'filesystem',
+        'view',
         'read',
         join(workspaceRoot, 'apps', 'web', 'index.ts'),
       ),
@@ -66,7 +66,7 @@ describe('checkToolPolicy', () => {
       checkToolPolicy(
         team,
         'frontend-engineer',
-        'filesystem',
+        'view',
         'read',
         join(workspaceRoot, 'apps', 'api'),
       ),
@@ -95,7 +95,7 @@ describe('checkToolPolicy', () => {
             provider: 'openai',
             model: 'gpt-5.4',
             workspaceScopes: ['apps/web'],
-            tools: ['filesystem'],
+            tools: [],
             channels: ['general'],
           },
         ],
@@ -107,7 +107,7 @@ describe('checkToolPolicy', () => {
         checkToolPolicy(
           team,
           'root-reader',
-          'filesystem',
+          'view',
           'read',
           join(workspaceRoot, 'apps', 'web', 'soul.md'),
         ),
@@ -133,7 +133,7 @@ describe('checkToolPolicy', () => {
             provider: 'openai',
             model: 'gpt-5.4',
             workspaceScopes: ['apps/api'],
-            tools: ['filesystem'],
+            tools: [],
             channels: ['general'],
           },
         ],
@@ -145,7 +145,7 @@ describe('checkToolPolicy', () => {
         checkToolPolicy(
           team,
           'web-reader',
-          'filesystem',
+          'view',
           'read',
           join(workspaceRoot, 'apps', 'web', 'soul.md'),
         ),
@@ -176,7 +176,7 @@ describe('checkToolPolicy', () => {
             provider: 'openai',
             model: 'gpt-5.4',
             workspaceScopes: ['.'],
-            tools: ['filesystem'],
+            tools: [],
             channels: ['general'],
           },
         ],
@@ -188,7 +188,7 @@ describe('checkToolPolicy', () => {
         checkToolPolicy(
           team,
           'secret-reader',
-          'filesystem',
+          'view',
           'read',
           join(workspaceRoot, '.env'),
         ),
@@ -218,7 +218,7 @@ describe('checkToolPolicy', () => {
             provider: 'openai',
             model: 'gpt-5.4',
             workspaceScopes: ['.'],
-            tools: ['filesystem', 'write', 'edit', 'multiedit'],
+            tools: ['write', 'edit', 'multiedit'],
             channels: ['general'],
           },
         ],
@@ -230,7 +230,7 @@ describe('checkToolPolicy', () => {
         checkToolPolicy(
           team,
           'goal-writer',
-          'filesystem',
+          'write',
           'write',
           join(workspaceRoot, '.ujima-goals', 'plan.md'),
         ),
@@ -430,6 +430,15 @@ describe('checkToolPolicy', () => {
       });
       expect(result.allowed).toBe(false);
       expect(result.reason).toMatch(/mandatory-reply/);
+    });
+
+    it('rejects channel.pass in direct-message threads', () => {
+      const team = buildTeam();
+      const result = checkToolPolicy(team, 'engineer', 'channel.pass', 'message', undefined, {
+        threadId: 'dm:member-a:member-b',
+      });
+      expect(result.allowed).toBe(false);
+      expect(result.reason).toMatch(/direct-message/);
     });
 
     it('allows channel.pass for non-mention wake reasons', () => {

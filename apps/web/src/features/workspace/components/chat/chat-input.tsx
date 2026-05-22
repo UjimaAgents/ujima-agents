@@ -264,6 +264,7 @@ export function ChatInput({
     return SLASH_COMMANDS.filter((option) => option.command.startsWith(slashQuery));
   }, [slashQuery]);
   const slashMenuOpen = slashQuery !== null && slashMenuOptions.length > 0;
+  const working = isSending || isCommanding || uploading;
   const canStopRun = Boolean(stoppableRunId && onStopRun);
   const showStopInsteadOfSend =
     canStopRun &&
@@ -966,7 +967,20 @@ export function ChatInput({
           ) : null}
           <div className="flex items-center justify-between border-t border-zinc-200 px-3 py-1.5 dark:border-zinc-800">
             <div className="flex items-center gap-2">
-              <button type="button" aria-label="Add content" className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300">
+              <button
+                type="button"
+                aria-label="Open commands"
+                title="Open commands"
+                onClick={() => {
+                  setContent((value) => (value.trim().length === 0 ? "/" : value));
+                  setClearConfirmation(false);
+                  requestAnimationFrame(() => {
+                    textareaRef.current?.focus();
+                    textareaRef.current?.setSelectionRange(1, 1);
+                  });
+                }}
+                className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300"
+              >
                 <Plus className="h-4 w-4" />
               </button>
               <button
@@ -1036,9 +1050,9 @@ export function ChatInput({
               ) : (
                 <button
                   type="button"
-                  disabled={isSending || isCommanding || uploading || (!hasDraft && !exactSlashCommand && !canConfirmClear)}
+                  disabled={working || (!hasDraft && !exactSlashCommand && !canConfirmClear)}
                   onClick={() => void submitComposer()}
-                aria-label={
+                  aria-label={
                     canConfirmClear
                       ? "Confirm clear conversation"
                       : exactSlashCommand === "clear"
@@ -1051,7 +1065,7 @@ export function ChatInput({
                   }
                   className="flex h-7 w-7 items-center justify-center rounded-lg bg-violet-600 text-white shadow-lg shadow-violet-500/20 transition hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  <Send className="h-3.5 w-3.5" />
+                  {working ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
                 </button>
               )}
             </div>

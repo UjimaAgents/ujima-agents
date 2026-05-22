@@ -5,6 +5,7 @@ import type {
   DecisionVerificationFailure,
 } from '@ujima/shared';
 import type { ConversationRepository } from '../services/repository-reader.js';
+import { isDirectMessageThread } from './thread-state.js';
 
 /**
  * Shadow-mode verifier for `channel.pass` decisions.
@@ -78,6 +79,13 @@ function verifyNotAddressedToMe(
   const sourceMessage = resolveSourceMessage(input, repo);
   if (!sourceMessage) return ALL_PASS;
   const failures: DecisionVerificationFailure[] = [];
+
+  if (
+    isDirectMessageThread(input.threadId) &&
+    sourceMessage.senderId !== input.agentId
+  ) {
+    failures.push('not_addressed_to_me_in_direct_message');
+  }
 
   if ((sourceMessage.mentions ?? []).includes(input.agentId)) {
     failures.push('not_addressed_to_me_but_self_was_mentioned');

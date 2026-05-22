@@ -2,6 +2,8 @@ import type { AgentTeamHandle } from '@ujima/framework';
 import { AGENT_KIND, ChannelSchema, type Channel, type Member } from '@ujima/shared';
 import type { ApiRepository } from './repository-reader.js';
 
+type MemberRef = Pick<Member, 'id' | 'name'>;
+
 export function selfChannelId(memberId: string): string {
   return `self:${memberId}`;
 }
@@ -37,6 +39,60 @@ export function ensureMemberSelfChannel(
     });
   }
   return channel;
+}
+
+export function ensureChannelThread(
+  repo: ApiRepository,
+  organizationId: string,
+  channel: Pick<Channel, 'id' | 'name' | 'memberIds' | 'createdAt'>,
+): void {
+  if (repo.getThread(organizationId, channel.id)) return;
+  repo.ensureThread({
+    id: channel.id,
+    organizationId,
+    channelId: channel.id,
+    title: channel.name,
+    memberIds: channel.memberIds.length
+      ? channel.memberIds
+      : repo.listMembers(organizationId).map((member) => member.id),
+    createdAt: channel.createdAt ?? new Date().toISOString(),
+  });
+}
+
+export function ensureDirectMessageConversation(
+  repo: ApiRepository,
+  organizationId: string,
+  memberA: MemberRef,
+  memberB: MemberRef,
+): string {
+  const [firstId, secondId] = [memberA.id, memberB.id].sort();
+  const channelId = `dm:${firstId}:${secondId}`;
+  const dmChannelName = [memberA.name, memberB.name].sort().join(' / ');
+  const now = new Date().toISOString();
+
+  const existing = repo.getChannel(organizationId, channelId);
+  const channel = ChannelSchema.parse({
+    id: channelId,
+    organizationId,
+    name: dmChannelName,
+    kind: 'dm',
+    topic: '',
+    memberIds: [memberA.id, memberB.id],
+    createdAt: existing?.createdAt ?? now,
+    archivedAt: existing?.archivedAt,
+    parentMessageId: existing?.parentMessageId,
+  });
+  repo.saveChannel(channel);
+  repo.setChannelMembers(channelId, [memberA.id, memberB.id].sort());
+  repo.ensureThread({
+    id: channel.id,
+    organizationId,
+    channelId: channel.id,
+    title: dmChannelName,
+    memberIds: [memberA.id, memberB.id],
+    createdAt: channel.createdAt ?? now,
+  });
+  return channelId;
 }
 
 export function addMemberToDefaultChannels(

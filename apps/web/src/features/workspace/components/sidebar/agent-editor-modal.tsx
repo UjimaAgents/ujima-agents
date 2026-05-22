@@ -1,10 +1,11 @@
 "use client";
 
 import { useState, useMemo } from "react";
-import { Modal } from "../modal";
+import { Modal } from "@/components/ui/modal";
 import { Avatar } from "../chat/primitives";
 import { FieldShell, TextArea, TextInput } from "@/components/ui/form-fields";
 import { ProviderModelFields } from "@/components/ui/provider-model-fields";
+import { ChannelPicker } from "@/features/team/channel-picker";
 import { Select } from "@/components/ui/select";
 import type { BootstrapResponse } from "@ujima/api-schema";
 import type { SelectedConversation } from "../../types";
@@ -18,6 +19,7 @@ import {
   PERSONALITY_OPTIONS,
   uniqueSorted,
 } from "../workspace-sidebar";
+import type { UpdateAgentHandler } from "@/features/team/agent-mutations";
 import type { WorkspaceSidebarProps } from "../workspace-sidebar";
 
 type TeamRole = NonNullable<WorkspaceSidebarProps["teamSettings"]>["roles"][number];
@@ -37,7 +39,7 @@ export function AgentEditorModal({
   visibleChannels: BootstrapResponse["channels"];
   onClose: () => void;
   onSelect: (conv: SelectedConversation) => void;
-  onUpdateAgent: WorkspaceSidebarProps["onUpdateAgent"];
+  onUpdateAgent: UpdateAgentHandler;
 }) {
   const [draft, setDraft] = useState<AgentEditorDraft | null>(() =>
     agent ? buildAgentEditorDraft({ agent, teamSettings, rolePresets, channels: visibleChannels }) : null,
@@ -70,16 +72,6 @@ export function AgentEditorModal({
           ? current.tools.filter((item) => item !== tool)
           : uniqueSorted([...current.tools, tool]),
       };
-    });
-  };
-
-  const toggleChannel = (channelId: string) => {
-    setDraft((current) => {
-      if (!current) return current;
-      const channels = current.channels.includes(channelId)
-        ? current.channels.filter((id) => id !== channelId)
-        : [...current.channels, channelId];
-      return { ...current, channels };
     });
   };
 
@@ -246,32 +238,11 @@ export function AgentEditorModal({
           </FieldShell>
         </div>
 
-        <div>
-          <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-            Channels
-          </p>
-          <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-            Select where this agent can participate.
-          </p>
-          <div className="mt-3 grid gap-2">
-            {visibleChannels.map((channel) => (
-              <label
-                key={channel.id}
-                className="flex items-center gap-3 rounded-xl border border-zinc-200 px-4 py-3 text-sm dark:border-zinc-800"
-              >
-                <input
-                  type="checkbox"
-                  checked={draft.channels.includes(channel.id)}
-                  onChange={() => toggleChannel(channel.id)}
-                  className="h-4 w-4 rounded border-zinc-300 text-violet-600 focus:ring-violet-500"
-                />
-                <span className="font-medium text-zinc-700 dark:text-zinc-200">
-                  {channel.name}
-                </span>
-              </label>
-            ))}
-          </div>
-        </div>
+        <ChannelPicker
+          channels={visibleChannels.map((channel) => ({ id: channel.id, name: channel.name }))}
+          selectedIds={draft.channels}
+          onChange={(channelIds) => patchDraft({ channels: channelIds })}
+        />
 
         {error ? <p className="text-xs text-red-600 dark:text-red-400">{error}</p> : null}
 

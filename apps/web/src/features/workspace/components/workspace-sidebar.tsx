@@ -13,6 +13,7 @@ import {
 import Link from "next/link";
 import { Avatar } from "./chat/primitives";
 import type { BootstrapResponse } from "@ujima/api-schema";
+import type { CreateAgentHandler, UpdateAgentHandler } from "@/features/team/agent-mutations";
 import type { SelectedConversation, WorkspaceRoleInput } from "../types";
 import { useState, useMemo, useEffect, useRef, memo, useCallback } from "react";
 import { useRouter } from "next/navigation";
@@ -25,20 +26,15 @@ import { ThemeToggle } from "@/components/theme-toggle";
 import { AgentEditorModal } from "./sidebar/agent-editor-modal";
 import { CreateAgentModal } from "./sidebar/create-agent-modal";
 import { CreateChannelModal } from "./sidebar/create-channel-modal";
-import { reloadAfterWorkspaceSwitch, switchWorkspace } from "../switch-workspace";
+import { SidebarSectionEmpty } from "./sidebar/sidebar-section-empty";
+import { switchOrganization } from "../switch-workspace";
+import { visibleWorkspaceChannels } from "../workspace-channels";
 
 type WorkspaceSchedule = {
   id: string;
   name: string;
   status: "active" | "paused" | "completed" | "failed";
   runCount: number;
-};
-
-type WorkspaceOption = {
-  id: string;
-  root_path: string | null;
-  label: string | null;
-  is_current?: boolean;
 };
 
 export interface WorkspaceSidebarProps {
@@ -68,29 +64,11 @@ export interface WorkspaceSidebarProps {
   members: BootstrapResponse["members"];
   memberActivity: Record<string, ActivityState>;
   conversationUnreadCounts: Record<string, number>;
-  selected: SelectedConversation;
+  selected?: SelectedConversation;
   onSelect: (conv: SelectedConversation) => void;
   onCreateChannel: (name: string) => Promise<SelectedConversation | null>;
-  onCreateAgent: (input: {
-    name: string;
-    roleName: string;
-    channelIds: string[];
-    llm: string;
-    model: string;
-    role: WorkspaceRoleInput;
-  }) => Promise<SelectedConversation | null>;
-  onUpdateAgent: (input: {
-    previousAgentId: string;
-    previousRoleName: string;
-    memberId: string;
-    name: string;
-    roleName: string;
-    personalityName: string;
-    channelIds: string[];
-    llm: string;
-    model: string;
-    role: WorkspaceRoleInput;
-  }) => Promise<BootstrapResponse["members"][number] | null>;
+  onCreateAgent: CreateAgentHandler;
+  onUpdateAgent: UpdateAgentHandler;
 }
 
 export function slugifyRoleName(value: string) {
@@ -248,9 +226,7 @@ export function WorkspaceSidebar({
   const [menuOpen, setMenuOpen] = useState(false);
   const [isChannelModalOpen, setIsChannelModalOpen] = useState(false);
   const [isAgentModalOpen, setIsAgentModalOpen] = useState(false);
-  const [workspaces, setWorkspaces] = useState<WorkspaceOption[]>([]);
-  const [loadingWorkspaces, setLoadingWorkspaces] = useState(false);
-  const [switchingWorkspaceId, setSwitchingWorkspaceId] = useState<string | null>(null);
+  const [switchingOrgId, setSwitchingOrgId] = useState<string | null>(null);
   const [schedules, setSchedules] = useState<WorkspaceSchedule[]>([]);
   const [visibleCounts, setVisibleCounts] = useState({
     channels: 5,
@@ -258,7 +234,6 @@ export function WorkspaceSidebar({
     schedules: 5,
   });
   const headerMenuRef = useRef<HTMLDivElement>(null);
-  const workspacesFetched = useRef(false);
   const initialProvider =
     bootstrap.providers.find((provider) => provider.hasKey)?.name ?? "openai";
 
@@ -276,34 +251,12 @@ export function WorkspaceSidebar({
       null,
     [channels],
   );
-  const visibleChannels = useMemo(
-    () => channels.filter((channel) => channel.kind !== "self" && channel.kind !== "dm"),
-    [channels],
-  );
+  const visibleChannels = useMemo(() => visibleWorkspaceChannels(channels), [channels]);
   const agentMembers = useMemo(
     () => members.filter((member) => member.kind === "agent"),
     [members],
   );
   const orgId = bootstrap.organization?.id;
-
-  useEffect(() => {
-    if (!menuOpen) return;
-    if (workspacesFetched.current || !orgId) return;
-    workspacesFetched.current = true;
-    setLoadingWorkspaces(true);
-    void (async () => {
-      try {
-        const response = await fetch("/api/workspaces");
-        if (!response.ok) return;
-        const body = (await response.json().catch(() => null)) as { workspaces?: WorkspaceOption[] } | null;
-        setWorkspaces(body?.workspaces ?? []);
-      } catch {
-        setWorkspaces([]);
-      } finally {
-        setLoadingWorkspaces(false);
-      }
-    })();
-  }, [menuOpen, orgId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -347,27 +300,10 @@ export function WorkspaceSidebar({
     router.push("/settings/organization?tab=schedules");
   }, [router]);
 
-  const handleWorkspaceSelect = useCallback(
-    async (workspaceId: string, isCurrent: boolean) => {
-      setMenuOpen(false);
-      if (isCurrent || switchingWorkspaceId) return;
-      setSwitchingWorkspaceId(workspaceId);
-      try {
-        await switchWorkspace(workspaceId);
-        reloadAfterWorkspaceSwitch();
-      } catch {
-        setSwitchingWorkspaceId(null);
-      }
-    },
-    [switchingWorkspaceId],
-  );
-
   return (
     <aside className="relative flex h-full w-full flex-col border-r border-zinc-200 bg-white dark:border-zinc-800 dark:bg-[#09090b]">
-      {/* Sidebar background gradient */}
       <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-zinc-50/50 to-transparent dark:from-white/[0.02]" />
 
-      {/* Workspace Header / Org Switcher */}
       <div ref={headerMenuRef} className="relative z-30 px-4 pt-3">
         <div className="flex items-start justify-between gap-2">
           <div className="relative min-w-0 flex-1">
@@ -383,74 +319,43 @@ export function WorkspaceSidebar({
               </span>
               <ChevronDown className="ml-auto h-4 w-4 shrink-0 text-zinc-400" />
             </button>
-            {menuOpen ? (
+            {menuOpen && bootstrap.organizations.length > 1 ? (
               <div className="absolute left-11 right-0 top-full z-50 mt-2 overflow-hidden rounded-xl border border-zinc-200 bg-white p-1 shadow-[0_16px_40px_rgba(0,0,0,0.12)] dark:border-zinc-800 dark:bg-[#09090b]">
-                {bootstrap.organizations.length > 1 ? (
-                  <>
-                    {bootstrap.organizations.map((org) => {
-                      const active = org.id === bootstrap.organization?.id;
-                      return (
-                        <button
-                          key={org.id}
-                          type="button"
-                          onClick={async () => {
-                            setMenuOpen(false);
-                            if (active) return;
-                            const res = await fetch("/api/auth/switch-org", {
-                              method: "POST",
-                              headers: { "Content-Type": "application/json" },
-                              body: JSON.stringify({ organizationId: org.id }),
-                            });
-                            if (res.ok) {
-                              window.location.href = "/workspace";
-                            }
-                          }}
-                          className={`flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-xs transition ${
-                            active
-                              ? "bg-zinc-100 text-zinc-900 dark:bg-zinc-900 dark:text-zinc-50"
-                              : "text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-900"
-                          }`}
-                        >
-                          <span className="flex-1 truncate font-medium">{org.name}</span>
-                          {active ? <Check className="h-3.5 w-3.5 text-zinc-500" /> : null}
-                        </button>
-                      );
-                    })}
-
-                    <div className="my-1 border-t border-zinc-200 dark:border-zinc-800" />
-                  </>
-                ) : null}
-                {loadingWorkspaces ? (
-                  <p className="px-2 py-2 text-xs text-zinc-500">Loading...</p>
-                ) : null}
-                {!loadingWorkspaces ? (
-                  workspaces.map((workspace) => {
-                    const active = Boolean(workspace.is_current);
-                    const busy = switchingWorkspaceId === workspace.id;
-                    return (
-                      <button
-                        key={workspace.id}
-                        type="button"
-                        disabled={Boolean(switchingWorkspaceId)}
-                        onClick={() => void handleWorkspaceSelect(workspace.id, active)}
-                        className={`flex w-full flex-col gap-0.5 rounded-lg px-2 py-2 text-left text-xs transition ${
-                          active
-                            ? "bg-zinc-100 text-zinc-900 dark:bg-zinc-900 dark:text-zinc-50"
-                            : "text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-900"
-                        } disabled:opacity-60`}
-                      >
-                        <span className="flex items-center gap-2 font-medium">
-                          {busy ? <Clock className="h-3.5 w-3.5 animate-pulse" /> : null}
-                          <span className="truncate">{workspace.label || workspace.id}</span>
-                          {active ? <Check className="ml-auto h-3.5 w-3.5 shrink-0 text-zinc-500" /> : null}
-                        </span>
-                        <span className="truncate font-mono text-[10px] text-zinc-500 dark:text-zinc-400">
-                          {workspace.root_path || "—"}
-                        </span>
-                      </button>
-                    );
-                  })
-                ) : null}
+                <p className="px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-400">
+                  Workspaces
+                </p>
+                {bootstrap.organizations.map((org) => {
+                  const active = org.id === bootstrap.organization?.id;
+                  const busy = switchingOrgId === org.id;
+                  return (
+                    <button
+                      key={org.id}
+                      type="button"
+                      disabled={Boolean(switchingOrgId)}
+                      onClick={() => {
+                        void (async () => {
+                          setMenuOpen(false);
+                          if (active || switchingOrgId) return;
+                          setSwitchingOrgId(org.id);
+                          try {
+                            await switchOrganization(org.id, "/workspace");
+                          } catch {
+                            setSwitchingOrgId(null);
+                          }
+                        })();
+                      }}
+                      className={`flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-xs transition ${
+                        active
+                          ? "bg-zinc-100 text-zinc-900 dark:bg-zinc-900 dark:text-zinc-50"
+                          : "text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-900"
+                      } disabled:opacity-60`}
+                    >
+                      {busy ? <Clock className="h-3.5 w-3.5 shrink-0 animate-pulse" /> : null}
+                      <span className="flex-1 truncate font-medium">{org.name}</span>
+                      {active ? <Check className="h-3.5 w-3.5 shrink-0 text-zinc-500" /> : null}
+                    </button>
+                  );
+                })}
               </div>
             ) : null}
           </div>
@@ -460,7 +365,6 @@ export function WorkspaceSidebar({
         </div>
       </div>
 
-      {/* Search */}
       <div className="relative z-10 px-4 py-1.5">
         <div className="group relative">
           <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400 group-focus-within:text-violet-500" />
@@ -475,30 +379,36 @@ export function WorkspaceSidebar({
         </div>
       </div>
 
-      {/* Navigation Groups */}
       <div className="relative z-10 flex-1 overflow-y-auto px-2 py-3">
-        {/* Channels */}
         <div className="mb-5">
           <SidebarSectionHeader title="Channels" onAdd={() => setIsChannelModalOpen(true)} />
           <div className="mt-1.5 space-y-0.5">
-            {visibleChannels.slice(0, visibleCounts.channels).map((channel) => (
-              <SidebarItem
-                key={channel.id}
-                icon={<Hash className="h-4 w-4" />}
-                label={channel.name}
-                count={conversationUnreadCounts[channel.id]}
-                active={
-                  selected.type === "channel" && selected.id === channel.id
-                }
-                onClick={() =>
-                  onSelect({
-                    type: "channel",
-                    id: channel.id,
-                    name: channel.name,
-                  })
-                }
+            {visibleChannels.length === 0 ? (
+              <SidebarSectionEmpty
+                message="No channels yet. Create one to start conversations."
+                actionLabel="Add channel"
+                onAction={() => setIsChannelModalOpen(true)}
               />
-            ))}
+            ) : (
+              visibleChannels.slice(0, visibleCounts.channels).map((channel) => (
+                <SidebarItem
+                  key={channel.id}
+                  icon={<Hash className="h-4 w-4" />}
+                  label={channel.name}
+                  count={conversationUnreadCounts[channel.id]}
+                active={
+                  selected?.type === "channel" && selected.id === channel.id
+                }
+                  onClick={() =>
+                    onSelect({
+                      type: "channel",
+                      id: channel.id,
+                      name: channel.name,
+                    })
+                  }
+                />
+              ))
+            )}
           </div>
           {visibleChannels.length > visibleCounts.channels ? (
             <button
@@ -511,28 +421,35 @@ export function WorkspaceSidebar({
           ) : null}
         </div>
 
-        {/* Agents */}
         <div className="mb-5">
           <SidebarSectionHeader title="Agents" onAdd={() => setIsAgentModalOpen(true)} />
           <div className="mt-1.5 space-y-0.5">
-            {agentMembers.slice(0, visibleCounts.agents).map((agent, idx) => (
-              <SidebarItem
-                key={agent.id}
-                icon={<Avatar name={agent.name} colorIndex={idx} size="xs" />}
-                label={agent.name}
-                count={conversationUnreadCounts[agent.id]}
-                active={selected.type === "agent" && selected.id === agent.id}
-                status={resolveMemberActivity(agent, memberActivity)}
-                goalMode={goalMode}
-                onClick={() =>
-                  onSelect({
-                    type: "agent",
-                    id: agent.id,
-                    name: agent.name,
-                  })
-                }
+            {agentMembers.length === 0 ? (
+              <SidebarSectionEmpty
+                message="No agents yet. Add one to delegate work in this workspace."
+                actionLabel="Add agent"
+                onAction={() => setIsAgentModalOpen(true)}
               />
-            ))}
+            ) : (
+              agentMembers.slice(0, visibleCounts.agents).map((agent, idx) => (
+                <SidebarItem
+                  key={agent.id}
+                  icon={<Avatar name={agent.name} colorIndex={idx} size="xs" />}
+                  label={agent.name}
+                  count={conversationUnreadCounts[agent.id]}
+                  active={selected?.type === "agent" && selected.id === agent.id}
+                  status={resolveMemberActivity(agent, memberActivity)}
+                  goalMode={goalMode}
+                  onClick={() =>
+                    onSelect({
+                      type: "agent",
+                      id: agent.id,
+                      name: agent.name,
+                    })
+                  }
+                />
+              ))
+            )}
           </div>
           {agentMembers.length > visibleCounts.agents ? (
             <button
@@ -575,7 +492,6 @@ export function WorkspaceSidebar({
 
 
 
-      {/* User Footer */}
       <div className="border-t border-zinc-200 p-3 dark:border-zinc-800">
         <Link
           href="/settings/organization"
@@ -606,7 +522,8 @@ export function WorkspaceSidebar({
         onClose={() => setIsAgentModalOpen(false)}
         rolePresets={rolePresets}
         initialProvider={initialProvider}
-        primaryChannel={primaryChannel}
+        channels={visibleChannels.map((channel) => ({ id: channel.id, name: channel.name }))}
+        primaryChannelId={primaryChannel?.id}
         onCreateAgent={onCreateAgent}
         onSelect={onSelect}
       />
@@ -707,43 +624,35 @@ function RunningFigureIndicator() {
       strokeLinejoin="round"
       strokeWidth="1.8"
     >
-      {/* Head */}
       <circle cx="14" cy="4" r="1.4" fill="currentColor" stroke="none" />
-
-      {/* Torso */}
       <line x1="13.5" y1="5.5" x2="11" y2="12">
         <animate attributeName="y2" values="12;11.5;12;11.5;12" dur="0.6s" repeatCount="indefinite" />
       </line>
 
-      {/* Back arm (depth via opacity) */}
       <path strokeOpacity="0.4" d="M13 7 L10 9.5">
         <animate attributeName="d"
           values="M13 7 L10 9.5;M13 7 L15.5 9;M13 7 L16 10.5;M13 7 L15.5 9;M13 7 L10 9.5"
           dur="0.6s" repeatCount="indefinite" />
       </path>
 
-      {/* Front arm */}
       <path d="M13 7 L16 10.5">
         <animate attributeName="d"
           values="M13 7 L16 10.5;M13 7 L11.5 10;M13 7 L10 9.5;M13 7 L11.5 10;M13 7 L16 10.5"
           dur="0.6s" repeatCount="indefinite" />
       </path>
 
-      {/* Back leg (depth via opacity) */}
       <path strokeOpacity="0.4" d="M11 12 L8 15 L6.5 16">
         <animate attributeName="d"
           values="M11 12 L8 15 L6.5 16;M11 12 L12 16 L14 19;M11 12 L14.5 15.5 L16.5 18;M11 12 L12 16 L14 19;M11 12 L8 15 L6.5 16"
           dur="0.6s" repeatCount="indefinite" />
       </path>
 
-      {/* Front leg */}
       <path d="M11 12 L14.5 15.5 L16.5 18">
         <animate attributeName="d"
           values="M11 12 L14.5 15.5 L16.5 18;M11 12 L12 16 L10 19;M11 12 L8 15 L6.5 16;M11 12 L12 16 L10 19;M11 12 L14.5 15.5 L16.5 18"
           dur="0.6s" repeatCount="indefinite" />
       </path>
 
-      {/* Motion lines */}
       <g strokeOpacity="0.25" strokeWidth="1.2">
         <line x1="6" y1="7" x2="3" y2="7.5">
           <animate attributeName="x1" values="6;4;6" dur="0.3s" repeatCount="indefinite" />

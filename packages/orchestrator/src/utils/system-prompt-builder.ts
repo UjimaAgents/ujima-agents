@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { ModelMessage } from 'ai';
+import type { WakeReason } from '@ujima/shared';
 import { loadProceduresFile, PROCEDURE_FILE_MAX_BYTES } from '../tools/self-procedure.js';
 
 /**
@@ -64,6 +65,16 @@ export interface CacheableSystemInput {
   proceduresText?: string;
   /** Optional task-session goal suffix (still cache-stable per task). */
   goalSuffix?: string;
+  /**
+   * Per-thread base scaffold (DM vs channel) from
+   * `resolveWakeReplyPolicy().scaffoldBlock`. Stable for the
+   * lifetime of a thread — DM threads get the DM scaffold, channel
+   * threads get the channel scaffold; neither flips per wake. When
+   * omitted, falls back to the joined `BASE_WAKE_SCAFFOLD` for
+   * backwards-compatibility with non-policy-driven callers (tests
+   * and any legacy code path).
+   */
+  baseScaffold?: string;
 }
 
 export interface CacheableSystemOutput {
@@ -80,14 +91,14 @@ export function buildCacheableSystem(input: CacheableSystemInput): CacheableSyst
     sections.push('Your procedural memory (per-agent playbook):');
     sections.push(input.proceduresText);
   }
-  sections.push(BASE_WAKE_SCAFFOLD.join('\n'));
+  sections.push(input.baseScaffold ?? BASE_WAKE_SCAFFOLD.join('\n'));
   const system = sections.filter(Boolean).join('\n\n');
   const hash = createHash('sha256').update(system).digest('hex');
   return { system, hash };
 }
 
 export interface WakeContextInput {
-  wakeReason: 'mention' | 'self-followup' | 'channel-read' | 'dm' | 'handoff' | 'parent-thread' | null;
+  wakeReason: WakeReason | null;
   /** Resolved AI-SDK model id — used to gate the anti-mirror line. */
   modelIdString: string;
   /** When present, prefer JSON-shape thinking for fragile models. */

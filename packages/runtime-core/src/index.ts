@@ -15,6 +15,7 @@ export type {
 export {
   createWorkspaceStore,
   syncWorkspacesFromOrganizations,
+  upsertOrganizationWorkspace,
   NoWorkspaceRootError,
   ERR_NO_WORKSPACE_ROOT,
 } from './workspaces';

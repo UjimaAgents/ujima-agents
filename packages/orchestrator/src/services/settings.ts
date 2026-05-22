@@ -1,18 +1,20 @@
-import { existsSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { AGENT_KIND, ChannelSchema, MemberSchema, PROVIDER_KINDS, type Organization, type Member, type Channel } from '@ujima/shared';
 import { AgentTeam, createAgent, defineRole, loadAgentTeam, normalizeProviderKey, type RoleConfig } from '@ujima/framework';
-interface WorkspaceCatalog {
-  get(id: string): { id: string; root_path: string | null } | undefined;
-}
 import type { ApiRepository } from './repository-reader.js';
 import type { TeamStore } from './team-store.js';
 import { listProviderStatuses, type ProviderStatus } from './team.js';
-import { addMemberToDefaultChannels, ensureMemberSelfChannel } from './member-channels.js';
-import { upsertWorkspaceMemberScopes } from './workspace-root.js';
+import {
+  addMemberToDefaultChannels,
+  ensureChannelThread,
+  ensureMemberSelfChannel,
+} from './member-channels.js';
+import {
+  assertWorkspaceRootPathExists,
+  upsertWorkspaceMemberScopes,
+} from './workspace-root.js';
 import { upsertDashboardTeamOverride } from './dashboard-team-overrides.js';
-import { ACTIVE_WORKSPACE_SETTING_KEY, ConfigSyncService, persistTeamConfig } from './config-sync.js';
+import { ConfigSyncService, persistTeamConfig } from './config-sync.js';
 import { requireTeam } from '../utils/require-team.js';
 import { requireOrganization } from '../utils/require-organization.js';
 import { visiblePublicChannels } from './channel-visibility.js';
@@ -37,12 +39,8 @@ export interface OrganizationSettingsResponse {
 export interface UpdateOrganizationInput {
   organizationId: string;
   organizationName?: string;
+  workspaceRoot?: string;
   organizationChart?: { reportsTo: Record<string, string> };
-}
-
-export interface ActivateWorkspaceInput {
-  organizationId: string;
-  workspaceId: string;
 }
 
 export interface AddMemberInput {
@@ -157,51 +155,6 @@ export class SettingsService {
   private loadTeamForOrganization(organizationId: string) {
     new ConfigSyncService(this.repo, this.teamStore).loadFromStoredConfig(organizationId);
     return requireTeam(this.teamStore, organizationId);
-  }
-
-  activateWorkspace(
-    input: ActivateWorkspaceInput,
-    workspaces: WorkspaceCatalog,
-  ): TeamSettingsResponse {
-    const organization = requireOrganization(this.repo, input.organizationId);
-    const workspace = workspaces.get(input.workspaceId);
-    if (!workspace) {
-      throw new Error(`workspace "${input.workspaceId}" not found`);
-    }
-    if (!workspace.root_path?.trim()) {
-      throw new Error(`workspace "${input.workspaceId}" has no root_path`);
-    }
-    const resolvedRoot = resolve(workspace.root_path);
-    if (!existsSync(resolvedRoot)) {
-      throw new Error(`workspace root "${resolvedRoot}" does not exist on disk`);
-    }
-
-    this.repo.saveOrganization({
-      ...organization,
-      workspace: {
-        ...organization.workspace,
-        root: resolvedRoot,
-      },
-    });
-    this.repo.saveWorkspaceSetting(
-      input.organizationId,
-      ACTIVE_WORKSPACE_SETTING_KEY,
-      workspace.id,
-    );
-
-    const team = this.loadTeamForOrganization(input.organizationId);
-    const config = team.toJSON();
-    const updatedTeam = loadAgentTeam({
-      ...config,
-      workspace: {
-        ...config.workspace,
-        root: resolvedRoot,
-      },
-    });
-    this.teamStore.setTeam(updatedTeam, input.organizationId);
-    persistTeamConfig(this.repo, input.organizationId, updatedTeam);
-
-    return this.getTeamSettings(input.organizationId);
   }
 
   getTeamSettings(organizationId: string): TeamSettingsResponse {
@@ -427,7 +380,7 @@ export class SettingsService {
 
   addChannel(input: CreateChannelInput): Channel {
     requireOrganization(this.repo, input.organizationId);
-    return this.repo.saveChannel(
+    const channel = this.repo.saveChannel(
       ChannelSchema.parse({
         id: randomUUID(),
         organizationId: input.organizationId,
@@ -437,6 +390,8 @@ export class SettingsService {
         memberIds: [],
       }),
     );
+    ensureChannelThread(this.repo, input.organizationId, channel);
+    return channel;
   }
 
   updatePolicies(input: UpdatePoliciesInput): OrganizationSettingsResponse {
@@ -511,6 +466,19 @@ export class SettingsService {
       throw new Error('Organization name is managed by config and cannot be edited here');
     }
 
+    if (input.workspaceRoot !== undefined) {
+      if (
+        this.isConfigOwnedField(
+          input.organizationId,
+          'organization',
+          input.organizationId,
+          'workspace.root',
+        )
+      ) {
+        throw new Error('Project folder is managed by config and cannot be edited here');
+      }
+    }
+
     if (input.organizationChart) {
       if (
         this.isConfigOwnedField(
@@ -535,11 +503,39 @@ export class SettingsService {
       validateOrganizationChart(input.organizationChart.reportsTo, memberIds, agentIds, owner.id);
     }
 
+    const nextName = input.organizationName ?? organization.name;
+    const nextRoot =
+      input.workspaceRoot !== undefined
+        ? assertWorkspaceRootPathExists(input.workspaceRoot)
+        : organization.workspace.root;
     const updated = this.repo.saveOrganization({
       ...organization,
-      name: input.organizationName ?? organization.name,
+      name: nextName,
+      workspace: {
+        ...organization.workspace,
+        root: nextRoot,
+      },
       organizationChart: input.organizationChart ?? organization.organizationChart,
     });
+
+    if (input.organizationName !== undefined || input.workspaceRoot !== undefined) {
+      const team = this.loadTeamForOrganization(input.organizationId);
+      const config = team.toJSON() as Record<string, unknown>;
+      const workspace =
+        typeof config.workspace === 'object' && config.workspace
+          ? (config.workspace as Record<string, unknown>)
+          : {};
+      const updatedTeam = loadAgentTeam({
+        ...config,
+        name: nextName,
+        workspace: {
+          ...workspace,
+          root: nextRoot,
+        },
+      });
+      this.teamStore.setTeam(updatedTeam, input.organizationId);
+      persistTeamConfig(this.repo, input.organizationId, updatedTeam);
+    }
 
     return {
       organization: updated,

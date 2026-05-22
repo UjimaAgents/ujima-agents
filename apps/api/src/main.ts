@@ -16,6 +16,7 @@ import {
   ConfigSyncService,
   createApiServices,
   createTeamStore,
+  migrateUnifiedWorkspaceOrg,
   type PermissionContextBuilder,
 } from '@ujima/orchestrator';
 import { createTransport } from './transport/server.js';
@@ -117,6 +118,15 @@ async function main(): Promise<void> {
   const repository = new Repository(host.db.raw, secretStore);
   closeOrphanedActiveRuns(repository);
   const teamStore = createTeamStore();
+  const migration = migrateUnifiedWorkspaceOrg({
+    repo: repository,
+    teamStore,
+    workspaces: host.workspaces,
+    logger,
+  });
+  if (migration.splits.length > 0) {
+    logger.info('runtime: unified workspace/org migration', { splits: migration.splits });
+  }
   const configSync = new ConfigSyncService(repository, teamStore);
   const teamConfigWatcher = await startTeamConfigWatcher({
     repo: repository,
@@ -203,6 +213,7 @@ async function main(): Promise<void> {
           archiveRoot: homeDir,
           teamStore,
           repo: repository,
+          workspaces: host.workspaces,
           realtime,
           permissions: host.permissions,
           buildPermissionContext,

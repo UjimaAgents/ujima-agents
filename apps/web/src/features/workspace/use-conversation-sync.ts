@@ -808,26 +808,7 @@ function buildRunChunkItem(input: {
   sequence: number;
 }): RunChunkStoreItem {
   const activity = runChunkToActivity(input.chunk, input.sequence);
-  const sender = input.members.find((member) => member.id === input.chunk.agentId);
-  const createdAt = new Date().toISOString();
-  if (!input.chunk.delta) return { activity };
-  if (input.chunk.kind === "reasoning") return { activity };
-  return {
-    activity,
-    message: {
-      id: `run-stream:${input.chunk.runId}`,
-      streamRunId: input.chunk.runId,
-      senderId: input.chunk.agentId,
-      threadId: input.chunk.threadId,
-      role: sender?.roleName ?? "agent",
-      name: sender?.name ?? input.chunk.agentId,
-      kind: "agent",
-      time: formatTime(createdAt),
-      content: input.chunk.delta,
-      createdAt,
-      pending: false,
-    },
-  };
+  return { activity };
 }
 
 function formatTime(iso: string): string {

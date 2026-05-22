@@ -218,9 +218,7 @@ export class AuthService {
   listAccessibleOrganizations(sessionToken?: string | null): Organization[] {
     const state = this.getAuthState(sessionToken);
     if (!state.authenticated || !state.user) return [];
-    return this.repo.listOrganizationsForUser(
-      state.user.email.trim().toLowerCase(),
-    ).map((org) => ({ id: org.id, name: org.name } as Organization));
+    return this.repo.listOrganizationsForUser(state.user.email.trim().toLowerCase());
   }
 
   private issueSession(user: AuthUser, member: Member): AuthenticatedSession {

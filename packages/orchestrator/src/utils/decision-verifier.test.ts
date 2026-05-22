@@ -74,6 +74,26 @@ describe('verifyChannelPass — shadow-mode verifier', () => {
       expect(result.failureKinds).toContain('not_addressed_to_me_but_name_referenced');
     });
 
+    it('flags failure when pass is claimed in a direct message from the peer', () => {
+      const source = buildMessage({
+        id: 'msg-1',
+        senderId: 'human-1',
+        content: 'review the frontend and critique the UX',
+      });
+      const result = verifyChannelPass(
+        {
+          organizationId: 'org-1',
+          agentId: 'agent-ada',
+          threadId: 'dm:agent-ada:human-1',
+          reason: 'not_addressed_to_me',
+          sourceMessageId: 'msg-1',
+        },
+        buildRepo([source]),
+      );
+      expect(result.verified).toBe(false);
+      expect(result.failureKinds).toContain('not_addressed_to_me_in_direct_message');
+    });
+
     it('verifies when neither mention nor name reference applies', () => {
       const source = buildMessage({
         id: 'msg-1',
