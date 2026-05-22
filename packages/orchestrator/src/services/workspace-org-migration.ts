@@ -72,15 +72,6 @@ function upsertOrganizationWorkspace(
   }
 }
 
-function syncWorkspacesFromOrganizations(
-  store: WorkspaceCatalogStore,
-  organizations: readonly { id: string; name: string; workspace: { root: string } }[],
-): void {
-  for (const organization of organizations) {
-    upsertOrganizationWorkspace(store, organization);
-  }
-}
-
 function readLinkedWorkspaceIds(repo: ApiRepository, organizationId: string): Set<string> {
   const raw = repo.getWorkspaceSetting(organizationId, ORGANIZATION_WORKSPACE_IDS_KEY);
   if (!raw) return new Set();
@@ -122,11 +113,10 @@ function resolvePrimaryWorkspaceId(
 function splitWorkspaceToOrganization(input: {
   repo: ApiRepository;
   teamStore: TeamStore;
-  workspaces: WorkspaceCatalogStore;
   parentOrganization: Organization;
   workspace: WorkspaceCatalogRow;
 }): string {
-  const { repo, teamStore, workspaces, parentOrganization, workspace } = input;
+  const { repo, teamStore, parentOrganization, workspace } = input;
   const rootPath = workspace.root_path?.trim();
   if (!rootPath) {
     throw new Error(`workspace "${workspace.id}" has no root_path`);
@@ -145,7 +135,7 @@ function splitWorkspaceToOrganization(input: {
     ? (JSON.parse(storedTeam) as Record<string, unknown>)
     : {};
 
-  const organization = provisionOrganization({
+  provisionOrganization({
     repo,
     teamStore,
     organizationId: newOrganizationId,
@@ -157,7 +147,6 @@ function splitWorkspaceToOrganization(input: {
     credentialSourceOrganizationId: parentOrganization.id,
   });
 
-  syncWorkspacesFromOrganizations(workspaces, [organization]);
   return newOrganizationId;
 }
 
@@ -206,7 +195,6 @@ function alignOrganizationToWorkspace(
       root,
     },
   });
-  syncWorkspacesFromOrganizations(workspaces, [updated]);
   return updated;
 }
 
@@ -252,7 +240,6 @@ export function migrateUnifiedWorkspaceOrg(input: {
           const newOrgId = splitWorkspaceToOrganization({
             repo,
             teamStore,
-            workspaces,
             parentOrganization: org,
             workspace: row,
           });
@@ -289,7 +276,7 @@ export function migrateUnifiedWorkspaceOrg(input: {
 
       markMigrationComplete(repo, org.id);
     } else {
-      syncWorkspacesFromOrganizations(workspaces, [org]);
+      upsertOrganizationWorkspace(workspaces, org);
       if (activeId) {
         alignOrganizationToWorkspace(repo, workspaces, org, activeId);
       }

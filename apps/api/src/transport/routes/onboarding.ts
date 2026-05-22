@@ -1,13 +1,11 @@
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
-import { syncWorkspacesFromOrganizations, type RuntimeHost } from '@ujima/runtime-core';
 import { OnboardingRequestSchema, OnboardingResponseSchema, BootstrapResponseSchema, ApiErrorSchema } from '@ujima/api-schema';
 import type { AuthService, BootstrapService, OnboardingService } from '@ujima/orchestrator';
 import { readSessionToken } from '../session-token.js';
 import { apiError, errorMessage } from './route-errors.js';
 
 export interface OnboardingRoutesOptions {
-  host: RuntimeHost;
   auth: AuthService;
   bootstrap: BootstrapService;
   onboarding: OnboardingService;
@@ -17,7 +15,7 @@ export function registerOnboardingRoutes(
   _app: FastifyInstance,
   options: OnboardingRoutesOptions,
 ): void {
-  const { host, auth, bootstrap, onboarding } = options;
+  const { auth, bootstrap, onboarding } = options;
   const app = _app.withTypeProvider<ZodTypeProvider>();
 
   app.get('/bootstrap', {
@@ -57,7 +55,6 @@ export function registerOnboardingRoutes(
       if (!owner) {
         throw new Error('onboarding did not create an owner member');
       }
-      syncWorkspacesFromOrganizations(host.workspaces, [result.organization]);
       const session = auth.registerOwnerAccount({
         organizationId: result.organization.id,
         memberId: owner.id,
