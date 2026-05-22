@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 import {
   ApprovalRequestSchema,
   SocketEventNames,
+  approvalScopeMatches,
+  approvalScopeMatchesPersisted,
   canonicalizeApprovalFamilyScope,
   canonicalizeApprovalGrantScope,
   orgRoom,
@@ -14,7 +16,6 @@ import {
 } from '@ujima/shared';
 import type { RealtimeService } from './context.js';
 import type { ApiRepository } from './repository-reader.js';
-import type { ConversationService } from './conversation.js';
 import { isLiveStatus } from './live-status.js';
 
 export interface ApprovalRequestInput {
@@ -48,7 +49,6 @@ export class ApprovalService {
   constructor(
     private readonly repo: ApiRepository,
     private readonly realtime: RealtimeService,
-    private readonly conversations: ConversationService,
     private readonly resumeRun: ResumeRun,
   ) {}
 
@@ -56,7 +56,8 @@ export class ApprovalService {
     const runForApproval = this.repo.getRun(input.organizationId, input.runId);
     const threadIdFromRun = runForApproval?.threadId;
 
-    const existing = input.approvalScope
+    const requestedScope = input.approvalScope;
+    const existing = requestedScope
       ? this.repo
           .listPendingApprovals(input.organizationId)
           .find(
@@ -64,10 +65,7 @@ export class ApprovalService {
               approval.runId === input.runId &&
               approval.resourceType === input.resourceType &&
               approval.action === input.action &&
-              approvalScopeMatches(
-                decodeApprovalScope(approval.reason) ?? '',
-                input.approvalScope,
-              ),
+              approvalScopeMatches(decodeApprovalScope(approval.reason) ?? '', requestedScope),
           )
       : undefined;
 
@@ -233,12 +231,6 @@ export class ApprovalService {
         return !!run && isLiveStatus(run.status);
       });
   }
-
-  private getOwnerMember(organizationId: string) {
-    return this.repo
-      .listMembers(organizationId)
-      .find((member) => member.kind === 'human' && member.roleName === 'owner');
-  }
 }
 
 function decodeApprovalScope(reason: string): string | undefined {
@@ -264,25 +256,10 @@ function pendingApprovalMatchesResolution(input: {
   if (!approvalScope || !persistedScope) {
     return false;
   }
-  if (resolution === 'allow_family') {
-    return (
-      canonicalizeApprovalGrantScope(approvalScope) === persistedScope ||
-      canonicalizeApprovalFamilyScope(approvalScope) === persistedScope
-    );
-  }
-  return canonicalizeApprovalGrantScope(approvalScope) === persistedScope;
-}
-
-function approvalScopeMatches(storedScope: string, requestedScope: string): boolean {
-  const storedGrant = canonicalizeApprovalGrantScope(storedScope);
-  const storedFamily = canonicalizeApprovalFamilyScope(storedScope);
-  const requestedGrant = canonicalizeApprovalGrantScope(requestedScope);
-  const requestedFamily = canonicalizeApprovalFamilyScope(requestedScope);
-  return (
-    storedGrant === requestedGrant ||
-    storedGrant === requestedFamily ||
-    storedFamily === requestedGrant ||
-    storedFamily === requestedFamily
+  return approvalScopeMatchesPersisted(
+    approvalScope,
+    persistedScope,
+    resolution === 'allow_family' ? 'family' : 'grant',
   );
 }
 

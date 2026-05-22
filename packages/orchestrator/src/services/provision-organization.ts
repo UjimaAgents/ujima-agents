@@ -28,29 +28,6 @@ export interface ProvisionOrganizationInput {
   credentialSourceOrganizationId: string;
 }
 
-function assertOwnerCanBeProvisioned(repo: ApiRepository, owner: OrganizationOwnerSource): void {
-  if (owner.kind === 'parent') {
-    assertGrantableOwnerFromParentOrg(repo, owner.parentOrganizationId);
-    return;
-  }
-
-  const authUser = repo.getAuthUserByMember(owner.templateOrganizationId, owner.templateMemberId);
-  if (!authUser) {
-    throw new Error('current user has no credentials for this workspace');
-  }
-  const stored = repo.getAuthUserCredentials(
-    owner.templateOrganizationId,
-    authUser.email.trim().toLowerCase(),
-  );
-  if (!stored) {
-    throw new Error('current user credentials were not found');
-  }
-  const templateMember = repo.getMember(owner.templateOrganizationId, owner.templateMemberId);
-  if (!templateMember || templateMember.kind !== 'human') {
-    throw new Error('only human members can own a workspace');
-  }
-}
-
 function grantOwner(
   repo: ApiRepository,
   organizationId: string,
@@ -58,6 +35,7 @@ function grantOwner(
 ): void {
   const ownerMemberId = randomUUID();
   if (owner.kind === 'parent') {
+    assertGrantableOwnerFromParentOrg(repo, owner.parentOrganizationId);
     grantWorkspaceOwnerFromParentOrg(
       repo,
       owner.parentOrganizationId,
@@ -81,7 +59,6 @@ function grantOwner(
  */
 export function provisionOrganization(input: ProvisionOrganizationInput): Organization {
   const resolvedRoot = assertWorkspaceRootPathExists(input.workspaceRoot);
-  assertOwnerCanBeProvisioned(input.repo, input.owner);
 
   const organization = OrganizationSchema.parse({
     id: input.organizationId,

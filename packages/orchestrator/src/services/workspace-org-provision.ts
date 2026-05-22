@@ -2,15 +2,6 @@ import { randomUUID } from 'node:crypto';
 import { MemberSchema } from '@ujima/shared';
 import type { ApiRepository } from './repository-reader.js';
 
-export function orgWorkspaceId(organizationId: string): string {
-  return `ws_${organizationId}`;
-}
-
-export function organizationIdFromWorkspaceId(workspaceId: string): string | null {
-  if (!workspaceId.startsWith('ws_') || workspaceId.length <= 3) return null;
-  return workspaceId.slice(3);
-}
-
 export function copyProviderCredentials(
   repo: ApiRepository,
   fromOrganizationId: string,

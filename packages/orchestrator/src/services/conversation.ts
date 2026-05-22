@@ -14,6 +14,9 @@ import {
   type ChannelPassReason,
   type Message,
   type MessageMention,
+  buildMentionHandleRegistry,
+  getDirectMessageThreadId,
+  scanMentionsInContent,
   type WakeReason,
   type WakeSuppressedReason,
 } from '@ujima/shared';
@@ -954,8 +957,7 @@ export class ConversationService {
       throw new Error(`Recipient not found: ${input.recipientId}`);
     }
 
-    const [firstId, secondId] = [sender.id, recipient.id].sort();
-    const channelId = `dm:${firstId}:${secondId}`;
+    const channelId = getDirectMessageThreadId(sender.id, recipient.id);
     let threadId = channelId;
     let replyChannelId = channelId;
     if (input.parentMessageId) {
@@ -1044,8 +1046,7 @@ export class ConversationService {
       throw new Error(`Member not found: ${input.memberIdB}`);
     }
 
-    const [firstId, secondId] = [memberA.id, memberB.id].sort();
-    const channelId = `dm:${firstId}:${secondId}`;
+    const channelId = getDirectMessageThreadId(memberA.id, memberB.id);
     const dmChannelName = [memberA.name, memberB.name].sort().join(' / ');
     const now = new Date().toISOString();
 
@@ -1572,50 +1573,26 @@ export class ConversationService {
     senderKind: string,
     explicitMentionIds: string[],
   ): string[] {
-    const byHandle = this.listMentionHandleMap(organizationId);
-    const sortedHandles = [...byHandle.keys()].sort((a, b) => b.length - a.length);
-
-    // We merge explicit mention ids from tool inputs with parsed @handles from
-    // the message body so typed intent stays consistent no matter how the
-    // message was authored.
     const mentionIds = new Set<string>(explicitMentionIds);
+    const registry = buildMentionHandleRegistry(
+      this.repo.listMembers(organizationId).flatMap((member) => [
+        { handle: member.id, value: member.id },
+        { handle: member.name, value: member.id },
+      ]),
+    );
 
-    // Regex to find potential mention starts: @ preceded by start of string or a non-word char (except @)
-    const mentionStartRegex = /(?:^|[^@\w])@/g;
-
-    for (const match of content.matchAll(mentionStartRegex)) {
-      const startIndex = (match.index ?? 0) + match[0].length;
-      const remaining = content.slice(startIndex).toLowerCase();
-
-
-      // Check for "@all" first as it's a special system handle
-      if (senderKind !== AGENT_KIND && remaining.startsWith('all')) {
-        const nextChar = remaining[3];
-        if (!nextChar || !/\w/.test(nextChar)) {
-          for (const memberId of this.resolveAllMentionIds(organizationId, channel)) {
-            mentionIds.add(memberId);
-          }
-          continue;
+    scanMentionsInContent(content, registry, {
+      allowAll: senderKind !== AGENT_KIND,
+      onAll: () => {
+        for (const memberId of this.resolveAllMentionIds(organizationId, channel)) {
+          mentionIds.add(memberId);
         }
-      }
+      },
+    });
 
-      for (const handle of sortedHandles) {
-        if (remaining.startsWith(handle)) {
-          // Check if the match is followed by a non-word char or end of string
-          const nextChar = remaining[handle.length];
-          if (!nextChar || !/\w/.test(nextChar)) {
-            const memberId = byHandle.get(handle);
-            if (memberId) {
-              mentionIds.add(memberId);
-              // Break after first (longest) match for this @ instance
-              break;
-            }
-          }
-        }
-      }
+    for (const memberId of registry.values) {
+      mentionIds.add(memberId);
     }
-
-
 
     return [...mentionIds];
   }
@@ -1640,66 +1617,27 @@ export class ConversationService {
     return this.repo.listMembers(organizationId).map((member) => member.id);
   }
 
-  private listMentionHandleMap(organizationId: string): Map<string, string> {
-    const members = this.repo.listMembers(organizationId);
-    const byHandle = new Map<string, string>();
-    for (const member of members) {
-      byHandle.set(normalizeMentionHandle(member.id), member.id);
-      byHandle.set(normalizeMentionHandle(member.name), member.id);
-    }
-    return byHandle;
-  }
-
-  private listMentionDisplayMap(organizationId: string): Map<string, string> {
-    const members = this.repo.listMembers(organizationId);
-    const byHandle = new Map<string, string>();
-    for (const member of members) {
-      byHandle.set(normalizeMentionHandle(member.id), member.name);
-      byHandle.set(normalizeMentionHandle(member.name), member.name);
-    }
-    return byHandle;
-  }
-
   private resolveMentionNames(
     organizationId: string,
     content: string,
     channel: Channel | null,
   ): string[] {
-    const byHandle = this.listMentionDisplayMap(organizationId);
-    const sortedHandles = [...byHandle.keys()].sort((a, b) => b.length - a.length);
-    const mentionNames = new Set<string>();
-    const mentionStartRegex = /(?:^|[^@\w])@/g;
+    const registry = buildMentionHandleRegistry(
+      this.repo.listMembers(organizationId).flatMap((member) => [
+        { handle: member.id, value: member.name },
+        { handle: member.name, value: member.name },
+      ]),
+    );
 
-    for (const match of content.matchAll(mentionStartRegex)) {
-      const startIndex = (match.index ?? 0) + match[0].length;
-      const remaining = content.slice(startIndex).toLowerCase();
+    scanMentionsInContent(content, registry, {
+      allowAll: true,
+      skipAllInDm: channel?.kind === 'dm',
+      onAll: () => {
+        registry.values.add('all');
+      },
+    });
 
-      if (remaining.startsWith('all')) {
-        const nextChar = remaining[3];
-        if (!nextChar || !/\w/.test(nextChar)) {
-          mentionNames.add('all');
-          continue;
-        }
-      }
-
-      for (const handle of sortedHandles) {
-        if (!remaining.startsWith(handle)) continue;
-        const nextChar = remaining[handle.length];
-        if (!nextChar || !/\w/.test(nextChar)) {
-          const displayName = byHandle.get(handle);
-          if (displayName) {
-            mentionNames.add(displayName);
-            break;
-          }
-        }
-      }
-    }
-
-    if (mentionNames.has('all') && channel?.kind === 'dm') {
-      mentionNames.delete('all');
-    }
-
-    return [...mentionNames];
+    return [...registry.values];
   }
 
   private decorateMessages(
@@ -1994,10 +1932,6 @@ function mergePaginatedMessages(
   const head = hasMore && data[0] ? data[0] : undefined;
   const nextCursor = head ? encodeCursor(head.createdAt, head.id) : undefined;
   return { data, hasMore, nextCursor };
-}
-
-function normalizeMentionHandle(value: string): string {
-  return value.trim().toLowerCase();
 }
 
 function uniqueMentionIds(mentions: MessageMention[]): string[] {

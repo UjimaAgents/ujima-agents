@@ -8,7 +8,8 @@ import {
 } from './config-sync.js';
 import type { ApiRepository } from './repository-reader.js';
 import type { TeamStore } from './team-store.js';
-import { assertGrantableOwnerFromParentOrg, orgWorkspaceId } from './workspace-org-provision.js';
+import { orgWorkspaceId } from '@ujima/shared';
+import { assertGrantableOwnerFromParentOrg } from './workspace-org-provision.js';
 import { provisionOrganization } from './provision-organization.js';
 
 export const ORGANIZATION_WORKSPACE_IDS_KEY = 'organization_workspace_ids';

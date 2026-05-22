@@ -1,5 +1,10 @@
 import type { AgentDef, TaskDef, UjimaEvent } from '@ujima/shared';
-import { SHARED_AGENT_SYSTEM_PROMPT, COLLABORATION_PROTOCOL, buildEnvironmentContext, buildTeamHierarchySection } from '@ujima/shared';
+import {
+  buildCollaborationProtocol,
+  buildEnvironmentContext,
+  buildTeamHierarchySection,
+  SHARED_AGENT_SYSTEM_PROMPT,
+} from '@ujima/shared';
 import type { ContextEntry, ContextStore, ApprovalTracker } from '@ujima/context-store';
 import type { EventBus } from '@ujima/event-bus';
 import type { HydrationBundle } from './types';
@@ -167,7 +172,7 @@ function buildSystemPrompt(opts: {
   }
 
   // ── Collaboration protocol: how to work with teammates ──
-  sections.push(`\n${COLLABORATION_PROTOCOL}`);
+  sections.push(`\n${buildCollaborationProtocol('channel')}`);
 
   // ── Task: what the agent is here to do ──
   const taskLines = [`\n## Task`];

@@ -93,13 +93,12 @@ export {
 } from './scheduler.js';
 export type { SchedulerServiceOptions } from './scheduler.js';
 export { SettingsService } from './settings.js';
+export { orgWorkspaceId, organizationIdFromWorkspaceId } from '@ujima/shared';
 export {
   assertGrantableOwnerFromParentOrg,
   copyProviderCredentials,
   grantWorkspaceOwnerForMember,
   grantWorkspaceOwnerFromParentOrg,
-  orgWorkspaceId,
-  organizationIdFromWorkspaceId,
 } from './workspace-org-provision.js';
 export {
   ensureChannelThread,
@@ -469,7 +468,6 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   const approvalsImpl = new ApprovalService(
     context.repo,
     context.realtime,
-    conversations,
     (orgId, runId, allowRun, approvalScope) =>
       resumeRun(orgId, runId, allowRun, approvalScope),
   );

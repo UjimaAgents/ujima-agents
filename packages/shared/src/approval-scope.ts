@@ -1,5 +1,3 @@
-import { posix } from 'node:path';
-
 export interface ParsedShellScope {
   cwd: string;
   command: string;
@@ -122,6 +120,28 @@ export function canonicalizeApprovalFamilyScope(scope: string): string {
   return canonicalizeApprovalScope(scope, true);
 }
 
+/** True when stored and requested scopes match at grant precision (args included for shell). */
+export function approvalScopeMatches(storedScope: string, requestedScope: string): boolean {
+  return (
+    canonicalizeApprovalGrantScope(storedScope) === canonicalizeApprovalGrantScope(requestedScope)
+  );
+}
+
+/** Matches a pending approval scope against a persisted grant/family scope from resolution. */
+export function approvalScopeMatchesPersisted(
+  approvalScope: string,
+  persistedScope: string,
+  mode: 'grant' | 'family',
+): boolean {
+  if (mode === 'grant') {
+    return canonicalizeApprovalGrantScope(approvalScope) === persistedScope;
+  }
+  return (
+    canonicalizeApprovalGrantScope(approvalScope) === persistedScope ||
+    canonicalizeApprovalFamilyScope(approvalScope) === persistedScope
+  );
+}
+
 /**
  * Filesystem tool approval scope from the permission gate (`filesystem:{json}`)
  * or orchestrator inner gate (`filesystem:read:/abs/path`).
@@ -226,6 +246,12 @@ function parseWorkspaceWriteScope(scope: string): ParsedFilesystemScope | null {
   }
 }
 
+/**
+ * Normalizes approval scope strings for grant matching.
+ * - Grant mode (family=false): full scope including shell args and fetch/download URLs.
+ * - Family mode (family=true): shell drops args; fetch/download URLs omitted.
+ * - Paths are posix-normalized; legacy write:/edit:/download: shapes map to filesystem grants.
+ */
 function canonicalizeApprovalScope(scope: string, family: boolean): string {
   const shell = parseShellScope(scope);
   if (shell) {
@@ -299,8 +325,22 @@ function canonicalizeApprovalScope(scope: string, family: boolean): string {
   return scope;
 }
 
+/** Browser-safe posix-style path normalization (no node:path — shared ships to webview). */
 function normalizeApprovalPath(value: string): string {
-  return posix.normalize(value.replace(/\\/g, '/').trim() || '.');
+  const trimmed = value.replace(/\\/g, '/').trim() || '.';
+  const absolute = trimmed.startsWith('/');
+  const stack: string[] = [];
+  for (const part of trimmed.split('/')) {
+    if (!part || part === '.') continue;
+    if (part === '..') {
+      stack.pop();
+      continue;
+    }
+    stack.push(part);
+  }
+  const joined = stack.join('/');
+  if (absolute) return `/${joined}`;
+  return joined || '.';
 }
 
 const RELAY_FS_WRITE_BODY_MAX = 4000;

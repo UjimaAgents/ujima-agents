@@ -1,5 +1,6 @@
 import type { ResourceType, ToolAction, SpiritRole, WakeReason } from '@ujima/shared';
 import type { PermissionMiddleware, PermissionCheckInput } from '@ujima/permissions';
+import { ApprovedRunScopeTracker } from '../utils/approved-run-scopes.js';
 import { buildShellApprovalScope } from './shell-scope.js';
 
 export interface ToolInvocationInput {
@@ -115,10 +116,8 @@ export function createPermissionGatedToolService(
   requestApproval?: ApprovalRequester['requestApproval'],
   recordApprovalWait?: ApprovalWaitRecorder,
 ): ToolService {
-  const approvedRuns = new Set<string>();
-  const approvedRunScopes = new Set<string>();
+  const approvedRunScopes = new ApprovedRunScopeTracker();
 
-  const runKey = (organizationId: string, runId: string) => `${organizationId}:${runId}`;
   return {
     async invoke(input) {
       if (input.bypassPermission) {
@@ -127,7 +126,7 @@ export function createPermissionGatedToolService(
       const context = await buildContext(input);
       const approvalScope = buildToolApprovalScope(input);
 
-      if (consumeApprovedRun(input.organizationId, input.runId, approvalScope)) {
+      if (approvedRunScopes.consumeApprovedRun(input.organizationId, input.runId, approvalScope)) {
         return inner.invoke(input);
       }
       const decision = await permissions.check(context);
@@ -158,30 +157,8 @@ export function createPermissionGatedToolService(
       return inner.invoke(input);
     },
     allowRun(organizationId, runId, approvalScope) {
-      if (approvalScope) {
-        approvedRunScopes.add(scopedRunKey(organizationId, runId, approvalScope));
-      } else {
-        approvedRuns.add(runKey(organizationId, runId));
-      }
+      approvedRunScopes.allowRun(organizationId, runId, approvalScope);
       inner.allowRun(organizationId, runId, approvalScope);
     },
   };
-
-  function consumeApprovedRun(organizationId: string, runId: string, approvalScope: string): boolean {
-    const scopedKey = scopedRunKey(organizationId, runId, approvalScope);
-    if (approvedRunScopes.has(scopedKey)) {
-      approvedRunScopes.delete(scopedKey);
-      return true;
-    }
-    const key = runKey(organizationId, runId);
-    if (!approvedRuns.has(key)) {
-      return false;
-    }
-    approvedRuns.delete(key);
-    return true;
-  }
-
-  function scopedRunKey(organizationId: string, runId: string, approvalScope: string): string {
-    return `${runKey(organizationId, runId)}:${approvalScope}`;
-  }
 }

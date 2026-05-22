@@ -6,7 +6,7 @@ export * from './auth.js';
 export * from './onboarding.js';
 export * from './runs.js';
 export * from './settings.js';
-export * from './workspaces.js';
+export { orgWorkspaceId, organizationIdFromWorkspaceId } from '@ujima/shared';
 export * from './task-sessions.js';
 export * from './task-files.js';
 export * from './mcps.js';

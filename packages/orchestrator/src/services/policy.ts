@@ -5,7 +5,11 @@ import type { ToolAction, SpiritRole, WakeReason } from '@ujima/shared';
 import { isSensitiveWorkspacePath } from '@ujima/shared/workspace-file-filters';
 import { assertWorkspaceBoundary, isPathInsideRoot } from '@ujima/shared/workspace';
 import { ALWAYS_AVAILABLE_AGENT_TOOLS } from '../tools/index.js';
-import { isDirectMessageThread } from '../utils/thread-state.js';
+import {
+  buildPassOrSelfNoteDenialReason,
+  resolveWakeReplyPolicy,
+  shouldSuppressPassAndSelfNote,
+} from '../utils/wake-reply-policy.js';
 
 export interface PolicyResult {
   allowed: boolean;
@@ -38,36 +42,21 @@ export function checkToolPolicy(
     return { allowed: false, requiresApproval: false, reason: `Unknown role: ${roleName}` };
   }
 
-  // L3 — mandatory-reply enforcement. A `@mention`ed run is a
-  // contract: someone tagged this agent and expects a posted reply.
-  // Allowing `channel.pass` or `self.note` would let the model
-  // silently slip out of the obligation. Reject both BEFORE the
-  // blanket allows below so the contract holds regardless of role.
-  const mandatoryReply = options.wakeReason === 'mention';
-  const directMessageThread =
-    options.threadId !== undefined && isDirectMessageThread(options.threadId);
+  // L3 — wake/DM reply contract (palette + policy share resolveWakeReplyPolicy).
+  const wakeReplyPolicy = resolveWakeReplyPolicy({
+    threadId: options.threadId ?? '',
+    wakeReason: options.wakeReason,
+  });
 
-  if (mandatoryReply || directMessageThread) {
-    if (toolId === 'channel.pass') {
-      const reason = mandatoryReply
-        ? 'mandatory-reply: you were @mentioned, channel.pass is not allowed. Reply via channel.reply, channel.dm, or message.'
-        : 'direct-message: channel.pass is not allowed in a 1:1 DM. Reply via channel.reply, channel.dm, or message.';
-      return {
-        allowed: false,
-        requiresApproval: false,
-        reason,
-      };
-    }
-    if (toolId === 'self.note') {
-      const reason = mandatoryReply
-        ? 'mandatory-reply: you were @mentioned, self.note is not allowed. Reply via channel.reply, channel.dm, or message.'
-        : 'direct-message: self.note is not allowed in a 1:1 DM when a reply is expected. Reply via channel.reply, channel.dm, or message.';
-      return {
-        allowed: false,
-        requiresApproval: false,
-        reason,
-      };
-    }
+  if (
+    shouldSuppressPassAndSelfNote(wakeReplyPolicy) &&
+    (toolId === 'channel.pass' || toolId === 'self.note')
+  ) {
+    return {
+      allowed: false,
+      requiresApproval: false,
+      reason: buildPassOrSelfNoteDenialReason(toolId, wakeReplyPolicy),
+    };
   }
 
   // self.note is the agent's private scratchpad. Per the channels-as-substrate
@@ -130,10 +119,6 @@ export function checkToolPolicy(
       requiresApproval: false,
       reason: `Tool "${toolId}" is supervisor-only — invocation spiritRole is "${options.spiritRole ?? 'worker'}"`,
     };
-  }
-
-  if (toolId === 'message') {
-    return { allowed: true, requiresApproval: false };
   }
 
   if (toolId === 'mcp') {

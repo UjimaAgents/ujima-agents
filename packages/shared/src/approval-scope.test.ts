@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+  approvalScopeMatches,
+  approvalScopeMatchesPersisted,
+  canonicalizeApprovalFamilyScope,
+  canonicalizeApprovalGrantScope,
   formatApprovalRelayMarkdown,
   parseApprovalDisplayScopesFromReason,
   parseFilesystemScope,
@@ -160,5 +164,28 @@ describe('shellInvocationDisplayLine', () => {
     expect(
       shellInvocationDisplayLine({ cwd: '/tmp', command: 'sh', args: ['-c', 'echo hi'] }),
     ).toBe('sh -c echo hi');
+  });
+});
+
+describe('approvalScopeMatches', () => {
+  it('matches legacy shell scopes to canonical JSON at grant precision', () => {
+    const legacy = 'shell:/workspace:git:["status"]';
+    const status = 'shell:{"cwd":"/workspace","command":"git","args":["status"]}';
+    const log = 'shell:{"cwd":"/workspace","command":"git","args":["log"]}';
+    expect(approvalScopeMatches(legacy, status)).toBe(true);
+    expect(approvalScopeMatches(legacy, log)).toBe(false);
+  });
+
+  it('does not treat different shell args as family-equivalent in grant mode', () => {
+    const status = 'shell:{"cwd":"/workspace","command":"git","args":["status"]}';
+    const log = 'shell:{"cwd":"/workspace","command":"git","args":["log"]}';
+    expect(canonicalizeApprovalFamilyScope(status)).toBe(canonicalizeApprovalFamilyScope(log));
+    expect(approvalScopeMatches(status, log)).toBe(false);
+    expect(
+      approvalScopeMatchesPersisted(status, canonicalizeApprovalFamilyScope(log), 'family'),
+    ).toBe(true);
+    expect(approvalScopeMatchesPersisted(status, canonicalizeApprovalGrantScope(log), 'grant')).toBe(
+      false,
+    );
   });
 });

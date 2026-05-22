@@ -34,6 +34,7 @@ import {
 } from "./workspace-root.js";
 import { normalizeShellScope } from "./shell-scope.js";
 import { materializeMcpDef, type McpRuntimePool } from "./mcp-runtime.js";
+import { ApprovedRunScopeTracker } from "../utils/approved-run-scopes.js";
 import { formatReadableToolOutput } from "../utils/tool-output.js";
 
 /** Merge top-level invocation fields into `input` for client / reasoning-trace payloads. */
@@ -61,8 +62,7 @@ export interface ApprovalRequester {
 }
 
 export class ToolServiceImpl implements ToolService {
-  private readonly approvedRuns = new Set<string>();
-  private readonly approvedRunScopes = new Set<string>();
+  private readonly approvedRunScopes = new ApprovedRunScopeTracker();
 
   constructor(
     private readonly teamStore: TeamStore,
@@ -80,11 +80,7 @@ export class ToolServiceImpl implements ToolService {
   ) {}
 
   allowRun(organizationId: string, runId: string, approvalScope?: string): void {
-    if (approvalScope) {
-      this.approvedRunScopes.add(this.scopedRunKey(organizationId, runId, approvalScope));
-      return;
-    }
-    this.approvedRuns.add(this.runKey(organizationId, runId));
+    this.approvedRunScopes.allowRun(organizationId, runId, approvalScope);
   }
 
   async invoke(invocation: ToolInvocationInput): Promise<ToolInvocationResult> {
@@ -278,7 +274,11 @@ export class ToolServiceImpl implements ToolService {
 
     if (
       policy.requiresApproval &&
-      !this.consumeApprovedRun(invocation.organizationId, invocation.runId, approvalScope) &&
+      !this.approvedRunScopes.consumeApprovedRun(
+        invocation.organizationId,
+        invocation.runId,
+        approvalScope,
+      ) &&
       !this.repo.hasApprovalGrant({
         organizationId: preparedInvocation.organizationId,
         resourceType: preparedInvocation.resourceType,
@@ -441,28 +441,6 @@ export class ToolServiceImpl implements ToolService {
       throw new Error(formatMcpError(result.content, toolName));
     }
     return result.content;
-  }
-
-  private consumeApprovedRun(organizationId: string, runId: string, approvalScope: string): boolean {
-    const scopedKey = this.scopedRunKey(organizationId, runId, approvalScope);
-    if (this.approvedRunScopes.has(scopedKey)) {
-      this.approvedRunScopes.delete(scopedKey);
-      return true;
-    }
-    const key = this.runKey(organizationId, runId);
-    if (!this.approvedRuns.has(key)) {
-      return false;
-    }
-    this.approvedRuns.delete(key);
-    return true;
-  }
-
-  private runKey(organizationId: string, runId: string): string {
-    return `${organizationId}:${runId}`;
-  }
-
-  private scopedRunKey(organizationId: string, runId: string, approvalScope: string): string {
-    return `${this.runKey(organizationId, runId)}:${approvalScope}`;
   }
 
   private audit(

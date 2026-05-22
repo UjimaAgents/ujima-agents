@@ -3,7 +3,7 @@
 import { Check, ChevronDown, Command, Loader2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { BootstrapResponse } from "@ujima/api-schema";
-import { orgWorkspaceId } from "@/features/workspace/workspace-ids";
+import { orgWorkspaceId } from "@ujima/shared/browser";
 import { switchToWorkspace } from "@/features/workspace/switch-workspace";
 
 export function WorkspaceSwitcher({

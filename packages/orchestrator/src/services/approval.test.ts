@@ -3,7 +3,7 @@ import type { ApprovalRequest } from '@ujima/shared';
 import { ApprovalService } from './approval.js';
 
 describe('ApprovalService', () => {
-  it('relays a new approval to the owner chat', () => {
+  it('persists pending approval and emits socket event', () => {
     const shellScope = 'shell:{"cwd":"/workspace","command":"pwd"}';
     const approval = {
       id: 'ap-1',
@@ -22,7 +22,6 @@ describe('ApprovalService', () => {
 
     let saved = 0;
     let emitted = 0;
-    let relayThreadId: string | undefined;
     let savedPayload: ApprovalRequest | undefined;
     const repo = {
       listPendingApprovals: () => [],
@@ -39,33 +38,10 @@ describe('ApprovalService', () => {
       getApproval: () => approval,
       resolveApproval: () => approval,
     } as never;
-    const conversations = {
-      sendDirectSystemMessage: (input: {
-        organizationId: string;
-        memberIdA: string;
-        memberIdB: string;
-        content: string;
-      }) => {
-        relayThreadId = `dm:${[input.memberIdA, input.memberIdB].sort().join(':')}`;
-        return {
-          id: 'relay-message-1',
-          organizationId: input.organizationId,
-          threadId: relayThreadId,
-          channelId: relayThreadId,
-          senderId: 'system',
-          senderKind: 'human',
-          kind: 'system',
-          content: input.content,
-          mentions: [],
-          createdAt: '2026-05-04T00:00:00.000Z',
-        };
-      },
-    } as never;
 
     const service = new ApprovalService(
       repo,
       { emit: () => { emitted++; } } as never,
-      conversations,
       () => undefined,
     );
 
@@ -121,7 +97,6 @@ describe('ApprovalService', () => {
     const service = new ApprovalService(
       repo,
       { emit: () => { emitted++; } } as never,
-      { sendDirectSystemMessage: () => undefined } as never,
       () => undefined,
     );
 
@@ -176,7 +151,6 @@ describe('ApprovalService', () => {
     const service = new ApprovalService(
       repo,
       { emit: () => undefined } as never,
-      { sendDirectSystemMessage: () => undefined } as never,
       () => undefined,
     );
 
@@ -258,7 +232,6 @@ describe('ApprovalService', () => {
     const service = new ApprovalService(
       repo,
       { emit: () => { emitted++; } } as never,
-      { sendDirectSystemMessage: () => undefined } as never,
       () => { resumed++; },
     );
 
@@ -323,7 +296,6 @@ describe('ApprovalService', () => {
     const service = new ApprovalService(
       repo,
       { emit: () => { emitted++; } } as never,
-      { sendDirectSystemMessage: () => undefined } as never,
       async (_organizationId: string, _runId: string, allowRun?: boolean) => {
         resumedAllowRun = allowRun;
         if (allowRun === false) {
@@ -387,7 +359,6 @@ describe('ApprovalService', () => {
     const service = new ApprovalService(
       repo,
       { emit: () => undefined } as never,
-      { sendDirectSystemMessage: () => undefined } as never,
       () => undefined,
     );
 
@@ -442,7 +413,6 @@ describe('ApprovalService', () => {
     const service = new ApprovalService(
       repo,
       { emit: () => undefined } as never,
-      { sendDirectSystemMessage: () => undefined } as never,
       () => undefined,
     );
 
@@ -496,7 +466,6 @@ describe('ApprovalService', () => {
     const service = new ApprovalService(
       repo,
       { emit: () => undefined } as never,
-      { sendDirectSystemMessage: () => undefined } as never,
       () => undefined,
     );
 
@@ -509,8 +478,11 @@ describe('ApprovalService', () => {
     });
 
     expect(result.status).toBe('approved');
-    expect(capturedReason).toContain('grant:always_allow:scope=');
-    expect(capturedReason).toContain('/workspace/readme.md');
+    expect(capturedReason).toBe(
+      `grant:always_allow:scope=${encodeURIComponent(
+        'filesystem:{"action":"write","resourcePath":"/workspace/readme.md"}',
+      )};note=Allow this write permanently.`,
+    );
   });
 
   it('approves pending shell calls in the same run when allow_family matches their command family', async () => {
@@ -571,7 +543,6 @@ describe('ApprovalService', () => {
     const service = new ApprovalService(
       repo,
       { emit: () => undefined } as never,
-      { sendDirectSystemMessage: () => undefined } as never,
       () => undefined,
     );
 

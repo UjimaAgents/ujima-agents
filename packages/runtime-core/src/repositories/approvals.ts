@@ -1,8 +1,7 @@
 import type { SqliteDbHandle as DbHandle } from '@ujima/context-store';
 import {
   ApprovalRequestSchema,
-  canonicalizeApprovalFamilyScope,
-  canonicalizeApprovalGrantScope,
+  approvalScopeMatches,
   parseApprovalReasonValue,
   type ApprovalRequest,
 } from '@ujima/shared';
@@ -146,6 +145,12 @@ export function listPendingApprovals(
   return rows.map(rowToApproval);
 }
 
+/**
+ * Returns true when the organization has an approved "allow always" grant whose
+ * canonical scope matches the requested tool scope. Grants are organization-wide
+ * for the given resourceType and action (not scoped to requestedBy or
+ * resourcePath on the approval row).
+ */
 export function hasApprovalGrant(
   db: DbHandle,
   input: {
@@ -155,9 +160,6 @@ export function hasApprovalGrant(
     approvalScope: string;
   },
 ): boolean {
-  const currentGrantScope = canonicalizeApprovalGrantScope(input.approvalScope);
-  const currentFamilyScope = canonicalizeApprovalFamilyScope(input.approvalScope);
-
   const rows = db
     .prepare(
       `SELECT reason
@@ -178,7 +180,6 @@ export function hasApprovalGrant(
   return rows.some((candidate) => {
     const storedScope = parseApprovalReasonValue(rowString(candidate, 'reason'), 'scope');
     if (!storedScope) return false;
-    const canonicalStored = canonicalizeApprovalGrantScope(storedScope);
-    return canonicalStored === currentGrantScope || canonicalStored === currentFamilyScope;
+    return approvalScopeMatches(storedScope, input.approvalScope);
   });
 }

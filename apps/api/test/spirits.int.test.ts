@@ -24,13 +24,26 @@ import {
   taskRunChannelId,
   type ApiRepository,
   type ApprovalRequester,
-  type ModelResolver,
-  type RealtimeService,
   type SpiritServiceOptions,
   type ToolInvocationInput,
   type ToolInvocationResult,
   type ToolService,
 } from '@ujima/orchestrator';
+import {
+  createSpiritTestFixture as createFixture,
+  type ModelCall,
+  type SpiritFixture as Fixture,
+  type SpiritFixtureOptions as FixtureOptions,
+} from './helpers/spirit-test-fixture.js';
+import {
+  extractModelToolNames,
+  makeMcpToolCallModel,
+  makeStreamingModel,
+  makeTextOnlyModel,
+  makeToolCaptureModel,
+  v3Usage,
+} from './helpers/mock-language-models.js';
+import { noopRealtime } from './helpers/noop-realtime.js';
 import { createPermissionMiddleware } from '@ujima/permissions';
 import { AgentTeam } from '@ujima/framework';
 import { ChannelSchema, MemberSchema, OrganizationSchema, type MCPDef } from '@ujima/shared';
@@ -39,135 +52,6 @@ import { MessageCardSchema } from '@ujima/shared';
 // ---------------------------------------------------------------------
 // Phase 2.A–C — spirits + supervisor.todo.* + supervisor (lazy split).
 // ---------------------------------------------------------------------
-
-function noopRealtime(): RealtimeService {
-  return { emit: () => undefined };
-}
-
-function v3Usage(inputTotal: number, outputTotal: number) {
-  return {
-    inputTokens: { total: inputTotal, noCache: inputTotal, cacheRead: 0, cacheWrite: 0 },
-    outputTokens: { total: outputTotal, text: outputTotal, reasoning: 0 },
-    totalTokens: inputTotal + outputTotal,
-  };
-}
-
-function makeStreamingModel(parts: LanguageModelV3StreamPart[]): LanguageModel {
-  return new MockLanguageModelV3({
-    doStream: async () => ({
-      stream: simulateReadableStream<LanguageModelV3StreamPart>({ chunks: parts }),
-    }),
-  }) as unknown as LanguageModel;
-}
-
-function makeTextOnlyModel(text: string): LanguageModel {
-  return makeStreamingModel([
-    { type: 'text-start', id: '1' },
-    { type: 'text-delta', id: '1', delta: text },
-    { type: 'text-end', id: '1' },
-    {
-      type: 'finish',
-      usage: v3Usage(11, 7),
-      finishReason: { unified: 'stop' as const, raw: 'stop' },
-    },
-  ]);
-}
-
-function extractModelToolNames(rawTools: unknown): string[] {
-  if (Array.isArray(rawTools)) {
-    return rawTools
-      .map((entry) =>
-        entry && typeof entry === 'object'
-          ? (entry as { name?: unknown }).name
-          : undefined,
-      )
-      .filter((name): name is string => typeof name === 'string')
-      .sort();
-  }
-  if (rawTools && typeof rawTools === 'object') {
-    return Object.keys(rawTools).sort();
-  }
-  return [];
-}
-
-function makeToolCaptureModel(capturedToolNames: string[][]): LanguageModel {
-  return new MockLanguageModelV3({
-    doStream: async (options) => {
-      // The V3 protocol passes tools as an ARRAY of `{ type, name, ... }`
-      // entries — not as a `Record<string, ToolDef>` keyed by tool id.
-      // We normalise to tool ids so test assertions can read them
-      // identically across "record" and "array" providers.
-      capturedToolNames.push(extractModelToolNames((options as { tools?: unknown }).tools));
-      return {
-        stream: simulateReadableStream<LanguageModelV3StreamPart>({
-          chunks: [
-            { type: 'text-start', id: '1' },
-            { type: 'text-delta', id: '1', delta: 'done' },
-            { type: 'text-end', id: '1' },
-            {
-              type: 'finish',
-              usage: v3Usage(9, 4),
-              finishReason: { unified: 'stop' as const, raw: 'stop' },
-            },
-          ],
-        }),
-      };
-    },
-  }) as unknown as LanguageModel;
-}
-
-function makeMcpToolCallModel(matchToolName: (name: string) => boolean): LanguageModel {
-  return new MockLanguageModelV3({
-    doStream: async (options) => {
-      const hasToolResults = options.prompt.some((m) =>
-        Array.isArray(m.content)
-          ? m.content.some((c: { type?: string }) => c.type === 'tool-result')
-          : false,
-      );
-      if (hasToolResults) {
-        return {
-          stream: simulateReadableStream<LanguageModelV3StreamPart>({
-            chunks: [
-              { type: 'text-start', id: '2' },
-              { type: 'text-delta', id: '2', delta: 'done' },
-              { type: 'text-end', id: '2' },
-              {
-                type: 'finish',
-                usage: v3Usage(12, 4),
-                finishReason: { unified: 'stop' as const, raw: 'stop' },
-              },
-            ],
-          }),
-        };
-      }
-
-      const toolNames = extractModelToolNames((options as { tools?: unknown }).tools);
-      const toolName = toolNames.find(matchToolName);
-      if (!toolName) {
-        throw new Error(
-          `expected MCP tool not found in model palette; saw ${toolNames.join(', ')}`,
-        );
-      }
-      return {
-        stream: simulateReadableStream<LanguageModelV3StreamPart>({
-          chunks: [
-            {
-              type: 'tool-call',
-              toolCallId: 'call-mcp-1',
-              toolName,
-              input: JSON.stringify({}),
-            },
-            {
-              type: 'finish',
-              usage: v3Usage(10, 3),
-              finishReason: { unified: 'tool-calls' as const, raw: 'tool-calls' },
-            },
-          ],
-        }),
-      };
-    },
-  }) as unknown as LanguageModel;
-}
 
 function mcpDef(id: string, name: string): MCPDef {
   return {
@@ -181,158 +65,6 @@ function mcpDef(id: string, name: string): MCPDef {
     args: [],
     env: {},
     isolation: 'shared',
-  };
-}
-
-interface FixtureOptions {
-  modelByCall?: LanguageModel[];
-  staticModel?: LanguageModel;
-  agentNames?: string[];
-  /** Use the real ToolServiceImpl path (with allowlist enforcement). */
-  realToolPipeline?: boolean;
-  mcpPool?: SpiritServiceOptions['mcpPool'];
-  mcpResolver?: SpiritServiceOptions['mcpResolver'];
-  toolInvoke?: (input: ToolInvocationInput) => ToolInvocationResult | Promise<ToolInvocationResult>;
-}
-
-interface ModelCall {
-  organizationId: string;
-  memberId: string;
-  role: 'worker' | 'supervisor';
-}
-
-interface Fixture {
-  archiveRoot: string;
-  repo: ApiRepository;
-  conversations: ConversationService;
-  spirits: SpiritService;
-  supervisorTodos: SupervisorTodoService;
-  taskSessions: TaskSessionService;
-  registry: ActiveSpiritRegistry;
-  tools: ToolService;
-  organizationId: string;
-  ownerId: string;
-  modelCalls: { input: ModelCall; resolved: LanguageModel }[];
-}
-
-async function createFixture(opts: FixtureOptions = {}): Promise<Fixture> {
-  const archiveRoot = await mkdtemp(join(tmpdir(), 'ujima-phase2-'));
-  const db = openDatabase({ dbPath: ':memory:' });
-  const repo = new Repository(db);
-  const teamStore = createTeamStore();
-  const onboarding = new OnboardingService(repo, teamStore);
-
-  await onboarding.onboard({
-    organizationName: 'Phase 2 Org',
-    ownerName: 'Owner',
-    workspaceRoot: archiveRoot,
-    providerKeys: { local: 'sk-test' },
-    team: {
-      channels: [
-        { name: 'general', kind: 'general', topic: 'General' },
-        { name: 'frontend', kind: 'group', topic: 'Frontend' },
-      ],
-      roles: [
-        {
-          name: 'frontend-engineer',
-          title: 'Frontend Engineer',
-          instructions: 'Build the frontend',
-          workspaceScopes: ['apps/web'],
-          tools: ['filesystem', 'channel.post', 'channel.read'],
-          channels: ['general', 'frontend'],
-          provider: 'local',
-          model: 'mock-worker-v1',
-        },
-      ],
-      providers: {
-        local: {
-          kind: 'openai',
-          defaultModel: 'mock-worker-v1',
-        },
-      },
-      agents: (opts.agentNames ?? ['frontend-alice']).map((name) => ({
-        name,
-        roleName: 'frontend-engineer',
-        personalityName: 'direct',
-      })),
-    },
-  });
-
-  const owner = repo
-    .listMembers(repo.getLatestOrganization()!.id)
-    .find((m) => m.kind === 'human')!;
-  const organizationId = owner.organizationId;
-
-  const conversations = new ConversationService(repo, noopRealtime());
-  const supervisorTodos = new SupervisorTodoService(repo);
-
-  const modelCalls: { input: ModelCall; resolved: LanguageModel }[] = [];
-  let queueIndex = 0;
-  const modelResolver: ModelResolver = (input) => {
-    let resolved: LanguageModel;
-    if (opts.modelByCall && opts.modelByCall.length > 0) {
-      resolved = opts.modelByCall[queueIndex % opts.modelByCall.length]!;
-      queueIndex += 1;
-    } else if (opts.staticModel) {
-      resolved = opts.staticModel;
-    } else {
-      resolved = makeTextOnlyModel('default');
-    }
-    modelCalls.push({ input, resolved });
-    return resolved;
-  };
-
-  let tools: ToolService;
-  if (opts.realToolPipeline) {
-    // Real pipeline so SUPERVISOR_TOOL_ALLOWLIST enforcement runs.
-    const approvalRequester: ApprovalRequester = {
-      requestApproval: () => ({ id: 'fake-approval-id' }),
-    };
-    tools = new ToolServiceImpl(
-      teamStore,
-      repo,
-      approvalRequester,
-      conversations,
-      noopRealtime(),
-      supervisorTodos,
-    );
-  } else {
-    // Stub: bypass policy + IAM. Used by tests that only care about the
-    // spirit/supervisor flow, not the tool gate.
-    tools = {
-      invoke: async (input) =>
-        opts.toolInvoke
-          ? await opts.toolInvoke(input)
-          : { ok: true, output: { status: 'completed', result: 'noop' } },
-      allowRun: () => undefined,
-    };
-  }
-
-  const registry = new ActiveSpiritRegistry();
-  const spirits = new SpiritService(teamStore, repo, noopRealtime(), tools, {
-    modelResolver,
-    maxIterationsPerRun: 8,
-    registry,
-    ...(opts.mcpPool ? { mcpPool: opts.mcpPool } : {}),
-    ...(opts.mcpResolver ? { mcpResolver: opts.mcpResolver } : {}),
-    conversations,
-    supervisorDebounceMs: 0,
-    supervisorTurnCapPerSession: 3,
-  });
-  const taskSessions = new TaskSessionService(repo, conversations, spirits);
-
-  return {
-    archiveRoot,
-    repo,
-    conversations,
-    spirits,
-    supervisorTodos,
-    taskSessions,
-    registry,
-    tools,
-    organizationId,
-    ownerId: owner.id,
-    modelCalls,
   };
 }
 

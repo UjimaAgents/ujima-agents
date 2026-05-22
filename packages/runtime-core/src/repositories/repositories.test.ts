@@ -594,6 +594,43 @@ test('saveMessage is race-safe on duplicate clientMessageId (returns winner inst
   ).toHaveLength(1);
 });
 
+test('hasApprovalGrant matches org-wide canonical scope regardless of requesting agent', () => {
+  const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
+  const orgId = randomUUID();
+  repo.saveOrganization(
+    OrganizationSchema.parse({
+      id: orgId,
+      name: 'Org-Wide Grant Org',
+      workspace: { root: '/tmp/org-wide-grant', roleScopes: {} },
+    }),
+  );
+
+  const grantScope = 'shell:{"cwd":"/workspace","command":"npm","args":["test"]}';
+  repo.saveApproval({
+    id: randomUUID(),
+    organizationId: orgId,
+    runId: randomUUID(),
+    toolCallId: randomUUID(),
+    requestedBy: 'agent-owner',
+    resourceType: 'shell',
+    resourcePath: '/workspace',
+    action: 'execute',
+    status: 'approved',
+    reason: `grant:always_allow:scope=${encodeURIComponent(grantScope)};note=owner-grant`,
+    createdAt: new Date().toISOString(),
+    resolvedAt: new Date().toISOString(),
+  });
+
+  expect(
+    repo.hasApprovalGrant({
+      organizationId: orgId,
+      resourceType: 'shell',
+      action: 'execute',
+      approvalScope: grantScope,
+    }),
+  ).toBe(true);
+});
+
 test('hasApprovalGrant matches legacy shell scopes against canonical JSON scopes', () => {
   const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
   const orgId = randomUUID();
