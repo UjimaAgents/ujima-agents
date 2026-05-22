@@ -465,9 +465,7 @@ export class Repository {
   };
   hasApprovalGrant = (input: {
     organizationId: string;
-    requestedBy: string;
     resourceType: ApprovalRequest['resourceType'];
-    resourcePath: string;
     action: ApprovalRequest['action'];
     approvalScope: string;
   }): boolean => readApprovalGrant(this.db, input);

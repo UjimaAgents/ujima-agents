@@ -281,9 +281,7 @@ export class ToolServiceImpl implements ToolService {
       !this.consumeApprovedRun(invocation.organizationId, invocation.runId, approvalScope) &&
       !this.repo.hasApprovalGrant({
         organizationId: preparedInvocation.organizationId,
-        requestedBy: preparedInvocation.memberId,
         resourceType: preparedInvocation.resourceType,
-        resourcePath: preparedInvocation.resourcePath ?? "",
         action: preparedInvocation.action,
         approvalScope,
       })

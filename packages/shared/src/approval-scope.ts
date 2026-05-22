@@ -1,3 +1,5 @@
+import { posix } from 'node:path';
+
 export interface ParsedShellScope {
   cwd: string;
   command: string;
@@ -112,6 +114,14 @@ export function parseApprovalDisplayScopesFromReason(reason: string): {
   return { shell: null, filesystem: parseFilesystemScope(scopeEncoded) ?? parseWorkspaceWriteScope(scopeEncoded) };
 }
 
+export function canonicalizeApprovalGrantScope(scope: string): string {
+  return canonicalizeApprovalScope(scope, false);
+}
+
+export function canonicalizeApprovalFamilyScope(scope: string): string {
+  return canonicalizeApprovalScope(scope, true);
+}
+
 /**
  * Filesystem tool approval scope from the permission gate (`filesystem:{json}`)
  * or orchestrator inner gate (`filesystem:read:/abs/path`).
@@ -214,6 +224,83 @@ function parseWorkspaceWriteScope(scope: string): ParsedFilesystemScope | null {
   } catch {
     return null;
   }
+}
+
+function canonicalizeApprovalScope(scope: string, family: boolean): string {
+  const shell = parseShellScope(scope);
+  if (shell) {
+    return `shell:${JSON.stringify({
+      cwd: normalizeApprovalPath(shell.cwd),
+      command: shell.command,
+      ...(family || !shell.args?.length ? {} : { args: shell.args }),
+    })}`;
+  }
+
+  const filesystem = parseFilesystemScope(scope) ?? parseWorkspaceWriteScope(scope);
+  if (filesystem) {
+    return `filesystem:${JSON.stringify({
+      action: filesystem.action,
+      resourcePath: normalizeApprovalPath(filesystem.resourcePath),
+    })}`;
+  }
+
+  if (scope.startsWith('download:')) {
+    const payload = scope.slice('download:'.length);
+    if (payload.startsWith('{')) {
+      try {
+        const parsed = JSON.parse(payload) as {
+          resourcePath?: unknown;
+          url?: unknown;
+        };
+        if (typeof parsed.resourcePath === 'string' && parsed.resourcePath.trim()) {
+          return `filesystem:${JSON.stringify({
+            action: 'write',
+            resourcePath: normalizeApprovalPath(parsed.resourcePath),
+          })}`;
+        }
+        if (!family && typeof parsed.url === 'string' && parsed.url.trim()) {
+          return `download:${JSON.stringify({ url: parsed.url.trim() })}`;
+        }
+      } catch {
+        /* fall through */
+      }
+    }
+  }
+
+  if (scope.startsWith('job_kill:')) {
+    return 'job_kill';
+  }
+
+  if (scope.startsWith('fetch:')) {
+    const payload = scope.slice('fetch:'.length);
+    if (payload.startsWith('{')) {
+      try {
+        const parsed = JSON.parse(payload) as { url?: unknown };
+        if (typeof parsed.url === 'string' && parsed.url.trim()) {
+          return `fetch:${JSON.stringify({ url: parsed.url.trim() })}`;
+        }
+      } catch {
+        /* fall through */
+      }
+    }
+  }
+
+  const firstColon = scope.indexOf(':');
+  const secondColon = firstColon === -1 ? -1 : scope.indexOf(':', firstColon + 1);
+  if (firstColon > 0 && secondColon > firstColon) {
+    const resourceType = scope.slice(0, firstColon);
+    const action = scope.slice(firstColon + 1, secondColon);
+    const resourcePath = scope.slice(secondColon + 1).trim();
+    if (resourceType && action && resourcePath) {
+      return `${resourceType}:${action}:${normalizeApprovalPath(resourcePath)}`;
+    }
+  }
+
+  return scope;
+}
+
+function normalizeApprovalPath(value: string): string {
+  return posix.normalize(value.replace(/\\/g, '/').trim() || '.');
 }
 
 const RELAY_FS_WRITE_BODY_MAX = 4000;

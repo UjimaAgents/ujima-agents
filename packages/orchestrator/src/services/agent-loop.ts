@@ -61,7 +61,6 @@ export async function runAgentLoop(input: {
   const toolChoiceStrategy: AgentLoopToolChoice = input.toolChoice ?? 'auto';
   const userStopWhen = input.stopWhen;
   const onChunk = input.onChunk;
-  let sawModelOutputStreamPart = false;
 
   const stopWhen: NonNullable<Parameters<typeof streamText>[0]['stopWhen']> = (info) => {
     for (const step of steps) {
@@ -138,9 +137,6 @@ export async function runAgentLoop(input: {
         if (approvalError) throw approvalError;
         throw part.error;
       }
-      if (isModelOutputStreamPart(part)) {
-        sawModelOutputStreamPart = true;
-      }
     }
 
     const [text, usage] = await Promise.all([result.text, result.usage]);
@@ -151,25 +147,19 @@ export async function runAgentLoop(input: {
   try {
     return await execute(toolChoiceStrategy);
   } catch (error) {
+    // Retry with `auto` when the provider rejects `toolChoice: required` on
+    // step 0. Some models (e.g. deepseek-v4-flash in thinking mode) may
+    // stream reasoning tokens before the HTTP error arrives; we still retry
+    // because `onStepFinish` has not run and no tool results were committed.
     if (
       toolChoiceStrategy === 'required-first-step' &&
       steps.length === 0 &&
-      !sawModelOutputStreamPart &&
       isUnsupportedToolChoiceError(error)
     ) {
       return execute('auto');
     }
     throw error;
   }
-}
-
-function isModelOutputStreamPart(part: { type?: unknown }): boolean {
-  if (typeof part.type !== 'string') return false;
-  return (
-    part.type.includes('text') ||
-    part.type.includes('reasoning') ||
-    part.type.includes('tool')
-  );
 }
 
 function isUnsupportedToolChoiceError(error: unknown): boolean {

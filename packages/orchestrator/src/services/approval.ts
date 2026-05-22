@@ -2,7 +2,10 @@ import { randomUUID } from 'node:crypto';
 import {
   ApprovalRequestSchema,
   SocketEventNames,
+  canonicalizeApprovalFamilyScope,
+  canonicalizeApprovalGrantScope,
   orgRoom,
+  parseApprovalReasonValue,
   runRoom,
   threadRoom,
   type ApprovalRequest,
@@ -59,11 +62,12 @@ export class ApprovalService {
           .find(
             (approval) =>
               approval.runId === input.runId &&
-              approval.requestedBy === input.requestedBy &&
               approval.resourceType === input.resourceType &&
-              approval.resourcePath === input.resourcePath &&
               approval.action === input.action &&
-              decodeApprovalScope(approval.reason) === input.approvalScope,
+              approvalScopeMatches(
+                decodeApprovalScope(approval.reason) ?? '',
+                input.approvalScope,
+              ),
           )
       : undefined;
 
@@ -112,17 +116,18 @@ export class ApprovalService {
 
   async resolveApproval(input: ApprovalResolveInput): Promise<ApprovalRequest> {
     const existing = this.repo.getApproval(input.organizationId, input.approvalId);
-    const scopeMatch = existing?.reason.match(/(?:^|[;:])scope=([^;]+)/);
-    // The scope in the reason is stored URL-encoded by ToolServiceImpl. We decode
-    // it here so we have the raw scope, then re-encode it when building the
-    // permanent grant reason string. This ensures consistency with how
-    // hasApprovalGrant searches for the record.
-    const rawScope = scopeMatch && scopeMatch[1] ? decodeURIComponent(scopeMatch[1]) : undefined;
+    const rawScope = existing?.reason ? parseApprovalReasonValue(existing.reason, 'scope') ?? undefined : undefined;
+    const persistedScope =
+      (input.resolution === 'allow_family'
+        ? rawScope
+          ? canonicalizeApprovalFamilyScope(rawScope)
+          : fallbackApprovalScope(existing)
+        : rawScope
+          ? canonicalizeApprovalGrantScope(rawScope)
+          : fallbackApprovalScope(existing)) ?? undefined;
     const canPersistGrant =
       (input.resolution === 'allow_always' || input.resolution === 'allow_family') &&
-      !!rawScope;
-    const persistedScope =
-      input.resolution === 'allow_family' && rawScope ? buildFamilyApprovalScope(rawScope) : rawScope;
+      !!persistedScope;
     const effectiveReason =
       input.status === 'rejected' && rawScope
         ? `reject:scope=${encodeURIComponent(rawScope)};note=${input.reason ?? ''}`
@@ -134,14 +139,13 @@ export class ApprovalService {
         ? this.repo
             .listPendingApprovals(input.organizationId)
             .filter((approval) => approval.runId === existing.runId)
-        : existing && rawScope
+        : existing
           ? this.repo
               .listPendingApprovals(input.organizationId)
               .filter((approval) =>
                 pendingApprovalMatchesResolution({
                   approval,
                   existing,
-                  rawScope,
                   persistedScope,
                   resolution: input.resolution,
                 }),
@@ -238,47 +242,62 @@ export class ApprovalService {
 }
 
 function decodeApprovalScope(reason: string): string | undefined {
-  const scopeMatch = reason.match(/(?:^|[;:])scope=([^;]+)/);
-  return scopeMatch?.[1] ? decodeURIComponent(scopeMatch[1]) : undefined;
-}
-
-function buildFamilyApprovalScope(rawScope: string): string {
-  if (!rawScope.startsWith('shell:')) return rawScope;
-  try {
-    const parsed = JSON.parse(rawScope.slice('shell:'.length)) as {
-      cwd?: unknown;
-      command?: unknown;
-    };
-    if (typeof parsed?.cwd !== 'string' || typeof parsed?.command !== 'string') {
-      return rawScope;
-    }
-    return `shell:${JSON.stringify({ cwd: parsed.cwd, command: parsed.command })}`;
-  } catch {
-    return rawScope;
-  }
+  return parseApprovalReasonValue(reason, 'scope') ?? undefined;
 }
 
 function pendingApprovalMatchesResolution(input: {
   approval: ApprovalRequest;
   existing: ApprovalRequest;
-  rawScope: string;
   persistedScope: string | undefined;
   resolution: ApprovalResolveInput['resolution'];
 }): boolean {
-  const { approval, existing, rawScope, persistedScope, resolution } = input;
+  const { approval, existing, persistedScope, resolution } = input;
   if (
     approval.runId !== existing.runId ||
-    approval.requestedBy !== existing.requestedBy ||
     approval.resourceType !== existing.resourceType ||
-    approval.resourcePath !== existing.resourcePath ||
     approval.action !== existing.action
   ) {
     return false;
   }
 
   const approvalScope = decodeApprovalScope(approval.reason);
-  if (resolution === 'allow_family' && persistedScope) {
-    return approvalScope ? buildFamilyApprovalScope(approvalScope) === persistedScope : false;
+  if (!approvalScope || !persistedScope) {
+    return false;
   }
-  return approvalScope === rawScope;
+  if (resolution === 'allow_family') {
+    return (
+      canonicalizeApprovalGrantScope(approvalScope) === persistedScope ||
+      canonicalizeApprovalFamilyScope(approvalScope) === persistedScope
+    );
+  }
+  return canonicalizeApprovalGrantScope(approvalScope) === persistedScope;
+}
+
+function approvalScopeMatches(storedScope: string, requestedScope: string): boolean {
+  const storedGrant = canonicalizeApprovalGrantScope(storedScope);
+  const storedFamily = canonicalizeApprovalFamilyScope(storedScope);
+  const requestedGrant = canonicalizeApprovalGrantScope(requestedScope);
+  const requestedFamily = canonicalizeApprovalFamilyScope(requestedScope);
+  return (
+    storedGrant === requestedGrant ||
+    storedGrant === requestedFamily ||
+    storedFamily === requestedGrant ||
+    storedFamily === requestedFamily
+  );
+}
+
+function fallbackApprovalScope(approval: ApprovalRequest | null | undefined): string | undefined {
+  if (!approval) return undefined;
+  if (!approval.resourcePath) return undefined;
+  if (approval.resourceType === 'shell') {
+    return canonicalizeApprovalGrantScope(`shell:${JSON.stringify({ cwd: approval.resourcePath })}`);
+  }
+  if (approval.action === 'write') {
+    return canonicalizeApprovalGrantScope(
+      `write:${JSON.stringify({ resourcePath: approval.resourcePath })}`,
+    );
+  }
+  return canonicalizeApprovalGrantScope(
+    `${approval.resourceType}:${approval.action}:${approval.resourcePath}`,
+  );
 }

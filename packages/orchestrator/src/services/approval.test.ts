@@ -142,6 +142,60 @@ describe('ApprovalService', () => {
     expect(emitted).toBe(0);
   });
 
+  it('reuses a pending write approval when only the file content changes', () => {
+    const oldScope = 'write:{"resourcePath":"/workspace/readme.md","content":"old"}';
+    const nextScope = 'edit:{"file_path":"/workspace/readme.md","old_string":"old","new_string":"new"}';
+    const approval = {
+      id: 'ap-1',
+      organizationId: 'org-1',
+      runId: 'run-1',
+      toolCallId: 'tool-1',
+      requestedBy: 'agent-1',
+      resourceType: 'file',
+      resourcePath: '/workspace/readme.md',
+      action: 'write',
+      status: 'pending',
+      reason: `Tool action requires approval;scope=${encodeURIComponent(oldScope)}`,
+      createdAt: '2026-05-04T00:00:00.000Z',
+      resolvedAt: undefined,
+    };
+
+    let saved = 0;
+    const repo = {
+      listPendingApprovals: () => [approval],
+      saveApproval: () => {
+        saved++;
+        return approval;
+      },
+      listMembers: () => [],
+      getRun: () => ({ threadId: 'thread-1' }),
+      getApproval: () => approval,
+      resolveApproval: () => approval,
+    } as never;
+
+    const service = new ApprovalService(
+      repo,
+      { emit: () => undefined } as never,
+      { sendDirectSystemMessage: () => undefined } as never,
+      () => undefined,
+    );
+
+    const result = service.requestApproval({
+      organizationId: 'org-1',
+      runId: 'run-1',
+      toolCallId: 'tool-2',
+      requestedBy: 'agent-1',
+      resourceType: 'file',
+      resourcePath: '/workspace/readme.md',
+      action: 'write',
+      reason: `Tool action requires approval;scope=${encodeURIComponent(nextScope)}`,
+      approvalScope: nextScope,
+    });
+
+    expect(result.id).toBe('ap-1');
+    expect(saved).toBe(0);
+  });
+
   it('resolves duplicate pending approvals for the same scope together', async () => {
     const shellScope = 'shell:{"cwd":"/workspace","command":"pwd"}';
     interface ApprovalFixture {
@@ -404,6 +458,59 @@ describe('ApprovalService', () => {
     expect(capturedReason).toBe(
       `grant:always_allow:scope=${encodeURIComponent('shell:{"cwd":"/workspace","command":"git"}')};note=Always allow this git family.`,
     );
+  });
+
+  it('persists an allow_always grant even when the approval reason lacks scope', async () => {
+    const approval = {
+      id: 'ap-1',
+      organizationId: 'org-1',
+      runId: 'run-1',
+      toolCallId: 'tool-1',
+      requestedBy: 'agent-1',
+      resourceType: 'file',
+      resourcePath: '/workspace/readme.md',
+      action: 'write',
+      status: 'pending',
+      reason: 'Tool action requires approval',
+      createdAt: '2026-05-04T00:00:00.000Z',
+      resolvedAt: undefined,
+    };
+    let capturedReason = '';
+    const repo = {
+      listPendingApprovals: () => [approval],
+      saveApproval: () => approval,
+      listMembers: () => [],
+      getRun: () => ({ threadId: 'thread-1' }),
+      getApproval: () => approval,
+      resolveApproval: (_orgId: string, _approvalId: string, status: 'approved' | 'rejected', reason?: string) => {
+        capturedReason = reason ?? '';
+        return {
+          ...approval,
+          status,
+          reason: reason ?? '',
+          resolvedAt: '2026-05-04T00:01:00.000Z',
+        };
+      },
+    } as never;
+
+    const service = new ApprovalService(
+      repo,
+      { emit: () => undefined } as never,
+      { sendDirectSystemMessage: () => undefined } as never,
+      () => undefined,
+    );
+
+    const result = await service.resolveApproval({
+      organizationId: 'org-1',
+      approvalId: 'ap-1',
+      status: 'approved',
+      resolution: 'allow_always',
+      reason: 'Allow this write permanently.',
+    });
+
+    expect(result.status).toBe('approved');
+    expect(capturedReason).toContain('grant:always_allow:scope=');
+    expect(capturedReason).toContain('/workspace/readme.md');
   });
 
   it('approves pending shell calls in the same run when allow_family matches their command family', async () => {
