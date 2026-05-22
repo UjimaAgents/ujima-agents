@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { AgentTeamConfigSchema, RoleConfigSchema } from '@ujima/framework';
-import { syncWorkspacesFromOrganizations, type Repository, type RuntimeHost } from '@ujima/runtime-core';
+import type { Repository } from '@ujima/runtime-core';
 import { AGENT_KIND, ChannelSchema, IdSchema, MemberSchema } from '@ujima/shared';
 import { ensureDirectMessageConversation } from '@ujima/orchestrator';
 import {
@@ -61,14 +61,13 @@ export interface SettingsRoutesOptions {
   repo: Repository;
   settings: SettingsService;
   auth: AuthService;
-  host?: RuntimeHost;
 }
 
 export function registerSettingsRoutes(
   _app: FastifyInstance,
   options: SettingsRoutesOptions,
 ): void {
-  const { repo, settings, auth, host } = options;
+  const { repo, settings, auth } = options;
   const app = _app.withTypeProvider<ZodTypeProvider>();
 
   app.get('/settings/team', {
@@ -226,11 +225,7 @@ export function registerSettingsRoutes(
       assertReadyWorkspaceRoot(repo, req.body.organizationId);
       const forbidden = requireOrgSession(auth, req, reply, req.body.organizationId);
       if (forbidden) return forbidden;
-      const result = settings.updateOrganizationSettings(req.body);
-      if (req.body.workspaceRoot !== undefined && host) {
-        syncWorkspacesFromOrganizations(host.workspaces, [result.organization]);
-      }
-      return result;
+      return settings.updateOrganizationSettings(req.body);
     } catch (err) {
       return routeError(reply, err, { notFound: 'Organization not found', workspaceRoot: true });
     }

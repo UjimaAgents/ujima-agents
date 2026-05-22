@@ -8,11 +8,9 @@ import {
   WorkspaceListItemSchema,
 } from '@ujima/api-schema';
 import {
-  organizationIdFromWorkspaceId,
   type AuthService,
   type WorkspaceService,
 } from '@ujima/orchestrator';
-import type { Repository } from '@ujima/runtime-core';
 import { readSessionToken } from '../session-token.js';
 import { apiError, errorMessage } from './route-errors.js';
 
@@ -24,7 +22,6 @@ const workspaceAuthResponses = {
 
 export interface WorkspaceRoutesOptions {
   host: RuntimeHost;
-  repo?: Repository;
   auth?: AuthService;
   workspaces?: WorkspaceService;
 }
@@ -33,7 +30,7 @@ export function registerWorkspaceRoutes(
   _app: FastifyInstance,
   options: WorkspaceRoutesOptions,
 ): void {
-  const { host, repo, auth, workspaces } = options;
+  const { host, auth, workspaces } = options;
   const app = _app.withTypeProvider<ZodTypeProvider>();
 
   app.get('/workspaces', {
@@ -103,21 +100,12 @@ export function registerWorkspaceRoutes(
         organizationName,
         workspaceRoot,
       });
-
-      const organizationId = organizationIdFromWorkspaceId(created.id);
-      const organization =
-        organizationId && repo ? repo.getOrganization(organizationId) : null;
-      if (!organization) {
-        return apiError(reply, 500, 'workspace was created but organization record is missing');
-      }
-
-      syncWorkspacesFromOrganizations(host.workspaces, [organization]);
       const row = host.workspaces.get(created.id);
       if (!row) {
         return apiError(reply, 500, 'workspace catalog row was not created');
       }
 
-      return { ...row, label: organization.name, is_current: false };
+      return { ...row, is_current: false };
     } catch (err) {
       const message = errorMessage(err);
       if (/session required/i.test(message)) {

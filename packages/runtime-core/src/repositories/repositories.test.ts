@@ -62,6 +62,40 @@ test('provider credentials stay scoped to their organization', () => {
   expect(repo.getOrganization(secondOrganization.id)?.id).toBe(secondOrganization.id);
 });
 
+test('saveOrganization upserts the matching workspace catalog row', () => {
+  const db = openDatabase({ dbPath: ':memory:' });
+  const repo = new Repository(db);
+  const org = OrganizationSchema.parse({
+    id: randomUUID(),
+    name: 'Workspace Org',
+    workspace: {
+      root: './tmp/workspace-org',
+      roleScopes: {},
+    },
+  });
+
+  repo.saveOrganization(org);
+  const firstRow = db
+    .prepare('SELECT id, root_path, label FROM workspaces WHERE id = ?')
+    .get(`ws_${org.id}`) as { id: string; root_path: string; label: string } | undefined;
+
+  expect(firstRow?.id).toBe(`ws_${org.id}`);
+  expect(firstRow?.root_path).toBeDefined();
+  expect(firstRow?.label).toBe('Workspace Org');
+
+  repo.saveOrganization({
+    ...org,
+    name: 'Renamed Workspace Org',
+    workspace: { ...org.workspace, root: '/tmp/workspace-org-renamed' },
+  });
+  const updatedRow = db
+    .prepare('SELECT id, root_path, label FROM workspaces WHERE id = ?')
+    .get(`ws_${org.id}`) as { id: string; root_path: string; label: string } | undefined;
+
+  expect(updatedRow?.label).toBe('Renamed Workspace Org');
+  expect(updatedRow?.root_path).toContain('workspace-org-renamed');
+});
+
 test('members are isolated per organization and preserve role name', () => {
   const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
   const orgId = randomUUID();
