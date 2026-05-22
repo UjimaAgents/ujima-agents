@@ -42,7 +42,7 @@ If you touch package APIs, update the matching README in the same change.
 - Explain what changed and why.
 - Mention any user-facing impact.
 - Include the commands you ran.
-- Keep the diff as small as possible. Aim for under 500 lines of churn; CI blocks PRs over **2000** lines (insertions + deletions, excluding lockfiles and `.vsix` artifacts).
+- Keep the diff as small as possible. Aim for under 500 lines added; CI blocks PRs that **add more than 2000 lines** (insertions only — deletions and refactors do not count toward the limit; lockfiles and `.vsix` artifacts are excluded).
 
 To check size locally before opening a PR:
 
