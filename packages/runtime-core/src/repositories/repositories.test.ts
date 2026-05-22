@@ -713,6 +713,51 @@ test('hasApprovalGrant ignores write payload churn for the same file target', ()
   ).toBe(true);
 });
 
+test('hasApprovalGrant reuses allow_family shell grants for later args variants', () => {
+  const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
+  const orgId = randomUUID();
+  repo.saveOrganization(
+    OrganizationSchema.parse({
+      id: orgId,
+      name: 'Shell Family Grant Org',
+      workspace: { root: '/tmp/shell-family-grant-org', roleScopes: {} },
+    }),
+  );
+
+  const familyScope = 'shell:{"cwd":"/workspace","command":"git"}';
+  repo.saveApproval({
+    id: randomUUID(),
+    organizationId: orgId,
+    runId: randomUUID(),
+    toolCallId: randomUUID(),
+    requestedBy: 'agent-1',
+    resourceType: 'shell',
+    resourcePath: '/workspace',
+    action: 'execute',
+    status: 'approved',
+    reason: `grant:always_allow_family:scope=${encodeURIComponent(familyScope)};note=family`,
+    createdAt: new Date().toISOString(),
+    resolvedAt: new Date().toISOString(),
+  });
+
+  expect(
+    repo.hasApprovalGrant({
+      organizationId: orgId,
+      resourceType: 'shell',
+      action: 'execute',
+      approvalScope: 'shell:{"cwd":"/workspace","command":"git","args":["status"]}',
+    }),
+  ).toBe(true);
+  expect(
+    repo.hasApprovalGrant({
+      organizationId: orgId,
+      resourceType: 'shell',
+      action: 'execute',
+      approvalScope: 'shell:{"cwd":"/workspace","command":"npm","args":["test"]}',
+    }),
+  ).toBe(false);
+});
+
 test('hasApprovalGrant normalizes shell cwd aliases for the same command', () => {
   const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
   const orgId = randomUUID();

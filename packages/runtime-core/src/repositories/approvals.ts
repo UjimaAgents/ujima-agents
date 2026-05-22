@@ -1,7 +1,7 @@
 import type { SqliteDbHandle as DbHandle } from '@ujima/context-store';
 import {
   ApprovalRequestSchema,
-  approvalScopeMatches,
+  approvalPersistedGrantMatches,
   parseApprovalReasonValue,
   type ApprovalRequest,
 } from '@ujima/shared';
@@ -168,7 +168,7 @@ export function hasApprovalGrant(
          AND resource_type = ?
          AND action = ?
          AND status = 'approved'
-         AND reason LIKE 'grant:always_allow:scope=%'
+         AND (reason LIKE 'grant:always_allow:scope=%' OR reason LIKE 'grant:always_allow_family:scope=%')
        ORDER BY resolved_at DESC`,
     )
     .all(
@@ -180,6 +180,6 @@ export function hasApprovalGrant(
   return rows.some((candidate) => {
     const storedScope = parseApprovalReasonValue(rowString(candidate, 'reason'), 'scope');
     if (!storedScope) return false;
-    return approvalScopeMatches(storedScope, input.approvalScope);
+    return approvalPersistedGrantMatches(rowString(candidate, 'reason'), storedScope, input.approvalScope);
   });
 }

@@ -117,6 +117,61 @@ describe('ApprovalService', () => {
     expect(emitted).toBe(0);
   });
 
+  it('does not reuse a pending approval from a different requesting agent', () => {
+    const shellScope = 'shell:{"cwd":"/workspace","command":"pwd"}';
+    const approval = {
+      id: 'ap-1',
+      organizationId: 'org-1',
+      runId: 'run-1',
+      toolCallId: 'tool-1',
+      requestedBy: 'agent-1',
+      resourceType: 'shell',
+      resourcePath: '/workspace',
+      action: 'execute',
+      status: 'pending',
+      reason: `Tool action requires approval;scope=${encodeURIComponent(shellScope)}`,
+      createdAt: '2026-05-04T00:00:00.000Z',
+      resolvedAt: undefined,
+    };
+
+    let saved: ApprovalRequest | undefined;
+    let emitted = 0;
+    const repo = {
+      listPendingApprovals: () => [approval],
+      saveApproval: (value: ApprovalRequest) => {
+        saved = value;
+        return value;
+      },
+      listMembers: () => [],
+      getRun: () => ({ threadId: 'thread-1' }),
+      getApproval: () => approval,
+      resolveApproval: () => approval,
+    } as never;
+
+    const service = new ApprovalService(
+      repo,
+      { emit: () => { emitted++; } } as never,
+      () => undefined,
+    );
+
+    const result = service.requestApproval({
+      organizationId: 'org-1',
+      runId: 'run-1',
+      toolCallId: 'tool-2',
+      requestedBy: 'agent-2',
+      resourceType: 'shell',
+      resourcePath: '/workspace',
+      action: 'execute',
+      reason: `Tool action requires approval;scope=${encodeURIComponent(shellScope)}`,
+      approvalScope: shellScope,
+    });
+
+    expect(result.id).not.toBe('ap-1');
+    expect(result.requestedBy).toBe('agent-2');
+    expect(saved?.requestedBy).toBe('agent-2');
+    expect(emitted).toBe(1);
+  });
+
   it('reuses a pending write approval when only the file content changes', () => {
     const oldScope = 'write:{"resourcePath":"/workspace/readme.md","content":"old"}';
     const nextScope = 'edit:{"file_path":"/workspace/readme.md","old_string":"old","new_string":"new"}';
@@ -426,7 +481,7 @@ describe('ApprovalService', () => {
 
     expect(result.status).toBe('approved');
     expect(capturedReason).toBe(
-      `grant:always_allow:scope=${encodeURIComponent('shell:{"cwd":"/workspace","command":"git"}')};note=Always allow this git family.`,
+      `grant:always_allow_family:scope=${encodeURIComponent('shell:{"cwd":"/workspace","command":"git"}')};note=Always allow this git family.`,
     );
   });
 

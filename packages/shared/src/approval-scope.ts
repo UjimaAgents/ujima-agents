@@ -142,6 +142,50 @@ export function approvalScopeMatchesPersisted(
   );
 }
 
+export const APPROVAL_GRANT_ALWAYS_PREFIX = 'grant:always_allow:';
+export const APPROVAL_GRANT_FAMILY_PREFIX = 'grant:always_allow_family:';
+
+export function formatPersistedApprovalGrantReason(
+  mode: 'grant' | 'family',
+  persistedScope: string,
+  note: string,
+): string {
+  const prefix = mode === 'family' ? APPROVAL_GRANT_FAMILY_PREFIX : APPROVAL_GRANT_ALWAYS_PREFIX;
+  return `${prefix}scope=${encodeURIComponent(persistedScope)};note=${note}`;
+}
+
+function persistedGrantMode(grantReason: string): 'grant' | 'family' {
+  return grantReason.includes(APPROVAL_GRANT_FAMILY_PREFIX) ? 'family' : 'grant';
+}
+
+/** True when an approved always-allow row covers the requested tool scope. */
+export function approvalPersistedGrantMatches(
+  grantReason: string,
+  storedScope: string,
+  requestedScope: string,
+): boolean {
+  const mode = persistedGrantMode(grantReason);
+  const persistedCanonical =
+    mode === 'family'
+      ? canonicalizeApprovalFamilyScope(storedScope)
+      : canonicalizeApprovalGrantScope(storedScope);
+  if (approvalScopeMatchesPersisted(requestedScope, persistedCanonical, mode)) {
+    return true;
+  }
+  // Legacy allow_family rows used grant:always_allow: with a family-shaped canonical scope.
+  if (
+    mode === 'grant' &&
+    canonicalizeApprovalFamilyScope(storedScope) === canonicalizeApprovalGrantScope(storedScope)
+  ) {
+    return approvalScopeMatchesPersisted(
+      requestedScope,
+      canonicalizeApprovalFamilyScope(storedScope),
+      'family',
+    );
+  }
+  return false;
+}
+
 /**
  * Filesystem tool approval scope from the permission gate (`filesystem:{json}`)
  * or orchestrator inner gate (`filesystem:read:/abs/path`).

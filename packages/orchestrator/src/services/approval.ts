@@ -6,6 +6,7 @@ import {
   approvalScopeMatchesPersisted,
   canonicalizeApprovalFamilyScope,
   canonicalizeApprovalGrantScope,
+  formatPersistedApprovalGrantReason,
   orgRoom,
   parseApprovalReasonValue,
   runRoom,
@@ -63,6 +64,7 @@ export class ApprovalService {
           .find(
             (approval) =>
               approval.runId === input.runId &&
+              approval.requestedBy === input.requestedBy &&
               approval.resourceType === input.resourceType &&
               approval.action === input.action &&
               approvalScopeMatches(decodeApprovalScope(approval.reason) ?? '', requestedScope),
@@ -130,7 +132,11 @@ export class ApprovalService {
       input.status === 'rejected' && rawScope
         ? `reject:scope=${encodeURIComponent(rawScope)};note=${input.reason ?? ''}`
         : canPersistGrant && persistedScope
-          ? `grant:always_allow:scope=${encodeURIComponent(persistedScope)};note=${input.reason ?? ''}`
+          ? formatPersistedApprovalGrantReason(
+              input.resolution === 'allow_family' ? 'family' : 'grant',
+              persistedScope,
+              input.reason ?? '',
+            )
           : input.reason;
     const matchingPendingApprovals =
       existing?.runId && input.status === 'rejected'
