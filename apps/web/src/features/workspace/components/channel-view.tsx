@@ -186,7 +186,24 @@ export function ChannelView({
   const messageVirtualizer = useVirtualizer({
     count: feed.messages.length,
     getScrollElement: () => listRef.current,
-    estimateSize: () => 132,
+    estimateSize: (index: number) => {
+      const msg = feed.messages[index];
+      if (!msg) return 80;
+      // Base row: avatar row + padding ~ 48px
+      let height = 48;
+      // Text content: ~18px per line of 80 chars
+      const textLen = msg.content?.length ?? 0;
+      const lines = Math.max(1, Math.ceil(textLen / 80));
+      height += lines * 18;
+      // Code blocks: ~24px per marker pair
+      const codeFences = (msg.content?.match(/```/g)?.length ?? 0) / 2;
+      height += codeFences * 60;
+      // Attachments: ~40px each
+      height += (msg.attachments?.length ?? 0) * 40;
+      // Tool calls: ~24px each
+      height += (msg.toolCalls?.length ?? 0) * 24;
+      return Math.max(64, Math.min(400, height));
+    },
     overscan: 8,
   });
   const virtualMessageRows = messageVirtualizer.getVirtualItems();
@@ -674,11 +691,6 @@ export function ChannelView({
               : `Message #${conversation.name} or @agent...`
           }
           inlineError={feed.error}
-          statusHint={
-            typingLabel ||
-            (feed.loading ? "Syncing…" : "") ||
-            "Enter to send · Shift+Enter newline"
-          }
           mentionSuggestions={mentionSuggestions}
           replyTo={replyTo}
           onCancelReply={() => setReplyTo(null)}

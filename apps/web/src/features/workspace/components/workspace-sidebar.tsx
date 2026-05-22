@@ -29,6 +29,7 @@ import { CreateChannelModal } from "./sidebar/create-channel-modal";
 import { SidebarSectionEmpty } from "./sidebar/sidebar-section-empty";
 import { switchOrganization } from "../switch-workspace";
 import { visibleWorkspaceChannels } from "../workspace-channels";
+import { WORKSPACE_DOCK_ROW_CLASS } from "../workspace-dock";
 
 type WorkspaceSchedule = {
   id: string;
@@ -228,6 +229,7 @@ export function WorkspaceSidebar({
   const [isAgentModalOpen, setIsAgentModalOpen] = useState(false);
   const [switchingOrgId, setSwitchingOrgId] = useState<string | null>(null);
   const [schedules, setSchedules] = useState<WorkspaceSchedule[]>([]);
+  const [searchQuery, setSearchQuery] = useState("");
   const [visibleCounts, setVisibleCounts] = useState({
     channels: 5,
     agents: 5,
@@ -255,6 +257,24 @@ export function WorkspaceSidebar({
   const agentMembers = useMemo(
     () => members.filter((member) => member.kind === "agent"),
     [members],
+  );
+  const filteredChannels = useMemo(
+    () =>
+      searchQuery
+        ? visibleChannels.filter((ch) =>
+            ch.name.toLowerCase().includes(searchQuery.toLowerCase()),
+          )
+        : visibleChannels,
+    [visibleChannels, searchQuery],
+  );
+  const filteredAgents = useMemo(
+    () =>
+      searchQuery
+        ? agentMembers.filter((agent) =>
+            agent.name.toLowerCase().includes(searchQuery.toLowerCase()),
+          )
+        : agentMembers,
+    [agentMembers, searchQuery],
   );
   const orgId = bootstrap.organization?.id;
 
@@ -371,6 +391,8 @@ export function WorkspaceSidebar({
           <TextInput
             type="text"
             placeholder="Search"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
             className="h-8 pl-9 pr-8 text-xs bg-zinc-50/50 focus:ring-1 focus:ring-violet-500 dark:bg-zinc-900/50"
           />
           <kbd className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded border border-zinc-200 bg-white px-1.5 py-0.5 text-[10px] font-medium text-zinc-400 dark:border-zinc-700 dark:bg-zinc-800">
@@ -383,14 +405,14 @@ export function WorkspaceSidebar({
         <div className="mb-5">
           <SidebarSectionHeader title="Channels" onAdd={() => setIsChannelModalOpen(true)} />
           <div className="mt-1.5 space-y-0.5">
-            {visibleChannels.length === 0 ? (
+            {filteredChannels.length === 0 ? (
               <SidebarSectionEmpty
                 message="No channels yet. Create one to start conversations."
                 actionLabel="Add channel"
                 onAction={() => setIsChannelModalOpen(true)}
               />
             ) : (
-              visibleChannels.slice(0, visibleCounts.channels).map((channel) => (
+              filteredChannels.slice(0, visibleCounts.channels).map((channel) => (
                 <SidebarItem
                   key={channel.id}
                   icon={<Hash className="h-4 w-4" />}
@@ -410,7 +432,7 @@ export function WorkspaceSidebar({
               ))
             )}
           </div>
-          {visibleChannels.length > visibleCounts.channels ? (
+          {filteredChannels.length > visibleCounts.channels ? (
             <button
               type="button"
               onClick={() => showMore("channels")}
@@ -424,14 +446,14 @@ export function WorkspaceSidebar({
         <div className="mb-5">
           <SidebarSectionHeader title="Agents" onAdd={() => setIsAgentModalOpen(true)} />
           <div className="mt-1.5 space-y-0.5">
-            {agentMembers.length === 0 ? (
+            {filteredAgents.length === 0 ? (
               <SidebarSectionEmpty
                 message="No agents yet. Add one to delegate work in this workspace."
                 actionLabel="Add agent"
                 onAction={() => setIsAgentModalOpen(true)}
               />
             ) : (
-              agentMembers.slice(0, visibleCounts.agents).map((agent, idx) => (
+              filteredAgents.slice(0, visibleCounts.agents).map((agent, idx) => (
                 <SidebarItem
                   key={agent.id}
                   icon={<Avatar name={agent.name} colorIndex={idx} size="xs" />}
@@ -451,7 +473,7 @@ export function WorkspaceSidebar({
               ))
             )}
           </div>
-          {agentMembers.length > visibleCounts.agents ? (
+          {filteredAgents.length > visibleCounts.agents ? (
             <button
               type="button"
               onClick={() => showMore("agents")}
@@ -492,10 +514,10 @@ export function WorkspaceSidebar({
 
 
 
-      <div className="border-t border-zinc-200 p-3 dark:border-zinc-800">
+      <div className={`${WORKSPACE_DOCK_ROW_CLASS} px-3`}>
         <Link
           href="/settings/organization"
-          className="flex w-full items-center gap-3 rounded-xl p-2 transition hover:bg-zinc-100 dark:hover:bg-zinc-900 text-left"
+          className="flex min-w-0 flex-1 items-center gap-3 rounded-xl transition hover:bg-zinc-100 dark:hover:bg-zinc-900 text-left"
         >
           <div className="relative shrink-0">
             <div className="h-9 w-9 rounded-full bg-gradient-to-tr from-violet-500 to-indigo-500 shadow-[0_2px_10px_rgba(99,102,241,0.2)]" />
