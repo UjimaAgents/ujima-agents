@@ -23,6 +23,137 @@ function stringField(record: Record<string, unknown>, ...keys: string[]): string
   return undefined;
 }
 
+export interface EditScopeInput {
+  oldString: string;
+  newString: string;
+  replaceAll?: boolean;
+  fileContent?: string | null;
+}
+
+export interface EditScopeFields {
+  oldString: string;
+  newString: string;
+  replaceAll: boolean;
+  startLine?: number;
+}
+
+export function readEditRecord(edit: unknown): Omit<EditScopeInput, 'fileContent'> | null {
+  if (!edit || typeof edit !== 'object' || Array.isArray(edit)) return null;
+  const item = edit as Record<string, unknown>;
+  return {
+    oldString: stringField(item, 'oldString', 'old_string') ?? '',
+    newString: stringField(item, 'newString', 'new_string') ?? '',
+    replaceAll: item.replaceAll === true || item.replace_all === true,
+  };
+}
+
+export function enrichEditScopeFields(input: EditScopeInput): EditScopeFields {
+  const replaceAll = input.replaceAll === true;
+  let startLine: number | undefined;
+  if (input.fileContent && input.oldString) {
+    const idx = input.fileContent.indexOf(input.oldString);
+    if (idx !== -1) {
+      startLine = input.fileContent.slice(0, idx).split('\n').length;
+    }
+  }
+  return {
+    oldString: input.oldString,
+    newString: input.newString,
+    replaceAll,
+    ...(startLine !== undefined ? { startLine } : {}),
+  };
+}
+
+/** Removes display-only fields so approval scope strings match across request and retry. */
+export function stripApprovalScopeDisplayFields(scope: string): string {
+  if (scope.startsWith('edit:')) {
+    const payload = scope.slice('edit:'.length);
+    if (!payload.startsWith('{')) return scope;
+    try {
+      const parsed = JSON.parse(payload) as Record<string, unknown>;
+      const { startLine: _start, ...rest } = parsed;
+      return `edit:${JSON.stringify(rest)}`;
+    } catch {
+      return scope;
+    }
+  }
+  if (scope.startsWith('multiedit:')) {
+    const payload = scope.slice('multiedit:'.length);
+    if (!payload.startsWith('{')) return scope;
+    try {
+      const parsed = JSON.parse(payload) as { resourcePath?: unknown; edits?: unknown };
+      const edits = Array.isArray(parsed.edits)
+        ? parsed.edits.map((edit) => {
+            if (!edit || typeof edit !== 'object' || Array.isArray(edit)) return edit;
+            const { startLine: _start, ...rest } = edit as Record<string, unknown>;
+            return rest;
+          })
+        : parsed.edits;
+      return `multiedit:${JSON.stringify({ ...parsed, edits })}`;
+    } catch {
+      return scope;
+    }
+  }
+  return scope;
+}
+
+/** Adds startLine hints for approval UI when file content is available. */
+export function enrichApprovalScopeForDisplay(
+  scope: string,
+  fileContent?: string | null,
+): string {
+  if (!fileContent) return scope;
+  if (scope.startsWith('edit:')) {
+    const payload = scope.slice('edit:'.length);
+    if (!payload.startsWith('{')) return scope;
+    try {
+      const parsed = JSON.parse(payload) as Record<string, unknown>;
+      const fields = readEditRecord(parsed);
+      if (!fields) return scope;
+      const enriched = enrichEditScopeFields({ ...fields, fileContent });
+      return `edit:${JSON.stringify({
+        resourcePath: parsed.resourcePath,
+        ...enriched,
+      })}`;
+    } catch {
+      return scope;
+    }
+  }
+  if (scope.startsWith('multiedit:')) {
+    const payload = scope.slice('multiedit:'.length);
+    if (!payload.startsWith('{')) return scope;
+    try {
+      const parsed = JSON.parse(payload) as {
+        resourcePath?: unknown;
+        edits?: unknown;
+      };
+      let currentContent = fileContent;
+      const edits = Array.isArray(parsed.edits)
+        ? parsed.edits.map((edit) => {
+            const fields = readEditRecord(edit);
+            if (!fields) return edit;
+            const enriched = enrichEditScopeFields({ ...fields, fileContent: currentContent });
+            if (currentContent && fields.oldString) {
+              const idx = currentContent.indexOf(fields.oldString);
+              if (idx !== -1) {
+                currentContent = enriched.replaceAll
+                  ? currentContent.split(fields.oldString).join(fields.newString)
+                  : currentContent.slice(0, idx) +
+                    fields.newString +
+                    currentContent.slice(idx + fields.oldString.length);
+              }
+            }
+            return enriched;
+          })
+        : parsed.edits;
+      return `multiedit:${JSON.stringify({ ...parsed, edits })}`;
+    } catch {
+      return scope;
+    }
+  }
+  return scope;
+}
+
 function splitDiffLines(prefix: '+' | '-', value: string): string[] {
   const lines = value.split(/\r?\n/);
   return lines.map((line) => `${prefix}${line}`);
@@ -38,11 +169,16 @@ function proposedWriteDiff(resourcePath: string, content: string): string {
   ].join('\n');
 }
 
-function proposedEditDiff(resourcePath: string, oldString: string, newString: string): string {
+function proposedEditDiff(resourcePath: string, oldString: string, newString: string, startLine?: number): string {
+  const oldLineCount = oldString.split(/\r?\n/).length;
+  const newLineCount = newString.split(/\r?\n/).length;
+  const hunkHeader = startLine !== undefined
+    ? `@@ -${startLine},${oldLineCount} +${startLine},${newLineCount} @@`
+    : '@@';
   return [
     `--- ${resourcePath}`,
     `+++ ${resourcePath}`,
-    '@@',
+    hunkHeader,
     ...splitDiffLines('-', oldString),
     ...splitDiffLines('+', newString),
   ].join('\n');
@@ -261,12 +397,13 @@ function parseWorkspaceWriteScope(scope: string): ParsedFilesystemScope | null {
     if (prefix === 'edit:') {
       const oldString = stringField(parsed, 'oldString', 'old_string');
       const newString = stringField(parsed, 'newString', 'new_string');
+      const startLine = typeof parsed.startLine === 'number' ? parsed.startLine : undefined;
       return {
         action: 'write',
         resourcePath,
         patch:
           oldString !== undefined && newString !== undefined
-            ? proposedEditDiff(resourcePath, oldString, newString)
+            ? proposedEditDiff(resourcePath, oldString, newString, startLine)
             : undefined,
       };
     }
@@ -274,12 +411,19 @@ function parseWorkspaceWriteScope(scope: string): ParsedFilesystemScope | null {
     const edits = Array.isArray(parsed.edits) ? parsed.edits : [];
     const patch = edits
       .map((edit) => {
-        if (!edit || typeof edit !== 'object' || Array.isArray(edit)) return '';
-        const item = edit as Record<string, unknown>;
-        const oldString = stringField(item, 'oldString', 'old_string');
-        const newString = stringField(item, 'newString', 'new_string');
-        return oldString !== undefined && newString !== undefined
-          ? proposedEditDiff(resourcePath, oldString, newString)
+        const fields = readEditRecord(edit);
+        if (!fields) return '';
+        const startLine =
+          edit && typeof edit === 'object' && !Array.isArray(edit)
+            ? (edit as Record<string, unknown>).startLine
+            : undefined;
+        return fields.oldString !== undefined && fields.newString !== undefined
+          ? proposedEditDiff(
+              resourcePath,
+              fields.oldString,
+              fields.newString,
+              typeof startLine === 'number' ? startLine : undefined,
+            )
           : '';
       })
       .filter(Boolean)

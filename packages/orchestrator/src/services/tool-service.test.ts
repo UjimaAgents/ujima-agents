@@ -31,6 +31,9 @@ describe('createPermissionGatedToolService', () => {
         async recordUsage() {
           return undefined;
         },
+        async recordCompletedCall() {
+          return undefined;
+        },
         setSessionOverride() {
           return undefined;
         },
@@ -149,6 +152,9 @@ describe('createPermissionGatedToolService', () => {
         async recordUsage() {
           return undefined;
         },
+        async recordCompletedCall() {
+          return undefined;
+        },
         setSessionOverride() {
           return undefined;
         },
@@ -219,6 +225,9 @@ describe('createPermissionGatedToolService', () => {
         async recordUsage() {
           return undefined;
         },
+        async recordCompletedCall() {
+          return undefined;
+        },
         setSessionOverride() {
           return undefined;
         },
@@ -273,5 +282,82 @@ describe('createPermissionGatedToolService', () => {
     expect(other.ok).toBe(false);
     expect(approved.ok).toBe(true);
     expect(innerCalls).toBe(1);
+  });
+
+  it('returns structured denial with code and records run step for rate_limited', async () => {
+    const denials: { code?: string; toolCallId: string }[] = [];
+    const inner: ToolService = {
+      async invoke() {
+        return { ok: true, output: { status: 'completed' } };
+      },
+      allowRun() {
+        return undefined;
+      },
+    };
+
+    const tools = createPermissionGatedToolService(
+      inner,
+      {
+        async check() {
+          return {
+            allowed: false,
+            reason: 'Agent "agent-1" exceeded rate limit of 30 calls/min',
+            code: 'rate_limited',
+          };
+        },
+        async recordUsage() {
+          return undefined;
+        },
+        async recordCompletedCall() {
+          return undefined;
+        },
+        setSessionOverride() {
+          return undefined;
+        },
+        clearSessionOverride() {
+          return undefined;
+        },
+        setGovernancePolicy() {
+          return undefined;
+        },
+        getGovernancePolicy() {
+          return undefined;
+        },
+      },
+      async () => ({
+        agent: {} as never,
+        mcp: { id: 'fs' },
+        toolName: 'view',
+        args: {},
+        taskId: 'task-1',
+        sessionId: 'session-1',
+      }),
+      undefined,
+      undefined,
+      (_input, decision) => {
+        denials.push({ code: decision.code, toolCallId: _input.toolCallId });
+      },
+    );
+
+    const result = await tools.invoke({
+      organizationId: 'org-1',
+      runId: 'run-1',
+      memberId: 'agent-1',
+      toolCallId: 'tool-rate-1',
+      toolId: 'view',
+      action: 'read',
+      resourceType: 'file',
+      resourcePath: '/workspace/foo.ts',
+      input: {},
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.code).toBe('rate_limited');
+    expect(result.output).toEqual({
+      status: 'blocked',
+      code: 'rate_limited',
+      error: 'Agent "agent-1" exceeded rate limit of 30 calls/min',
+    });
+    expect(denials).toEqual([{ code: 'rate_limited', toolCallId: 'tool-rate-1' }]);
   });
 });

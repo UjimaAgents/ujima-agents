@@ -19,15 +19,27 @@ describe('resolveWakeReplyPolicy', () => {
     expect(policy.scaffoldBlock).not.toContain('direct message (1:1)');
   });
 
-  it('dm thread suppresses pass without mention wake', () => {
+  it('dm thread suppresses pass with standard dm wake', () => {
+    const policy = resolveWakeReplyPolicy({
+      threadId: 'dm:agent-a:human-b',
+      wakeReason: 'dm',
+    });
+    expect(policy.conversationKind).toBe('dm');
+    expect(policy.mandatoryReply).toBe(false);
+    expect(policy.suppressPassTool).toBe(true);
+    expect(policy.scaffoldBlock).toContain('direct message (1:1)');
+  });
+
+  it('dm thread allows pass when wake reason is channel-read (backpressure demoted)', () => {
     const policy = resolveWakeReplyPolicy({
       threadId: 'dm:agent-a:human-b',
       wakeReason: 'channel-read',
     });
     expect(policy.conversationKind).toBe('dm');
     expect(policy.mandatoryReply).toBe(false);
-    expect(policy.suppressPassTool).toBe(true);
-    expect(policy.scaffoldBlock).toContain('direct message (1:1)');
+    expect(policy.suppressPassTool).toBe(false);
+    expect(policy.scaffoldBlock).toContain('pairwise mention cap');
+    expect(policy.scaffoldBlock).not.toMatch(/rate limit/i);
   });
 
   it('channel non-mention wake leaves pass available in palette policy', () => {

@@ -67,6 +67,7 @@ function fakePermissions(
       recordUsage: async (_id: string, tokens: number) => {
         usage.push(tokens);
       },
+      recordCompletedCall: async () => undefined,
     } as unknown as PermissionMiddleware,
     usage,
   };

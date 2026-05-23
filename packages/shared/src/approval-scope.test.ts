@@ -5,12 +5,43 @@ import {
   approvalScopeMatchesPersisted,
   canonicalizeApprovalFamilyScope,
   canonicalizeApprovalGrantScope,
+  enrichApprovalScopeForDisplay,
+  enrichEditScopeFields,
   formatPersistedApprovalGrantReason,
   formatApprovalRelayMarkdown,
   parseApprovalDisplayScopesFromReason,
   parseFilesystemScope,
   shellInvocationDisplayLine,
+  stripApprovalScopeDisplayFields,
 } from './approval-scope';
+
+describe('enrichEditScopeFields', () => {
+  it('computes startLine from file content', () => {
+    const fileContent = 'line1\nline2\nold\nline4';
+    expect(
+      enrichEditScopeFields({
+        oldString: 'old',
+        newString: 'new',
+        fileContent,
+      }),
+    ).toEqual({ oldString: 'old', newString: 'new', replaceAll: false, startLine: 3 });
+  });
+
+  it('strips startLine for scoped allow-once matching', () => {
+    const scope = 'edit:{"resourcePath":"/x/a.md","oldString":"a","newString":"b","startLine":2}';
+    expect(stripApprovalScopeDisplayFields(scope)).toBe(
+      'edit:{"resourcePath":"/x/a.md","oldString":"a","newString":"b"}',
+    );
+  });
+
+  it('enriches edit scope for approval display', () => {
+    const base = 'edit:{"resourcePath":"/x/a.md","oldString":"old","newString":"new"}';
+    const fileContent = 'before\nold\nafter';
+    expect(enrichApprovalScopeForDisplay(base, fileContent)).toBe(
+      'edit:{"resourcePath":"/x/a.md","oldString":"old","newString":"new","replaceAll":false,"startLine":2}',
+    );
+  });
+});
 
 describe('formatApprovalRelayMarkdown', () => {
   it('renders cwd and shell line for shell scope', () => {
@@ -80,6 +111,17 @@ describe('formatApprovalRelayMarkdown', () => {
     ).toBe('[Approval needed] Filesystem write\nPath: /x/a.md\nPatch:\n--- /x/a.md\n+++ /x/a.md\n@@\n-old\n+new');
   });
 
+  it('renders workspace edit approval as a diff patch with startLine hunk offset', () => {
+    const scope = JSON.stringify({ file_path: '/x/a.md', old_string: 'old', new_string: 'new', startLine: 120 });
+    expect(
+      formatApprovalRelayMarkdown({
+        action: 'edit',
+        resourcePath: '/x/a.md',
+        reason: `Tool action requires approval;scope=${encodeURIComponent('edit:' + scope)}`,
+      }),
+    ).toBe('[Approval needed] Filesystem write\nPath: /x/a.md\nPatch:\n--- /x/a.md\n+++ /x/a.md\n@@ -120,1 +120,1 @@\n-old\n+new');
+  });
+
   it('renders workspace multiedit approval as a diff patch', () => {
     const scope = JSON.stringify({
       resourcePath: '/x/a.md',
@@ -96,6 +138,25 @@ describe('formatApprovalRelayMarkdown', () => {
       }),
     ).toBe(
       '[Approval needed] Filesystem write\nPath: /x/a.md\nPatch:\n--- /x/a.md\n+++ /x/a.md\n@@\n-one\n+two\n--- /x/a.md\n+++ /x/a.md\n@@\n-red\n+blue',
+    );
+  });
+
+  it('renders workspace multiedit approval as a diff patch with startLine hunk offsets', () => {
+    const scope = JSON.stringify({
+      resourcePath: '/x/a.md',
+      edits: [
+        { oldString: 'one', newString: 'two', startLine: 45 },
+        { old_string: 'red', new_string: 'blue', startLine: 60 },
+      ],
+    });
+    expect(
+      formatApprovalRelayMarkdown({
+        action: 'multiedit',
+        resourcePath: '/x/a.md',
+        reason: `Tool action requires approval;scope=${encodeURIComponent('multiedit:' + scope)}`,
+      }),
+    ).toBe(
+      '[Approval needed] Filesystem write\nPath: /x/a.md\nPatch:\n--- /x/a.md\n+++ /x/a.md\n@@ -45,1 +45,1 @@\n-one\n+two\n--- /x/a.md\n+++ /x/a.md\n@@ -60,1 +60,1 @@\n-red\n+blue',
     );
   });
 

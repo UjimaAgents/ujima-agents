@@ -1,7 +1,24 @@
-import type { ResourceType, ToolAction, SpiritRole, WakeReason } from '@ujima/shared';
-import type { PermissionMiddleware, PermissionCheckInput } from '@ujima/permissions';
+import { readFileSync } from 'node:fs';
+import {
+  enrichApprovalScopeForDisplay,
+  enrichEditScopeFields,
+  readEditRecord,
+  type ResourceType,
+  type ToolAction,
+  type SpiritRole,
+  type WakeReason,
+} from '@ujima/shared';
+import type {
+  PermissionMiddleware,
+  PermissionCheckInput,
+  PermissionDecision,
+  PermissionDenyCode,
+} from '@ujima/permissions';
+import { randomUUID } from 'node:crypto';
 import { ApprovedRunScopeTracker } from '../utils/approved-run-scopes.js';
+import type { ApiRepository } from './repository-reader.js';
 import { buildShellApprovalScope } from './shell-scope.js';
+import { ERR_PATH_ESCAPE } from './workspace-root.js';
 
 export interface ToolInvocationInput {
   organizationId: string;
@@ -45,7 +62,39 @@ export interface ToolInvocationResult {
   ok: boolean;
   output?: unknown;
   error?: string;
+  code?: PermissionDenyCode | 'ERR_PATH_ESCAPE';
   requiresApprovalId?: string;
+}
+
+export type RecordPermissionDenial = (
+  input: ToolInvocationInput,
+  decision: Extract<PermissionDecision, { allowed: false }>,
+) => void;
+
+export function permissionDenialResult(
+  decision: Extract<PermissionDecision, { allowed: false }>,
+): ToolInvocationResult {
+  return blockedToolResult(decision.code, decision.reason);
+}
+
+export function pathEscapeToolResult(message: string): ToolInvocationResult {
+  return blockedToolResult(ERR_PATH_ESCAPE, message);
+}
+
+function blockedToolResult(
+  code: PermissionDenyCode | 'ERR_PATH_ESCAPE',
+  error: string,
+): ToolInvocationResult {
+  return {
+    ok: false,
+    error,
+    code,
+    output: {
+      status: 'blocked',
+      code,
+      error,
+    },
+  };
 }
 
 export interface ToolService {
@@ -87,10 +136,19 @@ export function buildToolApprovalScope(input: ToolInvocationInput): string {
     return `write:${JSON.stringify({ resourcePath: input.resourcePath, content: input.input.content })}`;
   }
   if (input.toolId === 'edit') {
-    return `edit:${JSON.stringify({ resourcePath: input.resourcePath, oldString: input.input.oldString, newString: input.input.newString, replaceAll: input.input.replaceAll })}`;
+    const fields = enrichEditScopeFields({
+      oldString: String(input.input.oldString ?? input.input.old_string ?? ''),
+      newString: String(input.input.newString ?? input.input.new_string ?? ''),
+      replaceAll: input.input.replaceAll === true || input.input.replace_all === true,
+    });
+    return `edit:${JSON.stringify({ resourcePath: input.resourcePath, ...fields })}`;
   }
   if (input.toolId === 'multiedit') {
-    return `multiedit:${JSON.stringify({ resourcePath: input.resourcePath, edits: input.input.edits })}`;
+    const edits = (Array.isArray(input.input.edits) ? input.input.edits : [])
+      .map((edit) => readEditRecord(edit))
+      .filter((edit): edit is NonNullable<typeof edit> => edit !== null)
+      .map((edit) => enrichEditScopeFields(edit));
+    return `multiedit:${JSON.stringify({ resourcePath: input.resourcePath, edits })}`;
   }
   if (input.toolId === 'download') {
     return `download:${JSON.stringify({ resourcePath: input.resourcePath, url: input.input.url, timeout: input.input.timeout })}`;
@@ -99,6 +157,49 @@ export function buildToolApprovalScope(input: ToolInvocationInput): string {
     return `job_kill:${JSON.stringify({ job_id: input.input.job_id })}`;
   }
   return `${input.toolId}:${input.action}:${input.resourcePath ?? ''}`;
+}
+
+function readApprovalScopeFileContent(resourcePath?: string): string | undefined {
+  if (!resourcePath) return undefined;
+  try {
+    return readFileSync(resourcePath, 'utf8');
+  } catch {
+    return undefined;
+  }
+}
+
+export function enrichToolApprovalScopeForRequest(
+  scope: string,
+  input: ToolInvocationInput,
+): string {
+  if (!scope.startsWith('edit:') && !scope.startsWith('multiedit:')) {
+    return scope;
+  }
+  return enrichApprovalScopeForDisplay(scope, readApprovalScopeFileContent(input.resourcePath));
+}
+
+export function saveBlockedToolRunStep(
+  repo: Pick<ApiRepository, 'saveRunStep'>,
+  invocation: ToolInvocationInput,
+  output: Record<string, unknown>,
+  status: 'ok' | 'blocked',
+): void {
+  repo.saveRunStep({
+    id: randomUUID(),
+    organizationId: invocation.organizationId,
+    runId: invocation.runId,
+    threadId: invocation.threadId,
+    agentId: invocation.memberId,
+    toolCallId: invocation.toolCallId,
+    toolId: invocation.toolId,
+    action: invocation.action,
+    resourceType: invocation.resourceType,
+    resourcePath: invocation.resourcePath ?? '',
+    input: invocation.input ?? {},
+    output,
+    status,
+    createdAt: new Date().toISOString(),
+  });
 }
 
 export function approvalWaitResult(approvalId: string): ToolInvocationResult {
@@ -115,6 +216,7 @@ export function createPermissionGatedToolService(
   buildContext: PermissionContextBuilder,
   requestApproval?: ApprovalRequester['requestApproval'],
   recordApprovalWait?: ApprovalWaitRecorder,
+  recordPermissionDenial?: RecordPermissionDenial,
 ): ToolService {
   const approvedRunScopes = new ApprovedRunScopeTracker();
 
@@ -132,6 +234,7 @@ export function createPermissionGatedToolService(
       const decision = await permissions.check(context);
 
       if (!decision.allowed && decision.gate === 'approval' && requestApproval) {
+        const displayScope = enrichToolApprovalScopeForRequest(approvalScope, input);
         const approval = requestApproval({
           organizationId: input.organizationId,
           runId: input.runId,
@@ -140,7 +243,7 @@ export function createPermissionGatedToolService(
           resourceType: input.resourceType,
           resourcePath: input.resourcePath ?? '',
           action: input.action,
-          reason: `Tool action requires approval;scope=${encodeURIComponent(approvalScope)};note=${decision.reason}`,
+          reason: `Tool action requires approval;scope=${encodeURIComponent(displayScope)};note=${decision.reason}`,
           approvalScope,
         });
         recordApprovalWait?.(input, approval.id);
@@ -148,13 +251,15 @@ export function createPermissionGatedToolService(
       }
 
       if (!decision.allowed) {
-        return {
-          ok: false,
-          error: decision.reason,
-        };
+        recordPermissionDenial?.(input, decision);
+        return permissionDenialResult(decision);
       }
 
-      return inner.invoke(input);
+      const result = await inner.invoke(input);
+      if (result.ok || result.requiresApprovalId) {
+        await permissions.recordCompletedCall(context);
+      }
+      return result;
     },
     allowRun(organizationId, runId, approvalScope) {
       approvedRunScopes.allowRun(organizationId, runId, approvalScope);

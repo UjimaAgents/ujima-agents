@@ -62,11 +62,21 @@ export interface PermissionMiddlewareDeps {
 
 export interface PermissionMiddleware {
   check(input: PermissionCheckInput): Promise<PermissionDecision>;
+  /**
+   * Records a completed tool invocation against the per-session rate
+   * limit window. Call after the tool actually ran (or was accepted
+   * into the approval queue), not on permission check alone.
+   */
+  recordCompletedCall(input: PermissionCheckInput): Promise<void>;
   recordUsage(agentId: string, tokens: number): Promise<void>;
   setSessionOverride(agentId: string, override: SessionOverride): void;
   clearSessionOverride(agentId: string): void;
   setGovernancePolicy(policy: GovernancePolicy | undefined): void;
   getGovernancePolicy(): GovernancePolicy | undefined;
+}
+
+export function rateLimitBucketKey(agentId: string, sessionId: string): string {
+  return `${agentId}:${sessionId}`;
 }
 
 const DEFAULT_PLATFORM_DEFAULTS: PlatformDefaults = {
@@ -116,7 +126,9 @@ export function createPermissionMiddleware(
       tool_name: input.toolName,
       tool_input: input.args,
       allowed: decision.allowed,
-      block_reason: decision.allowed ? undefined : decision.reason,
+      block_reason: decision.allowed
+        ? undefined
+        : `${decision.code}: ${decision.reason}`,
     });
   }
 
@@ -132,18 +144,26 @@ export function createPermissionMiddleware(
     return false;
   }
 
-  function checkRateLimit(agentId: string, limits: AgentPermissions['rate_limit']): boolean {
+  function recentCallsForBucket(bucketKey: string): number[] {
     const windowMs = 60_000;
     const cutoff = now() - windowMs;
-    const history = callWindows.get(agentId) ?? [];
+    const history = callWindows.get(bucketKey) ?? [];
     const recent = history.filter((t) => t > cutoff);
-    if (recent.length >= limits.calls_per_minute) {
-      callWindows.set(agentId, recent);
-      return false;
-    }
+    callWindows.set(bucketKey, recent);
+    return recent;
+  }
+
+  function wouldExceedRateLimit(
+    bucketKey: string,
+    limits: AgentPermissions['rate_limit'],
+  ): boolean {
+    return recentCallsForBucket(bucketKey).length >= limits.calls_per_minute;
+  }
+
+  function recordRateLimitCall(bucketKey: string): void {
+    const recent = recentCallsForBucket(bucketKey);
     recent.push(now());
-    callWindows.set(agentId, recent);
-    return true;
+    callWindows.set(bucketKey, recent);
   }
 
   async function checkTokenCap(
@@ -304,7 +324,8 @@ export function createPermissionMiddleware(
         }
       }
 
-      if (!checkRateLimit(agent.id, agent.permissions.rate_limit)) {
+      const rateBucket = rateLimitBucketKey(agent.id, input.sessionId);
+      if (wouldExceedRateLimit(rateBucket, agent.permissions.rate_limit)) {
         const decision: PermissionDecision = {
           allowed: false,
           reason: `Agent "${agent.id}" exceeded rate limit of ${agent.permissions.rate_limit.calls_per_minute} calls/min`,
@@ -326,10 +347,15 @@ export function createPermissionMiddleware(
 
       const allow: PermissionDecision = { allowed: true };
       await writeAudit(input, allow);
-      if (deps.agentState) {
-        await deps.agentState.incrementCalls(agent.id);
-      }
       return allow;
+    },
+
+    async recordCompletedCall(input) {
+      const bucketKey = rateLimitBucketKey(input.agent.id, input.sessionId);
+      recordRateLimitCall(bucketKey);
+      if (deps.agentState) {
+        await deps.agentState.incrementCalls(input.agent.id);
+      }
     },
 
     async recordUsage(agentId, tokens) {

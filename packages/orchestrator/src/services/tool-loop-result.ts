@@ -1,5 +1,6 @@
 import type { ToolInvocationResult } from './tool-service.js';
 import { errorMessage } from '../utils/error-message.js';
+import { ERR_PATH_ESCAPE, isPathEscapeError } from './workspace-root.js';
 
 export class ToolApprovalRequiredError extends Error {
   constructor(readonly approvalId: string) {
@@ -28,9 +29,12 @@ export function findToolApprovalRequiredError(error: unknown): ToolApprovalRequi
   return null;
 }
 
-export function toModelToolErrorOutput(error: unknown): { error: string } {
+export function toModelToolErrorOutput(error: unknown): { error: string; code?: string } {
   const approvalError = findToolApprovalRequiredError(error);
   if (approvalError) throw approvalError;
+  if (isPathEscapeError(error)) {
+    return { error: error.message, code: ERR_PATH_ESCAPE };
+  }
   return { error: errorMessage(error) };
 }
 
@@ -39,7 +43,13 @@ export function toModelToolOutput(result: ToolInvocationResult): unknown {
     throw new ToolApprovalRequiredError(result.requiresApprovalId);
   }
   if (!result.ok) {
-    return result.output ?? { error: result.error ?? 'tool invocation failed' };
+    if (result.output && typeof result.output === 'object') {
+      return result.output;
+    }
+    return {
+      error: result.error ?? 'tool invocation failed',
+      ...(result.code ? { code: result.code } : {}),
+    };
   }
   return result.output ?? { ok: true };
 }
