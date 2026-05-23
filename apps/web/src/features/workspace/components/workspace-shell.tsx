@@ -282,6 +282,14 @@ export function WorkspaceShell(props: {
       `/api/notifications/stream?organizationId=${encodeURIComponent(organizationId)}`,
     );
 
+    source.onopen = () => {
+      console.info("[notifications] stream connected");
+    };
+    source.onerror = () => {
+      if (source.readyState === EventSource.CLOSED) {
+        console.warn("[notifications] stream disconnected permanently — unread counts may be stale");
+      }
+    };
     source.onmessage = (event) => {
       const envelope = parseNotificationEnvelope(event.data);
       if (!envelope || envelope.type === "ready" || envelope.type === "error") return;
