@@ -149,6 +149,10 @@ export function findTerminatingToolFromRunSteps(steps: unknown): string | null {
   return pickTerminatingTool(names);
 }
 
+export function isAcknowledgementOnly(text: string): boolean {
+  return /^acknowledged\.?$/i.test(text.trim());
+}
+
 /**
  * Did the run produce a `channel.pass` toolcall? The run-loop uses
  * this to detect "sycophantic pass" (pass + non-empty assistant text)

@@ -105,8 +105,6 @@ export function listTodosForSession(
 }
 
 /**
- * List todos by channel — Bet 4 / Bet 2 / post-review.
- *
  * Two paths into the result set:
  *   1. Direct `todos.channel_id = ?` — the commitment extractor and
  *      Tasks-tab PATCH path both write channel_id directly.
@@ -149,17 +147,7 @@ export function listTodosForChannel(
   return rows.map(rowToTodo);
 }
 
-/**
- * Scheduler query — return commitments that need a follow-up wake
- * (idle worker, not yet expired). Returned ordered by last-progress
- * so the oldest stale commitments wake first.
- *
- * NB: this is a *read* — caller must claim each row via
- * {@link claimIdleCommitment} before invoking the wake to avoid
- * double-waking when two sweeps overlap or the daemon restarts mid-
- * sweep. Backed by the partial index `idx_todos_idle_progress`
- * (migration 023).
- */
+/** Return idle commitments for passive cleanup. */
 export function listIdleCommitments(
   db: DbHandle,
   options: {
@@ -182,42 +170,6 @@ export function listIdleCommitments(
     )
     .all(...statuses, options.idleSinceIso, limit) as Row[];
   return rows.map(rowToTodo);
-}
-
-/**
- * Atomically claim a commitment for sweeping — sets
- * `last_progress_at` to `now` ONLY if it still matches the value the
- * sweeper just read. Returns `true` on successful claim, `false` if
- * another sweep or a human update raced ahead. Standard "claim by
- * update" pattern from production queue systems; avoids double-wake
- * on daemon restart, accidental two-daemon, or concurrent ticks.
- */
-export function claimIdleCommitment(
-  db: DbHandle,
-  todoId: string,
-  expectedLastProgressAt: string | null,
-  newLastProgressAt: string,
-): boolean {
-  const result = db
-    .prepare(
-      expectedLastProgressAt === null
-        ? `UPDATE todos
-              SET last_progress_at = ?, updated_at = ?
-            WHERE id = ?
-              AND last_progress_at IS NULL
-              AND status IN ('pending', 'in_progress')`
-        : `UPDATE todos
-              SET last_progress_at = ?, updated_at = ?
-            WHERE id = ?
-              AND last_progress_at = ?
-              AND status IN ('pending', 'in_progress')`,
-    )
-    .run(
-      ...(expectedLastProgressAt === null
-        ? [newLastProgressAt, newLastProgressAt, todoId]
-        : [newLastProgressAt, newLastProgressAt, todoId, expectedLastProgressAt]),
-    );
-  return (result.changes ?? 0) > 0;
 }
 
 /**
@@ -280,9 +232,7 @@ export function listExpiredCommitments(
 /**
  * Find an open commitment for `(organizationId, channelId, memberId)`
  * created within `sinceIso` (lookback window). Used by the commitment
- * extractor to dedup near-identical "I will proceed…" messages that
- * Layla/Phoebe loops produce — without this, three identical
- * commitments fan out three independent self-followup wakes.
+ * extractor to dedup near-identical "I will proceed…" messages.
  *
  * Returns the most recently created candidate. Bounded to a single
  * row because dedup is per-pair, not per-deliverable.
@@ -310,12 +260,7 @@ export function findOpenChannelCommitmentForMember(
   return row ? rowToTodo(row) : null;
 }
 
-/**
- * Find the commitment that produced a given source-message. Used by
- * `CommitmentService.onRunCompleted` to map a self-followup run back
- * to its originating todo so the empty-wake counter can be advanced
- * (or reset) based on the run's terminator.
- */
+/** Find the commitment that produced a given source-message. */
 export function findCommitmentBySourceMessage(
   db: DbHandle,
   organizationId: string,

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { mkdtemp, writeFile, mkdir, symlink, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createPathResolver, PathEscapeError } from './path-resolver';
+import { createPathResolver, PathEscapeError } from './path-resolver.js';
 
 describe('PathResolver', () => {
   let root: string;

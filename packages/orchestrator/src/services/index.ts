@@ -210,22 +210,8 @@ export interface ApiServicesContext extends ApiServiceContext {
    * (the spirit run path still works without MCP tools).
    */
   mcpPool?: SpiritMcpPool;
-  /**
-   * Bet 4 — how long a commitment can sit idle before the scheduler
-   * re-wakes the owner. Default is 10 minutes. Tests can shorten
-   * this dramatically.
-   */
   commitmentIdleThresholdMs?: number;
-  /**
-   * Bet 4 — default deadline offset for commitments that the
-   * extractor finds without an explicit due. Default is 24 hours.
-   */
   commitmentDefaultDueOffsetMs?: number;
-  /**
-   * Bet 4 — how often the commitment sweeper fires. Defaults to 60s
-   * in production. Tests can set 0 to disable auto-scheduling and
-   * call `commitments.sweepIdle()` / `sweepExpired()` directly.
-   */
   commitmentSweeperIntervalMs?: number;
 }
 
@@ -579,17 +565,10 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   });
   const mcpRegistry = new McpRegistryService(context.repo);
 
-  // Bet 4 — durable commitment lifecycle. Extracts forward-looking
-  // promises from agent messages, parks them as `todos` rows tied to
-  // the channel + originating message, re-wakes the owner on idle,
-  // and posts a deadline-letter system message when due_at elapses.
   const commitments = new CommitmentService(
     context.repo,
     conversations,
     context.realtime,
-    async (wakeInput) => {
-      await wakeMember(wakeInput);
-    },
     {
       idleThresholdMs: context.commitmentIdleThresholdMs,
       defaultDueOffsetMs: context.commitmentDefaultDueOffsetMs,
@@ -598,20 +577,11 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   conversations.setMessagePublishedHook((message) =>
     commitments.onAgentMessagePublished(message),
   );
-  // Late-bind the run-completed hook so the commitment service can
-  // track empty self-followup wakes and short-circuit `due_at` when
-  // a commitment is stuck. Same chicken-and-egg pattern as
-  // `setMcpToolResolver` / `setMessagePublishedHook`.
   spirits.setRunCompletedHook(async (run) => {
-    await commitments.onRunCompleted(run);
     await drainPendingMemberAlertAfterRun(run, (pending) =>
       wakeMemberWithFailureEvents(wakeMemberDeps, pending),
     );
   });
-  // Scheduler tick (Bet 4). Production runs it every 60s; tests
-  // can pass `commitmentSweeperIntervalMs: 0` to opt out and call
-  // `commitments.sweepIdle()` / `sweepExpired()` directly. The
-  // interval is captured by `stop()` so daemon shutdown cancels it.
   const sweepInterval =
     context.commitmentSweeperIntervalMs ?? 60_000;
   let commitmentSweeperHandle: ReturnType<typeof setInterval> | null = null;
@@ -625,8 +595,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
       await commitments.sweepIdle();
       await commitments.sweepExpired();
     } catch {
-      // Bad row → swallow at the tick level; per-row failures are
-      // handled inside the service.
+      return;
     }
   };
   if (sweepInterval > 0) {

@@ -94,11 +94,6 @@ export const WakeReasonSchema = z.enum([
   'channel-read',
   'handoff',
   'parent-thread',
-  // Bet 4 — scheduler tick. The runtime is the originator (no other
-  // human or agent triggered this wake); the agent is being asked to
-  // deliver on an existing commitment or declare a blocker. The
-  // mandatory-reply contract is NOT active for this wake reason —
-  // see `ai-service.ts` palette-strip logic.
   'self-followup',
 ]);
 export type WakeReason = z.infer<typeof WakeReasonSchema>;
@@ -332,8 +327,6 @@ export const EchoSuppressedEventSchema = z.object({
 });
 export type EchoSuppressedEvent = z.infer<typeof EchoSuppressedEventSchema>;
 
-// Commitment lifecycle — Bet 4. "I'll draft the BRD" creates one;
-// scheduler ticks re-wake the owner; deadline-letter marks it expired.
 export const CommitmentEventSchema = z.object({
   organizationId: IdSchema,
   channelId: IdSchema.optional(),
@@ -452,10 +445,6 @@ export const MemberMustReplyFailedEventSchema = z.object({
 });
 export type MemberMustReplyFailedEvent = z.infer<typeof MemberMustReplyFailedEventSchema>;
 
-// Bet 4 follow-up. Emitted when a `self-followup` wake completes
-// without a publishing terminator. `escalated: true` means the
-// commitment hit `maxEmptyWakes` and `due_at` was short-circuited
-// to fire the deadline-letter on the next sweep.
 export const MemberEmptyWakeEventSchema = z.object({
   organizationId: IdSchema,
   memberId: IdSchema,

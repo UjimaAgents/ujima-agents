@@ -14,6 +14,7 @@ import { ORCHESTRATOR_TOOLS } from '../tools/index.js';
 import { toModelToolName } from '../tools/names.js';
 import { toModelToolErrorOutput, toModelToolOutput } from '../services/tool-loop-result.js';
 import { isCompactionSummarySystemMessage } from '../services/conversation-summary.js';
+import { formatReadableToolOutput } from './tool-output.js';
 
 export function toModelMessages(messages: Message[], selfId?: string): ModelMessage[] {
   return messages
@@ -37,22 +38,45 @@ export function toModelMessages(messages: Message[], selfId?: string): ModelMess
           ? ("assistant" as const)
           : ("user" as const);
 
+      const content = withToolCalls(message);
       const reasoning = message.reasoningContent?.trim();
       if (role === "assistant" && reasoning) {
         return {
           role: "assistant",
           content: [
             { type: "reasoning" as const, text: reasoning },
-            { type: "text" as const, text: message.content },
+            { type: "text" as const, text: content },
           ],
         } as ModelMessage;
       }
 
       return {
         role,
-        content: buildUserContent(message),
+        content: buildUserContent({ ...message, content }),
       } as ModelMessage;
     });
+}
+
+function withToolCalls(message: Message): string {
+  if (!message.toolCalls.length) return message.content;
+  const lines = message.toolCalls.slice(-8).map((call) => {
+    const target = toolTarget(call.args);
+    const output = truncate(formatReadableToolOutput(call.result) ?? '');
+    return [
+      `- ${call.toolName}${target ? ` (${target})` : ''}: ${call.isError ? 'error' : 'ok'}`,
+      output,
+    ].filter(Boolean).join('\n');
+  });
+  return [message.content.trimEnd(), 'Tool results:', lines.join('\n')].filter(Boolean).join('\n\n');
+}
+
+function toolTarget(args: Record<string, unknown>): string {
+  const value = args.resourcePath ?? args.path ?? args.filePath ?? args.cwd ?? args.command;
+  return typeof value === 'string' ? value : '';
+}
+
+function truncate(value: string): string {
+  return value.length > 1600 ? `${value.slice(0, 1600)}\n[truncated]` : value;
 }
 
 function buildUserContent(message: Message): UserContent {

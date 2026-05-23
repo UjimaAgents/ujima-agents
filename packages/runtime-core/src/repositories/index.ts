@@ -147,7 +147,6 @@ import {
 } from './task-sessions.js';
 import {
   claimExpiredCommitment as runClaimExpiredCommitment,
-  claimIdleCommitment as runClaimIdleCommitment,
   findCommitmentBySourceMessage as readCommitmentBySourceMessage,
   findOpenChannelCommitmentForMember as readOpenChannelCommitmentForMember,
   getTodo as readTodo,
@@ -537,12 +536,6 @@ export class Repository {
   }): Todo[] => readIdleCommitments(this.db, options);
   listExpiredCommitments = (options: { nowIso: string; limit?: number }): Todo[] =>
     readExpiredCommitments(this.db, options);
-  claimIdleCommitment = (
-    todoId: string,
-    expectedLastProgressAt: string | null,
-    newLastProgressAt: string,
-  ): boolean =>
-    runClaimIdleCommitment(this.db, todoId, expectedLastProgressAt, newLastProgressAt);
   claimExpiredCommitment = (todoId: string, nowIso: string): boolean =>
     runClaimExpiredCommitment(this.db, todoId, nowIso);
   findOpenChannelCommitmentForMember = (

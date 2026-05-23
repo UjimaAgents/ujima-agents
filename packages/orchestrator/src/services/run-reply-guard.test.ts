@@ -4,9 +4,17 @@ import {
   THREAD_PUBLISHING_TOOL_NAMES,
   findTerminatingTool,
   findTerminatingToolFromRunSteps,
+  isAcknowledgementOnly,
   runUsedChannelPass,
   runUsedThreadPublishingTool,
 } from './run-reply-guard.js';
+
+describe('isAcknowledgementOnly', () => {
+  it('matches only a bare acknowledgement', () => {
+    expect(isAcknowledgementOnly('Acknowledged.')).toBe(true);
+    expect(isAcknowledgementOnly('Acknowledged. Holding.')).toBe(false);
+  });
+});
 
 describe('runUsedThreadPublishingTool', () => {
   it('returns true when toolResults include channel.dm', () => {

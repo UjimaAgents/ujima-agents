@@ -3,9 +3,9 @@ import {
   MessageSchema,
   SocketEventNames,
   TodoSchema,
+  isAgentOnlyThread,
   type Channel,
   type Message,
-  type RunState,
   type TaskSession,
   type Todo,
   orgRoom,
@@ -19,30 +19,7 @@ import type { RealtimeService } from './context.js';
 import { AGENT_KIND } from '@ujima/shared';
 
 /**
- * Terminators that mean "the owner published concrete progress" for
- * the purposes of resetting the empty-wake counter. `channel.handoff`
- * counts as progress because handing off to another member is itself
- * forward motion on the deliverable.
- */
-const PUBLISHING_TERMINATORS = new Set([
-  'channel.reply',
-  'channel.post',
-  'channel.dm',
-  'channel.handoff',
-  'message',
-]);
-
-/**
- * Terminators that mean "the owner explicitly declared they have
- * nothing to publish this turn" — `channel.pass` with a real reason.
- * Counted as a non-empty acknowledgement: the agent didn't drop the
- * ball, it just doesn't have new content yet. We don't increment the
- * empty-wake counter, but we don't reset it either.
- */
-const ACKNOWLEDGED_TERMINATORS = new Set(['channel.pass', 'channel.ack']);
-
-/**
- * Bet 4 — durable commitment service.
+ * Durable commitment service.
  *
  * Three responsibilities:
  *
@@ -52,11 +29,9 @@ const ACKNOWLEDGED_TERMINATORS = new Set(['channel.pass', 'channel.ack']);
  *    channel, source message, and an idle deadline. The chat promise
  *    now has a durable home that survives the run terminating.
  *
- * 2. **Idle re-wake.** A periodic tick scans `todos` for commitments
- *    where `last_progress_at` is older than the idle threshold. The
- *    owner is woken with `wakeReason='self-followup'` — mandatory-reply
- *    is OFF for this reason, so the agent can deliver, declare a
- *    blocker via `supervisor.todo.update`, or `channel.pass`.
+ * 2. **Progress resolution.** Delivered artifacts and substantive
+ *    inline deliveries close matching open commitments in the same
+ *    channel/member pair.
  *
  * 3. **Deadline-letter.** When a commitment's `due_at` elapses without
  *    a status flip to `completed`, the service posts a system message
@@ -317,8 +292,7 @@ export function extractCommitment(body: string): ExtractedCommitment | null {
 export interface CommitmentServiceOptions {
   /**
    * How long a commitment can sit at `last_progress_at` before the
-   * scheduler re-wakes the owner. Defaults to 10 minutes; in
-   * production this should be tuned to the team's working cadence.
+   * sweeper may clean up invalid rows. It does not wake agents.
    */
   idleThresholdMs?: number;
   /**
@@ -336,43 +310,22 @@ export interface CommitmentServiceOptions {
    * identical commitments inside 2-minute windows.
    */
   dedupWindowMs?: number;
-  /**
-   * Maximum number of consecutive empty self-followup wakes before
-   * the service short-circuits `due_at` to fire the deadline-letter
-   * early. Defaults to 3 — a generous heads-up before declaring the
-   * commitment stuck, but firm enough that 24h doesn't silently
-   * elapse. An "empty" wake is one whose run completed without any
-   * publishing terminator (see {@link PUBLISHING_TERMINATORS}).
-   */
-  maxEmptyWakes?: number;
 }
 
 export class CommitmentService {
   private readonly idleThresholdMs: number;
   private readonly defaultDueOffsetMs: number;
   private readonly dedupWindowMs: number;
-  private readonly maxEmptyWakes: number;
 
   constructor(
     private readonly repo: ApiRepository,
     private readonly conversations: ConversationService,
     private readonly realtime: RealtimeService,
-    private readonly wakeOwner: (input: {
-      organizationId: string;
-      memberId: string;
-      channelId: string;
-      threadId: string;
-      messageId: string;
-      reason: string;
-      wakeReason: 'self-followup';
-      byMemberId: string;
-    }) => Promise<void> | void,
     options: CommitmentServiceOptions = {},
   ) {
     this.idleThresholdMs = options.idleThresholdMs ?? 10 * 60 * 1000;
     this.defaultDueOffsetMs = options.defaultDueOffsetMs ?? 24 * 60 * 60 * 1000;
     this.dedupWindowMs = options.dedupWindowMs ?? 5 * 60 * 1000;
-    this.maxEmptyWakes = options.maxEmptyWakes ?? 3;
   }
 
   /**
@@ -405,7 +358,7 @@ export class CommitmentService {
       if (!channel) return;
       // Don't open commitments on private self-channels (workspace
       // notes) or empty-roster channels.
-      if (channel.kind === 'self') return;
+      if (channel.kind === 'self' || this.isAgentOnlyChannel(message.organizationId, channel)) return;
 
       // Delivery resolution — both path-bearing completions and
       // in-channel inline deliveries should close the matching open
@@ -486,9 +439,8 @@ export class CommitmentService {
       // the same channel within `dedupWindowMs`, update the existing
       // row instead of creating a parallel one. Past-tense completions
       // bypass dedup so a delivered artifact always lands as its own
-      // `completed` row on the rail. Without this, Phoebe↔Layla mirror
-      // loops produce 3+ identical "I will proceed…" todos that each
-      // trigger an independent self-followup wake cycle.
+      // `completed` row on the rail. Without this, repeated "I will
+      // proceed…" messages pollute the rail and expiration queue.
       if (!isCompletion && this.repo.findOpenChannelCommitmentForMember) {
         const since = new Date(Date.now() - this.dedupWindowMs).toISOString();
         const existing = this.repo.findOpenChannelCommitmentForMember(
@@ -500,18 +452,12 @@ export class CommitmentService {
         if (existing) {
           const refreshed: Todo = TodoSchema.parse({
             ...existing,
-            // Roll forward to the newest message so re-wakes target
-            // the most recent context, and the goals rail surfaces
-            // the most recent restatement.
             sourceMessageId: message.id,
             deliverableSummary:
               existing.deliverableSummary && existing.deliverableSummary.length >= deliverable.length
                 ? existing.deliverableSummary
                 : deliverable,
             notes: existing.notes || notes,
-            // Restating the commitment counts as a soft "still
-            // working" signal — push lastProgressAt forward so the
-            // sweeper doesn't immediately re-wake.
             lastProgressAt: now,
             updatedAt: now,
           });
@@ -532,10 +478,7 @@ export class CommitmentService {
         runId: undefined,
         memberId: message.senderId,
         title: deliverable.slice(0, 120),
-        // Past-tense completions land directly as `completed` so the
-        // rail can show them as delivered (and the sweeper won't
-        // re-wake the owner). Future-tense commitments start as
-        // `in_progress`.
+        // Past-tense completions land directly as `completed`.
         status: isCompletion ? 'completed' : 'in_progress',
         notes,
         channelId: message.channelId,
@@ -559,123 +502,9 @@ export class CommitmentService {
   }
 
   /**
-   * Post-run hook fired when a wake completes. Late-bound by
-   * `services/index.ts` via `SpiritService.setRunCompletedHook`.
-   *
-   * Two responsibilities:
-   *
-   *  1. **Empty-wake counter.** For `wakeReason === 'self-followup'`,
-   *     classify the run's terminating tool. Publishing terminators
-   *     (`channel.reply` / `channel.post` / `channel.dm` /
-   *     `channel.handoff`) reset the counter — the owner did the
-   *     work. Acknowledged terminators (`channel.pass` /
-   *     `channel.ack`) leave the counter unchanged. Anything else
-   *     (`NULL`, `self.note` only, etc.) increments it.
-   *
-   *  2. **Early deadline-letter escalation.** When the counter
-   *     reaches `maxEmptyWakes`, the commitment is "stuck" — the
-   *     owner has woken N times without publishing or even
-   *     acknowledging. We short-circuit `due_at` to fire the
-   *     deadline-letter on the next `sweepExpired` tick, instead of
-   *     waiting the full 24h. The user sees the stall surface as a
-   *     system message in the channel.
-   *
-   * Failures are swallowed — a flaky hook must never poison run
-   * completion.
-   */
-  async onRunCompleted(run: RunState): Promise<void> {
-    try {
-      if (run.status !== 'completed') return;
-      if (run.wakeReason !== 'self-followup') return;
-      if (!run.sourceMessageId) return;
-      if (!this.repo.findCommitmentBySourceMessage) return;
-
-      const todo = this.repo.findCommitmentBySourceMessage(
-        run.organizationId,
-        run.sourceMessageId,
-      );
-      if (!todo) return;
-      // Already-resolved todos shouldn't be touched — the owner
-      // closed the work via `supervisor.todo.update` or the past-
-      // tense extractor fired.
-      if (todo.status !== 'pending' && todo.status !== 'in_progress') return;
-
-      const terminator = run.terminatingTool ?? null;
-      const now = new Date().toISOString();
-
-      if (terminator && PUBLISHING_TERMINATORS.has(terminator)) {
-        // Real progress. Reset the counter.
-        if (todo.emptyWakeCount === 0) return;
-        const cleared: Todo = TodoSchema.parse({
-          ...todo,
-          emptyWakeCount: 0,
-          lastProgressAt: now,
-          updatedAt: now,
-        });
-        this.repo.saveTodo(cleared);
-        return;
-      }
-
-      if (terminator && ACKNOWLEDGED_TERMINATORS.has(terminator)) {
-        // The owner explicitly acknowledged the wake with a pass /
-        // ack. Don't reward (no counter reset) but don't escalate
-        // either — they answered the door, just didn't deliver yet.
-        return;
-      }
-
-      // Empty wake. Increment counter; escalate if past the
-      // threshold.
-      const nextCount = todo.emptyWakeCount + 1;
-      const shouldEscalate = nextCount >= this.maxEmptyWakes;
-      const updated: Todo = TodoSchema.parse({
-        ...todo,
-        emptyWakeCount: nextCount,
-        // Short-circuit due_at so sweepExpired picks this up on the
-        // next tick. Only override when the new due_at would be
-        // *sooner* than the existing one — if the commitment was
-        // already due in the next 60s, don't push it back.
-        dueAt:
-          shouldEscalate &&
-          (!todo.dueAt || new Date(todo.dueAt).getTime() > Date.now())
-            ? now
-            : todo.dueAt,
-        updatedAt: now,
-      });
-      this.repo.saveTodo(updated);
-
-      const channel = todo.channelId
-        ? this.repo.getChannel(todo.organizationId, todo.channelId)
-        : null;
-      this.realtime.emit(
-        SocketEventNames.memberEmptyWake,
-        {
-          organizationId: run.organizationId,
-          memberId: run.agentId,
-          runId: run.id,
-          channelId: todo.channelId,
-          threadId: run.threadId,
-          todoId: todo.id,
-          emptyWakeCount: nextCount,
-          escalated: shouldEscalate,
-          occurredAt: now,
-        },
-        channel ? this.roomsFor(updated, channel) : [orgRoom(todo.organizationId), memberRoom(todo.memberId)],
-      );
-    } catch {
-      // best-effort — never poison run completion
-    }
-  }
-
-  /**
-   * Idle sweep — re-wake owners whose commitments haven't moved.
-   * Caller drives this via setInterval; the service is responsible
-   * for the underlying queries and the wake call.
-   *
-   * Uses claim-by-update (`repo.claimIdleCommitment`) before firing
-   * the wake so two overlapping sweeps, a daemon restart mid-sweep,
-   * or a concurrent human update via `supervisor.todo.update` don't
-   * cause the same commitment to wake twice. A retired/missing
-   * owner row gets cancelled instead of cycled forever.
+   * Idle sweep is passive cleanup only. Todos are memory, not a
+   * timer-driven orchestration source; stale commitments must not
+   * create agent runs every sweep.
    */
   async sweepIdle(): Promise<number> {
     if (!this.repo.listIdleCommitments) return 0;
@@ -685,86 +514,34 @@ export class CommitmentService {
       statuses: ['pending', 'in_progress'],
       limit: 25,
     });
-    let woken = 0;
+    let cancelledCount = 0;
     for (const todo of candidates) {
       if (!todo.channelId) continue;
       const channel = this.repo.getChannel(todo.organizationId, todo.channelId);
       if (!channel) continue;
-      // Skip retired or missing owners — re-waking them runs into
-      // `createRun` failing with `Agent retired:` and the todo
-      // cycles forever. Cancel it so the rail and metrics stop
-      // pretending the work is live.
-      const owner = this.repo.getMember(todo.organizationId, todo.memberId);
-      if (!owner || owner.retiredAt) {
-        const cancelled = TodoSchema.parse({
-          ...todo,
-          status: 'cancelled',
-          updatedAt: new Date().toISOString(),
-        });
-        this.repo.saveTodo(cancelled);
-        this.realtime.emit(
-          SocketEventNames.commitmentUpdated,
-          this.toEventPayload(cancelled, 'updated'),
-          this.roomsFor(cancelled, channel),
-        );
+      if (this.isAgentOnlyChannel(todo.organizationId, channel)) {
+        this.cancelCommitment(todo, channel);
+        cancelledCount += 1;
         continue;
       }
-      // Claim-by-update — only one sweep / restart can win this row.
-      const now = new Date().toISOString();
-      const claimed = this.repo.claimIdleCommitment?.(
-        todo.id,
-        todo.lastProgressAt ?? null,
-        now,
-      );
-      if (claimed === false) continue;
-      const sourceMessage = todo.sourceMessageId
-        ? this.repo.getMessage(todo.organizationId, todo.sourceMessageId)
-        : null;
-      const threadId = sourceMessage?.threadId ?? todo.channelId;
-      try {
-        await this.wakeOwner({
-          organizationId: todo.organizationId,
-          memberId: todo.memberId,
-          channelId: todo.channelId,
-          threadId,
-          messageId: todo.sourceMessageId ?? todo.id,
-          reason: 'self-followup',
-          wakeReason: 'self-followup',
-          byMemberId: todo.memberId,
-        });
-        const updated: Todo = TodoSchema.parse({
-          ...todo,
-          lastProgressAt: now,
-          updatedAt: now,
-        });
-        this.realtime.emit(
-          SocketEventNames.commitmentUpdated,
-          this.toEventPayload(updated, 'updated'),
-          this.roomsFor(updated, channel),
-        );
-        woken += 1;
-      } catch {
-        // Swallow per-commitment failures so a bad row doesn't
-        // bring down the whole sweep. The row's `lastProgressAt`
-        // was already advanced by the claim — so it'll be eligible
-        // again only after `idleThresholdMs` instead of immediately
-        // re-firing on the next tick.
+      const owner = this.repo.getMember(todo.organizationId, todo.memberId);
+      if (!owner || owner.retiredAt) {
+        this.cancelCommitment(todo, channel);
+        cancelledCount += 1;
       }
     }
-    return woken;
+    return cancelledCount;
   }
 
   /**
    * Deadline-letter sweep — flip expired commitments to `expired` and
-   * post a system message in the channel. Caller drives this via
-   * setInterval (typically same tick as `sweepIdle`).
+   * post a system message in the channel.
    *
    * Idempotency: each row is atomically claimed (status flipped to
    * `expired`) BEFORE the system message publishes. If the publish
    * errors or the daemon crashes between claim and emit, the next
    * sweep sees the row already in `expired` status and skips it —
    * so we may miss a letter once, but we never double-post one.
-   * Mirror of the claim-by-update pattern in `sweepIdle`.
    */
   async sweepExpired(): Promise<number> {
     if (!this.repo.listExpiredCommitments) return 0;
@@ -775,6 +552,10 @@ export class CommitmentService {
       if (!todo.channelId) continue;
       const channel = this.repo.getChannel(todo.organizationId, todo.channelId);
       if (!channel) continue;
+      if (this.isAgentOnlyChannel(todo.organizationId, channel)) {
+        this.cancelCommitment(todo, channel, now);
+        continue;
+      }
       // Atomic claim. If `claimExpiredCommitment` is absent (narrow
       // test repo) fall back to the legacy publish-then-persist flow
       // — tests with stub repos exercise the same code path they
@@ -799,6 +580,7 @@ export class CommitmentService {
       try {
         this.conversations.publishMessage(message, [], undefined, {
           skipMentionResolution: true,
+          suppressDmAlerts: true,
         });
       } catch {
         // Publish failed AFTER the claim — the row is already
@@ -888,5 +670,27 @@ export class CommitmentService {
       ...(todo.channelId ? [threadRoom(todo.channelId)] : []),
       ...(channel.id ? [channelRoom(channel.id)] : []),
     ];
+  }
+
+  private isAgentOnlyChannel(organizationId: string, channel: Channel): boolean {
+    const members = channel.memberIds
+      .map((memberId) => this.repo.getMember(organizationId, memberId))
+      .filter((member): member is NonNullable<typeof member> => member != null)
+      .map((member) => ({ id: member.id, kind: member.kind }));
+    return isAgentOnlyThread(channel.id, members, [{ id: channel.id, memberIds: channel.memberIds }]);
+  }
+
+  private cancelCommitment(todo: Todo, channel: Channel, now = new Date().toISOString()): void {
+    const cancelled = TodoSchema.parse({
+      ...todo,
+      status: 'cancelled',
+      updatedAt: now,
+    });
+    this.repo.saveTodo(cancelled);
+    this.realtime.emit(
+      SocketEventNames.commitmentUpdated,
+      this.toEventPayload(cancelled, 'updated'),
+      this.roomsFor(cancelled, channel),
+    );
   }
 }

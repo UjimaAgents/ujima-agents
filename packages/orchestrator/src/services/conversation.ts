@@ -43,6 +43,7 @@ import type {
 } from './repository-reader.js';
 import { requireOrganization } from '../utils/require-organization.js';
 import { isVacuousAck, shouldSuppressForMirror } from './mirror-guard.js';
+import { isAcknowledgementOnly } from './run-reply-guard.js';
 
 const ATTACHMENT_FILE_LIMIT_BYTES = 25 * 1024 * 1024;
 const ATTACHMENT_MESSAGE_LIMIT_BYTES = 100 * 1024 * 1024;
@@ -414,8 +415,7 @@ export class ConversationService {
       // we skip them here to avoid double-fire.
       void this.alertChannelReaders(emittedMessage, channel, resolvedMentions);
     }
-    // Post-publish hook (Bet 4 — commitment extraction). Fire-and-
-    // forget; a hook failure must never roll back the publish.
+    // Fire-and-forget; a hook failure must never roll back the publish.
     if (this.messagePublishedHook) {
       void Promise.resolve()
         .then(() => this.messagePublishedHook?.(emittedMessage))
@@ -1452,16 +1452,10 @@ export class ConversationService {
   }
 
   private shouldSuppressDmWake(message: Message, channel: Channel | null): boolean {
-    // L4 — `Acknowledged.` is no longer the termination protocol;
-    // the new termination is `channel.handoff({ complete: true })`
-    // which already short-circuits the run loop and never reaches
-    // this path. DM-wake suppression stays in for future
-    // metadata-based terminators but no longer pattern-matches on
-    // the literal token.
     if (!channel || channel.kind !== 'dm') return false;
     if (message.kind !== AGENT_KIND) return false;
     const handoff = (message.metadata as { handoff?: { complete?: boolean } } | undefined)?.handoff;
-    return handoff?.complete === true;
+    return handoff?.complete === true || isAcknowledgementOnly(message.content);
   }
 
   private publishMentionThrottledSystemMessage(

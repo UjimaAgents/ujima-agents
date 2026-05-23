@@ -1,9 +1,13 @@
-import { existsSync, realpathSync } from 'node:fs';
-import { join, resolve, sep } from 'node:path';
+import { sep } from 'node:path';
 import type { AgentTeamHandle } from '@ujima/framework';
 import type { ToolAction, SpiritRole, WakeReason } from '@ujima/shared';
 import { isSensitiveWorkspacePath } from '@ujima/shared/workspace-file-filters';
-import { assertWorkspaceBoundary, isPathInsideRoot } from '@ujima/shared/workspace';
+import {
+  assertWorkspaceBoundary,
+  canonicalWorkspacePath,
+  isPathWithinScope,
+} from '@ujima/shared/workspace';
+import { isInScopeFileTool } from '../path-scoped-tools.js';
 import { ALWAYS_AVAILABLE_AGENT_TOOLS } from '../tools/index.js';
 import {
   buildPassOrSelfNoteDenialReason,
@@ -162,6 +166,7 @@ export function checkToolPolicy(
     return { allowed: true, requiresApproval: false };
   }
 
+  let inScopeFileAccess = false;
   if (resourcePath) {
     try {
       assertWorkspaceBoundary(team.workspace.root, resourcePath);
@@ -192,10 +197,13 @@ export function checkToolPolicy(
         : action === 'read'
           ? ['.']
           : role.workspaceScopes;
-    if (!effectiveScopes.some((scope) => pathWithinScope(team.workspace.root, scope, resourcePath))) {
+    const inRoleScope = effectiveScopes.some((scope) =>
+      isPathWithinScope(team.workspace.root, scope, resourcePath),
+    );
+    if (!inRoleScope) {
       return {
-        allowed: false,
-        requiresApproval: false,
+        allowed: true,
+        requiresApproval: true,
         reason: `Path "${resourcePath}" is outside allowed scopes for role "${roleName}"`,
       };
     }
@@ -207,27 +215,23 @@ export function checkToolPolicy(
         reason: `Path "${resourcePath}" requires approval`,
       };
     }
+
+    inScopeFileAccess = isInScopeFileTool(toolId, action);
   }
 
   return {
     allowed: true,
-    requiresApproval: action !== 'read',
+    requiresApproval:
+      !inScopeFileAccess &&
+      action !== 'read' &&
+      toolId !== 'write' &&
+      toolId !== 'edit' &&
+      toolId !== 'multiedit',
   };
 }
 
-function pathWithinScope(workspaceRoot: string, scope: string, resourcePath: string): boolean {
-  const normalizedScope = canonicalizeForComparison(scope, workspaceRoot);
-  const normalizedResource = canonicalizeForComparison(resourcePath, workspaceRoot);
-  return isPathInsideRoot(normalizedScope, normalizedResource);
-}
-
-function canonicalizeForComparison(path: string, workspaceRoot: string): string {
-  const resolved = resolve(workspaceRoot, path);
-  return existsSync(resolved) ? realpathSync(resolved) : resolved;
-}
-
 function isGoalArtifactPath(workspaceRoot: string, resourcePath: string): boolean {
-  const candidate = canonicalizeForComparison(resourcePath, workspaceRoot);
-  const goalRoot = canonicalizeForComparison(join(workspaceRoot, '.ujima-goals'), workspaceRoot);
+  const candidate = canonicalWorkspacePath(workspaceRoot, resourcePath);
+  const goalRoot = canonicalWorkspacePath(workspaceRoot, '.ujima-goals');
   return candidate === goalRoot || candidate.startsWith(`${goalRoot}${sep}`);
 }

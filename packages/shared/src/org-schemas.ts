@@ -575,12 +575,7 @@ export const TodoStatusSchema = z.enum([
   'in_progress',
   'completed',
   'cancelled',
-  // Bet 4 — added when the scheduler crosses `due_at` without a
-  // status flip to completed. Deadline-letter system message is
-  // posted at the same time so the human sees the miss.
   'expired',
-  // Bet 4 — owner declared a blocker via supervisor.todo.update.
-  // Scheduler stops re-waking until status flips back.
   'blocked',
 ]);
 export type TodoStatus = z.infer<typeof TodoStatusSchema>;
@@ -594,22 +589,11 @@ export const TodoSchema = z.object({
   title: z.string().min(1),
   status: TodoStatusSchema.default('pending'),
   notes: z.string().default(''),
-  // Bet 4 — commitment durability fields. Populated by the
-  // promise-extractor when an agent says "I'll draft X" in a
-  // channel; consumed by the scheduler tick and the goals rail UI.
-  // Optional so existing supervisor.todo.* writers don't need to
-  // change.
   channelId: IdSchema.optional(),
   sourceMessageId: IdSchema.optional(),
   deliverableSummary: z.string().optional(),
   dueAt: TimestampSchema.optional(),
   lastProgressAt: TimestampSchema.optional(),
-  // Bet 4 follow-up. Incremented on each self-followup wake that
-  // completes without a publishing terminator (no channel.reply /
-  // channel.post / channel.dm). Reset to 0 when the owner does
-  // publish concrete progress. After K consecutive empty wakes the
-  // commitment service short-circuits `due_at` to fire the deadline-
-  // letter early instead of letting the agent silently cycle for 24h.
   emptyWakeCount: z.number().int().nonnegative().default(0),
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,
