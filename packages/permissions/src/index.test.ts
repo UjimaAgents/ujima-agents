@@ -103,12 +103,41 @@ describe('permission middleware', () => {
       },
     });
     const first = await mw.check({ agent: a, ...ctx, toolName: 'read', args: {} });
+    await mw.recordCompletedCall({ agent: a, ...ctx, toolName: 'read', args: {} });
     const second = await mw.check({ agent: a, ...ctx, toolName: 'read', args: {} });
+    await mw.recordCompletedCall({ agent: a, ...ctx, toolName: 'read', args: {} });
     const third = await mw.check({ agent: a, ...ctx, toolName: 'read', args: {} });
     expect(first.allowed).toBe(true);
     expect(second.allowed).toBe(true);
     expect(third.allowed).toBe(false);
     if (!third.allowed) expect(third.code).toBe('rate_limited');
+  });
+
+  it('rate limit is scoped per session, not shared across concurrent runs', async () => {
+    const a = agent({
+      permissions: {
+        allowed_tools: [],
+        blocked_tools: [],
+        rate_limit: { calls_per_minute: 1, max_session_tokens: 1000 },
+      },
+    });
+    const runA = { ...ctx, sessionId: 'run-a', taskId: 'run-a' };
+    const runB = { ...ctx, sessionId: 'run-b', taskId: 'run-b' };
+    expect((await mw.check({ agent: a, ...runA, toolName: 'read', args: {} })).allowed).toBe(true);
+    await mw.recordCompletedCall({ agent: a, ...runA, toolName: 'read', args: {} });
+    expect((await mw.check({ agent: a, ...runB, toolName: 'read', args: {} })).allowed).toBe(true);
+  });
+
+  it('does not count permission checks that never completed a tool call', async () => {
+    const a = agent({
+      permissions: {
+        allowed_tools: [],
+        blocked_tools: [],
+        rate_limit: { calls_per_minute: 1, max_session_tokens: 1000 },
+      },
+    });
+    expect((await mw.check({ agent: a, ...ctx, toolName: 'read', args: {} })).allowed).toBe(true);
+    expect((await mw.check({ agent: a, ...ctx, toolName: 'read', args: {} })).allowed).toBe(true);
   });
 
   it('enforces token cap from agent state', async () => {
@@ -143,6 +172,24 @@ describe('permission middleware', () => {
     expect(rows[0]?.allowed).toBe(true);
   });
 
+  it('writes rate_limited denials to audit with code in block_reason', async () => {
+    const a = agent({
+      permissions: {
+        allowed_tools: [],
+        blocked_tools: [],
+        rate_limit: { calls_per_minute: 1, max_session_tokens: 1000 },
+      },
+    });
+    await mw.recordCompletedCall({ agent: a, ...ctx, toolName: 'read', args: {} });
+    const denied = await mw.check({ agent: a, ...ctx, toolName: 'read', args: {} });
+    expect(denied.allowed).toBe(false);
+    if (!denied.allowed) expect(denied.code).toBe('rate_limited');
+
+    const rows = await db.audit.query({ taskId: 't1', eventType: 'permission_check' });
+    const blocked = rows.find((row) => row.allowed === false);
+    expect(blocked?.block_reason).toMatch(/^rate_limited:/);
+  });
+
   it('rate limit window rolls over after 60s — old calls no longer count', async () => {
     let time = 1_000_000;
     const mwClock = createPermissionMiddleware({
@@ -158,7 +205,9 @@ describe('permission middleware', () => {
       },
     });
     expect((await mwClock.check({ agent: a, ...ctx, toolName: 'r', args: {} })).allowed).toBe(true);
+    await mwClock.recordCompletedCall({ agent: a, ...ctx, toolName: 'r', args: {} });
     expect((await mwClock.check({ agent: a, ...ctx, toolName: 'r', args: {} })).allowed).toBe(true);
+    await mwClock.recordCompletedCall({ agent: a, ...ctx, toolName: 'r', args: {} });
     expect((await mwClock.check({ agent: a, ...ctx, toolName: 'r', args: {} })).allowed).toBe(false);
     time += 61_000;
     expect((await mwClock.check({ agent: a, ...ctx, toolName: 'r', args: {} })).allowed).toBe(true);
@@ -387,6 +436,7 @@ describe('permission middleware — governance policy layer', () => {
       },
     });
     const first = await mw.check({ agent: a, ...ctx, toolName: 'read', args: {} });
+    await mw.recordCompletedCall({ agent: a, ...ctx, toolName: 'read', args: {} });
     const second = await mw.check({ agent: a, ...ctx, toolName: 'read', args: {} });
     expect(first.allowed).toBe(true);
     expect(second.allowed).toBe(false);
@@ -481,6 +531,6 @@ describe('permission middleware — governance policy layer', () => {
     await mw.check({ agent: agent(), ...ctx, toolName: 'write', args: {} });
     const rows = await db.audit.query({ taskId: 't1', eventType: 'permission_check' });
     expect(rows[0]?.allowed).toBe(false);
-    expect(rows[0]?.block_reason).toBe('senior review required');
+    expect(rows[0]?.block_reason).toBe('requires_approval: senior review required');
   });
 });

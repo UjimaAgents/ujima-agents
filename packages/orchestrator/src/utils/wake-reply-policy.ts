@@ -41,13 +41,24 @@ export function resolveWakeReplyPolicy(input: {
 }): WakeReplyPolicy {
   const conversationKind: ConversationKind = isDirectMessageThread(input.threadId) ? 'dm' : 'channel';
   const mandatoryReply = input.wakeReason === 'mention';
-  const suppressPassTool = mandatoryReply || conversationKind === 'dm';
+  const suppressPassTool =
+    mandatoryReply || (conversationKind === 'dm' && input.wakeReason !== 'channel-read');
+
+  let scaffoldBlock = conversationKind === 'dm' ? DM_WAKE_SCAFFOLD : CHANNEL_WAKE_SCAFFOLD;
+  if (conversationKind === 'dm' && input.wakeReason === 'channel-read') {
+    scaffoldBlock = [
+      'Before you pick a tool, read the <thread-state> block in the most recent user message.',
+      'This is a direct message (1:1) thread demoted by channel-read back-pressure after a pairwise mention cap was hit.',
+      'You are allowed to call channel.pass to stand down and break the loop.',
+      'If you have no constructive/new response, please call channel.pass with a descriptive note immediately.',
+    ].join('\n');
+  }
 
   return {
     conversationKind,
     suppressPassTool,
     mandatoryReply,
-    scaffoldBlock: conversationKind === 'dm' ? DM_WAKE_SCAFFOLD : CHANNEL_WAKE_SCAFFOLD,
+    scaffoldBlock,
   };
 }
 

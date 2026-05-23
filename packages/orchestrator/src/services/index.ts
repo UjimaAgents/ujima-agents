@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import type { PermissionMiddleware } from '@ujima/permissions';
 import {
   SocketEventNames,
@@ -35,6 +34,7 @@ import { TaskPromoterService, type TaskPromotionEvaluator } from './task-promote
 import { TaskSessionService } from './task-session.js';
 import {
   createPermissionGatedToolService,
+  saveBlockedToolRunStep,
   type PermissionContextBuilder,
   type ToolService,
 } from './tool-service.js';
@@ -486,22 +486,24 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     context.buildPermissionContext,
     approvalRequester.requestApproval,
     (invocation, approvalId) => {
-      context.repo.saveRunStep({
-        id: randomUUID(),
-        organizationId: invocation.organizationId,
-        runId: invocation.runId,
-        threadId: invocation.threadId,
-        agentId: invocation.memberId,
-        toolCallId: invocation.toolCallId,
-        toolId: invocation.toolId,
-        action: invocation.action,
-        resourceType: invocation.resourceType,
-        resourcePath: invocation.resourcePath ?? '',
-        input: invocation.input ?? {},
-        output: { status: 'waiting_for_approval', approvalId },
-        status: 'ok',
-        createdAt: new Date().toISOString(),
-      });
+      saveBlockedToolRunStep(
+        context.repo,
+        invocation,
+        { status: 'waiting_for_approval', approvalId },
+        'ok',
+      );
+    },
+    (invocation, decision) => {
+      saveBlockedToolRunStep(
+        context.repo,
+        invocation,
+        {
+          status: 'blocked',
+          code: decision.code,
+          error: decision.reason,
+        },
+        'blocked',
+      );
     },
   );
 

@@ -10,6 +10,7 @@ import {
   orgRoom,
   parseApprovalReasonValue,
   runRoom,
+  stripApprovalScopeDisplayFields,
   threadRoom,
   type ApprovalRequest,
   type ResourceType,
@@ -222,7 +223,9 @@ export class ApprovalService {
         approval.organizationId,
         approval.runId,
         true,
-        input.resolution === 'allow_once' ? rawScope : undefined,
+        input.resolution === 'allow_once' && rawScope
+          ? stripApprovalScopeDisplayFields(rawScope)
+          : undefined,
       );
     }
 

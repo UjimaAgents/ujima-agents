@@ -367,7 +367,11 @@ export async function runAiSdkLoop(input: AiSdkLoopInputs): Promise<AiSdkLoopOut
             denied: true,
             code: decision.code,
           });
-          return { error: `permission_denied: ${decision.reason ?? decision.code}` };
+          return {
+            status: 'blocked',
+            code: decision.code,
+            error: decision.reason ?? decision.code,
+          };
         }
 
         // Allowed — straight through.
@@ -416,6 +420,14 @@ export async function runAiSdkLoop(input: AiSdkLoopInputs): Promise<AiSdkLoopOut
               isError: result.isError,
               durationMs: duration,
               gateResolved: gated ? 'approve' : undefined,
+            });
+            await permissions.recordCompletedCall({
+              agent,
+              mcp: { id: mcp.id, name: mcp.def.name },
+              toolName,
+              args: finalArgs,
+              taskId,
+              sessionId,
             });
             if (result.isError) {
               return { error: truncateToolContent(result.content, maxToolResultChars) };

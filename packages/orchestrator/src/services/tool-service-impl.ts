@@ -23,6 +23,7 @@ import {
 import {
   approvalWaitResult,
   buildToolApprovalScope,
+  enrichToolApprovalScopeForRequest,
   type ToolInvocationInput,
   type ToolInvocationResult,
   type ToolService,
@@ -31,7 +32,9 @@ import {
   ERR_PATH_ESCAPE,
   createMemberPathResolver,
   isPathEscapeError,
+  type PathEscapeError,
 } from "./workspace-root.js";
+import { pathEscapeToolResult } from "./tool-service.js";
 import { normalizeShellScope } from "./shell-scope.js";
 import { materializeMcpDef, type McpRuntimePool } from "./mcp-runtime.js";
 import { ApprovedRunScopeTracker } from "../utils/approved-run-scopes.js";
@@ -179,35 +182,9 @@ export class ToolServiceImpl implements ToolService {
         team,
       );
     } catch (error) {
-      const message = (error as Error).message;
-      this.audit(invocation, "blocked", {
-        error: message,
-        code: isPathEscapeError(error) ? ERR_PATH_ESCAPE : undefined,
-      });
-      this.saveRunStep(invocation, "blocked", {
-        status: "blocked",
-        error: message,
-        ...(isPathEscapeError(error) ? { code: ERR_PATH_ESCAPE } : {}),
-      });
-      this.emitToolCalled(invocation, rooms);
-      this.realtime.emit(
-        SocketEventNames.toolResult,
-        {
-          organizationId: invocation.organizationId,
-          runId: invocation.runId,
-          threadId: invocation.threadId ?? this.repo.getRun(invocation.organizationId, invocation.runId)?.threadId,
-          agentId: invocation.memberId,
-          toolResult: {
-            toolCallId: invocation.toolCallId,
-            result: {
-              error: message,
-              ...(isPathEscapeError(error) ? { code: ERR_PATH_ESCAPE } : {}),
-            },
-            isError: true,
-          },
-        },
-        rooms,
-      );
+      if (isPathEscapeError(error)) {
+        return this.finishPathEscapeFailure(invocation, rooms, error);
+      }
       throw error;
     }
 
@@ -286,6 +263,7 @@ export class ToolServiceImpl implements ToolService {
         approvalScope,
       })
     ) {
+      const displayScope = enrichToolApprovalScopeForRequest(approvalScope, preparedInvocation);
       const approval = this.approvals.requestApproval({
         organizationId: preparedInvocation.organizationId,
         runId: preparedInvocation.runId,
@@ -294,7 +272,7 @@ export class ToolServiceImpl implements ToolService {
         resourceType: preparedInvocation.resourceType,
         resourcePath: preparedInvocation.resourcePath ?? "",
         action: preparedInvocation.action,
-        reason: `Tool action requires approval;scope=${encodeURIComponent(approvalScope)}`,
+        reason: `Tool action requires approval;scope=${encodeURIComponent(displayScope)}`,
         approvalScope,
       });
 
@@ -338,39 +316,43 @@ export class ToolServiceImpl implements ToolService {
 
       return { ok: true, output: { status: "completed", result } };
     } catch (error) {
-      const message = (error as Error).message;
-      this.audit(preparedInvocation, "error", {
-        error: message,
-        code: isPathEscapeError(error) ? ERR_PATH_ESCAPE : undefined,
-      });
-      this.saveRunStep(preparedInvocation, "error", {
-        error: message,
-        ...(isPathEscapeError(error) ? { code: ERR_PATH_ESCAPE } : {}),
-      });
-      const run = this.repo.getRun(preparedInvocation.organizationId, preparedInvocation.runId);
-      const threadId = preparedInvocation.threadId ?? run?.threadId;
-
-      this.realtime.emit(
-        SocketEventNames.toolResult,
-        {
-          organizationId: preparedInvocation.organizationId,
-          runId: preparedInvocation.runId,
-          threadId,
-          agentId: preparedInvocation.memberId,
-          toolResult: {
-            toolCallId: preparedInvocation.toolCallId,
-            result: {
-              error: message,
-              ...(isPathEscapeError(error) ? { code: ERR_PATH_ESCAPE } : {}),
-            },
-            isError: true,
-          },
-        },
-        rooms,
-      );
-
+      if (isPathEscapeError(error)) {
+        return this.finishPathEscapeFailure(preparedInvocation, rooms, error);
+      }
       throw error;
     }
+  }
+
+  private finishPathEscapeFailure(
+    invocation: ToolInvocationInput,
+    rooms: string[],
+    error: PathEscapeError,
+  ): ToolInvocationResult {
+    const result = pathEscapeToolResult(error.message);
+    this.audit(invocation, "blocked", {
+      error: error.message,
+      code: ERR_PATH_ESCAPE,
+    });
+    this.saveRunStep(invocation, "blocked", result.output);
+    this.emitToolCalled(invocation, rooms);
+    const run = this.repo.getRun(invocation.organizationId, invocation.runId);
+    const threadId = invocation.threadId ?? run?.threadId;
+    this.realtime.emit(
+      SocketEventNames.toolResult,
+      {
+        organizationId: invocation.organizationId,
+        runId: invocation.runId,
+        threadId,
+        agentId: invocation.memberId,
+        toolResult: {
+          toolCallId: invocation.toolCallId,
+          result: result.output,
+          isError: true,
+        },
+      },
+      rooms,
+    );
+    return result;
   }
 
   private async executeTool(invocation: ToolInvocationInput): Promise<unknown> {

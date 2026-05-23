@@ -1418,7 +1418,27 @@ export class ConversationService {
     await Promise.all(
       recipients.map(async (recipientId) => {
         try {
-          await this.alertMember(message, recipientId, channel, 'dm' as WakeReason);
+          const countInWindow = this.recordPairMentionWake(
+            message.organizationId,
+            message.threadId,
+            message.senderId,
+            recipientId,
+          );
+          const wakeReason: WakeReason =
+            countInWindow > this.pairMentionCap ? 'channel-read' : 'dm';
+
+          if (wakeReason === 'channel-read') {
+            this.emitEchoSuppressed({
+              organizationId: message.organizationId,
+              fromMemberId: message.senderId,
+              toMemberId: recipientId,
+              channelId: channel?.id,
+              threadId: message.threadId,
+              countInWindow,
+            });
+          }
+
+          await this.alertMember(message, recipientId, channel, wakeReason);
         } catch (error) {
           console.warn('DM participant alert failed', {
             organizationId: message.organizationId,
