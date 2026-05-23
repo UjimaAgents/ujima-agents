@@ -14,7 +14,7 @@ import type {
   SpiritAlertInput,
   SpiritSupervisorReplyOutcome,
 } from './spirit-types.js';
-import { goalModeSystemPromptSuffix, goalModeEnabledFromMessage } from './goal-mode-prompt.js';
+import { goalModeEnabledFromMessage } from './goal-mode-prompt.js';
 import { SpiritServiceAgentRun } from './spirit-agent-run.js';
 
 export class SpiritServiceSupervisor extends SpiritServiceAgentRun {
@@ -86,10 +86,6 @@ export class SpiritServiceSupervisor extends SpiritServiceAgentRun {
     }
 
     const sourceMessage = this.repo.getMessage(input.organizationId, input.messageId);
-    const goalModeSuffix = goalModeSystemPromptSuffix({
-      goalMode: goalModeEnabledFromMessage(sourceMessage),
-      messageContent: sourceMessage?.content,
-    });
 
     if (input.wakeReason) {
       const supervisorSpirit = this.repo
@@ -117,7 +113,8 @@ export class SpiritServiceSupervisor extends SpiritServiceAgentRun {
         role: 'supervisor',
         maxIterations: 2,
         extraPrompt: this.buildSupervisorAlertContext(taskSessionId, input),
-        systemPromptSuffix: goalModeSuffix,
+        promptMessageContent: sourceMessage?.content,
+        promptGoalMode: goalModeEnabledFromMessage(sourceMessage),
       });
       this.repo.saveTaskSession({
         ...session,

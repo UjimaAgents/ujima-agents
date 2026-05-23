@@ -10,10 +10,10 @@ import {
   type Message,
   type RunState,
   type Spirit,
-  type WakeReason,
   AGENT_KIND,
   isDirectMessageThread,
 } from '@ujima/shared';
+import { composeSystemPromptSuffix, runWakeReason } from './spirit-run-detail.js';
 import type { ActiveSpiritEntry } from './active-spirit-registry.js';
 import type { ToolInvocationInput } from './tool-service.js';
 import {
@@ -121,15 +121,86 @@ export class SpiritServiceBase {
     );
   }
 
+  protected toolInvocationContextForSpirit(
+    spirit: Spirit,
+    run?: RunState | null,
+  ): Pick<ToolInvocationInput, 'taskSessionId' | 'spiritRole' | 'wakeReason'> {
+    return {
+      taskSessionId: spirit.taskSessionId,
+      spiritRole: spirit.role,
+      wakeReason: run ? runWakeReason(run) : null,
+    };
+  }
+
   protected toolInvocationContextForRun(
     run: RunState,
   ): Pick<ToolInvocationInput, 'taskSessionId' | 'spiritRole' | 'wakeReason'> {
     const spirit = this.resolveSpiritForRun(run.organizationId, run.id);
-    return {
-      taskSessionId: spirit?.taskSessionId,
-      spiritRole: spirit?.role,
-      wakeReason: (run.wakeReason as WakeReason | null | undefined) ?? null,
-    };
+    if (spirit) {
+      return this.toolInvocationContextForSpirit(spirit, run);
+    }
+    return { wakeReason: runWakeReason(run) };
+  }
+
+  protected async replayApprovedToolsForRun(run: RunState): Promise<void> {
+    await this.replayApprovedToolSteps(
+      run.organizationId,
+      run.id,
+      this.toolInvocationContextForRun(run),
+    );
+  }
+
+  protected async replayApprovedToolsForSpirit(spirit: Spirit): Promise<void> {
+    const runId = spirit.runId ?? spirit.id;
+    const run = this.repo.getRun(spirit.organizationId, runId);
+    const context = run
+      ? this.toolInvocationContextForRun(run)
+      : this.toolInvocationContextForSpirit(spirit);
+    await this.replayApprovedToolSteps(spirit.organizationId, runId, context);
+  }
+
+  protected listStepsAwaitingApprovedReplay(organizationId: string, runId: string) {
+    const pendingApprovalToolCallIds = new Set(
+      this.repo
+        .listPendingApprovals(organizationId)
+        .filter((approval) => approval.runId === runId && approval.toolCallId)
+        .map((approval) => approval.toolCallId as string),
+    );
+    return (this.repo.listRunSteps?.(organizationId, runId) ?? []).filter((step) => {
+      const output = step.output as { status?: unknown } | undefined;
+      return (
+        output?.status === 'waiting_for_approval' &&
+        !pendingApprovalToolCallIds.has(step.toolCallId)
+      );
+    });
+  }
+
+  protected async replayApprovedToolSteps(
+    organizationId: string,
+    runId: string,
+    context: Pick<ToolInvocationInput, 'taskSessionId' | 'spiritRole' | 'wakeReason'>,
+  ): Promise<void> {
+    for (const step of this.listStepsAwaitingApprovedReplay(organizationId, runId)) {
+      const invocation: ToolInvocationInput = {
+        organizationId: step.organizationId,
+        runId: step.runId,
+        memberId: step.agentId,
+        threadId: step.threadId,
+        ...context,
+        toolCallId: step.toolCallId,
+        toolId: step.toolId,
+        action: step.action,
+        resourceType: step.resourceType,
+        resourcePath: step.resourcePath || undefined,
+        input: step.input,
+        bypassPermission: true,
+      };
+      try {
+        await this.tools.invoke(invocation);
+      } catch {
+        // ToolService persists failures; continue replay.
+      }
+    }
   }
 
   protected isBroadOrgChannelSurface(
@@ -290,6 +361,45 @@ export class SpiritServiceBase {
     return goalModeEnabledFromMessage(
       this.repo.getLatestHumanMessageInThread(organizationId, threadId),
     );
+  }
+
+  protected resolveSystemPromptSuffix(input: {
+    organizationId: string;
+    taskSessionId?: string;
+    threadId?: string;
+    extraSuffix?: string;
+    messageContent?: string | null;
+    goalMode?: boolean;
+  }): string | undefined {
+    let messageContent = input.messageContent;
+    let goalMode = input.goalMode;
+
+    if (messageContent === undefined && goalMode === undefined && input.taskSessionId) {
+      const session = this.repo.getTaskSession(input.organizationId, input.taskSessionId);
+      const originMessageId = session?.origin?.messageId;
+      const originMessage = originMessageId
+        ? this.repo.getMessage(input.organizationId, originMessageId)
+        : null;
+      messageContent = originMessage?.content;
+      goalMode = goalModeEnabledFromMessage(originMessage);
+    }
+
+    if (messageContent === undefined && input.threadId) {
+      messageContent = this.repo.getLatestHumanMessageInThread(
+        input.organizationId,
+        input.threadId,
+      )?.content;
+    }
+
+    if (goalMode === undefined && input.threadId) {
+      goalMode = this.isGoalModeActive(input.organizationId, input.threadId);
+    }
+
+    return composeSystemPromptSuffix({
+      extraSuffix: input.extraSuffix,
+      messageContent,
+      goalMode,
+    });
   }
 
   protected emit(event: string, spirit: Spirit): void {

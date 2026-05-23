@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useDeferredValue, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { buildReasoningTraceSteps } from "../reasoning-trace";
 import { File, FileArchive, FileAudio, FileImage, FileText, FileVideo, SquarePen } from "lucide-react";
@@ -8,6 +8,7 @@ import type { BootstrapResponse } from "@ujima/api-schema";
 import type { SelectedConversation } from "../types";
 import { useConversationSync } from "../use-conversation-sync";
 import { DragHandle, WORKSPACE_MAIN_GRID_TRANSITION } from "./workspace-shell";
+import { TerminalDrawer, type ActiveJob } from "./chat/terminal-drawer";
 import {
   ChatHeader,
   ChatTabs,
@@ -62,6 +63,7 @@ interface ChannelViewProps {
   onOpenAgentEditor?: () => void;
   goalMode: boolean;
   onGoalModeChange: (active: boolean) => void;
+  onSelectConversation?: (conv: SelectedConversation) => void;
 }
 
 export function ChannelView({
@@ -71,6 +73,7 @@ export function ChannelView({
   onOpenAgentEditor,
   goalMode,
   onGoalModeChange,
+  onSelectConversation,
 }: ChannelViewProps) {
   const [isAtBottom, setIsAtBottom] = useState(true);
   const [resolvingApprovals, setResolvingApprovals] = useState<Record<string, boolean>>({});
@@ -103,6 +106,17 @@ export function ChannelView({
     () => (conversation.type === "channel" ? channelById.get(conversation.id) : undefined),
     [channelById, conversation.id, conversation.type],
   );
+  const isReadOnly = useMemo(() => {
+    const currentMemberId = bootstrap.auth.member?.id;
+    if (!currentMemberId) return false;
+    if (conversation.type === "channel") {
+      const channel = channelById.get(conversation.id);
+      if (channel && channel.memberIds) {
+        return !channel.memberIds.includes(currentMemberId);
+      }
+    }
+    return false;
+  }, [bootstrap.auth.member?.id, conversation.id, conversation.type, channelById]);
   const [channelMemberIds, setChannelMemberIds] = useState<string[]>(
     () => currentChannel?.memberIds ?? [],
   );
@@ -115,6 +129,106 @@ export function ChannelView({
     }
     return conversation.id;
   }, [bootstrap.auth.member?.id, conversation.id, conversation.type]);
+
+  const globalActiveRuns = useWorkspaceStore((state) => state.globalActiveRuns);
+  const [isTerminalDrawerOpen, setIsTerminalDrawerOpen] = useState(false);
+  const [runningTerminalsCount, setRunningTerminalsCount] = useState(0);
+  const [activeJobsList, setActiveJobsList] = useState<ActiveJob[]>([]);
+
+  useEffect(() => {
+    if (globalActiveRuns.length === 0) {
+      setRunningTerminalsCount(0);
+      setActiveJobsList([]);
+      return;
+    }
+
+    let cancelled = false;
+    const organizationId = bootstrap.organization?.id;
+    const pollJobs = async () => {
+      try {
+        const jobsPromises = globalActiveRuns.map(async (run) => {
+          const res = await fetch(`/api/runs/${encodeURIComponent(run.id)}/jobs?organizationId=${encodeURIComponent(organizationId ?? "")}`);
+          if (!res.ok) return [];
+          const data = await res.json().catch(() => []);
+          if (!Array.isArray(data)) return [];
+          return data.flatMap((job: unknown) => {
+            if (!job || typeof job !== "object") return [];
+            const record = job as Record<string, unknown>;
+            if (typeof record.id !== "string") return [];
+            return [
+              {
+                runId: run.id,
+                jobId: record.id,
+                commandLine: typeof record.commandLine === "string" ? record.commandLine : "",
+                cwd: typeof record.cwd === "string" ? record.cwd : "",
+                status: typeof record.status === "string" ? record.status : "running",
+              } satisfies ActiveJob,
+            ];
+          });
+        });
+
+        const allJobsLists = await Promise.all(jobsPromises);
+        if (cancelled) return;
+
+        const runningJobs = allJobsLists.flat().filter((job) => job.status === "running");
+        setRunningTerminalsCount(runningJobs.length);
+        setActiveJobsList(runningJobs);
+      } catch (e) {
+        console.error("Failed to fetch running background jobs:", e);
+      }
+    };
+
+    void pollJobs();
+    const interval = setInterval(pollJobs, 3000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [globalActiveRuns, bootstrap.organization?.id]);
+
+  const activeAgentChats = useMemo(() => {
+    const currentMemberId = bootstrap.auth.member?.id;
+    if (!currentMemberId) return [];
+
+    const activeRuns = globalActiveRuns.filter(
+      (run) => run.status === "running" || run.status === "waiting_for_approval"
+    );
+    const groupedByThread = new Map<string, typeof activeRuns>();
+    for (const run of activeRuns) {
+      if (run.threadId && run.threadId !== currentThreadId) {
+        const list = groupedByThread.get(run.threadId) ?? [];
+        list.push(run);
+        groupedByThread.set(run.threadId, list);
+      }
+    }
+
+    const results: Array<{
+      threadId: string;
+      name: string;
+      agents: string[];
+    }> = [];
+
+    for (const [threadId, runs] of groupedByThread) {
+      const channel = channelById.get(threadId);
+      if (channel && (!channel.memberIds || !channel.memberIds.includes(currentMemberId))) {
+        const activeAgentIds = Array.from(new Set(runs.map((r) => r.agentId)));
+        const activeAgentNames = activeAgentIds
+          .map((id) => memberById.get(id)?.name)
+          .filter(Boolean) as string[];
+        
+        if (activeAgentNames.length > 0) {
+          results.push({
+            threadId,
+            name: channel.name || activeAgentNames.join(" & "),
+            agents: activeAgentNames,
+          });
+        }
+      }
+    }
+
+    return results;
+  }, [globalActiveRuns, bootstrap.auth.member?.id, currentThreadId, channelById, memberById]);
 
   const traceMembers = useMemo(
     () =>
@@ -666,10 +780,72 @@ export function ChannelView({
             <TabEmpty emptyLabel="No activity." />
           )
         )}
+        {/* Floating Pills Rail */}
+        {(activeAgentChats.length > 0 || runningTerminalsCount > 0) && (
+          <div className="relative z-20 flex flex-wrap gap-2 px-4 pb-2 animate-in slide-in-from-bottom-2 duration-300">
+            {/* Agent Chatting Pills */}
+            {activeAgentChats.map((chat) => (
+              <button
+                key={chat.threadId}
+                type="button"
+                onClick={() => {
+                  handleTabChange("conversation");
+                  onSelectConversation?.({
+                    type: "channel",
+                    id: chat.threadId,
+                    name: chat.name,
+                  });
+                }}
+                className="flex items-center gap-2 rounded-full border border-violet-500/30 bg-zinc-950/80 px-3.5 py-1.5 text-xs text-zinc-100 backdrop-blur-md shadow-lg transition-all duration-300 hover:scale-102 hover:bg-zinc-900/95 active:scale-98 dark:border-violet-500/20"
+              >
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                </span>
+                <span className="font-medium">
+                  {chat.agents.join(" & ")} {chat.agents.length > 1 ? "are" : "is"} chatting
+                </span>
+              </button>
+            ))}
+
+            {/* Terminals Pill */}
+            {runningTerminalsCount > 0 && (
+              <div className="flex items-center gap-1 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setIsTerminalDrawerOpen(true)}
+                  className="flex items-center gap-2 rounded-full border border-zinc-200 bg-white/95 px-3.5 py-1.5 text-xs font-semibold text-zinc-800 backdrop-blur-md shadow-md hover:bg-zinc-50 active:scale-98 dark:border-zinc-800 dark:bg-zinc-950/95 dark:text-zinc-200"
+                >
+                  <svg
+                    className="h-3.5 w-3.5 text-zinc-500 animate-pulse"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    strokeWidth={2.2}
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                  </svg>
+                  <span>
+                    {runningTerminalsCount} {runningTerminalsCount === 1 ? "Terminal" : "Terminals"}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsTerminalDrawerOpen(true)}
+                  className="flex h-[29px] w-[29px] items-center justify-center rounded-full border border-zinc-200 bg-white/95 text-zinc-500 shadow-md hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950/95 dark:text-zinc-400"
+                  aria-label="More terminal details"
+                >
+                  <span className="text-xs font-semibold">...</span>
+                </button>
+              </div>
+            )}
+          </div>
+        )}
         <ChatInput
           organizationId={organizationId}
           goalMode={goalMode}
           onGoalModeChange={onGoalModeChange}
+          readOnly={isReadOnly}
           onCommand={async (command, content) => {
             if (command === "schedule") {
               const prompt = content?.replace(/^\/schedule\s*/i, "").trim();
@@ -742,6 +918,12 @@ export function ChannelView({
           </DetailsSidebar>
         </div>
       </div>
+      <TerminalDrawer
+        isOpen={isTerminalDrawerOpen}
+        onClose={() => setIsTerminalDrawerOpen(false)}
+        jobs={activeJobsList}
+        organizationId={organizationId ?? ""}
+      />
     </div>
   );
 }

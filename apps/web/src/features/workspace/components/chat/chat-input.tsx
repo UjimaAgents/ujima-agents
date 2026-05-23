@@ -167,6 +167,7 @@ export function ChatInput({
   onGoalModeChange,
   stoppableRunId,
   onStopRun,
+  readOnly = false,
 }: {
   placeholder?: string;
   organizationId?: string;
@@ -180,6 +181,7 @@ export function ChatInput({
   onGoalModeChange?: (active: boolean) => void;
   stoppableRunId?: string | null;
   onStopRun?: (runId: string) => Promise<void> | void;
+  readOnly?: boolean;
 }) {
   const goalMode = goalModeProp ?? false;
   const [content, setContent] = useState("");
@@ -491,7 +493,6 @@ export function ChatInput({
       return;
     }
 
-    const rawContent = content;
     setError(null);
     setIsCommanding(true);
     try {
@@ -541,6 +542,31 @@ export function ChatInput({
       setIsStopping(false);
     }
   };
+
+  if (readOnly) {
+    return (
+      <div className="shrink-0 px-3 pt-1.5 pb-3">
+        <div className="flex flex-col items-center justify-center rounded-xl border border-zinc-200/50 bg-zinc-50/70 p-4 text-center backdrop-blur-md dark:border-zinc-800/50 dark:bg-zinc-900/40 shadow-sm transition-all duration-300 animate-in fade-in zoom-in-95">
+          <div className="flex h-9 w-9 items-center justify-center rounded-full bg-violet-500/10 text-violet-600 dark:text-violet-400 mb-1.5 animate-pulse">
+            <svg
+              className="h-4.5 w-4.5"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              strokeWidth={2.2}
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+              <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+            </svg>
+          </div>
+          <p className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">Observer Mode</p>
+          <p className="text-[10px] text-zinc-400 dark:text-zinc-500 mt-0.5 max-w-xs leading-relaxed">
+            You are viewing a conversation between agents. Direct interaction is restricted.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="shrink-0 px-3 pt-1.5 pb-0">

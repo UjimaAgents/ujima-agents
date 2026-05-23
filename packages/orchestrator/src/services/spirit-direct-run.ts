@@ -18,8 +18,6 @@ import { requireTeam } from '../utils/require-team.js';
 import { findToolApprovalRequiredError } from './tool-loop-result.js';
 import { extractReasoningChunk } from '../utils/extract-reasoning.js';
 import { appendGoalArtifactToolCall, buildGoalArtifactMessage } from './goal-artifact-card.js';
-import { goalModeSystemPromptSuffix } from './goal-mode-prompt.js';
-import { scheduleToolSystemPromptSuffix } from './schedule-prompt.js';
 import { pendingApprovalRunSummary } from './approval-summary.js';
 import {
   findTerminatingTool,
@@ -27,7 +25,6 @@ import {
   runUsedChannelPass,
   runUsedThreadPublishingTool,
 } from './run-reply-guard.js';
-import type { ToolInvocationInput } from './tool-service.js';
 import type { CreateRunInput, RunDetail } from './spirit-types.js';
 import { aggregateToolUsage } from './spirit-run-detail.js';
 import type { RunSpiritOutcome } from './spirit-types.js';
@@ -40,7 +37,7 @@ export class SpiritServiceDirectRun extends SpiritServiceSupervisor {
     allowRun = true,
     approvalScope?: string,
   ): Promise<RunSpiritOutcome | Spirit | RunState | null> {
-    const spirit = this.findActiveSpiritByRunId(organizationId, runId);
+    const spirit = this.resolveSpiritForRun(organizationId, runId);
     if (spirit) {
       if (allowRun) {
         this.tools.allowRun(organizationId, runId, approvalScope);
@@ -69,7 +66,7 @@ export class SpiritServiceDirectRun extends SpiritServiceSupervisor {
         return spirit;
       }
 
-      await this.executePendingApprovedTools(spirit);
+      await this.replayApprovedToolsForSpirit(spirit);
       return this.run({
         organizationId,
         taskSessionId: spirit.taskSessionId,
@@ -370,19 +367,10 @@ export class SpiritServiceDirectRun extends SpiritServiceSupervisor {
     this.runAbortControllers.set(abortKey, abortController);
 
     try {
-      const goalModeActive = this.isGoalModeActive(run.organizationId, run.threadId ?? '');
-      const latestHumanMessage = this.repo.getLatestHumanMessageInThread(run.organizationId, run.threadId ?? '');
-      const systemPromptSuffix = [
-        goalModeSystemPromptSuffix({
-          goalMode: goalModeActive,
-          messageContent: latestHumanMessage?.content,
-        }),
-        scheduleToolSystemPromptSuffix({
-          messageContent: latestHumanMessage?.content,
-        }),
-      ]
-        .filter(Boolean)
-        .join('\n\n') || undefined;
+      const systemPromptSuffix = this.resolveSystemPromptSuffix({
+        organizationId: run.organizationId,
+        threadId: run.threadId ?? '',
+      });
       let streamedText = '';
       let streamedReasoning = '';
       const ai = this.ai;
@@ -740,42 +728,7 @@ export class SpiritServiceDirectRun extends SpiritServiceSupervisor {
   }
 
   protected async executePendingApprovedRunTools(run: RunState): Promise<RunState> {
-    const pendingApprovalToolCallIds = new Set(
-      this.repo
-        .listPendingApprovals(run.organizationId)
-        .filter((approval) => approval.runId === run.id && approval.toolCallId)
-        .map((approval) => approval.toolCallId as string),
-    );
-    const pendingSteps = this.repo
-      .listRunSteps?.(run.organizationId, run.id) ?? [];
-    const runContext = this.toolInvocationContextForRun(run);
-    for (const step of pendingSteps.filter((item) => {
-      const output = item.output as { status?: unknown } | undefined;
-      return output?.status === 'waiting_for_approval' && !pendingApprovalToolCallIds.has(item.toolCallId);
-    })) {
-      const invocation: ToolInvocationInput = {
-        organizationId: step.organizationId,
-        runId: step.runId,
-        memberId: step.agentId,
-        threadId: step.threadId,
-        taskSessionId: runContext.taskSessionId,
-        spiritRole: runContext.spiritRole,
-        wakeReason: runContext.wakeReason,
-        toolCallId: step.toolCallId,
-        toolId: step.toolId,
-        action: step.action,
-        resourceType: step.resourceType,
-        resourcePath: step.resourcePath || undefined,
-        input: step.input,
-        bypassPermission: true,
-      };
-
-      try {
-        await this.tools.invoke(invocation);
-      } catch {
-        // Tool failures are already persisted by ToolService; keep going.
-      }
-    }
+    await this.replayApprovedToolsForRun(run);
     return run;
   }
 }
