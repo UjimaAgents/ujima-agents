@@ -1252,6 +1252,86 @@ describe('SpiritService run path', () => {
     expect(messages[0].metadata).toEqual({ runId, failedTrace: true });
   });
 
+  it('persists blocked traces even when goal artifact extraction cannot read the file', async () => {
+    const organizationId = 'org-1';
+    const runId = 'run-blocked-goal-1';
+    const agentId = 'Quinn Mason';
+    const threadId = 'thread-1';
+    const messages: any[] = [];
+    let run: any = {
+      id: runId,
+      organizationId,
+      agentId,
+      threadId,
+      status: 'queued',
+      step: 'queued',
+      summary: 'Run queued',
+      startedAt: '2026-05-04T19:07:08.071Z',
+    };
+    const repo = {
+      getMember: () => ({
+        id: agentId,
+        organizationId,
+        name: agentId,
+        kind: AGENT_KIND,
+        roleName: 'backend-engineer',
+      }),
+      saveRun: (next: any) => {
+        run = next;
+        return next;
+      },
+      getRun: () => run,
+      getProviderCredential: () => null,
+      getWorkspaceSetting: () => null,
+      listMembers: () => [],
+      listPendingApprovals: () => [],
+      listRunSteps: () => [],
+      listMessages: () => ({ data: [], hasMore: false }),
+      getLatestHumanMessageInThread: () => null,
+      getSpiritByRunId: () => null,
+      getThread: () => ({ channelId: 'channel-1' }),
+    } as never;
+    const service = createSpiritRunService(
+      {
+        getTeam: () =>
+          loadAgentTeam({
+            name: 'Timetotest',
+            workspace: { root: '/Users/mac/Documents/Work/Timetotest' },
+            roles: [{ name: 'backend-engineer', title: 'Backend Engineer', instructions: 'Work.', tools: ['view'] }],
+            agents: [{ name: agentId, roleName: 'backend-engineer' }],
+          }),
+        setTeam: () => undefined,
+      } as never,
+      repo,
+      { emit: () => undefined } as never,
+      { publishMessage: (message: any) => messages.push(message) } as never,
+      {
+        generateRunReply: async () => ({
+          text: 'I tried to write the goal.',
+          reasoningText: 'Need to update the goal file.',
+          toolResults: [],
+          steps: [
+            {
+              text: 'I tried to write the goal.',
+              reasoningText: 'Need to update the goal file.',
+              toolCalls: [{ toolCallId: 'tool-call-1', toolName: 'write', input: { resourcePath: '.ujima-goals/plan.md' } }],
+              toolResults: [{ toolCallId: 'tool-call-1', output: { status: 'blocked', code: 'blocked_tool' } }],
+            },
+          ],
+        }),
+      } as never,
+      { allowRun: () => undefined, invoke: async () => ({ ok: true }) } as never,
+    );
+
+    const result = await (service as any).advanceRun(run);
+
+    expect(result.status).toBe('failed');
+    expect(result.summary).toBe('Tool action blocked');
+    expect(messages).toHaveLength(1);
+    expect(messages[0].content).toBe('I tried to write the goal.');
+    expect(messages[0].metadata).toEqual({ runId, failedTrace: true });
+  });
+
   it('persists streamed trace when run generation throws', async () => {
     const organizationId = 'org-1';
     const runId = 'run-throw-1';

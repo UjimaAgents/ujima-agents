@@ -29,7 +29,12 @@ export async function appendGoalArtifactToolCall(
   const relativePath = normalizePath(path.relative(rootPath, resolvedPath));
   if (!relativePath.startsWith(`${GOAL_ARTIFACT_DIR}/`)) return undefined;
 
-  const content = await readFile(resolvedPath, 'utf8');
+  let content: string;
+  try {
+    content = await readFile(resolvedPath, 'utf8');
+  } catch {
+    return undefined;
+  }
   const card = buildGoalArtifactCard(relativePath, content);
 
   return {

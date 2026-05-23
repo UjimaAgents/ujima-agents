@@ -490,6 +490,9 @@ function applyWhitespaceEdit(
   newString: string,
   options: { replaceAll: boolean; startLine?: number },
 ): string {
+  if (oldString.trim().length === 0) {
+    throw new Error('match_strategy="whitespace" requires at least one non-whitespace character in oldString');
+  }
   const pattern = whitespacePattern(oldString);
   const flags = options.replaceAll ? 'g' : '';
   const regex = new RegExp(pattern, flags);

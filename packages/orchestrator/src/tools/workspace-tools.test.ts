@@ -71,4 +71,29 @@ describe('workspace edit tools', () => {
 
     expect(await readFile(file, 'utf8')).toBe('function run() {\n  return 2;\n}\n');
   });
+
+  it('rejects whitespace-only match targets', async () => {
+    root = await mkdtemp(join(tmpdir(), 'ujima-edit-'));
+    const file = join(root, 'a.ts');
+    await writeFile(file, 'const value = 1;\n', 'utf8');
+
+    await expect(
+      editTool.execute({
+        invocation: {
+          organizationId: 'org-1',
+          runId: 'run-1',
+          memberId: 'agent-1',
+          toolCallId: 'call-1',
+          toolId: 'edit',
+          action: 'write',
+          resourceType: 'file',
+          resourcePath: 'a.ts',
+          input: { oldString: '   \n', newString: 'x', matchStrategy: 'whitespace' },
+        } as never,
+        team: { workspace: { root } } as never,
+        repo: {} as never,
+        conversations: {} as never,
+      }),
+    ).rejects.toThrow('match_strategy="whitespace" requires at least one non-whitespace character in oldString');
+  });
 });
