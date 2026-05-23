@@ -7,10 +7,8 @@ import {
   orgRoom,
   type Message,
   AGENT_KIND,
-  isDirectMessageThread,
 } from '@ujima/shared';
 import { MESSAGE_TOOL_USAGE_GUIDANCE } from '@ujima/framework';
-import type { ActiveSpiritEntry } from './active-spirit-registry.js';
 import type {
   SpiritAlertDispatchResult,
   SpiritAlertInput,
@@ -300,65 +298,5 @@ export class SpiritServiceSupervisor extends SpiritServiceAgentRun {
     );
     if (last === undefined) return false;
     return Date.now() - last < this.supervisorDebounceMs;
-  }
-
-  protected isBroadOrgChannelSurface(
-    organizationId: string,
-    threadId: string,
-    channelId?: string,
-  ): boolean {
-    const getChannel = this.repo.getChannel;
-    if (typeof getChannel !== 'function') return false;
-    const check = (surfaceId: string): boolean => {
-      const ch = getChannel.call(this.repo, organizationId, surfaceId);
-      if (!ch) return false;
-      return ch.kind === 'general' || ch.kind === 'group';
-    };
-    if (check(threadId)) return true;
-    if (channelId && channelId !== threadId && check(channelId)) return true;
-    return false;
-  }
-
-  protected findActiveSpiritForThread(
-    active: ActiveSpiritEntry[],
-    organizationId: string,
-    threadId: string,
-    channelId?: string,
-  ): ActiveSpiritEntry | null {
-    if (active.length === 0) return null;
-
-    const matchesSurface = (entry: ActiveSpiritEntry): boolean => {
-      const session = this.repo.getTaskSession(entry.organizationId, entry.taskSessionId);
-      if (!session) return false;
-      if (session.channelId === threadId || (channelId !== undefined && session.channelId === channelId)) {
-        return true;
-      }
-      const { origin } = session;
-      if (
-        origin.channelId &&
-        (origin.channelId === threadId || (channelId !== undefined && origin.channelId === channelId))
-      ) {
-        return true;
-      }
-      if (origin.threadId && origin.threadId === threadId) {
-        return true;
-      }
-      return false;
-    };
-
-    const direct = active.find((entry) => matchesSurface(entry));
-    if (direct) return direct;
-
-    if (
-      isDirectMessageThread(threadId) ||
-      (channelId !== undefined && isDirectMessageThread(channelId))
-    ) {
-      return null;
-    }
-
-    if (this.isBroadOrgChannelSurface(organizationId, threadId, channelId)) {
-      return active[0] ?? null;
-    }
-    return null;
   }
 }

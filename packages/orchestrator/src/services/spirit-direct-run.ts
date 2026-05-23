@@ -748,6 +748,7 @@ export class SpiritServiceDirectRun extends SpiritServiceSupervisor {
     );
     const pendingSteps = this.repo
       .listRunSteps?.(run.organizationId, run.id) ?? [];
+    const runContext = this.toolInvocationContextForRun(run);
     for (const step of pendingSteps.filter((item) => {
       const output = item.output as { status?: unknown } | undefined;
       return output?.status === 'waiting_for_approval' && !pendingApprovalToolCallIds.has(item.toolCallId);
@@ -757,6 +758,9 @@ export class SpiritServiceDirectRun extends SpiritServiceSupervisor {
         runId: step.runId,
         memberId: step.agentId,
         threadId: step.threadId,
+        taskSessionId: runContext.taskSessionId,
+        spiritRole: runContext.spiritRole,
+        wakeReason: runContext.wakeReason,
         toolCallId: step.toolCallId,
         toolId: step.toolId,
         action: step.action,
