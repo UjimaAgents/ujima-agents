@@ -23,7 +23,7 @@ const agent: AgentDef = {
   permissions: {
     allowed_tools: ['read_file', 'write_file'],
     blocked_tools: [],
-    rate_limit: { calls_per_minute: 30, max_session_tokens: 100_000 },
+    rate_limit: { max_session_tokens: 100_000 },
   },
   communication: { publishes: [], subscribes: [] },
   escalation: { conditions: [], escalate_to: 'human' },

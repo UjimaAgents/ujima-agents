@@ -57,7 +57,7 @@ describe('createPermissionGatedToolService', () => {
           permissions: {
             allowed_tools: [],
             blocked_tools: [],
-            rate_limit: { calls_per_minute: 30, max_session_tokens: 1000 },
+            rate_limit: { max_session_tokens: 1000 },
           },
           communication: { publishes: [], subscribes: [] },
           escalation: { conditions: [], escalate_to: 'human' },
@@ -284,7 +284,7 @@ describe('createPermissionGatedToolService', () => {
     expect(innerCalls).toBe(1);
   });
 
-  it('returns structured denial with code and records run step for rate_limited', async () => {
+  it('returns structured denial with code and records run step for permission blocks', async () => {
     const denials: { code?: string; toolCallId: string }[] = [];
     const inner: ToolService = {
       async invoke() {
@@ -301,8 +301,8 @@ describe('createPermissionGatedToolService', () => {
         async check() {
           return {
             allowed: false,
-            reason: 'Agent "agent-1" exceeded rate limit of 30 calls/min',
-            code: 'rate_limited',
+            reason: 'Tool "view" is blocked for agent "agent-1"',
+            code: 'blocked_tool',
           };
         },
         async recordUsage() {
@@ -343,7 +343,7 @@ describe('createPermissionGatedToolService', () => {
       organizationId: 'org-1',
       runId: 'run-1',
       memberId: 'agent-1',
-      toolCallId: 'tool-rate-1',
+      toolCallId: 'tool-blocked-1',
       toolId: 'view',
       action: 'read',
       resourceType: 'file',
@@ -352,12 +352,12 @@ describe('createPermissionGatedToolService', () => {
     });
 
     expect(result.ok).toBe(false);
-    expect(result.code).toBe('rate_limited');
+    expect(result.code).toBe('blocked_tool');
     expect(result.output).toEqual({
       status: 'blocked',
-      code: 'rate_limited',
-      error: 'Agent "agent-1" exceeded rate limit of 30 calls/min',
+      code: 'blocked_tool',
+      error: 'Tool "view" is blocked for agent "agent-1"',
     });
-    expect(denials).toEqual([{ code: 'rate_limited', toolCallId: 'tool-rate-1' }]);
+    expect(denials).toEqual([{ code: 'blocked_tool', toolCallId: 'tool-blocked-1' }]);
   });
 });

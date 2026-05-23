@@ -1,7 +1,7 @@
 import { useMemo, useState, type ReactElement } from 'react';
 import {
   bucketSamples,
-  callsPerMinute,
+  callsInLastMinute,
   evaluatePolicy,
   filterAuditRecords,
   uniqueAuditAgents,
@@ -36,7 +36,7 @@ const TABS: { key: TabKey; label: string }[] = [
   { key: 'iam', label: 'IAM Matrix' },
   { key: 'gates', label: 'Pending Gates' },
   { key: 'permissions', label: 'Permissions' },
-  { key: 'rate', label: 'Rate Dashboard' },
+  { key: 'rate', label: 'Activity Dashboard' },
   { key: 'history', label: 'Session History' },
 ];
 
@@ -382,11 +382,10 @@ function PermissionForm({ agent }: { agent: GovernanceAgentView }): ReactElement
   const initial: AgentPermissions = agent.permissions ?? {
     allowed_tools: [],
     blocked_tools: [],
-    rate_limit: { calls_per_minute: 30, max_session_tokens: 100_000 },
+    rate_limit: { max_session_tokens: 100_000 },
   };
   const [allowed, setAllowed] = useState(initial.allowed_tools.join('\n'));
   const [blocked, setBlocked] = useState(initial.blocked_tools.join('\n'));
-  const [callsPerMin, setCallsPerMin] = useState(initial.rate_limit.calls_per_minute);
   const [maxTokens, setMaxTokens] = useState(initial.rate_limit.max_session_tokens);
 
   const apply = (scope: 'session' | 'def'): void => {
@@ -394,7 +393,6 @@ function PermissionForm({ agent }: { agent: GovernanceAgentView }): ReactElement
       allowed_tools: parseList(allowed),
       blocked_tools: parseList(blocked),
       rate_limit: {
-        calls_per_minute: Math.max(1, callsPerMin | 0),
         max_session_tokens: Math.max(1, maxTokens | 0),
       },
     };
@@ -423,16 +421,6 @@ function PermissionForm({ agent }: { agent: GovernanceAgentView }): ReactElement
         </label>
       </div>
       <div style={{ display: 'flex', gap: '0.75rem' }}>
-        <label style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-          <span style={labelStyle}>Calls / minute</span>
-          <input
-            type="number"
-            min={1}
-            value={callsPerMin}
-            onChange={(e) => setCallsPerMin(Number(e.target.value))}
-            style={inputStyle}
-          />
-        </label>
         <label style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
           <span style={labelStyle}>Max session tokens</span>
           <input
@@ -472,9 +460,7 @@ function RateDashboard({
     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', padding: '0.75rem 1rem', overflowY: 'auto', height: '100%', minHeight: 0 }}>
       {agents.map((a) => {
         const samples = rate.get(a.id) ?? [];
-        const cpm = callsPerMinute(samples);
-        const limit = a.permissions?.rate_limit.calls_per_minute ?? 0;
-        const ratio = limit > 0 ? cpm / limit : 0;
+        const cpm = callsInLastMinute(samples);
         return (
           <div
             key={a.id}
@@ -493,9 +479,7 @@ function RateDashboard({
             </div>
             <Sparkline samples={samples} />
             <div style={{ minWidth: 120, textAlign: 'right' }}>
-              <div style={{ color: ratio >= 1 ? 'var(--vscode-errorForeground, #f48771)' : ratio >= 0.8 ? 'var(--vscode-editorWarning-foreground, #cca700)' : 'inherit' }}>
-                {cpm}{limit > 0 ? ` / ${limit}` : ''} cpm
-              </div>
+              <div>{cpm} cpm</div>
               <div style={{ opacity: 0.55, fontSize: '0.75em' }}>
                 {a.tokensUsed.toLocaleString()} tokens
               </div>

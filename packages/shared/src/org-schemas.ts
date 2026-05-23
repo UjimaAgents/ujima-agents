@@ -233,6 +233,8 @@ export const MessageMetadataSchema = z.object({
   handoff: HandoffMetadataSchema.optional(),
   /** Correlates persisted agent replies with in-flight `run:chunk` streaming bubbles. */
   runId: IdSchema.optional(),
+  failedTrace: z.boolean().optional(),
+  stoppedTrace: z.boolean().optional(),
 }).optional();
 export type MessageMetadata = z.infer<typeof MessageMetadataSchema>;
 

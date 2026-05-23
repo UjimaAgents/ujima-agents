@@ -3,7 +3,7 @@ import {
   auditToCsv,
   auditToJson,
   bucketSamples,
-  callsPerMinute,
+  callsInLastMinute,
   filterAuditRecords,
   summarizeSession,
   uniqueAuditAgents,
@@ -95,15 +95,15 @@ describe('audit export', () => {
   });
 });
 
-describe('rate aggregation', () => {
-  it('callsPerMinute sums within 60s window', () => {
+describe('activity aggregation', () => {
+  it('sums calls within 60s window', () => {
     const now = Date.now();
     const samples = [
       { at: new Date(now - 30_000).toISOString(), calls: 2, tokens: 0 },
       { at: new Date(now - 45_000).toISOString(), calls: 3, tokens: 0 },
       { at: new Date(now - 120_000).toISOString(), calls: 100, tokens: 0 },
     ];
-    expect(callsPerMinute(samples, now)).toBe(5);
+    expect(callsInLastMinute(samples, now)).toBe(5);
   });
 
   it('bucketSamples distributes by timestamp', () => {

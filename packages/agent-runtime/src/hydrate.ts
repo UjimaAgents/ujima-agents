@@ -28,7 +28,6 @@ export interface HydrateDeps {
   constraints?: {
     maxToolIterations?: number;
     maxSessionTokens?: number;
-    callsPerMinute?: number;
   };
 }
 
@@ -139,7 +138,6 @@ function buildSystemPrompt(opts: {
   constraints?: {
     maxToolIterations?: number;
     maxSessionTokens?: number;
-    callsPerMinute?: number;
   };
 }): string {
   const { agent, task, events, peerOutputs, approvedArtifacts, sessionId, teammates, mcpMeta, constraints } = opts;
@@ -208,9 +206,6 @@ function buildSystemPrompt(opts: {
     }
     if (constraints.maxSessionTokens) {
       cLines.push(`- Token budget: ${constraints.maxSessionTokens.toLocaleString()} tokens`);
-    }
-    if (constraints.callsPerMinute) {
-      cLines.push(`- Rate limit: ${constraints.callsPerMinute} tool calls/minute`);
     }
     sections.push(cLines.join('\n'));
   }

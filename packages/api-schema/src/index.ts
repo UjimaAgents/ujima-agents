@@ -22,7 +22,6 @@ export const ErrorCodeSchema = z.enum([
   'ERR_NOT_FOUND',
   'ERR_BAD_REQUEST',
   'ERR_CONFLICT',
-  'ERR_RATE_LIMITED',
   'ERR_INTERNAL',
   'ERR_NO_WORKSPACE_ROOT',
   'ERR_PATH_ESCAPE',

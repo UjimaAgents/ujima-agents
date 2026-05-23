@@ -125,7 +125,6 @@ export function ensureWorkspaceMemberScopes(
   return upsertWorkspaceMemberScopes(repo, organizationId, memberId, desiredScopes);
 }
 
-/** Resolves paths inside the workspace root; role scope is enforced by policy. */
 export async function createMemberBoundaryPathResolver(
   repo: ApiRepository,
   team: AgentTeamHandle,

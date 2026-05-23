@@ -185,7 +185,7 @@ async function main(): Promise<void> {
         permissions: {
           allowed_tools: [...allowedTools],
           blocked_tools: [],
-          rate_limit: { calls_per_minute: 30, max_session_tokens: 100_000 },
+          rate_limit: { max_session_tokens: 100_000 },
         },
         communication: { publishes: [], subscribes: [] },
         escalation: { conditions: [], escalate_to: 'human' },
@@ -276,27 +276,24 @@ async function main(): Promise<void> {
 }
 
 function closeOrphanedActiveRuns(repository: Repository): void {
-  const snapshot = repository.getBootstrapSnapshot();
-  if (!snapshot.organization) return;
-
   const endedAt = new Date().toISOString();
-  for (const run of snapshot.activeRuns) {
-    repository.saveRun({
-      ...run,
-      status: 'failed',
-      step: 'failed',
-      summary: 'Runtime restarted before this run completed.',
-      endedAt,
-    });
-  }
+  for (const organization of repository.listOrganizations()) {
+    const snapshot = repository.getBootstrapSnapshot(organization.id);
+    for (const run of snapshot.activeRuns) {
+      repository.saveRun({
+        ...run,
+        status: 'failed',
+        step: 'failed',
+        summary: 'Runtime restarted before this run completed.',
+        endedAt,
+      });
+    }
 
-  const pendingApprovals = repository.listPendingApprovals(snapshot.organization.id);
-  for (const approval of pendingApprovals) {
-    const run = approval.runId
-      ? repository.getRun(snapshot.organization.id, approval.runId)
-      : null;
-    if (!run || isTerminalRunStatus(run.status)) {
-      repository.deleteApproval(snapshot.organization.id, approval.id);
+    for (const approval of repository.listPendingApprovals(organization.id)) {
+      const run = approval.runId ? repository.getRun(organization.id, approval.runId) : null;
+      if (!run || isTerminalRunStatus(run.status)) {
+        repository.deleteApproval(organization.id, approval.id);
+      }
     }
   }
 }

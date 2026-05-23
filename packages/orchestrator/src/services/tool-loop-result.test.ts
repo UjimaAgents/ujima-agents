@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { PathEscapeError } from './workspace-root.js';
-import { pathEscapeToolResult, permissionDenialResult } from './tool-service.js';
+import { pathEscapeToolResult } from './tool-service.js';
 import {
   ToolApprovalRequiredError,
   findToolApprovalRequiredError,
@@ -55,19 +55,5 @@ describe('tool loop approval control flow', () => {
       error: err.message,
     });
     expect(JSON.stringify(modelOutput).toLowerCase()).not.toMatch(/rate[\s_-]?limit/);
-  });
-
-  it('rate_limited denials include code rate_limited for the model', () => {
-    const denial = permissionDenialResult({
-      allowed: false,
-      reason: 'Agent "ethan" exceeded rate limit of 30 calls/min',
-      code: 'rate_limited',
-    });
-    expect(denial.code).toBe('rate_limited');
-    expect(toModelToolOutput(denial)).toEqual({
-      status: 'blocked',
-      code: 'rate_limited',
-      error: 'Agent "ethan" exceeded rate limit of 30 calls/min',
-    });
   });
 });

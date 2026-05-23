@@ -32,6 +32,15 @@ function booleanFrom(args: Record<string, unknown>, primary: string, alias: stri
   return typeof value === 'boolean' ? value : false;
 }
 
+function numberFrom(args: Record<string, unknown>, primary: string, alias: string): number | undefined {
+  const value = args[alias] ?? args[primary];
+  return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : undefined;
+}
+
+function matchStrategyFrom(args: Record<string, unknown>): 'exact' | 'whitespace' {
+  return args.matchStrategy === 'whitespace' || args.match_strategy === 'whitespace' ? 'whitespace' : 'exact';
+}
+
 const EditSchema = z.object({
   ...FilePathFields,
   oldString: z.string().optional().describe('Exact text to replace. `old_string` is also accepted.'),
@@ -40,6 +49,10 @@ const EditSchema = z.object({
   new_string: z.string().optional().describe('Replacement text. Prefer this field.'),
   replaceAll: z.boolean().optional().describe('Replace every occurrence. `replace_all` is also accepted.'),
   replace_all: z.boolean().optional().describe('Replace every occurrence. Prefer this field.'),
+  startLine: z.number().int().min(1).optional().describe('1-based line near the intended match. `start_line` is also accepted.'),
+  start_line: z.number().int().min(1).optional().describe('1-based line near the intended match. Prefer this field.'),
+  matchStrategy: z.enum(['exact', 'whitespace']).optional().describe('Use whitespace only when formatting drift prevents an exact match.'),
+  match_strategy: z.enum(['exact', 'whitespace']).optional().describe('Use whitespace only when formatting drift prevents an exact match. Prefer this field.'),
 }).superRefine((value, ctx) => {
   if (!filePathFrom(value).trim()) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['file_path'], message: 'file_path is required' });
@@ -63,6 +76,10 @@ const MultiEditSchema = z.object({
         new_string: z.string().optional().describe('Replacement text. Prefer this field.'),
         replaceAll: z.boolean().optional().describe('Replace every occurrence. `replace_all` is also accepted.'),
         replace_all: z.boolean().optional().describe('Replace every occurrence. Prefer this field.'),
+        startLine: z.number().int().min(1).optional().describe('1-based line near the intended match. `start_line` is also accepted.'),
+        start_line: z.number().int().min(1).optional().describe('1-based line near the intended match. Prefer this field.'),
+        matchStrategy: z.enum(['exact', 'whitespace']).optional().describe('Use whitespace only when formatting drift prevents an exact match.'),
+        match_strategy: z.enum(['exact', 'whitespace']).optional().describe('Use whitespace only when formatting drift prevents an exact match. Prefer this field.'),
       }).superRefine((value, ctx) => {
         if (stringFrom(value, 'oldString', 'old_string') === '') {
           ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['old_string'], message: 'old_string is required' });
@@ -200,6 +217,8 @@ export const editTool: OrchestratorTool<typeof EditSchema> = {
       oldString: stringFrom(args, 'oldString', 'old_string'),
       newString: stringFrom(args, 'newString', 'new_string'),
       replaceAll: booleanFrom(args, 'replaceAll', 'replace_all'),
+      startLine: numberFrom(args, 'startLine', 'start_line'),
+      matchStrategy: matchStrategyFrom(args),
     },
   }),
   execute: async ({ invocation, team }) => {
@@ -212,7 +231,9 @@ export const editTool: OrchestratorTool<typeof EditSchema> = {
     const oldString = String(invocation.input?.oldString ?? '');
     const newString = String(invocation.input?.newString ?? '');
     const replaceAll = invocation.input?.replaceAll === true;
-    const after = applyExactEdit(before, oldString, newString, replaceAll);
+    const startLine = typeof invocation.input?.startLine === 'number' ? invocation.input.startLine : undefined;
+    const matchStrategy = invocation.input?.matchStrategy === 'whitespace' ? 'whitespace' : 'exact';
+    const after = applyEdit(before, oldString, newString, { replaceAll, startLine, matchStrategy });
 
     if (after === before) {
       return {
@@ -245,6 +266,8 @@ export const multieditTool: OrchestratorTool<typeof MultiEditSchema> = {
         oldString: stringFrom(edit, 'oldString', 'old_string'),
         newString: stringFrom(edit, 'newString', 'new_string'),
         replaceAll: booleanFrom(edit, 'replaceAll', 'replace_all'),
+        startLine: numberFrom(edit, 'startLine', 'start_line'),
+        matchStrategy: matchStrategyFrom(edit),
       })),
     },
   }),
@@ -262,7 +285,13 @@ export const multieditTool: OrchestratorTool<typeof MultiEditSchema> = {
       const oldString = String((edit as { oldString?: unknown }).oldString ?? '');
       const newString = String((edit as { newString?: unknown }).newString ?? '');
       const replaceAll = (edit as { replaceAll?: unknown }).replaceAll === true;
-      after = applyExactEdit(after, oldString, newString, replaceAll);
+      const startLine = typeof (edit as { startLine?: unknown }).startLine === 'number'
+        ? (edit as { startLine: number }).startLine
+        : undefined;
+      const matchStrategy = (edit as { matchStrategy?: unknown }).matchStrategy === 'whitespace'
+        ? 'whitespace'
+        : 'exact';
+      after = applyEdit(after, oldString, newString, { replaceAll, startLine, matchStrategy });
     }
 
     if (after === before) {
@@ -413,7 +442,12 @@ function numberedWindow(content: string, offset: number, limit: number): string 
   return numbered.join('\n');
 }
 
-function applyExactEdit(content: string, oldString: string, newString: string, replaceAll: boolean): string {
+function applyEdit(
+  content: string,
+  oldString: string,
+  newString: string,
+  options: { replaceAll: boolean; startLine?: number; matchStrategy: 'exact' | 'whitespace' },
+): string {
   if (oldString.length === 0) {
     if (content.length === 0) {
       return newString;
@@ -421,22 +455,93 @@ function applyExactEdit(content: string, oldString: string, newString: string, r
     throw new Error('oldString cannot be empty for an existing file');
   }
 
+  if (options.matchStrategy === 'whitespace') {
+    return applyWhitespaceEdit(content, oldString, newString, options);
+  }
+
   const occurrences = countOccurrences(content, oldString);
-  if (replaceAll) {
+  if (options.replaceAll) {
     if (occurrences === 0) {
-      throw new Error('oldString was not found');
+      throw new Error('oldString was not found. Use view/grep to copy exact text, or set match_strategy="whitespace" for whitespace-only drift.');
     }
     return content.split(oldString).join(newString);
+  }
+
+  if (options.startLine && occurrences > 1) {
+    const match = closestExactMatch(content, oldString, options.startLine);
+    if (match) {
+      return content.slice(0, match.index) + newString + content.slice(match.index + oldString.length);
+    }
   }
 
   if (occurrences !== 1) {
     throw new Error(
       occurrences === 0
-        ? 'oldString was not found'
-        : 'oldString must match exactly one location unless replaceAll is true',
+        ? 'oldString was not found. Use view/grep to copy exact text, or set match_strategy="whitespace" for whitespace-only drift.'
+        : 'oldString matched multiple locations. Pass start_line near the intended match or replace_all=true.',
     );
   }
   return content.replace(oldString, newString);
+}
+
+function applyWhitespaceEdit(
+  content: string,
+  oldString: string,
+  newString: string,
+  options: { replaceAll: boolean; startLine?: number },
+): string {
+  if (oldString.trim().length === 0) {
+    throw new Error('match_strategy="whitespace" requires at least one non-whitespace character in oldString');
+  }
+  const pattern = whitespacePattern(oldString);
+  const flags = options.replaceAll ? 'g' : '';
+  const regex = new RegExp(pattern, flags);
+  const matches = [...content.matchAll(new RegExp(pattern, 'g'))];
+  if (matches.length === 0) {
+    throw new Error('oldString was not found, even with match_strategy="whitespace"');
+  }
+  if (options.replaceAll) {
+    return content.replace(regex, () => newString);
+  }
+  const match = options.startLine
+    ? closestRegexMatch(content, matches, options.startLine)
+    : matches.length === 1 ? matches[0] : undefined;
+  if (!match?.index && match?.index !== 0) {
+    throw new Error('oldString matched multiple locations. Pass start_line near the intended match or replace_all=true.');
+  }
+  return content.slice(0, match.index) + newString + content.slice(match.index + match[0].length);
+}
+
+function whitespacePattern(value: string): string {
+  return value
+    .trim()
+    .split(/\s+/)
+    .map(escapeRegex)
+    .join('\\s+');
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function closestExactMatch(content: string, oldString: string, startLine: number): { index: number } | undefined {
+  const matches: { index: number; distance: number }[] = [];
+  let index = content.indexOf(oldString);
+  while (index !== -1) {
+    matches.push({ index, distance: Math.abs(lineNumberAt(content, index) - startLine) });
+    index = content.indexOf(oldString, index + oldString.length);
+  }
+  return matches.sort((a, b) => a.distance - b.distance)[0];
+}
+
+function closestRegexMatch(content: string, matches: RegExpMatchArray[], startLine: number): RegExpMatchArray | undefined {
+  return matches
+    .filter((match): match is RegExpMatchArray & { index: number } => typeof match.index === 'number')
+    .sort((a, b) => Math.abs(lineNumberAt(content, a.index) - startLine) - Math.abs(lineNumberAt(content, b.index) - startLine))[0];
+}
+
+function lineNumberAt(content: string, index: number): number {
+  return content.slice(0, index).split(/\r?\n/).length;
 }
 
 function countOccurrences(haystack: string, needle: string): number {

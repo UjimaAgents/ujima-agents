@@ -190,6 +190,29 @@ describe('checkToolPolicy', () => {
         ),
       ).toMatchObject({ allowed: true, requiresApproval: true });
     });
+
+    it('requires approval, not denial, for reads outside role scope', () => {
+      const team = teamWithRole({
+        name: 'web-reader',
+        title: 'Web Reader',
+        instructions: 'Can inspect apps/web.',
+        provider: 'openai',
+        model: 'gpt-5.4',
+        workspaceScopes: ['apps/web'],
+        tools: [],
+        channels: ['general'],
+      });
+
+      expect(
+        checkToolPolicy(
+          team,
+          'web-reader',
+          'view',
+          'read',
+          join(workspaceRoot, 'apps', 'api', 'src', 'main.ts'),
+        ),
+      ).toMatchObject({ allowed: true, requiresApproval: true });
+    });
   });
 
   // Regression coverage for two bugs in the channel-tool surface:

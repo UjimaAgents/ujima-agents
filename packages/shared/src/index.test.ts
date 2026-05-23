@@ -16,6 +16,6 @@ describe('@ujima/shared smoke', () => {
       permissions: { allowed_tools: ['read'], blocked_tools: [] },
     });
     expect(parsed.id).toBe('agent-1');
-    expect(parsed.permissions.rate_limit.calls_per_minute).toBe(30);
+    expect(parsed.permissions.rate_limit.max_session_tokens).toBe(100_000);
   });
 });

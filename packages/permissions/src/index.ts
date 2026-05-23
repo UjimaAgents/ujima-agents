@@ -1,4 +1,4 @@
-import type { AgentDef, AgentPermissions, MCPDef, GovernancePolicy, ToolPolicyRule } from '@ujima/shared';
+import type { AgentDef, MCPDef, GovernancePolicy, ToolPolicyRule } from '@ujima/shared';
 import { evaluatePolicy } from '@ujima/shared';
 import type { AuditLog, AgentStateStore } from '@ujima/context-store';
 
@@ -16,7 +16,6 @@ export type PermissionDenyCode =
   | 'blocked_tool'
   | 'not_allowed_tool'
   | 'destructive_pattern'
-  | 'rate_limited'
   | 'token_cap_exceeded'
   | 'session_override'
   | 'policy_deny'
@@ -62,21 +61,12 @@ export interface PermissionMiddlewareDeps {
 
 export interface PermissionMiddleware {
   check(input: PermissionCheckInput): Promise<PermissionDecision>;
-  /**
-   * Records a completed tool invocation against the per-session rate
-   * limit window. Call after the tool actually ran (or was accepted
-   * into the approval queue), not on permission check alone.
-   */
   recordCompletedCall(input: PermissionCheckInput): Promise<void>;
   recordUsage(agentId: string, tokens: number): Promise<void>;
   setSessionOverride(agentId: string, override: SessionOverride): void;
   clearSessionOverride(agentId: string): void;
   setGovernancePolicy(policy: GovernancePolicy | undefined): void;
   getGovernancePolicy(): GovernancePolicy | undefined;
-}
-
-export function rateLimitBucketKey(agentId: string, sessionId: string): string {
-  return `${agentId}:${sessionId}`;
 }
 
 const DEFAULT_PLATFORM_DEFAULTS: PlatformDefaults = {
@@ -110,8 +100,6 @@ export function createPermissionMiddleware(
   const resolveGovernancePolicy = (): GovernancePolicy | undefined =>
     governancePolicyFn ? governancePolicyFn() : governancePolicy;
 
-  const callWindows = new Map<string, number[]>();
-
   async function writeAudit(
     input: PermissionCheckInput,
     decision: PermissionDecision,
@@ -142,28 +130,6 @@ export function createPermissionMiddleware(
       }
     }
     return false;
-  }
-
-  function recentCallsForBucket(bucketKey: string): number[] {
-    const windowMs = 60_000;
-    const cutoff = now() - windowMs;
-    const history = callWindows.get(bucketKey) ?? [];
-    const recent = history.filter((t) => t > cutoff);
-    callWindows.set(bucketKey, recent);
-    return recent;
-  }
-
-  function wouldExceedRateLimit(
-    bucketKey: string,
-    limits: AgentPermissions['rate_limit'],
-  ): boolean {
-    return recentCallsForBucket(bucketKey).length >= limits.calls_per_minute;
-  }
-
-  function recordRateLimitCall(bucketKey: string): void {
-    const recent = recentCallsForBucket(bucketKey);
-    recent.push(now());
-    callWindows.set(bucketKey, recent);
   }
 
   async function checkTokenCap(
@@ -248,7 +214,7 @@ export function createPermissionMiddleware(
         }
         // `allow` is an explicit admin override: it bypasses the legacy
         // blocked_tools / allowed_tools / mcpPolicies layers below. Safety
-        // rails (destructive_patterns, rate limits, token cap) still apply.
+        // rails (destructive_patterns, token cap) still apply.
         if (evaluation.state === 'allow') {
           policyAllowOverride = true;
         }
@@ -324,17 +290,6 @@ export function createPermissionMiddleware(
         }
       }
 
-      const rateBucket = rateLimitBucketKey(agent.id, input.sessionId);
-      if (wouldExceedRateLimit(rateBucket, agent.permissions.rate_limit)) {
-        const decision: PermissionDecision = {
-          allowed: false,
-          reason: `Agent "${agent.id}" exceeded rate limit of ${agent.permissions.rate_limit.calls_per_minute} calls/min`,
-          code: 'rate_limited',
-        };
-        await writeAudit(input, decision);
-        return decision;
-      }
-
       if (!(await checkTokenCap(agent.id, agent.permissions.rate_limit.max_session_tokens))) {
         const decision: PermissionDecision = {
           allowed: false,
@@ -351,8 +306,6 @@ export function createPermissionMiddleware(
     },
 
     async recordCompletedCall(input) {
-      const bucketKey = rateLimitBucketKey(input.agent.id, input.sessionId);
-      recordRateLimitCall(bucketKey);
       if (deps.agentState) {
         await deps.agentState.incrementCalls(input.agent.id);
       }

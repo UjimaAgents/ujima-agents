@@ -36,6 +36,10 @@ import { TypingIndicator } from "./typing-indicator";
 import { RunCard } from "./run-card";
 import { ActivityRow } from "./activity-row";
 import { ConversationSkeleton } from "./conversation-skeleton";
+import { ActivityListSkeleton } from "./activity-list-skeleton";
+import { FileListSkeleton } from "./file-list-skeleton";
+import { MemberListSkeleton } from "./member-list-skeleton";
+import { EmptyState } from "@/components/ui/empty-state";
 import { resolveWorkspaceApproval } from "../approval-resolution";
 import { runToActivity } from "../activity-events";
 import { pendingApprovalVisibleInChannelView, queueApprovals } from "../approval-thread-filter";
@@ -623,11 +627,15 @@ export function ChannelView({
               members={members}
               onSaved={setChannelMemberIds}
             />
+          ) : feed.loading ? (
+            <TabPanel><MemberListSkeleton /></TabPanel>
           ) : (
-            <TabEmpty emptyLabel="Channel unavailable." />
+            <TabEmpty context="members" label="Channel unavailable." />
           )
         ) : activeTab === "approvals" ? (
-          visibleApprovals.length > 0 ? (
+          feed.loading ? (
+            <TabPanel><MemberListSkeleton /></TabPanel>
+          ) : visibleApprovals.length > 0 ? (
             <TabPanel>
               <div className="space-y-2">
                 {visibleApprovals.map((approval) => (
@@ -641,7 +649,7 @@ export function ChannelView({
               </div>
             </TabPanel>
           ) : (
-            <TabEmpty emptyLabel="No approvals." />
+            <TabEmpty context="approvals" label="No approvals." />
           )
         ) : activeTab === "tasks" ? (
           conversation.type === "channel" && organizationId ? (
@@ -665,10 +673,12 @@ export function ChannelView({
               </div>
             </TabPanel>
           ) : (
-            <TabEmpty emptyLabel="No active tasks." />
+            <TabEmpty context="tasks" label="No active tasks." />
           )
         ) : activeTab === "files" ? (
-          conversationAttachments.length > 0 ? (
+          feed.loading ? (
+            <TabPanel><FileListSkeleton /></TabPanel>
+          ) : conversationAttachments.length > 0 ? (
             <TabPanel>
               <div className="space-y-2">
                 {conversationAttachments.map((attachment) => {
@@ -698,10 +708,12 @@ export function ChannelView({
               </div>
             </TabPanel>
           ) : (
-            <TabEmpty emptyLabel="No attachments." />
+            <TabEmpty context="files" label="No attachments." />
           )
         ) : (
-          visibleActivity.length > 0 ? (
+          feed.loading ? (
+            <TabPanel><ActivityListSkeleton /></TabPanel>
+          ) : visibleActivity.length > 0 ? (
             <TabPanel>
               <div className="space-y-2">
                 {visibleActivity.map((event) => (
@@ -710,7 +722,7 @@ export function ChannelView({
               </div>
             </TabPanel>
           ) : (
-            <TabEmpty emptyLabel="No activity." />
+            <TabEmpty context="activity" label="No activity." />
           )
         )}
         {(activeAgentChats.length > 0 || activeTerminals.length > 0) && (
@@ -873,12 +885,10 @@ function TabPanel({ children }: { children: ReactNode }) {
   );
 }
 
-function TabEmpty({ emptyLabel }: { emptyLabel: string }) {
+function TabEmpty({ context, label }: { context?: "messages" | "members" | "approvals" | "tasks" | "files" | "activity" | "search" | "generic"; label?: string }) {
   return (
     <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4">
-      <div className="flex h-full items-center justify-center text-xs text-zinc-500">
-        {emptyLabel}
-      </div>
+      <EmptyState context={context ?? "generic"} title={label} />
     </div>
   );
 }

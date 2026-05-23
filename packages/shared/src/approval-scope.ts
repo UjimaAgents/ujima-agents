@@ -27,6 +27,7 @@ export interface EditScopeInput {
   oldString: string;
   newString: string;
   replaceAll?: boolean;
+  matchStrategy?: 'exact' | 'whitespace';
   fileContent?: string | null;
 }
 
@@ -35,6 +36,7 @@ export interface EditScopeFields {
   newString: string;
   replaceAll: boolean;
   startLine?: number;
+  matchStrategy?: 'whitespace';
 }
 
 export function readEditRecord(edit: unknown): Omit<EditScopeInput, 'fileContent'> | null {
@@ -44,6 +46,7 @@ export function readEditRecord(edit: unknown): Omit<EditScopeInput, 'fileContent
     oldString: stringField(item, 'oldString', 'old_string') ?? '',
     newString: stringField(item, 'newString', 'new_string') ?? '',
     replaceAll: item.replaceAll === true || item.replace_all === true,
+    matchStrategy: item.matchStrategy === 'whitespace' || item.match_strategy === 'whitespace' ? 'whitespace' : 'exact',
   };
 }
 
@@ -60,6 +63,7 @@ export function enrichEditScopeFields(input: EditScopeInput): EditScopeFields {
     oldString: input.oldString,
     newString: input.newString,
     replaceAll,
+    ...(input.matchStrategy === 'whitespace' ? { matchStrategy: 'whitespace' as const } : {}),
     ...(startLine !== undefined ? { startLine } : {}),
   };
 }
