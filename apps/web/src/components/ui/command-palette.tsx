@@ -3,10 +3,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowRight, Hash, MessageSquare, Search, User, File } from "lucide-react";
 
-/* ------------------------------------------------------------------ */
-/*  Types                                                              */
-/* ------------------------------------------------------------------ */
-
 export interface SearchResult {
   id: string;
   type: "channel" | "agent" | "message" | "file";
@@ -29,6 +25,14 @@ const typeIcon: Record<SearchResult["type"], typeof Hash> = {
 };
 
 export function CommandPalette({ results, open, onOpenChange }: CommandPaletteProps) {
+  if (!open) return null;
+  return <CommandPalettePanel results={results} onOpenChange={onOpenChange} />;
+}
+
+function CommandPalettePanel({
+  results,
+  onOpenChange,
+}: Omit<CommandPaletteProps, "open">) {
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const [query, setQuery] = useState("");
@@ -44,24 +48,24 @@ export function CommandPalette({ results, open, onOpenChange }: CommandPalettePr
     );
   }, [results, query]);
 
-  useEffect(() => { setSelectedIndex(0); }, [query, results.length]);
+  const activeIndex =
+    filtered.length === 0 ? 0 : Math.min(selectedIndex, filtered.length - 1);
 
   useEffect(() => {
-    if (open) {
-      setQuery("");
-      setSelectedIndex(0);
-      requestAnimationFrame(() => inputRef.current?.focus());
-    }
-  }, [open]);
+    requestAnimationFrame(() => inputRef.current?.focus());
+  }, []);
 
   useEffect(() => {
-    const el = listRef.current?.children[selectedIndex] as HTMLElement | undefined;
+    const el = listRef.current?.children[activeIndex] as HTMLElement | undefined;
     el?.scrollIntoView({ block: "nearest" });
-  }, [selectedIndex]);
+  }, [activeIndex]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
-      if (e.key === "Escape") { onOpenChange(false); return; }
+      if (e.key === "Escape") {
+        onOpenChange(false);
+        return;
+      }
       if (e.key === "ArrowDown") {
         e.preventDefault();
         setSelectedIndex((i) => Math.min(i + 1, filtered.length - 1));
@@ -72,16 +76,14 @@ export function CommandPalette({ results, open, onOpenChange }: CommandPalettePr
         setSelectedIndex((i) => Math.max(i - 1, 0));
         return;
       }
-      if (e.key === "Enter" && filtered[selectedIndex]) {
+      if (e.key === "Enter" && filtered[activeIndex]) {
         e.preventDefault();
-        filtered[selectedIndex].onSelect();
+        filtered[activeIndex].onSelect();
         onOpenChange(false);
       }
     },
-    [filtered, selectedIndex, onOpenChange],
+    [activeIndex, filtered, onOpenChange],
   );
-
-  if (!open) return null;
 
   return (
     <div
@@ -101,7 +103,10 @@ export function CommandPalette({ results, open, onOpenChange }: CommandPalettePr
             ref={inputRef}
             type="text"
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              setSelectedIndex(0);
+            }}
             onKeyDown={handleKeyDown}
             placeholder="Search channels, agents, messages..."
             className="h-12 w-full bg-transparent text-sm text-zinc-900 outline-none placeholder:text-zinc-400 dark:text-zinc-100"
@@ -119,7 +124,7 @@ export function CommandPalette({ results, open, onOpenChange }: CommandPalettePr
             <div className="space-y-0.5">
               {filtered.map((result, index) => {
                 const Icon = typeIcon[result.type];
-                const selected = index === selectedIndex;
+                const selected = index === activeIndex;
                 return (
                   <button
                     key={result.id}

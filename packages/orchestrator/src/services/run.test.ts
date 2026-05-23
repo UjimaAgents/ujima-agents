@@ -1855,8 +1855,7 @@ describe('SpiritService run path', () => {
       getSpiritByRunId: () => null,
       getThread: () => ({ channelId: 'channel-1' }),
     } as never;
-    let service: ReturnType<typeof createSpiritRunService>;
-    service = createSpiritRunService(
+    const service = createSpiritRunService(
       {
         getTeam: () =>
           loadAgentTeam({

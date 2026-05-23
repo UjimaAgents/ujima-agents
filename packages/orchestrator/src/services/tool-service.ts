@@ -140,6 +140,7 @@ export function buildToolApprovalScope(input: ToolInvocationInput): string {
       oldString: String(input.input.oldString ?? input.input.old_string ?? ''),
       newString: String(input.input.newString ?? input.input.new_string ?? ''),
       replaceAll: input.input.replaceAll === true || input.input.replace_all === true,
+      matchStrategy: input.input.matchStrategy === 'whitespace' || input.input.match_strategy === 'whitespace' ? 'whitespace' : 'exact',
     });
     return `edit:${JSON.stringify({ resourcePath: input.resourcePath, ...fields })}`;
   }

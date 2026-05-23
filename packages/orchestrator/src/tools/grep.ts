@@ -7,20 +7,30 @@ import { isSensitiveWorkspacePath } from '@ujima/shared/workspace-file-filters';
 import type { OrchestratorTool } from './types.js';
 import { readWindowValue } from './window-utils.js';
 
-const DEFAULT_LIMIT = 20;
+const DEFAULT_LIMIT = 50;
+const DEFAULT_CONTEXT_LINES = 2;
 const IGNORED_DIRECTORIES = new Set(['.git', '.next', 'build', 'coverage', 'dist', 'node_modules']);
 
 export const GrepSchema = z.object({
   query: z.string().min(1),
   path: z.string().min(1).default('.'),
-  limit: z.number().int().min(1).max(100).default(DEFAULT_LIMIT),
+  limit: z.number().int().min(1).max(500).default(DEFAULT_LIMIT),
+  contextLines: z.number().int().min(0).max(10).default(DEFAULT_CONTEXT_LINES),
+  context_lines: z.number().int().min(0).max(10).optional(),
   ignoreCase: z.boolean().default(false),
 });
+
+export interface GrepContextLine {
+  lineNumber: number;
+  line: string;
+}
 
 export interface GrepMatch {
   path: string;
   lineNumber: number;
   line: string;
+  before: GrepContextLine[];
+  after: GrepContextLine[];
 }
 
 export const grepTool: OrchestratorTool<typeof GrepSchema> = {
@@ -37,6 +47,7 @@ export const grepTool: OrchestratorTool<typeof GrepSchema> = {
     const resourcePath = invocation.resourcePath ?? String(invocation.input.path ?? '.');
     const ignoreCase = invocation.input.ignoreCase === true;
     const limit = readWindowValue(invocation.input.limit, DEFAULT_LIMIT);
+    const contextLines = readWindowValue(invocation.input.context_lines ?? invocation.input.contextLines, DEFAULT_CONTEXT_LINES);
     const resolved = assertWorkspaceBoundary(team.workspace.root, resourcePath);
     const matches: GrepMatch[] = [];
     const needle = ignoreCase ? query.toLowerCase() : query;
@@ -55,6 +66,7 @@ export const grepTool: OrchestratorTool<typeof GrepSchema> = {
       query,
       path: resolved,
       limit,
+      contextLines,
       ignoreCase,
       truncated: matches.length >= limit,
       count: matches.length,
@@ -76,11 +88,20 @@ export const grepTool: OrchestratorTool<typeof GrepSchema> = {
           path,
           lineNumber: index + 1,
           line,
+          before: contextFor(lines, Math.max(0, index - contextLines), index),
+          after: contextFor(lines, index + 1, Math.min(lines.length, index + 1 + contextLines)),
         });
       }
     }
   },
 };
+
+function contextFor(lines: string[], start: number, end: number): GrepContextLine[] {
+  return lines.slice(start, end).map((line, index) => ({
+    lineNumber: start + index + 1,
+    line,
+  }));
+}
 
 async function collectSearchableFiles(workspaceRoot: string, resolvedPath: string): Promise<string[]> {
   const gitFiles = listGitFiles(workspaceRoot, resolvedPath);
