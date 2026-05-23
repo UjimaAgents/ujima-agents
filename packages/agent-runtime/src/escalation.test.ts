@@ -12,7 +12,7 @@ function mkAgent(conditions: string[]): AgentDef {
     permissions: {
       allowed_tools: [],
       blocked_tools: [],
-      rate_limit: { calls_per_minute: 10, max_session_tokens: 1000 },
+      rate_limit: { max_session_tokens: 1000 },
     },
     communication: { publishes: [], subscribes: [] },
     escalation: { conditions, escalate_to: 'human' },

@@ -4,10 +4,6 @@ import { formatPathEscapeError, type PathEscapeReason } from './path-escape.js';
 
 export const ERR_PATH_ESCAPE = 'ERR_PATH_ESCAPE';
 
-/**
- * Thrown when a path requested by a tool, after full `realpath` resolution,
- * lands outside the workspace root or any permitted role-scope subpath.
- */
 export class PathEscapeError extends Error {
   readonly code = ERR_PATH_ESCAPE;
   readonly requested: string;
@@ -35,10 +31,6 @@ export class PathEscapeError extends Error {
 export interface PathResolveOptions {
   root: string;
   scopePaths?: readonly string[];
-  /**
-   * When false, paths may leave role scopes but must stay inside the workspace
-   * root. Policy owns out-of-scope approval; use createWorkspaceBoundaryPathResolver.
-   */
   enforceRoleScopes?: boolean;
 }
 

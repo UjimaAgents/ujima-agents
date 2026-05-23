@@ -58,15 +58,15 @@ describe('permission presets', () => {
     expect(perms.blocked_tools).toEqual(
       expect.arrayContaining(['browser_close', 'browser_execute_js']),
     );
-    expect(perms.rate_limit.calls_per_minute).toBeGreaterThan(0);
+    expect(perms.rate_limit.max_session_tokens).toBeGreaterThan(0);
   });
 
-  it('respects custom rate limit overrides', () => {
+  it('respects custom token cap overrides', () => {
     const perms = buildPermissionPreset('filesystem', 'read_write', {
       discoveredTools: ['list_dir', 'read_file', 'write_file'],
-      rateLimit: { calls_per_minute: 5, max_session_tokens: 1_000 },
+      tokenLimit: { max_session_tokens: 1_000 },
     });
-    expect(perms.rate_limit).toEqual({ calls_per_minute: 5, max_session_tokens: 1_000 });
+    expect(perms.rate_limit).toEqual({ max_session_tokens: 1_000 });
   });
 
   it('isDestructive reads from the registry flag', () => {

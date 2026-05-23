@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { APP_ROUTES } from "@/config/routes";
 import { ThemeToggle } from "./theme-toggle";
+import { ToastContainer } from "./ui/toast-container";
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -19,12 +20,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     return (
       <div className="h-screen overflow-hidden bg-zinc-50 text-zinc-950 dark:bg-[#040712] dark:text-zinc-100">
         {children}
+        <ToastContainer />
       </div>
     );
   }
 
   return (
     <div className="min-h-screen bg-zinc-100 text-zinc-950 dark:bg-zinc-950 dark:text-zinc-100">
+      <ToastContainer />
       <header className="border-b border-zinc-200 bg-white/90 backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/80">
         <div
           className={`mx-auto flex max-w-7xl items-center justify-between px-4 md:px-6 ${isCompactHeader ? "py-2.5" : "py-3"}`}

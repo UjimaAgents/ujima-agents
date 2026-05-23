@@ -5,11 +5,10 @@ export type PermissionPreset = 'read_only' | 'read_write' | 'full';
 
 export interface PresetOptions {
   discoveredTools?: string[];
-  rateLimit?: AgentPermissions['rate_limit'];
+  tokenLimit?: AgentPermissions['rate_limit'];
 }
 
-const DEFAULT_RATE_LIMIT: AgentPermissions['rate_limit'] = {
-  calls_per_minute: 30,
+const DEFAULT_TOKEN_LIMIT: AgentPermissions['rate_limit'] = {
   max_session_tokens: 100_000,
 };
 
@@ -45,13 +44,13 @@ export function applyPreset(
 ): AgentPermissions {
   const destructive = entry.knownDestructiveTools ?? [];
   const tools = normalizeList(opts.discoveredTools);
-  const rateLimit = opts.rateLimit ?? DEFAULT_RATE_LIMIT;
+  const tokenLimit = opts.tokenLimit ?? DEFAULT_TOKEN_LIMIT;
 
   if (preset === 'full') {
     return {
       allowed_tools: tools,
       blocked_tools: [],
-      rate_limit: rateLimit,
+      rate_limit: tokenLimit,
     };
   }
 
@@ -60,7 +59,7 @@ export function applyPreset(
     return {
       allowed_tools: reads,
       blocked_tools: unique([...tools.filter((t) => !isReadTool(t)), ...destructive]),
-      rate_limit: rateLimit,
+      rate_limit: tokenLimit,
     };
   }
 
@@ -68,7 +67,7 @@ export function applyPreset(
   return {
     allowed_tools: tools.filter((t) => !destructive.includes(t)),
     blocked_tools: unique(destructive),
-    rate_limit: rateLimit,
+    rate_limit: tokenLimit,
   };
 }
 

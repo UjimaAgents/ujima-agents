@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto';
 import {
-  MessageSchema,
   RunStateSchema,
   SocketEventNames,
   memberRoom,
@@ -17,7 +16,6 @@ import { isLiveRunStatus } from './live-status.js';
 import { requireTeam } from '../utils/require-team.js';
 import { findToolApprovalRequiredError } from './tool-loop-result.js';
 import { extractReasoningChunk } from '../utils/extract-reasoning.js';
-import { appendGoalArtifactToolCall, buildGoalArtifactMessage } from './goal-artifact-card.js';
 import { pendingApprovalRunSummary } from './approval-summary.js';
 import {
   findTerminatingTool,
@@ -30,6 +28,15 @@ import type { CreateRunInput, RunDetail } from './spirit-types.js';
 import { aggregateToolUsage } from './spirit-run-detail.js';
 import type { RunSpiritOutcome } from './spirit-types.js';
 import { SpiritServiceSupervisor } from './spirit-supervisor.js';
+import { appendGoalArtifactToolCall } from './goal-artifact-card.js';
+import {
+  appendGoalArtifactFromRunSteps,
+  collectRunStepToolCalls,
+  collectToolStatuses,
+  publishRunReplyTrace,
+  publishStreamedTrace,
+  type StreamedRunTrace,
+} from './run-trace-publisher.js';
 
 export class SpiritServiceDirectRun extends SpiritServiceSupervisor {
   async resumeAfterApproval(
@@ -366,14 +373,13 @@ export class SpiritServiceDirectRun extends SpiritServiceSupervisor {
     const abortKey = this.runKey(run.organizationId, run.id);
     const abortController = new AbortController();
     this.runAbortControllers.set(abortKey, abortController);
+    const streamedTrace: StreamedRunTrace = { text: '', reasoning: '' };
 
     try {
       const systemPromptSuffix = this.resolveSystemPromptSuffix({
         organizationId: run.organizationId,
         threadId: run.threadId ?? '',
       });
-      let streamedText = '';
-      let streamedReasoning = '';
       const ai = this.ai;
       if (!ai) {
         throw new Error('Run execution is not wired into SpiritService');
@@ -387,8 +393,8 @@ export class SpiritServiceDirectRun extends SpiritServiceSupervisor {
         systemPromptSuffix,
         abortSignal: abortController.signal,
         onChunk: (chunk) => {
-          if (chunk.kind === 'text') streamedText += chunk.delta;
-          if (chunk.kind === 'reasoning') streamedReasoning += chunk.delta;
+          if (chunk.kind === 'text') streamedTrace.text += chunk.delta;
+          if (chunk.kind === 'reasoning') streamedTrace.reasoning += chunk.delta;
           this.emitRunChunk(
             {
               organizationId: running.organizationId,
@@ -403,6 +409,15 @@ export class SpiritServiceDirectRun extends SpiritServiceSupervisor {
 
       const latestRun = this.repo.getRun(run.organizationId, run.id);
       if (latestRun && latestRun.status !== 'running') {
+        if (latestRun.status === 'cancelled') {
+          publishStreamedTrace({
+            repo: this.repo,
+            conversations: this.conversations,
+            run: latestRun,
+            trace: streamedTrace,
+            outcome: 'stopped',
+          });
+        }
         return latestRun;
       }
 
@@ -411,13 +426,28 @@ export class SpiritServiceDirectRun extends SpiritServiceSupervisor {
         return this.advanceRun(afterApprovedTools);
       }
 
-      const statuses = [
-        ...result.toolResults,
-        ...result.steps.flatMap((step: (typeof result.steps)[number]) => step?.toolResults ?? []),
-      ]
-        .map((toolResult) => (toolResult?.output as { status?: string } | undefined)?.status)
-        .filter((status): status is string => typeof status === 'string');
+      const statuses = collectToolStatuses(result);
+      const text = (result.text || streamedTrace.text).trim();
+      const reasoningContent = extractReasoningChunk(result) ?? (streamedTrace.reasoning.trim() || undefined);
+      const runSteps = this.repo.listRunSteps?.(run.organizationId, run.id) ?? [];
+      const goalToolCalls = collectRunStepToolCalls(result);
+      const goalArtifactToolCall =
+        (await appendGoalArtifactToolCall(goalToolCalls, team.workspace.root)) ??
+        (await appendGoalArtifactFromRunSteps(this.repo, run, team.workspace.root));
       if (statuses.includes('blocked')) {
+        await publishRunReplyTrace({
+          repo: this.repo,
+          conversations: this.conversations,
+          run: running,
+          result,
+          reply: text || (goalArtifactToolCall ? 'Goal artifact updated.' : ''),
+          reasoningContent,
+          teamRoot: team.workspace.root,
+          goalArtifactToolCall,
+          skipFinalThreadMessage: findTerminatingToolFromRunSteps(runSteps) !== null,
+          suppressDmAlerts: true,
+          failureTrace: true,
+        });
         return this.failRun(running, 'Tool action blocked');
       }
 
@@ -432,9 +462,6 @@ export class SpiritServiceDirectRun extends SpiritServiceSupervisor {
         return this.waitForApproval(running, pendingApprovalRunSummary(this.repo, running.organizationId, running.id));
       }
 
-      const text = (result.text || streamedText).trim();
-      const reasoningContent = extractReasoningChunk(result) ?? (streamedReasoning.trim() || undefined);
-      const runSteps = this.repo.listRunSteps?.(run.organizationId, run.id) ?? [];
       const detectedTerminatingTool =
         findTerminatingTool(result) ?? findTerminatingToolFromRunSteps(runSteps);
       // Preserve any silent terminator that a mid-run side-effect
@@ -459,21 +486,6 @@ export class SpiritServiceDirectRun extends SpiritServiceSupervisor {
         : undefined;
       const wakeReason = (running.wakeReason ?? null) as WakeReason | null;
       const now = new Date().toISOString();
-      const goalToolCalls = result.steps.flatMap((step: (typeof result.steps)[number]) => step?.toolCalls ?? []);
-      const goalArtifactToolCall =
-        (await appendGoalArtifactToolCall(goalToolCalls, team.workspace.root)) ??
-        (await appendGoalArtifactToolCall(
-          runSteps.map((step) => ({
-            toolName: step.toolId,
-            input: {
-              action: step.action,
-              resourcePath: step.resourcePath,
-              ...step.input,
-            },
-          })),
-          team.workspace.root,
-        ));
-
       if (usedPass && text.length > 0) {
         this.realtime.emit(
           SocketEventNames.agentPassedWithText,
@@ -539,114 +551,17 @@ export class SpiritServiceDirectRun extends SpiritServiceSupervisor {
       }
 
       const reply = text || 'Goal artifact updated.';
-      const skipFinalThreadMessage = terminatingTool !== null || runUsedThreadPublishingTool(result);
-      let publishedMessages = 0;
-      let publishedGoalArtifact = false;
-      let lastPublishedContent: string | undefined;
-      for (const [index, step] of result.steps.entries()) {
-        const stepText = typeof step.text === 'string' ? step.text.trim() : '';
-        const stepToolCalls = Array.isArray(step.toolCalls) ? step.toolCalls : [];
-        if (!stepText && stepToolCalls.length === 0) {
-          continue;
-        }
-
-        // Skip per-step text publication when this step used a thread-publishing
-        // tool (message, channel.reply, channel.post, etc.) — the tool already
-        // wrote to the thread, so re-publishing stepText would double-post.
-        const stepUsedPublishingTool = runUsedThreadPublishingTool({ steps: [step] });
-
-        const stepGoalArtifactToolCall =
-          (await appendGoalArtifactToolCall(stepToolCalls, team.workspace.root)) ??
-          (await appendGoalArtifactToolCall(
-            (this.repo.listRunSteps?.(run.organizationId, run.id) ?? [])
-              .filter((step) => step.toolCallId === stepToolCalls.at(-1)?.toolCallId)
-              .map((step) => ({
-                toolName: step.toolId,
-                input: {
-                  action: step.action,
-                  resourcePath: step.resourcePath,
-                  ...step.input,
-                },
-              })),
-            team.workspace.root,
-          ));
-        if (stepGoalArtifactToolCall) {
-          publishedGoalArtifact = true;
-        }
-        const toolCalls = [...stepToolCalls, ...(stepGoalArtifactToolCall ? [stepGoalArtifactToolCall] : [])];
-        const stepReasoning = extractReasoningChunk(step) ?? (index === result.steps.length - 1 ? reasoningContent : undefined);
-        const threadId = run.threadId;
-        if (!threadId) {
-          continue;
-        }
-        const channelId = this.repo.getThread(run.organizationId, threadId)?.channelId;
-        if (stepUsedPublishingTool && !stepGoalArtifactToolCall) {
-          continue;
-        }
-        if (!stepText && !stepGoalArtifactToolCall) {
-          continue;
-        }
-        const content = stepText || 'Goal artifact updated.';
-        this.conversations?.publishMessage(
-          MessageSchema.parse({
-            id: randomUUID(),
-            organizationId: run.organizationId,
-            threadId,
-            ...(channelId ? { channelId } : {}),
-            senderId: run.agentId,
-            senderKind: AGENT_KIND,
-            kind: AGENT_KIND,
-            content,
-            metadata: { runId: run.id },
-            ...(toolCalls.length > 0 ? { toolCalls } : {}),
-            ...(stepReasoning ? { reasoningContent: stepReasoning } : {}),
-            createdAt: new Date().toISOString(),
-          }),
-        );
-        publishedMessages += 1;
-        lastPublishedContent = content;
-      }
-
-      const finalArtifactMessageNeeded = !!goalArtifactToolCall && !publishedGoalArtifact;
-      const shouldPublishFinalMessage =
-        !!finalThreadId &&
-        !skipFinalThreadMessage &&
-        (publishedMessages === 0 || reply !== lastPublishedContent || finalArtifactMessageNeeded);
-      if (finalThreadId && shouldPublishFinalMessage) {
-        const channelId = this.repo.getThread(run.organizationId, finalThreadId)?.channelId;
-        this.conversations?.publishMessage(
-          MessageSchema.parse({
-            id: randomUUID(),
-            organizationId: run.organizationId,
-            threadId: finalThreadId,
-            ...(channelId ? { channelId } : {}),
-            senderId: run.agentId,
-            senderKind: AGENT_KIND,
-            kind: AGENT_KIND,
-            content: reply,
-            metadata: { runId: run.id },
-            ...(reasoningContent ? { reasoningContent } : {}),
-            createdAt: new Date().toISOString(),
-          }),
-        );
-      }
-
-      if (finalThreadId && finalArtifactMessageNeeded) {
-        const goalArtifactMessage = buildGoalArtifactMessage({
-          goalArtifactToolCall,
-          organizationId: run.organizationId,
-          threadId: finalThreadId,
-          channelId: this.repo.getThread(run.organizationId, finalThreadId)?.channelId,
-          senderId: run.agentId,
-          senderKind: AGENT_KIND,
-          kind: AGENT_KIND,
-          runId: run.id,
-          content: reply,
-        });
-        if (goalArtifactMessage) {
-          this.conversations?.publishMessage(goalArtifactMessage);
-        }
-      }
+      await publishRunReplyTrace({
+        repo: this.repo,
+        conversations: this.conversations,
+        run: running,
+        result,
+        reply,
+        reasoningContent,
+        teamRoot: team.workspace.root,
+        goalArtifactToolCall,
+        skipFinalThreadMessage: terminatingTool !== null || runUsedThreadPublishingTool(result),
+      });
 
       return this.completeRun(running, terminatingTool ?? reply, terminatingTool);
     } catch (error) {
@@ -659,8 +574,22 @@ export class SpiritServiceDirectRun extends SpiritServiceSupervisor {
       }
       const latestAfterError = this.repo.getRun(run.organizationId, run.id);
       if (latestAfterError?.status === 'cancelled') {
+        publishStreamedTrace({
+          repo: this.repo,
+          conversations: this.conversations,
+          run: latestAfterError,
+          trace: streamedTrace,
+          outcome: 'stopped',
+        });
         return latestAfterError;
       }
+      publishStreamedTrace({
+        repo: this.repo,
+        conversations: this.conversations,
+        run: running,
+        trace: streamedTrace,
+        outcome: 'failed',
+      });
       return this.failRun(running, (error as Error).message);
     } finally {
       this.runAbortControllers.delete(abortKey);

@@ -13,6 +13,7 @@ import {
 } from "@ujima/shared/browser";
 import { WorkspaceSidebar } from "./workspace-sidebar";
 import { ChannelView } from "./channel-view";
+import { CommandPalette, type SearchResult } from "@/components/ui/command-palette";
 import type { BootstrapResponse } from "@ujima/api-schema";
 import { resolveSelectedConversationFromSearchParams } from "../conversation-routing";
 import { resolveDefaultConversation } from "../workspace-channels";
@@ -62,6 +63,7 @@ export function WorkspaceShell(props: {
   const searchParams = useSearchParams();
   const [agentEditorTargetId, setAgentEditorTargetId] = useState<string | null>(null);
   const [goalMode, setGoalMode] = useState(false);
+  const [searchPaletteOpen, setSearchPaletteOpen] = useState(false);
   const sidebarWidth = useWorkspaceStore((state) => state.sidebarWidth);
   const selected = useWorkspaceStore((state) => state.selectedConversation);
   const channels = useWorkspaceStore((state) => state.channels);
@@ -236,6 +238,18 @@ export function WorkspaceShell(props: {
       : "Ujima Agents";
   }, [resolvedSelected?.id, resolvedSelected?.name, resolvedSelected?.type]);
 
+  // Cmd+K to open global search
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        e.preventDefault();
+        setSearchPaletteOpen((open) => !open);
+      }
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, []);
+
   useEffect(() => {
     if (!bootstrap.channels) return;
     syncWorkspace({
@@ -342,6 +356,31 @@ export function WorkspaceShell(props: {
     ).catch(() => undefined);
   }, [bootstrap.auth.member, clearConversationUnreadCount, organizationId, resolvedSelected]);
 
+  const searchResults = useMemo(() => {
+    const results: SearchResult[] = [];
+    for (const ch of channels) {
+      results.push({
+        id: `channel:${ch.id}`,
+        type: "channel",
+        label: ch.name,
+        subtitle: `${ch.memberIds?.length ?? 0} members`,
+        onSelect: () => handleSelect({ type: "channel", id: ch.id, name: ch.name }),
+      });
+    }
+    for (const m of members) {
+      if (m.kind === "agent") {
+        results.push({
+          id: `agent:${m.id}`,
+          type: "agent",
+          label: m.name,
+          subtitle: m.roleName ?? "Agent",
+          onSelect: () => handleSelect({ type: "agent", id: m.id, name: m.name }),
+        });
+      }
+    }
+    return results;
+  }, [channels, members, handleSelect]);
+
   return (
     <div className="flex h-full min-h-0">
       <div
@@ -399,6 +438,11 @@ export function WorkspaceShell(props: {
           )}
         </div>
       </main>
+      <CommandPalette
+        results={searchResults}
+        open={searchPaletteOpen}
+        onOpenChange={setSearchPaletteOpen}
+      />
     </div>
   );
 }

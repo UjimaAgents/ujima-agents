@@ -6,7 +6,7 @@ import {
   filterAuditRecords,
   auditToCsv,
   auditToJson,
-  callsPerMinute,
+  callsInLastMinute,
   bucketSamples,
   summarizeSession,
   type RateSample,
@@ -47,7 +47,7 @@ test('every demo agent definition validates against AgentDef', () => {
         permissions: {
           allowed_tools: [],
           blocked_tools: suggested?.knownDestructiveTools ?? [],
-          rate_limit: { calls_per_minute: 30, max_session_tokens: 100_000 },
+          rate_limit: { max_session_tokens: 100_000 },
         },
       }),
     );
@@ -100,13 +100,13 @@ test('governance reducers: filter + export + summarize compose cleanly', () => {
   expect(summary.blocked_calls).toBe(1);
 });
 
-test('rate reducers: bucketing + callsPerMinute', () => {
+test('activity reducers: bucketing + recent calls', () => {
   const now = Date.now();
   const samples: RateSample[] = [];
   for (let i = 0; i < 30; i++) {
     samples.push({ at: new Date(now - i * 1_000).toISOString(), calls: 1, tokens: 10 });
   }
-  expect(callsPerMinute(samples, now)).toBe(30);
+  expect(callsInLastMinute(samples, now)).toBe(30);
   const buckets = bucketSamples(samples, { bucketMs: 5_000, buckets: 12, now });
   expect(buckets).toHaveLength(12);
   expect(buckets.reduce((a, b) => a + b, 0)).toBeGreaterThan(0);
@@ -171,7 +171,7 @@ test('every persona template assembles into a valid AgentDef', () => {
       permissions: {
         allowed_tools: [],
         blocked_tools: suggested?.knownDestructiveTools ?? [],
-        rate_limit: { calls_per_minute: 30, max_session_tokens: 100_000 },
+        rate_limit: { max_session_tokens: 100_000 },
       },
     });
     const parsed = AgentDef.safeParse(agent);
@@ -242,7 +242,7 @@ test('every demo agent blocked_tools subset matches MCP knownDestructiveTools (i
       permissions: {
         allowed_tools: [],
         blocked_tools: entry.knownDestructiveTools,
-        rate_limit: { calls_per_minute: 30, max_session_tokens: 100_000 },
+        rate_limit: { max_session_tokens: 100_000 },
       },
     });
     const blocked = new Set(agent.permissions.blocked_tools);

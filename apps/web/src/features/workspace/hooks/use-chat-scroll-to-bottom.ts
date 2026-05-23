@@ -60,7 +60,7 @@ export function useChatScrollToBottom({
     isAtBottomRef.current = true;
     previousFeedSignal.current = "";
     prevMessagesLength.current = feed.messages.length;
-  }, [conversationKey, feed.messages.length]);
+  }, [conversationKey]);
 
   useLayoutEffect(() => {
     const signal = `${feed.messages.length}:${latestMessageSignal}:${feed.approvals.length}:${feed.runs.length}:${feed.loading ? 1 : 0}:${pendingApprovalIds}`;

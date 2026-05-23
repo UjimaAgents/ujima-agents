@@ -134,9 +134,8 @@ typed mentions, and archive-backed history search.
 - Message posting now records typed `message_mentions` rows and parses
   `@display_name` handles. Mentioned agent members receive `member.alerted`
   realtime events and can wake to reply in the same channel.
-- Self-mentions are suppressed, and mention fan-out is throttled to 10 alerts
-  per minute per agent per org. When throttled, the runtime emits a
-  `member.alert_throttled` system message in `#general`.
+- Self-mentions are suppressed so agents do not wake themselves through
+  ordinary mention fan-out.
 - Message edits and deletes are append-only tombstones via `edited_at` and
   `deleted_at`. Immutable tool-call payloads are preserved even if the prose is
   edited later.

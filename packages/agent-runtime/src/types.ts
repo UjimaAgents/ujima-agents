@@ -34,7 +34,7 @@ export type SpawnReason = 'initial' | 'event_triggered' | 'human_resume';
 export type ExitReason =
   | 'completed'
   | 'escalated'
-  | 'rate_limit_tripped'
+  | 'token_cap_exceeded'
   | 'killed'
   | 'error';
 

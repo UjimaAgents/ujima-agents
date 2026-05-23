@@ -1170,6 +1170,160 @@ describe('SpiritService run path', () => {
     expect(generateCalls).toBe(1);
   });
 
+  it('persists blocked-run trace before failing', async () => {
+    const organizationId = 'org-1';
+    const runId = 'run-blocked-1';
+    const agentId = 'Quinn Mason';
+    const threadId = 'thread-1';
+    const messages: any[] = [];
+    let run: any = {
+      id: runId,
+      organizationId,
+      agentId,
+      threadId,
+      status: 'queued',
+      step: 'queued',
+      summary: 'Run queued',
+      startedAt: '2026-05-04T19:07:08.071Z',
+    };
+    const repo = {
+      getMember: () => ({
+        id: agentId,
+        organizationId,
+        name: agentId,
+        kind: AGENT_KIND,
+        roleName: 'backend-engineer',
+      }),
+      saveRun: (next: any) => {
+        run = next;
+        return next;
+      },
+      getRun: () => run,
+      getProviderCredential: () => null,
+      getWorkspaceSetting: () => null,
+      listMembers: () => [],
+      listPendingApprovals: () => [],
+      listRunSteps: () => [],
+      listMessages: () => ({ data: [], hasMore: false }),
+      getLatestHumanMessageInThread: () => null,
+      getSpiritByRunId: () => null,
+      getThread: () => ({ channelId: 'channel-1' }),
+    } as never;
+    const service = createSpiritRunService(
+      {
+        getTeam: () =>
+          loadAgentTeam({
+            name: 'Timetotest',
+            workspace: { root: '/Users/mac/Documents/Work/Timetotest' },
+            roles: [{ name: 'backend-engineer', title: 'Backend Engineer', instructions: 'Work.', tools: ['view'] }],
+            agents: [{ name: agentId, roleName: 'backend-engineer' }],
+          }),
+        setTeam: () => undefined,
+      } as never,
+      repo,
+      { emit: () => undefined } as never,
+      { publishMessage: (message: any) => messages.push(message) } as never,
+      {
+        generateRunReply: async () => ({
+          text: 'I checked the file before the block.',
+          reasoningText: 'Need the file context before editing.',
+          toolResults: [],
+          steps: [
+            {
+              text: 'I checked the file before the block.',
+              reasoningText: 'Need the file context before editing.',
+              toolCalls: [{ toolCallId: 'tool-call-1', toolName: 'view', input: { path: 'src/index.ts' } }],
+              toolResults: [{ toolCallId: 'tool-call-1', output: { status: 'blocked', code: 'blocked_tool' } }],
+            },
+          ],
+        }),
+      } as never,
+      { allowRun: () => undefined, invoke: async () => ({ ok: true }) } as never,
+    );
+
+    const result = await (service as any).advanceRun(run);
+
+    expect(result.status).toBe('failed');
+    expect(result.summary).toBe('Tool action blocked');
+    expect(messages).toHaveLength(1);
+    expect(messages[0].content).toBe('I checked the file before the block.');
+    expect(messages[0].reasoningContent).toBe('Need the file context before editing.');
+    expect(messages[0].toolCalls[0].toolName).toBe('view');
+    expect(messages[0].metadata).toEqual({ runId, failedTrace: true });
+  });
+
+  it('persists streamed trace when run generation throws', async () => {
+    const organizationId = 'org-1';
+    const runId = 'run-throw-1';
+    const agentId = 'Quinn Mason';
+    const threadId = 'thread-1';
+    const messages: any[] = [];
+    let run: any = {
+      id: runId,
+      organizationId,
+      agentId,
+      threadId,
+      status: 'queued',
+      step: 'queued',
+      summary: 'Run queued',
+      startedAt: '2026-05-04T19:07:08.071Z',
+    };
+    const repo = {
+      getMember: () => ({
+        id: agentId,
+        organizationId,
+        name: agentId,
+        kind: AGENT_KIND,
+        roleName: 'backend-engineer',
+      }),
+      saveRun: (next: any) => {
+        run = next;
+        return next;
+      },
+      getRun: () => run,
+      getProviderCredential: () => null,
+      getWorkspaceSetting: () => null,
+      listMembers: () => [],
+      listPendingApprovals: () => [],
+      listMessages: () => ({ data: [], hasMore: false }),
+      getLatestHumanMessageInThread: () => null,
+      getSpiritByRunId: () => null,
+      getThread: () => ({ channelId: 'channel-1' }),
+    } as never;
+    const service = createSpiritRunService(
+      {
+        getTeam: () =>
+          loadAgentTeam({
+            name: 'Timetotest',
+            workspace: { root: '/Users/mac/Documents/Work/Timetotest' },
+            roles: [{ name: 'backend-engineer', title: 'Backend Engineer', instructions: 'Work.', tools: ['view'] }],
+            agents: [{ name: agentId, roleName: 'backend-engineer' }],
+          }),
+        setTeam: () => undefined,
+      } as never,
+      repo,
+      { emit: () => undefined } as never,
+      { publishMessage: (message: any) => messages.push(message) } as never,
+      {
+        generateRunReply: async (input: { onChunk?: (chunk: { kind: 'text' | 'reasoning'; delta: string }) => void }) => {
+          input.onChunk?.({ kind: 'reasoning', delta: 'I found the target file.' });
+          input.onChunk?.({ kind: 'text', delta: 'Partial answer' });
+          throw new Error('model failed');
+        },
+      } as never,
+      { allowRun: () => undefined, invoke: async () => ({ ok: true }) } as never,
+    );
+
+    const result = await (service as any).advanceRun(run);
+
+    expect(result.status).toBe('failed');
+    expect(result.summary).toBe('model failed');
+    expect(messages).toHaveLength(1);
+    expect(messages[0].content).toBe('Partial answer');
+    expect(messages[0].reasoningContent).toBe('I found the target file.');
+    expect(messages[0].metadata).toEqual({ runId, failedTrace: true });
+  });
+
   it('does not publish a duplicate final assistant message when channel.dm tool ran', async () => {
     const organizationId = 'org-1';
     const runId = 'run-1';
@@ -1661,5 +1815,77 @@ describe('SpiritService run path', () => {
     expect(result.summary).toBe('Stopped by user');
     expect(completions).toBe(1);
     expect(service.cancelRun(organizationId, runId).status).toBe('cancelled');
+  });
+
+  it('persists streamed trace when a run is stopped', async () => {
+    const organizationId = 'org-1';
+    const runId = 'run-stop-trace-1';
+    const agentId = 'Quinn Mason';
+    const threadId = 'thread-1';
+    const messages: any[] = [];
+    let run: any = {
+      id: runId,
+      organizationId,
+      agentId,
+      threadId,
+      status: 'queued',
+      step: 'queued',
+      summary: 'Run queued',
+      startedAt: '2026-05-04T19:07:08.071Z',
+    };
+    const repo = {
+      getMember: () => ({
+        id: agentId,
+        organizationId,
+        name: agentId,
+        kind: AGENT_KIND,
+        roleName: 'backend-engineer',
+      }),
+      getRun: () => run,
+      saveRun: (next: any) => {
+        run = next;
+        return next;
+      },
+      getProviderCredential: () => null,
+      getWorkspaceSetting: () => null,
+      listMembers: () => [],
+      listPendingApprovals: () => [],
+      listMessages: () => ({ data: [], hasMore: false }),
+      getLatestHumanMessageInThread: () => null,
+      getSpiritByRunId: () => null,
+      getThread: () => ({ channelId: 'channel-1' }),
+    } as never;
+    let service: ReturnType<typeof createSpiritRunService>;
+    service = createSpiritRunService(
+      {
+        getTeam: () =>
+          loadAgentTeam({
+            name: 'Timetotest',
+            workspace: { root: '/tmp' },
+            roles: [{ name: 'backend-engineer', title: 'BE', instructions: '.', tools: ['shell'] }],
+            agents: [{ name: agentId, roleName: 'backend-engineer' }],
+          }),
+        setTeam: () => undefined,
+      } as never,
+      repo,
+      { emit: () => undefined } as never,
+      { publishMessage: (message: any) => messages.push(message) } as never,
+      {
+        generateRunReply: async (input: { onChunk?: (chunk: { kind: 'text' | 'reasoning'; delta: string }) => void }) => {
+          input.onChunk?.({ kind: 'reasoning', delta: 'Checking the component tree.' });
+          input.onChunk?.({ kind: 'text', delta: 'I changed the skeleton primitive.' });
+          service.cancelRun(organizationId, runId);
+          return { text: '', toolResults: [], steps: [] };
+        },
+      } as never,
+      { allowRun: () => undefined, invoke: async () => ({ ok: true }) } as never,
+    );
+
+    const result = await (service as any).advanceRun(run);
+
+    expect(result.status).toBe('cancelled');
+    expect(messages[0].content).toBe('I changed the skeleton primitive.');
+    expect(messages[0].reasoningContent).toBe('Checking the component tree.');
+    expect(messages[0].metadata).toMatchObject({ runId, stoppedTrace: true });
   });
 });

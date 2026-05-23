@@ -324,7 +324,7 @@ Jr QA       ══════           Sr QA                                �
                               │
 ┌─────────────────────────────▼───────────────────────────────┐
 │                    Governance Layer (Cloud)                   │
-│    Permissions · Audit Log · Rate Limits · Kill Switch        │
+│    Permissions · Audit Log · Usage Budgets · Kill Switch      │
 └─────────────────────────────────────────────────────────────┘
 </code></pre>
 <p><strong>The key principle:</strong> every agent is live from the moment the task starts. The Junior Designer is creating frames in Figma while the Junior QA is already drafting test scaffolding from whatever schema and design context is already in the store. When the Senior Designer approves a frame, it appears in the context store immediately — the QA agents consume it without waiting for a prompt. Work flows continuously across all domains at once.</p>
@@ -455,7 +455,7 @@ Jr QA       ══════           Sr QA                                �
 <tr>
 <td>Provider selection order</td>
 <td><code>vscode.lm</code> → configured API → Ollama</td>
-<td>Zero-config default; falls back gracefully when the host chat model is unavailable or rate-limited</td>
+<td>Zero-config default; falls back gracefully when the host chat model is unavailable</td>
 </tr>
 <tr>
 <td>Testing</td>
@@ -486,7 +486,7 @@ Jr QA       ══════           Sr QA                                �
   <span class="hljs-attr">&quot;permissions&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">{</span>
     <span class="hljs-attr">&quot;allowed_tools&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">[</span><span class="hljs-string">&quot;get_file&quot;</span><span class="hljs-punctuation">,</span> <span class="hljs-string">&quot;get_components&quot;</span><span class="hljs-punctuation">,</span> <span class="hljs-string">&quot;get_styles&quot;</span><span class="hljs-punctuation">,</span> <span class="hljs-string">&quot;create_frame&quot;</span><span class="hljs-punctuation">,</span> <span class="hljs-string">&quot;update_frame&quot;</span><span class="hljs-punctuation">,</span> <span class="hljs-string">&quot;delete_frame&quot;</span><span class="hljs-punctuation">]</span><span class="hljs-punctuation">,</span>
     <span class="hljs-attr">&quot;blocked_tools&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">[</span><span class="hljs-punctuation">]</span><span class="hljs-punctuation">,</span>
-    <span class="hljs-attr">&quot;rate_limit&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">{</span> <span class="hljs-attr">&quot;calls_per_minute&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-number">30</span><span class="hljs-punctuation">,</span> <span class="hljs-attr">&quot;max_session_tokens&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-number">50000</span> <span class="hljs-punctuation">}</span>
+    <span class="hljs-attr">&quot;rate_limit&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">{</span> <span class="hljs-attr">&quot;max_session_tokens&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-number">50000</span> <span class="hljs-punctuation">}</span>
   <span class="hljs-punctuation">}</span><span class="hljs-punctuation">,</span>
   <span class="hljs-attr">&quot;communication&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">{</span>
     <span class="hljs-attr">&quot;publishes&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">[</span><span class="hljs-string">&quot;design_system_ready&quot;</span><span class="hljs-punctuation">,</span> <span class="hljs-string">&quot;frame_approved&quot;</span><span class="hljs-punctuation">,</span> <span class="hljs-string">&quot;review_required&quot;</span><span class="hljs-punctuation">]</span><span class="hljs-punctuation">,</span>
@@ -510,7 +510,7 @@ Jr QA       ══════           Sr QA                                �
   <span class="hljs-attr">&quot;permissions&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">{</span>
     <span class="hljs-attr">&quot;allowed_tools&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">[</span><span class="hljs-string">&quot;get_file&quot;</span><span class="hljs-punctuation">,</span> <span class="hljs-string">&quot;get_components&quot;</span><span class="hljs-punctuation">,</span> <span class="hljs-string">&quot;get_styles&quot;</span><span class="hljs-punctuation">,</span> <span class="hljs-string">&quot;create_frame&quot;</span><span class="hljs-punctuation">,</span> <span class="hljs-string">&quot;update_frame&quot;</span><span class="hljs-punctuation">]</span><span class="hljs-punctuation">,</span>
     <span class="hljs-attr">&quot;blocked_tools&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">[</span><span class="hljs-string">&quot;delete_frame&quot;</span><span class="hljs-punctuation">,</span> <span class="hljs-string">&quot;delete_component&quot;</span><span class="hljs-punctuation">,</span> <span class="hljs-string">&quot;update_styles&quot;</span><span class="hljs-punctuation">]</span><span class="hljs-punctuation">,</span>
-    <span class="hljs-attr">&quot;rate_limit&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">{</span> <span class="hljs-attr">&quot;calls_per_minute&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-number">20</span><span class="hljs-punctuation">,</span> <span class="hljs-attr">&quot;max_session_tokens&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-number">30000</span> <span class="hljs-punctuation">}</span>
+    <span class="hljs-attr">&quot;rate_limit&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">{</span> <span class="hljs-attr">&quot;max_session_tokens&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-number">30000</span> <span class="hljs-punctuation">}</span>
   <span class="hljs-punctuation">}</span><span class="hljs-punctuation">,</span>
   <span class="hljs-attr">&quot;communication&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">{</span>
     <span class="hljs-attr">&quot;publishes&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">[</span><span class="hljs-string">&quot;junior_frame_ready&quot;</span><span class="hljs-punctuation">,</span> <span class="hljs-string">&quot;clarification_needed&quot;</span><span class="hljs-punctuation">]</span><span class="hljs-punctuation">,</span>
@@ -576,7 +576,7 @@ task:{task_id}:schema             → Database schema summary from DB agent
 task:{task_id}:approved_frames    → List of Figma frame IDs approved by senior designer
 task:{task_id}:test_results       → Playwright test output
 agent:{agent_id}:last_action      → Timestamp and description of last action
-agent:{agent_id}:token_usage      → Running token count for rate limit enforcement
+agent:{agent_id}:token_usage      → Running token count for token cap enforcement
 </code></pre>
 <h3 id="72b-context-hydration-on-agent-spawn">7.2b Context hydration on agent spawn</h3>
 <p>Because agents are spawned on demand rather than held as long-lived processes, each spawn is cold — the agent has no in-memory history from its previous invocations. The context store is the sole source of truth for continuity. This creates a trade-off: how much history and cross-domain context should be loaded into the agent's prompt on each spawn?</p>
@@ -770,7 +770,7 @@ Shared Context:    ════ Figma outputs still flowing ════ DB quer
 <h3 id="81-what-governance-controls">8.1 What governance controls</h3>
 <p><strong>Permissions</strong> — what each agent is allowed to do. Defined at registration, modifiable live. Changes take effect on the next tool call.</p>
 <p><strong>Audit log</strong> — a complete, tamper-resistant record of every event, tool call, token usage, and permission check. Queryable by agent, tool, time window, and task.</p>
-<p><strong>Rate limits</strong> — per-agent caps on token usage, tool calls per minute, and maximum session duration. Prevents runaway agents from burning compute budget or flooding an external API.</p>
+<p><strong>Usage budgets</strong> — per-agent caps on token usage and maximum session duration. Prevents runaway agents from burning compute budget while keeping tool progress unthrottled.</p>
 <p><strong>Kill switch</strong> — halts a specific agent, an entire team, or a full session immediately. Stops tool calls mid-flight, persists current state to the context store, and marks the session as paused.</p>
 <h3 id="81b-approval-routing">8.1b Approval routing</h3>
 <p>When an artifact requires approval before downstream agents can consume it, the question of <em>who</em> approves is configurable via <code>ujima.approvals.mode</code>:</p>
@@ -1061,7 +1061,7 @@ Playwright agent subscribes to lint_report → proceeds
         ↓
 Developer opens Governance → Live Agents view
         ↓
-Sees DB agent rate limit breached (limit: 30/min)
+Sees DB agent token cap exceeded
         ↓
 Clicks Kill on DB agent
         ↓

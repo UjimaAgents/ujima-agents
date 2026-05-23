@@ -223,7 +223,7 @@ The governance layer is the control room — the single authoritative source of 
                               │
 ┌─────────────────────────────▼───────────────────────────────┐
 │                    Governance Layer (Cloud)                   │
-│    Permissions · Audit Log · Rate Limits · Kill Switch        │
+│    Permissions · Audit Log · Usage Budgets · Kill Switch      │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -262,7 +262,7 @@ Cloud is additive, not required. You connect a cloud workspace when you want two
 | MCP client | `@modelcontextprotocol/sdk` (official TypeScript) | One canonical client; same SDK the MCP spec authors maintain; supports stdio, SSE, and streamable HTTP transports |
 | MCP connection | JSON config paste or registry | Same pattern as Claude desktop MCP config |
 | LLM abstraction | Vercel AI SDK + first-class `vscode.lm` adapter | Vercel AI SDK unifies streaming across Anthropic, OpenAI-compatible, Ollama, and others; the `vscode.lm` adapter lets Ujima use the user's already-active chat model (Copilot, etc.) with zero API-key configuration — the "use whatever chat is already in my editor" path |
-| Provider selection order | `vscode.lm` → configured API → Ollama | Zero-config default; falls back gracefully when the host chat model is unavailable or rate-limited |
+| Provider selection order | `vscode.lm` → configured API → Ollama | Zero-config default; falls back gracefully when the host chat model is unavailable |
 | Testing | Vitest (unit) + Playwright (e2e, via `@vscode/test-electron`) | Vitest is fast, ESM-native, parity with the dev runtime; Playwright codegen accelerates webview test authoring |
 | Cloud sync (optional) | Node.js + PostgreSQL | Team workspace, shared agent registry |
 | Remote monitoring (optional) | WebSocket stream to cloud dashboard | Watch agent activity outside VS Code |
@@ -283,7 +283,7 @@ Cloud is additive, not required. You connect a cloud workspace when you want two
   "permissions": {
     "allowed_tools": ["get_file", "get_components", "get_styles", "create_frame", "update_frame", "delete_frame"],
     "blocked_tools": [],
-    "rate_limit": { "calls_per_minute": 30, "max_session_tokens": 50000 }
+    "rate_limit": { "max_session_tokens": 50000 }
   },
   "communication": {
     "publishes": ["design_system_ready", "frame_approved", "review_required"],
@@ -309,7 +309,7 @@ Cloud is additive, not required. You connect a cloud workspace when you want two
   "permissions": {
     "allowed_tools": ["get_file", "get_components", "get_styles", "create_frame", "update_frame"],
     "blocked_tools": ["delete_frame", "delete_component", "update_styles"],
-    "rate_limit": { "calls_per_minute": 20, "max_session_tokens": 30000 }
+    "rate_limit": { "max_session_tokens": 30000 }
   },
   "communication": {
     "publishes": ["junior_frame_ready", "clarification_needed"],
@@ -397,7 +397,7 @@ task:{task_id}:schema             → Database schema summary from DB agent
 task:{task_id}:approved_frames    → List of Figma frame IDs approved by senior designer
 task:{task_id}:test_results       → Playwright test output
 agent:{agent_id}:last_action      → Timestamp and description of last action
-agent:{agent_id}:token_usage      → Running token count for rate limit enforcement
+agent:{agent_id}:token_usage      → Running token count for token cap enforcement
 ```
 
 ### 7.2b Context hydration on agent spawn
@@ -610,7 +610,7 @@ Once resolution is applied and the Playwright agents resume, they pick up from t
 
 **Audit log** — a complete, tamper-resistant record of every event, tool call, token usage, and permission check. Queryable by agent, tool, time window, and task.
 
-**Rate limits** — per-agent caps on token usage, tool calls per minute, and maximum session duration. Prevents runaway agents from burning compute budget or flooding an external API.
+**Usage budgets** — per-agent caps on token usage and maximum session duration. Prevents runaway agents from burning compute budget while keeping tool progress unthrottled.
 
 **Kill switch** — halts a specific agent, an entire team, or a full session immediately. Stops tool calls mid-flight, persists current state to the context store, and marks the session as paused.
 
@@ -875,7 +875,7 @@ Activity stream shows DB agent looping — same query, 847 calls in 3 minutes
         ↓
 Developer opens Governance → Live Agents view
         ↓
-Sees DB agent rate limit breached (limit: 30/min)
+Sees DB agent token cap exceeded
         ↓
 Clicks Kill on DB agent
         ↓
