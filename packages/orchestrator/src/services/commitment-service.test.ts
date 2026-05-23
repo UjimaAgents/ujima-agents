@@ -15,11 +15,6 @@ import type { ApiRepository } from './repository-reader.js';
 import type { ConversationService } from './conversation.js';
 import type { RealtimeService } from './context.js';
 
-// Commitment / completion extractor regression coverage (Bet 4 +
-// post-review follow-up). These regexes ship with no LLM call and
-// will eventually be tuned against real channel traffic; the tests
-// are the only guard against silent calibration drift.
-
 describe('extractCommitment — positive', () => {
   it.each([
     "I'll draft the BRD",
@@ -120,12 +115,6 @@ describe('extractCompletion — captures past-tense delivered work', () => {
     expect(extractCompletion('I have drafted the BRD and will share it soon.')).toBeNull();
   });
 
-  // Dogfood regression: the old code required "to / at / in / on"
-  // as the connector before the path, so "review it here: <path>"
-  // and "See <path>" missed the extractor entirely. The path-signal
-  // refactor decoupled the verb from the connector — any workspace-
-  // shaped path token in a body that also contains a completion verb
-  // is now treated as an artifact reference.
   it.each([
     [
       "I have created a summary document of Phoebe Parker's findings for the 'Settings' section. You can review it here: `ai/memory-bank/tasks/my-payroll-settings-documentation-summary.md`",
@@ -155,23 +144,6 @@ describe('extractCompletion — captures past-tense delivered work', () => {
     expect(extractCompletion('I have spoken with Phoebe.Parker about the issue.')).toBeNull();
   });
 });
-
-// -----------------------------------------------------------------------
-// CommitmentService — runtime behaviour (dedup + run-completed hook)
-// -----------------------------------------------------------------------
-//
-// The post-mortem on the Layla/Phoebe stall in channel-9ufz1jk3
-// (2026-05-22) surfaced three compounding gaps:
-//   1. No commitment dedup — three identical "I will proceed…"
-//      messages produced three separate todos and three independent
-//      self-followup wake cycles.
-//   2. No empty-wake counter — five consecutive self-followup wakes
-//      completed with no publishing terminator and the conversation
-//      silently cycled for the full 24h deadline window.
-//   3. No early escalation — the deadline-letter was the only safety
-//      net, 24h out, so nobody saw the stall in real time.
-//
-// These tests exercise the runtime fixes that close each gap.
 
 interface MockRepoState {
   todos: Map<string, Todo>;
@@ -247,17 +219,17 @@ function makeChannel(): Channel {
     name: 'general',
     kind: 'general',
     topic: '',
-    memberIds: ['layla', 'phoebe'],
+    memberIds: ['human-1', 'layla', 'phoebe'],
     createdAt: new Date().toISOString(),
   } as Channel;
 }
 
-function makeMember(id: string): Member {
+function makeMember(id: string, kind: 'agent' | 'human' = AGENT_KIND): Member {
   return {
     id,
     organizationId: 'org-1',
     name: id,
-    kind: AGENT_KIND,
+    kind,
     roleName: 'engineer',
     presence: 'online',
     createdAt: new Date().toISOString(),
@@ -288,6 +260,7 @@ describe('CommitmentService.onAgentMessagePublished — dedup', () => {
       todos: new Map(),
       channels: new Map([['channel-1', makeChannel()]]),
       members: new Map([
+        ['human-1', makeMember('human-1', 'human')],
         ['layla', makeMember('layla')],
         ['phoebe', makeMember('phoebe')],
       ]),
@@ -297,8 +270,7 @@ describe('CommitmentService.onAgentMessagePublished — dedup', () => {
     const repo = buildMockRepo(state);
     const conversations = buildMockConversations();
     const realtime = buildMockRealtime();
-    const wakeOwner = vi.fn();
-    const service = new CommitmentService(repo, conversations, realtime, wakeOwner, {
+    const service = new CommitmentService(repo, conversations, realtime, {
       dedupWindowMs: 5 * 60 * 1000,
     });
     return { service, state };
@@ -317,10 +289,27 @@ describe('CommitmentService.onAgentMessagePublished — dedup', () => {
     expect(todo.emptyWakeCount).toBe(0);
   });
 
+  it.each(['dm', 'general'] as const)('ignores commitments in agent-only %s threads', async (kind) => {
+    const { service, state } = setup();
+    state.channels.set('agent-thread', {
+      ...makeChannel(),
+      id: 'agent-thread',
+      name: 'Layla / Phoebe',
+      kind,
+      memberIds: ['layla', 'phoebe'],
+    });
+    await service.onAgentMessagePublished(
+      makeMessage({
+        id: `m-${kind}`,
+        threadId: 'agent-thread',
+        channelId: 'agent-thread',
+        content: "I'll draft the BRD now.",
+      }),
+    );
+    expect(state.todos.size).toBe(0);
+  });
+
   it('dedups a near-identical second commitment in the same window (updates existing instead of inserting)', async () => {
-    // This is the Layla/Phoebe scenario condensed: same agent says
-    // "I will proceed…" twice in seconds. Without dedup we would
-    // get two todos and two independent wake cycles.
     const { service, state } = setup();
     await service.onAgentMessagePublished(
       makeMessage({ id: 'm-1', content: 'I will now proceed to compile the task list.' }),
@@ -330,8 +319,6 @@ describe('CommitmentService.onAgentMessagePublished — dedup', () => {
     );
     expect(state.todos.size).toBe(1);
     const todo = Array.from(state.todos.values())[0]!;
-    // Source message rolled forward to the newest restatement so
-    // re-wakes target the most recent context.
     expect(todo.sourceMessageId).toBe('m-2');
   });
 
@@ -408,7 +395,6 @@ describe('CommitmentService.onAgentMessagePublished — in-channel delivery reso
       repo,
       buildMockConversations(),
       buildMockRealtime(),
-      vi.fn(),
       {},
     );
     return { service, state };
@@ -455,121 +441,6 @@ describe('CommitmentService.onAgentMessagePublished — in-channel delivery reso
   });
 });
 
-describe('CommitmentService.onRunCompleted — empty-wake counter', () => {
-  function setupWithCommitment(opts: { dueAt?: string; emptyWakeCount?: number } = {}) {
-    const state: MockRepoState = {
-      todos: new Map(),
-      channels: new Map([['channel-1', makeChannel()]]),
-      members: new Map([['layla', makeMember('layla')]]),
-      messages: new Map(),
-      taskSessions: new Map(),
-    };
-    const futureDue = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-    const todo: Todo = TodoSchema.parse({
-      id: 'todo-1',
-      organizationId: 'org-1',
-      memberId: 'layla',
-      title: 'compile the task list',
-      status: 'in_progress',
-      notes: '',
-      channelId: 'channel-1',
-      sourceMessageId: 'm-1',
-      deliverableSummary: 'compile the task list',
-      dueAt: opts.dueAt ?? futureDue,
-      lastProgressAt: new Date().toISOString(),
-      emptyWakeCount: opts.emptyWakeCount ?? 0,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    });
-    state.todos.set(todo.id, todo);
-    const repo = buildMockRepo(state);
-    const realtime = buildMockRealtime();
-    const service = new CommitmentService(
-      repo,
-      buildMockConversations(),
-      realtime,
-      vi.fn(),
-      { maxEmptyWakes: 3 },
-    );
-    return { service, state, realtime, todo };
-  }
-
-  it('resets the empty-wake counter when a publishing terminator fires', async () => {
-    const { service, state } = setupWithCommitment({ emptyWakeCount: 2 });
-    await service.onRunCompleted(
-      makeRun({
-        id: 'run-1',
-        sourceMessageId: 'm-1',
-        terminatingTool: 'channel.post',
-      }),
-    );
-    expect(state.todos.get('todo-1')!.emptyWakeCount).toBe(0);
-  });
-
-  it('does NOT touch the counter when channel.pass acknowledges the wake', async () => {
-    const { service, state } = setupWithCommitment({ emptyWakeCount: 2 });
-    await service.onRunCompleted(
-      makeRun({ id: 'run-1', sourceMessageId: 'm-1', terminatingTool: 'channel.pass' }),
-    );
-    expect(state.todos.get('todo-1')!.emptyWakeCount).toBe(2);
-  });
-
-  it('increments the counter on an empty terminator (NULL — no publishing tool, no pass)', async () => {
-    const { service, state } = setupWithCommitment({ emptyWakeCount: 0 });
-    await service.onRunCompleted(
-      makeRun({ id: 'run-1', sourceMessageId: 'm-1', terminatingTool: null }),
-    );
-    expect(state.todos.get('todo-1')!.emptyWakeCount).toBe(1);
-    // First empty wake doesn't escalate yet.
-    expect(state.todos.get('todo-1')!.dueAt).not.toBe(state.todos.get('todo-1')!.updatedAt);
-  });
-
-  it('escalates due_at when the counter hits maxEmptyWakes', async () => {
-    const { service, state, realtime } = setupWithCommitment({ emptyWakeCount: 2 });
-    const before = state.todos.get('todo-1')!.dueAt;
-    await service.onRunCompleted(
-      makeRun({ id: 'run-1', sourceMessageId: 'm-1', terminatingTool: null }),
-    );
-    const after = state.todos.get('todo-1')!;
-    expect(after.emptyWakeCount).toBe(3);
-    // due_at must move EARLIER — we want the deadline-letter to fire
-    // on the next sweep instead of waiting 24h.
-    expect(after.dueAt).toBeDefined();
-    expect(new Date(after.dueAt!).getTime()).toBeLessThanOrEqual(Date.now());
-    expect(after.dueAt).not.toBe(before);
-    // The member.empty_wake event fires with `escalated: true`.
-    const emitCalls = (realtime.emit as ReturnType<typeof vi.fn>).mock.calls;
-    const escalation = emitCalls.find(
-      (call) => call[0] === 'member.empty_wake' && (call[1] as { escalated?: boolean }).escalated,
-    );
-    expect(escalation).toBeDefined();
-  });
-
-  it('is a no-op when wakeReason is not self-followup', async () => {
-    const { service, state } = setupWithCommitment({ emptyWakeCount: 0 });
-    await service.onRunCompleted(
-      makeRun({
-        id: 'run-1',
-        sourceMessageId: 'm-1',
-        terminatingTool: null,
-        wakeReason: 'mention',
-      }),
-    );
-    expect(state.todos.get('todo-1')!.emptyWakeCount).toBe(0);
-  });
-
-  it('is a no-op when the run has no source_message_id (no todo to attach to)', async () => {
-    const { service, state } = setupWithCommitment({ emptyWakeCount: 1 });
-    // RunStateSchema requires sourceMessageId in our helper signature
-    // but the service guards against a missing one; build a run with
-    // a non-matching source message id to exercise that branch.
-    await service.onRunCompleted(
-      makeRun({ id: 'run-1', sourceMessageId: 'm-orphan', terminatingTool: null }),
-    );
-    expect(state.todos.get('todo-1')!.emptyWakeCount).toBe(1);
-  });
-});
-
 describe('CommitmentService.sweepExpired — deadline-letter idempotency', () => {
   // Post-review regression: the deadline-letter sweep used to publish
   // FIRST and persist `status: 'expired'` second, so a crash between
@@ -578,7 +449,7 @@ describe('CommitmentService.sweepExpired — deadline-letter idempotency', () =>
   // `claimExpiredCommitment` flips status BEFORE the publish so a
   // re-attempt simply skips already-claimed rows.
 
-  function buildExpiredCommitmentRepo(opts: { failClaim?: boolean } = {}) {
+  function buildExpiredCommitmentRepo(opts: { agentDm?: boolean; failClaim?: boolean } = {}) {
     const past = new Date(Date.now() - 60 * 60 * 1000).toISOString();
     const todo: Todo = TodoSchema.parse({
       id: 'todo-expired',
@@ -598,8 +469,14 @@ describe('CommitmentService.sweepExpired — deadline-letter idempotency', () =>
     const todos = new Map<string, Todo>([[todo.id, todo]]);
     const claimedIds = new Set<string>();
     const repo: Partial<ApiRepository> = {
-      getMember: () => ({ id: 'layla', name: 'Layla' } as never),
-      getChannel: () => ({ id: 'channel-1', name: 'general' } as never),
+      getMember: (_orgId, memberId) =>
+        memberId === 'human-1' ? makeMember('human-1', 'human') : makeMember(memberId),
+      getChannel: () => ({
+        ...makeChannel(),
+        name: opts.agentDm ? 'Layla / Phoebe' : 'general',
+        kind: opts.agentDm ? 'dm' : 'general',
+        memberIds: opts.agentDm ? ['layla', 'phoebe'] : ['human-1', 'layla'],
+      }),
       listExpiredCommitments: () => Array.from(todos.values()).filter((t) => !claimedIds.has(t.id)),
       claimExpiredCommitment: (todoId: string, nowIso: string) => {
         if (opts.failClaim) return false;
@@ -628,11 +505,15 @@ describe('CommitmentService.sweepExpired — deadline-letter idempotency', () =>
       publishMessage: publish,
     } as unknown as ConversationService;
     const realtime = buildMockRealtime();
-    const service = new CommitmentService(repo, conversations, realtime, vi.fn(), {});
+    const service = new CommitmentService(repo, conversations, realtime, {});
 
     const first = await service.sweepExpired();
     expect(first).toBe(1);
     expect(publish).toHaveBeenCalledTimes(1);
+    expect(publish.mock.calls[0]?.[3]).toMatchObject({
+      skipMentionResolution: true,
+      suppressDmAlerts: true,
+    });
     expect(todos.get('todo-expired')!.status).toBe('expired');
 
     // Second sweep — listExpiredCommitments filters out claimed rows,
@@ -652,11 +533,25 @@ describe('CommitmentService.sweepExpired — deadline-letter idempotency', () =>
       repo,
       conversations,
       buildMockRealtime(),
-      vi.fn(),
       {},
     );
     const count = await service.sweepExpired();
     expect(count).toBe(0);
     expect(publish).not.toHaveBeenCalled();
+  });
+
+  it('cancels agent-only DM commitments instead of posting deadline letters', async () => {
+    const { repo, todos } = buildExpiredCommitmentRepo({ agentDm: true });
+    const publish = vi.fn();
+    const service = new CommitmentService(
+      repo,
+      { publishMessage: publish } as unknown as ConversationService,
+      buildMockRealtime(),
+      {},
+    );
+    const count = await service.sweepExpired();
+    expect(count).toBe(0);
+    expect(publish).not.toHaveBeenCalled();
+    expect(todos.get('todo-expired')!.status).toBe('cancelled');
   });
 });

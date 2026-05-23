@@ -30,7 +30,7 @@ import {
 } from "./tool-service.js";
 import {
   ERR_PATH_ESCAPE,
-  createMemberPathResolver,
+  createMemberBoundaryPathResolver,
   isPathEscapeError,
   type PathEscapeError,
 } from "./workspace-root.js";
@@ -39,6 +39,7 @@ import { normalizeShellScope } from "./shell-scope.js";
 import { materializeMcpDef, type McpRuntimePool } from "./mcp-runtime.js";
 import { ApprovedRunScopeTracker } from "../utils/approved-run-scopes.js";
 import { formatReadableToolOutput } from "../utils/tool-output.js";
+import { isPathScopedToolId, usesPathResolution } from "../path-scoped-tools.js";
 
 /** Merge top-level invocation fields into `input` for client / reasoning-trace payloads. */
 function toolCallArgsForClient(inv: ToolInvocationInput): Record<string, unknown> {
@@ -535,21 +536,11 @@ export class ToolServiceImpl implements ToolService {
     roleName: string,
     team: AgentTeamHandle,
   ): Promise<ToolInvocationInput> {
-    if (
-      invocation.toolId !== "filesystem" &&
-      invocation.toolId !== "shell" &&
-      invocation.toolId !== "view" &&
-      invocation.toolId !== "write" &&
-      invocation.toolId !== "edit" &&
-      invocation.toolId !== "multiedit" &&
-      invocation.toolId !== "ls" &&
-      invocation.toolId !== "glob" &&
-      invocation.toolId !== "download"
-    ) {
+    if (!usesPathResolution(invocation.toolId)) {
       return invocation;
     }
 
-    const resolver = await createMemberPathResolver(
+    const resolver = await createMemberBoundaryPathResolver(
       this.repo,
       team,
       invocation.organizationId,
@@ -557,16 +548,7 @@ export class ToolServiceImpl implements ToolService {
       roleName,
     );
 
-    if (
-      invocation.toolId === "filesystem" ||
-      invocation.toolId === "view" ||
-      invocation.toolId === "write" ||
-      invocation.toolId === "edit" ||
-      invocation.toolId === "multiedit" ||
-      invocation.toolId === "ls" ||
-      invocation.toolId === "glob" ||
-      invocation.toolId === "download"
-    ) {
+    if (isPathScopedToolId(invocation.toolId)) {
       if (!invocation.resourcePath) {
         return invocation;
       }

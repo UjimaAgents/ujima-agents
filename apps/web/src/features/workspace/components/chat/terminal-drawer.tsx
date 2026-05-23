@@ -2,14 +2,7 @@
 
 import { X, Terminal, TerminalSquare } from "lucide-react";
 import { BackgroundShellJobPane } from "./background-shell-job-pane";
-
-export interface ActiveJob {
-  runId: string;
-  jobId: string;
-  commandLine: string;
-  cwd: string;
-  status: string;
-}
+import type { ActiveJob } from "../../workspace-store";
 
 interface TerminalDrawerProps {
   isOpen: boolean;
@@ -80,7 +73,7 @@ export function TerminalDrawer({
                 <div className="space-y-6 pb-12">
                   {jobs.map((job) => (
                     <div
-                      key={job.jobId}
+                      key={`${job.runId}:${job.jobId}`}
                       className="rounded-xl border border-zinc-200 bg-zinc-50/50 p-1 dark:border-zinc-800 dark:bg-zinc-900/30"
                     >
                       <BackgroundShellJobPane

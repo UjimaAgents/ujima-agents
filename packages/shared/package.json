@@ -24,6 +24,11 @@
       "types": "./dist/workspace-paths.d.ts",
       "import": "./dist/workspace-paths.js",
       "default": "./dist/workspace-paths.js"
+    },
+    "./path-resolver": {
+      "types": "./dist/path-resolver.d.ts",
+      "import": "./dist/path-resolver.js",
+      "default": "./dist/path-resolver.js"
     }
   },
   "files": ["dist"],

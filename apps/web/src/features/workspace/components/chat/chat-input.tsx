@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import {
+  Eye,
   File as FileIcon,
   FileArchive,
   FileAudio,
@@ -18,7 +19,6 @@ import {
 import { AttachmentSchema, type AttachmentCategory } from "@ujima/shared/browser";
 import type { ChatMessageData } from "./chat-message";
 import { MarkdownInline } from "../markdown";
-import { WORKSPACE_DOCK_HEIGHT_CLASS } from "../../workspace-dock";
 
 export interface MentionSuggestion {
   id: string;
@@ -71,6 +71,8 @@ const SLASH_COMMANDS: Array<{
     description: "Compact the thread and keep the recent raw window.",
   },
 ];
+
+const MAX_COMPOSER_ROWS = 3;
 
 function RunningFigureIndicator() {
   return (
@@ -213,6 +215,15 @@ export function ChatInput({
       requestAnimationFrame(() => textareaRef.current?.focus());
     }
   }, [replyTo]);
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    textarea.style.height = "auto";
+    const lineHeight = Number.parseFloat(getComputedStyle(textarea).lineHeight) || 20;
+    const maxHeight = lineHeight * MAX_COMPOSER_ROWS;
+    textarea.style.height = `${Math.min(textarea.scrollHeight, maxHeight)}px`;
+    textarea.style.overflowY = textarea.scrollHeight > maxHeight ? "auto" : "hidden";
+  }, [content]);
   useEffect(() => {
     attachmentsRef.current = attachments;
   }, [attachments]);
@@ -548,16 +559,7 @@ export function ChatInput({
       <div className="shrink-0 px-3 pt-1.5 pb-3">
         <div className="flex flex-col items-center justify-center rounded-xl border border-zinc-200/50 bg-zinc-50/70 p-4 text-center backdrop-blur-md dark:border-zinc-800/50 dark:bg-zinc-900/40 shadow-sm transition-all duration-300 animate-in fade-in zoom-in-95">
           <div className="flex h-9 w-9 items-center justify-center rounded-full bg-violet-500/10 text-violet-600 dark:text-violet-400 mb-1.5 animate-pulse">
-            <svg
-              className="h-4.5 w-4.5"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              strokeWidth={2.2}
-            >
-              <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-              <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-            </svg>
+            <Eye className="h-4.5 w-4.5" />
           </div>
           <p className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">Observer Mode</p>
           <p className="text-[10px] text-zinc-400 dark:text-zinc-500 mt-0.5 max-w-xs leading-relaxed">
@@ -709,10 +711,10 @@ export function ChatInput({
                         <>
                           {/* eslint-disable-next-line @next/next/no-img-element -- blob or cookie-backed API URL */}
                           <img
-                          src={attachment.previewUrl ?? thumbnailUrl(attachment.id)}
-                          alt={attachment.filename}
-                          className="h-full w-full object-cover"
-                        />
+                            src={attachment.previewUrl ?? thumbnailUrl(attachment.id)}
+                            alt={attachment.filename}
+                            className="h-full w-full object-cover"
+                          />
                         </>
                       ) : (
                         <div className="flex h-full items-center gap-3 px-3 py-2">
@@ -762,7 +764,7 @@ export function ChatInput({
               ) : null}
             </div>
           ) : null}
-          <div className={`relative flex ${WORKSPACE_DOCK_HEIGHT_CLASS} items-center gap-1.5 px-2`}>
+          <div className="relative flex min-h-12 items-center gap-1.5 px-2 py-2">
             <div className="flex shrink-0 items-center gap-1.5">
               <button
                 type="button"
@@ -791,122 +793,122 @@ export function ChatInput({
               </button>
             </div>
             <textarea
-            ref={textareaRef}
-            rows={1}
-            placeholder={placeholder}
-            value={content}
-            onChange={(event) => {
-              setContent(event.target.value);
-              setSelection({
-                start: event.target.selectionStart ?? event.target.value.length,
-                end: event.target.selectionEnd ?? event.target.value.length,
-              });
-              setActiveMentionIndex(0);
-            }}
-            onSelect={(event) => {
-              setSelection({
-                start: event.currentTarget.selectionStart ?? 0,
-                end: event.currentTarget.selectionEnd ?? 0,
-              });
-            }}
-            onClick={(event) => {
-              setSelection({
-                start: event.currentTarget.selectionStart ?? 0,
-                end: event.currentTarget.selectionEnd ?? 0,
-              });
-              setActiveMentionIndex(0);
-            }}
-            onKeyUp={(event) => {
-              setSelection({
-                start: event.currentTarget.selectionStart ?? 0,
-                end: event.currentTarget.selectionEnd ?? 0,
-              });
-            }}
-            onKeyDown={(event) => {
-              if (canConfirmClear) {
-                if (event.key === "Escape") {
-                  event.preventDefault();
-                  setClearConfirmation(false);
-                  setContent("");
-                  return;
-                }
-                if (event.key === "Enter" && !event.shiftKey) {
-                  event.preventDefault();
-                  void confirmClear();
-                  return;
-                }
-              }
-              if (exactSlashCommand && event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault();
-                void runSlashCommand(exactSlashCommand);
-                return;
-              }
-              if (slashMenuOpen) {
-                if (event.key === "ArrowDown") {
-                  event.preventDefault();
-                  setActiveSlashIndex((index) =>
-                    (index + 1) % slashMenuOptions.length,
-                  );
-                  return;
-                }
-                if (event.key === "ArrowUp") {
-                  event.preventDefault();
-                  setActiveSlashIndex((index) =>
-                    (index - 1 + slashMenuOptions.length) % slashMenuOptions.length,
-                  );
-                  return;
-                }
-                if (event.key === "Enter" && !event.shiftKey) {
-                  event.preventDefault();
-                  const selected = slashMenuOptions[activeSlashSelection] ?? slashMenuOptions[0];
-                  if (selected) {
-                    void runSlashCommand(selected.command);
+              ref={textareaRef}
+              rows={1}
+              placeholder={placeholder}
+              value={content}
+              onChange={(event) => {
+                setContent(event.target.value);
+                setSelection({
+                  start: event.target.selectionStart ?? event.target.value.length,
+                  end: event.target.selectionEnd ?? event.target.value.length,
+                });
+                setActiveMentionIndex(0);
+              }}
+              onSelect={(event) => {
+                setSelection({
+                  start: event.currentTarget.selectionStart ?? 0,
+                  end: event.currentTarget.selectionEnd ?? 0,
+                });
+              }}
+              onClick={(event) => {
+                setSelection({
+                  start: event.currentTarget.selectionStart ?? 0,
+                  end: event.currentTarget.selectionEnd ?? 0,
+                });
+                setActiveMentionIndex(0);
+              }}
+              onKeyUp={(event) => {
+                setSelection({
+                  start: event.currentTarget.selectionStart ?? 0,
+                  end: event.currentTarget.selectionEnd ?? 0,
+                });
+              }}
+              onKeyDown={(event) => {
+                if (canConfirmClear) {
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    setClearConfirmation(false);
+                    setContent("");
+                    return;
                   }
-                  return;
+                  if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
+                    void confirmClear();
+                    return;
+                  }
                 }
-                if (event.key === "Escape") {
+                if (exactSlashCommand && event.key === "Enter" && !event.shiftKey) {
                   event.preventDefault();
-                  setContent("");
+                  void runSlashCommand(exactSlashCommand);
                   return;
                 }
-              }
-              if (mentionMenuOpen) {
-                if (event.key === "ArrowDown") {
+                if (slashMenuOpen) {
+                  if (event.key === "ArrowDown") {
+                    event.preventDefault();
+                    setActiveSlashIndex((index) =>
+                      (index + 1) % slashMenuOptions.length,
+                    );
+                    return;
+                  }
+                  if (event.key === "ArrowUp") {
+                    event.preventDefault();
+                    setActiveSlashIndex((index) =>
+                      (index - 1 + slashMenuOptions.length) % slashMenuOptions.length,
+                    );
+                    return;
+                  }
+                  if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
+                    const selected = slashMenuOptions[activeSlashSelection] ?? slashMenuOptions[0];
+                    if (selected) {
+                      void runSlashCommand(selected.command);
+                    }
+                    return;
+                  }
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    setContent("");
+                    return;
+                  }
+                }
+                if (mentionMenuOpen) {
+                  if (event.key === "ArrowDown") {
+                    event.preventDefault();
+                    setActiveMentionIndex((index) =>
+                      (index + 1) % filteredMentionSuggestions.length,
+                    );
+                    return;
+                  }
+                  if (event.key === "ArrowUp") {
+                    event.preventDefault();
+                    setActiveMentionIndex((index) =>
+                      (index - 1 + filteredMentionSuggestions.length) %
+                      filteredMentionSuggestions.length,
+                    );
+                    return;
+                  }
+                  if (event.key === "Enter" || event.key === "Tab") {
+                    event.preventDefault();
+                    insertMention(
+                      filteredMentionSuggestions[activeMentionIndex] ??
+                        filteredMentionSuggestions[0],
+                    );
+                    return;
+                  }
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    setActiveMentionIndex(0);
+                    return;
+                  }
+                }
+                if (event.key === "Enter" && !event.shiftKey) {
                   event.preventDefault();
-                  setActiveMentionIndex((index) =>
-                    (index + 1) % filteredMentionSuggestions.length,
-                  );
-                  return;
+                  void submitComposer();
                 }
-                if (event.key === "ArrowUp") {
-                  event.preventDefault();
-                  setActiveMentionIndex((index) =>
-                    (index - 1 + filteredMentionSuggestions.length) %
-                    filteredMentionSuggestions.length,
-                  );
-                  return;
-                }
-                if (event.key === "Enter" || event.key === "Tab") {
-                  event.preventDefault();
-                  insertMention(
-                    filteredMentionSuggestions[activeMentionIndex] ??
-                      filteredMentionSuggestions[0],
-                  );
-                  return;
-                }
-                if (event.key === "Escape") {
-                  event.preventDefault();
-                  setActiveMentionIndex(0);
-                  return;
-                }
-              }
-              if (event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault();
-                void submitComposer();
-              }
-            }}
-            className="max-h-8 min-h-0 min-w-0 flex-1 resize-none self-center overflow-y-auto bg-transparent py-0 text-sm leading-5 focus:outline-none"
-          />
+              }}
+              className="min-h-5 min-w-0 flex-1 resize-none bg-transparent py-0 text-sm leading-5 focus:outline-none"
+            />
           {mentionMenuOpen ? (
             <div className="absolute bottom-full left-0 right-0 z-20 mb-1 max-h-44 overflow-y-auto rounded-lg border border-zinc-200 bg-white p-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-950">
               {filteredMentionSuggestions.map((suggestion, index) => (

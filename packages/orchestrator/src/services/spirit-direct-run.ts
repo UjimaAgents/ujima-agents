@@ -22,6 +22,7 @@ import { pendingApprovalRunSummary } from './approval-summary.js';
 import {
   findTerminatingTool,
   findTerminatingToolFromRunSteps,
+  isAcknowledgementOnly,
   runUsedChannelPass,
   runUsedThreadPublishingTool,
 } from './run-reply-guard.js';
@@ -490,18 +491,15 @@ export class SpiritServiceDirectRun extends SpiritServiceSupervisor {
       }
 
       if (terminatingTool === 'channel.pass') {
-        this.realtime.emit(
-          SocketEventNames.runSilentCompletion,
-          {
-            organizationId: run.organizationId,
-            runId: run.id,
-            memberId: run.agentId,
-            wakeReason: wakeReason ?? undefined,
-            occurredAt: now,
-          },
-          this.getRooms(running),
-        );
-        return this.completeRun(running, 'passed', 'channel.pass');
+        return this.completeSilentRun(running, 'passed', 'channel.pass', wakeReason);
+      }
+
+      if (terminatingTool === 'channel.ack') {
+        return this.completeSilentRun(running, 'acked', 'channel.ack', wakeReason);
+      }
+
+      if (!terminatingTool && isAcknowledgementOnly(text)) {
+        return this.completeSilentRun(running, 'acked', 'channel.ack', wakeReason);
       }
 
       if (!terminatingTool && text.length === 0 && !goalArtifactToolCall) {
@@ -688,6 +686,26 @@ export class SpiritServiceDirectRun extends SpiritServiceSupervisor {
     this.invokeRunTerminalHook(completed);
 
     return completed;
+  }
+
+  private completeSilentRun(
+    run: RunState,
+    summary: string,
+    terminatingTool: string,
+    wakeReason: WakeReason | null,
+  ): RunState {
+    this.realtime.emit(
+      SocketEventNames.runSilentCompletion,
+      {
+        organizationId: run.organizationId,
+        runId: run.id,
+        memberId: run.agentId,
+        wakeReason: wakeReason ?? undefined,
+        occurredAt: new Date().toISOString(),
+      },
+      this.getRooms(run),
+    );
+    return this.completeRun(run, summary, terminatingTool);
   }
 
   protected waitForApproval(run: RunState, summary: string): RunState {

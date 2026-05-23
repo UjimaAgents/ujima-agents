@@ -1,14 +1,15 @@
 "use client";
 
 import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useChatScrollToBottom } from "../hooks/use-chat-scroll-to-bottom";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { buildReasoningTraceSteps } from "../reasoning-trace";
-import { File, FileArchive, FileAudio, FileImage, FileText, FileVideo, SquarePen } from "lucide-react";
+import { File, FileArchive, FileAudio, FileImage, FileText, FileVideo, SquarePen, Terminal } from "lucide-react";
 import type { BootstrapResponse } from "@ujima/api-schema";
 import type { SelectedConversation } from "../types";
 import { useConversationSync } from "../use-conversation-sync";
 import { DragHandle, WORKSPACE_MAIN_GRID_TRANSITION } from "./workspace-shell";
-import { TerminalDrawer, type ActiveJob } from "./chat/terminal-drawer";
+import { TerminalDrawer } from "./chat/terminal-drawer";
 import {
   ChatHeader,
   ChatTabs,
@@ -23,7 +24,13 @@ import {
 import { ChannelMembersTab } from "./channel-members-tab";
 import { ChannelTasksTab } from "./channel-tasks-tab";
 import { getDirectMessageThreadId, RunStateSchema, type RunState } from "@ujima/shared/browser";
-import { useWorkspaceStore } from "../workspace-store";
+import {
+  isAgentOnlyThread,
+  selectActiveAgentChats,
+  selectActiveTerminals,
+  useWorkspaceStore,
+  type ActiveJob,
+} from "../workspace-store";
 import { EmptyChat } from "./empty-chat";
 import { TypingIndicator } from "./typing-indicator";
 import { RunCard } from "./run-card";
@@ -75,13 +82,11 @@ export function ChannelView({
   onGoalModeChange,
   onSelectConversation,
 }: ChannelViewProps) {
-  const [isAtBottom, setIsAtBottom] = useState(true);
   const [resolvingApprovals, setResolvingApprovals] = useState<Record<string, boolean>>({});
   const [approvalErrors, setApprovalErrors] = useState<Record<string, string>>({});
   const [replyTo, setReplyTo] = useState<ChatMessageData | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
-  const previousFeedSignal = useRef("");
   const feed = useConversationSync(bootstrap, conversation);
   const activeTab = useWorkspaceStore((state) => state.activeTab);
   const showDetails = useWorkspaceStore((state) => state.showDetails);
@@ -106,21 +111,6 @@ export function ChannelView({
     () => (conversation.type === "channel" ? channelById.get(conversation.id) : undefined),
     [channelById, conversation.id, conversation.type],
   );
-  const isReadOnly = useMemo(() => {
-    const currentMemberId = bootstrap.auth.member?.id;
-    if (!currentMemberId) return false;
-    if (conversation.type === "channel") {
-      const channel = channelById.get(conversation.id);
-      if (channel && channel.memberIds) {
-        return !channel.memberIds.includes(currentMemberId);
-      }
-    }
-    return false;
-  }, [bootstrap.auth.member?.id, conversation.id, conversation.type, channelById]);
-  const [channelMemberIds, setChannelMemberIds] = useState<string[]>(
-    () => currentChannel?.memberIds ?? [],
-  );
-
   const currentThreadId = useMemo(() => {
     const senderId = bootstrap.auth.member?.id;
     if (!senderId) return undefined;
@@ -129,25 +119,45 @@ export function ChannelView({
     }
     return conversation.id;
   }, [bootstrap.auth.member?.id, conversation.id, conversation.type]);
+  const isReadOnly = useMemo(() => {
+    const currentMemberId = bootstrap.auth.member?.id;
+    if (!currentMemberId) return false;
+    if (currentThreadId && isAgentOnlyThread(currentThreadId, { channels: bootstrap.channels, members })) {
+      return true;
+    }
+    if (conversation.type === "channel") {
+      const channel = channelById.get(conversation.id);
+      if (channel && channel.memberIds) {
+        return !channel.memberIds.includes(currentMemberId);
+      }
+    }
+    return false;
+  }, [bootstrap.auth.member?.id, bootstrap.channels, conversation.id, conversation.type, currentThreadId, channelById, members]);
+  const [channelMemberIds, setChannelMemberIds] = useState<string[]>(
+    () => currentChannel?.memberIds ?? [],
+  );
 
   const globalActiveRuns = useWorkspaceStore((state) => state.globalActiveRuns);
+  const activeAgentChats = useMemo(
+    () => selectActiveAgentChats({ channels: bootstrap.channels, members, globalActiveRuns }, currentThreadId),
+    [bootstrap.channels, currentThreadId, globalActiveRuns, members],
+  );
+  const activeTerminals = useWorkspaceStore(selectActiveTerminals);
+  const setActiveTerminals = useWorkspaceStore((state) => state.setActiveTerminals);
   const [isTerminalDrawerOpen, setIsTerminalDrawerOpen] = useState(false);
-  const [runningTerminalsCount, setRunningTerminalsCount] = useState(0);
-  const [activeJobsList, setActiveJobsList] = useState<ActiveJob[]>([]);
 
   useEffect(() => {
-    if (globalActiveRuns.length === 0) {
-      setRunningTerminalsCount(0);
-      setActiveJobsList([]);
+    const organizationId = bootstrap.organization?.id;
+    if (!organizationId || globalActiveRuns.length === 0) {
+      setActiveTerminals([]);
       return;
     }
 
     let cancelled = false;
-    const organizationId = bootstrap.organization?.id;
     const pollJobs = async () => {
       try {
         const jobsPromises = globalActiveRuns.map(async (run) => {
-          const res = await fetch(`/api/runs/${encodeURIComponent(run.id)}/jobs?organizationId=${encodeURIComponent(organizationId ?? "")}`);
+          const res = await fetch(`/api/runs/${encodeURIComponent(run.id)}/jobs?organizationId=${encodeURIComponent(organizationId)}`);
           if (!res.ok) return [];
           const data = await res.json().catch(() => []);
           if (!Array.isArray(data)) return [];
@@ -171,8 +181,7 @@ export function ChannelView({
         if (cancelled) return;
 
         const runningJobs = allJobsLists.flat().filter((job) => job.status === "running");
-        setRunningTerminalsCount(runningJobs.length);
-        setActiveJobsList(runningJobs);
+        setActiveTerminals(runningJobs);
       } catch (e) {
         console.error("Failed to fetch running background jobs:", e);
       }
@@ -185,50 +194,7 @@ export function ChannelView({
       cancelled = true;
       clearInterval(interval);
     };
-  }, [globalActiveRuns, bootstrap.organization?.id]);
-
-  const activeAgentChats = useMemo(() => {
-    const currentMemberId = bootstrap.auth.member?.id;
-    if (!currentMemberId) return [];
-
-    const activeRuns = globalActiveRuns.filter(
-      (run) => run.status === "running" || run.status === "waiting_for_approval"
-    );
-    const groupedByThread = new Map<string, typeof activeRuns>();
-    for (const run of activeRuns) {
-      if (run.threadId && run.threadId !== currentThreadId) {
-        const list = groupedByThread.get(run.threadId) ?? [];
-        list.push(run);
-        groupedByThread.set(run.threadId, list);
-      }
-    }
-
-    const results: Array<{
-      threadId: string;
-      name: string;
-      agents: string[];
-    }> = [];
-
-    for (const [threadId, runs] of groupedByThread) {
-      const channel = channelById.get(threadId);
-      if (channel && (!channel.memberIds || !channel.memberIds.includes(currentMemberId))) {
-        const activeAgentIds = Array.from(new Set(runs.map((r) => r.agentId)));
-        const activeAgentNames = activeAgentIds
-          .map((id) => memberById.get(id)?.name)
-          .filter(Boolean) as string[];
-        
-        if (activeAgentNames.length > 0) {
-          results.push({
-            threadId,
-            name: channel.name || activeAgentNames.join(" & "),
-            agents: activeAgentNames,
-          });
-        }
-      }
-    }
-
-    return results;
-  }, [globalActiveRuns, bootstrap.auth.member?.id, currentThreadId, channelById, memberById]);
+  }, [globalActiveRuns, bootstrap.organization?.id, setActiveTerminals]);
 
   const traceMembers = useMemo(
     () =>
@@ -321,6 +287,34 @@ export function ChannelView({
     overscan: 8,
   });
   const virtualMessageRows = messageVirtualizer.getVirtualItems();
+
+  const latestMessageSignal = useMemo(() => {
+    const last = feed.messages.at(-1);
+    if (!last) return "";
+    return [
+      last.id,
+      last.createdAt ?? "",
+      last.content.length,
+      last.pending ? 1 : 0,
+      last.streamRunId ?? "",
+    ].join(":");
+  }, [feed.messages]);
+
+  const pendingApprovalIds = useMemo(
+    () => pendingThreadApprovals.map((a) => a.id).join(","),
+    [pendingThreadApprovals],
+  );
+
+  const { isAtBottom, scrollToLatest, handleScroll } = useChatScrollToBottom({
+    listRef,
+    bottomRef,
+    feed,
+    latestMessageSignal,
+    pendingApprovalIds,
+    conversationKey: `${conversation.id}:${conversation.type}`,
+    virtualizerTotalSize: messageVirtualizer.getTotalSize(),
+  });
+
   const selectedStatus =
     conversation.type === "channel"
       ? { variant: "active" as const, label: "Active" }
@@ -522,56 +516,6 @@ export function ChannelView({
     [activeTab, feed.activity],
   );
 
-  const scrollToLatest = useCallback((behavior: ScrollBehavior = "smooth") => {
-    bottomRef.current?.scrollIntoView({ block: "end", behavior });
-  }, []);
-
-  const latestMessageSignal = useMemo(() => {
-    const last = feed.messages.at(-1);
-    if (!last) return "";
-    return [
-      last.id,
-      last.createdAt ?? "",
-      last.content.length,
-      last.pending ? 1 : 0,
-      last.streamRunId ?? "",
-    ].join(":");
-  }, [feed.messages]);
-
-  const handleScroll = useCallback(() => {
-    const list = listRef.current;
-    if (!list) return;
-    const distanceFromBottom = list.scrollHeight - list.scrollTop - list.clientHeight;
-    const atBottom = distanceFromBottom < 96;
-    setIsAtBottom(atBottom);
-  }, []);
-
-  useLayoutEffect(() => {
-    const pendingKey = pendingThreadApprovals.map((a) => a.id).join(",");
-    const signal = `${feed.messages.length}:${latestMessageSignal}:${feed.approvals.length}:${feed.runs.length}:${feed.loading ? 1 : 0}:${pendingKey}`;
-    if (!previousFeedSignal.current) {
-      previousFeedSignal.current = signal;
-      if (feed.messages.length > 0) {
-        scrollToLatest("auto");
-      }
-      return;
-    }
-    if (previousFeedSignal.current === signal) return;
-    previousFeedSignal.current = signal;
-    if (isAtBottom) {
-      scrollToLatest("smooth");
-    }
-  }, [
-    feed.approvals.length,
-    feed.loading,
-    feed.messages.length,
-    feed.runs.length,
-    isAtBottom,
-    latestMessageSignal,
-    pendingThreadApprovals,
-    scrollToLatest,
-  ]);
-
   useLayoutEffect(() => {
     if (!tabIds.has(activeTab)) {
       setActiveTab("conversation");
@@ -655,18 +599,7 @@ export function ChannelView({
                       );
                     })}
                   </div>
-                  {pendingThreadApprovals.length > 0 ? (
-                    <div className="space-y-2 px-3 py-2">
-                      {pendingThreadApprovals.map((approval) => (
-                        <ApprovalCard
-                          key={approval.id}
-                          data={{ ...approval, error: approvalErrors[approval.id] }}
-                          resolving={!!resolvingApprovals[approval.id]}
-                          onResolve={(resolution) => resolveApproval(approval.id, resolution)}
-                        />
-                      ))}
-                    </div>
-                  ) : typingLabel ? (
+                  {typingLabel ? (
                     <TypingIndicator
                       label={typingLabel}
                       name={typingMember?.name ?? conversation.name}
@@ -780,10 +713,8 @@ export function ChannelView({
             <TabEmpty emptyLabel="No activity." />
           )
         )}
-        {/* Floating Pills Rail */}
-        {(activeAgentChats.length > 0 || runningTerminalsCount > 0) && (
-          <div className="relative z-20 flex flex-wrap gap-2 px-4 pb-2 animate-in slide-in-from-bottom-2 duration-300">
-            {/* Agent Chatting Pills */}
+        {(activeAgentChats.length > 0 || activeTerminals.length > 0) && (
+          <div className="relative z-20 flex shrink-0 flex-wrap gap-2 px-3 pb-1.5 pt-1 animate-in slide-in-from-bottom-2 duration-300">
             {activeAgentChats.map((chat) => (
               <button
                 key={chat.threadId}
@@ -796,7 +727,7 @@ export function ChannelView({
                     name: chat.name,
                   });
                 }}
-                className="flex items-center gap-2 rounded-full border border-violet-500/30 bg-zinc-950/80 px-3.5 py-1.5 text-xs text-zinc-100 backdrop-blur-md shadow-lg transition-all duration-300 hover:scale-102 hover:bg-zinc-900/95 active:scale-98 dark:border-violet-500/20"
+                className="flex items-center gap-2 rounded-full border border-violet-500/30 bg-zinc-950/80 px-3.5 py-1.5 text-xs text-zinc-100 shadow-lg backdrop-blur-md transition hover:bg-zinc-900/95 dark:border-violet-500/20"
               >
                 <span className="relative flex h-2 w-2">
                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
@@ -808,25 +739,16 @@ export function ChannelView({
               </button>
             ))}
 
-            {/* Terminals Pill */}
-            {runningTerminalsCount > 0 && (
+            {activeTerminals.length > 0 && (
               <div className="flex items-center gap-1 shrink-0">
                 <button
                   type="button"
                   onClick={() => setIsTerminalDrawerOpen(true)}
-                  className="flex items-center gap-2 rounded-full border border-zinc-200 bg-white/95 px-3.5 py-1.5 text-xs font-semibold text-zinc-800 backdrop-blur-md shadow-md hover:bg-zinc-50 active:scale-98 dark:border-zinc-800 dark:bg-zinc-950/95 dark:text-zinc-200"
+                  className="flex items-center gap-2 rounded-full border border-zinc-200 bg-white/95 px-3.5 py-1.5 text-xs font-semibold text-zinc-800 shadow-md backdrop-blur-md transition hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950/95 dark:text-zinc-200"
                 >
-                  <svg
-                    className="h-3.5 w-3.5 text-zinc-500 animate-pulse"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                    strokeWidth={2.2}
-                  >
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                  </svg>
+                  <Terminal className="h-3.5 w-3.5 animate-pulse text-zinc-500" />
                   <span>
-                    {runningTerminalsCount} {runningTerminalsCount === 1 ? "Terminal" : "Terminals"}
+                    {activeTerminals.length} {activeTerminals.length === 1 ? "Terminal" : "Terminals"}
                   </span>
                 </button>
                 <button
@@ -841,46 +763,61 @@ export function ChannelView({
             )}
           </div>
         )}
-        <ChatInput
-          organizationId={organizationId}
-          goalMode={goalMode}
-          onGoalModeChange={onGoalModeChange}
-          readOnly={isReadOnly}
-          onCommand={async (command, content) => {
-            if (command === "schedule") {
-              const prompt = content?.replace(/^\/schedule\s*/i, "").trim();
-              if (!prompt) {
-                throw new Error("Usage: /schedule do this");
+        {pendingThreadApprovals.length > 0 ? (
+          <div className="shrink-0 px-3 pt-1.5 pb-3">
+            <div className="space-y-2">
+              {pendingThreadApprovals.map((approval) => (
+                <ApprovalCard
+                  key={approval.id}
+                  data={{ ...approval, error: approvalErrors[approval.id] }}
+                  resolving={!!resolvingApprovals[approval.id]}
+                  onResolve={(resolution) => resolveApproval(approval.id, resolution)}
+                />
+              ))}
+            </div>
+          </div>
+        ) : (
+          <ChatInput
+            organizationId={organizationId}
+            goalMode={goalMode}
+            onGoalModeChange={onGoalModeChange}
+            readOnly={isReadOnly}
+            onCommand={async (command, content) => {
+              if (command === "schedule") {
+                const prompt = content?.replace(/^\/schedule\s*/i, "").trim();
+                if (!prompt) {
+                  throw new Error("Usage: /schedule do this");
+                }
+                await feed.sendMessage(`Please use the schedule tool for this request: ${prompt}`);
+                setReplyTo(null);
+                scrollToLatest("auto");
+                return;
               }
-              await feed.sendMessage(`Please use the schedule tool for this request: ${prompt}`);
+              await feed.archiveConversation(command);
               setReplyTo(null);
               scrollToLatest("auto");
-              return;
+            }}
+            placeholder={
+              isAgent
+                ? `Message @${conversation.name}...`
+                : `Message #${conversation.name} or @agent...`
             }
-            await feed.archiveConversation(command);
-            setReplyTo(null);
-            scrollToLatest("auto");
-          }}
-          placeholder={
-            isAgent
-              ? `Message @${conversation.name}...`
-              : `Message #${conversation.name} or @agent...`
-          }
-          inlineError={feed.error}
-          mentionSuggestions={mentionSuggestions}
-          replyTo={replyTo}
-          onCancelReply={() => setReplyTo(null)}
-          stoppableRunId={stoppableRunId}
-          onStopRun={stopAgentRun}
-          onSend={(content, attachmentIds, metadata) => {
-            if (isAgent) {
-              openDetailsForAgentMessage();
-            }
-            const promise = feed.sendMessage(content, replyTo?.id, attachmentIds, metadata);
-            setReplyTo(null);
-            return promise;
-          }}
-        />
+            inlineError={feed.error}
+            mentionSuggestions={mentionSuggestions}
+            replyTo={replyTo}
+            onCancelReply={() => setReplyTo(null)}
+            stoppableRunId={stoppableRunId}
+            onStopRun={stopAgentRun}
+            onSend={(content, attachmentIds, metadata) => {
+              if (isAgent) {
+                openDetailsForAgentMessage();
+              }
+              const promise = feed.sendMessage(content, replyTo?.id, attachmentIds, metadata);
+              setReplyTo(null);
+              return promise;
+            }}
+          />
+        )}
       </div>
 
       <div
@@ -921,7 +858,7 @@ export function ChannelView({
       <TerminalDrawer
         isOpen={isTerminalDrawerOpen}
         onClose={() => setIsTerminalDrawerOpen(false)}
-        jobs={activeJobsList}
+        jobs={activeTerminals}
         organizationId={organizationId ?? ""}
       />
     </div>

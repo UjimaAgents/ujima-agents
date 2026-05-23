@@ -6,6 +6,8 @@ import type {
   Message,
   RunState,
 } from "@ujima/shared/browser";
+import { isAgentOnlyThread as isSharedAgentOnlyThread } from "@ujima/shared";
+import { parseDmThreadId } from "@ujima/shared/browser";
 import type { SelectedConversation } from "./types";
 import { resolveDefaultConversation } from "./workspace-channels";
 import type { ChatMessageData, ApprovalCardData } from "./components/chat";
@@ -17,7 +19,21 @@ export type WorkspaceMember = BootstrapResponse["members"][number];
 export type WorkspaceTab = "conversation" | "approvals" | "files" | "activity" | "tasks" | "members";
 export type WorkspaceDetailsTab = "Reasoning trace" | "Changes" | "Metadata";
 
-interface WorkspaceState {
+export interface ActiveJob {
+  runId: string;
+  jobId: string;
+  commandLine: string;
+  cwd: string;
+  status: string;
+}
+
+export interface ActiveAgentChat {
+  threadId: string;
+  name: string;
+  agents: string[];
+}
+
+export interface WorkspaceState {
   sidebarWidth: number;
   activeTab: WorkspaceTab;
   showDetails: boolean;
@@ -33,6 +49,7 @@ interface WorkspaceState {
   approvals: ApprovalCardData[];
   runs: RunState[];
   globalActiveRuns: RunState[];
+  activeTerminals: ActiveJob[];
   activitySequence: number;
   activity: ActivityEvent[];
   loading: boolean;
@@ -68,6 +85,7 @@ interface WorkspaceState {
   upsertApproval(approval: ApprovalRequest, toCard: (approval: ApprovalRequest, state: Pick<WorkspaceState, "members">) => ApprovalCardData, toActivity: (approval: ApprovalRequest) => ActivityEvent): void;
   upsertRun(run: RunState, toActivity: (run: RunState) => ActivityEvent): void;
   upsertGlobalActiveRun(run: RunState): void;
+  setActiveTerminals(jobs: ActiveJob[]): void;
   appendActivity(event: ActivityEvent): void;
 }
 
@@ -90,6 +108,7 @@ const EMPTY_ACTIVITY = {
   approvals: [],
   runs: [],
   globalActiveRuns: [],
+  activeTerminals: [],
   activitySequence: 0,
   activity: [],
   loading: true,
@@ -247,7 +266,10 @@ export function normalizeConversationSelection(
 
   if (conversation.type === "channel") {
     const channel = channels.find((entry) => entry.id === conversation.id);
-    if (!channel) return undefined;
+    if (!channel) {
+      const name = agentOnlyThreadName(conversation.id, { channels, members });
+      return name ? { ...conversation, name } : undefined;
+    }
     if (channel.name === conversation.name) return conversation;
     return { ...conversation, name: channel.name };
   }
@@ -292,6 +314,80 @@ function sameItems<T extends { id: string }>(current: T[], incoming: T[]): boole
     current.length === incoming.length &&
     current.every((item, index) => item.id === incoming[index]?.id && sameRecord(item, incoming[index]))
   );
+}
+
+function sameActiveJobs(current: ActiveJob[], incoming: ActiveJob[]): boolean {
+  return current.length === incoming.length && current.every((job, index) => sameRecord(job, incoming[index]));
+}
+
+function findMember(id: string, members: WorkspaceMember[]): WorkspaceMember | undefined {
+  return members.find((member) => member.id === id);
+}
+
+function agentThreadMembers(threadId: string, state: Pick<WorkspaceState, "channels" | "members">): WorkspaceMember[] {
+  const dm = parseDmThreadId(threadId);
+  if (dm) {
+    return [findMember(dm.participantA, state.members), findMember(dm.participantB, state.members)]
+      .filter((member): member is WorkspaceMember => member?.kind === "agent");
+  }
+
+  const channel = state.channels.find((entry) => entry.id === threadId);
+  if (!channel?.memberIds.length) return [];
+  return channel.memberIds
+    .map((memberId) => findMember(memberId, state.members))
+    .filter((member): member is WorkspaceMember => member?.kind === "agent");
+}
+
+export function isAgentOnlyThread(
+  threadId: string,
+  state: Pick<WorkspaceState, "channels" | "members">,
+): boolean {
+  return isSharedAgentOnlyThread(
+    threadId,
+    state.members.map((member) => ({ id: member.id, kind: member.kind })),
+    state.channels.map((channel) => ({ id: channel.id, memberIds: channel.memberIds })),
+  );
+}
+
+export function agentOnlyThreadName(
+  threadId: string,
+  state: Pick<WorkspaceState, "channels" | "members">,
+): string | undefined {
+  const channel = state.channels.find((entry) => entry.id === threadId);
+  if (channel) return channel.name;
+  const agents = agentThreadMembers(threadId, state);
+  return agents.length === 2 ? agents.map((agent) => agent.name).join(" & ") : undefined;
+}
+
+export function selectActiveAgentChats(
+  state: Pick<WorkspaceState, "channels" | "members" | "globalActiveRuns">,
+  currentThreadId?: string,
+): ActiveAgentChat[] {
+  const grouped = new Map<string, RunState[]>();
+  for (const run of state.globalActiveRuns) {
+    if (
+      !run.threadId ||
+      run.threadId === currentThreadId ||
+      (run.status !== "running" && run.status !== "waiting_for_approval") ||
+      !isAgentOnlyThread(run.threadId, state)
+    ) {
+      continue;
+    }
+    grouped.set(run.threadId, [...(grouped.get(run.threadId) ?? []), run]);
+  }
+
+  return [...grouped.keys()].map((threadId) => {
+    const agents = agentThreadMembers(threadId, state).map((agent) => agent.name);
+    return {
+      threadId,
+      name: agentOnlyThreadName(threadId, state) ?? agents.join(" & "),
+      agents,
+    };
+  });
+}
+
+export function selectActiveTerminals(state: WorkspaceState): ActiveJob[] {
+  return state.activeTerminals;
 }
 
 export const useWorkspaceStore = create<WorkspaceState>((set) => ({
@@ -347,14 +443,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
       );
       const passedValid =
         passed &&
-        (passed.type === "channel"
-          ? nextChannels.some((channel) => channel.id === passed.id)
-          : nextMembers.some((member) => member.id === passed.id));
+        conversationExists(passed, nextChannels, nextMembers);
       const selectionExists =
         currentSelection &&
-        (currentSelection.type === "channel"
-          ? nextChannels.some((channel) => channel.id === currentSelection.id)
-          : nextMembers.some((member) => member.id === currentSelection.id));
+        conversationExists(currentSelection, nextChannels, nextMembers);
       const nextSelection =
         (passedValid ? passed : undefined) ??
         (selectionExists ? currentSelection : undefined) ??
@@ -529,8 +621,24 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
         : mergeRuns(state.globalActiveRuns, [run]);
       return { globalActiveRuns: nextGlobalRuns };
     }),
+  setActiveTerminals: (activeTerminals) =>
+    set((state) => (sameActiveJobs(state.activeTerminals, activeTerminals) ? state : { activeTerminals })),
   appendActivity: (event) => set((state) => appendSequencedEvents(state, [event])),
 }));
+
+function conversationExists(
+  conversation: SelectedConversation,
+  channels: WorkspaceChannel[],
+  members: WorkspaceMember[],
+): boolean {
+  if (conversation.type === "agent") {
+    return members.some((member) => member.id === conversation.id);
+  }
+  return (
+    channels.some((channel) => channel.id === conversation.id) ||
+    isAgentOnlyThread(conversation.id, { channels, members })
+  );
+}
 
 function readDetailsAutoOpenDismissed(): boolean {
   if (typeof window === "undefined") return false;

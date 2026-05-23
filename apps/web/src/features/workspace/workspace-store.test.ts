@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
+import type { RunState } from "@ujima/shared/browser";
 import {
+  isAgentOnlyThread,
   mergeConversationUnreadCounts,
   normalizeConversationSelection,
+  selectActiveAgentChats,
   useWorkspaceStore,
   type WorkspaceChannel,
   type WorkspaceMember,
@@ -19,6 +22,22 @@ describe("workspace-store helpers", () => {
       name: "Ava",
       kind: "agent",
       roleName: "assistant",
+      presence: "offline",
+    },
+    {
+      id: "bo",
+      organizationId: "org",
+      name: "Bo",
+      kind: "agent",
+      roleName: "assistant",
+      presence: "offline",
+    },
+    {
+      id: "human",
+      organizationId: "org",
+      name: "Human",
+      kind: "human",
+      roleName: "operator",
       presence: "offline",
     },
   ];
@@ -87,7 +106,7 @@ describe("workspace-store helpers", () => {
       "general",
       "random",
     ]);
-    expect(useWorkspaceStore.getState().members.map((member) => member.id)).toEqual(["ava"]);
+    expect(useWorkspaceStore.getState().members.map((member) => member.id)).toEqual(["ava", "bo", "human"]);
   });
 
   it("keeps enough live activity for long streaming traces", () => {
@@ -115,4 +134,52 @@ describe("workspace-store helpers", () => {
     expect(activity[0]?.event_id).toBe("chunk-0");
   });
 
+  it("detects agent-only channels and DMs", () => {
+    const state = {
+      channels: [
+        { id: "agents", name: "agents", kind: "general", topic: "", memberIds: ["ava", "bo"] },
+        { id: "mixed", name: "mixed", kind: "general", topic: "", memberIds: ["ava", "human"] },
+      ],
+      members,
+    };
+
+    expect(isAgentOnlyThread("agents", state)).toBe(true);
+    expect(isAgentOnlyThread("dm:ava:bo", state)).toBe(true);
+    expect(isAgentOnlyThread("mixed", state)).toBe(false);
+    expect(isAgentOnlyThread("dm:ava:human", state)).toBe(false);
+  });
+
+  it("selects active agent chats outside the current thread", () => {
+    useWorkspaceStore.setState({
+      channels: [
+        { id: "agents", name: "agents", kind: "general", topic: "", memberIds: ["ava", "bo"] },
+        { id: "mixed", name: "mixed", kind: "general", topic: "", memberIds: ["ava", "human"] },
+      ],
+      members,
+      globalActiveRuns: [
+        run({ id: "run-1", agentId: "ava", threadId: "agents", status: "running" }),
+        run({ id: "run-2", agentId: "bo", threadId: "agents", status: "waiting_for_approval" }),
+        run({ id: "run-3", agentId: "ava", threadId: "dm:ava:bo", status: "running" }),
+        run({ id: "run-4", agentId: "ava", threadId: "mixed", status: "running" }),
+        run({ id: "run-5", agentId: "ava", threadId: "current", status: "running" }),
+        run({ id: "run-6", agentId: "ava", threadId: "agents", status: "completed" }),
+      ],
+    });
+
+    expect(selectActiveAgentChats(useWorkspaceStore.getState(), "current")).toEqual([
+      { threadId: "agents", name: "agents", agents: ["Ava", "Bo"] },
+      { threadId: "dm:ava:bo", name: "Ava & Bo", agents: ["Ava", "Bo"] },
+    ]);
+  });
+
 });
+
+function run(input: Pick<RunState, "id" | "agentId" | "threadId" | "status">): RunState {
+  return {
+    organizationId: "org",
+    step: "",
+    summary: "",
+    startedAt: new Date(0).toISOString(),
+    ...input,
+  };
+}

@@ -1,6 +1,6 @@
 import { streamText, type LanguageModel, type ModelMessage, type ToolSet } from 'ai';
 import { RUN_TERMINATING_TOOL_NAMES } from './run-reply-guard.js';
-import { findToolApprovalRequiredError } from './tool-loop-result.js';
+import { findToolApprovalRequiredError, ToolApprovalRequiredError } from './tool-loop-result.js';
 
 export interface AgentLoopStep {
   text?: string;
@@ -20,6 +20,19 @@ export interface AgentLoopResult {
   toolResults: { toolName?: string; output?: unknown }[];
   usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number };
   [key: string]: unknown;
+}
+
+function approvalWaitFromSteps(steps: readonly AgentLoopStep[]): string | null {
+  for (const step of steps) {
+    const results = Array.isArray(step.toolResults) ? step.toolResults : [];
+    for (const result of results) {
+      const output = result?.output as { status?: unknown; approvalId?: unknown } | undefined;
+      if (output?.status === 'waiting_for_approval' && typeof output.approvalId === 'string') {
+        return output.approvalId;
+      }
+    }
+  }
+  return null;
 }
 
 /**
@@ -63,6 +76,7 @@ export async function runAgentLoop(input: {
   const onChunk = input.onChunk;
 
   const stopWhen: NonNullable<Parameters<typeof streamText>[0]['stopWhen']> = (info) => {
+    if (approvalWaitFromSteps(steps)) return true;
     for (const step of steps) {
       const calls = Array.isArray(step.toolCalls) ? step.toolCalls : [];
       for (const call of calls) {
@@ -141,6 +155,8 @@ export async function runAgentLoop(input: {
 
     const [text, usage] = await Promise.all([result.text, result.usage]);
     const toolResults = steps.flatMap((step) => step.toolResults ?? []);
+    const approvalId = approvalWaitFromSteps(steps);
+    if (approvalId) throw new ToolApprovalRequiredError(approvalId);
     return { text, steps, toolResults, usage } as unknown as AgentLoopResult;
   };
 

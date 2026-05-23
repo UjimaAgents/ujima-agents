@@ -25,6 +25,19 @@ describe('checkToolPolicy', () => {
     await rm(daemonCwd, { recursive: true, force: true });
   });
 
+  function teamWithRole(role: Record<string, unknown>) {
+    return loadAgentTeam({
+      name: 'Policy Org',
+      workspace: { root: workspaceRoot },
+      providers: {
+        openai: { kind: 'openai', defaultModel: 'gpt-5.4', models: ['gpt-5.4'] },
+      },
+      roles: [role],
+      agents: [],
+      channels: [{ name: 'general', kind: 'general', topic: 'General' }],
+    } as Record<string, unknown>);
+  }
+
   it('evaluates relative workspace scopes against the workspace root instead of process cwd', () => {
     const team = loadAgentTeam({
       name: 'Policy Org',
@@ -70,119 +83,27 @@ describe('checkToolPolicy', () => {
         'read',
         join(workspaceRoot, 'apps', 'api'),
       ),
-    ).toMatchObject({ allowed: false });
+    ).toMatchObject({
+      allowed: true,
+      requiresApproval: true,
+      reason: expect.stringContaining('outside allowed scopes'),
+    });
   });
 
-  describe('filesystem access to soul.md', () => {
-    it('allows a role scoped to apps/web to read soul.md there', async () => {
-      await writeFile(join(workspaceRoot, 'apps', 'web', 'soul.md'), 'I am the soul.\n', 'utf8');
-
-      const team = loadAgentTeam({
-        name: 'Soul Org',
-        workspace: { root: workspaceRoot },
-        providers: {
-          openai: {
-            kind: 'openai',
-            defaultModel: 'gpt-5.4',
-            models: ['gpt-5.4'],
-          },
-        },
-        roles: [
-          {
-            name: 'root-reader',
-            title: 'Root Reader',
-            instructions: 'Can read soul.md.',
-            provider: 'openai',
-            model: 'gpt-5.4',
-            workspaceScopes: ['apps/web'],
-            tools: [],
-            channels: ['general'],
-          },
-        ],
-        agents: [],
-        channels: [{ name: 'general', kind: 'general', topic: 'General' }],
-      } as Record<string, unknown>);
-
-      expect(
-        checkToolPolicy(
-          team,
-          'root-reader',
-          'view',
-          'read',
-          join(workspaceRoot, 'apps', 'web', 'soul.md'),
-        ),
-      ).toEqual({ allowed: true, requiresApproval: false });
-    });
-
-    it('blocks a role without access to apps/web', () => {
-      const team = loadAgentTeam({
-        name: 'Soul Org',
-        workspace: { root: workspaceRoot },
-        providers: {
-          openai: {
-            kind: 'openai',
-            defaultModel: 'gpt-5.4',
-            models: ['gpt-5.4'],
-          },
-        },
-        roles: [
-          {
-            name: 'web-reader',
-            title: 'Web Reader',
-            instructions: 'Can only read apps/web.',
-            provider: 'openai',
-            model: 'gpt-5.4',
-            workspaceScopes: ['apps/api'],
-            tools: [],
-            channels: ['general'],
-          },
-        ],
-        agents: [],
-        channels: [{ name: 'general', kind: 'general', topic: 'General' }],
-      } as Record<string, unknown>);
-
-      expect(
-        checkToolPolicy(
-          team,
-          'web-reader',
-          'view',
-          'read',
-          join(workspaceRoot, 'apps', 'web', 'soul.md'),
-        ),
-      ).toMatchObject({
-        allowed: false,
-        reason: expect.stringContaining('outside allowed scopes'),
-      });
-    });
-
+  describe('filesystem path policy', () => {
     it('requires approval for hidden or secret-looking reads', async () => {
       await writeFile(join(workspaceRoot, '.env'), 'TOKEN=secret\n', 'utf8');
 
-      const team = loadAgentTeam({
-        name: 'Secret Org',
-        workspace: { root: workspaceRoot },
-        providers: {
-          openai: {
-            kind: 'openai',
-            defaultModel: 'gpt-5.4',
-            models: ['gpt-5.4'],
-          },
-        },
-        roles: [
-          {
-            name: 'secret-reader',
-            title: 'Secret Reader',
-            instructions: 'Can inspect root files.',
-            provider: 'openai',
-            model: 'gpt-5.4',
-            workspaceScopes: ['.'],
-            tools: [],
-            channels: ['general'],
-          },
-        ],
-        agents: [],
-        channels: [{ name: 'general', kind: 'general', topic: 'General' }],
-      } as Record<string, unknown>);
+      const team = teamWithRole({
+        name: 'secret-reader',
+        title: 'Secret Reader',
+        instructions: 'Can inspect root files.',
+        provider: 'openai',
+        model: 'gpt-5.4',
+        workspaceScopes: ['.'],
+        tools: [],
+        channels: ['general'],
+      });
 
       expect(
         checkToolPolicy(
@@ -200,31 +121,16 @@ describe('checkToolPolicy', () => {
     });
 
     it('bypasses approval for writes inside .ujima-goals', async () => {
-      const team = loadAgentTeam({
-        name: 'Goal Org',
-        workspace: { root: workspaceRoot },
-        providers: {
-          openai: {
-            kind: 'openai',
-            defaultModel: 'gpt-5.4',
-            models: ['gpt-5.4'],
-          },
-        },
-        roles: [
-          {
-            name: 'goal-writer',
-            title: 'Goal Writer',
-            instructions: 'Can manage goal artifacts.',
-            provider: 'openai',
-            model: 'gpt-5.4',
-            workspaceScopes: ['.'],
-            tools: ['write', 'edit', 'multiedit'],
-            channels: ['general'],
-          },
-        ],
-        agents: [],
-        channels: [{ name: 'general', kind: 'general', topic: 'General' }],
-      } as Record<string, unknown>);
+      const team = teamWithRole({
+        name: 'goal-writer',
+        title: 'Goal Writer',
+        instructions: 'Can manage goal artifacts.',
+        provider: 'openai',
+        model: 'gpt-5.4',
+        workspaceScopes: ['.'],
+        tools: ['write', 'edit', 'multiedit'],
+        channels: ['general'],
+      });
 
       expect(
         checkToolPolicy(
@@ -235,6 +141,54 @@ describe('checkToolPolicy', () => {
           join(workspaceRoot, '.ujima-goals', 'plan.md'),
         ),
       ).toEqual({ allowed: true, requiresApproval: false });
+    });
+
+    it('does not require approval for write/edit/multiedit inside role scope', () => {
+      const team = teamWithRole({
+        name: 'web-writer',
+        title: 'Web Writer',
+        instructions: 'Can edit apps/web.',
+        provider: 'openai',
+        model: 'gpt-5.4',
+        workspaceScopes: ['apps/web'],
+        tools: ['write', 'edit', 'multiedit'],
+        channels: ['general'],
+      });
+
+      for (const toolId of ['write', 'edit', 'multiedit']) {
+        expect(
+          checkToolPolicy(
+            team,
+            'web-writer',
+            toolId,
+            'write',
+            join(workspaceRoot, 'apps', 'web', 'index.ts'),
+          ),
+        ).toEqual({ allowed: true, requiresApproval: false });
+      }
+    });
+
+    it('requires approval for edits outside role scope', () => {
+      const team = teamWithRole({
+        name: 'web-writer',
+        title: 'Web Writer',
+        instructions: 'Can edit apps/web.',
+        provider: 'openai',
+        model: 'gpt-5.4',
+        workspaceScopes: ['apps/web'],
+        tools: ['write', 'edit', 'multiedit'],
+        channels: ['general'],
+      });
+
+      expect(
+        checkToolPolicy(
+          team,
+          'web-writer',
+          'edit',
+          'write',
+          join(workspaceRoot, 'apps', 'api', 'index.ts'),
+        ),
+      ).toMatchObject({ allowed: true, requiresApproval: true });
     });
   });
 
@@ -278,39 +232,21 @@ describe('checkToolPolicy', () => {
       } as Record<string, unknown>);
     }
 
-    it('channel.post is allowed without approval (messaging is the substrate)', () => {
+    it('allows baseline channel tools without workspace path checks', () => {
       const team = buildTeam();
-      // Pre-fix: this returned `{ requiresApproval: true }` and paused the run.
-      expect(
-        checkToolPolicy(team, 'frontend-engineer', 'channel.post', 'message'),
-      ).toEqual({ allowed: true, requiresApproval: false });
-    });
-
-    it('channel.reply / channel.dm are allowed without approval', () => {
-      const team = buildTeam();
-      expect(
-        checkToolPolicy(team, 'frontend-engineer', 'channel.reply', 'message'),
-      ).toEqual({ allowed: true, requiresApproval: false });
-      expect(
-        checkToolPolicy(team, 'frontend-engineer', 'channel.dm', 'message'),
-      ).toEqual({ allowed: true, requiresApproval: false });
-    });
-
-    it('channel.list / channel.read are allowed (read action)', () => {
-      const team = buildTeam();
-      expect(
-        checkToolPolicy(team, 'frontend-engineer', 'channel.list', 'read'),
-      ).toEqual({ allowed: true, requiresApproval: false });
-      expect(
-        checkToolPolicy(team, 'frontend-engineer', 'channel.read', 'read'),
-      ).toEqual({ allowed: true, requiresApproval: false });
-    });
-
-    it('channel ids are not run through the workspace-boundary check', () => {
-      const team = buildTeam();
-      // Pre-fix: passing `general` (or `dm:alex`) as resourcePath triggered
-      // assertWorkspaceBoundary, which resolved it against workspaceRoot and
-      // either rejected for escape or for being outside `apps/web`.
+      for (const toolId of [
+        'channel.post',
+        'channel.reply',
+        'channel.dm',
+        'channel.read',
+        'channel.list',
+      ] as const) {
+        const action = toolId === 'channel.read' || toolId === 'channel.list' ? 'read' : 'message';
+        expect(checkToolPolicy(team, 'frontend-engineer', toolId, action)).toEqual({
+          allowed: true,
+          requiresApproval: false,
+        });
+      }
       expect(
         checkToolPolicy(team, 'frontend-engineer', 'channel.post', 'message', 'general'),
       ).toEqual({ allowed: true, requiresApproval: false });
