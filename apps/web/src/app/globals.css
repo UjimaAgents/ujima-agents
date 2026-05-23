@@ -18,6 +18,8 @@
   --font-mono: "SFMono-Regular", "Consolas", "Liberation Mono", monospace;
 
   --animate-approval-in: approval-in 0.3s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+  --animate-bubble-in: bubble-in 0.22s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+  --animate-bubble-out: bubble-out 0.18s cubic-bezier(0.4, 0, 0.2, 1) forwards;
   --animate-in: in 0.25s ease-out forwards;
 
   @keyframes approval-in {
@@ -39,6 +41,32 @@
     to {
       opacity: 1;
       transform: translateY(0);
+    }
+  }
+
+  @keyframes bubble-in {
+    from {
+      opacity: 0;
+      transform: translateY(10px) scale(0.96);
+      filter: blur(3px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+      filter: blur(0);
+    }
+  }
+
+  @keyframes bubble-out {
+    from {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+      filter: blur(0);
+    }
+    to {
+      opacity: 0;
+      transform: translateY(8px) scale(0.97);
+      filter: blur(3px);
     }
   }
 

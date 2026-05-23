@@ -19,6 +19,7 @@ import {
   scanMentionsInContent,
   type WakeReason,
   type WakeSuppressedReason,
+  isAgentOnlyThread,
 } from '@ujima/shared';
 import type { RealtimeService } from './context.js';
 import { selfChannelId } from './member-channels.js';
@@ -209,7 +210,7 @@ export class ConversationService {
     requireOrganization(this.repo, organizationId);
 
     if (memberId) {
-      this.requireThreadAccess(organizationId, threadId, memberId);
+      this.requireThreadAccess(organizationId, threadId, memberId, 'read');
     }
 
     const thread = this.repo.getThread(organizationId, threadId);
@@ -225,7 +226,12 @@ export class ConversationService {
     );
   }
 
-  requireThreadAccess(organizationId: string, threadId: string, memberId: string): void {
+  requireThreadAccess(
+    organizationId: string,
+    threadId: string,
+    memberId: string,
+    access: 'read' | 'write' = 'write',
+  ): void {
     const thread = this.repo.getThread(organizationId, threadId);
     if (!thread) {
       const channel = this.repo.getChannel(organizationId, threadId);
@@ -236,6 +242,9 @@ export class ConversationService {
         throw new Error(`Channel is archived: ${threadId}`);
       }
       if (!this.canMemberAccessChannel(channel, memberId)) {
+        if (access === 'read' && this.canObserverReadThread(organizationId, threadId)) {
+          return;
+        }
         throw new Error('Forbidden: you do not have access to this thread');
       }
       this.repo.ensureThread({
@@ -260,6 +269,10 @@ export class ConversationService {
       if (channel && this.canMemberAccessChannel(channel, memberId)) {
         return;
       }
+    }
+
+    if (access === 'read' && this.canObserverReadThread(organizationId, threadId)) {
+      return;
     }
 
     throw new Error('Forbidden: you do not have access to this thread');
@@ -1915,6 +1928,20 @@ export class ConversationService {
     if (isArchivedConversation(message) && message.content.includes('compactedInto=')) return true;
     if (channel?.kind === 'self' && message.content.startsWith(SELF_NOTE_COMPACTED_MARKER)) return true;
     return false;
+  }
+
+  private canObserverReadThread(organizationId: string, threadId: string): boolean {
+    const thread = this.repo.getThread(organizationId, threadId);
+    if (!thread) return false;
+    const channel = thread.channelId ? this.repo.getChannel(organizationId, thread.channelId) : null;
+    const channels = channel
+      ? [channel]
+      : [{ id: thread.id, memberIds: thread.memberIds }];
+    return isAgentOnlyThread(
+      thread.id,
+      this.repo.listMembers(organizationId).map((member) => ({ id: member.id, kind: member.kind })),
+      channels,
+    );
   }
 }
 

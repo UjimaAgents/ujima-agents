@@ -10,6 +10,7 @@ import {
   formatPersistedApprovalGrantReason,
   formatApprovalRelayMarkdown,
   parseApprovalDisplayScopesFromReason,
+  parseApprovalReasonValue,
   parseFilesystemScope,
   shellInvocationDisplayLine,
   stripApprovalScopeDisplayFields,
@@ -195,6 +196,14 @@ describe('parseApprovalDisplayScopesFromReason', () => {
       shell: null,
       filesystem: null,
     });
+  });
+
+  it('handles missing reason', () => {
+    expect(parseApprovalDisplayScopesFromReason(undefined)).toEqual({
+      shell: null,
+      filesystem: null,
+    });
+    expect(parseApprovalReasonValue(undefined, 'scope')).toBeNull();
   });
 });
 

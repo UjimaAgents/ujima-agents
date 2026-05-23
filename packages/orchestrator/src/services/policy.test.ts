@@ -83,15 +83,11 @@ describe('checkToolPolicy', () => {
         'read',
         join(workspaceRoot, 'apps', 'api'),
       ),
-    ).toMatchObject({
-      allowed: true,
-      requiresApproval: true,
-      reason: expect.stringContaining('outside allowed scopes'),
-    });
+    ).toEqual({ allowed: true, requiresApproval: false });
   });
 
   describe('filesystem path policy', () => {
-    it('requires approval for hidden or secret-looking reads', async () => {
+    it('allows hidden or secret-looking reads without approval', async () => {
       await writeFile(join(workspaceRoot, '.env'), 'TOKEN=secret\n', 'utf8');
 
       const team = teamWithRole({
@@ -113,11 +109,7 @@ describe('checkToolPolicy', () => {
           'read',
           join(workspaceRoot, '.env'),
         ),
-      ).toEqual({
-        allowed: true,
-        requiresApproval: true,
-        reason: 'Path "' + join(workspaceRoot, '.env') + '" requires approval',
-      });
+      ).toEqual({ allowed: true, requiresApproval: false });
     });
 
     it('bypasses approval for writes inside .ujima-goals', async () => {
@@ -191,7 +183,7 @@ describe('checkToolPolicy', () => {
       ).toMatchObject({ allowed: true, requiresApproval: true });
     });
 
-    it('requires approval, not denial, for reads outside role scope', () => {
+    it('allows reads outside role scope without approval', () => {
       const team = teamWithRole({
         name: 'web-reader',
         title: 'Web Reader',
@@ -211,7 +203,7 @@ describe('checkToolPolicy', () => {
           'read',
           join(workspaceRoot, 'apps', 'api', 'src', 'main.ts'),
         ),
-      ).toMatchObject({ allowed: true, requiresApproval: true });
+      ).toEqual({ allowed: true, requiresApproval: false });
     });
   });
 

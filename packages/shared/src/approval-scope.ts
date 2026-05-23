@@ -195,7 +195,8 @@ export interface ParsedGrepScope {
   ignoreCase?: boolean;
 }
 
-export function parseApprovalReasonValue(reason: string, key: string): string | null {
+export function parseApprovalReasonValue(reason: string | null | undefined, key: string): string | null {
+  if (!reason) return null;
   const match = reason.match(new RegExp(`(?:^|[;:])${key}=([^;]+)`));
   if (!match?.[1]) return null;
   try {
@@ -241,7 +242,7 @@ export function shellInvocationDisplayLine(parsed: ParsedShellScope): string {
  * Reads `scope=` from the approval reason and returns at most one of shell or filesystem.
  * Prefer this over repeating `parseApprovalReasonValue` + `parseShellScope` + `parseFilesystemScope`.
  */
-export function parseApprovalDisplayScopesFromReason(reason: string): {
+export function parseApprovalDisplayScopesFromReason(reason: string | null | undefined): {
   shell: ParsedShellScope | null;
   filesystem: ParsedFilesystemScope | null;
 } {
