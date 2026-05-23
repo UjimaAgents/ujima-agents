@@ -10,8 +10,12 @@ import {
   type Message,
   type RunState,
   type Spirit,
+  type WakeReason,
   AGENT_KIND,
+  isDirectMessageThread,
 } from '@ujima/shared';
+import type { ActiveSpiritEntry } from './active-spirit-registry.js';
+import type { ToolInvocationInput } from './tool-service.js';
 import {
   resolveSpiritModel,
   defaultResolveProviderName,
@@ -106,6 +110,84 @@ export class SpiritServiceBase {
         .listActiveSpiritsForMember(organizationId, member.id)
         .find((item) => item.runId === runId);
       if (spirit) return spirit;
+    }
+    return null;
+  }
+
+  protected resolveSpiritForRun(organizationId: string, runId: string): Spirit | null {
+    return (
+      this.repo.getSpiritByRunId?.(organizationId, runId) ??
+      this.findActiveSpiritByRunId(organizationId, runId)
+    );
+  }
+
+  protected toolInvocationContextForRun(
+    run: RunState,
+  ): Pick<ToolInvocationInput, 'taskSessionId' | 'spiritRole' | 'wakeReason'> {
+    const spirit = this.resolveSpiritForRun(run.organizationId, run.id);
+    return {
+      taskSessionId: spirit?.taskSessionId,
+      spiritRole: spirit?.role,
+      wakeReason: (run.wakeReason as WakeReason | null | undefined) ?? null,
+    };
+  }
+
+  protected isBroadOrgChannelSurface(
+    organizationId: string,
+    threadId: string,
+    channelId?: string,
+  ): boolean {
+    const getChannel = this.repo.getChannel;
+    if (typeof getChannel !== 'function') return false;
+    const check = (surfaceId: string): boolean => {
+      const ch = getChannel.call(this.repo, organizationId, surfaceId);
+      if (!ch) return false;
+      return ch.kind === 'general' || ch.kind === 'group';
+    };
+    if (check(threadId)) return true;
+    if (channelId && channelId !== threadId && check(channelId)) return true;
+    return false;
+  }
+
+  protected findActiveSpiritForThread(
+    active: ActiveSpiritEntry[],
+    organizationId: string,
+    threadId: string,
+    channelId?: string,
+  ): ActiveSpiritEntry | null {
+    if (active.length === 0) return null;
+
+    const matchesSurface = (entry: ActiveSpiritEntry): boolean => {
+      const session = this.repo.getTaskSession(entry.organizationId, entry.taskSessionId);
+      if (!session) return false;
+      if (session.channelId === threadId || (channelId !== undefined && session.channelId === channelId)) {
+        return true;
+      }
+      const { origin } = session;
+      if (
+        origin.channelId &&
+        (origin.channelId === threadId || (channelId !== undefined && origin.channelId === channelId))
+      ) {
+        return true;
+      }
+      if (origin.threadId && origin.threadId === threadId) {
+        return true;
+      }
+      return false;
+    };
+
+    const direct = active.find((entry) => matchesSurface(entry));
+    if (direct) return direct;
+
+    if (
+      isDirectMessageThread(threadId) ||
+      (channelId !== undefined && isDirectMessageThread(channelId))
+    ) {
+      return null;
+    }
+
+    if (this.isBroadOrgChannelSurface(organizationId, threadId, channelId)) {
+      return active[0] ?? null;
     }
     return null;
   }

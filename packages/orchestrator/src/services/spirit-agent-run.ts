@@ -486,14 +486,17 @@ export class SpiritServiceAgentRun extends SpiritServiceLifecycle {
         );
       });
 
+    const run = this.repo.getRun(spirit.organizationId, runId);
+    const runContext = run ? this.toolInvocationContextForRun(run) : {};
     for (const step of pendingSteps) {
       const invocation: ToolInvocationInput = {
         organizationId: step.organizationId,
         runId: step.runId,
         memberId: step.agentId,
         threadId: step.threadId,
-        taskSessionId: spirit.taskSessionId,
-        spiritRole: spirit.role,
+        taskSessionId: spirit.taskSessionId ?? runContext.taskSessionId,
+        spiritRole: spirit.role ?? runContext.spiritRole,
+        wakeReason: runContext.wakeReason,
         toolCallId: step.toolCallId,
         toolId: step.toolId,
         action: step.action,
