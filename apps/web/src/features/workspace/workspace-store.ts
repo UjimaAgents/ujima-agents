@@ -6,8 +6,10 @@ import type {
   Message,
   RunState,
 } from "@ujima/shared/browser";
-import { isAgentOnlyThread as isSharedAgentOnlyThread } from "@ujima/shared";
-import { parseDmThreadId } from "@ujima/shared/browser";
+import {
+  isAgentOnlyThread as isSharedAgentOnlyThread,
+  parseDmThreadId,
+} from "@ujima/shared/browser";
 import type { SelectedConversation } from "./types";
 import { resolveDefaultConversation } from "./workspace-channels";
 import type { ChatMessageData, ApprovalCardData } from "./components/chat";

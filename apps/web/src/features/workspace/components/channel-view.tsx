@@ -305,7 +305,7 @@ export function ChannelView({
     [pendingThreadApprovals],
   );
 
-  const { isAtBottom, scrollToLatest, handleScroll } = useChatScrollToBottom({
+  const { scrollToLatest, handleScroll } = useChatScrollToBottom({
     listRef,
     bottomRef,
     feed,

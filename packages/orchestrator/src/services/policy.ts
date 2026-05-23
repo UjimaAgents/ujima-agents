@@ -1,4 +1,4 @@
-import { join, sep } from 'node:path';
+import { sep } from 'node:path';
 import type { AgentTeamHandle } from '@ujima/framework';
 import type { ToolAction, SpiritRole, WakeReason } from '@ujima/shared';
 import { isSensitiveWorkspacePath } from '@ujima/shared/workspace-file-filters';

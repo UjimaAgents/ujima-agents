@@ -3,12 +3,10 @@ import { CommitmentService, extractCommitment, extractCompletion } from './commi
 import {
   AGENT_KIND,
   MessageSchema,
-  RunStateSchema,
   TodoSchema,
   type Channel,
   type Member,
   type Message,
-  type RunState,
   type Todo,
 } from '@ujima/shared';
 import type { ApiRepository } from './repository-reader.js';
@@ -234,24 +232,6 @@ function makeMember(id: string, kind: 'agent' | 'human' = AGENT_KIND): Member {
     presence: 'online',
     createdAt: new Date().toISOString(),
   } as Member;
-}
-
-function makeRun(overrides: Partial<RunState> & { id: string; sourceMessageId: string }): RunState {
-  return RunStateSchema.parse({
-    id: overrides.id,
-    organizationId: overrides.organizationId ?? 'org-1',
-    agentId: overrides.agentId ?? 'layla',
-    threadId: overrides.threadId ?? 'channel-1',
-    status: overrides.status ?? 'completed',
-    step: overrides.step ?? 'completed',
-    summary: overrides.summary ?? '',
-    startedAt: overrides.startedAt ?? new Date().toISOString(),
-    endedAt: overrides.endedAt ?? new Date().toISOString(),
-    terminatingTool: overrides.terminatingTool ?? null,
-    wakeReason: overrides.wakeReason ?? 'self-followup',
-    sourceMessageId: overrides.sourceMessageId,
-    byMemberId: overrides.byMemberId ?? 'layla',
-  });
 }
 
 describe('CommitmentService.onAgentMessagePublished — dedup', () => {

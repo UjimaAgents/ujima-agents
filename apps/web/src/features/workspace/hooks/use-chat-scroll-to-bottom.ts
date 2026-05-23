@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useLayoutEffect, useRef, useState, type RefObject } from "react";
+import { useCallback, useLayoutEffect, useRef, type RefObject } from "react";
 
 interface ChatScrollFeed {
   messages: { length: number };
@@ -28,7 +28,7 @@ export function useChatScrollToBottom({
   conversationKey,
   virtualizerTotalSize,
 }: UseChatScrollToBottomOptions) {
-  const [isAtBottom, setIsAtBottom] = useState(true);
+  const isAtBottomRef = useRef(true);
   const previousFeedSignal = useRef("");
   const isProgrammaticScroll = useRef(false);
   const prevMessagesLength = useRef(feed.messages.length);
@@ -49,17 +49,18 @@ export function useChatScrollToBottom({
     const list = listRef.current;
     if (!list) return;
     if (isProgrammaticScroll.current) {
-      setIsAtBottom(true);
+      isAtBottomRef.current = true;
       return;
     }
     const distanceFromBottom = list.scrollHeight - list.scrollTop - list.clientHeight;
-    setIsAtBottom(distanceFromBottom < 96);
+    isAtBottomRef.current = distanceFromBottom < 96;
   }, [listRef]);
 
   useLayoutEffect(() => {
-    setIsAtBottom(true);
+    isAtBottomRef.current = true;
     previousFeedSignal.current = "";
-  }, [conversationKey]);
+    prevMessagesLength.current = feed.messages.length;
+  }, [conversationKey, feed.messages.length]);
 
   useLayoutEffect(() => {
     const signal = `${feed.messages.length}:${latestMessageSignal}:${feed.approvals.length}:${feed.runs.length}:${feed.loading ? 1 : 0}:${pendingApprovalIds}`;
@@ -74,7 +75,7 @@ export function useChatScrollToBottom({
     }
     if (previousFeedSignal.current === signal) return;
     previousFeedSignal.current = signal;
-    if (isAtBottom) {
+    if (isAtBottomRef.current) {
       const isNewMessage = feed.messages.length > prevMessagesLength.current;
       scrollToLatest(isNewMessage ? "smooth" : "auto");
     }
@@ -84,17 +85,16 @@ export function useChatScrollToBottom({
     feed.loading,
     feed.messages.length,
     feed.runs.length,
-    isAtBottom,
     latestMessageSignal,
     pendingApprovalIds,
     scrollToLatest,
   ]);
 
   useLayoutEffect(() => {
-    if (isAtBottom && feed.messages.length > 0) {
+    if (isAtBottomRef.current && feed.messages.length > 0) {
       scrollToLatest("auto");
     }
-  }, [virtualizerTotalSize, isAtBottom, scrollToLatest, feed.messages.length]);
+  }, [virtualizerTotalSize, scrollToLatest, feed.messages.length]);
 
-  return { isAtBottom, scrollToLatest, handleScroll };
+  return { scrollToLatest, handleScroll };
 }
