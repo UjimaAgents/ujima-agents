@@ -21,7 +21,6 @@ import {
   type MessageToolCall,
   type Spirit,
   type SpiritRole,
-  type TaskSession,
   type WakeReason,
   AGENT_KIND,
 } from '@ujima/shared';
@@ -42,9 +41,7 @@ import { findToolApprovalRequiredError } from './tool-loop-result.js';
 import { extractReasoningChunk } from '../utils/extract-reasoning.js';
 import { errorMessage } from '../utils/error-message.js';
 import { buildRunTranscript } from '../utils/run-transcript.js';
-import type { ToolInvocationInput } from './tool-service.js';
 import { appendGoalArtifactToolCall } from './goal-artifact-card.js';
-import { goalModeEnabledFromMessage, goalModeSystemPromptSuffix } from './goal-mode-prompt.js';
 import { pendingApprovalRunSummary } from './approval-summary.js';
 import {
   findTerminatingTool,
@@ -186,11 +183,14 @@ export class SpiritServiceAgentRun extends SpiritServiceLifecycle {
       attachedMcpServers.map((s) => ({ name: s.serverName, toolNames: s.toolNames })),
       supervisorWakePolicy.conversationKind,
     );
-    const systemPromptSuffix = this.resolveGoalSystemPromptSuffix(
-      input.organizationId,
-      input.taskSessionId,
-      input.systemPromptSuffix,
-    );
+    const systemPromptSuffix = this.resolveSystemPromptSuffix({
+      organizationId: input.organizationId,
+      taskSessionId: input.taskSessionId,
+      threadId: session.channelId,
+      extraSuffix: input.systemPromptSuffix,
+      messageContent: input.promptMessageContent,
+      goalMode: input.promptGoalMode,
+    });
     const systemPrompt = systemPromptSuffix ? `${system}\n\n${systemPromptSuffix}` : system;
 
     const maxIterations = input.maxIterations ?? this.maxIterationsPerRun;
@@ -447,67 +447,6 @@ export class SpiritServiceAgentRun extends SpiritServiceLifecycle {
       this.emit(SocketEventNames.spiritCompleted, failed);
       this.maybeFinalizeTaskSession(failed.organizationId, failed.taskSessionId, message);
       throw err;
-    }
-  }
-
-  protected resolveGoalSystemPromptSuffix(
-    organizationId: string,
-    taskSessionId: string,
-    systemPromptSuffix?: string,
-  ): string | undefined {
-    const session = this.repo.getTaskSession(organizationId, taskSessionId) as TaskSession | null;
-    const originMessageId = session?.origin?.messageId;
-    const originMessage = originMessageId ? this.repo.getMessage(organizationId, originMessageId) : null;
-    const goalSuffix = goalModeSystemPromptSuffix({
-      goalMode: goalModeEnabledFromMessage(originMessage),
-      messageContent: originMessage?.content,
-    });
-    if (goalSuffix && systemPromptSuffix) {
-      return `${systemPromptSuffix}\n\n${goalSuffix}`;
-    }
-    return systemPromptSuffix ?? goalSuffix;
-  }
-
-  protected async executePendingApprovedTools(spirit: Spirit): Promise<void> {
-    const runId = spirit.runId ?? spirit.id;
-    const pendingApprovalToolCallIds = new Set(
-      this.repo
-        .listPendingApprovals(spirit.organizationId)
-        .filter((approval) => approval.runId === runId && approval.toolCallId)
-        .map((approval) => approval.toolCallId as string),
-    );
-    const pendingSteps = this.repo
-      .listRunSteps(spirit.organizationId, runId)
-      .filter((step) => {
-        const output = step.output as { status?: unknown } | undefined;
-        return (
-          output?.status === 'waiting_for_approval' &&
-          !pendingApprovalToolCallIds.has(step.toolCallId)
-        );
-      });
-
-    for (const step of pendingSteps) {
-      const invocation: ToolInvocationInput = {
-        organizationId: step.organizationId,
-        runId: step.runId,
-        memberId: step.agentId,
-        threadId: step.threadId,
-        taskSessionId: spirit.taskSessionId,
-        spiritRole: spirit.role,
-        toolCallId: step.toolCallId,
-        toolId: step.toolId,
-        action: step.action,
-        resourceType: step.resourceType,
-        resourcePath: step.resourcePath || undefined,
-        input: step.input,
-        bypassPermission: true,
-      };
-
-      try {
-        await this.tools.invoke(invocation);
-      } catch {
-        // ToolService persists the failed step; keep replaying the rest.
-      }
     }
   }
 

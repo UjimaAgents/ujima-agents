@@ -1,4 +1,28 @@
-import type { Spirit, SpiritRole } from '@ujima/shared';
+import type { RunState, Spirit, SpiritRole, WakeReason } from '@ujima/shared';
+import { goalModeSystemPromptSuffix } from './goal-mode-prompt.js';
+import { scheduleToolSystemPromptSuffix } from './schedule-prompt.js';
+
+export function runWakeReason(run: Pick<RunState, 'wakeReason'>): WakeReason | null {
+  return run.wakeReason == null ? null : (run.wakeReason as WakeReason);
+}
+
+export function composeSystemPromptSuffix(input: {
+  extraSuffix?: string;
+  messageContent?: string | null;
+  goalMode?: boolean;
+}): string | undefined {
+  const segments = [
+    input.extraSuffix,
+    goalModeSystemPromptSuffix({
+      goalMode: input.goalMode,
+      messageContent: input.messageContent,
+    }),
+    scheduleToolSystemPromptSuffix({
+      messageContent: input.messageContent,
+    }),
+  ].filter((segment): segment is string => Boolean(segment));
+  return segments.length > 0 ? segments.join('\n\n') : undefined;
+}
 import { defaultResolveModelId } from '../utils/to-model-messages.js';
 import type { RunDetailAggregate } from './spirit-types.js';
 

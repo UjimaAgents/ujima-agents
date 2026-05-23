@@ -32,6 +32,7 @@ interface WorkspaceState {
   messages: ChatMessageData[];
   approvals: ApprovalCardData[];
   runs: RunState[];
+  globalActiveRuns: RunState[];
   activitySequence: number;
   activity: ActivityEvent[];
   loading: boolean;
@@ -47,6 +48,7 @@ interface WorkspaceState {
     members: WorkspaceMember[];
     conversationUnreadCounts?: Record<string, number>;
     selectedConversation?: SelectedConversation;
+    globalActiveRuns?: RunState[];
   }): void;
   setSelectedConversation(conversation?: SelectedConversation): void;
   setChannels(channels: WorkspaceChannel[]): void;
@@ -65,6 +67,7 @@ interface WorkspaceState {
   removeMessage(id: string): void;
   upsertApproval(approval: ApprovalRequest, toCard: (approval: ApprovalRequest, state: Pick<WorkspaceState, "members">) => ApprovalCardData, toActivity: (approval: ApprovalRequest) => ActivityEvent): void;
   upsertRun(run: RunState, toActivity: (run: RunState) => ActivityEvent): void;
+  upsertGlobalActiveRun(run: RunState): void;
   appendActivity(event: ActivityEvent): void;
 }
 
@@ -86,6 +89,7 @@ const EMPTY_ACTIVITY = {
   messages: [],
   approvals: [],
   runs: [],
+  globalActiveRuns: [],
   activitySequence: 0,
   activity: [],
   loading: true,
@@ -321,7 +325,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
     set((state) => (state.detailsWidth === detailsWidth ? state : { detailsWidth })),
   setDetailsTab: (detailsTab) =>
     set((state) => (state.detailsTab === detailsTab ? state : { detailsTab })),
-  syncWorkspace: ({ channels, members, conversationUnreadCounts, selectedConversation }) =>
+  syncWorkspace: ({ channels, members, conversationUnreadCounts, selectedConversation, globalActiveRuns }) =>
     set((state) => {
       const nextChannels = sameItems(state.channels, channels) ? state.channels : channels;
       const nextMembers = sameItems(state.members, members) ? state.members : members;
@@ -360,11 +364,16 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
           ? true
           : sameConversation(state.selectedConversation, nextSelection) &&
             state.selectedConversation?.name === nextSelection?.name;
+      const nextGlobalRuns = globalActiveRuns
+        ? (sameItems(state.globalActiveRuns, globalActiveRuns) ? state.globalActiveRuns : globalActiveRuns)
+        : state.globalActiveRuns;
+
       if (
         nextChannels === state.channels &&
         nextMembers === state.members &&
         nextUnreadCounts === state.conversationUnreadCounts &&
-        selectionUnchanged
+        selectionUnchanged &&
+        nextGlobalRuns === state.globalActiveRuns
       ) {
         return state;
       }
@@ -373,6 +382,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
         members: nextMembers,
         conversationUnreadCounts: nextUnreadCounts,
         selectedConversation: nextSelection,
+        globalActiveRuns: nextGlobalRuns,
       };
     }),
   setSelectedConversation: (selectedConversation) =>
@@ -511,6 +521,14 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
       runs: mergeRuns(state.runs, [run]),
       ...appendSequencedEvents(state, [toActivity(run)]),
     })),
+  upsertGlobalActiveRun: (run) =>
+    set((state) => {
+      const isFinished = run.status === "completed" || run.status === "failed" || run.status === "cancelled";
+      const nextGlobalRuns = isFinished
+        ? state.globalActiveRuns.filter((r) => r.id !== run.id)
+        : mergeRuns(state.globalActiveRuns, [run]);
+      return { globalActiveRuns: nextGlobalRuns };
+    }),
   appendActivity: (event) => set((state) => appendSequencedEvents(state, [event])),
 }));
 

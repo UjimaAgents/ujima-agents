@@ -76,6 +76,7 @@ export function WorkspaceShell(props: {
   const clearConversationUnreadCount = useWorkspaceStore((state) => state.clearConversationUnreadCount);
   const incrementConversationUnreadCount = useWorkspaceStore((state) => state.incrementConversationUnreadCount);
   const setMemberActivity = useWorkspaceStore((state) => state.setMemberActivity);
+  const upsertGlobalActiveRun = useWorkspaceStore((state) => state.upsertGlobalActiveRun);
   const seenApprovalNotifications = useRef(new Set<string>());
   const goalModeSyncing = useRef(false);
 
@@ -242,6 +243,7 @@ export function WorkspaceShell(props: {
       members: bootstrap.members,
       conversationUnreadCounts: bootstrap.conversationUnreadCounts,
       selectedConversation: resolvedSelected,
+      globalActiveRuns: bootstrap.activeRuns,
     });
     for (const run of bootstrap.activeRuns) {
       if (isLiveRunStatus(run.status)) {
@@ -279,6 +281,10 @@ export function WorkspaceShell(props: {
 
       if (isNotificationRunEvent(envelope.event)) {
         updateRunActivity(envelope.payload, setMemberActivity);
+        const run = (envelope.payload as { run?: RunState })?.run;
+        if (run) {
+          upsertGlobalActiveRun(run);
+        }
       }
 
       const conversationId = resolveNotificationConversationId(
@@ -371,6 +377,7 @@ export function WorkspaceShell(props: {
               members={members}
               goalMode={goalMode}
               onGoalModeChange={setGoalMode}
+              onSelectConversation={handleSelect}
               onOpenAgentEditor={() => {
                 if (resolvedSelected.type === "agent") {
                   setAgentEditorTargetId(resolvedSelected.id);

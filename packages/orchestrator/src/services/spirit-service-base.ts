@@ -11,7 +11,11 @@ import {
   type RunState,
   type Spirit,
   AGENT_KIND,
+  isDirectMessageThread,
 } from '@ujima/shared';
+import { composeSystemPromptSuffix, runWakeReason } from './spirit-run-detail.js';
+import type { ActiveSpiritEntry } from './active-spirit-registry.js';
+import type { ToolInvocationInput } from './tool-service.js';
 import {
   resolveSpiritModel,
   defaultResolveProviderName,
@@ -106,6 +110,155 @@ export class SpiritServiceBase {
         .listActiveSpiritsForMember(organizationId, member.id)
         .find((item) => item.runId === runId);
       if (spirit) return spirit;
+    }
+    return null;
+  }
+
+  protected resolveSpiritForRun(organizationId: string, runId: string): Spirit | null {
+    return (
+      this.repo.getSpiritByRunId?.(organizationId, runId) ??
+      this.findActiveSpiritByRunId(organizationId, runId)
+    );
+  }
+
+  protected toolInvocationContextForSpirit(
+    spirit: Spirit,
+    run?: RunState | null,
+  ): Pick<ToolInvocationInput, 'taskSessionId' | 'spiritRole' | 'wakeReason'> {
+    return {
+      taskSessionId: spirit.taskSessionId,
+      spiritRole: spirit.role,
+      wakeReason: run ? runWakeReason(run) : null,
+    };
+  }
+
+  protected toolInvocationContextForRun(
+    run: RunState,
+  ): Pick<ToolInvocationInput, 'taskSessionId' | 'spiritRole' | 'wakeReason'> {
+    const spirit = this.resolveSpiritForRun(run.organizationId, run.id);
+    if (spirit) {
+      return this.toolInvocationContextForSpirit(spirit, run);
+    }
+    return { wakeReason: runWakeReason(run) };
+  }
+
+  protected async replayApprovedToolsForRun(run: RunState): Promise<void> {
+    await this.replayApprovedToolSteps(
+      run.organizationId,
+      run.id,
+      this.toolInvocationContextForRun(run),
+    );
+  }
+
+  protected async replayApprovedToolsForSpirit(spirit: Spirit): Promise<void> {
+    const runId = spirit.runId ?? spirit.id;
+    const run = this.repo.getRun(spirit.organizationId, runId);
+    const context = run
+      ? this.toolInvocationContextForRun(run)
+      : this.toolInvocationContextForSpirit(spirit);
+    await this.replayApprovedToolSteps(spirit.organizationId, runId, context);
+  }
+
+  protected listStepsAwaitingApprovedReplay(organizationId: string, runId: string) {
+    const pendingApprovalToolCallIds = new Set(
+      this.repo
+        .listPendingApprovals(organizationId)
+        .filter((approval) => approval.runId === runId && approval.toolCallId)
+        .map((approval) => approval.toolCallId as string),
+    );
+    return (this.repo.listRunSteps?.(organizationId, runId) ?? []).filter((step) => {
+      const output = step.output as { status?: unknown } | undefined;
+      return (
+        output?.status === 'waiting_for_approval' &&
+        !pendingApprovalToolCallIds.has(step.toolCallId)
+      );
+    });
+  }
+
+  protected async replayApprovedToolSteps(
+    organizationId: string,
+    runId: string,
+    context: Pick<ToolInvocationInput, 'taskSessionId' | 'spiritRole' | 'wakeReason'>,
+  ): Promise<void> {
+    for (const step of this.listStepsAwaitingApprovedReplay(organizationId, runId)) {
+      const invocation: ToolInvocationInput = {
+        organizationId: step.organizationId,
+        runId: step.runId,
+        memberId: step.agentId,
+        threadId: step.threadId,
+        ...context,
+        toolCallId: step.toolCallId,
+        toolId: step.toolId,
+        action: step.action,
+        resourceType: step.resourceType,
+        resourcePath: step.resourcePath || undefined,
+        input: step.input,
+        bypassPermission: true,
+      };
+      try {
+        await this.tools.invoke(invocation);
+      } catch {
+        // ToolService persists failures; continue replay.
+      }
+    }
+  }
+
+  protected isBroadOrgChannelSurface(
+    organizationId: string,
+    threadId: string,
+    channelId?: string,
+  ): boolean {
+    const getChannel = this.repo.getChannel;
+    if (typeof getChannel !== 'function') return false;
+    const check = (surfaceId: string): boolean => {
+      const ch = getChannel.call(this.repo, organizationId, surfaceId);
+      if (!ch) return false;
+      return ch.kind === 'general' || ch.kind === 'group';
+    };
+    if (check(threadId)) return true;
+    if (channelId && channelId !== threadId && check(channelId)) return true;
+    return false;
+  }
+
+  protected findActiveSpiritForThread(
+    active: ActiveSpiritEntry[],
+    organizationId: string,
+    threadId: string,
+    channelId?: string,
+  ): ActiveSpiritEntry | null {
+    if (active.length === 0) return null;
+
+    const matchesSurface = (entry: ActiveSpiritEntry): boolean => {
+      const session = this.repo.getTaskSession(entry.organizationId, entry.taskSessionId);
+      if (!session) return false;
+      if (session.channelId === threadId || (channelId !== undefined && session.channelId === channelId)) {
+        return true;
+      }
+      const { origin } = session;
+      if (
+        origin.channelId &&
+        (origin.channelId === threadId || (channelId !== undefined && origin.channelId === channelId))
+      ) {
+        return true;
+      }
+      if (origin.threadId && origin.threadId === threadId) {
+        return true;
+      }
+      return false;
+    };
+
+    const direct = active.find((entry) => matchesSurface(entry));
+    if (direct) return direct;
+
+    if (
+      isDirectMessageThread(threadId) ||
+      (channelId !== undefined && isDirectMessageThread(channelId))
+    ) {
+      return null;
+    }
+
+    if (this.isBroadOrgChannelSurface(organizationId, threadId, channelId)) {
+      return active[0] ?? null;
     }
     return null;
   }
@@ -208,6 +361,45 @@ export class SpiritServiceBase {
     return goalModeEnabledFromMessage(
       this.repo.getLatestHumanMessageInThread(organizationId, threadId),
     );
+  }
+
+  protected resolveSystemPromptSuffix(input: {
+    organizationId: string;
+    taskSessionId?: string;
+    threadId?: string;
+    extraSuffix?: string;
+    messageContent?: string | null;
+    goalMode?: boolean;
+  }): string | undefined {
+    let messageContent = input.messageContent;
+    let goalMode = input.goalMode;
+
+    if (messageContent === undefined && goalMode === undefined && input.taskSessionId) {
+      const session = this.repo.getTaskSession(input.organizationId, input.taskSessionId);
+      const originMessageId = session?.origin?.messageId;
+      const originMessage = originMessageId
+        ? this.repo.getMessage(input.organizationId, originMessageId)
+        : null;
+      messageContent = originMessage?.content;
+      goalMode = goalModeEnabledFromMessage(originMessage);
+    }
+
+    if (messageContent === undefined && input.threadId) {
+      messageContent = this.repo.getLatestHumanMessageInThread(
+        input.organizationId,
+        input.threadId,
+      )?.content;
+    }
+
+    if (goalMode === undefined && input.threadId) {
+      goalMode = this.isGoalModeActive(input.organizationId, input.threadId);
+    }
+
+    return composeSystemPromptSuffix({
+      extraSuffix: input.extraSuffix,
+      messageContent,
+      goalMode,
+    });
   }
 
   protected emit(event: string, spirit: Spirit): void {
