@@ -644,87 +644,107 @@ describe('workspace path hardening', () => {
     return { workspaceRoot, repo, tools, db, organizationId: result.organization.id };
   }
 
-  it('rejects shell traversal attempts that escape the workspace root', async () => {
+  it('blocks shell traversal attempts that escape the workspace root', async () => {
     const fixture = await createToolFixture();
 
-    await expect(
-      fixture.tools.invoke({
-        organizationId: fixture.organizationId,
-        runId: 'run-traversal',
-        memberId: 'frontend-alice',
-        toolCallId: 'tc-traversal',
-        toolId: 'shell',
-        action: 'execute',
-        resourceType: 'shell',
-        input: {
-          command: 'cat',
-          args: ['../../../etc/passwd'],
-        },
-      }),
-    ).rejects.toMatchObject({ code: 'ERR_PATH_ESCAPE' });
+    const result = await fixture.tools.invoke({
+      organizationId: fixture.organizationId,
+      runId: 'run-traversal',
+      memberId: 'frontend-alice',
+      toolCallId: 'tc-traversal',
+      toolId: 'shell',
+      action: 'execute',
+      resourceType: 'shell',
+      input: {
+        command: 'cat',
+        args: ['../../../etc/passwd'],
+      },
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.code).toBe('ERR_PATH_ESCAPE');
+    expect(result.output).toMatchObject({
+      status: 'blocked',
+      code: 'ERR_PATH_ESCAPE',
+    });
   });
 
-  it('rejects filesystem access outside the member role scope', async () => {
+  it('blocks filesystem access outside the member role scope', async () => {
     const fixture = await createToolFixture();
 
-    await expect(
-      fixture.tools.invoke({
-        organizationId: fixture.organizationId,
-        runId: 'run-scope',
-        memberId: 'frontend-alice',
-        toolCallId: 'tc-scope',
-        toolId: 'view',
-        action: 'read',
-        resourceType: 'file',
-        resourcePath: 'apps/api/server.ts',
-        input: {},
-      }),
-    ).rejects.toMatchObject({ code: 'ERR_PATH_ESCAPE' });
+    const result = await fixture.tools.invoke({
+      organizationId: fixture.organizationId,
+      runId: 'run-scope',
+      memberId: 'frontend-alice',
+      toolCallId: 'tc-scope',
+      toolId: 'view',
+      action: 'read',
+      resourceType: 'file',
+      resourcePath: 'apps/api/server.ts',
+      input: {},
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.code).toBe('ERR_PATH_ESCAPE');
+    expect(result.output).toMatchObject({
+      status: 'blocked',
+      code: 'ERR_PATH_ESCAPE',
+    });
   });
 
-  it.skipIf(skipIfWin32)('rejects symlink escapes that point outside the workspace root', async () => {
+  it.skipIf(skipIfWin32)('blocks symlink escapes that point outside the workspace root', async () => {
     const fixture = await createToolFixture();
     const outsideDir = await mkdtemp(join(tmpdir(), 'ujima-workspace-outside-'));
     tempDirs.push(outsideDir);
     await writeFile(join(outsideDir, 'secret.txt'), 'outside\n', 'utf8');
     await symlink(outsideDir, join(fixture.workspaceRoot, 'apps', 'web', 'outside-link'));
 
-    await expect(
-      fixture.tools.invoke({
-        organizationId: fixture.organizationId,
-        runId: 'run-symlink',
-        memberId: 'frontend-alice',
-        toolCallId: 'tc-symlink',
-        toolId: 'view',
-        action: 'read',
-        resourceType: 'file',
-        resourcePath: 'apps/web/outside-link/secret.txt',
-        input: {},
-      }),
-    ).rejects.toMatchObject({ code: 'ERR_PATH_ESCAPE' });
+    const result = await fixture.tools.invoke({
+      organizationId: fixture.organizationId,
+      runId: 'run-symlink',
+      memberId: 'frontend-alice',
+      toolCallId: 'tc-symlink',
+      toolId: 'view',
+      action: 'read',
+      resourceType: 'file',
+      resourcePath: 'apps/web/outside-link/secret.txt',
+      input: {},
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.code).toBe('ERR_PATH_ESCAPE');
+    expect(result.output).toMatchObject({
+      status: 'blocked',
+      code: 'ERR_PATH_ESCAPE',
+    });
   });
 
-  it('rejects shell cwd values that escape the member role scope', async () => {
+  it('blocks shell cwd values that escape the member role scope', async () => {
     const fixture = await createToolFixture();
 
     fixture.tools.allowRun(fixture.organizationId, 'run-cwd');
 
-    await expect(
-      fixture.tools.invoke({
-        organizationId: fixture.organizationId,
-        runId: 'run-cwd',
-        memberId: 'frontend-alice',
-        toolCallId: 'tc-cwd',
-        toolId: 'shell',
-        action: 'execute',
-        resourceType: 'shell',
-        input: {
-          command: 'pwd',
-          args: [],
-          cwd: 'apps/api',
-        },
-      }),
-    ).rejects.toMatchObject({ code: 'ERR_PATH_ESCAPE' });
+    const result = await fixture.tools.invoke({
+      organizationId: fixture.organizationId,
+      runId: 'run-cwd',
+      memberId: 'frontend-alice',
+      toolCallId: 'tc-cwd',
+      toolId: 'shell',
+      action: 'execute',
+      resourceType: 'shell',
+      input: {
+        command: 'pwd',
+        args: [],
+        cwd: 'apps/api',
+      },
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.code).toBe('ERR_PATH_ESCAPE');
+    expect(result.output).toMatchObject({
+      status: 'blocked',
+      code: 'ERR_PATH_ESCAPE',
+    });
   });
 
   it.skipIf(skipIfWin32)('allows shell -c command strings without treating them as filesystem paths', async () => {
