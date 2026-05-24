@@ -1,8 +1,10 @@
 # Ujima Web
 
-Next.js UI for the local Ujima control plane.
+Slack-like web UI for Ujima agent teams.
 
-The web app will provide:
+Part of [Ujima Agents](../../README.md): a framework for building Slack-like teams of AI agents, with roles and workspace-bounded execution.
+
+The web app provides:
 - onboarding
 - chat and channel views
 - DMs and mentions

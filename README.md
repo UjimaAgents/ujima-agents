@@ -8,11 +8,16 @@
 
 ---
 
-## 👥 What if you could run your AI agents as a cohesive team?
+**Ujima Agents** is a framework for building Slack-like teams of AI agents, with roles and workspace-bounded execution.
 
-A real, persistent team — with distinct names, specialized roles, durable memory, and a shared secure workspace. Agents that message each other, coordinate tasks, wait for your approval on sensitive actions, and stay strictly in scope.
+Define persistent agent members, assign roles, and work in channels — the same collaboration model as a team chat app, backed by a local runtime that enforces approvals and keeps every tool call inside your workspace root.
 
-**Ujima** is a local-first control plane for running AI software teams. Set up, collaborate, and co-author with your agents through a beautiful Slack-like Web UI, a deep VS Code/Cursor extension, or a powerful command-line interface — all backed by the same high-performance local runtime.
+**Product surfaces**
+
+- **Web** — Slack-like UI for channels, DMs, mentions, approvals, and task runs (`apps/web`)
+- **VS Code extension** — the same team in your editor: chat, channels, approvals, and workspace-aware actions (`apps/vscode-extension`)
+
+The CLI bootstraps your org and starts the local stack; both surfaces talk to the same API.
 
 ---
 
@@ -21,7 +26,7 @@ A real, persistent team — with distinct names, specialized roles, durable memo
 * **Organization** — Your team has a name, a workspace root folder, and a set of members. Every agent is a persistent, stateful member of that organization.
 * **Roles** — Agents are assigned typed roles (`backend-engineer`, `frontend-engineer`, `code-reviewer`, `pm`, etc.) that determine their system instructions, tool access, and workspace subdirectory scope.
 * **Channels** — Team communication happens in named channels, threads, DMs, and private self-channels. Agents respond when `@mentioned`; they don't spam every conversation.
-* **Task Shell** — Real work can promote into dedicated `task-run` channels where focused worker spirits execute, progress stays visible, and completion/failure summaries link back into the main organization conversation.
+* **Task runs** — Focused work promotes into dedicated `task-run` channels where workers execute with visible progress; completion and failure summaries link back to the main conversation.
 * **Approvals** — Sensitive actions (file writes, shell commands, git mutations) are gated behind human approval. Nothing lands in your workspace without your explicit say-so.
 * **Workspace Bounds** — All agent execution is hard-sandboxed to your chosen organization root. No traversal, no escape, no surprises.
 * **Skills** — Agents can be dynamically equipped with open-source `SKILL.md` capabilities from the community, loaded directly into their operational context.
@@ -89,28 +94,25 @@ cd ../..
 ujima init --name "Acme Engineering" --owner "Alex" --workspace $(pwd)
 ujima start
 ```
-```
 
 > [!TIP]
 > Once started, open **[http://localhost:3000](http://localhost:3000)** in your browser to sign in and join your agent team!
 
 ---
 
-## 💡 How to Interact with Your Agents
+## Product surfaces
 
-Ujima is built around a multi-surface collaboration model:
-
-| Surface | Best For | Get Started |
+| Surface | What it is | Get started |
 | :--- | :--- | :--- |
-| **💬 Web Shell (Slack-like UI)** | Realtime brainstorming, multi-agent debates, visual artifact tracking, and channel discussions. | Open `http://localhost:3000` after running `ujima start`. |
-| **💻 VS Code & Cursor Extension** | Co-authoring code, inline refactoring, and reviewing agent-driven changes directly in your workspace. | Build and load the extension located under `apps/vscode-extension`. |
-| **🛠️ Command Line Interface (CLI)** | Zero-config initial setup, onboarding operations, daemon diagnostics, and quick pipeline triggers. | Run `ujima --help` to explore all available management tools. |
+| **Web** | Slack-like UI for your agent team: channels, threads, DMs, `@mentions`, approvals, and task-run visibility. | Open `http://localhost:3000` after `ujima start`. |
+| **VS Code extension** | The same team inside the editor — channels, agent chat, approvals, and workspace-scoped actions on the repo you have open. | Build and load `apps/vscode-extension`. |
+| **CLI** | Bootstrap (`ujima init`), start the local API and web app (`ujima start`), and diagnostics. Not a third chat UI — it wires up the runtime both surfaces use. | `ujima --help` |
 
 ---
 
-## 🏗️ Define Your Team in Code (Infrastructure as Code)
+## Define your team in code
 
-Ujima lets you specify your team configuration declaratively in your repository. Create an `ujima.config.ts` in your workspace root:
+The framework is configured declaratively. Create an `ujima.config.ts` in your workspace root:
 
 ```typescript
 import { createStarterAgentTeamConfig } from "@ujima/framework";
@@ -169,36 +171,39 @@ export default team;
 
 ## 🛡️ Sandbox & Security Model
 
-Ujima is built from the ground up for **local execution and maximum security**:
+Ujima is **local-first**: execution and secrets stay on your machine.
 
-* 🔑 **Secrets Stay Local**: All provider LLM keys and API keys reside securely inside your local daemon runtime. The browser interface and extensions never see, store, or transmit your secrets.
-* 📦 **Strict Workspace Boundaries**: Every single filesystem, shell, and git action triggered by an agent spirit is dynamically audited and sandboxed to your configured `workspaceRoot`. Directory traversal attacks or unexpected escapes are rejected at the runtime core level.
-* 🛑 **Human-in-the-Loop Gatekeeping**: Any operations flagged as high-risk (writing code, installing dependencies, or running shell operations) wait for your direct 1-click confirmation in the Web UI or VS Code sidebar.
-* 🗂️ **Fine-Grained Role Scopes**: Restrict specific agents to designated folders (e.g., frontend engineers are restricted to `apps/web`), preventing cross-contamination in monolithic repos.
+* **Secrets stay local** — Provider keys live in the local daemon. The web app and VS Code extension never store or transmit them.
+* **Workspace-bounded execution** — Filesystem, shell, and git actions are resolved under your org `workspaceRoot`. Path escapes are rejected at the runtime.
+* **Approvals** — Writes, shell commands, and other sensitive operations wait for your confirmation in the web UI or VS Code sidebar.
+* **Role scopes** — Restrict agents to subtrees (for example, `apps/web` only) so roles stay separated in monorepos.
 
 ---
 
 ## 🧩 Core Architecture & Codebase Map
 
-Ujima is managed as a high-performance monorepo:
+Monorepo layout:
 
 ```mermaid
 graph TD
-    subgraph Client ["Client Interfaces"]
-        Web["Web Interface (Next.js)"]
-        VSCode["VS Code / Cursor Extension"]
-        CLI["Global Ujima CLI"]
+    subgraph Surfaces ["Product surfaces"]
+        Web["Web — Slack-like UI (Next.js)"]
+        VSCode["VS Code extension"]
     end
 
-    subgraph Core ["Local Control Plane"]
-        API["Local Daemon (Fastify API & WebSockets)"]
-        DB[(SQLite DB & Session Store)]
+    subgraph Bootstrap ["Bootstrap"]
+        CLI["Ujima CLI"]
     end
 
-    subgraph Engine ["Orchestration Core"]
-        Runtime["Agent Runtime Engine"]
-        Orchestrator["Task & Agent Orchestrator"]
-        Framework["@ujima/framework (Team Config SDK)"]
+    subgraph Core ["Local runtime"]
+        API["API daemon (Fastify + WebSockets)"]
+        DB[(SQLite)]
+    end
+
+    subgraph Engine ["Framework & orchestration"]
+        Runtime["Agent runtime"]
+        Orchestrator["Orchestrator"]
+        Framework["@ujima/framework"]
     end
 
     subgraph Ext ["Integrations & Tools"]
@@ -206,7 +211,8 @@ graph TD
         LLM["LLMs (Anthropic, OpenAI, DeepSeek)"]
     end
 
-    Web & VSCode & CLI <-->|API / WS| API
+    Web & VSCode <-->|API / WS| API
+    CLI --> API
     API <--> DB
     API <--> Engine
     Engine <--> Ext
@@ -219,8 +225,8 @@ graph TD
 | [`packages/ujima`](./packages/ujima) | **Framework SDK** — Config creators, personality presets, and role schemas. | [Framework Readme](./packages/ujima/README.md) |
 | [`packages/cli`](./packages/cli) | **Command Line Interface** — Entry point for setup, daemon management, and boot operations. | [CLI Readme](./packages/cli/README.md) |
 | [`apps/api`](./apps/api) | **Runtime Daemon** — Local orchestrator, realtime event bus, SQLite database, and sandboxed executors. | [API Readme](./apps/api/README.md) |
-| [`apps/web`](./apps/web) | **Web Workspace** — React/Next.js interface for messaging, approvals, and real-time trace viewing. | [Web Readme](./apps/web/README.md) |
-| [`apps/vscode-extension`](./apps/vscode-extension) | **VS Code Shell** — Sidebars, command panels, and in-editor chat integrations. | [Extension Readme](./apps/vscode-extension/README.md) |
+| [`apps/web`](./apps/web) | **Web** — Slack-like UI for channels, messaging, approvals, and runs. | [Web Readme](./apps/web/README.md) |
+| [`apps/vscode-extension`](./apps/vscode-extension) | **VS Code extension** — Editor surface for the same team and API. | [Extension Readme](./apps/vscode-extension/README.md) |
 
 ---
 
@@ -228,7 +234,7 @@ graph TD
 
 If you are developing Ujima itself or building custom extensions:
 
-For local browser testing or Codex Run actions, use the combined dev launcher:
+For local development (fixed ports for API + web), use:
 
 ```bash
 bun run dev:local

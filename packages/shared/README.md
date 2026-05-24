@@ -1,8 +1,6 @@
 # @ujima/shared
 
-Shared runtime contracts for Ujima.
-
-This package is the common language for the whole monorepo. It holds the schemas, event contracts, workspace helpers, and small shared utilities that keep every app speaking the same dialect.
+Shared contracts for Ujima Agents — the framework for Slack-like teams of AI agents with roles and workspace-bounded execution.
 
 ## What It Does
 
