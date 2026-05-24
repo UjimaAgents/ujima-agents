@@ -178,22 +178,38 @@ async function pathExists(path: string): Promise<boolean> {
   }
 }
 
+function isCommitRef(ref: string): boolean {
+  return /^[0-9a-f]{7,40}$/i.test(ref);
+}
+
+async function fetchRefCheckout(cloneUrl: string, targetDir: string, ref: string): Promise<void> {
+  await execFileAsync('git', ['init', targetDir], { env: process.env });
+  await execFileAsync('git', ['-C', targetDir, 'remote', 'add', 'origin', cloneUrl], { env: process.env });
+  await execFileAsync('git', ['-C', targetDir, 'fetch', '--depth', '1', 'origin', ref], { env: process.env });
+  await execFileAsync('git', ['-C', targetDir, 'checkout', 'FETCH_HEAD'], { env: process.env });
+}
+
 async function cloneRepository(sourceUrl: string, targetDir: string): Promise<string> {
   await rm(targetDir, { recursive: true, force: true });
   await mkdir(targetDir, { recursive: true });
   const { cloneUrl, ref, subdir } = normalizeTreeSourceUrl(sourceUrl);
-  const cloneArgs = ['clone', '--depth', '1'];
-  if (ref) {
-    cloneArgs.push('--branch', ref, '--single-branch');
-  }
-  cloneArgs.push(cloneUrl, targetDir);
-  try {
-    await execFileAsync('git', cloneArgs, { env: process.env });
-  } catch (err) {
-    if (!ref) throw err;
+
+  if (!ref) {
     await execFileAsync('git', ['clone', '--depth', '1', cloneUrl, targetDir], { env: process.env });
-    await execFileAsync('git', ['-C', targetDir, 'checkout', ref], { env: process.env });
+  } else if (isCommitRef(ref)) {
+    await fetchRefCheckout(cloneUrl, targetDir, ref);
+  } else {
+    try {
+      await execFileAsync(
+        'git',
+        ['clone', '--depth', '1', '--branch', ref, '--single-branch', cloneUrl, targetDir],
+        { env: process.env },
+      );
+    } catch {
+      await fetchRefCheckout(cloneUrl, targetDir, ref);
+    }
   }
+
   return subdir ? join(targetDir, subdir) : targetDir;
 }
 
