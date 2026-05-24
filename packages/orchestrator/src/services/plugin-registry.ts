@@ -151,19 +151,22 @@ function normalizeRepoUrl(sourceUrl: string): string {
 
 function normalizeTreeSourceUrl(sourceUrl: string): { cloneUrl: string; subdir: string; ref?: string } {
   const normalized = normalizeRepoUrl(sourceUrl.trim());
-  const url = new URL(normalized.startsWith('http') ? normalized : `https://${normalized}`);
+  const hashIndex = normalized.indexOf('#');
+  const urlWithoutHash = hashIndex >= 0 ? normalized.slice(0, hashIndex) : normalized;
+  const hashRef = hashIndex >= 0 ? decodeURIComponent(normalized.slice(hashIndex + 1)) : undefined;
+  const url = new URL(urlWithoutHash.startsWith('http') ? urlWithoutHash : `https://${urlWithoutHash}`);
   const parts = url.pathname.split('/').filter(Boolean);
   const treeIndex = parts.indexOf('tree');
   if (url.hostname === 'github.com' && parts.length >= 4 && treeIndex >= 0) {
     const cloneUrl = `${url.origin}/${parts[0]}/${parts[1]}.git`;
-    const ref = parts[treeIndex + 1];
+    const ref = parts[treeIndex + 1] ?? hashRef;
     const subdir = parts.slice(treeIndex + 2).join('/');
     return { cloneUrl, ref, subdir };
   }
   if (url.hostname === 'github.com') {
-    return { cloneUrl: githubCloneUrl(url), subdir: '' };
+    return { cloneUrl: githubCloneUrl(url), subdir: '', ref: hashRef };
   }
-  return { cloneUrl: normalized, subdir: '' };
+  return { cloneUrl: urlWithoutHash, subdir: '', ref: hashRef };
 }
 
 async function pathExists(path: string): Promise<boolean> {
@@ -179,8 +182,16 @@ async function cloneRepository(sourceUrl: string, targetDir: string): Promise<st
   await rm(targetDir, { recursive: true, force: true });
   await mkdir(targetDir, { recursive: true });
   const { cloneUrl, ref, subdir } = normalizeTreeSourceUrl(sourceUrl);
-  await execFileAsync('git', ['clone', '--depth', '1', cloneUrl, targetDir], { env: process.env });
+  const cloneArgs = ['clone', '--depth', '1'];
   if (ref) {
+    cloneArgs.push('--branch', ref, '--single-branch');
+  }
+  cloneArgs.push(cloneUrl, targetDir);
+  try {
+    await execFileAsync('git', cloneArgs, { env: process.env });
+  } catch (err) {
+    if (!ref) throw err;
+    await execFileAsync('git', ['clone', '--depth', '1', cloneUrl, targetDir], { env: process.env });
     await execFileAsync('git', ['-C', targetDir, 'checkout', ref], { env: process.env });
   }
   return subdir ? join(targetDir, subdir) : targetDir;
@@ -347,9 +358,20 @@ export class PluginRegistryService {
     }
   }
 
-  private clearMarketplaceInstalls(organizationId: string, marketplaceUrl: string): void {
-    for (const install of this.repo.listPluginInstalls(organizationId)) {
-      if (install.sourceUrl === marketplaceUrl || install.sourceUrl.startsWith(`${marketplaceUrl}::`)) {
+  private listMarketplaceInstalls(organizationId: string, marketplaceUrl: string): PluginInstall[] {
+    return this.repo.listPluginInstalls(organizationId).filter(
+      (install) =>
+        install.sourceUrl === marketplaceUrl || install.sourceUrl.startsWith(`${marketplaceUrl}::`),
+    );
+  }
+
+  private removeStaleMarketplaceInstalls(
+    organizationId: string,
+    marketplaceUrl: string,
+    keepSourceUrls: ReadonlySet<string>,
+  ): void {
+    for (const install of this.listMarketplaceInstalls(organizationId, marketplaceUrl)) {
+      if (!keepSourceUrls.has(install.sourceUrl)) {
         this.repo.deletePluginInstall(organizationId, install.id);
       }
     }
@@ -359,8 +381,6 @@ export class PluginRegistryService {
     input: PluginInstallInput,
     entries: MarketplaceEntry[],
   ): Promise<{ plugin: PluginInstall; skills: SkillInstall[] }> {
-    this.clearMarketplaceInstalls(input.organizationId, input.sourceUrl);
-
     const plugins: PluginInstall[] = [];
     const skills: SkillInstall[] = [];
     const failures: string[] = [];
@@ -386,6 +406,12 @@ export class PluginRegistryService {
           : 'No skills found in marketplace plugins.',
       );
     }
+
+    this.removeStaleMarketplaceInstalls(
+      input.organizationId,
+      input.sourceUrl,
+      new Set(plugins.map((plugin) => plugin.sourceUrl)),
+    );
 
     const plugin = plugins[0];
     if (!plugin) {
