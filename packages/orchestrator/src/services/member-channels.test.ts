@@ -56,6 +56,83 @@ describe('member-channels conversation provisioning', () => {
     const conversations = new ConversationService(repo, { emit: () => undefined });
     expect(() => conversations.requireThreadAccess('org-1', threadId, human.id)).not.toThrow();
   });
+
+  it('allows observer read access to agent-only dm threads without granting write access', () => {
+    const repo = createRepo();
+    const agentA = MemberSchema.parse({
+      id: 'agent-1',
+      organizationId: 'org-1',
+      name: 'Ava',
+      kind: 'agent',
+      roleName: 'assistant',
+      presence: 'offline',
+    });
+    const agentB = MemberSchema.parse({
+      id: 'agent-2',
+      organizationId: 'org-1',
+      name: 'Bo',
+      kind: 'agent',
+      roleName: 'assistant',
+      presence: 'offline',
+    });
+    const human = MemberSchema.parse({
+      id: 'human-1',
+      organizationId: 'org-1',
+      name: 'Owner',
+      kind: 'human',
+      roleName: 'owner',
+      presence: 'offline',
+    });
+    repo.saveMember(agentA);
+    repo.saveMember(agentB);
+    repo.saveMember(human);
+
+    const threadId = ensureDirectMessageConversation(repo, 'org-1', agentA, agentB);
+    const conversations = new ConversationService(repo, { emit: () => undefined });
+
+    expect(() => conversations.requireThreadAccess('org-1', threadId, human.id, 'read')).not.toThrow();
+    expect(() => conversations.requireThreadAccess('org-1', threadId, human.id)).toThrow(
+      /Forbidden/,
+    );
+  });
+
+  it('denies agent read access to other agents agent-only dm threads', () => {
+    const repo = createRepo();
+    const agentA = MemberSchema.parse({
+      id: 'agent-1',
+      organizationId: 'org-1',
+      name: 'Ava',
+      kind: 'agent',
+      roleName: 'assistant',
+      presence: 'offline',
+    });
+    const agentB = MemberSchema.parse({
+      id: 'agent-2',
+      organizationId: 'org-1',
+      name: 'Bo',
+      kind: 'agent',
+      roleName: 'assistant',
+      presence: 'offline',
+    });
+    const agentC = MemberSchema.parse({
+      id: 'agent-3',
+      organizationId: 'org-1',
+      name: 'Cy',
+      kind: 'agent',
+      roleName: 'assistant',
+      presence: 'offline',
+    });
+    repo.saveMember(agentA);
+    repo.saveMember(agentB);
+    repo.saveMember(agentC);
+
+    const threadId = ensureDirectMessageConversation(repo, 'org-1', agentA, agentB);
+    const conversations = new ConversationService(repo, { emit: () => undefined });
+
+    expect(() => conversations.requireThreadAccess('org-1', threadId, agentC.id, 'read')).toThrow(
+      /Forbidden/,
+    );
+  });
 });
 
 function createRepo(): ApiRepository {

@@ -669,7 +669,7 @@ describe('workspace path hardening', () => {
     });
   });
 
-  it('requires approval for filesystem access outside the member role scope', async () => {
+  it('allows reads outside the member role scope without approval', async () => {
     const fixture = await createToolFixture();
 
     const result = await fixture.tools.invoke({
@@ -684,12 +684,8 @@ describe('workspace path hardening', () => {
       input: {},
     });
 
-    expect(result.ok).toBe(false);
-    expect(result.requiresApprovalId).toBe('approval-1');
-    expect(result.output).toMatchObject({
-      status: 'waiting_for_approval',
-      approvalId: 'approval-1',
-    });
+    expect(result.ok).toBe(true);
+    expect(result.requiresApprovalId).toBeUndefined();
   });
 
   it.skipIf(skipIfWin32)('blocks symlink escapes that point outside the workspace root', async () => {

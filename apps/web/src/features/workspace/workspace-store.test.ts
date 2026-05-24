@@ -137,8 +137,8 @@ describe("workspace-store helpers", () => {
   it("detects agent-only channels and DMs", () => {
     const state = {
       channels: [
-        { id: "agents", name: "agents", kind: "general", topic: "", memberIds: ["ava", "bo"] },
-        { id: "mixed", name: "mixed", kind: "general", topic: "", memberIds: ["ava", "human"] },
+        { id: "agents", name: "agents", kind: "general" as const, topic: "", memberIds: ["ava", "bo"] },
+        { id: "mixed", name: "mixed", kind: "general" as const, topic: "", memberIds: ["ava", "human"] },
       ],
       members,
     };
@@ -152,8 +152,8 @@ describe("workspace-store helpers", () => {
   it("selects active agent chats outside the current thread", () => {
     useWorkspaceStore.setState({
       channels: [
-        { id: "agents", name: "agents", kind: "general", topic: "", memberIds: ["ava", "bo"] },
-        { id: "mixed", name: "mixed", kind: "general", topic: "", memberIds: ["ava", "human"] },
+        { id: "agents", name: "agents", kind: "general" as const, topic: "", memberIds: ["ava", "bo"] },
+        { id: "mixed", name: "mixed", kind: "general" as const, topic: "", memberIds: ["ava", "human"] },
       ],
       members,
       globalActiveRuns: [

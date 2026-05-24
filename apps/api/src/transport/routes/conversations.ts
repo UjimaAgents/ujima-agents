@@ -97,6 +97,7 @@ export function registerConversationRoutes(
         req.query.organizationId,
         req.params.threadId,
         authState.member.id,
+        'read',
       );
       const thread = repo.getThread(req.query.organizationId, req.params.threadId);
       const channel = thread?.channelId ? repo.getChannel(req.query.organizationId, thread.channelId) : null;
@@ -174,6 +175,7 @@ export function registerConversationRoutes(
         req.query.organizationId,
         req.params.threadId,
         authState.member.id,
+        'read',
       );
       repo.saveConversationRead(
         req.query.organizationId,

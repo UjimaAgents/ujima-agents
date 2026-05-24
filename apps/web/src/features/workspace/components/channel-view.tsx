@@ -141,6 +141,15 @@ export function ChannelView({
     () => currentChannel?.memberIds ?? [],
   );
 
+  // Sync with currentChannel.memberIds when updated externally (SSE, etc.)
+  useEffect(() => {
+    setChannelMemberIds((prev) => {
+      const next = currentChannel?.memberIds ?? [];
+      if (next.length === prev.length && next.every((id, i) => id === prev[i])) return prev;
+      return next;
+    });
+  }, [currentChannel?.memberIds]);
+
   const globalActiveRuns = useWorkspaceStore((state) => state.globalActiveRuns);
   const activeAgentChats = useMemo(
     () => selectActiveAgentChats({ channels: bootstrap.channels, members, globalActiveRuns }, currentThreadId),
@@ -336,7 +345,7 @@ export function ChannelView({
     return s;
   }, [typingRuns]);
   const traceAutoScroll = reasoningTraceVisible && typingRuns.length > 0;
-  const stoppableRunId = useMemo(() => {
+  const stoppableRunIds = useMemo(() => {
     const sorted = [...liveThreadRuns].sort((a, b) => {
       const pri = (r: RunState) =>
         r.status === "running" ? 0 : r.status === "waiting_for_approval" ? 1 : 2;
@@ -344,7 +353,7 @@ export function ChannelView({
       if (d !== 0) return d;
       return (b.startedAt ?? "").localeCompare(a.startedAt ?? "");
     });
-    return sorted[0]?.id;
+    return sorted.map((run) => run.id);
   }, [liveThreadRuns]);
   const typingMembers = useMemo(() => {
     const seen = new Set<string>();
@@ -756,9 +765,9 @@ export function ChannelView({
                 <button
                   type="button"
                   onClick={() => setIsTerminalDrawerOpen(true)}
-                  className="flex items-center gap-2 rounded-full border border-zinc-200 bg-white/95 px-3.5 py-1.5 text-xs font-semibold text-zinc-800 shadow-md backdrop-blur-md transition hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950/95 dark:text-zinc-200"
+                  className="flex items-center gap-2 rounded-full border border-violet-500/20 bg-zinc-950/85 px-3.5 py-1.5 text-xs font-semibold text-zinc-100 shadow-lg shadow-black/20 backdrop-blur-md transition hover:bg-zinc-900/95 dark:border-violet-500/20 dark:bg-zinc-950/90 dark:text-zinc-100 dark:hover:bg-zinc-900/95"
                 >
-                  <Terminal className="h-3.5 w-3.5 animate-pulse text-zinc-500" />
+                  <Terminal className="h-3.5 w-3.5 animate-pulse text-zinc-400" />
                   <span>
                     {activeTerminals.length} {activeTerminals.length === 1 ? "Terminal" : "Terminals"}
                   </span>
@@ -766,7 +775,7 @@ export function ChannelView({
                 <button
                   type="button"
                   onClick={() => setIsTerminalDrawerOpen(true)}
-                  className="flex h-[29px] w-[29px] items-center justify-center rounded-full border border-zinc-200 bg-white/95 text-zinc-500 shadow-md hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950/95 dark:text-zinc-400"
+                  className="flex h-[29px] w-[29px] items-center justify-center rounded-full border border-violet-500/20 bg-zinc-950/85 text-zinc-400 shadow-lg shadow-black/20 transition hover:bg-zinc-900/95 dark:border-violet-500/20 dark:bg-zinc-950/90 dark:text-zinc-400 dark:hover:bg-zinc-900/95"
                   aria-label="More terminal details"
                 >
                   <span className="text-xs font-semibold">...</span>
@@ -818,7 +827,7 @@ export function ChannelView({
             mentionSuggestions={mentionSuggestions}
             replyTo={replyTo}
             onCancelReply={() => setReplyTo(null)}
-            stoppableRunId={stoppableRunId}
+            stoppableRunIds={stoppableRunIds}
             onStopRun={stopAgentRun}
             onSend={(content, attachmentIds, metadata) => {
               if (isAgent) {

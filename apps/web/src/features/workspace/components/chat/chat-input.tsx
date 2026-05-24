@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import {
-  Eye,
   File as FileIcon,
   FileArchive,
   FileAudio,
@@ -167,7 +166,7 @@ export function ChatInput({
   organizationId,
   goalMode: goalModeProp,
   onGoalModeChange,
-  stoppableRunId,
+  stoppableRunIds,
   onStopRun,
   readOnly = false,
 }: {
@@ -181,7 +180,7 @@ export function ChatInput({
   onCancelReply?: () => void;
   goalMode?: boolean;
   onGoalModeChange?: (active: boolean) => void;
-  stoppableRunId?: string | null;
+  stoppableRunIds?: string[];
   onStopRun?: (runId: string) => Promise<void> | void;
   readOnly?: boolean;
 }) {
@@ -203,6 +202,7 @@ export function ChatInput({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const attachmentsRef = useRef<UploadedAttachment[]>([]);
   const uploadControllersRef = useRef(new Map<string, AbortController>());
+  const composerPlaceholder = readOnly ? `Observer Mode · ${placeholder}` : placeholder;
 
   function revokePreviewUrl(attachment: UploadedAttachment) {
     if (attachment.previewUrl?.startsWith("blob:")) {
@@ -211,10 +211,10 @@ export function ChatInput({
   }
 
   useEffect(() => {
-    if (replyTo) {
+    if (replyTo && !readOnly) {
       requestAnimationFrame(() => textareaRef.current?.focus());
     }
-  }, [replyTo]);
+  }, [readOnly, replyTo]);
   useEffect(() => {
     const textarea = textareaRef.current;
     if (!textarea) return;
@@ -235,17 +235,18 @@ export function ChatInput({
     };
   }, []);
   const hasAttachments = attachments.length > 0;
-  const hasDraft = content.trim().length > 0 || hasAttachments;
-  const exactSlashCommand = hasAttachments ? null : getExactSlashCommand(content);
-  const canConfirmClear = clearConfirmation && exactSlashCommand === "clear";
-  const slashQuery = canConfirmClear || hasAttachments ? null : getSlashQuery(content);
+  const visibleAttachments = readOnly ? [] : attachments;
+  const hasDraft = !readOnly && (content.trim().length > 0 || visibleAttachments.length > 0);
+  const exactSlashCommand = readOnly || hasAttachments ? null : getExactSlashCommand(content);
+  const canConfirmClear = !readOnly && clearConfirmation && exactSlashCommand === "clear";
+  const slashQuery = readOnly || canConfirmClear || hasAttachments ? null : getSlashQuery(content);
   const slashMenuOptions = useMemo(() => {
     if (slashQuery === null) return SLASH_COMMANDS;
     return SLASH_COMMANDS.filter((option) => option.command.startsWith(slashQuery));
   }, [slashQuery]);
   const slashMenuOpen = slashQuery !== null && slashMenuOptions.length > 0;
   const working = isSending || isCommanding || uploading;
-  const canStopRun = Boolean(stoppableRunId && onStopRun);
+  const canStopRun = Boolean(stoppableRunIds?.length && onStopRun);
   const showStopInsteadOfSend =
     canStopRun &&
     !hasDraft &&
@@ -264,6 +265,7 @@ export function ChatInput({
   }, [mentionSuggestions, mentionTrigger]);
   const mentionMenuOpen =
     !!mentionTrigger && filteredMentionSuggestions.length > 0;
+  const activeReplyTo = readOnly ? null : replyTo;
   const activeSlashSelection = Math.min(
     activeSlashIndex,
     Math.max(slashMenuOptions.length - 1, 0),
@@ -391,17 +393,22 @@ export function ChatInput({
   };
 
   const handleFiles = (files: globalThis.File[]) => {
-    if (uploading) return;
+    if (readOnly || uploading) return;
     void uploadFiles(files);
   };
 
   const handleAttachmentInput = (event: ChangeEvent<HTMLInputElement>) => {
+    if (readOnly) {
+      event.currentTarget.value = "";
+      return;
+    }
     const files = Array.from(event.currentTarget.files ?? []);
     event.currentTarget.value = "";
     handleFiles(files);
   };
 
   const handleDrag = (next: boolean) => {
+    if (readOnly) return;
     setIsDragging(next);
   };
 
@@ -542,33 +549,23 @@ export function ChatInput({
   };
 
   const stopRun = async () => {
-    if (!stoppableRunId || !onStopRun || isStopping) return;
+    if (!stoppableRunIds?.length || !onStopRun || isStopping) return;
     setError(null);
     setIsStopping(true);
+    let failure: string | null = null;
     try {
-      await onStopRun(stoppableRunId);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to stop the run.");
+      for (const runId of stoppableRunIds) {
+        try {
+          await onStopRun(runId);
+        } catch (err) {
+          failure ??= err instanceof Error ? err.message : "Unable to stop the run.";
+        }
+      }
     } finally {
       setIsStopping(false);
     }
+    if (failure) setError(failure);
   };
-
-  if (readOnly) {
-    return (
-      <div className="shrink-0 px-3 pt-1.5 pb-3">
-        <div className="flex flex-col items-center justify-center rounded-xl border border-zinc-200/50 bg-zinc-50/70 p-4 text-center backdrop-blur-md dark:border-zinc-800/50 dark:bg-zinc-900/40 shadow-sm transition-all duration-300 animate-in fade-in zoom-in-95">
-          <div className="flex h-9 w-9 items-center justify-center rounded-full bg-violet-500/10 text-violet-600 dark:text-violet-400 mb-1.5 animate-pulse">
-            <Eye className="h-4.5 w-4.5" />
-          </div>
-          <p className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">Observer Mode</p>
-          <p className="text-[10px] text-zinc-400 dark:text-zinc-500 mt-0.5 max-w-xs leading-relaxed">
-            You are viewing a conversation between agents. Direct interaction is restricted.
-          </p>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="shrink-0 px-3 pt-1.5 pb-0">
@@ -643,14 +640,14 @@ export function ChatInput({
           onChange={handleAttachmentInput}
         />
         <div className={`relative z-10 flex flex-col rounded-lg border border-zinc-200 bg-zinc-50 transition-all focus-within:border-zinc-300 focus-within:bg-white focus-within:ring-1 focus-within:ring-zinc-200/80 dark:border-zinc-800 dark:bg-zinc-900/50 dark:focus-within:border-zinc-600 dark:focus-within:bg-[#09090b] dark:focus-within:ring-zinc-800/80 ${goalMode ? "bg-zinc-100/80 dark:bg-zinc-900/80" : ""}`}>
-          {replyTo && (
+          {activeReplyTo && (
             <div className="flex items-center gap-2 rounded-t-lg border-b border-zinc-200 bg-violet-50/50 px-2 py-1 dark:border-zinc-800 dark:bg-violet-500/5">
               <div className="flex-1 min-w-0">
                 <p className="truncate text-[10px] font-semibold text-violet-700 dark:text-violet-300">
-                  Replying to {replyTo.name}
+                  Replying to {activeReplyTo.name}
                 </p>
                 <MarkdownInline
-                  content={replyTo.content}
+                  content={activeReplyTo.content}
                   className="block truncate text-[10px] text-zinc-500 dark:text-zinc-400"
                 />
               </div>
@@ -665,7 +662,7 @@ export function ChatInput({
               )}
             </div>
           )}
-          {slashMenuOpen ? (
+          {!readOnly && slashMenuOpen ? (
             <div className="mx-2 mb-1 overflow-hidden rounded-lg bg-zinc-100/70 p-1 ring-1 ring-zinc-200/70 dark:bg-zinc-950/60 dark:ring-zinc-800/70">
               <div className="space-y-1">
                 {slashMenuOptions.map((option, index) => (
@@ -695,10 +692,10 @@ export function ChatInput({
               </div>
             </div>
           ) : null}
-          {attachments.length > 0 ? (
+          {!readOnly && visibleAttachments.length > 0 ? (
             <div className="border-t border-zinc-200 px-2 py-1.5 dark:border-zinc-800">
               <div className="flex gap-2 overflow-x-auto pb-1">
-                {attachments.map((attachment) => {
+                {visibleAttachments.map((attachment) => {
                   const Icon = getAttachmentIcon(attachment.category);
                   return (
                     <div
@@ -770,7 +767,9 @@ export function ChatInput({
                 type="button"
                 aria-label="Open commands"
                 title="Open commands"
+                disabled={readOnly}
                 onClick={() => {
+                  if (readOnly) return;
                   setContent((value) => (value.trim().length === 0 ? "/" : value));
                   setClearConfirmation(false);
                   requestAnimationFrame(() => {
@@ -778,7 +777,7 @@ export function ChatInput({
                     textareaRef.current?.setSelectionRange(1, 1);
                   });
                 }}
-                className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300"
+                className="text-zinc-400 transition hover:text-zinc-600 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:text-zinc-300"
               >
                 <Plus className="h-4 w-4" />
               </button>
@@ -786,7 +785,7 @@ export function ChatInput({
                 type="button"
                 aria-label="Attach file"
                 onClick={() => fileInputRef.current?.click()}
-                disabled={uploading}
+                disabled={readOnly || uploading}
                 className="text-zinc-400 hover:text-zinc-600 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:text-zinc-300"
               >
                 <Paperclip className="h-4 w-4" />
@@ -795,8 +794,9 @@ export function ChatInput({
             <textarea
               ref={textareaRef}
               rows={1}
-              placeholder={placeholder}
+              placeholder={composerPlaceholder}
               value={content}
+              disabled={readOnly}
               onChange={(event) => {
                 setContent(event.target.value);
                 setSelection({
@@ -909,7 +909,7 @@ export function ChatInput({
               }}
               className="min-h-5 min-w-0 flex-1 resize-none bg-transparent py-0 text-sm leading-5 focus:outline-none"
             />
-          {mentionMenuOpen ? (
+          {!readOnly && mentionMenuOpen ? (
             <div className="absolute bottom-full left-0 right-0 z-20 mb-1 max-h-44 overflow-y-auto rounded-lg border border-zinc-200 bg-white p-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-950">
               {filteredMentionSuggestions.map((suggestion, index) => (
                 <button
@@ -942,8 +942,9 @@ export function ChatInput({
                   aria-label="Disable goal mode"
                   aria-pressed="true"
                   title="Goal mode active — click to disable"
+                  disabled={readOnly}
                   onClick={() => onGoalModeChange?.(false)}
-                  className="inline-flex h-7 items-center gap-1.5 rounded-md bg-violet-50 px-2 text-[11px] font-medium text-violet-700 transition hover:bg-violet-100 dark:bg-violet-500/10 dark:text-violet-300 dark:hover:bg-violet-500/15"
+                  className="inline-flex h-7 items-center gap-1.5 rounded-md bg-violet-50 px-2 text-[11px] font-medium text-violet-700 transition hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-violet-500/10 dark:text-violet-300 dark:hover:bg-violet-500/15"
                 >
                   <RunningFigureIndicator />
                   Goal

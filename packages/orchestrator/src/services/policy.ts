@@ -1,4 +1,4 @@
-import { sep } from 'node:path';
+import { relative, sep } from 'node:path';
 import type { AgentTeamHandle } from '@ujima/framework';
 import type { ToolAction, SpiritRole, WakeReason } from '@ujima/shared';
 import { isSensitiveWorkspacePath } from '@ujima/shared/workspace-file-filters';
@@ -185,12 +185,23 @@ export function checkToolPolicy(
       return { allowed: true, requiresApproval: false };
     }
 
+    const canonicalPath = canonicalWorkspacePath(team.workspace.root, resourcePath);
+    const pathForSensitivityCheck = canonicalPath.startsWith(team.workspace.root)
+      ? relative(team.workspace.root, canonicalPath)
+      : resourcePath;
+    if (action === 'read' && isSensitiveWorkspacePath(pathForSensitivityCheck)) {
+      return {
+        allowed: true,
+        requiresApproval: true,
+        reason: `Reading "${resourcePath}" requires approval because it may contain secrets`,
+      };
+    }
+
     // When `role.workspaceScopes` is empty (the default for roles
     // that didn't opt in), fall back to the workspace root for
     // READ actions only. The product mental model is "every agent
     // can look at the workspace"; writes still require an explicit
-    // scope to keep blast-radius bounded. The sensitive-path filter
-    // below still applies in both cases.
+    // scope to keep blast-radius bounded.
     const effectiveScopes =
       role.workspaceScopes.length > 0
         ? role.workspaceScopes
@@ -200,22 +211,13 @@ export function checkToolPolicy(
     const inRoleScope = effectiveScopes.some((scope) =>
       isPathWithinScope(team.workspace.root, scope, resourcePath),
     );
-    if (!inRoleScope) {
+    if (!inRoleScope && action !== 'read') {
       return {
         allowed: true,
         requiresApproval: true,
         reason: `Path "${resourcePath}" is outside allowed scopes for role "${roleName}"`,
       };
     }
-
-    if (action === 'read' && isSensitiveWorkspacePath(resourcePath)) {
-      return {
-        allowed: true,
-        requiresApproval: true,
-        reason: `Path "${resourcePath}" requires approval`,
-      };
-    }
-
     inScopeFileAccess = isInScopeFileTool(toolId, action);
   }
 

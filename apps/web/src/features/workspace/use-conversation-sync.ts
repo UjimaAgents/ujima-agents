@@ -228,10 +228,15 @@ export function useConversationSync(
         upsertRun,
       });
     };
+    source.onopen = () => {
+      setError(undefined);
+    };
     source.onerror = () => {
       setLoading(false);
-      setError({ conversationKey: currentConversationKey, message: "Conversation stream disconnected." });
-      if (conversation.type === "agent") setMemberActivity(conversation.id, "error");
+      if (source.readyState === EventSource.CLOSED) {
+        setError({ conversationKey: currentConversationKey, message: "Conversation stream disconnected." });
+        if (conversation.type === "agent") setMemberActivity(conversation.id, "error");
+      }
     };
 
     return () => {
