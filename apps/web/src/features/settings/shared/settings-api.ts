@@ -1,8 +1,8 @@
 export function parseApiError(body: unknown, fallback: string): string {
   if (body && typeof body === "object") {
     const record = body as Record<string, unknown>;
-    if (typeof record.error === "string") return record.error;
     if (typeof record.message === "string") return record.message;
+    if (typeof record.error === "string") return record.error;
   }
   return fallback;
 }

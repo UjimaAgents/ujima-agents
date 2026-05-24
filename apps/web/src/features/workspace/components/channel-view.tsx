@@ -5,7 +5,7 @@ import { useChatScrollToBottom } from "../hooks/use-chat-scroll-to-bottom";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { buildReasoningTraceSteps } from "../reasoning-trace";
 import { File, FileArchive, FileAudio, FileImage, FileText, FileVideo, SquarePen, Terminal } from "lucide-react";
-import type { BootstrapResponse } from "@ujima/api-schema";
+import type { BootstrapResponse, SkillInvocationResponse } from "@ujima/api-schema";
 import type { SelectedConversation } from "../types";
 import { useConversationSync } from "../use-conversation-sync";
 import { DragHandle, WORKSPACE_MAIN_GRID_TRANSITION } from "./workspace-shell";
@@ -20,10 +20,12 @@ import {
   ApprovalCard,
   type ChatTab,
   type ChatMessageData,
+  toSlashSkillCommands,
 } from "./chat";
 import { ChannelMembersTab } from "./channel-members-tab";
 import { ChannelTasksTab } from "./channel-tasks-tab";
 import { getDirectMessageThreadId, RunStateSchema, type RunState } from "@ujima/shared/browser";
+import { settingsFetch } from "@/features/settings/shared/settings-api";
 import {
   isAgentOnlyThread,
   selectActiveAgentChats,
@@ -123,6 +125,10 @@ export function ChannelView({
     }
     return conversation.id;
   }, [bootstrap.auth.member?.id, conversation.id, conversation.type]);
+  const skillCommands = useMemo(
+    () => toSlashSkillCommands(bootstrap.skills ?? []),
+    [bootstrap.skills],
+  );
   const isReadOnly = useMemo(() => {
     const currentMemberId = bootstrap.auth.member?.id;
     if (!currentMemberId) return false;
@@ -803,6 +809,18 @@ export function ChannelView({
             goalMode={goalMode}
             onGoalModeChange={onGoalModeChange}
             readOnly={isReadOnly}
+            skillCommands={skillCommands}
+            onSkillCommand={async (skillId, content) => {
+              if (!organizationId) throw new Error("Missing organization context.");
+              const { content: skillContent } = await settingsFetch<SkillInvocationResponse>(
+                `/api/settings/skills/${encodeURIComponent(skillId)}?organizationId=${encodeURIComponent(organizationId)}&arguments=${encodeURIComponent(content ?? "")}`,
+                undefined,
+                "Unable to load skill.",
+              );
+              await feed.sendMessage(skillContent);
+              setReplyTo(null);
+              scrollToLatest("auto");
+            }}
             onCommand={async (command, content) => {
               if (command === "schedule") {
                 const prompt = content?.replace(/^\/schedule\s*/i, "").trim();

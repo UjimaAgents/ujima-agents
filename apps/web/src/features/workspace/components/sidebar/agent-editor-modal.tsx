@@ -204,7 +204,7 @@ export function AgentEditorModal({
                         onClick={() => toggleTool(tool)}
                         className={`rounded-full border px-3 py-1 text-xs font-semibold transition ${
                           selected
-                            ? "border-violet-500 bg-violet-100 text-violet-700 dark:border-violet-400 dark:bg-violet-500/20 dark:text-violet-200"
+                            ? "border-violet-500 bg-violet-50 text-violet-700 dark:border-violet-400 dark:bg-violet-500/20 dark:text-violet-200"
                             : "border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300 dark:hover:bg-zinc-900"
                         }`}
                         aria-pressed={selected}

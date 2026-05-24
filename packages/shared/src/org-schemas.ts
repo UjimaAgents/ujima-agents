@@ -772,3 +772,55 @@ export const McpToolCacheSchema = z.object({
   error: z.string().optional(),
 });
 export type McpToolCache = z.infer<typeof McpToolCacheSchema>;
+
+export const PluginSkillManifestSchema = z.object({
+  name: z.string().min(1),
+  description: z.string().min(1),
+  userInvocable: z.boolean().default(false),
+  disableModelInvocation: z.boolean().default(false),
+  license: z.string().optional(),
+  compatibility: z.string().optional(),
+  metadata: z.record(z.string()).default({}),
+});
+export type PluginSkillManifest = z.infer<typeof PluginSkillManifestSchema>;
+
+export const PluginManifestSchema = z.object({
+  name: z.string().min(1),
+  description: z.string().default(''),
+  version: z.string().default('0.0.0'),
+  author: z.string().optional(),
+  skills: z.array(PluginSkillManifestSchema).default([]),
+});
+export type PluginManifest = z.infer<typeof PluginManifestSchema>;
+
+export const PluginInstallSchema = z.object({
+  id: IdSchema,
+  organizationId: IdSchema,
+  pluginId: z.string().min(1),
+  pluginName: z.string().min(1),
+  version: z.string().min(1),
+  sourceUrl: z.string().min(1),
+  localPath: z.string().min(1),
+  status: z.enum(['installed', 'error']).default('installed'),
+  createdBy: IdSchema,
+  createdAt: TimestampSchema,
+  updatedAt: TimestampSchema,
+});
+export type PluginInstall = z.infer<typeof PluginInstallSchema>;
+
+export const SkillInstallSchema = z.object({
+  id: IdSchema,
+  organizationId: IdSchema,
+  pluginInstallId: IdSchema,
+  pluginId: z.string().min(1),
+  pluginName: z.string().min(1),
+  skillName: z.string().min(1),
+  commandName: z.string().min(1),
+  description: z.string().default(''),
+  userInvocable: z.boolean().default(false),
+  disableModelInvocation: z.boolean().default(false),
+  skillPath: z.string().min(1),
+  createdAt: TimestampSchema,
+  updatedAt: TimestampSchema,
+});
+export type SkillInstall = z.infer<typeof SkillInstallSchema>;

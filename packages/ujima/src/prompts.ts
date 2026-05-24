@@ -1,5 +1,5 @@
 import { readdirSync } from 'node:fs';
-import type { Channel, Member, OrganizationChart } from '@ujima/shared';
+import type { Channel, Member, OrganizationChart, SkillInstall } from '@ujima/shared';
 import {
   buildCollaborationProtocol,
   buildSharedAgentSystemPrompt,
@@ -83,6 +83,35 @@ function listScopes(role: RoleConfig): string {
 
 function listChannels(role: RoleConfig): string {
   return role.channels.length ? role.channels.join(', ') : 'none';
+}
+
+function formatAvailableSkills(skills: readonly SkillInstall[] | undefined, legacySkills: readonly string[]): string {
+  const visible = (skills ?? []).filter((skill) => !skill.disableModelInvocation);
+  if (visible.length > 0) {
+    return [
+      'If a skill is relevant, inspect its SKILL.md before acting.',
+      '<available_skills>',
+      ...visible.map((skill) =>
+        [
+          '  <skill>',
+          `    <name>${skill.commandName}</name>`,
+          `    <description>${skill.description}</description>`,
+          `    <location>${skill.skillPath}</location>`,
+          `    <plugin>${skill.pluginName}</plugin>`,
+          `    <source>${skill.pluginId}</source>`,
+          '  </skill>',
+        ].join('\n'),
+      ),
+      '</available_skills>',
+    ].join('\n');
+  }
+
+  if (legacySkills.length === 0) return '';
+  return [
+    'Available skills:',
+    legacySkills.map((skill) => `- ${skill}`).join('\n'),
+    'If a skill is relevant, inspect its SKILL.md before acting.',
+  ].join('\n');
 }
 
 function formatWorkspaceLayout(workspaceRoot: string): string {
@@ -194,6 +223,7 @@ export function buildAgentSystemPrompt(
   agents: AgentConfig[] = [],
   channels: Channel[] = [],
   organizationChart: OrganizationChart = { reportsTo: {} },
+  availableSkills?: readonly SkillInstall[],
   /**
    * Final resolved tool ids — `role.tools` ∪ baseline ALWAYS_AVAILABLE
    * conversational tools ∪ MCP-attached tool ids (namespaced). The
@@ -254,6 +284,8 @@ export function buildAgentSystemPrompt(
       : MESSAGE_TOOL_USAGE_GUIDANCE),
     '',
     buildCollaborationProtocol(conversationKind),
+    '',
+    formatAvailableSkills(availableSkills, role.skills),
     '',
     `Workspace root: ${workspaceRoot}`,
     `Allowed scopes: ${listScopes(role)}`,

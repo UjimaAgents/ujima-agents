@@ -2,6 +2,16 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowRight, Hash, MessageSquare, Search, User, File } from "lucide-react";
+import {
+  listItemChevronIdle,
+  listItemChevronSelected,
+  listItemIconIdle,
+  listItemIconSelected,
+  listItemIdle,
+  listItemSelected,
+  listItemSubtitleIdle,
+  listItemSubtitleSelected,
+} from "@/lib/list-item-styles";
 
 export interface SearchResult {
   id: string;
@@ -129,27 +139,36 @@ function CommandPalettePanel({
                   <button
                     key={result.id}
                     type="button"
+                    onMouseEnter={() => setSelectedIndex(index)}
                     onClick={() => {
                       result.onSelect();
                       onOpenChange(false);
                     }}
                     className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm transition ${
-                      selected
-                        ? "bg-violet-100 text-violet-900 dark:bg-violet-900/30 dark:text-violet-200"
-                        : "text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                      selected ? listItemSelected : listItemIdle
                     }`}
                   >
-                    <Icon className="h-4 w-4 shrink-0 text-zinc-400" />
+                    <Icon
+                      className={`h-4 w-4 shrink-0 ${selected ? listItemIconSelected : listItemIconIdle}`}
+                    />
                     <div className="min-w-0 flex-1">
                       <p className="truncate font-medium">{result.label}</p>
                       {result.subtitle && (
-                        <p className="truncate text-xs text-zinc-400 dark:text-zinc-500">
+                        <p
+                          className={`truncate text-xs ${
+                            selected ? listItemSubtitleSelected : listItemSubtitleIdle
+                          }`}
+                        >
                           {result.subtitle}
                         </p>
                       )}
                     </div>
                     {(result.type === "channel" || result.type === "agent") && (
-                      <ArrowRight className="h-3.5 w-3.5 shrink-0 text-zinc-300 dark:text-zinc-600" />
+                      <ArrowRight
+                        className={`h-3.5 w-3.5 shrink-0 ${
+                          selected ? listItemChevronSelected : listItemChevronIdle
+                        }`}
+                      />
                     )}
                   </button>
                 );

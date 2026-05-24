@@ -16,6 +16,12 @@ import {
   X,
 } from "lucide-react";
 import { AttachmentSchema, type AttachmentCategory } from "@ujima/shared/browser";
+import {
+  listItemIdle,
+  listItemSelected,
+  listItemSubtitleIdle,
+  listItemSubtitleSelected,
+} from "@/lib/list-item-styles";
 import type { ChatMessageData } from "./chat-message";
 import { MarkdownInline } from "../markdown";
 
@@ -24,6 +30,35 @@ export interface MentionSuggestion {
   name: string;
   detail?: string;
 }
+
+export interface SlashSkillCommand {
+  id: string;
+  command: string;
+  label: string;
+  description: string;
+}
+
+export function toSlashSkillCommands(
+  skills: readonly {
+    id: string;
+    commandName: string;
+    description: string;
+    userInvocable: boolean;
+  }[],
+): SlashSkillCommand[] {
+  return skills
+    .filter((skill) => skill.userInvocable)
+    .map((skill) => ({
+      id: skill.id,
+      command: skill.commandName,
+      label: `/${skill.commandName}`,
+      description: skill.description,
+    }));
+}
+
+type SlashMenuOption =
+  | ({ kind: "builtin" } & (typeof BUILTIN_SLASH_COMMANDS)[number])
+  | ({ kind: "skill" } & SlashSkillCommand);
 
 interface UploadedAttachment {
   id: string;
@@ -44,7 +79,7 @@ interface MentionTrigger {
 export type ComposerCommand = "summarize" | "clear" | "goal" | "schedule";
 type ThreadCommand = Exclude<ComposerCommand, "goal">;
 
-const SLASH_COMMANDS: Array<{
+const BUILTIN_SLASH_COMMANDS: Array<{
   command: ComposerCommand;
   label: string;
   description: string;
@@ -72,6 +107,7 @@ const SLASH_COMMANDS: Array<{
 ];
 
 const MAX_COMPOSER_ROWS = 3;
+const SLASH_MENU_PREVIEW_COUNT = 5;
 
 function RunningFigureIndicator() {
   return (
@@ -135,6 +171,15 @@ export function getExactSlashCommand(value: string): ComposerCommand | null {
   return null;
 }
 
+function getExactSlashCommandDefinition(value: string, commands: SlashMenuOption[]) {
+  const trimmed = value.trim();
+  if (!trimmed.startsWith("/")) return null;
+  const token = trimmed.split(/\s/, 1)[0] ?? "";
+  if (token.length <= 1) return null;
+  const command = token.slice(1).toLowerCase();
+  return commands.find((option) => option.command === command) ?? null;
+}
+
 export function getSlashQuery(value: string): string | null {
   const trimmed = value.trimStart();
   if (!trimmed.startsWith("/")) return null;
@@ -169,6 +214,8 @@ export function ChatInput({
   stoppableRunIds,
   onStopRun,
   readOnly = false,
+  skillCommands = [],
+  onSkillCommand,
 }: {
   placeholder?: string;
   organizationId?: string;
@@ -183,6 +230,8 @@ export function ChatInput({
   stoppableRunIds?: string[];
   onStopRun?: (runId: string) => Promise<void> | void;
   readOnly?: boolean;
+  skillCommands?: SlashSkillCommand[];
+  onSkillCommand?: (skillId: string, rawContent?: string) => Promise<void> | void;
 }) {
   const goalMode = goalModeProp ?? false;
   const [content, setContent] = useState("");
@@ -192,6 +241,7 @@ export function ChatInput({
   const [error, setError] = useState<string | null>(null);
   const [activeMentionIndex, setActiveMentionIndex] = useState(0);
   const [activeSlashIndex, setActiveSlashIndex] = useState(0);
+  const [slashMenuExpanded, setSlashMenuExpanded] = useState(false);
   const [clearConfirmation, setClearConfirmation] = useState(false);
   const [selection, setSelection] = useState({ start: 0, end: 0 });
   const [attachments, setAttachments] = useState<UploadedAttachment[]>([]);
@@ -237,14 +287,39 @@ export function ChatInput({
   const hasAttachments = attachments.length > 0;
   const visibleAttachments = readOnly ? [] : attachments;
   const hasDraft = !readOnly && (content.trim().length > 0 || visibleAttachments.length > 0);
-  const exactSlashCommand = readOnly || hasAttachments ? null : getExactSlashCommand(content);
-  const canConfirmClear = !readOnly && clearConfirmation && exactSlashCommand === "clear";
+  const allSlashCommands = useMemo(
+    () => [
+      ...BUILTIN_SLASH_COMMANDS.map((option) => ({ ...option, kind: "builtin" as const })),
+      ...skillCommands.map((option) => ({ ...option, kind: "skill" as const })),
+    ],
+    [skillCommands],
+  );
+  const exactSlashCommand = readOnly || hasAttachments ? null : getExactSlashCommandDefinition(content, allSlashCommands);
+  const canConfirmClear = !readOnly && clearConfirmation && exactSlashCommand?.command === "clear";
   const slashQuery = readOnly || canConfirmClear || hasAttachments ? null : getSlashQuery(content);
   const slashMenuOptions = useMemo(() => {
-    if (slashQuery === null) return SLASH_COMMANDS;
-    return SLASH_COMMANDS.filter((option) => option.command.startsWith(slashQuery));
-  }, [slashQuery]);
+    if (slashQuery === null) return allSlashCommands;
+    return allSlashCommands.filter((option) => option.command.startsWith(slashQuery));
+  }, [allSlashCommands, slashQuery]);
   const slashMenuOpen = slashQuery !== null && slashMenuOptions.length > 0;
+  const isSlashBrowseMode = slashQuery === "";
+  const displayedSlashOptions = useMemo(() => {
+    if (!isSlashBrowseMode || slashMenuExpanded) return slashMenuOptions;
+    return slashMenuOptions.slice(0, SLASH_MENU_PREVIEW_COUNT);
+  }, [isSlashBrowseMode, slashMenuExpanded, slashMenuOptions]);
+  const hasMoreSlashCommands =
+    isSlashBrowseMode &&
+    !slashMenuExpanded &&
+    slashMenuOptions.length > SLASH_MENU_PREVIEW_COUNT;
+  const hiddenSlashCount = slashMenuOptions.length - SLASH_MENU_PREVIEW_COUNT;
+
+  const [prevSlashQuery, setPrevSlashQuery] = useState<string | null>(slashQuery);
+  if (slashQuery !== prevSlashQuery) {
+    setPrevSlashQuery(slashQuery);
+    setSlashMenuExpanded(false);
+    setActiveSlashIndex(0);
+  }
+
   const working = isSending || isCommanding || uploading;
   const canStopRun = Boolean(stoppableRunIds?.length && onStopRun);
   const showStopInsteadOfSend =
@@ -268,7 +343,7 @@ export function ChatInput({
   const activeReplyTo = readOnly ? null : replyTo;
   const activeSlashSelection = Math.min(
     activeSlashIndex,
-    Math.max(slashMenuOptions.length - 1, 0),
+    Math.max(displayedSlashOptions.length - 1, 0),
   );
 
   const thumbnailUrl = (attachmentId: string) =>
@@ -487,9 +562,9 @@ export function ChatInput({
     }
   };
 
-  const runSlashCommand = async (command: ComposerCommand) => {
+  const runSlashCommand = async (command: SlashMenuOption) => {
     if (isSending || isCommanding || uploading) return;
-    if (command === "goal") {
+    if (command.kind === "builtin" && command.command === "goal") {
       onGoalModeChange?.(!goalMode);
       setError(null);
       setContent("");
@@ -500,7 +575,7 @@ export function ChatInput({
       });
       return;
     }
-    if (command === "clear" && !canConfirmClear) {
+    if (command.kind === "builtin" && command.command === "clear" && !canConfirmClear) {
       setClearConfirmation(true);
       setError(null);
       setContent("/clear");
@@ -515,7 +590,11 @@ export function ChatInput({
     setIsCommanding(true);
     try {
       const currentContent = content;
-      await onCommand(command, currentContent);
+      if (command.kind === "skill") {
+        await onSkillCommand?.(command.id, currentContent);
+      } else {
+        await onCommand(command.command as ThreadCommand, currentContent);
+      }
       setContent("");
       setSelection({ start: 0, end: 0 });
       setAttachments([]);
@@ -529,7 +608,7 @@ export function ChatInput({
   };
 
   const confirmClear = async () => {
-    await runSlashCommand("clear");
+    await runSlashCommand({ command: "clear", label: "/clear", description: "Archive the thread and empty the visible chat.", kind: "builtin" });
   };
 
   const submitComposer = async () => {
@@ -663,33 +742,54 @@ export function ChatInput({
             </div>
           )}
           {!readOnly && slashMenuOpen ? (
-            <div className="mx-2 mb-1 overflow-hidden rounded-lg bg-zinc-100/70 p-1 ring-1 ring-zinc-200/70 dark:bg-zinc-950/60 dark:ring-zinc-800/70">
-              <div className="space-y-1">
-                {slashMenuOptions.map((option, index) => (
-                  <button
-                    key={option.command}
-                    type="button"
-                    onMouseDown={(event) => {
-                      event.preventDefault();
-                      void runSlashCommand(option.command);
-                    }}
-                    className={`flex w-full items-center gap-3 rounded-md px-2 py-2 text-left text-xs transition ${
-                      index === activeSlashSelection
-                        ? "bg-violet-50 text-violet-900 dark:bg-violet-500/15 dark:text-violet-100"
-                        : "text-zinc-700 hover:bg-zinc-200/80 dark:text-zinc-200 dark:hover:bg-zinc-900"
-                    }`}
-                  >
-                    <span className="mt-0.5 rounded-md border border-zinc-200 bg-white px-1.5 py-0.5 font-mono text-[10px] font-semibold text-zinc-700 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200">
-                      {option.label}
-                    </span>
-                    <span className="min-w-0">
-                      <span className="block text-[10px] leading-4 text-zinc-500 dark:text-zinc-400">
-                        {option.description}
+            <div className="mx-2 mb-1 flex max-h-[min(18rem,40vh)] flex-col overflow-hidden rounded-lg bg-zinc-100/70 ring-1 ring-zinc-200/70 dark:bg-zinc-950/60 dark:ring-zinc-800/70">
+              <div className="min-h-0 flex-1 overflow-y-auto p-1">
+                <div className="space-y-1">
+                  {displayedSlashOptions.map((option, index) => (
+                    <button
+                      key={option.kind === "skill" ? option.id : option.command}
+                      type="button"
+                      onMouseDown={(event) => {
+                        event.preventDefault();
+                        void runSlashCommand(option);
+                      }}
+                      className={`flex w-full items-center gap-3 rounded-md px-2 py-2 text-left text-xs transition ${
+                        index === activeSlashSelection ? listItemSelected : listItemIdle
+                      }`}
+                    >
+                      <span
+                        title={option.label}
+                        className="mt-0.5 max-w-[11rem] shrink-0 truncate rounded-md border border-zinc-200 bg-white px-1.5 py-0.5 font-mono text-[10px] font-semibold text-zinc-700 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200"
+                      >
+                        {option.label}
                       </span>
-                    </span>
-                  </button>
-                ))}
+                      <span className="min-w-0 flex-1">
+                        <span
+                          className={`block truncate text-[10px] leading-4 ${
+                            index === activeSlashSelection
+                              ? listItemSubtitleSelected
+                              : listItemSubtitleIdle
+                          }`}
+                        >
+                          {option.description}
+                        </span>
+                      </span>
+                    </button>
+                  ))}
+                </div>
               </div>
+              {hasMoreSlashCommands ? (
+                <button
+                  type="button"
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                    setSlashMenuExpanded(true);
+                  }}
+                  className="shrink-0 border-t border-zinc-200/80 px-3 py-2 text-center text-[10px] font-semibold text-violet-700 transition hover:bg-zinc-200/60 dark:border-zinc-800 dark:text-violet-300 dark:hover:bg-zinc-900/80"
+                >
+                  Show {hiddenSlashCount} more
+                </button>
+              ) : null}
             </div>
           ) : null}
           {!readOnly && visibleAttachments.length > 0 ? (
@@ -847,22 +947,22 @@ export function ChatInput({
                   if (event.key === "ArrowDown") {
                     event.preventDefault();
                     setActiveSlashIndex((index) =>
-                      (index + 1) % slashMenuOptions.length,
+                      (index + 1) % displayedSlashOptions.length,
                     );
                     return;
                   }
                   if (event.key === "ArrowUp") {
                     event.preventDefault();
                     setActiveSlashIndex((index) =>
-                      (index - 1 + slashMenuOptions.length) % slashMenuOptions.length,
+                      (index - 1 + displayedSlashOptions.length) % displayedSlashOptions.length,
                     );
                     return;
                   }
                   if (event.key === "Enter" && !event.shiftKey) {
                     event.preventDefault();
-                    const selected = slashMenuOptions[activeSlashSelection] ?? slashMenuOptions[0];
+                    const selected = displayedSlashOptions[activeSlashSelection] ?? displayedSlashOptions[0];
                     if (selected) {
-                      void runSlashCommand(selected.command);
+                      void runSlashCommand(selected);
                     }
                     return;
                   }
@@ -920,14 +1020,18 @@ export function ChatInput({
                     insertMention(suggestion);
                   }}
                   className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs transition ${
-                    index === activeMentionIndex
-                      ? "bg-violet-50 text-violet-800 dark:bg-violet-500/15 dark:text-violet-200"
-                      : "text-zinc-700 hover:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-900"
+                    index === activeMentionIndex ? listItemSelected : listItemIdle
                   }`}
                 >
                   <span className="font-semibold">@{suggestion.name}</span>
                   {suggestion.detail ? (
-                    <span className="ml-2 truncate text-[10px] text-zinc-500 dark:text-zinc-400">
+                    <span
+                      className={`ml-2 truncate text-[10px] ${
+                        index === activeMentionIndex
+                          ? listItemSubtitleSelected
+                          : listItemSubtitleIdle
+                      }`}
+                    >
                       {suggestion.detail}
                     </span>
                   ) : null}
@@ -989,11 +1093,11 @@ export function ChatInput({
                   aria-label={
                     canConfirmClear
                       ? "Confirm clear conversation"
-                      : exactSlashCommand === "clear"
+                      : exactSlashCommand?.command === "clear"
                         ? "Clear conversation"
-                        : exactSlashCommand === "summarize"
+                      : exactSlashCommand?.command === "summarize"
                           ? "Run summarize"
-                          : exactSlashCommand === "schedule"
+                          : exactSlashCommand?.command === "schedule"
                             ? "Ask agent to schedule"
                           : "Send message"
                   }

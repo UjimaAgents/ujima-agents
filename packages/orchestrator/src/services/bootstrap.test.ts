@@ -81,6 +81,7 @@ describe('BootstrapService', () => {
           providerCredentials: {},
         };
       },
+      listOrganizationSkillInstalls: () => [],
     };
     const auth = {
       getAuthState: (sessionToken?: string | null) => sessionToken === 'token-1'

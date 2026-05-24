@@ -11,6 +11,7 @@ import type {
   ConversationThread,
   McpServer,
   McpToolCache,
+  PluginInstall,
   Member,
   Message,
   MessageMention,
@@ -20,6 +21,7 @@ import type {
   ScheduledJob,
   Spirit,
   SpiritRole,
+  SkillInstall,
   TaskSession,
   TaskSessionStatus,
   Todo,
@@ -99,6 +101,7 @@ export interface RepositoryReader {
     limit?: number,
   ): PaginatedMessages;
   getProviderCredential(organizationId: string, providerName: string): string | null;
+  listOrganizationSkillInstalls?(organizationId: string): SkillInstall[];
   listRunSteps?(organizationId: string, runId: string): RunStep[];
   /**
    * Optional lookup so ai-service can read the wake-trigger
@@ -315,6 +318,18 @@ export interface ApiRepository extends ConversationRepository {
   ): { attachment: AgentMcpAttachment; server: McpServer }[];
   saveMcpToolCache(cache: McpToolCache): McpToolCache;
   getMcpToolCache(organizationId: string, mcpServerId: string): McpToolCache | null;
+  savePluginInstall(install: PluginInstall): PluginInstall;
+  getPluginInstall(organizationId: string, installId: string): PluginInstall | null;
+  getPluginInstallBySourceUrl(
+    organizationId: string,
+    sourceUrl: string,
+  ): PluginInstall | null;
+  listPluginInstalls(organizationId: string): PluginInstall[];
+  deletePluginInstall(organizationId: string, installId: string): void;
+  saveOrganizationSkillInstall(install: SkillInstall): SkillInstall;
+  getOrganizationSkillInstall(organizationId: string, installId: string): SkillInstall | null;
+  listOrganizationSkillInstalls(organizationId: string): SkillInstall[];
+  deleteOrganizationSkillInstall(organizationId: string, installId: string): void;
   saveTodo(todo: Todo): Todo;
   getTodo(organizationId: string, todoId: string): Todo | null;
   listTodosForSession(
