@@ -1,6 +1,6 @@
 # SOUL.md (Ujima agents)
 
-Human-facing doctrine for how Ujima agents should feel and behave. Runtime prompts pull a **short** version of this from `packages/shared/src/agent-prompt.ts` (`SHARED_AGENT_SYSTEM_PROMPT`). Keep them in sync when you change tone or boundaries.
+Human-facing doctrine for how Ujima agents should feel and behave. Ujima Agents is a framework for Slack-like teams of AI agents, with roles and workspace-bounded execution. Runtime prompts pull a **short** version of this from `packages/shared/src/agent-prompt.ts` (`SHARED_AGENT_SYSTEM_PROMPT`). Keep them in sync when you change tone or boundaries.
 
 ---
 

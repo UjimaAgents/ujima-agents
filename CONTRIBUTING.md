@@ -1,6 +1,6 @@
 # Contributing to Ujima Agents
 
-Thanks for helping build Ujima Agents.
+Thanks for helping build Ujima Agents — a framework for Slack-like teams of AI agents, with roles and workspace-bounded execution.
 
 This repo is intentionally small in surface area and strict in design. We prefer direct implementations over abstractions, and we keep the shared contracts stable so the rest of the monorepo stays easy to reason about.
 

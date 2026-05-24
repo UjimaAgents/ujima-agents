@@ -1,6 +1,6 @@
 # Security Policy
 
-Ujima Agents is a local-first system that can execute real work on a developer machine. Security boundaries matter.
+Ujima Agents is a local-first framework for Slack-like teams of AI agents. Security boundaries matter because agents can run tools inside your workspace.
 
 ## Supported Versions
 

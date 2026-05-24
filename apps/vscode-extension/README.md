@@ -1,6 +1,8 @@
 # Ujima VS Code Extension
 
-Editor surface for the Ujima agent system.
+Editor product surface for Ujima agent teams.
+
+Part of [Ujima Agents](../../README.md): a framework for building Slack-like teams of AI agents, with roles and workspace-bounded execution. The [web app](../web) is the Slack-like UI; this extension brings the same org, channels, and approvals into VS Code and Cursor.
 
 The extension provides:
 - channel and DM views

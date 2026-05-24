@@ -1,8 +1,8 @@
 # @ujima/api
 
-Local backend and runtime service for Ujima Agents.
+Local API daemon for Ujima Agents.
 
-This app owns onboarding, organization state, SQLite persistence, approvals, realtime events, tool execution, and AI orchestration. It is the source of truth for workspace boundaries and run execution.
+Runs onboarding, org state, channels, approvals, orchestration, and workspace-bounded tool execution. Both product surfaces — the [Slack-like web UI](../web) and the [VS Code extension](../vscode-extension) — use this service as the source of truth.
 
 ## System Architecture
 
