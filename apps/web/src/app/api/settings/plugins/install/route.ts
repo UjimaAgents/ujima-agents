@@ -1,4 +1,7 @@
-import { organizationIdFromJsonBody, proxyDaemonRoute } from "@/server/proxy-daemon-route";
+import {
+  organizationIdFromJsonBody,
+  proxyDaemonRoute,
+} from "@/server/proxy-daemon-route";
 
 export const dynamic = "force-dynamic";
 
@@ -7,8 +10,8 @@ export async function POST(request: Request) {
   if (parsed instanceof Response) return parsed;
   return proxyDaemonRoute(
     parsed.organizationId,
-    "/api/settings/mcps/import",
+    "/api/settings/plugins/install",
     { method: "POST", body: JSON.stringify(parsed.payload) },
-    "Unable to import MCP servers.",
+    "Unable to install skill.",
   );
 }

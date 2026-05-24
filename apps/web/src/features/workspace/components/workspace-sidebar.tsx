@@ -23,6 +23,7 @@ import { defaultModelForProvider } from "../../onboarding/types";
 import { resolveMemberActivity } from "../workspace-store";
 import type { ActivityState } from "../activity-state";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { listItemIdle, listItemSelectedNeutral } from "@/lib/list-item-styles";
 import { AgentEditorModal } from "./sidebar/agent-editor-modal";
 import { CreateAgentModal } from "./sidebar/create-agent-modal";
 import { CreateChannelModal } from "./sidebar/create-channel-modal";
@@ -364,11 +365,9 @@ export function WorkspaceSidebar({
                           }
                         })();
                       }}
-                      className={`flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-xs transition ${
-                        active
-                          ? "bg-zinc-100 text-zinc-900 dark:bg-zinc-900 dark:text-zinc-50"
-                          : "text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-900"
-                      } disabled:opacity-60`}
+                      className={`flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-xs transition disabled:opacity-60 ${
+                        active ? listItemSelectedNeutral : listItemIdle
+                      }`}
                     >
                       {busy ? <Clock className="h-3.5 w-3.5 shrink-0 animate-pulse" /> : null}
                       <span className="flex-1 truncate font-medium">{org.name}</span>

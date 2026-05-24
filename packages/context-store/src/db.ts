@@ -856,6 +856,46 @@ const MIGRATIONS: { id: string; up: string }[] = [
         ON scheduled_jobs(organization_id, status, next_run_at);
     `,
   },
+  {
+    id: '026_plugin_registry',
+    up: `
+      CREATE TABLE IF NOT EXISTS plugin_installs (
+        id              TEXT PRIMARY KEY,
+        organization_id TEXT NOT NULL,
+        plugin_id       TEXT NOT NULL,
+        plugin_name     TEXT NOT NULL,
+        version         TEXT NOT NULL,
+        source_url      TEXT NOT NULL,
+        local_path      TEXT NOT NULL,
+        status          TEXT NOT NULL DEFAULT 'installed',
+        created_by      TEXT NOT NULL,
+        created_at      TEXT NOT NULL,
+        updated_at      TEXT NOT NULL,
+        UNIQUE (organization_id, source_url)
+      );
+      CREATE INDEX IF NOT EXISTS idx_plugin_installs_org
+        ON plugin_installs(organization_id, plugin_name);
+
+      CREATE TABLE IF NOT EXISTS organization_skill_installs (
+        id                  TEXT PRIMARY KEY,
+        organization_id     TEXT NOT NULL,
+        plugin_install_id   TEXT NOT NULL,
+        plugin_id           TEXT NOT NULL,
+        plugin_name         TEXT NOT NULL,
+        skill_name          TEXT NOT NULL,
+        command_name        TEXT NOT NULL,
+        description         TEXT NOT NULL DEFAULT '',
+        user_invocable      INTEGER NOT NULL DEFAULT 0,
+        disable_model_invocation INTEGER NOT NULL DEFAULT 0,
+        skill_path          TEXT NOT NULL,
+        created_at         TEXT NOT NULL,
+        updated_at         TEXT NOT NULL,
+        UNIQUE (organization_id, plugin_install_id, skill_name)
+      );
+      CREATE INDEX IF NOT EXISTS idx_org_skill_installs_org
+        ON organization_skill_installs(organization_id, plugin_name);
+    `,
+  },
 ];
 
 export interface DbOptions {

@@ -1,6 +1,7 @@
 "use client";
 import { useState, useRef, useEffect } from "react";
 import { ChevronDown, Check } from "lucide-react";
+import { listItemIdle, listItemSelected } from "@/lib/list-item-styles";
 
 export interface SelectOption {
   value: string;
@@ -58,13 +59,9 @@ export function Select({ id, value, onChange, options, placeholder = "Select an 
                 onChange({ target: { value: option.value } });
                 setIsOpen(false);
               }}
-              className={`flex w-full items-center justify-between px-4 py-2 text-left transition hover:bg-zinc-50 dark:hover:bg-zinc-900 ${
+              className={`flex w-full items-center justify-between px-4 py-2 text-left font-medium transition ${
                 option.disabled ? "cursor-not-allowed opacity-50" : ""
-              } ${
-                option.value === value
-                  ? "bg-violet-50 font-medium text-violet-700 dark:bg-violet-500/10 dark:text-violet-300"
-                  : "text-zinc-700 dark:text-zinc-300"
-              }`}
+              } ${option.value === value ? listItemSelected : listItemIdle}`}
             >
               <span className="truncate">{option.label}</span>
               {option.value === value && <Check className="ml-2 h-4 w-4 shrink-0" />}

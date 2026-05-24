@@ -210,6 +210,7 @@ export class AiService {
     // ids) so the prompt matches the AI-SDK schema; otherwise the
     // model can deny tools it actually has.
     const availableToolIds = Object.keys(toolDefs);
+    const availableSkills = this.repo.listOrganizationSkillInstalls?.(input.organizationId) ?? [];
     const system = buildAgentSystemPrompt(
       team.workspace.root,
       organization.name,
@@ -224,6 +225,7 @@ export class AiService {
       team.agents,
       team.channels,
       organization.organizationChart,
+      availableSkills,
       availableToolIds,
       attachedMcpServers.map((s) => ({ name: s.serverName, toolNames: s.toolNames })),
       wakeReplyPolicy.conversationKind,

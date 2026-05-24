@@ -165,6 +165,7 @@ export class SpiritServiceAgentRun extends SpiritServiceLifecycle {
     const toolDefs: ToolSet = { ...builtInToolDefs, ...mcpToolDefs };
 
     const availableToolIds = Object.keys(toolDefs);
+    const availableSkills = this.repo.listOrganizationSkillInstalls?.(input.organizationId) ?? [];
     const system = buildAgentSystemPrompt(
       team.workspace.root,
       organization.name,
@@ -179,6 +180,7 @@ export class SpiritServiceAgentRun extends SpiritServiceLifecycle {
       team.agents,
       team.channels,
       organization.organizationChart,
+      availableSkills,
       availableToolIds,
       attachedMcpServers.map((s) => ({ name: s.serverName, toolNames: s.toolNames })),
       supervisorWakePolicy.conversationKind,

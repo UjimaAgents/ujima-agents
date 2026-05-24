@@ -7,6 +7,7 @@ import {
   MemberSchema,
   OrganizationChartSchema,
   RunStateSchema,
+  SkillInstallSchema,
 } from '@ujima/shared';
 import { z } from 'zod';
 import { SessionAuthStateSchema } from './auth.js';
@@ -80,6 +81,7 @@ export const BootstrapResponseSchema = z.object({
   channels: z.array(ChannelSchema),
   pendingApprovals: z.array(ApprovalRequestSchema),
   activeRuns: z.array(RunStateSchema),
+  skills: z.array(SkillInstallSchema),
   conversationUnreadCounts: z.record(z.number().int().nonnegative()),
   auth: SessionAuthStateSchema,
 });

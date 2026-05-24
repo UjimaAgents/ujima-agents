@@ -48,6 +48,7 @@ describe('buildAgentSystemPrompt', () => {
         { id: 'general', name: 'general', kind: 'general' },
       ] as never,
       { reportsTo: { 'frontend-alice': 'pm' } },
+      undefined,
     );
 
     expect(system).toContain(`Workspace root: ${root}`);
@@ -86,6 +87,7 @@ describe('buildAgentSystemPrompt', () => {
       [agent, createAgent('ivy', 'qa-engineer', 'skeptical')] as never,
       [] as never,
       { reportsTo: {} },
+      undefined,
     );
 
     expect(system).toContain('You are Phoebe Hunter, an employee of Ujima Demo, acting as QA Engineer (qa-engineer).');

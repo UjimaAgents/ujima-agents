@@ -18,6 +18,7 @@ import type { ApiServiceContext } from './context.js';
 import { ConversationService } from './conversation.js';
 import { CommitmentService } from './commitment-service.js';
 import { McpRegistryService } from './mcp-registry.js';
+import { PluginRegistryService } from './plugin-registry.js';
 import { OnboardingService } from './onboarding.js';
 import {
   drainPendingMemberAlertAfterRun,
@@ -157,6 +158,11 @@ export type {
   TestMcpResult,
   UpdateMcpServerInput,
 } from './mcp-registry.js';
+export { PluginRegistryService } from './plugin-registry.js';
+export type {
+  PluginInstallInput,
+  SkillInvocation,
+} from './plugin-registry.js';
 export {
   ERR_NO_WORKSPACE_ROOT,
   WorkspaceRootRequiredError,
@@ -234,6 +240,7 @@ export interface ApiServices {
   supervisorTodos: SupervisorTodoService;
   activeSpirits: ActiveSpiritRegistry;
   mcpRegistry: McpRegistryService;
+  pluginRegistry: PluginRegistryService;
   commitments: CommitmentService;
   /**
    * Tears down background timers (commitment sweeper, anything else
@@ -564,6 +571,10 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     evaluator: context.taskPromoterEvaluator,
   });
   const mcpRegistry = new McpRegistryService(context.repo);
+  const pluginRegistry = new PluginRegistryService(
+    context.repo,
+    context.archiveRoot ?? process.env.UJIMA_HOME ?? process.cwd(),
+  );
 
   const commitments = new CommitmentService(
     context.repo,
@@ -650,6 +661,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     supervisorTodos,
     activeSpirits,
     mcpRegistry,
+    pluginRegistry,
     commitments,
     stop,
   };

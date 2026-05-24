@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import type { BootstrapResponse } from "@ujima/api-schema";
 import { orgWorkspaceId } from "@ujima/shared/browser";
 import { switchToWorkspace } from "@/features/workspace/switch-workspace";
+import { listItemIdle, listItemSelectedNeutral } from "@/lib/list-item-styles";
 
 export function WorkspaceSwitcher({
   bootstrap,
@@ -102,11 +103,9 @@ export function WorkspaceSwitcher({
                 type="button"
                 disabled={Boolean(switchingId)}
                 onClick={() => void handleSwitch(org.id, active)}
-                className={`flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-xs transition ${
-                  active
-                    ? "bg-zinc-100 text-zinc-900 dark:bg-zinc-900 dark:text-zinc-50"
-                    : "text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-900"
-                } disabled:opacity-60`}
+                className={`flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-xs transition disabled:opacity-60 ${
+                  active ? listItemSelectedNeutral : listItemIdle
+                }`}
               >
                 {busy ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" /> : null}
                 <span className="flex-1 truncate font-medium">{org.name}</span>

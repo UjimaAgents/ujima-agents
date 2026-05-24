@@ -192,7 +192,9 @@ import {
   saveMcpServer as writeMcpServer,
   saveMcpToolCache as writeMcpToolCache,
 } from './mcp-servers.js';
+import { createPluginRepository, type PluginRepository } from './plugins.js';
 
+/* eslint-disable @typescript-eslint/no-unsafe-declaration-merging -- PluginRepository methods are mixed onto Repository via Object.assign */
 export class Repository {
   private readonly secrets: SecretStore;
 
@@ -201,6 +203,7 @@ export class Repository {
     // have not wired a file-backed store. Production callers (runtime/main.ts)
     // pass a createFileSecretStore() instance.
     this.secrets = secrets ?? createInMemorySecretStore();
+    Object.assign(this, createPluginRepository(this.db));
   }
 
   getOrganization = (organizationId: string): Organization | null =>
@@ -614,6 +617,10 @@ export class Repository {
   getBootstrapSnapshot = (organizationId?: string): BootstrapSnapshot =>
     readBootstrapSnapshot(this.db, organizationId);
 }
+
+/* eslint-disable @typescript-eslint/no-empty-object-type */
+export interface Repository extends PluginRepository {}
+/* eslint-enable @typescript-eslint/no-empty-object-type, @typescript-eslint/no-unsafe-declaration-merging */
 
 export type {
   BootstrapSnapshot,
