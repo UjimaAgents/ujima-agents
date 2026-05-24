@@ -87,7 +87,7 @@ describe('checkToolPolicy', () => {
   });
 
   describe('filesystem path policy', () => {
-    it('allows hidden or secret-looking reads without approval', async () => {
+    it('requires approval for sensitive-path reads even inside role scope', async () => {
       await writeFile(join(workspaceRoot, '.env'), 'TOKEN=secret\n', 'utf8');
 
       const team = teamWithRole({
@@ -109,7 +109,7 @@ describe('checkToolPolicy', () => {
           'read',
           join(workspaceRoot, '.env'),
         ),
-      ).toEqual({ allowed: true, requiresApproval: false });
+      ).toMatchObject({ allowed: true, requiresApproval: true });
     });
 
     it('bypasses approval for writes inside .ujima-goals', async () => {

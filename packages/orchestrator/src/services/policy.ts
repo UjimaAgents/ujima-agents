@@ -1,6 +1,7 @@
-import { sep } from 'node:path';
+import { relative, sep } from 'node:path';
 import type { AgentTeamHandle } from '@ujima/framework';
 import type { ToolAction, SpiritRole, WakeReason } from '@ujima/shared';
+import { isSensitiveWorkspacePath } from '@ujima/shared/workspace-file-filters';
 import {
   assertWorkspaceBoundary,
   canonicalWorkspacePath,
@@ -182,6 +183,18 @@ export function checkToolPolicy(
       isGoalArtifactPath(team.workspace.root, resourcePath)
     ) {
       return { allowed: true, requiresApproval: false };
+    }
+
+    const canonicalPath = canonicalWorkspacePath(team.workspace.root, resourcePath);
+    const pathForSensitivityCheck = canonicalPath.startsWith(team.workspace.root)
+      ? relative(team.workspace.root, canonicalPath)
+      : resourcePath;
+    if (action === 'read' && isSensitiveWorkspacePath(pathForSensitivityCheck)) {
+      return {
+        allowed: true,
+        requiresApproval: true,
+        reason: `Reading "${resourcePath}" requires approval because it may contain secrets`,
+      };
     }
 
     // When `role.workspaceScopes` is empty (the default for roles

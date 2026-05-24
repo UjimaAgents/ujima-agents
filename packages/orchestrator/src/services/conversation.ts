@@ -242,7 +242,7 @@ export class ConversationService {
         throw new Error(`Channel is archived: ${threadId}`);
       }
       if (!this.canMemberAccessChannel(channel, memberId)) {
-        if (access === 'read' && this.canObserverReadThread(organizationId, threadId)) {
+        if (access === 'read' && this.canObserverReadThread(organizationId, threadId, memberId)) {
           return;
         }
         throw new Error('Forbidden: you do not have access to this thread');
@@ -271,7 +271,7 @@ export class ConversationService {
       }
     }
 
-    if (access === 'read' && this.canObserverReadThread(organizationId, threadId)) {
+    if (access === 'read' && this.canObserverReadThread(organizationId, threadId, memberId)) {
       return;
     }
 
@@ -1930,7 +1930,14 @@ export class ConversationService {
     return false;
   }
 
-  private canObserverReadThread(organizationId: string, threadId: string): boolean {
+  private canObserverReadThread(
+    organizationId: string,
+    threadId: string,
+    memberId: string,
+  ): boolean {
+    const member = this.repo.getMember(organizationId, memberId);
+    if (!member || member.kind !== 'human') return false;
+
     const thread = this.repo.getThread(organizationId, threadId);
     if (!thread) return false;
     const channel = thread.channelId ? this.repo.getChannel(organizationId, thread.channelId) : null;
