@@ -31,40 +31,44 @@ export interface BuildWorkspaceStateInput {
 export function buildWorkspaceStateBlock(input: BuildWorkspaceStateInput): string | null {
   const sections: string[] = [];
 
-  // --- Open commitments (across all channels this agent owns) -----
-  if (input.repo.listTodosForChannel) {
-    const open: { title: string; channelId?: string; ageMin: number; empties: number }[] = [];
-    // We can't list across all channels in one shot without a new
-    // repo method; iterate from the current channel and hope the
-    // common case (own-channel commitments) covers it. Future
-    // upgrade: a `listOpenCommitmentsForMember` repo method.
-    if (input.channelId && input.repo.listTodosForChannel) {
-      try {
-        const rows = input.repo.listTodosForChannel(input.organizationId, input.channelId, {
-          memberId: input.memberId,
-          status: 'in_progress',
-        });
-        const now = Date.now();
-        for (const row of rows.slice(0, MAX_OPEN_COMMITMENTS)) {
-          if (!row.deliverableSummary) continue;
-          const lastTouch = row.lastProgressAt ?? row.createdAt;
-          const ageMin = Math.max(0, Math.round((now - new Date(lastTouch).getTime()) / 60_000));
-          open.push({
-            title: row.deliverableSummary.slice(0, 160),
-            channelId: row.channelId,
-            ageMin,
-            empties: row.emptyWakeCount ?? 0,
+  // --- Open commitments (this agent, ACROSS the whole workspace) ---
+  // Post-review fix: the previous implementation only queried the
+  // *current channel* via `listTodosForChannel(channelId)`, so an
+  // agent juggling multiple channels lost sight of commitments owed
+  // in any other one. We now use the dedicated cross-channel query.
+  // The block runs even when `channelId` is absent (DM threads,
+  // self-channel wakes) so the agent always sees what they owe.
+  const listOpenForMember = input.repo.listOpenCommitmentsForMember;
+  const memberOpen = listOpenForMember
+    ? (() => {
+        try {
+          return listOpenForMember(input.organizationId, input.memberId, {
+            limit: MAX_OPEN_COMMITMENTS,
           });
+        } catch {
+          return [];
         }
-      } catch {
-        // best-effort
-      }
-    }
-    if (open.length > 0) {
-      const lines = open.map((c) => {
-        const empties = c.empties > 0 ? ` empties=${c.empties}` : '';
-        return `  <commitment age_min="${c.ageMin}"${empties}>${escapeXml(c.title)}</commitment>`;
+      })()
+    : [];
+  if (memberOpen.length > 0) {
+    const now = Date.now();
+    const lines = memberOpen
+      .filter((row) => row.deliverableSummary)
+      .slice(0, MAX_OPEN_COMMITMENTS)
+      .map((row) => {
+        const lastTouch = row.lastProgressAt ?? row.createdAt;
+        const ageMin = Math.max(0, Math.round((now - new Date(lastTouch).getTime()) / 60_000));
+        const title = (row.deliverableSummary ?? row.title).slice(0, 160);
+        const empties = (row.emptyWakeCount ?? 0) > 0 ? ` empties="${row.emptyWakeCount}"` : '';
+        // Surface the owning channel so an agent in #design can
+        // see they owe something in #engineering — and act on it,
+        // or call channel.handoff to redirect.
+        const channelAttr = row.channelId
+          ? ` channel="${escapeXml(row.channelId)}"`
+          : '';
+        return `  <commitment age_min="${ageMin}"${empties}${channelAttr}>${escapeXml(title)}</commitment>`;
       });
+    if (lines.length > 0) {
       sections.push(`<open-commitments>\n${lines.join('\n')}\n</open-commitments>`);
     }
   }

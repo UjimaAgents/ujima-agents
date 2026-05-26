@@ -351,6 +351,18 @@ export interface ApiRepository extends ConversationRepository {
     statuses?: readonly TodoStatus[];
     limit?: number;
   }): Todo[];
+  /**
+   * Open commitments owned by `memberId` across every channel.
+   * Surfaces into `<workspace-state>` so an agent juggling multiple
+   * channels sees what's owed across the workspace, not just the
+   * current channel. Optional because the narrow test repo doesn't
+   * implement it.
+   */
+  listOpenCommitmentsForMember?(
+    organizationId: string,
+    memberId: string,
+    options?: { statuses?: readonly TodoStatus[]; limit?: number },
+  ): Todo[];
   listExpiredCommitments?(options: { nowIso: string; limit?: number }): Todo[];
   /**
    * Atomic flip from "open + past due" → `expired`. Returns true on

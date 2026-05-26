@@ -29,12 +29,20 @@ export function appendDecisionLogEntry(
   entry: DecisionLogEntry,
 ): DecisionLogEntry {
   const payload = DecisionLogEntrySchema.parse(entry);
+  // Post-review fix — uniqueness is enforced at the SCHEMA level by
+  // migration 031's unique index on (organization_id,
+  // source_message_id). The previous `INSERT OR IGNORE` keyed on the
+  // UUID primary key didn't deduplicate because every call generated
+  // a fresh UUID, so a replayed publish could insert twice before
+  // the `findDecisionBySourceMessage` pre-check raced to catch it.
+  // Now the database itself rejects the second insert.
   db.prepare(
-    `INSERT OR IGNORE INTO decision_log (
+    `INSERT INTO decision_log (
        id, organization_id, channel_id, decided_at, decided_by,
        decision_text, source_message_id, supersedes_id, created_at
      )
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(organization_id, source_message_id) DO NOTHING`,
   ).run(
     payload.id,
     payload.organizationId,

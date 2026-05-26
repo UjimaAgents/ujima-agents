@@ -73,24 +73,36 @@ export function buildSelfFollowupContextBlock(
     lines.push(`  <due-at>${todo.dueAt}</due-at>`);
   }
 
-  // Pull recent run steps from this agent on the same channel since
-  // the commitment was created. The steps already include write/edit
-  // resource paths — they're the agent's published artifacts.
-  if (input.repo.listRunSteps) {
+  // Pull artifact paths from the run that PRODUCED the commitment,
+  // not the brand-new wake we're currently building the prompt for.
+  // The wake run has no steps yet at prompt-build time, so the
+  // earlier `listRunSteps(input.runId)` always returned empty and
+  // the <artifacts-touched> block never surfaced — defeating the
+  // whole point of this block (post-review regression).
+  //
+  // Source: the commitment's source message carries
+  // `metadata.runId`, which identifies the agent run that published
+  // it. That run's run_steps contain the write/edit actions whose
+  // resource paths we want to re-attach for the wake.
+  if (input.repo.listRunSteps && original) {
     try {
-      const steps = input.repo.listRunSteps(input.organizationId, input.runId);
-      const artifactPaths = new Set<string>();
-      for (const step of steps) {
-        if (step.action === 'write' && step.resourcePath) {
-          artifactPaths.add(step.resourcePath);
+      const originalRunId =
+        typeof original.metadata?.runId === 'string' ? original.metadata.runId : undefined;
+      if (originalRunId) {
+        const steps = input.repo.listRunSteps(input.organizationId, originalRunId);
+        const artifactPaths = new Set<string>();
+        for (const step of steps) {
+          if (step.action === 'write' && step.resourcePath) {
+            artifactPaths.add(step.resourcePath);
+          }
         }
-      }
-      if (artifactPaths.size > 0) {
-        lines.push('  <artifacts-touched-this-run>');
-        for (const path of Array.from(artifactPaths).slice(0, 8)) {
-          lines.push(`    <path>${escapeXml(path)}</path>`);
+        if (artifactPaths.size > 0) {
+          lines.push('  <artifacts-from-commitment-run>');
+          for (const path of Array.from(artifactPaths).slice(0, 8)) {
+            lines.push(`    <path>${escapeXml(path)}</path>`);
+          }
+          lines.push('  </artifacts-from-commitment-run>');
         }
-        lines.push('  </artifacts-touched-this-run>');
       }
     } catch {
       // best-effort

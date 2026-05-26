@@ -156,6 +156,7 @@ import {
   getTodo as readTodo,
   listExpiredCommitments as readExpiredCommitments,
   listIdleCommitments as readIdleCommitments,
+  listOpenCommitmentsForMember as readOpenCommitmentsForMember,
   listTodosForChannel as readTodosForChannel,
   listTodosForSession as readTodosForSession,
   saveTodo as writeTodo,
@@ -560,6 +561,11 @@ export class Repository {
     statuses?: readonly TodoStatus[];
     limit?: number;
   }): Todo[] => readIdleCommitments(this.db, options);
+  listOpenCommitmentsForMember = (
+    organizationId: string,
+    memberId: string,
+    options?: { statuses?: readonly TodoStatus[]; limit?: number },
+  ): Todo[] => readOpenCommitmentsForMember(this.db, organizationId, memberId, options);
   listExpiredCommitments = (options: { nowIso: string; limit?: number }): Todo[] =>
     readExpiredCommitments(this.db, options);
   claimExpiredCommitment = (todoId: string, nowIso: string): boolean =>

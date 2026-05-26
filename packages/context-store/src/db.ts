@@ -1024,6 +1024,29 @@ const MIGRATIONS: { id: string; up: string }[] = [
         WHERE key IS NOT NULL;
     `,
   },
+  {
+    // Post-review fix — Bet 6 follow-up. Migration 028 created
+    // `idx_decision_log_source` as a non-unique index, and
+    // appendDecisionLogEntry used `INSERT OR IGNORE` on the UUID
+    // primary key — so a replayed publish or concurrent extractor
+    // hook could insert the same decision twice before the
+    // `findDecisionBySourceMessage` pre-check raced to catch it.
+    // Fix: dedup any existing duplicates keeping the earliest row
+    // per (org, source_message_id), then replace the non-unique
+    // index with a UNIQUE one. The upsert in the repository now
+    // targets `ON CONFLICT(organization_id, source_message_id)`.
+    id: '031_decision_log_source_unique',
+    up: `
+      DELETE FROM decision_log
+        WHERE rowid NOT IN (
+          SELECT MIN(rowid) FROM decision_log
+            GROUP BY organization_id, source_message_id
+        );
+      DROP INDEX IF EXISTS idx_decision_log_source;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_decision_log_source
+        ON decision_log(organization_id, source_message_id);
+    `,
+  },
 ];
 
 export interface DbOptions {
