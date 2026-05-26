@@ -183,7 +183,9 @@ async function cmdStartPackaged(runtimeDir: string, argv: string[]): Promise<voi
   process.on('SIGINT', () => shutdown('SIGINT'));
   process.on('SIGTERM', () => shutdown('SIGTERM'));
 
-  const exitCode = await superviseChildren(supervised);
+  const exitCode = await superviseChildren(supervised, {
+    isGracefulShutdown: () => shuttingDown,
+  });
   process.exit(exitCode);
 }
 

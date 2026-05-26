@@ -3,48 +3,116 @@ import { EventEmitter } from 'node:events';
 import type { ChildProcess } from 'node:child_process';
 import { superviseChildren } from './start-supervisor.js';
 
-function mockChild(): ChildProcess {
+function createMockChild(autoExitOnKill = false) {
   const emitter = new EventEmitter();
-  const state = { killed: false };
-  return Object.assign(emitter, {
-    exitCode: null,
-    get killed() {
-      return state.killed;
+  const state = { killed: false, exitCode: null as number | null };
+
+  const child = emitter as unknown as ChildProcess;
+  Object.defineProperty(child, 'exitCode', {
+    get: () => state.exitCode,
+    enumerable: true,
+    configurable: true,
+  });
+  Object.defineProperty(child, 'killed', {
+    get: () => state.killed,
+    enumerable: true,
+    configurable: true,
+  });
+  child.kill = () => {
+    state.killed = true;
+    if (autoExitOnKill) {
+      state.exitCode = 0;
+      queueMicrotask(() => emitter.emit('exit', 0, 'SIGTERM'));
+    }
+    return true;
+  };
+
+  return {
+    child,
+    state,
+    exit(code: number, signal: NodeJS.Signals | null = null) {
+      state.exitCode = signal ? 128 : code;
+      emitter.emit('exit', code, signal);
     },
-    kill: () => {
-      state.killed = true;
-    },
-  }) as unknown as ChildProcess;
+  };
 }
 
 describe('superviseChildren', () => {
-  it('resolves when the first child exits non-zero and marks siblings killed', async () => {
-    const api = mockChild();
-    const web = mockChild();
+  it('fails when the first child exits 0 unexpectedly and waits for the sibling', async () => {
+    const api = createMockChild(true);
+    const web = createMockChild(true);
 
-    const resultPromise = superviseChildren([
-      { child: api, label: 'API' },
-      { child: web, label: 'web UI' },
-    ]);
+    const resultPromise = superviseChildren(
+      [
+        { child: api.child, label: 'API' },
+        { child: web.child, label: 'web UI' },
+      ],
+      { shutdownTimeoutMs: 200 },
+    );
 
-    api.emit('exit', 1, null);
+    api.exit(0);
 
     await expect(resultPromise).resolves.toBe(1);
-    expect(web.killed).toBe(true);
+    expect(web.state.killed).toBe(true);
   });
 
-  it('resolves on spawn error without waiting for the sibling', async () => {
-    const api = mockChild();
-    const web = mockChild();
+  it('resolves when the first child exits non-zero and stops the sibling', async () => {
+    const api = createMockChild(true);
+    const web = createMockChild(true);
 
-    const resultPromise = superviseChildren([
-      { child: api, label: 'API' },
-      { child: web, label: 'web UI' },
-    ]);
+    const resultPromise = superviseChildren(
+      [
+        { child: api.child, label: 'API' },
+        { child: web.child, label: 'web UI' },
+      ],
+      { shutdownTimeoutMs: 200 },
+    );
 
-    api.emit('error', new Error('ENOENT'));
+    api.exit(1);
 
     await expect(resultPromise).resolves.toBe(1);
-    expect(web.killed).toBe(true);
+    expect(web.state.killed).toBe(true);
+  });
+
+  it('waits for both children during graceful shutdown', async () => {
+    const api = createMockChild();
+    const web = createMockChild();
+    let graceful = false;
+
+    const resultPromise = superviseChildren(
+      [
+        { child: api.child, label: 'API' },
+        { child: web.child, label: 'web UI' },
+      ],
+      {
+        isGracefulShutdown: () => graceful,
+        shutdownTimeoutMs: 200,
+      },
+    );
+
+    graceful = true;
+    api.exit(0);
+    web.exit(0);
+
+    await expect(resultPromise).resolves.toBe(0);
+    expect(web.state.killed).toBe(false);
+  });
+
+  it('resolves on spawn error and stops the sibling', async () => {
+    const api = createMockChild();
+    const web = createMockChild();
+
+    const resultPromise = superviseChildren(
+      [
+        { child: api.child, label: 'API' },
+        { child: web.child, label: 'web UI' },
+      ],
+      { shutdownTimeoutMs: 200 },
+    );
+
+    api.child.emit('error', new Error('ENOENT'));
+
+    await expect(resultPromise).resolves.toBe(1);
+    expect(web.state.killed).toBe(true);
   });
 });
