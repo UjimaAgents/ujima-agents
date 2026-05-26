@@ -18,7 +18,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   if (isLandingPage) {
     return (
-      <div className="min-h-screen overflow-y-auto bg-white text-zinc-950 dark:bg-[#09090b] dark:text-zinc-100">
+      <div className="min-h-screen scroll-smooth overflow-y-auto bg-white text-zinc-950 dark:bg-[#09090b] dark:text-zinc-100">
         {children}
         <ToastContainer />
       </div>

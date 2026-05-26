@@ -1,14 +1,17 @@
 import { GITHUB_URL, productSurfaces } from "./content";
+import { LandingReveal } from "./landing-reveal";
 import { GitHubButton, LandingContainer, LandingSection, SecondaryButton } from "./primitives";
 
 export function PersonasSection() {
   return (
-    <LandingSection id="surfaces">
+    <LandingSection id="surfaces" reveal={false}>
       <LandingContainer wide>
-        <h2 className="text-[13px] font-semibold uppercase tracking-[0.12em] text-zinc-500">Surfaces</h2>
+        <LandingReveal>
+          <h2 className="text-[13px] font-semibold uppercase tracking-[0.12em] text-zinc-500">Surfaces</h2>
+        </LandingReveal>
         <div className="mt-10 grid gap-12 md:grid-cols-3 md:gap-8">
-          {productSurfaces.map((surface) => (
-            <article key={surface.title}>
+          {productSurfaces.map((surface, index) => (
+            <LandingReveal key={surface.title} as="article" delay={index * 120}>
               <h3 className="text-xl font-semibold tracking-tight text-zinc-950 dark:text-zinc-50">
                 {surface.title}
               </h3>
@@ -22,7 +25,7 @@ export function PersonasSection() {
                   </SecondaryButton>
                 )}
               </div>
-            </article>
+            </LandingReveal>
           ))}
         </div>
       </LandingContainer>

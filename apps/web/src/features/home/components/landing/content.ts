@@ -50,7 +50,3 @@ export const securityLines = [
   "Sensitive operations require explicit approval.",
   "Role scopes can limit agents to subtrees.",
 ];
-
-export const footer = {
-  tagline: "Slack-like AI agent teams. Local-first.",
-};
