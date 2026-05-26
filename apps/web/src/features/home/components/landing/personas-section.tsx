@@ -20,8 +20,14 @@ export function PersonasSection() {
                 {"comingSoon" in surface && surface.comingSoon ? (
                   <ComingSoonButton className="!px-3 !py-2 !text-xs">Coming soon</ComingSoonButton>
                 ) : (
+                  // The discriminated-union narrowing for productSurfaces
+                  // entries is too loose for TS to infer `href` as
+                  // required here. The `comingSoon` branch above
+                  // structurally guarantees this branch has an href —
+                  // the `?? '#'` is dead at runtime, only there to
+                  // satisfy the type checker. Same idea for `external`.
                   <SecondaryButton
-                    href={surface.href}
+                    href={("href" in surface ? surface.href : undefined) ?? "#"}
                     external={"external" in surface ? surface.external : false}
                     className="!px-3 !py-2 !text-xs"
                   >
