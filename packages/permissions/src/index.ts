@@ -1,4 +1,4 @@
-import type { AgentDef, AgentPermissions, MCPDef, GovernancePolicy, ToolPolicyRule } from '@ujima/shared';
+import type { AgentDef, MCPDef, GovernancePolicy, ToolPolicyRule } from '@ujima/shared';
 import { evaluatePolicy } from '@ujima/shared';
 import type { AuditLog, AgentStateStore } from '@ujima/context-store';
 
@@ -16,7 +16,6 @@ export type PermissionDenyCode =
   | 'blocked_tool'
   | 'not_allowed_tool'
   | 'destructive_pattern'
-  | 'rate_limited'
   | 'token_cap_exceeded'
   | 'session_override'
   | 'policy_deny'
@@ -62,6 +61,7 @@ export interface PermissionMiddlewareDeps {
 
 export interface PermissionMiddleware {
   check(input: PermissionCheckInput): Promise<PermissionDecision>;
+  recordCompletedCall(input: PermissionCheckInput): Promise<void>;
   recordUsage(agentId: string, tokens: number): Promise<void>;
   setSessionOverride(agentId: string, override: SessionOverride): void;
   clearSessionOverride(agentId: string): void;
@@ -100,8 +100,6 @@ export function createPermissionMiddleware(
   const resolveGovernancePolicy = (): GovernancePolicy | undefined =>
     governancePolicyFn ? governancePolicyFn() : governancePolicy;
 
-  const callWindows = new Map<string, number[]>();
-
   async function writeAudit(
     input: PermissionCheckInput,
     decision: PermissionDecision,
@@ -116,7 +114,9 @@ export function createPermissionMiddleware(
       tool_name: input.toolName,
       tool_input: input.args,
       allowed: decision.allowed,
-      block_reason: decision.allowed ? undefined : decision.reason,
+      block_reason: decision.allowed
+        ? undefined
+        : `${decision.code}: ${decision.reason}`,
     });
   }
 
@@ -130,20 +130,6 @@ export function createPermissionMiddleware(
       }
     }
     return false;
-  }
-
-  function checkRateLimit(agentId: string, limits: AgentPermissions['rate_limit']): boolean {
-    const windowMs = 60_000;
-    const cutoff = now() - windowMs;
-    const history = callWindows.get(agentId) ?? [];
-    const recent = history.filter((t) => t > cutoff);
-    if (recent.length >= limits.calls_per_minute) {
-      callWindows.set(agentId, recent);
-      return false;
-    }
-    recent.push(now());
-    callWindows.set(agentId, recent);
-    return true;
   }
 
   async function checkTokenCap(
@@ -228,7 +214,7 @@ export function createPermissionMiddleware(
         }
         // `allow` is an explicit admin override: it bypasses the legacy
         // blocked_tools / allowed_tools / mcpPolicies layers below. Safety
-        // rails (destructive_patterns, rate limits, token cap) still apply.
+        // rails (destructive_patterns, token cap) still apply.
         if (evaluation.state === 'allow') {
           policyAllowOverride = true;
         }
@@ -304,16 +290,6 @@ export function createPermissionMiddleware(
         }
       }
 
-      if (!checkRateLimit(agent.id, agent.permissions.rate_limit)) {
-        const decision: PermissionDecision = {
-          allowed: false,
-          reason: `Agent "${agent.id}" exceeded rate limit of ${agent.permissions.rate_limit.calls_per_minute} calls/min`,
-          code: 'rate_limited',
-        };
-        await writeAudit(input, decision);
-        return decision;
-      }
-
       if (!(await checkTokenCap(agent.id, agent.permissions.rate_limit.max_session_tokens))) {
         const decision: PermissionDecision = {
           allowed: false,
@@ -326,10 +302,13 @@ export function createPermissionMiddleware(
 
       const allow: PermissionDecision = { allowed: true };
       await writeAudit(input, allow);
-      if (deps.agentState) {
-        await deps.agentState.incrementCalls(agent.id);
-      }
       return allow;
+    },
+
+    async recordCompletedCall(input) {
+      if (deps.agentState) {
+        await deps.agentState.incrementCalls(input.agent.id);
+      }
     },
 
     async recordUsage(agentId, tokens) {

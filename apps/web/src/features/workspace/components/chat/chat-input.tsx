@@ -12,11 +12,16 @@ import {
   Paperclip,
   Plus,
   Send,
-  Smile,
   Square,
   X,
 } from "lucide-react";
 import { AttachmentSchema, type AttachmentCategory } from "@ujima/shared/browser";
+import {
+  listItemIdle,
+  listItemSelected,
+  listItemSubtitleIdle,
+  listItemSubtitleSelected,
+} from "@/lib/list-item-styles";
 import type { ChatMessageData } from "./chat-message";
 import { MarkdownInline } from "../markdown";
 
@@ -25,6 +30,35 @@ export interface MentionSuggestion {
   name: string;
   detail?: string;
 }
+
+export interface SlashSkillCommand {
+  id: string;
+  command: string;
+  label: string;
+  description: string;
+}
+
+export function toSlashSkillCommands(
+  skills: readonly {
+    id: string;
+    commandName: string;
+    description: string;
+    userInvocable: boolean;
+  }[],
+): SlashSkillCommand[] {
+  return skills
+    .filter((skill) => skill.userInvocable)
+    .map((skill) => ({
+      id: skill.id,
+      command: skill.commandName,
+      label: `/${skill.commandName}`,
+      description: skill.description,
+    }));
+}
+
+type SlashMenuOption =
+  | ({ kind: "builtin" } & (typeof BUILTIN_SLASH_COMMANDS)[number])
+  | ({ kind: "skill" } & SlashSkillCommand);
 
 interface UploadedAttachment {
   id: string;
@@ -45,7 +79,7 @@ interface MentionTrigger {
 export type ComposerCommand = "summarize" | "clear" | "goal" | "schedule";
 type ThreadCommand = Exclude<ComposerCommand, "goal">;
 
-const SLASH_COMMANDS: Array<{
+const BUILTIN_SLASH_COMMANDS: Array<{
   command: ComposerCommand;
   label: string;
   description: string;
@@ -71,6 +105,9 @@ const SLASH_COMMANDS: Array<{
     description: "Compact the thread and keep the recent raw window.",
   },
 ];
+
+const MAX_COMPOSER_ROWS = 3;
+const SLASH_MENU_PREVIEW_COUNT = 5;
 
 function RunningFigureIndicator() {
   return (
@@ -134,6 +171,15 @@ export function getExactSlashCommand(value: string): ComposerCommand | null {
   return null;
 }
 
+function getExactSlashCommandDefinition(value: string, commands: SlashMenuOption[]) {
+  const trimmed = value.trim();
+  if (!trimmed.startsWith("/")) return null;
+  const token = trimmed.split(/\s/, 1)[0] ?? "";
+  if (token.length <= 1) return null;
+  const command = token.slice(1).toLowerCase();
+  return commands.find((option) => option.command === command) ?? null;
+}
+
 export function getSlashQuery(value: string): string | null {
   const trimmed = value.trimStart();
   if (!trimmed.startsWith("/")) return null;
@@ -158,7 +204,6 @@ export function ChatInput({
   placeholder = "Type a message...",
   onSend,
   onCommand,
-  statusHint,
   inlineError,
   mentionSuggestions = [],
   replyTo,
@@ -166,22 +211,27 @@ export function ChatInput({
   organizationId,
   goalMode: goalModeProp,
   onGoalModeChange,
-  stoppableRunId,
+  stoppableRunIds,
   onStopRun,
+  readOnly = false,
+  skillCommands = [],
+  onSkillCommand,
 }: {
   placeholder?: string;
   organizationId?: string;
   onSend: (content: string, attachmentIds?: string[], metadata?: { goalMode?: boolean }) => Promise<void> | void;
   onCommand: (command: ThreadCommand, rawContent?: string) => Promise<void> | void;
-  statusHint?: string;
   inlineError?: string;
   mentionSuggestions?: MentionSuggestion[];
   replyTo?: ChatMessageData | null;
   onCancelReply?: () => void;
   goalMode?: boolean;
   onGoalModeChange?: (active: boolean) => void;
-  stoppableRunId?: string | null;
+  stoppableRunIds?: string[];
   onStopRun?: (runId: string) => Promise<void> | void;
+  readOnly?: boolean;
+  skillCommands?: SlashSkillCommand[];
+  onSkillCommand?: (skillId: string, rawContent?: string) => Promise<void> | void;
 }) {
   const goalMode = goalModeProp ?? false;
   const [content, setContent] = useState("");
@@ -191,29 +241,18 @@ export function ChatInput({
   const [error, setError] = useState<string | null>(null);
   const [activeMentionIndex, setActiveMentionIndex] = useState(0);
   const [activeSlashIndex, setActiveSlashIndex] = useState(0);
+  const [slashMenuExpanded, setSlashMenuExpanded] = useState(false);
   const [clearConfirmation, setClearConfirmation] = useState(false);
   const [selection, setSelection] = useState({ start: 0, end: 0 });
   const [attachments, setAttachments] = useState<UploadedAttachment[]>([]);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
-  const [emojiMenuOpen, setEmojiMenuOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const emojiMenuRef = useRef<HTMLDivElement>(null);
-  const emojiToggleRef = useRef<HTMLButtonElement>(null);
   const attachmentsRef = useRef<UploadedAttachment[]>([]);
   const uploadControllersRef = useRef(new Map<string, AbortController>());
-  const emojiOptions = [
-    "😀", "😃", "😄", "😁", "😆", "😅", "🤣", "😂",
-    "🙂", "🙃", "😉", "😊", "😍", "😘", "😎", "🤩",
-    "🤔", "😴", "😭", "😡", "🤯", "🥳", "😇", "🤗",
-    "👍", "👎", "👏", "🙌", "🤝", "🙏", "💪", "🤞",
-    "❤️", "🧡", "💛", "💚", "💙", "💜", "🖤", "🤍",
-    "🔥", "✨", "💥", "💫", "💡", "✅", "❌", "⚡",
-    "🎉", "🎊", "🥂", "🍾", "🎯", "🚀", "🧠", "📌",
-    "📎", "📝", "💬", "📣", "👀", "👋", "🌟", "☕",
-  ];
+  const composerPlaceholder = readOnly ? `Observer Mode · ${placeholder}` : placeholder;
 
   function revokePreviewUrl(attachment: UploadedAttachment) {
     if (attachment.previewUrl?.startsWith("blob:")) {
@@ -222,31 +261,22 @@ export function ChatInput({
   }
 
   useEffect(() => {
-    if (replyTo) {
+    if (replyTo && !readOnly) {
       requestAnimationFrame(() => textareaRef.current?.focus());
     }
-  }, [replyTo]);
+  }, [readOnly, replyTo]);
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    textarea.style.height = "auto";
+    const lineHeight = Number.parseFloat(getComputedStyle(textarea).lineHeight) || 20;
+    const maxHeight = lineHeight * MAX_COMPOSER_ROWS;
+    textarea.style.height = `${Math.min(textarea.scrollHeight, maxHeight)}px`;
+    textarea.style.overflowY = textarea.scrollHeight > maxHeight ? "auto" : "hidden";
+  }, [content]);
   useEffect(() => {
     attachmentsRef.current = attachments;
   }, [attachments]);
-  useEffect(() => {
-    if (!emojiMenuOpen) return;
-    const onPointerDown = (event: PointerEvent) => {
-      const target = event.target as Node;
-      if (emojiMenuRef.current?.contains(target)) return;
-      if (emojiToggleRef.current?.contains(target)) return;
-      setEmojiMenuOpen(false);
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setEmojiMenuOpen(false);
-    };
-    window.addEventListener("pointerdown", onPointerDown);
-    window.addEventListener("keydown", onKeyDown);
-    return () => {
-      window.removeEventListener("pointerdown", onPointerDown);
-      window.removeEventListener("keydown", onKeyDown);
-    };
-  }, [emojiMenuOpen]);
   useEffect(() => {
     return () => {
       for (const attachment of attachmentsRef.current) {
@@ -255,17 +285,43 @@ export function ChatInput({
     };
   }, []);
   const hasAttachments = attachments.length > 0;
-  const hasDraft = content.trim().length > 0 || hasAttachments;
-  const exactSlashCommand = hasAttachments ? null : getExactSlashCommand(content);
-  const canConfirmClear = clearConfirmation && exactSlashCommand === "clear";
-  const slashQuery = canConfirmClear || hasAttachments ? null : getSlashQuery(content);
+  const visibleAttachments = readOnly ? [] : attachments;
+  const hasDraft = !readOnly && (content.trim().length > 0 || visibleAttachments.length > 0);
+  const allSlashCommands = useMemo(
+    () => [
+      ...BUILTIN_SLASH_COMMANDS.map((option) => ({ ...option, kind: "builtin" as const })),
+      ...skillCommands.map((option) => ({ ...option, kind: "skill" as const })),
+    ],
+    [skillCommands],
+  );
+  const exactSlashCommand = readOnly || hasAttachments ? null : getExactSlashCommandDefinition(content, allSlashCommands);
+  const canConfirmClear = !readOnly && clearConfirmation && exactSlashCommand?.command === "clear";
+  const slashQuery = readOnly || canConfirmClear || hasAttachments ? null : getSlashQuery(content);
   const slashMenuOptions = useMemo(() => {
-    if (slashQuery === null) return SLASH_COMMANDS;
-    return SLASH_COMMANDS.filter((option) => option.command.startsWith(slashQuery));
-  }, [slashQuery]);
+    if (slashQuery === null) return allSlashCommands;
+    return allSlashCommands.filter((option) => option.command.startsWith(slashQuery));
+  }, [allSlashCommands, slashQuery]);
   const slashMenuOpen = slashQuery !== null && slashMenuOptions.length > 0;
+  const isSlashBrowseMode = slashQuery === "";
+  const displayedSlashOptions = useMemo(() => {
+    if (!isSlashBrowseMode || slashMenuExpanded) return slashMenuOptions;
+    return slashMenuOptions.slice(0, SLASH_MENU_PREVIEW_COUNT);
+  }, [isSlashBrowseMode, slashMenuExpanded, slashMenuOptions]);
+  const hasMoreSlashCommands =
+    isSlashBrowseMode &&
+    !slashMenuExpanded &&
+    slashMenuOptions.length > SLASH_MENU_PREVIEW_COUNT;
+  const hiddenSlashCount = slashMenuOptions.length - SLASH_MENU_PREVIEW_COUNT;
+
+  const [prevSlashQuery, setPrevSlashQuery] = useState<string | null>(slashQuery);
+  if (slashQuery !== prevSlashQuery) {
+    setPrevSlashQuery(slashQuery);
+    setSlashMenuExpanded(false);
+    setActiveSlashIndex(0);
+  }
+
   const working = isSending || isCommanding || uploading;
-  const canStopRun = Boolean(stoppableRunId && onStopRun);
+  const canStopRun = Boolean(stoppableRunIds?.length && onStopRun);
   const showStopInsteadOfSend =
     canStopRun &&
     !hasDraft &&
@@ -284,9 +340,10 @@ export function ChatInput({
   }, [mentionSuggestions, mentionTrigger]);
   const mentionMenuOpen =
     !!mentionTrigger && filteredMentionSuggestions.length > 0;
+  const activeReplyTo = readOnly ? null : replyTo;
   const activeSlashSelection = Math.min(
     activeSlashIndex,
-    Math.max(slashMenuOptions.length - 1, 0),
+    Math.max(displayedSlashOptions.length - 1, 0),
   );
 
   const thumbnailUrl = (attachmentId: string) =>
@@ -411,17 +468,22 @@ export function ChatInput({
   };
 
   const handleFiles = (files: globalThis.File[]) => {
-    if (uploading) return;
+    if (readOnly || uploading) return;
     void uploadFiles(files);
   };
 
   const handleAttachmentInput = (event: ChangeEvent<HTMLInputElement>) => {
+    if (readOnly) {
+      event.currentTarget.value = "";
+      return;
+    }
     const files = Array.from(event.currentTarget.files ?? []);
     event.currentTarget.value = "";
     handleFiles(files);
   };
 
   const handleDrag = (next: boolean) => {
+    if (readOnly) return;
     setIsDragging(next);
   };
 
@@ -472,21 +534,6 @@ export function ChatInput({
     setContent(next);
     setSelection({ start: nextCaret, end: nextCaret });
     setActiveMentionIndex(0);
-    setEmojiMenuOpen(false);
-    requestAnimationFrame(() => {
-      textareaRef.current?.focus();
-      textareaRef.current?.setSelectionRange(nextCaret, nextCaret);
-    });
-  };
-
-  const insertEmoji = (emoji: string) => {
-    const before = content.slice(0, selection.start);
-    const after = content.slice(selection.end);
-    const next = `${before}${emoji}${after}`;
-    const nextCaret = before.length + emoji.length;
-    setContent(next);
-    setSelection({ start: nextCaret, end: nextCaret });
-    setEmojiMenuOpen(false);
     requestAnimationFrame(() => {
       textareaRef.current?.focus();
       textareaRef.current?.setSelectionRange(nextCaret, nextCaret);
@@ -506,7 +553,6 @@ export function ChatInput({
       }
       setContent("");
       setSelection({ start: 0, end: 0 });
-      setEmojiMenuOpen(false);
       setAttachments([]);
       setUploadProgress(0);
     } catch (err) {
@@ -516,21 +562,20 @@ export function ChatInput({
     }
   };
 
-  const runSlashCommand = async (command: ComposerCommand) => {
+  const runSlashCommand = async (command: SlashMenuOption) => {
     if (isSending || isCommanding || uploading) return;
-    if (command === "goal") {
+    if (command.kind === "builtin" && command.command === "goal") {
       onGoalModeChange?.(!goalMode);
       setError(null);
       setContent("");
       setSelection({ start: 0, end: 0 });
       setClearConfirmation(false);
-      setEmojiMenuOpen(false);
       requestAnimationFrame(() => {
         textareaRef.current?.focus();
       });
       return;
     }
-    if (command === "clear" && !canConfirmClear) {
+    if (command.kind === "builtin" && command.command === "clear" && !canConfirmClear) {
       setClearConfirmation(true);
       setError(null);
       setContent("/clear");
@@ -541,18 +586,20 @@ export function ChatInput({
       return;
     }
 
-    const rawContent = content;
     setError(null);
     setIsCommanding(true);
     try {
       const currentContent = content;
-      await onCommand(command, currentContent);
+      if (command.kind === "skill") {
+        await onSkillCommand?.(command.id, currentContent);
+      } else {
+        await onCommand(command.command as ThreadCommand, currentContent);
+      }
       setContent("");
       setSelection({ start: 0, end: 0 });
       setAttachments([]);
       setUploadProgress(0);
       setClearConfirmation(false);
-      setEmojiMenuOpen(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to run command.");
     } finally {
@@ -561,7 +608,7 @@ export function ChatInput({
   };
 
   const confirmClear = async () => {
-    await runSlashCommand("clear");
+    await runSlashCommand({ command: "clear", label: "/clear", description: "Archive the thread and empty the visible chat.", kind: "builtin" });
   };
 
   const submitComposer = async () => {
@@ -581,22 +628,28 @@ export function ChatInput({
   };
 
   const stopRun = async () => {
-    if (!stoppableRunId || !onStopRun || isStopping) return;
+    if (!stoppableRunIds?.length || !onStopRun || isStopping) return;
     setError(null);
     setIsStopping(true);
+    let failure: string | null = null;
     try {
-      await onStopRun(stoppableRunId);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to stop the run.");
+      for (const runId of stoppableRunIds) {
+        try {
+          await onStopRun(runId);
+        } catch (err) {
+          failure ??= err instanceof Error ? err.message : "Unable to stop the run.";
+        }
+      }
     } finally {
       setIsStopping(false);
     }
+    if (failure) setError(failure);
   };
 
   return (
-    <div className="shrink-0 px-4 py-2 border-t border-zinc-200 dark:border-zinc-800">
+    <div className="shrink-0 px-3 pt-1.5 pb-0">
       <div
-        className={`relative group ${isDragging ? "ring-2 ring-violet-400/50 ring-offset-2 ring-offset-transparent" : ""}`}
+        className={`relative group ${isDragging ? "ring-2 ring-zinc-300/80 ring-offset-2 ring-offset-transparent dark:ring-zinc-600" : ""}`}
         onDragEnter={(event) => {
           event.preventDefault();
           handleDrag(true);
@@ -665,16 +718,15 @@ export function ChatInput({
           className="hidden"
           onChange={handleAttachmentInput}
         />
-        <div className="pointer-events-none absolute inset-0 rounded-xl bg-gradient-to-r from-violet-500/10 to-indigo-500/10 blur-lg opacity-0 transition-opacity group-focus-within:opacity-100" />
-        <div className={`relative z-10 flex flex-col rounded-xl border transition-all focus-within:border-violet-500 focus-within:bg-white focus-within:ring-1 focus-within:ring-violet-500 dark:focus-within:bg-[#09090b] ${goalMode ? "border-violet-400/50 bg-violet-50/30 dark:border-violet-500/30 dark:bg-violet-500/5" : "border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/50"}`}>
-          {replyTo && (
-            <div className="flex items-center gap-2 rounded-t-xl border-b border-zinc-200 bg-violet-50/50 px-3 py-1.5 dark:border-zinc-800 dark:bg-violet-500/5">
+        <div className={`relative z-10 flex flex-col rounded-lg border border-zinc-200 bg-zinc-50 transition-all focus-within:border-zinc-300 focus-within:bg-white focus-within:ring-1 focus-within:ring-zinc-200/80 dark:border-zinc-800 dark:bg-zinc-900/50 dark:focus-within:border-zinc-600 dark:focus-within:bg-[#09090b] dark:focus-within:ring-zinc-800/80 ${goalMode ? "bg-zinc-100/80 dark:bg-zinc-900/80" : ""}`}>
+          {activeReplyTo && (
+            <div className="flex items-center gap-2 rounded-t-lg border-b border-zinc-200 bg-violet-50/50 px-2 py-1 dark:border-zinc-800 dark:bg-violet-500/5">
               <div className="flex-1 min-w-0">
                 <p className="truncate text-[10px] font-semibold text-violet-700 dark:text-violet-300">
-                  Replying to {replyTo.name}
+                  Replying to {activeReplyTo.name}
                 </p>
                 <MarkdownInline
-                  content={replyTo.content}
+                  content={activeReplyTo.content}
                   className="block truncate text-[10px] text-zinc-500 dark:text-zinc-400"
                 />
               </div>
@@ -689,217 +741,61 @@ export function ChatInput({
               )}
             </div>
           )}
-          {slashMenuOpen ? (
-            <div className="mx-2 mb-1 overflow-hidden rounded-lg bg-zinc-100/70 p-1 ring-1 ring-zinc-200/70 dark:bg-zinc-950/60 dark:ring-zinc-800/70">
-              <div className="space-y-1">
-                {slashMenuOptions.map((option, index) => (
-                  <button
-                    key={option.command}
-                    type="button"
-                    onMouseDown={(event) => {
-                      event.preventDefault();
-                      void runSlashCommand(option.command);
-                    }}
-                    className={`flex w-full items-center gap-3 rounded-md px-2 py-2 text-left text-xs transition ${
-                      index === activeSlashSelection
-                        ? "bg-violet-50 text-violet-900 dark:bg-violet-500/15 dark:text-violet-100"
-                        : "text-zinc-700 hover:bg-zinc-200/80 dark:text-zinc-200 dark:hover:bg-zinc-900"
-                    }`}
-                  >
-                    <span className="mt-0.5 rounded-md border border-zinc-200 bg-white px-1.5 py-0.5 font-mono text-[10px] font-semibold text-zinc-700 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200">
-                      {option.label}
-                    </span>
-                    <span className="min-w-0">
-                      <span className="block text-[10px] leading-4 text-zinc-500 dark:text-zinc-400">
-                        {option.description}
+          {!readOnly && slashMenuOpen ? (
+            <div className="mx-2 mb-1 flex max-h-[min(18rem,40vh)] flex-col overflow-hidden rounded-lg bg-zinc-100/70 ring-1 ring-zinc-200/70 dark:bg-zinc-950/60 dark:ring-zinc-800/70">
+              <div className="min-h-0 flex-1 overflow-y-auto p-1">
+                <div className="space-y-1">
+                  {displayedSlashOptions.map((option, index) => (
+                    <button
+                      key={option.kind === "skill" ? option.id : option.command}
+                      type="button"
+                      onMouseDown={(event) => {
+                        event.preventDefault();
+                        void runSlashCommand(option);
+                      }}
+                      className={`flex w-full items-center gap-3 rounded-md px-2 py-2 text-left text-xs transition ${
+                        index === activeSlashSelection ? listItemSelected : listItemIdle
+                      }`}
+                    >
+                      <span
+                        title={option.label}
+                        className="mt-0.5 max-w-[11rem] shrink-0 truncate rounded-md border border-zinc-200 bg-white px-1.5 py-0.5 font-mono text-[10px] font-semibold text-zinc-700 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200"
+                      >
+                        {option.label}
                       </span>
-                    </span>
-                  </button>
-                ))}
+                      <span className="min-w-0 flex-1">
+                        <span
+                          className={`block truncate text-[10px] leading-4 ${
+                            index === activeSlashSelection
+                              ? listItemSubtitleSelected
+                              : listItemSubtitleIdle
+                          }`}
+                        >
+                          {option.description}
+                        </span>
+                      </span>
+                    </button>
+                  ))}
+                </div>
               </div>
-            </div>
-          ) : null}
-          <textarea
-            ref={textareaRef}
-            placeholder={placeholder}
-            value={content}
-            onChange={(event) => {
-              setContent(event.target.value);
-              setSelection({
-                start: event.target.selectionStart ?? event.target.value.length,
-                end: event.target.selectionEnd ?? event.target.value.length,
-              });
-              setActiveMentionIndex(0);
-            }}
-            onSelect={(event) => {
-              setSelection({
-                start: event.currentTarget.selectionStart ?? 0,
-                end: event.currentTarget.selectionEnd ?? 0,
-              });
-            }}
-            onClick={(event) => {
-              setSelection({
-                start: event.currentTarget.selectionStart ?? 0,
-                end: event.currentTarget.selectionEnd ?? 0,
-              });
-              setActiveMentionIndex(0);
-            }}
-            onKeyUp={(event) => {
-              setSelection({
-                start: event.currentTarget.selectionStart ?? 0,
-                end: event.currentTarget.selectionEnd ?? 0,
-              });
-            }}
-            onKeyDown={(event) => {
-              if (canConfirmClear) {
-                if (event.key === "Escape") {
-                  event.preventDefault();
-                  setClearConfirmation(false);
-                  setContent("");
-                  return;
-                }
-                if (event.key === "Enter" && !event.shiftKey) {
-                  event.preventDefault();
-                  void confirmClear();
-                  return;
-                }
-              }
-              if (exactSlashCommand && event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault();
-                void runSlashCommand(exactSlashCommand);
-                return;
-              }
-              if (slashMenuOpen) {
-                if (event.key === "ArrowDown") {
-                  event.preventDefault();
-                  setActiveSlashIndex((index) =>
-                    (index + 1) % slashMenuOptions.length,
-                  );
-                  return;
-                }
-                if (event.key === "ArrowUp") {
-                  event.preventDefault();
-                  setActiveSlashIndex((index) =>
-                    (index - 1 + slashMenuOptions.length) % slashMenuOptions.length,
-                  );
-                  return;
-                }
-                if (event.key === "Enter" && !event.shiftKey) {
-                  event.preventDefault();
-                  const selected = slashMenuOptions[activeSlashSelection] ?? slashMenuOptions[0];
-                  if (selected) {
-                    void runSlashCommand(selected.command);
-                  }
-                  return;
-                }
-                if (event.key === "Escape") {
-                  event.preventDefault();
-                  setContent("");
-                  return;
-                }
-              }
-              if (mentionMenuOpen) {
-                if (event.key === "ArrowDown") {
-                  event.preventDefault();
-                  setActiveMentionIndex((index) =>
-                    (index + 1) % filteredMentionSuggestions.length,
-                  );
-                  return;
-                }
-                if (event.key === "ArrowUp") {
-                  event.preventDefault();
-                  setActiveMentionIndex((index) =>
-                    (index - 1 + filteredMentionSuggestions.length) %
-                    filteredMentionSuggestions.length,
-                  );
-                  return;
-                }
-                if (event.key === "Enter" || event.key === "Tab") {
-                  event.preventDefault();
-                  insertMention(
-                    filteredMentionSuggestions[activeMentionIndex] ??
-                      filteredMentionSuggestions[0],
-                  );
-                  return;
-                }
-                if (event.key === "Escape") {
-                  event.preventDefault();
-                  setActiveMentionIndex(0);
-                  return;
-                }
-              }
-              if (event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault();
-                void submitComposer();
-              }
-            }}
-            className="w-full bg-transparent px-3 py-2.5 text-sm focus:outline-none resize-none min-h-[56px]"
-          />
-          {mentionMenuOpen ? (
-            <div className="mx-2 mt-1 max-h-44 overflow-y-auto rounded-lg border border-zinc-200 bg-white p-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-950">
-              {filteredMentionSuggestions.map((suggestion, index) => (
+              {hasMoreSlashCommands ? (
                 <button
-                  key={suggestion.id}
                   type="button"
                   onMouseDown={(event) => {
                     event.preventDefault();
-                    insertMention(suggestion);
+                    setSlashMenuExpanded(true);
                   }}
-                  className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs transition ${
-                    index === activeMentionIndex
-                      ? "bg-violet-50 text-violet-800 dark:bg-violet-500/15 dark:text-violet-200"
-                      : "text-zinc-700 hover:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-900"
-                  }`}
+                  className="shrink-0 border-t border-zinc-200/80 px-3 py-2 text-center text-[10px] font-semibold text-violet-700 transition hover:bg-zinc-200/60 dark:border-zinc-800 dark:text-violet-300 dark:hover:bg-zinc-900/80"
                 >
-                  <span className="font-semibold">@{suggestion.name}</span>
-                  {suggestion.detail ? (
-                    <span className="ml-2 truncate text-[10px] text-zinc-500 dark:text-zinc-400">
-                      {suggestion.detail}
-                    </span>
-                  ) : null}
+                  Show {hiddenSlashCount} more
                 </button>
-              ))}
+              ) : null}
             </div>
           ) : null}
-          {emojiMenuOpen ? (
-            <div
-              ref={emojiMenuRef}
-              className="absolute bottom-[68px] left-3 z-20 w-72 rounded-xl border border-zinc-200 bg-white p-2 shadow-xl transition dark:border-zinc-700 dark:bg-zinc-950"
-            >
-              <div className="mb-2 flex items-center justify-between px-1">
-                <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-zinc-500 dark:text-zinc-400">
-                  Emoji
-                </p>
-                <button
-                  type="button"
-                  onClick={() => setEmojiMenuOpen(false)}
-                  className="rounded-md px-1.5 py-0.5 text-[10px] text-zinc-500 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-900"
-                >
-                  Close
-                </button>
-              </div>
-              <div className="grid max-h-64 grid-cols-8 gap-1 overflow-y-auto pr-1">
-                {emojiOptions.map((emoji) => (
-                  <button
-                    key={emoji}
-                    type="button"
-                    onMouseDown={(event) => {
-                      event.preventDefault();
-                      insertEmoji(emoji);
-                    }}
-                    className="flex h-9 w-9 items-center justify-center rounded-lg text-lg transition hover:bg-zinc-100 dark:hover:bg-zinc-900"
-                    aria-label={`Insert ${emoji}`}
-                  >
-                    {emoji}
-                  </button>
-                ))}
-              </div>
-            </div>
-          ) : null}
-          {attachments.length > 0 ? (
-            <div className="border-t border-zinc-200 px-3 py-2 dark:border-zinc-800">
+          {!readOnly && visibleAttachments.length > 0 ? (
+            <div className="border-t border-zinc-200 px-2 py-1.5 dark:border-zinc-800">
               <div className="flex gap-2 overflow-x-auto pb-1">
-                {attachments.map((attachment) => {
+                {visibleAttachments.map((attachment) => {
                   const Icon = getAttachmentIcon(attachment.category);
                   return (
                     <div
@@ -912,10 +808,10 @@ export function ChatInput({
                         <>
                           {/* eslint-disable-next-line @next/next/no-img-element -- blob or cookie-backed API URL */}
                           <img
-                          src={attachment.previewUrl ?? thumbnailUrl(attachment.id)}
-                          alt={attachment.filename}
-                          className="h-full w-full object-cover"
-                        />
+                            src={attachment.previewUrl ?? thumbnailUrl(attachment.id)}
+                            alt={attachment.filename}
+                            className="h-full w-full object-cover"
+                          />
                         </>
                       ) : (
                         <div className="flex h-full items-center gap-3 px-3 py-2">
@@ -965,13 +861,15 @@ export function ChatInput({
               ) : null}
             </div>
           ) : null}
-          <div className="flex items-center justify-between border-t border-zinc-200 px-3 py-1.5 dark:border-zinc-800">
-            <div className="flex items-center gap-2">
+          <div className="relative flex min-h-12 items-center gap-1.5 px-2 py-2">
+            <div className="flex shrink-0 items-center gap-1.5">
               <button
                 type="button"
                 aria-label="Open commands"
                 title="Open commands"
+                disabled={readOnly}
                 onClick={() => {
+                  if (readOnly) return;
                   setContent((value) => (value.trim().length === 0 ? "/" : value));
                   setClearConfirmation(false);
                   requestAnimationFrame(() => {
@@ -979,38 +877,178 @@ export function ChatInput({
                     textareaRef.current?.setSelectionRange(1, 1);
                   });
                 }}
-                className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300"
+                className="text-zinc-400 transition hover:text-zinc-600 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:text-zinc-300"
               >
                 <Plus className="h-4 w-4" />
               </button>
               <button
                 type="button"
-                aria-label="Add emoji"
-                ref={emojiToggleRef}
-                onClick={() => setEmojiMenuOpen((value) => !value)}
-                className={`text-zinc-400 transition hover:text-zinc-600 dark:hover:text-zinc-300 ${emojiMenuOpen ? "text-violet-600 dark:text-violet-300" : ""}`}
-              >
-                <Smile className="h-4 w-4" />
-              </button>
-              <button
-                type="button"
                 aria-label="Attach file"
                 onClick={() => fileInputRef.current?.click()}
-                disabled={uploading}
+                disabled={readOnly || uploading}
                 className="text-zinc-400 hover:text-zinc-600 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:text-zinc-300"
               >
                 <Paperclip className="h-4 w-4" />
               </button>
             </div>
-            <div className="flex items-center gap-2">
+            <textarea
+              ref={textareaRef}
+              rows={1}
+              placeholder={composerPlaceholder}
+              value={content}
+              disabled={readOnly}
+              onChange={(event) => {
+                setContent(event.target.value);
+                setSelection({
+                  start: event.target.selectionStart ?? event.target.value.length,
+                  end: event.target.selectionEnd ?? event.target.value.length,
+                });
+                setActiveMentionIndex(0);
+              }}
+              onSelect={(event) => {
+                setSelection({
+                  start: event.currentTarget.selectionStart ?? 0,
+                  end: event.currentTarget.selectionEnd ?? 0,
+                });
+              }}
+              onClick={(event) => {
+                setSelection({
+                  start: event.currentTarget.selectionStart ?? 0,
+                  end: event.currentTarget.selectionEnd ?? 0,
+                });
+                setActiveMentionIndex(0);
+              }}
+              onKeyUp={(event) => {
+                setSelection({
+                  start: event.currentTarget.selectionStart ?? 0,
+                  end: event.currentTarget.selectionEnd ?? 0,
+                });
+              }}
+              onKeyDown={(event) => {
+                if (canConfirmClear) {
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    setClearConfirmation(false);
+                    setContent("");
+                    return;
+                  }
+                  if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
+                    void confirmClear();
+                    return;
+                  }
+                }
+                if (exactSlashCommand && event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault();
+                  void runSlashCommand(exactSlashCommand);
+                  return;
+                }
+                if (slashMenuOpen) {
+                  if (event.key === "ArrowDown") {
+                    event.preventDefault();
+                    setActiveSlashIndex((index) =>
+                      (index + 1) % displayedSlashOptions.length,
+                    );
+                    return;
+                  }
+                  if (event.key === "ArrowUp") {
+                    event.preventDefault();
+                    setActiveSlashIndex((index) =>
+                      (index - 1 + displayedSlashOptions.length) % displayedSlashOptions.length,
+                    );
+                    return;
+                  }
+                  if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
+                    const selected = displayedSlashOptions[activeSlashSelection] ?? displayedSlashOptions[0];
+                    if (selected) {
+                      void runSlashCommand(selected);
+                    }
+                    return;
+                  }
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    setContent("");
+                    return;
+                  }
+                }
+                if (mentionMenuOpen) {
+                  if (event.key === "ArrowDown") {
+                    event.preventDefault();
+                    setActiveMentionIndex((index) =>
+                      (index + 1) % filteredMentionSuggestions.length,
+                    );
+                    return;
+                  }
+                  if (event.key === "ArrowUp") {
+                    event.preventDefault();
+                    setActiveMentionIndex((index) =>
+                      (index - 1 + filteredMentionSuggestions.length) %
+                      filteredMentionSuggestions.length,
+                    );
+                    return;
+                  }
+                  if (event.key === "Enter" || event.key === "Tab") {
+                    event.preventDefault();
+                    insertMention(
+                      filteredMentionSuggestions[activeMentionIndex] ??
+                        filteredMentionSuggestions[0],
+                    );
+                    return;
+                  }
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    setActiveMentionIndex(0);
+                    return;
+                  }
+                }
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault();
+                  void submitComposer();
+                }
+              }}
+              className="min-h-5 min-w-0 flex-1 resize-none bg-transparent py-0 text-sm leading-5 focus:outline-none"
+            />
+          {!readOnly && mentionMenuOpen ? (
+            <div className="absolute bottom-full left-0 right-0 z-20 mb-1 max-h-44 overflow-y-auto rounded-lg border border-zinc-200 bg-white p-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-950">
+              {filteredMentionSuggestions.map((suggestion, index) => (
+                <button
+                  key={suggestion.id}
+                  type="button"
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                    insertMention(suggestion);
+                  }}
+                  className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs transition ${
+                    index === activeMentionIndex ? listItemSelected : listItemIdle
+                  }`}
+                >
+                  <span className="font-semibold">@{suggestion.name}</span>
+                  {suggestion.detail ? (
+                    <span
+                      className={`ml-2 truncate text-[10px] ${
+                        index === activeMentionIndex
+                          ? listItemSubtitleSelected
+                          : listItemSubtitleIdle
+                      }`}
+                    >
+                      {suggestion.detail}
+                    </span>
+                  ) : null}
+                </button>
+              ))}
+            </div>
+          ) : null}
+            <div className="flex shrink-0 items-center gap-1.5">
               {goalMode ? (
                 <button
                   type="button"
                   aria-label="Disable goal mode"
                   aria-pressed="true"
                   title="Goal mode active — click to disable"
+                  disabled={readOnly}
                   onClick={() => onGoalModeChange?.(false)}
-                  className="inline-flex h-7 items-center gap-1.5 rounded-md bg-violet-50 px-2 text-[11px] font-medium text-violet-700 transition hover:bg-violet-100 dark:bg-violet-500/10 dark:text-violet-300 dark:hover:bg-violet-500/15"
+                  className="inline-flex h-7 items-center gap-1.5 rounded-md bg-violet-50 px-2 text-[11px] font-medium text-violet-700 transition hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-violet-500/10 dark:text-violet-300 dark:hover:bg-violet-500/15"
                 >
                   <RunningFigureIndicator />
                   Goal
@@ -1023,7 +1061,7 @@ export function ChatInput({
                   title="Stop agent run"
                   onClick={() => void stopRun()}
                   disabled={isStopping}
-                  className="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-red-600 text-white shadow-lg shadow-red-500/20 transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-red-600 text-white shadow-lg shadow-red-500/20 transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {isStopping ? (
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -1039,7 +1077,7 @@ export function ChatInput({
                   title="Stop agent run"
                   onClick={() => void stopRun()}
                   disabled={isStopping}
-                  className="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-red-600 text-white shadow-lg shadow-red-500/20 transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-red-600 text-white shadow-lg shadow-red-500/20 transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {isStopping ? (
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -1055,15 +1093,15 @@ export function ChatInput({
                   aria-label={
                     canConfirmClear
                       ? "Confirm clear conversation"
-                      : exactSlashCommand === "clear"
+                      : exactSlashCommand?.command === "clear"
                         ? "Clear conversation"
-                        : exactSlashCommand === "summarize"
+                      : exactSlashCommand?.command === "summarize"
                           ? "Run summarize"
-                          : exactSlashCommand === "schedule"
+                          : exactSlashCommand?.command === "schedule"
                             ? "Ask agent to schedule"
                           : "Send message"
                   }
-                  className="flex h-7 w-7 items-center justify-center rounded-lg bg-violet-600 text-white shadow-lg shadow-violet-500/20 transition hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="flex h-7 w-7 items-center justify-center rounded-md bg-violet-600 text-white shadow-lg shadow-violet-500/20 transition hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {working ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
                 </button>
@@ -1073,9 +1111,6 @@ export function ChatInput({
         </div>
         {error ? (
           <p className="mt-2 text-xs text-red-600 dark:text-red-400">{error}</p>
-        ) : null}
-        {statusHint?.trim() ? (
-          <p className="mt-1.5 px-1 text-[10px] text-zinc-400 dark:text-zinc-500">{statusHint}</p>
         ) : null}
       </div>
     </div>

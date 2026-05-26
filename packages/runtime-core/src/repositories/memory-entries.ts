@@ -4,6 +4,28 @@ import { optionalRowString, rowString } from './common.js';
 
 type Row = Record<string, unknown>;
 
+/**
+ * Sentinel value stored for `memory_entries.member_id` when a write is
+ * org-scoped (`memberId === undefined` in the public API). SQLite
+ * treats NULL as distinct in unique indexes, so without a sentinel
+ * two org-scoped writes to the same key would create duplicate rows
+ * instead of upserting the existing one. The sentinel restores the
+ * documented "one key, one value" contract. Internal-only — readers
+ * coalesce it back to `undefined` before returning to callers.
+ */
+const ORG_SCOPE_MEMBER_SENTINEL = '__org__';
+
+function toStoredMemberId(memberId: string | null | undefined): string {
+  return memberId === undefined || memberId === null || memberId === ORG_SCOPE_MEMBER_SENTINEL
+    ? ORG_SCOPE_MEMBER_SENTINEL
+    : memberId;
+}
+
+function fromStoredMemberId(stored: string | null | undefined): string | undefined {
+  if (!stored) return undefined;
+  return stored === ORG_SCOPE_MEMBER_SENTINEL ? undefined : stored;
+}
+
 function rowToMemoryEntry(row: Row): MemoryEntry {
   const metadataRaw = optionalRowString(row, 'metadata');
   let metadata: Record<string, unknown> = {};
@@ -18,7 +40,7 @@ function rowToMemoryEntry(row: Row): MemoryEntry {
   return MemoryEntrySchema.parse({
     id: rowString(row, 'id'),
     organizationId: rowString(row, 'organization_id'),
-    memberId: optionalRowString(row, 'member_id'),
+    memberId: fromStoredMemberId(optionalRowString(row, 'member_id')),
     kind: rowString(row, 'kind') as MemoryEntryKind,
     key: rowString(row, 'key'),
     content: rowString(row, 'content'),
@@ -57,7 +79,7 @@ export function upsertMemoryEntry(db: DbHandle, entry: MemoryEntry): MemoryEntry
   ).run(
     payload.id,
     payload.organizationId,
-    payload.memberId ?? null,
+    toStoredMemberId(payload.memberId),
     payload.kind,
     payload.key,
     payload.content,
@@ -96,8 +118,12 @@ export function recallMemoryEntries(
   let sql =
     'SELECT * FROM memory_entries WHERE organization_id = ? AND (expires_at IS NULL OR expires_at > ?) AND key IS NOT NULL';
   if (input.memberId !== undefined) {
-    sql += ' AND (member_id = ? OR member_id IS NULL)';
-    params.push(input.memberId);
+    // Caller is asking for their own per-member entries — surface
+    // those AND any org-scoped entries (sentinel) that apply to all
+    // members. Sentinel is internal; never leaks to callers via
+    // rowToMemoryEntry (which coalesces it back to undefined).
+    sql += ' AND (member_id = ? OR member_id = ?)';
+    params.push(input.memberId, ORG_SCOPE_MEMBER_SENTINEL);
   }
   if (input.kind) {
     sql += ' AND kind = ?';
@@ -146,13 +172,14 @@ export function deleteMemoryEntry(
   memberId: string | null,
   key: string,
 ): boolean {
+  const stored = toStoredMemberId(memberId);
   const result = db
     .prepare(
       `DELETE FROM memory_entries
         WHERE organization_id = ?
-          AND (member_id = ? OR (member_id IS NULL AND ? IS NULL))
+          AND member_id = ?
           AND key = ?`,
     )
-    .run(organizationId, memberId, memberId, key);
+    .run(organizationId, stored, key);
   return (result.changes ?? 0) > 0;
 }

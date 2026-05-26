@@ -1,8 +1,8 @@
 # @ujima/api
 
-Local backend and runtime service for Ujima Agents.
+Local API daemon for Ujima Agents.
 
-This app owns onboarding, organization state, SQLite persistence, approvals, realtime events, tool execution, and AI orchestration. It is the source of truth for workspace boundaries and run execution.
+Runs onboarding, org state, channels, approvals, orchestration, and workspace-bounded tool execution. Both product surfaces — the [Slack-like web UI](../web) and the [VS Code extension](../vscode-extension) — use this service as the source of truth.
 
 ## System Architecture
 
@@ -134,9 +134,8 @@ typed mentions, and archive-backed history search.
 - Message posting now records typed `message_mentions` rows and parses
   `@display_name` handles. Mentioned agent members receive `member.alerted`
   realtime events and can wake to reply in the same channel.
-- Self-mentions are suppressed, and mention fan-out is throttled to 10 alerts
-  per minute per agent per org. When throttled, the runtime emits a
-  `member.alert_throttled` system message in `#general`.
+- Self-mentions are suppressed so agents do not wake themselves through
+  ordinary mention fan-out.
 - Message edits and deletes are append-only tombstones via `edited_at` and
   `deleted_at`. Immutable tool-call payloads are preserved even if the prose is
   edited later.

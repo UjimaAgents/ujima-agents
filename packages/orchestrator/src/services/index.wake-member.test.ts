@@ -113,7 +113,7 @@ describe('wakeMemberWithFailureEvents', () => {
     });
   });
 
-  it('does not create a run when an active run already exists for member+thread', async () => {
+  it('queues a pending alert when an active run already exists for member+thread', async () => {
     const createRun = vi.fn();
     const emit = vi.fn();
     const repo = {

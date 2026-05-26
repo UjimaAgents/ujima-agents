@@ -107,6 +107,68 @@ export function deleteWorkspaceFile(
 }
 
 /**
+ * Recent-artifacts projection — returns the most-recently-written
+ * workspace files in this org. Used by the `<workspace-state>`
+ * block to surface file paths the agent (or anyone on the team)
+ * wrote in the last lookback window, so wakes don't have to
+ * re-derive what was just produced. Bounded by limit + sinceIso.
+ */
+export interface RecentWorkspaceArtifact {
+  path: string;
+  writtenBy: string;
+  channelId?: string;
+  updatedAt: string;
+  sizeBytes: number;
+}
+
+export function listRecentWorkspaceArtifacts(
+  db: DbHandle,
+  input: {
+    organizationId: string;
+    sinceIso?: string;
+    memberId?: string;
+    channelId?: string;
+    limit?: number;
+  },
+): RecentWorkspaceArtifact[] {
+  const limit = input.limit ?? 6;
+  const params: (string | number)[] = [input.organizationId];
+  let sql =
+    'SELECT path, written_by, channel_id, updated_at, size_bytes FROM workspace_files WHERE organization_id = ?';
+  if (input.sinceIso) {
+    sql += ' AND updated_at >= ?';
+    params.push(input.sinceIso);
+  }
+  if (input.memberId) {
+    sql += ' AND written_by = ?';
+    params.push(input.memberId);
+  }
+  if (input.channelId) {
+    sql += ' AND channel_id = ?';
+    params.push(input.channelId);
+  }
+  sql += ' ORDER BY updated_at DESC LIMIT ?';
+  params.push(limit);
+  const rows = db.prepare(sql).all(...params) as Row[];
+  return rows.map((row) => {
+    const sizeRaw = row['size_bytes'];
+    const sizeBytes =
+      typeof sizeRaw === 'number'
+        ? sizeRaw
+        : typeof sizeRaw === 'string'
+          ? Number.parseInt(sizeRaw, 10) || 0
+          : 0;
+    return {
+      path: rowString(row, 'path'),
+      writtenBy: rowString(row, 'written_by'),
+      channelId: optionalRowString(row, 'channel_id'),
+      updatedAt: rowString(row, 'updated_at'),
+      sizeBytes,
+    };
+  });
+}
+
+/**
  * Search workspace files by FTS5 BM25 ranking. Returns top-N matches
  * scoped to the given organization. Caller is responsible for filtering
  * by member visibility (which agents may not see all files in

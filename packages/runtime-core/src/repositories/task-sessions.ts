@@ -181,9 +181,8 @@ export function listTaskSessions(
 
 /**
  * Find the most recent open task session for a channel, if one
- * exists. Used by the commitment extractor (Bet 4) to decide whether
- * to auto-promote the channel into a session before parking a
- * commitment todo on it.
+ * exists. Used by the commitment extractor before parking a todo on
+ * the channel.
  */
 export function findOpenTaskSessionForChannel(
   db: DbHandle,

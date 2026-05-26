@@ -1,4 +1,4 @@
-import { memo } from "react";
+import { memo, useCallback } from "react";
 
 export interface ChatTab {
   id: string;
@@ -16,11 +16,47 @@ export const ChatTabs = memo(function ChatTabs({
   activeTab: string;
   onTabChange: (id: string) => void;
 }) {
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      const currentIndex = tabs.findIndex((t) => t.id === activeTab);
+      let nextIndex: number | null = null;
+
+      switch (e.key) {
+        case "ArrowRight":
+          nextIndex = (currentIndex + 1) % tabs.length;
+          break;
+        case "ArrowLeft":
+          nextIndex = (currentIndex - 1 + tabs.length) % tabs.length;
+          break;
+        case "Home":
+          nextIndex = 0;
+          break;
+        case "End":
+          nextIndex = tabs.length - 1;
+          break;
+        default:
+          return;
+      }
+
+      e.preventDefault();
+      if (nextIndex !== null && tabs[nextIndex]) {
+        onTabChange(tabs[nextIndex].id);
+      }
+    },
+    [tabs, activeTab, onTabChange],
+  );
+
   return (
-    <div className="flex shrink-0 border-b border-zinc-200 px-4 dark:border-zinc-800">
+    <div
+      role="tablist"
+      className="flex shrink-0 border-b border-zinc-200 px-4 dark:border-zinc-800"
+      onKeyDown={handleKeyDown}
+    >
       {tabs.map((tab) => (
         <button
           key={tab.id}
+          role="tab"
+          aria-selected={activeTab === tab.id}
           onClick={() => onTabChange(tab.id)}
           className={`relative px-3 py-2 text-xs font-medium transition ${
             activeTab === tab.id

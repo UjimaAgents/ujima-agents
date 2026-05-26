@@ -23,7 +23,7 @@ const srAgent: AgentDef = {
   permissions: {
     allowed_tools: ['create_frame'],
     blocked_tools: [],
-    rate_limit: { calls_per_minute: 30, max_session_tokens: 100_000 },
+    rate_limit: { max_session_tokens: 100_000 },
   },
   communication: { publishes: ['design:frames'], subscribes: [] },
   escalation: { conditions: [], escalate_to: 'human' },
@@ -38,7 +38,7 @@ const jrAgent: AgentDef = {
   permissions: {
     allowed_tools: ['inspect_frame'],
     blocked_tools: [],
-    rate_limit: { calls_per_minute: 30, max_session_tokens: 100_000 },
+    rate_limit: { max_session_tokens: 100_000 },
   },
   communication: { publishes: ['review:frames'], subscribes: ['design:frames'] },
   escalation: { conditions: [], escalate_to: 'human' },

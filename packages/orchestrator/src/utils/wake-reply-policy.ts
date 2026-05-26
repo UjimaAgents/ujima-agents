@@ -1,12 +1,9 @@
-import type { WakeReason } from '@ujima/shared';
-import { isDirectMessageThread } from './thread-state.js';
-
-export type ConversationKind = 'dm' | 'channel';
+import type { ConversationKind, WakeReason } from '@ujima/shared';
+import { isDirectMessageThread } from '@ujima/shared';
 
 export interface WakeReplyPolicy {
   conversationKind: ConversationKind;
   suppressPassTool: boolean;
-  denyPassInPolicy: boolean;
   mandatoryReply: boolean;
   scaffoldBlock: string;
 }
@@ -44,15 +41,47 @@ export function resolveWakeReplyPolicy(input: {
 }): WakeReplyPolicy {
   const conversationKind: ConversationKind = isDirectMessageThread(input.threadId) ? 'dm' : 'channel';
   const mandatoryReply = input.wakeReason === 'mention';
-  const suppressPassTool = mandatoryReply || conversationKind === 'dm';
+  const suppressPassTool =
+    mandatoryReply || (conversationKind === 'dm' && input.wakeReason !== 'channel-read');
+
+  let scaffoldBlock = conversationKind === 'dm' ? DM_WAKE_SCAFFOLD : CHANNEL_WAKE_SCAFFOLD;
+  if (conversationKind === 'dm' && input.wakeReason === 'channel-read') {
+    scaffoldBlock = [
+      'Before you pick a tool, read the <thread-state> block in the most recent user message.',
+      'This is a direct message (1:1) thread demoted by channel-read back-pressure after a pairwise mention cap was hit.',
+      'You are allowed to call channel.pass to stand down and break the loop.',
+      'If you have no constructive/new response, please call channel.pass with a descriptive note immediately.',
+    ].join('\n');
+  }
 
   return {
     conversationKind,
     suppressPassTool,
-    denyPassInPolicy: suppressPassTool,
     mandatoryReply,
-    scaffoldBlock: conversationKind === 'dm' ? DM_WAKE_SCAFFOLD : CHANNEL_WAKE_SCAFFOLD,
+    scaffoldBlock,
   };
+}
+
+export function shouldSuppressPassAndSelfNote(
+  policy: Pick<WakeReplyPolicy, 'suppressPassTool'>,
+): boolean {
+  return policy.suppressPassTool;
+}
+
+export function buildPassOrSelfNoteDenialReason(
+  toolId: 'channel.pass' | 'self.note',
+  policy: Pick<WakeReplyPolicy, 'mandatoryReply' | 'conversationKind'>,
+): string {
+  if (policy.mandatoryReply) {
+    if (toolId === 'channel.pass') {
+      return 'mandatory-reply: you were @mentioned, channel.pass is not allowed. Reply via channel.reply, channel.dm, or message.';
+    }
+    return 'mandatory-reply: you were @mentioned, self.note is not allowed. Reply via channel.reply, channel.dm, or message.';
+  }
+  if (toolId === 'channel.pass') {
+    return 'direct-message: channel.pass is not allowed in a 1:1 DM. Reply via channel.reply, channel.dm, or message.';
+  }
+  return 'direct-message: self.note is not allowed in a 1:1 DM when a reply is expected. Reply via channel.reply, channel.dm, or message.';
 }
 
 export function filterToolsForWakeReplyPolicy(

@@ -1,10 +1,48 @@
 import { describe, expect, it } from 'vitest';
 import {
+  approvalPersistedGrantMatches,
+  approvalScopeMatches,
+  approvalScopeMatchesPersisted,
+  canonicalizeApprovalFamilyScope,
+  canonicalizeApprovalGrantScope,
+  enrichApprovalScopeForDisplay,
+  enrichEditScopeFields,
+  formatPersistedApprovalGrantReason,
   formatApprovalRelayMarkdown,
   parseApprovalDisplayScopesFromReason,
+  parseApprovalReasonValue,
   parseFilesystemScope,
   shellInvocationDisplayLine,
+  stripApprovalScopeDisplayFields,
 } from './approval-scope';
+
+describe('enrichEditScopeFields', () => {
+  it('computes startLine from file content', () => {
+    const fileContent = 'line1\nline2\nold\nline4';
+    expect(
+      enrichEditScopeFields({
+        oldString: 'old',
+        newString: 'new',
+        fileContent,
+      }),
+    ).toEqual({ oldString: 'old', newString: 'new', replaceAll: false, startLine: 3 });
+  });
+
+  it('strips startLine for scoped allow-once matching', () => {
+    const scope = 'edit:{"resourcePath":"/x/a.md","oldString":"a","newString":"b","startLine":2}';
+    expect(stripApprovalScopeDisplayFields(scope)).toBe(
+      'edit:{"resourcePath":"/x/a.md","oldString":"a","newString":"b"}',
+    );
+  });
+
+  it('enriches edit scope for approval display', () => {
+    const base = 'edit:{"resourcePath":"/x/a.md","oldString":"old","newString":"new"}';
+    const fileContent = 'before\nold\nafter';
+    expect(enrichApprovalScopeForDisplay(base, fileContent)).toBe(
+      'edit:{"resourcePath":"/x/a.md","oldString":"old","newString":"new","replaceAll":false,"startLine":2}',
+    );
+  });
+});
 
 describe('formatApprovalRelayMarkdown', () => {
   it('renders cwd and shell line for shell scope', () => {
@@ -74,6 +112,17 @@ describe('formatApprovalRelayMarkdown', () => {
     ).toBe('[Approval needed] Filesystem write\nPath: /x/a.md\nPatch:\n--- /x/a.md\n+++ /x/a.md\n@@\n-old\n+new');
   });
 
+  it('renders workspace edit approval as a diff patch with startLine hunk offset', () => {
+    const scope = JSON.stringify({ file_path: '/x/a.md', old_string: 'old', new_string: 'new', startLine: 120 });
+    expect(
+      formatApprovalRelayMarkdown({
+        action: 'edit',
+        resourcePath: '/x/a.md',
+        reason: `Tool action requires approval;scope=${encodeURIComponent('edit:' + scope)}`,
+      }),
+    ).toBe('[Approval needed] Filesystem write\nPath: /x/a.md\nPatch:\n--- /x/a.md\n+++ /x/a.md\n@@ -120,1 +120,1 @@\n-old\n+new');
+  });
+
   it('renders workspace multiedit approval as a diff patch', () => {
     const scope = JSON.stringify({
       resourcePath: '/x/a.md',
@@ -90,6 +139,25 @@ describe('formatApprovalRelayMarkdown', () => {
       }),
     ).toBe(
       '[Approval needed] Filesystem write\nPath: /x/a.md\nPatch:\n--- /x/a.md\n+++ /x/a.md\n@@\n-one\n+two\n--- /x/a.md\n+++ /x/a.md\n@@\n-red\n+blue',
+    );
+  });
+
+  it('renders workspace multiedit approval as a diff patch with startLine hunk offsets', () => {
+    const scope = JSON.stringify({
+      resourcePath: '/x/a.md',
+      edits: [
+        { oldString: 'one', newString: 'two', startLine: 45 },
+        { old_string: 'red', new_string: 'blue', startLine: 60 },
+      ],
+    });
+    expect(
+      formatApprovalRelayMarkdown({
+        action: 'multiedit',
+        resourcePath: '/x/a.md',
+        reason: `Tool action requires approval;scope=${encodeURIComponent('multiedit:' + scope)}`,
+      }),
+    ).toBe(
+      '[Approval needed] Filesystem write\nPath: /x/a.md\nPatch:\n--- /x/a.md\n+++ /x/a.md\n@@ -45,1 +45,1 @@\n-one\n+two\n--- /x/a.md\n+++ /x/a.md\n@@ -60,1 +60,1 @@\n-red\n+blue',
     );
   });
 
@@ -129,6 +197,14 @@ describe('parseApprovalDisplayScopesFromReason', () => {
       filesystem: null,
     });
   });
+
+  it('handles missing reason', () => {
+    expect(parseApprovalDisplayScopesFromReason(undefined)).toEqual({
+      shell: null,
+      filesystem: null,
+    });
+    expect(parseApprovalReasonValue(undefined, 'scope')).toBeNull();
+  });
 });
 
 describe('parseFilesystemScope', () => {
@@ -160,5 +236,54 @@ describe('shellInvocationDisplayLine', () => {
     expect(
       shellInvocationDisplayLine({ cwd: '/tmp', command: 'sh', args: ['-c', 'echo hi'] }),
     ).toBe('sh -c echo hi');
+  });
+});
+
+describe('approvalPersistedGrantMatches', () => {
+  it('matches later shell invocations under an allow_family grant', () => {
+    const familyScope = 'shell:{"cwd":"/workspace","command":"git"}';
+    const grantReason = formatPersistedApprovalGrantReason('family', familyScope, 'git family');
+    const diff = 'shell:{"cwd":"/workspace","command":"git","args":["diff"]}';
+    const status = 'shell:{"cwd":"/workspace","command":"git","args":["status"]}';
+    expect(approvalPersistedGrantMatches(grantReason, familyScope, diff)).toBe(true);
+    expect(approvalPersistedGrantMatches(grantReason, familyScope, status)).toBe(true);
+  });
+
+  it('does not treat allow_always grants as family-wide shell access', () => {
+    const exactScope = 'shell:{"cwd":"/workspace","command":"git","args":["status"]}';
+    const grantReason = formatPersistedApprovalGrantReason('grant', exactScope, 'exact');
+    const log = 'shell:{"cwd":"/workspace","command":"git","args":["log"]}';
+    expect(approvalPersistedGrantMatches(grantReason, exactScope, exactScope)).toBe(true);
+    expect(approvalPersistedGrantMatches(grantReason, exactScope, log)).toBe(false);
+  });
+
+  it('supports legacy allow_family rows stored under grant:always_allow:', () => {
+    const legacyFamilyScope = 'shell:{"cwd":"/workspace","command":"git"}';
+    const grantReason = `grant:always_allow:scope=${encodeURIComponent(legacyFamilyScope)};note=legacy`;
+    const status = 'shell:{"cwd":"/workspace","command":"git","args":["status"]}';
+    expect(approvalPersistedGrantMatches(grantReason, legacyFamilyScope, status)).toBe(true);
+  });
+});
+
+describe('approvalScopeMatches', () => {
+  it('matches legacy shell scopes to canonical JSON at grant precision', () => {
+    const legacy = 'shell:/workspace:git:["status"]';
+    const status = 'shell:{"cwd":"/workspace","command":"git","args":["status"]}';
+    const log = 'shell:{"cwd":"/workspace","command":"git","args":["log"]}';
+    expect(approvalScopeMatches(legacy, status)).toBe(true);
+    expect(approvalScopeMatches(legacy, log)).toBe(false);
+  });
+
+  it('does not treat different shell args as family-equivalent in grant mode', () => {
+    const status = 'shell:{"cwd":"/workspace","command":"git","args":["status"]}';
+    const log = 'shell:{"cwd":"/workspace","command":"git","args":["log"]}';
+    expect(canonicalizeApprovalFamilyScope(status)).toBe(canonicalizeApprovalFamilyScope(log));
+    expect(approvalScopeMatches(status, log)).toBe(false);
+    expect(
+      approvalScopeMatchesPersisted(status, canonicalizeApprovalFamilyScope(log), 'family'),
+    ).toBe(true);
+    expect(approvalScopeMatchesPersisted(status, canonicalizeApprovalGrantScope(log), 'grant')).toBe(
+      false,
+    );
   });
 });

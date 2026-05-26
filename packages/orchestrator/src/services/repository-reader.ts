@@ -12,6 +12,7 @@ import type {
   DecisionLogEntry,
   McpServer,
   McpToolCache,
+  PluginInstall,
   Member,
   MemoryEntry,
   MemoryEntryKind,
@@ -23,6 +24,7 @@ import type {
   ScheduledJob,
   Spirit,
   SpiritRole,
+  SkillInstall,
   TaskSession,
   TaskSessionStatus,
   Todo,
@@ -103,6 +105,7 @@ export interface RepositoryReader {
     limit?: number,
   ): PaginatedMessages;
   getProviderCredential(organizationId: string, providerName: string): string | null;
+  listOrganizationSkillInstalls?(organizationId: string): SkillInstall[];
   listRunSteps?(organizationId: string, runId: string): RunStep[];
   /**
    * Optional lookup so ai-service can read the wake-trigger
@@ -263,9 +266,7 @@ export interface ApiRepository extends ConversationRepository {
   listPendingApprovals(organizationId: string): ApprovalRequest[];
   hasApprovalGrant(input: {
     organizationId: string;
-    requestedBy: string;
     resourceType: ApprovalRequest['resourceType'];
-    resourcePath: string;
     action: ApprovalRequest['action'];
     approvalScope: string;
   }): boolean;
@@ -321,6 +322,18 @@ export interface ApiRepository extends ConversationRepository {
   ): { attachment: AgentMcpAttachment; server: McpServer }[];
   saveMcpToolCache(cache: McpToolCache): McpToolCache;
   getMcpToolCache(organizationId: string, mcpServerId: string): McpToolCache | null;
+  savePluginInstall(install: PluginInstall): PluginInstall;
+  getPluginInstall(organizationId: string, installId: string): PluginInstall | null;
+  getPluginInstallBySourceUrl(
+    organizationId: string,
+    sourceUrl: string,
+  ): PluginInstall | null;
+  listPluginInstalls(organizationId: string): PluginInstall[];
+  deletePluginInstall(organizationId: string, installId: string): void;
+  saveOrganizationSkillInstall(install: SkillInstall): SkillInstall;
+  getOrganizationSkillInstall(organizationId: string, installId: string): SkillInstall | null;
+  listOrganizationSkillInstalls(organizationId: string): SkillInstall[];
+  deleteOrganizationSkillInstall(organizationId: string, installId: string): void;
   saveTodo(todo: Todo): Todo;
   getTodo(organizationId: string, todoId: string): Todo | null;
   listTodosForSession(
@@ -340,25 +353,10 @@ export interface ApiRepository extends ConversationRepository {
   }): Todo[];
   listExpiredCommitments?(options: { nowIso: string; limit?: number }): Todo[];
   /**
-   * Atomic claim-by-update for the commitment sweeper (Bet 4
-   * follow-up). Returns true when this caller successfully claimed
-   * the row by advancing `last_progress_at`; false when another
-   * sweep (or a human update) raced ahead. Optional because tests
-   * with narrower mocks skip the sweeper entirely.
-   */
-  claimIdleCommitment?(
-    todoId: string,
-    expectedLastProgressAt: string | null,
-    newLastProgressAt: string,
-  ): boolean;
-  /**
    * Atomic flip from "open + past due" → `expired`. Returns true on
-   * successful claim. Mirror of `claimIdleCommitment` but for the
-   * deadline-letter sweep: the sweeper claims FIRST, then publishes
-   * the system message — so a crash between persist and publish
-   * causes one missed letter (the lesser evil) rather than a
-   * duplicate one. Optional for the same test-repo reason as the
-   * other commitment helpers.
+   * successful claim. The sweeper claims first, then publishes the
+   * system message, so a crash causes one missed letter rather than a
+   * duplicate one.
    */
   claimExpiredCommitment?(todoId: string, nowIso: string): boolean;
   /**
@@ -374,12 +372,7 @@ export interface ApiRepository extends ConversationRepository {
     memberId: string,
     sinceIso: string,
   ): Todo | null;
-  /**
-   * Reverse-lookup used by `CommitmentService.onRunCompleted` to map a
-   * self-followup run back to its originating commitment so the empty-
-   * wake counter can be updated. Optional for the same test-repo
-   * reason — the service skips counter updates when absent.
-   */
+  /** Reverse-lookup from a source message to its originating commitment. */
   findCommitmentBySourceMessage?(
     organizationId: string,
     sourceMessageId: string,
@@ -423,6 +416,24 @@ export interface ApiRepository extends ConversationRepository {
     writtenBy: string;
     channelId?: string;
     updatedAt: string;
+  }[];
+  /**
+   * Recent-artifacts projection — used by `<workspace-state>` to
+   * surface file paths written in the lookback window. Optional
+   * because narrow test repos don't implement it.
+   */
+  listRecentWorkspaceArtifacts?(input: {
+    organizationId: string;
+    sinceIso?: string;
+    memberId?: string;
+    channelId?: string;
+    limit?: number;
+  }): {
+    path: string;
+    writtenBy: string;
+    channelId?: string;
+    updatedAt: string;
+    sizeBytes: number;
   }[];
 
   // Bet 6 — append-only decision log.

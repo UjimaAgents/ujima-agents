@@ -105,7 +105,7 @@ export interface RateSeries {
   samples: RateSample[];
 }
 
-export function callsPerMinute(samples: RateSample[], nowMs: number = Date.now()): number {
+export function callsInLastMinute(samples: RateSample[], nowMs: number = Date.now()): number {
   const cutoff = nowMs - 60_000;
   return samples.reduce((n, s) => (Date.parse(s.at) >= cutoff ? n + s.calls : n), 0);
 }

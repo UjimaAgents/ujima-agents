@@ -959,6 +959,71 @@ const MIGRATIONS: { id: string; up: string }[] = [
         ON decision_log(source_message_id);
     `,
   },
+  {
+    // Renumbered from main's `026_plugin_registry` on merge — our
+    // 026/027/028 had already shipped to dogfood DBs. `CREATE TABLE
+    // IF NOT EXISTS` is idempotent so DBs that already applied the
+    // original 026_plugin_registry simply record this id (harmless
+    // dual-record); fresh DBs see one create.
+    id: '029_plugin_registry',
+    up: `
+      CREATE TABLE IF NOT EXISTS plugin_installs (
+        id              TEXT PRIMARY KEY,
+        organization_id TEXT NOT NULL,
+        plugin_id       TEXT NOT NULL,
+        plugin_name     TEXT NOT NULL,
+        version         TEXT NOT NULL,
+        source_url      TEXT NOT NULL,
+        local_path      TEXT NOT NULL,
+        status          TEXT NOT NULL DEFAULT 'installed',
+        created_by      TEXT NOT NULL,
+        created_at      TEXT NOT NULL,
+        updated_at      TEXT NOT NULL,
+        UNIQUE (organization_id, source_url)
+      );
+      CREATE INDEX IF NOT EXISTS idx_plugin_installs_org
+        ON plugin_installs(organization_id, plugin_name);
+
+      CREATE TABLE IF NOT EXISTS organization_skill_installs (
+        id                  TEXT PRIMARY KEY,
+        organization_id     TEXT NOT NULL,
+        plugin_install_id   TEXT NOT NULL,
+        plugin_id           TEXT NOT NULL,
+        plugin_name         TEXT NOT NULL,
+        skill_name          TEXT NOT NULL,
+        command_name        TEXT NOT NULL,
+        description         TEXT NOT NULL DEFAULT '',
+        user_invocable      INTEGER NOT NULL DEFAULT 0,
+        disable_model_invocation INTEGER NOT NULL DEFAULT 0,
+        skill_path          TEXT NOT NULL,
+        created_at         TEXT NOT NULL,
+        updated_at         TEXT NOT NULL,
+        UNIQUE (organization_id, plugin_install_id, skill_name)
+      );
+      CREATE INDEX IF NOT EXISTS idx_org_skill_installs_org
+        ON organization_skill_installs(organization_id, plugin_name);
+    `,
+  },
+  {
+    // Post-review fix — Bet 5 follow-up. Migration 027's unique
+    // index was `(organization_id, member_id, key)` with member_id
+    // NULL-able for org-scoped writes. SQLite treats NULL as
+    // distinct in unique indexes, so two org-scoped writes to the
+    // same key inserted DIFFERENT rows instead of upserting the
+    // existing one — breaking the documented "one key, one value"
+    // contract. Fix: replace the index with one that uses a
+    // non-null sentinel ('__org__') in place of NULL, and migrate
+    // any existing NULL member_id rows to that sentinel.
+    id: '030_memory_entries_org_scope_sentinel',
+    up: `
+      UPDATE memory_entries SET member_id = '__org__'
+        WHERE member_id IS NULL;
+      DROP INDEX IF EXISTS idx_memory_entries_member_key;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_entries_member_key
+        ON memory_entries(organization_id, member_id, key)
+        WHERE key IS NOT NULL;
+    `,
+  },
 ];
 
 export interface DbOptions {

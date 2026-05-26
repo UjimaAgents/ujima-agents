@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { io } from "socket.io-client";
 import {
+  parseDmThreadId,
   SocketEventNames,
   SocketEventSchemas,
   type SocketEventName,
@@ -245,10 +246,10 @@ function parseVerifiedThreadAccess(value: unknown): { memberIds: string[]; chann
 
 function resolveTrustedMemberIds(threadId: string, authenticatedMemberId: string): string[] {
   const members = new Set<string>([authenticatedMemberId]);
-  if (threadId.startsWith("dm:")) {
-    const [, firstId, secondId] = threadId.split(":", 3);
-    if (firstId) members.add(firstId);
-    if (secondId) members.add(secondId);
+  const dm = parseDmThreadId(threadId);
+  if (dm) {
+    members.add(dm.participantA);
+    members.add(dm.participantB);
   }
   return [...members];
 }

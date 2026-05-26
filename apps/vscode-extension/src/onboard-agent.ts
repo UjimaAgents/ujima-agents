@@ -10,7 +10,6 @@ import {
 import {
   connectMCP,
   instantiateFromRegistry,
-  isDestructive,
   listRegistry,
   type RegistryEntry,
 } from '@ujima/mcp-client';
@@ -35,8 +34,7 @@ interface CustomPersona {
   persona: string;
 }
 
-const DEFAULT_RATE_LIMIT: AgentPermissions['rate_limit'] = {
-  calls_per_minute: 30,
+const DEFAULT_TOKEN_LIMIT: AgentPermissions['rate_limit'] = {
   max_session_tokens: 100_000,
 };
 
@@ -76,7 +74,7 @@ export async function onboardAgentCommand(
   const permissions: AgentPermissions = {
     allowed_tools: allowed,
     blocked_tools: blocked,
-    rate_limit: DEFAULT_RATE_LIMIT,
+    rate_limit: DEFAULT_TOKEN_LIMIT,
   };
 
   const personaDefaultEscalation =
@@ -561,6 +559,3 @@ function iconFor(category: string): string {
 function seniorityIcon(s: PersonaTemplate['seniority']): string {
   return s === 'senior' ? 'verified' : 'person';
 }
-
-// Silence unused import warning — isDestructive may be used for tool descriptions later.
-void isDestructive;

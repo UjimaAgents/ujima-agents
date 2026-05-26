@@ -1,4 +1,5 @@
 import type { BootstrapResponse } from "@ujima/api-schema";
+import { parseDmThreadId } from "@ujima/shared/browser";
 import type { SelectedConversation } from "./types";
 import { isVisibleWorkspaceChannel } from "./workspace-channels";
 
@@ -39,6 +40,19 @@ function findChannel(
   );
 }
 
+function resolveAgentOnlyDm(
+  bootstrap: BootstrapResponse,
+  value: string,
+): SelectedConversation | undefined {
+  const dm = parseDmThreadId(value);
+  if (!dm) return;
+  const members = [dm.participantA, dm.participantB]
+    .map((id) => bootstrap.members.find((member) => member.id === id))
+    .filter((member): member is BootstrapResponse["members"][number] => member?.kind === "agent");
+  if (members.length !== 2) return;
+  return { type: "channel", id: value, name: members.map((member) => member.name).join(" & ") };
+}
+
 export function resolveSelectedConversationFromSearchParams(
   searchParams: SearchParamsLike,
   bootstrap?: BootstrapResponse,
@@ -61,5 +75,6 @@ export function resolveSelectedConversationFromSearchParams(
     if (channel) {
       return { type: "channel", id: channel.id, name: channel.name };
     }
+    return resolveAgentOnlyDm(bootstrap, channelValue);
   }
 }

@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import type { PermissionMiddleware } from '@ujima/permissions';
 import {
   SocketEventNames,
@@ -21,7 +20,13 @@ import { CommitmentService } from './commitment-service.js';
 import { MemoryReviewService } from './memory-review.js';
 import { TrajectoryService } from './trajectory.js';
 import { McpRegistryService } from './mcp-registry.js';
+import { PluginRegistryService } from './plugin-registry.js';
 import { OnboardingService } from './onboarding.js';
+import {
+  drainPendingMemberAlertAfterRun,
+  enqueuePendingMemberAlert,
+  type PendingMemberAlert,
+} from './pending-member-alerts.js';
 import type { ApiRepository } from './repository-reader.js';
 import { SettingsService } from './settings.js';
 import { WorkspaceService, type WorkspaceCatalog } from './workspace.js';
@@ -32,6 +37,7 @@ import { TaskPromoterService, type TaskPromotionEvaluator } from './task-promote
 import { TaskSessionService } from './task-session.js';
 import {
   createPermissionGatedToolService,
+  saveBlockedToolRunStep,
   type PermissionContextBuilder,
   type ToolService,
 } from './tool-service.js';
@@ -95,13 +101,12 @@ export {
 } from './scheduler.js';
 export type { SchedulerServiceOptions } from './scheduler.js';
 export { SettingsService } from './settings.js';
+export { orgWorkspaceId, organizationIdFromWorkspaceId } from '@ujima/shared';
 export {
   assertGrantableOwnerFromParentOrg,
   copyProviderCredentials,
   grantWorkspaceOwnerForMember,
   grantWorkspaceOwnerFromParentOrg,
-  orgWorkspaceId,
-  organizationIdFromWorkspaceId,
 } from './workspace-org-provision.js';
 export {
   ensureChannelThread,
@@ -155,6 +160,11 @@ export type {
   TestMcpResult,
   UpdateMcpServerInput,
 } from './mcp-registry.js';
+export { PluginRegistryService } from './plugin-registry.js';
+export type {
+  PluginInstallInput,
+  SkillInvocation,
+} from './plugin-registry.js';
 export {
   ERR_NO_WORKSPACE_ROOT,
   WorkspaceRootRequiredError,
@@ -208,22 +218,8 @@ export interface ApiServicesContext extends ApiServiceContext {
    * (the spirit run path still works without MCP tools).
    */
   mcpPool?: SpiritMcpPool;
-  /**
-   * Bet 4 — how long a commitment can sit idle before the scheduler
-   * re-wakes the owner. Default is 10 minutes. Tests can shorten
-   * this dramatically.
-   */
   commitmentIdleThresholdMs?: number;
-  /**
-   * Bet 4 — default deadline offset for commitments that the
-   * extractor finds without an explicit due. Default is 24 hours.
-   */
   commitmentDefaultDueOffsetMs?: number;
-  /**
-   * Bet 4 — how often the commitment sweeper fires. Defaults to 60s
-   * in production. Tests can set 0 to disable auto-scheduling and
-   * call `commitments.sweepIdle()` / `sweepExpired()` directly.
-   */
   commitmentSweeperIntervalMs?: number;
 }
 
@@ -246,6 +242,7 @@ export interface ApiServices {
   supervisorTodos: SupervisorTodoService;
   activeSpirits: ActiveSpiritRegistry;
   mcpRegistry: McpRegistryService;
+  pluginRegistry: PluginRegistryService;
   commitments: CommitmentService;
   /**
    * Tears down background timers (commitment sweeper, anything else
@@ -258,21 +255,7 @@ export interface ApiServices {
   stop(): Promise<void>;
 }
 
-interface WakeMemberInput {
-  organizationId: string;
-  memberId: string;
-  threadId: string;
-  channelId?: string;
-  messageId: string;
-  byMemberId: string;
-  reason: string;
-  /**
-   * Typed wake reason — drives mandatory-reply enforcement
-   * downstream (policy rejects `channel.pass`/`self.note` for
-   * `wakeReason === 'mention'`).
-   */
-  wakeReason: WakeReason;
-}
+type WakeMemberInput = PendingMemberAlert;
 
 interface WakeMemberDeps {
   spirits: Pick<SpiritService, 'handleAlert'>;
@@ -405,6 +388,7 @@ export async function wakeMemberWithFailureEvents(
       input.threadId,
     );
     if (activeRun) {
+      enqueuePendingMemberAlert(input);
       return;
     }
 
@@ -471,7 +455,6 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   const approvalsImpl = new ApprovalService(
     context.repo,
     context.realtime,
-    conversations,
     (orgId, runId, allowRun, approvalScope) =>
       resumeRun(orgId, runId, allowRun, approvalScope),
   );
@@ -498,22 +481,24 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     context.buildPermissionContext,
     approvalRequester.requestApproval,
     (invocation, approvalId) => {
-      context.repo.saveRunStep({
-        id: randomUUID(),
-        organizationId: invocation.organizationId,
-        runId: invocation.runId,
-        threadId: invocation.threadId,
-        agentId: invocation.memberId,
-        toolCallId: invocation.toolCallId,
-        toolId: invocation.toolId,
-        action: invocation.action,
-        resourceType: invocation.resourceType,
-        resourcePath: invocation.resourcePath ?? '',
-        input: invocation.input ?? {},
-        output: { status: 'waiting_for_approval', approvalId },
-        status: 'ok',
-        createdAt: new Date().toISOString(),
-      });
+      saveBlockedToolRunStep(
+        context.repo,
+        invocation,
+        { status: 'waiting_for_approval', approvalId },
+        'ok',
+      );
+    },
+    (invocation, decision) => {
+      saveBlockedToolRunStep(
+        context.repo,
+        invocation,
+        {
+          status: 'blocked',
+          code: decision.code,
+          error: decision.reason,
+        },
+        'blocked',
+      );
     },
   );
 
@@ -552,6 +537,13 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   // registry and fall through to regular wake runs for already-active work.
   spirits.bootstrapAll();
 
+  const wakeMemberDeps = {
+    spirits,
+    runs: spirits,
+    realtime: context.realtime,
+    repo: context.repo,
+  };
+
   // Wake routing — replaces the simple `runs.createRun` fan-out.
   // The dispatch result is a discriminated union; only
   // `no-active-spirit` falls through to the regular run loop. A
@@ -559,10 +551,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   // the alert (second mention in a 2s burst) — falling through there
   // would spawn a duplicate run that defeats the debounce.
   wakeMember = async (input) => {
-    await wakeMemberWithFailureEvents(
-      { spirits, runs: spirits, realtime: context.realtime, repo: context.repo },
-      input,
-    );
+    await wakeMemberWithFailureEvents(wakeMemberDeps, input);
   };
 
   const auth = new AuthService(context.repo);
@@ -584,18 +573,15 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     evaluator: context.taskPromoterEvaluator,
   });
   const mcpRegistry = new McpRegistryService(context.repo);
+  const pluginRegistry = new PluginRegistryService(
+    context.repo,
+    context.archiveRoot ?? process.env.UJIMA_HOME ?? process.cwd(),
+  );
 
-  // Bet 4 — durable commitment lifecycle. Extracts forward-looking
-  // promises from agent messages, parks them as `todos` rows tied to
-  // the channel + originating message, re-wakes the owner on idle,
-  // and posts a deadline-letter system message when due_at elapses.
   const commitments = new CommitmentService(
     context.repo,
     conversations,
     context.realtime,
-    async (wakeInput) => {
-      await wakeMember(wakeInput);
-    },
     {
       idleThresholdMs: context.commitmentIdleThresholdMs,
       defaultDueOffsetMs: context.commitmentDefaultDueOffsetMs,
@@ -620,10 +606,14 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     ai,
   );
 
-  // Late-bind the run-completed hook. The single hook routes to all
-  // three subscribers: commitment-service's empty-wake counter,
+  // Late-bind the run-completed hook. The single hook routes to
+  // every subscriber: main's drain-pending-member-alert (skills
+  // library merge), commitment-service's empty-wake counter,
   // memory-review's turn counter, and the trajectory writer.
-  spirits.setRunCompletedHook((run) => {
+  spirits.setRunCompletedHook(async (run) => {
+    await drainPendingMemberAlertAfterRun(run, (pending) =>
+      wakeMemberWithFailureEvents(wakeMemberDeps, pending),
+    );
     void commitments.onRunCompleted(run);
     // Resolve workspace root lazily — only when the trajectory
     // writer is actually enabled (env-gated).
@@ -670,8 +660,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
       await commitments.sweepIdle();
       await commitments.sweepExpired();
     } catch {
-      // Bad row → swallow at the tick level; per-row failures are
-      // handled inside the service.
+      return;
     }
   };
   if (sweepInterval > 0) {
@@ -726,6 +715,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     supervisorTodos,
     activeSpirits,
     mcpRegistry,
+    pluginRegistry,
     commitments,
     stop,
   };

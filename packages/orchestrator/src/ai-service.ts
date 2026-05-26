@@ -216,6 +216,12 @@ export class AiService {
     // ids) so the prompt matches the AI-SDK schema; otherwise the
     // model can deny tools it actually has.
     const availableToolIds = Object.keys(toolDefs);
+    // Main introduced a skills library: organisation-installed skills
+    // get threaded through `buildAgentSystemPrompt` so they appear in
+    // the system prompt alongside the role/tools listing. The lookup
+    // is optional on the repo so narrow test repos work without
+    // wiring the new method.
+    const availableSkills = this.repo.listOrganizationSkillInstalls?.(input.organizationId) ?? [];
     const baseSystemPrompt = buildAgentSystemPrompt(
       team.workspace.root,
       organization.name,
@@ -230,6 +236,7 @@ export class AiService {
       team.agents,
       team.channels,
       organization.organizationChart,
+      availableSkills,
       availableToolIds,
       attachedMcpServers.map((s) => ({ name: s.serverName, toolNames: s.toolNames })),
       wakeReplyPolicy.conversationKind,

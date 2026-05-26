@@ -6,10 +6,11 @@ export * from './auth.js';
 export * from './onboarding.js';
 export * from './runs.js';
 export * from './settings.js';
-export * from './workspaces.js';
+export { orgWorkspaceId, organizationIdFromWorkspaceId } from '@ujima/shared';
 export * from './task-sessions.js';
 export * from './task-files.js';
 export * from './mcps.js';
+export * from './plugins.js';
 export * from './schedules.js';
 export * from './additive/requests.js';
 export { MODEL_OPTIONS_BY_PROVIDER, defaultModelForProvider, getModelOptionsForProvider } from './model-catalog.js';
@@ -22,7 +23,6 @@ export const ErrorCodeSchema = z.enum([
   'ERR_NOT_FOUND',
   'ERR_BAD_REQUEST',
   'ERR_CONFLICT',
-  'ERR_RATE_LIMITED',
   'ERR_INTERNAL',
   'ERR_NO_WORKSPACE_ROOT',
   'ERR_PATH_ESCAPE',

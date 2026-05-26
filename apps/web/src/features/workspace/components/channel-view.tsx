@@ -1,13 +1,15 @@
 "use client";
 
-import { useCallback, useDeferredValue, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useChatScrollToBottom } from "../hooks/use-chat-scroll-to-bottom";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { buildReasoningTraceSteps } from "../reasoning-trace";
-import { File, FileArchive, FileAudio, FileImage, FileText, FileVideo, SquarePen } from "lucide-react";
-import type { BootstrapResponse } from "@ujima/api-schema";
+import { File, FileArchive, FileAudio, FileImage, FileText, FileVideo, SquarePen, Terminal } from "lucide-react";
+import type { BootstrapResponse, SkillInvocationResponse } from "@ujima/api-schema";
 import type { SelectedConversation } from "../types";
 import { useConversationSync } from "../use-conversation-sync";
 import { DragHandle, WORKSPACE_MAIN_GRID_TRANSITION } from "./workspace-shell";
+import { TerminalDrawer } from "./chat/terminal-drawer";
 import {
   ChatHeader,
   ChatTabs,
@@ -18,16 +20,28 @@ import {
   ApprovalCard,
   type ChatTab,
   type ChatMessageData,
+  toSlashSkillCommands,
 } from "./chat";
 import { ChannelMembersTab } from "./channel-members-tab";
 import { ChannelTasksTab } from "./channel-tasks-tab";
 import { getDirectMessageThreadId, RunStateSchema, type RunState } from "@ujima/shared/browser";
-import { useWorkspaceStore } from "../workspace-store";
+import { settingsFetch } from "@/features/settings/shared/settings-api";
+import {
+  isAgentOnlyThread,
+  selectActiveAgentChats,
+  selectActiveTerminals,
+  useWorkspaceStore,
+  type ActiveJob,
+} from "../workspace-store";
 import { EmptyChat } from "./empty-chat";
 import { TypingIndicator } from "./typing-indicator";
 import { RunCard } from "./run-card";
 import { ActivityRow } from "./activity-row";
 import { ConversationSkeleton } from "./conversation-skeleton";
+import { ActivityListSkeleton } from "./activity-list-skeleton";
+import { FileListSkeleton } from "./file-list-skeleton";
+import { MemberListSkeleton } from "./member-list-skeleton";
+import { EmptyState } from "@/components/ui/empty-state";
 import { resolveWorkspaceApproval } from "../approval-resolution";
 import { runToActivity } from "../activity-events";
 import { pendingApprovalVisibleInChannelView, queueApprovals } from "../approval-thread-filter";
@@ -62,6 +76,7 @@ interface ChannelViewProps {
   onOpenAgentEditor?: () => void;
   goalMode: boolean;
   onGoalModeChange: (active: boolean) => void;
+  onSelectConversation?: (conv: SelectedConversation) => void;
 }
 
 export function ChannelView({
@@ -71,14 +86,13 @@ export function ChannelView({
   onOpenAgentEditor,
   goalMode,
   onGoalModeChange,
+  onSelectConversation,
 }: ChannelViewProps) {
-  const [isAtBottom, setIsAtBottom] = useState(true);
   const [resolvingApprovals, setResolvingApprovals] = useState<Record<string, boolean>>({});
   const [approvalErrors, setApprovalErrors] = useState<Record<string, string>>({});
   const [replyTo, setReplyTo] = useState<ChatMessageData | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
-  const previousFeedSignal = useRef("");
   const feed = useConversationSync(bootstrap, conversation);
   const activeTab = useWorkspaceStore((state) => state.activeTab);
   const showDetails = useWorkspaceStore((state) => state.showDetails);
@@ -103,10 +117,6 @@ export function ChannelView({
     () => (conversation.type === "channel" ? channelById.get(conversation.id) : undefined),
     [channelById, conversation.id, conversation.type],
   );
-  const [channelMemberIds, setChannelMemberIds] = useState<string[]>(
-    () => currentChannel?.memberIds ?? [],
-  );
-
   const currentThreadId = useMemo(() => {
     const senderId = bootstrap.auth.member?.id;
     if (!senderId) return undefined;
@@ -115,6 +125,95 @@ export function ChannelView({
     }
     return conversation.id;
   }, [bootstrap.auth.member?.id, conversation.id, conversation.type]);
+  const skillCommands = useMemo(
+    () => toSlashSkillCommands(bootstrap.skills ?? []),
+    [bootstrap.skills],
+  );
+  const isReadOnly = useMemo(() => {
+    const currentMemberId = bootstrap.auth.member?.id;
+    if (!currentMemberId) return false;
+    if (currentThreadId && isAgentOnlyThread(currentThreadId, { channels: bootstrap.channels, members })) {
+      return true;
+    }
+    if (conversation.type === "channel") {
+      const channel = channelById.get(conversation.id);
+      if (channel && channel.memberIds) {
+        return !channel.memberIds.includes(currentMemberId);
+      }
+    }
+    return false;
+  }, [bootstrap.auth.member?.id, bootstrap.channels, conversation.id, conversation.type, currentThreadId, channelById, members]);
+  const [channelMemberIds, setChannelMemberIds] = useState<string[]>(
+    () => currentChannel?.memberIds ?? [],
+  );
+
+  // Sync with currentChannel.memberIds when updated externally (SSE, etc.)
+  useEffect(() => {
+    setChannelMemberIds((prev) => {
+      const next = currentChannel?.memberIds ?? [];
+      if (next.length === prev.length && next.every((id, i) => id === prev[i])) return prev;
+      return next;
+    });
+  }, [currentChannel?.memberIds]);
+
+  const globalActiveRuns = useWorkspaceStore((state) => state.globalActiveRuns);
+  const activeAgentChats = useMemo(
+    () => selectActiveAgentChats({ channels: bootstrap.channels, members, globalActiveRuns }, currentThreadId),
+    [bootstrap.channels, currentThreadId, globalActiveRuns, members],
+  );
+  const activeTerminals = useWorkspaceStore(selectActiveTerminals);
+  const setActiveTerminals = useWorkspaceStore((state) => state.setActiveTerminals);
+  const [isTerminalDrawerOpen, setIsTerminalDrawerOpen] = useState(false);
+
+  useEffect(() => {
+    const organizationId = bootstrap.organization?.id;
+    if (!organizationId || globalActiveRuns.length === 0) {
+      setActiveTerminals([]);
+      return;
+    }
+
+    let cancelled = false;
+    const pollJobs = async () => {
+      try {
+        const jobsPromises = globalActiveRuns.map(async (run) => {
+          const res = await fetch(`/api/runs/${encodeURIComponent(run.id)}/jobs?organizationId=${encodeURIComponent(organizationId)}`);
+          if (!res.ok) return [];
+          const data = await res.json().catch(() => []);
+          if (!Array.isArray(data)) return [];
+          return data.flatMap((job: unknown) => {
+            if (!job || typeof job !== "object") return [];
+            const record = job as Record<string, unknown>;
+            if (typeof record.id !== "string") return [];
+            return [
+              {
+                runId: run.id,
+                jobId: record.id,
+                commandLine: typeof record.commandLine === "string" ? record.commandLine : "",
+                cwd: typeof record.cwd === "string" ? record.cwd : "",
+                status: typeof record.status === "string" ? record.status : "running",
+              } satisfies ActiveJob,
+            ];
+          });
+        });
+
+        const allJobsLists = await Promise.all(jobsPromises);
+        if (cancelled) return;
+
+        const runningJobs = allJobsLists.flat().filter((job) => job.status === "running");
+        setActiveTerminals(runningJobs);
+      } catch (e) {
+        console.error("Failed to fetch running background jobs:", e);
+      }
+    };
+
+    void pollJobs();
+    const interval = setInterval(pollJobs, 3000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [globalActiveRuns, bootstrap.organization?.id, setActiveTerminals]);
 
   const traceMembers = useMemo(
     () =>
@@ -186,10 +285,55 @@ export function ChannelView({
   const messageVirtualizer = useVirtualizer({
     count: feed.messages.length,
     getScrollElement: () => listRef.current,
-    estimateSize: () => 132,
+    estimateSize: (index: number) => {
+      const msg = feed.messages[index];
+      if (!msg) return 80;
+      // Base row: avatar row + padding ~ 48px
+      let height = 48;
+      // Text content: ~18px per line of 80 chars
+      const textLen = msg.content?.length ?? 0;
+      const lines = Math.max(1, Math.ceil(textLen / 80));
+      height += lines * 18;
+      // Code blocks: ~24px per marker pair
+      const codeFences = (msg.content?.match(/```/g)?.length ?? 0) / 2;
+      height += codeFences * 60;
+      // Attachments: ~40px each
+      height += (msg.attachments?.length ?? 0) * 40;
+      // Tool calls: ~24px each
+      height += (msg.toolCalls?.length ?? 0) * 24;
+      return Math.max(64, Math.min(400, height));
+    },
     overscan: 8,
   });
   const virtualMessageRows = messageVirtualizer.getVirtualItems();
+
+  const latestMessageSignal = useMemo(() => {
+    const last = feed.messages.at(-1);
+    if (!last) return "";
+    return [
+      last.id,
+      last.createdAt ?? "",
+      last.content.length,
+      last.pending ? 1 : 0,
+      last.streamRunId ?? "",
+    ].join(":");
+  }, [feed.messages]);
+
+  const pendingApprovalIds = useMemo(
+    () => pendingThreadApprovals.map((a) => a.id).join(","),
+    [pendingThreadApprovals],
+  );
+
+  const { scrollToLatest, handleScroll } = useChatScrollToBottom({
+    listRef,
+    bottomRef,
+    feed,
+    latestMessageSignal,
+    pendingApprovalIds,
+    conversationKey: `${conversation.id}:${conversation.type}`,
+    virtualizerTotalSize: messageVirtualizer.getTotalSize(),
+  });
+
   const selectedStatus =
     conversation.type === "channel"
       ? { variant: "active" as const, label: "Active" }
@@ -207,7 +351,7 @@ export function ChannelView({
     return s;
   }, [typingRuns]);
   const traceAutoScroll = reasoningTraceVisible && typingRuns.length > 0;
-  const stoppableRunId = useMemo(() => {
+  const stoppableRunIds = useMemo(() => {
     const sorted = [...liveThreadRuns].sort((a, b) => {
       const pri = (r: RunState) =>
         r.status === "running" ? 0 : r.status === "waiting_for_approval" ? 1 : 2;
@@ -215,7 +359,7 @@ export function ChannelView({
       if (d !== 0) return d;
       return (b.startedAt ?? "").localeCompare(a.startedAt ?? "");
     });
-    return sorted[0]?.id;
+    return sorted.map((run) => run.id);
   }, [liveThreadRuns]);
   const typingMembers = useMemo(() => {
     const seen = new Set<string>();
@@ -391,56 +535,6 @@ export function ChannelView({
     [activeTab, feed.activity],
   );
 
-  const scrollToLatest = useCallback((behavior: ScrollBehavior = "smooth") => {
-    bottomRef.current?.scrollIntoView({ block: "end", behavior });
-  }, []);
-
-  const latestMessageSignal = useMemo(() => {
-    const last = feed.messages.at(-1);
-    if (!last) return "";
-    return [
-      last.id,
-      last.createdAt ?? "",
-      last.content.length,
-      last.pending ? 1 : 0,
-      last.streamRunId ?? "",
-    ].join(":");
-  }, [feed.messages]);
-
-  const handleScroll = useCallback(() => {
-    const list = listRef.current;
-    if (!list) return;
-    const distanceFromBottom = list.scrollHeight - list.scrollTop - list.clientHeight;
-    const atBottom = distanceFromBottom < 96;
-    setIsAtBottom(atBottom);
-  }, []);
-
-  useLayoutEffect(() => {
-    const pendingKey = pendingThreadApprovals.map((a) => a.id).join(",");
-    const signal = `${feed.messages.length}:${latestMessageSignal}:${feed.approvals.length}:${feed.runs.length}:${feed.loading ? 1 : 0}:${pendingKey}`;
-    if (!previousFeedSignal.current) {
-      previousFeedSignal.current = signal;
-      if (feed.messages.length > 0) {
-        scrollToLatest("auto");
-      }
-      return;
-    }
-    if (previousFeedSignal.current === signal) return;
-    previousFeedSignal.current = signal;
-    if (isAtBottom) {
-      scrollToLatest("smooth");
-    }
-  }, [
-    feed.approvals.length,
-    feed.loading,
-    feed.messages.length,
-    feed.runs.length,
-    isAtBottom,
-    latestMessageSignal,
-    pendingThreadApprovals,
-    scrollToLatest,
-  ]);
-
   useLayoutEffect(() => {
     if (!tabIds.has(activeTab)) {
       setActiveTab("conversation");
@@ -524,18 +618,7 @@ export function ChannelView({
                       );
                     })}
                   </div>
-                  {pendingThreadApprovals.length > 0 ? (
-                    <div className="space-y-2 px-3 py-2">
-                      {pendingThreadApprovals.map((approval) => (
-                        <ApprovalCard
-                          key={approval.id}
-                          data={{ ...approval, error: approvalErrors[approval.id] }}
-                          resolving={!!resolvingApprovals[approval.id]}
-                          onResolve={(resolution) => resolveApproval(approval.id, resolution)}
-                        />
-                      ))}
-                    </div>
-                  ) : typingLabel ? (
+                  {typingLabel ? (
                     <TypingIndicator
                       label={typingLabel}
                       name={typingMember?.name ?? conversation.name}
@@ -559,11 +642,15 @@ export function ChannelView({
               members={members}
               onSaved={setChannelMemberIds}
             />
+          ) : feed.loading ? (
+            <TabPanel><MemberListSkeleton /></TabPanel>
           ) : (
-            <TabEmpty emptyLabel="Channel unavailable." />
+            <TabEmpty context="members" label="Channel unavailable." />
           )
         ) : activeTab === "approvals" ? (
-          visibleApprovals.length > 0 ? (
+          feed.loading ? (
+            <TabPanel><MemberListSkeleton /></TabPanel>
+          ) : visibleApprovals.length > 0 ? (
             <TabPanel>
               <div className="space-y-2">
                 {visibleApprovals.map((approval) => (
@@ -577,7 +664,7 @@ export function ChannelView({
               </div>
             </TabPanel>
           ) : (
-            <TabEmpty emptyLabel="No approvals." />
+            <TabEmpty context="approvals" label="No approvals." />
           )
         ) : activeTab === "tasks" ? (
           conversation.type === "channel" && organizationId ? (
@@ -601,10 +688,12 @@ export function ChannelView({
               </div>
             </TabPanel>
           ) : (
-            <TabEmpty emptyLabel="No active tasks." />
+            <TabEmpty context="tasks" label="No active tasks." />
           )
         ) : activeTab === "files" ? (
-          conversationAttachments.length > 0 ? (
+          feed.loading ? (
+            <TabPanel><FileListSkeleton /></TabPanel>
+          ) : conversationAttachments.length > 0 ? (
             <TabPanel>
               <div className="space-y-2">
                 {conversationAttachments.map((attachment) => {
@@ -634,10 +723,12 @@ export function ChannelView({
               </div>
             </TabPanel>
           ) : (
-            <TabEmpty emptyLabel="No attachments." />
+            <TabEmpty context="files" label="No attachments." />
           )
         ) : (
-          visibleActivity.length > 0 ? (
+          feed.loading ? (
+            <TabPanel><ActivityListSkeleton /></TabPanel>
+          ) : visibleActivity.length > 0 ? (
             <TabPanel>
               <div className="space-y-2">
                 {visibleActivity.map((event) => (
@@ -646,53 +737,126 @@ export function ChannelView({
               </div>
             </TabPanel>
           ) : (
-            <TabEmpty emptyLabel="No activity." />
+            <TabEmpty context="activity" label="No activity." />
           )
         )}
-        <ChatInput
-          organizationId={organizationId}
-          goalMode={goalMode}
-          onGoalModeChange={onGoalModeChange}
-          onCommand={async (command, content) => {
-            if (command === "schedule") {
-              const prompt = content?.replace(/^\/schedule\s*/i, "").trim();
-              if (!prompt) {
-                throw new Error("Usage: /schedule do this");
-              }
-              await feed.sendMessage(`Please use the schedule tool for this request: ${prompt}`);
+        {(activeAgentChats.length > 0 || activeTerminals.length > 0) && (
+          <div className="relative z-20 flex shrink-0 flex-wrap gap-2 px-3 pb-1.5 pt-1 animate-in slide-in-from-bottom-2 duration-300">
+            {activeAgentChats.map((chat) => (
+              <button
+                key={chat.threadId}
+                type="button"
+                onClick={() => {
+                  handleTabChange("conversation");
+                  onSelectConversation?.({
+                    type: "channel",
+                    id: chat.threadId,
+                    name: chat.name,
+                  });
+                }}
+                className="flex items-center gap-2 rounded-full border border-violet-500/30 bg-zinc-950/80 px-3.5 py-1.5 text-xs text-zinc-100 shadow-lg backdrop-blur-md transition hover:bg-zinc-900/95 dark:border-violet-500/20"
+              >
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                </span>
+                <span className="font-medium">
+                  {chat.agents.join(" & ")} {chat.agents.length > 1 ? "are" : "is"} chatting
+                </span>
+              </button>
+            ))}
+
+            {activeTerminals.length > 0 && (
+              <div className="flex items-center gap-1 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setIsTerminalDrawerOpen(true)}
+                  className="flex items-center gap-2 rounded-full border border-violet-500/20 bg-zinc-950/85 px-3.5 py-1.5 text-xs font-semibold text-zinc-100 shadow-lg shadow-black/20 backdrop-blur-md transition hover:bg-zinc-900/95 dark:border-violet-500/20 dark:bg-zinc-950/90 dark:text-zinc-100 dark:hover:bg-zinc-900/95"
+                >
+                  <Terminal className="h-3.5 w-3.5 animate-pulse text-zinc-400" />
+                  <span>
+                    {activeTerminals.length} {activeTerminals.length === 1 ? "Terminal" : "Terminals"}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsTerminalDrawerOpen(true)}
+                  className="flex h-[29px] w-[29px] items-center justify-center rounded-full border border-violet-500/20 bg-zinc-950/85 text-zinc-400 shadow-lg shadow-black/20 transition hover:bg-zinc-900/95 dark:border-violet-500/20 dark:bg-zinc-950/90 dark:text-zinc-400 dark:hover:bg-zinc-900/95"
+                  aria-label="More terminal details"
+                >
+                  <span className="text-xs font-semibold">...</span>
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+        {pendingThreadApprovals.length > 0 ? (
+          <div className="shrink-0 px-3 pt-1.5 pb-3">
+            <div className="space-y-2">
+              {pendingThreadApprovals.map((approval) => (
+                <ApprovalCard
+                  key={approval.id}
+                  data={{ ...approval, error: approvalErrors[approval.id] }}
+                  resolving={!!resolvingApprovals[approval.id]}
+                  onResolve={(resolution) => resolveApproval(approval.id, resolution)}
+                />
+              ))}
+            </div>
+          </div>
+        ) : (
+          <ChatInput
+            organizationId={organizationId}
+            goalMode={goalMode}
+            onGoalModeChange={onGoalModeChange}
+            readOnly={isReadOnly}
+            skillCommands={skillCommands}
+            onSkillCommand={async (skillId, content) => {
+              if (!organizationId) throw new Error("Missing organization context.");
+              const { content: skillContent } = await settingsFetch<SkillInvocationResponse>(
+                `/api/settings/skills/${encodeURIComponent(skillId)}?organizationId=${encodeURIComponent(organizationId)}&arguments=${encodeURIComponent(content ?? "")}`,
+                undefined,
+                "Unable to load skill.",
+              );
+              await feed.sendMessage(skillContent);
               setReplyTo(null);
               scrollToLatest("auto");
-              return;
+            }}
+            onCommand={async (command, content) => {
+              if (command === "schedule") {
+                const prompt = content?.replace(/^\/schedule\s*/i, "").trim();
+                if (!prompt) {
+                  throw new Error("Usage: /schedule do this");
+                }
+                await feed.sendMessage(`Please use the schedule tool for this request: ${prompt}`);
+                setReplyTo(null);
+                scrollToLatest("auto");
+                return;
+              }
+              await feed.archiveConversation(command);
+              setReplyTo(null);
+              scrollToLatest("auto");
+            }}
+            placeholder={
+              isAgent
+                ? `Message @${conversation.name}...`
+                : `Message #${conversation.name} or @agent...`
             }
-            await feed.archiveConversation(command);
-            setReplyTo(null);
-            scrollToLatest("auto");
-          }}
-          placeholder={
-            isAgent
-              ? `Message @${conversation.name}...`
-              : `Message #${conversation.name} or @agent...`
-          }
-          inlineError={feed.error}
-          statusHint={
-            typingLabel ||
-            (feed.loading ? "Syncing…" : "") ||
-            "Enter to send · Shift+Enter newline"
-          }
-          mentionSuggestions={mentionSuggestions}
-          replyTo={replyTo}
-          onCancelReply={() => setReplyTo(null)}
-          stoppableRunId={stoppableRunId}
-          onStopRun={stopAgentRun}
-          onSend={(content, attachmentIds, metadata) => {
-            if (isAgent) {
-              openDetailsForAgentMessage();
-            }
-            const promise = feed.sendMessage(content, replyTo?.id, attachmentIds, metadata);
-            setReplyTo(null);
-            return promise;
-          }}
-        />
+            inlineError={feed.error}
+            mentionSuggestions={mentionSuggestions}
+            replyTo={replyTo}
+            onCancelReply={() => setReplyTo(null)}
+            stoppableRunIds={stoppableRunIds}
+            onStopRun={stopAgentRun}
+            onSend={(content, attachmentIds, metadata) => {
+              if (isAgent) {
+                openDetailsForAgentMessage();
+              }
+              const promise = feed.sendMessage(content, replyTo?.id, attachmentIds, metadata);
+              setReplyTo(null);
+              return promise;
+            }}
+          />
+        )}
       </div>
 
       <div
@@ -730,6 +894,12 @@ export function ChannelView({
           </DetailsSidebar>
         </div>
       </div>
+      <TerminalDrawer
+        isOpen={isTerminalDrawerOpen}
+        onClose={() => setIsTerminalDrawerOpen(false)}
+        jobs={activeTerminals}
+        organizationId={organizationId ?? ""}
+      />
     </div>
   );
 }
@@ -742,12 +912,10 @@ function TabPanel({ children }: { children: ReactNode }) {
   );
 }
 
-function TabEmpty({ emptyLabel }: { emptyLabel: string }) {
+function TabEmpty({ context, label }: { context?: "messages" | "members" | "approvals" | "tasks" | "files" | "activity" | "search" | "generic"; label?: string }) {
   return (
     <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4">
-      <div className="flex h-full items-center justify-center text-xs text-zinc-500">
-        {emptyLabel}
-      </div>
+      <EmptyState context={context ?? "generic"} title={label} />
     </div>
   );
 }

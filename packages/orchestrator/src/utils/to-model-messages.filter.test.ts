@@ -40,4 +40,31 @@ describe('toModelMessages system filtering', () => {
       content: summary.content,
     });
   });
+
+  it('replays persisted tool results into model context', () => {
+    const message = MessageSchema.parse({
+      id: 'm-tool',
+      organizationId: 'org',
+      threadId: 'th',
+      senderId: 'agent-1',
+      senderKind: 'agent',
+      kind: 'agent',
+      content: 'Checked the file.',
+      toolCalls: [
+        {
+          toolCallId: 'tool-1',
+          toolName: 'view',
+          args: { path: 'README.md' },
+          result: { content: 'Important persisted output.' },
+        },
+      ],
+      mentions: [],
+      createdAt,
+    });
+
+    const content = toModelMessages([message], 'agent-1')[0]?.content;
+    expect(typeof content).toBe('string');
+    expect(content).toContain('Tool results:');
+    expect(content).toContain('Important persisted output.');
+  });
 });

@@ -6,6 +6,7 @@ import {
   FolderKanban,
   Layers,
   MessageSquare,
+  Package,
   Plug,
   Server,
   ShieldCheck,
@@ -33,6 +34,7 @@ import { ChannelsTab } from "./channels-tab";
 import { OrgChartTab } from "./org-chart-tab";
 import { PoliciesTab } from "./policies-tab";
 import { ProvidersTab } from "./providers-tab";
+import { PluginsTab } from "./plugins-tab";
 import { SchedulesTab } from "./schedules-tab";
 import { McpsTab } from "./mcps-tab";
 import { WorkspacesTab } from "./workspaces-tab";
@@ -45,6 +47,7 @@ export type SettingsTabId =
   | "org-chart"
   | "policies"
   | "providers"
+  | "plugins"
   | "schedules"
   | "mcps";
 
@@ -56,6 +59,7 @@ const VALID_TABS: SettingsTabId[] = [
   "org-chart",
   "policies",
   "providers",
+  "plugins",
   "schedules",
   "mcps",
 ];
@@ -81,6 +85,7 @@ const NAV_GROUPS: SettingsNavGroup<SettingsTabId>[] = [
     label: "Integrations",
     items: [
       { id: "providers", label: "Providers", icon: Server },
+      { id: "plugins", label: "Plugins", icon: Package },
       { id: "mcps", label: "MCPs", icon: Plug },
     ],
   },
@@ -236,6 +241,9 @@ function OrganizationSettingsContent({
             providers={providers}
             onProvidersChange={setProviders}
           />
+        )}
+        {activeTab === "plugins" && (
+          <PluginsTab bootstrap={bootstrap} createdBy={createdBy} />
         )}
         {activeTab === "schedules" && <SchedulesTab />}
         {activeTab === "mcps" && (

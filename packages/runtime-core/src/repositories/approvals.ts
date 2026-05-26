@@ -1,5 +1,10 @@
 import type { SqliteDbHandle as DbHandle } from '@ujima/context-store';
-import { ApprovalRequestSchema, parseShellScope, type ApprovalRequest } from '@ujima/shared';
+import {
+  ApprovalRequestSchema,
+  approvalPersistedGrantMatches,
+  parseApprovalReasonValue,
+  type ApprovalRequest,
+} from '@ujima/shared';
 import { now, optionalRowString, rowString } from './common.js';
 
 type Row = Record<string, unknown>;
@@ -140,99 +145,41 @@ export function listPendingApprovals(
   return rows.map(rowToApproval);
 }
 
+/**
+ * Returns true when the organization has an approved "allow always" grant whose
+ * canonical scope matches the requested tool scope. Grants are organization-wide
+ * for the given resourceType and action (not scoped to requestedBy or
+ * resourcePath on the approval row).
+ */
 export function hasApprovalGrant(
   db: DbHandle,
   input: {
     organizationId: string;
-    requestedBy: string;
     resourceType: ApprovalRequest['resourceType'];
-    resourcePath: string;
     action: ApprovalRequest['action'];
     approvalScope: string;
   },
 ): boolean {
-  const escapedScope = encodeURIComponent(input.approvalScope)
-    .replace(/\\/g, '\\\\')
-    .replace(/%/g, '\\%')
-    .replace(/_/g, '\\_');
-
-  const row = db
-    .prepare(
-      `SELECT id
-       FROM approvals
-       WHERE organization_id = ?
-         AND requested_by = ?
-         AND resource_type = ?
-         AND resource_path = ?
-         AND action = ?
-         AND status = 'approved'
-         AND reason LIKE ? ESCAPE '\\'
-       ORDER BY resolved_at DESC
-       LIMIT 1`,
-    )
-    .get(
-      input.organizationId,
-      input.requestedBy,
-      input.resourceType,
-      input.resourcePath,
-      input.action,
-      `grant:always_allow:scope=${escapedScope};%`,
-  ) as Row | null;
-  if (row) return true;
-  if (!input.approvalScope.startsWith('shell:')) return false;
-
-  const shellRows = db
+  const rows = db
     .prepare(
       `SELECT reason
        FROM approvals
        WHERE organization_id = ?
-         AND requested_by = ?
          AND resource_type = ?
-         AND resource_path = ?
          AND action = ?
          AND status = 'approved'
-         AND reason LIKE 'grant:always_allow:scope=shell%'
+         AND (reason LIKE 'grant:always_allow:scope=%' OR reason LIKE 'grant:always_allow_family:scope=%')
        ORDER BY resolved_at DESC`,
     )
     .all(
       input.organizationId,
-      input.requestedBy,
       input.resourceType,
-      input.resourcePath,
       input.action,
     ) as Row[];
 
-  return shellRows.some((candidate) =>
-    shellScopesEquivalent(extractEncodedScope(rowString(candidate, 'reason')), input.approvalScope),
-  );
-}
-
-function extractEncodedScope(reason: string): string | undefined {
-  const match = reason.match(/(?:^|[;:])scope=([^;]+)/);
-  if (!match || !match[1]) return undefined;
-  try {
-    return decodeURIComponent(match[1]);
-  } catch {
-    return match[1];
-  }
-}
-
-function shellScopesEquivalent(storedScope: string | undefined, requestedScope: string): boolean {
-  if (!storedScope) return false;
-  if (storedScope === requestedScope) return true;
-
-  const stored = parseShellScope(storedScope);
-  const requested = parseShellScope(requestedScope);
-  if (!stored || !requested) return false;
-  if (stored.cwd !== requested.cwd || stored.command !== requested.command) return false;
-  if (!stored.args || !requested.args) return true;
-  return arraysEqual(stored.args, requested.args);
-}
-
-function arraysEqual(left: string[], right: string[]): boolean {
-  if (left.length !== right.length) return false;
-  for (let i = 0; i < left.length; i += 1) {
-    if (left[i] !== right[i]) return false;
-  }
-  return true;
+  return rows.some((candidate) => {
+    const storedScope = parseApprovalReasonValue(rowString(candidate, 'reason'), 'scope');
+    if (!storedScope) return false;
+    return approvalPersistedGrantMatches(rowString(candidate, 'reason'), storedScope, input.approvalScope);
+  });
 }

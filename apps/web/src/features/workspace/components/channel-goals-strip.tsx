@@ -20,17 +20,6 @@ interface ChannelGoalsResponse {
   taskSessionIds: string[];
 }
 
-/**
- * Bet 2 — channel goals rail. Renders a compact strip of in-flight
- * commitments for the current channel. Reads from `/api/channels/
- * [id]/open-goals` and refreshes on the `commitment:*` socket events
- * emitted by the daemon (Bet 4). Empty state collapses to a hint;
- * full state shows owner + deliverable + age.
- *
- * Deliberately a deterministic projection of the database — NOT an
- * LLM-driven summary, NOT an orchestrator-as-agent. Coordination
- * state lives in `task_sessions` + `todos`; this is the read view.
- */
 export function ChannelGoalsStrip({
   organizationId,
   channelId,

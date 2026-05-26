@@ -23,18 +23,23 @@ import {
 import {
   approvalWaitResult,
   buildToolApprovalScope,
+  enrichToolApprovalScopeForRequest,
   type ToolInvocationInput,
   type ToolInvocationResult,
   type ToolService,
 } from "./tool-service.js";
 import {
   ERR_PATH_ESCAPE,
-  createMemberPathResolver,
+  createMemberBoundaryPathResolver,
   isPathEscapeError,
+  type PathEscapeError,
 } from "./workspace-root.js";
+import { pathEscapeToolResult } from "./tool-service.js";
 import { normalizeShellScope } from "./shell-scope.js";
 import { materializeMcpDef, type McpRuntimePool } from "./mcp-runtime.js";
+import { ApprovedRunScopeTracker } from "../utils/approved-run-scopes.js";
 import { formatReadableToolOutput } from "../utils/tool-output.js";
+import { isPathScopedToolId, usesPathResolution } from "../path-scoped-tools.js";
 
 /** Merge top-level invocation fields into `input` for client / reasoning-trace payloads. */
 function toolCallArgsForClient(inv: ToolInvocationInput): Record<string, unknown> {
@@ -61,8 +66,7 @@ export interface ApprovalRequester {
 }
 
 export class ToolServiceImpl implements ToolService {
-  private readonly approvedRuns = new Set<string>();
-  private readonly approvedRunScopes = new Set<string>();
+  private readonly approvedRunScopes = new ApprovedRunScopeTracker();
 
   constructor(
     private readonly teamStore: TeamStore,
@@ -80,11 +84,7 @@ export class ToolServiceImpl implements ToolService {
   ) {}
 
   allowRun(organizationId: string, runId: string, approvalScope?: string): void {
-    if (approvalScope) {
-      this.approvedRunScopes.add(this.scopedRunKey(organizationId, runId, approvalScope));
-      return;
-    }
-    this.approvedRuns.add(this.runKey(organizationId, runId));
+    this.approvedRunScopes.allowRun(organizationId, runId, approvalScope);
   }
 
   async invoke(invocation: ToolInvocationInput): Promise<ToolInvocationResult> {
@@ -183,35 +183,9 @@ export class ToolServiceImpl implements ToolService {
         team,
       );
     } catch (error) {
-      const message = (error as Error).message;
-      this.audit(invocation, "blocked", {
-        error: message,
-        code: isPathEscapeError(error) ? ERR_PATH_ESCAPE : undefined,
-      });
-      this.saveRunStep(invocation, "blocked", {
-        status: "blocked",
-        error: message,
-        ...(isPathEscapeError(error) ? { code: ERR_PATH_ESCAPE } : {}),
-      });
-      this.emitToolCalled(invocation, rooms);
-      this.realtime.emit(
-        SocketEventNames.toolResult,
-        {
-          organizationId: invocation.organizationId,
-          runId: invocation.runId,
-          threadId: invocation.threadId ?? this.repo.getRun(invocation.organizationId, invocation.runId)?.threadId,
-          agentId: invocation.memberId,
-          toolResult: {
-            toolCallId: invocation.toolCallId,
-            result: {
-              error: message,
-              ...(isPathEscapeError(error) ? { code: ERR_PATH_ESCAPE } : {}),
-            },
-            isError: true,
-          },
-        },
-        rooms,
-      );
+      if (isPathEscapeError(error)) {
+        return this.finishPathEscapeFailure(invocation, rooms, error);
+      }
       throw error;
     }
 
@@ -278,16 +252,19 @@ export class ToolServiceImpl implements ToolService {
 
     if (
       policy.requiresApproval &&
-      !this.consumeApprovedRun(invocation.organizationId, invocation.runId, approvalScope) &&
+      !this.approvedRunScopes.consumeApprovedRun(
+        invocation.organizationId,
+        invocation.runId,
+        approvalScope,
+      ) &&
       !this.repo.hasApprovalGrant({
         organizationId: preparedInvocation.organizationId,
-        requestedBy: preparedInvocation.memberId,
         resourceType: preparedInvocation.resourceType,
-        resourcePath: preparedInvocation.resourcePath ?? "",
         action: preparedInvocation.action,
         approvalScope,
       })
     ) {
+      const displayScope = enrichToolApprovalScopeForRequest(approvalScope, preparedInvocation);
       const approval = this.approvals.requestApproval({
         organizationId: preparedInvocation.organizationId,
         runId: preparedInvocation.runId,
@@ -296,7 +273,7 @@ export class ToolServiceImpl implements ToolService {
         resourceType: preparedInvocation.resourceType,
         resourcePath: preparedInvocation.resourcePath ?? "",
         action: preparedInvocation.action,
-        reason: `Tool action requires approval;scope=${encodeURIComponent(approvalScope)}`,
+        reason: `Tool action requires approval;scope=${encodeURIComponent(displayScope)}`,
         approvalScope,
       });
 
@@ -340,39 +317,43 @@ export class ToolServiceImpl implements ToolService {
 
       return { ok: true, output: { status: "completed", result } };
     } catch (error) {
-      const message = (error as Error).message;
-      this.audit(preparedInvocation, "error", {
-        error: message,
-        code: isPathEscapeError(error) ? ERR_PATH_ESCAPE : undefined,
-      });
-      this.saveRunStep(preparedInvocation, "error", {
-        error: message,
-        ...(isPathEscapeError(error) ? { code: ERR_PATH_ESCAPE } : {}),
-      });
-      const run = this.repo.getRun(preparedInvocation.organizationId, preparedInvocation.runId);
-      const threadId = preparedInvocation.threadId ?? run?.threadId;
-
-      this.realtime.emit(
-        SocketEventNames.toolResult,
-        {
-          organizationId: preparedInvocation.organizationId,
-          runId: preparedInvocation.runId,
-          threadId,
-          agentId: preparedInvocation.memberId,
-          toolResult: {
-            toolCallId: preparedInvocation.toolCallId,
-            result: {
-              error: message,
-              ...(isPathEscapeError(error) ? { code: ERR_PATH_ESCAPE } : {}),
-            },
-            isError: true,
-          },
-        },
-        rooms,
-      );
-
+      if (isPathEscapeError(error)) {
+        return this.finishPathEscapeFailure(preparedInvocation, rooms, error);
+      }
       throw error;
     }
+  }
+
+  private finishPathEscapeFailure(
+    invocation: ToolInvocationInput,
+    rooms: string[],
+    error: PathEscapeError,
+  ): ToolInvocationResult {
+    const result = pathEscapeToolResult(error.message);
+    this.audit(invocation, "blocked", {
+      error: error.message,
+      code: ERR_PATH_ESCAPE,
+    });
+    this.saveRunStep(invocation, "blocked", result.output);
+    this.emitToolCalled(invocation, rooms);
+    const run = this.repo.getRun(invocation.organizationId, invocation.runId);
+    const threadId = invocation.threadId ?? run?.threadId;
+    this.realtime.emit(
+      SocketEventNames.toolResult,
+      {
+        organizationId: invocation.organizationId,
+        runId: invocation.runId,
+        threadId,
+        agentId: invocation.memberId,
+        toolResult: {
+          toolCallId: invocation.toolCallId,
+          result: result.output,
+          isError: true,
+        },
+      },
+      rooms,
+    );
+    return result;
   }
 
   private async executeTool(invocation: ToolInvocationInput): Promise<unknown> {
@@ -443,28 +424,6 @@ export class ToolServiceImpl implements ToolService {
       throw new Error(formatMcpError(result.content, toolName));
     }
     return result.content;
-  }
-
-  private consumeApprovedRun(organizationId: string, runId: string, approvalScope: string): boolean {
-    const scopedKey = this.scopedRunKey(organizationId, runId, approvalScope);
-    if (this.approvedRunScopes.has(scopedKey)) {
-      this.approvedRunScopes.delete(scopedKey);
-      return true;
-    }
-    const key = this.runKey(organizationId, runId);
-    if (!this.approvedRuns.has(key)) {
-      return false;
-    }
-    this.approvedRuns.delete(key);
-    return true;
-  }
-
-  private runKey(organizationId: string, runId: string): string {
-    return `${organizationId}:${runId}`;
-  }
-
-  private scopedRunKey(organizationId: string, runId: string, approvalScope: string): string {
-    return `${this.runKey(organizationId, runId)}:${approvalScope}`;
   }
 
   private audit(
@@ -577,21 +536,11 @@ export class ToolServiceImpl implements ToolService {
     roleName: string,
     team: AgentTeamHandle,
   ): Promise<ToolInvocationInput> {
-    if (
-      invocation.toolId !== "filesystem" &&
-      invocation.toolId !== "shell" &&
-      invocation.toolId !== "view" &&
-      invocation.toolId !== "write" &&
-      invocation.toolId !== "edit" &&
-      invocation.toolId !== "multiedit" &&
-      invocation.toolId !== "ls" &&
-      invocation.toolId !== "glob" &&
-      invocation.toolId !== "download"
-    ) {
+    if (!usesPathResolution(invocation.toolId)) {
       return invocation;
     }
 
-    const resolver = await createMemberPathResolver(
+    const resolver = await createMemberBoundaryPathResolver(
       this.repo,
       team,
       invocation.organizationId,
@@ -599,16 +548,7 @@ export class ToolServiceImpl implements ToolService {
       roleName,
     );
 
-    if (
-      invocation.toolId === "filesystem" ||
-      invocation.toolId === "view" ||
-      invocation.toolId === "write" ||
-      invocation.toolId === "edit" ||
-      invocation.toolId === "multiedit" ||
-      invocation.toolId === "ls" ||
-      invocation.toolId === "glob" ||
-      invocation.toolId === "download"
-    ) {
+    if (isPathScopedToolId(invocation.toolId)) {
       if (!invocation.resourcePath) {
         return invocation;
       }

@@ -29,7 +29,7 @@ const srDesigner: AgentDef = {
   permissions: {
     allowed_tools: ['create_frame'],
     blocked_tools: [],
-    rate_limit: { calls_per_minute: 30, max_session_tokens: 100_000 },
+    rate_limit: { max_session_tokens: 100_000 },
   },
   communication: { publishes: ['design:frames'], subscribes: [] },
   escalation: { conditions: [], escalate_to: 'human' },
@@ -44,7 +44,7 @@ const jrDesigner: AgentDef = {
   permissions: {
     allowed_tools: ['inspect_frame'],
     blocked_tools: [],
-    rate_limit: { calls_per_minute: 30, max_session_tokens: 100_000 },
+    rate_limit: { max_session_tokens: 100_000 },
   },
   communication: { publishes: ['design:frames'], subscribes: ['design:frames'] },
   escalation: { conditions: ['requires approval'], escalate_to: 'sr-designer' },
@@ -59,7 +59,7 @@ const dbAgent: AgentDef = {
   permissions: {
     allowed_tools: ['query'],
     blocked_tools: [],
-    rate_limit: { calls_per_minute: 30, max_session_tokens: 100_000 },
+    rate_limit: { max_session_tokens: 100_000 },
   },
   communication: { publishes: ['data:schema'], subscribes: [] },
   escalation: { conditions: [], escalate_to: 'human' },

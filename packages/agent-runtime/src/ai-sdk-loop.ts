@@ -49,7 +49,7 @@ export interface AiSdkLoopInputs {
 import { type BrowserStateSnapshot, captureBrowserState } from './browser';
 
 export interface AiSdkLoopOutcome {
-  exitReason: 'completed' | 'escalated' | 'rate_limit_tripped' | 'killed' | 'error';
+  exitReason: 'completed' | 'escalated' | 'token_cap_exceeded' | 'killed' | 'error';
   escalationReason?: string;
   error?: string;
   toolCalls: number;
@@ -68,7 +68,7 @@ const DEFAULT_MAX_TOOL_RESULT_CHARS = 12_000;
 
 // Control-flow sentinels. streamText treats `execute` throwing as an error
 // returned to the model; we instead use these to force a non-model-visible
-// exit from the loop (rate limit, kill, human reject).
+// exit from the loop (token cap, kill, human reject).
 class LoopExit extends Error {
   constructor(readonly outcome: Partial<AiSdkLoopOutcome>) {
     super(outcome.exitReason ?? 'error');
@@ -222,12 +222,12 @@ export async function runAiSdkLoop(input: AiSdkLoopInputs): Promise<AiSdkLoopOut
         });
 
         if (!decision.allowed) {
-          // Rate limit / token cap → non-model-visible exit.
-          if (decision.code === 'rate_limited' || decision.code === 'token_cap_exceeded') {
+          // Token cap → non-model-visible exit.
+          if (decision.code === 'token_cap_exceeded') {
             if (emitEvent) {
               await emitEvent({
                 event_id: genEventId('evt'),
-                type: 'rate_limit_tripped',
+                type: 'token_cap_exceeded',
                 publisher: agent.id,
                 timestamp: new Date().toISOString(),
                 task_id: taskId,
@@ -235,7 +235,7 @@ export async function runAiSdkLoop(input: AiSdkLoopInputs): Promise<AiSdkLoopOut
                 payload: { reason: decision.reason, code: decision.code },
               });
             }
-            throw new LoopExit({ exitReason: 'rate_limit_tripped' });
+            throw new LoopExit({ exitReason: 'token_cap_exceeded' });
           }
 
           const isGate =
@@ -367,7 +367,11 @@ export async function runAiSdkLoop(input: AiSdkLoopInputs): Promise<AiSdkLoopOut
             denied: true,
             code: decision.code,
           });
-          return { error: `permission_denied: ${decision.reason ?? decision.code}` };
+          return {
+            status: 'blocked',
+            code: decision.code,
+            error: decision.reason ?? decision.code,
+          };
         }
 
         // Allowed — straight through.
@@ -416,6 +420,14 @@ export async function runAiSdkLoop(input: AiSdkLoopInputs): Promise<AiSdkLoopOut
               isError: result.isError,
               durationMs: duration,
               gateResolved: gated ? 'approve' : undefined,
+            });
+            await permissions.recordCompletedCall({
+              agent,
+              mcp: { id: mcp.id, name: mcp.def.name },
+              toolName,
+              args: finalArgs,
+              taskId,
+              sessionId,
             });
             if (result.isError) {
               return { error: truncateToolContent(result.content, maxToolResultChars) };

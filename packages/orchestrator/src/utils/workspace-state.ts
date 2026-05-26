@@ -95,11 +95,38 @@ export function buildWorkspaceStateBlock(input: BuildWorkspaceStateInput): strin
   }
 
   // --- Recent artifacts (write/edit tool calls in the lookback) -----
-  // Cheap recency-based artifact list: pull from workspace_files
-  // ordered by updated_at via a repo helper. We don't have one
-  // dedicated for "recent artifacts" yet; the searchWorkspaceFiles
-  // path is FTS-based. Skip for now — agents see recent paths via
-  // run_steps in the live run's transcript.
+  // Surfaces file paths the agent (or anyone on the team) wrote in
+  // the last ARTIFACT_LOOKBACK_HOURS so wakes don't have to
+  // re-derive what was just produced. Scoped to the current channel
+  // when available; falls back to org-wide when this is a non-
+  // channel run.
+  if (input.repo.listRecentWorkspaceArtifacts) {
+    try {
+      const sinceIso = new Date(
+        Date.now() - ARTIFACT_LOOKBACK_HOURS * 60 * 60 * 1000,
+      ).toISOString();
+      const recent = input.repo.listRecentWorkspaceArtifacts({
+        organizationId: input.organizationId,
+        channelId: input.channelId,
+        sinceIso,
+        limit: MAX_RECENT_ARTIFACTS,
+      });
+      if (recent.length > 0) {
+        const lines = recent.map((row) => {
+          const ageMin = Math.max(
+            0,
+            Math.round((Date.now() - new Date(row.updatedAt).getTime()) / 60_000),
+          );
+          const owner = input.repo.getMember?.(input.organizationId, row.writtenBy);
+          const writerName = owner?.name ?? row.writtenBy;
+          return `  <artifact age_min="${ageMin}" by="${escapeXml(writerName)}" bytes="${row.sizeBytes}">${escapeXml(row.path)}</artifact>`;
+        });
+        sections.push(`<recent-artifacts>\n${lines.join('\n')}\n</recent-artifacts>`);
+      }
+    } catch {
+      // best-effort
+    }
+  }
 
   // --- Recent decisions (channel-scoped) ----------------------------
   if (input.channelId && input.repo.listDecisionLogForChannel) {
@@ -141,10 +168,6 @@ export function buildWorkspaceStateBlock(input: BuildWorkspaceStateInput): strin
       // best-effort
     }
   }
-
-  // Suppress lookback-only var warning — kept for forward extension.
-  void ARTIFACT_LOOKBACK_HOURS;
-  void MAX_RECENT_ARTIFACTS;
 
   if (sections.length === 0) return null;
   return `<workspace-state>\n${sections.join('\n')}\n</workspace-state>`;

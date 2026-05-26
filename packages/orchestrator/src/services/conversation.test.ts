@@ -379,7 +379,7 @@ describe('ConversationService @all mentions', () => {
     expect(alerts).toEqual(['agent-2']);
   });
 
-  it('skips DM wake fanout when the message is a completed channel.handoff (replaces old "Acknowledged." protocol)', async () => {
+  it('skips DM wake fanout when the message is a completed channel.handoff', async () => {
     const { alerts, service } = createConversationFixture();
 
     const message = await service.sendDirectMessage({
@@ -388,8 +388,6 @@ describe('ConversationService @all mentions', () => {
       recipientId: 'agent-2',
       content: 'Wrapping up.\n\n[DONE]',
       metadata: {
-        // Loophole-fix L4 / handoff: terminator is the metadata
-        // flag, not a literal token in the body.
         handoff: { from: 'agent-1', to: 'agent-2', reason: 'wrap-up', complete: true },
       } as unknown as { goalMode?: boolean },
     });
@@ -397,6 +395,20 @@ describe('ConversationService @all mentions', () => {
     await new Promise((resolve) => setImmediate(resolve));
 
     expect(message.channelId).toMatch(/^dm:/);
+    expect(alerts).toEqual([]);
+  });
+
+  it('skips DM wake fanout for literal Acknowledged terminators', async () => {
+    const { alerts, service } = createConversationFixture();
+
+    await service.sendDirectMessage({
+      organizationId: 'org-1',
+      senderId: 'agent-1',
+      recipientId: 'agent-2',
+      content: 'Acknowledged.',
+    });
+
+    await new Promise((resolve) => setImmediate(resolve));
     expect(alerts).toEqual([]);
   });
 

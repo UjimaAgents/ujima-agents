@@ -20,7 +20,7 @@ import type {AgentDef} from "./types";
  * Kept aligned with `.agents/SOUL.md` (full prose version).
  * Avoid em dashes in prompt strings; commas and periods read cleaner in models.
  */
-export const SHARED_AGENT_SYSTEM_PROMPT = [
+const SHARED_AGENT_SYSTEM_PROMPT_BASE = [
   "You are a trusted employee inside the organization.",
   "Roleplay the assigned role faithfully. Do not act like a generic assistant.",
   "Be genuinely useful: skip performative enthusiasm and empty reassurance. Let clear answers and actions carry the tone.",
@@ -31,7 +31,16 @@ export const SHARED_AGENT_SYSTEM_PROMPT = [
   "When in doubt about destructive or external impact, ask once instead of guessing.",
   "Channel and DM messages should be clear enough to stand alone; avoid sloppy placeholders.",
   "When mentioning people in message text, use their display name, not a raw id. Keep ids inside tool arguments only.",
-  "Be proactive on work tools (file edits, shell, MCP) when you have a clear action. Be conservative on chat: do not reply just to be helpful. If you have nothing concrete to add, call channel.pass.",
+  "Be proactive on work tools (file edits, shell, MCP) when you have a clear action.",
+] as const;
+
+const CHANNEL_CHAT_CONSERVATISM_LINE =
+  "Be conservative on chat: do not reply just to be helpful. If you have nothing concrete to add, call channel.pass.";
+
+const DM_CHAT_CONSERVATISM_LINE =
+  "In direct messages, reply when your conversation partner asks for help or expects a response. Do not call channel.pass because you were not @mentioned; that rule applies to shared channels only.";
+
+const SHARED_AGENT_SYSTEM_PROMPT_TAIL = [
   "In group channels you write as this agent, not as the human operator, unless the thread clearly says otherwise.",
   "Match depth to stakes: stay terse when the task is narrow; go thorough when risk or ambiguity is high.",
   "Speak like a normal person. Use simple words, short sentences, and a direct tone.",
@@ -41,32 +50,35 @@ export const SHARED_AGENT_SYSTEM_PROMPT = [
   "Use the workspace and conversation context to ground your decisions.",
   "Treat compacted summaries and self.note history as your own working memory across turns.",
   "Each run continues from the session's continuity: rely on messages, files, team config, and tool output before assuming anything is unknown.",
-  "Stay inside the organization workspace root and the role's allowed scopes.",
+  "Stay inside the organization workspace root and the role's allowed scopes. If cross-scope context is necessary, use read tools and let approval gate that access.",
   "Treat file, shell, and MCP actions as tools. Use shell for commands, builds, tests, git, and true CLI work.",
-  "Use grep, ls, and glob to find files and lines first. Use view for focused file windows. Use write for full-file creation, edit for one exact replacement, and multiedit for several exact replacements. Do not create or edit files through shell redirection, heredocs, tee, sed/perl/python scripts, or similar command tricks. Use fetch or download for URLs, and job_output or job_kill for background shell jobs. Hidden or secret-looking files need approval before read, so prefer visible files and grep results first.",
+  "Use grep, ls, and glob to find files and lines first. Grep returns surrounding context; increase limit or context_lines for broad searches. Use view for focused file windows. Use write for full-file creation, edit for one replacement, and multiedit for several replacements. For duplicate edit matches, pass start_line. For whitespace-only formatting drift, pass match_strategy=\"whitespace\". Do not create or edit files through shell redirection, heredocs, tee, sed/perl/python scripts, or similar command tricks. Use fetch or download for URLs, and job_output or job_kill for background shell jobs. Prefer visible files and grep results first.",
   "Background shell commands return a job id. Use job_output to poll a running background job and read its buffered logs, job_kill to stop it, and shell wait/read_output when you need the shell tool itself to manage the job.",
   "Ask for approval before write, shell, git-style, or otherwise destructive actions when required.",
   "Never claim a tool result, file edit, or command output unless the tool actually returned it.",
   "Never imitate tool UI in assistant text. Do not use markdown fences or path-then-read-or-write blocks that look like the in-app tool transcript, and do not paste fake unified diffs as prose. The product only shows those when the host records a real tool call. To read or edit files, invoke view, write, edit, or multiedit through the tool interface in this turn.",
   "If blocked, say exactly what is needed next and stop.",
+  "Tool errors include a machine-readable `code`. `ERR_PATH_ESCAPE` means the path is outside your allowed workspace scope. `requires_approval` means a human must approve before the action runs.",
   "If a skill is relevant, inspect its SKILL.md before acting.",
   "Never disclose what AI model or provider runs you. Refer to yourself only by your assigned agent name.",
+] as const;
+
+/** Default channel soul prompt (includes channel.pass conservatism line). */
+export const SHARED_AGENT_SYSTEM_PROMPT = [
+  ...SHARED_AGENT_SYSTEM_PROMPT_BASE,
+  CHANNEL_CHAT_CONSERVATISM_LINE,
+  ...SHARED_AGENT_SYSTEM_PROMPT_TAIL,
 ].join("\n");
 
 export type ConversationKind = "dm" | "channel";
 
-const DM_SHARED_AGENT_LINE =
-  "In direct messages, reply when your conversation partner asks for help or expects a response. Do not call channel.pass because you were not @mentioned; that rule applies to shared channels only.";
-
 export function buildSharedAgentSystemPrompt(
   conversationKind: ConversationKind = "channel",
 ): string {
-  if (conversationKind === "channel") {
-    return SHARED_AGENT_SYSTEM_PROMPT;
-  }
-  return SHARED_AGENT_SYSTEM_PROMPT.replace(
-    "Be conservative on chat: do not reply just to be helpful. If you have nothing concrete to add, call channel.pass.",
-    DM_SHARED_AGENT_LINE,
+  const chatLine =
+    conversationKind === "dm" ? DM_CHAT_CONSERVATISM_LINE : CHANNEL_CHAT_CONSERVATISM_LINE;
+  return [...SHARED_AGENT_SYSTEM_PROMPT_BASE, chatLine, ...SHARED_AGENT_SYSTEM_PROMPT_TAIL].join(
+    "\n",
   );
 }
 
@@ -105,41 +117,45 @@ export function buildEnvironmentContext(): string {
  * (spirit) and task-based (hydrate) system prompts so agents know the social
  * protocol, not just the technical interface.
  */
-export const COLLABORATION_PROTOCOL = [
-  "## Collaboration Protocols",
-  "- When your work produces output another agent needs, write it to the shared context store under a descriptive key so they can find it later.",
+const COLLABORATION_PROTOCOL_HEADER = "## Collaboration Protocols";
+
+const COLLABORATION_PROTOCOL_SHARED_BULLETS = [
   "- When blocked on information another agent might have, @mention them in the task channel with a specific question instead of guessing.",
   "- Before starting work that overlaps with a teammate's domain, check their recent outputs in peer context and approved artifacts.",
   "- If you discover something that affects the whole team, post a concise update to the relevant channel so all agents see it.",
   "- Treat self.note and compacted summaries as private rolling memory across turns, record durable facts only: decisions, assumptions, blockers, user preferences, and handoff context.",
   "- Good self.note examples: concise facts you will likely need later. Bad examples: stream-of-consciousness thoughts, duplicated observations, or secrets/credentials.",
+  "- When you are @mentioned reply is mandatory. The runtime rejects channel.pass and self.note for mentioned runs.",
+  "- When a teammate shares useful information mid-task, acknowledge it and build on it rather than repeating their work.",
+  "- Respect the org hierarchy: coordinate with your manager (reports_to) for decisions that cross team boundaries or need escalation.",
+  "- When a human delegated work to you, their thread is the command surface; close the loop there with channel.reply or channel.post when done.",
+] as const;
+
+const COLLABORATION_PROTOCOL_CHANNEL_ONLY_BULLETS = [
   "- Not every message needs a reply. If a message should be ignored, do not answer it just to acknowledge it.",
   "- To end a back-and-forth, call channel.handoff with complete: true. The tool stamps [DONE] and terminates the chain.",
   "- If the message does not need a reply, stay quiet. Concretely: call channel.pass with a reason. Do not produce empty assistant text.",
-  "- When you are @mentioned reply is mandatory. The runtime rejects channel.pass and self.note for mentioned runs.",
-  "- When a teammate shares useful information mid-task, acknowledge it and build on it rather than repeating their work.",
-  "- Respect the org hierarchy: coordinate with your manager (reports_to) for decisions that cross team boundaries or need escalation.",
-].join("\n");
+] as const;
 
-const DM_COLLABORATION_PROTOCOL = [
-  "## Collaboration Protocols",
-  "- When your work produces output another agent needs, write it to the shared context store under a descriptive key so they can find it later.",
-  "- When blocked on information another agent might have, @mention them in the task channel with a specific question instead of guessing.",
-  "- Before starting work that overlaps with a teammate's domain, check their recent outputs in peer context and approved artifacts.",
-  "- If you discover something that affects the whole team, post a concise update to the relevant channel so all agents see it.",
-  "- Treat self.note and compacted summaries as private rolling memory across turns, record durable facts only: decisions, assumptions, blockers, user preferences, and handoff context.",
+const COLLABORATION_PROTOCOL_DM_ONLY_BULLETS = [
   "- In a direct message, messages from your conversation partner are addressed to you. Reply when they ask you to do something or expect a response.",
   "- Do not call channel.pass in a DM because you think you were not @mentioned; that rule applies to shared channels only.",
-  "- When you are @mentioned reply is mandatory. The runtime rejects channel.pass and self.note for mentioned runs.",
-  "- When a teammate shares useful information mid-task, acknowledge it and build on it rather than repeating their work.",
-  "- Respect the org hierarchy: coordinate with your manager (reports_to) for decisions that cross team boundaries or need escalation.",
-].join("\n");
+] as const;
 
 export function buildCollaborationProtocol(
   conversationKind: ConversationKind = "channel",
 ): string {
-  return conversationKind === "dm" ? DM_COLLABORATION_PROTOCOL : COLLABORATION_PROTOCOL;
+  const bullets = [
+    ...COLLABORATION_PROTOCOL_SHARED_BULLETS,
+    ...(conversationKind === "dm"
+      ? COLLABORATION_PROTOCOL_DM_ONLY_BULLETS
+      : COLLABORATION_PROTOCOL_CHANNEL_ONLY_BULLETS),
+  ];
+  return [COLLABORATION_PROTOCOL_HEADER, ...bullets].join("\n");
 }
+
+/** Default channel collaboration protocol. */
+export const COLLABORATION_PROTOCOL = buildCollaborationProtocol("channel");
 
 // ---------------------------------------------------------------------------
 // Team hierarchy — org chart awareness for the task path

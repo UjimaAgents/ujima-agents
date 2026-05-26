@@ -40,10 +40,12 @@ describe('grep tool', () => {
       path: string;
       count: number;
       truncated: boolean;
-      matches: { path: string; lineNumber: number; line: string }[];
+      contextLines: number;
+      matches: { path: string; lineNumber: number; line: string; before: unknown[]; after: unknown[] }[];
     };
 
     expect(result.query).toBe('cors');
+    expect(result.contextLines).toBe(2);
     expect(result.count).toBe(2);
     expect(result.truncated).toBe(false);
     expect(result.matches[0]).toMatchObject({
@@ -56,6 +58,37 @@ describe('grep tool', () => {
       lineNumber: 1,
       line: 'CORS_CONFIG',
     });
+  });
+
+  it('returns surrounding context and supports higher result caps', async () => {
+    root = await mkdtemp(join(tmpdir(), 'ujima-grep-'));
+    await writeFile(join(root, 'a.ts'), 'one\nbefore\nneedle\nbetween\nneedle\nend\n', 'utf8');
+
+    const result = (await grepTool.execute({
+      invocation: {
+        organizationId: 'org-1',
+        runId: 'run-1',
+        memberId: 'agent-1',
+        toolCallId: 'call-1',
+        toolId: 'grep',
+        action: 'read',
+        resourceType: 'folder',
+        resourcePath: '.',
+        input: { query: 'needle', limit: 200, context_lines: 1 },
+      } as never,
+      team: { workspace: { root } } as never,
+      repo: {} as never,
+      conversations: {} as never,
+    })) as {
+      limit: number;
+      contextLines: number;
+      matches: { before: { lineNumber: number; line: string }[]; after: { lineNumber: number; line: string }[] }[];
+    };
+
+    expect(result.limit).toBe(200);
+    expect(result.contextLines).toBe(1);
+    expect(result.matches.at(0)?.before).toEqual([{ lineNumber: 2, line: 'before' }]);
+    expect(result.matches.at(0)?.after).toEqual([{ lineNumber: 4, line: 'between' }]);
   });
 
   it('skips hidden and secret-looking files without git', async () => {

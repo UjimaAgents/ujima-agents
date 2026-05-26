@@ -14,6 +14,23 @@ export function isPathInsideRoot(root: string, candidatePath: string): boolean {
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
 }
 
+export function canonicalWorkspacePath(workspaceRoot: string, candidatePath: string): string {
+  const resolved = path.isAbsolute(candidatePath)
+    ? path.resolve(candidatePath)
+    : path.resolve(workspaceRoot, candidatePath);
+  return existsSync(resolved) ? realpathSync(resolved) : resolved;
+}
+
+export function isPathWithinScope(
+  workspaceRoot: string,
+  scopePath: string,
+  resourcePath: string,
+): boolean {
+  const normalizedScope = canonicalWorkspacePath(workspaceRoot, scopePath);
+  const normalizedResource = canonicalWorkspacePath(workspaceRoot, resourcePath);
+  return isPathInsideRoot(normalizedScope, normalizedResource);
+}
+
 export function resolveWorkspacePath(root: string, relativePath = '.'): string {
   const normalizedRoot = path.resolve(root);
   const resolvedPath = path.resolve(normalizedRoot, relativePath);

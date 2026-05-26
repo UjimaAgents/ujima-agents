@@ -1,11 +1,19 @@
-import { existsSync, realpathSync } from 'node:fs';
-import { join, resolve, sep } from 'node:path';
+import { relative, sep } from 'node:path';
 import type { AgentTeamHandle } from '@ujima/framework';
 import type { ToolAction, SpiritRole, WakeReason } from '@ujima/shared';
 import { isSensitiveWorkspacePath } from '@ujima/shared/workspace-file-filters';
-import { assertWorkspaceBoundary, isPathInsideRoot } from '@ujima/shared/workspace';
+import {
+  assertWorkspaceBoundary,
+  canonicalWorkspacePath,
+  isPathWithinScope,
+} from '@ujima/shared/workspace';
+import { isInScopeFileTool } from '../path-scoped-tools.js';
 import { ALWAYS_AVAILABLE_AGENT_TOOLS } from '../tools/index.js';
-import { isDirectMessageThread } from '../utils/thread-state.js';
+import {
+  buildPassOrSelfNoteDenialReason,
+  resolveWakeReplyPolicy,
+  shouldSuppressPassAndSelfNote,
+} from '../utils/wake-reply-policy.js';
 
 export interface PolicyResult {
   allowed: boolean;
@@ -38,36 +46,21 @@ export function checkToolPolicy(
     return { allowed: false, requiresApproval: false, reason: `Unknown role: ${roleName}` };
   }
 
-  // L3 — mandatory-reply enforcement. A `@mention`ed run is a
-  // contract: someone tagged this agent and expects a posted reply.
-  // Allowing `channel.pass` or `self.note` would let the model
-  // silently slip out of the obligation. Reject both BEFORE the
-  // blanket allows below so the contract holds regardless of role.
-  const mandatoryReply = options.wakeReason === 'mention';
-  const directMessageThread =
-    options.threadId !== undefined && isDirectMessageThread(options.threadId);
+  // L3 — wake/DM reply contract (palette + policy share resolveWakeReplyPolicy).
+  const wakeReplyPolicy = resolveWakeReplyPolicy({
+    threadId: options.threadId ?? '',
+    wakeReason: options.wakeReason,
+  });
 
-  if (mandatoryReply || directMessageThread) {
-    if (toolId === 'channel.pass') {
-      const reason = mandatoryReply
-        ? 'mandatory-reply: you were @mentioned, channel.pass is not allowed. Reply via channel.reply, channel.dm, or message.'
-        : 'direct-message: channel.pass is not allowed in a 1:1 DM. Reply via channel.reply, channel.dm, or message.';
-      return {
-        allowed: false,
-        requiresApproval: false,
-        reason,
-      };
-    }
-    if (toolId === 'self.note') {
-      const reason = mandatoryReply
-        ? 'mandatory-reply: you were @mentioned, self.note is not allowed. Reply via channel.reply, channel.dm, or message.'
-        : 'direct-message: self.note is not allowed in a 1:1 DM when a reply is expected. Reply via channel.reply, channel.dm, or message.';
-      return {
-        allowed: false,
-        requiresApproval: false,
-        reason,
-      };
-    }
+  if (
+    shouldSuppressPassAndSelfNote(wakeReplyPolicy) &&
+    (toolId === 'channel.pass' || toolId === 'self.note')
+  ) {
+    return {
+      allowed: false,
+      requiresApproval: false,
+      reason: buildPassOrSelfNoteDenialReason(toolId, wakeReplyPolicy),
+    };
   }
 
   // self.note is the agent's private scratchpad. Per the channels-as-substrate
@@ -132,10 +125,6 @@ export function checkToolPolicy(
     };
   }
 
-  if (toolId === 'message') {
-    return { allowed: true, requiresApproval: false };
-  }
-
   if (toolId === 'mcp') {
     return { allowed: true, requiresApproval: true };
   }
@@ -177,6 +166,7 @@ export function checkToolPolicy(
     return { allowed: true, requiresApproval: false };
   }
 
+  let inScopeFileAccess = false;
   if (resourcePath) {
     try {
       assertWorkspaceBoundary(team.workspace.root, resourcePath);
@@ -195,54 +185,55 @@ export function checkToolPolicy(
       return { allowed: true, requiresApproval: false };
     }
 
+    const canonicalPath = canonicalWorkspacePath(team.workspace.root, resourcePath);
+    const pathForSensitivityCheck = canonicalPath.startsWith(team.workspace.root)
+      ? relative(team.workspace.root, canonicalPath)
+      : resourcePath;
+    if (action === 'read' && isSensitiveWorkspacePath(pathForSensitivityCheck)) {
+      return {
+        allowed: true,
+        requiresApproval: true,
+        reason: `Reading "${resourcePath}" requires approval because it may contain secrets`,
+      };
+    }
+
     // When `role.workspaceScopes` is empty (the default for roles
     // that didn't opt in), fall back to the workspace root for
     // READ actions only. The product mental model is "every agent
     // can look at the workspace"; writes still require an explicit
-    // scope to keep blast-radius bounded. The sensitive-path filter
-    // below still applies in both cases.
+    // scope to keep blast-radius bounded.
     const effectiveScopes =
       role.workspaceScopes.length > 0
         ? role.workspaceScopes
         : action === 'read'
           ? ['.']
           : role.workspaceScopes;
-    if (!effectiveScopes.some((scope) => pathWithinScope(team.workspace.root, scope, resourcePath))) {
-      return {
-        allowed: false,
-        requiresApproval: false,
-        reason: `Path "${resourcePath}" is outside allowed scopes for role "${roleName}"`,
-      };
-    }
-
-    if (action === 'read' && isSensitiveWorkspacePath(resourcePath)) {
+    const inRoleScope = effectiveScopes.some((scope) =>
+      isPathWithinScope(team.workspace.root, scope, resourcePath),
+    );
+    if (!inRoleScope && action !== 'read') {
       return {
         allowed: true,
         requiresApproval: true,
-        reason: `Path "${resourcePath}" requires approval`,
+        reason: `Path "${resourcePath}" is outside allowed scopes for role "${roleName}"`,
       };
     }
+    inScopeFileAccess = isInScopeFileTool(toolId, action);
   }
 
   return {
     allowed: true,
-    requiresApproval: action !== 'read',
+    requiresApproval:
+      !inScopeFileAccess &&
+      action !== 'read' &&
+      toolId !== 'write' &&
+      toolId !== 'edit' &&
+      toolId !== 'multiedit',
   };
 }
 
-function pathWithinScope(workspaceRoot: string, scope: string, resourcePath: string): boolean {
-  const normalizedScope = canonicalizeForComparison(scope, workspaceRoot);
-  const normalizedResource = canonicalizeForComparison(resourcePath, workspaceRoot);
-  return isPathInsideRoot(normalizedScope, normalizedResource);
-}
-
-function canonicalizeForComparison(path: string, workspaceRoot: string): string {
-  const resolved = resolve(workspaceRoot, path);
-  return existsSync(resolved) ? realpathSync(resolved) : resolved;
-}
-
 function isGoalArtifactPath(workspaceRoot: string, resourcePath: string): boolean {
-  const candidate = canonicalizeForComparison(resourcePath, workspaceRoot);
-  const goalRoot = canonicalizeForComparison(join(workspaceRoot, '.ujima-goals'), workspaceRoot);
+  const candidate = canonicalWorkspacePath(workspaceRoot, resourcePath);
+  const goalRoot = canonicalWorkspacePath(workspaceRoot, '.ujima-goals');
   return candidate === goalRoot || candidate.startsWith(`${goalRoot}${sep}`);
 }

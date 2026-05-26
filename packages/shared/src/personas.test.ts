@@ -70,7 +70,7 @@ describe('persona templates', () => {
       permissions: {
         allowed_tools: ['get_file', 'create_frame'],
         blocked_tools: ['delete_node'],
-        rate_limit: { calls_per_minute: 30, max_session_tokens: 100_000 },
+        rate_limit: { max_session_tokens: 100_000 },
       },
       reportsTo: 'agent_designer_sr_1',
     });
@@ -90,7 +90,7 @@ describe('persona templates', () => {
         templateId: 'nope',
         mcpId: 'filesystem',
         model: 'm',
-        permissions: { allowed_tools: [], blocked_tools: [], rate_limit: { calls_per_minute: 1, max_session_tokens: 1 } },
+        permissions: { allowed_tools: [], blocked_tools: [], rate_limit: { max_session_tokens: 1 } },
       }),
     ).toThrow(/Unknown persona template/);
   });

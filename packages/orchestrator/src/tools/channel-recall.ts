@@ -67,8 +67,20 @@ export const channelRecallTool: OrchestratorTool<typeof ChannelRecallSchema> = {
     // --- Message hits -------------------------------------------------
     if (scope === 'channel' || scope === 'org' || scope === 'all') {
       try {
-        const visibleChannelId =
+        // Resolve the channel id for 'channel' scope:
+        //   1. Explicit `channel_id` argument always wins.
+        //   2. Otherwise fall back to the current thread's channel
+        //      via the threads repo — this is what callers expect
+        //      when they pass `scope: 'channel'` without an id.
+        // Without this resolution the tool used to silently widen
+        // to the org-scope fan-out branch, returning hits from
+        // every visible channel.
+        let visibleChannelId =
           typeof input.channel_id === 'string' ? input.channel_id : undefined;
+        if (scope === 'channel' && !visibleChannelId && invocation.threadId) {
+          const thread = repo.getThread(invocation.organizationId, invocation.threadId);
+          visibleChannelId = thread?.channelId;
+        }
         if (scope === 'channel' && visibleChannelId) {
           const page = await conversations.readChannel({
             organizationId: invocation.organizationId,
@@ -88,6 +100,13 @@ export const channelRecallTool: OrchestratorTool<typeof ChannelRecallSchema> = {
               createdAt: m.createdAt,
             });
           }
+        } else if (scope === 'channel') {
+          // `scope: 'channel'` was requested but we couldn't
+          // resolve a channel id from either the argument or the
+          // current thread. Refuse to silently widen to org scope
+          // — the caller asked for one channel and getting many
+          // would bury the hit they want. Return an empty
+          // message-hit set; file hits below still run.
         } else {
           // Org-scope: fan out across the channels the member can
           // see. Bound the per-channel limit so a single noisy

@@ -8,10 +8,9 @@ export const AgentPermissions = z.object({
   blocked_tools: z.array(z.string()).default([]),
   rate_limit: z
     .object({
-      calls_per_minute: z.number().int().positive().default(30),
       max_session_tokens: z.number().int().positive().default(100_000),
     })
-    .default({ calls_per_minute: 30, max_session_tokens: 100_000 }),
+    .default({ max_session_tokens: 100_000 }),
 });
 export type AgentPermissions = z.infer<typeof AgentPermissions>;
 

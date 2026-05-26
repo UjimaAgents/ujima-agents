@@ -24,9 +24,12 @@ export type {ProviderModelOption} from "./model-catalog.js";
 export * from "./socket-events.js";
 export * from "./cursor.js";
 export * from "./conversations.js";
+export * from "./agent-only-thread.js";
+export * from "./mentions.js";
 export * from "./approval-scope.js";
 export * from "./tool-call-display-args.js";
 export * from "./workspace-file-filters.js";
+export { formatPathEscapeError, type PathEscapeReason } from "./path-escape.js";
 export * from "./goal-schemas.js";
 export {
   SHARED_AGENT_SYSTEM_PROMPT,

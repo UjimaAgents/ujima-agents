@@ -12,7 +12,7 @@ import { resolveDefaultConversation } from "@/features/workspace/workspace-chann
 export default async function WorkspacePage({
   searchParams,
 }: {
-  searchParams?: Promise<Record<string, string | string[] | undefined>> | Record<string, string | string[] | undefined>;
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const bootstrap = await getServerBootstrap().catch(() => null);
   if (!bootstrap) {

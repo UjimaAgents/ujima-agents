@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { mkdtemp, writeFile, mkdir, symlink, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createPathResolver, PathEscapeError } from './path-resolver';
+import { createPathResolver, PathEscapeError } from './path-resolver.js';
 
 describe('PathResolver', () => {
   let root: string;
@@ -54,6 +54,19 @@ describe('PathResolver', () => {
     const r = await createPathResolver({ root, scopePaths: ['src'] });
     await expect(r.resolve(join(root, 'src', 'a.ts'))).resolves.toContain('src');
     await expect(r.resolve(join(root, 'other.ts'))).rejects.toBeInstanceOf(PathEscapeError);
+  });
+
+  it('describes scope violations separately from workspace root escape', async () => {
+    const r = await createPathResolver({ root, scopePaths: ['src'] });
+    await expect(r.resolve(join(root, 'other.ts'))).rejects.toMatchObject({
+      reason: 'scope',
+    });
+    await expect(r.resolve(join(root, 'other.ts'))).rejects.toThrow(
+      /outside allowed scope\(s\)/,
+    );
+    await expect(r.resolve(join(outside, 'secret.txt'))).rejects.toMatchObject({
+      reason: 'workspace',
+    });
   });
 
   it('preserves missing scope boundaries instead of broadening to the parent subtree', async () => {

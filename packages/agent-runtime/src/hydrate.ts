@@ -1,5 +1,10 @@
 import type { AgentDef, TaskDef, UjimaEvent } from '@ujima/shared';
-import { SHARED_AGENT_SYSTEM_PROMPT, COLLABORATION_PROTOCOL, buildEnvironmentContext, buildTeamHierarchySection } from '@ujima/shared';
+import {
+  buildCollaborationProtocol,
+  buildEnvironmentContext,
+  buildTeamHierarchySection,
+  SHARED_AGENT_SYSTEM_PROMPT,
+} from '@ujima/shared';
 import type { ContextEntry, ContextStore, ApprovalTracker } from '@ujima/context-store';
 import type { EventBus } from '@ujima/event-bus';
 import type { HydrationBundle } from './types';
@@ -23,7 +28,6 @@ export interface HydrateDeps {
   constraints?: {
     maxToolIterations?: number;
     maxSessionTokens?: number;
-    callsPerMinute?: number;
   };
 }
 
@@ -134,7 +138,6 @@ function buildSystemPrompt(opts: {
   constraints?: {
     maxToolIterations?: number;
     maxSessionTokens?: number;
-    callsPerMinute?: number;
   };
 }): string {
   const { agent, task, events, peerOutputs, approvedArtifacts, sessionId, teammates, mcpMeta, constraints } = opts;
@@ -167,7 +170,7 @@ function buildSystemPrompt(opts: {
   }
 
   // ── Collaboration protocol: how to work with teammates ──
-  sections.push(`\n${COLLABORATION_PROTOCOL}`);
+  sections.push(`\n${buildCollaborationProtocol('channel')}`);
 
   // ── Task: what the agent is here to do ──
   const taskLines = [`\n## Task`];
@@ -203,9 +206,6 @@ function buildSystemPrompt(opts: {
     }
     if (constraints.maxSessionTokens) {
       cLines.push(`- Token budget: ${constraints.maxSessionTokens.toLocaleString()} tokens`);
-    }
-    if (constraints.callsPerMinute) {
-      cLines.push(`- Rate limit: ${constraints.callsPerMinute} tool calls/minute`);
     }
     sections.push(cLines.join('\n'));
   }

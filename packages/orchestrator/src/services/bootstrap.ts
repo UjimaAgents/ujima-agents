@@ -1,5 +1,6 @@
 import type { AuthState } from './auth.js';
 import type { BootstrapSnapshot, ApiRepository } from './repository-reader.js';
+import type { SkillInstall } from '@ujima/shared';
 import type { TeamStore } from './team-store.js';
 import type { TeamSummary } from './team.js';
 import type { AuthService } from './auth.js';
@@ -21,6 +22,7 @@ export interface BootstrapResponse {
   channels: BootstrapSnapshot['channels'];
   pendingApprovals: BootstrapSnapshot['pendingApprovals'];
   activeRuns: BootstrapSnapshot['activeRuns'];
+  skills: SkillInstall[];
   conversationUnreadCounts: Record<string, number>;
   auth: AuthState;
 }
@@ -63,6 +65,7 @@ export class BootstrapService {
       channels: snapshot.channels,
       pendingApprovals: snapshot.pendingApprovals,
       activeRuns: snapshot.activeRuns,
+      skills: organizationId ? (this.repo.listOrganizationSkillInstalls?.(organizationId) ?? []) : [],
       conversationUnreadCounts: member
         ? this.buildConversationUnreadCounts(snapshot, member.id)
         : {},

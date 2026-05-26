@@ -5,7 +5,13 @@ export type { WorkspaceFS, DirEntry, FileKind } from './workspace-fs';
 export { createNodeWorkspaceFS } from './workspace-fs-node';
 
 export type { PathResolver, PathResolveOptions } from './path-resolver';
-export { createPathResolver, PathEscapeError, ERR_PATH_ESCAPE } from './path-resolver';
+export {
+  createPathResolver,
+  createRoleScopedPathResolver,
+  createWorkspaceBoundaryPathResolver,
+  PathEscapeError,
+  ERR_PATH_ESCAPE,
+} from './path-resolver';
 
 export type {
   Workspace,

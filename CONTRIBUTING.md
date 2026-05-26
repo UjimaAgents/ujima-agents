@@ -1,6 +1,6 @@
 # Contributing to Ujima Agents
 
-Thanks for helping build Ujima Agents.
+Thanks for helping build Ujima Agents — a framework for Slack-like teams of AI agents, with roles and workspace-bounded execution.
 
 This repo is intentionally small in surface area and strict in design. We prefer direct implementations over abstractions, and we keep the shared contracts stable so the rest of the monorepo stays easy to reason about.
 
@@ -42,12 +42,56 @@ If you touch package APIs, update the matching README in the same change.
 - Explain what changed and why.
 - Mention any user-facing impact.
 - Include the commands you ran.
-- Keep the diff as small as possible. Aim for under 500 lines of churn; CI blocks PRs over **2000** lines (insertions + deletions, excluding lockfiles and `.vsix` artifacts).
+- Keep the diff as small as possible. Aim for under 500 lines added; CI blocks PRs that **add more than 2000 lines** (insertions only — deletions and refactors do not count toward the limit; lockfiles and `.vsix` artifacts are excluded).
 
 To check size locally before opening a PR:
 
 ```bash
 BASE_SHA=origin/main HEAD_SHA=HEAD MAX_LINES=2000 bash .github/scripts/check-pr-size.sh
+```
+
+## Releasing
+
+Releases are **tag-driven**. Day-to-day work still merges to `main`; npm publish happens only when a version tag is pushed.
+
+### Version source of truth
+
+[`packages/distribution/package.json`](packages/distribution/package.json) — workspace package `@ujima/distribution`; published to npm as **`ujima-agents`**.
+
+### Prepare a release
+
+1. Ensure `main` is green in CI.
+2. Update [`CHANGELOG.md`](CHANGELOG.md) under `[Unreleased]` with user-facing notes.
+3. Bump the distribution version and roll the changelog:
+
+```bash
+bun run release:prepare 0.2.0
+```
+
+4. Commit, tag, and push:
+
+```bash
+git add packages/distribution/package.json CHANGELOG.md
+git commit -m "chore(release): v0.2.0"
+git tag v0.2.0
+git push origin main && git push origin v0.2.0
+```
+
+The tag **must** match the package version exactly (`v0.2.0` ↔ `"version": "0.2.0"`).
+
+### CI publish
+
+[`.github/workflows/release.yml`](.github/workflows/release.yml) runs on `v*` tags: validates the tag, runs tests, assembles `packages/distribution/dist` (compiled runtime only — no TypeScript sources), publishes to npm, and creates a GitHub Release with the VSIX attached.
+
+Set the repository secret **`NPM_TOKEN`** (npm automation token with publish access to `ujima-agents`).
+
+### Local checks
+
+```bash
+bun run release:check          # tag ↔ package.json (set TAG=v0.2.0 if not on a tag)
+bun run release:dist             # assemble dist/
+bun run release:smoke            # npm pack + install + ujima --help (+ API /health)
+bun run release:smoke --skip-start   # skip API health probe
 ```
 
 ## Questions

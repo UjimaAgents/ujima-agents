@@ -1,6 +1,9 @@
-import { organizationIdFromWorkspaceId } from "./workspace-ids";
+import {
+  organizationIdFromWorkspaceId,
+  orgWorkspaceId,
+} from "@ujima/shared/browser";
 
-export { organizationIdFromWorkspaceId, orgWorkspaceId } from "./workspace-ids";
+export { organizationIdFromWorkspaceId, orgWorkspaceId };
 
 export function reloadAfterWorkspaceSwitch(redirectTo?: string): void {
   window.location.href =

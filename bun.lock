@@ -16,6 +16,7 @@
         "@typescript-eslint/eslint-plugin": "^8.0.0",
         "@typescript-eslint/parser": "^8.0.0",
         "@ujima/mcp-client": "workspace:*",
+        "esbuild": "^0.28.0",
         "eslint": "^9.9.0",
         "prettier": "^3.3.3",
         "tailwindcss": "4",
@@ -182,6 +183,16 @@
       },
       "devDependencies": {
         "@types/better-sqlite3": "^7.6.11",
+      },
+    },
+    "packages/distribution": {
+      "name": "@ujima/distribution",
+      "version": "0.1.0-alpha.0",
+      "bin": {
+        "ujima": "./dist/cli.js",
+      },
+      "dependencies": {
+        "better-sqlite3": "^12.9.0",
       },
     },
     "packages/event-bus": {
@@ -819,6 +830,8 @@
     "@ujima/client-sdk": ["@ujima/client-sdk@workspace:packages/client-sdk"],
 
     "@ujima/context-store": ["@ujima/context-store@workspace:packages/context-store"],
+
+    "@ujima/distribution": ["@ujima/distribution@workspace:packages/distribution"],
 
     "@ujima/event-bus": ["@ujima/event-bus@workspace:packages/event-bus"],
 

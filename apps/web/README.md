@@ -1,8 +1,10 @@
 # Ujima Web
 
-Next.js UI for the local Ujima control plane.
+Slack-like web UI for Ujima agent teams.
 
-The web app will provide:
+Part of [Ujima Agents](../../README.md): a framework for building Slack-like teams of AI agents, with roles and workspace-bounded execution.
+
+The web app provides:
 - onboarding
 - chat and channel views
 - DMs and mentions
@@ -32,6 +34,9 @@ bun install
 ```
 
 ## Development Notes
+
+- **Default port:** `3452` (not `3000`) so the web UI does not clash with other React/Next apps. Override with `WEB_PORT`, e.g. `WEB_PORT=4000 bun run dev`.
+- API default remains `7511` (`UJIMA_PORT`).
 
 - Use existing UI primitives first.
 - Keep the UI thin and driven by API contracts.

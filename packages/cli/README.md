@@ -1,8 +1,8 @@
 # Ujima CLI
 
-Command-line entry point for bootstrapping and local setup.
+Bootstrap and start the local Ujima stack.
 
-The CLI is the fast path for getting a workspace ready. It should make the project easy to start, easy to understand, and hard to misconfigure.
+The CLI initializes your org and runs `ujima start` so the web (Slack-like UI) and VS Code extension can connect to the same local API. It is not a third chat surface.
 
 ## What It Does
 
@@ -14,7 +14,7 @@ The CLI is the fast path for getting a workspace ready. It should make the proje
 
 ## Why It Exists
 
-An open-source agent stack needs a clear first command. The CLI gives people a low-friction path from clone to running system.
+`ujima init` and `ujima start` are the path from clone to a running team — web UI and extension ready to connect.
 
 ## Build
 

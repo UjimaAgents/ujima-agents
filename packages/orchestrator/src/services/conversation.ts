@@ -14,8 +14,12 @@ import {
   type ChannelPassReason,
   type Message,
   type MessageMention,
+  buildMentionHandleRegistry,
+  getDirectMessageThreadId,
+  scanMentionsInContent,
   type WakeReason,
   type WakeSuppressedReason,
+  isAgentOnlyThread,
 } from '@ujima/shared';
 import type { RealtimeService } from './context.js';
 import { selfChannelId } from './member-channels.js';
@@ -40,6 +44,7 @@ import type {
 } from './repository-reader.js';
 import { requireOrganization } from '../utils/require-organization.js';
 import { isVacuousAck, shouldSuppressForMirror } from './mirror-guard.js';
+import { isAcknowledgementOnly } from './run-reply-guard.js';
 
 const ATTACHMENT_FILE_LIMIT_BYTES = 25 * 1024 * 1024;
 const ATTACHMENT_MESSAGE_LIMIT_BYTES = 100 * 1024 * 1024;
@@ -205,7 +210,7 @@ export class ConversationService {
     requireOrganization(this.repo, organizationId);
 
     if (memberId) {
-      this.requireThreadAccess(organizationId, threadId, memberId);
+      this.requireThreadAccess(organizationId, threadId, memberId, 'read');
     }
 
     const thread = this.repo.getThread(organizationId, threadId);
@@ -221,7 +226,12 @@ export class ConversationService {
     );
   }
 
-  requireThreadAccess(organizationId: string, threadId: string, memberId: string): void {
+  requireThreadAccess(
+    organizationId: string,
+    threadId: string,
+    memberId: string,
+    access: 'read' | 'write' = 'write',
+  ): void {
     const thread = this.repo.getThread(organizationId, threadId);
     if (!thread) {
       const channel = this.repo.getChannel(organizationId, threadId);
@@ -232,6 +242,9 @@ export class ConversationService {
         throw new Error(`Channel is archived: ${threadId}`);
       }
       if (!this.canMemberAccessChannel(channel, memberId)) {
+        if (access === 'read' && this.canObserverReadThread(organizationId, threadId, memberId)) {
+          return;
+        }
         throw new Error('Forbidden: you do not have access to this thread');
       }
       this.repo.ensureThread({
@@ -256,6 +269,10 @@ export class ConversationService {
       if (channel && this.canMemberAccessChannel(channel, memberId)) {
         return;
       }
+    }
+
+    if (access === 'read' && this.canObserverReadThread(organizationId, threadId, memberId)) {
+      return;
     }
 
     throw new Error('Forbidden: you do not have access to this thread');
@@ -411,8 +428,7 @@ export class ConversationService {
       // we skip them here to avoid double-fire.
       void this.alertChannelReaders(emittedMessage, channel, resolvedMentions);
     }
-    // Post-publish hook (Bet 4 — commitment extraction). Fire-and-
-    // forget; a hook failure must never roll back the publish.
+    // Fire-and-forget; a hook failure must never roll back the publish.
     if (this.messagePublishedHook) {
       void Promise.resolve()
         .then(() => this.messagePublishedHook?.(emittedMessage))
@@ -954,8 +970,7 @@ export class ConversationService {
       throw new Error(`Recipient not found: ${input.recipientId}`);
     }
 
-    const [firstId, secondId] = [sender.id, recipient.id].sort();
-    const channelId = `dm:${firstId}:${secondId}`;
+    const channelId = getDirectMessageThreadId(sender.id, recipient.id);
     let threadId = channelId;
     let replyChannelId = channelId;
     if (input.parentMessageId) {
@@ -1044,8 +1059,7 @@ export class ConversationService {
       throw new Error(`Member not found: ${input.memberIdB}`);
     }
 
-    const [firstId, secondId] = [memberA.id, memberB.id].sort();
-    const channelId = `dm:${firstId}:${secondId}`;
+    const channelId = getDirectMessageThreadId(memberA.id, memberB.id);
     const dmChannelName = [memberA.name, memberB.name].sort().join(' / ');
     const now = new Date().toISOString();
 
@@ -1417,7 +1431,27 @@ export class ConversationService {
     await Promise.all(
       recipients.map(async (recipientId) => {
         try {
-          await this.alertMember(message, recipientId, channel, 'dm' as WakeReason);
+          const countInWindow = this.recordPairMentionWake(
+            message.organizationId,
+            message.threadId,
+            message.senderId,
+            recipientId,
+          );
+          const wakeReason: WakeReason =
+            countInWindow > this.pairMentionCap ? 'channel-read' : 'dm';
+
+          if (wakeReason === 'channel-read') {
+            this.emitEchoSuppressed({
+              organizationId: message.organizationId,
+              fromMemberId: message.senderId,
+              toMemberId: recipientId,
+              channelId: channel?.id,
+              threadId: message.threadId,
+              countInWindow,
+            });
+          }
+
+          await this.alertMember(message, recipientId, channel, wakeReason);
         } catch (error) {
           console.warn('DM participant alert failed', {
             organizationId: message.organizationId,
@@ -1431,16 +1465,10 @@ export class ConversationService {
   }
 
   private shouldSuppressDmWake(message: Message, channel: Channel | null): boolean {
-    // L4 — `Acknowledged.` is no longer the termination protocol;
-    // the new termination is `channel.handoff({ complete: true })`
-    // which already short-circuits the run loop and never reaches
-    // this path. DM-wake suppression stays in for future
-    // metadata-based terminators but no longer pattern-matches on
-    // the literal token.
     if (!channel || channel.kind !== 'dm') return false;
     if (message.kind !== AGENT_KIND) return false;
     const handoff = (message.metadata as { handoff?: { complete?: boolean } } | undefined)?.handoff;
-    return handoff?.complete === true;
+    return handoff?.complete === true || isAcknowledgementOnly(message.content);
   }
 
   private publishMentionThrottledSystemMessage(
@@ -1572,50 +1600,26 @@ export class ConversationService {
     senderKind: string,
     explicitMentionIds: string[],
   ): string[] {
-    const byHandle = this.listMentionHandleMap(organizationId);
-    const sortedHandles = [...byHandle.keys()].sort((a, b) => b.length - a.length);
-
-    // We merge explicit mention ids from tool inputs with parsed @handles from
-    // the message body so typed intent stays consistent no matter how the
-    // message was authored.
     const mentionIds = new Set<string>(explicitMentionIds);
+    const registry = buildMentionHandleRegistry(
+      this.repo.listMembers(organizationId).flatMap((member) => [
+        { handle: member.id, value: member.id },
+        { handle: member.name, value: member.id },
+      ]),
+    );
 
-    // Regex to find potential mention starts: @ preceded by start of string or a non-word char (except @)
-    const mentionStartRegex = /(?:^|[^@\w])@/g;
-
-    for (const match of content.matchAll(mentionStartRegex)) {
-      const startIndex = (match.index ?? 0) + match[0].length;
-      const remaining = content.slice(startIndex).toLowerCase();
-
-
-      // Check for "@all" first as it's a special system handle
-      if (senderKind !== AGENT_KIND && remaining.startsWith('all')) {
-        const nextChar = remaining[3];
-        if (!nextChar || !/\w/.test(nextChar)) {
-          for (const memberId of this.resolveAllMentionIds(organizationId, channel)) {
-            mentionIds.add(memberId);
-          }
-          continue;
+    scanMentionsInContent(content, registry, {
+      allowAll: senderKind !== AGENT_KIND,
+      onAll: () => {
+        for (const memberId of this.resolveAllMentionIds(organizationId, channel)) {
+          mentionIds.add(memberId);
         }
-      }
+      },
+    });
 
-      for (const handle of sortedHandles) {
-        if (remaining.startsWith(handle)) {
-          // Check if the match is followed by a non-word char or end of string
-          const nextChar = remaining[handle.length];
-          if (!nextChar || !/\w/.test(nextChar)) {
-            const memberId = byHandle.get(handle);
-            if (memberId) {
-              mentionIds.add(memberId);
-              // Break after first (longest) match for this @ instance
-              break;
-            }
-          }
-        }
-      }
+    for (const memberId of registry.values) {
+      mentionIds.add(memberId);
     }
-
-
 
     return [...mentionIds];
   }
@@ -1640,66 +1644,27 @@ export class ConversationService {
     return this.repo.listMembers(organizationId).map((member) => member.id);
   }
 
-  private listMentionHandleMap(organizationId: string): Map<string, string> {
-    const members = this.repo.listMembers(organizationId);
-    const byHandle = new Map<string, string>();
-    for (const member of members) {
-      byHandle.set(normalizeMentionHandle(member.id), member.id);
-      byHandle.set(normalizeMentionHandle(member.name), member.id);
-    }
-    return byHandle;
-  }
-
-  private listMentionDisplayMap(organizationId: string): Map<string, string> {
-    const members = this.repo.listMembers(organizationId);
-    const byHandle = new Map<string, string>();
-    for (const member of members) {
-      byHandle.set(normalizeMentionHandle(member.id), member.name);
-      byHandle.set(normalizeMentionHandle(member.name), member.name);
-    }
-    return byHandle;
-  }
-
   private resolveMentionNames(
     organizationId: string,
     content: string,
     channel: Channel | null,
   ): string[] {
-    const byHandle = this.listMentionDisplayMap(organizationId);
-    const sortedHandles = [...byHandle.keys()].sort((a, b) => b.length - a.length);
-    const mentionNames = new Set<string>();
-    const mentionStartRegex = /(?:^|[^@\w])@/g;
+    const registry = buildMentionHandleRegistry(
+      this.repo.listMembers(organizationId).flatMap((member) => [
+        { handle: member.id, value: member.name },
+        { handle: member.name, value: member.name },
+      ]),
+    );
 
-    for (const match of content.matchAll(mentionStartRegex)) {
-      const startIndex = (match.index ?? 0) + match[0].length;
-      const remaining = content.slice(startIndex).toLowerCase();
+    scanMentionsInContent(content, registry, {
+      allowAll: true,
+      skipAllInDm: channel?.kind === 'dm',
+      onAll: () => {
+        registry.values.add('all');
+      },
+    });
 
-      if (remaining.startsWith('all')) {
-        const nextChar = remaining[3];
-        if (!nextChar || !/\w/.test(nextChar)) {
-          mentionNames.add('all');
-          continue;
-        }
-      }
-
-      for (const handle of sortedHandles) {
-        if (!remaining.startsWith(handle)) continue;
-        const nextChar = remaining[handle.length];
-        if (!nextChar || !/\w/.test(nextChar)) {
-          const displayName = byHandle.get(handle);
-          if (displayName) {
-            mentionNames.add(displayName);
-            break;
-          }
-        }
-      }
-    }
-
-    if (mentionNames.has('all') && channel?.kind === 'dm') {
-      mentionNames.delete('all');
-    }
-
-    return [...mentionNames];
+    return [...registry.values];
   }
 
   private decorateMessages(
@@ -1964,6 +1929,27 @@ export class ConversationService {
     if (channel?.kind === 'self' && message.content.startsWith(SELF_NOTE_COMPACTED_MARKER)) return true;
     return false;
   }
+
+  private canObserverReadThread(
+    organizationId: string,
+    threadId: string,
+    memberId: string,
+  ): boolean {
+    const member = this.repo.getMember(organizationId, memberId);
+    if (!member || member.kind !== 'human') return false;
+
+    const thread = this.repo.getThread(organizationId, threadId);
+    if (!thread) return false;
+    const channel = thread.channelId ? this.repo.getChannel(organizationId, thread.channelId) : null;
+    const channels = channel
+      ? [channel]
+      : [{ id: thread.id, memberIds: thread.memberIds }];
+    return isAgentOnlyThread(
+      thread.id,
+      this.repo.listMembers(organizationId).map((member) => ({ id: member.id, kind: member.kind })),
+      channels,
+    );
+  }
 }
 
 function mergePaginatedMessages(
@@ -1994,10 +1980,6 @@ function mergePaginatedMessages(
   const head = hasMore && data[0] ? data[0] : undefined;
   const nextCursor = head ? encodeCursor(head.createdAt, head.id) : undefined;
   return { data, hasMore, nextCursor };
-}
-
-function normalizeMentionHandle(value: string): string {
-  return value.trim().toLowerCase();
 }
 
 function uniqueMentionIds(mentions: MessageMention[]): string[] {

@@ -5,12 +5,15 @@ import { GripVertical, MessageSquare } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   getDirectMessageThreadId,
+  isDirectMessageThread,
+  resolveDmPeerMemberId,
   SocketEventNames,
   type RunState,
   type SocketEventName,
 } from "@ujima/shared/browser";
 import { WorkspaceSidebar } from "./workspace-sidebar";
 import { ChannelView } from "./channel-view";
+import { CommandPalette, type SearchResult } from "@/components/ui/command-palette";
 import type { BootstrapResponse } from "@ujima/api-schema";
 import { resolveSelectedConversationFromSearchParams } from "../conversation-routing";
 import { resolveDefaultConversation } from "../workspace-channels";
@@ -60,6 +63,7 @@ export function WorkspaceShell(props: {
   const searchParams = useSearchParams();
   const [agentEditorTargetId, setAgentEditorTargetId] = useState<string | null>(null);
   const [goalMode, setGoalMode] = useState(false);
+  const [searchPaletteOpen, setSearchPaletteOpen] = useState(false);
   const sidebarWidth = useWorkspaceStore((state) => state.sidebarWidth);
   const selected = useWorkspaceStore((state) => state.selectedConversation);
   const channels = useWorkspaceStore((state) => state.channels);
@@ -74,6 +78,7 @@ export function WorkspaceShell(props: {
   const clearConversationUnreadCount = useWorkspaceStore((state) => state.clearConversationUnreadCount);
   const incrementConversationUnreadCount = useWorkspaceStore((state) => state.incrementConversationUnreadCount);
   const setMemberActivity = useWorkspaceStore((state) => state.setMemberActivity);
+  const upsertGlobalActiveRun = useWorkspaceStore((state) => state.upsertGlobalActiveRun);
   const seenApprovalNotifications = useRef(new Set<string>());
   const goalModeSyncing = useRef(false);
 
@@ -233,6 +238,18 @@ export function WorkspaceShell(props: {
       : "Ujima Agents";
   }, [resolvedSelected?.id, resolvedSelected?.name, resolvedSelected?.type]);
 
+  // Cmd+K to open global search
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        e.preventDefault();
+        setSearchPaletteOpen((open) => !open);
+      }
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, []);
+
   useEffect(() => {
     if (!bootstrap.channels) return;
     syncWorkspace({
@@ -240,6 +257,7 @@ export function WorkspaceShell(props: {
       members: bootstrap.members,
       conversationUnreadCounts: bootstrap.conversationUnreadCounts,
       selectedConversation: resolvedSelected,
+      globalActiveRuns: bootstrap.activeRuns,
     });
     for (const run of bootstrap.activeRuns) {
       if (isLiveRunStatus(run.status)) {
@@ -264,6 +282,14 @@ export function WorkspaceShell(props: {
       `/api/notifications/stream?organizationId=${encodeURIComponent(organizationId)}`,
     );
 
+    source.onopen = () => {
+      console.info("[notifications] stream connected");
+    };
+    source.onerror = () => {
+      if (source.readyState === EventSource.CLOSED) {
+        console.warn("[notifications] stream disconnected permanently — unread counts may be stale");
+      }
+    };
     source.onmessage = (event) => {
       const envelope = parseNotificationEnvelope(event.data);
       if (!envelope || envelope.type === "ready" || envelope.type === "error") return;
@@ -277,6 +303,10 @@ export function WorkspaceShell(props: {
 
       if (isNotificationRunEvent(envelope.event)) {
         updateRunActivity(envelope.payload, setMemberActivity);
+        const run = (envelope.payload as { run?: RunState })?.run;
+        if (run) {
+          upsertGlobalActiveRun(run);
+        }
       }
 
       const conversationId = resolveNotificationConversationId(
@@ -334,6 +364,31 @@ export function WorkspaceShell(props: {
     ).catch(() => undefined);
   }, [bootstrap.auth.member, clearConversationUnreadCount, organizationId, resolvedSelected]);
 
+  const searchResults = useMemo(() => {
+    const results: SearchResult[] = [];
+    for (const ch of channels) {
+      results.push({
+        id: `channel:${ch.id}`,
+        type: "channel",
+        label: ch.name,
+        subtitle: `${ch.memberIds?.length ?? 0} members`,
+        onSelect: () => handleSelect({ type: "channel", id: ch.id, name: ch.name }),
+      });
+    }
+    for (const m of members) {
+      if (m.kind === "agent") {
+        results.push({
+          id: `agent:${m.id}`,
+          type: "agent",
+          label: m.name,
+          subtitle: m.roleName ?? "Agent",
+          onSelect: () => handleSelect({ type: "agent", id: m.id, name: m.name }),
+        });
+      }
+    }
+    return results;
+  }, [channels, members, handleSelect]);
+
   return (
     <div className="flex h-full min-h-0">
       <div
@@ -369,6 +424,7 @@ export function WorkspaceShell(props: {
               members={members}
               goalMode={goalMode}
               onGoalModeChange={setGoalMode}
+              onSelectConversation={handleSelect}
               onOpenAgentEditor={() => {
                 if (resolvedSelected.type === "agent") {
                   setAgentEditorTargetId(resolvedSelected.id);
@@ -390,6 +446,11 @@ export function WorkspaceShell(props: {
           )}
         </div>
       </main>
+      <CommandPalette
+        results={searchResults}
+        open={searchPaletteOpen}
+        onOpenChange={setSearchPaletteOpen}
+      />
     </div>
   );
 }
@@ -527,7 +588,7 @@ function resolveNotificationConversationId(
     };
     const threadId = body.threadId ?? body.message?.threadId;
     if (typeof threadId !== "string") return undefined;
-    if (threadId.startsWith("dm:")) {
+    if (isDirectMessageThread(threadId)) {
       return resolveDmConversationId(threadId, currentMemberId);
     }
     const messageChannelId = body.message?.channelId;
@@ -549,7 +610,7 @@ function resolveNotificationConversationId(
   const body = payload as { threadId?: string; run?: { threadId?: string } };
   const threadId = body.threadId ?? body.run?.threadId;
   if (typeof threadId !== "string") return undefined;
-  if (threadId.startsWith("dm:")) {
+  if (isDirectMessageThread(threadId)) {
     return resolveDmConversationId(threadId, currentMemberId);
   }
   return channels.some((channel) => channel.id === threadId) ? threadId : undefined;
@@ -561,11 +622,7 @@ function parseApprovalId(payload: unknown): string | undefined {
 }
 
 function resolveDmConversationId(threadId: string, currentMemberId: string): string | undefined {
-  if (!threadId.startsWith("dm:")) return undefined;
-  const [, firstId, secondId] = threadId.split(":", 3);
-  if (firstId === currentMemberId) return secondId;
-  if (secondId === currentMemberId) return firstId;
-  return undefined;
+  return resolveDmPeerMemberId(threadId, currentMemberId);
 }
 
 function playApprovalSound(): void {

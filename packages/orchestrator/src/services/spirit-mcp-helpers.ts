@@ -1,0 +1,69 @@
+import { createHash } from 'node:crypto';
+import { jsonSchema, type FlexibleSchema } from 'ai';
+import { z } from 'zod';
+
+export interface McpServerSummary {
+  serverName: string;
+  serverId: string;
+  toolNames: string[];
+}
+
+export function sanitizeMcpNamespace(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 40) || 'mcp';
+}
+
+export function buildMcpNamespace(name: string, serverId: string): string {
+  const hash = shortStableHash(serverId);
+  const maxNameLength = 40 - hash.length - 1;
+  const nameSlug = sanitizeMcpNamespace(name).slice(0, maxNameLength).replace(/_+$/g, '');
+  return `${nameSlug || 'mcp'}_${hash}`;
+}
+
+export function sanitizeMcpToolName(name: string): string {
+  return name
+    .replace(/[^A-Za-z0-9_-]+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 40) || 'tool';
+}
+
+export function uniqueMcpToolId(
+  baseToolId: string,
+  serverId: string,
+  toolName: string,
+  usedToolIds: Set<string>,
+): string {
+  if (!usedToolIds.has(baseToolId)) {
+    usedToolIds.add(baseToolId);
+    return baseToolId;
+  }
+
+  const suffix = shortStableHash(`${serverId}:${toolName}`);
+  let candidate = `${baseToolId}__${suffix}`;
+  let attempt = 2;
+  while (usedToolIds.has(candidate)) {
+    candidate = `${baseToolId}__${suffix}_${attempt}`;
+    attempt += 1;
+  }
+  usedToolIds.add(candidate);
+  return candidate;
+}
+
+export function shortStableHash(value: string): string {
+  return createHash('sha256').update(value).digest('hex').slice(0, 8);
+}
+
+/** Prefer server JSON Schema; fall back to a permissive record when absent. */
+export function mcpToolInputSchema(
+  schema: Record<string, unknown> | undefined,
+): FlexibleSchema<Record<string, unknown>> {
+  if (schema && typeof schema === 'object' && !Array.isArray(schema)) {
+    return jsonSchema<Record<string, unknown>>(schema as never);
+  }
+  return z.record(z.string(), z.unknown());
+}

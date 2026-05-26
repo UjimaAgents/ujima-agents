@@ -15,7 +15,7 @@ const ACTIONS: ActionItem[] = [
   { label: 'Add MCP Server', tooltip: 'Paste mcpServers JSON and test the connection', icon: 'plug', command: 'ujima.addMcp' },
   { label: 'MCP Registry', tooltip: 'Browse curated MCP servers', icon: 'library', command: 'ujima.openRegistry' },
   { label: 'Open Agent Chat', tooltip: 'Watch agents think and call tools', icon: 'comment-discussion', command: 'ujima.openAgentChat' },
-  { label: 'Open Governance', tooltip: 'Review audit log, rate limits, approvals', icon: 'shield', command: 'ujima.openGovernance' },
+  { label: 'Open Governance', tooltip: 'Review audit log, token caps, approvals', icon: 'shield', command: 'ujima.openGovernance' },
   { label: 'Open Activity Stream', tooltip: 'Live event feed', icon: 'pulse', command: 'ujima.openActivityStream' },
   { label: 'Load Demo Scenario', tooltip: 'Seed a demo team + MCPs', icon: 'rocket', command: 'ujima.loadDemoScenario' },
   { label: 'Kill Session', tooltip: 'Stop every running agent', icon: 'debug-stop', command: 'ujima.killSession' },
