@@ -3,12 +3,32 @@ import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
+  findMonorepoRoot,
   resolvePackagedRuntimeDir,
   resolveWebServerCwd,
   resolveWebServerEntry,
 } from './runtime-paths.js';
 
 describe('runtime-paths', () => {
+  it('findMonorepoRoot skips packages/distribution and resolves workspace root', () => {
+    const root = join(tmpdir(), `ujima-repo-${Date.now()}`);
+    const distPkg = join(root, 'packages', 'distribution');
+    mkdirSync(distPkg, { recursive: true });
+    writeFileSync(
+      join(root, 'package.json'),
+      JSON.stringify({ name: 'ujima-agents', private: true, workspaces: ['packages/*'] }),
+    );
+    writeFileSync(join(root, 'turbo.json'), '{}');
+    writeFileSync(
+      join(distPkg, 'package.json'),
+      JSON.stringify({ name: 'ujima-agents', version: '0.1.0' }),
+    );
+
+    expect(findMonorepoRoot(distPkg)).toBe(root);
+    expect(findMonorepoRoot(join(root, 'packages', 'cli'))).toBe(root);
+    rmSync(root, { recursive: true, force: true });
+  });
+
   it('detects packaged runtime when api main exists', () => {
     const root = join(tmpdir(), `ujima-runtime-${Date.now()}`);
     const cliDir = join(root, 'dist');
