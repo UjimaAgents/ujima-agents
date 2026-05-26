@@ -195,13 +195,15 @@ describe('ALWAYS_AVAILABLE_AGENT_TOOLS', () => {
         'schedule',
         'self.note',
         'self.procedure.add',
+        'self.procedure.list',
         'self.procedure.remove',
+        'self.procedure.view',
         'view',
       ].sort(),
     );
   });
 
-  it.each(['channel.handoff', 'filesystem', 'edit', 'write', 'multiedit', 'shell'])(
+  it.each(['channel.handoff', 'edit', 'write', 'multiedit', 'shell'])(
     'does NOT include %s (write-capable / workflow opt-in via role.tools)',
     (toolId) => {
       expect([...ALWAYS_AVAILABLE_AGENT_TOOLS]).not.toContain(toolId);

@@ -79,9 +79,6 @@ export function buildToolApprovalScope(input: ToolInvocationInput): string {
   if (input.toolId === 'shell') {
     return buildShellApprovalScope({ input: input.input, resourcePath: input.resourcePath });
   }
-  if (input.toolId === 'filesystem' && input.action === 'write') {
-    return `filesystem:${JSON.stringify({ action: input.action, resourcePath: input.resourcePath, patch: input.input.patch, content: input.input.content })}`;
-  }
   if (input.toolId === 'write') {
     return `write:${JSON.stringify({ resourcePath: input.resourcePath, content: input.input.content })}`;
   }

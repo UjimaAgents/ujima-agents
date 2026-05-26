@@ -11,7 +11,6 @@ import {
   selfNoteTool,
 } from './channel.js';
 import { channelRecallTool } from './channel-recall.js';
-import { filesystemTool } from './filesystem.js';
 import { grepTool } from './grep.js';
 import { jobKillTool, jobOutputTool } from './job-tools.js';
 import { downloadTool, fetchTool } from './web-tools.js';
@@ -20,7 +19,12 @@ import { messageTool } from './message.js';
 import { scheduleTool } from './schedule.js';
 import { webSearchTool } from './web-search.js';
 import { memoryForgetTool, memoryRecallTool, memoryWriteTool } from './memory.js';
-import { selfProcedureAddTool, selfProcedureRemoveTool } from './self-procedure.js';
+import {
+  selfProcedureAddTool,
+  selfProcedureListTool,
+  selfProcedureRemoveTool,
+  selfProcedureViewTool,
+} from './self-procedure.js';
 import {
   supervisorTodoAddTool,
   supervisorTodoCheckTool,
@@ -44,7 +48,6 @@ export const ORCHESTRATOR_TOOLS = {
   'channel.pass': channelPassTool,
   'channel.ack': channelAckTool,
   'channel.handoff': channelHandoffTool,
-  filesystem: filesystemTool,
   view: viewTool,
   write: writeTool,
   edit: editTool,
@@ -61,6 +64,8 @@ export const ORCHESTRATOR_TOOLS = {
   'self.note': selfNoteTool,
   'self.procedure.add': selfProcedureAddTool,
   'self.procedure.remove': selfProcedureRemoveTool,
+  'self.procedure.list': selfProcedureListTool,
+  'self.procedure.view': selfProcedureViewTool,
   'channel.recall': channelRecallTool,
   'memory.write': memoryWriteTool,
   'memory.recall': memoryRecallTool,
@@ -110,6 +115,8 @@ export const ALWAYS_AVAILABLE_AGENT_TOOLS = Object.freeze([
   'self.note',
   'self.procedure.add',
   'self.procedure.remove',
+  'self.procedure.list',
+  'self.procedure.view',
   'channel.pass',
   'channel.ack',
   'channel.reply',

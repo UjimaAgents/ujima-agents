@@ -256,6 +256,9 @@ export class AiService {
       // reason-dependent anti-mirror + self-followup lines below
       // are emitted as user-role messages and DON'T bust the cache.
       baseScaffold: wakeReplyPolicy.scaffoldBlock,
+      // Bet 1b — gate memory/procedure guidance on tool availability
+      // so prompts without those tools stay clean.
+      availableToolIds,
     });
 
     const initialThreadMessages = this.repo.listMessages(input.organizationId, input.threadId, undefined, 20).data;

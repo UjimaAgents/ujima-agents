@@ -91,9 +91,6 @@ function goalArtifactWritePath(call: ToolCallLike): string | undefined {
   const toolName = call.toolName?.toLowerCase();
   const resourcePath = readStringField(call, 'resourcePath');
   if (!resourcePath) return undefined;
-  if (toolName === 'filesystem') {
-    return readStringField(call, 'action') === 'write' ? resourcePath : undefined;
-  }
   return toolName === 'write' || toolName === 'edit' || toolName === 'multiedit'
     ? resourcePath
     : undefined;

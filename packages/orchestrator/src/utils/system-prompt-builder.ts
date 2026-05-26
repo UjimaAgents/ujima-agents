@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { ModelMessage } from 'ai';
 import type { WakeReason } from '@ujima/shared';
-import { loadProceduresFile, PROCEDURE_FILE_MAX_BYTES } from '../tools/self-procedure.js';
+import { loadProceduresForSystemPrompt as loadProceduresIndex } from '../tools/self-procedure.js';
 
 /**
  * Bet 1 — cache-stable system prompt.
@@ -43,6 +43,44 @@ import { loadProceduresFile, PROCEDURE_FILE_MAX_BYTES } from '../tools/self-proc
  * cache-stability test relies on: if a future refactor pushes a
  * `wakeReason`-dependent line in here, the assertion fails.
  */
+/**
+ * Memory write-policy guidance. Lifted from Hermes Agent's
+ * `MEMORY_GUIDANCE` (Nous Research, `agent/prompt_builder.py`)
+ * and adapted to ujima's `memory.write` tool. Without this block,
+ * agents can call `memory.write` but have no policy for WHEN to
+ * fire it or WHAT counts as durable — we built the warehouse and
+ * shipped no inventory. The block is prescriptive on purpose;
+ * vague guidance produces noisy memory tables.
+ *
+ * Loaded into Zone 1 (cache-stable prefix) iff `memory.write` is in
+ * the resolved tool palette. Skipped otherwise — agents without
+ * memory tools don't see the guidance, keeping the prompt clean.
+ */
+export const MEMORY_GUIDANCE: readonly string[] = Object.freeze([
+  'Persistent memory (memory.write / memory.recall):',
+  '- Write declarative facts about the user, the team, or this workspace that will still be true next week. Examples: "User prefers concise replies", "Deploy region is us-west-2", "PaidHR engineering owns auth + payroll".',
+  '- Do NOT write ephemeral state: PR numbers, issue numbers, commit SHAs, "phase N done", "Phoebe is currently writing the BRD", today\'s date. That belongs in channel messages, not memory.',
+  '- Do NOT write instructions to yourself ("always respond concisely"); write the fact ("user prefers concise responses") and let the agent decide what to do.',
+  '- One key, one value. Reuse keys: `memory.write({ key: "user.tone-preference", value: "..." })` overwrites the old value. Don\'t hoard versioned keys.',
+  '- TTL: pass `expires_in_days` for facts that have a natural decay (current quarter, ongoing project). Omit it for stable facts (preferences, identity).',
+  '- If you\'re unsure whether a fact belongs in memory, it probably doesn\'t. Memory is small and hot; the message log is large and searchable.',
+]);
+
+/**
+ * Procedures (Bet 7) write-policy guidance. Same idea as
+ * `MEMORY_GUIDANCE` but for the per-agent playbook. Procedures are
+ * "when X, do Y" rules — they are the agent's view of HOW it
+ * should act, not what it knows.
+ */
+export const PROCEDURES_GUIDANCE: readonly string[] = Object.freeze([
+  'Procedural memory (self.procedure.add / self.procedure.remove):',
+  '- Write a procedure when you discover a non-obvious pattern that worked: "When pinging Phoebe in #design on a long thread, include the artifact path explicitly so she doesn\'t have to scroll".',
+  '- Procedures are FOR YOU. Phrase them as "When X, do Y" — short, specific, actionable.',
+  '- Do NOT add a procedure for behavior the system already enforces (mandatory-reply, channel.pass rules). Those live in the wake scaffold.',
+  '- Remove a procedure when it stops being useful — outdated playbooks poison every future wake.',
+  '- The procedure file is YOUR playbook. It is not the user\'s style guide and not the team\'s process doc.',
+]);
+
 export const BASE_WAKE_SCAFFOLD: readonly string[] = Object.freeze([
   'Before you pick a tool, read the <thread-state> block in the most recent user message.',
   'Treat its <agents-not-yet-responded> and <you-explicitly-addressed> / <you-implicitly-addressed> fields as ground truth — they are computed from the actual channel state, not from your reading.',
@@ -75,6 +113,14 @@ export interface CacheableSystemInput {
    * and any legacy code path).
    */
   baseScaffold?: string;
+  /**
+   * Resolved tool palette for this wake — used to gate memory /
+   * procedure guidance blocks. When the agent doesn't have
+   * `memory.write`, the MEMORY_GUIDANCE block is omitted so the
+   * cache prefix stays minimal. Pass an empty array (or omit) to
+   * skip all guidance.
+   */
+  availableToolIds?: readonly string[];
 }
 
 export interface CacheableSystemOutput {
@@ -87,6 +133,11 @@ export interface CacheableSystemOutput {
 export function buildCacheableSystem(input: CacheableSystemInput): CacheableSystemOutput {
   const sections: string[] = [input.baseSystem];
   if (input.goalSuffix) sections.push(input.goalSuffix);
+  // Bet 1b — memory/procedure write-policy guidance, gated on
+  // tool availability so prompts without memory tools stay clean.
+  const toolIds = new Set(input.availableToolIds ?? []);
+  if (toolIds.has('memory.write')) sections.push(MEMORY_GUIDANCE.join('\n'));
+  if (toolIds.has('self.procedure.add')) sections.push(PROCEDURES_GUIDANCE.join('\n'));
   if (input.proceduresText) {
     sections.push('Your procedural memory (per-agent playbook):');
     sections.push(input.proceduresText);
@@ -143,23 +194,22 @@ export function buildWakeContextMessages(input: WakeContextInput): ModelMessage[
 }
 
 /**
- * Best-effort read of the agent's procedural memory file. Returns
- * undefined when the file doesn't exist; never throws on read
- * errors (we degrade to "no procedures" rather than block a wake).
- * Caps the returned text at PROCEDURE_FILE_MAX_BYTES — the file
- * tool also enforces this on write, but reading is the second line
- * of defence.
+ * Best-effort read of the agent's procedural memory index. Returns
+ * undefined when no procedures exist; never throws on read errors
+ * (we degrade to "no procedures" rather than block a wake).
+ *
+ * Bet 2 (Hermes-inspired): the system prompt loads only
+ * `name: description` lines for each procedure, NOT the full
+ * bodies. The agent calls `self.procedure.view(name)` on demand.
+ * This keeps the cache-stable prefix lean even when the agent
+ * accumulates many playbooks.
  */
 export async function loadProceduresForSystemPrompt(
   workspaceRoot: string,
   memberId: string,
 ): Promise<string | undefined> {
   try {
-    const loaded = await loadProceduresFile(workspaceRoot, memberId);
-    if (!loaded || loaded.entries.length === 0) return undefined;
-    const raw = loaded.raw;
-    if (raw.length === 0) return undefined;
-    return raw.length > PROCEDURE_FILE_MAX_BYTES ? raw.slice(0, PROCEDURE_FILE_MAX_BYTES) : raw;
+    return await loadProceduresIndex(workspaceRoot, memberId);
   } catch {
     return undefined;
   }

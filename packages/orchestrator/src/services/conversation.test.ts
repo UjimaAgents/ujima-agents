@@ -598,7 +598,7 @@ describe('ConversationService @all mentions', () => {
       mode: 'summarize',
     });
 
-    expect(result.summaryMessage?.content.startsWith('[[CONVERSATION_SUMMARY_V1]]')).toBe(true);
+    expect(result.summaryMessage?.content.startsWith('[[CONVERSATION_SUMMARY_V2]]')).toBe(true);
 
     const visible = await service.readChannel({
       organizationId: 'org-1',
@@ -608,7 +608,7 @@ describe('ConversationService @all mentions', () => {
     });
     const joined = visible.data.map((message) => message.content).join('\n');
     expect(joined).toContain('general-20');
-    expect(joined).toContain('[[CONVERSATION_SUMMARY_V1]]');
+    expect(joined).toContain('[[CONVERSATION_SUMMARY_V2]]');
     expect(joined).not.toContain('[[CONVERSATION_COMPACTED_V1]]');
   });
 
@@ -625,7 +625,7 @@ describe('ConversationService @all mentions', () => {
     }
 
     const stored = repo.listChannelMessages('org-1', 'general', { limit: 1_000 });
-    expect(stored.data.some((message) => message.content.startsWith('[[CONVERSATION_SUMMARY_V1]]'))).toBe(
+    expect(stored.data.some((message) => message.content.startsWith('[[CONVERSATION_SUMMARY_V2]]'))).toBe(
       true,
     );
     expect(stored.data.some((message) => message.content.startsWith('[[CONVERSATION_COMPACTED_V1]]'))).toBe(
@@ -648,7 +648,7 @@ describe('ConversationService @all mentions', () => {
 
     const summaries = repo
       .listMessages('org-1', 'general')
-      .data.filter((message) => message.content.startsWith('[[CONVERSATION_SUMMARY_V1]]'));
+      .data.filter((message) => message.content.startsWith('[[CONVERSATION_SUMMARY_V2]]'));
 
     expect(summaries).toHaveLength(1);
     expect(summaries[0]?.content).toContain('Compacted 36 earlier messages.');
@@ -713,7 +713,7 @@ describe('ConversationService @all mentions', () => {
       channelId: 'dm:agent-1:human-1',
       limit: 1_000,
     });
-    expect(visible.data.some((message) => message.content.includes('CONVERSATION_SUMMARY_V1'))).toBe(true);
+    expect(visible.data.some((message) => message.content.includes('CONVERSATION_SUMMARY_V2'))).toBe(true);
   });
 
   it('does not re-trigger mention alerts when publishing a compaction summary', async () => {

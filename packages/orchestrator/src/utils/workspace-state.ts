@@ -16,6 +16,7 @@ import type { ApiRepository } from '../services/repository-reader.js';
  */
 
 const MAX_OPEN_COMMITMENTS = 6;
+const MAX_CHANNEL_COMMITMENTS = 6;
 const MAX_RECENT_ARTIFACTS = 6;
 const MAX_RECENT_DECISIONS = 5;
 const ARTIFACT_LOOKBACK_HOURS = 24;
@@ -65,6 +66,31 @@ export function buildWorkspaceStateBlock(input: BuildWorkspaceStateInput): strin
         return `  <commitment age_min="${c.ageMin}"${empties}>${escapeXml(c.title)}</commitment>`;
       });
       sections.push(`<open-commitments>\n${lines.join('\n')}\n</open-commitments>`);
+    }
+  }
+
+  // --- Channel-wide commitments (Bet 4 from Hermes review) ----------
+  // Surfaces commitments owned by ANY agent in this channel, not just
+  // the current member. Closes the "private memory per agent" gap —
+  // agent B can now see agent A is in the middle of delivering Y.
+  if (input.channelId && input.repo.listTodosForChannel) {
+    try {
+      const allOpen = input.repo.listTodosForChannel(input.organizationId, input.channelId, {
+        status: 'in_progress',
+      });
+      const others = allOpen
+        .filter((row) => row.memberId !== input.memberId && row.deliverableSummary)
+        .slice(0, MAX_CHANNEL_COMMITMENTS);
+      if (others.length > 0) {
+        const lines = others.map((row) => {
+          const owner = input.repo.getMember(input.organizationId, row.memberId);
+          const ownerName = owner?.name ?? row.memberId;
+          return `  <commitment by="${escapeXml(ownerName)}">${escapeXml((row.deliverableSummary ?? row.title).slice(0, 160))}</commitment>`;
+        });
+        sections.push(`<channel-commitments>\n${lines.join('\n')}\n</channel-commitments>`);
+      }
+    } catch {
+      // best-effort
     }
   }
 

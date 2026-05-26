@@ -263,7 +263,7 @@ describe('checkToolPolicy', () => {
             model: 'gpt-5.4',
             workspaceScopes: ['apps/web'], // narrow scope — channel ids must NOT be path-checked
             tools: [
-              'filesystem',
+              'write',
               'channel.post',
               'channel.reply',
               'channel.dm',

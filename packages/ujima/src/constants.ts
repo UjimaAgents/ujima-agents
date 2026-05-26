@@ -3,15 +3,6 @@ import type { PersonalityPreset } from './schemas.js';
 import type { ToolCapability } from '@ujima/shared';
 
 export const DEFAULT_TOOL_CATALOG: Record<string, ToolCapability> = {
-  filesystem: {
-    id: 'filesystem',
-    name: 'Filesystem',
-    description:
-      'Legacy file tool: read line windows or apply unified-diff patches. Prefer view/read for file reads and write/edit/multiedit for normal file changes.',
-    actions: ['read', 'write'],
-    pathScopes: ['.'],
-    requiresApproval: true,
-  },
   view: {
     id: 'view',
     name: 'View',

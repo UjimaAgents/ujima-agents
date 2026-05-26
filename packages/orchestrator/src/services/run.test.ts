@@ -255,7 +255,7 @@ describe('SpiritService run path', () => {
         threadId,
         agentId,
         toolCallId: 'tool-call-2',
-        toolId: 'filesystem',
+        toolId: 'write',
         action: 'write',
         resourceType: 'file',
         resourcePath: '.ujima-goals/plan.md',
@@ -409,7 +409,7 @@ describe('SpiritService run path', () => {
           threadId,
           agentId,
           toolCallId: 'tool-call-2',
-          toolId: 'filesystem',
+          toolId: 'write',
           action: 'write',
           resourceType: 'file',
           resourcePath: '.ujima-goals/plan.md',
@@ -455,7 +455,7 @@ describe('SpiritService run path', () => {
               toolCalls: [
                 {
                   toolCallId: 'tool-call-2',
-                  toolName: 'filesystem',
+                  toolName: 'write',
                   input: { action: 'write', resourcePath: '.ujima-goals/plan.md' },
                 },
               ],

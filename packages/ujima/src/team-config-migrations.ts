@@ -131,7 +131,7 @@ export function fillEmptyRoleToolsByClass<T extends Record<string, unknown>>(rol
   if (!classDefaults) return role;
   const scopes = Array.isArray(role.workspaceScopes) ? role.workspaceScopes : [];
   const needsScope = classDefaults.some((tool) =>
-    ['edit', 'write', 'multiedit', 'filesystem', 'shell'].includes(tool),
+    ['edit', 'write', 'multiedit', 'shell'].includes(tool),
   );
   return {
     ...role,
