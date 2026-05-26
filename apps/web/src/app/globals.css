@@ -4,11 +4,19 @@
 :root {
   --background: #ffffff;
   --foreground: #171717;
+  --landing-hero-bg: #fafafa;
+  --landing-hero-glow-a: rgba(99, 102, 241, 0.12);
+  --landing-hero-glow-b: rgba(59, 130, 246, 0.08);
+  --landing-hero-orb: rgba(99, 102, 241, 0.14);
 }
 
 .dark {
   --background: #09090b;
   --foreground: #f4f4f5;
+  --landing-hero-bg: #040712;
+  --landing-hero-glow-a: rgba(99, 102, 241, 0.18);
+  --landing-hero-glow-b: rgba(59, 130, 246, 0.08);
+  --landing-hero-orb: rgba(99, 102, 241, 0.22);
 }
 
 @theme inline {
@@ -185,18 +193,21 @@ button {
 }
 
 .landing-hero-bg {
-  background-color: #030508;
+  position: relative;
+  isolation: isolate;
+  color: var(--foreground);
+  background-color: var(--landing-hero-bg);
   background-image:
-    radial-gradient(ellipse 80% 50% at 50% -20%, rgba(99, 102, 241, 0.18), transparent),
-    radial-gradient(ellipse 60% 40% at 100% 0%, rgba(59, 130, 246, 0.08), transparent);
-}
-
-.dark .landing-hero-bg {
-  background-color: #040712;
+    radial-gradient(ellipse 80% 50% at 50% -20%, var(--landing-hero-glow-a), transparent),
+    radial-gradient(ellipse 60% 40% at 100% 0%, var(--landing-hero-glow-b), transparent);
+  transition:
+    background-color 180ms ease,
+    color 180ms ease;
 }
 
 .landing-section-muted {
   background-color: #fafafa;
+  transition: background-color 180ms ease;
 }
 
 .dark .landing-section-muted {
@@ -205,6 +216,7 @@ button {
 
 .landing-section-base {
   background-color: #ffffff;
+  transition: background-color 180ms ease;
 }
 
 .dark .landing-section-base {
@@ -271,19 +283,15 @@ button {
   animation-delay: 0.44s;
 }
 
-.landing-hero-bg {
-  position: relative;
-  isolation: isolate;
-}
-
 .landing-hero-bg::before {
   content: "";
   position: absolute;
   inset: -20% -10%;
   z-index: 0;
   pointer-events: none;
-  background: radial-gradient(ellipse 55% 45% at 70% 10%, rgba(99, 102, 241, 0.22), transparent 65%);
+  background: radial-gradient(ellipse 55% 45% at 70% 10%, var(--landing-hero-orb), transparent 65%);
   animation: landing-glow-drift 14s ease-in-out infinite alternate;
+  transition: opacity 180ms ease;
 }
 
 .landing-hero-bg > * {
@@ -356,7 +364,24 @@ button {
 }
 
 /* Hero headline — continuous channel pulse (recording-friendly loop) */
-@keyframes hero-channel-pulse {
+@keyframes hero-channel-pulse-light {
+  0%,
+  8%,
+  42%,
+  100% {
+    color: rgb(9 9 11);
+    text-shadow: 0 0 0 transparent;
+    transform: translate3d(0, 0, 0);
+  }
+  20%,
+  32% {
+    color: rgb(109 40 217);
+    text-shadow: 0 0 20px rgba(139, 92, 246, 0.22);
+    transform: translate3d(0, -4px, 0);
+  }
+}
+
+@keyframes hero-channel-pulse-dark {
   0%,
   8%,
   42%,
@@ -375,11 +400,17 @@ button {
 
 .landing .hero-headline {
   display: block;
+  color: var(--foreground);
+  transition: color 180ms ease;
 }
 
 .landing .hero-headline .hero-word {
   display: inline-block;
-  animation: hero-channel-pulse 3.6s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+  animation: hero-channel-pulse-light 3.6s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+}
+
+.dark .landing .hero-headline .hero-word {
+  animation-name: hero-channel-pulse-dark;
 }
 
 .landing .hero-headline .hero-word:nth-child(1) {
