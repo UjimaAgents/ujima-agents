@@ -62,7 +62,11 @@ export const channelRecallTool: OrchestratorTool<typeof ChannelRecallSchema> = {
     const scope = (input.scope as 'channel' | 'org' | 'files' | 'all') ?? 'all';
     const query = String(input.query);
     const since = typeof input.since === 'string' ? input.since : undefined;
-    const hits: ChannelRecallHit[] = [];
+    // Track each hit alongside its per-source rank (0-based position in
+    // the BM25-ordered list it came from) so the final merge preserves
+    // relevance order across sources. Without this, the previous
+    // recency sort buried the top BM25 hit behind a newer-but-worse one.
+    const ranked: { hit: ChannelRecallHit; rank: number }[] = [];
 
     // --- Message hits -------------------------------------------------
     if (scope === 'channel' || scope === 'org' || scope === 'all') {
@@ -90,16 +94,19 @@ export const channelRecallTool: OrchestratorTool<typeof ChannelRecallSchema> = {
             since,
             limit,
           });
-          for (const m of page.data.slice(0, limit)) {
-            hits.push({
-              source: 'message',
-              snippet: m.content.slice(0, 240),
-              ref: m.id,
-              channelId: m.channelId,
-              authorId: m.senderId,
-              createdAt: m.createdAt,
+          page.data.slice(0, limit).forEach((m, idx) => {
+            ranked.push({
+              hit: {
+                source: 'message',
+                snippet: m.content.slice(0, 240),
+                ref: m.id,
+                channelId: m.channelId,
+                authorId: m.senderId,
+                createdAt: m.createdAt,
+              },
+              rank: idx,
             });
-          }
+          });
         } else if (scope === 'channel') {
           // `scope: 'channel'` was requested but we couldn't
           // resolve a channel id from either the argument or the
@@ -130,21 +137,24 @@ export const channelRecallTool: OrchestratorTool<typeof ChannelRecallSchema> = {
                 since,
                 limit: perChannelLimit,
               });
-              for (const m of page.data.slice(0, perChannelLimit)) {
-                hits.push({
-                  source: 'message',
-                  snippet: m.content.slice(0, 240),
-                  ref: m.id,
-                  channelId: m.channelId,
-                  channelName: channel.name,
-                  authorId: m.senderId,
-                  createdAt: m.createdAt,
+              page.data.slice(0, perChannelLimit).forEach((m, idx) => {
+                ranked.push({
+                  hit: {
+                    source: 'message',
+                    snippet: m.content.slice(0, 240),
+                    ref: m.id,
+                    channelId: m.channelId,
+                    channelName: channel.name,
+                    authorId: m.senderId,
+                    createdAt: m.createdAt,
+                  },
+                  rank: idx,
                 });
-              }
+              });
             } catch {
               // Per-channel errors don't abort the org-scope fan-out.
             }
-            if (hits.length >= limit * 2) break;
+            if (ranked.length >= limit * 2) break;
           }
         }
       } catch {
@@ -161,23 +171,32 @@ export const channelRecallTool: OrchestratorTool<typeof ChannelRecallSchema> = {
           limit,
           sinceIso: since,
         });
-        for (const f of fileHits) {
-          hits.push({
-            source: 'file',
-            snippet: f.snippet,
-            ref: f.path,
-            channelId: f.channelId,
-            authorId: f.writtenBy,
-            createdAt: f.updatedAt,
+        fileHits.forEach((f, idx) => {
+          ranked.push({
+            hit: {
+              source: 'file',
+              snippet: f.snippet,
+              ref: f.path,
+              channelId: f.channelId,
+              authorId: f.writtenBy,
+              createdAt: f.updatedAt,
+            },
+            rank: idx,
           });
-        }
+        });
       } catch {
         // best-effort
       }
     }
 
-    // Rank by recency within the merged set; cap to `limit`.
-    hits.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-    return { query, scope, hits: hits.slice(0, limit) };
+    // Merge by per-source BM25 rank (lower = more relevant), with
+    // recency as a secondary tie-breaker so equally-ranked hits across
+    // sources surface the newer one first. The earlier implementation
+    // sorted by recency alone and silently buried the top BM25 hit.
+    ranked.sort((a, b) => {
+      if (a.rank !== b.rank) return a.rank - b.rank;
+      return b.hit.createdAt.localeCompare(a.hit.createdAt);
+    });
+    return { query, scope, hits: ranked.slice(0, limit).map((r) => r.hit) };
   },
 };
