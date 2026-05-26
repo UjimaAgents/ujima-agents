@@ -16,7 +16,16 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const isSettingsPage = pathname.startsWith("/settings");
   const isCompactHeader = isSettingsPage || pathname.startsWith("/profile");
 
-  if (isLandingPage || isOnboardingPage || isLoginPage || isWorkspacePage) {
+  if (isLandingPage) {
+    return (
+      <div className="min-h-screen overflow-y-auto bg-white text-zinc-950 dark:bg-[#09090b] dark:text-zinc-100">
+        {children}
+        <ToastContainer />
+      </div>
+    );
+  }
+
+  if (isOnboardingPage || isLoginPage || isWorkspacePage) {
     return (
       <div className="h-screen overflow-hidden bg-zinc-50 text-zinc-950 dark:bg-[#040712] dark:text-zinc-100">
         {children}
