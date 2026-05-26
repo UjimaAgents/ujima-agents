@@ -1,4 +1,3 @@
-import { footer } from "./content";
 import { GitHubButton, LandingContainer, PrimaryButton, SecondaryButton } from "./primitives";
 
 export function LandingFooter() {
@@ -11,9 +10,7 @@ export function LandingFooter() {
           <SecondaryButton href="/login">Sign in</SecondaryButton>
           <GitHubButton />
         </div>
-        <p className="mt-16 text-[13px] text-zinc-600">
-          © {new Date().getFullYear()} Ujima Agents · {footer.tagline}
-        </p>
+        <p className="mt-16 text-[13px] text-zinc-600">© {new Date().getFullYear()} Ujima Agents</p>
       </LandingContainer>
     </footer>
   );

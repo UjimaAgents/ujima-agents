@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { GITHUB_URL } from "./content";
+import { LandingReveal } from "./landing-reveal";
 
 function GitHubIcon({ className = "h-4 w-4 shrink-0" }: { className?: string }) {
   return (
@@ -12,11 +13,11 @@ function GitHubIcon({ className = "h-4 w-4 shrink-0" }: { className?: string }) 
 
 /** Matches SettingsPrimaryButton / login submit */
 export const buttonPrimaryClass =
-  "inline-flex items-center justify-center rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-violet-500/20 transition hover:bg-violet-700 active:scale-[0.98] disabled:opacity-50 disabled:shadow-none";
+  "landing-interactive inline-flex items-center justify-center rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-violet-500/20 hover:bg-violet-700 hover:shadow-violet-500/30 disabled:opacity-50 disabled:shadow-none";
 
 /** Matches SettingsSecondaryButton / login page back link */
 export const buttonSecondaryClass =
-  "inline-flex items-center justify-center rounded-xl border border-zinc-200 bg-white px-4 py-2.5 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200 dark:hover:bg-zinc-900";
+  "landing-interactive inline-flex items-center justify-center rounded-xl border border-zinc-200 bg-white px-4 py-2.5 text-sm font-medium text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200 dark:hover:bg-zinc-900";
 
 export function LandingContainer({
   children,
@@ -41,18 +42,28 @@ export function LandingSection({
   children,
   className = "",
   muted = false,
+  reveal = true,
+  revealDelay = 0,
 }: {
   id?: string;
   children: ReactNode;
   className?: string;
   muted?: boolean;
+  reveal?: boolean;
+  revealDelay?: number;
 }) {
+  const body = reveal ? (
+    <LandingReveal delay={revealDelay}>{children}</LandingReveal>
+  ) : (
+    children
+  );
+
   return (
     <section
       id={id}
       className={`py-20 md:py-28 ${muted ? "landing-section-muted" : "landing-section-base"} ${className}`}
     >
-      {children}
+      {body}
     </section>
   );
 }
@@ -153,18 +164,18 @@ export function GitHubIconLink({ className = "" }: { className?: string }) {
       target="_blank"
       rel="noreferrer"
       aria-label="GitHub repository"
-      className={`inline-flex h-9 w-9 items-center justify-center rounded-lg border border-zinc-200 bg-white text-zinc-700 transition hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200 dark:hover:bg-zinc-900 ${className}`}
+      className={`landing-interactive inline-flex h-9 w-9 items-center justify-center rounded-lg border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200 dark:hover:bg-zinc-900 ${className}`}
     >
       {githubIcon}
     </a>
   );
 }
 
-export function FeatureRow({ title, text }: { title: string; text: string }) {
+export function FeatureRow({ title, text, delay = 0 }: { title: string; text: string; delay?: number }) {
   return (
-    <div className="landing-divider grid gap-2 border-b py-6 first:pt-0 last:border-b-0 md:grid-cols-[200px_1fr] md:gap-12 md:py-8">
+    <LandingReveal delay={delay} className="landing-divider grid gap-2 border-b py-6 first:pt-0 last:border-b-0 md:grid-cols-[200px_1fr] md:gap-12 md:py-8">
       <h3 className="text-[17px] font-semibold tracking-tight text-zinc-950 dark:text-zinc-50">{title}</h3>
       <p className="text-[17px] leading-relaxed text-zinc-600 dark:text-zinc-400">{text}</p>
-    </div>
+    </LandingReveal>
   );
 }
