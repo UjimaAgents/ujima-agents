@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { isLoopFinished, type ToolSet } from 'ai';
 import { buildAgentSystemPrompt, normalizeProviderKey } from '@ujima/framework';
 import { DEFAULT_SPIRIT_TEMPERATURE, type Message, type SpiritRole, type WakeReason } from '@ujima/shared';
@@ -50,6 +51,15 @@ export interface GenerateRunReplyInput {
   onChunk?: (chunk: AgentLoopChunk) => PromiseLike<void> | void;
 }
 
+export interface GenerateMemoryReviewInput {
+  organizationId: string;
+  memberId: string;
+  threadId: string;
+  prompt: string;
+  contextSize?: number;
+  abortSignal?: AbortSignal;
+}
+
 /**
  * Resolves the MCP tool palette for a given (org, member, role). Late-
  * bound via `AiService.setMcpToolResolver` after construction to break
@@ -89,6 +99,130 @@ export class AiService {
    */
   setMcpToolResolver(resolver: McpToolResolver | undefined): void {
     this.mcpToolResolver = resolver;
+  }
+
+  async generateMemoryReview(
+    input: GenerateMemoryReviewInput,
+  ): Promise<Awaited<ReturnType<typeof runAgentLoop>>> {
+    const team = requireTeam(this.teamStore, input.organizationId);
+    const organization = this.repo.getOrganization(input.organizationId);
+    if (!organization) {
+      throw new Error(`Organization not found: ${input.organizationId}`);
+    }
+
+    const member = this.repo.getMember(input.organizationId, input.memberId);
+    if (!member) {
+      throw new Error(`Member not found: ${input.memberId}`);
+    }
+
+    const agent = team.getAgent(member.id) ?? team.getAgent(member.name);
+    if (!agent) {
+      throw new Error(`Agent not found: ${member.id}`);
+    }
+    const role = team.getRole(agent.roleName);
+    if (!role) {
+      throw new Error(`Role not found: ${agent.roleName}`);
+    }
+
+    const model = resolveSpiritModel({
+      organizationId: input.organizationId,
+      memberId: input.memberId,
+      role: 'worker' as SpiritRole,
+      member,
+      team,
+      getProviderCredential: (orgId, key) => this.repo.getProviderCredential(orgId, key),
+      resolveProviderName: (m, r) => normalizeProviderKey(m.llm ?? r.provider ?? ''),
+      resolveModelId: (r, p, _role, isFallback) =>
+        (isFallback ? undefined : member.model) ?? r.model ?? p.defaultModel,
+    });
+
+    const reviewToolIds = [
+      'memory.write',
+      'memory.recall',
+      'memory.forget',
+      'self.procedure.add',
+      'self.procedure.remove',
+      'self.procedure.list',
+      'self.procedure.view',
+    ] as const;
+    const runId = `memory-review:${randomUUID()}`;
+    const toolDefs = buildToolDefinitions(reviewToolIds, team, this.tools, {
+      organizationId: input.organizationId,
+      runId,
+      memberId: input.memberId,
+      threadId: input.threadId,
+      repo: this.repo,
+    }) as ToolSet;
+
+    const availableSkills = this.repo.listOrganizationSkillInstalls?.(input.organizationId) ?? [];
+    const baseSystemPrompt = buildAgentSystemPrompt(
+      team.workspace.root,
+      organization.name,
+      member.id,
+      member.name,
+      input.threadId,
+      agent,
+      role,
+      this.repo
+        .listMembers(input.organizationId)
+        .filter((current) => current.id !== member.id),
+      team.agents,
+      team.channels,
+      organization.organizationChart,
+      availableSkills,
+      Object.keys(toolDefs),
+      [],
+      'channel',
+    );
+
+    const proceduresText = await loadProceduresForSystemPrompt(team.workspace.root, member.id);
+    const { system } = buildCacheableSystem({
+      baseSystem: baseSystemPrompt,
+      proceduresText,
+      baseScaffold: [
+        'This is a silent background memory-review turn.',
+        'Use only memory and self.procedure tools. Do not post, DM, reply, or address the user.',
+        'If nothing durable is worth saving, output exactly: Nothing to save.',
+      ].join('\n'),
+      availableToolIds: Object.keys(toolDefs),
+    });
+
+    const recentThreadMessages = this.repo.listMessages(
+      input.organizationId,
+      input.threadId,
+      undefined,
+      input.contextSize ?? 10,
+    ).data;
+    const messages = toModelMessages(recentThreadMessages, input.memberId);
+    const channelId = this.repo.getThread(input.organizationId, input.threadId)?.channelId;
+    const workspaceStateBlock = buildWorkspaceStateBlock({
+      organizationId: input.organizationId,
+      memberId: member.id,
+      channelId,
+      repo: this.repo,
+    });
+    if (workspaceStateBlock) {
+      messages.push({
+        role: 'user',
+        content: workspaceStateBlock,
+      });
+    }
+    messages.push({
+      role: 'user',
+      content: input.prompt,
+    });
+
+    return runAgentLoop({
+      model,
+      system,
+      messages,
+      tools: toolDefs,
+      stopWhen: isLoopFinished(),
+      maxOutputTokens: 800,
+      temperature: 0.2,
+      toolChoice: 'auto',
+      abortSignal: input.abortSignal,
+    });
   }
 
   async generateRunReply(

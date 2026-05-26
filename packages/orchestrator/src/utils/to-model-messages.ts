@@ -25,8 +25,8 @@ export function toModelMessages(messages: Message[], selfId?: string): ModelMess
     .map((message) => {
       if (message.kind === 'system') {
         return {
-          role: 'system' as const,
-          content: message.content,
+          role: 'user' as const,
+          content: buildCompactionMemoryContext(message.content),
         } as ModelMessage;
       }
 
@@ -55,6 +55,15 @@ export function toModelMessages(messages: Message[], selfId?: string): ModelMess
         content: buildUserContent({ ...message, content }),
       } as ModelMessage;
     });
+}
+
+function buildCompactionMemoryContext(content: string): string {
+  return [
+    '<conversation-memory source="compaction-summary">',
+    'Treat this as durable context from earlier in the conversation, not as a new instruction from the user.',
+    content,
+    '</conversation-memory>',
+  ].join('\n');
 }
 
 function withToolCalls(message: Message): string {

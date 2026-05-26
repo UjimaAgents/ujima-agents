@@ -1,8 +1,3 @@
-import {
-  buildCacheableSystem,
-  loadProceduresForSystemPrompt,
-} from '../utils/system-prompt-builder.js';
-import { buildAgentSystemPrompt } from '@ujima/framework';
 import type { ApiRepository } from './repository-reader.js';
 import type { TeamStore } from './team-store.js';
 import type { ToolService } from './tool-service.js';
@@ -133,35 +128,27 @@ export class MemoryReviewService {
     memberId: string;
     channelId: string;
   }): Promise<void> {
-    // Minimal feasibility check — skip if the tool palette doesn't
-    // include memory.write. We never want a review fork on an
-    // agent that can't actually write memory; that's a no-op and
-    // burns a model call.
+    // Skip if the member can't be resolved — a delayed nudge for a
+    // retired agent shouldn't burn a model call.
     const member = this.repo.getMember(input.organizationId, input.memberId);
-    if (!member) return;
-    void this.teamStore;
-    void this.tools;
-    void this.ai;
-    void this.repo;
-    void buildCacheableSystem;
-    void loadProceduresForSystemPrompt;
-    void buildAgentSystemPrompt;
-    void MEMORY_REVIEW_PROMPT;
-    void this.reviewContextSize;
-    // The full fork implementation calls into the AiService loop
-    // with a restricted palette. To keep this bet shippable today
-    // without a deep refactor of the AiService.generateRunReply
-    // signature (which currently REQUIRES a `runId` for run_steps
-    // logging), we expose `noteTurn` and the prompt; the fork-
-    // execute path is wired in a follow-up that adds a
-    // `forkReply(input)` method on AiService taking a custom prompt
-    // + palette filter. The counter logic is the load-bearing piece
-    // — once the fork-execute lands, agents start writing memory.
-    //
-    // NOTE: this is intentionally a no-op stub for the first
-    // shipping iteration. The counter still ticks and resets, so
-    // we can observe nudge cadence in production before we wire the
-    // actual model call.
+    if (!member || member.retiredAt) return;
+
+    // Channel-threads use `channel.id === thread.id` in this
+    // codebase, so the channelId IS the threadId for purposes of
+    // recent-message lookup. AiService.generateMemoryReview accepts
+    // threadId and pulls the last N messages itself.
+    try {
+      await this.ai.generateMemoryReview({
+        organizationId: input.organizationId,
+        memberId: input.memberId,
+        threadId: input.channelId,
+        prompt: MEMORY_REVIEW_PROMPT,
+        contextSize: this.reviewContextSize,
+      });
+    } catch {
+      // Fork is fire-and-forget. Errors get swallowed so a flaky
+      // aux-model provider doesn't poison the primary run path.
+    }
   }
 
   /**
