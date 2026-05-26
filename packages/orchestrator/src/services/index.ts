@@ -608,13 +608,13 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
 
   // Late-bind the run-completed hook. The single hook routes to
   // every subscriber: main's drain-pending-member-alert (skills
-  // library merge), commitment-service's empty-wake counter,
-  // memory-review's turn counter, and the trajectory writer.
+  // library merge), memory-review's turn counter, and the
+  // trajectory writer. (Empty-wake handling moved into the
+  // commitment-service sweeper as part of the main merge.)
   spirits.setRunCompletedHook(async (run) => {
     await drainPendingMemberAlertAfterRun(run, (pending) =>
       wakeMemberWithFailureEvents(wakeMemberDeps, pending),
     );
-    void commitments.onRunCompleted(run);
     // Resolve workspace root lazily — only when the trajectory
     // writer is actually enabled (env-gated).
     try {

@@ -1,16 +1,16 @@
 import type { ChildProcess } from 'node:child_process';
 
-export type SupervisedChild = {
+export interface SupervisedChild {
   child: ChildProcess;
   label: string;
-};
+}
 
-export type SuperviseOptions = {
+export interface SuperviseOptions {
   /** When true, child exits are expected (user-initiated shutdown). */
   isGracefulShutdown?: () => boolean;
   /** Max time to wait for siblings to exit after the first one stops. */
   shutdownTimeoutMs?: number;
-};
+}
 
 function waitForAllExited(
   processes: SupervisedChild[],
@@ -18,6 +18,10 @@ function waitForAllExited(
 ): Promise<number> {
   return new Promise((resolve) => {
     const children = processes.map(({ child }) => child);
+    // `timer` is assigned once (line ~53) but cleanup() captures it
+    // via closure and may run before assignment, so we can't lift to
+    // const-at-init. eslint-disable for that reason.
+    // eslint-disable-next-line prefer-const
     let timer: ReturnType<typeof setTimeout> | undefined;
 
     const maxExitCode = () => {
