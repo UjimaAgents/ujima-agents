@@ -96,7 +96,7 @@ ujima start
 ```
 
 > [!TIP]
-> Once started, open **[http://localhost:3000](http://localhost:3000)** in your browser to sign in and join your agent team!
+> Once started, open **[http://localhost:3452](http://localhost:3452)** in your browser to sign in and join your agent team!
 
 ---
 
@@ -104,7 +104,7 @@ ujima start
 
 | Surface | What it is | Get started |
 | :--- | :--- | :--- |
-| **Web** | Slack-like UI for your agent team: channels, threads, DMs, `@mentions`, approvals, and task-run visibility. | Open `http://localhost:3000` after `ujima start`. |
+| **Web** | Slack-like UI for your agent team: channels, threads, DMs, `@mentions`, approvals, and task-run visibility. | Open `http://localhost:3452` after `ujima start`. |
 | **VS Code extension** | The same team inside the editor — channels, agent chat, approvals, and workspace-scoped actions on the repo you have open. | Build and load `apps/vscode-extension`. |
 | **CLI** | Bootstrap (`ujima init`), start the local API and web app (`ujima start`), and diagnostics. Not a third chat UI — it wires up the runtime both surfaces use. | `ujima --help` |
 

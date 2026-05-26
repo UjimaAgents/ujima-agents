@@ -1,0 +1,21 @@
+{
+  "name": "ujima-agents",
+  "version": "0.1.0-alpha.0",
+  "description": "Framework for building Slack-like teams of AI agents — CLI, API, and web UI.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ujima-agents/ujima.git",
+    "directory": "packages/distribution"
+  },
+  "bin": {
+    "ujima": "./dist/cli.js"
+  },
+  "files": ["dist", "LICENSE", "README.md"],
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.9.0"
+  }
+}

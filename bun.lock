@@ -16,6 +16,7 @@
         "@typescript-eslint/eslint-plugin": "^8.0.0",
         "@typescript-eslint/parser": "^8.0.0",
         "@ujima/mcp-client": "workspace:*",
+        "esbuild": "^0.28.0",
         "eslint": "^9.9.0",
         "prettier": "^3.3.3",
         "tailwindcss": "4",
@@ -182,6 +183,16 @@
       },
       "devDependencies": {
         "@types/better-sqlite3": "^7.6.11",
+      },
+    },
+    "packages/distribution": {
+      "name": "ujima-agents",
+      "version": "0.1.0-alpha.0",
+      "bin": {
+        "ujima": "./dist/cli.js",
+      },
+      "dependencies": {
+        "better-sqlite3": "^12.9.0",
       },
     },
     "packages/event-bus": {
@@ -2097,6 +2108,8 @@
     "ufo": ["ufo@1.6.3", "", {}, "sha512-yDJTmhydvl5lJzBmy/hyOAA0d+aqCBuwl818haVdYCRrWV84o7YyeVm4QlVHStqNrrJSTb6jKuFAVqAFsr+K3Q=="],
 
     "ujima": ["ujima@workspace:packages/cli"],
+
+    "ujima-agents": ["ujima-agents@workspace:packages/distribution"],
 
     "ujima-vscode-extension": ["ujima-vscode-extension@workspace:apps/vscode-extension"],
 

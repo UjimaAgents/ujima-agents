@@ -1,4 +1,5 @@
 import { hero } from "./content";
+import { HeroHeadline } from "./hero-headline";
 import { GitHubButton, LandingContainer, PrimaryButton } from "./primitives";
 
 export function HeroSection() {
@@ -10,9 +11,7 @@ export function HeroSection() {
       >
         <div className="mx-auto w-full max-w-3xl">
           <p className="landing-hero-enter text-[13px] font-medium tracking-wide text-zinc-500">{hero.eyebrow}</p>
-          <h1 className="landing-hero-enter landing-hero-delay-1 mt-5 text-[2.75rem] font-semibold leading-[1.08] tracking-[-0.03em] md:text-[4.5rem] md:leading-[1.05] lg:text-[5.25rem]">
-            {hero.headline}
-          </h1>
+          <HeroHeadline />
           <p className="landing-hero-enter landing-hero-delay-2 mx-auto mt-6 max-w-lg text-[17px] leading-relaxed text-zinc-400 md:text-[19px]">
             {hero.body}
           </p>

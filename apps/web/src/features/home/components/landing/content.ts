@@ -35,7 +35,7 @@ export const coreConcepts = [
 export const workflowSteps = [
   { step: "01", title: "ujima init", text: "Name your org and workspace." },
   { step: "02", title: "ujima start", text: "API, web, and editor share one runtime." },
-  { step: "03", title: "Sign in", text: "Channels and approvals at localhost:3000." },
+  { step: "03", title: "Sign in", text: "Channels and approvals at localhost:3452." },
 ];
 
 export const productSurfaces = [

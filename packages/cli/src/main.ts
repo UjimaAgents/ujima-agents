@@ -1,10 +1,15 @@
 #!/usr/bin/env node
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { homedir } from 'node:os';
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { maybeLoadTeam } from '@ujima/runtime-core';
 import { DEFAULT_BIND_HOST, DEFAULT_BIND_PORT } from '@ujima/api-schema';
+import {
+  resolvePackagedRuntimeDir,
+  resolveWebServerCwd,
+  resolveWebServerEntry,
+} from './runtime-paths.js';
 
 function resolveHomeDir(): string {
   const fromEnv = process.env.UJIMA_HOME;
@@ -128,14 +133,13 @@ async function cmdInit(argv: string[]): Promise<void> {
   process.stdout.write(`${text}\n`);
 }
 
-
 function findMonorepoRoot(startDir = process.cwd()): string | null {
   let dir = startDir;
   while (true) {
     const pkgPath = join(dir, 'package.json');
     if (existsSync(pkgPath)) {
       try {
-        const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
+        const pkg = JSON.parse(readFileSync(pkgPath, 'utf8')) as { name?: string };
         if (pkg.name === 'ujima-agents') return dir;
       } catch {
         // ignore JSON parsing errors
@@ -148,24 +152,82 @@ function findMonorepoRoot(startDir = process.cwd()): string | null {
   return null;
 }
 
-async function cmdStart(argv: string[]): Promise<void> {
-  const root = findMonorepoRoot();
-  if (!root) {
-    process.stderr.write('ujima start: Could not find Ujima monorepo root (looking for package.json with name "ujima-agents"). Run this command from within the Ujima repo.\n');
+function waitForChildren(children: ChildProcess[]): Promise<void> {
+  return new Promise((resolvePromise) => {
+    let remaining = children.length;
+    const onDone = () => {
+      remaining -= 1;
+      if (remaining <= 0) resolvePromise();
+    };
+    for (const child of children) {
+      child.on('exit', onDone);
+      child.on('error', onDone);
+    }
+  });
+}
+
+async function cmdStartPackaged(runtimeDir: string, argv: string[]): Promise<void> {
+  const apiEntry = join(runtimeDir, 'api', 'main.js');
+  const webRuntimeDir = join(runtimeDir, 'web');
+  const webEntry = resolveWebServerEntry(webRuntimeDir);
+  if (!webEntry) {
+    process.stderr.write(
+      `ujima start: web server entry not found under ${webRuntimeDir}\n`,
+    );
     process.exit(1);
   }
 
-  process.stdout.write(`ujima start: Found monorepo at ${root}\nStarting stack with 'bun run dev'...\n\n`);
+  const homeDir = resolveHomeDir();
+  mkdirSync(homeDir, { recursive: true });
+  const webPort = process.env.WEB_PORT ?? '3452';
+  const webCwd = resolveWebServerCwd(webRuntimeDir, webEntry);
+
+  process.stdout.write('ujima start: launching packaged API and web UI…\n\n');
+
+  const apiChild = spawn(process.execPath, [apiEntry, ...argv], {
+    env: { ...process.env, UJIMA_HOME: homeDir },
+    stdio: 'inherit',
+  });
+
+  const webChild = spawn(process.execPath, [webEntry], {
+    cwd: webCwd,
+    env: {
+      ...process.env,
+      PORT: webPort,
+      HOSTNAME: process.env.WEB_HOST ?? '127.0.0.1',
+    },
+    stdio: 'inherit',
+  });
+
+  const children = [apiChild, webChild];
+  const shutdown = (signal: NodeJS.Signals) => {
+    for (const child of children) {
+      if (!child.killed) child.kill(signal);
+    }
+  };
+  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+
+  await waitForChildren(children);
+  const exitCode = Math.max(
+    apiChild.exitCode ?? 0,
+    webChild.exitCode ?? 0,
+  );
+  process.exit(exitCode);
+}
+
+async function cmdStartMonorepo(root: string, argv: string[]): Promise<void> {
+  process.stdout.write(
+    `ujima start: Found monorepo at ${root}\nStarting stack with 'bun run dev'…\n\n`,
+  );
 
   const child = spawn('bun', ['run', 'dev', ...argv], {
     cwd: root,
     stdio: 'inherit',
-    env: {
-      ...process.env,
-    },
+    env: { ...process.env },
   });
 
-  return new Promise<void>((_, _reject) => {
+  return new Promise<void>((resolvePromise) => {
     child.on('error', (err) => {
       process.stderr.write(`ujima start error: ${err.message}\n`);
       process.exit(1);
@@ -174,12 +236,32 @@ async function cmdStart(argv: string[]): Promise<void> {
     child.on('exit', (code, signal) => {
       if (signal) {
         process.stdout.write(`\nujima start process terminated by signal ${signal}\n`);
-        process.exit(128 + (typeof signal === 'number' ? signal : 0));
-      } else {
-        process.exit(code ?? 0);
+        process.exit(128);
       }
+      process.exit(code ?? 0);
+      resolvePromise();
     });
   });
+}
+
+async function cmdStart(argv: string[]): Promise<void> {
+  const packagedRuntime = resolvePackagedRuntimeDir(__dirname);
+  if (packagedRuntime) {
+    await cmdStartPackaged(packagedRuntime, argv);
+    return;
+  }
+
+  const root = findMonorepoRoot();
+  if (!root) {
+    process.stderr.write(
+      'ujima start: no packaged runtime found and not inside the Ujima monorepo.\n' +
+        'Install globally: npm install -g ujima-agents\n' +
+        'Or run from a clone of https://github.com/ujima-agents/ujima\n',
+    );
+    process.exit(1);
+  }
+
+  await cmdStartMonorepo(root, argv);
 }
 
 function printUsage(): void {
@@ -188,7 +270,7 @@ function printUsage(): void {
       'Usage: ujima <command> [options]',
       '',
       'Commands:',
-      '  start  Start the development stack (runs bun dev)',
+      '  start  Start the local API and web UI',
       '  init   Run first-run onboarding against a running daemon',
       '',
       'init options:',
@@ -203,6 +285,7 @@ function printUsage(): void {
       '  UJIMA_TOKEN      Bearer token (default: read from $UJIMA_HOME/token)',
       '  UJIMA_BIND_HOST  Daemon host (default: 127.0.0.1)',
       '  UJIMA_PORT       Daemon port (default: 7511)',
+      '  WEB_PORT         Web UI port when using packaged start (default: 3452)',
       '',
     ].join('\n'),
   );
