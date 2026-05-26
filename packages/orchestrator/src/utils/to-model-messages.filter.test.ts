@@ -21,7 +21,15 @@ describe('toModelMessages system filtering', () => {
     expect(toModelMessages([approval])).toEqual([]);
   });
 
-  it('keeps compaction summary system rows as model system turns', () => {
+  it('wraps compaction summary system rows as user-context turns', () => {
+    // The previous behaviour mapped compaction summaries back to
+    // `role: 'system'` mid-thread. Anthropic and parts of OpenAI
+    // reject system messages that aren't the leading one, which
+    // produced the "system messages are only supported at the
+    // beginning of the conversation" failure visible on 299 runs
+    // in the live DB. The fix wraps the summary as a `role: 'user'`
+    // message with an XML envelope so the model still sees the
+    // durable context but the provider contract stays satisfied.
     const summary = MessageSchema.parse({
       id: 'm-s',
       organizationId: 'org',
@@ -35,10 +43,11 @@ describe('toModelMessages system filtering', () => {
     });
     const out = toModelMessages([summary]);
     expect(out).toHaveLength(1);
-    expect(out[0]).toEqual({
-      role: 'system',
-      content: summary.content,
-    });
+    expect(out[0]?.role).toBe('user');
+    expect(out[0]?.content).toContain('<conversation-memory');
+    expect(out[0]?.content).toContain(CONVERSATION_SUMMARY_MARKER);
+    expect(out[0]?.content).toContain('Body');
+    expect(out[0]?.content).toContain('</conversation-memory>');
   });
 
   it('replays persisted tool results into model context', () => {
