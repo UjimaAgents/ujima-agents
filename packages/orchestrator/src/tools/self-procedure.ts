@@ -169,12 +169,14 @@ export async function listProcedures(
   if (!existsSync(dir)) return [];
   let files: string[];
   try {
-    files = (await readdir(dir)).filter((f) => f.endsWith('.md'));
+    files = (await readdir(dir))
+      .filter((f) => f.endsWith('.md'))
+      .sort((a, b) => a.localeCompare(b));
   } catch {
     return [];
   }
   const out: ProcedureFile[] = [];
-  for (const file of files.slice(0, PROCEDURE_LIST_HARD_CAP)) {
+  for (const file of files) {
     const path = join(dir, file);
     try {
       const raw = await readFile(path, 'utf8');
@@ -188,8 +190,13 @@ export async function listProcedures(
       // skip unreadable
     }
   }
-  out.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  return out;
+  out.sort((a, b) => {
+    const byCreatedAt = b.createdAt.localeCompare(a.createdAt);
+    if (byCreatedAt !== 0) return byCreatedAt;
+    const byName = a.name.localeCompare(b.name);
+    return byName !== 0 ? byName : a.path.localeCompare(b.path);
+  });
+  return out.slice(0, PROCEDURE_LIST_HARD_CAP);
 }
 
 /**

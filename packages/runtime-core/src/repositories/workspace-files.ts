@@ -8,6 +8,7 @@ type Row = Record<string, unknown>;
 const PER_ORG_BYTE_CAP_DEFAULT = 50 * 1024 * 1024;
 /** Per-file body cap. Larger files are tracked by path only with truncated body. */
 const PER_FILE_BYTE_CAP_DEFAULT = 100 * 1024;
+const DELETE_BATCH_SIZE = 500;
 
 // Kept for future read-by-path API; intentionally retained behind
 // an underscore alias so the rest of the file can use the same row
@@ -29,6 +30,57 @@ function _rowToWorkspaceFile(row: Row): WorkspaceFile {
     sizeBytes,
     updatedAt: rowString(row, 'updated_at'),
   });
+}
+
+function rowNumber(row: Row, key: string): number {
+  const raw = row[key];
+  return typeof raw === 'number'
+    ? raw
+    : typeof raw === 'string'
+      ? Number.parseInt(raw, 10) || 0
+      : 0;
+}
+
+function enforceWorkspaceFileByteCap(
+  db: DbHandle,
+  organizationId: string,
+  perOrgCap: number,
+): void {
+  const rows = db
+    .prepare(
+      `SELECT rowid, LENGTH(body) AS body_bytes
+         FROM workspace_files
+        WHERE organization_id = ?
+        ORDER BY updated_at ASC, path ASC`,
+    )
+    .all(organizationId) as Row[];
+
+  let total = 0;
+  const measuredRows = rows.map((row) => {
+    const rowid = rowNumber(row, 'rowid');
+    const bodyBytes = rowNumber(row, 'body_bytes');
+    total += bodyBytes;
+    return { rowid, bodyBytes };
+  });
+  if (total <= perOrgCap) return;
+
+  const rowidsToDelete: number[] = [];
+  for (const row of measuredRows) {
+    if (total <= perOrgCap) break;
+    if (row.rowid <= 0) continue;
+    rowidsToDelete.push(row.rowid);
+    total -= row.bodyBytes;
+  }
+
+  for (let i = 0; i < rowidsToDelete.length; i += DELETE_BATCH_SIZE) {
+    const chunk = rowidsToDelete.slice(i, i + DELETE_BATCH_SIZE);
+    const placeholders = chunk.map(() => '?').join(', ');
+    db.prepare(
+      `DELETE FROM workspace_files
+        WHERE organization_id = ?
+          AND rowid IN (${placeholders})`,
+    ).run(organizationId, ...chunk);
+  }
 }
 
 /**
@@ -76,22 +128,7 @@ export function upsertWorkspaceFile(
   );
 
   // Eviction sweep — drop oldest rows until under cap. Best-effort.
-  const totalRow = db
-    .prepare(`SELECT COALESCE(SUM(LENGTH(body)), 0) AS total FROM workspace_files WHERE organization_id = ?`)
-    .get(payload.organizationId) as { total: number } | undefined;
-  const total = totalRow?.total ?? 0;
-  if (total > perOrgCap) {
-    db.prepare(
-      `DELETE FROM workspace_files
-        WHERE organization_id = ?
-          AND rowid IN (
-            SELECT rowid FROM workspace_files
-              WHERE organization_id = ?
-              ORDER BY updated_at ASC
-              LIMIT 10
-          )`,
-    ).run(payload.organizationId, payload.organizationId);
-  }
+  enforceWorkspaceFileByteCap(db, payload.organizationId, perOrgCap);
   return payload;
 }
 

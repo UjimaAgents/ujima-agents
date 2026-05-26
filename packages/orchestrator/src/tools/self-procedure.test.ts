@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -222,5 +222,50 @@ describe('listProcedures', () => {
   it('returns an empty array on a fresh workspace', async () => {
     const list = await listProcedures(workspaceRoot, memberId);
     expect(list).toEqual([]);
+  });
+
+  it('keeps the newest procedures when the directory exceeds the prompt cap', async () => {
+    const dir = proceduresDirPath(workspaceRoot, memberId);
+    await mkdir(dir, { recursive: true });
+    const writeProcedure = async (name: string, createdAt: string) => {
+      await writeFile(
+        join(dir, `${name}.md`),
+        [
+          '---',
+          `name: ${name}`,
+          `description: ${name} description`,
+          `created_at: ${createdAt}`,
+          '---',
+          '',
+          `When: ${name}`,
+          'Then: keep deterministic prompt coverage',
+          '',
+        ].join('\n'),
+        'utf8',
+      );
+    };
+
+    for (let i = 0; i < 50; i += 1) {
+      await writeProcedure(
+        `old-${String(i).padStart(2, '0')}`,
+        `2025-01-01T00:00:${String(i).padStart(2, '0')}Z`,
+      );
+    }
+    for (let i = 0; i < 5; i += 1) {
+      await writeProcedure(
+        `new-${String(i).padStart(2, '0')}`,
+        `2026-01-01T00:00:0${i}Z`,
+      );
+    }
+
+    const list = await listProcedures(workspaceRoot, memberId);
+    const names = list.map((p) => p.name);
+
+    expect(list).toHaveLength(50);
+    expect(names.slice(0, 5)).toEqual(['new-04', 'new-03', 'new-02', 'new-01', 'new-00']);
+    expect(names).toEqual(expect.arrayContaining(['old-05', 'old-49']));
+    expect(names).not.toEqual(
+      expect.arrayContaining(['old-00', 'old-01', 'old-02', 'old-03', 'old-04']),
+    );
   });
 });
