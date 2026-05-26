@@ -6,11 +6,19 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { $ } from 'bun';
+import {
+  installedPackagePath,
+  packTarballFileName,
+  readDistributionPackage,
+} from './lib/package.ts';
 import { DIST_PKG_DIR, REPO_ROOT } from './lib/paths.ts';
 
 const skipStart = process.argv.includes('--skip-start');
 
 async function main(): Promise<void> {
+  const distribution = readDistributionPackage();
+  const expectedTarball = packTarballFileName(distribution.name, distribution.version);
+
   console.log('[release:smoke] Assembling distribution…');
   const assemble = await $`bun run release:dist`.cwd(REPO_ROOT).nothrow();
   if (assemble.exitCode !== 0) {
@@ -25,16 +33,22 @@ async function main(): Promise<void> {
     process.exit(packResult.exitCode ?? 1);
   }
 
-  const tarballMatch = packResult.stdout.toString().match(/ujima-agents-[^\s]+\.tgz/);
-  const tarballName = tarballMatch?.[0];
+  const packOutput = packResult.stdout.toString();
+  const tarballName =
+    packOutput.match(new RegExp(`${expectedTarball.replace('.', '\\.')}`))?.[0] ??
+    packOutput.match(/[^\s"]+\.tgz/)?.[0]?.replace(/^npm notice\s+/, '').trim();
+
   if (!tarballName) {
-    console.error('Could not parse npm pack output');
-    console.error(packResult.stdout.toString());
+    console.error(
+      `Could not find packed tarball (expected ${expectedTarball} from ${distribution.name}@${distribution.version})`,
+    );
+    console.error(packOutput);
     process.exit(1);
   }
+
   const tarballPath = join(workDir, tarballName);
   if (!existsSync(tarballPath)) {
-    console.error(`Expected tarball at ${tarballPath}, got: ${tarballLine}`);
+    console.error(`Expected tarball at ${tarballPath}`);
     process.exit(1);
   }
 
@@ -60,12 +74,9 @@ async function main(): Promise<void> {
   const homeDir = join(workDir, 'ujima-home');
   await $`mkdir -p ${homeDir}`.quiet();
 
-  const pkgRoot = (
-    await $`npm root -g --prefix ${installRoot}`.quiet()
-  ).stdout
-    .toString()
-    .trim();
-  const apiEntry = join(pkgRoot, 'ujima-agents', 'dist', 'runtime', 'api', 'main.js');
+  const pkgRoot = (await $`npm root -g --prefix ${installRoot}`.quiet()).stdout.toString().trim();
+  const packageDir = installedPackagePath(pkgRoot, distribution.name);
+  const apiEntry = join(packageDir, 'dist', 'runtime', 'api', 'main.js');
   if (!existsSync(apiEntry)) {
     console.error(`API entry not found: ${apiEntry}`);
     process.exit(1);

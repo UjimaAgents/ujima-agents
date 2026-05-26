@@ -64,9 +64,11 @@ ujima start
 
 ---
 
-### 📂 Path B: Local Clone & Setup (For Customizing)
+### 📂 Path B: Local Clone & Setup (coming soon)
 
-If you'd like to clone the repository to modify or extend the code, follow these steps:
+**Open source is not public yet.** For now, install from npm (Path A above). The repository will be published when we open-source the project.
+
+When the source is available, you will be able to clone and develop locally:
 
 #### 1. Clone & Bootstrap the Stack
 ```bash

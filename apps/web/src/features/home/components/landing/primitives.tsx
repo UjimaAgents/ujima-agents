@@ -156,6 +156,25 @@ export function GitHubButton({
   );
 }
 
+/** Non-interactive label for features not shipped publicly yet. */
+export function ComingSoonButton({
+  children = "Coming soon",
+  className = "",
+}: {
+  children?: string;
+  className?: string;
+}) {
+  return (
+    <span
+      className={`${buttonSecondaryClass} pointer-events-none cursor-default opacity-70 ${className}`}
+      aria-disabled="true"
+      title="Available in a future release"
+    >
+      {children}
+    </span>
+  );
+}
+
 /** Icon-only control — matches ThemeToggle compact sizing */
 export function GitHubIconLink({ className = "" }: { className?: string }) {
   return (

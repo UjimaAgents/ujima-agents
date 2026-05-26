@@ -1,4 +1,4 @@
-import { GitHubButton, LandingContainer, PrimaryButton, SecondaryButton } from "./primitives";
+import { LandingContainer, PrimaryButton, SecondaryButton } from "./primitives";
 
 export function LandingFooter() {
   return (
@@ -10,7 +10,6 @@ export function LandingFooter() {
         <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row sm:gap-4">
           <PrimaryButton href="/onboarding">Get started</PrimaryButton>
           <SecondaryButton href="/login">Sign in</SecondaryButton>
-          <GitHubButton />
         </div>
         <p className="mt-16 text-[13px] text-zinc-500 dark:text-zinc-600">
           © {new Date().getFullYear()} Ujima Agents

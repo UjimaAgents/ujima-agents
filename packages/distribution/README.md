@@ -10,4 +10,4 @@ ujima start
 
 Open the web UI at `http://127.0.0.1:3452` (default). The API listens on `http://127.0.0.1:7511` by default.
 
-See the [Ujima Agents repository](https://github.com/ujima-agents/ujima) for full documentation.
+Full documentation and open-source release are coming soon. Install via npm to run the stack today.

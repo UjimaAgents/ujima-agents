@@ -6,6 +6,7 @@ const monorepoRoot = join(import.meta.dirname, "../..");
 
 const nextConfig: NextConfig = {
   output: process.env.RELEASE === "1" ? "standalone" : undefined,
+  productionBrowserSourceMaps: false,
   outputFileTracingRoot: monorepoRoot,
   turbopack: {
     root: monorepoRoot,

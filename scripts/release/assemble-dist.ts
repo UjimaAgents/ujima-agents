@@ -7,6 +7,7 @@ import {
   cpSync,
   existsSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -146,6 +147,22 @@ function copyLicense(): void {
   cpSync(LICENSE_PATH, join(DIST_PKG_DIR, 'LICENSE'));
 }
 
+/** Remove stray source maps from the publishable tree (Next chunks, tooling, etc.). */
+function stripSourceMaps(dir: string): number {
+  if (!existsSync(dir)) return 0;
+  let removed = 0;
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const fullPath = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      removed += stripSourceMaps(fullPath);
+    } else if (entry.name.endsWith('.map') || entry.name.endsWith('.map.gz')) {
+      rmSync(fullPath);
+      removed += 1;
+    }
+  }
+  return removed;
+}
+
 function writeDistManifest(): void {
   const pkg = JSON.parse(
     readFileSync(join(DIST_PKG_DIR, 'package.json'), 'utf8'),
@@ -183,6 +200,11 @@ async function main(): Promise<void> {
   await bundleCli();
   copyLicense();
   writeDistManifest();
+
+  const mapsRemoved = stripSourceMaps(DIST_OUT_DIR);
+  if (mapsRemoved > 0) {
+    log(`Removed ${mapsRemoved} source map file(s) from distribution.`);
+  }
 
   log(`Distribution assembled at ${DIST_OUT_DIR}`);
   if (dryRun) {
