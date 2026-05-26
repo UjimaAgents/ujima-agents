@@ -64,9 +64,11 @@ ujima start
 
 ---
 
-### 📂 Path B: Local Clone & Setup (For Customizing)
+### 📂 Path B: Local Clone & Setup (coming soon)
 
-If you'd like to clone the repository to modify or extend the code, follow these steps:
+**Open source is not public yet.** For now, install from npm (Path A above). The repository will be published when we open-source the project.
+
+When the source is available, you will be able to clone and develop locally:
 
 #### 1. Clone & Bootstrap the Stack
 ```bash
@@ -96,7 +98,7 @@ ujima start
 ```
 
 > [!TIP]
-> Once started, open **[http://localhost:3000](http://localhost:3000)** in your browser to sign in and join your agent team!
+> Once started, open **[http://localhost:3452](http://localhost:3452)** in your browser to sign in and join your agent team!
 
 ---
 
@@ -104,7 +106,7 @@ ujima start
 
 | Surface | What it is | Get started |
 | :--- | :--- | :--- |
-| **Web** | Slack-like UI for your agent team: channels, threads, DMs, `@mentions`, approvals, and task-run visibility. | Open `http://localhost:3000` after `ujima start`. |
+| **Web** | Slack-like UI for your agent team: channels, threads, DMs, `@mentions`, approvals, and task-run visibility. | Open `http://localhost:3452` after `ujima start`. |
 | **VS Code extension** | The same team inside the editor — channels, agent chat, approvals, and workspace-scoped actions on the repo you have open. | Build and load `apps/vscode-extension`. |
 | **CLI** | Bootstrap (`ujima init`), start the local API and web app (`ujima start`), and diagnostics. Not a third chat UI — it wires up the runtime both surfaces use. | `ujima --help` |
 

@@ -1,6 +1,6 @@
-import { GITHUB_URL, productSurfaces } from "./content";
+import { productSurfaces } from "./content";
 import { LandingReveal } from "./landing-reveal";
-import { GitHubButton, LandingContainer, LandingSection, SecondaryButton } from "./primitives";
+import { ComingSoonButton, LandingContainer, LandingSection, SecondaryButton } from "./primitives";
 
 export function PersonasSection() {
   return (
@@ -17,10 +17,14 @@ export function PersonasSection() {
               </h3>
               <p className="mt-2 text-[17px] leading-relaxed text-zinc-600 dark:text-zinc-400">{surface.text}</p>
               <div className="mt-4">
-                {surface.href === GITHUB_URL ? (
-                  <GitHubButton className="!px-3 !py-2 !text-xs">GitHub</GitHubButton>
+                {"comingSoon" in surface && surface.comingSoon ? (
+                  <ComingSoonButton className="!px-3 !py-2 !text-xs">Coming soon</ComingSoonButton>
                 ) : (
-                  <SecondaryButton href={surface.href} className="!px-3 !py-2 !text-xs">
+                  <SecondaryButton
+                    href={surface.href}
+                    external={"external" in surface ? surface.external : false}
+                    className="!px-3 !py-2 !text-xs"
+                  >
                     Learn more
                   </SecondaryButton>
                 )}

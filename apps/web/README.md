@@ -35,6 +35,9 @@ bun install
 
 ## Development Notes
 
+- **Default port:** `3452` (not `3000`) so the web UI does not clash with other React/Next apps. Override with `WEB_PORT`, e.g. `WEB_PORT=4000 bun run dev`.
+- API default remains `7511` (`UJIMA_PORT`).
+
 - Use existing UI primitives first.
 - Keep the UI thin and driven by API contracts.
 - Align all workspace actions with the org root selected during onboarding.

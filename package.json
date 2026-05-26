@@ -11,6 +11,10 @@
   ],
   "scripts": {
     "build": "turbo run build",
+    "release:prepare": "bun scripts/release/prepare.ts",
+    "release:check": "bun scripts/release/check.ts",
+    "release:dist": "bun scripts/release/assemble-dist.ts",
+    "release:smoke": "bun scripts/release/smoke-pack.ts",
     "dev": "turbo run dev --concurrency=100",
     "dev:local": "bash scripts/dev-local.sh",
     "lint": "turbo run lint",
@@ -38,6 +42,7 @@
     "eslint": "^9.9.0",
     "prettier": "^3.3.3",
     "tailwindcss": "4",
+    "esbuild": "^0.28.0",
     "turbo": "^2.0.14",
     "typescript": "^5.5.4",
     "typescript-eslint": "^8.0.0",

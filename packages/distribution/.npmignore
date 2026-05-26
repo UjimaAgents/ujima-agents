@@ -1,0 +1,10 @@
+*
+!dist/**
+!LICENSE
+!README.md
+!package.json
+**/*.map
+**/*.map.gz
+**/*.ts
+**/*.tsx
+**/src/**
