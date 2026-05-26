@@ -177,3 +177,44 @@ button {
     linear-gradient(180deg, rgba(12, 16, 33, 0.96), rgba(8, 12, 25, 0.98));
   border-color: rgba(255, 255, 255, 0.12);
 }
+
+/* Landing page */
+.landing {
+  font-family: var(--font-landing), system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.landing-hero-bg {
+  background-color: #030508;
+  background-image:
+    radial-gradient(ellipse 80% 50% at 50% -20%, rgba(99, 102, 241, 0.18), transparent),
+    radial-gradient(ellipse 60% 40% at 100% 0%, rgba(59, 130, 246, 0.08), transparent);
+}
+
+.dark .landing-hero-bg {
+  background-color: #040712;
+}
+
+.landing-section-muted {
+  background-color: #fafafa;
+}
+
+.dark .landing-section-muted {
+  background-color: #080a12;
+}
+
+.landing-section-base {
+  background-color: #ffffff;
+}
+
+.dark .landing-section-base {
+  background-color: #09090b;
+}
+
+.landing-divider {
+  border-color: rgb(228 228 231 / 0.8);
+}
+
+.dark .landing-divider {
+  border-color: rgb(255 255 255 / 0.08);
+}
