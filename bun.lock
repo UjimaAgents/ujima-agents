@@ -186,7 +186,7 @@
       },
     },
     "packages/distribution": {
-      "name": "ujima-agents",
+      "name": "@ujima/distribution",
       "version": "0.1.0-alpha.0",
       "bin": {
         "ujima": "./dist/cli.js",
@@ -830,6 +830,8 @@
     "@ujima/client-sdk": ["@ujima/client-sdk@workspace:packages/client-sdk"],
 
     "@ujima/context-store": ["@ujima/context-store@workspace:packages/context-store"],
+
+    "@ujima/distribution": ["@ujima/distribution@workspace:packages/distribution"],
 
     "@ujima/event-bus": ["@ujima/event-bus@workspace:packages/event-bus"],
 
@@ -2108,8 +2110,6 @@
     "ufo": ["ufo@1.6.3", "", {}, "sha512-yDJTmhydvl5lJzBmy/hyOAA0d+aqCBuwl818haVdYCRrWV84o7YyeVm4QlVHStqNrrJSTb6jKuFAVqAFsr+K3Q=="],
 
     "ujima": ["ujima@workspace:packages/cli"],
-
-    "ujima-agents": ["ujima-agents@workspace:packages/distribution"],
 
     "ujima-vscode-extension": ["ujima-vscode-extension@workspace:apps/vscode-extension"],
 

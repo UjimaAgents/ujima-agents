@@ -154,7 +154,8 @@ function writeDistManifest(): void {
     join(DIST_OUT_DIR, 'manifest.json'),
     `${JSON.stringify(
       {
-        name: pkg.name,
+        name: 'ujima-agents',
+        workspaceName: pkg.name,
         version: pkg.version,
         builtAt: new Date().toISOString(),
         runtime: {

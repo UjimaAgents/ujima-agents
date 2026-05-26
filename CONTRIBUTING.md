@@ -56,7 +56,7 @@ Releases are **tag-driven**. Day-to-day work still merges to `main`; npm publish
 
 ### Version source of truth
 
-[`packages/distribution/package.json`](packages/distribution/package.json) — published npm package name **`ujima-agents`**.
+[`packages/distribution/package.json`](packages/distribution/package.json) — workspace package `@ujima/distribution`; published to npm as **`ujima-agents`**.
 
 ### Prepare a release
 

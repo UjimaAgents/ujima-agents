@@ -2,7 +2,8 @@
 import { readFileSync, mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { homedir } from 'node:os';
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn } from 'node:child_process';
+import { superviseChildren } from './start-supervisor.js';
 import { maybeLoadTeam } from '@ujima/runtime-core';
 import { DEFAULT_BIND_HOST, DEFAULT_BIND_PORT } from '@ujima/api-schema';
 import {
@@ -134,42 +135,6 @@ async function cmdInit(argv: string[]): Promise<void> {
   process.stdout.write(`${text}\n`);
 }
 
-/** When either child exits or errors, stop the other and return the first exit code. */
-function superviseChildren(children: ChildProcess[]): Promise<number> {
-  return new Promise((resolvePromise) => {
-    let settled = false;
-
-    const stopSiblings = (except?: ChildProcess) => {
-      for (const child of children) {
-        if (child === except) continue;
-        if (child.exitCode !== null || child.killed) continue;
-        child.kill('SIGTERM');
-      }
-    };
-
-    const finish = (exitCode: number) => {
-      if (settled) return;
-      settled = true;
-      stopSiblings();
-      resolvePromise(exitCode);
-    };
-
-    for (const child of children) {
-      child.on('error', (err) => {
-        process.stderr.write(`ujima start: ${err.message}\n`);
-        stopSiblings(child);
-        finish(1);
-      });
-      child.on('exit', (code, signal) => {
-        if (settled) return;
-        const exitCode = signal ? 128 : (code ?? 0);
-        stopSiblings(child);
-        finish(exitCode);
-      });
-    }
-  });
-}
-
 async function cmdStartPackaged(runtimeDir: string, argv: string[]): Promise<void> {
   const apiEntry = join(runtimeDir, 'api', 'main.js');
   const webRuntimeDir = join(runtimeDir, 'web');
@@ -203,19 +168,22 @@ async function cmdStartPackaged(runtimeDir: string, argv: string[]): Promise<voi
     stdio: 'inherit',
   });
 
-  const children = [apiChild, webChild];
+  const supervised = [
+    { child: apiChild, label: 'API' },
+    { child: webChild, label: 'web UI' },
+  ];
   let shuttingDown = false;
   const shutdown = (signal: NodeJS.Signals) => {
     if (shuttingDown) return;
     shuttingDown = true;
-    for (const child of children) {
+    for (const { child } of supervised) {
       if (child.exitCode === null && !child.killed) child.kill(signal);
     }
   };
   process.on('SIGINT', () => shutdown('SIGINT'));
   process.on('SIGTERM', () => shutdown('SIGTERM'));
 
-  const exitCode = await superviseChildren(children);
+  const exitCode = await superviseChildren(supervised);
   process.exit(exitCode);
 }
 

@@ -1,8 +1,22 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 
+/** npm publish staging dir — shares the product name but is not the dev workspace root. */
+function isDistributionPackageDir(dir: string): boolean {
+  const pkgPath = join(dir, 'package.json');
+  if (!existsSync(pkgPath)) return false;
+  try {
+    const pkg = JSON.parse(readFileSync(pkgPath, 'utf8')) as { name?: string };
+    return pkg.name === '@ujima/distribution' || pkg.name === 'ujima-agents-publish';
+  } catch {
+    return false;
+  }
+}
+
 function isMonorepoRoot(dir: string): boolean {
+  if (isDistributionPackageDir(dir)) return false;
   if (!existsSync(join(dir, 'turbo.json'))) return false;
+  if (!existsSync(join(dir, 'bun.lock'))) return false;
   const pkgPath = join(dir, 'package.json');
   if (!existsSync(pkgPath)) return false;
   try {
@@ -13,7 +27,8 @@ function isMonorepoRoot(dir: string): boolean {
     };
     return (
       pkg.name === 'ujima-agents' &&
-      (pkg.private === true || Array.isArray(pkg.workspaces))
+      pkg.private === true &&
+      Array.isArray(pkg.workspaces)
     );
   } catch {
     return false;
