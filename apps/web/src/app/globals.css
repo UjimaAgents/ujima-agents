@@ -182,7 +182,6 @@ button {
 .landing {
   font-family: var(--font-landing), system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
-  scroll-behavior: smooth;
 }
 
 .landing-hero-bg {
