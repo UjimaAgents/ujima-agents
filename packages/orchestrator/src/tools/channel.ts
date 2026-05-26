@@ -466,6 +466,25 @@ export const channelPassTool: OrchestratorTool<typeof ChannelPassSchema> = {
       ? repo.getThread(invocation.organizationId, threadId)?.channelId
       : undefined;
 
+    // Post-review enforcement — out_of_scope is no longer a valid
+    // silent terminator when the agent was explicitly addressed.
+    // Agents were channel.pass'ing with reason: out_of_scope on
+    // legitimate questions (e.g. "Layla, what does X do?" where X
+    // sits outside the PM role), producing zero visible reply and
+    // making the channel feel broken. The model must instead use
+    // channel.reply with a one-line redirect.
+    if (reason === 'out_of_scope' && run?.sourceMessageId) {
+      const source = repo.getMessage(invocation.organizationId, run.sourceMessageId);
+      const addressed = (source?.mentions ?? []).includes(invocation.memberId);
+      if (addressed) {
+        return {
+          status: 'rejected' as const,
+          error:
+            'channel.pass(reason: out_of_scope) is not allowed when you were explicitly addressed. Use channel.reply with a one-line redirect (e.g. "That\'s outside my scope as <role>; @<better-fit> would be a better contact.") instead.',
+        };
+      }
+    }
+
     // Persist the pass on the run row so metrics queries can find it.
     if (run) {
       repo.saveRun({

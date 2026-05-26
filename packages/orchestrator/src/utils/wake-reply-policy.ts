@@ -20,6 +20,12 @@ const CHANNEL_WAKE_SCAFFOLD_LINES = [
   'Treat its <agents-not-yet-responded> and <you-explicitly-addressed> / <you-implicitly-addressed> fields as ground truth — they are computed from the actual channel state, not from your reading.',
   'channel.ack = you were addressed but have no new information, question, or status to add. channel.pass = you were not addressed at all. channel.reply = you have substantive content (an answer, an artifact, a question, a status that changes the picture).',
   'If <you-explicitly-addressed>true</you-explicitly-addressed>, you must terminate via a tool. Use channel.reply ONLY when you have substantive content per the definition above; otherwise use channel.ack with an empty body. Acknowledging via channel.reply with paraphrased filler is treated as a missed reply.',
+  // Out-of-scope handling: agents were silently channel.pass-ing with
+  // `reason: out_of_scope` when explicitly addressed but the topic
+  // didn't match their role. That looks like "Layla never replied"
+  // to the human even though Layla DID consider the message. Force
+  // an explicit, brief, visible response in that case.
+  'If <you-explicitly-addressed>true</you-explicitly-addressed> AND the topic is outside your role/scope, use channel.reply with a one-line redirect (e.g. "That\'s outside my scope as <role>; @<better-fit-member> might be better here."). Do NOT use channel.pass with `reason: out_of_scope` when you were explicitly addressed — `out_of_scope` is reserved for unaddressed broadcasts you were CC\'d into.',
   'If <you-explicitly-addressed>false</you-explicitly-addressed> AND <you-implicitly-addressed>false</you-implicitly-addressed>, call channel.pass and stop. Do not post any message. The audit log already records that you considered the thread.',
   'When you call channel.pass, the note field must reference a specific fact from <thread-state>. Empty notes and generic phrasing are rejected.',
   'An auto-re-mention closing a hand-off does NOT count as being addressed. If the previous message is a plain acknowledgement of YOUR work and contains no new question, treat the chain as complete — call channel.handoff with complete:true (if you initiated the chain) or channel.ack (if you are receiving the acknowledgement).',

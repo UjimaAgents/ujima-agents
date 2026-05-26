@@ -1,0 +1,64 @@
+- generic [ref=e2] [box=0,0,1200,679]:
+  - navigation [ref=e3] [box=0,0,1200,60]:
+    - generic [ref=e5] [box=6,4,1188,52]:
+      - generic [ref=e6] [box=935,4,118,52]:
+        - link "Gmail" [ref=e8] [cursor=pointer] [box=950,16,34,24]:
+          - /url: https://mail.google.com/mail/&ogbl
+        - link "Search for Images" [ref=e10] [cursor=pointer] [box=999,16,43,24]:
+          - /url: https://www.google.com/imghp?hl=en&ogbl
+          - text: Images
+      - button "Google apps" [ref=e13] [cursor=pointer] [box=1057,8,40,40]:
+        - img [ref=e14] [box=1065,16,24,24]
+      - link "Sign in" [ref=e18] [cursor=pointer] [box=1105,8,85,40]:
+        - /url: https://accounts.google.com/ServiceLogin?hl=en&passive=true&continue=https://www.google.com/&ec=futura_exp_og_so_72776762_e
+  - img "Google" [ref=e21] [box=464,87,272,92]
+  - search [ref=e29] [box=96,205,1008,140]:
+    - generic [ref=e31] [box=256,205,688,140]:
+      - generic [ref=e33] [box=257,206,686,50]:
+        - button "Add files and tools" [ref=e36] [cursor=pointer] [box=262,213,36,36]:
+          - img [ref=e38] [box=268,219,24,24]
+        - combobox "Search" [active] [ref=e41] [box=304,206,441,50]
+        - generic [ref=e42] [box=745,206,190,50]:
+          - generic [ref=e43] [box=745,219,80,24]:
+            - button "Search by voice" [ref=e44] [cursor=pointer] [box=745,219,40,24]:
+              - img [ref=e45] [box=753,219,24,24]
+            - button "Search by image" [ref=e47] [cursor=pointer] [box=785,219,40,24]:
+              - img [ref=e48] [box=793,219,24,24]
+          - link "AI Mode" [ref=e50] [cursor=pointer] [box=833,213,102,36]:
+            - generic [ref=e52] [box=841,221,86,20]:
+              - img [ref=e54] [box=841,221,20,20]
+              - generic [ref=e61] [box=865,221,62,20]: AI Mode
+      - generic [ref=e63] [box=256,275,688,58]:
+        - button "Google Search" [ref=e64] [cursor=pointer] [box=457,286,130,36]
+        - button "I'm Feeling Lucky" [ref=e65] [cursor=pointer] [box=598,286,145,36]
+  - generic [ref=e68] [box=432,365,336,28]:
+    - text: "Google offered in:"
+    - link "Hausa" [ref=e69] [cursor=pointer] [box=539,372,38,15]:
+      - /url: https://www.google.com/setprefs?sig=0_4FuykFoctKjbvPnupSa0nQsWXWs%3D&hl=ha&source=homepage&sa=X&ved=0ahUKEwijvtCalteUAxXvXEEAHd8OCQ4Q2ZgBCCQ
+    - link "Igbo" [ref=e70] [cursor=pointer] [box=580,372,25,15]:
+      - /url: https://www.google.com/setprefs?sig=0_4FuykFoctKjbvPnupSa0nQsWXWs%3D&hl=ig&source=homepage&sa=X&ved=0ahUKEwijvtCalteUAxXvXEEAHd8OCQ4Q2ZgBCCU
+    - link "Èdè Yorùbá" [ref=e71] [cursor=pointer] [box=609,372,67,15]:
+      - /url: https://www.google.com/setprefs?sig=0_4FuykFoctKjbvPnupSa0nQsWXWs%3D&hl=yo&source=homepage&sa=X&ved=0ahUKEwijvtCalteUAxXvXEEAHd8OCQ4Q2ZgBCCY
+    - link "Nigerian Pidgin" [ref=e72] [cursor=pointer] [box=680,372,88,15]:
+      - /url: https://www.google.com/setprefs?sig=0_4FuykFoctKjbvPnupSa0nQsWXWs%3D&hl=pcm&source=homepage&sa=X&ved=0ahUKEwijvtCalteUAxXvXEEAHd8OCQ4Q2ZgBCCc
+  - contentinfo [ref=e74] [box=0,538,1200,142]:
+    - generic [ref=e75] [box=0,538,1200,48]: Nigeria
+    - generic [ref=e76] [box=0,586,1200,94]:
+      - generic [ref=e77] [box=158,633,399,46]:
+        - link "About" [ref=e78] [cursor=pointer] [box=158,633,67,46]:
+          - /url: https://about.google/?utm_source=google-NG&utm_medium=referral&utm_campaign=hp-footer&fg=1
+        - link "Advertising" [ref=e79] [cursor=pointer] [box=224,633,99,46]:
+          - /url: https://www.google.com/intl/en_ng/ads/?subid=ww-ww-et-g-awa-a-g_hpafoot1_1!o2&utm_source=google.com&utm_medium=referral&utm_campaign=google_hpafooter&fg=1
+        - link "Business" [ref=e80] [cursor=pointer] [box=323,633,87,46]:
+          - /url: https://www.google.com/services/?subid=ww-ww-et-g-awa-a-g_hpbfoot1_1!o2&utm_source=google.com&utm_medium=referral&utm_campaign=google_hpbfooter&fg=1
+        - link "How Search works" [ref=e81] [cursor=pointer] [box=410,633,147,46]:
+          - /url: https://google.com/search/howsearchworks/?fg=1
+      - link "Applying AI towards science and the environment" [ref=e83] [cursor=pointer] [box=423,586,354,48]:
+        - /url: https://ai.google/societal_impact/?utm_source=googlehpfooter&utm_medium=housepromos&utm_campaign=bottom-footer
+      - generic [ref=e84] [box=694,633,348,46]:
+        - link "Privacy" [ref=e85] [cursor=pointer] [box=818,633,76,46]:
+          - /url: https://policies.google.com/privacy?hl=en-NG&fg=1
+        - link "Terms" [ref=e86] [cursor=pointer] [box=894,633,68,46]:
+          - /url: https://policies.google.com/terms?hl=en-NG&fg=1
+        - button "Settings" [ref=e90] [cursor=pointer] [box=962,633,81,46]:
+          - generic [ref=e91] [box=962,633,81,46]: Settings
