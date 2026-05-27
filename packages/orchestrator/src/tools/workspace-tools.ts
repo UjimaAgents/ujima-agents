@@ -8,6 +8,10 @@ import { isSensitiveWorkspacePath } from '@ujima/shared/workspace-file-filters';
 import type { ApiRepository } from '../services/repository-reader.js';
 import type { OrchestratorTool, ToolExecutionContext } from './types.js';
 import { readWindowValue } from './window-utils.js';
+import {
+  isAgentRestrictedProcedurePath,
+  isProceduresPath,
+} from '../utils/procedures.js';
 
 /**
  * Bet 4 — workspace-files FTS index. Every successful `write` /
@@ -32,6 +36,16 @@ function indexWorkspaceWrite(
   if (!repo?.upsertWorkspaceFile) return;
   try {
     if (isSensitiveWorkspacePath(workspacePath)) {
+      repo.deleteWorkspaceFile?.(ctx.invocation.organizationId, workspacePath);
+      return;
+    }
+    // Procedures-as-Culture (docs/procedures-as-culture.md "FTS
+    // exclusion"). Org / channel / agent procedures must NEVER
+    // surface via `channel.recall(scope: 'files')`. They are a system
+    // of record loaded only by the wake-time aggregator. Cross-channel
+    // leakage was the main risk — an agent in #engineering must not
+    // discover #legal's culture via lexical recall.
+    if (isProceduresPath(workspacePath)) {
       repo.deleteWorkspaceFile?.(ctx.invocation.organizationId, workspacePath);
       return;
     }
@@ -234,6 +248,7 @@ export const writeTool: OrchestratorTool<typeof WriteSchema> = {
     if (!invocation.resourcePath) {
       throw new Error('resourcePath is required');
     }
+    assertAgentWritePermitted(invocation.memberId, invocation.resourcePath);
 
     const resolved = resolveWorkspacePath(team.workspace.root, invocation.resourcePath);
     const before = await readExistingText(resolved);
@@ -278,6 +293,7 @@ export const editTool: OrchestratorTool<typeof EditSchema> = {
     if (!invocation.resourcePath) {
       throw new Error('resourcePath is required');
     }
+    assertAgentWritePermitted(invocation.memberId, invocation.resourcePath);
 
     const resolved = resolveWorkspacePath(team.workspace.root, invocation.resourcePath);
     const before = await readExistingText(resolved);
@@ -330,6 +346,7 @@ export const multieditTool: OrchestratorTool<typeof MultiEditSchema> = {
     if (!invocation.resourcePath) {
       throw new Error('resourcePath is required');
     }
+    assertAgentWritePermitted(invocation.memberId, invocation.resourcePath);
 
     const resolved = resolveWorkspacePath(team.workspace.root, invocation.resourcePath);
     const before = await readExistingText(resolved);
@@ -472,6 +489,29 @@ export const globTool: OrchestratorTool<typeof GlobSchema> = {
 
 function resolveWorkspacePath(workspaceRoot: string, resourcePath: string): string {
   return assertWorkspaceBoundary(workspaceRoot, resourcePath);
+}
+
+/**
+ * Procedures-as-Culture (docs/procedures-as-culture.md "Security
+ * boundary"). Agents may only write inside their own subtree under
+ * `ai/memory-bank/agents/<self>/**`. Org culture, channel culture,
+ * and other agents' procedures are off-limits via these tools.
+ * Human admins use the HTTP API (apps/api/src/transport/routes/
+ * {org,channel}-culture.ts), which bypasses the agent tool surface.
+ *
+ * Throws a descriptive error so the model sees WHY the write was
+ * refused and routes the request through the channel instead.
+ *
+ * NOTE: the `shell` tool is still a gap — arbitrary commands can
+ * bypass this check. Reproducing the guard there is a larger change
+ * (string-matching commands is brittle) and is tracked separately.
+ */
+function assertAgentWritePermitted(memberId: string, resourcePath: string): void {
+  if (isAgentRestrictedProcedurePath(memberId, resourcePath)) {
+    throw new Error(
+      `Procedures-as-Culture: agents may only write under ai/memory-bank/agents/<self>/. Use channel.reply or escalate to a human admin to change org or channel culture; use self.procedure.add for your own procedures.`,
+    );
+  }
 }
 
 async function readExistingText(path: string): Promise<string> {

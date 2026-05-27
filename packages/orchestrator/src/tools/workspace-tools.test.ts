@@ -132,4 +132,125 @@ describe('workspace edit tools', () => {
     expect(indexedPath).toBeUndefined();
     expect(deletedPath).toBe('.env');
   });
+
+  // Procedures-as-Culture (docs/procedures-as-culture.md "Security boundary").
+  it('rejects agent writes to org culture', async () => {
+    root = await mkdtemp(join(tmpdir(), 'ujima-edit-'));
+    await expect(
+      writeTool.execute({
+        invocation: {
+          organizationId: 'org-1',
+          runId: 'run-1',
+          memberId: 'agent-layla',
+          toolCallId: 'call-1',
+          toolId: 'write',
+          action: 'write',
+          resourceType: 'file',
+          resourcePath: 'ai/memory-bank/org/procedures/take-over-org.md',
+          input: { content: 'oops' },
+        } as never,
+        team: { workspace: { root } } as never,
+        repo: {} as never,
+        conversations: {} as never,
+      }),
+    ).rejects.toThrow(/agents may only write under ai\/memory-bank\/agents\/<self>/);
+  });
+
+  it('rejects agent writes to channel culture', async () => {
+    root = await mkdtemp(join(tmpdir(), 'ujima-edit-'));
+    await expect(
+      writeTool.execute({
+        invocation: {
+          organizationId: 'org-1',
+          runId: 'run-1',
+          memberId: 'agent-layla',
+          toolCallId: 'call-1',
+          toolId: 'write',
+          action: 'write',
+          resourceType: 'file',
+          resourcePath: 'ai/memory-bank/channels/eng/procedures/sneaky.md',
+          input: { content: 'oops' },
+        } as never,
+        team: { workspace: { root } } as never,
+        repo: {} as never,
+        conversations: {} as never,
+      }),
+    ).rejects.toThrow(/agents may only write under ai\/memory-bank\/agents\/<self>/);
+  });
+
+  it('rejects agent writes to ANOTHER agent subtree', async () => {
+    root = await mkdtemp(join(tmpdir(), 'ujima-edit-'));
+    await expect(
+      writeTool.execute({
+        invocation: {
+          organizationId: 'org-1',
+          runId: 'run-1',
+          memberId: 'agent-layla',
+          toolCallId: 'call-1',
+          toolId: 'write',
+          action: 'write',
+          resourceType: 'file',
+          resourcePath: 'ai/memory-bank/agents/phoebe/procedures/cross-write.md',
+          input: { content: 'oops' },
+        } as never,
+        team: { workspace: { root } } as never,
+        repo: {} as never,
+        conversations: {} as never,
+      }),
+    ).rejects.toThrow(/agents may only write under ai\/memory-bank\/agents\/<self>/);
+  });
+
+  it('allows agent writes inside its OWN subtree', async () => {
+    root = await mkdtemp(join(tmpdir(), 'ujima-edit-'));
+    const result = await writeTool.execute({
+      invocation: {
+        organizationId: 'org-1',
+        runId: 'run-1',
+        memberId: 'agent-layla',
+        toolCallId: 'call-1',
+        toolId: 'write',
+        action: 'write',
+        resourceType: 'file',
+        resourcePath: 'ai/memory-bank/agents/agent-layla/notes/observation.md',
+        input: { content: 'my own note' },
+      } as never,
+      team: { workspace: { root } } as never,
+      repo: {} as never,
+      conversations: {} as never,
+    });
+    expect((result as { success: boolean }).success).toBe(true);
+  });
+
+  it('skips FTS indexing on procedure paths', async () => {
+    root = await mkdtemp(join(tmpdir(), 'ujima-edit-'));
+    let indexedPath: string | undefined;
+    let deletedPath: string | undefined;
+    await writeTool.execute({
+      invocation: {
+        organizationId: 'org-1',
+        runId: 'run-1',
+        memberId: 'agent-layla',
+        toolCallId: 'call-1',
+        toolId: 'write',
+        action: 'write',
+        resourceType: 'file',
+        resourcePath: 'ai/memory-bank/agents/agent-layla/procedures/my-rule.md',
+        input: { content: 'body' },
+      } as never,
+      team: { workspace: { root } } as never,
+      repo: {
+        upsertWorkspaceFile: (input: { path: string }) => {
+          indexedPath = input.path;
+          return input;
+        },
+        deleteWorkspaceFile: (_org: string, path: string) => {
+          deletedPath = path;
+          return true;
+        },
+      } as never,
+      conversations: {} as never,
+    });
+    expect(indexedPath).toBeUndefined();
+    expect(deletedPath).toBe('ai/memory-bank/agents/agent-layla/procedures/my-rule.md');
+  });
 });

@@ -19,6 +19,7 @@ import { buildSelfFollowupContextBlock } from './utils/self-followup-context.js'
 import {
   buildCacheableSystem,
   buildWakeContextMessages,
+  loadCultureForSystemPrompt,
   loadProceduresForSystemPrompt,
 } from './utils/system-prompt-builder.js';
 import { buildThreadStateBlock } from './utils/thread-state.js';
@@ -386,10 +387,33 @@ export class AiService {
     // on every wake. The CI lint at packages/orchestrator/test/
     // cache-stability.test.ts hashes this output across wake reasons
     // to enforce the invariant.
-    const proceduresText = await loadProceduresForSystemPrompt(team.workspace.root, member.id);
+    // Multi-scope procedures-as-culture (docs/procedures-as-culture.md):
+    // load org + channel + agent procedures and pull LAW entries out
+    // for hoisting to the top of Zone 1. The channel id falls back
+    // through the thread's channel attribution so DM threads (no
+    // channel) just see org + agent culture.
+    const cultureChannelId = input.threadId
+      ? this.repo.getThread(input.organizationId, input.threadId)?.channelId
+      : undefined;
+    const culture = await loadCultureForSystemPrompt({
+      workspaceRoot: team.workspace.root,
+      organizationId: input.organizationId,
+      memberId: member.id,
+      channelId: cultureChannelId,
+    });
+    if (culture.applied.length > 0) {
+      // Record what the agent saw this wake into audit_events so the
+      // trajectory log can surface `procedures_applied` per run.
+      this.repo.recordProceduresApplied?.({
+        organizationId: input.organizationId,
+        runId: input.runId,
+        applied: culture.applied,
+      });
+    }
     const { system } = buildCacheableSystem({
       baseSystem: baseSystemPrompt,
-      proceduresText,
+      lawText: culture.lawText,
+      proceduresText: culture.cultureText,
       goalSuffix: input.systemPromptSuffix,
       // Use the DM vs channel scaffold from the wake-reply policy
       // (introduced by main as `wake-reply-policy.ts`). Per-thread

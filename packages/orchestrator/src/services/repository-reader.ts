@@ -10,6 +10,8 @@ import type {
   ConfigFieldOwnership,
   ConversationThread,
   DecisionLogEntry,
+  ProcedureRevision,
+  RunProcedureApplied,
   McpServer,
   McpToolCache,
   PluginInstall,
@@ -460,6 +462,26 @@ export interface ApiRepository extends ConversationRepository {
     organizationId: string,
     sourceMessageId: string,
   ): DecisionLogEntry | null;
+
+  // Procedures as Culture (docs/procedures-as-culture.md). Optional —
+  // older Repository fakes in tests can omit these without breaking.
+  appendProcedureRevision?(rev: ProcedureRevision): ProcedureRevision;
+  listProcedureRevisions?(input: {
+    organizationId: string;
+    scope: string;
+    scopeId: string;
+    name: string;
+    limit?: number;
+  }): ProcedureRevision[];
+  recordProceduresApplied?(input: {
+    organizationId: string;
+    runId: string;
+    applied: { scope: string; scopeId: string; name: string; version: number; enforced: boolean }[];
+  }): void;
+  listRunProceduresApplied?(
+    organizationId: string,
+    runId: string,
+  ): RunProcedureApplied[];
 
   updateTodoStatus(
     organizationId: string,

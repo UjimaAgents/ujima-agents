@@ -22,6 +22,27 @@ export {
 export { AiService } from './ai-service.js';
 export type { GenerateRunReplyInput } from './ai-service.js';
 export {
+  aggregateProcedures,
+  isAgentRestrictedProcedurePath,
+  isProceduresPath,
+  isValidProcedureName,
+  listProceduresByScope,
+  PROCEDURE_BUDGETS,
+  PROCEDURE_LAW_HARD_CAP,
+  proceduresDirFor,
+  removeProcedure,
+  renderProcedureFile,
+  safeSegment,
+  saveProcedure,
+} from './utils/procedures.js';
+export type {
+  AggregatorOutput,
+  ProcedureApplied,
+  ProcedureFile,
+  ProcedureScope,
+  SaveProcedureInput,
+} from './utils/procedures.js';
+export {
   ALWAYS_AVAILABLE_AGENT_TOOLS,
   ORCHESTRATOR_TOOLS,
   SUPERVISOR_ALLOWED_TOOLS,

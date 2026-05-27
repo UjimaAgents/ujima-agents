@@ -58,6 +58,24 @@ describe('buildCacheableSystem — cache stability invariants', () => {
     expect(hashPromptZone('abc')).toBe(hashPromptZone('abc'));
     expect(hashPromptZone('abc')).not.toBe(hashPromptZone('abd'));
   });
+
+  // Procedures-as-Culture (docs/procedures-as-culture.md "Zone 1 ordering").
+  it('hoists lawText above procedures and goal suffix', () => {
+    const { system } = buildCacheableSystem({
+      baseSystem: FIXED_BASE,
+      lawText: 'LAW (do not violate): Never share customer data.',
+      proceduresText: 'Workspace Culture — applies to everyone.',
+      goalSuffix: 'Goal: ship the demo.',
+    });
+    const lawIdx = system.indexOf('LAW (do not violate)');
+    const cultureIdx = system.indexOf('Workspace Culture');
+    const goalIdx = system.indexOf('Goal: ship the demo');
+    expect(lawIdx).toBeGreaterThan(-1);
+    expect(cultureIdx).toBeGreaterThan(-1);
+    expect(goalIdx).toBeGreaterThan(-1);
+    expect(lawIdx).toBeLessThan(goalIdx);
+    expect(lawIdx).toBeLessThan(cultureIdx);
+  });
 });
 
 describe('buildWakeContextMessages — per-wake additions (NOT part of cacheable prefix)', () => {

@@ -56,6 +56,7 @@ import {registerMcpRoutes} from "./routes/mcps.js";
 import {registerPluginRoutes} from "./routes/plugins.js";
 import {registerChannelGoalsRoutes} from "./routes/channel-goals.js";
 import {registerChannelTasksRoutes} from "./routes/channel-tasks.js";
+import {registerCultureRoutes} from "./routes/culture.js";
 import {registerWorkspaceRoutes} from "./routes/workspaces.js";
 import {registerAgentRoutes} from "./routes/agents.js";
 import {registerOauthRoutes} from "./routes/oauth.js";
@@ -329,6 +330,10 @@ export function createTransport(opts: TransportOptions): Transport {
           repo: opts.apiServices.repo,
           auth: services.auth,
           realtime,
+        });
+        registerCultureRoutes(api, {
+          repo: opts.apiServices.repo,
+          auth: services.auth,
         });
         registerScheduleRoutes(api, {
           repo: opts.apiServices.repo,

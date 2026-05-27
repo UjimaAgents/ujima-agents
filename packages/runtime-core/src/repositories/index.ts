@@ -11,6 +11,8 @@ import type {
   ConfigFieldOwnership,
   ConversationThread,
   DecisionLogEntry,
+  ProcedureRevision,
+  RunProcedureApplied,
   McpServer,
   McpToolCache,
   Member,
@@ -181,6 +183,12 @@ import {
   findDecisionBySourceMessage as readDecisionBySourceMessage,
   listDecisionLogForChannel as readDecisionLogForChannel,
 } from './decision-log.js';
+import {
+  appendProcedureRevision as writeProcedureRevision,
+  listProcedureRevisions as readProcedureRevisions,
+  listRunProceduresApplied as readRunProceduresApplied,
+  recordRunProceduresApplied as writeRunProceduresApplied,
+} from './procedure-revisions.js';
 import {
   ensureThread as ensureThreadRecord,
   getThread as readThread,
@@ -642,6 +650,26 @@ export class Repository {
     sourceMessageId: string,
   ): DecisionLogEntry | null =>
     readDecisionBySourceMessage(this.db, organizationId, sourceMessageId);
+
+  // Procedures as Culture (docs/procedures-as-culture.md).
+  appendProcedureRevision = (rev: ProcedureRevision): ProcedureRevision =>
+    writeProcedureRevision(this.db, rev);
+  listProcedureRevisions = (input: {
+    organizationId: string;
+    scope: string;
+    scopeId: string;
+    name: string;
+    limit?: number;
+  }): ProcedureRevision[] => readProcedureRevisions(this.db, input);
+  recordProceduresApplied = (input: {
+    organizationId: string;
+    runId: string;
+    applied: { scope: string; scopeId: string; name: string; version: number; enforced: boolean }[];
+  }): void => writeRunProceduresApplied(this.db, input);
+  listRunProceduresApplied = (
+    organizationId: string,
+    runId: string,
+  ): RunProcedureApplied[] => readRunProceduresApplied(this.db, organizationId, runId);
 
   saveScheduledJob = (job: ScheduledJob): ScheduledJob =>
     writeScheduledJob(this.db, job);
