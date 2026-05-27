@@ -181,7 +181,12 @@ export const channelRecallTool: OrchestratorTool<typeof ChannelRecallSchema> = {
               authorId: f.writtenBy,
               createdAt: f.updatedAt,
             },
-            rank: idx,
+            // BM25 score from `searchWorkspaceFiles` — lower (more
+            // negative) is more relevant, on the same scale as
+            // `page.searchRanks` for messages. Falling back to `idx`
+            // would mix BM25 with array position and let weaker files
+            // outrank stronger messages purely on positional luck.
+            rank: typeof f.rank === 'number' ? f.rank : idx,
           });
         });
       } catch {
