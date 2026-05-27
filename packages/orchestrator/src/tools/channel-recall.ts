@@ -62,10 +62,8 @@ export const channelRecallTool: OrchestratorTool<typeof ChannelRecallSchema> = {
     const scope = (input.scope as 'channel' | 'org' | 'files' | 'all') ?? 'all';
     const query = String(input.query);
     const since = typeof input.since === 'string' ? input.since : undefined;
-    // Track each hit alongside its per-source rank (0-based position in
-    // the BM25-ordered list it came from) so the final merge preserves
-    // relevance order across sources. Without this, the previous
-    // recency sort buried the top BM25 hit behind a newer-but-worse one.
+    // Track each hit alongside its BM25 rank score so the final merge
+    // preserves relevance order across sources. Lower scores are better.
     const ranked: { hit: ChannelRecallHit; rank: number }[] = [];
 
     // --- Message hits -------------------------------------------------
@@ -93,6 +91,7 @@ export const channelRecallTool: OrchestratorTool<typeof ChannelRecallSchema> = {
             query,
             since,
             limit,
+            ranked: true,
           });
           page.data.slice(0, limit).forEach((m, idx) => {
             ranked.push({
@@ -104,7 +103,7 @@ export const channelRecallTool: OrchestratorTool<typeof ChannelRecallSchema> = {
                 authorId: m.senderId,
                 createdAt: m.createdAt,
               },
-              rank: idx,
+              rank: page.searchRanks?.[m.id] ?? idx,
             });
           });
         } else if (scope === 'channel') {
@@ -121,7 +120,7 @@ export const channelRecallTool: OrchestratorTool<typeof ChannelRecallSchema> = {
           const visibleChannels = conversations.listVisibleChannels({
             organizationId: invocation.organizationId,
             memberId: invocation.memberId,
-            scope: 'mine',
+            scope: 'all',
           });
           const perChannelLimit = Math.max(
             2,
@@ -136,6 +135,7 @@ export const channelRecallTool: OrchestratorTool<typeof ChannelRecallSchema> = {
                 query,
                 since,
                 limit: perChannelLimit,
+                ranked: true,
               });
               page.data.slice(0, perChannelLimit).forEach((m, idx) => {
                 ranked.push({
@@ -148,7 +148,7 @@ export const channelRecallTool: OrchestratorTool<typeof ChannelRecallSchema> = {
                     authorId: m.senderId,
                     createdAt: m.createdAt,
                   },
-                  rank: idx,
+                  rank: page.searchRanks?.[m.id] ?? idx,
                 });
               });
             } catch {
@@ -189,7 +189,7 @@ export const channelRecallTool: OrchestratorTool<typeof ChannelRecallSchema> = {
       }
     }
 
-    // Merge by per-source BM25 rank (lower = more relevant), with
+    // Merge by BM25 rank (lower = more relevant), with
     // recency as a secondary tie-breaker so equally-ranked hits across
     // sources surface the newer one first. The earlier implementation
     // sorted by recency alone and silently buried the top BM25 hit.

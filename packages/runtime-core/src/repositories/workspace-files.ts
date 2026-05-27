@@ -1,5 +1,6 @@
 import type { SqliteDbHandle as DbHandle } from '@ujima/context-store';
 import { WorkspaceFileSchema, type WorkspaceFile } from '@ujima/shared';
+import { isSensitiveWorkspacePath } from '@ujima/shared/workspace-file-filters';
 import { optionalRowString, rowString } from './common.js';
 
 type Row = Record<string, unknown>;
@@ -225,6 +226,7 @@ export function searchWorkspaceFiles(
   input: { organizationId: string; query: string; limit?: number; sinceIso?: string },
 ): WorkspaceFileSearchHit[] {
   const limit = input.limit ?? 5;
+  const searchLimit = Math.min(Math.max(limit * 5, 25), 100);
   // FTS5 syntax: callers pass natural-language queries; we MATCH on
   // the body+path index. Escape double-quotes; multi-word queries
   // become AND by default in FTS5.
@@ -245,16 +247,19 @@ export function searchWorkspaceFiles(
     params.push(input.sinceIso);
   }
   sql += ' ORDER BY rank LIMIT ?';
-  params.push(limit);
+  params.push(searchLimit);
   const rows = db.prepare(sql).all(...params) as Row[];
-  return rows.map((row) => ({
-    path: rowString(row, 'path'),
-    snippet: rowString(row, 'snippet'),
-    rank: Number(row['rank'] ?? 0),
-    writtenBy: rowString(row, 'written_by'),
-    channelId: optionalRowString(row, 'channel_id'),
-    updatedAt: rowString(row, 'updated_at'),
-  }));
+  return rows
+    .filter((row) => !isSensitiveWorkspacePath(rowString(row, 'path')))
+    .slice(0, limit)
+    .map((row) => ({
+      path: rowString(row, 'path'),
+      snippet: rowString(row, 'snippet'),
+      rank: Number(row['rank'] ?? 0),
+      writtenBy: rowString(row, 'written_by'),
+      channelId: optionalRowString(row, 'channel_id'),
+      updatedAt: rowString(row, 'updated_at'),
+    }));
 }
 
 /**

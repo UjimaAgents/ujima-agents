@@ -10,6 +10,7 @@ export interface PaginatedMessages {
   data: Message[];
   nextCursor?: string;
   hasMore: boolean;
+  searchRanks?: Record<string, number>;
 }
 
 export function saveMessage(db: DbHandle, message: Message): Message {
@@ -343,6 +344,7 @@ export function searchChannelMessages(
     cursor?: string;
     since?: string;
     limit?: number;
+    ranked?: boolean;
   } = {},
 ): PaginatedMessages {
   const limit = options.limit ?? 50;
@@ -350,7 +352,7 @@ export function searchChannelMessages(
   const safeFtsQuery = buildSafeFtsQuery(terms);
   const params: (string | number)[] = [organizationId, channelId, safeFtsQuery];
   let innerQuery = `
-    SELECT m.*
+    SELECT m.*, bm25(messages_fts) AS search_rank
       FROM messages_fts f
       JOIN messages m ON m.rowid = f.rowid
      WHERE m.organization_id = ?
@@ -369,30 +371,51 @@ export function searchChannelMessages(
     params.push(...cursorParams);
   }
 
-  innerQuery += ' ORDER BY m.created_at DESC, m.id DESC LIMIT ?';
+  innerQuery += options.ranked
+    ? ' ORDER BY search_rank ASC, m.created_at DESC, m.id DESC LIMIT ?'
+    : ' ORDER BY m.created_at DESC, m.id DESC LIMIT ?';
   params.push(limit + 1);
 
   try {
-    const query = `SELECT * FROM (${innerQuery}) ORDER BY created_at ASC, id ASC`;
+    const query = options.ranked
+      ? innerQuery
+      : `SELECT * FROM (${innerQuery}) ORDER BY created_at ASC, id ASC`;
     const rows = db.prepare(query).all(...params) as Row[];
     const hasMore = rows.length > limit;
-    if (hasMore) rows.shift();
+    if (hasMore) {
+      if (options.ranked) {
+        rows.pop();
+      } else {
+        rows.shift();
+      }
+    }
     const attachmentsByMessageId = listMessageAttachmentsForMessageIds(
       db,
       rows.map((row) => rowString(row, 'id')),
     );
     const data = rows.map((row) => rowToMessage(row, attachmentsByMessageId.get(rowString(row, 'id'))));
     const head = hasMore ? data[0] : undefined;
+    const searchRanks = options.ranked
+      ? Object.fromEntries(data.map((message, index) => [message.id, rowSearchRank(rows[index])]))
+      : undefined;
     return {
       data,
       hasMore,
-      nextCursor: head ? encodeCursor(head.createdAt, head.id) : undefined,
+      nextCursor: options.ranked ? undefined : head ? encodeCursor(head.createdAt, head.id) : undefined,
+      ...(searchRanks ? { searchRanks } : {}),
     };
   } catch {
     // User-entered search text can contain broken FTS syntax like unmatched
     // quotes. Fall back to substring search instead of surfacing an SQL error.
     return searchChannelMessagesBySubstring(db, organizationId, channelId, terms, options);
   }
+}
+
+function rowSearchRank(row: Row | undefined): number {
+  if (!row) return Number.POSITIVE_INFINITY;
+  const raw = row['search_rank'];
+  const rank = typeof raw === 'number' ? raw : typeof raw === 'string' ? Number(raw) : NaN;
+  return Number.isFinite(rank) ? rank : Number.POSITIVE_INFINITY;
 }
 
 export function deleteMessages(

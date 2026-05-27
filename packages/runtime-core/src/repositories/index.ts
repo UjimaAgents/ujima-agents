@@ -386,7 +386,7 @@ export class Repository {
     organizationId: string,
     channelId: string,
     query: string,
-    options?: { cursor?: string; since?: string; limit?: number },
+    options?: { cursor?: string; since?: string; limit?: number; ranked?: boolean },
   ): PaginatedMessages => searchMessagesByChannel(this.db, organizationId, channelId, query, options);
   replaceMessageMentions = (
     messageId: string,

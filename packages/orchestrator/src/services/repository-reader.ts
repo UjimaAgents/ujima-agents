@@ -52,6 +52,7 @@ export interface PaginatedMessages {
   data: Message[];
   nextCursor?: string;
   hasMore: boolean;
+  searchRanks?: Record<string, number>;
 }
 
 export interface PaginatedChannels {
@@ -176,7 +177,7 @@ export interface ConversationRepository extends RepositoryReader {
     organizationId: string,
     channelId: string,
     query: string,
-    options?: { cursor?: string; since?: string; limit?: number },
+    options?: { cursor?: string; since?: string; limit?: number; ranked?: boolean },
   ): PaginatedMessages;
   getAttachment(organizationId: string, attachmentId: string): Attachment | null;
   listMessageAttachments(messageId: string): Attachment[];

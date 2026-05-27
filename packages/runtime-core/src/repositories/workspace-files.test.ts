@@ -65,3 +65,43 @@ test('upsertWorkspaceFile evicts enough oldest rows to satisfy the org byte cap'
     '/file-new.md',
   ]);
 });
+
+test('searchWorkspaceFiles filters sensitive paths before exposing snippets', () => {
+  const db = openDatabase({ dbPath: ':memory:' });
+  const repo = new Repository(db);
+  const organizationId = 'org-workspace-file-sensitive';
+  const base = {
+    organizationId,
+    writtenBy: 'member-a',
+    channelId: 'channel-a',
+    sizeBytes: 0,
+    updatedAt: '2026-01-01T00:00:00.000Z',
+  };
+
+  repo.upsertWorkspaceFile(
+    WorkspaceFileSchema.parse({
+      ...base,
+      path: '.env',
+      body: 'TOP_SECRET_TOKEN=needle-secret',
+      sizeBytes: 'TOP_SECRET_TOKEN=needle-secret'.length,
+    }),
+  );
+  repo.upsertWorkspaceFile(
+    WorkspaceFileSchema.parse({
+      ...base,
+      path: 'docs/public-note.md',
+      body: 'needle public note',
+      sizeBytes: 'needle public note'.length,
+      updatedAt: '2026-01-01T00:00:01.000Z',
+    }),
+  );
+
+  const hits = repo.searchWorkspaceFiles({
+    organizationId,
+    query: 'needle',
+    limit: 10,
+  });
+
+  expect(hits.map((hit) => hit.path)).toEqual(['docs/public-note.md']);
+  expect(hits.map((hit) => hit.snippet).join('\n')).not.toContain('TOP_SECRET_TOKEN');
+});

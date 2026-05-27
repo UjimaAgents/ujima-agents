@@ -31,6 +31,10 @@ function indexWorkspaceWrite(
   const repo: ApiRepository | undefined = ctx.repo;
   if (!repo?.upsertWorkspaceFile) return;
   try {
+    if (isSensitiveWorkspacePath(workspacePath)) {
+      repo.deleteWorkspaceFile?.(ctx.invocation.organizationId, workspacePath);
+      return;
+    }
     const channelId = ctx.invocation.threadId
       ? repo.getThread(ctx.invocation.organizationId, ctx.invocation.threadId)?.channelId
       : undefined;
