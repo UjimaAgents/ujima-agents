@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
+import { z } from 'zod';
 import { syncWorkspacesFromOrganizations, type RuntimeHost } from '@ujima/runtime-core';
 import {
   ApiErrorSchema,
@@ -106,6 +107,42 @@ export function registerWorkspaceRoutes(
       }
 
       return { ...row, is_current: false };
+    } catch (err) {
+      const message = errorMessage(err);
+      if (/session required/i.test(message)) {
+        return apiError(reply, 401, message);
+      }
+      return apiError(reply, 400, message);
+    }
+  });
+
+  app.delete('/workspaces/:workspaceId', {
+    schema: {
+      description: 'Delete an existing workspace',
+      tags: ['Workspaces'],
+      params: z.object({
+        workspaceId: z.string().min(1),
+      }),
+      response: {
+        200: z.object({ success: z.literal(true) }),
+        400: ApiErrorSchema,
+        401: ApiErrorSchema,
+        403: ApiErrorSchema,
+        503: ApiErrorSchema,
+      },
+    },
+  }, async (req, reply) => {
+    if (!auth || !workspaces) {
+      return reply.status(503).send({
+        code: 'ERR_SHUTTING_DOWN',
+        message: 'Workspace routes are not configured',
+      });
+    }
+
+    try {
+      const { workspaceId } = req.params;
+      workspaces.deleteWorkspace(readSessionToken(req), workspaceId);
+      return { success: true } as const;
     } catch (err) {
       const message = errorMessage(err);
       if (/session required/i.test(message)) {

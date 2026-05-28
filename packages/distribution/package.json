@@ -1,7 +1,7 @@
 {
   "name": "@ujima/agents",
   "publishConfig": {
-    "access": "public"
+    "access": "restricted"
   },
   "version": "0.0.5",
   "description": "Framework for building Slack-like teams of AI agents — CLI, API, and web UI.",

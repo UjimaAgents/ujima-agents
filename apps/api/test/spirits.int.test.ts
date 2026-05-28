@@ -1117,7 +1117,7 @@ describe('TaskSessionService.create — audit fix regressions', () => {
       await onboarding.onboard({
         organizationName: name,
         ownerName: `${name} Owner`,
-        workspaceRoot: archiveRoot,
+        workspaceRoot: join(archiveRoot, name),
         providerKeys: { local: 'k' },
         team: {
           channels: [{ name: 'general', kind: 'general', topic: '' }],

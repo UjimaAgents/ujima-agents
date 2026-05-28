@@ -27,6 +27,7 @@ import { MIN_TEAM_AGENTS } from "../api-contract";
 import { getSuggestedAgentName } from "../agent-name-suggestions";
 import { Avatar } from "../../workspace/components/chat/primitives";
 import { Select } from "@/components/ui/select";
+import { Modal } from "@/components/ui/modal";
 import { FieldShell, TextInput } from "@/components/ui/form-fields";
 import { ChannelFormFields } from "@/features/team/channel-form-fields";
 import { normalizeChannelName } from "@/features/team/channel-form-fields";
@@ -476,6 +477,7 @@ function StepFields({
   onTeamTabChange: (tabId: TeamTabId) => void;
 }) {
   const [roleMenuId, setRoleMenuId] = useState<string | null>(null);
+  const [roleToDelete, setRoleToDelete] = useState<{ id: string; name: string } | null>(null);
   const [isPickingWorkspaceRoot, setIsPickingWorkspaceRoot] = useState(false);
   const [workspaceRootPickError, setWorkspaceRootPickError] = useState<string | null>(null);
   const [roleEditor, setRoleEditor] = useState<{
@@ -742,16 +744,17 @@ function StepFields({
     setRoleEditor(null);
   };
 
-  const deleteRole = (roleId: string) => {
+  const requestDeleteRole = (roleId: string) => {
     const role = draft.roles.find((item) => item.id === roleId);
-
     if (!role) {
       return;
     }
+    setRoleToDelete({ id: role.id, name: role.name });
+  };
 
-    const shouldDelete = window.confirm(`Delete the role "${role.name}"?`);
-
-    if (!shouldDelete) {
+  const performDeleteRole = (roleId: string) => {
+    const role = draft.roles.find((item) => item.id === roleId);
+    if (!role) {
       return;
     }
 
@@ -1031,6 +1034,7 @@ function StepFields({
           {TEAM_TABS.map((tab) => {
             const Icon = tab.icon;
             const isActive = tab.id === activeTeamTab;
+            const isValid = validateTeamTab(tab.id, draft) === null;
 
             return (
               <button
@@ -1045,6 +1049,9 @@ function StepFields({
               >
                 <Icon className="h-4 w-4 shrink-0" />
                 <span className="whitespace-nowrap">{tab.label}</span>
+                {isValid ? (
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" title="Valid configuration" />
+                ) : null}
               </button>
             );
           })}
@@ -1194,7 +1201,7 @@ function StepFields({
                               </button>
                               <button
                                 type="button"
-                                onClick={() => deleteRole(role.id)}
+                                onClick={() => requestDeleteRole(role.id)}
                                 className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-sm text-red-600 transition hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-500/10"
                               >
                                 <Trash2 className="h-4 w-4" />
@@ -1443,6 +1450,39 @@ function StepFields({
             />
           </ModalShell>
         ) : null}
+
+        {roleToDelete && (
+          <Modal
+            isOpen={true}
+            onClose={() => setRoleToDelete(null)}
+            title="Delete Role?"
+          >
+            <div className="space-y-4">
+              <p className="text-sm text-zinc-600 dark:text-zinc-400">
+                Are you sure you want to delete the role <span className="font-semibold text-zinc-900 dark:text-white">&ldquo;{roleToDelete.name}&rdquo;</span>? This action cannot be undone.
+              </p>
+              <div className="flex justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setRoleToDelete(null)}
+                  className="rounded-lg border border-zinc-200 px-4 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-900"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    performDeleteRole(roleToDelete.id);
+                    setRoleToDelete(null);
+                  }}
+                  className="rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-red-700"
+                >
+                  Delete
+                </button>
+              </div>
+            </div>
+          </Modal>
+        )}
       </div>
     );
   }

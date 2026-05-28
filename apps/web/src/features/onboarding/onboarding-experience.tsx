@@ -257,7 +257,12 @@ export function OnboardingExperience({
 
   const navigateStep = (offset: 1 | -1) => {
     const nextIndex = Math.min(Math.max(stepIndex + offset, 0), ONBOARDING_STEPS.length - 1);
-    setSession((current) => ({ ...current, activeStep: ONBOARDING_STEPS[nextIndex].id }));
+    const nextStepId = ONBOARDING_STEPS[nextIndex].id;
+    setSession((current) => ({
+      ...current,
+      activeStep: nextStepId,
+      activeTeamTab: nextStepId === "team" ? "agents" : current.activeTeamTab,
+    }));
   };
 
   const handleNext = () => {
