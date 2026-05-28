@@ -48,6 +48,13 @@ export function checkToolPolicy(
       reason: 'self.note was removed; use memory.write / memory.recall instead.',
     };
   }
+  if (toolId === 'memory.save') {
+    return {
+      allowed: false,
+      requiresApproval: false,
+      reason: 'memory.save was renamed; use memory.write instead.',
+    };
+  }
 
   // L3 — wake/DM reply contract (palette + policy share resolveWakeReplyPolicy).
   const wakeReplyPolicy = resolveWakeReplyPolicy({

@@ -254,7 +254,7 @@ test('legacy default role tools are migrated forward on load', () => {
         title: 'Frontend Engineer',
         instructions: ROLE_PRESETS.frontendEngineer?.instructions ?? '',
         workspaceScopes: ['apps/web'],
-        tools: ['filesystem', 'shell', 'message', 'channel.post', 'channel.reply', 'channel.dm', 'channel.list', 'channel.read', 'self.note', 'mcp'],
+        tools: ['filesystem', 'shell', 'message', 'channel.post', 'channel.reply', 'channel.dm', 'channel.list', 'channel.read', 'self.note', 'memory.save', 'mcp'],
         channels: ['general'],
       },
     ],
@@ -263,6 +263,8 @@ test('legacy default role tools are migrated forward on load', () => {
   expect(team.config.configVersion).toBe(4);
   expect(team.getRole('frontend-engineer')?.tools).toContain('grep');
   expect(team.getRole('frontend-engineer')?.tools).not.toContain('self.note');
+  expect(team.getRole('frontend-engineer')?.tools).not.toContain('memory.save');
+  expect(team.getRole('frontend-engineer')?.tools).toContain('memory.write');
 });
 
 test('filesystem is stripped from persisted role tools on load', () => {

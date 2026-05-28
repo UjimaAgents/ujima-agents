@@ -19,7 +19,7 @@ export const DEFAULT_ROLE_TOOLS = [
   "channel.list",
   "channel.read",
   "schedule",
-  "memory.save",
+  "memory.write",
   "memory.recall",
   "mcp"
 ] as const;

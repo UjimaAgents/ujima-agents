@@ -111,8 +111,16 @@ export const ORCHESTRATOR_TOOLS = {
 // approval-gated. `channel.ack` is the silent terminator used to
 // satisfy the mandatory-reply contract without producing a wake-able
 // message (Bet 3 — kills the echo-loop pathology).
+const DEPRECATED_TOOL_ALIASES: Record<string, string> = {
+  'memory.save': 'memory.write',
+};
+
 export function filterDeprecatedToolIds(toolIds: readonly string[]): string[] {
-  return toolIds.filter((toolId) => toolId !== 'self.note');
+  const normalized = toolIds.map((toolId) => {
+    if (toolId === 'self.note') return null;
+    return DEPRECATED_TOOL_ALIASES[toolId] ?? toolId;
+  });
+  return [...new Set(normalized.filter((toolId): toolId is string => toolId !== null))];
 }
 
 export const ALWAYS_AVAILABLE_AGENT_TOOLS = Object.freeze([

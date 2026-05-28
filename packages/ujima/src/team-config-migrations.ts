@@ -80,6 +80,8 @@ const LEGACY_DEFAULT_ROLE_TOOL_SET = new Set<string>([
   'job_output',
   'job_kill',
   'web_search',
+  'memory.save',
+  'memory.write',
 ]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -105,6 +107,9 @@ export function upgradeLegacyDefaultRoleTools<T extends Record<string, unknown>>
   }
   if (tools.includes('self.note')) {
     tools = tools.filter((tool) => tool !== 'self.note');
+  }
+  if (tools.includes('memory.save')) {
+    tools = tools.map((tool) => (tool === 'memory.save' ? 'memory.write' : tool));
   }
   return { ...role, tools } as T;
 }

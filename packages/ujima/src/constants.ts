@@ -162,9 +162,9 @@ export const DEFAULT_TOOL_CATALOG: Record<string, ToolCapability> = {
     pathScopes: [],
     requiresApproval: false,
   },
-  'memory.save': {
-    id: 'memory.save',
-    name: 'Memory Save',
+  'memory.write': {
+    id: 'memory.write',
+    name: 'Memory Write',
     description: 'Save a durable memory fact, decision, action summary, or correction to persist across runs and channels.',
     actions: ['message'],
     pathScopes: [],

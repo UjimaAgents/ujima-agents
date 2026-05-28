@@ -117,13 +117,17 @@ export class SpiritServiceAgentRun extends SpiritServiceLifecycle {
       messages.push({ role: 'user', content: runTranscript });
     }
 
-    // Retrieve and inject member's recent memory entries (last 15, within past 24 hours)
     try {
-      const memories = this.repo.listMemories(input.organizationId, input.memberId);
       const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-      const activeMemories = memories
-        .filter((m) => m.createdAt >= oneDayAgo)
-        .slice(0, 15);
+      const memories = this.repo.recallMemoryEntries
+        ? this.repo.recallMemoryEntries({
+            organizationId: input.organizationId,
+            memberId: input.memberId,
+            limit: 15,
+            touch: false,
+          })
+        : this.repo.listMemories(input.organizationId, input.memberId);
+      const activeMemories = memories.filter((m) => m.createdAt >= oneDayAgo);
 
       if (activeMemories.length > 0) {
         const memoryPrompt = `=== YOUR RECENT WORK MEMORY ===
