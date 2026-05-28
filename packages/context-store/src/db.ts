@@ -1,11 +1,11 @@
-import { mkdirSync } from 'node:fs';
-import { createRequire } from 'node:module';
-import { dirname } from 'node:path';
+import {mkdirSync} from "node:fs";
+import {createRequire} from "node:module";
+import {dirname} from "node:path";
 
 interface StatementHandle {
   all(...params: unknown[]): unknown[];
   get(...params: unknown[]): unknown;
-  run(...params: unknown[]): { changes: number };
+  run(...params: unknown[]): {changes: number};
 }
 
 export interface DbHandle {
@@ -30,16 +30,17 @@ let cachedConstructor: SqliteDatabaseCtor | undefined;
 
 function resolveDatabaseConstructor(): SqliteDatabaseCtor {
   if (cachedConstructor) return cachedConstructor;
-  const isBun = typeof process !== 'undefined' && Boolean(process.versions?.bun);
+  const isBun =
+    typeof process !== "undefined" && Boolean(process.versions?.bun);
   cachedConstructor = isBun
-    ? (requireSqlite('bun:sqlite') as { Database: SqliteDatabaseCtor }).Database
-    : (requireSqlite('better-sqlite3') as SqliteDatabaseCtor);
+    ? (requireSqlite("bun:sqlite") as {Database: SqliteDatabaseCtor}).Database
+    : (requireSqlite("better-sqlite3") as SqliteDatabaseCtor);
   return cachedConstructor;
 }
 
-const MIGRATIONS: { id: string; up: string }[] = [
+const MIGRATIONS: {id: string; up: string}[] = [
   {
-    id: '001_initial',
+    id: "001_initial",
     up: `
       CREATE TABLE IF NOT EXISTS context_entries (
         key         TEXT PRIMARY KEY,
@@ -119,7 +120,7 @@ const MIGRATIONS: { id: string; up: string }[] = [
     `,
   },
   {
-    id: '002_workspaces',
+    id: "002_workspaces",
     up: `
       CREATE TABLE IF NOT EXISTS workspaces (
         id          TEXT PRIMARY KEY,
@@ -138,7 +139,7 @@ const MIGRATIONS: { id: string; up: string }[] = [
     `,
   },
   {
-    id: '003_org_mode_core',
+    id: "003_org_mode_core",
     up: `
       ALTER TABLE audit_events RENAME TO task_audit_events;
       ALTER TABLE approvals    RENAME TO task_approvals;
@@ -298,7 +299,7 @@ const MIGRATIONS: { id: string; up: string }[] = [
     `,
   },
   {
-    id: '004_additive_ports',
+    id: "004_additive_ports",
     up: `
       ALTER TABLE messages ADD COLUMN tool_calls TEXT NOT NULL DEFAULT '[]';
 
@@ -343,7 +344,7 @@ const MIGRATIONS: { id: string; up: string }[] = [
     `,
   },
   {
-    id: '005_config_reconcile',
+    id: "005_config_reconcile",
     up: `
       ALTER TABLE members ADD COLUMN retired_at TEXT;
       ALTER TABLE channels ADD COLUMN archived_at TEXT;
@@ -363,7 +364,7 @@ const MIGRATIONS: { id: string; up: string }[] = [
     `,
   },
   {
-    id: '006_channels_v2',
+    id: "006_channels_v2",
     up: `
       ALTER TABLE channels ADD COLUMN parent_message_id TEXT;
       ALTER TABLE messages ADD COLUMN parent_message_id TEXT;
@@ -424,14 +425,14 @@ const MIGRATIONS: { id: string; up: string }[] = [
     `,
   },
   {
-    id: '007_member_llm_model',
+    id: "007_member_llm_model",
     up: `
       ALTER TABLE members ADD COLUMN llm TEXT;
       ALTER TABLE members ADD COLUMN model TEXT;
     `,
   },
   {
-    id: '007_auth',
+    id: "007_auth",
     up: `
       CREATE TABLE IF NOT EXISTS auth_users (
         id                TEXT PRIMARY KEY,
@@ -470,7 +471,7 @@ const MIGRATIONS: { id: string; up: string }[] = [
     `,
   },
   {
-    id: '008_task_sessions',
+    id: "008_task_sessions",
     up: `
       -- Phase 1 of the unified task shell. A task_session is the parent
       -- aggregate above per-agent RunState rows: one session per piece of
@@ -505,7 +506,7 @@ const MIGRATIONS: { id: string; up: string }[] = [
     `,
   },
   {
-    id: '009_spirits',
+    id: "009_spirits",
     up: `
       -- Phase 2.A — spirits table.
       --
@@ -547,7 +548,7 @@ const MIGRATIONS: { id: string; up: string }[] = [
     `,
   },
   {
-    id: '010_supervisor_todos',
+    id: "010_supervisor_todos",
     up: `
       -- Phase 2.B — extend the existing todos table (introduced in
       -- migration 004_additive_ports) with a task_session_id pointer
@@ -562,13 +563,13 @@ const MIGRATIONS: { id: string; up: string }[] = [
     `,
   },
   {
-    id: '011_approval_tool_call_id',
+    id: "011_approval_tool_call_id",
     up: `
       ALTER TABLE approvals ADD COLUMN tool_call_id TEXT;
     `,
   },
   {
-    id: '012_attachments',
+    id: "012_attachments",
     up: `
       CREATE TABLE IF NOT EXISTS attachments (
         id              TEXT PRIMARY KEY,
@@ -599,7 +600,7 @@ const MIGRATIONS: { id: string; up: string }[] = [
     `,
   },
   {
-    id: '013_conversation_reads',
+    id: "013_conversation_reads",
     up: `
       CREATE TABLE IF NOT EXISTS conversation_reads (
         organization_id  TEXT NOT NULL,
@@ -613,7 +614,7 @@ const MIGRATIONS: { id: string; up: string }[] = [
     `,
   },
   {
-    id: '014_run_steps',
+    id: "014_run_steps",
     up: `
       CREATE TABLE IF NOT EXISTS run_steps (
         id               TEXT PRIMARY KEY,
@@ -636,7 +637,7 @@ const MIGRATIONS: { id: string; up: string }[] = [
     `,
   },
   {
-    id: '016_approval_thread_id',
+    id: "016_approval_thread_id",
     up: `
       ALTER TABLE approvals ADD COLUMN thread_id TEXT;
       CREATE INDEX IF NOT EXISTS idx_approvals_thread
@@ -644,25 +645,25 @@ const MIGRATIONS: { id: string; up: string }[] = [
     `,
   },
   {
-    id: '017_drop_thread_dispositions',
+    id: "017_drop_thread_dispositions",
     up: `
       DROP TABLE IF EXISTS thread_dispositions;
     `,
   },
   {
-    id: '018_message_metadata',
+    id: "018_message_metadata",
     up: `
       ALTER TABLE messages ADD COLUMN metadata TEXT NOT NULL DEFAULT '{}';
     `,
   },
   {
-    id: '019_message_reasoning_content',
+    id: "019_message_reasoning_content",
     up: `
       ALTER TABLE messages ADD COLUMN reasoning_content TEXT;
     `,
   },
   {
-    id: '020_mcp_registry',
+    id: "020_mcp_registry",
     up: `
       -- Phase 3 (MCP) — registry of MCP servers known to an organisation.
       -- A "server" is a stdio command, SSE endpoint, or HTTP-streamable
@@ -739,7 +740,7 @@ const MIGRATIONS: { id: string; up: string }[] = [
     `,
   },
   {
-    id: '020_run_wake_metadata',
+    id: "020_run_wake_metadata",
     up: `
       ALTER TABLE runs ADD COLUMN terminating_tool TEXT;
       ALTER TABLE runs ADD COLUMN wake_reason TEXT;
@@ -764,7 +765,7 @@ const MIGRATIONS: { id: string; up: string }[] = [
     // and returns the existing row, matching the lookup-hit
     // behaviour in conversations.ts. Read-then-insert is now
     // race-safe.
-    id: '021_messages_client_message_id_unique',
+    id: "021_messages_client_message_id_unique",
     up: `
       CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_client_dedupe
         ON messages(
@@ -782,7 +783,7 @@ const MIGRATIONS: { id: string; up: string }[] = [
     // scheduler reads `last_progress_at` to re-wake idle owners and
     // `due_at` to surface deadline-letter system messages. All
     // nullable so existing supervisor.todo.* writes keep working.
-    id: '022_todos_commitment_fields',
+    id: "022_todos_commitment_fields",
     up: `
       ALTER TABLE todos ADD COLUMN channel_id TEXT;
       ALTER TABLE todos ADD COLUMN source_message_id TEXT;
@@ -805,7 +806,7 @@ const MIGRATIONS: { id: string; up: string }[] = [
     // `WHERE deliverable_summary IS NOT NULL` clause makes it a
     // partial index so the size stays small (commitment todos only,
     // not supervisor.todo.* rows).
-    id: '023_todos_idle_progress_index',
+    id: "023_todos_idle_progress_index",
     up: `
       CREATE INDEX IF NOT EXISTS idx_todos_idle_progress
         ON todos(status, last_progress_at)
@@ -823,7 +824,7 @@ const MIGRATIONS: { id: string; up: string }[] = [
     // publishes. The service short-circuits `due_at` after K
     // consecutive empties so the deadline-letter fires early
     // (typical K=3, ~30min instead of 24h).
-    id: '024_todos_empty_wake_count',
+    id: "024_todos_empty_wake_count",
     up: `
       ALTER TABLE todos ADD COLUMN empty_wake_count INTEGER NOT NULL DEFAULT 0;
     `,
@@ -834,7 +835,7 @@ const MIGRATIONS: { id: string; up: string }[] = [
     // `CREATE TABLE IF NOT EXISTS` is idempotent so DBs that already
     // applied the original 022_scheduled_jobs simply re-record this
     // migration id (harmless dual-record); fresh DBs see one create.
-    id: '025_scheduled_jobs',
+    id: "025_scheduled_jobs",
     up: `
       CREATE TABLE IF NOT EXISTS scheduled_jobs (
         id               TEXT PRIMARY KEY,
@@ -857,7 +858,115 @@ const MIGRATIONS: { id: string; up: string }[] = [
     `,
   },
   {
-    id: '026_plugin_registry',
+    // Bet 4 — workspace artifact search. `messages_fts` covers
+    // chat history; this is its peer for the markdown/text files
+    // agents `write` into the workspace. Without it, an agent that
+    // produced `ai/memory-bank/tasks/foo.md` in channel A cannot
+    // recall it by content from channel B without grepping disk on
+    // every query. The backing table is required because FTS5 can't
+    // index a filesystem directly — `write`/`edit`/`multiedit` hooks
+    // UPSERT here, the FTS triggers mirror the messages_fts pattern.
+    id: "026_workspace_files_fts",
+    up: `
+      CREATE TABLE IF NOT EXISTS workspace_files (
+        organization_id  TEXT NOT NULL,
+        path             TEXT NOT NULL,
+        body             TEXT NOT NULL,
+        written_by       TEXT NOT NULL,
+        channel_id       TEXT,
+        size_bytes       INTEGER NOT NULL DEFAULT 0,
+        updated_at       TEXT NOT NULL,
+        PRIMARY KEY (organization_id, path)
+      );
+      CREATE INDEX IF NOT EXISTS idx_workspace_files_org
+        ON workspace_files(organization_id, updated_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_workspace_files_member
+        ON workspace_files(organization_id, written_by, updated_at DESC);
+
+      CREATE VIRTUAL TABLE IF NOT EXISTS workspace_files_fts USING fts5(
+        path,
+        body,
+        content='workspace_files',
+        content_rowid='rowid'
+      );
+
+      CREATE TRIGGER IF NOT EXISTS workspace_files_fts_ai
+        AFTER INSERT ON workspace_files BEGIN
+          INSERT INTO workspace_files_fts(rowid, path, body)
+            VALUES (new.rowid, new.path, new.body);
+        END;
+      CREATE TRIGGER IF NOT EXISTS workspace_files_fts_ad
+        AFTER DELETE ON workspace_files BEGIN
+          INSERT INTO workspace_files_fts(workspace_files_fts, rowid, path, body)
+            VALUES ('delete', old.rowid, old.path, old.body);
+        END;
+      CREATE TRIGGER IF NOT EXISTS workspace_files_fts_au
+        AFTER UPDATE ON workspace_files BEGIN
+          INSERT INTO workspace_files_fts(workspace_files_fts, rowid, path, body)
+            VALUES ('delete', old.rowid, old.path, old.body);
+          INSERT INTO workspace_files_fts(rowid, path, body)
+            VALUES (new.rowid, new.path, new.body);
+        END;
+    `,
+  },
+  {
+    // Bet 5 — memory_entries flat KV activation. The table has been
+    // dormant since migration 001 with only `kind, content, metadata`
+    // columns. Three additive columns turn it into a usable
+    // per-(member, key) KV store: `key` for the lookup, `expires_at`
+    // for TTL, `source_message_id` for provenance. The pre-existing
+    // `content` column reuses as the value — no `value` column is
+    // added so we avoid a redundant migration. The UNIQUE index on
+    // (org, member, key) enforces "one value per key" at insert.
+    id: "027_memory_entries_kv",
+    up: `
+      ALTER TABLE memory_entries ADD COLUMN key TEXT;
+      ALTER TABLE memory_entries ADD COLUMN expires_at TEXT;
+      ALTER TABLE memory_entries ADD COLUMN source_message_id TEXT;
+      ALTER TABLE memory_entries ADD COLUMN last_recalled_at TEXT;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_entries_member_key
+        ON memory_entries(organization_id, member_id, key)
+        WHERE key IS NOT NULL;
+      CREATE INDEX IF NOT EXISTS idx_memory_entries_expires
+        ON memory_entries(organization_id, expires_at)
+        WHERE expires_at IS NOT NULL;
+    `,
+  },
+  {
+    // Bet 6 — append-only decision log. The single-blob compaction
+    // summary at conversation-summary.ts produces lossy bullet lists
+    // that get re-summarised on every cycle (Letta-documented drift).
+    // The decision log captures the load-bearing artifacts of a
+    // channel — "we decided X" — in a structured form that the L1
+    // diff summariser cannot overwrite. Append-only by convention:
+    // there's no UPDATE column on the row, and `supersedes_id` lets
+    // a newer decision shadow an older one without delete.
+    id: "028_decision_log",
+    up: `
+      CREATE TABLE IF NOT EXISTS decision_log (
+        id                TEXT PRIMARY KEY,
+        organization_id   TEXT NOT NULL,
+        channel_id        TEXT NOT NULL,
+        decided_at        TEXT NOT NULL,
+        decided_by        TEXT NOT NULL,
+        decision_text     TEXT NOT NULL,
+        source_message_id TEXT NOT NULL,
+        supersedes_id     TEXT,
+        created_at        TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_decision_log_channel
+        ON decision_log(organization_id, channel_id, decided_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_decision_log_source
+        ON decision_log(source_message_id);
+    `,
+  },
+  {
+    // Renumbered from main's `026_plugin_registry` on merge — our
+    // 026/027/028 had already shipped to dogfood DBs. `CREATE TABLE
+    // IF NOT EXISTS` is idempotent so DBs that already applied the
+    // original 026_plugin_registry simply record this id (harmless
+    // dual-record); fresh DBs see one create.
+    id: "029_plugin_registry",
     up: `
       CREATE TABLE IF NOT EXISTS plugin_installs (
         id              TEXT PRIMARY KEY,
@@ -897,20 +1006,90 @@ const MIGRATIONS: { id: string; up: string }[] = [
     `,
   },
   {
-    id: '027_migrate_self_notes_to_memories',
+    // Post-review fix — Bet 5 follow-up. Migration 027's unique
+    // index was `(organization_id, member_id, key)` with member_id
+    // NULL-able for org-scoped writes. SQLite treats NULL as
+    // distinct in unique indexes, so two org-scoped writes to the
+    // same key inserted DIFFERENT rows instead of upserting the
+    // existing one — breaking the documented "one key, one value"
+    // contract. Fix: replace the index with one that uses a
+    // non-null sentinel ('__org__') in place of NULL, and migrate
+    // any existing NULL member_id rows to that sentinel.
+    id: "030_memory_entries_org_scope_sentinel",
     up: `
-      INSERT OR IGNORE INTO memory_entries (id, organization_id, member_id, kind, content, metadata, created_at)
-      SELECT 
-        m.id, 
-        m.organization_id, 
-        m.sender_id AS member_id, 
-        'fact' AS kind, 
-        m.content, 
-        '{"migratedFromSelfNote":true}' AS metadata, 
-        m.created_at
-      FROM messages m
-      JOIN channels c ON m.channel_id = c.id
-      WHERE c.kind = 'self';
+      UPDATE memory_entries SET member_id = '__org__'
+        WHERE member_id IS NULL;
+      DROP INDEX IF EXISTS idx_memory_entries_member_key;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_entries_member_key
+        ON memory_entries(organization_id, member_id, key)
+        WHERE key IS NOT NULL;
+    `,
+  },
+  {
+    // Post-review fix — Bet 6 follow-up. Migration 028 created
+    // `idx_decision_log_source` as a non-unique index, and
+    // appendDecisionLogEntry used `INSERT OR IGNORE` on the UUID
+    // primary key — so a replayed publish or concurrent extractor
+    // hook could insert the same decision twice before the
+    // `findDecisionBySourceMessage` pre-check raced to catch it.
+    // Fix: dedup any existing duplicates keeping the earliest row
+    // per (org, source_message_id), then replace the non-unique
+    // index with a UNIQUE one. The upsert in the repository now
+    // targets `ON CONFLICT(organization_id, source_message_id)`.
+    id: "031_decision_log_source_unique",
+    up: `
+      DELETE FROM decision_log
+        WHERE rowid NOT IN (
+          SELECT MIN(rowid) FROM decision_log
+            GROUP BY organization_id, source_message_id
+        );
+      DROP INDEX IF EXISTS idx_decision_log_source;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_decision_log_source
+        ON decision_log(organization_id, source_message_id);
+    `,
+  },
+  {
+    // Procedures-as-Culture (docs/procedures-as-culture.md).
+    //
+    // Two small tables: `procedure_revisions` is the append-only
+    // version history surfaced in the UI; `run_procedures_applied`
+    // captures which (scope, name, version) tuples were surfaced into
+    // a given wake's system prompt so the trajectory log can render
+    // them. Procedure BODIES still live on disk under
+    // `ai/memory-bank/{org,channels,agents}/**/procedures/<slug>.md`
+    // — neither table stores the body except as a per-revision
+    // snapshot for history.
+    id: "032_procedure_culture",
+    up: `
+      CREATE TABLE IF NOT EXISTS procedure_revisions (
+        id              TEXT PRIMARY KEY,
+        organization_id TEXT NOT NULL,
+        scope           TEXT NOT NULL,
+        scope_id        TEXT NOT NULL,
+        name            TEXT NOT NULL,
+        version         INTEGER NOT NULL,
+        body_snapshot   TEXT NOT NULL,
+        description     TEXT NOT NULL,
+        enforced        INTEGER NOT NULL DEFAULT 0,
+        updated_by      TEXT NOT NULL,
+        updated_at      TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_procedure_revisions_lookup
+        ON procedure_revisions(organization_id, scope, scope_id, name, version DESC);
+
+      CREATE TABLE IF NOT EXISTS run_procedures_applied (
+        organization_id TEXT NOT NULL,
+        run_id          TEXT NOT NULL,
+        scope           TEXT NOT NULL,
+        scope_id        TEXT NOT NULL,
+        name            TEXT NOT NULL,
+        version         INTEGER NOT NULL,
+        enforced        INTEGER NOT NULL DEFAULT 0,
+        created_at      TEXT NOT NULL,
+        PRIMARY KEY (organization_id, run_id, scope, scope_id, name)
+      );
+      CREATE INDEX IF NOT EXISTS idx_run_procedures_applied_run
+        ON run_procedures_applied(organization_id, run_id);
     `,
   },
 ];
@@ -920,16 +1099,16 @@ export interface DbOptions {
 }
 
 export function openDatabase(options: DbOptions): DbHandle {
-  if (options.dbPath !== ':memory:') {
-    mkdirSync(dirname(options.dbPath), { recursive: true });
+  if (options.dbPath !== ":memory:") {
+    mkdirSync(dirname(options.dbPath), {recursive: true});
   }
 
   const Database = resolveDatabaseConstructor();
   const db = new Database(options.dbPath);
 
-  db.exec('PRAGMA journal_mode = WAL');
-  db.exec('PRAGMA synchronous = NORMAL');
-  db.exec('PRAGMA foreign_keys = ON');
+  db.exec("PRAGMA journal_mode = WAL");
+  db.exec("PRAGMA synchronous = NORMAL");
+  db.exec("PRAGMA foreign_keys = ON");
   runMigrations(db);
   return db;
 }
@@ -942,35 +1121,48 @@ function runMigrations(db: DbHandle): void {
     );
   `);
 
-  const select = db.prepare('SELECT id FROM schema_migrations');
-  const applied = new Set((select.all() as { id: string }[]).map((row) => row.id));
-  const insert = db.prepare('INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)');
+  const select = db.prepare("SELECT id FROM schema_migrations");
+  const applied = new Set(
+    (select.all() as {id: string}[]).map((row) => row.id)
+  );
+  const insert = db.prepare(
+    "INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)"
+  );
 
   for (const m of MIGRATIONS) {
     if (applied.has(m.id)) continue;
-    if (m.id === '011_approval_tool_call_id' && hasColumn(db, 'approvals', 'tool_call_id')) {
+    if (
+      m.id === "011_approval_tool_call_id" &&
+      hasColumn(db, "approvals", "tool_call_id")
+    ) {
       insert.run(m.id, Date.now());
       continue;
     }
-    if (m.id === '018_message_metadata' && hasColumn(db, 'messages', 'metadata')) {
+    if (
+      m.id === "018_message_metadata" &&
+      hasColumn(db, "messages", "metadata")
+    ) {
       insert.run(m.id, Date.now());
       continue;
     }
-    if (m.id === '020_run_wake_metadata' && !hasTable(db, 'runs')) {
+    if (m.id === "020_run_wake_metadata" && !hasTable(db, "runs")) {
       insert.run(m.id, Date.now());
       continue;
     }
-    if (m.id === '019_message_reasoning_content' && hasColumn(db, 'messages', 'reasoning_content')) {
+    if (
+      m.id === "019_message_reasoning_content" &&
+      hasColumn(db, "messages", "reasoning_content")
+    ) {
       insert.run(m.id, Date.now());
       continue;
     }
-    db.exec('BEGIN');
+    db.exec("BEGIN");
     try {
       db.exec(m.up);
       insert.run(m.id, Date.now());
-      db.exec('COMMIT');
+      db.exec("COMMIT");
     } catch (err) {
-      db.exec('ROLLBACK');
+      db.exec("ROLLBACK");
       throw err;
     }
   }
@@ -981,13 +1173,15 @@ export function nowMs(): number {
 }
 
 function hasColumn(db: DbHandle, table: string, column: string): boolean {
-  const rows = db.prepare(`PRAGMA table_info(${table})`).all() as { name?: unknown }[];
+  const rows = db.prepare(`PRAGMA table_info(${table})`).all() as {
+    name?: unknown;
+  }[];
   return rows.some((row) => row.name === column);
 }
 
 function hasTable(db: DbHandle, table: string): boolean {
   const row = db
     .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
-    .get(table) as { name?: unknown } | undefined;
+    .get(table) as {name?: unknown} | undefined;
   return row?.name === table;
 }

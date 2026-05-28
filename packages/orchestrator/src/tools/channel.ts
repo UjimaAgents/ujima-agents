@@ -49,6 +49,9 @@ const ChannelReadSchema = z.object({
   limit: z.number().int().min(1).max(100).default(50),
 });
 
+const SelfNoteSchema = z.object({
+  body: z.string().min(1),
+});
 
 // `channel.pass` is the first-class "silent" outcome: an agent that
 // has nothing to add to a channel message calls this tool with a
@@ -405,6 +408,29 @@ export const channelReadTool: OrchestratorTool<typeof ChannelReadSchema> = {
     }),
 };
 
+export const selfNoteTool: OrchestratorTool<typeof SelfNoteSchema> = {
+  id: 'self.note',
+  schema: SelfNoteSchema,
+  toInvocation: (args) => ({
+    action: 'message',
+    resourceType: 'message',
+    // Self notes are the agent's private scratchpad. They intentionally bypass
+    // policy gating so an agent can always think — EXCEPT when the run was
+    // triggered by an @mention. Mandatory-reply enforcement at policy.ts
+    // rejects `self.note` for `wakeReason === 'mention'` so the model can't
+    // use self.note as an escape hatch (L3). The bypass below skips the
+    // permission middleware, but `checkToolPolicy` still runs in the inner
+    // ToolServiceImpl, so the mention-reject path catches it.
+    bypassPermission: true,
+    input: args,
+  }),
+  execute: ({ invocation, conversations }) =>
+    conversations.sendSelfNote({
+      organizationId: invocation.organizationId,
+      memberId: invocation.memberId,
+      body: String(invocation.input.body),
+    }),
+};
 
 // L1/L12: `channel.pass` is a silent run terminator. It does NOT
 // call `publishMessage` — instead it records an audit-only step
@@ -439,6 +465,25 @@ export const channelPassTool: OrchestratorTool<typeof ChannelPassSchema> = {
     const channelId = threadId
       ? repo.getThread(invocation.organizationId, threadId)?.channelId
       : undefined;
+
+    // Post-review enforcement — out_of_scope is no longer a valid
+    // silent terminator when the agent was explicitly addressed.
+    // Agents were channel.pass'ing with reason: out_of_scope on
+    // legitimate questions (e.g. "Layla, what does X do?" where X
+    // sits outside the PM role), producing zero visible reply and
+    // making the channel feel broken. The model must instead use
+    // channel.reply with a one-line redirect.
+    if (reason === 'out_of_scope' && run?.sourceMessageId) {
+      const source = repo.getMessage(invocation.organizationId, run.sourceMessageId);
+      const addressed = (source?.mentions ?? []).includes(invocation.memberId);
+      if (addressed) {
+        return {
+          status: 'rejected' as const,
+          error:
+            'channel.pass(reason: out_of_scope) is not allowed when you were explicitly addressed. Use channel.reply with a one-line redirect (e.g. "That\'s outside my scope as <role>; @<better-fit> would be a better contact.") instead.',
+        };
+      }
+    }
 
     // Persist the pass on the run row so metrics queries can find it.
     if (run) {

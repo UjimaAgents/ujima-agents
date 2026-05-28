@@ -147,6 +147,41 @@ export function listTodosForChannel(
   return rows.map(rowToTodo);
 }
 
+/**
+ * Open commitments owned by `memberId` across every channel in the
+ * organization. Used by the `<workspace-state>` block to surface
+ * "what you've promised across the workspace" — without this the
+ * block was channel-local and an agent juggling two channels lost
+ * sight of work owed in the other one (post-review regression).
+ *
+ * Ordered newest-first by `created_at`; statuses default to
+ * `pending` + `in_progress` so completed/expired/cancelled rows
+ * don't drown the active list. Hard `LIMIT` so a noisy agent
+ * doesn't blow the prompt budget.
+ */
+export function listOpenCommitmentsForMember(
+  db: DbHandle,
+  organizationId: string,
+  memberId: string,
+  options: { statuses?: readonly TodoStatus[]; limit?: number } = {},
+): Todo[] {
+  const statuses = options.statuses ?? (['pending', 'in_progress'] as const);
+  const limit = options.limit ?? 12;
+  const placeholders = statuses.map(() => '?').join(', ');
+  const rows = db
+    .prepare(
+      `SELECT * FROM todos
+        WHERE organization_id = ?
+          AND member_id = ?
+          AND deliverable_summary IS NOT NULL
+          AND status IN (${placeholders})
+        ORDER BY COALESCE(last_progress_at, created_at) DESC
+        LIMIT ?`,
+    )
+    .all(organizationId, memberId, ...statuses, limit) as Row[];
+  return rows.map(rowToTodo);
+}
+
 /** Return idle commitments for passive cleanup. */
 export function listIdleCommitments(
   db: DbHandle,

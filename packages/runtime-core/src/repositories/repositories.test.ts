@@ -281,6 +281,76 @@ test('searchChannelMessages tolerates unmatched quotes in user search text', () 
   expect(results.data.map((message) => message.content)).toContain('quoted needle here');
 });
 
+test('ranked searchChannelMessages orders lexical hits by FTS rank instead of recency', () => {
+  const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
+  const orgId = randomUUID();
+  repo.saveOrganization(
+    OrganizationSchema.parse({
+      id: orgId,
+      name: 'Ranked Search Org',
+      workspace: { root: '/tmp/ranked-search-org', roleScopes: {} },
+    }),
+  );
+  repo.saveChannel({
+    id: 'general',
+    organizationId: orgId,
+    name: 'general',
+    kind: 'general',
+    topic: '',
+    memberIds: [],
+  });
+  repo.ensureThread({
+    id: 'general',
+    organizationId: orgId,
+    channelId: 'general',
+    title: 'general',
+    memberIds: [],
+    createdAt: '2026-01-01T00:00:00.000Z',
+  });
+
+  repo.saveMessage(
+    MessageSchema.parse({
+      id: 'older-better-hit',
+      organizationId: orgId,
+      threadId: 'general',
+      channelId: 'general',
+      senderId: 'user',
+      senderKind: 'human',
+      kind: 'human',
+      content: 'needle',
+      mentions: [],
+      createdAt: '2026-01-01T00:00:01.000Z',
+    }),
+  );
+  repo.saveMessage(
+    MessageSchema.parse({
+      id: 'newer-weaker-hit',
+      organizationId: orgId,
+      threadId: 'general',
+      channelId: 'general',
+      senderId: 'user',
+      senderKind: 'human',
+      kind: 'human',
+      content: `needle ${'filler '.repeat(60)}`,
+      mentions: [],
+      createdAt: '2026-01-01T00:00:02.000Z',
+    }),
+  );
+
+  const ranked = repo.searchChannelMessages(orgId, 'general', 'needle', {
+    limit: 2,
+    ranked: true,
+  });
+
+  expect(ranked.data.map((message) => message.id)).toEqual([
+    'older-better-hit',
+    'newer-weaker-hit',
+  ]);
+  expect(ranked.searchRanks?.['older-better-hit']).toBeLessThan(
+    ranked.searchRanks?.['newer-weaker-hit'] ?? Number.POSITIVE_INFINITY,
+  );
+});
+
 test('message metadata (goalMode) round-trips through save, list, get, and update', () => {
   const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
   const orgId = randomUUID();

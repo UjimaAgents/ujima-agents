@@ -120,6 +120,45 @@ function findArtifactPath(body: string): string | null {
   return null;
 }
 
+// Bet 6 — decision-log extractor. Mirrors the regex pattern used
+// by `conversation-summary.ts` to flag "decision" lines so the
+// append-only `decision_log` table receives load-bearing
+// statements without depending on the (eventual) L1 compaction
+// summariser. Conservative on purpose: keyword + first-person
+// declarative + length floor. Returns the cleaned line or null.
+const DECISION_PATTERN =
+  /\b(decided|decision|let'?s|we'?ll|we will|we should|we won'?t|we must|going (?:to|with)|use|keep|remove|rename|don'?t|do not|prefer)\b/i;
+const DECISION_LINE_MIN_LENGTH = 24;
+const DECISION_LINE_MAX_LENGTH = 480;
+
+export function extractDecision(body: string): string | null {
+  if (!body) return null;
+  const trimmed = body.trim();
+  if (trimmed.length < DECISION_LINE_MIN_LENGTH || trimmed.length > 4000) return null;
+  // Skip wholly-quoted bodies.
+  const nonQuoted = trimmed
+    .split(/\r?\n/)
+    .filter((line) => !line.startsWith('>') && !line.startsWith('|'))
+    .join('\n');
+  if (nonQuoted.length === 0) return null;
+  // Skip fenced code blocks.
+  if (nonQuoted.startsWith('```') && nonQuoted.endsWith('```')) return null;
+  // Find the first line that matches the decision pattern AND
+  // contains a noun-ish substring (skip "let's go", "we'll see").
+  for (const rawLine of nonQuoted.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (line.length < DECISION_LINE_MIN_LENGTH || line.length > DECISION_LINE_MAX_LENGTH) continue;
+    if (!DECISION_PATTERN.test(line)) continue;
+    // Strip leading "@mention " noise from the captured decision.
+    // Strip leading "@First Last," or "@handle, " noise — mention
+    // names may contain a single inner space (e.g. "@Phoebe Parker,").
+    const cleaned = line.replace(/^(?:@[\w-]+(?:\s+[\w-]+)?[,:]?\s+)+/i, '').trim();
+    if (cleaned.length < DECISION_LINE_MIN_LENGTH) continue;
+    return cleaned;
+  }
+  return null;
+}
+
 // In-channel artifact delivery — past-tense completion *without* a
 // file path. Surfaces when the agent pastes the deliverable inline
 // instead of writing it to disk ("I have compiled the documentation
@@ -345,6 +384,15 @@ export class CommitmentService {
       // fails on retired agents) and would cycle forever.
       const sender = this.repo.getMember(message.organizationId, message.senderId);
       if (!sender || sender.retiredAt) return;
+
+      // Bet 6 — decision-log extraction. Runs alongside commitment
+      // extraction, NOT instead of it: a single message can both
+      // announce "we'll use Postgres" (decision) AND commit to
+      // "I'll draft the migration" (commitment). Append-only — the
+      // append helper short-circuits on conflicting source_message_id
+      // via INSERT OR IGNORE so re-publication doesn't double-log.
+      this.recordDecisionIfPresent(message);
+
       // Try future-tense commitment first; fall back to past-tense
       // completion so delivered work (Layla announcing "I have
       // drafted X to /path") still lands on the rail even when no
@@ -615,6 +663,40 @@ export class CommitmentService {
    * The session's `requestedBy` is set to the agent itself (the
    * committer), `executionMode='concurrent'` (the default).
    */
+  /**
+   * Bet 6 — append-only decision capture. Runs alongside commitment
+   * extraction. Errors are swallowed: the publish hot path must
+   * never block on the audit substrate.
+   */
+  private recordDecisionIfPresent(message: Message): void {
+    if (!this.repo.appendDecisionLogEntry) return;
+    if (!message.channelId) return;
+    if (this.repo.findDecisionBySourceMessage) {
+      const existing = this.repo.findDecisionBySourceMessage(
+        message.organizationId,
+        message.id,
+      );
+      if (existing) return;
+    }
+    const text = extractDecision(message.content);
+    if (!text) return;
+    try {
+      const now = new Date().toISOString();
+      this.repo.appendDecisionLogEntry({
+        id: randomUUID(),
+        organizationId: message.organizationId,
+        channelId: message.channelId,
+        decidedAt: message.createdAt,
+        decidedBy: message.senderId,
+        decisionText: text,
+        sourceMessageId: message.id,
+        createdAt: now,
+      });
+    } catch {
+      // best-effort
+    }
+  }
+
   private ensureTaskSession(message: Message, channel: Channel): TaskSession | null {
     if (!this.repo.findOpenTaskSessionForChannel) return null;
     const existing = this.repo.findOpenTaskSessionForChannel(

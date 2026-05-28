@@ -129,6 +129,16 @@ export function checkToolPolicy(
     return { allowed: true, requiresApproval: false };
   }
 
+  // Durable memory and per-agent procedure tools are private
+  // knowledge-management surfaces. They are intentionally present
+  // in ALWAYS_AVAILABLE_AGENT_TOOLS, but they use action='message'
+  // for audit classification, so without this branch they fall
+  // through to the generic non-read approval rule and silently stall
+  // background memory writes behind approvals nobody asked for.
+  if (toolId.startsWith('memory.') || toolId.startsWith('self.procedure.')) {
+    return { allowed: true, requiresApproval: false };
+  }
+
   // Baseline tools (channel primitives, read-only workspace tools,
   // silent terminators, `schedule`) are available to every role
   // regardless of `role.tools`. This mirrors the palette assembled by

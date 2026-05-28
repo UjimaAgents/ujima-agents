@@ -603,22 +603,122 @@ export const TodoSchema = z.object({
 export type Todo = z.infer<typeof TodoSchema>;
 
 // -----------------------------------------------------------------------
-// Memory Entries
+// Memory KV — Bet 5
+//
+// Activates the dormant `memory_entries` table as a per-(org, member)
+// key-value store. `kind` tags the type of memory; `key` is the
+// lookup; `content` (existing column) is the value; `expiresAt`
+// gives the entry a TTL; `lastRecalledAt` is updated on read so
+// frequently-recalled facts stay hot when surfaced into the wake
+// prompt. Designed flat — if cross-fact relations become a product
+// need we promote additively to SPO triples, not retroactively.
 // -----------------------------------------------------------------------
 
-export const MemoryKindSchema = z.enum(['action', 'decision', 'fact', 'correction']);
-export type MemoryKind = z.infer<typeof MemoryKindSchema>;
+export const MemoryEntryKindSchema = z.enum([
+  'fact',
+  'preference',
+  'identity',
+  'rule',
+]);
+export type MemoryEntryKind = z.infer<typeof MemoryEntryKindSchema>;
 
 export const MemoryEntrySchema = z.object({
   id: IdSchema,
   organizationId: IdSchema,
-  memberId: IdSchema.nullable().optional(),
-  kind: MemoryKindSchema,
-  content: z.string(),
+  memberId: IdSchema.optional(),
+  kind: MemoryEntryKindSchema,
+  key: z.string().min(1).max(120),
+  content: z.string().min(1),
   metadata: z.record(z.string(), z.unknown()).default({}),
+  expiresAt: TimestampSchema.optional(),
+  sourceMessageId: IdSchema.optional(),
+  lastRecalledAt: TimestampSchema.optional(),
   createdAt: TimestampSchema,
 });
 export type MemoryEntry = z.infer<typeof MemoryEntrySchema>;
+
+// -----------------------------------------------------------------------
+// Workspace File index — Bet 4
+//
+// Backs `workspace_files_fts` (FTS5 cannot index a filesystem
+// directly). Populated by the `write` / `edit` / `multiedit` tool
+// hooks; queried by `channel.recall` for cross-channel artifact
+// recall. Size capped per-file at the hook layer (default 100KB) so
+// the table doesn't grow unbounded against large binaries; total
+// per-org size is also bounded by an eviction sweep that drops the
+// oldest rows when the per-org footprint exceeds the configured cap.
+// -----------------------------------------------------------------------
+
+export const WorkspaceFileSchema = z.object({
+  organizationId: IdSchema,
+  path: z.string().min(1),
+  body: z.string(),
+  writtenBy: IdSchema,
+  channelId: IdSchema.optional(),
+  sizeBytes: z.number().int().nonnegative(),
+  updatedAt: TimestampSchema,
+});
+export type WorkspaceFile = z.infer<typeof WorkspaceFileSchema>;
+
+// -----------------------------------------------------------------------
+// Decision log — Bet 6
+//
+// Append-only record of channel decisions, harvested from messages
+// by the same regex pattern the existing compaction extractor uses
+// at conversation-summary.ts:216. Survives L1 compaction so the
+// load-bearing "we decided X" lines can never be lost to summariser
+// drift. `supersedesId` lets a later decision shadow an earlier one
+// without delete.
+// -----------------------------------------------------------------------
+
+export const DecisionLogEntrySchema = z.object({
+  id: IdSchema,
+  organizationId: IdSchema,
+  channelId: IdSchema,
+  decidedAt: TimestampSchema,
+  decidedBy: IdSchema,
+  decisionText: z.string().min(1),
+  sourceMessageId: IdSchema,
+  supersedesId: IdSchema.optional(),
+  createdAt: TimestampSchema,
+});
+export type DecisionLogEntry = z.infer<typeof DecisionLogEntrySchema>;
+
+// -----------------------------------------------------------------------
+// Procedures as Culture (docs/procedures-as-culture.md)
+// -----------------------------------------------------------------------
+
+export const ProcedureScopeSchema = z.enum(['org', 'channel', 'agent']);
+export type ProcedureScope = z.infer<typeof ProcedureScopeSchema>;
+
+/** Append-only version history. One row per save. */
+export const ProcedureRevisionSchema = z.object({
+  id: IdSchema,
+  organizationId: IdSchema,
+  scope: ProcedureScopeSchema,
+  scopeId: z.string(), // '' for org; channel-id; agent-id
+  name: z.string().min(1).max(64),
+  version: z.number().int().min(1),
+  bodySnapshot: z.string(),
+  description: z.string(),
+  enforced: z.boolean().default(false),
+  updatedBy: IdSchema,
+  updatedAt: TimestampSchema,
+});
+export type ProcedureRevision = z.infer<typeof ProcedureRevisionSchema>;
+
+/** Captures what was surfaced into a given wake's system prompt. */
+export const RunProcedureAppliedSchema = z.object({
+  organizationId: IdSchema,
+  runId: IdSchema,
+  scope: ProcedureScopeSchema,
+  scopeId: z.string(),
+  name: z.string().min(1).max(64),
+  version: z.number().int().min(1),
+  enforced: z.boolean().default(false),
+  createdAt: TimestampSchema,
+});
+export type RunProcedureApplied = z.infer<typeof RunProcedureAppliedSchema>;
 
 // -----------------------------------------------------------------------
 // Scheduled Jobs (cron)

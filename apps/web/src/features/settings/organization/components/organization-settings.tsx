@@ -10,6 +10,7 @@ import {
   Plug,
   Server,
   ShieldCheck,
+  Sparkles,
   Users,
 } from "lucide-react";
 import type {
@@ -38,10 +39,12 @@ import { PluginsTab } from "./plugins-tab";
 import { SchedulesTab } from "./schedules-tab";
 import { McpsTab } from "./mcps-tab";
 import { WorkspacesTab } from "./workspaces-tab";
+import { CultureTab } from "@/features/settings/shared/culture-tab";
 
 export type SettingsTabId =
   | "general"
   | "workspaces"
+  | "culture"
   | "agents"
   | "channels"
   | "org-chart"
@@ -54,6 +57,7 @@ export type SettingsTabId =
 const VALID_TABS: SettingsTabId[] = [
   "general",
   "workspaces",
+  "culture",
   "agents",
   "channels",
   "org-chart",
@@ -70,6 +74,7 @@ const NAV_GROUPS: SettingsNavGroup<SettingsTabId>[] = [
     items: [
       { id: "general", label: "General", icon: FolderKanban },
       { id: "workspaces", label: "Workspaces", icon: Layers },
+      { id: "culture", label: "Culture", icon: Sparkles },
       { id: "policies", label: "Policies", icon: ShieldCheck },
     ],
   },
@@ -190,6 +195,9 @@ function OrganizationSettingsContent({
         )}
         {activeTab === "workspaces" && (
           <WorkspacesTab currentWorkspaceRoot={teamSettings?.workspace.root ?? ""} />
+        )}
+        {activeTab === "culture" && (
+          <CultureTab organizationId={orgId} channelId={null} />
         )}
         {activeTab === "agents" && (
           <AgentsTab

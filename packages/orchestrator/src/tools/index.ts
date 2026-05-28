@@ -8,7 +8,9 @@ import {
   channelPostTool,
   channelReadTool,
   channelReplyTool,
+  selfNoteTool,
 } from './channel.js';
+import { channelRecallTool } from './channel-recall.js';
 import { grepTool } from './grep.js';
 import { jobKillTool, jobOutputTool } from './job-tools.js';
 import { downloadTool, fetchTool } from './web-tools.js';
@@ -16,12 +18,19 @@ import { shellTool } from './shell.js';
 import { messageTool } from './message.js';
 import { scheduleTool } from './schedule.js';
 import { webSearchTool } from './web-search.js';
+import { memoryForgetTool, memoryRecallTool, memoryWriteTool } from './memory.js';
+import {
+  selfProcedureAddTool,
+  selfProcedureListTool,
+  selfProcedureRemoveTool,
+  selfProcedureViewTool,
+} from './self-procedure.js';
+import { procedureListTool, procedureViewTool } from './procedure-read.js';
 import {
   supervisorTodoAddTool,
   supervisorTodoCheckTool,
   supervisorTodoListTool,
 } from './supervisor-todo.js';
-import { memorySaveTool, memoryRecallTool } from './memory.js';
 import {
   editTool,
   globTool,
@@ -53,8 +62,17 @@ export const ORCHESTRATOR_TOOLS = {
   job_output: jobOutputTool,
   job_kill: jobKillTool,
   web_search: webSearchTool,
-  'memory.save': memorySaveTool,
+  'self.note': selfNoteTool,
+  'self.procedure.add': selfProcedureAddTool,
+  'self.procedure.remove': selfProcedureRemoveTool,
+  'self.procedure.list': selfProcedureListTool,
+  'self.procedure.view': selfProcedureViewTool,
+  'procedure.list': procedureListTool,
+  'procedure.view': procedureViewTool,
+  'channel.recall': channelRecallTool,
+  'memory.write': memoryWriteTool,
   'memory.recall': memoryRecallTool,
+  'memory.forget': memoryForgetTool,
   message: messageTool,
   schedule: scheduleTool,
   'supervisor.todo.add': supervisorTodoAddTool,
@@ -97,11 +115,19 @@ export const ORCHESTRATOR_TOOLS = {
 // satisfy the mandatory-reply contract without producing a wake-able
 // message (Bet 3 — kills the echo-loop pathology).
 export const ALWAYS_AVAILABLE_AGENT_TOOLS = Object.freeze([
+  'self.note',
+  'self.procedure.add',
+  'self.procedure.remove',
+  'self.procedure.list',
+  'self.procedure.view',
+  'procedure.list',
+  'procedure.view',
   'channel.pass',
   'channel.ack',
   'channel.reply',
   'channel.post',
   'channel.dm',
+  'channel.recall',
   'message',
   'channel.read',
   'channel.list',
@@ -110,8 +136,9 @@ export const ALWAYS_AVAILABLE_AGENT_TOOLS = Object.freeze([
   'glob',
   'grep',
   'schedule',
-  'memory.save',
+  'memory.write',
   'memory.recall',
+  'memory.forget',
 ] as const);
 
 // Supervisor's strict tool allowlist — read-only / annotation-only tools
@@ -129,6 +156,7 @@ export const ALWAYS_AVAILABLE_AGENT_TOOLS = Object.freeze([
 //      out-of-band invocations (e.g. a custom tool that hardcodes
 //      `permissionMcpId: 'supervisor'` on a non-allowlisted tool id).
 export const SUPERVISOR_TOOL_ALLOWLIST = Object.freeze([
+  'self.note',
   'channel.read',
   'channel.list',
   'channel.post',
@@ -145,7 +173,7 @@ export const SUPERVISOR_TOOL_ALLOWLIST = Object.freeze([
   'supervisor.todo.add',
   'supervisor.todo.check',
   'supervisor.todo.list',
-  'memory.save',
+  'memory.write',
   'memory.recall',
 ] as const);
 
