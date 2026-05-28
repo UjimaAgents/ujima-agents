@@ -9,6 +9,7 @@ import { DEFAULT_BIND_HOST, DEFAULT_BIND_PORT } from '@ujima/api-schema';
 import {
   findMonorepoRoot,
   resolvePackagedRuntimeDir,
+  buildPackagedWebNodePath,
   resolveWebServerCwd,
   resolveWebServerEntry,
 } from './runtime-paths.js';
@@ -164,6 +165,7 @@ async function cmdStartPackaged(runtimeDir: string, argv: string[]): Promise<voi
       ...process.env,
       PORT: webPort,
       HOSTNAME: process.env.WEB_HOST ?? '127.0.0.1',
+      NODE_PATH: buildPackagedWebNodePath(webRuntimeDir, process.env.NODE_PATH),
     },
     stdio: 'inherit',
   });

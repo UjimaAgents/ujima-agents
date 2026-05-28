@@ -12,6 +12,7 @@ import {
   packTarballFileName,
   readDistributionPackage,
 } from './lib/package.ts';
+import { buildPackagedWebNodePath } from '../../packages/cli/src/runtime-paths.ts';
 import { DIST_PKG_DIR, REPO_ROOT } from './lib/paths.ts';
 
 const skipStart = process.argv.includes('--skip-start');
@@ -95,10 +96,11 @@ async function main(): Promise<void> {
   const webCwd = webEntry.includes(`${join('apps', 'web')}`)
     ? join(webRuntimeDir, 'apps/web')
     : dirname(webEntry);
+  const nodePath = buildPackagedWebNodePath(webRuntimeDir);
   const nextResolve = spawnSync(
     process.execPath,
     ['-e', "require.resolve('next')"],
-    { cwd: webCwd, encoding: 'utf8' },
+    { cwd: webCwd, encoding: 'utf8', env: { ...process.env, NODE_PATH: nodePath } },
   );
   if (nextResolve.status !== 0) {
     console.error('[release:smoke] Web runtime cannot resolve next:');

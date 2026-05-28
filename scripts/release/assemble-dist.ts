@@ -16,7 +16,7 @@ import {join, dirname} from "node:path";
 import {createRequire} from "node:module";
 import {$} from "bun";
 import {bannerCdnUrl} from "./lib/banner-cdn.ts";
-import {repairBunStyleNodeModules} from "./lib/repair-standalone-node-modules.ts";
+import {materializeWebStandaloneDependencies} from "./lib/materialize-web-deps.ts";
 import {
   API_RUNTIME_DIR,
   DIST_OUT_DIR,
@@ -98,7 +98,7 @@ async function bundleApi(): Promise<void> {
   copySwaggerUiStatic();
 }
 
-function copyWebStandalone(): void {
+async function copyWebStandalone(): Promise<void> {
   const webRoot = join(REPO_ROOT, "apps/web");
   const standaloneRoot = join(webRoot, ".next/standalone");
   if (!existsSync(standaloneRoot)) {
@@ -135,25 +135,18 @@ function copyWebStandalone(): void {
     }
   }
 
-  repairWebStandaloneNodeModules();
+  await materializeWebStandaloneDeps();
 }
 
-function repairWebStandaloneNodeModules(): void {
-  const nodeModulesDir = join(WEB_RUNTIME_DIR, "node_modules");
-  const linked = repairBunStyleNodeModules(nodeModulesDir);
-  const nextPkg = join(nodeModulesDir, "next", "package.json");
-  if (!existsSync(nextPkg)) {
-    console.error(
-      `Missing node_modules/next under ${WEB_RUNTIME_DIR}. ` +
-        "Next standalone trace or Bun node_modules layout may be broken."
-    );
+async function materializeWebStandaloneDeps(): Promise<void> {
+  log("Materializing web runtime node_modules (npm install)…");
+  try {
+    await materializeWebStandaloneDependencies(WEB_RUNTIME_DIR);
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : err);
     process.exit(1);
   }
-  log(
-    linked > 0
-      ? `Repaired ${linked} standalone package symlink(s) for Node (e.g. next).`
-      : "Standalone node_modules already Node-resolvable."
-  );
+  log("Web runtime node_modules ready.");
 }
 
 async function bundleCli(): Promise<void> {
@@ -255,7 +248,7 @@ async function main(): Promise<void> {
   await runMonorepoBuild();
   await buildWebStandalone();
   await bundleApi();
-  copyWebStandalone();
+  await copyWebStandalone();
   await bundleCli();
   copyLicense();
   copyBannerForPublish();

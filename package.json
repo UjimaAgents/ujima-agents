@@ -15,6 +15,7 @@
     "release:check": "bun scripts/release/check.ts",
     "release:dist": "bun scripts/release/assemble-dist.ts",
     "release:smoke": "bun scripts/release/smoke-pack.ts",
+    "release:e2e": "bun scripts/release/e2e-pack.ts",
     "dev": "turbo run dev --concurrency=100",
     "dev:local": "bash scripts/dev-local.sh",
     "lint": "turbo run lint",

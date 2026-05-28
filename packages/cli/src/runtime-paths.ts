@@ -1,5 +1,5 @@
-import { existsSync, readFileSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { delimiter, dirname, join } from 'node:path';
 
 /** npm publish staging dir — shares the product name but is not the dev workspace root. */
 function isDistributionPackageDir(dir: string): boolean {
@@ -75,4 +75,27 @@ export function resolveWebServerCwd(webRuntimeDir: string, serverEntry: string):
   const appWebCwd = join(webRuntimeDir, 'apps/web');
   if (serverEntry.startsWith(appWebCwd)) return appWebCwd;
   return dirname(serverEntry);
+}
+
+/**
+ * Bun standalone traces into `node_modules/.bun/.../node_modules/<pkg>`.
+ * npm pack does not preserve symlinks, so Node needs NODE_PATH for those store paths.
+ */
+export function buildPackagedWebNodePath(webRuntimeDir: string, existingNodePath?: string): string {
+  const nodeModulesDir = join(webRuntimeDir, 'node_modules');
+  const paths: string[] = [nodeModulesDir];
+  const bunDir = join(nodeModulesDir, '.bun');
+  if (existsSync(bunDir)) {
+    for (const entry of readdirSync(bunDir, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const storeModules = join(bunDir, entry.name, 'node_modules');
+      if (existsSync(storeModules)) paths.push(storeModules);
+    }
+  }
+  if (existingNodePath) {
+    for (const segment of existingNodePath.split(delimiter)) {
+      if (segment) paths.push(segment);
+    }
+  }
+  return paths.join(delimiter);
 }
