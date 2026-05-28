@@ -146,10 +146,17 @@ function getValidationMessage(stepId: OnboardingStepId, errors: DraftErrors): st
   return "Resolve the missing onboarding details before creating the organization.";
 }
 
+const onboardingBorder = "border border-zinc-200/90 dark:border-zinc-800";
+const onboardingPanelClass = `rounded-xl ${onboardingBorder} bg-white p-4 dark:bg-zinc-950 sm:p-5`;
+const onboardingTileClass = `rounded-lg ${onboardingBorder} bg-zinc-50/50 p-3.5 text-left transition hover:border-violet-300/80 hover:bg-violet-50/70 dark:bg-zinc-900/25 dark:hover:border-violet-500/35 dark:hover:bg-violet-500/10`;
+const onboardingListClass = `rounded-xl ${onboardingBorder} overflow-hidden divide-y divide-zinc-200 dark:divide-zinc-800`;
+const onboardingCalloutClass =
+  "rounded-xl border border-violet-200/80 bg-violet-50/90 p-4 dark:border-violet-500/25 dark:bg-violet-500/10 sm:flex sm:items-center sm:gap-5 sm:p-5";
+
 function OrganizationPreviewCard() {
   return (
-    <div className="flex flex-col sm:flex-row sm:items-center gap-5 rounded-2xl bg-violet-50 p-6 dark:bg-violet-500/10">
-      <div className="flex shrink-0 h-11 w-11 items-center justify-center rounded-xl bg-white text-violet-600 shadow-sm dark:bg-zinc-900 dark:text-violet-300">
+    <div className={onboardingCalloutClass}>
+      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-violet-200/60 bg-white text-violet-600 dark:border-violet-500/30 dark:bg-zinc-900 dark:text-violet-300">
         <FolderKanban className="h-5 w-5" />
       </div>
       <div className="flex-1 min-w-0">
@@ -171,8 +178,8 @@ function OrganizationPreviewCard() {
 
 function OwnerPreviewCard() {
   return (
-    <div className="flex flex-col sm:flex-row sm:items-center gap-5 rounded-2xl bg-violet-50 p-6 dark:bg-violet-500/10">
-      <div className="flex shrink-0 h-11 w-11 items-center justify-center rounded-xl bg-white text-violet-600 shadow-sm dark:bg-zinc-900 dark:text-violet-300">
+    <div className={onboardingCalloutClass}>
+      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-violet-200/60 bg-white text-violet-600 dark:border-violet-500/30 dark:bg-zinc-900 dark:text-violet-300">
         <ShieldCheck className="h-5 w-5" />
       </div>
       <div className="flex-1 min-w-0">
@@ -281,9 +288,9 @@ function ReviewSection({
   children: React.ReactNode;
 }) {
   return (
-    <section className="rounded-2xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950">
+    <section className={onboardingPanelClass}>
       <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">{title}</p>
-      <div className="mt-4">{children}</div>
+      <div className="mt-3">{children}</div>
     </section>
   );
 }
@@ -308,7 +315,7 @@ function TeamSection({
         </div>
         {actions ? <div className="shrink-0">{actions}</div> : null}
       </div>
-      {children}
+      <div className={onboardingPanelClass}>{children}</div>
     </section>
   );
 }
@@ -326,10 +333,10 @@ function FilterChip({
     <button
       type="button"
       onClick={onClick}
-      className={`shrink-0 rounded-full px-3 py-1 text-xs font-medium transition ${
+      className={`shrink-0 rounded-full border px-3 py-1 text-xs font-medium transition ${
         active
-          ? "bg-violet-600 text-white"
-          : "text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800/80"
+          ? "border-violet-600 bg-violet-600 text-white"
+          : "border-zinc-200/90 text-zinc-600 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800/80"
       }`}
     >
       {children}
@@ -756,8 +763,8 @@ function StepFields({
 
   if (stepId === "organization") {
     return (
-      <div className="rounded-[24px] border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950">
-        <div className="flex flex-col gap-8">
+      <div className={onboardingPanelClass}>
+        <div className="flex flex-col gap-6 sm:gap-8">
           <div className="space-y-6">
             <FieldShell
               label="Workspace name"
@@ -816,9 +823,9 @@ function StepFields({
 
   if (stepId === "owner") {
     return (
-      <div className="rounded-[24px] border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950">
+      <div className={onboardingPanelClass}>
         <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Owner details</p>
-        <div className="mt-6 flex flex-col gap-8">
+        <div className="mt-5 flex flex-col gap-6 sm:mt-6 sm:gap-8">
           <div className="space-y-6">
             <FieldShell
               label="Full name"
@@ -900,7 +907,7 @@ function StepFields({
     return (
       <div className="space-y-5">
         <nav
-          className="flex gap-1 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          className="inline-flex max-w-full gap-0.5 overflow-x-auto rounded-xl border border-zinc-200 bg-zinc-50/60 p-1 dark:border-zinc-800 dark:bg-zinc-900/40 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
           aria-label="Team configuration sections"
         >
           {TEAM_TABS.map((tab) => {
@@ -912,10 +919,10 @@ function StepFields({
                 key={tab.id}
                 type="button"
                 onClick={() => onTeamTabChange(tab.id)}
-                className={`inline-flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition ${
+                className={`inline-flex shrink-0 items-center gap-1.5 rounded-lg border px-3 py-2 text-sm font-medium transition ${
                   isActive
-                    ? "bg-violet-600/10 text-violet-700 dark:bg-violet-500/15 dark:text-violet-300"
-                    : "text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800 dark:text-zinc-400 dark:hover:bg-zinc-800/60 dark:hover:text-zinc-200"
+                    ? "border-zinc-200 bg-white text-violet-700 shadow-sm dark:border-zinc-700 dark:bg-zinc-950 dark:text-violet-300"
+                    : "border-transparent text-zinc-500 hover:border-zinc-200/80 hover:bg-white/70 hover:text-zinc-800 dark:text-zinc-400 dark:hover:border-zinc-700/80 dark:hover:bg-zinc-950/70 dark:hover:text-zinc-200"
                 }`}
               >
                 <Icon className="h-4 w-4 shrink-0" />
@@ -983,7 +990,7 @@ function StepFields({
                         key={template.name}
                         type="button"
                         onClick={() => openRoleEditor(undefined, template.name)}
-                        className="rounded-xl bg-zinc-50/90 p-3.5 text-left transition hover:bg-violet-50/90 dark:bg-zinc-900/50 dark:hover:bg-violet-500/10"
+                        className={onboardingTileClass}
                       >
                         <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">{template.title}</p>
                         <p className="mt-1 line-clamp-2 text-xs leading-5 text-zinc-500 dark:text-zinc-400">
@@ -1004,13 +1011,13 @@ function StepFields({
               </div>
 
               {draft.roles.length > 0 ? (
-                <div className="border-t border-zinc-200 pt-5 dark:border-zinc-800">
+                <div className="border-t border-zinc-200/90 pt-5 dark:border-zinc-800">
                   <p className="mb-3 text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
                     Your team · {draft.roles.length}
                   </p>
-                  <div className="divide-y divide-zinc-200 dark:divide-zinc-800">
+                  <div className={onboardingListClass}>
                     {draft.roles.map((role, index) => (
-                      <article key={role.id} className="flex items-start justify-between gap-4 py-4 first:pt-0 last:pb-0">
+                      <article key={role.id} className="flex items-start justify-between gap-4 px-4 py-3.5">
                         <div className="flex min-w-0 gap-3">
                           <Avatar name={role.agentName} colorIndex={index} />
                           <div className="min-w-0">
@@ -1098,9 +1105,9 @@ function StepFields({
               </button>
             }
           >
-            <div className="divide-y divide-zinc-200 dark:divide-zinc-800">
+            <div className={onboardingListClass}>
               {draft.channels.map((channel) => (
-                <div key={channel.id} className="flex items-center justify-between gap-4 py-3.5 first:pt-0 last:pb-0">
+                <div key={channel.id} className="flex items-center justify-between gap-4 px-4 py-3.5">
                   <div className="flex min-w-0 items-start gap-2.5">
                     <Hash className="mt-0.5 h-4 w-4 shrink-0 text-zinc-400" />
                     <div className="min-w-0">
@@ -1187,9 +1194,12 @@ function StepFields({
               </button>
             }
           >
-            <div className="space-y-4">
+            <div className="space-y-3">
               {draft.providers.map((provider, index) => (
-                  <div key={provider.id} className="flex flex-col gap-2 sm:flex-row sm:flex-nowrap sm:items-center sm:gap-3">
+                  <div
+                    key={provider.id}
+                    className={`flex flex-col gap-2 rounded-lg ${onboardingBorder} bg-zinc-50/30 p-3 dark:bg-zinc-900/20 sm:flex-row sm:flex-nowrap sm:items-center sm:gap-3`}
+                  >
                     <Select
                       value={provider.name}
                       onChange={(event) => {
