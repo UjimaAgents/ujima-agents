@@ -16,6 +16,7 @@ import {join, dirname} from "node:path";
 import {createRequire} from "node:module";
 import {$} from "bun";
 import {bannerCdnUrl} from "./lib/banner-cdn.ts";
+import {repairBunStyleNodeModules} from "./lib/repair-standalone-node-modules.ts";
 import {
   API_RUNTIME_DIR,
   DIST_OUT_DIR,
@@ -133,6 +134,26 @@ function copyWebStandalone(): void {
       cpSync(publicSrc, dest, {recursive: true});
     }
   }
+
+  repairWebStandaloneNodeModules();
+}
+
+function repairWebStandaloneNodeModules(): void {
+  const nodeModulesDir = join(WEB_RUNTIME_DIR, "node_modules");
+  const linked = repairBunStyleNodeModules(nodeModulesDir);
+  const nextPkg = join(nodeModulesDir, "next", "package.json");
+  if (!existsSync(nextPkg)) {
+    console.error(
+      `Missing node_modules/next under ${WEB_RUNTIME_DIR}. ` +
+        "Next standalone trace or Bun node_modules layout may be broken."
+    );
+    process.exit(1);
+  }
+  log(
+    linked > 0
+      ? `Repaired ${linked} standalone package symlink(s) for Node (e.g. next).`
+      : "Standalone node_modules already Node-resolvable."
+  );
 }
 
 async function bundleCli(): Promise<void> {

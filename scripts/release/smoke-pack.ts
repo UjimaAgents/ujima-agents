@@ -3,7 +3,8 @@
  * Smoke-test the distribution tarball: pack, install globally in a temp dir, sanity-check CLI + API health.
  */
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { $ } from 'bun';
 import {
@@ -81,6 +82,30 @@ async function main(): Promise<void> {
     console.error(`API entry not found: ${apiEntry}`);
     process.exit(1);
   }
+
+  const webRuntimeDir = join(packageDir, 'dist', 'runtime', 'web');
+  const webEntry =
+    [join(webRuntimeDir, 'apps/web/server.js'), join(webRuntimeDir, 'server.js')].find((p) =>
+      existsSync(p),
+    ) ?? null;
+  if (!webEntry) {
+    console.error(`Web server entry not found under ${webRuntimeDir}`);
+    process.exit(1);
+  }
+  const webCwd = webEntry.includes(`${join('apps', 'web')}`)
+    ? join(webRuntimeDir, 'apps/web')
+    : dirname(webEntry);
+  const nextResolve = spawnSync(
+    process.execPath,
+    ['-e', "require.resolve('next')"],
+    { cwd: webCwd, encoding: 'utf8' },
+  );
+  if (nextResolve.status !== 0) {
+    console.error('[release:smoke] Web runtime cannot resolve next:');
+    console.error(nextResolve.stderr);
+    process.exit(1);
+  }
+  console.log('[release:smoke] Web runtime resolves next OK');
 
   const apiProc = Bun.spawn([process.execPath, apiEntry], {
     env: {
