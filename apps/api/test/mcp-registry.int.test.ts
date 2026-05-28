@@ -1257,6 +1257,60 @@ describe('McpRegistryService — Phase 3 MCP integration', () => {
     );
   });
 
+  // Regression: the role filter previously only applied to per-tool
+  // grants, not to the MCP attachment used for `hasMcp`. A
+  // supervisor-only MCP attachment would still make the worker
+  // catalog view report `exposed: true` for every tool on the
+  // server, overstating what the runtime actually exposes.
+  it('getCatalog(?role=): supervisor-only MCP attachment is invisible to the worker view', async () => {
+    const fixture = await createFixture();
+    tempDirs.push(fixture.archiveRoot);
+
+    const server = fixture.registry.create({
+      organizationId: fixture.organizationId,
+      createdBy: fixture.ownerId,
+      name: 'role-attach-mcp',
+      transport: 'stdio',
+      command: 'x',
+    });
+    fixture.repo.saveMcpToolCache({
+      mcpServerId: server.id,
+      organizationId: fixture.organizationId,
+      tools: [{ name: 'tool_a', description: '' }],
+      fetchedAt: new Date().toISOString(),
+    });
+    fixture.registry.attach({
+      organizationId: fixture.organizationId,
+      memberId: 'agent-x',
+      mcpServerId: server.id,
+      scope: 'supervisor',
+    });
+
+    // Supervisor view: attachment matches the role → exposed.
+    const sup = fixture.registry.getCatalog(
+      fixture.organizationId,
+      'agent-x',
+      'supervisor',
+    );
+    expect(sup.agentView![`${server.id}::tool_a`]?.exposed).toBe(true);
+    expect(sup.agentView![`${server.id}::tool_a`]?.exposureReason).toBe(
+      'all-tools-mode',
+    );
+
+    // Worker view: attachment scope doesn't match → not reachable.
+    // Pre-fix `hasMcp` was true and the catalog reported `exposed: true`
+    // anyway, overstating what the runtime ever sees.
+    const wkr = fixture.registry.getCatalog(
+      fixture.organizationId,
+      'agent-x',
+      'worker',
+    );
+    expect(wkr.agentView![`${server.id}::tool_a`]?.exposed).toBe(false);
+    expect(wkr.agentView![`${server.id}::tool_a`]?.exposureReason).toBe(
+      'no-mcp-attachment',
+    );
+  });
+
   // Companion: when an MCP attachment already exists, the per-tool
   // grant must mirror its scope rather than overwriting it or
   // defaulting elsewhere. Avoids silently widening or narrowing what

@@ -494,10 +494,15 @@ export class McpRegistryService {
       role ? grantScope === role || grantScope === 'both' : true;
 
     // Per-agent perspective state, computed once and reused per row.
+    // The scope filter MUST apply to MCP attachments too — otherwise a
+    // supervisor-only server attachment would count as "reachable" for
+    // the worker view and the catalog would report `exposed: true`
+    // (via hasMcp) even though the runtime never resolves the server.
     const agentMcpAttachments = agentId
       ? new Set(
           this.repo
             .listAgentMcpAttachments(organizationId, agentId)
+            .filter((a) => matchesRole(a.scope))
             .map((a) => a.mcpServerId),
         )
       : null;
