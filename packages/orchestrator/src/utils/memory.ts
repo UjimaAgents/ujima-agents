@@ -36,22 +36,39 @@ export function recallMemoryEntries(repo: MemoryRepo, input: {
     return repo.recallMemoryEntries(input);
   }
 
-  const seen = new Map<string, MemoryEntry>();
-  for (const entry of repo.listOrgMemories(input.organizationId)) {
-    if (entry.memberId === undefined) seen.set(entry.id, entry);
-  }
-  if (input.memberId) {
-    for (const entry of repo.listMemories(input.organizationId, input.memberId)) {
-      seen.set(entry.id, entry);
+  const nowIso = new Date().toISOString();
+  const entries = repo
+    .listOrgMemories(input.organizationId)
+    .filter((entry) =>
+      input.memberId === undefined
+        ? true
+        : entry.memberId === undefined || entry.memberId === input.memberId,
+    )
+    .filter((entry) => !entry.expiresAt || entry.expiresAt > nowIso);
+
+  const { kind, keyPrefix, query, limit } = input;
+  const filtered = entries
+    .filter((entry) => !kind || entry.kind === kind)
+    .filter((entry) => !keyPrefix || entry.key.startsWith(keyPrefix))
+    .filter((entry) => !query || entry.content.includes(query))
+    .sort(
+      (a, b) =>
+        Date.parse(b.lastRecalledAt ?? b.createdAt) - Date.parse(a.lastRecalledAt ?? a.createdAt),
+    )
+    .slice(0, limit ?? 20);
+
+  if (input.touch) {
+    for (const entry of filtered) {
+      const touched = { ...entry, lastRecalledAt: nowIso };
+      if (repo.upsertMemoryEntry) {
+        repo.upsertMemoryEntry(touched);
+      } else {
+        repo.saveMemory(touched);
+      }
     }
   }
 
-  let entries = [...seen.values()];
-  const { kind, keyPrefix, query, limit } = input;
-  if (kind) entries = entries.filter((entry) => entry.kind === kind);
-  if (keyPrefix) entries = entries.filter((entry) => entry.key.startsWith(keyPrefix));
-  if (query) entries = entries.filter((entry) => entry.content.includes(query));
-  return entries.slice(0, limit ?? 20);
+  return filtered;
 }
 
 export function forgetMemoryEntry(
