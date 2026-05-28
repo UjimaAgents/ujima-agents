@@ -32,7 +32,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           isOnboardingPage ? "flex min-h-0 flex-col" : ""
         }`}
       >
-        <div className={isOnboardingPage ? "min-h-0 flex-1" : undefined}>{children}</div>
+        <div className={isOnboardingPage ? "min-h-0 flex-1" : isWorkspacePage ? "h-full w-full" : undefined}>{children}</div>
         <ToastContainer />
       </div>
     );

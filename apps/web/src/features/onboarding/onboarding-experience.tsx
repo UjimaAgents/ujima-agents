@@ -350,7 +350,7 @@ export function OnboardingExperience({
 
       window.localStorage.removeItem(ONBOARDING_STORAGE_KEY);
       // Full navigation ensures the session cookie from Set-Cookie is sent on the next request.
-      window.location.assign("/workspace");
+      window.location.replace("/workspace");
     } catch (error) {
       setSubmitError(error instanceof Error ? error.message : "Unable to complete onboarding right now.");
     } finally {

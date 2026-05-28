@@ -49,7 +49,7 @@ export function sessionCookieOptions(expiresAt?: string) {
   return {
     httpOnly: true,
     sameSite: "lax" as const,
-    secure: process.env.NODE_ENV === "production",
+    secure: process.env.UJIMA_WEB_SECURE_COOKIES === "1",
     path: "/",
     expires: expiresAt ? new Date(expiresAt) : undefined,
   };
