@@ -163,6 +163,8 @@ async function cmdStartPackaged(runtimeDir: string, argv: string[]): Promise<voi
     cwd: webCwd,
     env: {
       ...process.env,
+      UJIMA_HOME: homeDir,
+      UJIMA_PORT: process.env.UJIMA_PORT ?? String(DEFAULT_BIND_PORT),
       PORT: webPort,
       HOSTNAME: process.env.WEB_HOST ?? '127.0.0.1',
       NODE_PATH: buildPackagedWebNodePath(webRuntimeDir, process.env.NODE_PATH),

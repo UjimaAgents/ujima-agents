@@ -5,6 +5,7 @@
   },
   "version": "0.0.4",
   "description": "Framework for building Slack-like teams of AI agents — CLI, API, and web UI.",
+  "readme": "README.md",
   "keywords": [
     "ai",
     "skills",

@@ -11,28 +11,15 @@ import {
   packTarballFileName,
   readDistributionPackage,
 } from './lib/package.ts';
-import { buildPackagedWebNodePath } from '../../packages/cli/src/runtime-paths.ts';
+import {
+  assertBootstrapEndpoints,
+  assertNoTransportErrors,
+  waitForHttpOk,
+} from './lib/pack-verify.ts';
 import { DIST_PKG_DIR, REPO_ROOT } from './lib/paths.ts';
 
 const API_PORT = '17621';
 const WEB_PORT = '17622';
-
-async function waitForUrl(
-  url: string,
-  attempts: number,
-  intervalMs: number,
-): Promise<boolean> {
-  for (let i = 0; i < attempts; i++) {
-    try {
-      const res = await fetch(url, { redirect: 'follow' });
-      if (res.ok || res.status < 500) return true;
-    } catch {
-      // retry
-    }
-    await Bun.sleep(intervalMs);
-  }
-  return false;
-}
 
 async function main(): Promise<void> {
   const distribution = readDistributionPackage();
@@ -102,13 +89,39 @@ async function main(): Promise<void> {
     cwd: workDir,
   });
 
-  const apiOk = await waitForUrl(`http://127.0.0.1:${API_PORT}/health`, 45, 1000);
-  const webOk = await waitForUrl(`http://127.0.0.1:${WEB_PORT}/`, 45, 1000);
+  const token = await Bun.file(join(homeDir, 'token')).text().catch(() => '');
+  const apiOk = await waitForHttpOk(`http://127.0.0.1:${API_PORT}/health`, 45, 1000);
+  const webOk = await waitForHttpOk(`http://127.0.0.1:${WEB_PORT}/`, 45, 1000);
 
   proc.kill('SIGTERM');
   const exitCode = await proc.exited;
   const stderr = await new Response(proc.stderr).text();
   const stdout = await new Response(proc.stdout).text();
+
+  if (token.trim()) {
+    try {
+      await assertBootstrapEndpoints({
+        apiPort: API_PORT,
+        webPort: WEB_PORT,
+        bearerToken: token.trim(),
+      });
+      console.log('[release:e2e] Bootstrap endpoints OK (no 500)');
+    } catch (error) {
+      console.error('[release:e2e] Bootstrap check failed:', error);
+      console.error('--- stderr ---\n', stderr.slice(-4000));
+      rmSync(workDir, { recursive: true, force: true });
+      process.exit(1);
+    }
+  }
+
+  try {
+    await assertNoTransportErrors(stderr);
+  } catch (error) {
+    console.error('[release:e2e]', error);
+    console.error('--- stderr ---\n', stderr.slice(-4000));
+    rmSync(workDir, { recursive: true, force: true });
+    process.exit(1);
+  }
 
   if (!apiOk) {
     console.error('[release:e2e] API /health did not become ready');

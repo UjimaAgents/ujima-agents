@@ -9,3 +9,9 @@
 **/*.ts
 **/*.tsx
 **/src/**
+# Dependency docs bloat the tarball (~12k files) and can confuse npm's readme UI.
+dist/runtime/web/node_modules/**/README*
+dist/runtime/web/node_modules/**/readme*
+dist/runtime/web/node_modules/**/Readme*
+dist/runtime/web/node_modules/**/CHANGELOG*
+dist/runtime/web/node_modules/**/changelog*

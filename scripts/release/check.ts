@@ -6,9 +6,12 @@
  *   bun run release:check
  *   TAG=v0.1.0 bun run release:check
  */
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { $ } from 'bun';
-import { DISTRIBUTION_PKG_JSON } from './lib/paths.ts';
+import { DISTRIBUTION_PKG_JSON, DIST_PKG_DIR } from './lib/paths.ts';
+
+const MIN_README_BYTES = 500;
 
 function normalizeTag(tag: string): string {
   return tag.startsWith('v') ? tag.slice(1) : tag;
@@ -41,4 +44,21 @@ if (pkg.version !== expected) {
   process.exit(1);
 }
 
-console.log(`Release check OK: tag ${tag} matches package version ${pkg.version}.`);
+const readmePath = join(DIST_PKG_DIR, 'README.md');
+if (!existsSync(readmePath)) {
+  console.error(
+    `Missing ${readmePath}. Run: bun run release:dist (copies root README for npm).`,
+  );
+  process.exit(1);
+}
+const readmeBytes = readFileSync(readmePath).byteLength;
+if (readmeBytes < MIN_README_BYTES) {
+  console.error(
+    `README too small (${readmeBytes} bytes). npm will show an empty package page.`,
+  );
+  process.exit(1);
+}
+
+console.log(
+  `Release check OK: tag ${tag} matches package version ${pkg.version}; README ${readmeBytes} bytes.`,
+);

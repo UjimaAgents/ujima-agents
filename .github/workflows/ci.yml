@@ -46,6 +46,11 @@ jobs:
       - name: Test
         run: bun run test
 
+      - name: Verify distribution pack (README, next, ujima start)
+        run: |
+          bun run release:dist
+          bun run release:e2e
+
       - name: Package VSIX
         run: bun --filter ujima-vscode-extension package
 

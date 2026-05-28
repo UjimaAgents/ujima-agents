@@ -106,7 +106,7 @@ export async function daemonFetch(
     throw new DaemonRequestError(
       503,
       "ERR_DAEMON_UNAVAILABLE",
-      `Unable to reach the Ujima daemon at ${url}. Start the API from the repo root (\`bun dev\`) and ensure it is listening on port ${DEFAULT_DAEMON_PORT}. (${reason})`,
+      `Unable to reach the Ujima daemon at ${url}. Run \`ujima start\` (npm install) or \`bun run dev\` (monorepo) and ensure the API is listening on port ${DEFAULT_DAEMON_PORT}. (${reason})`,
     );
   }
 }

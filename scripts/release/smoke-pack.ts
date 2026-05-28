@@ -3,8 +3,7 @@
  * Smoke-test the distribution tarball: pack, install globally in a temp dir, sanity-check CLI + API health.
  */
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
-import { join, dirname } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { $ } from 'bun';
 import {
@@ -12,7 +11,11 @@ import {
   packTarballFileName,
   readDistributionPackage,
 } from './lib/package.ts';
-import { buildPackagedWebNodePath } from '../../packages/cli/src/runtime-paths.ts';
+import {
+  assertDistributionReadme,
+  assertPackagedWebNext,
+  assertPackManifestIncludesReadme,
+} from './lib/pack-verify.ts';
 import { DIST_PKG_DIR, REPO_ROOT } from './lib/paths.ts';
 
 const skipStart = process.argv.includes('--skip-start');
@@ -35,7 +38,10 @@ async function main(): Promise<void> {
     process.exit(packResult.exitCode ?? 1);
   }
 
+  assertDistributionReadme(DIST_PKG_DIR);
+
   const packOutput = packResult.stdout.toString();
+  assertPackManifestIncludesReadme(packOutput);
   const tarballName =
     packOutput.match(new RegExp(`${expectedTarball.replace('.', '\\.')}`))?.[0] ??
     packOutput.match(/[^\s"]+\.tgz/)?.[0]?.replace(/^npm notice\s+/, '').trim();
@@ -84,27 +90,10 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const webRuntimeDir = join(packageDir, 'dist', 'runtime', 'web');
-  const webEntry =
-    [join(webRuntimeDir, 'apps/web/server.js'), join(webRuntimeDir, 'server.js')].find((p) =>
-      existsSync(p),
-    ) ?? null;
-  if (!webEntry) {
-    console.error(`Web server entry not found under ${webRuntimeDir}`);
-    process.exit(1);
-  }
-  const webCwd = webEntry.includes(`${join('apps', 'web')}`)
-    ? join(webRuntimeDir, 'apps/web')
-    : dirname(webEntry);
-  const nodePath = buildPackagedWebNodePath(webRuntimeDir);
-  const nextResolve = spawnSync(
-    process.execPath,
-    ['-e', "require.resolve('next')"],
-    { cwd: webCwd, encoding: 'utf8', env: { ...process.env, NODE_PATH: nodePath } },
-  );
-  if (nextResolve.status !== 0) {
-    console.error('[release:smoke] Web runtime cannot resolve next:');
-    console.error(nextResolve.stderr);
+  try {
+    assertPackagedWebNext(packageDir);
+  } catch (error) {
+    console.error('[release:smoke]', error);
     process.exit(1);
   }
   console.log('[release:smoke] Web runtime resolves next OK');
