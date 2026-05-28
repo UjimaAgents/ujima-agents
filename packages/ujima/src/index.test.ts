@@ -28,7 +28,7 @@ test('starter config includes the preset team shape', () => {
 
   expect(config.name).toBe('Ujima Demo');
   expect(config.channels[0]?.name).toBe('general');
-  expect(Object.keys(config.tools)).toContain('filesystem');
+  expect(Object.keys(config.tools)).toContain('write');
   expect(Object.keys(config.tools)).toContain('grep');
   expect(Object.keys(config.tools)).toContain('shell');
   expect(config.agents.map((agent) => agent.name)).toContain('pm');
@@ -56,9 +56,9 @@ test('framework helpers normalize roles, tools, and providers', () => {
     models: ['gpt-5.4'],
   });
   const tool = defineTool({
-    id: 'filesystem',
-    name: 'Filesystem',
-    actions: ['read'],
+    id: 'write',
+    name: 'Write',
+    actions: ['write'],
     pathScopes: ['.'],
     requiresApproval: true,
   });
@@ -68,7 +68,7 @@ test('framework helpers normalize roles, tools, and providers', () => {
   });
 
   expect(provider.defaultModel).toBe('gpt-5.4');
-  expect(tool.id).toBe('filesystem');
+  expect(tool.id).toBe('write');
   expect(role.name).toBe('frontend-engineer');
   expect(createPersonalityFromPreset('direct').name).toBe('direct');
 });

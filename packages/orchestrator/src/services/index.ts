@@ -17,6 +17,8 @@ import { ChannelRetentionService } from './channel-retention.js';
 import type { ApiServiceContext } from './context.js';
 import { ConversationService } from './conversation.js';
 import { CommitmentService } from './commitment-service.js';
+import { MemoryReviewService } from './memory-review.js';
+import { TrajectoryService } from './trajectory.js';
 import { McpRegistryService } from './mcp-registry.js';
 import { PluginRegistryService } from './plugin-registry.js';
 import { OnboardingService } from './onboarding.js';
@@ -590,11 +592,63 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   conversations.setMessagePublishedHook((message) =>
     commitments.onAgentMessagePublished(message),
   );
+  // Bet 5 (Hermes review) — trajectory JSONL projection. One JSONL
+  // line per completed run, gated by env var. Fire-and-forget, no
+  // schema, no service dependencies: pure projection over runs +
+  // run_steps + messages tables we already keep.
+  const trajectory = new TrajectoryService();
+
+  // Bet 1c (Hermes review) — post-turn memory-review counter.
+  // Counter ticks per completed run; threshold-hit spawns a
+  // restricted memory-only review fork (stub for follow-up wiring).
+  const memoryReview = new MemoryReviewService(
+    context.teamStore,
+    context.repo,
+    tools,
+    ai,
+  );
+
+  // Late-bind the run-completed hook. The single hook routes to
+  // every subscriber: main's drain-pending-member-alert (skills
+  // library merge), memory-review's turn counter, and the
+  // trajectory writer. (Empty-wake handling moved into the
+  // commitment-service sweeper as part of the main merge.)
   spirits.setRunCompletedHook(async (run) => {
     await drainPendingMemberAlertAfterRun(run, (pending) =>
       wakeMemberWithFailureEvents(wakeMemberDeps, pending),
     );
+    // Resolve workspace root lazily — only when the trajectory
+    // writer is actually enabled (env-gated).
+    try {
+      const team = context.teamStore.getTeam(run.organizationId);
+      const workspaceRoot = team?.workspace.root;
+      if (workspaceRoot) {
+        void trajectory.record({ run, repo: context.repo, workspaceRoot });
+      }
+    } catch {
+      // best-effort
+    }
+    // Memory-review counter — only ticks for publishing terminators
+    // so empty wakes and silent acks don't burn the nudge.
+    const isPublishing =
+      run.terminatingTool === 'channel.reply' ||
+      run.terminatingTool === 'channel.post' ||
+      run.terminatingTool === 'channel.dm' ||
+      run.terminatingTool === 'message';
+    if (isPublishing && run.threadId) {
+      const channelId = context.repo.getThread(run.organizationId, run.threadId)?.channelId;
+      memoryReview.noteTurn({
+        organizationId: run.organizationId,
+        memberId: run.agentId,
+        channelId,
+        runId: run.id,
+      });
+    }
   });
+  // Scheduler tick (Bet 4). Production runs it every 60s; tests
+  // can pass `commitmentSweeperIntervalMs: 0` to opt out and call
+  // `commitments.sweepIdle()` / `sweepExpired()` directly. The
+  // interval is captured by `stop()` so daemon shutdown cancels it.
   const sweepInterval =
     context.commitmentSweeperIntervalMs ?? 60_000;
   let commitmentSweeperHandle: ReturnType<typeof setInterval> | null = null;

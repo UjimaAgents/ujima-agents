@@ -2,10 +2,60 @@ import { createTwoFilesPatch } from 'diff';
 import { z } from 'zod';
 import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, join, relative, sep } from 'node:path';
+import { WorkspaceFileSchema } from '@ujima/shared';
 import { assertWorkspaceBoundary } from '@ujima/shared/workspace';
 import { isSensitiveWorkspacePath } from '@ujima/shared/workspace-file-filters';
-import type { OrchestratorTool } from './types.js';
+import type { ApiRepository } from '../services/repository-reader.js';
+import type { OrchestratorTool, ToolExecutionContext } from './types.js';
 import { readWindowValue } from './window-utils.js';
+
+/**
+ * Bet 4 — workspace-files FTS index. Every successful `write` /
+ * `edit` / `multiedit` UPSERTs the post-edit body into the
+ * `workspace_files` table; the FTS5 triggers from migration 026
+ * keep the search index in lockstep. Best-effort — index failures
+ * never block the on-disk write because the filesystem is the
+ * system of record, the index is just an accelerator for
+ * `channel.recall(scope: 'files')`.
+ *
+ * Channel attribution: pulled from `invocation.threadId` via the
+ * threads table when present. A wake-run on a non-channel thread
+ * (DM, self-channel) leaves channelId undefined — that's fine, the
+ * recall path is org-scoped not channel-scoped today.
+ */
+function indexWorkspaceWrite(
+  ctx: ToolExecutionContext,
+  workspacePath: string,
+  body: string,
+): void {
+  const repo: ApiRepository | undefined = ctx.repo;
+  if (!repo?.upsertWorkspaceFile) return;
+  try {
+    if (isSensitiveWorkspacePath(workspacePath)) {
+      repo.deleteWorkspaceFile?.(ctx.invocation.organizationId, workspacePath);
+      return;
+    }
+    const channelId = ctx.invocation.threadId
+      ? repo.getThread(ctx.invocation.organizationId, ctx.invocation.threadId)?.channelId
+      : undefined;
+    repo.upsertWorkspaceFile(
+      WorkspaceFileSchema.parse({
+        organizationId: ctx.invocation.organizationId,
+        path: workspacePath,
+        body,
+        writtenBy: ctx.invocation.memberId,
+        channelId,
+        sizeBytes: body.length,
+        updatedAt: new Date().toISOString(),
+      }),
+    );
+  } catch {
+    // Best-effort — never break a real write because the index
+    // path errored. Larger-than-cap bodies are truncated inside
+    // upsertWorkspaceFile; schema parse failures here log nothing
+    // (the disk write already succeeded, we're indexing post-facto).
+  }
+}
 
 const VIEW_DEFAULT_LIMIT = 1000;
 const VIEW_MAX_BYTES = 200 * 1024;
@@ -179,7 +229,8 @@ export const writeTool: OrchestratorTool<typeof WriteSchema> = {
       content: args.content,
     },
   }),
-  execute: async ({ invocation, team }) => {
+  execute: async (ctx) => {
+    const { invocation, team } = ctx;
     if (!invocation.resourcePath) {
       throw new Error('resourcePath is required');
     }
@@ -197,6 +248,7 @@ export const writeTool: OrchestratorTool<typeof WriteSchema> = {
 
     await mkdir(dirname(resolved), { recursive: true });
     await writeFile(resolved, after, 'utf8');
+    indexWorkspaceWrite(ctx, invocation.resourcePath, after);
     return {
       success: true,
       changed: true,
@@ -221,7 +273,8 @@ export const editTool: OrchestratorTool<typeof EditSchema> = {
       matchStrategy: matchStrategyFrom(args),
     },
   }),
-  execute: async ({ invocation, team }) => {
+  execute: async (ctx) => {
+    const { invocation, team } = ctx;
     if (!invocation.resourcePath) {
       throw new Error('resourcePath is required');
     }
@@ -245,6 +298,7 @@ export const editTool: OrchestratorTool<typeof EditSchema> = {
 
     await mkdir(dirname(resolved), { recursive: true });
     await writeFile(resolved, after, 'utf8');
+    indexWorkspaceWrite(ctx, invocation.resourcePath, after);
     return {
       success: true,
       changed: true,
@@ -271,7 +325,8 @@ export const multieditTool: OrchestratorTool<typeof MultiEditSchema> = {
       })),
     },
   }),
-  execute: async ({ invocation, team }) => {
+  execute: async (ctx) => {
+    const { invocation, team } = ctx;
     if (!invocation.resourcePath) {
       throw new Error('resourcePath is required');
     }
@@ -304,6 +359,7 @@ export const multieditTool: OrchestratorTool<typeof MultiEditSchema> = {
 
     await mkdir(dirname(resolved), { recursive: true });
     await writeFile(resolved, after, 'utf8');
+    indexWorkspaceWrite(ctx, invocation.resourcePath, after);
     return {
       success: true,
       changed: true,

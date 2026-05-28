@@ -63,7 +63,8 @@ describe('database migrations', () => {
       -- Tables introduced by 004_additive_ports. The fixture is hand-
       -- rolled so each migration we mark "applied" must have its
       -- artefacts present, otherwise later migrations that ALTER one
-      -- of them (e.g. 009 ADDS task_session_id to todos) blow up.
+      -- of them (e.g. 009 ADDS task_session_id to todos, 027 ALTERs
+      -- memory_entries) blow up.
       CREATE TABLE todos (
         id               TEXT PRIMARY KEY,
         organization_id  TEXT NOT NULL,
@@ -74,6 +75,16 @@ describe('database migrations', () => {
         notes            TEXT NOT NULL DEFAULT '',
         created_at       TEXT NOT NULL,
         updated_at       TEXT NOT NULL
+      );
+
+      CREATE TABLE memory_entries (
+        id               TEXT PRIMARY KEY,
+        organization_id  TEXT NOT NULL,
+        member_id        TEXT,
+        kind             TEXT NOT NULL,
+        content          TEXT NOT NULL,
+        metadata         TEXT NOT NULL DEFAULT '{}',
+        created_at       TEXT NOT NULL
       );
 
       CREATE TABLE approvals (

@@ -857,7 +857,115 @@ const MIGRATIONS: { id: string; up: string }[] = [
     `,
   },
   {
-    id: '026_plugin_registry',
+    // Bet 4 — workspace artifact search. `messages_fts` covers
+    // chat history; this is its peer for the markdown/text files
+    // agents `write` into the workspace. Without it, an agent that
+    // produced `ai/memory-bank/tasks/foo.md` in channel A cannot
+    // recall it by content from channel B without grepping disk on
+    // every query. The backing table is required because FTS5 can't
+    // index a filesystem directly — `write`/`edit`/`multiedit` hooks
+    // UPSERT here, the FTS triggers mirror the messages_fts pattern.
+    id: '026_workspace_files_fts',
+    up: `
+      CREATE TABLE IF NOT EXISTS workspace_files (
+        organization_id  TEXT NOT NULL,
+        path             TEXT NOT NULL,
+        body             TEXT NOT NULL,
+        written_by       TEXT NOT NULL,
+        channel_id       TEXT,
+        size_bytes       INTEGER NOT NULL DEFAULT 0,
+        updated_at       TEXT NOT NULL,
+        PRIMARY KEY (organization_id, path)
+      );
+      CREATE INDEX IF NOT EXISTS idx_workspace_files_org
+        ON workspace_files(organization_id, updated_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_workspace_files_member
+        ON workspace_files(organization_id, written_by, updated_at DESC);
+
+      CREATE VIRTUAL TABLE IF NOT EXISTS workspace_files_fts USING fts5(
+        path,
+        body,
+        content='workspace_files',
+        content_rowid='rowid'
+      );
+
+      CREATE TRIGGER IF NOT EXISTS workspace_files_fts_ai
+        AFTER INSERT ON workspace_files BEGIN
+          INSERT INTO workspace_files_fts(rowid, path, body)
+            VALUES (new.rowid, new.path, new.body);
+        END;
+      CREATE TRIGGER IF NOT EXISTS workspace_files_fts_ad
+        AFTER DELETE ON workspace_files BEGIN
+          INSERT INTO workspace_files_fts(workspace_files_fts, rowid, path, body)
+            VALUES ('delete', old.rowid, old.path, old.body);
+        END;
+      CREATE TRIGGER IF NOT EXISTS workspace_files_fts_au
+        AFTER UPDATE ON workspace_files BEGIN
+          INSERT INTO workspace_files_fts(workspace_files_fts, rowid, path, body)
+            VALUES ('delete', old.rowid, old.path, old.body);
+          INSERT INTO workspace_files_fts(rowid, path, body)
+            VALUES (new.rowid, new.path, new.body);
+        END;
+    `,
+  },
+  {
+    // Bet 5 — memory_entries flat KV activation. The table has been
+    // dormant since migration 001 with only `kind, content, metadata`
+    // columns. Three additive columns turn it into a usable
+    // per-(member, key) KV store: `key` for the lookup, `expires_at`
+    // for TTL, `source_message_id` for provenance. The pre-existing
+    // `content` column reuses as the value — no `value` column is
+    // added so we avoid a redundant migration. The UNIQUE index on
+    // (org, member, key) enforces "one value per key" at insert.
+    id: '027_memory_entries_kv',
+    up: `
+      ALTER TABLE memory_entries ADD COLUMN key TEXT;
+      ALTER TABLE memory_entries ADD COLUMN expires_at TEXT;
+      ALTER TABLE memory_entries ADD COLUMN source_message_id TEXT;
+      ALTER TABLE memory_entries ADD COLUMN last_recalled_at TEXT;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_entries_member_key
+        ON memory_entries(organization_id, member_id, key)
+        WHERE key IS NOT NULL;
+      CREATE INDEX IF NOT EXISTS idx_memory_entries_expires
+        ON memory_entries(organization_id, expires_at)
+        WHERE expires_at IS NOT NULL;
+    `,
+  },
+  {
+    // Bet 6 — append-only decision log. The single-blob compaction
+    // summary at conversation-summary.ts produces lossy bullet lists
+    // that get re-summarised on every cycle (Letta-documented drift).
+    // The decision log captures the load-bearing artifacts of a
+    // channel — "we decided X" — in a structured form that the L1
+    // diff summariser cannot overwrite. Append-only by convention:
+    // there's no UPDATE column on the row, and `supersedes_id` lets
+    // a newer decision shadow an older one without delete.
+    id: '028_decision_log',
+    up: `
+      CREATE TABLE IF NOT EXISTS decision_log (
+        id                TEXT PRIMARY KEY,
+        organization_id   TEXT NOT NULL,
+        channel_id        TEXT NOT NULL,
+        decided_at        TEXT NOT NULL,
+        decided_by        TEXT NOT NULL,
+        decision_text     TEXT NOT NULL,
+        source_message_id TEXT NOT NULL,
+        supersedes_id     TEXT,
+        created_at        TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_decision_log_channel
+        ON decision_log(organization_id, channel_id, decided_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_decision_log_source
+        ON decision_log(source_message_id);
+    `,
+  },
+  {
+    // Renumbered from main's `026_plugin_registry` on merge — our
+    // 026/027/028 had already shipped to dogfood DBs. `CREATE TABLE
+    // IF NOT EXISTS` is idempotent so DBs that already applied the
+    // original 026_plugin_registry simply record this id (harmless
+    // dual-record); fresh DBs see one create.
+    id: '029_plugin_registry',
     up: `
       CREATE TABLE IF NOT EXISTS plugin_installs (
         id              TEXT PRIMARY KEY,
@@ -894,6 +1002,49 @@ const MIGRATIONS: { id: string; up: string }[] = [
       );
       CREATE INDEX IF NOT EXISTS idx_org_skill_installs_org
         ON organization_skill_installs(organization_id, plugin_name);
+    `,
+  },
+  {
+    // Post-review fix — Bet 5 follow-up. Migration 027's unique
+    // index was `(organization_id, member_id, key)` with member_id
+    // NULL-able for org-scoped writes. SQLite treats NULL as
+    // distinct in unique indexes, so two org-scoped writes to the
+    // same key inserted DIFFERENT rows instead of upserting the
+    // existing one — breaking the documented "one key, one value"
+    // contract. Fix: replace the index with one that uses a
+    // non-null sentinel ('__org__') in place of NULL, and migrate
+    // any existing NULL member_id rows to that sentinel.
+    id: '030_memory_entries_org_scope_sentinel',
+    up: `
+      UPDATE memory_entries SET member_id = '__org__'
+        WHERE member_id IS NULL;
+      DROP INDEX IF EXISTS idx_memory_entries_member_key;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_entries_member_key
+        ON memory_entries(organization_id, member_id, key)
+        WHERE key IS NOT NULL;
+    `,
+  },
+  {
+    // Post-review fix — Bet 6 follow-up. Migration 028 created
+    // `idx_decision_log_source` as a non-unique index, and
+    // appendDecisionLogEntry used `INSERT OR IGNORE` on the UUID
+    // primary key — so a replayed publish or concurrent extractor
+    // hook could insert the same decision twice before the
+    // `findDecisionBySourceMessage` pre-check raced to catch it.
+    // Fix: dedup any existing duplicates keeping the earliest row
+    // per (org, source_message_id), then replace the non-unique
+    // index with a UNIQUE one. The upsert in the repository now
+    // targets `ON CONFLICT(organization_id, source_message_id)`.
+    id: '031_decision_log_source_unique',
+    up: `
+      DELETE FROM decision_log
+        WHERE rowid NOT IN (
+          SELECT MIN(rowid) FROM decision_log
+            GROUP BY organization_id, source_message_id
+        );
+      DROP INDEX IF EXISTS idx_decision_log_source;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_decision_log_source
+        ON decision_log(organization_id, source_message_id);
     `,
   },
 ];

@@ -9,10 +9,13 @@ import type {
   ChannelKind,
   ConfigFieldOwnership,
   ConversationThread,
+  DecisionLogEntry,
   McpServer,
   McpToolCache,
   PluginInstall,
   Member,
+  MemoryEntry,
+  MemoryEntryKind,
   Message,
   MessageMention,
   Organization,
@@ -26,6 +29,7 @@ import type {
   TaskSessionStatus,
   Todo,
   TodoStatus,
+  WorkspaceFile,
   WorkspaceMember,
 } from '@ujima/shared';
 
@@ -48,6 +52,7 @@ export interface PaginatedMessages {
   data: Message[];
   nextCursor?: string;
   hasMore: boolean;
+  searchRanks?: Record<string, number>;
 }
 
 export interface PaginatedChannels {
@@ -172,7 +177,7 @@ export interface ConversationRepository extends RepositoryReader {
     organizationId: string,
     channelId: string,
     query: string,
-    options?: { cursor?: string; since?: string; limit?: number },
+    options?: { cursor?: string; since?: string; limit?: number; ranked?: boolean },
   ): PaginatedMessages;
   getAttachment(organizationId: string, attachmentId: string): Attachment | null;
   listMessageAttachments(messageId: string): Attachment[];
@@ -347,6 +352,18 @@ export interface ApiRepository extends ConversationRepository {
     statuses?: readonly TodoStatus[];
     limit?: number;
   }): Todo[];
+  /**
+   * Open commitments owned by `memberId` across every channel.
+   * Surfaces into `<workspace-state>` so an agent juggling multiple
+   * channels sees what's owed across the workspace, not just the
+   * current channel. Optional because the narrow test repo doesn't
+   * implement it.
+   */
+  listOpenCommitmentsForMember?(
+    organizationId: string,
+    memberId: string,
+    options?: { statuses?: readonly TodoStatus[]; limit?: number },
+  ): Todo[];
   listExpiredCommitments?(options: { nowIso: string; limit?: number }): Todo[];
   /**
    * Atomic flip from "open + past due" → `expired`. Returns true on
@@ -373,6 +390,77 @@ export interface ApiRepository extends ConversationRepository {
     organizationId: string,
     sourceMessageId: string,
   ): Todo | null;
+
+  // Bet 5 — memory_entries KV. All optional because the in-memory
+  // test repos don't implement them; services degrade gracefully
+  // when absent.
+  upsertMemoryEntry?(entry: MemoryEntry): MemoryEntry;
+  recallMemoryEntries?(input: {
+    organizationId: string;
+    memberId?: string;
+    kind?: MemoryEntryKind;
+    keyPrefix?: string;
+    query?: string;
+    limit?: number;
+    touch?: boolean;
+  }): MemoryEntry[];
+  deleteMemoryEntry?(
+    organizationId: string,
+    memberId: string | null,
+    key: string,
+  ): boolean;
+  deleteExpiredMemoryEntries?(nowIso: string): number;
+
+  // Bet 4 — workspace files FTS index.
+  upsertWorkspaceFile?(
+    input: WorkspaceFile,
+    caps?: { perOrgByteCap?: number; perFileByteCap?: number },
+  ): WorkspaceFile;
+  deleteWorkspaceFile?(organizationId: string, path: string): boolean;
+  searchWorkspaceFiles?(input: {
+    organizationId: string;
+    query: string;
+    limit?: number;
+    sinceIso?: string;
+  }): {
+    path: string;
+    snippet: string;
+    rank: number;
+    writtenBy: string;
+    channelId?: string;
+    updatedAt: string;
+  }[];
+  /**
+   * Recent-artifacts projection — used by `<workspace-state>` to
+   * surface file paths written in the lookback window. Optional
+   * because narrow test repos don't implement it.
+   */
+  listRecentWorkspaceArtifacts?(input: {
+    organizationId: string;
+    sinceIso?: string;
+    memberId?: string;
+    channelId?: string;
+    limit?: number;
+  }): {
+    path: string;
+    writtenBy: string;
+    channelId?: string;
+    updatedAt: string;
+    sizeBytes: number;
+  }[];
+
+  // Bet 6 — append-only decision log.
+  appendDecisionLogEntry?(entry: DecisionLogEntry): DecisionLogEntry;
+  listDecisionLogForChannel?(
+    organizationId: string,
+    channelId: string,
+    limit?: number,
+  ): DecisionLogEntry[];
+  findDecisionBySourceMessage?(
+    organizationId: string,
+    sourceMessageId: string,
+  ): DecisionLogEntry | null;
+
   updateTodoStatus(
     organizationId: string,
     todoId: string,

@@ -69,6 +69,7 @@ export interface ArchivedChannelMessageStore {
     cursor?: string;
     since?: string;
     limit?: number;
+    ranked?: boolean;
   }): Promise<PaginatedMessages>;
 }
 
@@ -286,6 +287,7 @@ export class ConversationService {
     query?: string;
     cursor?: string;
     limit?: number;
+    ranked?: boolean;
   }): Promise<PaginatedMessages> {
     requireOrganization(this.repo, input.organizationId);
     const member = this.repo.getMember(input.organizationId, input.memberId);
@@ -303,6 +305,7 @@ export class ConversationService {
           cursor: input.cursor,
           since: input.since,
           limit: input.limit,
+          ranked: input.ranked,
         },
       );
       const archived = this.archiveStore
@@ -313,10 +316,14 @@ export class ConversationService {
             cursor: input.cursor,
             since: input.since,
             limit: input.limit,
+            ranked: input.ranked,
           })
         : { data: [], hasMore: false, nextCursor: undefined };
+      const merged = input.ranked
+        ? mergeRankedPaginatedMessages(live, archived, input.limit ?? 50)
+        : mergePaginatedMessages(live, archived, input.limit ?? 50);
       return this.decorateMessages(
-        mergePaginatedMessages(live, archived, input.limit ?? 50),
+        merged,
         input.organizationId,
         channel,
       );
@@ -1980,6 +1987,43 @@ function mergePaginatedMessages(
   const head = hasMore && data[0] ? data[0] : undefined;
   const nextCursor = head ? encodeCursor(head.createdAt, head.id) : undefined;
   return { data, hasMore, nextCursor };
+}
+
+function mergeRankedPaginatedMessages(
+  live: PaginatedMessages,
+  archived: PaginatedMessages,
+  limit: number,
+): PaginatedMessages {
+  const rankFor = (message: Message) =>
+    live.searchRanks?.[message.id] ??
+    archived.searchRanks?.[message.id] ??
+    Number.POSITIVE_INFINITY;
+  const combined = [...live.data, ...archived.data].sort((left, right) => {
+    const byRank = rankFor(left) - rankFor(right);
+    if (byRank !== 0) return byRank;
+    const byTime = right.createdAt.localeCompare(left.createdAt);
+    return byTime !== 0 ? byTime : left.id.localeCompare(right.id);
+  });
+  const unique: Message[] = [];
+  const seen = new Set<string>();
+  for (const message of combined) {
+    if (seen.has(message.id)) continue;
+    seen.add(message.id);
+    unique.push(message);
+  }
+  const data = unique.slice(0, limit);
+  const searchRanks: Record<string, number> = {};
+  for (const message of data) {
+    const rank = rankFor(message);
+    if (Number.isFinite(rank)) {
+      searchRanks[message.id] = rank;
+    }
+  }
+  return {
+    data,
+    hasMore: unique.length > limit || live.hasMore || archived.hasMore,
+    ...(Object.keys(searchRanks).length > 0 ? { searchRanks } : {}),
+  };
 }
 
 function uniqueMentionIds(mentions: MessageMention[]): string[] {

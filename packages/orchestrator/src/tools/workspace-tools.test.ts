@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { editTool, multieditTool } from './workspace-tools.js';
+import { editTool, multieditTool, writeTool } from './workspace-tools.js';
 
 describe('workspace edit tools', () => {
   let root = '';
@@ -95,5 +95,41 @@ describe('workspace edit tools', () => {
         conversations: {} as never,
       }),
     ).rejects.toThrow('match_strategy="whitespace" requires at least one non-whitespace character in oldString');
+  });
+
+  it('does not index sensitive workspace writes for recall', async () => {
+    root = await mkdtemp(join(tmpdir(), 'ujima-edit-'));
+    let indexedPath: string | undefined;
+    let deletedPath: string | undefined;
+
+    await writeTool.execute({
+      invocation: {
+        organizationId: 'org-1',
+        runId: 'run-1',
+        memberId: 'agent-1',
+        toolCallId: 'call-1',
+        toolId: 'write',
+        action: 'write',
+        resourceType: 'file',
+        resourcePath: '.env',
+        input: { content: 'SECRET_TOKEN=needle-secret' },
+      } as never,
+      team: { workspace: { root } } as never,
+      repo: {
+        upsertWorkspaceFile: (input: { path: string }) => {
+          indexedPath = input.path;
+          return input;
+        },
+        deleteWorkspaceFile: (_organizationId: string, path: string) => {
+          deletedPath = path;
+          return true;
+        },
+      } as never,
+      conversations: {} as never,
+    });
+
+    expect(await readFile(join(root, '.env'), 'utf8')).toBe('SECRET_TOKEN=needle-secret');
+    expect(indexedPath).toBeUndefined();
+    expect(deletedPath).toBe('.env');
   });
 });

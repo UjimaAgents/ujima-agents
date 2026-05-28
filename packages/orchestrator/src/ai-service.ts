@@ -1,8 +1,9 @@
+import { randomUUID } from 'node:crypto';
 import { isLoopFinished, type ToolSet } from 'ai';
 import { buildAgentSystemPrompt, normalizeProviderKey } from '@ujima/framework';
 import { DEFAULT_SPIRIT_TEMPERATURE, type Message, type SpiritRole, type WakeReason } from '@ujima/shared';
 import { runAgentLoop, type AgentLoopChunk } from './services/agent-loop.js';
-import type { RepositoryReader } from './services/repository-reader.js';
+import type { ApiRepository } from './services/repository-reader.js';
 import type { TeamStore } from './services/team-store.js';
 import type { ToolService } from './services/tool-service.js';
 import { ALWAYS_AVAILABLE_AGENT_TOOLS } from './tools/index.js';
@@ -14,9 +15,15 @@ import {
 } from './utils/to-model-messages.js';
 import { requireTeam } from './utils/require-team.js';
 import { buildRunTranscript } from './utils/run-transcript.js';
-import { buildThreadStateBlock } from './utils/thread-state.js';
+import { buildSelfFollowupContextBlock } from './utils/self-followup-context.js';
 import {
-  buildWakeRunScaffold,
+  buildCacheableSystem,
+  buildWakeContextMessages,
+  loadProceduresForSystemPrompt,
+} from './utils/system-prompt-builder.js';
+import { buildThreadStateBlock } from './utils/thread-state.js';
+import { buildWorkspaceStateBlock } from './utils/workspace-state.js';
+import {
   filterToolsForWakeReplyPolicy,
   resolveWakeReplyPolicy,
 } from './utils/wake-reply-policy.js';
@@ -42,6 +49,15 @@ export interface GenerateRunReplyInput {
   systemPromptSuffix?: string;
   abortSignal?: AbortSignal;
   onChunk?: (chunk: AgentLoopChunk) => PromiseLike<void> | void;
+}
+
+export interface GenerateMemoryReviewInput {
+  organizationId: string;
+  memberId: string;
+  threadId: string;
+  prompt: string;
+  contextSize?: number;
+  abortSignal?: AbortSignal;
 }
 
 /**
@@ -72,7 +88,7 @@ export class AiService {
 
   constructor(
     private readonly teamStore: TeamStore,
-    private readonly repo: RepositoryReader,
+    private readonly repo: ApiRepository,
     private readonly tools: ToolService,
   ) {}
 
@@ -83,6 +99,130 @@ export class AiService {
    */
   setMcpToolResolver(resolver: McpToolResolver | undefined): void {
     this.mcpToolResolver = resolver;
+  }
+
+  async generateMemoryReview(
+    input: GenerateMemoryReviewInput,
+  ): Promise<Awaited<ReturnType<typeof runAgentLoop>>> {
+    const team = requireTeam(this.teamStore, input.organizationId);
+    const organization = this.repo.getOrganization(input.organizationId);
+    if (!organization) {
+      throw new Error(`Organization not found: ${input.organizationId}`);
+    }
+
+    const member = this.repo.getMember(input.organizationId, input.memberId);
+    if (!member) {
+      throw new Error(`Member not found: ${input.memberId}`);
+    }
+
+    const agent = team.getAgent(member.id) ?? team.getAgent(member.name);
+    if (!agent) {
+      throw new Error(`Agent not found: ${member.id}`);
+    }
+    const role = team.getRole(agent.roleName);
+    if (!role) {
+      throw new Error(`Role not found: ${agent.roleName}`);
+    }
+
+    const model = resolveSpiritModel({
+      organizationId: input.organizationId,
+      memberId: input.memberId,
+      role: 'worker' as SpiritRole,
+      member,
+      team,
+      getProviderCredential: (orgId, key) => this.repo.getProviderCredential(orgId, key),
+      resolveProviderName: (m, r) => normalizeProviderKey(m.llm ?? r.provider ?? ''),
+      resolveModelId: (r, p, _role, isFallback) =>
+        (isFallback ? undefined : member.model) ?? r.model ?? p.defaultModel,
+    });
+
+    const reviewToolIds = [
+      'memory.write',
+      'memory.recall',
+      'memory.forget',
+      'self.procedure.add',
+      'self.procedure.remove',
+      'self.procedure.list',
+      'self.procedure.view',
+    ] as const;
+    const runId = `memory-review:${randomUUID()}`;
+    const toolDefs = buildToolDefinitions(reviewToolIds, team, this.tools, {
+      organizationId: input.organizationId,
+      runId,
+      memberId: input.memberId,
+      threadId: input.threadId,
+      repo: this.repo,
+    }) as ToolSet;
+
+    const availableSkills = this.repo.listOrganizationSkillInstalls?.(input.organizationId) ?? [];
+    const baseSystemPrompt = buildAgentSystemPrompt(
+      team.workspace.root,
+      organization.name,
+      member.id,
+      member.name,
+      input.threadId,
+      agent,
+      role,
+      this.repo
+        .listMembers(input.organizationId)
+        .filter((current) => current.id !== member.id),
+      team.agents,
+      team.channels,
+      organization.organizationChart,
+      availableSkills,
+      Object.keys(toolDefs),
+      [],
+      'channel',
+    );
+
+    const proceduresText = await loadProceduresForSystemPrompt(team.workspace.root, member.id);
+    const { system } = buildCacheableSystem({
+      baseSystem: baseSystemPrompt,
+      proceduresText,
+      baseScaffold: [
+        'This is a silent background memory-review turn.',
+        'Use only memory and self.procedure tools. Do not post, DM, reply, or address the user.',
+        'If nothing durable is worth saving, output exactly: Nothing to save.',
+      ].join('\n'),
+      availableToolIds: Object.keys(toolDefs),
+    });
+
+    const recentThreadMessages = this.repo.listMessages(
+      input.organizationId,
+      input.threadId,
+      undefined,
+      input.contextSize ?? 10,
+    ).data;
+    const messages = toModelMessages(recentThreadMessages, input.memberId);
+    const channelId = this.repo.getThread(input.organizationId, input.threadId)?.channelId;
+    const workspaceStateBlock = buildWorkspaceStateBlock({
+      organizationId: input.organizationId,
+      memberId: member.id,
+      channelId,
+      repo: this.repo,
+    });
+    if (workspaceStateBlock) {
+      messages.push({
+        role: 'user',
+        content: workspaceStateBlock,
+      });
+    }
+    messages.push({
+      role: 'user',
+      content: input.prompt,
+    });
+
+    return runAgentLoop({
+      model,
+      system,
+      messages,
+      tools: toolDefs,
+      stopWhen: isLoopFinished(),
+      maxOutputTokens: 800,
+      temperature: 0.2,
+      toolChoice: 'auto',
+      abortSignal: input.abortSignal,
+    });
   }
 
   async generateRunReply(
@@ -210,8 +350,13 @@ export class AiService {
     // ids) so the prompt matches the AI-SDK schema; otherwise the
     // model can deny tools it actually has.
     const availableToolIds = Object.keys(toolDefs);
+    // Main introduced a skills library: organisation-installed skills
+    // get threaded through `buildAgentSystemPrompt` so they appear in
+    // the system prompt alongside the role/tools listing. The lookup
+    // is optional on the repo so narrow test repos work without
+    // wiring the new method.
     const availableSkills = this.repo.listOrganizationSkillInstalls?.(input.organizationId) ?? [];
-    const system = buildAgentSystemPrompt(
+    const baseSystemPrompt = buildAgentSystemPrompt(
       team.workspace.root,
       organization.name,
       member.id,
@@ -230,6 +375,32 @@ export class AiService {
       attachedMcpServers.map((s) => ({ name: s.serverName, toolNames: s.toolNames })),
       wakeReplyPolicy.conversationKind,
     );
+
+    // Bet 1 + Bet 7 — cache-stable system prompt assembly.
+    //
+    // The base system prompt + the agent's procedures.md + the base
+    // wake scaffold form Zone 1: invariant per (agent, thread). The
+    // per-wake mutations (anti-mirror line, self-followup contract)
+    // are emitted SEPARATELY as user-role messages after the cache
+    // breakpoint, so they no longer bust the Anthropic prompt cache
+    // on every wake. The CI lint at packages/orchestrator/test/
+    // cache-stability.test.ts hashes this output across wake reasons
+    // to enforce the invariant.
+    const proceduresText = await loadProceduresForSystemPrompt(team.workspace.root, member.id);
+    const { system } = buildCacheableSystem({
+      baseSystem: baseSystemPrompt,
+      proceduresText,
+      goalSuffix: input.systemPromptSuffix,
+      // Use the DM vs channel scaffold from the wake-reply policy
+      // (introduced by main as `wake-reply-policy.ts`). Per-thread
+      // stable, so it remains in the cacheable prefix; the wake-
+      // reason-dependent anti-mirror + self-followup lines below
+      // are emitted as user-role messages and DON'T bust the cache.
+      baseScaffold: wakeReplyPolicy.scaffoldBlock,
+      // Bet 1b — gate memory/procedure guidance on tool availability
+      // so prompts without those tools stay clean.
+      availableToolIds,
+    });
 
     const initialThreadMessages = this.repo.listMessages(input.organizationId, input.threadId, undefined, 20).data;
     const messages = toModelMessages(initialThreadMessages, input.agentId);
@@ -273,22 +444,63 @@ export class AiService {
       });
     }
 
-    // Provider-agnostic decision scaffold — positive-framed, no
-    // forbidden-phrase list (negation anchoring is a known trap)
-    // and no use of the word "silence" as a noun (the model will
-    // paraphrase it back as message content). Points the model at
-    // the <thread-state> block above so it grounds its decision in
-    // facts instead of inventing them.
+    // Bet 3 — workspace-state ground truth. Surfaces open commitments
+    // owned by this agent, recent channel decisions (decision_log),
+    // and any persistent memory entries (Bet 5) inline so the model
+    // sees its own durable context at every wake.
+    const currentChannelIdForState = input.threadId
+      ? this.repo.getThread(input.organizationId, input.threadId)?.channelId
+      : undefined;
+    const workspaceStateBlock = buildWorkspaceStateBlock({
+      organizationId: input.organizationId,
+      memberId: member.id,
+      channelId: currentChannelIdForState,
+      repo: this.repo,
+    });
+    if (workspaceStateBlock) {
+      messages.push({
+        role: 'user',
+        content: workspaceStateBlock,
+      });
+    }
+
+    // Bet 2 — self-followup context. Re-attaches the original
+    // commitment message + artifact paths + empty-wake count so a
+    // scheduler-driven wake doesn't land blind to its own promise.
+    const selfFollowupBlock = buildSelfFollowupContextBlock({
+      organizationId: input.organizationId,
+      memberId: member.id,
+      runId: input.runId,
+      sourceMessageId,
+      wakeReason: (runRow?.wakeReason ?? null) as string | null,
+      repo: this.repo,
+    });
+    if (selfFollowupBlock) {
+      messages.push({
+        role: 'user',
+        content: selfFollowupBlock,
+      });
+    }
+
+    // Bet 1 — per-wake mutations land here as user-role messages.
+    // These are the lines that previously mutated `system` per wake
+    // and busted the cache (anti-mirror for gemini-flash, self-
+    // followup publish contract for scheduler wakes). The base
+    // scaffold (DM vs channel) is per-thread stable and is folded
+    // into the cacheable system prompt above via the
+    // `policy.scaffoldBlock` route; only the wake-reason-specific
+    // additions live below the cache breakpoint.
     const resolvedModelId = (model as { modelId?: unknown }).modelId;
     const modelIdString = typeof resolvedModelId === 'string' ? resolvedModelId : '';
-    const wakeRunScaffoldText = buildWakeRunScaffold({
-      policy: wakeReplyPolicy,
+    const wakeContextMessages = buildWakeContextMessages({
       wakeReason: wakeReasonForPalette,
-      mirrorFragile: isMirrorFragileModel(modelIdString),
+      modelIdString,
+      isMirrorFragile: isMirrorFragileModel(modelIdString),
     });
-    const goalSuffix = input.systemPromptSuffix;
-    const combinedSuffix = [goalSuffix, wakeRunScaffoldText].filter(Boolean).join('\n\n');
-    const systemPrompt = combinedSuffix ? `${system}\n\n${combinedSuffix}` : system;
+    for (const wakeMessage of wakeContextMessages) {
+      messages.push(wakeMessage);
+    }
+    const systemPrompt = system;
 
     // Self-followup wakes routinely produce multi-section
     // deliverables (the scaffold now nudges agents to write them to
