@@ -46,14 +46,27 @@ export const workflowSteps = [
   },
 ];
 
-export const productSurfaces = [
+export type ProductSurface =
+  | {
+      title: string;
+      text: string;
+      comingSoon: true;
+    }
+  | {
+      title: string;
+      text: string;
+      href: string;
+      external?: boolean;
+    };
+
+export const productSurfaces: ProductSurface[] = [
   {
     title: "Web",
     text: "Channels, DMs, mentions, approvals.",
     href: "/onboarding",
     external: false,
   },
-  {title: "VS Code", text: "Same team inside your editor.", comingSoon: true},
+  { title: "VS Code", text: "Same team inside your editor.", comingSoon: true },
   {
     title: "CLI",
     text: "Install from npm, then init and start.",
