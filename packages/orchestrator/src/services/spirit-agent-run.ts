@@ -29,6 +29,7 @@ import {
   filterToolsForWakeReplyPolicy,
   resolveWakeReplyPolicy,
 } from '../utils/wake-reply-policy.js';
+import { recallMemoryEntries } from '../utils/memory.js';
 import { requireTeam } from '../utils/require-team.js';
 import { runAgentLoop } from './agent-loop.js';
 import { toModelMessages, buildToolDefinitions } from '../utils/to-model-messages.js';
@@ -119,14 +120,12 @@ export class SpiritServiceAgentRun extends SpiritServiceLifecycle {
 
     try {
       const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-      const memories = this.repo.recallMemoryEntries
-        ? this.repo.recallMemoryEntries({
-            organizationId: input.organizationId,
-            memberId: input.memberId,
-            limit: 15,
-            touch: false,
-          })
-        : this.repo.listMemories(input.organizationId, input.memberId);
+      const memories = recallMemoryEntries(this.repo, {
+        organizationId: input.organizationId,
+        memberId: input.memberId,
+        limit: 15,
+        touch: false,
+      });
       const activeMemories = memories.filter((m) => m.createdAt >= oneDayAgo);
 
       if (activeMemories.length > 0) {

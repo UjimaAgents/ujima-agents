@@ -147,7 +147,17 @@ function migrateToV3(config: Record<string, unknown>): Record<string, unknown> {
     ? config.roles.map((role) => (isRecord(role) ? upgradeLegacyDefaultRoleTools(role) : role))
     : config.roles;
   const tools = isRecord(config.tools)
-    ? Object.fromEntries([...Object.entries(DEFAULT_TOOL_CATALOG), ...Object.entries(config.tools)])
+    ? (() => {
+        const toolEntries = Object.entries(config.tools).filter(([toolName]) => toolName !== 'memory.save');
+        const legacyMemorySave = config.tools['memory.save'];
+        return Object.fromEntries([
+          ...Object.entries(DEFAULT_TOOL_CATALOG),
+          ...toolEntries,
+          ...(legacyMemorySave !== undefined && !('memory.write' in config.tools)
+            ? [['memory.write', legacyMemorySave] as const]
+            : []),
+        ]);
+      })()
     : DEFAULT_TOOL_CATALOG;
 
   return {

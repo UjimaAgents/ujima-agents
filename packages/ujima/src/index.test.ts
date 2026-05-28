@@ -267,6 +267,41 @@ test('legacy default role tools are migrated forward on load', () => {
   expect(team.getRole('frontend-engineer')?.tools).toContain('memory.write');
 });
 
+test('legacy memory.save catalog entries migrate to memory.write on load', () => {
+  const team = loadAgentTeam({
+    name: 'Ujima Demo',
+    workspace: {
+      root: '/tmp/ujima-org',
+      roleScopes: {},
+    },
+    organizationChart: { reportsTo: {} },
+    agents: [createAgent('pm', 'pm', 'direct')],
+    tools: {
+      'memory.save': {
+        id: 'memory.save',
+        name: 'Memory Save',
+        description: 'Save a durable memory.',
+        actions: ['message'],
+        pathScopes: [],
+        requiresApproval: false,
+      },
+    },
+    roles: [
+      {
+        name: 'pm',
+        title: 'Product Manager',
+        instructions: ROLE_PRESETS.pm?.instructions ?? '',
+        workspaceScopes: ['.'],
+        tools: ['memory.write'],
+        channels: ['general'],
+      },
+    ],
+  });
+
+  expect(team.tools['memory.save']).toBeUndefined();
+  expect(team.tools['memory.write']).toBeDefined();
+});
+
 test('filesystem is stripped from persisted role tools on load', () => {
   const team = loadAgentTeam({
     name: 'Ujima Demo',
