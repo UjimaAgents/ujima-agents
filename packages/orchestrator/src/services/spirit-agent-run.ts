@@ -116,6 +116,33 @@ export class SpiritServiceAgentRun extends SpiritServiceLifecycle {
       messages.push({ role: 'user', content: runTranscript });
     }
 
+    // Retrieve and inject member's recent memory entries (last 15, within past 24 hours)
+    try {
+      const memories = this.repo.listMemories(input.organizationId, input.memberId);
+      const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      const activeMemories = memories
+        .filter((m) => m.createdAt >= oneDayAgo)
+        .slice(0, 15);
+
+      if (activeMemories.length > 0) {
+        const memoryPrompt = `=== YOUR RECENT WORK MEMORY ===
+Here are key facts, actions, decisions, and corrections you've made across chats and channels within the last 24 hours. Keep these in mind as you respond to ensure seamless, unified actions:
+${activeMemories
+  .map(
+    (m) =>
+      `- [${m.kind}] (${new Date(m.createdAt).toLocaleTimeString([], {
+        hour: '2-digit',
+        minute: '2-digit',
+      })}): ${m.content}`,
+  )
+  .join('\n')}
+================================`;
+        messages.push({ role: 'user', content: memoryPrompt });
+      }
+    } catch (e) {
+      // Degrade gracefully if memory query fails
+    }
+
     const running: Spirit = SpiritSchema.parse({
       ...spirit,
       status: 'running',

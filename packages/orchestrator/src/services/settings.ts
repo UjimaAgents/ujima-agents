@@ -13,7 +13,7 @@ import {
   assertWorkspaceRootPathExists,
   upsertWorkspaceMemberScopes,
 } from './workspace-root.js';
-import { upsertDashboardTeamOverride } from './dashboard-team-overrides.js';
+import { upsertDashboardTeamOverride, deleteDashboardTeamOverride } from './dashboard-team-overrides.js';
 import { ConfigSyncService, persistTeamConfig } from './config-sync.js';
 import { requireTeam } from '../utils/require-team.js';
 import { requireOrganization } from '../utils/require-organization.js';
@@ -376,6 +376,36 @@ export class SettingsService {
     }
 
     return saved;
+  }
+
+  deleteMember(organizationId: string, memberId: string): void {
+    requireOrganization(this.repo, organizationId);
+    const member = this.repo.getMember(organizationId, memberId);
+    if (!member) {
+      throw new Error(`Member not found: ${memberId}`);
+    }
+    if (member.kind !== AGENT_KIND) {
+      throw new Error('Only agents can be deleted');
+    }
+
+    const now = new Date().toISOString();
+    this.repo.saveMember({
+      ...member,
+      retiredAt: now,
+    });
+
+    deleteDashboardTeamOverride(
+      this.repo,
+      organizationId,
+      this.teamStore,
+      memberId,
+      member.roleName,
+    );
+
+    const updatedTeam = this.teamStore.getTeam(organizationId);
+    if (updatedTeam) {
+      persistTeamConfig(this.repo, organizationId, updatedTeam);
+    }
   }
 
   addChannel(input: CreateChannelInput): Channel {

@@ -78,7 +78,7 @@ export type SocketEventName = (typeof SocketEventNames)[keyof typeof SocketEvent
 
 /**
  * Why an agent was woken. Drives mandatory-reply enforcement
- * (`channel.pass` and `self.note` are stripped from the tool
+ * (`channel.pass` is stripped from the tool
  * palette when `wakeReason === 'mention'`, so the model
  * structurally cannot opt out of replying) and observability
  * events.

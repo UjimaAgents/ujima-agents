@@ -7,7 +7,7 @@ import {
 } from './wake-reply-policy.js';
 
 describe('resolveWakeReplyPolicy', () => {
-  it('mention wake on channel thread suppresses pass and self.note', () => {
+  it('mention wake on channel thread suppresses pass', () => {
     const policy = resolveWakeReplyPolicy({
       threadId: 'thread-general',
       wakeReason: 'mention',
@@ -77,12 +77,10 @@ describe('buildPassOrSelfNoteDenialReason', () => {
   it('matches mandatory-reply strings used by checkToolPolicy', () => {
     const policy = resolveWakeReplyPolicy({ threadId: 'thread-1', wakeReason: 'mention' });
     expect(buildPassOrSelfNoteDenialReason('channel.pass', policy)).toMatch(/mandatory-reply/);
-    expect(buildPassOrSelfNoteDenialReason('self.note', policy)).toMatch(/mandatory-reply/);
   });
 
   it('matches direct-message strings for dm threads', () => {
     const policy = resolveWakeReplyPolicy({ threadId: 'dm:a:b' });
     expect(buildPassOrSelfNoteDenialReason('channel.pass', policy)).toMatch(/direct-message/);
-    expect(buildPassOrSelfNoteDenialReason('self.note', policy)).toMatch(/direct-message/);
   });
 });

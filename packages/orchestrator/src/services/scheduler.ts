@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { SocketEventNames, channelRoom, orgRoom, type ScheduledJob } from '@ujima/shared';
+import { SocketEventNames, channelRoom, orgRoom, type ScheduledJob, MessageSchema } from '@ujima/shared';
 import type { ApiRepository } from './repository-reader.js';
 import type { ConversationService } from './conversation.js';
 import type { RealtimeService } from './context.js';
@@ -142,7 +142,6 @@ export interface SchedulerServiceOptions {
   pollIntervalMs?: number;
 }
 
-const CRON_SENDER_ID = '__ujima_scheduler__';
 
 export class SchedulerService {
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -163,7 +162,7 @@ export class SchedulerService {
     if (this.running) return;
     this.running = true;
     this.timer = setInterval(() => void this.tick(), this.pollIntervalMs);
-    queueMicrotask(() => void this.tick());
+    setTimeout(() => void this.tick(), 0);
   }
 
   stop(): void {
@@ -230,34 +229,26 @@ export class SchedulerService {
     channelId?: string;
     prompt: string;
     name: string;
+    memberId: string;
   }): Promise<void> {
-    // Ensure the scheduler sender member exists
-    const senderId = this.schedulerMemberId(job.organizationId);
-    const sender = this.repo.getMember(job.organizationId, senderId);
-    if (!sender) {
-      this.repo.saveMember({
-        id: senderId,
-        organizationId: job.organizationId,
-        name: 'Scheduler',
-        kind: 'agent',
-        roleName: 'system',
-        presence: 'offline',
-        createdAt: new Date().toISOString(),
-      });
-    }
-
     if (job.channelId) {
       const channel = this.repo.getChannel(job.organizationId, job.channelId);
-      if (channel && !channel.memberIds.includes(senderId)) {
-        this.repo.setChannelMembers(job.channelId, [...channel.memberIds, senderId].sort());
+      const sender = this.repo.getMember(job.organizationId, job.memberId);
+      if (channel && sender) {
+        const message = MessageSchema.parse({
+          id: randomUUID(),
+          organizationId: job.organizationId,
+          threadId: job.channelId,
+          channelId: job.channelId,
+          senderId: job.memberId,
+          senderKind: sender.kind,
+          kind: sender.kind,
+          content: `**⏰ Scheduled: ${job.name}**\n\n${job.prompt}`,
+          mentions: [],
+          createdAt: new Date().toISOString(),
+        });
+        await this.conversations.publishMessage(message);
       }
-      await this.conversations.sendMessage({
-        organizationId: job.organizationId,
-        channelId: job.channelId,
-        threadId: job.channelId,
-        senderId,
-        content: `**⏰ Scheduled: ${job.name}**\n\n${job.prompt}`,
-      });
     }
 
     this.realtime.emit(SocketEventNames.scheduledJobExecuted, {
@@ -266,9 +257,5 @@ export class SchedulerService {
       channelId: job.channelId,
       prompt: job.prompt,
     }, [orgRoom(job.organizationId), ...(job.channelId ? [channelRoom(job.channelId)] : [])]);
-  }
-
-  private schedulerMemberId(organizationId: string): string {
-    return `${CRON_SENDER_ID}:${organizationId}`;
   }
 }

@@ -337,7 +337,7 @@ export const RunStateSchema = z.object({
   endedAt: TimestampSchema.optional(),
   // Why this run was created. Drives mandatory-reply enforcement and
   // observability. `mention` runs cannot terminate via `channel.pass`
-  // or `self.note` (policy rejects both). Persisted as a string so a
+  // (policy rejects it). Persisted as a string so a
   // future enum value doesn't break the schema parser on old rows.
   wakeReason: z.string().nullable().optional(),
   // The terminating tool the run ended with. One of the entries in
@@ -601,6 +601,24 @@ export const TodoSchema = z.object({
   updatedAt: TimestampSchema,
 });
 export type Todo = z.infer<typeof TodoSchema>;
+
+// -----------------------------------------------------------------------
+// Memory Entries
+// -----------------------------------------------------------------------
+
+export const MemoryKindSchema = z.enum(['action', 'decision', 'fact', 'correction']);
+export type MemoryKind = z.infer<typeof MemoryKindSchema>;
+
+export const MemoryEntrySchema = z.object({
+  id: IdSchema,
+  organizationId: IdSchema,
+  memberId: IdSchema.nullable().optional(),
+  kind: MemoryKindSchema,
+  content: z.string(),
+  metadata: z.record(z.string(), z.unknown()).default({}),
+  createdAt: TimestampSchema,
+});
+export type MemoryEntry = z.infer<typeof MemoryEntrySchema>;
 
 // -----------------------------------------------------------------------
 // Scheduled Jobs (cron)

@@ -28,7 +28,7 @@ test('starter config includes the preset team shape', () => {
 
   expect(config.name).toBe('Ujima Demo');
   expect(config.channels[0]?.name).toBe('general');
-  expect(Object.keys(config.tools)).toContain('filesystem');
+  expect(Object.keys(config.tools)).toContain('view');
   expect(Object.keys(config.tools)).toContain('grep');
   expect(Object.keys(config.tools)).toContain('shell');
   expect(config.agents.map((agent) => agent.name)).toContain('pm');

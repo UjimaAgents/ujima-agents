@@ -129,8 +129,8 @@ export class AiService {
 
     // Mandatory-reply enforcement at the tool-palette layer.
     // When wakeReason === 'mention' (the agent was @mentioned, or
-    // included via @all expansion), `channel.pass` and `self.note`
-    // are stripped so the model literally cannot opt out of
+    // included via @all expansion), `channel.pass`
+    // is stripped so the model literally cannot opt out of
     // replying. Posting tools (`channel.reply`, `channel.post`,
     // `channel.dm`, `message`) stay available via
     // `ALWAYS_AVAILABLE_AGENT_TOOLS`, so the model has a clear

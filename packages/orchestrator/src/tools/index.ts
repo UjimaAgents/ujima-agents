@@ -8,9 +8,7 @@ import {
   channelPostTool,
   channelReadTool,
   channelReplyTool,
-  selfNoteTool,
 } from './channel.js';
-import { filesystemTool } from './filesystem.js';
 import { grepTool } from './grep.js';
 import { jobKillTool, jobOutputTool } from './job-tools.js';
 import { downloadTool, fetchTool } from './web-tools.js';
@@ -23,6 +21,7 @@ import {
   supervisorTodoCheckTool,
   supervisorTodoListTool,
 } from './supervisor-todo.js';
+import { memorySaveTool, memoryRecallTool } from './memory.js';
 import {
   editTool,
   globTool,
@@ -41,7 +40,6 @@ export const ORCHESTRATOR_TOOLS = {
   'channel.pass': channelPassTool,
   'channel.ack': channelAckTool,
   'channel.handoff': channelHandoffTool,
-  filesystem: filesystemTool,
   view: viewTool,
   write: writeTool,
   edit: editTool,
@@ -55,7 +53,8 @@ export const ORCHESTRATOR_TOOLS = {
   job_output: jobOutputTool,
   job_kill: jobKillTool,
   web_search: webSearchTool,
-  'self.note': selfNoteTool,
+  'memory.save': memorySaveTool,
+  'memory.recall': memoryRecallTool,
   message: messageTool,
   schedule: scheduleTool,
   'supervisor.todo.add': supervisorTodoAddTool,
@@ -98,7 +97,6 @@ export const ORCHESTRATOR_TOOLS = {
 // satisfy the mandatory-reply contract without producing a wake-able
 // message (Bet 3 — kills the echo-loop pathology).
 export const ALWAYS_AVAILABLE_AGENT_TOOLS = Object.freeze([
-  'self.note',
   'channel.pass',
   'channel.ack',
   'channel.reply',
@@ -112,6 +110,8 @@ export const ALWAYS_AVAILABLE_AGENT_TOOLS = Object.freeze([
   'glob',
   'grep',
   'schedule',
+  'memory.save',
+  'memory.recall',
 ] as const);
 
 // Supervisor's strict tool allowlist — read-only / annotation-only tools
@@ -129,7 +129,6 @@ export const ALWAYS_AVAILABLE_AGENT_TOOLS = Object.freeze([
 //      out-of-band invocations (e.g. a custom tool that hardcodes
 //      `permissionMcpId: 'supervisor'` on a non-allowlisted tool id).
 export const SUPERVISOR_TOOL_ALLOWLIST = Object.freeze([
-  'self.note',
   'channel.read',
   'channel.list',
   'channel.post',
@@ -146,6 +145,8 @@ export const SUPERVISOR_TOOL_ALLOWLIST = Object.freeze([
   'supervisor.todo.add',
   'supervisor.todo.check',
   'supervisor.todo.list',
+  'memory.save',
+  'memory.recall',
 ] as const);
 
 /** @deprecated Renamed to {@link SUPERVISOR_TOOL_ALLOWLIST}. Kept for one cycle. */

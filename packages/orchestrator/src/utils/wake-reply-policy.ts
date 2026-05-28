@@ -31,7 +31,7 @@ const ANTI_MIRROR_SCAFFOLD_LINE =
   'IMPORTANT — anti-mirror rule: Do NOT paraphrase the previous message. If your intended reply restates what the previous turn already said, differs only by swapping names, or amounts to "noted / understood / I will await", call channel.ack with no body. Filler acknowledgements waste team attention and trigger redundant wakes.';
 
 const SELF_FOLLOWUP_SCAFFOLD_LINES = [
-  'You are waking on a commitment you made earlier in this channel. Before you stop, do one of: (a) call channel.post or channel.reply with concrete progress — a path you wrote, a result, or the actual artifact; (b) call channel.pass with a real reason ("still gathering inputs", "blocked on X") if you have no publishable progress yet; (c) call supervisor.todo.update if you need to mark the commitment blocked or completed. self.note alone is NOT a valid termination — every team member will notice you went silent on your own promise.',
+  'You are waking on a commitment you made earlier in this channel. Before you stop, do one of: (a) call channel.post or channel.reply with concrete progress — a path you wrote, a result, or the actual artifact; (b) call channel.pass with a real reason ("still gathering inputs", "blocked on X") if you have no publishable progress yet; (c) call supervisor.todo.update if you need to mark the commitment blocked or completed. memory.save alone is NOT a valid termination — every team member will notice you went silent on your own promise.',
   'For ANY deliverable longer than ~10 lines (task lists, BRDs, PRDs, specs, multi-section docs): use the `write` tool to save the artifact to a file in the workspace (e.g. ai/memory-bank/tasks/<name>.md) FIRST, then post a short channel.post that says "Delivered — see <path>". Pasting long markdown inline gets truncated at the token cap and the reader sees a half-written document.',
 ];
 
@@ -69,19 +69,13 @@ export function shouldSuppressPassAndSelfNote(
 }
 
 export function buildPassOrSelfNoteDenialReason(
-  toolId: 'channel.pass' | 'self.note',
+  toolId: 'channel.pass',
   policy: Pick<WakeReplyPolicy, 'mandatoryReply' | 'conversationKind'>,
 ): string {
   if (policy.mandatoryReply) {
-    if (toolId === 'channel.pass') {
-      return 'mandatory-reply: you were @mentioned, channel.pass is not allowed. Reply via channel.reply, channel.dm, or message.';
-    }
-    return 'mandatory-reply: you were @mentioned, self.note is not allowed. Reply via channel.reply, channel.dm, or message.';
+    return 'mandatory-reply: you were @mentioned, channel.pass is not allowed. Reply via channel.reply, channel.dm, or message.';
   }
-  if (toolId === 'channel.pass') {
-    return 'direct-message: channel.pass is not allowed in a 1:1 DM. Reply via channel.reply, channel.dm, or message.';
-  }
-  return 'direct-message: self.note is not allowed in a 1:1 DM when a reply is expected. Reply via channel.reply, channel.dm, or message.';
+  return 'direct-message: channel.pass is not allowed in a 1:1 DM. Reply via channel.reply, channel.dm, or message.';
 }
 
 export function filterToolsForWakeReplyPolicy(
@@ -91,7 +85,7 @@ export function filterToolsForWakeReplyPolicy(
   if (!policy.suppressPassTool) {
     return [...toolIds];
   }
-  return toolIds.filter((toolId) => toolId !== 'channel.pass' && toolId !== 'self.note');
+  return toolIds.filter((toolId) => toolId !== 'channel.pass');
 }
 
 /**

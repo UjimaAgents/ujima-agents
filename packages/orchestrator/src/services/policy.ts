@@ -54,22 +54,13 @@ export function checkToolPolicy(
 
   if (
     shouldSuppressPassAndSelfNote(wakeReplyPolicy) &&
-    (toolId === 'channel.pass' || toolId === 'self.note')
+    toolId === 'channel.pass'
   ) {
     return {
       allowed: false,
       requiresApproval: false,
       reason: buildPassOrSelfNoteDenialReason(toolId, wakeReplyPolicy),
     };
-  }
-
-  // self.note is the agent's private scratchpad. Per the channels-as-substrate
-  // principle, an agent must always be able to think to itself — even if its
-  // role doesn't explicitly list `self.note` in `tools`. Always allowed,
-  // never approval-gated — EXCEPT for the `wakeReason === 'mention'`
-  // case above, which already returned.
-  if (toolId === 'self.note') {
-    return { allowed: true, requiresApproval: false };
   }
 
   // channel.pass is the always-available silent-outcome tool. Every

@@ -90,6 +90,16 @@ describe('database migrations', () => {
         resolved_at      TEXT,
         tool_call_id     TEXT
       );
+
+      CREATE TABLE memory_entries (
+        id               TEXT PRIMARY KEY,
+        organization_id  TEXT NOT NULL,
+        member_id        TEXT,
+        kind             TEXT NOT NULL,
+        content          TEXT NOT NULL,
+        metadata         TEXT NOT NULL DEFAULT '{}',
+        created_at       TEXT NOT NULL
+      );
     `);
 
     const appliedAt = Date.now();
@@ -180,6 +190,68 @@ describe('database migrations', () => {
         created_at: '2026-04-27T08:00:00.000Z',
       },
     ]);
+
+    upgraded.close();
+  });
+
+  it('migrates self notes to memory entries during 027 upgrade', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'ujima-db-migration-self-note-'));
+    tempDirs.push(dir);
+    const dbPath = join(dir, 'legacy.sqlite');
+
+    // Setup an empty DB with migrations applied up to 026
+    const db = openDatabase({ dbPath });
+    
+    // Now seed some channels and messages
+    db.prepare(
+      `INSERT INTO channels (id, organization_id, name, kind, topic, created_at, updated_at) 
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run('self-chan-Alice', 'org-1', 'Alice (self)', 'self', 'Private working notes', '2026-04-27T08:00:00Z', '2026-04-27T08:00:00Z');
+
+    db.prepare(
+      `INSERT INTO channels (id, organization_id, name, kind, topic, created_at, updated_at) 
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run('general', 'org-1', 'general', 'general', '', '2026-04-27T08:00:00Z', '2026-04-27T08:00:00Z');
+
+    db.prepare(
+      `INSERT INTO messages (id, organization_id, thread_id, channel_id, sender_id, sender_kind, kind, content, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run('self-msg-1', 'org-1', 'self-chan-Alice', 'self-chan-Alice', 'alice', 'agent', 'agent', 'Remember to delete the scheduler.', '2026-04-27T08:01:00Z');
+
+    db.prepare(
+      `INSERT INTO messages (id, organization_id, thread_id, channel_id, sender_id, sender_kind, kind, content, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run('public-msg-1', 'org-1', 'general', 'general', 'alice', 'agent', 'agent', 'Hello everyone!', '2026-04-27T08:02:00Z');
+
+    db.close();
+
+    // Now delete the migration record for 027 to simulate upgrading from 026 to 027
+    const rawDb = new Database(dbPath);
+    rawDb.prepare('DELETE FROM schema_migrations WHERE id = ?').run('027_migrate_self_notes_to_memories');
+    // Clear out memory_entries table to make sure migration re-populates it
+    rawDb.prepare('DELETE FROM memory_entries').run();
+    rawDb.close();
+
+    // Opening it again with openDatabase will apply the 027 migration
+    const upgraded = openDatabase({ dbPath });
+    const memories = upgraded.prepare('SELECT * FROM memory_entries ORDER BY created_at ASC').all() as {
+      id: string;
+      organization_id: string;
+      member_id: string;
+      kind: string;
+      content: string;
+      metadata: string;
+      created_at: string;
+    }[];
+
+    expect(memories).toHaveLength(1);
+    expect(memories[0]?.id).toBe('self-msg-1');
+    expect(memories[0]?.organization_id).toBe('org-1');
+    expect(memories[0]?.member_id).toBe('alice');
+    expect(memories[0]?.kind).toBe('fact');
+    expect(memories[0]?.content).toBe('Remember to delete the scheduler.');
+    expect(JSON.parse(memories[0]?.metadata || '{}')).toEqual({ migratedFromSelfNote: true });
+    expect(memories[0]?.created_at).toBe('2026-04-27T08:01:00Z');
 
     upgraded.close();
   });

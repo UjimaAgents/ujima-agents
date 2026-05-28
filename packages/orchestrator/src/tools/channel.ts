@@ -49,9 +49,6 @@ const ChannelReadSchema = z.object({
   limit: z.number().int().min(1).max(100).default(50),
 });
 
-const SelfNoteSchema = z.object({
-  body: z.string().min(1),
-});
 
 // `channel.pass` is the first-class "silent" outcome: an agent that
 // has nothing to add to a channel message calls this tool with a
@@ -408,29 +405,6 @@ export const channelReadTool: OrchestratorTool<typeof ChannelReadSchema> = {
     }),
 };
 
-export const selfNoteTool: OrchestratorTool<typeof SelfNoteSchema> = {
-  id: 'self.note',
-  schema: SelfNoteSchema,
-  toInvocation: (args) => ({
-    action: 'message',
-    resourceType: 'message',
-    // Self notes are the agent's private scratchpad. They intentionally bypass
-    // policy gating so an agent can always think — EXCEPT when the run was
-    // triggered by an @mention. Mandatory-reply enforcement at policy.ts
-    // rejects `self.note` for `wakeReason === 'mention'` so the model can't
-    // use self.note as an escape hatch (L3). The bypass below skips the
-    // permission middleware, but `checkToolPolicy` still runs in the inner
-    // ToolServiceImpl, so the mention-reject path catches it.
-    bypassPermission: true,
-    input: args,
-  }),
-  execute: ({ invocation, conversations }) =>
-    conversations.sendSelfNote({
-      organizationId: invocation.organizationId,
-      memberId: invocation.memberId,
-      body: String(invocation.input.body),
-    }),
-};
 
 // L1/L12: `channel.pass` is a silent run terminator. It does NOT
 // call `publishMessage` — instead it records an audit-only step

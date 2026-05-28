@@ -680,4 +680,55 @@ describe('team config reconcile', () => {
     expect(ids).not.toContain('self_pm');
     expect(ids).not.toContain('dm_pm_alice');
   });
+
+  it('can delete/retire a dashboard-created agent, removes its overrides, and rejects deleting humans', async () => {
+    const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
+    const teamStore = createTeamStore();
+    const syncService = new ConfigSyncService(repo, teamStore);
+    const settings = new SettingsService(repo, teamStore);
+    const dir = await mkdtemp(join(tmpdir(), 'ujima-config-sync-delete-'));
+    tempDirs.push(dir);
+    const configPath = join(dir, 'ujima.config.js');
+
+    await writeConfigFile(configPath, teamConfig());
+    const first = await syncService.loadAndReconcileFromFile(configPath);
+    repo.saveWorkspaceSetting(first.organization.id, 'config_sync.path', configPath);
+
+    // 1. Add a new agent member
+    const agent = settings.addMember({
+      organizationId: first.organization.id,
+      name: 'delete-me-agent',
+      kind: 'agent',
+      roleName: 'frontend-engineer',
+    });
+
+    const storedOverridesBefore = repo.getWorkspaceSetting(first.organization.id, 'dashboard.teamOverrides');
+    expect(storedOverridesBefore).toBeTruthy();
+    expect(JSON.parse(storedOverridesBefore!).agents).toContainEqual(
+      expect.objectContaining({ name: agent.id })
+    );
+
+    // 2. Try to delete a human member
+    const human = settings.addMember({
+      organizationId: first.organization.id,
+      name: 'human-owner',
+      kind: 'human',
+      roleName: 'pm',
+    });
+    expect(() => settings.deleteMember(first.organization.id, human.id)).toThrow(/Only agents can be deleted/);
+
+    // 3. Delete the agent member
+    settings.deleteMember(first.organization.id, agent.id);
+
+    // 4. Verify agent has retiredAt timestamp set
+    const deletedAgent = repo.getMember(first.organization.id, agent.id);
+    expect(deletedAgent?.retiredAt).toBeTruthy();
+
+    // 5. Verify agent is removed from dashboard team overrides
+    const storedOverridesAfter = repo.getWorkspaceSetting(first.organization.id, 'dashboard.teamOverrides');
+    expect(storedOverridesAfter).toBeTruthy();
+    expect(JSON.parse(storedOverridesAfter!).agents).not.toContainEqual(
+      expect.objectContaining({ name: agent.id })
+    );
+  });
 });

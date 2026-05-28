@@ -308,36 +308,6 @@ describe('checkToolPolicy', () => {
       }
     });
 
-    it('self.note is always allowed even when the role does not list it', () => {
-      // Per the channels-as-substrate principle: an agent must be able to
-      // think to itself even if its role omits self.note from `tools`.
-      const team = loadAgentTeam({
-        name: 'Quiet Org',
-        workspace: { root: workspaceRoot },
-        providers: {
-          openai: { kind: 'openai', defaultModel: 'gpt-5.4', models: ['gpt-5.4'] },
-        },
-        roles: [
-          {
-            name: 'silent-role',
-            title: 'Silent',
-            instructions: 'No declared tools beyond filesystem.',
-            provider: 'openai',
-            model: 'gpt-5.4',
-            workspaceScopes: ['apps/web'],
-            tools: ['filesystem'],
-            channels: ['general'],
-          },
-        ],
-        agents: [],
-        channels: [{ name: 'general', kind: 'general', topic: 'General' }],
-      } as Record<string, unknown>);
-
-      expect(
-        checkToolPolicy(team, 'silent-role', 'self.note', 'message'),
-      ).toEqual({ allowed: true, requiresApproval: false });
-    });
-
   });
 
   describe('mandatory-reply enforcement (L3)', () => {
@@ -374,14 +344,6 @@ describe('checkToolPolicy', () => {
       expect(result.reason).toMatch(/mandatory-reply/);
     });
 
-    it('rejects self.note when wakeReason === mention (escape-hatch closed)', () => {
-      const team = buildTeam();
-      const result = checkToolPolicy(team, 'engineer', 'self.note', 'message', undefined, {
-        wakeReason: 'mention',
-      });
-      expect(result.allowed).toBe(false);
-      expect(result.reason).toMatch(/mandatory-reply/);
-    });
 
     it('rejects channel.pass in direct-message threads', () => {
       const team = buildTeam();
@@ -410,14 +372,6 @@ describe('checkToolPolicy', () => {
       ).toEqual({ allowed: true, requiresApproval: false });
     });
 
-    it('allows self.note for non-mention wake reasons', () => {
-      const team = buildTeam();
-      expect(
-        checkToolPolicy(team, 'engineer', 'self.note', 'message', undefined, {
-          wakeReason: 'channel-read',
-        }),
-      ).toEqual({ allowed: true, requiresApproval: false });
-    });
 
     it('keeps channel.reply available for mention runs (the contract IS to reply)', () => {
       const team = buildTeam();

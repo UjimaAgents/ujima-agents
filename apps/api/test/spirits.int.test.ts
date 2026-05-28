@@ -953,11 +953,13 @@ describe('SpiritService alert dispatch — Phase 2.C', () => {
     expect(SUPERVISOR_TOOL_ALLOWLIST).toContain('supervisor.todo.add');
     expect(SUPERVISOR_TOOL_ALLOWLIST).toContain('supervisor.todo.check');
     expect(SUPERVISOR_TOOL_ALLOWLIST).toContain('supervisor.todo.list');
-    expect(SUPERVISOR_TOOL_ALLOWLIST).toContain('self.note');
+    expect(SUPERVISOR_TOOL_ALLOWLIST).toContain('memory.save');
+    expect(SUPERVISOR_TOOL_ALLOWLIST).toContain('memory.recall');
     expect(SUPERVISOR_TOOL_ALLOWLIST).toContain('web_search');
     expect(SUPERVISOR_TOOL_ALLOWLIST).not.toContain('filesystem');
     expect(SUPERVISOR_TOOL_ALLOWLIST).not.toContain('shell');
-    expect(ALWAYS_AVAILABLE_AGENT_TOOLS).toContain('self.note');
+    expect(ALWAYS_AVAILABLE_AGENT_TOOLS).toContain('memory.save');
+    expect(ALWAYS_AVAILABLE_AGENT_TOOLS).toContain('memory.recall');
   });
 
   it('pickProviderModel returns supervisorModel when available, falls back to defaultModel', () => {

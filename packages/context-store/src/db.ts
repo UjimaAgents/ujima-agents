@@ -896,6 +896,23 @@ const MIGRATIONS: { id: string; up: string }[] = [
         ON organization_skill_installs(organization_id, plugin_name);
     `,
   },
+  {
+    id: '027_migrate_self_notes_to_memories',
+    up: `
+      INSERT OR IGNORE INTO memory_entries (id, organization_id, member_id, kind, content, metadata, created_at)
+      SELECT 
+        m.id, 
+        m.organization_id, 
+        m.sender_id AS member_id, 
+        'fact' AS kind, 
+        m.content, 
+        '{"migratedFromSelfNote":true}' AS metadata, 
+        m.created_at
+      FROM messages m
+      JOIN channels c ON m.channel_id = c.id
+      WHERE c.kind = 'self';
+    `,
+  },
 ];
 
 export interface DbOptions {
