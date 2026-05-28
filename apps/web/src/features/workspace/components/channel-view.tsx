@@ -24,6 +24,7 @@ import {
 } from "./chat";
 import { ChannelMembersTab } from "./channel-members-tab";
 import { ChannelTasksTab } from "./channel-tasks-tab";
+import { CultureTab } from "@/features/settings/shared/culture-tab";
 import { getDirectMessageThreadId, RunStateSchema, type RunState } from "@ujima/shared/browser";
 import { settingsFetch } from "@/features/settings/shared/settings-api";
 import {
@@ -54,6 +55,7 @@ const CHANNEL_TABS: ChatTab[] = [
   { id: "members", label: "Members" },
   { id: "approvals", label: "Approvals" },
   { id: "tasks", label: "Tasks" },
+  { id: "culture", label: "Culture" },
   { id: "files", label: "Files" },
   { id: "activity", label: "Activity" },
 ];
@@ -689,6 +691,14 @@ export function ChannelView({
             </TabPanel>
           ) : (
             <TabEmpty context="tasks" label="No active tasks." />
+          )
+        ) : activeTab === "culture" ? (
+          conversation.type === "channel" && organizationId ? (
+            <TabPanel>
+              <CultureTab organizationId={organizationId} channelId={conversation.id} />
+            </TabPanel>
+          ) : (
+            <TabEmpty context="generic" label="Channel culture is only available in channels." />
           )
         ) : activeTab === "files" ? (
           feed.loading ? (

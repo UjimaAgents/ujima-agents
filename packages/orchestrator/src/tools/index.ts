@@ -25,6 +25,7 @@ import {
   selfProcedureRemoveTool,
   selfProcedureViewTool,
 } from './self-procedure.js';
+import { procedureListTool, procedureViewTool } from './procedure-read.js';
 import {
   supervisorTodoAddTool,
   supervisorTodoCheckTool,
@@ -66,6 +67,8 @@ export const ORCHESTRATOR_TOOLS = {
   'self.procedure.remove': selfProcedureRemoveTool,
   'self.procedure.list': selfProcedureListTool,
   'self.procedure.view': selfProcedureViewTool,
+  'procedure.list': procedureListTool,
+  'procedure.view': procedureViewTool,
   'channel.recall': channelRecallTool,
   'memory.write': memoryWriteTool,
   'memory.recall': memoryRecallTool,
@@ -117,6 +120,8 @@ export const ALWAYS_AVAILABLE_AGENT_TOOLS = Object.freeze([
   'self.procedure.remove',
   'self.procedure.list',
   'self.procedure.view',
+  'procedure.list',
+  'procedure.view',
   'channel.pass',
   'channel.ack',
   'channel.reply',

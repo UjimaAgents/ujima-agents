@@ -34,6 +34,20 @@ export interface TrajectoryEntry {
   endedAt?: string;
   conversations: { role: string; content: string }[];
   toolCalls: { toolId: string; action: string; resourcePath?: string; status: string }[];
+  /**
+   * Procedures-as-Culture (docs/procedures-as-culture.md "Provenance +
+   * observability"). The (scope, name, version) tuples that the wake-
+   * time aggregator surfaced into the system prompt for this run. The
+   * run-detail UI renders this list so an admin can answer "why did
+   * Layla do X" by reading the procedures-applied trail.
+   */
+  proceduresApplied?: {
+    scope: string;
+    scopeId: string;
+    name: string;
+    version: number;
+    enforced: boolean;
+  }[];
 }
 
 export interface TrajectoryServiceOptions {
@@ -94,6 +108,7 @@ export class TrajectoryService {
       resourcePath: s.resourcePath || undefined,
       status: s.status,
     }));
+    const proceduresApplied = repo.listRunProceduresApplied?.(run.organizationId, run.id) ?? [];
     return {
       runId: run.id,
       organizationId: run.organizationId,
@@ -106,6 +121,15 @@ export class TrajectoryService {
       endedAt: run.endedAt,
       conversations,
       toolCalls,
+      proceduresApplied: proceduresApplied.length > 0
+        ? proceduresApplied.map((p) => ({
+            scope: p.scope,
+            scopeId: p.scopeId,
+            name: p.name,
+            version: p.version,
+            enforced: p.enforced,
+          }))
+        : undefined,
     };
   }
 }

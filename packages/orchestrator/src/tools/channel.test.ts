@@ -283,6 +283,8 @@ describe('ALWAYS_AVAILABLE_AGENT_TOOLS', () => {
         'message',
         'schedule',
         'self.note',
+        'procedure.list',
+        'procedure.view',
         'self.procedure.add',
         'self.procedure.list',
         'self.procedure.remove',
