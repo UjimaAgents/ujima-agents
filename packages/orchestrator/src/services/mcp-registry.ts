@@ -529,7 +529,17 @@ export class McpRegistryService {
     for (const server of servers) {
       const cache = this.repo.getMcpToolCache(organizationId, server.id);
       const descriptors = cache?.tools ?? [];
-      const attachments = this.repo.listMcpServerAttachments(organizationId, server.id);
+      // Role-scope the per-server attachment list: a worker-only
+      // attachment must not surface in the supervisor catalog (and
+      // vice versa) because listAttachedServersForSpirit ignores it
+      // at the runtime resolver. attachedAgents flows into both
+      // tool.attachedAgents (the row-level field the UI uses to
+      // decide exposure in all-tools mode) AND the loop that builds
+      // grantedByTool / allowlistAgents — so this single filter
+      // keeps the catalog and the runtime in lock-step.
+      const attachments = this.repo
+        .listMcpServerAttachments(organizationId, server.id)
+        .filter((a) => matchesRole(a.scope));
       const attachedAgents = [...new Set(attachments.map((a) => a.memberId))];
 
       // Per-server: agents → tools-granted, for fast row-level "grantedAgents".

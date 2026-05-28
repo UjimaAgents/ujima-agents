@@ -1257,6 +1257,78 @@ describe('McpRegistryService — Phase 3 MCP integration', () => {
     );
   });
 
+  // Regression: tool.attachedAgents is the row-level list the Tools
+  // and Agents tabs use to decide whether a tool is exposed when no
+  // per-tool allowlist is active. Pre-fix the list was scope-agnostic
+  // even when the catalog was scoped by role, so a supervisor-only
+  // attachment would show as "available" in the worker view —
+  // overstating runtime access and misleading admins about who can
+  // actually call the tool.
+  it('getCatalog(?role=): tool.attachedAgents only includes agents whose attachment scope matches the role', async () => {
+    const fixture = await createFixture();
+    tempDirs.push(fixture.archiveRoot);
+
+    // Two agents on one server: A attached worker-only, B
+    // supervisor-only.
+    fixture.repo.saveMember({
+      id: 'agent-y',
+      organizationId: fixture.organizationId,
+      name: 'agent-y',
+      kind: 'agent',
+      roleName: 'engineer',
+      presence: 'offline',
+      createdAt: new Date().toISOString(),
+    });
+    const server = fixture.registry.create({
+      organizationId: fixture.organizationId,
+      createdBy: fixture.ownerId,
+      name: 'role-attached-mcp',
+      transport: 'stdio',
+      command: 'x',
+    });
+    fixture.repo.saveMcpToolCache({
+      mcpServerId: server.id,
+      organizationId: fixture.organizationId,
+      tools: [{ name: 'tool_a', description: '' }],
+      fetchedAt: new Date().toISOString(),
+    });
+    fixture.registry.attach({
+      organizationId: fixture.organizationId,
+      memberId: 'agent-x',
+      mcpServerId: server.id,
+      scope: 'worker',
+    });
+    fixture.registry.attach({
+      organizationId: fixture.organizationId,
+      memberId: 'agent-y',
+      mcpServerId: server.id,
+      scope: 'supervisor',
+    });
+
+    // Role-agnostic view: both agents present (union — planning view).
+    const anyRole = fixture.registry.getCatalog(fixture.organizationId);
+    const anyRow = anyRole.servers.find((s) => s.id === server.id)!;
+    expect(anyRow.tools[0]!.attachedAgents.sort()).toEqual(['agent-x', 'agent-y']);
+
+    // Worker view: only the worker-attached agent.
+    const worker = fixture.registry.getCatalog(
+      fixture.organizationId,
+      undefined,
+      'worker',
+    );
+    const workerRow = worker.servers.find((s) => s.id === server.id)!;
+    expect(workerRow.tools[0]!.attachedAgents).toEqual(['agent-x']);
+
+    // Supervisor view: only the supervisor-attached agent.
+    const sup = fixture.registry.getCatalog(
+      fixture.organizationId,
+      undefined,
+      'supervisor',
+    );
+    const supRow = sup.servers.find((s) => s.id === server.id)!;
+    expect(supRow.tools[0]!.attachedAgents).toEqual(['agent-y']);
+  });
+
   // Regression: the role filter previously only applied to per-tool
   // grants, not to the MCP attachment used for `hasMcp`. A
   // supervisor-only MCP attachment would still make the worker
