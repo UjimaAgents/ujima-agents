@@ -931,6 +931,140 @@ describe('McpRegistryService — Phase 3 MCP integration', () => {
     ).toHaveLength(1);
   });
 
+  // Regression: low-confidence inferred tools must carry the
+  // needsReview flag through the catalog so the review queue
+  // surfaces them before re-test. Pre-fix only inf.risk was threaded
+  // through; needsReview defaulted to false because
+  // resolveClassification returns source='inferred' when an inferred
+  // fallback is supplied (not 'unknown'), so the heuristic flag was
+  // silently dropped.
+  it('getCatalog: surfaces needsReview from the inferred fallback when no stored row exists', async () => {
+    const fixture = await createFixture();
+    tempDirs.push(fixture.archiveRoot);
+
+    const server = fixture.registry.create({
+      organizationId: fixture.organizationId,
+      createdBy: fixture.ownerId,
+      name: 'review-mcp',
+      transport: 'stdio',
+      command: 'x',
+    });
+    // `frobnicate_widget` has no verb in any set + no helpful
+    // description → classifier returns low confidence with
+    // needsReview=true. Pinned by classify-tool.test.ts.
+    fixture.repo.saveMcpToolCache({
+      mcpServerId: server.id,
+      organizationId: fixture.organizationId,
+      tools: [
+        { name: 'get_thing', description: 'reads it' },
+        { name: 'frobnicate_widget', description: '' },
+      ],
+      fetchedAt: new Date().toISOString(),
+    });
+
+    const catalog = fixture.registry.getCatalog(fixture.organizationId);
+    const row = catalog.servers.find((s) => s.id === server.id)!;
+    const obvious = row.tools.find((t) => t.name === 'get_thing')!;
+    const lowConfidence = row.tools.find((t) => t.name === 'frobnicate_widget')!;
+
+    expect(obvious.needsReview).toBe(false);
+    expect(lowConfidence.needsReview).toBe(true);
+    // And the source still resolves to 'inferred' (not 'unknown') —
+    // the fix decouples needsReview from the source field entirely.
+    expect(lowConfidence.source).toBe('inferred');
+  });
+
+  // Regression: resetToolClassification used to delete the manual
+  // row first and only check whether the tool descriptor existed
+  // afterwards. A stale cache (tool removed, listTools out of date)
+  // would silently wipe the admin override and then bail with a
+  // missing-descriptor null return — operator intended to reset, got
+  // a hard delete.
+  it('resetToolClassification: rejects unknown tool name without erasing the manual row', async () => {
+    const fixture = await createFixture();
+    tempDirs.push(fixture.archiveRoot);
+
+    const server = fixture.registry.create({
+      organizationId: fixture.organizationId,
+      createdBy: fixture.ownerId,
+      name: 'stale-mcp',
+      transport: 'stdio',
+      command: 'x',
+    });
+    // Cache has only `real_tool` — admin classifies a PHANTOM that
+    // somehow already has a row (e.g. via a prior write before tool
+    // was removed from the server).
+    fixture.repo.saveMcpToolCache({
+      mcpServerId: server.id,
+      organizationId: fixture.organizationId,
+      tools: [{ name: 'real_tool', description: '' }],
+      fetchedAt: new Date().toISOString(),
+    });
+    fixture.repo.upsertMcpToolClassification({
+      organizationId: fixture.organizationId,
+      mcpServerId: server.id,
+      toolName: 'ghost_tool',
+      risk: 'destructive',
+      source: 'manual',
+      needsReview: false,
+      updatedAt: new Date().toISOString(),
+      updatedBy: 'admin',
+    });
+
+    expect(() =>
+      fixture.registry.resetToolClassification(
+        fixture.organizationId,
+        server.id,
+        'ghost_tool',
+      ),
+    ).toThrow(/Tool not found/);
+
+    // The manual row survives — reset failed cleanly without
+    // mutating state.
+    const after = fixture.repo.getMcpToolClassification(
+      fixture.organizationId,
+      server.id,
+      'ghost_tool',
+    );
+    expect(after).not.toBeNull();
+    expect(after?.risk).toBe('destructive');
+    expect(after?.source).toBe('manual');
+  });
+
+  it('resetToolClassification: replaces a manual row with the inferred classification for a live tool', async () => {
+    const fixture = await createFixture();
+    tempDirs.push(fixture.archiveRoot);
+
+    const server = fixture.registry.create({
+      organizationId: fixture.organizationId,
+      createdBy: fixture.ownerId,
+      name: 'reset-happy-mcp',
+      transport: 'stdio',
+      command: 'x',
+    });
+    fixture.repo.saveMcpToolCache({
+      mcpServerId: server.id,
+      organizationId: fixture.organizationId,
+      tools: [{ name: 'get_thing', description: 'reads' }],
+      fetchedAt: new Date().toISOString(),
+    });
+    fixture.registry.setToolClassification({
+      organizationId: fixture.organizationId,
+      serverId: server.id,
+      toolName: 'get_thing',
+      risk: 'destructive',
+      updatedBy: 'admin',
+    });
+
+    const row = fixture.registry.resetToolClassification(
+      fixture.organizationId,
+      server.id,
+      'get_thing',
+    );
+    expect(row.risk).toBe('read');
+    expect(row.source).toBe('inferred');
+  });
+
   // Companion: when an MCP attachment already exists, the per-tool
   // grant must mirror its scope rather than overwriting it or
   // defaulting elsewhere. Avoids silently widening or narrowing what

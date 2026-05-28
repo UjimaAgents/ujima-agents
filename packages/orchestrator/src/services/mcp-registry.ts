@@ -533,7 +533,14 @@ export class McpRegistryService {
           server.id,
           d.name,
         );
-        let inferredRisk: ToolRiskClass | undefined;
+        // Preserve the full classifier output for tools without a
+        // stored row — `needsReview` (and `reason`) drives the admin
+        // review queue. Pre-fix only `inf.risk` was threaded through,
+        // and the catalog defaulted needsReview to false because
+        // resolveClassification returns source='inferred' (not
+        // 'unknown') when an inferred fallback is supplied — so
+        // low-confidence inferences silently never surfaced.
+        let inferred: { risk: ToolRiskClass; needsReview: boolean } | undefined;
         if (!stored) {
           const inf = classifyTool({
             name: d.name,
@@ -541,9 +548,9 @@ export class McpRegistryService {
             category: server.category,
             declaredDestructive: d.destructive,
           });
-          inferredRisk = inf.risk;
+          inferred = { risk: inf.risk, needsReview: inf.needsReview };
         }
-        const effective = resolveClassification(stored, inferredRisk);
+        const effective = resolveClassification(stored, inferred?.risk);
         const evaluation = evaluatePolicy(policy, {
           // Synthetic agent id so agent rules don't fire — only platform
           // + risk defaults inform the org-default chip.
@@ -593,7 +600,10 @@ export class McpRegistryService {
           description: d.description ?? '',
           risk: (effective.risk === 'unknown' ? 'write' : effective.risk) as ToolRiskClass,
           source: effective.source,
-          needsReview: stored?.needsReview ?? effective.source === 'unknown',
+          needsReview:
+            stored?.needsReview ??
+            inferred?.needsReview ??
+            effective.source === 'unknown',
           effective: {
             state: evaluation.state,
             source: evaluation.source,
@@ -752,12 +762,24 @@ export class McpRegistryService {
     organizationId: string,
     serverId: string,
     toolName: string,
-  ): McpToolClassification | null {
+  ): McpToolClassification {
     const server = this.requireServer(organizationId, serverId);
-    this.repo.deleteMcpToolClassification(organizationId, serverId, toolName);
+    // Validate the tool exists BEFORE touching state. Pre-fix the
+    // delete happened first and a stale cache (or removed tool) would
+    // leave the row gone with no inferred replacement — silently
+    // erasing the admin override the operator wanted to reset.
+    this.requireTool(organizationId, serverId, toolName);
     const cache = this.repo.getMcpToolCache(organizationId, serverId);
     const descriptor = cache?.tools.find((t) => t.name === toolName);
-    if (!descriptor) return null;
+    if (!descriptor) {
+      // requireTool already asserted this; the branch is defensive
+      // against a race between validation and read.
+      throw new Error(
+        `Tool not found: "${toolName}" on MCP server "${serverId}"`,
+      );
+    }
+
+    this.repo.deleteMcpToolClassification(organizationId, serverId, toolName);
     const inf = classifyTool({
       name: descriptor.name,
       description: descriptor.description,
@@ -772,7 +794,19 @@ export class McpRegistryService {
         reason: inf.reason,
       },
     ]);
-    return this.repo.getMcpToolClassification(organizationId, serverId, toolName);
+    const row = this.repo.getMcpToolClassification(
+      organizationId,
+      serverId,
+      toolName,
+    );
+    if (!row) {
+      // requireTool + seed guarantee a row exists; this branch is
+      // a programmer-error rail, not a code path admins ever see.
+      throw new Error(
+        `Tool not found: "${toolName}" on MCP server "${serverId}" after reseed`,
+      );
+    }
+    return row;
   }
 
   // ----------------- Attachments ---------------------------------------

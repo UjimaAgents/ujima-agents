@@ -186,31 +186,36 @@ export function AgentsSubtab({ agents, catalog }: Props) {
                 </button>
 
                 {isOpen ? (
-                  <table className="w-full border-t border-zinc-100 text-left text-xs dark:border-zinc-900">
-                    <thead className="bg-zinc-50 text-[10px] uppercase tracking-wide text-zinc-500 dark:bg-zinc-950 dark:text-zinc-400">
-                      <tr>
-                        <th className="px-3 py-1.5 font-medium">Tool</th>
-                        <th className="px-3 py-1.5 font-medium">Risk</th>
-                        <th className="px-3 py-1.5 font-medium">Decision</th>
-                        <th className="px-3 py-1.5 font-medium">Exposed</th>
-                        <th className="px-3 py-1.5 font-medium" />
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-zinc-100 dark:divide-zinc-900">
-                      {server.tools.map((tool) =>
-                        renderToolRow({
-                          tool,
-                          serverId: server.id,
-                          view: lookupView(server.id, tool.name),
-                          activeAgentId,
-                          busy,
-                          inAllowlistMode,
-                          onGrant: handleGrant,
-                          onRevoke: handleRevoke,
-                        }),
-                      )}
-                    </tbody>
-                  </table>
+                  // overflow-x-auto so the action column (Grant/Revoke/Pin)
+                  // never gets clipped by the rounded-card overflow-hidden
+                  // when descriptions are long.
+                  <div className="overflow-x-auto border-t border-zinc-100 dark:border-zinc-900">
+                    <table className="w-full min-w-[640px] text-left text-xs">
+                      <thead className="bg-zinc-50 text-[10px] uppercase tracking-wide text-zinc-500 dark:bg-zinc-950 dark:text-zinc-400">
+                        <tr>
+                          <th className="px-3 py-1.5 font-medium">Tool</th>
+                          <th className="px-3 py-1.5 font-medium">Risk</th>
+                          <th className="px-3 py-1.5 font-medium">Decision</th>
+                          <th className="px-3 py-1.5 font-medium">Exposed</th>
+                          <th className="px-3 py-1.5 font-medium" />
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-zinc-100 dark:divide-zinc-900">
+                        {server.tools.map((tool) =>
+                          renderToolRow({
+                            tool,
+                            serverId: server.id,
+                            view: lookupView(server.id, tool.name),
+                            activeAgentId,
+                            busy,
+                            inAllowlistMode,
+                            onGrant: handleGrant,
+                            onRevoke: handleRevoke,
+                          }),
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
                 ) : null}
               </div>
             );
@@ -240,10 +245,12 @@ function renderToolRow(args: {
     : tool.effective;
   return (
     <tr key={`${serverId}:${tool.name}`}>
-      <td className="px-3 py-1.5 align-top">
-        <div className="font-medium text-zinc-900 dark:text-zinc-100">{tool.name}</div>
+      <td className="max-w-[260px] px-3 py-1.5 align-top">
+        <div className="truncate font-medium text-zinc-900 dark:text-zinc-100">
+          {tool.name}
+        </div>
         {tool.description ? (
-          <div className="max-w-md truncate text-[10px] text-zinc-500 dark:text-zinc-400">
+          <div className="truncate text-[10px] text-zinc-500 dark:text-zinc-400">
             {tool.description}
           </div>
         ) : null}
