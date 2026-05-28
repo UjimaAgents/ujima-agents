@@ -1,6 +1,6 @@
 {
   "name": "@ujima/distribution",
-  "version": "0.1.0-alpha.0",
+  "version": "0.0.1",
   "description": "Framework for building Slack-like teams of AI agents — CLI, API, and web UI.",
   "license": "MIT",
   "repository": {
