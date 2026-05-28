@@ -26,26 +26,25 @@ interface Props {
 }
 
 export function GovernanceDefaultsPanel({ value, onSave }: Props) {
-  const [draft, setDraft] = useState<RiskDefaults>(value);
+  // Track only the user's edits as a delta on top of `value`. Means a
+  // catalog refresh (which updates `value`) never clobbers in-progress
+  // edits and Save can only ever send the fields the user actually
+  // touched — even if the form rendered before the policy loaded.
+  const [edits, setEdits] = useState<Partial<RiskDefaults>>({});
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<number | null>(null);
 
-  const dirty =
-    draft.read !== value.read ||
-    draft.write !== value.write ||
-    draft.destructive !== value.destructive ||
-    draft.unknown !== value.unknown;
+  const draft: RiskDefaults = { ...value, ...edits };
+  const dirty = Object.keys(edits).length > 0;
 
   const handleSave = async () => {
+    if (!dirty) return;
     setError(null);
     setSaving(true);
     try {
-      const patch: Partial<RiskDefaults> = {};
-      (Object.keys(draft) as (keyof RiskDefaults)[]).forEach((k) => {
-        if (draft[k] !== value[k]) patch[k] = draft[k];
-      });
-      await onSave(patch);
+      await onSave(edits);
+      setEdits({});
       setSavedAt(Date.now());
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -74,12 +73,18 @@ export function GovernanceDefaultsPanel({ value, onSave }: Props) {
             </label>
             <Select
               value={draft[cls]}
-              onChange={(e) =>
-                setDraft((prev) => ({
-                  ...prev,
-                  [cls]: e.target.value as ToolPolicyState,
-                }))
-              }
+              onChange={(e) => {
+                const next = e.target.value as ToolPolicyState;
+                setEdits((prev) => {
+                  // If the user reverted back to the persisted value,
+                  // drop the edit so dirty flips back to false.
+                  if (next === value[cls]) {
+                    const { [cls]: _, ...rest } = prev;
+                    return rest;
+                  }
+                  return { ...prev, [cls]: next };
+                });
+              }}
               options={STATE_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
             />
             <p className="text-[11px] text-zinc-500 dark:text-zinc-400">

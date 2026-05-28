@@ -639,6 +639,152 @@ describe('McpRegistryService — Phase 3 MCP integration', () => {
       fixture.repo.listAgentMcpAttachments(fixture.organizationId, 'agent-x'),
     ).toHaveLength(1);
   });
+
+  // Regression: `allowlistAgents` is per (server) and surfaces only
+  // those agents whose per-(agent, server) grant set is non-empty.
+  // Prior UI code computed exposure from `tool.grantedAgents.length`
+  // — a server-wide aggregate — so a peer-tool grant would
+  // incorrectly hide unrelated tools from other attached agents.
+  it('getCatalog: server.allowlistAgents is per-(agent, server) and does not leak across peers', async () => {
+    const fixture = await createFixture();
+    tempDirs.push(fixture.archiveRoot);
+
+    // Two agents on the same MCP. Agent A receives a per-tool grant
+    // (allowlist mode); agent B is attached but has no per-tool rows.
+    const memberB = fixture.repo.saveMember({
+      id: 'agent-y',
+      organizationId: fixture.organizationId,
+      name: 'agent-y',
+      kind: 'agent',
+      roleName: 'engineer',
+      presence: 'offline',
+      createdAt: new Date().toISOString(),
+    });
+
+    const server = fixture.registry.create({
+      organizationId: fixture.organizationId,
+      createdBy: fixture.ownerId,
+      name: 'split-mcp',
+      transport: 'stdio',
+      command: 'x',
+    });
+    // Pre-seed the tool cache so getCatalog has something to render.
+    fixture.repo.saveMcpToolCache({
+      mcpServerId: server.id,
+      organizationId: fixture.organizationId,
+      tools: [
+        { name: 'tool_a', description: 'reads a thing' },
+        { name: 'tool_b', description: 'reads another' },
+      ],
+      fetchedAt: new Date().toISOString(),
+    });
+    fixture.registry.attach({
+      organizationId: fixture.organizationId,
+      memberId: 'agent-x',
+      mcpServerId: server.id,
+      scope: 'worker',
+    });
+    fixture.registry.attach({
+      organizationId: fixture.organizationId,
+      memberId: memberB.id,
+      mcpServerId: server.id,
+      scope: 'worker',
+    });
+    fixture.registry.grantToolToAgent({
+      organizationId: fixture.organizationId,
+      memberId: 'agent-x',
+      mcpServerId: server.id,
+      toolName: 'tool_a',
+    });
+
+    const catalog = fixture.registry.getCatalog(fixture.organizationId);
+    const row = catalog.servers.find((s) => s.id === server.id)!;
+
+    // The server lists A in allowlist mode and B as plain-attached.
+    expect(row.allowlistAgents.sort()).toEqual(['agent-x']);
+
+    // Per-tool grant agents are still tool-specific (this is the
+    // existing contract — only A is granted on tool_a).
+    const toolA = row.tools.find((t) => t.name === 'tool_a')!;
+    const toolB = row.tools.find((t) => t.name === 'tool_b')!;
+    expect(toolA.grantedAgents).toEqual(['agent-x']);
+    expect(toolB.grantedAgents).toEqual([]);
+    // Both agents remain attached at the MCP level.
+    expect(toolA.attachedAgents.sort()).toEqual(['agent-x', 'agent-y']);
+    expect(toolB.attachedAgents.sort()).toEqual(['agent-x', 'agent-y']);
+  });
+
+  // Same regression at the per-agent perspective: when `?agentId=X`
+  // is passed, `exposed` MUST reflect X's own (agent, server) state,
+  // not a different agent's grants on the same server.
+  it('getCatalog(?agentId): exposure decisions are scoped per (agent, server)', async () => {
+    const fixture = await createFixture();
+    tempDirs.push(fixture.archiveRoot);
+
+    fixture.repo.saveMember({
+      id: 'agent-y',
+      organizationId: fixture.organizationId,
+      name: 'agent-y',
+      kind: 'agent',
+      roleName: 'engineer',
+      presence: 'offline',
+      createdAt: new Date().toISOString(),
+    });
+    const server = fixture.registry.create({
+      organizationId: fixture.organizationId,
+      createdBy: fixture.ownerId,
+      name: 'per-agent-mcp',
+      transport: 'stdio',
+      command: 'x',
+    });
+    fixture.repo.saveMcpToolCache({
+      mcpServerId: server.id,
+      organizationId: fixture.organizationId,
+      tools: [
+        { name: 'tool_a', description: '' },
+        { name: 'tool_b', description: '' },
+      ],
+      fetchedAt: new Date().toISOString(),
+    });
+    fixture.registry.attach({
+      organizationId: fixture.organizationId,
+      memberId: 'agent-x',
+      mcpServerId: server.id,
+      scope: 'worker',
+    });
+    fixture.registry.attach({
+      organizationId: fixture.organizationId,
+      memberId: 'agent-y',
+      mcpServerId: server.id,
+      scope: 'worker',
+    });
+    fixture.registry.grantToolToAgent({
+      organizationId: fixture.organizationId,
+      memberId: 'agent-x',
+      mcpServerId: server.id,
+      toolName: 'tool_a',
+    });
+
+    // Agent A is in allowlist mode → exposed only for granted tool_a.
+    const viewA = fixture.registry
+      .getCatalog(fixture.organizationId, 'agent-x')
+      .agentView!;
+    expect(viewA[`${server.id}::tool_a`]?.exposed).toBe(true);
+    expect(viewA[`${server.id}::tool_a`]?.exposureReason).toBe('granted');
+    expect(viewA[`${server.id}::tool_b`]?.exposed).toBe(false);
+    expect(viewA[`${server.id}::tool_b`]?.exposureReason).toBe('no-tool-grant');
+
+    // Agent B has no per-tool grants → all-tools mode, both exposed.
+    // Pre-fix this could regress because a peer agent's grant
+    // affected aggregated counts.
+    const viewB = fixture.registry
+      .getCatalog(fixture.organizationId, 'agent-y')
+      .agentView!;
+    expect(viewB[`${server.id}::tool_a`]?.exposed).toBe(true);
+    expect(viewB[`${server.id}::tool_a`]?.exposureReason).toBe('all-tools-mode');
+    expect(viewB[`${server.id}::tool_b`]?.exposed).toBe(true);
+    expect(viewB[`${server.id}::tool_b`]?.exposureReason).toBe('all-tools-mode');
+  });
 });
 
 // =====================================================================

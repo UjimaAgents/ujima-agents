@@ -125,6 +125,11 @@ export interface CatalogServer {
   status: string;
   category: string;
   toolCount: number;
+  // Agents in allowlist mode on this server (have ≥1 per-tool grant
+  // for this server). Driving the per-agent "exposed" decision from a
+  // server-scoped set avoids globally aggregated grant counts leaking
+  // across agents.
+  allowlistAgents: string[];
   tools: CatalogTool[];
 }
 
@@ -501,13 +506,18 @@ export class McpRegistryService {
       const attachedAgents = [...new Set(attachments.map((a) => a.memberId))];
 
       // Per-server: agents → tools-granted, for fast row-level "grantedAgents".
+      // Also collect the set of agents in allowlist mode on this server
+      // (any per-tool grant for the (agent, server) pair flips them in).
       const grantedByTool = new Map<string, Set<string>>();
+      const allowlistAgents = new Set<string>();
       for (const member of attachedAgents) {
-        for (const row of this.repo.listAgentToolAttachments(
+        const rows = this.repo.listAgentToolAttachments(
           organizationId,
           member,
           server.id,
-        )) {
+        );
+        if (rows.length > 0) allowlistAgents.add(member);
+        for (const row of rows) {
           let set = grantedByTool.get(row.toolName);
           if (!set) {
             set = new Set();
@@ -600,6 +610,7 @@ export class McpRegistryService {
         status: server.status,
         category: server.category,
         toolCount: tools.length,
+        allowlistAgents: [...allowlistAgents],
         tools,
       });
     }

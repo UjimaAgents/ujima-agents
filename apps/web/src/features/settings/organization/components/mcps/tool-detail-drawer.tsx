@@ -12,6 +12,10 @@ interface Props {
   tool: McpCatalogTool;
   serverId: string;
   serverName: string;
+  // Agents in allowlist mode on THIS server (i.e. they have ≥1 per-tool
+  // grant). Driven by server.allowlistAgents so a grant on a peer tool
+  // doesn't change this tool's exposure copy for unrelated agents.
+  allowlistAgents: readonly string[];
   agents: Member[];
   catalog: UseMcpCatalog;
   onClose: () => void;
@@ -21,12 +25,14 @@ export function ToolDetailDrawer({
   tool,
   serverId,
   serverName,
+  allowlistAgents,
   agents,
   catalog,
   onClose,
 }: Props) {
   const grantedSet = new Set(tool.grantedAgents);
   const attachedSet = new Set(tool.attachedAgents);
+  const allowlistSet = new Set(allowlistAgents);
   const [busyAgent, setBusyAgent] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -145,7 +151,20 @@ export function ToolDetailDrawer({
               <ul className="space-y-1">
                 {agents.map((agent) => {
                   const granted = grantedSet.has(agent.id);
-                  const attachedOnly = !granted && attachedSet.has(agent.id);
+                  const attached = attachedSet.has(agent.id);
+                  const inAllowlistMode = allowlistSet.has(agent.id);
+                  // Per (agent, server) exposure: in allowlist mode the
+                  // agent only sees granted tools; otherwise MCP
+                  // attachment alone exposes every tool on the server.
+                  const exposed = granted || (attached && !inAllowlistMode);
+                  const status: "granted" | "allowlist-hidden" | "all-tools" | "no-access" =
+                    granted
+                      ? "granted"
+                      : !attached
+                        ? "no-access"
+                        : inAllowlistMode
+                          ? "allowlist-hidden"
+                          : "all-tools";
                   const busy = busyAgent === agent.id;
                   return (
                     <li
@@ -157,13 +176,15 @@ export function ToolDetailDrawer({
                           {agent.name}
                         </div>
                         <div className="text-[10px] text-zinc-500 dark:text-zinc-400">
-                          {granted ? (
+                          {status === "granted" ? (
                             <span className="inline-flex items-center gap-1 text-violet-700 dark:text-violet-300">
                               <Check className="h-2.5 w-2.5" /> tool granted
                             </span>
-                          ) : attachedOnly ? (
+                          ) : status === "all-tools" ? (
+                            <span>MCP attached &middot; sees all tools</span>
+                          ) : status === "allowlist-hidden" ? (
                             <span>
-                              MCP attached &middot; sees all tools
+                              MCP attached &middot; allowlist mode, not granted
                             </span>
                           ) : (
                             <span>no access</span>
@@ -183,8 +204,21 @@ export function ToolDetailDrawer({
                             ? "border border-zinc-200 text-zinc-700 hover:bg-zinc-100 dark:border-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-900"
                             : "bg-violet-600 text-white hover:bg-violet-700"
                         } ${busy ? "opacity-60" : ""}`}
+                        title={
+                          granted
+                            ? "Revoke this tool grant"
+                            : exposed
+                              ? "Pin this tool — flips the server into allowlist mode"
+                              : "Grant this tool and auto-attach the server"
+                        }
                       >
-                        {busy ? "…" : granted ? "Revoke" : attachedOnly ? "Pin to tool" : "Grant"}
+                        {busy
+                          ? "…"
+                          : granted
+                            ? "Revoke"
+                            : status === "all-tools"
+                              ? "Pin to tool"
+                              : "Grant"}
                       </button>
                     </li>
                   );
@@ -192,15 +226,25 @@ export function ToolDetailDrawer({
               </ul>
             )}
 
-            {attachedSet.size > 0 && grantedSet.size === 0 ? (
+            {(() => {
+              // Show the "all tools mode" hint only for agents whose
+              // exposure is currently driven by attachment alone — i.e.
+              // attached + not in allowlist mode. A peer-tool grant for
+              // a different agent shouldn't change this message.
+              const allToolsAgents = [...attachedSet].filter(
+                (id) => !allowlistSet.has(id),
+              );
+              if (allToolsAgents.length === 0) return null;
+              return (
               <p className="rounded-md bg-zinc-50 px-2 py-1.5 text-[11px] text-zinc-600 dark:bg-zinc-900 dark:text-zinc-300">
-                Tip: this server is attached to {attachedSet.size}{" "}
-                {attachedSet.size === 1 ? "agent" : "agents"} but no per-tool
-                grants exist. Those agents see every tool on this server.
-                Granting one tool flips them to allowlist mode and shrinks
-                their prompt.
+                Tip: this server is attached to {allToolsAgents.length}{" "}
+                {allToolsAgents.length === 1 ? "agent" : "agents"} with no
+                per-tool grants. They see every tool on this server. Granting
+                one tool flips that agent to allowlist mode and shrinks the
+                model prompt.
               </p>
-            ) : null}
+              );
+            })()}
 
             {error ? (
               <p className="text-[11px] text-rose-600 dark:text-rose-400">

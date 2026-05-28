@@ -83,11 +83,18 @@ export function ToolsSubtab({ orgId: _orgId, agents, catalog }: Props) {
       }
       if (serverFilter !== "all" && serverId !== serverFilter) return false;
       if (agentFilter !== "all") {
-        const allowed =
-          tool.grantedAgents.includes(agentFilter) ||
-          (tool.grantedAgents.length === 0 &&
-            tool.attachedAgents.includes(agentFilter));
-        if (!allowed) return false;
+        // Per-(agent, server) exposure: if the agent is in allowlist
+        // mode for THIS server, the tool only shows when explicitly
+        // granted; otherwise it shows whenever the MCP is attached.
+        // Driven by server.allowlistAgents so a grant on a peer tool
+        // doesn't hide unrelated tools from the same agent.
+        const server = catalogByServer[serverId];
+        const inAllowlistMode =
+          server?.allowlistAgents.includes(agentFilter) ?? false;
+        const exposed = inAllowlistMode
+          ? tool.grantedAgents.includes(agentFilter)
+          : tool.attachedAgents.includes(agentFilter);
+        if (!exposed) return false;
       }
       if (q) {
         const hay = `${tool.name} ${tool.description ?? ""} ${serverName}`.toLowerCase();
@@ -95,7 +102,7 @@ export function ToolsSubtab({ orgId: _orgId, agents, catalog }: Props) {
       }
       return true;
     });
-  }, [allRows, query, riskFilter, serverFilter, agentFilter]);
+  }, [allRows, query, riskFilter, serverFilter, agentFilter, catalogByServer]);
 
   const servers = useMemo(
     () =>
@@ -287,6 +294,9 @@ export function ToolsSubtab({ orgId: _orgId, agents, catalog }: Props) {
           tool={selectedCatalogTool}
           serverId={selectedRow.serverId}
           serverName={selectedRow.serverName}
+          allowlistAgents={
+            catalogByServer[selectedRow.serverId]?.allowlistAgents ?? []
+          }
           agents={agents}
           catalog={catalog}
           onClose={() => setSelectedRow(null)}

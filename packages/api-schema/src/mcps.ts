@@ -139,6 +139,9 @@ export const McpCatalogServerSchema = z.object({
   status: z.string(),
   category: z.string(),
   toolCount: z.number().int().nonnegative(),
+  // Agents with ≥1 per-tool grant on this specific server. Used by the
+  // UI to decide "exposed" per (agent, server) — see CatalogAgentView.
+  allowlistAgents: z.array(z.string()),
   tools: z.array(McpCatalogToolSchema),
 });
 export type McpCatalogServer = z.infer<typeof McpCatalogServerSchema>;
