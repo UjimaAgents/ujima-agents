@@ -573,14 +573,27 @@ export class SpiritServiceAgentRun extends SpiritServiceLifecycle {
           };
         });
 
-        // Seed inferred classifications for tools the live MCP
-        // surfaced for the first time. INSERT OR IGNORE preserves any
-        // existing rows (manual or inferred) and makes the catalog UI
-        // show first-seen tools with their correct risk class on the
-        // very next request — without an explicit Test run. The
-        // policy resolver still has its own classify_tool fallback as
-        // defence in depth.
+        // Two-step seed: refresh the tool cache AND insert inferred
+        // classifications. The cache write is load-bearing — without
+        // it the catalog UI can't render first-seen tools (the Tools
+        // tab and `requireTool` both read from mcp_tool_cache), and
+        // an operator who attached an MCP but skipped Test would see
+        // an empty catalog with no way to set classifications or
+        // grants until they triggered Test manually. Saving the
+        // cache here mirrors what `McpRegistryService.test()` does so
+        // a runtime spawn is the equivalent of a Test for the
+        // purposes of governance UI visibility.
+        //
+        // The classifications seed uses INSERT OR IGNORE so manual
+        // overrides survive; the cache write uses UPSERT and is
+        // safe to repeat concurrently.
         if (toolList.length > 0) {
+          this.repo.saveMcpToolCache({
+            mcpServerId: resolution.serverId,
+            organizationId: ctx.organizationId,
+            tools: toolList,
+            fetchedAt: new Date().toISOString(),
+          });
           const seedEntries = toolList.map((d) => {
             const inf = classifyTool({
               name: d.name,

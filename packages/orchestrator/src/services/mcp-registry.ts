@@ -808,26 +808,23 @@ export class McpRegistryService {
     // leave the row gone with no inferred replacement — silently
     // erasing the admin override the operator wanted to reset.
     this.requireTool(organizationId, serverId, toolName);
+    // requireTool accepts cache OR classifications. When the cache is
+    // missing the descriptor (first-use path), fall back to a
+    // name-only classify — same heuristic, no broken intermediate
+    // state.
     const cache = this.repo.getMcpToolCache(organizationId, serverId);
     const descriptor = cache?.tools.find((t) => t.name === toolName);
-    if (!descriptor) {
-      // requireTool already asserted this; the branch is defensive
-      // against a race between validation and read.
-      throw new Error(
-        `Tool not found: "${toolName}" on MCP server "${serverId}"`,
-      );
-    }
 
     this.repo.deleteMcpToolClassification(organizationId, serverId, toolName);
     const inf = classifyTool({
-      name: descriptor.name,
-      description: descriptor.description,
+      name: descriptor?.name ?? toolName,
+      description: descriptor?.description,
       category: server.category,
-      declaredDestructive: descriptor.destructive,
+      declaredDestructive: descriptor?.destructive,
     });
     this.repo.seedInferredClassifications(organizationId, serverId, [
       {
-        toolName: descriptor.name,
+        toolName: descriptor?.name ?? toolName,
         risk: inf.risk,
         needsReview: inf.needsReview,
         reason: inf.reason,
@@ -995,12 +992,17 @@ export class McpRegistryService {
     return server;
   }
 
-  // Validates the tool exists in the cached inventory. Used by writes
-  // that would otherwise corrupt downstream state: a grant on a phantom
-  // tool would flip the runtime palette into an empty-allowlist mode
-  // and the server would vanish from the agent's prompt; a manual
-  // classification on a phantom name would later attach itself to any
-  // future tool with the same name.
+  // Validates the tool exists in either the cached inventory OR the
+  // classifications table. Used by writes that would otherwise corrupt
+  // downstream state: a grant on a phantom tool would flip the runtime
+  // palette into an empty-allowlist mode and the server would vanish
+  // from the agent's prompt; a manual classification on a phantom name
+  // would later attach itself to any future tool with the same name.
+  //
+  // The classification-row check is defence in depth for the
+  // first-use path: a runtime spawn populates both tables, but if the
+  // cache write somehow fell behind (race, transient failure) the
+  // classification row alone is enough proof the tool is real.
   //
   // Throws "Tool not found ..." so the route mapper can return 404.
   private requireTool(
@@ -1009,11 +1011,15 @@ export class McpRegistryService {
     toolName: string,
   ): void {
     const cache = this.repo.getMcpToolCache(organizationId, serverId);
-    const exists = cache?.tools?.some((t) => t.name === toolName) ?? false;
-    if (!exists) {
-      throw new Error(
-        `Tool not found: "${toolName}" on MCP server "${serverId}". Run Test on the server first or check the tool name.`,
-      );
-    }
+    if (cache?.tools?.some((t) => t.name === toolName)) return;
+    const classification = this.repo.getMcpToolClassification(
+      organizationId,
+      serverId,
+      toolName,
+    );
+    if (classification) return;
+    throw new Error(
+      `Tool not found: "${toolName}" on MCP server "${serverId}". Run Test on the server first or check the tool name.`,
+    );
   }
 }
