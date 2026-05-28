@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import {
   AlertCircle,
@@ -351,6 +351,14 @@ const teamPrimaryActionClass =
 const teamGhostActionClass =
   "inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm font-medium text-zinc-600 transition hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-200";
 
+function useIsClient() {
+  return useSyncExternalStore(
+    () => () => undefined,
+    () => true,
+    () => false,
+  );
+}
+
 function ModalShell({
   title,
   description,
@@ -366,13 +374,12 @@ function ModalShell({
 }) {
   const titleId = useId();
   const descriptionId = useId();
-  const [mounted, setMounted] = useState(false);
+  const isClient = useIsClient();
 
   useEffect(() => {
-    setMounted(true);
-  }, []);
-
-  useEffect(() => {
+    if (!isClient) {
+      return;
+    }
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         onClose();
@@ -387,9 +394,9 @@ function ModalShell({
       document.body.style.overflow = previousOverflow;
       document.removeEventListener("keydown", onKeyDown);
     };
-  }, [onClose]);
+  }, [isClient, onClose]);
 
-  if (!mounted) {
+  if (!isClient) {
     return null;
   }
 
@@ -786,6 +793,33 @@ function StepFields({
       channelId: channel.id,
       name: channel.name,
       description: channel.description,
+    });
+  };
+
+  const removeProvider = (providerId: string) => {
+    if (draft.providers.length <= 1) {
+      return;
+    }
+
+    const removedIndex = draft.providers.findIndex((item) => item.id === providerId);
+    const removed = draft.providers[removedIndex];
+
+    if (!removed) {
+      return;
+    }
+
+    const newProviders = draft.providers.filter((item) => item.id !== providerId);
+    const fallbackName = newProviders[0]?.name?.trim() || "openai";
+    const fallbackModel = defaultModelForProvider(fallbackName);
+
+    const newRoles = draft.roles.map((role) =>
+      role.llm === removed.name ? { ...role, llm: fallbackName, model: fallbackModel } : role,
+    );
+
+    onDraftChange({
+      ...draft,
+      providers: newProviders,
+      roles: newRoles,
     });
   };
 
@@ -1278,52 +1312,63 @@ function StepFields({
               </button>
             }
           >
-            <div className="space-y-3">
+            <div className={onboardingListClass}>
               {draft.providers.map((provider, index) => (
-                  <div
-                    key={provider.id}
-                    className={`flex flex-col gap-2 rounded-lg ${onboardingBorder} bg-zinc-50/30 p-3 dark:bg-zinc-900/20 sm:flex-row sm:flex-nowrap sm:items-center sm:gap-3`}
-                  >
-                    <Select
-                      value={provider.name}
-                      onChange={(event) => {
-                        const newName = event.target.value;
-                        const isFirst = index === 0;
+                <div
+                  key={provider.id}
+                  className="flex flex-col gap-2 px-4 py-3.5 sm:flex-row sm:items-center sm:gap-3"
+                >
+                  <Select
+                    value={provider.name}
+                    onChange={(event) => {
+                      const newName = event.target.value;
+                      const isFirst = index === 0;
 
-                        const newProviders = draft.providers.map((item, itemIndex) =>
-                          itemIndex === index ? { ...item, name: newName } : item,
-                        );
+                      const newProviders = draft.providers.map((item, itemIndex) =>
+                        itemIndex === index ? { ...item, name: newName } : item,
+                      );
 
-                        let newRoles = draft.roles;
-                        if (isFirst) {
-                          const model = defaultModelForProvider(newName);
-                          newRoles = draft.roles.map((role) => ({ ...role, llm: newName, model }));
-                        }
-
-                        onDraftChange({
-                          ...draft,
-                          providers: newProviders,
-                          roles: newRoles,
-                        });
-                      }}
-                      className="w-[220px] shrink-0"
-                      placeholder="Select provider"
-                      options={PROVIDER_OPTIONS.map((opt) => ({ value: opt.token, label: opt.label }))}
-                    />
-                    <ProviderCredentialField
-                      provider={provider.name}
-                      apiKey={provider.apiKey}
-                      onApiKeyChange={(apiKey) =>
-                        onDraftChange({
-                          ...draft,
-                          providers: draft.providers.map((item, itemIndex) =>
-                            itemIndex === index ? { ...item, apiKey } : item,
-                          ),
-                        })
+                      let newRoles = draft.roles;
+                      if (isFirst) {
+                        const model = defaultModelForProvider(newName);
+                        newRoles = draft.roles.map((role) => ({ ...role, llm: newName, model }));
                       }
-                    />
-                  </div>
-                ))}
+
+                      onDraftChange({
+                        ...draft,
+                        providers: newProviders,
+                        roles: newRoles,
+                      });
+                    }}
+                    className="w-full shrink-0 sm:w-[200px]"
+                    placeholder="Select provider"
+                    options={PROVIDER_OPTIONS.map((opt) => ({ value: opt.token, label: opt.label }))}
+                  />
+                  <ProviderCredentialField
+                    provider={provider.name}
+                    apiKey={provider.apiKey}
+                    className="min-w-0 flex-1"
+                    onApiKeyChange={(apiKey) =>
+                      onDraftChange({
+                        ...draft,
+                        providers: draft.providers.map((item, itemIndex) =>
+                          itemIndex === index ? { ...item, apiKey } : item,
+                        ),
+                      })
+                    }
+                  />
+                  <button
+                    type="button"
+                    onClick={() => removeProvider(provider.id)}
+                    disabled={draft.providers.length <= 1}
+                    title={draft.providers.length <= 1 ? "At least one provider is required" : "Remove provider"}
+                    className="inline-flex h-9 w-9 shrink-0 items-center justify-center self-end rounded-lg text-zinc-400 transition hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-zinc-400 dark:hover:bg-red-500/10 dark:hover:text-red-400 sm:self-center"
+                    aria-label={`Remove ${provider.name || "provider"}`}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </div>
+              ))}
             </div>
           </TeamSection>
         ) : null}
