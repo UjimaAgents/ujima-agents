@@ -5,11 +5,6 @@
 [![npm version](https://img.shields.io/npm/v/@ujima/agents.svg)](https://www.npmjs.com/package/@ujima/agents)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Open Source](https://img.shields.io/badge/Open%20Source-Coming%20Soon-lightgrey)](https://github.com/UjimaAgents/ujima-agents)
-[![X @vincent_presh](https://img.shields.io/badge/X-@vincent_presh-000000?logo=x)](https://x.com/vincent_presh)
-
-> **Ujima Agents is not open source yet.** The runtime ships today via npm; the full monorepo and contributor workflow will be published when we open-source the project.
->
-> **Open source — coming soon.** Follow [@vincent_presh on X](https://x.com/vincent_presh) for updates.
 
 ---
 
