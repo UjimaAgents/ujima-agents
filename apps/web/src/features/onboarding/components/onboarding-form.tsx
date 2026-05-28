@@ -1,5 +1,6 @@
 "use client";
-import { useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   AlertCircle,
   ArrowLeft,
@@ -355,32 +356,90 @@ function ModalShell({
   description,
   onClose,
   children,
+  footer,
 }: {
   title: string;
   description: string;
   onClose: () => void;
   children: React.ReactNode;
+  footer: React.ReactNode;
 }) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/40 px-4">
-      <div className="w-full max-w-xl rounded-[28px] border border-zinc-200 bg-white p-6 shadow-[0_24px_80px_rgba(15,23,42,0.18)] dark:border-zinc-800 dark:bg-zinc-950">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <h3 className="text-lg font-semibold text-zinc-950 dark:text-zinc-50">{title}</h3>
-            <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">{description}</p>
+  const titleId = useId();
+  const descriptionId = useId();
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        onClose();
+      }
+    };
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    document.addEventListener("keydown", onKeyDown);
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [onClose]);
+
+  if (!mounted) {
+    return null;
+  }
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[100] flex items-center justify-center overflow-y-auto bg-zinc-950/50 p-4 backdrop-blur-[1px] sm:p-6"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) {
+          onClose();
+        }
+      }}
+      role="presentation"
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        aria-describedby={description ? descriptionId : undefined}
+        className={`my-auto flex w-full max-w-xl max-h-[min(90dvh,720px)] flex-col overflow-hidden shadow-[0_24px_80px_rgba(15,23,42,0.22)] ${onboardingPanelClass} !p-0`}
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="flex shrink-0 items-start justify-between gap-4 border-b border-zinc-200/90 px-5 py-4 dark:border-zinc-800">
+          <div className="min-w-0 pr-2">
+            <h3 id={titleId} className="text-lg font-semibold text-zinc-950 dark:text-zinc-50">
+              {title}
+            </h3>
+            {description ? (
+              <p id={descriptionId} className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
+                {description}
+              </p>
+            ) : null}
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="inline-flex h-9 w-9 items-center justify-center rounded-full text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-900 dark:hover:text-zinc-200"
+            className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-900 dark:hover:text-zinc-200"
             aria-label="Close modal"
           >
             <X className="h-4 w-4" />
           </button>
         </div>
-        <div className="mt-6">{children}</div>
+
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-4">{children}</div>
+
+        <div className="flex shrink-0 items-center justify-end gap-3 border-t border-zinc-200/90 px-5 py-4 dark:border-zinc-800">
+          {footer}
+        </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -432,6 +491,29 @@ function StepFields({
   } | null>(null);
   const [roleSearch, setRoleSearch] = useState("");
   const [activeRoleIndustry, setActiveRoleIndustry] = useState("all");
+
+  useEffect(() => {
+    if (!roleMenuId) {
+      return;
+    }
+
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target;
+
+      if (!(target instanceof Element)) {
+        return;
+      }
+
+      if (target.closest(`[data-role-menu="${roleMenuId}"]`)) {
+        return;
+      }
+
+      setRoleMenuId(null);
+    };
+
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [roleMenuId]);
 
   const pickWorkspaceRoot = async () => {
     setWorkspaceRootPickError(null);
@@ -511,6 +593,8 @@ function StepFields({
   }, [resolvedActiveRoleIndustry, roleSearch, starterRoleTemplates]);
 
   const openRoleEditor = (roleId?: string, templateName?: string) => {
+    setRoleMenuId(null);
+
     if (!roleId) {
     const defaultProvider = draft.providers[0]?.name || "openai";
       const template = getRoleTemplate(templateName ?? defaultSuggestedTemplate?.name ?? starterRoleTemplates[0]?.name ?? "", starterRoleTemplates);
@@ -1052,7 +1136,7 @@ function StepFields({
                           </div>
                         </div>
 
-                        <div className="relative shrink-0">
+                        <div className="relative shrink-0" data-role-menu={role.id}>
                           <button
                             type="button"
                             onClick={() => setRoleMenuId((current) => (current === role.id ? null : role.id))}
@@ -1249,56 +1333,41 @@ function StepFields({
             title={roleEditor.mode === "create" ? "Add role" : "Edit role"}
             description="Choose a suggested role, add an agent name, then pick provider, model, and channels."
             onClose={() => setRoleEditor(null)}
-          >
-            <div className="space-y-5">
-              <RoleFormFields
-                templateName={roleEditor.templateName}
-                templateOptions={starterRoleTemplates}
-                onTemplateChange={updateRoleEditorTemplate}
-                agentName={roleEditor.agentName}
-                onAgentNameChange={(agentName) =>
-                  setRoleEditor((current) => (current ? { ...current, agentName } : current))
-                }
-                title={roleEditor.title}
-                onTitleChange={(title) =>
-                  setRoleEditor((current) => (current ? { ...current, title } : current))
-                }
-                instructions={roleEditor.instructions}
-                onInstructionsChange={(instructions) =>
-                  setRoleEditor((current) => (current ? { ...current, instructions } : current))
-                }
-                llm={roleEditor.llm}
-                model={roleEditor.model}
-                onLlmChange={(llm) =>
-                  setRoleEditor((current) => (current ? { ...current, llm } : current))
-                }
-                onModelChange={(model) =>
-                  setRoleEditor((current) => (current ? { ...current, model } : current))
-                }
-                channelIds={roleEditor.channelIds}
-                onChannelIdsChange={(channelIds) =>
-                  setRoleEditor((current) => (current ? { ...current, channelIds } : current))
-                }
-                channels={draft.channels.map((channel) => ({ id: channel.id, name: channel.name }))}
-              />
-
-              <div className="flex items-center justify-end gap-3">
-                <button
-                  type="button"
-                  onClick={() => setRoleEditor(null)}
-                  className="rounded-lg border border-zinc-200 px-4 py-2.5 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-900"
-                >
+            footer={
+              <>
+                <button type="button" onClick={() => setRoleEditor(null)} className={teamGhostActionClass}>
                   Cancel
                 </button>
-                <button
-                  type="button"
-                  onClick={saveRoleEditor}
-                  className="rounded-lg bg-violet-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-violet-700"
-                >
+                <button type="button" onClick={saveRoleEditor} className={teamPrimaryActionClass}>
                   Save role
                 </button>
-              </div>
-            </div>
+              </>
+            }
+          >
+            <RoleFormFields
+              templateName={roleEditor.templateName}
+              templateOptions={starterRoleTemplates}
+              onTemplateChange={updateRoleEditorTemplate}
+              agentName={roleEditor.agentName}
+              onAgentNameChange={(agentName) =>
+                setRoleEditor((current) => (current ? { ...current, agentName } : current))
+              }
+              title={roleEditor.title}
+              onTitleChange={(title) => setRoleEditor((current) => (current ? { ...current, title } : current))}
+              instructions={roleEditor.instructions}
+              onInstructionsChange={(instructions) =>
+                setRoleEditor((current) => (current ? { ...current, instructions } : current))
+              }
+              llm={roleEditor.llm}
+              model={roleEditor.model}
+              onLlmChange={(llm) => setRoleEditor((current) => (current ? { ...current, llm } : current))}
+              onModelChange={(model) => setRoleEditor((current) => (current ? { ...current, model } : current))}
+              channelIds={roleEditor.channelIds}
+              onChannelIdsChange={(channelIds) =>
+                setRoleEditor((current) => (current ? { ...current, channelIds } : current))
+              }
+              channels={draft.channels.map((channel) => ({ id: channel.id, name: channel.name }))}
+            />
           </ModalShell>
         ) : null}
 
@@ -1307,34 +1376,26 @@ function StepFields({
             title={channelEditor.mode === "create" ? "Add channel" : "Edit channel"}
             description="Update the channel name and description."
             onClose={() => setChannelEditor(null)}
-          >
-            <div className="space-y-5">
-              <ChannelFormFields
-                mode={channelEditor.mode}
-                name={channelEditor.name}
-                description={channelEditor.description}
-                onNameChange={(name) => setChannelEditor({ ...channelEditor, name })}
-                onDescriptionChange={(description) => setChannelEditor({ ...channelEditor, description })}
-                nameId="channelName"
-                descriptionId="channelDescription"
-              />
-              <div className="flex items-center justify-end gap-3">
-                <button
-                  type="button"
-                  onClick={() => setChannelEditor(null)}
-                  className="rounded-lg border border-zinc-200 px-4 py-2.5 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-900"
-                >
+            footer={
+              <>
+                <button type="button" onClick={() => setChannelEditor(null)} className={teamGhostActionClass}>
                   Cancel
                 </button>
-                <button
-                  type="button"
-                  onClick={saveChannelEditor}
-                  className="rounded-lg bg-violet-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-violet-700"
-                >
+                <button type="button" onClick={saveChannelEditor} className={teamPrimaryActionClass}>
                   Save channel
                 </button>
-              </div>
-            </div>
+              </>
+            }
+          >
+            <ChannelFormFields
+              mode={channelEditor.mode}
+              name={channelEditor.name}
+              description={channelEditor.description}
+              onNameChange={(name) => setChannelEditor({ ...channelEditor, name })}
+              onDescriptionChange={(description) => setChannelEditor({ ...channelEditor, description })}
+              nameId="channelName"
+              descriptionId="channelDescription"
+            />
           </ModalShell>
         ) : null}
       </div>
@@ -1564,65 +1625,68 @@ export function OnboardingForm({
           onTeamTabChange={onTeamTabChange}
         />
 
-        {isLastStep ? (
-          <div className="mt-6 flex items-center justify-between border-t border-zinc-200 pt-5 dark:border-zinc-800">
-            <button
-              type="button"
-              onClick={onBack}
-              disabled={!canGoBack || isSubmitting}
-              className="inline-flex items-center gap-2 rounded-lg border border-zinc-200 px-4 py-2.5 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-900"
-            >
-              <ArrowLeft className="h-4 w-4" />
-              Back
-            </button>
-            <button
-              type="button"
-              onClick={handleContinue}
-              disabled={!isStepValid || isSubmitting}
-              aria-disabled={!isStepValid || isSubmitting}
-              className={`inline-flex items-center justify-center gap-2 rounded-lg px-5 py-2.5 text-sm font-medium text-white transition ${
-                isStepValid
-                  ? "bg-violet-600 hover:bg-violet-700 disabled:bg-violet-400 disabled:hover:bg-violet-400"
-                  : "bg-violet-300 hover:bg-violet-300 dark:bg-violet-500/50 dark:hover:bg-violet-500/50"
-              }`}
-            >
-              {isSubmitting ? "Creating organization..." : "Create organization"}
-              <ArrowRight className="h-4 w-4" />
-            </button>
-          </div>
-        ) : (
-          <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center">
-            <button
-              type="button"
-              onClick={handleContinue}
-              disabled={!isStepValid || isSubmitting}
-              aria-disabled={!isStepValid || isSubmitting}
-              className={`inline-flex items-center justify-center gap-2 rounded-lg px-5 py-2.5 text-sm font-medium text-white transition ${
-                isStepValid
-                  ? "bg-violet-600 hover:bg-violet-700 disabled:bg-violet-400 disabled:hover:bg-violet-400"
-                  : "bg-violet-300 hover:bg-violet-300 dark:bg-violet-500/50 dark:hover:bg-violet-500/50"
-              }`}
-            >
-              {isSubmitting ? "Working..." : "Continue"}
-              <ArrowRight className="h-4 w-4" />
-            </button>
-            <p className="text-sm text-zinc-500 dark:text-zinc-400">
-              Next: <span className="font-medium text-zinc-700 dark:text-zinc-200">{nextLabel}</span>
-            </p>
-          </div>
-        )}
         {attemptedSubmit && !isStepValid && validationMessage ? (
-          <p className="mt-3 flex items-center gap-2 text-sm text-red-600 dark:text-red-400" role="alert">
-            <AlertCircle className="h-4 w-4" />
+          <p className="mt-4 flex items-center gap-2 text-sm text-red-600 dark:text-red-400" role="alert">
+            <AlertCircle className="h-4 w-4 shrink-0" />
             {validationMessage}
           </p>
         ) : null}
         {submitError ? (
-          <p className="mt-3 flex items-center gap-2 text-sm text-red-600 dark:text-red-400" role="alert">
-            <AlertCircle className="h-4 w-4" />
+          <p className="mt-4 flex items-center gap-2 text-sm text-red-600 dark:text-red-400" role="alert">
+            <AlertCircle className="h-4 w-4 shrink-0" />
             {submitError}
           </p>
         ) : null}
+
+        <div className="sticky bottom-0 z-10 -mx-4 mt-6 border-t border-zinc-200/90 bg-white/95 px-4 py-4 backdrop-blur-sm dark:border-zinc-800 dark:bg-zinc-950/95 sm:-mx-6 sm:px-6 md:-mx-8 md:px-8">
+          {isLastStep ? (
+            <div className="flex items-center justify-between gap-3">
+              <button
+                type="button"
+                onClick={onBack}
+                disabled={!canGoBack || isSubmitting}
+                className="inline-flex items-center gap-2 rounded-lg border border-zinc-200 px-4 py-2.5 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-900"
+              >
+                <ArrowLeft className="h-4 w-4" />
+                Back
+              </button>
+              <button
+                type="button"
+                onClick={handleContinue}
+                disabled={!isStepValid || isSubmitting}
+                aria-disabled={!isStepValid || isSubmitting}
+                className={`inline-flex items-center justify-center gap-2 rounded-lg px-5 py-2.5 text-sm font-medium text-white transition ${
+                  isStepValid
+                    ? "bg-violet-600 hover:bg-violet-700 disabled:bg-violet-400 disabled:hover:bg-violet-400"
+                    : "bg-violet-300 hover:bg-violet-300 dark:bg-violet-500/50 dark:hover:bg-violet-500/50"
+                }`}
+              >
+                {isSubmitting ? "Creating organization..." : "Create organization"}
+                <ArrowRight className="h-4 w-4" />
+              </button>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+              <button
+                type="button"
+                onClick={handleContinue}
+                disabled={!isStepValid || isSubmitting}
+                aria-disabled={!isStepValid || isSubmitting}
+                className={`inline-flex items-center justify-center gap-2 rounded-lg px-5 py-2.5 text-sm font-medium text-white transition ${
+                  isStepValid
+                    ? "bg-violet-600 hover:bg-violet-700 disabled:bg-violet-400 disabled:hover:bg-violet-400"
+                    : "bg-violet-300 hover:bg-violet-300 dark:bg-violet-500/50 dark:hover:bg-violet-500/50"
+                }`}
+              >
+                {isSubmitting ? "Working..." : "Continue"}
+                <ArrowRight className="h-4 w-4" />
+              </button>
+              <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                Next: <span className="font-medium text-zinc-700 dark:text-zinc-200">{nextLabel}</span>
+              </p>
+            </div>
+          )}
+        </div>
       </div>
     </section>
   );
