@@ -252,9 +252,10 @@ describe('SchedulerService', () => {
     scheduler.start();
 
     await vi.waitFor(() => {
-      expect(mockConversations.publishMessage).toHaveBeenCalledWith(
+      expect(mockConversations.sendMessage).toHaveBeenCalledWith(
         expect.objectContaining({
           organizationId: 'org-1',
+          threadId: 'channel-1',
           channelId: 'channel-1',
           senderId: 'member-1',
           content: expect.stringContaining('Standup'),
@@ -281,8 +282,8 @@ describe('SchedulerService', () => {
     const sendPromise = new Promise<void>((resolve) => {
       resolveSend = resolve;
     });
-    vi.mocked(mockConversations.publishMessage).mockImplementation(
-      (() => sendPromise) as unknown as ConversationService['publishMessage'],
+    vi.mocked(mockConversations.sendMessage).mockImplementation(
+      (() => sendPromise) as unknown as ConversationService['sendMessage'],
     );
 
     const dueJob = {
@@ -321,11 +322,11 @@ describe('SchedulerService', () => {
     await vi.advanceTimersByTimeAsync(0);
 
     await vi.waitFor(() => {
-      expect(mockConversations.publishMessage).toHaveBeenCalledTimes(1);
+      expect(mockConversations.sendMessage).toHaveBeenCalledTimes(1);
     }, { timeout: 2000 });
 
     await vi.advanceTimersByTimeAsync(50);
-    expect(mockConversations.publishMessage).toHaveBeenCalledTimes(1);
+    expect(mockConversations.sendMessage).toHaveBeenCalledTimes(1);
 
     resolveSend();
     await vi.waitFor(() => {
@@ -369,7 +370,7 @@ describe('SchedulerService', () => {
       topic: '',
       memberIds: ['member-1'],
     } as never);
-    vi.mocked(mockConversations.publishMessage).mockImplementationOnce(() => {
+    vi.mocked(mockConversations.sendMessage).mockImplementationOnce(() => {
       throw new Error('send failed');
     });
 
@@ -386,6 +387,56 @@ describe('SchedulerService', () => {
 
     scheduler.stop();
     vi.useRealTimers();
+  });
+
+  it('does not publish when the sender cannot write to the target channel', async () => {
+    const now = new Date().toISOString();
+    const dueJob = {
+      id: 'job-private',
+      organizationId: 'org-1',
+      name: 'Private note',
+      cronExpression: '0 9 * * *',
+      prompt: 'Run private note',
+      channelId: 'channel-1',
+      memberId: 'member-1',
+      status: 'active' as const,
+      nextRunAt: now,
+      runCount: 0,
+      createdAt: now,
+      updatedAt: now,
+    };
+    let errorCalled = false;
+    mockRepo.listDueJobsGlobally = vi.fn().mockImplementation(() => {
+      if (errorCalled) return [];
+      errorCalled = true;
+      return [dueJob];
+    });
+    vi.mocked(mockRepo.getChannel).mockReturnValue({
+      id: 'channel-1',
+      organizationId: 'org-1',
+      name: 'private',
+      kind: 'dm',
+      topic: '',
+      memberIds: ['member-2'],
+    } as never);
+    vi.mocked(mockConversations.sendMessage).mockRejectedValueOnce(
+      new Error('Forbidden: you do not have access to this thread'),
+    );
+
+    scheduler.start();
+
+    await vi.waitFor(() => {
+      expect(mockConversations.sendMessage).toHaveBeenCalledTimes(1);
+    }, { timeout: 2000 });
+    await vi.waitFor(() => {
+      expect(mockRepo.saveScheduledJob).toHaveBeenCalled();
+    }, { timeout: 2000 });
+
+    const saved = vi.mocked(mockRepo.saveScheduledJob).mock.calls.at(-1)?.[0];
+    expect(saved?.lastError).toBe('Forbidden: you do not have access to this thread');
+    expect(mockConversations.publishMessage).not.toHaveBeenCalled();
+
+    scheduler.stop();
   });
 
   it('does not throw from errors in listDueJobsGlobally', async () => {

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { SocketEventNames, channelRoom, orgRoom, type ScheduledJob, MessageSchema } from '@ujima/shared';
+import { SocketEventNames, channelRoom, orgRoom, type ScheduledJob } from '@ujima/shared';
 import type { ApiRepository } from './repository-reader.js';
 import type { ConversationService } from './conversation.js';
 import type { RealtimeService } from './context.js';
@@ -232,22 +232,16 @@ export class SchedulerService {
     memberId: string;
   }): Promise<void> {
     if (job.channelId) {
-      const channel = this.repo.getChannel(job.organizationId, job.channelId);
       const sender = this.repo.getMember(job.organizationId, job.memberId);
+      const channel = this.repo.getChannel(job.organizationId, job.channelId);
       if (channel && sender) {
-        const message = MessageSchema.parse({
-          id: randomUUID(),
+        await this.conversations.sendMessage({
           organizationId: job.organizationId,
           threadId: job.channelId,
           channelId: job.channelId,
           senderId: job.memberId,
-          senderKind: sender.kind,
-          kind: sender.kind,
           content: `**⏰ Scheduled: ${job.name}**\n\n${job.prompt}`,
-          mentions: [],
-          createdAt: new Date().toISOString(),
         });
-        await this.conversations.publishMessage(message);
       }
     }
 

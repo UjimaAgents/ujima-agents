@@ -4,13 +4,19 @@ import { rowString, optionalRowString } from './common.js';
 import { upsertMemoryEntry as writeMemoryEntry } from './memory-entries.js';
 
 type Row = Record<string, unknown>;
+const ORG_SCOPE_MEMBER_SENTINEL = '__org__';
+
+function normalizeMemberId(memberId: string | null | undefined): string | undefined {
+  if (!memberId || memberId === ORG_SCOPE_MEMBER_SENTINEL) return undefined;
+  return memberId;
+}
 
 function rowToMemoryEntry(row: Row): MemoryEntry {
   const id = rowString(row, 'id');
   return MemoryEntrySchema.parse({
     id,
     organizationId: rowString(row, 'organization_id'),
-    memberId: optionalRowString(row, 'member_id') ?? undefined,
+    memberId: normalizeMemberId(optionalRowString(row, 'member_id')),
     kind: rowString(row, 'kind') as MemoryEntryKind,
     key: optionalRowString(row, 'key') ?? id,
     content: rowString(row, 'content'),

@@ -57,7 +57,9 @@ describe('memory entries repository', () => {
 
   it('lists org-scoped memory entries', () => {
     const otherOrgId = randomUUID();
-    repo.upsertMemoryEntry(baseMemory({ id: 'o1', organizationId, key: 'org.a' }));
+    repo.upsertMemoryEntry(
+      baseMemory({ id: 'o1', organizationId, key: 'org.a', memberId: undefined }),
+    );
     repo.upsertMemoryEntry(
       baseMemory({ id: 'o2', organizationId: otherOrgId, key: 'org.b' }),
     );
@@ -69,6 +71,7 @@ describe('memory entries repository', () => {
     });
     expect(list).toHaveLength(1);
     expect(list[0]?.id).toBe('o1');
+    expect(repo.listOrgMemories(organizationId)[0]?.memberId).toBeUndefined();
   });
 
   it('updates a memory entry on conflict', () => {
