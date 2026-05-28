@@ -8,6 +8,10 @@ export interface ToolInfo {
   name: string;
   description?: string;
   inputSchema?: unknown;
+  // Mirrors the MCP spec's `annotations.destructiveHint`. We carry it
+  // through verbatim so the classifier and admin UI can read the
+  // server's own intent before falling back to verb heuristics.
+  destructive?: boolean;
 }
 
 export interface ToolCallResult {
@@ -113,11 +117,20 @@ export async function connectMCP(
     async listTools() {
       return enqueue(async () => {
         const res = await client.listTools();
-        return res.tools.map((t) => ({
-          name: t.name,
-          description: t.description,
-          inputSchema: t.inputSchema,
-        }));
+        return res.tools.map((t) => {
+          const annotations = (t as { annotations?: { destructiveHint?: boolean } })
+            .annotations;
+          const destructive =
+            typeof annotations?.destructiveHint === 'boolean'
+              ? annotations.destructiveHint
+              : undefined;
+          return {
+            name: t.name,
+            description: t.description,
+            inputSchema: t.inputSchema,
+            ...(destructive !== undefined ? { destructive } : {}),
+          };
+        });
       });
     },
 

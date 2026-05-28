@@ -1,7 +1,16 @@
 import type { MCPDef, McpServer } from '@ujima/shared';
 
 export interface McpRuntimeConnection {
-  listTools(): Promise<{ name: string; description?: string; inputSchema?: unknown }[]>;
+  listTools(): Promise<
+    {
+      name: string;
+      description?: string;
+      inputSchema?: unknown;
+      // Mirrors the MCP spec's `annotations.destructiveHint`. Passed
+      // through so the classifier can honour the server's own intent.
+      destructive?: boolean;
+    }[]
+  >;
   callTool(
     ctx: { agentId: string; taskId?: string; sessionId?: string },
     toolName: string,

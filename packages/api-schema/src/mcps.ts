@@ -172,6 +172,9 @@ export type McpCatalogResponse = z.infer<typeof McpCatalogResponseSchema>;
 export const McpCatalogQuerySchema = z.object({
   organizationId: IdSchema,
   agentId: z.string().min(1).optional(),
+  // When set, the catalog only considers per-tool grants whose scope
+  // matches this role (or 'both'). Unspecified = role-agnostic union.
+  role: z.enum(['worker', 'supervisor']).optional(),
 });
 export type McpCatalogQuery = z.infer<typeof McpCatalogQuerySchema>;
 

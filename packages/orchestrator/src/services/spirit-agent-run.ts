@@ -571,16 +571,25 @@ export class SpiritServiceAgentRun extends SpiritServiceLifecycle {
       }
 
       // Per-tool grant filter. When the agent has at least one row in
-      // agent_tool_attachments for this server, narrow the palette to
-      // exactly those tools. Zero rows = "all tools" mode (back-compat).
-      // Shrinking the palette also shrinks the model prompt.
+      // agent_tool_attachments for this server *that applies to the
+      // current spirit role*, narrow the palette to those tools.
+      // Zero matching rows = "all tools" mode (back-compat).
+      //
+      // Role filter is load-bearing: a worker-only grant must not flip
+      // the palette into allowlist mode for supervisor runs, and vice
+      // versa. Pre-fix the scope column was stored but the filter
+      // ignored it, so a worker grant could erase the supervisor's
+      // tools or expose them to the wrong role entirely.
       const grants = this.repo.listAgentToolAttachments(
         ctx.organizationId,
         ctx.memberId,
         resolution.serverId,
       );
-      if (grants.length > 0) {
-        const allowedNames = new Set(grants.map((g) => g.toolName));
+      const applicableGrants = grants.filter(
+        (g) => g.scope === ctx.role || g.scope === 'both',
+      );
+      if (applicableGrants.length > 0) {
+        const allowedNames = new Set(applicableGrants.map((g) => g.toolName));
         toolList = toolList.filter((t) => allowedNames.has(t.name));
       }
 

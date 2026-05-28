@@ -1,6 +1,7 @@
 import { rm } from 'node:fs/promises';
 import { afterEach, describe, expect, it } from 'vitest';
 import { McpRegistryService } from '@ujima/orchestrator';
+import type { MCPConnection } from '@ujima/mcp-client';
 import { mapMcpRouteError } from '../src/transport/routes/mcps.js';
 import { createOnboardedFixture } from './helpers/create-onboarded-fixture.js';
 
@@ -1063,6 +1064,197 @@ describe('McpRegistryService — Phase 3 MCP integration', () => {
     );
     expect(row.risk).toBe('read');
     expect(row.source).toBe('inferred');
+  });
+
+  // Regression: detach() used to leave per-tool grants behind, so
+  // re-attaching the same MCP would silently restore the agent into
+  // allowlist mode with whatever tools were granted before — none
+  // of which the operator explicitly re-authorised.
+  it('detach: cascades agent_tool_attachments so re-attaching does not restore stale grants', async () => {
+    const fixture = await createFixture();
+    tempDirs.push(fixture.archiveRoot);
+
+    const server = fixture.registry.create({
+      organizationId: fixture.organizationId,
+      createdBy: fixture.ownerId,
+      name: 'cascade-mcp',
+      transport: 'stdio',
+      command: 'x',
+    });
+    fixture.repo.saveMcpToolCache({
+      mcpServerId: server.id,
+      organizationId: fixture.organizationId,
+      tools: [
+        { name: 'tool_a', description: '' },
+        { name: 'tool_b', description: '' },
+      ],
+      fetchedAt: new Date().toISOString(),
+    });
+
+    fixture.registry.grantToolToAgent({
+      organizationId: fixture.organizationId,
+      memberId: 'agent-x',
+      mcpServerId: server.id,
+      toolName: 'tool_a',
+    });
+    expect(
+      fixture.repo.listAgentToolAttachments(fixture.organizationId, 'agent-x', server.id),
+    ).toHaveLength(1);
+
+    fixture.registry.detach(fixture.organizationId, 'agent-x', server.id);
+
+    // Both attachment tables are clean.
+    expect(
+      fixture.repo
+        .listAgentMcpAttachments(fixture.organizationId, 'agent-x')
+        .filter((a) => a.mcpServerId === server.id),
+    ).toHaveLength(0);
+    expect(
+      fixture.repo.listAgentToolAttachments(fixture.organizationId, 'agent-x', server.id),
+    ).toHaveLength(0);
+
+    // Re-attach the server: catalog must NOT show this agent in
+    // allowlist mode (no per-tool rows survived the detach).
+    fixture.registry.attach({
+      organizationId: fixture.organizationId,
+      memberId: 'agent-x',
+      mcpServerId: server.id,
+      scope: 'worker',
+    });
+    const catalog = fixture.registry.getCatalog(fixture.organizationId);
+    const row = catalog.servers.find((s) => s.id === server.id)!;
+    expect(row.allowlistAgents).not.toContain('agent-x');
+  });
+
+  // Regression: the test() pipeline used to drop the server-declared
+  // destructive metadata at the descriptor boundary, so an MCP that
+  // explicitly marks a tool destructive would always get reclassified
+  // by the verb heuristic instead.
+  it('test() carries server-declared destructive metadata into descriptors + classification', async () => {
+    const fixture = await createFixture();
+    tempDirs.push(fixture.archiveRoot);
+
+    // Inject a fake live connection that surfaces a tool whose name
+    // has no destructive verb but is marked `destructive=true` by
+    // the server's annotations. Pre-fix this hint was discarded; the
+    // classifier would then call this `write` based on `update_thing`.
+    const fakeConnect = async (): Promise<MCPConnection> =>
+      ({
+        listTools: async () => [
+          {
+            name: 'update_thing',
+            description: 'updates a thing',
+            inputSchema: {},
+            destructive: true,
+          },
+        ],
+        callTool: async () => ({ content: 'ok' }),
+        close: async () => undefined,
+      }) as unknown as MCPConnection;
+
+    const registry = new McpRegistryService(fixture.repo, fakeConnect);
+    const server = registry.create({
+      organizationId: fixture.organizationId,
+      createdBy: fixture.ownerId,
+      name: 'destructive-meta-mcp',
+      transport: 'stdio',
+      command: 'x',
+    });
+
+    const result = await registry.test(fixture.organizationId, server.id);
+    expect(result.ok).toBe(true);
+    expect(result.tools[0]?.destructive).toBe(true);
+
+    const stored = fixture.repo.getMcpToolClassification(
+      fixture.organizationId,
+      server.id,
+      'update_thing',
+    );
+    expect(stored?.risk).toBe('destructive');
+  });
+
+  // High (bot): per-tool grants store a role scope, but the runtime
+  // filter and the catalog used to ignore it. A worker-only grant
+  // would flip the supervisor view into allowlist mode (and vice
+  // versa), so tools could disappear from the intended role or be
+  // exposed to the wrong one.
+  it('getCatalog(?role=): only counts grants whose scope matches the role for allowlistAgents', async () => {
+    const fixture = await createFixture();
+    tempDirs.push(fixture.archiveRoot);
+
+    const server = fixture.registry.create({
+      organizationId: fixture.organizationId,
+      createdBy: fixture.ownerId,
+      name: 'scope-aware-mcp',
+      transport: 'stdio',
+      command: 'x',
+    });
+    fixture.repo.saveMcpToolCache({
+      mcpServerId: server.id,
+      organizationId: fixture.organizationId,
+      tools: [
+        { name: 'tool_a', description: '' },
+        { name: 'tool_b', description: '' },
+      ],
+      fetchedAt: new Date().toISOString(),
+    });
+
+    // Attach as 'both' so the agent is reachable for either role.
+    fixture.registry.attach({
+      organizationId: fixture.organizationId,
+      memberId: 'agent-x',
+      mcpServerId: server.id,
+      scope: 'both',
+    });
+
+    // Then narrow the per-tool grant to worker-only.
+    fixture.registry.grantToolToAgent({
+      organizationId: fixture.organizationId,
+      memberId: 'agent-x',
+      mcpServerId: server.id,
+      toolName: 'tool_a',
+      scope: 'worker',
+    });
+
+    // Role-agnostic view: the agent IS in allowlist mode somewhere.
+    const anyRole = fixture.registry.getCatalog(fixture.organizationId);
+    expect(
+      anyRole.servers.find((s) => s.id === server.id)?.allowlistAgents,
+    ).toContain('agent-x');
+
+    // Supervisor view: no matching scope → not in allowlist mode →
+    // all tools exposed instead of an empty palette.
+    const supervisor = fixture.registry.getCatalog(
+      fixture.organizationId,
+      'agent-x',
+      'supervisor',
+    );
+    const supRow = supervisor.servers.find((s) => s.id === server.id)!;
+    expect(supRow.allowlistAgents).not.toContain('agent-x');
+    expect(
+      supervisor.agentView![`${server.id}::tool_a`]?.exposed,
+    ).toBe(true);
+    expect(
+      supervisor.agentView![`${server.id}::tool_a`]?.exposureReason,
+    ).toBe('all-tools-mode');
+
+    // Worker view: matching scope → allowlist mode → only tool_a.
+    const worker = fixture.registry.getCatalog(
+      fixture.organizationId,
+      'agent-x',
+      'worker',
+    );
+    expect(
+      worker.servers.find((s) => s.id === server.id)?.allowlistAgents,
+    ).toContain('agent-x');
+    expect(worker.agentView![`${server.id}::tool_a`]?.exposed).toBe(true);
+    expect(worker.agentView![`${server.id}::tool_a`]?.exposureReason).toBe(
+      'granted',
+    );
+    expect(worker.agentView![`${server.id}::tool_b`]?.exposed).toBe(false);
+    expect(worker.agentView![`${server.id}::tool_b`]?.exposureReason).toBe(
+      'no-tool-grant',
+    );
   });
 
   // Companion: when an MCP attachment already exists, the per-tool

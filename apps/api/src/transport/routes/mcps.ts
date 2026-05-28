@@ -184,8 +184,12 @@ export function registerMcpRoutes(
     organizationId: (req) => (req.query as { organizationId: string }).organizationId,
     onError: mcpHandle,
     handler: async (req, organizationId) => {
-      const query = req.query as { organizationId: string; agentId?: string };
-      return mcpRegistry.getCatalog(organizationId, query.agentId);
+      const query = req.query as {
+        organizationId: string;
+        agentId?: string;
+        role?: 'worker' | 'supervisor';
+      };
+      return mcpRegistry.getCatalog(organizationId, query.agentId, query.role);
     },
   });
 

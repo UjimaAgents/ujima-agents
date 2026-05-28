@@ -377,14 +377,25 @@ export class McpRegistryService {
     try {
       connection = await this.connect(def);
       const tools = await connection.listTools();
-      const descriptors: McpToolDescriptor[] = tools.map((tool) => ({
-        name: tool.name,
-        description: tool.description ?? '',
-        inputSchema:
-          tool.inputSchema && typeof tool.inputSchema === 'object'
-            ? (tool.inputSchema as Record<string, unknown>)
-            : undefined,
-      }));
+      const descriptors: McpToolDescriptor[] = tools.map((tool) => {
+        // Carry the server-declared destructive intent through so the
+        // classifier honours it before the verb heuristic kicks in.
+        // Pre-fix this hint was dropped at the descriptor boundary and
+        // every reclassification went straight to verb-based inference.
+        const declared =
+          typeof (tool as { destructive?: boolean }).destructive === 'boolean'
+            ? (tool as { destructive?: boolean }).destructive
+            : undefined;
+        return {
+          name: tool.name,
+          description: tool.description ?? '',
+          inputSchema:
+            tool.inputSchema && typeof tool.inputSchema === 'object'
+              ? (tool.inputSchema as Record<string, unknown>)
+              : undefined,
+          ...(declared !== undefined ? { destructive: declared } : {}),
+        };
+      });
       this.repo.saveMcpToolCache({
         mcpServerId: server.id,
         organizationId,
@@ -467,10 +478,20 @@ export class McpRegistryService {
 
   // ----------------- Governance catalog --------------------------------
 
-  getCatalog(organizationId: string, agentId?: string): CatalogResult {
+  getCatalog(
+    organizationId: string,
+    agentId?: string,
+    role?: 'worker' | 'supervisor',
+  ): CatalogResult {
     this.requireOrganization(organizationId);
     const policy = this.repo.getGovernancePolicy(organizationId);
     const servers = this.repo.listMcpServers(organizationId);
+
+    // A grant applies to the current view when its scope matches the
+    // requested role (or is 'both'). When `role` is unspecified the
+    // catalog is the role-agnostic union — the UI's planning surface.
+    const matchesRole = (grantScope: 'worker' | 'supervisor' | 'both'): boolean =>
+      role ? grantScope === role || grantScope === 'both' : true;
 
     // Per-agent perspective state, computed once and reused per row.
     const agentMcpAttachments = agentId
@@ -481,10 +502,11 @@ export class McpRegistryService {
         )
       : null;
     // For each server: tool-grant set + whether the agent is in "allowlist
-    // mode" (has any per-tool rows for that server).
+    // mode" (has any per-tool rows for that server with a matching scope).
     const agentToolGrantsByServer = new Map<string, Set<string>>();
     if (agentId) {
       for (const row of this.repo.listAgentToolAttachments(organizationId, agentId)) {
+        if (!matchesRole(row.scope)) continue;
         let set = agentToolGrantsByServer.get(row.mcpServerId);
         if (!set) {
           set = new Set();
@@ -508,14 +530,16 @@ export class McpRegistryService {
       // Per-server: agents → tools-granted, for fast row-level "grantedAgents".
       // Also collect the set of agents in allowlist mode on this server
       // (any per-tool grant for the (agent, server) pair flips them in).
+      //
+      // When the caller scoped the catalog by `role`, only grants with
+      // a matching scope contribute — a supervisor-only grant must not
+      // make the worker view think the agent is in allowlist mode.
       const grantedByTool = new Map<string, Set<string>>();
       const allowlistAgents = new Set<string>();
       for (const member of attachedAgents) {
-        const rows = this.repo.listAgentToolAttachments(
-          organizationId,
-          member,
-          server.id,
-        );
+        const rows = this.repo
+          .listAgentToolAttachments(organizationId, member, server.id)
+          .filter((r) => matchesRole(r.scope));
         if (rows.length > 0) allowlistAgents.add(member);
         for (const row of rows) {
           let set = grantedByTool.get(row.toolName);
@@ -843,6 +867,15 @@ export class McpRegistryService {
   detach(organizationId: string, memberId: string, mcpServerId: string): void {
     this.requireOrganization(organizationId);
     this.repo.deleteAgentMcpAttachment(organizationId, memberId, mcpServerId);
+    // Cascade per-tool grants too. Without this, re-attaching later
+    // would immediately restore stale grants — flipping the agent
+    // back into allowlist mode with whatever tools were granted
+    // before, none of which the operator explicitly re-authorised.
+    this.repo.deleteAgentToolAttachmentsForAgent(
+      organizationId,
+      memberId,
+      mcpServerId,
+    );
   }
 
   listAttachments(organizationId: string, memberId: string) {
