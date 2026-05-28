@@ -803,28 +803,34 @@ export class McpRegistryService {
     toolName: string,
   ): McpToolClassification {
     const server = this.requireServer(organizationId, serverId);
-    // Validate the tool exists BEFORE touching state. Pre-fix the
-    // delete happened first and a stale cache (or removed tool) would
-    // leave the row gone with no inferred replacement — silently
-    // erasing the admin override the operator wanted to reset.
+    // Validate the tool exists in the *current* cache BEFORE touching
+    // state. Reset's purpose is "revert manual → inferred" using the
+    // live descriptor; if the tool is gone there's no live data to
+    // reseed from, and we'd risk producing a misleading row. The
+    // pre-validation also prevents the original bug where the delete
+    // happened first and a stale cache silently erased the admin
+    // override with no replacement.
     this.requireTool(organizationId, serverId, toolName);
-    // requireTool accepts cache OR classifications. When the cache is
-    // missing the descriptor (first-use path), fall back to a
-    // name-only classify — same heuristic, no broken intermediate
-    // state.
     const cache = this.repo.getMcpToolCache(organizationId, serverId);
     const descriptor = cache?.tools.find((t) => t.name === toolName);
+    if (!descriptor) {
+      // requireTool guarantees the cache entry exists; this branch is
+      // a defensive rail against a race between validation and read.
+      throw new Error(
+        `Tool not found: "${toolName}" on MCP server "${serverId}"`,
+      );
+    }
 
     this.repo.deleteMcpToolClassification(organizationId, serverId, toolName);
     const inf = classifyTool({
-      name: descriptor?.name ?? toolName,
-      description: descriptor?.description,
+      name: descriptor.name,
+      description: descriptor.description,
       category: server.category,
-      declaredDestructive: descriptor?.destructive,
+      declaredDestructive: descriptor.destructive,
     });
     this.repo.seedInferredClassifications(organizationId, serverId, [
       {
-        toolName: descriptor?.name ?? toolName,
+        toolName: descriptor.name,
         risk: inf.risk,
         needsReview: inf.needsReview,
         reason: inf.reason,
@@ -992,17 +998,19 @@ export class McpRegistryService {
     return server;
   }
 
-  // Validates the tool exists in either the cached inventory OR the
-  // classifications table. Used by writes that would otherwise corrupt
-  // downstream state: a grant on a phantom tool would flip the runtime
-  // palette into an empty-allowlist mode and the server would vanish
-  // from the agent's prompt; a manual classification on a phantom name
-  // would later attach itself to any future tool with the same name.
+  // Validates the tool exists in the *current* cached inventory. The
+  // cache is the source of truth for "is this tool live right now":
+  // both McpRegistryService.test() and the runtime spawn path
+  // (buildMcpToolDefinitions) populate it from a fresh listTools, so
+  // any cache row reflects a tool the MCP just confirmed exists.
   //
-  // The classification-row check is defence in depth for the
-  // first-use path: a runtime spawn populates both tables, but if the
-  // cache write somehow fell behind (race, transient failure) the
-  // classification row alone is enough proof the tool is real.
+  // Classification rows are NOT accepted as proof of existence:
+  // mcp_tool_classifications outlives the cache (manual overrides
+  // are sticky by design), so a stale row from a renamed/removed
+  // tool could otherwise authorise grants whose names never match
+  // anything live — the runtime palette filter would then narrow
+  // the agent's tool list to that phantom name and the whole server
+  // would vanish from the model context.
   //
   // Throws "Tool not found ..." so the route mapper can return 404.
   private requireTool(
@@ -1012,12 +1020,6 @@ export class McpRegistryService {
   ): void {
     const cache = this.repo.getMcpToolCache(organizationId, serverId);
     if (cache?.tools?.some((t) => t.name === toolName)) return;
-    const classification = this.repo.getMcpToolClassification(
-      organizationId,
-      serverId,
-      toolName,
-    );
-    if (classification) return;
     throw new Error(
       `Tool not found: "${toolName}" on MCP server "${serverId}". Run Test on the server first or check the tool name.`,
     );

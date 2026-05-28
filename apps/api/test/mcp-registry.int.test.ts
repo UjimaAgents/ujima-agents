@@ -1235,16 +1235,88 @@ describe('McpRegistryService — Phase 3 MCP integration', () => {
     );
   });
 
-  // Regression: first-use workflow. Pre-fix `requireTool` only read
-  // from mcp_tool_cache, so a brand-new server whose tools were
-  // discovered at runtime (which writes the classifications table
-  // but only the spawn path writes the cache) could be called by the
-  // agent yet had no way to be governed from the UI — grants and
-  // classifications both 404'd because the cache was empty.
-  //
-  // Fix accepts tools from EITHER cache or classifications. This
-  // pins both surfaces so the no-Test-run path still works.
-  it('grantToolToAgent + setToolClassification accept first-seen tools (classification row only, no cache descriptor)', async () => {
+  // Regression: stale classifications must NOT authorise grants on a
+  // tool the MCP no longer exposes. mcp_tool_classifications outlives
+  // the cache (manual rows are sticky), so a row from a renamed or
+  // removed tool used to slip through requireTool and grants succeeded
+  // — flipping the agent into an empty allowlist that stripped every
+  // real tool and stranded the whole MCP server from the model.
+  it('grantToolToAgent: rejects a tool that has a stale classification row but is no longer in the cache', async () => {
+    const fixture = await createFixture();
+    tempDirs.push(fixture.archiveRoot);
+
+    const server = fixture.registry.create({
+      organizationId: fixture.organizationId,
+      createdBy: fixture.ownerId,
+      name: 'stale-class-mcp',
+      transport: 'stdio',
+      command: 'x',
+    });
+    // Cache reflects the current MCP state (tool_b only). The MCP
+    // dropped tool_a in this release, but the historical
+    // classification row stayed (admin had marked it destructive).
+    fixture.repo.saveMcpToolCache({
+      mcpServerId: server.id,
+      organizationId: fixture.organizationId,
+      tools: [{ name: 'tool_b', description: '' }],
+      fetchedAt: new Date().toISOString(),
+    });
+    fixture.repo.upsertMcpToolClassification({
+      organizationId: fixture.organizationId,
+      mcpServerId: server.id,
+      toolName: 'tool_a',
+      risk: 'destructive',
+      source: 'manual',
+      needsReview: false,
+      updatedAt: new Date().toISOString(),
+      updatedBy: 'admin',
+    });
+
+    // Grant on the now-missing tool must fail BEFORE any persistence.
+    expect(() =>
+      fixture.registry.grantToolToAgent({
+        organizationId: fixture.organizationId,
+        memberId: 'agent-x',
+        mcpServerId: server.id,
+        toolName: 'tool_a',
+      }),
+    ).toThrow(/Tool not found/);
+    expect(
+      fixture.repo.listAgentToolAttachments(fixture.organizationId, 'agent-x', server.id),
+    ).toHaveLength(0);
+
+    // Classifying the phantom must also fail, so a future tool with
+    // the same name can't inherit an orphan row written after the
+    // fact.
+    expect(() =>
+      fixture.registry.setToolClassification({
+        organizationId: fixture.organizationId,
+        serverId: server.id,
+        toolName: 'tool_a',
+        risk: 'read',
+        updatedBy: 'admin',
+      }),
+    ).toThrow(/Tool not found/);
+
+    // Grant on the live tool still works.
+    fixture.registry.grantToolToAgent({
+      organizationId: fixture.organizationId,
+      memberId: 'agent-x',
+      mcpServerId: server.id,
+      toolName: 'tool_b',
+    });
+    expect(
+      fixture.repo.listAgentToolAttachments(fixture.organizationId, 'agent-x', server.id),
+    ).toHaveLength(1);
+  });
+
+  // First-use workflow: the runtime spawn (buildMcpToolDefinitions)
+  // writes both the cache AND classifications, so an operator who
+  // attaches an MCP and goes straight to a task can grant + classify
+  // through the UI without a manual Test run. Pins that contract
+  // from the McpRegistryService API: with both surfaces populated,
+  // the cache-only requireTool admits the writes.
+  it('first-use workflow: cache + classifications written together (e.g. by spawn) enable grant/classify without Test', async () => {
     const fixture = await createFixture();
     tempDirs.push(fixture.archiveRoot);
 
@@ -1255,52 +1327,43 @@ describe('McpRegistryService — Phase 3 MCP integration', () => {
       transport: 'stdio',
       command: 'x',
     });
-    // Simulate what spirit-agent-run.ts now does on a runtime spawn
-    // BEFORE saving the cache — only the classifications table is
-    // populated. Pre-fix this state made the tool ungovernable.
+    // Mirror exactly what spirit-agent-run.ts now does on a live
+    // listTools: cache + inferred classifications.
+    fixture.repo.saveMcpToolCache({
+      mcpServerId: server.id,
+      organizationId: fixture.organizationId,
+      tools: [{ name: 'tool_a', description: 'reads' }],
+      fetchedAt: new Date().toISOString(),
+    });
     fixture.repo.seedInferredClassifications(
       fixture.organizationId,
       server.id,
-      [{ toolName: 'tool_a', risk: 'destructive' }],
+      [{ toolName: 'tool_a', risk: 'read' }],
     );
-    expect(
-      fixture.repo.getMcpToolCache(fixture.organizationId, server.id),
-    ).toBeNull();
 
-    // Grant must succeed: requireTool falls back to the classifications row.
     fixture.registry.grantToolToAgent({
       organizationId: fixture.organizationId,
       memberId: 'agent-x',
       mcpServerId: server.id,
       toolName: 'tool_a',
     });
-    expect(
-      fixture.repo.listAgentToolAttachments(fixture.organizationId, 'agent-x', server.id),
-    ).toHaveLength(1);
-
-    // setToolClassification must succeed for the same reason.
     fixture.registry.setToolClassification({
       organizationId: fixture.organizationId,
       serverId: server.id,
       toolName: 'tool_a',
-      risk: 'read',
+      risk: 'destructive',
       updatedBy: 'admin',
     });
-    expect(
-      fixture.repo.getMcpToolClassification(
-        fixture.organizationId,
-        server.id,
-        'tool_a',
-      )?.risk,
-    ).toBe('read');
-
-    // Reset still works too — falls back to a name-only classify
-    // when the cache descriptor is missing.
     const reset = fixture.registry.resetToolClassification(
       fixture.organizationId,
       server.id,
       'tool_a',
     );
+
+    expect(
+      fixture.repo.listAgentToolAttachments(fixture.organizationId, 'agent-x', server.id),
+    ).toHaveLength(1);
+    expect(reset.risk).toBe('read');
     expect(reset.source).toBe('inferred');
   });
 
