@@ -1310,6 +1310,118 @@ describe('McpRegistryService — Phase 3 MCP integration', () => {
     ).toHaveLength(1);
   });
 
+  // Regression: granting from a UI view scoped to a specific role
+  // must promote the MCP attachment when the existing scope can't
+  // reach that role. Pre-fix the grant landed with the right scope
+  // but the attachment stayed worker-only, so a supervisor grant
+  // was silently invisible at runtime.
+  it('grantToolToAgent: promotes a mismatched MCP attachment to "both" so the grant is reachable', async () => {
+    const fixture = await createFixture();
+    tempDirs.push(fixture.archiveRoot);
+
+    const server = fixture.registry.create({
+      organizationId: fixture.organizationId,
+      createdBy: fixture.ownerId,
+      name: 'promote-mcp',
+      transport: 'stdio',
+      command: 'x',
+    });
+    fixture.repo.saveMcpToolCache({
+      mcpServerId: server.id,
+      organizationId: fixture.organizationId,
+      tools: [{ name: 'tool_a', description: '' }],
+      fetchedAt: new Date().toISOString(),
+    });
+    fixture.registry.attach({
+      organizationId: fixture.organizationId,
+      memberId: 'agent-x',
+      mcpServerId: server.id,
+      scope: 'worker',
+    });
+
+    // Grant from the supervisor view: explicit scope='supervisor'.
+    fixture.registry.grantToolToAgent({
+      organizationId: fixture.organizationId,
+      memberId: 'agent-x',
+      mcpServerId: server.id,
+      toolName: 'tool_a',
+      scope: 'supervisor',
+    });
+
+    const mcpAttachments = fixture.repo
+      .listAgentMcpAttachments(fixture.organizationId, 'agent-x')
+      .filter((a) => a.mcpServerId === server.id);
+    expect(mcpAttachments).toHaveLength(1);
+    // Promoted so supervisor can actually resolve the server.
+    expect(mcpAttachments[0]!.scope).toBe('both');
+
+    // The grant carries the requested supervisor scope.
+    const grants = fixture.repo.listAgentToolAttachments(
+      fixture.organizationId,
+      'agent-x',
+      server.id,
+    );
+    expect(grants).toHaveLength(1);
+    expect(grants[0]!.scope).toBe('supervisor');
+
+    // Confirm runtime reachability for BOTH roles now (the worker grant
+    // was honoured implicitly by the original attachment, and the
+    // supervisor grant lands because of the promotion).
+    expect(
+      fixture.repo.listAttachedServersForSpirit(
+        fixture.organizationId,
+        'agent-x',
+        'worker',
+      ),
+    ).toHaveLength(1);
+    expect(
+      fixture.repo.listAttachedServersForSpirit(
+        fixture.organizationId,
+        'agent-x',
+        'supervisor',
+      ),
+    ).toHaveLength(1);
+  });
+
+  it('grantToolToAgent: matching scope does NOT touch the attachment', async () => {
+    const fixture = await createFixture();
+    tempDirs.push(fixture.archiveRoot);
+
+    const server = fixture.registry.create({
+      organizationId: fixture.organizationId,
+      createdBy: fixture.ownerId,
+      name: 'no-promote-mcp',
+      transport: 'stdio',
+      command: 'x',
+    });
+    fixture.repo.saveMcpToolCache({
+      mcpServerId: server.id,
+      organizationId: fixture.organizationId,
+      tools: [{ name: 'tool_a', description: '' }],
+      fetchedAt: new Date().toISOString(),
+    });
+    fixture.registry.attach({
+      organizationId: fixture.organizationId,
+      memberId: 'agent-x',
+      mcpServerId: server.id,
+      scope: 'worker',
+    });
+
+    fixture.registry.grantToolToAgent({
+      organizationId: fixture.organizationId,
+      memberId: 'agent-x',
+      mcpServerId: server.id,
+      toolName: 'tool_a',
+      scope: 'worker',
+    });
+
+    // No promotion happened.
+    const mcpAttachments = fixture.repo
+      .listAgentMcpAttachments(fixture.organizationId, 'agent-x')
+      .filter((a) => a.mcpServerId === server.id);
+    expect(mcpAttachments[0]!.scope).toBe('worker');
+  });
+
   // First-use workflow: the runtime spawn (buildMcpToolDefinitions)
   // writes both the cache AND classifications, so an operator who
   // attaches an MCP and goes straight to a task can grant + classify

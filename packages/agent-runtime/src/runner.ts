@@ -3,7 +3,7 @@ import { createLocalEventBus } from '@ujima/event-bus';
 import { createPermissionMiddleware, type ClassificationLookup } from '@ujima/permissions';
 import { createMCPPool } from '@ujima/mcp-client';
 import { selectLanguageModel, type ProviderKind } from '@ujima/llm';
-import type { AgentDef, MCPDef, TaskDef } from '@ujima/shared';
+import type { AgentDef, GovernancePolicy, MCPDef, TaskDef } from '@ujima/shared';
 import { runAgent } from './shell';
 import { resolveOrchestratorEngine, type OrchestratorEngine } from './engine';
 import type { AgentRunResult, SpawnReason } from './types';
@@ -32,6 +32,13 @@ export interface RunnerConfig {
     baseUrl?: string;
   };
   classificationLookup?: ClassificationLookup;
+  // Snapshot of the governance policy the runner should enforce.
+  // Must be serialisable — the runner is reached via UJIMA_RUNNER_CONFIG
+  // (JSON-encoded child-process env var), so callbacks aren't an option.
+  // Spawning callers load the policy from their repo and embed it here.
+  // When omitted, the middleware behaves as before: no `risk_defaults`
+  // / agent rules apply and legacy allow/block lists govern.
+  governancePolicy?: GovernancePolicy;
 }
 
 function readAiSdkConfigFromEnv(env: NodeJS.ProcessEnv): RunnerConfig['llm'] | undefined {
@@ -55,6 +62,7 @@ export async function runInRunner(config: RunnerConfig): Promise<AgentRunResult>
   const permissions = createPermissionMiddleware({
     audit: db.audit,
     agentState: db.agentState,
+    governancePolicy: config.governancePolicy,
     classificationLookup: config.classificationLookup,
   });
   const pool = createMCPPool();

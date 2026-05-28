@@ -79,7 +79,12 @@ export function AgentsSubtab({ agents, catalog }: Props) {
     setError(null);
     setBusy(`${serverId}:${toolName}`);
     try {
-      await catalog.grantToolToAgent(activeAgentId, serverId, toolName);
+      // Pass the active role as the grant scope so the persisted row
+      // matches the view the operator was looking at. Without this,
+      // granting from the supervisor view on an agent with a worker-
+      // only MCP attachment would mirror the attachment's scope and
+      // the supervisor would never actually see the tool.
+      await catalog.grantToolToAgent(activeAgentId, serverId, toolName, role);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {

@@ -155,6 +155,18 @@ export interface CatalogResult {
   agentViewId?: string;
 }
 
+type Scope = 'worker' | 'supervisor' | 'both';
+
+// True when an MCP attachment with `attachment` scope covers a grant
+// requested at `grant` scope. 'both' covers either side; otherwise
+// scopes must match exactly. Used by grantToolToAgent to decide
+// whether the existing attachment needs to be promoted to 'both' so
+// the grant actually reaches the requested spirit role at runtime.
+function scopeSatisfies(attachment: Scope, grant: Scope): boolean {
+  if (attachment === 'both') return true;
+  return attachment === grant;
+}
+
 export class McpRegistryService {
   constructor(
     private readonly repo: ApiRepository,
@@ -720,10 +732,12 @@ export class McpRegistryService {
       (a) => a.mcpServerId === input.mcpServerId,
     );
 
-    // Mirror the existing attachment's scope so the grant matches what
-    // the operator authorised at the server level. When auto-attaching
-    // and no scope is supplied, default to 'both' so the grant works
-    // for whichever spirit role runs.
+    // Scope resolution rules:
+    //   - Caller supplied scope → use it (the active UI role lands here).
+    //   - No caller scope + existing attachment → mirror it (preserves
+    //     whatever the operator authorised at the server level).
+    //   - No caller scope + no attachment → default 'both' so the
+    //     grant reaches whichever spirit role runs.
     const scope =
       input.scope ?? existingServerAttachment?.scope ?? 'both';
 
@@ -735,6 +749,19 @@ export class McpRegistryService {
         mcpServerId: input.mcpServerId,
         scope,
         createdAt: now,
+        updatedAt: now,
+      });
+    } else if (!scopeSatisfies(existingServerAttachment.scope, scope)) {
+      // The MCP attachment scope doesn't cover the requested grant
+      // scope (e.g. worker-only attachment + supervisor grant). Without
+      // promotion the grant would land but listAttachedServersForSpirit
+      // would never resolve the server for the requested role, so the
+      // tool would silently not reach the model. Promote to 'both' to
+      // honour the caller's intent — they explicitly asked for this
+      // scope, so the attachment must support it.
+      this.repo.saveAgentMcpAttachment({
+        ...existingServerAttachment,
+        scope: 'both',
         updatedAt: now,
       });
     }
