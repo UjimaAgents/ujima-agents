@@ -91,6 +91,19 @@ async function main(): Promise<void> {
   }
   writeDirtyFlag(homeDir);
 
+  // Late ref so the policy/classification resolvers can reach the
+  // Repository wrapper that's constructed after the host. Without this
+  // wire-up, the runtime-host's permission middleware would never see
+  // the governance policy or per-tool classifications — risk_defaults
+  // / classification gating would be silently skipped on the headless
+  // runtime path even though tool-service-impl already enforces them
+  // on the orchestrator path. The closures resolve the active org via
+  // `getLatestOrganization()` since the daemon is single-org per
+  // process (matches the migrateUnifiedWorkspaceOrg assumption).
+  const lateRepoRef: { current: Repository | undefined } = { current: undefined };
+  const resolveActiveOrgId = (): string | undefined =>
+    lateRepoRef.current?.getLatestOrganization()?.id ?? undefined;
+
   const host = await createRuntimeHost(
     {
       homeDir,
@@ -106,6 +119,19 @@ async function main(): Promise<void> {
       getModel: (agent: AgentDef): LanguageModel => {
         throw new Error(`runtime: no model configured for agent "${agent.id}"`);
       },
+      policyResolver: () => {
+        const repo = lateRepoRef.current;
+        const orgId = resolveActiveOrgId();
+        if (!repo || !orgId) return undefined;
+        return repo.getGovernancePolicy(orgId);
+      },
+      classificationLookup: (mcpId, toolName) => {
+        const repo = lateRepoRef.current;
+        const orgId = resolveActiveOrgId();
+        if (!repo || !orgId) return undefined;
+        const row = repo.getMcpToolClassification(orgId, mcpId, toolName);
+        return row?.risk;
+      },
     },
     {},
   );
@@ -116,6 +142,7 @@ async function main(): Promise<void> {
 
   const secretStore = createFileSecretStore({ homeDir });
   const repository = new Repository(host.db.raw, secretStore);
+  lateRepoRef.current = repository;
   closeOrphanedActiveRuns(repository);
   const teamStore = createTeamStore();
   const migration = migrateUnifiedWorkspaceOrg({
