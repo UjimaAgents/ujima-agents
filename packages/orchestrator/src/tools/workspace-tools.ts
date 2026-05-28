@@ -39,12 +39,6 @@ function indexWorkspaceWrite(
       repo.deleteWorkspaceFile?.(ctx.invocation.organizationId, workspacePath);
       return;
     }
-    // Procedures-as-Culture (docs/procedures-as-culture.md "FTS
-    // exclusion"). Org / channel / agent procedures must NEVER
-    // surface via `channel.recall(scope: 'files')`. They are a system
-    // of record loaded only by the wake-time aggregator. Cross-channel
-    // leakage was the main risk — an agent in #engineering must not
-    // discover #legal's culture via lexical recall.
     if (isProceduresPath(workspacePath)) {
       repo.deleteWorkspaceFile?.(ctx.invocation.organizationId, workspacePath);
       return;
@@ -491,25 +485,10 @@ function resolveWorkspacePath(workspaceRoot: string, resourcePath: string): stri
   return assertWorkspaceBoundary(workspaceRoot, resourcePath);
 }
 
-/**
- * Procedures-as-Culture (docs/procedures-as-culture.md "Security
- * boundary"). Agents may only write inside their own subtree under
- * `ai/memory-bank/agents/<self>/**`. Org culture, channel culture,
- * and other agents' procedures are off-limits via these tools.
- * Human admins use the HTTP API (apps/api/src/transport/routes/
- * {org,channel}-culture.ts), which bypasses the agent tool surface.
- *
- * Throws a descriptive error so the model sees WHY the write was
- * refused and routes the request through the channel instead.
- *
- * NOTE: the `shell` tool is still a gap — arbitrary commands can
- * bypass this check. Reproducing the guard there is a larger change
- * (string-matching commands is brittle) and is tracked separately.
- */
 function assertAgentWritePermitted(memberId: string, resourcePath: string): void {
   if (isAgentRestrictedProcedurePath(memberId, resourcePath)) {
     throw new Error(
-      `Procedures-as-Culture: agents may only write under ai/memory-bank/agents/<self>/. Use channel.reply or escalate to a human admin to change org or channel culture; use self.procedure.add for your own procedures.`,
+      'agents may only write under ai/memory-bank/agents/<self>/. Use self.procedure.add for your own procedures; ask a human to change org/channel culture.',
     );
   }
 }

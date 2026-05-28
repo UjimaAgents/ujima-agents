@@ -44,11 +44,6 @@ function rowToApplied(row: Row): RunProcedureApplied {
   });
 }
 
-/**
- * Append-only history. Caller passes a fresh UUID + the post-save
- * snapshot; we do not coalesce or upsert. The unique-history pane in
- * the UI reads from this list, newest first.
- */
 export function appendProcedureRevision(
   db: DbHandle,
   rev: ProcedureRevision,
@@ -76,7 +71,6 @@ export function appendProcedureRevision(
   return payload;
 }
 
-/** Newest first; capped so the version-history pane never balloons. */
 export function listProcedureRevisions(
   db: DbHandle,
   input: {
@@ -108,12 +102,6 @@ export function listProcedureRevisions(
   return rows.map(rowToRevision);
 }
 
-/**
- * Record one or more (scope, name, version) tuples that the wake-time
- * aggregator surfaced into a run's system prompt. Idempotent on
- * (org, run, scope, scope_id, name) so a retried wake doesn't
- * double-insert.
- */
 export function recordRunProceduresApplied(
   db: DbHandle,
   input: {

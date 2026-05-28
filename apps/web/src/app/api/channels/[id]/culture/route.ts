@@ -1,79 +1,38 @@
-import { NextResponse } from "next/server";
-import { parseApiError, upstreamUnavailable } from "@/server/api-response";
-import { daemonFetch, getSessionTokenFromCookie } from "@/server/ujima-daemon";
-import { requireProxyOrgAccess } from "@/server/route-guards";
+import {
+  missingOrganizationIdResponse,
+  organizationIdFromJsonBody,
+  organizationIdFromQuery,
+  proxyDaemonRoute,
+} from "@/server/proxy-daemon-route";
 
 export const dynamic = "force-dynamic";
 
-export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
-  try {
-    const { id } = await params;
-    const url = new URL(request.url);
-    const organizationId = url.searchParams.get("organizationId");
-    if (!organizationId) {
-      return NextResponse.json(
-        { code: "ERR_BAD_REQUEST", message: "organizationId is required." },
-        { status: 400 },
-      );
-    }
-    const forbidden = await requireProxyOrgAccess(organizationId);
-    if (forbidden) return forbidden;
-
-    const response = await daemonFetch(
-      `/api/channels/${encodeURIComponent(id)}/culture?organizationId=${encodeURIComponent(organizationId)}`,
-      {},
-      await getSessionTokenFromCookie(),
-    );
-    const body = await response.json().catch(() => null);
-    if (!response.ok) {
-      return NextResponse.json(
-        parseApiError(body, "Unable to load channel culture."),
-        { status: response.status },
-      );
-    }
-    return NextResponse.json(body, { status: 200 });
-  } catch (error) {
-    return NextResponse.json(
-      upstreamUnavailable(
-        error instanceof Error ? error.message : "Unable to reach the Ujima daemon.",
-      ),
-      { status: 503 },
-    );
-  }
+export async function GET(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const organizationId = organizationIdFromQuery(request);
+  if (!organizationId) return missingOrganizationIdResponse();
+  const { id } = await params;
+  return proxyDaemonRoute(
+    organizationId,
+    `/api/channels/${encodeURIComponent(id)}/culture?organizationId=${encodeURIComponent(organizationId)}`,
+    {},
+    "Unable to load channel culture.",
+  );
 }
 
-export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
-  try {
-    const { id } = await params;
-    const payload = await request.json().catch(() => null);
-    if (!payload || typeof payload !== "object" || typeof (payload as { organizationId?: unknown }).organizationId !== "string") {
-      return NextResponse.json(
-        { code: "ERR_BAD_REQUEST", message: "organizationId is required." },
-        { status: 400 },
-      );
-    }
-    const forbidden = await requireProxyOrgAccess((payload as { organizationId: string }).organizationId);
-    if (forbidden) return forbidden;
-
-    const response = await daemonFetch(
-      `/api/channels/${encodeURIComponent(id)}/culture`,
-      { method: "POST", body: JSON.stringify(payload), headers: { "content-type": "application/json" } },
-      await getSessionTokenFromCookie(),
-    );
-    const body = await response.json().catch(() => null);
-    if (!response.ok) {
-      return NextResponse.json(
-        parseApiError(body, "Unable to save channel culture."),
-        { status: response.status },
-      );
-    }
-    return NextResponse.json(body, { status: 200 });
-  } catch (error) {
-    return NextResponse.json(
-      upstreamUnavailable(
-        error instanceof Error ? error.message : "Unable to reach the Ujima daemon.",
-      ),
-      { status: 503 },
-    );
-  }
+export async function POST(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const parsed = await organizationIdFromJsonBody(request);
+  if (parsed instanceof Response) return parsed;
+  const { id } = await params;
+  return proxyDaemonRoute(
+    parsed.organizationId,
+    `/api/channels/${encodeURIComponent(id)}/culture`,
+    { method: "POST", body: JSON.stringify(parsed.payload) },
+    "Unable to save channel culture.",
+  );
 }

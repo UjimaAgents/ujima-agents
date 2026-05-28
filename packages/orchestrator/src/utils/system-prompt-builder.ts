@@ -100,19 +100,9 @@ export const BASE_WAKE_SCAFFOLD: readonly string[] = Object.freeze([
 export interface CacheableSystemInput {
   /** Output of `buildAgentSystemPrompt` — stable per (agent, thread). */
   baseSystem: string;
-  /**
-   * Org `enforced: true` procedures rendered as
-   * `LAW (do not violate): <body>` — hoisted to the top of Zone 1
-   * above all other procedures so the model sees them first.
-   * Per docs/procedures-as-culture.md "Zone 1 ordering".
-   */
+  /** Enforced org procedures rendered before lower-priority prompt sections. */
   lawText?: string;
-  /**
-   * Combined workspace-culture / channel-culture / own-procedures
-   * one-line index produced by `aggregateProcedures`. Cache-stable
-   * because the aggregator sorts by `name` (not `createdAt`) and
-   * write-time normalisation strips trailing whitespace + CRLF.
-   */
+  /** One-line workspace, channel, and agent procedure index. */
   proceduresText?: string;
   /** Optional task-session goal suffix (still cache-stable per task). */
   goalSuffix?: string;
@@ -145,9 +135,6 @@ export interface CacheableSystemOutput {
 
 export function buildCacheableSystem(input: CacheableSystemInput): CacheableSystemOutput {
   const sections: string[] = [input.baseSystem];
-  // LAW (org enforced=true) lands directly under baseSystem and ABOVE
-  // any goal / guidance / culture sections. The model sees these
-  // first — they cannot be argued down by lower-scope procedures.
   if (input.lawText) sections.push(input.lawText);
   if (input.goalSuffix) sections.push(input.goalSuffix);
   // Bet 1b — memory/procedure write-policy guidance, gated on
@@ -241,14 +228,6 @@ export function hashPromptZone(text: string): string {
   return createHash('sha256').update(text).digest('hex');
 }
 
-/**
- * Multi-scope wake-time culture loader (docs/procedures-as-culture.md).
- * Wraps `aggregateProcedures` with the same swallow-and-fall-back
- * behaviour `loadProceduresForSystemPrompt` uses: a broken procedures
- * directory must NEVER block a wake. Returns `{}` on any error so the
- * caller can spread it into `buildCacheableSystem` and end up with the
- * same prompt as if no culture entries existed.
- */
 export async function loadCultureForSystemPrompt(input: {
   workspaceRoot: string;
   organizationId: string;

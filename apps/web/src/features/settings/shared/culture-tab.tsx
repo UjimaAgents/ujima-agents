@@ -4,18 +4,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ShieldCheck, Trash2 } from "lucide-react";
 import { SettingsPrimaryButton } from "@/features/settings/shared/settings-buttons";
 
-/**
- * Procedures-as-Culture editor (docs/procedures-as-culture.md
- * "UI placement"). Shared between two surfaces:
- *
- *   - Workspace Culture — Settings → Organization → Culture tab
- *   - Channel Culture   — Channel header → Culture tab
- *
- * Same component, two endpoint sets. The only meaningful difference
- * is the `enforced: true` LAW toggle, which is org-scope only. The
- * substrate caps LAW entries at 3 per org.
- */
-
 interface ProcedureSummary {
   scope: "org" | "channel" | "agent";
   scopeId: string;
@@ -48,10 +36,6 @@ interface ApiError {
 
 export interface CultureTabProps {
   organizationId: string;
-  /**
-   * `null` → org scope (`/api/settings/culture`).
-   * String → channel scope (`/api/channels/:id/culture`).
-   */
   channelId: string | null;
 }
 
@@ -63,11 +47,25 @@ function endpointBase(channelId: string | null): string {
     : `/api/settings/culture`;
 }
 
+async function errorMessage(
+  response: Response,
+  fallback: string,
+): Promise<string> {
+  const body = (await response.json().catch(() => null)) as ApiError | null;
+  return body?.message ?? `${fallback} (${response.status}).`;
+}
+
 export function CultureTab({ organizationId, channelId }: CultureTabProps) {
   const [items, setItems] = useState<ProcedureSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [editing, setEditing] = useState<{ name: string; body: string; description: string; enforced: boolean; existing: boolean } | null>(null);
+  const [editing, setEditing] = useState<{
+    name: string;
+    body: string;
+    description: string;
+    enforced: boolean;
+    existing: boolean;
+  } | null>(null);
   const [busy, setBusy] = useState(false);
   const inflightRef = useRef<AbortController | null>(null);
 
@@ -86,8 +84,7 @@ export function CultureTab({ organizationId, channelId }: CultureTabProps) {
         { signal: ac.signal },
       );
       if (!res.ok) {
-        const body = (await res.json().catch(() => null)) as ApiError | null;
-        setError(body?.message ?? `Failed to load (${res.status}).`);
+        setError(await errorMessage(res, "Failed to load"));
         setLoading(false);
         return;
       }
@@ -103,9 +100,6 @@ export function CultureTab({ organizationId, channelId }: CultureTabProps) {
   }, [base, organizationId]);
 
   useEffect(() => {
-    // Defer the first fetch with setTimeout so we don't synchronously
-    // setState in the effect body — matches the channel-tasks-tab
-    // pattern and satisfies the react-hooks/set-state-in-effect lint.
     const initial = setTimeout(() => void refresh(), 0);
     return () => {
       clearTimeout(initial);
@@ -114,7 +108,13 @@ export function CultureTab({ organizationId, channelId }: CultureTabProps) {
   }, [refresh]);
 
   const beginAdd = () => {
-    setEditing({ name: "", body: "", description: "", enforced: false, existing: false });
+    setEditing({
+      name: "",
+      body: "",
+      description: "",
+      enforced: false,
+      existing: false,
+    });
   };
 
   const beginEdit = async (name: string) => {
@@ -124,8 +124,7 @@ export function CultureTab({ organizationId, channelId }: CultureTabProps) {
         `${base}/${encodeURIComponent(name)}?organizationId=${encodeURIComponent(organizationId)}`,
       );
       if (!res.ok) {
-        const body = (await res.json().catch(() => null)) as ApiError | null;
-        setError(body?.message ?? `Failed to load procedure (${res.status}).`);
+        setError(await errorMessage(res, "Failed to load procedure"));
         return;
       }
       const body = (await res.json()) as DetailResponse;
@@ -137,7 +136,9 @@ export function CultureTab({ organizationId, channelId }: CultureTabProps) {
         existing: true,
       });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load procedure.");
+      setError(
+        err instanceof Error ? err.message : "Failed to load procedure.",
+      );
     }
   };
 
@@ -172,8 +173,7 @@ export function CultureTab({ organizationId, channelId }: CultureTabProps) {
         }),
       });
       if (!res.ok) {
-        const body = (await res.json().catch(() => null)) as ApiError | null;
-        setError(body?.message ?? `Save failed (${res.status}).`);
+        setError(await errorMessage(res, "Save failed"));
         return;
       }
       setEditing(null);
@@ -186,7 +186,7 @@ export function CultureTab({ organizationId, channelId }: CultureTabProps) {
   };
 
   const remove = async (name: string) => {
-    if (typeof window !== "undefined" && !window.confirm(`Remove "${name}"?`)) return;
+    if (!window.confirm(`Remove "${name}"?`)) return;
     setBusy(true);
     setError(null);
     try {
@@ -195,8 +195,7 @@ export function CultureTab({ organizationId, channelId }: CultureTabProps) {
         { method: "DELETE" },
       );
       if (!res.ok) {
-        const body = (await res.json().catch(() => null)) as ApiError | null;
-        setError(body?.message ?? `Remove failed (${res.status}).`);
+        setError(await errorMessage(res, "Remove failed"));
         return;
       }
       void refresh();
@@ -221,12 +220,14 @@ export function CultureTab({ organizationId, channelId }: CultureTabProps) {
           </h3>
           <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
             {isOrg
-              ? "Cultural norms that apply across this organization. Every agent sees these at wake time."
-              : "Norms specific to this channel. All agents joining this channel inherit them at wake time."}
+              ? "Cultural norms that apply across this organization."
+              : "Norms specific to this channel."}
           </p>
         </div>
         {!editing ? (
-          <SettingsPrimaryButton onClick={beginAdd}>Add procedure</SettingsPrimaryButton>
+          <SettingsPrimaryButton onClick={beginAdd}>
+            Add procedure
+          </SettingsPrimaryButton>
         ) : null}
       </header>
 
@@ -250,7 +251,8 @@ export function CultureTab({ organizationId, channelId }: CultureTabProps) {
               onChange={(e) => setEditing({ ...editing, name: e.target.value })}
             />
             <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-              Lowercase letters, digits, hyphens (2-64 characters). Cannot be changed after creation.
+              Lowercase letters, digits, hyphens (2-64 characters). Cannot be
+              changed after creation.
             </p>
           </div>
           <div>
@@ -262,7 +264,9 @@ export function CultureTab({ organizationId, channelId }: CultureTabProps) {
               value={editing.description}
               maxLength={200}
               placeholder="One sentence: what this procedure enforces."
-              onChange={(e) => setEditing({ ...editing, description: e.target.value })}
+              onChange={(e) =>
+                setEditing({ ...editing, description: e.target.value })
+              }
             />
           </div>
           <div>
@@ -282,14 +286,19 @@ export function CultureTab({ organizationId, channelId }: CultureTabProps) {
               <input
                 type="checkbox"
                 checked={editing.enforced}
-                onChange={(e) => setEditing({ ...editing, enforced: e.target.checked })}
+                onChange={(e) =>
+                  setEditing({ ...editing, enforced: e.target.checked })
+                }
               />
               <ShieldCheck className="h-4 w-4 text-amber-600" aria-hidden />
-              Mark as LAW (max 3 per org). Renders at the top of the agent system prompt.
+              Mark as LAW (max 3 per org).
             </label>
           ) : null}
           <div className="flex gap-2 pt-1">
-            <SettingsPrimaryButton onClick={() => void submit()} disabled={busy}>
+            <SettingsPrimaryButton
+              onClick={() => void submit()}
+              disabled={busy}
+            >
               {busy ? "Saving…" : editing.existing ? "Save changes" : "Create"}
             </SettingsPrimaryButton>
             <button
@@ -307,7 +316,7 @@ export function CultureTab({ organizationId, channelId }: CultureTabProps) {
         <p className="text-sm text-zinc-500 dark:text-zinc-400">Loading…</p>
       ) : sortedItems.length === 0 && !editing ? (
         <div className="rounded border border-dashed border-zinc-300 p-6 text-center text-sm text-zinc-500 dark:border-zinc-700 dark:text-zinc-400">
-          No {isOrg ? "workspace" : "channel"} culture yet. Click <span className="font-medium">Add procedure</span> to start.
+          No {isOrg ? "workspace" : "channel"} culture yet.
         </div>
       ) : (
         <ul className="space-y-2">

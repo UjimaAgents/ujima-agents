@@ -387,11 +387,6 @@ export class AiService {
     // on every wake. The CI lint at packages/orchestrator/test/
     // cache-stability.test.ts hashes this output across wake reasons
     // to enforce the invariant.
-    // Multi-scope procedures-as-culture (docs/procedures-as-culture.md):
-    // load org + channel + agent procedures and pull LAW entries out
-    // for hoisting to the top of Zone 1. The channel id falls back
-    // through the thread's channel attribution so DM threads (no
-    // channel) just see org + agent culture.
     const cultureChannelId = input.threadId
       ? this.repo.getThread(input.organizationId, input.threadId)?.channelId
       : undefined;
@@ -402,8 +397,6 @@ export class AiService {
       channelId: cultureChannelId,
     });
     if (culture.applied.length > 0) {
-      // Record what the agent saw this wake into audit_events so the
-      // trajectory log can surface `procedures_applied` per run.
       this.repo.recordProceduresApplied?.({
         organizationId: input.organizationId,
         runId: input.runId,

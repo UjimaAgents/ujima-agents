@@ -6,26 +6,10 @@ import {
   type ProcedureScope,
 } from '../utils/procedures.js';
 
-/**
- * Cross-scope procedure reads (docs/procedures-as-culture.md "Tool
- * surface"). Agents call these to audit their full effective rule
- * set across org / channel / agent scopes. Writes are scope-
- * segregated by who's allowed to make them; reads are unified.
- *
- * The agent-scope reader `self.procedure.list` / `self.procedure.view`
- * remains in place for backwards compatibility — those tools simply
- * pass `scope: 'agent'` against the same on-disk layout.
- */
-
 const ScopeFilterSchema = z.enum(['all', 'org', 'channel', 'agent']).default('all');
 
 const ProcedureListSchema = z.object({
   scope: ScopeFilterSchema,
-  /**
-   * Override the channel id for `scope: 'channel'`. Defaults to the
-   * current thread's channel; explicit ids let an agent inspect a
-   * channel it's about to join.
-   */
   channel_id: z.string().min(1).optional(),
 });
 

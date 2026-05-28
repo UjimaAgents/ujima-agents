@@ -1,77 +1,30 @@
-import { NextResponse } from "next/server";
-import { parseApiError, upstreamUnavailable } from "@/server/api-response";
-import { daemonFetch, getSessionTokenFromCookie } from "@/server/ujima-daemon";
-import { requireProxyOrgAccess } from "@/server/route-guards";
+import {
+  missingOrganizationIdResponse,
+  organizationIdFromJsonBody,
+  organizationIdFromQuery,
+  proxyDaemonRoute,
+} from "@/server/proxy-daemon-route";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
-  try {
-    const url = new URL(request.url);
-    const organizationId = url.searchParams.get("organizationId");
-    if (!organizationId) {
-      return NextResponse.json(
-        { code: "ERR_BAD_REQUEST", message: "organizationId is required." },
-        { status: 400 },
-      );
-    }
-    const forbidden = await requireProxyOrgAccess(organizationId);
-    if (forbidden) return forbidden;
-
-    const response = await daemonFetch(
-      `/api/org/culture?organizationId=${encodeURIComponent(organizationId)}`,
-      {},
-      await getSessionTokenFromCookie(),
-    );
-    const body = await response.json().catch(() => null);
-    if (!response.ok) {
-      return NextResponse.json(
-        parseApiError(body, "Unable to load workspace culture."),
-        { status: response.status },
-      );
-    }
-    return NextResponse.json(body, { status: 200 });
-  } catch (error) {
-    return NextResponse.json(
-      upstreamUnavailable(
-        error instanceof Error ? error.message : "Unable to reach the Ujima daemon.",
-      ),
-      { status: 503 },
-    );
-  }
+  const organizationId = organizationIdFromQuery(request);
+  if (!organizationId) return missingOrganizationIdResponse();
+  return proxyDaemonRoute(
+    organizationId,
+    `/api/org/culture?organizationId=${encodeURIComponent(organizationId)}`,
+    {},
+    "Unable to load workspace culture.",
+  );
 }
 
 export async function POST(request: Request) {
-  try {
-    const payload = await request.json().catch(() => null);
-    if (!payload || typeof payload !== "object" || typeof (payload as { organizationId?: unknown }).organizationId !== "string") {
-      return NextResponse.json(
-        { code: "ERR_BAD_REQUEST", message: "organizationId is required." },
-        { status: 400 },
-      );
-    }
-    const forbidden = await requireProxyOrgAccess((payload as { organizationId: string }).organizationId);
-    if (forbidden) return forbidden;
-
-    const response = await daemonFetch(
-      `/api/org/culture`,
-      { method: "POST", body: JSON.stringify(payload), headers: { "content-type": "application/json" } },
-      await getSessionTokenFromCookie(),
-    );
-    const body = await response.json().catch(() => null);
-    if (!response.ok) {
-      return NextResponse.json(
-        parseApiError(body, "Unable to save workspace culture."),
-        { status: response.status },
-      );
-    }
-    return NextResponse.json(body, { status: 200 });
-  } catch (error) {
-    return NextResponse.json(
-      upstreamUnavailable(
-        error instanceof Error ? error.message : "Unable to reach the Ujima daemon.",
-      ),
-      { status: 503 },
-    );
-  }
+  const parsed = await organizationIdFromJsonBody(request);
+  if (parsed instanceof Response) return parsed;
+  return proxyDaemonRoute(
+    parsed.organizationId,
+    "/api/org/culture",
+    { method: "POST", body: JSON.stringify(parsed.payload) },
+    "Unable to save workspace culture.",
+  );
 }
