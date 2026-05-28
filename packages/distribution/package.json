@@ -5,6 +5,21 @@
   },
   "version": "0.0.2",
   "description": "Framework for building Slack-like teams of AI agents — CLI, API, and web UI.",
+  "keywords": [
+    "ai",
+    "skills",
+    "mcp",
+    "nextjs",
+    "openai",
+    "developer-tools",
+    "vscode-extension",
+    "software-development",
+    "agents",
+    "claude",
+    "agent-framework",
+    "agentic-ai",
+    "model-context-protocol"
+  ],
   "license": "MIT",
   "homepage": "https://github.com/UjimaAgents/ujima-agents#readme",
   "bugs": {
