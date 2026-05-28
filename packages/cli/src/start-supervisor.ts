@@ -1,16 +1,16 @@
 import type { ChildProcess } from 'node:child_process';
 
-export type SupervisedChild = {
+export interface SupervisedChild {
   child: ChildProcess;
   label: string;
-};
+}
 
-export type SuperviseOptions = {
+export interface SuperviseOptions {
   /** When true, child exits are expected (user-initiated shutdown). */
   isGracefulShutdown?: () => boolean;
   /** Max time to wait for siblings to exit after the first one stops. */
   shutdownTimeoutMs?: number;
-};
+}
 
 function waitForAllExited(
   processes: SupervisedChild[],
@@ -18,7 +18,6 @@ function waitForAllExited(
 ): Promise<number> {
   return new Promise((resolve) => {
     const children = processes.map(({ child }) => child);
-    let timer: ReturnType<typeof setTimeout> | undefined;
 
     const maxExitCode = () => {
       let max = 0;
@@ -31,8 +30,17 @@ function waitForAllExited(
 
     const onExit = () => tryFinish();
 
+    const timer = setTimeout(() => {
+      for (const child of children) {
+        if (child.exitCode == null && !child.killed) child.kill('SIGKILL');
+      }
+      cleanup();
+      const allExited = children.every((child) => child.exitCode != null);
+      resolve(allExited ? maxExitCode() : Math.max(maxExitCode(), 1));
+    }, timeoutMs);
+
     function cleanup() {
-      if (timer !== undefined) clearTimeout(timer);
+      clearTimeout(timer);
       for (const child of children) {
         child.off('exit', onExit);
       }
@@ -49,15 +57,6 @@ function waitForAllExited(
       child.on('exit', onExit);
     }
     tryFinish();
-
-    timer = setTimeout(() => {
-      for (const child of children) {
-        if (child.exitCode == null && !child.killed) child.kill('SIGKILL');
-      }
-      cleanup();
-      const allExited = children.every((child) => child.exitCode != null);
-      resolve(allExited ? maxExitCode() : Math.max(maxExitCode(), 1));
-    }, timeoutMs);
   });
 }
 

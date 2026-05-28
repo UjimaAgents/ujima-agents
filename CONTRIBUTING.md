@@ -79,6 +79,8 @@ git push origin main && git push origin v0.2.0
 
 The tag **must** match the package version exactly (`v0.2.0` ↔ `"version": "0.2.0"`).
 
+**Important:** Use a **`v` prefix** on the git tag (e.g. `v0.0.1`, not `0.0.1`). The [release workflow](.github/workflows/release.yml) only runs on `v*` tags; a GitHub “pre-release” checkbox alone does not publish to npm.
+
 ### CI publish
 
 [`.github/workflows/release.yml`](.github/workflows/release.yml) runs on `v*` tags: validates the tag, runs tests, assembles `packages/distribution/dist` (compiled runtime only — no TypeScript sources), publishes to npm, and creates a GitHub Release with the VSIX attached.
