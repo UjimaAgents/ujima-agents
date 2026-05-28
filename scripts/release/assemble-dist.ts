@@ -19,6 +19,7 @@ import {
   API_RUNTIME_DIR,
   DIST_OUT_DIR,
   DIST_PKG_DIR,
+  BANNER_PATH,
   DISTRIBUTION_PKG_JSON,
   LICENSE_PATH,
   README_PATH,
@@ -152,27 +153,35 @@ function copyLicense(): void {
   cpSync(LICENSE_PATH, join(DIST_PKG_DIR, "LICENSE"));
 }
 
+function copyBannerForPublish(): void {
+  if (!existsSync(BANNER_PATH)) {
+    console.error(`Missing banner asset: ${BANNER_PATH}`);
+    process.exit(1);
+  }
+  const assetsDir = join(DIST_PKG_DIR, "assets");
+  mkdirSync(assetsDir, {recursive: true});
+  cpSync(BANNER_PATH, join(assetsDir, "banner.png"));
+  log("Copied banner.png into packages/distribution/assets for npm README.");
+}
+
 /** npm displays README.md from packages/distribution — not the monorepo root. */
 function copyReadmeForPublish(): void {
   const pkg = JSON.parse(readFileSync(DISTRIBUTION_PKG_JSON, "utf8")) as {
     repository?: { url?: string };
   };
   const repoUrl = (pkg.repository?.url ?? "https://github.com/UjimaAgents/ujima-agents.git")
+    .replace(/^git\+/, "")
     .replace(/\.git$/, "");
   const branch = "main";
-  const rawBase = repoUrl.replace("https://github.com/", "https://raw.githubusercontent.com/");
 
   let readme = readFileSync(README_PATH, "utf8");
-  readme = readme.replace(
-    /!\[Ujima Agents Banner\]\(\.\/assets\/banner\.png\)/,
-    `![Ujima Agents Banner](${rawBase}/${branch}/assets/banner.png)`,
-  );
+  // Keep ./assets/banner.png — banner ships in the tarball (private repo breaks raw.githubusercontent.com).
   readme = readme.replace(/\]\(\.\/packages\//g, `](${repoUrl}/tree/${branch}/packages/`);
   readme = readme.replace(/\]\(\.\/apps\//g, `](${repoUrl}/tree/${branch}/apps/`);
   readme = readme.replace(/\]\(\.\/LICENSE\)/g, `](${repoUrl}/blob/${branch}/LICENSE)`);
 
   writeFileSync(join(DIST_PKG_DIR, "README.md"), readme, "utf8");
-  log("Copied root README for npm (GitHub URLs for banner and monorepo links).");
+  log("Copied root README for npm.");
 }
 
 /** Remove stray source maps from the publishable tree (Next chunks, tooling, etc.). */
@@ -227,6 +236,7 @@ async function main(): Promise<void> {
   copyWebStandalone();
   await bundleCli();
   copyLicense();
+  copyBannerForPublish();
   copyReadmeForPublish();
   writeDistManifest();
 

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.3] - 2026-05-28
+
 ## [0.0.2] - 2026-05-28
 ### Added
 - **Echo-loop kill** — new `channel.ack` silent terminator that satisfies the mandatory-reply contract without producing a wake-able channel message; vacuous-ack auto-mention suppression in `ConversationService.sendMessage`; per-pair mention back-pressure (`(org, thread, from, to)` window, 3 wakes / 90s) demotes runaway pairs to `channel-read`.
