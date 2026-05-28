@@ -3,7 +3,6 @@
 import type { ApiError } from "@ujima/api-schema";
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { Home, Sparkles } from "lucide-react";
 import { normalizeProviderName } from "./api-contract";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -236,7 +235,6 @@ export function OnboardingExperience({
   starterDraft?: OnboardingDraft;
   roleTemplates?: RolePresetTemplate[];
 }) {
-  const router = useRouter();
   const isHydrated = useSyncExternalStore(subscribe, () => true, () => false);
   const [session, setSession] = useState<PersistedOnboardingState>(() => readPersistedSession(starterDraft));
   const [isSubmitting, setIsSubmitting] = useState(false);

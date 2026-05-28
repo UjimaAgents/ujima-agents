@@ -60,9 +60,9 @@ export async function POST(request: Request) {
       );
     }
 
-    await setSessionCookie(body.sessionToken, body.auth.session.expiresAt);
-
-    return NextResponse.json(stripSessionToken(body), { status: response.status });
+    const nextResponse = NextResponse.json(stripSessionToken(body), { status: response.status });
+    setSessionCookie(nextResponse, body.sessionToken, body.auth.session.expiresAt);
+    return nextResponse;
   } catch (error) {
     return NextResponse.json(
       upstreamUnavailable(

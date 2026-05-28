@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import type { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import type { BootstrapResponse, SessionAuthState, TeamSettingsResponse } from "@ujima/api-schema";
 import type { RolePresetTemplate } from "@/features/onboarding/types";
@@ -59,14 +60,12 @@ export async function getSessionTokenFromCookie(): Promise<string | undefined> {
   return store.get(WEB_SESSION_COOKIE)?.value;
 }
 
-export async function setSessionCookie(token: string, expiresAt: string): Promise<void> {
-  const store = await cookies();
-  store.set(WEB_SESSION_COOKIE, token, sessionCookieOptions(expiresAt));
+export function setSessionCookie(response: NextResponse, token: string, expiresAt: string): void {
+  response.cookies.set(WEB_SESSION_COOKIE, token, sessionCookieOptions(expiresAt));
 }
 
-export async function clearSessionCookie(): Promise<void> {
-  const store = await cookies();
-  store.set(WEB_SESSION_COOKIE, "", {
+export function clearSessionCookie(response: NextResponse): void {
+  response.cookies.set(WEB_SESSION_COOKIE, "", {
     ...sessionCookieOptions(),
     expires: new Date(0),
   });

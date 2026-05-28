@@ -54,7 +54,7 @@ export function LoginForm({ organizations }: LoginFormProps) {
       }
 
       // Full navigation ensures the session cookie from Set-Cookie is sent on the next request.
-      window.location.assign("/workspace");
+      window.location.replace("/workspace");
     });
   };
 
