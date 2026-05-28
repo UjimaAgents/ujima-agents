@@ -1,7 +1,7 @@
 "use client";
 
 import { AlertTriangle, Search } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { McpCatalogServer, McpCatalogTool } from "@ujima/api-schema";
 import type { Member, ToolRiskClass } from "@ujima/shared";
 import { Select } from "@/components/ui/select";
@@ -37,6 +37,17 @@ const RISK_LABEL: Record<ToolRiskClass, string> = {
 
 export function ToolsSubtab({ orgId: _orgId, agents, catalog }: Props) {
   const { catalogByServer } = catalog;
+
+  // Tools tab is the role-agnostic planning surface. If the Agents
+  // tab left a role-scoped snapshot behind, reset to the union view
+  // so attachedAgents/grantedAgents reflect every agent regardless
+  // of role.
+  useEffect(() => {
+    if (catalog.agentViewId !== undefined || catalog.agentViewRole !== undefined) {
+      void catalog.refresh();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const allRows: ToolRow[] = useMemo(() => {
     const out: ToolRow[] = [];

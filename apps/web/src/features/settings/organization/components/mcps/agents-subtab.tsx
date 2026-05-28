@@ -8,7 +8,7 @@ import type {
   McpCatalogTool,
 } from "@ujima/api-schema";
 import type { Member, ToolRiskClass } from "@ujima/shared";
-import type { UseMcpCatalog } from "./use-mcp-catalog";
+import type { CatalogRole, UseMcpCatalog } from "./use-mcp-catalog";
 import { McpEffectiveChip } from "./mcp-effective-chip";
 
 interface Props {
@@ -25,17 +25,23 @@ const RISK_DOT: Record<ToolRiskClass, string> = {
 
 export function AgentsSubtab({ agents, catalog }: Props) {
   const [activeAgentId, setActiveAgentId] = useState<string>(agents[0]?.id ?? "");
+  // Role drives the catalog's exposure decisions: worker-only grants
+  // and supervisor-only attachments are scoped at the runtime
+  // resolver, so the UI mirrors that here. Defaults to 'worker' since
+  // worker is the predominant spirit role.
+  const [role, setRole] = useState<CatalogRole>("worker");
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
-  // Re-fetch catalog with the agent perspective whenever the active agent
-  // changes so the "exposed" + per-agent decision fields are populated.
+  // Re-fetch catalog with the (agent, role) perspective whenever
+  // either selector changes so `exposed` + per-agent decisions
+  // match exactly what listAttachedServersForSpirit would return.
   useEffect(() => {
     if (!activeAgentId) return;
-    void catalog.refresh(activeAgentId);
+    void catalog.refresh(activeAgentId, role);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeAgentId]);
+  }, [activeAgentId, role]);
 
   const servers = useMemo(
     () =>
@@ -130,6 +136,35 @@ export function AgentsSubtab({ agents, catalog }: Props) {
       </aside>
 
       <section className="space-y-3">
+        <div className="flex items-center justify-between gap-2 text-[11px] text-zinc-500 dark:text-zinc-400">
+          <span>Spirit role drives what the agent&rsquo;s model actually sees.</span>
+          <div
+            role="radiogroup"
+            aria-label="Spirit role"
+            className="inline-flex overflow-hidden rounded-md border border-zinc-200 dark:border-zinc-800"
+          >
+            {(["worker", "supervisor"] as const).map((opt) => {
+              const selected = opt === role;
+              return (
+                <button
+                  key={opt}
+                  type="button"
+                  role="radio"
+                  aria-checked={selected}
+                  onClick={() => setRole(opt)}
+                  className={`px-2 py-1 capitalize transition ${
+                    selected
+                      ? "bg-zinc-800 text-white dark:bg-zinc-200 dark:text-zinc-900"
+                      : "text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-900"
+                  }`}
+                >
+                  {opt}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
         {error ? (
           <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-[11px] text-rose-700 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-200">
             {error}

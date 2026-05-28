@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   AgentToolGrantsResponse,
   CatalogAgentView,
@@ -14,15 +14,20 @@ import type { RiskDefaults, ToolRiskClass } from "@ujima/shared";
 import { emptyRiskDefaults } from "@ujima/shared";
 import { settingsFetch, settingsFetchVoid } from "@/features/settings/shared/settings-api";
 
+export type CatalogRole = "worker" | "supervisor";
+
 export interface UseMcpCatalog {
   catalogByServer: Record<string, McpCatalogServer | undefined>;
   riskDefaults: RiskDefaults;
   // Optional per-agent perspective (filled when callers pass agentId).
   agentView: Record<string, CatalogAgentView> | undefined;
   agentViewId: string | undefined;
+  // Role that backs the current catalog snapshot. Undefined = role-
+  // agnostic union (the planning view used by the Tools tab).
+  agentViewRole: CatalogRole | undefined;
   loading: boolean;
   error: string | null;
-  refresh: (agentId?: string) => Promise<void>;
+  refresh: (agentId?: string, role?: CatalogRole) => Promise<void>;
   saveRiskDefaults: (patch: Partial<RiskDefaults>) => Promise<void>;
   setToolClassification: (
     serverId: string,
@@ -51,17 +56,31 @@ export function useMcpCatalog(orgId: string): UseMcpCatalog {
     Record<string, CatalogAgentView> | undefined
   >(undefined);
   const [agentViewId, setAgentViewId] = useState<string | undefined>();
+  const [agentViewRole, setAgentViewRole] = useState<CatalogRole | undefined>();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Keep refs of the current view selectors so post-mutation refreshes
+  // can hit the same (agentId, role) snapshot without invalidating
+  // every callback identity (avoiding cascade re-renders).
+  const viewIdRef = useRef<string | undefined>(undefined);
+  const viewRoleRef = useRef<CatalogRole | undefined>(undefined);
+  useEffect(() => {
+    viewIdRef.current = agentViewId;
+  }, [agentViewId]);
+  useEffect(() => {
+    viewRoleRef.current = agentViewRole;
+  }, [agentViewRole]);
+
   const refresh = useCallback(
-    async (agentId?: string) => {
+    async (agentId?: string, role?: CatalogRole) => {
       if (!orgId) return;
       setLoading(true);
       setError(null);
       try {
         const qs = new URLSearchParams({ organizationId: orgId });
         if (agentId) qs.set("agentId", agentId);
+        if (role) qs.set("role", role);
         const data = await settingsFetch<McpCatalogResponse>(
           `/api/settings/mcps/catalog?${qs.toString()}`,
           undefined,
@@ -73,6 +92,7 @@ export function useMcpCatalog(orgId: string): UseMcpCatalog {
         setRiskDefaults(data.riskDefaults);
         setAgentView(data.agentView);
         setAgentViewId(data.agentViewId);
+        setAgentViewRole(role);
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
       } finally {
@@ -117,14 +137,14 @@ export function useMcpCatalog(orgId: string): UseMcpCatalog {
         "Failed to save risk defaults.",
       );
       setRiskDefaults(data.policy.risk_defaults);
-      await refresh(agentViewId);
+      await refresh(viewIdRef.current, viewRoleRef.current);
     },
-    [orgId, refresh, agentViewId],
+    [orgId, refresh],
   );
 
   const setToolClassification = useCallback(
     async (serverId: string, toolName: string, risk: ToolRiskClass) => {
-      const data = await settingsFetch<ToolClassificationResponse>(
+      await settingsFetch<ToolClassificationResponse>(
         `/api/settings/mcps/${encodeURIComponent(serverId)}/tools/${encodeURIComponent(toolName)}/classification`,
         {
           method: "PATCH",
@@ -133,21 +153,14 @@ export function useMcpCatalog(orgId: string): UseMcpCatalog {
         },
         "Failed to update classification.",
       );
-      setCatalogByServer((prev) => {
-        const server = prev[serverId];
-        if (!server) return prev;
-        return {
-          ...prev,
-          [serverId]: {
-            ...server,
-            tools: server.tools.map((t) =>
-              t.name === toolName ? data.tool : t,
-            ),
-          },
-        };
-      });
+      // Classification edits also shift the effective decision per
+      // agent (risk_defaults route through risk class) so the agent
+      // view/allowlist state must be recomputed. Pre-fix only the
+      // single tool row was patched and the agent perspectives stayed
+      // stale until the next unrelated refresh.
+      await refresh(viewIdRef.current, viewRoleRef.current);
     },
-    [orgId],
+    [orgId, refresh],
   );
 
   const grantToolToAgent = useCallback(
@@ -166,9 +179,9 @@ export function useMcpCatalog(orgId: string): UseMcpCatalog {
         },
         "Failed to grant tool.",
       );
-      await refresh(agentViewId);
+      await refresh(viewIdRef.current, viewRoleRef.current);
     },
-    [orgId, refresh, agentViewId],
+    [orgId, refresh],
   );
 
   const revokeToolFromAgent = useCallback(
@@ -178,9 +191,9 @@ export function useMcpCatalog(orgId: string): UseMcpCatalog {
         { method: "DELETE" },
         "Failed to revoke tool.",
       );
-      await refresh(agentViewId);
+      await refresh(viewIdRef.current, viewRoleRef.current);
     },
-    [orgId, refresh, agentViewId],
+    [orgId, refresh],
   );
 
   // Convenience: load per-agent grants list directly. Used by Agents tab
@@ -190,6 +203,7 @@ export function useMcpCatalog(orgId: string): UseMcpCatalog {
     riskDefaults,
     agentView,
     agentViewId,
+    agentViewRole,
     loading,
     error,
     refresh,
