@@ -3,14 +3,13 @@
 import type { ApiError, AuthSessionResponse } from "@ujima/api-schema";
 import Link from "next/link";
 import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { Select } from "@/components/ui/select";
 
 interface LoginFormProps {
   organizations: { id: string; name: string }[];
 }
 
 export function LoginForm({ organizations }: LoginFormProps) {
-  const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [organizationId, setOrganizationId] = useState(organizations.length === 1 ? organizations[0]?.id ?? "" : "");
@@ -48,8 +47,14 @@ export function LoginForm({ organizations }: LoginFormProps) {
         return;
       }
 
-      router.replace("/workspace");
-      router.refresh();
+      const session = body as AuthSessionResponse | null;
+      if (!session?.auth?.authenticated) {
+        setError("Signed in without a valid session. Try again.");
+        return;
+      }
+
+      // Full navigation ensures the session cookie from Set-Cookie is sent on the next request.
+      window.location.replace("/workspace");
     });
   };
 
@@ -66,19 +71,17 @@ export function LoginForm({ organizations }: LoginFormProps) {
         {needsChoice ? (
           <label className="block">
             <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200">Organization</span>
-            <select
+            <Select
+              id="login-organization"
               value={organizationId}
               onChange={(event) => setOrganizationId(event.target.value)}
-              className="mt-2 w-full rounded-2xl border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm text-zinc-900 outline-none transition focus:border-violet-500 focus:bg-white dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100 dark:focus:bg-zinc-950"
-              required
-            >
-              <option value="">Choose an organization</option>
-              {organizations.map((organization) => (
-                <option key={organization.id} value={organization.id}>
-                  {organization.name}
-                </option>
-              ))}
-            </select>
+              placeholder="Choose an organization"
+              className="mt-2"
+              options={organizations.map((organization) => ({
+                value: organization.id,
+                label: organization.name,
+              }))}
+            />
           </label>
         ) : organizations.length === 1 ? (
           <p className="rounded-2xl border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300">

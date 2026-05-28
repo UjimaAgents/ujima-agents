@@ -11,6 +11,11 @@ import {
   packTarballFileName,
   readDistributionPackage,
 } from './lib/package.ts';
+import {
+  assertDistributionReadme,
+  assertPackagedWebNext,
+  assertPackManifestIncludesReadme,
+} from './lib/pack-verify.ts';
 import { DIST_PKG_DIR, REPO_ROOT } from './lib/paths.ts';
 
 const skipStart = process.argv.includes('--skip-start');
@@ -33,7 +38,10 @@ async function main(): Promise<void> {
     process.exit(packResult.exitCode ?? 1);
   }
 
+  assertDistributionReadme(DIST_PKG_DIR);
+
   const packOutput = packResult.stdout.toString();
+  assertPackManifestIncludesReadme(packOutput);
   const tarballName =
     packOutput.match(new RegExp(`${expectedTarball.replace('.', '\\.')}`))?.[0] ??
     packOutput.match(/[^\s"]+\.tgz/)?.[0]?.replace(/^npm notice\s+/, '').trim();
@@ -81,6 +89,14 @@ async function main(): Promise<void> {
     console.error(`API entry not found: ${apiEntry}`);
     process.exit(1);
   }
+
+  try {
+    assertPackagedWebNext(packageDir);
+  } catch (error) {
+    console.error('[release:smoke]', error);
+    process.exit(1);
+  }
+  console.log('[release:smoke] Web runtime resolves next OK');
 
   const apiProc = Bun.spawn([process.execPath, apiEntry], {
     env: {

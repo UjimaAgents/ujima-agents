@@ -18,11 +18,6 @@ function waitForAllExited(
 ): Promise<number> {
   return new Promise((resolve) => {
     const children = processes.map(({ child }) => child);
-    // `timer` is assigned once (line ~53) but cleanup() captures it
-    // via closure and may run before assignment, so we can't lift to
-    // const-at-init. eslint-disable for that reason.
-    // eslint-disable-next-line prefer-const
-    let timer: ReturnType<typeof setTimeout> | undefined;
 
     const maxExitCode = () => {
       let max = 0;
@@ -35,8 +30,17 @@ function waitForAllExited(
 
     const onExit = () => tryFinish();
 
+    const timer = setTimeout(() => {
+      for (const child of children) {
+        if (child.exitCode == null && !child.killed) child.kill('SIGKILL');
+      }
+      cleanup();
+      const allExited = children.every((child) => child.exitCode != null);
+      resolve(allExited ? maxExitCode() : Math.max(maxExitCode(), 1));
+    }, timeoutMs);
+
     function cleanup() {
-      if (timer !== undefined) clearTimeout(timer);
+      clearTimeout(timer);
       for (const child of children) {
         child.off('exit', onExit);
       }
@@ -53,15 +57,6 @@ function waitForAllExited(
       child.on('exit', onExit);
     }
     tryFinish();
-
-    timer = setTimeout(() => {
-      for (const child of children) {
-        if (child.exitCode == null && !child.killed) child.kill('SIGKILL');
-      }
-      cleanup();
-      const allExited = children.every((child) => child.exitCode != null);
-      resolve(allExited ? maxExitCode() : Math.max(maxExitCode(), 1));
-    }, timeoutMs);
   });
 }
 

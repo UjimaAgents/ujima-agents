@@ -3,6 +3,7 @@ import type { AgentTeamHandle } from '@ujima/framework';
 export interface TeamStore {
   getTeam(organizationId?: string): AgentTeamHandle | null;
   setTeam(team: AgentTeamHandle, organizationId?: string): void;
+  clearTeam(organizationId: string): void;
 }
 
 export function createTeamStore(initial: AgentTeamHandle | null = null): TeamStore {
@@ -20,6 +21,13 @@ export function createTeamStore(initial: AgentTeamHandle | null = null): TeamSto
         teams.set(organizationId, team);
       }
       current = team;
+    },
+    clearTeam: (organizationId) => {
+      const removed = teams.get(organizationId);
+      teams.delete(organizationId);
+      if (current === removed) {
+        current = teams.values().next().value ?? null;
+      }
     },
   };
 }

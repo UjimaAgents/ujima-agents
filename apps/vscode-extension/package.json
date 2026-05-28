@@ -7,7 +7,7 @@
   "publisher": "ujima",
   "repository": {
     "type": "git",
-    "url": "https://github.com/BlazinArtemis/ujima.git"
+    "url": "https://github.com/UjimaAgents/ujima-agents.git"
   },
   "engines": {
     "vscode": "^1.90.0",

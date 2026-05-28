@@ -1,17 +1,45 @@
 {
-  "name": "@ujima/distribution",
-  "version": "0.1.0-alpha.0",
+  "name": "@ujima/agents",
+  "publishConfig": {
+    "access": "public"
+  },
+  "version": "0.0.5",
   "description": "Framework for building Slack-like teams of AI agents — CLI, API, and web UI.",
+  "readme": "README.md",
+  "keywords": [
+    "ai",
+    "skills",
+    "mcp",
+    "nextjs",
+    "openai",
+    "developer-tools",
+    "vscode-extension",
+    "software-development",
+    "agents",
+    "claude",
+    "agent-framework",
+    "agentic-ai",
+    "model-context-protocol"
+  ],
   "license": "MIT",
+  "homepage": "https://www.npmjs.com/package/@ujima/agents",
+  "bugs": {
+    "url": "https://github.com/UjimaAgents/ujima-agents/issues"
+  },
   "repository": {
     "type": "git",
-    "url": "https://github.com/ujima-agents/ujima.git",
+    "url": "git+https://github.com/UjimaAgents/ujima-agents.git",
     "directory": "packages/distribution"
   },
   "bin": {
     "ujima": "./dist/cli.js"
   },
-  "files": ["dist", "LICENSE", "README.md"],
+  "files": [
+    "dist",
+    "assets",
+    "LICENSE",
+    "README.md"
+  ],
   "engines": {
     "node": ">=20"
   },

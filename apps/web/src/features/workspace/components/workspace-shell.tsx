@@ -349,6 +349,7 @@ export function WorkspaceShell(props: {
     organizationId,
     resolvedSelected,
     setMemberActivity,
+    upsertGlobalActiveRun,
   ]);
 
   useEffect(() => {

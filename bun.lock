@@ -186,8 +186,8 @@
       },
     },
     "packages/distribution": {
-      "name": "@ujima/distribution",
-      "version": "0.1.0-alpha.0",
+      "name": "@ujima/agents",
+      "version": "0.0.4",
       "bin": {
         "ujima": "./dist/cli.js",
       },
@@ -823,6 +823,8 @@
 
     "@ujima/agent-runtime": ["@ujima/agent-runtime@workspace:packages/agent-runtime"],
 
+    "@ujima/agents": ["@ujima/agents@workspace:packages/distribution"],
+
     "@ujima/api": ["@ujima/api@workspace:apps/api"],
 
     "@ujima/api-schema": ["@ujima/api-schema@workspace:packages/api-schema"],
@@ -830,8 +832,6 @@
     "@ujima/client-sdk": ["@ujima/client-sdk@workspace:packages/client-sdk"],
 
     "@ujima/context-store": ["@ujima/context-store@workspace:packages/context-store"],
-
-    "@ujima/distribution": ["@ujima/distribution@workspace:packages/distribution"],
 
     "@ujima/event-bus": ["@ujima/event-bus@workspace:packages/event-bus"],
 

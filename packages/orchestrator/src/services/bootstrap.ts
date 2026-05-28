@@ -32,6 +32,9 @@ export class BootstrapService {
     private readonly repo: ApiRepository,
     private readonly teamStore: TeamStore,
     private readonly auth: AuthService,
+    private readonly logTeamLoadFailure: (message: string, context: Record<string, unknown>) => void = () => {
+      /* optional; wired by API logger in production */
+    },
   ) {}
 
   getBootstrap(input: { sessionToken?: string | null } = {}): BootstrapResponse {
@@ -41,7 +44,15 @@ export class BootstrapService {
       : this.repo.getLatestOrganization()?.id;
 
     if (organizationId) {
-      new ConfigSyncService(this.repo, this.teamStore).loadFromStoredConfig(organizationId);
+      try {
+        new ConfigSyncService(this.repo, this.teamStore).loadFromStoredConfig(organizationId);
+      } catch (error) {
+        // Invalid stored team config must not take down /api/bootstrap (web UI polls it on load).
+        this.logTeamLoadFailure(
+          error instanceof Error ? error.message : String(error),
+          { organizationId },
+        );
+      }
     }
 
     const snapshot = this.repo.getBootstrapSnapshot(organizationId);
@@ -50,7 +61,7 @@ export class BootstrapService {
 
     const accessibleOrgs = authState.authenticated
       ? this.auth.listAccessibleOrganizations(input.sessionToken)
-      : this.repo.listOrganizations();
+      : this.repo.listOrganizationsWithSignIn();
 
     return {
       serviceReady: true,

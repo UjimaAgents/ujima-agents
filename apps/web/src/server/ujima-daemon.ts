@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import type { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import type { BootstrapResponse, SessionAuthState, TeamSettingsResponse } from "@ujima/api-schema";
 import type { RolePresetTemplate } from "@/features/onboarding/types";
@@ -48,7 +49,7 @@ export function sessionCookieOptions(expiresAt?: string) {
   return {
     httpOnly: true,
     sameSite: "lax" as const,
-    secure: process.env.NODE_ENV === "production",
+    secure: process.env.UJIMA_WEB_SECURE_COOKIES === "1",
     path: "/",
     expires: expiresAt ? new Date(expiresAt) : undefined,
   };
@@ -59,14 +60,12 @@ export async function getSessionTokenFromCookie(): Promise<string | undefined> {
   return store.get(WEB_SESSION_COOKIE)?.value;
 }
 
-export async function setSessionCookie(token: string, expiresAt: string): Promise<void> {
-  const store = await cookies();
-  store.set(WEB_SESSION_COOKIE, token, sessionCookieOptions(expiresAt));
+export function setSessionCookie(response: NextResponse, token: string, expiresAt: string): void {
+  response.cookies.set(WEB_SESSION_COOKIE, token, sessionCookieOptions(expiresAt));
 }
 
-export async function clearSessionCookie(): Promise<void> {
-  const store = await cookies();
-  store.set(WEB_SESSION_COOKIE, "", {
+export function clearSessionCookie(response: NextResponse): void {
+  response.cookies.set(WEB_SESSION_COOKIE, "", {
     ...sessionCookieOptions(),
     expires: new Date(0),
   });
@@ -106,7 +105,7 @@ export async function daemonFetch(
     throw new DaemonRequestError(
       503,
       "ERR_DAEMON_UNAVAILABLE",
-      `Unable to reach the Ujima daemon at ${url}. Start the API from the repo root (\`bun dev\`) and ensure it is listening on port ${DEFAULT_DAEMON_PORT}. (${reason})`,
+      `Unable to reach the Ujima daemon at ${url}. Run \`ujima start\` (npm install) or \`bun run dev\` (monorepo) and ensure the API is listening on port ${DEFAULT_DAEMON_PORT}. (${reason})`,
     );
   }
 }

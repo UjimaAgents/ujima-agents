@@ -6,8 +6,7 @@ import {
 export { organizationIdFromWorkspaceId, orgWorkspaceId };
 
 export function reloadAfterWorkspaceSwitch(redirectTo?: string): void {
-  window.location.href =
-    redirectTo ?? `${window.location.pathname}${window.location.search}`;
+  window.location.href = redirectTo ?? window.location.pathname;
 }
 
 export async function switchOrganization(

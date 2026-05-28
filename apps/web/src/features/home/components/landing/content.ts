@@ -1,4 +1,4 @@
-export const GITHUB_URL = "https://github.com/ujima-agents/ujima";
+export const GITHUB_URL = "https://github.com/UjimaAgents/ujima-agents";
 
 export const headerLinks = [
   {label: "Concepts", href: "#concepts"},
@@ -12,8 +12,8 @@ export const install = {
   title: "Get the CLI from npm",
   description:
     "Install globally, then run ujima init and ujima start in your project.",
-  npmCommand: "npm install -g ujima-agents",
-  bunCommand: "bun add -g ujima-agents",
+  npmCommand: "npm install -g @ujima/agents",
+  bunCommand: "bun add -g @ujima/agents",
 };
 
 export const hero = {
@@ -46,14 +46,27 @@ export const workflowSteps = [
   },
 ];
 
-export const productSurfaces = [
+export type ProductSurface =
+  | {
+      title: string;
+      text: string;
+      comingSoon: true;
+    }
+  | {
+      title: string;
+      text: string;
+      href: string;
+      external?: boolean;
+    };
+
+export const productSurfaces: ProductSurface[] = [
   {
     title: "Web",
     text: "Channels, DMs, mentions, approvals.",
     href: "/onboarding",
     external: false,
   },
-  {title: "VS Code", text: "Same team inside your editor.", comingSoon: true},
+  { title: "VS Code", text: "Same team inside your editor.", comingSoon: true },
   {
     title: "CLI",
     text: "Install from npm, then init and start.",

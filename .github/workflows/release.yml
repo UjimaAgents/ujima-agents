@@ -6,7 +6,6 @@ on:
 
 permissions:
   contents: write
-  id-token: write
 
 jobs:
   validate:
@@ -51,6 +50,13 @@ jobs:
       - name: Assemble distribution
         run: bun run release:dist
 
+      - name: Verify README and pack contents
+        working-directory: packages/distribution
+        run: |
+          test -s README.md
+          npm pack --dry-run 2>&1 | tee /tmp/pack.log
+          grep -q 'README.md' /tmp/pack.log || (echo 'ERROR: README.md not in npm pack manifest' && exit 1)
+
       - name: Package VSIX
         run: bun --filter ujima-vscode-extension package
 
@@ -63,9 +69,7 @@ jobs:
         working-directory: packages/distribution
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          npm pkg set name=ujima-agents
-          npm publish --access public --provenance
+        run: npm publish --access public
 
       - name: Extract changelog for release
         id: changelog

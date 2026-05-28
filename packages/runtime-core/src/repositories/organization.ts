@@ -96,6 +96,53 @@ export function listOrganizationsForUser(db: DbHandle, emailNormalized: string):
   return result;
 }
 
+/** Organizations that have at least one owner login (excludes failed/partial onboarding). */
+export function listOrganizationsWithSignIn(db: DbHandle): Organization[] {
+  const rows = db
+    .prepare(
+      `SELECT DISTINCT o.id FROM organizations o
+       INNER JOIN auth_users u ON u.organization_id = o.id
+       ORDER BY o.updated_at DESC`,
+    )
+    .all() as Row[];
+  const result: Organization[] = [];
+  for (const row of rows) {
+    const org = getOrganization(db, rowString(row, 'id'));
+    if (org) result.push(org);
+  }
+  return result;
+}
+
+/** Removes org data created during onboarding when credential registration fails afterward. */
+export function deleteOrganizationData(db: DbHandle, organizationId: string): void {
+  const run = (sql: string, ...params: unknown[]) => {
+    db.prepare(sql).run(...params);
+  };
+
+  db.exec('BEGIN');
+  try {
+    run('DELETE FROM auth_sessions WHERE organization_id = ?', organizationId);
+    run('DELETE FROM auth_users WHERE organization_id = ?', organizationId);
+    run('DELETE FROM conversation_reads WHERE organization_id = ?', organizationId);
+    run(
+      'DELETE FROM channel_members WHERE channel_id IN (SELECT id FROM channels WHERE organization_id = ?)',
+      organizationId,
+    );
+    run('DELETE FROM channels WHERE organization_id = ?', organizationId);
+    run('DELETE FROM workspace_members WHERE organization_id = ?', organizationId);
+    run('DELETE FROM members WHERE organization_id = ?', organizationId);
+    run('DELETE FROM provider_credentials WHERE organization_id = ?', organizationId);
+    run('DELETE FROM workspace_settings WHERE organization_id = ?', organizationId);
+    run('DELETE FROM config_field_ownership WHERE organization_id = ?', organizationId);
+    run('DELETE FROM workspaces WHERE id = ?', `ws_${organizationId}`);
+    run('DELETE FROM organizations WHERE id = ?', organizationId);
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
 export function saveOrganization(db: DbHandle, organization: Organization): Organization {
   const timestamp = now();
   const workspaceTimestamp = Date.now();

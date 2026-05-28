@@ -61,6 +61,7 @@ describe('BootstrapService', () => {
     const repo = {
       getLatestOrganization: () => org1,
       listOrganizations: () => [org1, org2],
+      listOrganizationsWithSignIn: () => [org1, org2],
       getOrganization: (organizationId: string) => (organizationId === org2.id ? org2 : org1),
       getWorkspaceSetting: (_organizationId: string, key: string) => {
         if (key !== 'team.config') return null;
@@ -109,5 +110,77 @@ describe('BootstrapService', () => {
     expect(response.team?.name).toBe('Session Org');
     expect(teamStore.getTeam()?.config.name).toBe('Session Org');
     expect(service.getBootstrap().organizations.map((org) => org.id)).toEqual([org1.id, org2.id]);
+  });
+
+  it('returns bootstrap when stored team config fails validation', () => {
+    const org = OrganizationSchema.parse({
+      id: 'org-bad',
+      name: 'Bad Config Org',
+      workspace: { root: '/tmp/bad', roleScopes: {} },
+      organizationChart: { reportsTo: {} },
+    });
+    const invalidStoredTeam = {
+      name: 'Bad Config Org',
+      workspace: { root: '/tmp/bad' },
+      roles: [
+        {
+          name: 'frontend-engineer',
+          title: 'Frontend',
+          instructions: 'Build UI.',
+          tools: [],
+          provider: 'deepseek',
+        },
+      ],
+      agents: [{ name: 'dev', roleName: 'frontend-engineer' }],
+      channels: [],
+      providers: {},
+    };
+    let deletedTeamConfig = false;
+    const repo = {
+      getLatestOrganization: () => org,
+      listOrganizations: () => [org],
+      listOrganizationsWithSignIn: () => [org],
+      getOrganization: () => org,
+      getWorkspaceSetting: (_organizationId: string, key: string) =>
+        key === 'team.config' ? JSON.stringify(invalidStoredTeam) : null,
+      deleteWorkspaceSetting: (_organizationId: string, key: string) => {
+        if (key === 'team.config') deletedTeamConfig = true;
+      },
+      listMembers: () => [],
+      listAllChannels: () => [],
+      listProviderCredentials: () => ({}),
+      saveWorkspaceSetting: () => undefined,
+      getBootstrapSnapshot: () => ({
+        organization: org,
+        members: [],
+        channels: [],
+        pendingApprovals: [],
+        activeRuns: [],
+        providerCredentials: {},
+      }),
+      listOrganizationSkillInstalls: () => [],
+    };
+    const auth = {
+      getAuthState: () => ({
+        authenticated: false,
+        user: null,
+        member: null,
+        session: null,
+      }),
+      listAccessibleOrganizations: () => [org],
+    };
+    const failures: Record<string, unknown>[] = [];
+    const teamStore = createTeamStore();
+    const service = new BootstrapService(repo as never, teamStore, auth as never, (message, context) => {
+      failures.push({ message, ...context });
+    });
+
+    const response = service.getBootstrap();
+
+    expect(response.serviceReady).toBe(true);
+    expect(response.organization?.id).toBe(org.id);
+    expect(response.team).toBeNull();
+    expect(deletedTeamConfig).toBe(true);
+    expect(failures).toHaveLength(0);
   });
 });

@@ -15,7 +15,7 @@ export function readDistributionPackage(): DistributionPackage {
   return { name: pkg.name, version: pkg.version };
 }
 
-/** npm pack filename for a workspace package (e.g. @ujima/distribution → ujima-distribution-1.0.0.tgz). */
+/** npm pack filename for a workspace package (e.g. @ujima/agents → ujima-agents-1.0.0.tgz). */
 export function packTarballFileName(name: string, version: string): string {
   const base = name.replace(/^@/, '').replace(/\//g, '-');
   return `${base}-${version}.tgz`;
