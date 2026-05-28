@@ -135,9 +135,20 @@ export class OnboardingService {
       }
     }
 
+    const workspaceRoot = resolve(input.workspaceRoot);
+    const normalizedNewRoot = workspaceRoot.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+    const existingOrgs = this.repo.listOrganizations();
+    for (const org of existingOrgs) {
+      if (!org.workspace?.root) continue;
+      const normalizedExisting = resolve(org.workspace.root.trim()).replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+      if (normalizedExisting === normalizedNewRoot) {
+        throw new Error(`A workspace with the project folder "${org.workspace.root}" already exists.`);
+      }
+    }
+
     const team: AgentTeamHandle = loadAgentTeam({
       name: input.team.name ?? input.organizationName,
-      workspace: { root: resolve(input.workspaceRoot) },
+      workspace: { root: workspaceRoot },
       agents: input.team.agents ?? [],
       roles: input.team.roles ?? [],
       channels: input.team.channels ?? [],
