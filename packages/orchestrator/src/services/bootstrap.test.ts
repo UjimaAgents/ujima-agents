@@ -61,6 +61,7 @@ describe('BootstrapService', () => {
     const repo = {
       getLatestOrganization: () => org1,
       listOrganizations: () => [org1, org2],
+      listOrganizationsWithSignIn: () => [org1, org2],
       getOrganization: (organizationId: string) => (organizationId === org2.id ? org2 : org1),
       getWorkspaceSetting: (_organizationId: string, key: string) => {
         if (key !== 'team.config') return null;
@@ -138,6 +139,7 @@ describe('BootstrapService', () => {
     const repo = {
       getLatestOrganization: () => org,
       listOrganizations: () => [org],
+      listOrganizationsWithSignIn: () => [org],
       getOrganization: () => org,
       getWorkspaceSetting: (_organizationId: string, key: string) =>
         key === 'team.config' ? JSON.stringify(invalidStoredTeam) : null,

@@ -1,7 +1,13 @@
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { OnboardingRequestSchema, OnboardingResponseSchema, BootstrapResponseSchema, ApiErrorSchema } from '@ujima/api-schema';
-import type { AuthService, BootstrapService, OnboardingService } from '@ujima/orchestrator';
+import type {
+  ApiRepository,
+  AuthService,
+  BootstrapService,
+  OnboardingService,
+  TeamStore,
+} from '@ujima/orchestrator';
 import { readSessionToken } from '../session-token.js';
 import { apiError, errorMessage } from './route-errors.js';
 
@@ -9,13 +15,15 @@ export interface OnboardingRoutesOptions {
   auth: AuthService;
   bootstrap: BootstrapService;
   onboarding: OnboardingService;
+  repo: ApiRepository;
+  teamStore: TeamStore;
 }
 
 export function registerOnboardingRoutes(
   _app: FastifyInstance,
   options: OnboardingRoutesOptions,
 ): void {
-  const { auth, bootstrap, onboarding } = options;
+  const { auth, bootstrap, onboarding, repo, teamStore } = options;
   const app = _app.withTypeProvider<ZodTypeProvider>();
 
   app.get('/bootstrap', {
@@ -41,6 +49,7 @@ export function registerOnboardingRoutes(
       },
     },
   }, async (req, reply) => {
+    let organizationId: string | undefined;
     try {
       const result = await onboarding.onboard({
         ...req.body,
@@ -49,6 +58,7 @@ export function registerOnboardingRoutes(
           organizationChart: req.body.team.organizationChart ?? { reportsTo: {} },
         },
       });
+      organizationId = result.organization.id;
       const owner = result.members.find(
         (member) => member.kind === 'human' && member.roleName === 'owner',
       );
@@ -72,6 +82,14 @@ export function registerOnboardingRoutes(
         sessionToken: session.sessionToken,
       };
     } catch (err) {
+      if (organizationId) {
+        try {
+          repo.deleteOrganizationData(organizationId);
+          teamStore.clearTeam(organizationId);
+        } catch {
+          // Best-effort rollback so a failed sign-up does not strand a login-less org.
+        }
+      }
       return apiError(reply, 400, errorMessage(err));
     }
   });

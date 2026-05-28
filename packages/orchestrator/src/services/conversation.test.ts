@@ -187,6 +187,7 @@ function createConversationFixture() {
     saveOrganization: (value: unknown) => value,
     getLatestOrganization: () => null,
     listOrganizations: () => [],
+    listOrganizationsWithSignIn: () => [],
     saveWorkspaceSetting: () => undefined,
     getWorkspaceSetting: () => null,
     findOrganizationIdByWorkspaceSetting: () => null,

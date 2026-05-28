@@ -21,6 +21,7 @@ import type {
   SupervisorTodoService,
   TaskPromoterService,
   TaskSessionService,
+  TeamStore,
   WorkspaceService,
 } from "@ujima/orchestrator";
 import type {UjimaEvent} from "@ujima/shared";
@@ -85,6 +86,7 @@ export interface TransportOptions {
       approvals: ApprovalService;
       auth: AuthService;
       bootstrap: BootstrapService;
+      teamStore: TeamStore;
       onboarding: OnboardingService;
       scheduler?: SchedulerService;
       settings: SettingsService;
@@ -298,6 +300,8 @@ export function createTransport(opts: TransportOptions): Transport {
           auth: services.auth,
           bootstrap: services.bootstrap,
           onboarding: services.onboarding,
+          repo: opts.apiServices.repo,
+          teamStore: services.teamStore,
         });
         registerSettingsRoutes(api, {
           repo: opts.apiServices.repo,

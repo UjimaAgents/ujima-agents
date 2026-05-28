@@ -117,6 +117,8 @@ import {
   getProviderCredential as readProviderCredential,
   listOrganizations as readOrganizations,
   listOrganizationsForUser as readOrganizationsForUser,
+  listOrganizationsWithSignIn as readOrganizationsWithSignIn,
+  deleteOrganizationData as removeOrganizationData,
   listProviderCredentials as readProviderCredentials,
   saveWorkspaceSetting as writeWorkspaceSetting,
   saveOrganization as writeOrganization,
@@ -212,6 +214,8 @@ export class Repository {
   listOrganizations = (): Organization[] => readOrganizations(this.db);
   listOrganizationsForUser = (emailNormalized: string): Organization[] =>
     readOrganizationsForUser(this.db, emailNormalized);
+  listOrganizationsWithSignIn = (): Organization[] => readOrganizationsWithSignIn(this.db);
+  deleteOrganizationData = (organizationId: string): void => removeOrganizationData(this.db, organizationId);
   saveOrganization = (organization: Organization): Organization =>
     writeOrganization(this.db, organization);
   saveWorkspaceSetting = (organizationId: string, key: string, value: string): void =>

@@ -337,9 +337,22 @@ export function OnboardingExperience({
         return;
       }
 
+      if (
+        !body ||
+        typeof body !== "object" ||
+        !("auth" in body) ||
+        typeof body.auth !== "object" ||
+        body.auth === null ||
+        !("authenticated" in body.auth) ||
+        body.auth.authenticated !== true
+      ) {
+        setSubmitError("Onboarding finished without a signed-in session. Try again or sign in if your organization was created.");
+        return;
+      }
+
       window.localStorage.removeItem(ONBOARDING_STORAGE_KEY);
-      router.replace("/workspace");
-      router.refresh();
+      // Full navigation ensures the session cookie from Set-Cookie is sent on the next request.
+      window.location.assign("/workspace");
     } catch (error) {
       setSubmitError(error instanceof Error ? error.message : "Unable to complete onboarding right now.");
     } finally {
