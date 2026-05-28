@@ -1,9 +1,9 @@
-# ujima-agents
+# @ujima/agents
 
 Install globally, then initialize and start the local Ujima stack:
 
 ```bash
-npm install -g ujima-agents
+npm install -g @ujima/agents
 ujima init --name "My Team" --owner "Alex" --workspace "$(pwd)"
 ujima start
 ```

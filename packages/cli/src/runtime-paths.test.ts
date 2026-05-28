@@ -22,7 +22,7 @@ describe('runtime-paths', () => {
     writeFileSync(join(root, 'bun.lock'), '');
     writeFileSync(
       join(distPkg, 'package.json'),
-      JSON.stringify({ name: '@ujima/distribution', version: '0.1.0' }),
+      JSON.stringify({ name: '@ujima/agents', version: '0.1.0' }),
     );
 
     expect(findMonorepoRoot(distPkg)).toBe(root);

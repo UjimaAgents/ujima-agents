@@ -12,8 +12,8 @@ export const install = {
   title: "Get the CLI from npm",
   description:
     "Install globally, then run ujima init and ujima start in your project.",
-  npmCommand: "npm install -g ujima-agents",
-  bunCommand: "bun add -g ujima-agents",
+  npmCommand: "npm install -g @ujima/agents",
+  bunCommand: "bun add -g @ujima/agents",
 };
 
 export const hero = {

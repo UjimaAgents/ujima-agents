@@ -63,9 +63,7 @@ jobs:
         working-directory: packages/distribution
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          npm pkg set name=ujima-agents
-          npm publish --access public --provenance
+        run: npm publish --access public --provenance
 
       - name: Extract changelog for release
         id: changelog

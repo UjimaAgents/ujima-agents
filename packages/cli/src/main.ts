@@ -228,7 +228,7 @@ async function cmdStart(argv: string[]): Promise<void> {
   if (!root) {
     process.stderr.write(
       'ujima start: no packaged runtime found and not inside the Ujima monorepo.\n' +
-        'Install globally: npm install -g ujima-agents\n' +
+        'Install globally: npm install -g @ujima/agents\n' +
         'Or run from a clone of https://github.com/ujima-agents/ujima\n',
     );
     process.exit(1);

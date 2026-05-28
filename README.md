@@ -2,7 +2,7 @@
 
 ![Ujima Agents Banner](./assets/banner.png)
 
-[![npm version](https://img.shields.io/npm/v/ujima-agents.svg)](https://www.npmjs.com/package/ujima-agents)
+[![npm version](https://img.shields.io/npm/v/@ujima/agents.svg)](https://www.npmjs.com/package/@ujima/agents)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](http://makeapullrequest.com)
 
@@ -46,9 +46,9 @@ The fastest path to run Ujima is installing our CLI package from **npm**.
 
 #### 1. Install Ujima globally
 ```bash
-npm install -g ujima-agents
+npm install -g @ujima/agents
 # or
-bun add -g ujima-agents
+bun add -g @ujima/agents
 ```
 
 #### 2. Initialize your workspace

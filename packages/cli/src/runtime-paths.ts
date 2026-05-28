@@ -7,7 +7,11 @@ function isDistributionPackageDir(dir: string): boolean {
   if (!existsSync(pkgPath)) return false;
   try {
     const pkg = JSON.parse(readFileSync(pkgPath, 'utf8')) as { name?: string };
-    return pkg.name === '@ujima/distribution' || pkg.name === 'ujima-agents-publish';
+    return (
+      pkg.name === '@ujima/agents' ||
+      pkg.name === '@ujima/distribution' ||
+      pkg.name === 'ujima-agents-publish'
+    );
   } catch {
     return false;
   }
