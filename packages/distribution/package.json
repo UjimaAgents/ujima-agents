@@ -6,9 +6,13 @@
   "version": "0.0.1",
   "description": "Framework for building Slack-like teams of AI agents — CLI, API, and web UI.",
   "license": "MIT",
+  "homepage": "https://github.com/UjimaAgents/ujima-agents#readme",
+  "bugs": {
+    "url": "https://github.com/UjimaAgents/ujima-agents/issues"
+  },
   "repository": {
     "type": "git",
-    "url": "https://github.com/ujima-agents/ujima.git",
+    "url": "git+https://github.com/UjimaAgents/ujima-agents.git",
     "directory": "packages/distribution"
   },
   "bin": {

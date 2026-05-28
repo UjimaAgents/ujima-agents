@@ -5,6 +5,7 @@
 [![npm version](https://img.shields.io/npm/v/@ujima/agents.svg)](https://www.npmjs.com/package/@ujima/agents)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](http://makeapullrequest.com)
+[![X @vincent_presh](https://img.shields.io/badge/X-@vincent_presh-000000?logo=x)](https://x.com/vincent_presh)
 
 ---
 
@@ -73,7 +74,7 @@ When the source is available, you will be able to clone and develop locally:
 #### 1. Clone & Bootstrap the Stack
 ```bash
 # Clone the repository
-git clone https://github.com/ujima-agents/ujima.git
+git clone https://github.com/UjimaAgents/ujima-agents.git
 cd ujima
 
 # Install monorepo dependencies
@@ -254,6 +255,12 @@ bun test
 - **Bun** is the designated package manager. Do not use npm or pnpm commands.
 - Shared API contracts under `packages/shared` are load-bearing; modifications require executing `bun run build` to update dependent typing across the workspaces.
 - File system validation guards in `packages/shared/src/paths.ts` must never be compromised or skipped.
+
+---
+
+## Contact
+
+Questions or updates: follow [@vincent_presh on X](https://x.com/vincent_presh).
 
 ---
 

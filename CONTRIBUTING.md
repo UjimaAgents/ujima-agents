@@ -83,7 +83,7 @@ The tag **must** match the package version exactly (`v0.2.0` ↔ `"version": "0.
 
 ### CI publish
 
-[`.github/workflows/release.yml`](.github/workflows/release.yml) runs on `v*` tags: validates the tag, runs tests, assembles `packages/distribution/dist` (compiled runtime only — no TypeScript sources), publishes to npm, and creates a GitHub Release with the VSIX attached.
+[`.github/workflows/release.yml`](.github/workflows/release.yml) runs on `v*` tags: validates the tag, runs tests, assembles `packages/distribution/dist` (compiled runtime only — no TypeScript sources), copies the root `README.md` into `packages/distribution` for npm, publishes to npm, and creates a GitHub Release with the VSIX attached.
 
 Set the repository secret **`NPM_TOKEN`** (npm automation token with publish access to `@ujima` on org **ujima**).
 

@@ -1,6 +1,6 @@
 # @ujima/framework
 
-Core SDK for [Ujima Agents](https://github.com/ujima-agents/ujima): a framework for building Slack-like teams of AI agents, with roles and workspace-bounded execution.
+Core SDK for [Ujima Agents](https://github.com/UjimaAgents/ujima-agents): a framework for building Slack-like teams of AI agents, with roles and workspace-bounded execution.
 
 Define roles, agents, channels, policies, and workspace scopes in code — the shape the web UI and VS Code extension both consume.
 

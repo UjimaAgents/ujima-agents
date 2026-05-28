@@ -1,4 +1,4 @@
-export const GITHUB_URL = "https://github.com/ujima-agents/ujima";
+export const GITHUB_URL = "https://github.com/UjimaAgents/ujima-agents";
 
 export const headerLinks = [
   {label: "Concepts", href: "#concepts"},

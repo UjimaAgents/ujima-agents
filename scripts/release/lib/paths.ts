@@ -10,3 +10,4 @@ export const WEB_RUNTIME_DIR = join(RUNTIME_DIR, 'web');
 export const DISTRIBUTION_PKG_JSON = join(DIST_PKG_DIR, 'package.json');
 export const CHANGELOG_PATH = join(REPO_ROOT, 'CHANGELOG.md');
 export const LICENSE_PATH = join(REPO_ROOT, 'LICENSE');
+export const README_PATH = join(REPO_ROOT, 'README.md');
