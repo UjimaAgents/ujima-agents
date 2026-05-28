@@ -623,8 +623,17 @@ export class McpRegistryService {
 
   /**
    * Grant a single tool to an agent. Idempotent. Auto-attaches the MCP
-   * server (with the requested scope) if no attachment exists, so the
-   * UI can say "give Ruby browser_navigate" in one click.
+   * server if no attachment exists.
+   *
+   * Scope rules:
+   *   - existing MCP attachment → mirror its scope so the grant lines
+   *     up with whatever spirit role the operator already authorised.
+   *   - no MCP attachment + caller specified scope → use it.
+   *   - no MCP attachment + no caller scope → default to 'both' so a
+   *     per-tool grant works regardless of which spirit role runs.
+   *     ('worker' is the wrong default here because a single-tool
+   *     grant is a precise op and the operator probably wants it to
+   *     be visible everywhere the agent can act.)
    */
   grantToolToAgent(input: {
     organizationId: string;
@@ -637,6 +646,13 @@ export class McpRegistryService {
     if (server.status === 'disabled') {
       throw new Error(`MCP server "${server.name}" is disabled`);
     }
+    // Reject phantom tool names BEFORE any persistence. A typo could
+    // otherwise persist a grant that doesn't match any live tool,
+    // flipping the agent into an empty-allowlist mode → the runtime
+    // palette filter would strip every real tool and the server would
+    // vanish from the agent's model context.
+    this.requireTool(input.organizationId, input.mcpServerId, input.toolName);
+
     const member = this.repo.getMember(input.organizationId, input.memberId);
     if (!member) throw new Error(`Member not found: ${input.memberId}`);
     if (member.kind !== 'agent') {
@@ -647,18 +663,22 @@ export class McpRegistryService {
     }
 
     const now = new Date().toISOString();
-    const scope = input.scope ?? 'worker';
-
-    // Ensure the MCP attachment exists. Without it, the runtime can't
-    // see the server at all, so the per-tool grant would be silent.
     const existingAttachments = this.repo.listAgentMcpAttachments(
       input.organizationId,
       input.memberId,
     );
-    const hasServerAttachment = existingAttachments.some(
+    const existingServerAttachment = existingAttachments.find(
       (a) => a.mcpServerId === input.mcpServerId,
     );
-    if (!hasServerAttachment) {
+
+    // Mirror the existing attachment's scope so the grant matches what
+    // the operator authorised at the server level. When auto-attaching
+    // and no scope is supplied, default to 'both' so the grant works
+    // for whichever spirit role runs.
+    const scope =
+      input.scope ?? existingServerAttachment?.scope ?? 'both';
+
+    if (!existingServerAttachment) {
       this.repo.saveAgentMcpAttachment({
         id: randomUUID(),
         organizationId: input.organizationId,
@@ -711,6 +731,10 @@ export class McpRegistryService {
     updatedBy: string;
   }): McpToolClassification {
     this.requireServer(input.organizationId, input.serverId);
+    // Validate up-front so a typo or removed tool can't leave an
+    // orphaned manual row in mcp_tool_classifications — a future tool
+    // with the same name would otherwise inherit the wrong class.
+    this.requireTool(input.organizationId, input.serverId, input.toolName);
     return this.repo.upsertMcpToolClassification({
       organizationId: input.organizationId,
       mcpServerId: input.serverId,
@@ -887,5 +911,27 @@ export class McpRegistryService {
       throw new Error(`MCP server not found: ${serverId}`);
     }
     return server;
+  }
+
+  // Validates the tool exists in the cached inventory. Used by writes
+  // that would otherwise corrupt downstream state: a grant on a phantom
+  // tool would flip the runtime palette into an empty-allowlist mode
+  // and the server would vanish from the agent's prompt; a manual
+  // classification on a phantom name would later attach itself to any
+  // future tool with the same name.
+  //
+  // Throws "Tool not found ..." so the route mapper can return 404.
+  private requireTool(
+    organizationId: string,
+    serverId: string,
+    toolName: string,
+  ): void {
+    const cache = this.repo.getMcpToolCache(organizationId, serverId);
+    const exists = cache?.tools?.some((t) => t.name === toolName) ?? false;
+    if (!exists) {
+      throw new Error(
+        `Tool not found: "${toolName}" on MCP server "${serverId}". Run Test on the server first or check the tool name.`,
+      );
+    }
   }
 }

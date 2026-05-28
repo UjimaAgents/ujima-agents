@@ -785,6 +785,202 @@ describe('McpRegistryService — Phase 3 MCP integration', () => {
     expect(viewB[`${server.id}::tool_b`]?.exposed).toBe(true);
     expect(viewB[`${server.id}::tool_b`]?.exposureReason).toBe('all-tools-mode');
   });
+
+  // Regression: a phantom toolName must NOT persist. Pre-fix, granting
+  // an unknown tool would write a row that flipped the agent into an
+  // empty-allowlist mode for the server, and the runtime palette
+  // filter would strip every real tool — the server would vanish from
+  // the agent's prompt context entirely.
+  it('grantToolToAgent: rejects an unknown tool name and writes nothing', async () => {
+    const fixture = await createFixture();
+    tempDirs.push(fixture.archiveRoot);
+
+    const server = fixture.registry.create({
+      organizationId: fixture.organizationId,
+      createdBy: fixture.ownerId,
+      name: 'phantom-mcp',
+      transport: 'stdio',
+      command: 'x',
+    });
+    fixture.repo.saveMcpToolCache({
+      mcpServerId: server.id,
+      organizationId: fixture.organizationId,
+      tools: [{ name: 'real_tool', description: '' }],
+      fetchedAt: new Date().toISOString(),
+    });
+
+    expect(() =>
+      fixture.registry.grantToolToAgent({
+        organizationId: fixture.organizationId,
+        memberId: 'agent-x',
+        mcpServerId: server.id,
+        toolName: 'phantom_tool',
+      }),
+    ).toThrow(/Tool not found/);
+
+    // Neither the per-tool grant nor the auto-attach happened.
+    expect(
+      fixture.repo.listAgentToolAttachments(fixture.organizationId, 'agent-x', server.id),
+    ).toHaveLength(0);
+    expect(
+      fixture.repo
+        .listAgentMcpAttachments(fixture.organizationId, 'agent-x')
+        .filter((a) => a.mcpServerId === server.id),
+    ).toHaveLength(0);
+  });
+
+  // Regression: classification PATCH used to write the manual row
+  // first and only check whether the tool existed afterwards, so a
+  // typo persisted a row that a future tool with the same name would
+  // inherit.
+  it('setToolClassification: rejects unknown tool name with no manual row written', async () => {
+    const fixture = await createFixture();
+    tempDirs.push(fixture.archiveRoot);
+
+    const server = fixture.registry.create({
+      organizationId: fixture.organizationId,
+      createdBy: fixture.ownerId,
+      name: 'classify-mcp',
+      transport: 'stdio',
+      command: 'x',
+    });
+    fixture.repo.saveMcpToolCache({
+      mcpServerId: server.id,
+      organizationId: fixture.organizationId,
+      tools: [{ name: 'real_tool', description: '' }],
+      fetchedAt: new Date().toISOString(),
+    });
+
+    expect(() =>
+      fixture.registry.setToolClassification({
+        organizationId: fixture.organizationId,
+        serverId: server.id,
+        toolName: 'phantom_tool',
+        risk: 'destructive',
+        updatedBy: 'admin',
+      }),
+    ).toThrow(/Tool not found/);
+
+    expect(
+      fixture.repo.getMcpToolClassification(
+        fixture.organizationId,
+        server.id,
+        'phantom_tool',
+      ),
+    ).toBeNull();
+  });
+
+  // Bot finding: a per-tool grant that auto-attaches the MCP must NOT
+  // hardcode scope='worker' — supervisor-only spirits would never see
+  // the granted tool. Defaulting to 'both' makes the grant work
+  // regardless of which spirit role runs.
+  it('grantToolToAgent: auto-attaches with scope="both" when no attachment exists', async () => {
+    const fixture = await createFixture();
+    tempDirs.push(fixture.archiveRoot);
+
+    const server = fixture.registry.create({
+      organizationId: fixture.organizationId,
+      createdBy: fixture.ownerId,
+      name: 'scope-mcp',
+      transport: 'stdio',
+      command: 'x',
+    });
+    fixture.repo.saveMcpToolCache({
+      mcpServerId: server.id,
+      organizationId: fixture.organizationId,
+      tools: [{ name: 't', description: '' }],
+      fetchedAt: new Date().toISOString(),
+    });
+
+    fixture.registry.grantToolToAgent({
+      organizationId: fixture.organizationId,
+      memberId: 'agent-x',
+      mcpServerId: server.id,
+      toolName: 't',
+    });
+
+    const mcpAttachments = fixture.repo
+      .listAgentMcpAttachments(fixture.organizationId, 'agent-x')
+      .filter((a) => a.mcpServerId === server.id);
+    expect(mcpAttachments).toHaveLength(1);
+    expect(mcpAttachments[0]!.scope).toBe('both');
+
+    const toolGrants = fixture.repo.listAgentToolAttachments(
+      fixture.organizationId,
+      'agent-x',
+      server.id,
+    );
+    expect(toolGrants).toHaveLength(1);
+    expect(toolGrants[0]!.scope).toBe('both');
+
+    // Both spirit roles can resolve the server through the runtime
+    // lookup, so the grant is reachable from either spawn path.
+    expect(
+      fixture.repo.listAttachedServersForSpirit(
+        fixture.organizationId,
+        'agent-x',
+        'worker',
+      ),
+    ).toHaveLength(1);
+    expect(
+      fixture.repo.listAttachedServersForSpirit(
+        fixture.organizationId,
+        'agent-x',
+        'supervisor',
+      ),
+    ).toHaveLength(1);
+  });
+
+  // Companion: when an MCP attachment already exists, the per-tool
+  // grant must mirror its scope rather than overwriting it or
+  // defaulting elsewhere. Avoids silently widening or narrowing what
+  // the operator already authorised.
+  it('grantToolToAgent: mirrors existing attachment scope on the grant row', async () => {
+    const fixture = await createFixture();
+    tempDirs.push(fixture.archiveRoot);
+
+    const server = fixture.registry.create({
+      organizationId: fixture.organizationId,
+      createdBy: fixture.ownerId,
+      name: 'mirror-mcp',
+      transport: 'stdio',
+      command: 'x',
+    });
+    fixture.repo.saveMcpToolCache({
+      mcpServerId: server.id,
+      organizationId: fixture.organizationId,
+      tools: [{ name: 't', description: '' }],
+      fetchedAt: new Date().toISOString(),
+    });
+    fixture.registry.attach({
+      organizationId: fixture.organizationId,
+      memberId: 'agent-x',
+      mcpServerId: server.id,
+      scope: 'supervisor',
+    });
+
+    fixture.registry.grantToolToAgent({
+      organizationId: fixture.organizationId,
+      memberId: 'agent-x',
+      mcpServerId: server.id,
+      toolName: 't',
+    });
+
+    const toolGrants = fixture.repo.listAgentToolAttachments(
+      fixture.organizationId,
+      'agent-x',
+      server.id,
+    );
+    expect(toolGrants).toHaveLength(1);
+    expect(toolGrants[0]!.scope).toBe('supervisor');
+
+    // The existing MCP attachment scope is preserved.
+    const mcpAttachments = fixture.repo
+      .listAgentMcpAttachments(fixture.organizationId, 'agent-x')
+      .filter((a) => a.mcpServerId === server.id);
+    expect(mcpAttachments).toHaveLength(1);
+    expect(mcpAttachments[0]!.scope).toBe('supervisor');
+  });
 });
 
 // =====================================================================
@@ -811,6 +1007,13 @@ describe('mapMcpRouteError', () => {
       status: 404,
       code: 'ERR_NOT_FOUND',
       message: 'Member not found: agent-x',
+    });
+    expect(
+      mapMcpRouteError(new Error('Tool not found: "phantom" on MCP server "fs"')),
+    ).toEqual({
+      status: 404,
+      code: 'ERR_NOT_FOUND',
+      message: 'Tool not found: "phantom" on MCP server "fs"',
     });
   });
 

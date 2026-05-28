@@ -405,7 +405,8 @@ export function mapMcpRouteError(err: unknown): {
   if (
     message.startsWith('Organization not found') ||
     message.startsWith('MCP server not found') ||
-    message.startsWith('Member not found')
+    message.startsWith('Member not found') ||
+    message.startsWith('Tool not found')
   ) {
     return { status: 404, code: 'ERR_NOT_FOUND', message };
   }
