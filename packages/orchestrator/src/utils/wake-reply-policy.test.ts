@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  buildPassOrSelfNoteDenialReason,
+  buildPassDenialReason,
   buildWakeRunScaffold,
   filterToolsForWakeReplyPolicy,
   resolveWakeReplyPolicy,
@@ -73,14 +73,14 @@ describe('buildWakeRunScaffold', () => {
   });
 });
 
-describe('buildPassOrSelfNoteDenialReason', () => {
+describe('buildPassDenialReason', () => {
   it('matches mandatory-reply strings used by checkToolPolicy', () => {
     const policy = resolveWakeReplyPolicy({ threadId: 'thread-1', wakeReason: 'mention' });
-    expect(buildPassOrSelfNoteDenialReason('channel.pass', policy)).toMatch(/mandatory-reply/);
+    expect(buildPassDenialReason(policy)).toMatch(/mandatory-reply/);
   });
 
   it('matches direct-message strings for dm threads', () => {
     const policy = resolveWakeReplyPolicy({ threadId: 'dm:a:b' });
-    expect(buildPassOrSelfNoteDenialReason('channel.pass', policy)).toMatch(/direct-message/);
+    expect(buildPassDenialReason(policy)).toMatch(/direct-message/);
   });
 });

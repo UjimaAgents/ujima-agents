@@ -1,17 +1,22 @@
 import type { SqliteDbHandle as DbHandle } from '@ujima/context-store';
-import { MemoryEntrySchema, type MemoryEntry, type MemoryKind } from '@ujima/shared';
+import { MemoryEntrySchema, type MemoryEntry, type MemoryEntryKind } from '@ujima/shared';
 import { now, rowString, optionalRowString } from './common.js';
 
 type Row = Record<string, unknown>;
 
 function rowToMemoryEntry(row: Row): MemoryEntry {
+  const id = rowString(row, 'id');
   return MemoryEntrySchema.parse({
-    id: rowString(row, 'id'),
+    id,
     organizationId: rowString(row, 'organization_id'),
-    memberId: optionalRowString(row, 'member_id') ?? null,
-    kind: rowString(row, 'kind') as MemoryKind,
+    memberId: optionalRowString(row, 'member_id') ?? undefined,
+    kind: rowString(row, 'kind') as MemoryEntryKind,
+    key: optionalRowString(row, 'key') ?? id,
     content: rowString(row, 'content'),
     metadata: parseMetadata(row.metadata),
+    expiresAt: optionalRowString(row, 'expires_at'),
+    sourceMessageId: optionalRowString(row, 'source_message_id'),
+    lastRecalledAt: optionalRowString(row, 'last_recalled_at'),
     createdAt: rowString(row, 'created_at'),
   });
 }

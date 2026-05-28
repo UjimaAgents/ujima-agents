@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { ModelMessage } from 'ai';
 import type { WakeReason } from '@ujima/shared';
+import { ANTI_MIRROR_SCAFFOLD_LINE, SELF_FOLLOWUP_SCAFFOLD_LINES } from './wake-reply-policy.js';
 import { loadProceduresForSystemPrompt as loadProceduresIndex } from '../tools/self-procedure.js';
 import { aggregateProcedures, type AggregatorOutput } from './procedures.js';
 
@@ -173,18 +174,11 @@ export function buildWakeContextMessages(input: WakeContextInput): ModelMessage[
   const lines: string[] = [];
 
   if (input.isMirrorFragile) {
-    lines.push(
-      'IMPORTANT — anti-mirror rule: Do NOT paraphrase the previous message. If your intended reply restates what the previous turn already said, differs only by swapping names, or amounts to "noted / understood / I will await", call channel.ack with no body. Filler acknowledgements waste team attention and trigger redundant wakes.',
-    );
+    lines.push(ANTI_MIRROR_SCAFFOLD_LINE);
   }
 
   if (input.wakeReason === 'self-followup') {
-    lines.push(
-      'You are waking on a commitment you made earlier in this channel. Before you stop, do one of: (a) call channel.post or channel.reply with concrete progress — a path you wrote, a result, or the actual artifact; (b) call channel.pass with a real reason ("still gathering inputs", "blocked on X") if you have no publishable progress yet; (c) call supervisor.todo.update if you need to mark the commitment blocked or completed. self.note alone is NOT a valid termination — every team member will notice you went silent on your own promise.',
-    );
-    lines.push(
-      'For ANY deliverable longer than ~10 lines (task lists, BRDs, PRDs, specs, multi-section docs): use the `write` tool to save the artifact to a file in the workspace (e.g. ai/memory-bank/tasks/<name>.md) FIRST, then post a short channel.post that says "Delivered — see <path>". Pasting long markdown inline gets truncated at the token cap and the reader sees a half-written document.',
-    );
+    lines.push(...SELF_FOLLOWUP_SCAFFOLD_LINES);
   }
 
   if (lines.length === 0) return [];

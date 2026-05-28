@@ -171,11 +171,9 @@ export function deleteDashboardTeamOverride(
 ): void {
   const overrides = readOverrides(repo, organizationId, teamStore);
   const agents = overrides.agents.filter((agent) => agent.name !== memberId);
-  
   const otherAgentsUseRole = repo.listMembers(organizationId).some(
     (item) => item.kind === AGENT_KIND && item.id !== memberId && !item.retiredAt && item.roleName === roleName,
   );
-  
   const roles = otherAgentsUseRole
     ? overrides.roles
     : overrides.roles.filter((role) => role.name !== roleName);

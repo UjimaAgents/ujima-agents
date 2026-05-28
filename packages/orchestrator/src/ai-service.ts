@@ -6,7 +6,10 @@ import { runAgentLoop, type AgentLoopChunk } from './services/agent-loop.js';
 import type { ApiRepository } from './services/repository-reader.js';
 import type { TeamStore } from './services/team-store.js';
 import type { ToolService } from './services/tool-service.js';
-import { ALWAYS_AVAILABLE_AGENT_TOOLS } from './tools/index.js';
+import {
+  ALWAYS_AVAILABLE_AGENT_TOOLS,
+  filterDeprecatedToolIds,
+} from './tools/index.js';
 import { isMirrorFragileModel } from './services/mirror-guard.js';
 import {
   toModelMessages,
@@ -288,7 +291,9 @@ export class AiService {
       wakeReplyPolicy,
     );
     const roleTools = filterToolsForWakeReplyPolicy(role.tools, wakeReplyPolicy);
-    const toolIds = [...new Set([...roleTools, ...baseAlwaysAvailable])];
+    const toolIds = filterDeprecatedToolIds([
+      ...new Set([...roleTools, ...baseAlwaysAvailable]),
+    ]);
     const builtInToolDefs = buildToolDefinitions(toolIds, team, this.tools, {
       organizationId: input.organizationId,
       runId: input.runId,

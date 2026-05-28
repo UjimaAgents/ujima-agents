@@ -276,7 +276,6 @@ describe('ALWAYS_AVAILABLE_AGENT_TOOLS', () => {
         'memory.write',
         'message',
         'schedule',
-        'self.note',
         'procedure.list',
         'procedure.view',
         'self.procedure.add',

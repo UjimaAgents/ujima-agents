@@ -730,5 +730,9 @@ describe('team config reconcile', () => {
     expect(JSON.parse(storedOverridesAfter!).agents).not.toContainEqual(
       expect.objectContaining({ name: agent.id })
     );
+
+    expect(
+      settings.getOrganizationSettings(first.organization.id).members.map((m) => m.id),
+    ).not.toContain(agent.id);
   });
 });

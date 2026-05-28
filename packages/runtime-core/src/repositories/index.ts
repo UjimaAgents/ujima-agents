@@ -32,7 +32,6 @@ import type {
   TodoStatus,
   WorkspaceFile,
   WorkspaceMember,
-  MemoryEntry,
 } from '@ujima/shared';
 import {
   findAuthUsersByEmail as readAuthUsersByEmail,

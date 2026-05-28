@@ -344,6 +344,18 @@ describe('checkToolPolicy', () => {
       expect(result.reason).toMatch(/mandatory-reply/);
     });
 
+    it('rejects deprecated self.note in favor of memory tools', () => {
+      const team = buildTeam();
+      expect(checkToolPolicy(team, 'engineer', 'self.note', 'message')).toEqual({
+        allowed: false,
+        requiresApproval: false,
+        reason: 'self.note was removed; use memory.write / memory.recall instead.',
+      });
+      expect(checkToolPolicy(team, 'engineer', 'memory.write', 'message')).toEqual({
+        allowed: true,
+        requiresApproval: false,
+      });
+    });
 
     it('rejects channel.pass in direct-message threads', () => {
       const team = buildTeam();

@@ -97,19 +97,16 @@ function isLegacyDefaultRoleToolList(value: unknown): boolean {
 
 export function upgradeLegacyDefaultRoleTools<T extends Record<string, unknown>>(role: T): T {
   if (!Array.isArray(role.tools)) return role;
-  if (isLegacyDefaultRoleToolList(role.tools)) {
-    return {
-      ...role,
-      tools: [...DEFAULT_ROLE_TOOLS],
-    } as T;
+  let tools = [...(role.tools as string[])];
+  if (isLegacyDefaultRoleToolList(tools)) {
+    tools = [...DEFAULT_ROLE_TOOLS];
+  } else if (tools.includes('filesystem')) {
+    tools = tools.filter((tool) => tool !== 'filesystem');
   }
-  if (role.tools.includes('filesystem')) {
-    return {
-      ...role,
-      tools: role.tools.filter((tool) => tool !== 'filesystem'),
-    } as T;
+  if (tools.includes('self.note')) {
+    tools = tools.filter((tool) => tool !== 'self.note');
   }
-  return role;
+  return { ...role, tools } as T;
 }
 
 /**

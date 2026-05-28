@@ -1092,6 +1092,30 @@ const MIGRATIONS: {id: string; up: string}[] = [
         ON run_procedures_applied(organization_id, run_id);
     `,
   },
+  {
+    id: "033_migrate_self_notes_to_memories",
+    up: `
+      INSERT OR IGNORE INTO memory_entries (
+        id, organization_id, member_id, kind, key, content, metadata, created_at, source_message_id
+      )
+      SELECT
+        m.id,
+        m.organization_id,
+        m.sender_id,
+        'fact',
+        'self-note.' || m.id,
+        m.content,
+        '{"migratedFromSelfNote":true}',
+        m.created_at,
+        m.id
+      FROM messages m
+      INNER JOIN channels c
+        ON c.id = m.channel_id
+       AND c.organization_id = m.organization_id
+      WHERE c.kind = 'self'
+        AND m.sender_kind = 'agent';
+    `,
+  },
 ];
 
 export interface DbOptions {

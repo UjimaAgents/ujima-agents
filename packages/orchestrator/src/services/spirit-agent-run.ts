@@ -35,6 +35,7 @@ import { toModelMessages, buildToolDefinitions } from '../utils/to-model-message
 import {
   ALWAYS_AVAILABLE_AGENT_TOOLS,
   SUPERVISOR_TOOL_ALLOWLIST,
+  filterDeprecatedToolIds,
 } from '../tools/index.js';
 import type { ApiRepository } from './repository-reader.js';
 import { findToolApprovalRequiredError } from './tool-loop-result.js';
@@ -139,7 +140,7 @@ ${activeMemories
 ================================`;
         messages.push({ role: 'user', content: memoryPrompt });
       }
-    } catch (e) {
+    } catch {
       // Degrade gracefully if memory query fails
     }
 
@@ -488,7 +489,9 @@ ${activeMemories
     if (role === 'supervisor') {
       return SUPERVISOR_TOOL_ALLOWLIST;
     }
-    return [...new Set([...roleTools, ...ALWAYS_AVAILABLE_AGENT_TOOLS])];
+    return filterDeprecatedToolIds([
+      ...new Set([...roleTools, ...ALWAYS_AVAILABLE_AGENT_TOOLS]),
+    ]);
   }
 
   protected buildToolDefinitions(

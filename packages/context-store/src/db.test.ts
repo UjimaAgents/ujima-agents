@@ -101,16 +101,6 @@ describe('database migrations', () => {
         resolved_at      TEXT,
         tool_call_id     TEXT
       );
-
-      CREATE TABLE memory_entries (
-        id               TEXT PRIMARY KEY,
-        organization_id  TEXT NOT NULL,
-        member_id        TEXT,
-        kind             TEXT NOT NULL,
-        content          TEXT NOT NULL,
-        metadata         TEXT NOT NULL DEFAULT '{}',
-        created_at       TEXT NOT NULL
-      );
     `);
 
     const appliedAt = Date.now();
@@ -238,7 +228,7 @@ describe('database migrations', () => {
 
     // Now delete the migration record for 027 to simulate upgrading from 026 to 027
     const rawDb = new Database(dbPath);
-    rawDb.prepare('DELETE FROM schema_migrations WHERE id = ?').run('027_migrate_self_notes_to_memories');
+    rawDb.prepare('DELETE FROM schema_migrations WHERE id = ?').run('033_migrate_self_notes_to_memories');
     // Clear out memory_entries table to make sure migration re-populates it
     rawDb.prepare('DELETE FROM memory_entries').run();
     rawDb.close();

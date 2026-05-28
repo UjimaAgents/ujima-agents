@@ -19,6 +19,10 @@ import { requireTeam } from '../utils/require-team.js';
 import { requireOrganization } from '../utils/require-organization.js';
 import { visiblePublicChannels } from './channel-visibility.js';
 
+function activeMembers(repo: ApiRepository, organizationId: string): Member[] {
+  return repo.listMembers(organizationId).filter((member) => !member.retiredAt);
+}
+
 export interface TeamSettingsResponse {
   name: string;
   workspace: { root: string; roleScopes: Record<string, string[]> };
@@ -478,7 +482,7 @@ export class SettingsService {
     }
     return {
       organization,
-      members: this.repo.listMembers(organizationId),
+      members: activeMembers(this.repo, organizationId),
       channels: visiblePublicChannels(visibleChannelsFromRepo(this.repo, organizationId)),
     };
   }
@@ -569,7 +573,7 @@ export class SettingsService {
 
     return {
       organization: updated,
-      members: this.repo.listMembers(input.organizationId),
+      members: activeMembers(this.repo, input.organizationId),
       channels: visiblePublicChannels(visibleChannelsFromRepo(this.repo, input.organizationId)),
     };
   }

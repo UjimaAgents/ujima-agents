@@ -33,7 +33,6 @@ import type {
   TodoStatus,
   WorkspaceFile,
   WorkspaceMember,
-  MemoryEntry,
 } from '@ujima/shared';
 
 export interface PaginatedTaskSessions {

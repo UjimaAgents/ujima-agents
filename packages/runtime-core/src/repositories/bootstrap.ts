@@ -47,7 +47,7 @@ export function getBootstrapSnapshot(db: DbHandle, organizationId?: string): Boo
 
   return {
     organization,
-    members: listMembers(db, organization.id),
+    members: listMembers(db, organization.id).filter((member) => !member.retiredAt),
     // Bootstrap snapshot is consumed by clients that don't have a member
     // identity yet (it's the very first response on connect). Hide private
     // channel kinds — `self` (agent scratchpads) and `dm` (private 2-member

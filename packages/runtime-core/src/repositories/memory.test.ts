@@ -20,6 +20,7 @@ describe('memory entries repository', () => {
       organizationId,
       memberId,
       kind: 'fact',
+      key: 'test.key',
       content: 'Mason deleted the scheduler successfully.',
       metadata: {},
       createdAt: nowIso,
@@ -28,66 +29,85 @@ describe('memory entries repository', () => {
   }
 
   it('creates and retrieves a memory entry', () => {
-    const memory = baseMemory({ id: 'mem-1', content: 'Quinn knows python.' });
-    repo.saveMemory(memory);
+    const memory = baseMemory({ id: 'mem-1', key: 'quinn.lang', content: 'Quinn knows python.' });
+    repo.upsertMemoryEntry(memory);
 
     const stored = repo.getMemory(organizationId, 'mem-1');
     expect(stored).not.toBeNull();
     expect(stored?.content).toBe('Quinn knows python.');
-    expect(stored?.kind).toBe('fact');
+    expect(stored?.key).toBe('quinn.lang');
   });
 
   it('lists memory entries for a member', () => {
     const otherMemberId = randomUUID();
-    repo.saveMemory(baseMemory({ id: 'm1', memberId }));
-    repo.saveMemory(baseMemory({ id: 'm2', memberId }));
-    repo.saveMemory(baseMemory({ id: 'm3', memberId: otherMemberId }));
+    repo.upsertMemoryEntry(baseMemory({ id: 'm1', memberId, key: 'a' }));
+    repo.upsertMemoryEntry(baseMemory({ id: 'm2', memberId, key: 'b' }));
+    repo.upsertMemoryEntry(baseMemory({ id: 'm3', memberId: otherMemberId, key: 'c' }));
 
-    const list = repo.listMemories(organizationId, memberId);
+    const list = repo.recallMemoryEntries({
+      organizationId,
+      memberId,
+      limit: 10,
+    });
     expect(list).toHaveLength(2);
     expect(list.some((m) => m.id === 'm1')).toBe(true);
     expect(list.some((m) => m.id === 'm2')).toBe(true);
     expect(list.some((m) => m.id === 'm3')).toBe(false);
   });
 
-  it('lists memory entries for an organization', () => {
+  it('lists org-scoped memory entries', () => {
     const otherOrgId = randomUUID();
-    repo.saveMemory(baseMemory({ id: 'o1', organizationId }));
-    repo.saveMemory(baseMemory({ id: 'o2', organizationId: otherOrgId }));
+    repo.upsertMemoryEntry(baseMemory({ id: 'o1', organizationId, key: 'org.a' }));
+    repo.upsertMemoryEntry(
+      baseMemory({ id: 'o2', organizationId: otherOrgId, key: 'org.b' }),
+    );
 
-    const list = repo.listOrgMemories(organizationId);
+    const list = repo.recallMemoryEntries({
+      organizationId,
+      memberId,
+      limit: 10,
+    });
     expect(list).toHaveLength(1);
     expect(list[0]?.id).toBe('o1');
   });
 
   it('updates a memory entry on conflict', () => {
-    repo.saveMemory(
+    repo.upsertMemoryEntry(
       baseMemory({
         id: 'u1',
+        key: 'prefs.tone',
         kind: 'fact',
         content: 'Old text',
         metadata: { a: 1 },
       }),
     );
-    repo.saveMemory(
+    repo.upsertMemoryEntry(
       baseMemory({
-        id: 'u1',
-        kind: 'decision',
+        id: 'u2',
+        key: 'prefs.tone',
+        kind: 'rule',
         content: 'New text',
         metadata: { b: 2 },
       }),
     );
 
-    const stored = repo.getMemory(organizationId, 'u1');
-    expect(stored?.kind).toBe('decision');
-    expect(stored?.content).toBe('New text');
-    expect(stored?.metadata).toEqual({ b: 2 });
+    const stored = repo.recallMemoryEntries({
+      organizationId,
+      memberId,
+      keyPrefix: 'prefs.',
+      limit: 5,
+    });
+    expect(stored).toHaveLength(1);
+    expect(stored[0]?.kind).toBe('rule');
+    expect(stored[0]?.content).toBe('New text');
+    expect(stored[0]?.metadata).toEqual({ b: 2 });
   });
 
   it('deletes a memory entry', () => {
-    repo.saveMemory(baseMemory({ id: 'd1' }));
-    repo.deleteMemory(organizationId, 'd1');
-
-    expect(repo.getMemory(organizationId, 'd1')).toBeNull();
+    repo.upsertMemoryEntry(baseMemory({ id: 'd1', key: 'temp.note' }));
+    expect(repo.deleteMemoryEntry(organizationId, memberId, 'temp.note')).toBe(true);
+    expect(
+      repo.recallMemoryEntries({ organizationId, memberId, keyPrefix: 'temp.', limit: 5 }),
+    ).toHaveLength(0);
   });
 });

@@ -8,7 +8,6 @@ import {
   channelPostTool,
   channelReadTool,
   channelReplyTool,
-  selfNoteTool,
 } from './channel.js';
 import { channelRecallTool } from './channel-recall.js';
 import { grepTool } from './grep.js';
@@ -62,7 +61,6 @@ export const ORCHESTRATOR_TOOLS = {
   job_output: jobOutputTool,
   job_kill: jobKillTool,
   web_search: webSearchTool,
-  'self.note': selfNoteTool,
   'self.procedure.add': selfProcedureAddTool,
   'self.procedure.remove': selfProcedureRemoveTool,
   'self.procedure.list': selfProcedureListTool,
@@ -99,9 +97,8 @@ export const ORCHESTRATOR_TOOLS = {
 // conversational primitive.
 //
 // Mandatory-reply and DM wake policy (`resolveWakeReplyPolicy`) strips
-// `channel.pass` and `self.note` from the palette at wake-time in
-// ai-service.ts and spirit.ts, keeping posting tools available so the
-// agent can comply.
+// `channel.pass` from the palette at wake-time in ai-service.ts and
+// spirit.ts, keeping posting tools available so the agent can comply.
 //
 // Read-only workspace tools (`view`, `ls`, `glob`, `grep`) are
 // baseline because the product mental model is "an employee with a
@@ -114,8 +111,11 @@ export const ORCHESTRATOR_TOOLS = {
 // approval-gated. `channel.ack` is the silent terminator used to
 // satisfy the mandatory-reply contract without producing a wake-able
 // message (Bet 3 — kills the echo-loop pathology).
+export function filterDeprecatedToolIds(toolIds: readonly string[]): string[] {
+  return toolIds.filter((toolId) => toolId !== 'self.note');
+}
+
 export const ALWAYS_AVAILABLE_AGENT_TOOLS = Object.freeze([
-  'self.note',
   'self.procedure.add',
   'self.procedure.remove',
   'self.procedure.list',
@@ -156,7 +156,6 @@ export const ALWAYS_AVAILABLE_AGENT_TOOLS = Object.freeze([
 //      out-of-band invocations (e.g. a custom tool that hardcodes
 //      `permissionMcpId: 'supervisor'` on a non-allowlisted tool id).
 export const SUPERVISOR_TOOL_ALLOWLIST = Object.freeze([
-  'self.note',
   'channel.read',
   'channel.list',
   'channel.post',

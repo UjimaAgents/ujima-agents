@@ -262,6 +262,7 @@ test('legacy default role tools are migrated forward on load', () => {
 
   expect(team.config.configVersion).toBe(4);
   expect(team.getRole('frontend-engineer')?.tools).toContain('grep');
+  expect(team.getRole('frontend-engineer')?.tools).not.toContain('self.note');
 });
 
 test('filesystem is stripped from persisted role tools on load', () => {
