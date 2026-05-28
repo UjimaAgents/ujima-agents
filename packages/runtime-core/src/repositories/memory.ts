@@ -1,6 +1,7 @@
 import type { SqliteDbHandle as DbHandle } from '@ujima/context-store';
 import { MemoryEntrySchema, type MemoryEntry, type MemoryEntryKind } from '@ujima/shared';
-import { now, rowString, optionalRowString } from './common.js';
+import { rowString, optionalRowString } from './common.js';
+import { upsertMemoryEntry as writeMemoryEntry } from './memory-entries.js';
 
 type Row = Record<string, unknown>;
 
@@ -37,31 +38,7 @@ function parseMetadata(value: unknown): Record<string, unknown> {
 }
 
 export function saveMemory(db: DbHandle, entry: MemoryEntry): MemoryEntry {
-  const timestamp = now();
-  const payload = MemoryEntrySchema.parse(entry);
-  const metadataStr = JSON.stringify(payload.metadata || {});
-
-  db.prepare(
-    `INSERT INTO memory_entries (
-      id, organization_id, member_id, kind, content, metadata, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(id) DO UPDATE SET
-      organization_id = excluded.organization_id,
-      member_id = excluded.member_id,
-      kind = excluded.kind,
-      content = excluded.content,
-      metadata = excluded.metadata`,
-  ).run(
-    payload.id,
-    payload.organizationId,
-    payload.memberId ?? null,
-    payload.kind,
-    payload.content,
-    metadataStr,
-    payload.createdAt ?? timestamp,
-  );
-
-  return payload;
+  return writeMemoryEntry(db, entry);
 }
 
 export function getMemory(db: DbHandle, organizationId: string, memoryId: string): MemoryEntry | null {

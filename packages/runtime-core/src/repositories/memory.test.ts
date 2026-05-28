@@ -103,6 +103,48 @@ describe('memory entries repository', () => {
     expect(stored[0]?.metadata).toEqual({ b: 2 });
   });
 
+  it('saveMemory preserves key and ttl fields', () => {
+    repo.saveMemory(
+      baseMemory({
+        id: 's1',
+        key: 'prefs.tone',
+        content: 'Be concise.',
+        expiresAt: '2030-01-01T00:00:00.000Z',
+        sourceMessageId: 'msg-1',
+        lastRecalledAt: '2029-12-31T23:59:00.000Z',
+      }),
+    );
+    repo.saveMemory(
+      baseMemory({
+        id: 's2',
+        key: 'prefs.tone',
+        kind: 'rule',
+        content: 'Be very concise.',
+        metadata: { updated: true },
+        expiresAt: '2030-02-01T00:00:00.000Z',
+        sourceMessageId: 'msg-2',
+        lastRecalledAt: '2030-01-31T23:59:00.000Z',
+      }),
+    );
+
+    const stored = repo.recallMemoryEntries({
+      organizationId,
+      memberId,
+      keyPrefix: 'prefs.',
+      limit: 5,
+    });
+    expect(stored).toHaveLength(1);
+    expect(stored[0]).toMatchObject({
+      key: 'prefs.tone',
+      kind: 'rule',
+      content: 'Be very concise.',
+      metadata: { updated: true },
+      expiresAt: '2030-02-01T00:00:00.000Z',
+      sourceMessageId: 'msg-2',
+      lastRecalledAt: '2030-01-31T23:59:00.000Z',
+    });
+  });
+
   it('deletes a memory entry', () => {
     repo.upsertMemoryEntry(baseMemory({ id: 'd1', key: 'temp.note' }));
     expect(repo.deleteMemoryEntry(organizationId, memberId, 'temp.note')).toBe(true);
