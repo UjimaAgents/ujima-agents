@@ -206,7 +206,7 @@ Questions or updates: follow [@vincent_presh on X](https://x.com/vincent_presh) 
 
 * [**Oluwaseyi Ajadi**](https://github.com/BlazinArtemis) (oluwaseyinexus137@gmail.com / [@OluwaseyiAjadi4 on X](https://x.com/OluwaseyiAjadi4))
 * [**Vincent Precious**](https://github.com/Vincent-presh)
-* [**Lightsource**](https://github.com/Lightsource-Pris)
+* [**Israel Akin Akinsanya**](https://github.com/Lightsource-Pris) (israelakinakinsanya@gmail.com / [@__light_source__ on X](https://x.com/__light_source__))
 
 ---
 
