@@ -203,7 +203,15 @@ graph TD
 
 ## Contact
 
-Questions or updates: follow [@vincent_presh on X](https://x.com/vincent_presh).
+Questions or updates: follow [@vincent_presh on X](https://x.com/vincent_presh) or contact Seyi at [oluwaseyinexus137@gmail.com](mailto:oluwaseyinexus137@gmail.com) / [@OluwaseyiAjadi4 on X](https://x.com/OluwaseyiAjadi4).
+
+---
+
+## 👥 Contributors
+
+* [**Oluwaseyi Ajadi**](https://github.com/BlazinArtemis) (oluwaseyinexus137@gmail.com / [@OluwaseyiAjadi4 on X](https://x.com/OluwaseyiAjadi4))
+* [**Vincent Precious**](https://github.com/Vincent-presh)
+* [**Lightsource**](https://github.com/Lightsource-Pris)
 
 ---
 
