@@ -167,7 +167,7 @@ describe('BootstrapService', () => {
       }),
       listAccessibleOrganizations: () => [org],
     };
-    const failures: Array<Record<string, unknown>> = [];
+    const failures: Record<string, unknown>[] = [];
     const teamStore = createTeamStore();
     const service = new BootstrapService(repo as never, teamStore, auth as never, (message, context) => {
       failures.push({ message, ...context });

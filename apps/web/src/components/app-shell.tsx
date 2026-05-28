@@ -27,8 +27,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   if (isOnboardingPage || isLoginPage || isWorkspacePage) {
     return (
-      <div className="h-screen overflow-hidden bg-zinc-50 text-zinc-950 dark:bg-[#040712] dark:text-zinc-100">
-        {children}
+      <div
+        className={`h-screen overflow-hidden bg-zinc-50 text-zinc-950 dark:bg-[#040712] dark:text-zinc-100 ${
+          isOnboardingPage ? "flex min-h-0 flex-col" : ""
+        }`}
+      >
+        <div className={isOnboardingPage ? "min-h-0 flex-1" : undefined}>{children}</div>
         <ToastContainer />
       </div>
     );

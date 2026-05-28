@@ -9,7 +9,7 @@ import { normalizeProviderName } from "./api-contract";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { MIN_TEAM_AGENTS, buildOnboardingRequest } from "./api-contract";
 import { OnboardingForm } from "./components/onboarding-form";
-import { OnboardingStepper } from "./components/onboarding-stepper";
+import { OnboardingStepper, OnboardingStepProgress } from "./components/onboarding-stepper";
 import {
   INITIAL_DRAFT,
   ONBOARDING_STEPS,
@@ -350,40 +350,47 @@ export function OnboardingExperience({
     return null;
   }
 
+  const stepperProps = {
+    steps: ONBOARDING_STEPS,
+    activeStep,
+    isStepAccessible: (stepId: OnboardingStepId) => accessibleSteps[stepId],
+    onStepClick: handleStepClick,
+  };
+
   return (
-    <main className="min-h-screen overflow-x-auto bg-[#fafafa] p-3 dark:bg-[#050816] md:p-4">
-      <div className="mx-auto min-w-[1024px] overflow-hidden rounded-[20px] border border-zinc-200 bg-white shadow-[0_8px_30px_rgba(15,23,42,0.05)] dark:border-zinc-800 dark:bg-zinc-950">
-        <header className="flex items-center justify-between border-b border-zinc-200 px-5 py-4 dark:border-zinc-800">
-          <div className="flex items-center gap-3">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-violet-600 text-white">
-              <Sparkles className="h-4 w-4" />
+    <main className="flex h-full min-h-0 flex-col bg-[#fafafa] p-2 dark:bg-[#050816] sm:p-3 md:p-4">
+      <div className="mx-auto flex min-h-0 w-full max-w-[1440px] flex-1 flex-col overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-[0_8px_30px_rgba(15,23,42,0.05)] dark:border-zinc-800 dark:bg-zinc-950 md:rounded-[20px]">
+        <header className="flex shrink-0 items-center justify-between gap-3 border-b border-zinc-200 px-3 py-3 dark:border-zinc-800 sm:px-4 md:px-5 md:py-3.5">
+          <div className="flex min-w-0 items-center gap-2.5 sm:gap-3">
+            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-violet-600 text-white sm:h-8 sm:w-8">
+              <Sparkles className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
             </div>
-            <p className="text-lg font-semibold text-zinc-950 dark:text-zinc-50">Ujima Agents</p>
+            <p className="truncate text-base font-semibold text-zinc-950 dark:text-zinc-50 sm:text-lg">Ujima Agents</p>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex shrink-0 items-center gap-2 sm:gap-3">
             <ThemeToggle />
             <Link
               href="/"
-              className="inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
+              className="inline-flex items-center gap-1.5 rounded-full border border-zinc-200 bg-white px-2.5 py-1.5 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800 sm:gap-2 sm:px-4 sm:py-2"
             >
               <Home className="h-4 w-4" />
-              <span>Go home</span>
+              <span className="hidden sm:inline">Go home</span>
+              <span className="sr-only sm:hidden">Go home</span>
             </Link>
           </div>
         </header>
 
-        <div className="flex min-h-[calc(100vh-110px)]">
-          <div className="w-[285px] shrink-0">
-            <OnboardingStepper
-              steps={ONBOARDING_STEPS}
-              activeStep={activeStep}
-              isStepAccessible={(stepId) => accessibleSteps[stepId]}
-              onStepClick={handleStepClick}
-            />
+        <div className="lg:hidden">
+          <OnboardingStepProgress {...stepperProps} />
+        </div>
+
+        <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
+          <div className="hidden w-52 shrink-0 overflow-y-auto lg:block xl:w-60">
+            <OnboardingStepper {...stepperProps} />
           </div>
 
-          <div className="min-w-0 flex-1 bg-white dark:bg-zinc-950">
+          <div className="min-h-0 min-w-0 flex-1 overflow-y-auto bg-white dark:bg-zinc-950">
             <OnboardingForm
               key={activeStepConfig.id}
               step={activeStepConfig}

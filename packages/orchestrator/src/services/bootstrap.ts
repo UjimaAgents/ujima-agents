@@ -32,7 +32,9 @@ export class BootstrapService {
     private readonly repo: ApiRepository,
     private readonly teamStore: TeamStore,
     private readonly auth: AuthService,
-    private readonly logTeamLoadFailure: (message: string, context: Record<string, unknown>) => void = () => {},
+    private readonly logTeamLoadFailure: (message: string, context: Record<string, unknown>) => void = () => {
+      /* optional; wired by API logger in production */
+    },
   ) {}
 
   getBootstrap(input: { sessionToken?: string | null } = {}): BootstrapResponse {
