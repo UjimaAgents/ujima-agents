@@ -165,51 +165,74 @@ export class ConfigSyncService {
 
     const stored = this.repo.getWorkspaceSetting(organization.id, TEAM_CONFIG_SETTING_KEY);
     if (stored) {
-      const parsedStored = JSON.parse(stored) as Record<string, unknown>;
-      if (parsedStored.providers && typeof parsedStored.providers === 'object') {
-        for (const [providerName, providerConfig] of Object.entries(parsedStored.providers)) {
-          if (typeof providerConfig === 'object' && providerConfig && !('kind' in providerConfig)) {
-            (providerConfig as Record<string, unknown>).kind = providerName;
+      try {
+        const parsedStored = JSON.parse(stored) as Record<string, unknown>;
+        if (parsedStored.providers && typeof parsedStored.providers === 'object') {
+          for (const [providerName, providerConfig] of Object.entries(parsedStored.providers)) {
+            if (typeof providerConfig === 'object' && providerConfig && !('kind' in providerConfig)) {
+              (providerConfig as Record<string, unknown>).kind = providerName;
+            }
           }
         }
-      }
-      const migrated = migrateAgentTeamConfig(parsedStored);
-      const activeRoot = organization.workspace.root?.trim();
-      if (activeRoot) {
-        const workspace =
-          migrated.config.workspace && typeof migrated.config.workspace === 'object'
-            ? { ...(migrated.config.workspace as Record<string, unknown>) }
-            : {};
-        if (workspace.root !== activeRoot) {
-          workspace.root = activeRoot;
-          migrated.config.workspace = workspace;
-          migrated.migrated = true;
+        const migrated = migrateAgentTeamConfig(parsedStored);
+        const activeRoot = organization.workspace.root?.trim();
+        if (activeRoot) {
+          const workspace =
+            migrated.config.workspace && typeof migrated.config.workspace === 'object'
+              ? { ...(migrated.config.workspace as Record<string, unknown>) }
+              : {};
+          if (workspace.root !== activeRoot) {
+            workspace.root = activeRoot;
+            migrated.config.workspace = workspace;
+            migrated.migrated = true;
+          }
+          if (normalizeStoredScopes(migrated.config, activeRoot)) {
+            migrated.migrated = true;
+          }
         }
-        if (normalizeStoredScopes(migrated.config, activeRoot)) {
-          migrated.migrated = true;
+        if (migrated.migrated) {
+          this.repo.saveWorkspaceSetting(
+            organization.id,
+            TEAM_CONFIG_SETTING_KEY,
+            JSON.stringify(migrated.config),
+          );
         }
-      }
-      if (migrated.migrated) {
-        this.repo.saveWorkspaceSetting(
+        const team = loadAgentTeam(migrated.config);
+        this.teamStore.setTeam(team, organization.id);
+        applyDashboardTeamOverrides(this.repo, organization.id, this.teamStore);
+        return { organizationId: organization.id, inferred: false };
+      } catch (error) {
+        this.discardInvalidStoredTeamConfig(
           organization.id,
-          TEAM_CONFIG_SETTING_KEY,
-          JSON.stringify(migrated.config),
+          error instanceof Error ? error.message : String(error),
         );
+        return null;
       }
-      const team = loadAgentTeam(migrated.config);
-      this.teamStore.setTeam(team, organization.id);
-      applyDashboardTeamOverrides(this.repo, organization.id, this.teamStore);
-      return { organizationId: organization.id, inferred: false };
     }
 
     const inferred = this.inferTeamConfig(organization.id);
     if (!inferred) return null;
 
-    const team = loadAgentTeam(inferred);
+    let team;
+    try {
+      team = loadAgentTeam(inferred);
+    } catch (error) {
+      this.discardInvalidStoredTeamConfig(
+        organization.id,
+        error instanceof Error ? error.message : String(error),
+      );
+      return null;
+    }
     persistTeamConfig(this.repo, organization.id, team);
     this.teamStore.setTeam(team, organization.id);
     applyDashboardTeamOverrides(this.repo, organization.id, this.teamStore);
     return { organizationId: organization.id, inferred: true };
+  }
+
+  /** Drop broken persisted team config so bootstrap/onboarding can recover cleanly. */
+  discardInvalidStoredTeamConfig(organizationId: string, _reason: string): void {
+    this.repo.deleteWorkspaceSetting(organizationId, TEAM_CONFIG_SETTING_KEY);
+    this.teamStore.clearTeam(organizationId);
   }
 
   reconcileTeamConfig(input: ReconcileTeamConfigInput): ReconcileTeamConfigResult {

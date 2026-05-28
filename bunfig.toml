@@ -1,0 +1,3 @@
+[install]
+# Next standalone must copy node_modules that Node can resolve (not only Bun's .bun store).
+nodeLinker = "node-modules"

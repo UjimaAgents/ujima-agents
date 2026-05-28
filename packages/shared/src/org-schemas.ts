@@ -685,6 +685,42 @@ export const DecisionLogEntrySchema = z.object({
 export type DecisionLogEntry = z.infer<typeof DecisionLogEntrySchema>;
 
 // -----------------------------------------------------------------------
+// Procedures as Culture (docs/procedures-as-culture.md)
+// -----------------------------------------------------------------------
+
+export const ProcedureScopeSchema = z.enum(['org', 'channel', 'agent']);
+export type ProcedureScope = z.infer<typeof ProcedureScopeSchema>;
+
+/** Append-only version history. One row per save. */
+export const ProcedureRevisionSchema = z.object({
+  id: IdSchema,
+  organizationId: IdSchema,
+  scope: ProcedureScopeSchema,
+  scopeId: z.string(), // '' for org; channel-id; agent-id
+  name: z.string().min(1).max(64),
+  version: z.number().int().min(1),
+  bodySnapshot: z.string(),
+  description: z.string(),
+  enforced: z.boolean().default(false),
+  updatedBy: IdSchema,
+  updatedAt: TimestampSchema,
+});
+export type ProcedureRevision = z.infer<typeof ProcedureRevisionSchema>;
+
+/** Captures what was surfaced into a given wake's system prompt. */
+export const RunProcedureAppliedSchema = z.object({
+  organizationId: IdSchema,
+  runId: IdSchema,
+  scope: ProcedureScopeSchema,
+  scopeId: z.string(),
+  name: z.string().min(1).max(64),
+  version: z.number().int().min(1),
+  enforced: z.boolean().default(false),
+  createdAt: TimestampSchema,
+});
+export type RunProcedureApplied = z.infer<typeof RunProcedureAppliedSchema>;
+
+// -----------------------------------------------------------------------
 // Scheduled Jobs (cron)
 // -----------------------------------------------------------------------
 

@@ -12,6 +12,8 @@ import type {
   ConversationThread,
   DecisionLogEntry,
   GovernancePolicy,
+  ProcedureRevision,
+  RunProcedureApplied,
   McpServer,
   McpToolCache,
   McpToolClassification,
@@ -525,6 +527,26 @@ export interface ApiRepository extends ConversationRepository {
     sourceMessageId: string,
   ): DecisionLogEntry | null;
 
+  // Procedures as Culture (docs/procedures-as-culture.md). Optional —
+  // older Repository fakes in tests can omit these without breaking.
+  appendProcedureRevision?(rev: ProcedureRevision): ProcedureRevision;
+  listProcedureRevisions?(input: {
+    organizationId: string;
+    scope: string;
+    scopeId: string;
+    name: string;
+    limit?: number;
+  }): ProcedureRevision[];
+  recordProceduresApplied?(input: {
+    organizationId: string;
+    runId: string;
+    applied: { scope: string; scopeId: string; name: string; version: number; enforced: boolean }[];
+  }): void;
+  listRunProceduresApplied?(
+    organizationId: string,
+    runId: string,
+  ): RunProcedureApplied[];
+
   updateTodoStatus(
     organizationId: string,
     todoId: string,
@@ -535,6 +557,8 @@ export interface ApiRepository extends ConversationRepository {
   saveOrganization(organization: Organization): Organization;
   getLatestOrganization(): Organization | null;
   listOrganizations(): Organization[];
+  listOrganizationsWithSignIn(): Organization[];
+  deleteOrganizationData(organizationId: string): void;
   saveWorkspaceSetting(organizationId: string, key: string, value: string): void;
   getWorkspaceSetting(organizationId: string, key: string): string | null;
   deleteWorkspaceSetting(organizationId: string, key: string): void;

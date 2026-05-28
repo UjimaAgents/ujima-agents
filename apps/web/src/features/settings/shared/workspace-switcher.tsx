@@ -41,7 +41,7 @@ export function WorkspaceSwitcher({
     try {
       await switchToWorkspace(
         orgWorkspaceId(orgId),
-        `${window.location.pathname}${window.location.search}`,
+        window.location.pathname,
       );
     } catch (err) {
       setSwitchingId(null);

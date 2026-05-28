@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import {
   findMonorepoRoot,
   resolvePackagedRuntimeDir,
+  buildPackagedWebNodePath,
   resolveWebServerCwd,
   resolveWebServerEntry,
 } from './runtime-paths.js';
@@ -22,7 +23,7 @@ describe('runtime-paths', () => {
     writeFileSync(join(root, 'bun.lock'), '');
     writeFileSync(
       join(distPkg, 'package.json'),
-      JSON.stringify({ name: '@ujima/distribution', version: '0.1.0' }),
+      JSON.stringify({ name: '@ujima/agents', version: '0.1.0' }),
     );
 
     expect(findMonorepoRoot(distPkg)).toBe(root);
@@ -47,6 +48,16 @@ describe('runtime-paths', () => {
     writeFileSync(server, '// stub\n');
     expect(resolveWebServerEntry(root)).toBe(server);
     expect(resolveWebServerCwd(root, server)).toBe(join(root, 'apps/web'));
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('buildPackagedWebNodePath includes Bun store module paths', () => {
+    const root = join(tmpdir(), `ujima-nm-${Date.now()}`);
+    const storeModules = join(root, 'node_modules', '.bun', 'next@1.0.0', 'node_modules');
+    mkdirSync(storeModules, { recursive: true });
+    const path = buildPackagedWebNodePath(root);
+    expect(path).toContain(join(root, 'node_modules'));
+    expect(path).toContain(storeModules);
     rmSync(root, { recursive: true, force: true });
   });
 });

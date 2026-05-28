@@ -18,10 +18,17 @@ export function ExpandableOutput({
 
   useEffect(() => {
     const el = contentRef.current;
-    if (el) {
+    if (!el) return;
+
+    const update = () => {
       setNeedsTruncation(el.scrollHeight > TRUNCATED_HEIGHT + 4);
-    }
-  });
+    };
+    update();
+
+    const observer = new ResizeObserver(update);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
 
   return (
     <div className={`relative min-w-0 max-w-full ${className}`}>

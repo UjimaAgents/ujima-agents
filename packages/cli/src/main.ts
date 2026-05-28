@@ -9,6 +9,7 @@ import { DEFAULT_BIND_HOST, DEFAULT_BIND_PORT } from '@ujima/api-schema';
 import {
   findMonorepoRoot,
   resolvePackagedRuntimeDir,
+  buildPackagedWebNodePath,
   resolveWebServerCwd,
   resolveWebServerEntry,
 } from './runtime-paths.js';
@@ -162,8 +163,11 @@ async function cmdStartPackaged(runtimeDir: string, argv: string[]): Promise<voi
     cwd: webCwd,
     env: {
       ...process.env,
+      UJIMA_HOME: homeDir,
+      UJIMA_PORT: process.env.UJIMA_PORT ?? String(DEFAULT_BIND_PORT),
       PORT: webPort,
       HOSTNAME: process.env.WEB_HOST ?? '127.0.0.1',
+      NODE_PATH: buildPackagedWebNodePath(webRuntimeDir, process.env.NODE_PATH),
     },
     stdio: 'inherit',
   });
@@ -228,8 +232,8 @@ async function cmdStart(argv: string[]): Promise<void> {
   if (!root) {
     process.stderr.write(
       'ujima start: no packaged runtime found and not inside the Ujima monorepo.\n' +
-        'Install globally: npm install -g ujima-agents\n' +
-        'Or run from a clone of https://github.com/ujima-agents/ujima\n',
+        'Install globally: npm install -g @ujima/agents\n' +
+        'Or run from a clone of https://github.com/UjimaAgents/ujima-agents\n',
     );
     process.exit(1);
   }

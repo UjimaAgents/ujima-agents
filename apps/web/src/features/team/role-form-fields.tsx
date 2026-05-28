@@ -80,7 +80,7 @@ export function RoleFormFields({
       <FieldShell label="Role instructions" htmlFor="roleInstructions">
         <TextArea
           id="roleInstructions"
-          className="min-h-28"
+          className="max-h-40 min-h-28 resize-y"
           value={instructions}
           onChange={(e) => onInstructionsChange(e.target.value)}
         />

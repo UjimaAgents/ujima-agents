@@ -36,6 +36,7 @@ import { SupervisorTodoService } from './supervisor-todo.js';
 import { SchedulerService } from './scheduler.js';
 import { TaskPromoterService, type TaskPromotionEvaluator } from './task-promoter.js';
 import { TaskSessionService } from './task-session.js';
+import type { TeamStore } from './team-store.js';
 import {
   createPermissionGatedToolService,
   saveBlockedToolRunStep,
@@ -234,6 +235,7 @@ export interface ApiServices {
   approvals: ApprovalService;
   auth: AuthService;
   bootstrap: BootstrapService;
+  teamStore: TeamStore;
   onboarding: OnboardingService;
   settings: SettingsService;
   workspaces: WorkspaceService;
@@ -709,6 +711,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     approvals: approvalsImpl,
     auth,
     bootstrap,
+    teamStore: context.teamStore,
     onboarding,
     settings,
     workspaces,

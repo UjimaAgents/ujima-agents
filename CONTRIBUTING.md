@@ -56,7 +56,7 @@ Releases are **tag-driven**. Day-to-day work still merges to `main`; npm publish
 
 ### Version source of truth
 
-[`packages/distribution/package.json`](packages/distribution/package.json) — workspace package `@ujima/distribution`; published to npm as **`ujima-agents`**.
+[`packages/distribution/package.json`](packages/distribution/package.json) — published to npm as **`@ujima/agents`** (CLI command: `ujima`).
 
 ### Prepare a release
 
@@ -79,11 +79,15 @@ git push origin main && git push origin v0.2.0
 
 The tag **must** match the package version exactly (`v0.2.0` ↔ `"version": "0.2.0"`).
 
+**Important:** Use a **`v` prefix** on the git tag (e.g. `v0.0.1`, not `0.0.1`). The [release workflow](.github/workflows/release.yml) only runs on `v*` tags; a GitHub “pre-release” checkbox alone does not publish to npm.
+
 ### CI publish
 
-[`.github/workflows/release.yml`](.github/workflows/release.yml) runs on `v*` tags: validates the tag, runs tests, assembles `packages/distribution/dist` (compiled runtime only — no TypeScript sources), publishes to npm, and creates a GitHub Release with the VSIX attached.
+[`.github/workflows/release.yml`](.github/workflows/release.yml) runs on `v*` tags: validates the tag, runs tests, assembles `packages/distribution/dist` (compiled runtime only — no TypeScript sources), copies the root `README.md` into `packages/distribution` for npm, publishes to npm, and creates a GitHub Release with the VSIX attached.
 
-Set the repository secret **`NPM_TOKEN`** (npm automation token with publish access to `ujima-agents`).
+Set the repository secret **`NPM_TOKEN`** (npm automation token with publish access to `@ujima` on org **ujima**).
+
+npm publish does **not** use `--provenance` while this repository is private (npm only accepts provenance from **public** GitHub repos). After open-sourcing, you can add `id-token: write` and `npm publish --provenance` back to the workflow.
 
 ### Local checks
 

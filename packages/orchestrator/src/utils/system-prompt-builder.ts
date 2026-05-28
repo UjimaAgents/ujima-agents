@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import type { ModelMessage } from 'ai';
 import type { WakeReason } from '@ujima/shared';
 import { loadProceduresForSystemPrompt as loadProceduresIndex } from '../tools/self-procedure.js';
+import { aggregateProcedures, type AggregatorOutput } from './procedures.js';
 
 /**
  * Bet 1 — cache-stable system prompt.
@@ -99,7 +100,9 @@ export const BASE_WAKE_SCAFFOLD: readonly string[] = Object.freeze([
 export interface CacheableSystemInput {
   /** Output of `buildAgentSystemPrompt` — stable per (agent, thread). */
   baseSystem: string;
-  /** Optional procedures.md content (Bet 7). When present, appended to the cache-stable prefix. */
+  /** Enforced org procedures rendered before lower-priority prompt sections. */
+  lawText?: string;
+  /** One-line workspace, channel, and agent procedure index. */
   proceduresText?: string;
   /** Optional task-session goal suffix (still cache-stable per task). */
   goalSuffix?: string;
@@ -132,6 +135,7 @@ export interface CacheableSystemOutput {
 
 export function buildCacheableSystem(input: CacheableSystemInput): CacheableSystemOutput {
   const sections: string[] = [input.baseSystem];
+  if (input.lawText) sections.push(input.lawText);
   if (input.goalSuffix) sections.push(input.goalSuffix);
   // Bet 1b — memory/procedure write-policy guidance, gated on
   // tool availability so prompts without memory tools stay clean.
@@ -139,7 +143,6 @@ export function buildCacheableSystem(input: CacheableSystemInput): CacheableSyst
   if (toolIds.has('memory.write')) sections.push(MEMORY_GUIDANCE.join('\n'));
   if (toolIds.has('self.procedure.add')) sections.push(PROCEDURES_GUIDANCE.join('\n'));
   if (input.proceduresText) {
-    sections.push('Your procedural memory (per-agent playbook):');
     sections.push(input.proceduresText);
   }
   sections.push(input.baseScaffold ?? BASE_WAKE_SCAFFOLD.join('\n'));
@@ -223,4 +226,17 @@ export async function loadProceduresForSystemPrompt(
  */
 export function hashPromptZone(text: string): string {
   return createHash('sha256').update(text).digest('hex');
+}
+
+export async function loadCultureForSystemPrompt(input: {
+  workspaceRoot: string;
+  organizationId: string;
+  memberId: string;
+  channelId?: string;
+}): Promise<AggregatorOutput> {
+  try {
+    return await aggregateProcedures(input);
+  } catch {
+    return { applied: [] };
+  }
 }

@@ -6,7 +6,8 @@ import { assertWorkspaceRootPathExists } from './workspace-root.js';
 import type { ApiRepository } from './repository-reader.js';
 import type { TeamStore } from './team-store.js';
 import { provisionOrganization } from './provision-organization.js';
-import { orgWorkspaceId } from '@ujima/shared';
+import { orgWorkspaceId, organizationIdFromWorkspaceId } from '@ujima/shared';
+import { resolve } from 'node:path';
 
 export interface WorkspaceListItem {
   id: string;
@@ -130,6 +131,16 @@ export class WorkspaceService {
 
     const workspaceRoot = assertWorkspaceRootPathExists(input.workspaceRoot);
 
+    const normalizedNewRoot = resolve(workspaceRoot.trim()).replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+    const existingOrgs = this.repo.listOrganizations();
+    for (const org of existingOrgs) {
+      if (!org.workspace?.root) continue;
+      const normalizedExisting = resolve(org.workspace.root.trim()).replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+      if (normalizedExisting === normalizedNewRoot) {
+        throw new Error(`A workspace with the project folder "${org.workspace.root}" already exists.`);
+      }
+    }
+
     const templateOrganizationId = authState.user.organizationId;
     const templateOrganization = this.repo.getOrganization(templateOrganizationId);
     if (!templateOrganization) {
@@ -168,5 +179,32 @@ export class WorkspaceService {
       updated_at: now,
       is_current: false,
     };
+  }
+
+  deleteWorkspace(
+    sessionToken: string | null | undefined,
+    workspaceId: string,
+  ): void {
+    const authState = this.auth.getAuthState(sessionToken);
+    if (!authState.authenticated || !authState.user) {
+      throw new Error('session required');
+    }
+
+    const organizationId = organizationIdFromWorkspaceId(workspaceId);
+    if (!organizationId) {
+      throw new Error('Invalid workspace ID');
+    }
+
+    if (organizationId === authState.user.organizationId) {
+      throw new Error('Cannot delete the currently active workspace. Switch to another workspace first.');
+    }
+
+    const organizations = this.auth.listAccessibleOrganizations(sessionToken);
+    if (!organizations.some((org) => org.id === organizationId)) {
+      throw new Error('Workspace not found or access denied');
+    }
+
+    this.repo.deleteOrganizationData(organizationId);
+    this.teamStore.clearTeam(organizationId);
   }
 }

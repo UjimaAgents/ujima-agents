@@ -9,6 +9,7 @@ import {
   Plus,
   Search,
   Settings,
+  Trash2,
 } from "lucide-react";
 import Link from "next/link";
 import { Avatar } from "./chat/primitives";
@@ -28,9 +29,10 @@ import { AgentEditorModal } from "./sidebar/agent-editor-modal";
 import { CreateAgentModal } from "./sidebar/create-agent-modal";
 import { CreateChannelModal } from "./sidebar/create-channel-modal";
 import { SidebarSectionEmpty } from "./sidebar/sidebar-section-empty";
-import { switchOrganization } from "../switch-workspace";
+import { switchOrganization, switchToWorkspace, orgWorkspaceId } from "../switch-workspace";
 import { visibleWorkspaceChannels } from "../workspace-channels";
 import { WORKSPACE_DOCK_ROW_CLASS } from "../workspace-dock";
+import { WorkspaceCreateModal } from "../../settings/organization/components/workspaces/workspace-create-modal";
 
 type WorkspaceSchedule = {
   id: string;
@@ -228,6 +230,7 @@ export function WorkspaceSidebar({
   const [menuOpen, setMenuOpen] = useState(false);
   const [isChannelModalOpen, setIsChannelModalOpen] = useState(false);
   const [isAgentModalOpen, setIsAgentModalOpen] = useState(false);
+  const [isCreateWorkspaceOpen, setIsCreateWorkspaceOpen] = useState(false);
   const [switchingOrgId, setSwitchingOrgId] = useState<string | null>(null);
   const [schedules, setSchedules] = useState<WorkspaceSchedule[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
@@ -321,6 +324,43 @@ export function WorkspaceSidebar({
     router.push("/settings/organization?tab=schedules");
   }, [router]);
 
+  const handleCreateWorkspace = useCallback(async (name: string, rootPath: string) => {
+    const res = await fetch("/api/workspaces", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        root_path: rootPath,
+        label: name,
+      }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => null);
+      throw new Error(body?.message || "Failed to create workspace");
+    }
+    const created = await res.json();
+    await switchToWorkspace(created.id, "/workspace");
+  }, []);
+
+  const handleDeleteWorkspace = useCallback(async (orgId: string, name: string) => {
+    const confirmed = window.confirm(`Are you sure you want to delete the workspace "${name}"? This action cannot be undone.`);
+    if (!confirmed) return;
+
+    try {
+      const workspaceId = orgWorkspaceId(orgId);
+      const res = await fetch(`/api/workspaces/${encodeURIComponent(workspaceId)}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.message || "Failed to delete workspace");
+      }
+      
+      window.location.reload();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Failed to delete workspace");
+    }
+  }, []);
+
   return (
     <aside className="relative flex h-full w-full flex-col border-r border-zinc-200 bg-white dark:border-zinc-800 dark:bg-[#09090b]">
       <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-zinc-50/50 to-transparent dark:from-white/[0.02]" />
@@ -340,41 +380,69 @@ export function WorkspaceSidebar({
               </span>
               <ChevronDown className="ml-auto h-4 w-4 shrink-0 text-zinc-400" />
             </button>
-            {menuOpen && bootstrap.organizations.length > 1 ? (
+            {menuOpen && bootstrap.organizations.length >= 1 ? (
               <div className="absolute left-11 right-0 top-full z-50 mt-2 overflow-hidden rounded-xl border border-zinc-200 bg-white p-1 shadow-[0_16px_40px_rgba(0,0,0,0.12)] dark:border-zinc-800 dark:bg-[#09090b]">
                 <p className="px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-400">
                   Workspaces
                 </p>
-                {bootstrap.organizations.map((org) => {
-                  const active = org.id === bootstrap.organization?.id;
-                  const busy = switchingOrgId === org.id;
-                  return (
-                    <button
-                      key={org.id}
-                      type="button"
-                      disabled={Boolean(switchingOrgId)}
-                      onClick={() => {
-                        void (async () => {
-                          setMenuOpen(false);
-                          if (active || switchingOrgId) return;
-                          setSwitchingOrgId(org.id);
-                          try {
-                            await switchOrganization(org.id, "/workspace");
-                          } catch {
-                            setSwitchingOrgId(null);
-                          }
-                        })();
-                      }}
-                      className={`flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-xs transition disabled:opacity-60 ${
-                        active ? listItemSelectedNeutral : listItemIdle
-                      }`}
-                    >
-                      {busy ? <Clock className="h-3.5 w-3.5 shrink-0 animate-pulse" /> : null}
-                      <span className="flex-1 truncate font-medium">{org.name}</span>
-                      {active ? <Check className="h-3.5 w-3.5 shrink-0 text-zinc-500" /> : null}
-                    </button>
-                  );
-                })}
+                <div className="space-y-0.5 max-h-60 overflow-y-auto">
+                  {bootstrap.organizations.map((org) => {
+                    const active = org.id === bootstrap.organization?.id;
+                    const busy = switchingOrgId === org.id;
+                    return (
+                      <div key={org.id} className="group/workspace flex items-center gap-1 rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-900">
+                        <button
+                          type="button"
+                          disabled={Boolean(switchingOrgId)}
+                          onClick={() => {
+                            void (async () => {
+                              setMenuOpen(false);
+                              if (active || switchingOrgId) return;
+                              setSwitchingOrgId(org.id);
+                              try {
+                                await switchOrganization(org.id, "/workspace");
+                              } catch {
+                                setSwitchingOrgId(null);
+                              }
+                            })();
+                          }}
+                          className={`flex-1 flex items-center gap-2 px-2 py-2 text-left text-xs transition disabled:opacity-60 ${
+                            active ? listItemSelectedNeutral : listItemIdle
+                          }`}
+                        >
+                          {busy ? <Clock className="h-3.5 w-3.5 shrink-0 animate-pulse" /> : null}
+                          <span className="flex-1 truncate font-medium">{org.name}</span>
+                          {active ? <Check className="h-3.5 w-3.5 shrink-0 text-zinc-500" /> : null}
+                        </button>
+                        {!active && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void handleDeleteWorkspace(org.id, org.name);
+                            }}
+                            className="mr-1 rounded p-1 text-zinc-400 hover:bg-red-500/10 hover:text-red-500 transition-colors"
+                            title="Delete Workspace"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="my-1 border-t border-zinc-100 dark:border-zinc-800" />
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    setIsCreateWorkspaceOpen(true);
+                  }}
+                  className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-xs font-semibold text-violet-600 hover:bg-zinc-100 dark:text-violet-400 dark:hover:bg-zinc-900"
+                >
+                  <Plus className="h-3.5 w-3.5 shrink-0" />
+                  Add Workspace
+                </button>
               </div>
             ) : null}
           </div>
@@ -536,6 +604,12 @@ export function WorkspaceSidebar({
         onClose={() => setIsChannelModalOpen(false)}
         onCreateChannel={onCreateChannel}
         onSelect={onSelect}
+      />
+
+      <WorkspaceCreateModal
+        isOpen={isCreateWorkspaceOpen}
+        onClose={() => setIsCreateWorkspaceOpen(false)}
+        onSubmit={handleCreateWorkspace}
       />
 
       <CreateAgentModal

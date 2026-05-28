@@ -1048,12 +1048,56 @@ const MIGRATIONS: { id: string; up: string }[] = [
     `,
   },
   {
-    // MCP governance v1 — per-tool risk classification, admin-owned.
+    // Procedures-as-Culture (docs/procedures-as-culture.md).
+    //
+    // Two small tables: `procedure_revisions` is the append-only
+    // version history surfaced in the UI; `run_procedures_applied`
+    // captures which (scope, name, version) tuples were surfaced into
+    // a given wake's system prompt so the trajectory log can render
+    // them. Procedure BODIES still live on disk under
+    // `ai/memory-bank/{org,channels,agents}/**/procedures/<slug>.md`
+    // — neither table stores the body except as a per-revision
+    // snapshot for history.
+    id: '032_procedure_culture',
+    up: `
+      CREATE TABLE IF NOT EXISTS procedure_revisions (
+        id              TEXT PRIMARY KEY,
+        organization_id TEXT NOT NULL,
+        scope           TEXT NOT NULL,
+        scope_id        TEXT NOT NULL,
+        name            TEXT NOT NULL,
+        version         INTEGER NOT NULL,
+        body_snapshot   TEXT NOT NULL,
+        description     TEXT NOT NULL,
+        enforced        INTEGER NOT NULL DEFAULT 0,
+        updated_by      TEXT NOT NULL,
+        updated_at      TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_procedure_revisions_lookup
+        ON procedure_revisions(organization_id, scope, scope_id, name, version DESC);
+
+      CREATE TABLE IF NOT EXISTS run_procedures_applied (
+        organization_id TEXT NOT NULL,
+        run_id          TEXT NOT NULL,
+        scope           TEXT NOT NULL,
+        scope_id        TEXT NOT NULL,
+        name            TEXT NOT NULL,
+        version         INTEGER NOT NULL,
+        enforced        INTEGER NOT NULL DEFAULT 0,
+        created_at      TEXT NOT NULL,
+        PRIMARY KEY (organization_id, run_id, scope, scope_id, name)
+      );
+      CREATE INDEX IF NOT EXISTS idx_run_procedures_applied_run
+        ON run_procedures_applied(organization_id, run_id);
+    `,
+  },
+  {
+    // MCP governance — per-tool risk classification, admin-owned.
     // Lives alongside (not inside) mcp_tool_cache so re-running Test
     // on an MCP server cannot clobber admin decisions. Seeding from
     // discovery uses INSERT OR IGNORE; manual edits never get
-    // overwritten by construction. See mcp_governance_plan.md §2.
-    id: '032_mcp_tool_classifications',
+    // overwritten by construction.
+    id: '033_mcp_tool_classifications',
     up: `
       CREATE TABLE IF NOT EXISTS mcp_tool_classifications (
         organization_id TEXT NOT NULL,
@@ -1074,12 +1118,10 @@ const MIGRATIONS: { id: string; up: string }[] = [
     `,
   },
   {
-    // Per-tool agent grants. When an agent has zero rows for an
-    // (org, agent, mcp_server) triple, the runtime exposes the full
-    // tool list (back-compat with whole-MCP attachments). When it
-    // has at least one row, only the listed tools are exposed —
-    // shrinking the model's tool palette and the resulting prompt.
-    id: '033_agent_tool_attachments',
+    // Per-tool agent grants. Zero rows for (agent, server) → runtime
+    // exposes the full tool list (back-compat). Any rows → only those
+    // tools are exposed, shrinking the model's prompt palette.
+    id: '034_agent_tool_attachments',
     up: `
       CREATE TABLE IF NOT EXISTS agent_tool_attachments (
         organization_id TEXT NOT NULL,

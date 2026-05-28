@@ -18,7 +18,14 @@ import { presenceToActivityState } from "./activity-state";
 
 export type WorkspaceChannel = BootstrapResponse["channels"][number];
 export type WorkspaceMember = BootstrapResponse["members"][number];
-export type WorkspaceTab = "conversation" | "approvals" | "files" | "activity" | "tasks" | "members";
+export type WorkspaceTab =
+  | "conversation"
+  | "approvals"
+  | "files"
+  | "activity"
+  | "tasks"
+  | "members"
+  | "culture";
 export type WorkspaceDetailsTab = "Reasoning trace" | "Changes" | "Metadata";
 
 export interface ActiveJob {

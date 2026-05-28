@@ -6,7 +6,6 @@ export const dynamic = "force-dynamic";
 
 export async function POST() {
   const sessionToken = await getSessionTokenFromCookie();
-  await clearSessionCookie();
 
   try {
     const response = await daemonFetch(
@@ -30,13 +29,17 @@ export async function POST() {
       );
     }
 
-    return NextResponse.json(body, { status: response.status });
+    const nextResponse = NextResponse.json(body, { status: response.status });
+    clearSessionCookie(nextResponse);
+    return nextResponse;
   } catch (error) {
-    return NextResponse.json(
+    const nextResponse = NextResponse.json(
       upstreamUnavailable(
         error instanceof Error ? error.message : "Unable to reach the Ujima daemon.",
       ),
       { status: 503 },
     );
+    clearSessionCookie(nextResponse);
+    return nextResponse;
   }
 }

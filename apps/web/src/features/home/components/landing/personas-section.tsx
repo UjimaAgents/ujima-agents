@@ -17,7 +17,7 @@ export function PersonasSection() {
               </h3>
               <p className="mt-2 text-[17px] leading-relaxed text-zinc-600 dark:text-zinc-400">{surface.text}</p>
               <div className="mt-4">
-                {"comingSoon" in surface && surface.comingSoon ? (
+                {"comingSoon" in surface ? (
                   <ComingSoonButton className="!px-3 !py-2 !text-xs">Coming soon</ComingSoonButton>
                 ) : (
                   // The discriminated-union narrowing for productSurfaces
@@ -27,8 +27,8 @@ export function PersonasSection() {
                   // the `?? '#'` is dead at runtime, only there to
                   // satisfy the type checker. Same idea for `external`.
                   <SecondaryButton
-                    href={("href" in surface ? surface.href : undefined) ?? "#"}
-                    external={"external" in surface ? surface.external : false}
+                    href={surface.href}
+                    external={surface.external ?? false}
                     className="!px-3 !py-2 !text-xs"
                   >
                     Learn more

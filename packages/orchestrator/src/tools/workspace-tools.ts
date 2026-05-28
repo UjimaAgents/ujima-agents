@@ -8,6 +8,10 @@ import { isSensitiveWorkspacePath } from '@ujima/shared/workspace-file-filters';
 import type { ApiRepository } from '../services/repository-reader.js';
 import type { OrchestratorTool, ToolExecutionContext } from './types.js';
 import { readWindowValue } from './window-utils.js';
+import {
+  isAgentRestrictedProcedurePath,
+  isProceduresPath,
+} from '../utils/procedures.js';
 
 /**
  * Bet 4 — workspace-files FTS index. Every successful `write` /
@@ -32,6 +36,10 @@ function indexWorkspaceWrite(
   if (!repo?.upsertWorkspaceFile) return;
   try {
     if (isSensitiveWorkspacePath(workspacePath)) {
+      repo.deleteWorkspaceFile?.(ctx.invocation.organizationId, workspacePath);
+      return;
+    }
+    if (isProceduresPath(workspacePath)) {
       repo.deleteWorkspaceFile?.(ctx.invocation.organizationId, workspacePath);
       return;
     }
@@ -234,6 +242,7 @@ export const writeTool: OrchestratorTool<typeof WriteSchema> = {
     if (!invocation.resourcePath) {
       throw new Error('resourcePath is required');
     }
+    assertAgentWritePermitted(invocation.memberId, invocation.resourcePath);
 
     const resolved = resolveWorkspacePath(team.workspace.root, invocation.resourcePath);
     const before = await readExistingText(resolved);
@@ -278,6 +287,7 @@ export const editTool: OrchestratorTool<typeof EditSchema> = {
     if (!invocation.resourcePath) {
       throw new Error('resourcePath is required');
     }
+    assertAgentWritePermitted(invocation.memberId, invocation.resourcePath);
 
     const resolved = resolveWorkspacePath(team.workspace.root, invocation.resourcePath);
     const before = await readExistingText(resolved);
@@ -330,6 +340,7 @@ export const multieditTool: OrchestratorTool<typeof MultiEditSchema> = {
     if (!invocation.resourcePath) {
       throw new Error('resourcePath is required');
     }
+    assertAgentWritePermitted(invocation.memberId, invocation.resourcePath);
 
     const resolved = resolveWorkspacePath(team.workspace.root, invocation.resourcePath);
     const before = await readExistingText(resolved);
@@ -472,6 +483,14 @@ export const globTool: OrchestratorTool<typeof GlobSchema> = {
 
 function resolveWorkspacePath(workspaceRoot: string, resourcePath: string): string {
   return assertWorkspaceBoundary(workspaceRoot, resourcePath);
+}
+
+function assertAgentWritePermitted(memberId: string, resourcePath: string): void {
+  if (isAgentRestrictedProcedurePath(memberId, resourcePath)) {
+    throw new Error(
+      'agents may only write under ai/memory-bank/agents/<self>/. Use self.procedure.add for your own procedures; ask a human to change org/channel culture.',
+    );
+  }
 }
 
 async function readExistingText(path: string): Promise<string> {
