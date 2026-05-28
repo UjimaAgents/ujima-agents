@@ -3,7 +3,7 @@
   "publishConfig": {
     "access": "public"
   },
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Framework for building Slack-like teams of AI agents — CLI, API, and web UI.",
   "license": "MIT",
   "homepage": "https://github.com/UjimaAgents/ujima-agents#readme",
@@ -18,7 +18,11 @@
   "bin": {
     "ujima": "./dist/cli.js"
   },
-  "files": ["dist", "LICENSE", "README.md"],
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
   "engines": {
     "node": ">=20"
   },

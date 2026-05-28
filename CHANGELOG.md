@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.0.2] - 2026-05-28
 ### Added
 - **Echo-loop kill** — new `channel.ack` silent terminator that satisfies the mandatory-reply contract without producing a wake-able channel message; vacuous-ack auto-mention suppression in `ConversationService.sendMessage`; per-pair mention back-pressure (`(org, thread, from, to)` window, 3 wakes / 90s) demotes runaway pairs to `channel-read`.
 - **Mirror-loop runtime guard** (Bet 1.5) — `packages/orchestrator/src/services/mirror-guard.ts` exports `detectMirrorChain` (Jaccard ≥ 0.75 across 3 consecutive agent messages), `isVacuousAck`, `isMirrorFragileModel`, `shouldSuppressForMirror`. Wired into `channel.reply` / `channel.post` / `channel.dm` via `conversations.tryMirrorSuppress`. Provider-aware anti-mirror prompt line injected for `gemini-*-flash` only.
