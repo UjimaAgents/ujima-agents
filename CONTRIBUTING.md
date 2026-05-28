@@ -87,6 +87,8 @@ The tag **must** match the package version exactly (`v0.2.0` ↔ `"version": "0.
 
 Set the repository secret **`NPM_TOKEN`** (npm automation token with publish access to `@ujima` on org **ujima**).
 
+npm publish does **not** use `--provenance` while this repository is private (npm only accepts provenance from **public** GitHub repos). After open-sourcing, you can add `id-token: write` and `npm publish --provenance` back to the workflow.
+
 ### Local checks
 
 ```bash
