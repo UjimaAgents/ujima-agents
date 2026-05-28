@@ -11,11 +11,8 @@ interface MockEventSource {
   close: () => void;
 }
 
-let activeSource: MockEventSource | null = null;
-
 beforeEach(() => {
-  activeSource = null;
-  const EventSourceMock = function EventSourceMock(_url: string) {
+  const EventSourceMock = function EventSourceMock() {
     const instance: MockEventSource = {
       onopen: null,
       onmessage: null,
@@ -25,7 +22,6 @@ beforeEach(() => {
         instance.readyState = 2; // EventSource.CLOSED
       },
     };
-    activeSource = instance;
     return instance;
   };
   EventSourceMock.CONNECTING = 0;
@@ -36,7 +32,6 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
-  activeSource = null;
 });
 
 describe("SSE stale error ghost — regression", () => {
