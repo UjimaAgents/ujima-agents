@@ -3,7 +3,7 @@
   "publishConfig": {
     "access": "public"
   },
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "Framework for building Slack-like teams of AI agents — CLI, API, and web UI.",
   "keywords": [
     "ai",
@@ -21,7 +21,7 @@
     "model-context-protocol"
   ],
   "license": "MIT",
-  "homepage": "https://github.com/UjimaAgents/ujima-agents#readme",
+  "homepage": "https://www.npmjs.com/package/@ujima/agents",
   "bugs": {
     "url": "https://github.com/UjimaAgents/ujima-agents/issues"
   },

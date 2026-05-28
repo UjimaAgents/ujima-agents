@@ -15,6 +15,7 @@ import {
 import {join, dirname} from "node:path";
 import {createRequire} from "node:module";
 import {$} from "bun";
+import {bannerCdnUrl} from "./lib/banner-cdn.ts";
 import {
   API_RUNTIME_DIR,
   DIST_OUT_DIR,
@@ -161,27 +162,27 @@ function copyBannerForPublish(): void {
   const assetsDir = join(DIST_PKG_DIR, "assets");
   mkdirSync(assetsDir, {recursive: true});
   cpSync(BANNER_PATH, join(assetsDir, "banner.png"));
-  log("Copied banner.png into packages/distribution/assets for npm README.");
+  log(`Copied banner.png for npm + jsDelivr (${bannerCdnUrl("latest")}).`);
 }
 
 /** npm displays README.md from packages/distribution — not the monorepo root. */
 function copyReadmeForPublish(): void {
   const pkg = JSON.parse(readFileSync(DISTRIBUTION_PKG_JSON, "utf8")) as {
+    version: string;
     repository?: { url?: string };
   };
-  const repoUrl = (pkg.repository?.url ?? "https://github.com/UjimaAgents/ujima-agents.git")
-    .replace(/^git\+/, "")
-    .replace(/\.git$/, "");
-  const branch = "main";
+  const bannerUrl = bannerCdnUrl(pkg.version);
 
   let readme = readFileSync(README_PATH, "utf8");
-  // Keep ./assets/banner.png — banner ships in the tarball (private repo breaks raw.githubusercontent.com).
-  readme = readme.replace(/\]\(\.\/packages\//g, `](${repoUrl}/tree/${branch}/packages/`);
-  readme = readme.replace(/\]\(\.\/apps\//g, `](${repoUrl}/tree/${branch}/apps/`);
-  readme = readme.replace(/\]\(\.\/LICENSE\)/g, `](${repoUrl}/blob/${branch}/LICENSE)`);
+  // Public CDN only — private GitHub raw/blob URLs do not render on npm.
+  readme = readme.replace(
+    /!\[Ujima Agents Banner\]\([^)]+\)/,
+    `![Ujima Agents Banner](${bannerUrl})`,
+  );
+  // Keep ./LICENSE — LICENSE ships in the tarball. Do not rewrite to GitHub while the repo is private.
 
   writeFileSync(join(DIST_PKG_DIR, "README.md"), readme, "utf8");
-  log("Copied root README for npm.");
+  log(`Copied root README for npm (banner → ${bannerUrl}).`);
 }
 
 /** Remove stray source maps from the publishable tree (Next chunks, tooling, etc.). */
