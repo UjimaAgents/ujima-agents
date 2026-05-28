@@ -13,6 +13,7 @@ import type {
 import type { RiskDefaults, ToolRiskClass } from "@ujima/shared";
 import { emptyRiskDefaults } from "@ujima/shared";
 import { settingsFetch, settingsFetchVoid } from "@/features/settings/shared/settings-api";
+import { buildCatalogUrl } from "./build-catalog-url";
 
 export type CatalogRole = "worker" | "supervisor";
 
@@ -78,11 +79,8 @@ export function useMcpCatalog(orgId: string): UseMcpCatalog {
       setLoading(true);
       setError(null);
       try {
-        const qs = new URLSearchParams({ organizationId: orgId });
-        if (agentId) qs.set("agentId", agentId);
-        if (role) qs.set("role", role);
         const data = await settingsFetch<McpCatalogResponse>(
-          `/api/settings/mcps/catalog?${qs.toString()}`,
+          buildCatalogUrl({ orgId, agentId, role }),
           undefined,
           "Failed to load tool catalog.",
         );

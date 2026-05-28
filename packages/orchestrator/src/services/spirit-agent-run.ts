@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { stepCountIs, tool, type ToolSet } from 'ai';
-import type { McpToolDescriptor } from '@ujima/shared';
+import { classifyTool, type McpToolDescriptor } from '@ujima/shared';
 import { toModelToolErrorOutput, toModelToolOutput } from './tool-loop-result.js';
 import type { SpiritMcpResolution } from './spirit-types.js';
 import { mcpPermissionToolName } from './mcp-runtime.js';
@@ -558,14 +558,49 @@ export class SpiritServiceAgentRun extends SpiritServiceLifecycle {
       try {
         const connection = await pool.get(resolution.def, { agentId: ctx.memberId });
         const liveTools = await connection.listTools();
-        toolList = liveTools.map((t) => ({
-          name: t.name,
-          description: t.description ?? '',
-          inputSchema:
-            t.inputSchema && typeof t.inputSchema === 'object' && !Array.isArray(t.inputSchema)
-              ? (t.inputSchema as Record<string, unknown>)
-              : undefined,
-        }));
+        toolList = liveTools.map((t) => {
+          const declared = typeof (t as { destructive?: boolean }).destructive === 'boolean'
+            ? (t as { destructive?: boolean }).destructive
+            : undefined;
+          return {
+            name: t.name,
+            description: t.description ?? '',
+            inputSchema:
+              t.inputSchema && typeof t.inputSchema === 'object' && !Array.isArray(t.inputSchema)
+                ? (t.inputSchema as Record<string, unknown>)
+                : undefined,
+            ...(declared !== undefined ? { destructive: declared } : {}),
+          };
+        });
+
+        // Seed inferred classifications for tools the live MCP
+        // surfaced for the first time. INSERT OR IGNORE preserves any
+        // existing rows (manual or inferred) and makes the catalog UI
+        // show first-seen tools with their correct risk class on the
+        // very next request — without an explicit Test run. The
+        // policy resolver still has its own classify_tool fallback as
+        // defence in depth.
+        if (toolList.length > 0) {
+          const seedEntries = toolList.map((d) => {
+            const inf = classifyTool({
+              name: d.name,
+              description: d.description,
+              category: resolution.def.category,
+              declaredDestructive: d.destructive,
+            });
+            return {
+              toolName: d.name,
+              risk: inf.risk,
+              needsReview: inf.needsReview,
+              reason: inf.reason,
+            };
+          });
+          this.repo.seedInferredClassifications(
+            ctx.organizationId,
+            resolution.serverId,
+            seedEntries,
+          );
+        }
       } catch {
         toolList = this.repo.getMcpToolCache(ctx.organizationId, resolution.serverId)?.tools ?? [];
       }

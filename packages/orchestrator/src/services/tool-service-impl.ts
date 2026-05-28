@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import type { AgentTeamHandle } from "@ujima/framework";
 import {
   SocketEventNames,
+  classifyTool,
   evaluatePolicy,
   memberRoom,
   resolveClassification,
@@ -409,7 +410,28 @@ export class ToolServiceImpl implements ToolService {
       serverId,
       rawToolName,
     );
-    const effective = resolveClassification(stored);
+    // Inferred fallback for tools that reached us via a live MCP
+    // listTools but haven't been seeded into the classifications
+    // table yet (no Test run, or first-seen tool surfaced
+    // dynamically). Pre-fix resolveClassification(null) returned
+    // 'unknown' and org defaults like read=allow / destructive=deny
+    // were ignored on those first calls. The cache lookup is the
+    // same source of truth the catalog uses; falling back to a name-
+    // only classify_tool covers tools that aren't cached either.
+    let inferred: ReturnType<typeof classifyTool>["risk"] | undefined;
+    if (!stored) {
+      const server = this.repo.getMcpServer(invocation.organizationId, serverId);
+      const cache = this.repo.getMcpToolCache(invocation.organizationId, serverId);
+      const descriptor = cache?.tools.find((t) => t.name === rawToolName);
+      const inf = classifyTool({
+        name: rawToolName,
+        description: descriptor?.description,
+        category: server?.category,
+        declaredDestructive: descriptor?.destructive,
+      });
+      inferred = inf.risk;
+    }
+    const effective = resolveClassification(stored, inferred);
     const evaluation = evaluatePolicy(policy, {
       agentId: invocation.memberId,
       mcpId: serverId,

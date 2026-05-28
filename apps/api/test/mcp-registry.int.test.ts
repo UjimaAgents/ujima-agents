@@ -1257,6 +1257,86 @@ describe('McpRegistryService — Phase 3 MCP integration', () => {
     );
   });
 
+  // Regression: deleteOrganizationData used to drop only the legacy
+  // org tables. The new governance tables (mcp_tool_classifications,
+  // agent_tool_attachments, plus the older mcp_servers / mcp_tool_cache
+  // / agent_mcp_attachments) are org-scoped without FK cascades, so a
+  // re-used org id could resurface stale grants and classifications
+  // into the runtime palette and the catalog UI.
+  it('deleteOrganizationData: clears every org-scoped governance table', async () => {
+    const fixture = await createFixture();
+    tempDirs.push(fixture.archiveRoot);
+
+    const server = fixture.registry.create({
+      organizationId: fixture.organizationId,
+      createdBy: fixture.ownerId,
+      name: 'teardown-mcp',
+      transport: 'stdio',
+      command: 'x',
+    });
+    fixture.repo.saveMcpToolCache({
+      mcpServerId: server.id,
+      organizationId: fixture.organizationId,
+      tools: [{ name: 'tool_a', description: '' }],
+      fetchedAt: new Date().toISOString(),
+    });
+    fixture.registry.grantToolToAgent({
+      organizationId: fixture.organizationId,
+      memberId: 'agent-x',
+      mcpServerId: server.id,
+      toolName: 'tool_a',
+    });
+    fixture.registry.setToolClassification({
+      organizationId: fixture.organizationId,
+      serverId: server.id,
+      toolName: 'tool_a',
+      risk: 'destructive',
+      updatedBy: 'admin',
+    });
+
+    // Sanity: all four rows landed.
+    expect(
+      fixture.repo.listAgentToolAttachments(fixture.organizationId, 'agent-x'),
+    ).toHaveLength(1);
+    expect(
+      fixture.repo.getMcpToolClassification(
+        fixture.organizationId,
+        server.id,
+        'tool_a',
+      ),
+    ).not.toBeNull();
+    expect(fixture.repo.listMcpServers(fixture.organizationId)).toHaveLength(1);
+    expect(
+      fixture.repo.getMcpToolCache(fixture.organizationId, server.id),
+    ).not.toBeNull();
+    expect(
+      fixture.repo
+        .listAgentMcpAttachments(fixture.organizationId, 'agent-x')
+        .filter((a) => a.mcpServerId === server.id),
+    ).toHaveLength(1);
+
+    fixture.repo.deleteOrganizationData(fixture.organizationId);
+
+    // Every governance surface for this org id is now empty.
+    expect(
+      fixture.repo.listAgentToolAttachments(fixture.organizationId, 'agent-x'),
+    ).toHaveLength(0);
+    expect(
+      fixture.repo.getMcpToolClassification(
+        fixture.organizationId,
+        server.id,
+        'tool_a',
+      ),
+    ).toBeNull();
+    expect(fixture.repo.listMcpServers(fixture.organizationId)).toHaveLength(0);
+    expect(
+      fixture.repo.getMcpToolCache(fixture.organizationId, server.id),
+    ).toBeNull();
+    expect(
+      fixture.repo.listAgentMcpAttachments(fixture.organizationId, 'agent-x'),
+    ).toHaveLength(0);
+  });
+
   // Regression: tool.attachedAgents is the row-level list the Tools
   // and Agents tabs use to decide whether a tool is exposed when no
   // per-tool allowlist is active. Pre-fix the list was scope-agnostic
