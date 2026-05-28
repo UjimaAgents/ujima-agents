@@ -3,6 +3,7 @@ import type {
   MCPDef,
   TaskDef,
   TeamDef,
+  ToolRiskClass,
   UjimaEvent,
   GovernancePolicy,
 } from '@ujima/shared';
@@ -93,6 +94,10 @@ export interface RuntimeHostDeps {
    * `undefined` if the workspace has none. Called on every tool check.
    */
   policyResolver?: () => GovernancePolicy | undefined;
+  classificationLookup?: (
+    mcpId: string,
+    toolName: string,
+  ) => ToolRiskClass | 'unknown' | undefined;
   gateResolver?: GateResolver;
 }
 
@@ -133,6 +138,7 @@ export async function createRuntimeHost(deps: RuntimeHostDeps, config: RuntimeHo
     audit: db.audit,
     agentState: db.agentState,
     governancePolicy: deps.policyResolver,
+    classificationLookup: deps.classificationLookup,
   });
   const pool = createMCPPool({});
   const workspaces = createWorkspaceStore(db.raw);

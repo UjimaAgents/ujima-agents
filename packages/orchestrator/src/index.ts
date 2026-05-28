@@ -43,6 +43,7 @@ export {
   OnboardingService,
   SettingsService,
   McpRegistryService,
+  GovernanceService,
   PluginRegistryService,
   SpiritService,
   SupervisorTodoService,

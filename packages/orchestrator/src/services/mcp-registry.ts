@@ -2,10 +2,19 @@ import { randomUUID } from 'node:crypto';
 import {
   McpServerPublicSchema,
   McpServerSchema,
+  classifyTool,
+  evaluatePolicy,
+  resolveClassification,
+  type AgentToolAttachment,
   type McpAttachmentScope,
   type McpServer,
   type McpServerPublic,
+  type McpToolClassification,
   type McpToolDescriptor,
+  type PolicyEvaluation,
+  type RiskDefaults,
+  type ToolPolicyState,
+  type ToolRiskClass,
 } from '@ujima/shared';
 import { connectMCP, parseMCPConfigJSON, type MCPConnection } from '@ujima/mcp-client';
 import type { MCPDef } from '@ujima/shared';
@@ -88,6 +97,57 @@ export interface TestMcpResult {
   tools: McpToolDescriptor[];
   error?: string;
   testedAt: string;
+}
+
+export interface CatalogTool {
+  name: string;
+  description: string;
+  risk: ToolRiskClass;
+  source: 'inferred' | 'manual' | 'registry' | 'unknown';
+  needsReview: boolean;
+  // Org-default decision (no specific agent).
+  effective: {
+    state: ToolPolicyState;
+    source: PolicyEvaluation['source'];
+    reason?: string;
+  };
+  // Agents that have this exact tool granted (per-tool attachments).
+  grantedAgents: string[];
+  // Agents the parent MCP server is attached to but no per-tool grant
+  // exists — they currently see this tool via the back-compat "all tools"
+  // expansion.
+  attachedAgents: string[];
+}
+
+export interface CatalogServer {
+  id: string;
+  name: string;
+  status: string;
+  category: string;
+  toolCount: number;
+  tools: CatalogTool[];
+}
+
+// Per-agent perspective row — only present when caller asked for ?agentId.
+export interface CatalogAgentView {
+  agentId: string;
+  // Effective decision the runtime would make for this (agent, tool).
+  state: ToolPolicyState;
+  source: PolicyEvaluation['source'];
+  reason?: string;
+  // Is the tool exposed to the model right now for this agent?
+  exposed: boolean;
+  // Why it is or isn't exposed.
+  exposureReason: 'no-mcp-attachment' | 'no-tool-grant' | 'granted' | 'all-tools-mode';
+}
+
+export interface CatalogResult {
+  servers: CatalogServer[];
+  riskDefaults: RiskDefaults;
+  // Per-(server,tool) per-agent decisions when ?agentId was passed.
+  // Keyed by `${serverId}::${toolName}` so the UI can look up in O(1).
+  agentView?: Record<string, CatalogAgentView>;
+  agentViewId?: string;
 }
 
 export class McpRegistryService {
@@ -326,6 +386,21 @@ export class McpRegistryService {
         tools: descriptors,
         fetchedAt: testedAt,
       });
+      const seedEntries = descriptors.map((d) => {
+        const out = classifyTool({
+          name: d.name,
+          description: d.description,
+          category: server.category,
+          declaredDestructive: d.destructive,
+        });
+        return {
+          toolName: d.name,
+          risk: out.risk,
+          needsReview: out.needsReview,
+          reason: out.reason,
+        };
+      });
+      this.repo.seedInferredClassifications(organizationId, server.id, seedEntries);
       this.repo.saveMcpServer({
         ...server,
         lastTestedAt: testedAt,
@@ -383,6 +458,286 @@ export class McpRegistryService {
     this.requireServer(organizationId, serverId);
     const cache = this.repo.getMcpToolCache(organizationId, serverId);
     return cache?.tools ?? [];
+  }
+
+  // ----------------- Governance catalog --------------------------------
+
+  getCatalog(organizationId: string, agentId?: string): CatalogResult {
+    this.requireOrganization(organizationId);
+    const policy = this.repo.getGovernancePolicy(organizationId);
+    const servers = this.repo.listMcpServers(organizationId);
+
+    // Per-agent perspective state, computed once and reused per row.
+    const agentMcpAttachments = agentId
+      ? new Set(
+          this.repo
+            .listAgentMcpAttachments(organizationId, agentId)
+            .map((a) => a.mcpServerId),
+        )
+      : null;
+    // For each server: tool-grant set + whether the agent is in "allowlist
+    // mode" (has any per-tool rows for that server).
+    const agentToolGrantsByServer = new Map<string, Set<string>>();
+    if (agentId) {
+      for (const row of this.repo.listAgentToolAttachments(organizationId, agentId)) {
+        let set = agentToolGrantsByServer.get(row.mcpServerId);
+        if (!set) {
+          set = new Set();
+          agentToolGrantsByServer.set(row.mcpServerId, set);
+        }
+        set.add(row.toolName);
+      }
+    }
+
+    const agentView: Record<string, CatalogAgentView> | undefined = agentId
+      ? {}
+      : undefined;
+
+    const out: CatalogResult['servers'] = [];
+    for (const server of servers) {
+      const cache = this.repo.getMcpToolCache(organizationId, server.id);
+      const descriptors = cache?.tools ?? [];
+      const attachments = this.repo.listMcpServerAttachments(organizationId, server.id);
+      const attachedAgents = [...new Set(attachments.map((a) => a.memberId))];
+
+      // Per-server: agents → tools-granted, for fast row-level "grantedAgents".
+      const grantedByTool = new Map<string, Set<string>>();
+      for (const member of attachedAgents) {
+        for (const row of this.repo.listAgentToolAttachments(
+          organizationId,
+          member,
+          server.id,
+        )) {
+          let set = grantedByTool.get(row.toolName);
+          if (!set) {
+            set = new Set();
+            grantedByTool.set(row.toolName, set);
+          }
+          set.add(member);
+        }
+      }
+
+      const tools = descriptors.map((d) => {
+        const stored: McpToolClassification | null = this.repo.getMcpToolClassification(
+          organizationId,
+          server.id,
+          d.name,
+        );
+        let inferredRisk: ToolRiskClass | undefined;
+        if (!stored) {
+          const inf = classifyTool({
+            name: d.name,
+            description: d.description,
+            category: server.category,
+            declaredDestructive: d.destructive,
+          });
+          inferredRisk = inf.risk;
+        }
+        const effective = resolveClassification(stored, inferredRisk);
+        const evaluation = evaluatePolicy(policy, {
+          // Synthetic agent id so agent rules don't fire — only platform
+          // + risk defaults inform the org-default chip.
+          agentId: '*org-default*',
+          mcpId: server.id,
+          toolName: d.name,
+          classification: effective.risk,
+        });
+
+        const grantedAgents = [...(grantedByTool.get(d.name) ?? [])];
+
+        if (agentView && agentId) {
+          const perAgentEval = evaluatePolicy(policy, {
+            agentId,
+            mcpId: server.id,
+            toolName: d.name,
+            classification: effective.risk,
+          });
+          const hasMcp = agentMcpAttachments?.has(server.id) ?? false;
+          const toolGrants = agentToolGrantsByServer.get(server.id);
+          const hasToolGrant = toolGrants?.has(d.name) ?? false;
+          const allowlistMode = (toolGrants?.size ?? 0) > 0;
+          const exposed = !hasMcp
+            ? false
+            : allowlistMode
+              ? hasToolGrant
+              : true;
+          const exposureReason: CatalogAgentView['exposureReason'] = !hasMcp
+            ? 'no-mcp-attachment'
+            : allowlistMode
+              ? hasToolGrant
+                ? 'granted'
+                : 'no-tool-grant'
+              : 'all-tools-mode';
+          agentView[`${server.id}::${d.name}`] = {
+            agentId,
+            state: perAgentEval.state,
+            source: perAgentEval.source,
+            reason: perAgentEval.reason,
+            exposed,
+            exposureReason,
+          };
+        }
+
+        return {
+          name: d.name,
+          description: d.description ?? '',
+          risk: (effective.risk === 'unknown' ? 'write' : effective.risk) as ToolRiskClass,
+          source: effective.source,
+          needsReview: stored?.needsReview ?? effective.source === 'unknown',
+          effective: {
+            state: evaluation.state,
+            source: evaluation.source,
+            reason: evaluation.reason,
+          },
+          grantedAgents,
+          attachedAgents,
+        };
+      });
+
+      out.push({
+        id: server.id,
+        name: server.name,
+        status: server.status,
+        category: server.category,
+        toolCount: tools.length,
+        tools,
+      });
+    }
+    return {
+      servers: out,
+      riskDefaults: policy.risk_defaults,
+      ...(agentView ? { agentView, agentViewId: agentId } : {}),
+    };
+  }
+
+  /**
+   * Grant a single tool to an agent. Idempotent. Auto-attaches the MCP
+   * server (with the requested scope) if no attachment exists, so the
+   * UI can say "give Ruby browser_navigate" in one click.
+   */
+  grantToolToAgent(input: {
+    organizationId: string;
+    memberId: string;
+    mcpServerId: string;
+    toolName: string;
+    scope?: 'worker' | 'supervisor' | 'both';
+  }): { attachment: AgentToolAttachment } {
+    const server = this.requireServer(input.organizationId, input.mcpServerId);
+    if (server.status === 'disabled') {
+      throw new Error(`MCP server "${server.name}" is disabled`);
+    }
+    const member = this.repo.getMember(input.organizationId, input.memberId);
+    if (!member) throw new Error(`Member not found: ${input.memberId}`);
+    if (member.kind !== 'agent') {
+      throw new Error(`Cannot grant tool to non-agent member "${input.memberId}"`);
+    }
+    if (member.retiredAt) {
+      throw new Error(`Cannot grant tool to retired member "${input.memberId}"`);
+    }
+
+    const now = new Date().toISOString();
+    const scope = input.scope ?? 'worker';
+
+    // Ensure the MCP attachment exists. Without it, the runtime can't
+    // see the server at all, so the per-tool grant would be silent.
+    const existingAttachments = this.repo.listAgentMcpAttachments(
+      input.organizationId,
+      input.memberId,
+    );
+    const hasServerAttachment = existingAttachments.some(
+      (a) => a.mcpServerId === input.mcpServerId,
+    );
+    if (!hasServerAttachment) {
+      this.repo.saveAgentMcpAttachment({
+        id: randomUUID(),
+        organizationId: input.organizationId,
+        memberId: input.memberId,
+        mcpServerId: input.mcpServerId,
+        scope,
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+
+    const attachment = this.repo.saveAgentToolAttachment({
+      organizationId: input.organizationId,
+      memberId: input.memberId,
+      mcpServerId: input.mcpServerId,
+      toolName: input.toolName,
+      scope,
+      createdAt: now,
+      updatedAt: now,
+    });
+    return { attachment };
+  }
+
+  // Revoke a single tool grant. MCP attachment is preserved so removing
+  // the last grant flips the agent back to "all tools" mode rather than
+  // silently detaching the server. UI exposes a separate "Detach MCP"
+  // affordance for the all-or-nothing op.
+  revokeToolFromAgent(
+    organizationId: string,
+    memberId: string,
+    mcpServerId: string,
+    toolName: string,
+  ): void {
+    this.repo.deleteAgentToolAttachment(organizationId, memberId, mcpServerId, toolName);
+  }
+
+  listToolGrants(
+    organizationId: string,
+    memberId: string,
+  ): AgentToolAttachment[] {
+    return this.repo.listAgentToolAttachments(organizationId, memberId);
+  }
+
+  setToolClassification(input: {
+    organizationId: string;
+    serverId: string;
+    toolName: string;
+    risk: ToolRiskClass;
+    reason?: string;
+    updatedBy: string;
+  }): McpToolClassification {
+    this.requireServer(input.organizationId, input.serverId);
+    return this.repo.upsertMcpToolClassification({
+      organizationId: input.organizationId,
+      mcpServerId: input.serverId,
+      toolName: input.toolName,
+      risk: input.risk,
+      source: 'manual',
+      needsReview: false,
+      reason: input.reason,
+      updatedAt: new Date().toISOString(),
+      updatedBy: input.updatedBy,
+    });
+  }
+
+  resetToolClassification(
+    organizationId: string,
+    serverId: string,
+    toolName: string,
+  ): McpToolClassification | null {
+    const server = this.requireServer(organizationId, serverId);
+    this.repo.deleteMcpToolClassification(organizationId, serverId, toolName);
+    const cache = this.repo.getMcpToolCache(organizationId, serverId);
+    const descriptor = cache?.tools.find((t) => t.name === toolName);
+    if (!descriptor) return null;
+    const inf = classifyTool({
+      name: descriptor.name,
+      description: descriptor.description,
+      category: server.category,
+      declaredDestructive: descriptor.destructive,
+    });
+    this.repo.seedInferredClassifications(organizationId, serverId, [
+      {
+        toolName: descriptor.name,
+        risk: inf.risk,
+        needsReview: inf.needsReview,
+        reason: inf.reason,
+      },
+    ]);
+    return this.repo.getMcpToolClassification(organizationId, serverId, toolName);
   }
 
   // ----------------- Attachments ---------------------------------------

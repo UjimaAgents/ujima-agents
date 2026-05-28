@@ -4,12 +4,14 @@ import {
   buildToolCatalog,
   clearAgent,
   emptyGovernancePolicy,
+  emptyRiskDefaults,
   evaluatePolicy,
   matchRule,
   removeAgentRule,
   removePlatformRule,
   setAgentRule,
   setPlatformRule,
+  setRiskDefaults,
 } from './governance-policy.js';
 
 describe('governance policy schema', () => {
@@ -208,6 +210,169 @@ describe('evaluatePolicy precedence', () => {
     });
     expect(r.state).toBe('inherit');
     expect(r.source).toBe('default');
+  });
+
+  it('back-compat: omitted classification still returns inherit when defaults are all inherit', () => {
+    const r = evaluatePolicy(emptyGovernancePolicy(), {
+      agentId: 'a',
+      mcpId: 'm',
+      toolName: 't',
+    });
+    // emptyGovernancePolicy() has risk_defaults = inherit for every class,
+    // so adding classification handling must not change historical behaviour.
+    expect(r.state).toBe('inherit');
+  });
+});
+
+describe('evaluatePolicy: risk_defaults', () => {
+  it('risk_defaults fires after agent rules and platform default', () => {
+    let p = emptyGovernancePolicy();
+    p = setRiskDefaults(p, { read: 'allow', write: 'require_approval', destructive: 'deny' });
+    expect(
+      evaluatePolicy(p, {
+        agentId: 'a',
+        mcpId: 'fs',
+        toolName: 'read_file',
+        classification: 'read',
+      }).state,
+    ).toBe('allow');
+    expect(
+      evaluatePolicy(p, {
+        agentId: 'a',
+        mcpId: 'fs',
+        toolName: 'write_file',
+        classification: 'write',
+      }).state,
+    ).toBe('require_approval');
+    expect(
+      evaluatePolicy(p, {
+        agentId: 'a',
+        mcpId: 'fs',
+        toolName: 'delete_file',
+        classification: 'destructive',
+      }).state,
+    ).toBe('deny');
+  });
+
+  it('agent rule beats risk_default', () => {
+    let p = emptyGovernancePolicy();
+    p = setRiskDefaults(p, { destructive: 'deny' });
+    p = setAgentRule(p, 'trusted', {
+      mcp_id: 'fs',
+      tool_name: 'delete_file',
+      state: 'allow',
+    });
+    const r = evaluatePolicy(p, {
+      agentId: 'trusted',
+      mcpId: 'fs',
+      toolName: 'delete_file',
+      classification: 'destructive',
+    });
+    expect(r.state).toBe('allow');
+    expect(r.source).toBe('agent_rule');
+  });
+
+  it('platform require_approval beats risk_default', () => {
+    let p = emptyGovernancePolicy();
+    p = setRiskDefaults(p, { read: 'allow' });
+    p = setPlatformRule(p, 'default_require_approval', {
+      mcp_id: 'fs',
+      tool_name: 'read_file',
+      state: 'require_approval',
+    });
+    const r = evaluatePolicy(p, {
+      agentId: 'a',
+      mcpId: 'fs',
+      toolName: 'read_file',
+      classification: 'read',
+    });
+    expect(r.state).toBe('require_approval');
+    expect(r.source).toBe('platform_require_approval');
+  });
+
+  it('missing classification falls into the unknown bucket', () => {
+    let p = emptyGovernancePolicy();
+    p = setRiskDefaults(p, { unknown: 'require_approval' });
+    const r = evaluatePolicy(p, { agentId: 'a', mcpId: 'm', toolName: 't' });
+    expect(r.state).toBe('require_approval');
+    expect(r.source).toBe('risk_default');
+  });
+
+  it('explicit classification=unknown also uses the unknown bucket', () => {
+    let p = emptyGovernancePolicy();
+    p = setRiskDefaults(p, { unknown: 'deny' });
+    const r = evaluatePolicy(p, {
+      agentId: 'a',
+      mcpId: 'm',
+      toolName: 't',
+      classification: 'unknown',
+    });
+    expect(r.state).toBe('deny');
+  });
+
+  it('class with inherit falls through to legacy', () => {
+    const p = emptyGovernancePolicy();
+    const r = evaluatePolicy(p, {
+      agentId: 'a',
+      mcpId: 'm',
+      toolName: 't',
+      classification: 'read',
+    });
+    expect(r.state).toBe('inherit');
+    expect(r.source).toBe('default');
+  });
+
+  it('PolicyEvaluation carries the classification through', () => {
+    let p = emptyGovernancePolicy();
+    p = setRiskDefaults(p, { destructive: 'deny' });
+    const r = evaluatePolicy(p, {
+      agentId: 'a',
+      mcpId: 'm',
+      toolName: 't',
+      classification: 'destructive',
+    });
+    expect(r.classification).toBe('destructive');
+  });
+});
+
+describe('setRiskDefaults', () => {
+  it('merges partial updates', () => {
+    let p = emptyGovernancePolicy();
+    p = setRiskDefaults(p, { read: 'allow' });
+    expect(p.risk_defaults.read).toBe('allow');
+    expect(p.risk_defaults.write).toBe('inherit');
+    p = setRiskDefaults(p, { write: 'require_approval' });
+    expect(p.risk_defaults.read).toBe('allow');
+    expect(p.risk_defaults.write).toBe('require_approval');
+  });
+
+  it('emptyRiskDefaults returns inherit for every class', () => {
+    const d = emptyRiskDefaults();
+    expect(d.read).toBe('inherit');
+    expect(d.write).toBe('inherit');
+    expect(d.destructive).toBe('inherit');
+    expect(d.unknown).toBe('inherit');
+  });
+});
+
+describe('GovernancePolicy schema with risk_defaults', () => {
+  it('parses a policy with risk_defaults declared', () => {
+    const parsed = GovernancePolicy.parse({
+      risk_defaults: { read: 'allow', destructive: 'deny' },
+    });
+    expect(parsed.risk_defaults.read).toBe('allow');
+    expect(parsed.risk_defaults.write).toBe('inherit');
+    expect(parsed.risk_defaults.destructive).toBe('deny');
+    expect(parsed.risk_defaults.unknown).toBe('inherit');
+  });
+
+  it('back-compat: parses an old policy without risk_defaults', () => {
+    const parsed = GovernancePolicy.parse({
+      version: 1,
+      platform: { always_deny: [], default_require_approval: [] },
+      agents: {},
+    });
+    expect(parsed.risk_defaults.read).toBe('inherit');
   });
 });
 

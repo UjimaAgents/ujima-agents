@@ -20,6 +20,7 @@ import { CommitmentService } from './commitment-service.js';
 import { MemoryReviewService } from './memory-review.js';
 import { TrajectoryService } from './trajectory.js';
 import { McpRegistryService } from './mcp-registry.js';
+import { GovernanceService } from './governance-service.js';
 import { PluginRegistryService } from './plugin-registry.js';
 import { OnboardingService } from './onboarding.js';
 import {
@@ -160,6 +161,7 @@ export type {
   TestMcpResult,
   UpdateMcpServerInput,
 } from './mcp-registry.js';
+export { GovernanceService } from './governance-service.js';
 export { PluginRegistryService } from './plugin-registry.js';
 export type {
   PluginInstallInput,
@@ -242,6 +244,7 @@ export interface ApiServices {
   supervisorTodos: SupervisorTodoService;
   activeSpirits: ActiveSpiritRegistry;
   mcpRegistry: McpRegistryService;
+  governance: GovernanceService;
   pluginRegistry: PluginRegistryService;
   commitments: CommitmentService;
   /**
@@ -573,6 +576,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     evaluator: context.taskPromoterEvaluator,
   });
   const mcpRegistry = new McpRegistryService(context.repo);
+  const governance = new GovernanceService(context.repo);
   const pluginRegistry = new PluginRegistryService(
     context.repo,
     context.archiveRoot ?? process.env.UJIMA_HOME ?? process.cwd(),
@@ -715,6 +719,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     supervisorTodos,
     activeSpirits,
     mcpRegistry,
+    governance,
     pluginRegistry,
     commitments,
     stop,

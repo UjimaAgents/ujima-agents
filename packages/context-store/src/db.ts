@@ -1047,6 +1047,58 @@ const MIGRATIONS: { id: string; up: string }[] = [
         ON decision_log(organization_id, source_message_id);
     `,
   },
+  {
+    // MCP governance v1 — per-tool risk classification, admin-owned.
+    // Lives alongside (not inside) mcp_tool_cache so re-running Test
+    // on an MCP server cannot clobber admin decisions. Seeding from
+    // discovery uses INSERT OR IGNORE; manual edits never get
+    // overwritten by construction. See mcp_governance_plan.md §2.
+    id: '032_mcp_tool_classifications',
+    up: `
+      CREATE TABLE IF NOT EXISTS mcp_tool_classifications (
+        organization_id TEXT NOT NULL,
+        mcp_server_id   TEXT NOT NULL,
+        tool_name       TEXT NOT NULL,
+        risk            TEXT NOT NULL CHECK (risk IN ('read','write','destructive')),
+        source          TEXT NOT NULL CHECK (source IN ('inferred','manual','registry')),
+        needs_review    INTEGER NOT NULL DEFAULT 0,
+        reason          TEXT,
+        updated_at      TEXT NOT NULL,
+        updated_by      TEXT,
+        PRIMARY KEY (organization_id, mcp_server_id, tool_name)
+      );
+      CREATE INDEX IF NOT EXISTS idx_mcp_tool_classifications_org
+        ON mcp_tool_classifications(organization_id);
+      CREATE INDEX IF NOT EXISTS idx_mcp_tool_classifications_org_mcp
+        ON mcp_tool_classifications(organization_id, mcp_server_id);
+    `,
+  },
+  {
+    // Per-tool agent grants. When an agent has zero rows for an
+    // (org, agent, mcp_server) triple, the runtime exposes the full
+    // tool list (back-compat with whole-MCP attachments). When it
+    // has at least one row, only the listed tools are exposed —
+    // shrinking the model's tool palette and the resulting prompt.
+    id: '033_agent_tool_attachments',
+    up: `
+      CREATE TABLE IF NOT EXISTS agent_tool_attachments (
+        organization_id TEXT NOT NULL,
+        member_id       TEXT NOT NULL,
+        mcp_server_id   TEXT NOT NULL,
+        tool_name       TEXT NOT NULL,
+        scope           TEXT NOT NULL DEFAULT 'worker',
+        created_at      TEXT NOT NULL,
+        updated_at      TEXT NOT NULL,
+        PRIMARY KEY (organization_id, member_id, mcp_server_id, tool_name)
+      );
+      CREATE INDEX IF NOT EXISTS idx_agent_tool_attachments_member
+        ON agent_tool_attachments(organization_id, member_id);
+      CREATE INDEX IF NOT EXISTS idx_agent_tool_attachments_member_server
+        ON agent_tool_attachments(organization_id, member_id, mcp_server_id);
+      CREATE INDEX IF NOT EXISTS idx_agent_tool_attachments_tool
+        ON agent_tool_attachments(organization_id, mcp_server_id, tool_name);
+    `,
+  },
 ];
 
 export interface DbOptions {

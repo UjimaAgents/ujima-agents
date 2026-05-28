@@ -1,5 +1,6 @@
 import type {
   AgentMcpAttachment,
+  AgentToolAttachment,
   ApprovalRequest,
   AuthSession,
   AuthUser,
@@ -10,8 +11,10 @@ import type {
   ConfigFieldOwnership,
   ConversationThread,
   DecisionLogEntry,
+  GovernancePolicy,
   McpServer,
   McpToolCache,
+  McpToolClassification,
   PluginInstall,
   Member,
   MemoryEntry,
@@ -29,6 +32,7 @@ import type {
   TaskSessionStatus,
   Todo,
   TodoStatus,
+  ToolRiskClass,
   WorkspaceFile,
   WorkspaceMember,
 } from '@ujima/shared';
@@ -323,6 +327,66 @@ export interface ApiRepository extends ConversationRepository {
   ): { attachment: AgentMcpAttachment; server: McpServer }[];
   saveMcpToolCache(cache: McpToolCache): McpToolCache;
   getMcpToolCache(organizationId: string, mcpServerId: string): McpToolCache | null;
+  getMcpToolClassification(
+    organizationId: string,
+    mcpServerId: string,
+    toolName: string,
+  ): McpToolClassification | null;
+  listMcpToolClassifications(
+    organizationId: string,
+    mcpServerId?: string,
+  ): McpToolClassification[];
+  upsertMcpToolClassification(
+    payload: McpToolClassification,
+  ): McpToolClassification;
+  seedInferredClassifications(
+    organizationId: string,
+    mcpServerId: string,
+    entries: readonly {
+      toolName: string;
+      risk: ToolRiskClass;
+      needsReview?: boolean;
+      reason?: string;
+    }[],
+    updatedBy?: string,
+  ): number;
+  deleteMcpToolClassification(
+    organizationId: string,
+    mcpServerId: string,
+    toolName: string,
+  ): void;
+  getGovernancePolicy(organizationId: string): GovernancePolicy;
+  saveGovernancePolicy(
+    organizationId: string,
+    policy: GovernancePolicy,
+  ): GovernancePolicy;
+  saveAgentToolAttachment(attachment: AgentToolAttachment): AgentToolAttachment;
+  deleteAgentToolAttachment(
+    organizationId: string,
+    memberId: string,
+    mcpServerId: string,
+    toolName: string,
+  ): void;
+  listAgentToolAttachments(
+    organizationId: string,
+    memberId: string,
+    mcpServerId?: string,
+  ): AgentToolAttachment[];
+  listAgentsForTool(
+    organizationId: string,
+    mcpServerId: string,
+    toolName: string,
+  ): string[];
+  countAgentToolAttachments(
+    organizationId: string,
+    memberId: string,
+    mcpServerId: string,
+  ): number;
+  deleteAgentToolAttachmentsForAgent(
+    organizationId: string,
+    memberId: string,
+    mcpServerId?: string,
+  ): void;
   savePluginInstall(install: PluginInstall): PluginInstall;
   getPluginInstall(organizationId: string, installId: string): PluginInstall | null;
   getPluginInstallBySourceUrl(

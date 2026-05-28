@@ -1,6 +1,6 @@
 import { openDb } from '@ujima/context-store';
 import { createLocalEventBus } from '@ujima/event-bus';
-import { createPermissionMiddleware } from '@ujima/permissions';
+import { createPermissionMiddleware, type ClassificationLookup } from '@ujima/permissions';
 import { createMCPPool } from '@ujima/mcp-client';
 import { selectLanguageModel, type ProviderKind } from '@ujima/llm';
 import type { AgentDef, MCPDef, TaskDef } from '@ujima/shared';
@@ -31,6 +31,7 @@ export interface RunnerConfig {
     apiKey?: string;
     baseUrl?: string;
   };
+  classificationLookup?: ClassificationLookup;
 }
 
 function readAiSdkConfigFromEnv(env: NodeJS.ProcessEnv): RunnerConfig['llm'] | undefined {
@@ -51,7 +52,11 @@ export async function runInRunner(config: RunnerConfig): Promise<AgentRunResult>
   void resolveOrchestratorEngine(config.engine ?? process.env.UJIMA_ORCHESTRATOR_ENGINE);
   const db = openDb({ dbPath: config.dbPath });
   const bus = createLocalEventBus({ audit: db.audit, pendingEvents: db.pendingEvents });
-  const permissions = createPermissionMiddleware({ audit: db.audit, agentState: db.agentState });
+  const permissions = createPermissionMiddleware({
+    audit: db.audit,
+    agentState: db.agentState,
+    classificationLookup: config.classificationLookup,
+  });
   const pool = createMCPPool();
   const mcpConfig = await db.context.get<{ defs: Record<string, unknown> }>('system:mcp-config');
   const mcpDef = (mcpConfig?.defs as Record<string, unknown> | undefined)?.[config.mcpDefId] as

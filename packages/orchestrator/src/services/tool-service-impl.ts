@@ -3,7 +3,9 @@ import { resolve } from "node:path";
 import type { AgentTeamHandle } from "@ujima/framework";
 import {
   SocketEventNames,
+  evaluatePolicy,
   memberRoom,
+  resolveClassification,
   runRoom,
   threadRoom,
   type AuditStatus,
@@ -208,7 +210,7 @@ export class ToolServiceImpl implements ToolService {
     const policy = isSubOperation
       ? { allowed: true, requiresApproval: false, reason: "sub-operation" }
       : preparedInvocation.toolId === "mcp"
-        ? { allowed: true, requiresApproval: true }
+        ? this.resolveMcpPolicy(preparedInvocation)
       : checkToolPolicy(
           team,
           member.roleName,
@@ -377,6 +379,62 @@ export class ToolServiceImpl implements ToolService {
     throw new Error(
       `Tool "${invocation.toolId}" action "${invocation.action}" is not implemented`,
     );
+  }
+
+  // Evaluate the governance policy + classification for an MCP call.
+  // `inherit` preserves the pre-governance default of "require approval".
+  private resolveMcpPolicy(invocation: ToolInvocationInput): {
+    allowed: boolean;
+    requiresApproval: boolean;
+    reason?: string;
+  } {
+    const serverId =
+      invocation.permissionMcpId ?? readString(invocation.input, "mcpServerId");
+    const rawToolName =
+      readString(invocation.input, "toolName") ??
+      (invocation.permissionToolName?.startsWith("mcp:")
+        ? undefined
+        : invocation.permissionToolName);
+    if (!serverId || !rawToolName) {
+      return {
+        allowed: false,
+        requiresApproval: false,
+        reason: "MCP invocation missing serverId or toolName",
+      };
+    }
+
+    const policy = this.repo.getGovernancePolicy(invocation.organizationId);
+    const stored = this.repo.getMcpToolClassification(
+      invocation.organizationId,
+      serverId,
+      rawToolName,
+    );
+    const effective = resolveClassification(stored);
+    const evaluation = evaluatePolicy(policy, {
+      agentId: invocation.memberId,
+      mcpId: serverId,
+      toolName: rawToolName,
+      classification: effective.risk,
+    });
+
+    switch (evaluation.state) {
+      case "deny":
+        return {
+          allowed: false,
+          requiresApproval: false,
+          reason:
+            evaluation.reason ??
+            `Tool "${rawToolName}" denied by governance policy`,
+        };
+      case "allow":
+        return { allowed: true, requiresApproval: false, reason: evaluation.reason };
+      case "require_approval":
+      case "require_input":
+        return { allowed: true, requiresApproval: true, reason: evaluation.reason };
+      case "inherit":
+      default:
+        return { allowed: true, requiresApproval: true };
+    }
   }
 
   private async executeMcpTool(invocation: ToolInvocationInput): Promise<unknown> {

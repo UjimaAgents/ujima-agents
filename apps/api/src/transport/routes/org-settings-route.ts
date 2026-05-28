@@ -7,7 +7,7 @@ import { requireOrgSession } from './org-auth.js';
 import { apiError } from './route-errors.js';
 
 type SettingsApp = ReturnType<FastifyInstance['withTypeProvider']>;
-type HttpMethod = 'get' | 'post' | 'delete' | 'patch';
+type HttpMethod = 'get' | 'post' | 'put' | 'delete' | 'patch';
 
 interface OrgRouteConfig {
   description: string;

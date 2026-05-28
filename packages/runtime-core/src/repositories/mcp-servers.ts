@@ -116,10 +116,10 @@ export function listMcpServers(db: DbHandle, organizationId: string): McpServer[
 }
 
 export function deleteMcpServer(db: DbHandle, organizationId: string, serverId: string): void {
-  // Cascade attachments + tool cache so the FK invariant survives even
-  // without ON DELETE CASCADE (which isn't declared on the table since
-  // we want explicit control over the soft-disable vs hard-delete
-  // semantics).
+  // Cascade attachments + tool cache + classifications so the FK
+  // invariant survives even without ON DELETE CASCADE (which isn't
+  // declared on the table since we want explicit control over the
+  // soft-disable vs hard-delete semantics).
   db.prepare('DELETE FROM agent_mcp_attachments WHERE organization_id = ? AND mcp_server_id = ?').run(
     organizationId,
     serverId,
@@ -128,6 +128,12 @@ export function deleteMcpServer(db: DbHandle, organizationId: string, serverId: 
     organizationId,
     serverId,
   );
+  db.prepare(
+    'DELETE FROM mcp_tool_classifications WHERE organization_id = ? AND mcp_server_id = ?',
+  ).run(organizationId, serverId);
+  db.prepare(
+    'DELETE FROM agent_tool_attachments WHERE organization_id = ? AND mcp_server_id = ?',
+  ).run(organizationId, serverId);
   db.prepare('DELETE FROM mcp_servers WHERE organization_id = ? AND id = ?').run(
     organizationId,
     serverId,

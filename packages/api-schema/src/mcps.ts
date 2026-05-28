@@ -1,12 +1,16 @@
 import { z } from 'zod';
 import {
   AgentMcpAttachmentSchema,
+  GovernancePolicy,
   IdSchema,
   McpAttachmentScopeSchema,
   McpIsolationSchema,
   McpServerPublicSchema,
   McpToolDescriptorSchema,
   McpTransportSchema,
+  RiskDefaultsSchema,
+  ToolPolicyState,
+  ToolRiskClass,
 } from '@ujima/shared';
 
 // REST shapes for the MCP registry (Phase 3 of the MCP integration).
@@ -102,6 +106,137 @@ export const AgentMcpAttachmentsResponseSchema = z.object({
 export const McpScopedQuerySchema = z.object({
   organizationId: IdSchema,
 });
+
+// ---------------- Governance catalog + classification ----------------
+
+const EvaluationSourceEnum = z.enum([
+  'platform_deny',
+  'agent_rule',
+  'platform_require_approval',
+  'risk_default',
+  'default',
+]);
+
+export const McpCatalogToolSchema = z.object({
+  name: z.string().min(1),
+  description: z.string().default(''),
+  risk: ToolRiskClass,
+  source: z.enum(['inferred', 'manual', 'registry', 'unknown']),
+  needsReview: z.boolean(),
+  effective: z.object({
+    state: ToolPolicyState,
+    source: EvaluationSourceEnum,
+    reason: z.string().optional(),
+  }),
+  grantedAgents: z.array(z.string()),
+  attachedAgents: z.array(z.string()),
+});
+export type McpCatalogTool = z.infer<typeof McpCatalogToolSchema>;
+
+export const McpCatalogServerSchema = z.object({
+  id: IdSchema,
+  name: z.string(),
+  status: z.string(),
+  category: z.string(),
+  toolCount: z.number().int().nonnegative(),
+  tools: z.array(McpCatalogToolSchema),
+});
+export type McpCatalogServer = z.infer<typeof McpCatalogServerSchema>;
+
+export const CatalogAgentViewSchema = z.object({
+  agentId: z.string(),
+  state: ToolPolicyState,
+  source: EvaluationSourceEnum,
+  reason: z.string().optional(),
+  exposed: z.boolean(),
+  exposureReason: z.enum([
+    'no-mcp-attachment',
+    'no-tool-grant',
+    'granted',
+    'all-tools-mode',
+  ]),
+});
+export type CatalogAgentView = z.infer<typeof CatalogAgentViewSchema>;
+
+export const McpCatalogResponseSchema = z.object({
+  servers: z.array(McpCatalogServerSchema),
+  riskDefaults: RiskDefaultsSchema,
+  agentView: z.record(z.string(), CatalogAgentViewSchema).optional(),
+  agentViewId: z.string().optional(),
+});
+export type McpCatalogResponse = z.infer<typeof McpCatalogResponseSchema>;
+
+export const McpCatalogQuerySchema = z.object({
+  organizationId: IdSchema,
+  agentId: z.string().min(1).optional(),
+});
+export type McpCatalogQuery = z.infer<typeof McpCatalogQuerySchema>;
+
+// ---------------- Per-tool grants ------------------------------------
+
+export const GrantToolRequestSchema = z.object({
+  organizationId: IdSchema,
+  scope: z.enum(['worker', 'supervisor', 'both']).optional(),
+});
+export type GrantToolRequest = z.infer<typeof GrantToolRequestSchema>;
+
+export const AgentToolAttachmentRowSchema = z.object({
+  organizationId: IdSchema,
+  memberId: IdSchema,
+  mcpServerId: IdSchema,
+  toolName: z.string(),
+  scope: z.enum(['worker', 'supervisor', 'both']),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type AgentToolAttachmentRow = z.infer<typeof AgentToolAttachmentRowSchema>;
+
+export const GrantToolResponseSchema = z.object({
+  attachment: AgentToolAttachmentRowSchema,
+});
+export type GrantToolResponse = z.infer<typeof GrantToolResponseSchema>;
+
+export const AgentToolGrantsResponseSchema = z.object({
+  agentId: z.string(),
+  grants: z.array(AgentToolAttachmentRowSchema),
+});
+export type AgentToolGrantsResponse = z.infer<typeof AgentToolGrantsResponseSchema>;
+
+export const UpdateToolClassificationRequestSchema = z.object({
+  organizationId: IdSchema,
+  risk: ToolRiskClass,
+  reason: z.string().max(2000).optional(),
+});
+export type UpdateToolClassificationRequest = z.infer<
+  typeof UpdateToolClassificationRequestSchema
+>;
+
+export const ToolClassificationResponseSchema = z.object({
+  tool: McpCatalogToolSchema,
+});
+export type ToolClassificationResponse = z.infer<typeof ToolClassificationResponseSchema>;
+
+// ---------------- Governance policy CRUD -----------------------------
+
+export const GovernancePolicyResponseSchema = z.object({
+  policy: GovernancePolicy,
+});
+export type GovernancePolicyResponse = z.infer<typeof GovernancePolicyResponseSchema>;
+
+export const UpdateRiskDefaultsRequestSchema = z.object({
+  organizationId: IdSchema,
+  riskDefaults: z
+    .object({
+      read: ToolPolicyState.optional(),
+      write: ToolPolicyState.optional(),
+      destructive: ToolPolicyState.optional(),
+      unknown: ToolPolicyState.optional(),
+    })
+    .refine((v) => Object.keys(v).length > 0, {
+      message: 'At least one risk class must be provided',
+    }),
+});
+export type UpdateRiskDefaultsRequest = z.infer<typeof UpdateRiskDefaultsRequestSchema>;
 
 export type CreateMcpServerRequest = z.infer<typeof CreateMcpServerRequestSchema>;
 export type UpdateMcpServerRequest = z.infer<typeof UpdateMcpServerRequestSchema>;

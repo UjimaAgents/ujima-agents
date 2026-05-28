@@ -14,6 +14,8 @@ export type {ActivityEvent, ActivityFilter} from "./activity-stream.js";
 export * from "./personas.js";
 export * from "./governance.js";
 export * from "./governance-policy.js";
+export * from "./classify-tool.js";
+export * from "./effective-classification.js";
 export * from "./org-schemas.js";
 export {
   MODEL_OPTIONS_BY_PROVIDER,

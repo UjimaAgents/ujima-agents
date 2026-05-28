@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { stepCountIs, tool, type ToolSet } from 'ai';
 import type { McpToolDescriptor } from '@ujima/shared';
-import { mcpPermissionToolName } from './mcp-runtime.js';
 import { toModelToolErrorOutput, toModelToolOutput } from './tool-loop-result.js';
 import type { SpiritMcpResolution } from './spirit-types.js';
+import { mcpPermissionToolName } from './mcp-runtime.js';
 import {
   buildMcpNamespace,
   mcpToolInputSchema,
@@ -569,6 +569,21 @@ export class SpiritServiceAgentRun extends SpiritServiceLifecycle {
       } catch {
         toolList = this.repo.getMcpToolCache(ctx.organizationId, resolution.serverId)?.tools ?? [];
       }
+
+      // Per-tool grant filter. When the agent has at least one row in
+      // agent_tool_attachments for this server, narrow the palette to
+      // exactly those tools. Zero rows = "all tools" mode (back-compat).
+      // Shrinking the palette also shrinks the model prompt.
+      const grants = this.repo.listAgentToolAttachments(
+        ctx.organizationId,
+        ctx.memberId,
+        resolution.serverId,
+      );
+      if (grants.length > 0) {
+        const allowedNames = new Set(grants.map((g) => g.toolName));
+        toolList = toolList.filter((t) => allowedNames.has(t.name));
+      }
+
       const nsSlug = buildMcpNamespace(resolution.serverName, resolution.serverId);
       if (toolList.length > 0) {
         servers.push({
@@ -617,6 +632,9 @@ export class SpiritServiceAgentRun extends SpiritServiceLifecycle {
                 resourceType: 'mcp',
                 resourcePath: `${entry.serverId}:${entry.toolName}`,
                 permissionMcpId: entry.serverId,
+                // Synthetic id namespaces MCP tools away from built-in tool ids
+                // (e.g. `self.note`) for the legacy allowed_tools match path.
+                // Governance reads the raw name from input.toolName below.
                 permissionToolName: mcpPermissionToolName(entry.serverId, entry.toolName),
                 input: {
                   mcpServerId: entry.serverId,
