@@ -130,11 +130,28 @@ describe('dashboard team overrides', () => {
       roleName: 'pm',
     });
 
-    expect(teamStore.getTeam(org.id)?.agents.map((agent) => agent.name)).toContain(saved.id);
+    // Add a scheduled job for the agent
+    repo.saveScheduledJob({
+      id: 'job-1',
+      organizationId: org.id,
+      name: 'Agent Standup',
+      cronExpression: '0 9 * * *',
+      prompt: 'Standup',
+      channelId: 'general',
+      memberId: saved.id,
+      status: 'active',
+      nextRunAt: new Date().toISOString(),
+      runCount: 0,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    expect(repo.listScheduledJobs(org.id)).toHaveLength(1);
 
     settings.deleteMember(org.id, saved.id);
 
     const liveAgents = teamStore.getTeam(org.id)?.agents.map((agent) => agent.name) ?? [];
     expect(liveAgents).not.toContain(saved.id);
+    expect(repo.listScheduledJobs(org.id)).toHaveLength(0);
   });
 });

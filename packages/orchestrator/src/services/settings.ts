@@ -434,6 +434,14 @@ export class SettingsService {
         this.repo.setChannelMembers(channel.id, nextMemberIds);
       }
     }
+
+    // Delete all scheduled jobs owned by the retired member
+    const allJobs = this.repo.listScheduledJobs(organizationId);
+    for (const job of allJobs) {
+      if (job.memberId === memberId) {
+        this.repo.deleteScheduledJob(organizationId, job.id);
+      }
+    }
   }
 
   addChannel(input: CreateChannelInput): Channel {

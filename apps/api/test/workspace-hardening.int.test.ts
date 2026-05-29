@@ -563,6 +563,20 @@ describe('workspace-root REST gating', () => {
     const retryBody = (await retry.json()) as { id: string };
     expect(retryBody.id).toBe(body.id);
   });
+
+  it('returns 403 Forbidden when trying to delete a human member', async () => {
+    const response = await fetch(`${baseUrl}/api/orgs/${readyOrganizationId}/members/ready-owner`, {
+      method: 'DELETE',
+      headers: {
+        authorization: `Bearer ${TOKEN}`,
+        'x-ujima-session': readyOwnerSessionToken,
+      },
+    });
+    expect(response.status).toBe(403);
+    const body = (await response.json()) as { code: string; message: string };
+    expect(body.code).toBe('ERR_FORBIDDEN');
+    expect(body.message).toBe('Only agents can be deleted');
+  });
 });
 
 function memberUpdateBody(overrides: Record<string, unknown> = {}) {

@@ -377,6 +377,10 @@ export function registerSettingsRoutes(
       settings.deleteMember(req.params.orgId, req.params.memberId);
       return { success: true as const };
     } catch (err) {
+      const message = errorMessage(err);
+      if (message === 'Only agents can be deleted') {
+        return apiError(reply, 403, message);
+      }
       return routeError(reply, err, { notFound: 'Member not found', workspaceRoot: true });
     }
   });

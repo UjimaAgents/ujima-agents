@@ -209,9 +209,15 @@ export class SchedulerService {
           });
         } catch (error) {
           const nextRun = computeNextCronRun(job.cronExpression, now);
+          const message = error instanceof Error ? error.message : String(error);
+          const isPermanentError =
+            message.includes('Scheduler sender not found') ||
+            message.includes('Scheduler sender is retired') ||
+            message.includes('Scheduler target channel not found');
           this.repo.saveScheduledJob({
             ...job,
-            lastError: error instanceof Error ? error.message : String(error),
+            status: isPermanentError ? 'paused' : job.status,
+            lastError: message,
             nextRunAt: nextRun?.toISOString() ?? job.nextRunAt,
             updatedAt: now.toISOString(),
           });
