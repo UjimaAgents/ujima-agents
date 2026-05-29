@@ -161,7 +161,7 @@ export function deleteOrganizationData(db: DbHandle, organizationId: string): vo
     run('DELETE FROM workspace_files WHERE organization_id = ?', organizationId);
     run('DELETE FROM decision_log WHERE organization_id = ?', organizationId);
     run('DELETE FROM procedure_revisions WHERE organization_id = ?', organizationId);
-    run('DELETE FROM procedures_applied WHERE organization_id = ?', organizationId);
+    run('DELETE FROM run_procedures_applied WHERE organization_id = ?', organizationId);
     run('DELETE FROM workspace_members WHERE organization_id = ?', organizationId);
     run('DELETE FROM members WHERE organization_id = ?', organizationId);
     run('DELETE FROM provider_credentials WHERE organization_id = ?', organizationId);
