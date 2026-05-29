@@ -425,6 +425,15 @@ export class SettingsService {
       memberId,
       member.roleName,
     );
+
+    // Remove the retired member from all channel memberships
+    const allChannels = this.repo.listAllChannels(organizationId);
+    for (const channel of allChannels) {
+      if (channel.memberIds.includes(memberId)) {
+        const nextMemberIds = channel.memberIds.filter((id) => id !== memberId);
+        this.repo.setChannelMembers(channel.id, nextMemberIds);
+      }
+    }
   }
 
   addChannel(input: CreateChannelInput): Channel {

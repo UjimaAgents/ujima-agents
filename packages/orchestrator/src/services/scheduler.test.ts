@@ -208,6 +208,14 @@ describe('SchedulerService', () => {
       updatedAt: runAt.toISOString(),
     };
     mockRepo.listDueJobsGlobally = vi.fn().mockReturnValue([dueJob]);
+    vi.mocked(mockRepo.getChannel).mockReturnValue({
+      id: 'channel-1',
+      organizationId: 'org-1',
+      name: 'general',
+      kind: 'general',
+      topic: '',
+      memberIds: ['member-1'],
+    } as never);
 
     scheduler.start();
     await vi.advanceTimersByTimeAsync(0);

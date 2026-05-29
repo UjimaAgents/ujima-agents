@@ -233,16 +233,35 @@ export class SchedulerService {
   }): Promise<void> {
     if (job.channelId) {
       const sender = this.repo.getMember(job.organizationId, job.memberId);
-      const channel = this.repo.getChannel(job.organizationId, job.channelId);
-      if (channel && sender) {
-        await this.conversations.sendMessage({
-          organizationId: job.organizationId,
-          threadId: job.channelId,
-          channelId: job.channelId,
-          senderId: job.memberId,
-          content: `**⏰ Scheduled: ${job.name}**\n\n${job.prompt}`,
-        });
+      if (!sender) {
+        throw new Error(`Scheduler sender not found: ${job.memberId}`);
       }
+      if (sender.retiredAt) {
+        throw new Error(`Scheduler sender is retired: ${job.memberId}`);
+      }
+
+      const channel = this.repo.getChannel(job.organizationId, job.channelId);
+      if (!channel) {
+        throw new Error(`Scheduler target channel not found: ${job.channelId}`);
+      }
+
+      // If the channel is private ('self' or 'dm') and the sender is not a member,
+      // explicitly add them to the channel before calling sendMessage
+      if (
+        (channel.kind === 'self' || channel.kind === 'dm') &&
+        !channel.memberIds.includes(job.memberId)
+      ) {
+        const nextMemberIds = [...channel.memberIds, job.memberId].sort();
+        this.repo.setChannelMembers(channel.id, nextMemberIds);
+      }
+
+      await this.conversations.sendMessage({
+        organizationId: job.organizationId,
+        threadId: job.channelId,
+        channelId: job.channelId,
+        senderId: job.memberId,
+        content: `**⏰ Scheduled: ${job.name}**\n\n${job.prompt}`,
+      });
     }
 
     this.realtime.emit(SocketEventNames.scheduledJobExecuted, {
