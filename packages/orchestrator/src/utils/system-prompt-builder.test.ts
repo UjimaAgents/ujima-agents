@@ -107,7 +107,7 @@ describe('buildWakeContextMessages — per-wake additions (NOT part of cacheable
     });
     expect(out).toHaveLength(1);
     const text = String(out[0]?.content ?? '');
-    expect(text).toContain('self.note alone is NOT a valid termination');
+    expect(text).toContain('memory.write alone is NOT a valid termination');
     expect(text).toContain('write');
     expect(text).toContain('save the artifact to a file');
   });
@@ -121,7 +121,7 @@ describe('buildWakeContextMessages — per-wake additions (NOT part of cacheable
     expect(out).toHaveLength(1);
     const text = String(out[0]?.content ?? '');
     expect(text).toContain('anti-mirror');
-    expect(text).toContain('self.note alone is NOT a valid termination');
+    expect(text).toContain('memory.write alone is NOT a valid termination');
   });
 });
 

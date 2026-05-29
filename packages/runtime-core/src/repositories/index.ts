@@ -213,6 +213,13 @@ import {
   saveScheduledJob as writeScheduledJob,
 } from './scheduled-jobs.js';
 import {
+  deleteMemory as removeMemory,
+  getMemory as readMemory,
+  listMemories as readMemories,
+  listOrgMemories as readOrgMemories,
+  saveMemory as writeMemory,
+} from './memory.js';
+import {
   deleteAgentMcpAttachment as removeAgentMcpAttachment,
   deleteMcpServer as removeMcpServer,
   getMcpServer as readMcpServer,
@@ -729,6 +736,16 @@ export class Repository {
   saveMcpToolCache = (cache: McpToolCache): McpToolCache => writeMcpToolCache(this.db, cache);
   getMcpToolCache = (organizationId: string, mcpServerId: string): McpToolCache | null =>
     readMcpToolCache(this.db, organizationId, mcpServerId);
+
+  saveMemory = (entry: MemoryEntry): MemoryEntry => writeMemory(this.db, entry);
+  getMemory = (organizationId: string, memoryId: string): MemoryEntry | null =>
+    readMemory(this.db, organizationId, memoryId);
+  listMemories = (organizationId: string, memberId: string): MemoryEntry[] =>
+    readMemories(this.db, organizationId, memberId);
+  listOrgMemories = (organizationId: string): MemoryEntry[] =>
+    readOrgMemories(this.db, organizationId);
+  deleteMemory = (organizationId: string, memoryId: string): void =>
+    removeMemory(this.db, organizationId, memoryId);
 
   getBootstrapSnapshot = (organizationId?: string): BootstrapSnapshot =>
     readBootstrapSnapshot(this.db, organizationId);

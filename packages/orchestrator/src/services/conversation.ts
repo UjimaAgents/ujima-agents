@@ -1920,6 +1920,12 @@ export class ConversationService {
   }
 
   private canMemberAccessChannel(channel: Channel, memberId: string): boolean {
+    const member = channel.organizationId
+      ? this.repo.getMember(channel.organizationId, memberId)
+      : null;
+    if (!member || member.retiredAt) {
+      return false;
+    }
     // Self channels and DMs are the only private channel kinds in the current
     // substrate. Everything else stays org-visible by default.
     if (channel.kind === 'self' || channel.kind === 'dm') {

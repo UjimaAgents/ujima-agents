@@ -6,7 +6,10 @@ import { runAgentLoop, type AgentLoopChunk } from './services/agent-loop.js';
 import type { ApiRepository } from './services/repository-reader.js';
 import type { TeamStore } from './services/team-store.js';
 import type { ToolService } from './services/tool-service.js';
-import { ALWAYS_AVAILABLE_AGENT_TOOLS } from './tools/index.js';
+import {
+  ALWAYS_AVAILABLE_AGENT_TOOLS,
+  filterDeprecatedToolIds,
+} from './tools/index.js';
 import { isMirrorFragileModel } from './services/mirror-guard.js';
 import {
   toModelMessages,
@@ -270,8 +273,8 @@ export class AiService {
 
     // Mandatory-reply enforcement at the tool-palette layer.
     // When wakeReason === 'mention' (the agent was @mentioned, or
-    // included via @all expansion), `channel.pass` and `self.note`
-    // are stripped so the model literally cannot opt out of
+    // included via @all expansion), `channel.pass`
+    // is stripped so the model literally cannot opt out of
     // replying. Posting tools (`channel.reply`, `channel.post`,
     // `channel.dm`, `message`) stay available via
     // `ALWAYS_AVAILABLE_AGENT_TOOLS`, so the model has a clear
@@ -288,7 +291,9 @@ export class AiService {
       wakeReplyPolicy,
     );
     const roleTools = filterToolsForWakeReplyPolicy(role.tools, wakeReplyPolicy);
-    const toolIds = [...new Set([...roleTools, ...baseAlwaysAvailable])];
+    const toolIds = filterDeprecatedToolIds([
+      ...new Set([...roleTools, ...baseAlwaysAvailable]),
+    ]);
     const builtInToolDefs = buildToolDefinitions(toolIds, team, this.tools, {
       organizationId: input.organizationId,
       runId: input.runId,

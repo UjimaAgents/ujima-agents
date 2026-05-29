@@ -215,6 +215,9 @@ function OrganizationSettingsContent({
             onMemberCreated={(member) => {
               setMembers((prev) => [...prev, member]);
             }}
+            onMemberDeleted={(memberId) => {
+              setMembers((prev) => prev.filter((m) => m.id !== memberId));
+            }}
           />
         )}
         {activeTab === "channels" && (

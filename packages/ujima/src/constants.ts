@@ -1,7 +1,6 @@
 import { ROLE_PRESETS } from './roles/index.js';
 import type { PersonalityPreset } from './schemas.js';
 import type { ToolCapability } from '@ujima/shared';
-
 export const DEFAULT_TOOL_CATALOG: Record<string, ToolCapability> = {
   view: {
     id: 'view',
@@ -163,10 +162,18 @@ export const DEFAULT_TOOL_CATALOG: Record<string, ToolCapability> = {
     pathScopes: [],
     requiresApproval: false,
   },
-  'self.note': {
-    id: 'self.note',
-    name: 'Self Note',
-    description: 'Write a private note into the member self-channel.',
+  'memory.write': {
+    id: 'memory.write',
+    name: 'Memory Write',
+    description: 'Save a durable memory fact, decision, action summary, or correction to persist across runs and channels.',
+    actions: ['message'],
+    pathScopes: [],
+    requiresApproval: false,
+  },
+  'memory.recall': {
+    id: 'memory.recall',
+    name: 'Memory Recall',
+    description: 'Recall active memories to maintain cross-spirit consistency across DMs and channels.',
     actions: ['message'],
     pathScopes: [],
     requiresApproval: false,

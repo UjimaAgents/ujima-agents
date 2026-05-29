@@ -1,6 +1,6 @@
 "use client";
 
-import { Bot, PencilLine, Plus } from "lucide-react";
+import { Bot, PencilLine, Plus, Trash2 } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 import type {
   BootstrapResponse,
@@ -18,6 +18,7 @@ import { AgentEditorModal } from "@/features/workspace/components/sidebar/agent-
 import { CreateAgentModal } from "@/features/workspace/components/sidebar/create-agent-modal";
 import { Avatar } from "@/features/workspace/components/chat/primitives";
 import {
+  SettingsDestructiveButton,
   SettingsPrimaryButton,
   SettingsSecondaryButton,
 } from "@/features/settings/shared/settings-buttons";
@@ -37,6 +38,7 @@ export function AgentsTab({
   rolePresets,
   onMemberUpdated,
   onMemberCreated,
+  onMemberDeleted,
 }: {
   orgId: string;
   members: Member[];
@@ -46,6 +48,7 @@ export function AgentsTab({
   rolePresets: RolePresetTemplate[];
   onMemberUpdated: (member: Member) => void;
   onMemberCreated: (member: Member) => void;
+  onMemberDeleted: (memberId: string) => void;
 }) {
   const agentMembers = members.filter((m) => m.kind === "agent");
   const [editingAgent, setEditingAgent] = useState<Member | null>(null);
@@ -103,6 +106,25 @@ export function AgentsTab({
     [orgId, onMemberCreated],
   );
 
+  const onDeleteAgent = useCallback(
+    async (memberId: string) => {
+      if (
+        !confirm(
+          "Are you sure you want to delete this agent? This cannot be undone."
+        )
+      ) {
+        return;
+      }
+      await settingsFetch<{ success: boolean }>(
+        `/api/orgs/${encodeURIComponent(orgId)}/members/${encodeURIComponent(memberId)}`,
+        { method: "DELETE" },
+        "Failed to delete agent."
+      );
+      onMemberDeleted(memberId);
+    },
+    [orgId, onMemberDeleted]
+  );
+
   return (
     <>
       <SettingsTabActions>
@@ -147,10 +169,16 @@ export function AgentsTab({
                   </>
                 }
                 actions={
-                  <SettingsSecondaryButton onClick={() => setEditingAgent(member)}>
-                    <PencilLine className="h-3.5 w-3.5" />
-                    Edit
-                  </SettingsSecondaryButton>
+                  <>
+                    <SettingsSecondaryButton onClick={() => setEditingAgent(member)}>
+                      <PencilLine className="h-3.5 w-3.5" />
+                      Edit
+                    </SettingsSecondaryButton>
+                    <SettingsDestructiveButton onClick={() => onDeleteAgent(member.id)}>
+                      <Trash2 className="h-3.5 w-3.5" />
+                      Delete
+                    </SettingsDestructiveButton>
+                  </>
                 }
               />
             );

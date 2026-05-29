@@ -39,6 +39,7 @@ export interface WorkspaceCatalogRow {
 
 export interface WorkspaceCatalog {
   get(id: string): WorkspaceCatalogRow | undefined;
+  remove?(id: string): boolean;
 }
 
 function toWorkspaceListItem(
@@ -206,5 +207,8 @@ export class WorkspaceService {
 
     this.repo.deleteOrganizationData(organizationId);
     this.teamStore.clearTeam(organizationId);
+    if (this.workspaces.remove) {
+      this.workspaces.remove(workspaceId);
+    }
   }
 }

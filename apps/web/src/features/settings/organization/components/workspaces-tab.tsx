@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { FolderKanban, Loader2, Plus, RefreshCw } from "lucide-react";
+import { FolderKanban, Loader2, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { switchToWorkspace } from "@/features/workspace/switch-workspace";
 import { SettingsErrorAlert, SettingsLoading } from "@/features/settings/shared/settings-alert";
 import {
@@ -47,6 +47,7 @@ export function WorkspacesTab({ currentWorkspaceRoot }: WorkspacesTabProps) {
   const [createOpen, setCreateOpen] = useState(false);
   const [switchingId, setSwitchingId] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const fetchWorkspaces = useCallback(async () => {
     setLoading(true);
@@ -111,6 +112,32 @@ export function WorkspacesTab({ currentWorkspaceRoot }: WorkspacesTabProps) {
     }
   };
 
+  const handleDelete = async (workspaceId: string) => {
+    if (
+      !confirm(
+        "Are you sure you want to delete this workspace? This will permanently delete all its data, members, and channels.",
+      )
+    ) {
+      return;
+    }
+    setDeletingId(workspaceId);
+    setError(null);
+    try {
+      const res = await fetch(`/api/workspaces/${encodeURIComponent(workspaceId)}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.message || "Failed to delete workspace");
+      }
+      setWorkspaces((prev) => prev.filter((ws) => ws.id !== workspaceId));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to delete workspace");
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
   const sortedWorkspaces = [...workspaces].sort((a, b) => {
     const aCurrent = isCurrentWorkspace(a.root_path, currentWorkspaceRoot, a.is_current);
     const bCurrent = isCurrentWorkspace(b.root_path, currentWorkspaceRoot, b.is_current);
@@ -158,6 +185,7 @@ export function WorkspacesTab({ currentWorkspaceRoot }: WorkspacesTabProps) {
           {sortedWorkspaces.map((ws) => {
             const current = isCurrentWorkspace(ws.root_path, currentWorkspaceRoot, ws.is_current);
             const busy = switchingId === ws.id;
+            const isDeleting = deletingId === ws.id;
 
             return (
               <SettingsListRow
@@ -174,15 +202,30 @@ export function WorkspacesTab({ currentWorkspaceRoot }: WorkspacesTabProps) {
                 }
                 actions={
                   current ? null : (
-                    <SettingsSecondaryButton
-                      disabled={Boolean(switchingId)}
-                      onClick={() => void handleSwitch(ws.id)}
-                    >
-                      {busy ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : null}
-                      Switch
-                    </SettingsSecondaryButton>
+                    <div className="flex gap-2">
+                      <SettingsSecondaryButton
+                        disabled={Boolean(switchingId) || Boolean(deletingId)}
+                        onClick={() => void handleSwitch(ws.id)}
+                      >
+                        {busy ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : null}
+                        Switch
+                      </SettingsSecondaryButton>
+                      <button
+                        type="button"
+                        disabled={Boolean(switchingId) || Boolean(deletingId)}
+                        onClick={() => void handleDelete(ws.id)}
+                        className="flex items-center gap-1.5 rounded-xl border border-red-200 px-3 py-2.5 text-sm font-medium text-red-600 transition hover:bg-red-50 hover:border-red-300 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-950/30 dark:text-red-400 dark:hover:bg-red-950/20"
+                      >
+                        {isDeleting ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <Trash2 className="h-3.5 w-3.5" />
+                        )}
+                        Delete
+                      </button>
+                    </div>
                   )
                 }
               />

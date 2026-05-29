@@ -355,6 +355,36 @@ export function registerSettingsRoutes(
     }
   });
 
+  app.delete('/orgs/:orgId/members/:memberId', {
+    schema: {
+      description: 'Delete/retire an agent member',
+      tags: ['Settings'],
+      params: z.object({ orgId: IdSchema, memberId: IdSchema }),
+      response: {
+        200: z.object({ success: z.literal(true) }),
+        400: ApiErrorSchema,
+        401: ApiErrorSchema,
+        403: ApiErrorSchema,
+        404: ApiErrorSchema,
+        409: ApiErrorSchema,
+      },
+    },
+  }, async (req, reply) => {
+    try {
+      assertReadyWorkspaceRoot(repo, req.params.orgId);
+      const forbidden = requireOrgSession(auth, req, reply, req.params.orgId);
+      if (forbidden) return forbidden;
+      settings.deleteMember(req.params.orgId, req.params.memberId);
+      return { success: true as const };
+    } catch (err) {
+      const message = errorMessage(err);
+      if (message === 'Only agents can be deleted') {
+        return apiError(reply, 403, message);
+      }
+      return routeError(reply, err, { notFound: 'Member not found', workspaceRoot: true });
+    }
+  });
+
   app.post('/orgs/:orgId/channels', {
     schema: {
       description: 'Add a channel to an organization',

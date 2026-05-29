@@ -29,12 +29,14 @@ import {
   filterToolsForWakeReplyPolicy,
   resolveWakeReplyPolicy,
 } from '../utils/wake-reply-policy.js';
+import { recallMemoryEntries } from '../utils/memory.js';
 import { requireTeam } from '../utils/require-team.js';
 import { runAgentLoop } from './agent-loop.js';
 import { toModelMessages, buildToolDefinitions } from '../utils/to-model-messages.js';
 import {
   ALWAYS_AVAILABLE_AGENT_TOOLS,
   SUPERVISOR_TOOL_ALLOWLIST,
+  filterDeprecatedToolIds,
 } from '../tools/index.js';
 import type { ApiRepository } from './repository-reader.js';
 import { findToolApprovalRequiredError } from './tool-loop-result.js';
@@ -114,6 +116,35 @@ export class SpiritServiceAgentRun extends SpiritServiceLifecycle {
     );
     if (runTranscript) {
       messages.push({ role: 'user', content: runTranscript });
+    }
+
+    try {
+      const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      const memories = recallMemoryEntries(this.repo, {
+        organizationId: input.organizationId,
+        memberId: input.memberId,
+        limit: 15,
+        touch: false,
+      });
+      const activeMemories = memories.filter((m) => m.createdAt >= oneDayAgo);
+
+      if (activeMemories.length > 0) {
+        const memoryPrompt = `=== YOUR RECENT WORK MEMORY ===
+Here are key facts, actions, decisions, and corrections you've made across chats and channels within the last 24 hours. Keep these in mind as you respond to ensure seamless, unified actions:
+${activeMemories
+  .map(
+    (m) =>
+      `- [${m.kind}] (${new Date(m.createdAt).toLocaleTimeString([], {
+        hour: '2-digit',
+        minute: '2-digit',
+      })}): ${m.content}`,
+  )
+  .join('\n')}
+================================`;
+        messages.push({ role: 'user', content: memoryPrompt });
+      }
+    } catch {
+      // Degrade gracefully if memory query fails
     }
 
     const running: Spirit = SpiritSchema.parse({
@@ -461,7 +492,9 @@ export class SpiritServiceAgentRun extends SpiritServiceLifecycle {
     if (role === 'supervisor') {
       return SUPERVISOR_TOOL_ALLOWLIST;
     }
-    return [...new Set([...roleTools, ...ALWAYS_AVAILABLE_AGENT_TOOLS])];
+    return filterDeprecatedToolIds([
+      ...new Set([...roleTools, ...ALWAYS_AVAILABLE_AGENT_TOOLS]),
+    ]);
   }
 
   protected buildToolDefinitions(

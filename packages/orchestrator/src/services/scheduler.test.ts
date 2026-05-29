@@ -151,7 +151,13 @@ describe('SchedulerService', () => {
       getChannel: vi.fn(),
       setChannelMembers: vi.fn(),
       getMember: vi.fn((organizationId: string, memberId: string) =>
-        members.get(`${organizationId}:${memberId}`) ?? null,
+        members.get(`${organizationId}:${memberId}`) ?? {
+          id: memberId,
+          organizationId,
+          name: memberId === 'member-1' ? 'Alice' : 'Bob',
+          kind: 'human',
+          roleName: 'admin',
+        }
       ),
       saveMember: vi.fn((member) => {
         members.set(`${member.organizationId}:${member.id}`, member);
@@ -161,6 +167,7 @@ describe('SchedulerService', () => {
 
     mockConversations = {
       sendMessage: vi.fn().mockResolvedValue(undefined),
+      publishMessage: vi.fn().mockReturnValue(undefined),
     } as unknown as ConversationService;
 
     mockRealtime = {
@@ -201,8 +208,17 @@ describe('SchedulerService', () => {
       updatedAt: runAt.toISOString(),
     };
     mockRepo.listDueJobsGlobally = vi.fn().mockReturnValue([dueJob]);
+    vi.mocked(mockRepo.getChannel).mockReturnValue({
+      id: 'channel-1',
+      organizationId: 'org-1',
+      name: 'general',
+      kind: 'general',
+      topic: '',
+      memberIds: ['member-1'],
+    } as never);
 
     scheduler.start();
+    await vi.advanceTimersByTimeAsync(0);
     await vi.waitFor(() => {
       expect(mockRepo.saveScheduledJob).toHaveBeenCalled();
     }, { timeout: 2000 });
@@ -215,7 +231,7 @@ describe('SchedulerService', () => {
     vi.useRealTimers();
   });
 
-  it('executes due jobs and sends messages', async () => {
+  it('executes due jobs and sends messages on behalf of the creator', async () => {
     const now = new Date().toISOString();
     const dueJob = {
       id: 'job-1',
@@ -232,6 +248,14 @@ describe('SchedulerService', () => {
       updatedAt: now,
     };
     mockRepo.listDueJobsGlobally = vi.fn().mockReturnValue([dueJob]);
+    vi.mocked(mockRepo.getChannel).mockReturnValue({
+      id: 'channel-1',
+      organizationId: 'org-1',
+      name: 'general',
+      kind: 'general',
+      topic: '',
+      memberIds: ['member-1'],
+    } as never);
 
     scheduler.start();
 
@@ -239,8 +263,9 @@ describe('SchedulerService', () => {
       expect(mockConversations.sendMessage).toHaveBeenCalledWith(
         expect.objectContaining({
           organizationId: 'org-1',
+          threadId: 'channel-1',
           channelId: 'channel-1',
-          senderId: '__ujima_scheduler__:org-1',
+          senderId: 'member-1',
           content: expect.stringContaining('Standup'),
         }),
       );
@@ -254,93 +279,6 @@ describe('SchedulerService', () => {
       }),
       [orgRoom('org-1'), channelRoom('channel-1')],
     );
-    scheduler.stop();
-  });
-
-  it('adds the scheduler member to private channels before sending', async () => {
-    const now = new Date().toISOString();
-    const dueJob = {
-      id: 'job-private',
-      organizationId: 'org-1',
-      name: 'Private',
-      cronExpression: '0 9 * * *',
-      prompt: 'Run private reminder',
-      channelId: 'dm-1',
-      memberId: 'member-1',
-      status: 'active' as const,
-      nextRunAt: now,
-      runCount: 0,
-      createdAt: now,
-      updatedAt: now,
-    };
-    mockRepo.listDueJobsGlobally = vi.fn().mockReturnValue([dueJob]);
-    vi.mocked(mockRepo.getChannel).mockReturnValue({
-      id: 'dm-1',
-      organizationId: 'org-1',
-      name: 'DM',
-      kind: 'dm',
-      topic: null,
-      memberIds: ['member-1'],
-      createdAt: now,
-      updatedAt: now,
-    } as never);
-
-    scheduler.start();
-
-    await vi.waitFor(() => {
-      expect(mockConversations.sendMessage).toHaveBeenCalled();
-    }, { timeout: 2000 });
-
-    expect(mockRepo.setChannelMembers).toHaveBeenCalledWith('dm-1', [
-      '__ujima_scheduler__:org-1',
-      'member-1',
-    ]);
-    scheduler.stop();
-  });
-
-  it('namespaces the scheduler sender per organization', async () => {
-    const now = new Date().toISOString();
-    mockRepo.listDueJobsGlobally = vi.fn().mockReturnValue([
-      {
-        id: 'job-a',
-        organizationId: 'org-1',
-        name: 'A',
-        cronExpression: '0 9 * * *',
-        prompt: 'one',
-        channelId: 'channel-1',
-        memberId: 'member-1',
-        status: 'active' as const,
-        nextRunAt: now,
-        runCount: 0,
-        createdAt: now,
-        updatedAt: now,
-      },
-      {
-        id: 'job-b',
-        organizationId: 'org-2',
-        name: 'B',
-        cronExpression: '0 9 * * *',
-        prompt: 'two',
-        channelId: 'channel-2',
-        memberId: 'member-2',
-        status: 'active' as const,
-        nextRunAt: now,
-        runCount: 0,
-        createdAt: now,
-        updatedAt: now,
-      },
-    ]);
-
-    scheduler.start();
-
-    await vi.waitFor(() => {
-      expect(mockConversations.sendMessage).toHaveBeenCalledTimes(2);
-    }, { timeout: 2000 });
-
-    expect(vi.mocked(mockRepo.saveMember).mock.calls.map(([member]) => member.id)).toEqual([
-      '__ujima_scheduler__:org-1',
-      '__ujima_scheduler__:org-2',
-    ]);
     scheduler.stop();
   });
 
@@ -370,12 +308,26 @@ describe('SchedulerService', () => {
       createdAt: new Date('2025-01-15T09:00:00').toISOString(),
       updatedAt: new Date('2025-01-15T09:00:00').toISOString(),
     };
-    mockRepo.listDueJobsGlobally = vi.fn().mockReturnValue([dueJob]);
+    let overlapCalled = false;
+    mockRepo.listDueJobsGlobally = vi.fn().mockImplementation(() => {
+      if (overlapCalled) return [];
+      overlapCalled = true;
+      return [dueJob];
+    });
+    vi.mocked(mockRepo.getChannel).mockReturnValue({
+      id: 'channel-1',
+      organizationId: 'org-1',
+      name: 'general',
+      kind: 'general',
+      topic: '',
+      memberIds: ['member-1'],
+    } as never);
 
     scheduler = new SchedulerService(mockRepo, mockConversations, mockRealtime, {
       pollIntervalMs: 5,
     });
     scheduler.start();
+    await vi.advanceTimersByTimeAsync(0);
 
     await vi.waitFor(() => {
       expect(mockConversations.sendMessage).toHaveBeenCalledTimes(1);
@@ -412,10 +364,26 @@ describe('SchedulerService', () => {
       createdAt: runAt.toISOString(),
       updatedAt: runAt.toISOString(),
     };
-    mockRepo.listDueJobsGlobally = vi.fn().mockReturnValue([dueJob]);
-    vi.mocked(mockConversations.sendMessage).mockRejectedValueOnce(new Error('send failed'));
+    let errorCalled = false;
+    mockRepo.listDueJobsGlobally = vi.fn().mockImplementation(() => {
+      if (errorCalled) return [];
+      errorCalled = true;
+      return [dueJob];
+    });
+    vi.mocked(mockRepo.getChannel).mockReturnValue({
+      id: 'channel-1',
+      organizationId: 'org-1',
+      name: 'general',
+      kind: 'general',
+      topic: '',
+      memberIds: ['member-1'],
+    } as never);
+    vi.mocked(mockConversations.sendMessage).mockImplementationOnce(() => {
+      throw new Error('send failed');
+    });
 
     scheduler.start();
+    await vi.advanceTimersByTimeAsync(0);
 
     await vi.waitFor(() => {
       expect(mockRepo.saveScheduledJob).toHaveBeenCalled();
@@ -427,6 +395,56 @@ describe('SchedulerService', () => {
 
     scheduler.stop();
     vi.useRealTimers();
+  });
+
+  it('does not publish when the sender cannot write to the target channel', async () => {
+    const now = new Date().toISOString();
+    const dueJob = {
+      id: 'job-private',
+      organizationId: 'org-1',
+      name: 'Private note',
+      cronExpression: '0 9 * * *',
+      prompt: 'Run private note',
+      channelId: 'channel-1',
+      memberId: 'member-1',
+      status: 'active' as const,
+      nextRunAt: now,
+      runCount: 0,
+      createdAt: now,
+      updatedAt: now,
+    };
+    let errorCalled = false;
+    mockRepo.listDueJobsGlobally = vi.fn().mockImplementation(() => {
+      if (errorCalled) return [];
+      errorCalled = true;
+      return [dueJob];
+    });
+    vi.mocked(mockRepo.getChannel).mockReturnValue({
+      id: 'channel-1',
+      organizationId: 'org-1',
+      name: 'private',
+      kind: 'dm',
+      topic: '',
+      memberIds: ['member-2'],
+    } as never);
+    vi.mocked(mockConversations.sendMessage).mockRejectedValueOnce(
+      new Error('Forbidden: you do not have access to this thread'),
+    );
+
+    scheduler.start();
+
+    await vi.waitFor(() => {
+      expect(mockConversations.sendMessage).toHaveBeenCalledTimes(1);
+    }, { timeout: 2000 });
+    await vi.waitFor(() => {
+      expect(mockRepo.saveScheduledJob).toHaveBeenCalled();
+    }, { timeout: 2000 });
+
+    const saved = vi.mocked(mockRepo.saveScheduledJob).mock.calls.at(-1)?.[0];
+    expect(saved?.lastError).toBe('Forbidden: you do not have access to this thread');
+    expect(mockConversations.publishMessage).not.toHaveBeenCalled();
+
+    scheduler.stop();
   });
 
   it('does not throw from errors in listDueJobsGlobally', async () => {

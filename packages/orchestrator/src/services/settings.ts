@@ -13,11 +13,19 @@ import {
   assertWorkspaceRootPathExists,
   upsertWorkspaceMemberScopes,
 } from './workspace-root.js';
-import { upsertDashboardTeamOverride } from './dashboard-team-overrides.js';
+import {
+  deleteDashboardTeamOverride,
+  stripAgentFromPersistedTeamConfig,
+  upsertDashboardTeamOverride,
+} from './dashboard-team-overrides.js';
 import { ConfigSyncService, persistTeamConfig } from './config-sync.js';
 import { requireTeam } from '../utils/require-team.js';
 import { requireOrganization } from '../utils/require-organization.js';
 import { visiblePublicChannels } from './channel-visibility.js';
+
+function activeMembers(repo: ApiRepository, organizationId: string): Member[] {
+  return repo.listMembers(organizationId).filter((member) => !member.retiredAt);
+}
 
 export interface TeamSettingsResponse {
   name: string;
@@ -378,6 +386,64 @@ export class SettingsService {
     return saved;
   }
 
+  deleteMember(organizationId: string, memberId: string): void {
+    requireOrganization(this.repo, organizationId);
+    const member = this.repo.getMember(organizationId, memberId);
+    if (!member) {
+      throw new Error(`Member not found: ${memberId}`);
+    }
+    if (member.kind !== AGENT_KIND) {
+      throw new Error('Only agents can be deleted');
+    }
+
+    const now = new Date().toISOString();
+    this.repo.saveMember({
+      ...member,
+      retiredAt: now,
+    });
+
+    const otherAgentsUseRole = this.repo.listMembers(organizationId).some(
+      (item) =>
+        item.kind === AGENT_KIND &&
+        item.id !== memberId &&
+        !item.retiredAt &&
+        item.roleName === member.roleName,
+    );
+
+    stripAgentFromPersistedTeamConfig(
+      this.repo,
+      organizationId,
+      memberId,
+      member.roleName,
+      otherAgentsUseRole,
+    );
+
+    deleteDashboardTeamOverride(
+      this.repo,
+      organizationId,
+      this.teamStore,
+      memberId,
+      member.roleName,
+    );
+
+    // Remove the retired member from all channel memberships
+    const allChannels = this.repo.listAllChannels(organizationId);
+    for (const channel of allChannels) {
+      if (channel.memberIds.includes(memberId)) {
+        const nextMemberIds = channel.memberIds.filter((id) => id !== memberId);
+        this.repo.setChannelMembers(channel.id, nextMemberIds);
+      }
+    }
+
+    // Delete all scheduled jobs owned by the retired member
+    const allJobs = this.repo.listScheduledJobs(organizationId);
+    for (const job of allJobs) {
+      if (job.memberId === memberId) {
+        this.repo.deleteScheduledJob(organizationId, job.id);
+      }
+    }
+  }
+
   addChannel(input: CreateChannelInput): Channel {
     requireOrganization(this.repo, input.organizationId);
     const channel = this.repo.saveChannel(
@@ -448,7 +514,7 @@ export class SettingsService {
     }
     return {
       organization,
-      members: this.repo.listMembers(organizationId),
+      members: activeMembers(this.repo, organizationId),
       channels: visiblePublicChannels(visibleChannelsFromRepo(this.repo, organizationId)),
     };
   }
@@ -539,7 +605,7 @@ export class SettingsService {
 
     return {
       organization: updated,
-      members: this.repo.listMembers(input.organizationId),
+      members: activeMembers(this.repo, input.organizationId),
       channels: visiblePublicChannels(visibleChannelsFromRepo(this.repo, input.organizationId)),
     };
   }

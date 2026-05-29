@@ -9,11 +9,7 @@ import {
 } from '@ujima/shared/workspace';
 import { isInScopeFileTool } from '../path-scoped-tools.js';
 import { ALWAYS_AVAILABLE_AGENT_TOOLS } from '../tools/index.js';
-import {
-  buildPassOrSelfNoteDenialReason,
-  resolveWakeReplyPolicy,
-  shouldSuppressPassAndSelfNote,
-} from '../utils/wake-reply-policy.js';
+import { buildPassDenialReason, resolveWakeReplyPolicy } from '../utils/wake-reply-policy.js';
 
 export interface PolicyResult {
   allowed: boolean;
@@ -25,9 +21,8 @@ export interface CheckToolPolicyOptions {
   spiritRole?: SpiritRole;
   /**
    * Why the run was woken. When `wakeReason === 'mention'` the
-   * mandatory-reply contract kicks in: `channel.pass` and
-   * `self.note` are both rejected so the agent has to call a
-   * posting tool. Other reasons leave both tools available.
+   * mandatory-reply contract kicks in: `channel.pass` is rejected so
+   * the agent has to call a posting tool.
    */
   wakeReason?: WakeReason | null;
   threadId?: string;
@@ -46,30 +41,33 @@ export function checkToolPolicy(
     return { allowed: false, requiresApproval: false, reason: `Unknown role: ${roleName}` };
   }
 
+  if (toolId === 'self.note') {
+    return {
+      allowed: false,
+      requiresApproval: false,
+      reason: 'self.note was removed; use memory.write / memory.recall instead.',
+    };
+  }
+  if (toolId === 'memory.save') {
+    return {
+      allowed: false,
+      requiresApproval: false,
+      reason: 'memory.save was renamed; use memory.write instead.',
+    };
+  }
+
   // L3 — wake/DM reply contract (palette + policy share resolveWakeReplyPolicy).
   const wakeReplyPolicy = resolveWakeReplyPolicy({
     threadId: options.threadId ?? '',
     wakeReason: options.wakeReason,
   });
 
-  if (
-    shouldSuppressPassAndSelfNote(wakeReplyPolicy) &&
-    (toolId === 'channel.pass' || toolId === 'self.note')
-  ) {
+  if (wakeReplyPolicy.suppressPassTool && toolId === 'channel.pass') {
     return {
       allowed: false,
       requiresApproval: false,
-      reason: buildPassOrSelfNoteDenialReason(toolId, wakeReplyPolicy),
+      reason: buildPassDenialReason(wakeReplyPolicy),
     };
-  }
-
-  // self.note is the agent's private scratchpad. Per the channels-as-substrate
-  // principle, an agent must always be able to think to itself — even if its
-  // role doesn't explicitly list `self.note` in `tools`. Always allowed,
-  // never approval-gated — EXCEPT for the `wakeReason === 'mention'`
-  // case above, which already returned.
-  if (toolId === 'self.note') {
-    return { allowed: true, requiresApproval: false };
   }
 
   // channel.pass is the always-available silent-outcome tool. Every

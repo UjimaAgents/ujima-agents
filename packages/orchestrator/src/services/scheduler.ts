@@ -142,7 +142,6 @@ export interface SchedulerServiceOptions {
   pollIntervalMs?: number;
 }
 
-const CRON_SENDER_ID = '__ujima_scheduler__';
 
 export class SchedulerService {
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -163,7 +162,7 @@ export class SchedulerService {
     if (this.running) return;
     this.running = true;
     this.timer = setInterval(() => void this.tick(), this.pollIntervalMs);
-    queueMicrotask(() => void this.tick());
+    setTimeout(() => void this.tick(), 0);
   }
 
   stop(): void {
@@ -210,9 +209,15 @@ export class SchedulerService {
           });
         } catch (error) {
           const nextRun = computeNextCronRun(job.cronExpression, now);
+          const message = error instanceof Error ? error.message : String(error);
+          const isPermanentError =
+            message.includes('Scheduler sender not found') ||
+            message.includes('Scheduler sender is retired') ||
+            message.includes('Scheduler target channel not found');
           this.repo.saveScheduledJob({
             ...job,
-            lastError: error instanceof Error ? error.message : String(error),
+            status: isPermanentError ? 'paused' : job.status,
+            lastError: message,
             nextRunAt: nextRun?.toISOString() ?? job.nextRunAt,
             updatedAt: now.toISOString(),
           });
@@ -230,32 +235,37 @@ export class SchedulerService {
     channelId?: string;
     prompt: string;
     name: string;
+    memberId: string;
   }): Promise<void> {
-    // Ensure the scheduler sender member exists
-    const senderId = this.schedulerMemberId(job.organizationId);
-    const sender = this.repo.getMember(job.organizationId, senderId);
-    if (!sender) {
-      this.repo.saveMember({
-        id: senderId,
-        organizationId: job.organizationId,
-        name: 'Scheduler',
-        kind: 'agent',
-        roleName: 'system',
-        presence: 'offline',
-        createdAt: new Date().toISOString(),
-      });
-    }
-
     if (job.channelId) {
-      const channel = this.repo.getChannel(job.organizationId, job.channelId);
-      if (channel && !channel.memberIds.includes(senderId)) {
-        this.repo.setChannelMembers(job.channelId, [...channel.memberIds, senderId].sort());
+      const sender = this.repo.getMember(job.organizationId, job.memberId);
+      if (!sender) {
+        throw new Error(`Scheduler sender not found: ${job.memberId}`);
       }
+      if (sender.retiredAt) {
+        throw new Error(`Scheduler sender is retired: ${job.memberId}`);
+      }
+
+      const channel = this.repo.getChannel(job.organizationId, job.channelId);
+      if (!channel) {
+        throw new Error(`Scheduler target channel not found: ${job.channelId}`);
+      }
+
+      // If the channel is private ('self' or 'dm') and the sender is not a member,
+      // explicitly add them to the channel before calling sendMessage
+      if (
+        (channel.kind === 'self' || channel.kind === 'dm') &&
+        !channel.memberIds.includes(job.memberId)
+      ) {
+        const nextMemberIds = [...channel.memberIds, job.memberId].sort();
+        this.repo.setChannelMembers(channel.id, nextMemberIds);
+      }
+
       await this.conversations.sendMessage({
         organizationId: job.organizationId,
-        channelId: job.channelId,
         threadId: job.channelId,
-        senderId,
+        channelId: job.channelId,
+        senderId: job.memberId,
         content: `**⏰ Scheduled: ${job.name}**\n\n${job.prompt}`,
       });
     }
@@ -266,9 +276,5 @@ export class SchedulerService {
       channelId: job.channelId,
       prompt: job.prompt,
     }, [orgRoom(job.organizationId), ...(job.channelId ? [channelRoom(job.channelId)] : [])]);
-  }
-
-  private schedulerMemberId(organizationId: string): string {
-    return `${CRON_SENDER_ID}:${organizationId}`;
   }
 }

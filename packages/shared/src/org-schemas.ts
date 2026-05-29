@@ -337,7 +337,7 @@ export const RunStateSchema = z.object({
   endedAt: TimestampSchema.optional(),
   // Why this run was created. Drives mandatory-reply enforcement and
   // observability. `mention` runs cannot terminate via `channel.pass`
-  // or `self.note` (policy rejects both). Persisted as a string so a
+  // (policy rejects it). Persisted as a string so a
   // future enum value doesn't break the schema parser on old rows.
   wakeReason: z.string().nullable().optional(),
   // The terminating tool the run ended with. One of the entries in

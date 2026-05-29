@@ -60,8 +60,8 @@ describe('buildTeamHierarchySection', () => {
 
 describe('SHARED_AGENT_SYSTEM_PROMPT', () => {
   it('treats compacted summaries as owned continuity, not a fresh slate', () => {
-    expect(SHARED_AGENT_SYSTEM_PROMPT).toContain('Treat compacted summaries and self.note history as your own working memory across turns.');
-    expect(SHARED_AGENT_SYSTEM_PROMPT).toContain('Each run continues from the session\'s continuity: rely on messages, files, team config, and tool output before assuming anything is unknown.');
+    expect(SHARED_AGENT_SYSTEM_PROMPT).toContain('Treat compacted summaries and memory.recall database entries as your own working memory across turns and threads.');
+    expect(SHARED_AGENT_SYSTEM_PROMPT).toContain('Each run continues from the session\'s continuity:');
     expect(SHARED_AGENT_SYSTEM_PROMPT).not.toContain('fresh context window');
   });
 });

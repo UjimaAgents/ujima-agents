@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { MemoryEntryKindSchema, MemoryEntrySchema } from '@ujima/shared';
 import type { OrchestratorTool } from './types.js';
+import { forgetMemoryEntry, recallMemoryEntries, writeMemoryEntry } from '../utils/memory.js';
 
 /**
  * Bet 5 — durable agent memory.
@@ -58,9 +59,6 @@ export const memoryWriteTool: OrchestratorTool<typeof MemoryWriteSchema> = {
     input: args,
   }),
   execute: ({ invocation, repo }) => {
-    if (!repo.upsertMemoryEntry) {
-      throw new Error('memory.write unavailable: repo does not support memory entries');
-    }
     const input = invocation.input as z.infer<typeof MemoryWriteSchema>;
     const expiresAt = input.expires_in_days
       ? new Date(Date.now() + input.expires_in_days * 24 * 60 * 60 * 1000).toISOString()
@@ -82,7 +80,7 @@ export const memoryWriteTool: OrchestratorTool<typeof MemoryWriteSchema> = {
       lastRecalledAt: undefined,
       createdAt: now,
     });
-    const saved = repo.upsertMemoryEntry(entry);
+    const saved = writeMemoryEntry(repo, entry);
     return {
       ok: true,
       key: saved.key,
@@ -103,11 +101,8 @@ export const memoryRecallTool: OrchestratorTool<typeof MemoryRecallSchema> = {
     input: args,
   }),
   execute: ({ invocation, repo }) => {
-    if (!repo.recallMemoryEntries) {
-      return { entries: [] };
-    }
     const input = invocation.input as z.infer<typeof MemoryRecallSchema>;
-    const entries = repo.recallMemoryEntries({
+    const entries = recallMemoryEntries(repo, {
       organizationId: invocation.organizationId,
       memberId: invocation.memberId,
       kind: input.kind,
@@ -139,12 +134,14 @@ export const memoryForgetTool: OrchestratorTool<typeof MemoryForgetSchema> = {
     input: args,
   }),
   execute: ({ invocation, repo }) => {
-    if (!repo.deleteMemoryEntry) {
-      return { ok: false, reason: 'memory.forget unavailable' };
-    }
     const input = invocation.input as z.infer<typeof MemoryForgetSchema>;
-    const memberId = input.scope === 'org' ? null : invocation.memberId;
-    const removed = repo.deleteMemoryEntry(invocation.organizationId, memberId, input.key);
+    const removed = forgetMemoryEntry(
+      repo,
+      invocation.organizationId,
+      invocation.memberId,
+      input.key,
+      input.scope,
+    );
     return { ok: removed, key: input.key };
   },
 };

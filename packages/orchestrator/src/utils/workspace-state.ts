@@ -1,4 +1,5 @@
 import type { ApiRepository } from '../services/repository-reader.js';
+import { recallMemoryEntries } from './memory.js';
 
 /**
  * Bet 3 — `<workspace-state>` ground-truth block.
@@ -153,24 +154,22 @@ export function buildWorkspaceStateBlock(input: BuildWorkspaceStateInput): strin
   }
 
   // --- Persistent memory (Bet 5) ----------------------------------
-  if (input.repo.recallMemoryEntries) {
-    try {
-      const entries = input.repo.recallMemoryEntries({
-        organizationId: input.organizationId,
-        memberId: input.memberId,
-        limit: 10,
-        touch: false,
-      });
-      if (entries.length > 0) {
-        const lines = entries.map(
-          (e) =>
-            `  <entry key="${escapeXml(e.key)}" kind="${escapeXml(e.kind)}">${escapeXml(e.content.slice(0, 200))}</entry>`,
-        );
-        sections.push(`<persistent-memory>\n${lines.join('\n')}\n</persistent-memory>`);
-      }
-    } catch {
-      // best-effort
+  try {
+    const entries = recallMemoryEntries(input.repo, {
+      organizationId: input.organizationId,
+      memberId: input.memberId,
+      limit: 10,
+      touch: false,
+    });
+    if (entries.length > 0) {
+      const lines = entries.map(
+        (e) =>
+          `  <entry key="${escapeXml(e.key)}" kind="${escapeXml(e.kind)}">${escapeXml(e.content.slice(0, 200))}</entry>`,
+      );
+      sections.push(`<persistent-memory>\n${lines.join('\n')}\n</persistent-memory>`);
     }
+  } catch {
+    // best-effort
   }
 
   if (sections.length === 0) return null;

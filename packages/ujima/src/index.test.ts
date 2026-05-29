@@ -28,6 +28,7 @@ test('starter config includes the preset team shape', () => {
 
   expect(config.name).toBe('Ujima Demo');
   expect(config.channels[0]?.name).toBe('general');
+  expect(Object.keys(config.tools)).toContain('view');
   expect(Object.keys(config.tools)).toContain('write');
   expect(Object.keys(config.tools)).toContain('grep');
   expect(Object.keys(config.tools)).toContain('shell');
@@ -253,7 +254,7 @@ test('legacy default role tools are migrated forward on load', () => {
         title: 'Frontend Engineer',
         instructions: ROLE_PRESETS.frontendEngineer?.instructions ?? '',
         workspaceScopes: ['apps/web'],
-        tools: ['filesystem', 'shell', 'message', 'channel.post', 'channel.reply', 'channel.dm', 'channel.list', 'channel.read', 'self.note', 'mcp'],
+        tools: ['filesystem', 'shell', 'message', 'channel.post', 'channel.reply', 'channel.dm', 'channel.list', 'channel.read', 'self.note', 'memory.save', 'mcp'],
         channels: ['general'],
       },
     ],
@@ -261,6 +262,44 @@ test('legacy default role tools are migrated forward on load', () => {
 
   expect(team.config.configVersion).toBe(4);
   expect(team.getRole('frontend-engineer')?.tools).toContain('grep');
+  expect(team.getRole('frontend-engineer')?.tools).not.toContain('self.note');
+  expect(team.getRole('frontend-engineer')?.tools).not.toContain('memory.save');
+  expect(team.getRole('frontend-engineer')?.tools).toContain('memory.write');
+});
+
+test('legacy memory.save catalog entries migrate to memory.write on load', () => {
+  const team = loadAgentTeam({
+    name: 'Ujima Demo',
+    workspace: {
+      root: '/tmp/ujima-org',
+      roleScopes: {},
+    },
+    organizationChart: { reportsTo: {} },
+    agents: [createAgent('pm', 'pm', 'direct')],
+    tools: {
+      'memory.save': {
+        id: 'memory.save',
+        name: 'Memory Save',
+        description: 'Save a durable memory.',
+        actions: ['message'],
+        pathScopes: [],
+        requiresApproval: false,
+      },
+    },
+    roles: [
+      {
+        name: 'pm',
+        title: 'Product Manager',
+        instructions: ROLE_PRESETS.pm?.instructions ?? '',
+        workspaceScopes: ['.'],
+        tools: ['memory.write'],
+        channels: ['general'],
+      },
+    ],
+  });
+
+  expect(team.tools['memory.save']).toBeUndefined();
+  expect(team.tools['memory.write']).toBeDefined();
 });
 
 test('filesystem is stripped from persisted role tools on load', () => {

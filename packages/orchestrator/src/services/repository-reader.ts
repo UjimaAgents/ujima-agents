@@ -532,4 +532,9 @@ export interface ApiRepository extends ConversationRepository {
   revokeAuthSession(sessionId: string, revokedAt?: string): AuthSession | null;
   touchAuthSession(sessionId: string, lastSeenAt?: string): AuthSession | null;
   getBootstrapSnapshot(organizationId?: string): BootstrapSnapshot;
+  saveMemory(entry: MemoryEntry): MemoryEntry;
+  getMemory(organizationId: string, memoryId: string): MemoryEntry | null;
+  listMemories(organizationId: string, memberId: string): MemoryEntry[];
+  listOrgMemories(organizationId: string): MemoryEntry[];
+  deleteMemory(organizationId: string, memoryId: string): void;
 }
