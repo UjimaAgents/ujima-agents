@@ -71,9 +71,14 @@ const TREE_LIMIT = 1000;
 const GLOB_LIMIT = 100;
 const IGNORED_DIRECTORIES = new Set(['.git', '.next', 'build', 'coverage', 'dist', 'node_modules']);
 
+// Only `file_path` is exposed in the model-facing JSON schema. Some
+// callers (older serialized tool calls, internal invocations) may
+// still pass `resourcePath`; the runtime reader continues to accept
+// it via filePathFrom, but it is intentionally absent from the
+// schema so models don't pattern-match it onto unrelated tools
+// (channel.post, channel.dm) and trip additionalProperties:false.
 const FilePathFields = {
-  resourcePath: z.string().min(1).optional().describe('Workspace file path. `file_path` is also accepted.'),
-  file_path: z.string().min(1).optional().describe('Workspace file path. Prefer this for file editing tools.'),
+  file_path: z.string().min(1).optional().describe('Workspace file path.'),
 };
 
 function filePathFrom(args: { resourcePath?: string; file_path?: string }): string {
@@ -200,7 +205,7 @@ export const viewTool: OrchestratorTool<typeof ViewSchema> = {
   }),
   execute: async ({ invocation, team }) => {
     if (!invocation.resourcePath) {
-      throw new Error('file_path is required (the workspace file path; `resourcePath` is also accepted)');
+      throw new Error('file_path is required (the workspace file path)');
     }
 
     const resolved = resolveWorkspacePath(team.workspace.root, invocation.resourcePath);
@@ -240,7 +245,7 @@ export const writeTool: OrchestratorTool<typeof WriteSchema> = {
   execute: async (ctx) => {
     const { invocation, team } = ctx;
     if (!invocation.resourcePath) {
-      throw new Error('file_path is required (the workspace file path; `resourcePath` is also accepted)');
+      throw new Error('file_path is required (the workspace file path)');
     }
     assertAgentWritePermitted(invocation.memberId, invocation.resourcePath);
 
@@ -285,7 +290,7 @@ export const editTool: OrchestratorTool<typeof EditSchema> = {
   execute: async (ctx) => {
     const { invocation, team } = ctx;
     if (!invocation.resourcePath) {
-      throw new Error('file_path is required (the workspace file path; `resourcePath` is also accepted)');
+      throw new Error('file_path is required (the workspace file path)');
     }
     assertAgentWritePermitted(invocation.memberId, invocation.resourcePath);
 
@@ -338,7 +343,7 @@ export const multieditTool: OrchestratorTool<typeof MultiEditSchema> = {
   execute: async (ctx) => {
     const { invocation, team } = ctx;
     if (!invocation.resourcePath) {
-      throw new Error('file_path is required (the workspace file path; `resourcePath` is also accepted)');
+      throw new Error('file_path is required (the workspace file path)');
     }
     assertAgentWritePermitted(invocation.memberId, invocation.resourcePath);
 

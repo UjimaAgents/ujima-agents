@@ -6,7 +6,7 @@ export const DEFAULT_TOOL_CATALOG: Record<string, ToolCapability> = {
   view: {
     id: 'view',
     name: 'View',
-    description: 'Read a workspace file in a numbered window. Accepts file_path or resourcePath, offset, and limit.',
+    description: 'Read a workspace file in a numbered window. Accepts file_path, offset, and limit.',
     actions: ['read'],
     pathScopes: ['.'],
     requiresApproval: false,
