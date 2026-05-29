@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { readFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { spawn } from 'node:child_process';
@@ -241,21 +241,69 @@ async function cmdStart(argv: string[]): Promise<void> {
   await cmdStartMonorepo(root, argv);
 }
 
+export function compareVersions(v1: string, v2: string): number {
+  const parse = (v: string) => {
+    const clean = (v.replace(/^v/, '').split('-')[0] as string) || '';
+    return clean.split('.').map(Number);
+  };
+
+  const p1 = parse(v1);
+  const p2 = parse(v2);
+
+  for (let i = 0; i < 3; i++) {
+    const n1 = p1[i] ?? 0;
+    const n2 = p2[i] ?? 0;
+    if (n1 !== n2) return n1 - n2;
+  }
+  return 0;
+}
+
+function tryReadVersion(path: string): string | null {
+  try {
+    if (existsSync(path)) {
+      const parsed = JSON.parse(readFileSync(path, 'utf8')) as { version?: unknown };
+      if (typeof parsed.version === 'string') return parsed.version;
+    }
+  } catch {
+    // Ignore error
+  }
+  return null;
+}
+
+export function getLocalVersion(): string {
+  const v1 = tryReadVersion(join(__dirname, 'manifest.json'));
+  if (v1) return v1;
+
+  const v2 = tryReadVersion(join(__dirname, '..', 'package.json'));
+  if (v2) return v2;
+
+  const root = findMonorepoRoot(__dirname);
+  if (root) {
+    const v3 = tryReadVersion(join(root, 'packages', 'distribution', 'package.json'));
+    if (v3) return v3;
+
+    const v4 = tryReadVersion(join(root, 'package.json'));
+    if (v4) return v4;
+  }
+
+  return '0.0.0-dev';
+}
+
 function printUsage(): void {
+  const version = getLocalVersion();
   process.stdout.write(
     [
+      `Ujima Agents CLI v${version} — Build and run teams of autonomous AI agents.`,
+      '',
       'Usage: ujima <command> [options]',
       '',
       'Commands:',
-      '  start  Start the local API and web UI',
-      '  init   Run first-run onboarding against a running daemon',
+      '  start   Start the local API daemon and web UI',
+      '  init    Onboard a new organization, owner, and workspace',
+      '  update  Check for and install updates to Ujima Agents CLI',
+      '  help    Display help information for a command',
       '',
-      'init options:',
-      '  --name, -n <name>         Organization name (required)',
-      '  --owner, -o <name>        Owner display name (required)',
-      '  --workspace, -w <path>    Absolute workspace root (required)',
-      '  --config, -c <path>       Path to ujima.config.ts (defaults to $UJIMA_CONFIG_FILE or ./ujima.config.ts)',
-      '  --provider <name=key>     Provider API key (repeatable)',
+      "Run 'ujima help <command>' or 'ujima <command> --help' to see detailed options for a specific command.",
       '',
       'Environment:',
       '  UJIMA_HOME       Runtime home dir (default: ~/.ujima)',
@@ -268,18 +316,186 @@ function printUsage(): void {
   );
 }
 
-async function main(): Promise<void> {
-  const [, , command, ...rest] = process.argv;
-  if (!command || command === 'help' || command === '--help' || command === '-h') {
-    printUsage();
+function printCommandHelp(cmd: string): void {
+  switch (cmd) {
+    case 'start':
+      process.stdout.write(
+        [
+          'Usage: ujima start [options]',
+          '',
+          'Start the local Ujima stack, launching both the API daemon and the web UI processes.',
+          '',
+          'Options:',
+          '  None (takes default environment configuration)',
+          '',
+          'Environment Variables:',
+          '  UJIMA_HOME        Runtime data home directory (default: ~/.ujima)',
+          '  UJIMA_PORT        Daemon API port (default: 7511)',
+          '  UJIMA_BIND_HOST   Daemon API host interface (default: 127.0.0.1)',
+          '  WEB_PORT          Web UI port when using packaged start (default: 3452)',
+          '  WEB_HOST          Web UI host interface when using packaged start (default: 127.0.0.1)',
+          '',
+        ].join('\n'),
+      );
+      break;
+
+    case 'init':
+      process.stdout.write(
+        [
+          'Usage: ujima init [options]',
+          '',
+          'Run first-run onboarding against a running Ujima API daemon to configure a new organization, owner, and workspace.',
+          '',
+          'Options:',
+          '  --name, -n <name>         Organization name (required)',
+          '  --owner, -o <name>        Owner display name (required)',
+          '  --workspace, -w <path>    Absolute path to workspace root (required)',
+          '  --config, -c <path>       Path to ujima.config.ts configuration file (defaults to ./ujima.config.ts)',
+          '  --provider <name=key>     LLM provider API key to configure (repeatable, e.g. --provider openai=sk-...)',
+          '',
+          'Example:',
+          '  ujima init --name "Acme Corp" --owner "Alice Smith" --workspace /Users/alice/projects/acme',
+          '',
+        ].join('\n'),
+      );
+      break;
+
+    case 'update':
+      process.stdout.write(
+        [
+          'Usage: ujima update [options]',
+          '',
+          'Check for updates to the Ujima Agents CLI (@ujima/agents) on the npm registry, compare with the currently installed version, and automatically update if a newer version is found.',
+          '',
+          'Options:',
+          '  --check-only              Only check for updates and print the status without executing the update',
+          '  --force                   Force re-installation/update even if already up-to-date',
+          '',
+        ].join('\n'),
+      );
+      break;
+
+    default:
+      process.stderr.write(`ujima help: unknown command "${cmd}"\n`);
+      printUsage();
+      process.exit(2);
+  }
+}
+
+async function cmdUpdate(argv: string[]): Promise<void> {
+  const checkOnly = argv.includes('--check-only');
+  const force = argv.includes('--force');
+
+  const localVersion = getLocalVersion();
+  process.stdout.write(`Current version: v${localVersion}\n`);
+  process.stdout.write('Checking npm registry for updates…\n');
+
+  let latestVersion = '';
+  try {
+    const res = await fetch('https://registry.npmjs.org/@ujima/agents/latest', {
+      headers: { 'User-Agent': 'ujima-cli-update' },
+    });
+    if (!res.ok) {
+      throw new Error(`Registry returned status ${res.status}`);
+    }
+    const data = (await res.json()) as { version: string };
+    latestVersion = data.version;
+  } catch (err) {
+    process.stderr.write(
+      `ujima update: Failed to contact the npm registry. Ensure you have an internet connection.\n` +
+        `Details: ${err instanceof Error ? err.message : String(err)}\n`,
+    );
+    process.exit(1);
+  }
+
+  process.stdout.write(`Latest version available: v${latestVersion}\n`);
+
+  const isNewer = compareVersions(latestVersion, localVersion) > 0;
+
+  if (!isNewer && !force) {
+    process.stdout.write('Ujima Agents CLI is already up-to-date!\n');
     return;
   }
+
+  if (isNewer) {
+    process.stdout.write(`\nA new version of Ujima Agents is available: v${latestVersion} (installed: v${localVersion})\n`);
+  } else if (force) {
+    process.stdout.write('\nForce-update requested.\n');
+  }
+
+  if (checkOnly) {
+    process.stdout.write("Run 'ujima update' to install the latest version.\n");
+    return;
+  }
+
+  const monorepoRoot = findMonorepoRoot(__dirname);
+  if (monorepoRoot) {
+    process.stdout.write(
+      `ujima update: You are running the CLI in monorepo development mode (${monorepoRoot}).\n` +
+        `Skipping global self-update to avoid clobbering development builds. Run 'bun run build' or updates locally.\n`,
+    );
+    return;
+  }
+
+  process.stdout.write(`Updating Ujima Agents globally to v${latestVersion} via npm…\n`);
+
+  const child = spawn('npm', ['install', '-g', `@ujima/agents@${latestVersion}`], {
+    stdio: 'inherit',
+  });
+
+  return new Promise<void>((resolvePromise) => {
+    child.on('error', (err) => {
+      process.stderr.write(
+        `ujima update error: failed to execute npm install. Details: ${err.message}\n` +
+          `Please run: npm install -g @ujima/agents\n`,
+      );
+      process.exit(1);
+    });
+
+    child.on('exit', (code) => {
+      if (code === 0) {
+        process.stdout.write(`\nSuccessfully updated Ujima Agents to v${latestVersion}!\n`);
+        resolvePromise();
+      } else {
+        process.stderr.write(
+          `\nnpm install exited with error code ${code}.\n` +
+            `If this is a permission error, please run:\n` +
+            `  sudo npm install -g @ujima/agents\n`,
+        );
+        process.exit(code ?? 1);
+      }
+    });
+  });
+}
+
+async function main(): Promise<void> {
+  const [, , command, ...rest] = process.argv;
+
+  // Handle global help
+  if (!command || command === 'help' || command === '--help' || command === '-h') {
+    if (command === 'help' && rest[0]) {
+      printCommandHelp(rest[0]);
+    } else {
+      printUsage();
+    }
+    return;
+  }
+
+  // Handle command-specific help like: ujima start --help, ujima start -h
+  if (rest.includes('--help') || rest.includes('-h')) {
+    printCommandHelp(command);
+    return;
+  }
+
   switch (command) {
     case 'start':
       await cmdStart(rest);
       return;
     case 'init':
       await cmdInit(rest);
+      return;
+    case 'update':
+      await cmdUpdate(rest);
       return;
     default:
       process.stderr.write(`ujima: unknown command "${command}"\n`);
