@@ -413,23 +413,27 @@ export class ToolServiceImpl implements ToolService {
     // Inferred fallback for tools that reached us via a live MCP
     // listTools but haven't been seeded into the classifications
     // table yet (no Test run, or first-seen tool surfaced
-    // dynamically). Pre-fix resolveClassification(null) returned
-    // 'unknown' and org defaults like read=allow / destructive=deny
-    // were ignored on those first calls. The cache lookup is the
-    // same source of truth the catalog uses; falling back to a name-
-    // only classify_tool covers tools that aren't cached either.
+    // dynamically). Only classify when we have a real cache
+    // descriptor — without one the heuristic falls through to its
+    // "no signal" default ('write') and the policy would fire the
+    // wrong bucket for a tool the system has literally never seen.
+    // When no descriptor exists, leave `inferred` undefined so
+    // evaluatePolicy hits the `unknown` bucket and the catalog +
+    // runtime decisions agree.
     let inferred: ReturnType<typeof classifyTool>["risk"] | undefined;
     if (!stored) {
-      const server = this.repo.getMcpServer(invocation.organizationId, serverId);
       const cache = this.repo.getMcpToolCache(invocation.organizationId, serverId);
       const descriptor = cache?.tools.find((t) => t.name === rawToolName);
-      const inf = classifyTool({
-        name: rawToolName,
-        description: descriptor?.description,
-        category: server?.category,
-        declaredDestructive: descriptor?.destructive,
-      });
-      inferred = inf.risk;
+      if (descriptor) {
+        const server = this.repo.getMcpServer(invocation.organizationId, serverId);
+        const inf = classifyTool({
+          name: rawToolName,
+          description: descriptor.description,
+          category: server?.category,
+          declaredDestructive: descriptor.destructive,
+        });
+        inferred = inf.risk;
+      }
     }
     const effective = resolveClassification(stored, inferred);
     const evaluation = evaluatePolicy(policy, {

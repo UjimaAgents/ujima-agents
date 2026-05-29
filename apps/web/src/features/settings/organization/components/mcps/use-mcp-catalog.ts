@@ -61,17 +61,14 @@ export function useMcpCatalog(orgId: string): UseMcpCatalog {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Keep refs of the current view selectors so post-mutation refreshes
+  // Refs of the current view selectors so post-mutation refreshes
   // can hit the same (agentId, role) snapshot without invalidating
-  // every callback identity (avoiding cascade re-renders).
+  // every callback identity (avoiding cascade re-renders). Updated
+  // synchronously during refresh() so a mutation fired immediately
+  // after a switch sees the latest selectors instead of the
+  // previous-render values that a useEffect would have captured.
   const viewIdRef = useRef<string | undefined>(undefined);
   const viewRoleRef = useRef<CatalogRole | undefined>(undefined);
-  useEffect(() => {
-    viewIdRef.current = agentViewId;
-  }, [agentViewId]);
-  useEffect(() => {
-    viewRoleRef.current = agentViewRole;
-  }, [agentViewRole]);
 
   const refresh = useCallback(
     async (agentId?: string, role?: CatalogRole) => {
@@ -91,6 +88,10 @@ export function useMcpCatalog(orgId: string): UseMcpCatalog {
         setAgentView(data.agentView);
         setAgentViewId(data.agentViewId);
         setAgentViewRole(role);
+        // Mirror into refs synchronously so any mutator fired before
+        // React commits the state update sees the freshest selectors.
+        viewIdRef.current = data.agentViewId;
+        viewRoleRef.current = role;
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
       } finally {

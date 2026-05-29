@@ -830,34 +830,45 @@ export class McpRegistryService {
     toolName: string,
   ): McpToolClassification {
     const server = this.requireServer(organizationId, serverId);
-    // Validate the tool exists in the *current* cache BEFORE touching
-    // state. Reset's purpose is "revert manual → inferred" using the
-    // live descriptor; if the tool is gone there's no live data to
-    // reseed from, and we'd risk producing a misleading row. The
-    // pre-validation also prevents the original bug where the delete
-    // happened first and a stale cache silently erased the admin
-    // override with no replacement.
-    this.requireTool(organizationId, serverId, toolName);
+    // Reset is a CLEANUP op — strictly less restrictive than
+    // grantToolToAgent / setToolClassification. The admin is asking
+    // to undo a manual override. They must be allowed to do that
+    // even if the cache has drifted (renamed tool, MCP upgrade) as
+    // long as some persisted state ties the name to this server:
+    //
+    //   - cache descriptor present → reseed from live descriptor
+    //   - cache gone but classification row exists → delete the
+    //     manual row + reseed from a name-only classify (safe
+    //     fallback; same heuristic as runtime spawn for unseeded
+    //     tools)
+    //   - nothing anywhere → pure typo, throw
+    //
+    // Grant/setClassification stay strict because phantom writes
+    // there are exploitable; reset only deletes / re-seeds an
+    // inferred row, neither of which corrupts the runtime palette.
     const cache = this.repo.getMcpToolCache(organizationId, serverId);
     const descriptor = cache?.tools.find((t) => t.name === toolName);
-    if (!descriptor) {
-      // requireTool guarantees the cache entry exists; this branch is
-      // a defensive rail against a race between validation and read.
+    const stored = this.repo.getMcpToolClassification(
+      organizationId,
+      serverId,
+      toolName,
+    );
+    if (!descriptor && !stored) {
       throw new Error(
-        `Tool not found: "${toolName}" on MCP server "${serverId}"`,
+        `Tool not found: "${toolName}" on MCP server "${serverId}". Run Test on the server first or check the tool name.`,
       );
     }
 
     this.repo.deleteMcpToolClassification(organizationId, serverId, toolName);
     const inf = classifyTool({
-      name: descriptor.name,
-      description: descriptor.description,
+      name: descriptor?.name ?? toolName,
+      description: descriptor?.description,
       category: server.category,
-      declaredDestructive: descriptor.destructive,
+      declaredDestructive: descriptor?.destructive,
     });
     this.repo.seedInferredClassifications(organizationId, serverId, [
       {
-        toolName: descriptor.name,
+        toolName: descriptor?.name ?? toolName,
         risk: inf.risk,
         needsReview: inf.needsReview,
         reason: inf.reason,

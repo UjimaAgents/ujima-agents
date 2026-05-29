@@ -975,14 +975,71 @@ describe('McpRegistryService — Phase 3 MCP integration', () => {
     expect(lowConfidence.source).toBe('inferred');
   });
 
-  // Regression: pure-typo reset must still fail. The previous behaviour
-  // also rejected when the cache lost the descriptor but a manual
-  // classification row still existed — that turned out to be too
-  // strict (the operator clearly intended to manage the tool when
-  // they wrote the row; reset can fall back to name-only classify).
-  // What MUST still throw is the case where neither the cache nor the
-  // classifications table has the name — i.e. a real typo or fully-
-  // removed tool with no historical state.
+  // Regression: reset MUST succeed when only a stale classification
+  // row remains (cache has drifted). It's a cleanup op — admin is
+  // explicitly undoing a manual override they previously wrote — so
+  // refusing it whenever the live cache lost the descriptor strands
+  // the operator with no way to revert. The hard "cache must contain
+  // it" rule still applies to grant + setClassification because
+  // phantom writes there would corrupt the runtime palette or
+  // shadow a future tool with the same name; reset only deletes the
+  // manual row and reseeds an inferred one, which can't introduce
+  // those problems.
+  it('resetToolClassification: succeeds via the classification row when the cache lost the descriptor', async () => {
+    const fixture = await createFixture();
+    tempDirs.push(fixture.archiveRoot);
+
+    const server = fixture.registry.create({
+      organizationId: fixture.organizationId,
+      createdBy: fixture.ownerId,
+      name: 'reset-stale-mcp',
+      transport: 'stdio',
+      command: 'x',
+    });
+    // Cache reflects current MCP state (tool_a renamed/removed by
+    // the server). The historical manual classification row stayed
+    // because manual rows are sticky by design.
+    fixture.repo.saveMcpToolCache({
+      mcpServerId: server.id,
+      organizationId: fixture.organizationId,
+      tools: [{ name: 'tool_b', description: '' }],
+      fetchedAt: new Date().toISOString(),
+    });
+    fixture.repo.upsertMcpToolClassification({
+      organizationId: fixture.organizationId,
+      mcpServerId: server.id,
+      toolName: 'tool_a',
+      risk: 'destructive',
+      source: 'manual',
+      needsReview: false,
+      updatedAt: new Date().toISOString(),
+      updatedBy: 'admin',
+    });
+
+    // Reset succeeds via the stored classification row + name-only
+    // classify. Manual row is replaced with an inferred one.
+    const reset = fixture.registry.resetToolClassification(
+      fixture.organizationId,
+      server.id,
+      'tool_a',
+    );
+    expect(reset.source).toBe('inferred');
+
+    // Grant on the same now-cache-missing tool must STILL fail —
+    // reset relaxation doesn't loosen grant's invariant.
+    expect(() =>
+      fixture.registry.grantToolToAgent({
+        organizationId: fixture.organizationId,
+        memberId: 'agent-x',
+        mcpServerId: server.id,
+        toolName: 'tool_a',
+      }),
+    ).toThrow(/Tool not found/);
+  });
+
+  // Regression: pure-typo reset must still fail. With nothing in either
+  // cache or classifications, the operator is asking to reset something
+  // that never existed — that's a real typo and we should surface it.
   it('resetToolClassification: rejects a name with no row anywhere (cache + classifications both empty)', async () => {
     const fixture = await createFixture();
     tempDirs.push(fixture.archiveRoot);

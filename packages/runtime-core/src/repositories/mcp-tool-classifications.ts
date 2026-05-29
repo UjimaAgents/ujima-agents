@@ -103,6 +103,12 @@ export interface SeedClassificationEntry {
 
 // INSERT OR IGNORE: existing rows (manual or already-inferred) are never
 // overwritten — that's how admin overrides survive re-test.
+//
+// The whole batch runs in a single sqlite transaction so an MCP with N
+// tools costs one fsync instead of N. Without this the runtime spawn
+// path (which seeds on every agent run) becomes a thundering-herd
+// write source under burst load and amplifies the "database is locked"
+// failures the caller has try/catch protection for.
 export function seedInferredClassifications(
   db: DbHandle,
   organizationId: string,
@@ -120,18 +126,25 @@ export function seedInferredClassifications(
      VALUES (?, ?, ?, ?, 'inferred', ?, ?, ?, ?)`,
   );
   let inserted = 0;
-  for (const e of entries) {
-    const result = stmt.run(
-      organizationId,
-      mcpServerId,
-      e.toolName,
-      e.risk,
-      e.needsReview ? 1 : 0,
-      e.reason ?? null,
-      now,
-      updatedBy,
-    );
-    if (result.changes > 0) inserted += 1;
+  db.exec('BEGIN');
+  try {
+    for (const e of entries) {
+      const result = stmt.run(
+        organizationId,
+        mcpServerId,
+        e.toolName,
+        e.risk,
+        e.needsReview ? 1 : 0,
+        e.reason ?? null,
+        now,
+        updatedBy,
+      );
+      if (result.changes > 0) inserted += 1;
+    }
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
   }
   return inserted;
 }

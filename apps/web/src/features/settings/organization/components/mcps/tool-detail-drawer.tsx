@@ -40,7 +40,16 @@ export function ToolDetailDrawer({
     setError(null);
     setBusyAgent(agentId);
     try {
-      await catalog.grantToolToAgent(agentId, serverId, tool.name);
+      // The Tools-tab drawer is the role-agnostic planning surface
+      // (the Agents tab passes its active role explicitly). Without
+      // an explicit scope the backend mirrors the existing MCP
+      // attachment scope — so granting against a back-compat
+      // worker-only attachment would land a worker-only grant and
+      // the supervisor view would never see the tool. Forcing
+      // 'both' here matches the planning-view semantic: the
+      // operator clicked Grant without picking a role, so the
+      // grant should reach whichever spirit role runs.
+      await catalog.grantToolToAgent(agentId, serverId, tool.name, 'both');
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {

@@ -148,4 +148,26 @@ describe('buildClassificationLookup', () => {
     seedOrg(repo);
     expect(buildClassificationLookup({ current: repo })('mcp_x', 'mystery')).toBeUndefined();
   });
+
+  // Defensive: if more than one org lands in the table (manual seed,
+  // migration artifact, leftover row), the resolver MUST refuse to
+  // guess. The middleware calls these without an org argument, so
+  // silently picking "latest" would enforce one org's classifications
+  // on another org's tasks. Returning undefined makes the middleware
+  // fall back to legacy behaviour — strictly safer.
+  it('refuses to guess when more than one org exists', () => {
+    const repo = makeRepo();
+    seedOrg(repo);
+    const second = OrganizationSchema.parse({
+      id: 'org-2',
+      name: 'Org 2',
+      workspace: { root: '/tmp/org-2', roleScopes: {} },
+    });
+    repo.saveOrganization(second);
+
+    expect(buildPolicyResolver({ current: repo })()).toBeUndefined();
+    expect(
+      buildClassificationLookup({ current: repo })('mcp_x', 'tool_a'),
+    ).toBeUndefined();
+  });
 });
