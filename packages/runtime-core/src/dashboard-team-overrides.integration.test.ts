@@ -1,17 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import { openDatabase } from '@ujima/context-store';
-import { Repository } from '@ujima/runtime-core';
+import {
+  applyDashboardTeamOverrides,
+  createTeamStore,
+  deleteDashboardTeamOverride,
+  persistTeamConfig,
+  SettingsService,
+  upsertDashboardTeamOverride,
+} from '@ujima/orchestrator';
 import { OrganizationSchema } from '@ujima/shared';
 import { createAgent, createStarterAgentTeamConfig, loadAgentTeam } from '@ujima/framework';
 import { AGENT_KIND } from '@ujima/shared';
-import {
-  applyDashboardTeamOverrides,
-  deleteDashboardTeamOverride,
-  upsertDashboardTeamOverride,
-} from './dashboard-team-overrides.js';
-import { persistTeamConfig } from './config-sync.js';
-import { SettingsService } from './settings.js';
-import { createTeamStore } from './team-store.js';
+import { Repository } from './repositories/index.js';
 
 describe('dashboard team overrides', () => {
   it('removes a deleted dashboard agent from the live team', () => {

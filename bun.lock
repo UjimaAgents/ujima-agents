@@ -249,6 +249,7 @@
       },
       "devDependencies": {
         "@types/diff": "^8.0.0",
+        "@ujima/runtime-core": "workspace:*",
       },
     },
     "packages/permissions": {

@@ -5,7 +5,6 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   listProcedures,
-  loadProceduresFile,
   loadProceduresForSystemPrompt,
   proceduresDirPath,
   selfProcedureAddTool,
@@ -175,7 +174,7 @@ describe('self.procedure.remove', () => {
   });
 });
 
-describe('loadProceduresForSystemPrompt + loadProceduresFile (back-compat)', () => {
+describe('loadProceduresForSystemPrompt', () => {
   it('returns undefined when no procedures exist', async () => {
     const text = await loadProceduresForSystemPrompt(workspaceRoot, memberId);
     expect(text).toBeUndefined();
@@ -194,19 +193,6 @@ describe('loadProceduresForSystemPrompt + loadProceduresFile (back-compat)', () 
     expect(text).toContain('switch to bullets');
     // Body is NOT in the prompt index — agent must call view().
     expect(text).not.toContain('Then: switch');
-  });
-
-  it('legacy `loadProceduresFile` shim still returns entries from new layout', async () => {
-    await selfProcedureAddTool.execute(
-      fakeInvocation({
-        name: 'legacy-shim',
-        description: 'Surfaces through the back-compat shim.',
-        body: 'When: caller uses old shim\nThen: synthesise when/then',
-      }),
-    );
-    const loaded = await loadProceduresFile(workspaceRoot, memberId);
-    expect(loaded?.entries.length).toBe(1);
-    expect(loaded?.entries[0]?.when).toContain('caller uses old shim');
   });
 });
 

@@ -129,6 +129,39 @@ export function deleteOrganizationData(db: DbHandle, organizationId: string): vo
       organizationId,
     );
     run('DELETE FROM channels WHERE organization_id = ?', organizationId);
+    run(
+      'DELETE FROM thread_members WHERE thread_id IN (SELECT id FROM threads WHERE organization_id = ?)',
+      organizationId,
+    );
+    run('DELETE FROM threads WHERE organization_id = ?', organizationId);
+    run(
+      'DELETE FROM message_attachments WHERE message_id IN (SELECT id FROM messages WHERE organization_id = ?)',
+      organizationId,
+    );
+    run(
+      'DELETE FROM message_mentions WHERE message_id IN (SELECT id FROM messages WHERE organization_id = ?)',
+      organizationId,
+    );
+    run('DELETE FROM messages WHERE organization_id = ?', organizationId);
+    run('DELETE FROM runs WHERE organization_id = ?', organizationId);
+    run('DELETE FROM run_steps WHERE organization_id = ?', organizationId);
+    run('DELETE FROM approvals WHERE organization_id = ?', organizationId);
+    run('DELETE FROM audit_events WHERE organization_id = ?', organizationId);
+    run('DELETE FROM memory_entries WHERE organization_id = ?', organizationId);
+    run('DELETE FROM tool_activity WHERE organization_id = ?', organizationId);
+    run('DELETE FROM todos WHERE organization_id = ?', organizationId);
+    run('DELETE FROM provider_bindings WHERE organization_id = ?', organizationId);
+    run('DELETE FROM task_sessions WHERE organization_id = ?', organizationId);
+    run('DELETE FROM spirits WHERE organization_id = ?', organizationId);
+    run('DELETE FROM attachments WHERE organization_id = ?', organizationId);
+    run('DELETE FROM mcp_servers WHERE organization_id = ?', organizationId);
+    run('DELETE FROM agent_mcp_attachments WHERE organization_id = ?', organizationId);
+    run('DELETE FROM mcp_tool_cache WHERE organization_id = ?', organizationId);
+    run('DELETE FROM scheduled_jobs WHERE organization_id = ?', organizationId);
+    run('DELETE FROM workspace_files WHERE organization_id = ?', organizationId);
+    run('DELETE FROM decision_log WHERE organization_id = ?', organizationId);
+    run('DELETE FROM procedure_revisions WHERE organization_id = ?', organizationId);
+    run('DELETE FROM run_procedures_applied WHERE organization_id = ?', organizationId);
     run('DELETE FROM workspace_members WHERE organization_id = ?', organizationId);
     run('DELETE FROM members WHERE organization_id = ?', organizationId);
     run('DELETE FROM provider_credentials WHERE organization_id = ?', organizationId);

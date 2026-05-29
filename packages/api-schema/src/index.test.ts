@@ -5,8 +5,6 @@ import {
   StartTaskRequestSchema,
   TaskFileSchema,
   WsFrameSchema,
-  DEFAULT_BIND_HOST,
-  DEFAULT_BIND_PORT,
 } from './index';
 
 describe('api-schema', () => {
@@ -76,10 +74,5 @@ describe('api-schema', () => {
       WsFrameSchema.safeParse({ kind: 'overflow', dropped: 10, code: 1008 }).success,
     ).toBe(true);
     expect(WsFrameSchema.safeParse({ kind: 'boom' }).success).toBe(false);
-  });
-
-  it('exposes bind defaults', () => {
-    expect(DEFAULT_BIND_HOST).toBe('127.0.0.1');
-    expect(DEFAULT_BIND_PORT).toBe(7511);
   });
 });
