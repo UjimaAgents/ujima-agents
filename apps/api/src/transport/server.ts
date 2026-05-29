@@ -62,6 +62,7 @@ import {registerWorkspaceRoutes} from "./routes/workspaces.js";
 import {registerAgentRoutes} from "./routes/agents.js";
 import {registerOauthRoutes} from "./routes/oauth.js";
 import {registerScheduleRoutes} from "./routes/schedules.js";
+import {registerNotificationRoutes} from "./routes/notifications.js";
 
 const WS_QUEUE_CAP = 256;
 const STARTED_AT = Date.now();
@@ -340,6 +341,10 @@ export function createTransport(opts: TransportOptions): Transport {
           auth: services.auth,
         });
         registerScheduleRoutes(api, {
+          repo: opts.apiServices.repo,
+          auth: services.auth,
+        });
+        registerNotificationRoutes(api, {
           repo: opts.apiServices.repo,
           auth: services.auth,
         });

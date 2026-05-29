@@ -33,6 +33,7 @@ import { WorkspaceService, type WorkspaceCatalog } from './workspace.js';
 import { SpiritService, type ModelResolver, type SpiritMcpPool } from './spirit.js';
 import { SupervisorTodoService } from './supervisor-todo.js';
 import { SchedulerService } from './scheduler.js';
+import { NotificationService } from './notification.js';
 import { TaskPromoterService, type TaskPromotionEvaluator } from './task-promoter.js';
 import { TaskSessionService } from './task-session.js';
 import type { TeamStore } from './team-store.js';
@@ -238,6 +239,7 @@ export interface ApiServices {
   settings: SettingsService;
   workspaces: WorkspaceService;
   scheduler: SchedulerService;
+  notifications: NotificationService;
   taskPromoter: TaskPromoterService;
   taskSessions: TaskSessionService;
   spirits: SpiritService;
@@ -560,7 +562,30 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   const bootstrap = new BootstrapService(context.repo, context.teamStore, auth);
   const onboarding = new OnboardingService(context.repo, context.teamStore);
   const scheduler = new SchedulerService(context.repo, conversations, context.realtime);
-  const settings = new SettingsService(context.repo, context.teamStore);
+  const notifications = new NotificationService(context.repo);
+  conversations.setMessagePublishedHook((msg) => {
+    if (msg.senderId !== '__ujima_scheduler__') {
+      void notifications.notifyMessage({
+        organizationId: msg.organizationId,
+        channelName: msg.channelId ?? msg.threadId,
+        senderName: context.repo.getMember(msg.organizationId, msg.senderId)?.name ?? msg.senderId,
+        content: msg.content ?? '',
+      });
+    }
+  });
+  approvalsImpl.setOnApprovalRequested((input) => {
+    void notifications.notifyApproval({
+      organizationId: input.organizationId,
+      requesterName:
+        context.repo.getMember(input.organizationId, input.requestedBy)?.name ??
+        input.requestedBy,
+      resourceType: input.resourceType,
+      action: input.action,
+      resourcePath: input.resourcePath,
+      approvalId: input.approvalId,
+    });
+  });
+  const settings = new SettingsService(context.repo, context.teamStore, approvalsImpl);
   const workspaces = new WorkspaceService(
     context.repo,
     context.teamStore,
@@ -715,6 +740,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     taskSessions,
     spirits,
     scheduler,
+    notifications,
     supervisorTodos,
     activeSpirits,
     mcpRegistry,

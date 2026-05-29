@@ -520,24 +520,28 @@ export function WorkspaceSidebar({
                 onAction={() => setIsAgentModalOpen(true)}
               />
             ) : (
-              filteredAgents.slice(0, visibleCounts.agents).map((agent, idx) => (
-                <SidebarItem
-                  key={agent.id}
-                  icon={<Avatar name={agent.name} colorIndex={idx} size="xs" />}
-                  label={agent.name}
-                  count={conversationUnreadCounts[agent.id]}
-                  active={selected?.type === "agent" && selected.id === agent.id}
-                  status={resolveMemberActivity(agent, memberActivity)}
-                  goalMode={goalMode}
-                  onClick={() =>
-                    onSelect({
-                      type: "agent",
-                      id: agent.id,
-                      name: agent.name,
-                    })
-                  }
-                />
-              ))
+              filteredAgents.slice(0, visibleCounts.agents).map((agent, idx) => {
+                const roleTitle = teamSettings?.roles.find((r) => r.name === agent.roleName)?.title;
+                return (
+                  <SidebarItem
+                    key={agent.id}
+                    icon={<Avatar name={agent.name} colorIndex={idx} size="xs" />}
+                    label={agent.name}
+                    subtitle={roleTitle}
+                    count={conversationUnreadCounts[agent.id]}
+                    active={selected?.type === "agent" && selected.id === agent.id}
+                    status={resolveMemberActivity(agent, memberActivity)}
+                    goalMode={goalMode}
+                    onClick={() =>
+                      onSelect({
+                        type: "agent",
+                        id: agent.id,
+                        name: agent.name,
+                      })
+                    }
+                  />
+                );
+              })
             )}
           </div>
           {filteredAgents.length > visibleCounts.agents ? (
@@ -642,6 +646,7 @@ export function WorkspaceSidebar({
 export const SidebarItem = memo(function SidebarItem({
   icon,
   label,
+  subtitle,
   count,
   active,
   status,
@@ -650,6 +655,7 @@ export const SidebarItem = memo(function SidebarItem({
 }: {
   icon: React.ReactNode;
   label: string;
+  subtitle?: string;
   count?: number;
   active?: boolean;
   status?: ActivityState;
@@ -668,6 +674,7 @@ export const SidebarItem = memo(function SidebarItem({
       <button
         type="button"
         onClick={onClick}
+        title={subtitle ? `${label} — ${subtitle}` : label}
         className="flex min-w-0 flex-1 items-center gap-2 text-left"
       >
         <div
@@ -680,6 +687,11 @@ export const SidebarItem = memo(function SidebarItem({
         >
           {label}
         </span>
+        {subtitle ? (
+          <span className="hidden shrink-0 truncate text-[10px] text-zinc-400 group-hover:inline dark:text-zinc-500">
+            {subtitle}
+          </span>
+        ) : null}
         {count && count > 0 ? (
           <span className="ml-1 rounded-full bg-violet-600 px-1.5 py-0.5 text-[10px] font-semibold text-white">
             {count}

@@ -1091,6 +1091,24 @@ const MIGRATIONS: { id: string; up: string }[] = [
         ON run_procedures_applied(organization_id, run_id);
     `,
   },
+  {
+    id: '033_notification_channels',
+    up: `
+      CREATE TABLE IF NOT EXISTS notification_channels (
+        id              TEXT PRIMARY KEY,
+        organization_id TEXT NOT NULL,
+        provider        TEXT NOT NULL CHECK(provider IN ('telegram', 'whatsapp', 'webhook')),
+        config_json     TEXT NOT NULL DEFAULT '{}',
+        enabled         INTEGER NOT NULL DEFAULT 1,
+        notify_messages INTEGER NOT NULL DEFAULT 1,
+        notify_approvals INTEGER NOT NULL DEFAULT 1,
+        created_at      TEXT NOT NULL,
+        updated_at      TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_notification_channels_org
+        ON notification_channels(organization_id);
+    `,
+  },
 ];
 
 export interface DbOptions {

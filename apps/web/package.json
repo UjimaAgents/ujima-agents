@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev --port ${WEB_PORT:-3452}",
+    "dev": "bun scripts/run-next.ts dev",
     "build": "next build",
-    "start": "next start --port ${WEB_PORT:-3452}",
+    "start": "bun scripts/run-next.ts start",
     "lint": "eslint"
   },
   "dependencies": {

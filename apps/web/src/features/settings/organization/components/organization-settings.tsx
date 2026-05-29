@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Bell,
   Building2,
   Clock,
   FolderKanban,
@@ -40,6 +41,7 @@ import { SchedulesTab } from "./schedules-tab";
 import { McpsTab } from "./mcps-tab";
 import { WorkspacesTab } from "./workspaces-tab";
 import { CultureTab } from "@/features/settings/shared/culture-tab";
+import { NotificationsTab } from "./notifications-tab";
 
 export type SettingsTabId =
   | "general"
@@ -52,7 +54,8 @@ export type SettingsTabId =
   | "providers"
   | "plugins"
   | "schedules"
-  | "mcps";
+  | "mcps"
+  | "notifications";
 
 const VALID_TABS: SettingsTabId[] = [
   "general",
@@ -66,6 +69,7 @@ const VALID_TABS: SettingsTabId[] = [
   "plugins",
   "schedules",
   "mcps",
+  "notifications",
 ];
 
 const NAV_GROUPS: SettingsNavGroup<SettingsTabId>[] = [
@@ -92,6 +96,7 @@ const NAV_GROUPS: SettingsNavGroup<SettingsTabId>[] = [
       { id: "providers", label: "Providers", icon: Server },
       { id: "plugins", label: "Plugins", icon: Package },
       { id: "mcps", label: "MCPs", icon: Plug },
+      { id: "notifications", label: "Notifications", icon: Bell },
     ],
   },
   {
@@ -254,6 +259,7 @@ function OrganizationSettingsContent({
           <PluginsTab bootstrap={bootstrap} createdBy={createdBy} />
         )}
         {activeTab === "schedules" && <SchedulesTab />}
+        {activeTab === "notifications" && <NotificationsTab />}
         {activeTab === "mcps" && (
           <McpsTab orgId={orgId} createdBy={createdBy} members={members} />
         )}

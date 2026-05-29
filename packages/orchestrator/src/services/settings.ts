@@ -18,6 +18,7 @@ import { ConfigSyncService, persistTeamConfig } from './config-sync.js';
 import { requireTeam } from '../utils/require-team.js';
 import { requireOrganization } from '../utils/require-organization.js';
 import { visiblePublicChannels } from './channel-visibility.js';
+import type { ApprovalResolveInput } from './approval.js';
 
 export interface TeamSettingsResponse {
   name: string;
@@ -150,6 +151,9 @@ export class SettingsService {
   constructor(
     private readonly repo: ApiRepository,
     private readonly teamStore: TeamStore,
+    private readonly approvals?: {
+      resolveApproval(input: ApprovalResolveInput): Promise<unknown> | unknown;
+    },
   ) {}
 
   private loadTeamForOrganization(organizationId: string) {
@@ -394,9 +398,11 @@ export class SettingsService {
     return channel;
   }
 
-  updatePolicies(input: UpdatePoliciesInput): OrganizationSettingsResponse {
+  async updatePolicies(input: UpdatePoliciesInput): Promise<OrganizationSettingsResponse> {
     requireOrganization(this.repo, input.organizationId);
     const team = this.loadTeamForOrganization(input.organizationId);
+    const previousRequireApprovalForWrites = team.config.policies.requireApprovalForWrites;
+    const previousRequireApprovalForShell = team.config.policies.requireApprovalForShell;
 
     if (input.requireApprovalForWrites !== undefined) {
       team.config.policies.requireApprovalForWrites = input.requireApprovalForWrites;
@@ -407,7 +413,49 @@ export class SettingsService {
 
     persistTeamConfig(this.repo, input.organizationId, team);
 
+    const writesApprovalTurnedOff =
+      previousRequireApprovalForWrites !== false &&
+      input.requireApprovalForWrites === false;
+    const shellApprovalTurnedOff =
+      previousRequireApprovalForShell !== false &&
+      input.requireApprovalForShell === false;
+
+    if (writesApprovalTurnedOff || shellApprovalTurnedOff) {
+      await this.autoApprovePendingByPolicy(input.organizationId, {
+        writes: writesApprovalTurnedOff,
+        shell: shellApprovalTurnedOff,
+      });
+    }
+
     return this.getOrganizationSettings(input.organizationId);
+  }
+
+  private async autoApprovePendingByPolicy(
+    organizationId: string,
+    options: { writes: boolean; shell: boolean },
+  ): Promise<void> {
+    if (!this.approvals) return;
+
+    const pending = this.repo.listPendingApprovals(organizationId);
+    const toApprove = pending.filter((approval) => {
+      if (options.shell && approval.resourceType === 'shell' && approval.action === 'execute') {
+        return true;
+      }
+      if (options.writes && approval.action === 'write') {
+        return true;
+      }
+      return false;
+    });
+
+    for (const approval of toApprove) {
+      await this.approvals.resolveApproval({
+        organizationId,
+        approvalId: approval.id,
+        status: 'approved',
+        resolution: 'allow_once',
+        reason: 'Auto-approved because policy was disabled.',
+      });
+    }
   }
 
   updateChannel(input: UpdateChannelInput): Channel {
