@@ -200,7 +200,7 @@ export const viewTool: OrchestratorTool<typeof ViewSchema> = {
   }),
   execute: async ({ invocation, team }) => {
     if (!invocation.resourcePath) {
-      throw new Error('resourcePath is required');
+      throw new Error('file_path is required (the workspace file path; `resourcePath` is also accepted)');
     }
 
     const resolved = resolveWorkspacePath(team.workspace.root, invocation.resourcePath);
@@ -240,7 +240,7 @@ export const writeTool: OrchestratorTool<typeof WriteSchema> = {
   execute: async (ctx) => {
     const { invocation, team } = ctx;
     if (!invocation.resourcePath) {
-      throw new Error('resourcePath is required');
+      throw new Error('file_path is required (the workspace file path; `resourcePath` is also accepted)');
     }
     assertAgentWritePermitted(invocation.memberId, invocation.resourcePath);
 
@@ -285,7 +285,7 @@ export const editTool: OrchestratorTool<typeof EditSchema> = {
   execute: async (ctx) => {
     const { invocation, team } = ctx;
     if (!invocation.resourcePath) {
-      throw new Error('resourcePath is required');
+      throw new Error('file_path is required (the workspace file path; `resourcePath` is also accepted)');
     }
     assertAgentWritePermitted(invocation.memberId, invocation.resourcePath);
 
@@ -338,7 +338,7 @@ export const multieditTool: OrchestratorTool<typeof MultiEditSchema> = {
   execute: async (ctx) => {
     const { invocation, team } = ctx;
     if (!invocation.resourcePath) {
-      throw new Error('resourcePath is required');
+      throw new Error('file_path is required (the workspace file path; `resourcePath` is also accepted)');
     }
     assertAgentWritePermitted(invocation.memberId, invocation.resourcePath);
 
