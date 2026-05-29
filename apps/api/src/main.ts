@@ -23,6 +23,11 @@ import { createTransport } from './transport/server.js';
 import { ensureBearerToken } from './transport/token.js';
 import { DEFAULT_BIND_HOST, DEFAULT_BIND_PORT } from '@ujima/api-schema';
 import { startTeamConfigWatcher } from './config-sync.js';
+import {
+  buildPolicyResolver,
+  buildClassificationLookup,
+  type DaemonRepoRef,
+} from './governance-resolvers.js';
 
 const STARTUP_SPLASH = `
    █  █   █ █ █▀▄▀█ █▀█
@@ -100,9 +105,7 @@ async function main(): Promise<void> {
   // on the orchestrator path. The closures resolve the active org via
   // `getLatestOrganization()` since the daemon is single-org per
   // process (matches the migrateUnifiedWorkspaceOrg assumption).
-  const lateRepoRef: { current: Repository | undefined } = { current: undefined };
-  const resolveActiveOrgId = (): string | undefined =>
-    lateRepoRef.current?.getLatestOrganization()?.id ?? undefined;
+  const lateRepoRef: DaemonRepoRef = { current: undefined };
 
   const host = await createRuntimeHost(
     {
@@ -119,19 +122,8 @@ async function main(): Promise<void> {
       getModel: (agent: AgentDef): LanguageModel => {
         throw new Error(`runtime: no model configured for agent "${agent.id}"`);
       },
-      policyResolver: () => {
-        const repo = lateRepoRef.current;
-        const orgId = resolveActiveOrgId();
-        if (!repo || !orgId) return undefined;
-        return repo.getGovernancePolicy(orgId);
-      },
-      classificationLookup: (mcpId, toolName) => {
-        const repo = lateRepoRef.current;
-        const orgId = resolveActiveOrgId();
-        if (!repo || !orgId) return undefined;
-        const row = repo.getMcpToolClassification(orgId, mcpId, toolName);
-        return row?.risk;
-      },
+      policyResolver: buildPolicyResolver(lateRepoRef),
+      classificationLookup: buildClassificationLookup(lateRepoRef),
     },
     {},
   );
