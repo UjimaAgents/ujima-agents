@@ -2,8 +2,10 @@ import {
   AgentTeam,
   createAgent,
   defineRole,
+  loadAgentTeam,
   upgradeLegacyDefaultRoleTools,
   type AgentConfig,
+  type AgentTeamHandle,
   type RoleConfig,
 } from '@ujima/framework';
 import { AGENT_KIND } from '@ujima/shared';
@@ -13,6 +15,7 @@ import type { ApiRepository } from './repository-reader.js';
 import type { TeamStore } from './team-store.js';
 
 const DASHBOARD_TEAM_OVERRIDES_KEY = 'dashboard.teamOverrides';
+const TEAM_CONFIG_SETTING_KEY = 'team.config';
 
 interface DashboardTeamOverrides {
   roles: RoleConfig[];
@@ -93,7 +96,36 @@ function upsertBy<T>(items: T[], next: T, keyOf: (item: T) => string): T[] {
   return [...filtered, next];
 }
 
+function loadPersistedBaseTeam(
+  repo: ApiRepository,
+  organizationId: string,
+  fallback: AgentTeamHandle,
+): AgentTeamHandle {
+  const stored = repo.getWorkspaceSetting(organizationId, TEAM_CONFIG_SETTING_KEY);
+  if (!stored) return fallback;
+  try {
+    return loadAgentTeam(JSON.parse(stored) as Record<string, unknown>);
+  } catch {
+    return fallback;
+  }
+}
+
+function withoutRetiredDashboardAgents(
+  repo: ApiRepository,
+  organizationId: string,
+  agents: AgentConfig[],
+): AgentConfig[] {
+  const members = new Map(
+    repo.listMembers(organizationId).map((member) => [member.id, member] as const),
+  );
+  return agents.filter((agent) => {
+    const member = members.get(agent.name);
+    return !member || (member.kind === AGENT_KIND && !member.retiredAt);
+  });
+}
+
 function applyOverrides(
+  repo: ApiRepository,
   teamStore: TeamStore,
   organizationId: string,
   overrides: DashboardTeamOverrides,
@@ -101,6 +133,7 @@ function applyOverrides(
   const team = teamStore.getTeam(organizationId);
   if (!team) return;
 
+  const base = loadPersistedBaseTeam(repo, organizationId, team);
   const allowedChannelNames = new Set(team.channels.map((channel) => channel.name));
   const sanitizedOverrideRoles = overrides.roles.map((role) =>
     defineRole({
@@ -111,11 +144,15 @@ function applyOverrides(
 
   const roles = sanitizedOverrideRoles.reduce(
     (current, role) => upsertBy(current, role, (item) => item.name),
-    team.roles,
+    [...base.roles],
   );
-  const agents = overrides.agents.reduce(
-    (current, agent) => upsertBy(current, agent, (item) => item.name),
-    team.agents,
+  const agents = withoutRetiredDashboardAgents(
+    repo,
+    organizationId,
+    overrides.agents.reduce(
+      (current, agent) => upsertBy(current, agent, (item) => item.name),
+      [...base.agents],
+    ),
   );
 
   teamStore.setTeam(AgentTeam({ ...team.toJSON(), roles, agents }), organizationId);
@@ -126,7 +163,7 @@ export function applyDashboardTeamOverrides(
   organizationId: string,
   teamStore: TeamStore,
 ): void {
-  applyOverrides(teamStore, organizationId, readOverrides(repo, organizationId, teamStore));
+  applyOverrides(repo, teamStore, organizationId, readOverrides(repo, organizationId, teamStore));
 }
 
 export function upsertDashboardTeamOverride(
@@ -159,7 +196,7 @@ export function upsertDashboardTeamOverride(
     DASHBOARD_TEAM_OVERRIDES_KEY,
     JSON.stringify(nextOverrides),
   );
-  applyOverrides(teamStore, organizationId, nextOverrides);
+  applyOverrides(repo, teamStore, organizationId, nextOverrides);
 }
 
 export function deleteDashboardTeamOverride(
@@ -188,5 +225,34 @@ export function deleteDashboardTeamOverride(
     DASHBOARD_TEAM_OVERRIDES_KEY,
     JSON.stringify(nextOverrides),
   );
-  applyOverrides(teamStore, organizationId, nextOverrides);
+  applyOverrides(repo, teamStore, organizationId, nextOverrides);
+}
+
+export function stripAgentFromPersistedTeamConfig(
+  repo: ApiRepository,
+  organizationId: string,
+  memberId: string,
+  roleName: string,
+  keepRole: boolean,
+): void {
+  const stored = repo.getWorkspaceSetting(organizationId, TEAM_CONFIG_SETTING_KEY);
+  if (!stored) return;
+
+  try {
+    const config = JSON.parse(stored) as {
+      agents?: AgentConfig[];
+      roles?: RoleConfig[];
+    };
+    const agents = (config.agents ?? []).filter((agent) => agent.name !== memberId);
+    const roles = keepRole
+      ? config.roles
+      : (config.roles ?? []).filter((role) => role.name !== roleName);
+    repo.saveWorkspaceSetting(
+      organizationId,
+      TEAM_CONFIG_SETTING_KEY,
+      JSON.stringify({ ...config, agents, roles }),
+    );
+  } catch {
+    // Ignore invalid persisted config; applyOverrides still rebuilds from teamStore fallback.
+  }
 }

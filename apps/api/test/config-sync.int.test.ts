@@ -734,5 +734,9 @@ describe('team config reconcile', () => {
     expect(
       settings.getOrganizationSettings(first.organization.id).members.map((m) => m.id),
     ).not.toContain(agent.id);
+
+    const liveTeam = teamStore.getTeam(first.organization.id);
+    expect(liveTeam?.agents.map((item) => item.name)).not.toContain(agent.id);
+    expect(liveTeam?.getAgent(agent.id)).toBeUndefined();
   });
 });
