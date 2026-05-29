@@ -554,6 +554,13 @@ export class SpiritServiceAgentRun extends SpiritServiceLifecycle {
     const usedToolIds = new Set<string>();
     const pool = this.mcpPool;
     for (const resolution of resolutions) {
+      // Two separate try blocks: the listTools fallback must NOT mask
+      // failures from the post-fetch seed writes. Pre-fix a single
+      // try/catch wrapped both, so a transient DB lock on the cache
+      // write would land in the catch and overwrite the freshly
+      // fetched live tools with stale cache data (or an empty list)
+      // — the agent silently lost its MCP tools even though the
+      // server had responded successfully.
       let toolList: McpToolDescriptor[] = [];
       try {
         const connection = await pool.get(resolution.def, { agentId: ctx.memberId });
@@ -572,28 +579,39 @@ export class SpiritServiceAgentRun extends SpiritServiceLifecycle {
             ...(declared !== undefined ? { destructive: declared } : {}),
           };
         });
+      } catch {
+        toolList = this.repo.getMcpToolCache(ctx.organizationId, resolution.serverId)?.tools ?? [];
+      }
 
-        // Two-step seed: refresh the tool cache AND insert inferred
-        // classifications. The cache write is load-bearing — without
-        // it the catalog UI can't render first-seen tools (the Tools
-        // tab and `requireTool` both read from mcp_tool_cache), and
-        // an operator who attached an MCP but skipped Test would see
-        // an empty catalog with no way to set classifications or
-        // grants until they triggered Test manually. Saving the
-        // cache here mirrors what `McpRegistryService.test()` does so
-        // a runtime spawn is the equivalent of a Test for the
-        // purposes of governance UI visibility.
-        //
-        // The classifications seed uses INSERT OR IGNORE so manual
-        // overrides survive; the cache write uses UPSERT and is
-        // safe to repeat concurrently.
-        if (toolList.length > 0) {
+      // Post-fetch seeds: refresh the tool cache AND insert inferred
+      // classifications. The cache write makes a runtime spawn the
+      // equivalent of an MCP Test for governance-UI visibility — the
+      // Tools tab and `requireTool` both read from mcp_tool_cache, so
+      // without this write a brand-new server's tools couldn't be
+      // governed from the UI until the operator manually ran Test.
+      // The classifications seed uses INSERT OR IGNORE so manual
+      // overrides survive; the cache write uses UPSERT and is safe to
+      // repeat concurrently.
+      //
+      // Failures here are non-fatal — they don't justify throwing
+      // away the toolList we just fetched. Log and move on so the
+      // agent keeps its palette and a transient lock doesn't strand
+      // it from its MCP.
+      if (toolList.length > 0) {
+        try {
           this.repo.saveMcpToolCache({
             mcpServerId: resolution.serverId,
             organizationId: ctx.organizationId,
             tools: toolList,
             fetchedAt: new Date().toISOString(),
           });
+        } catch (err) {
+          console.warn(
+            `[spirit-agent-run] failed to write mcp_tool_cache for server="${resolution.serverId}":`,
+            err,
+          );
+        }
+        try {
           const seedEntries = toolList.map((d) => {
             const inf = classifyTool({
               name: d.name,
@@ -613,9 +631,12 @@ export class SpiritServiceAgentRun extends SpiritServiceLifecycle {
             resolution.serverId,
             seedEntries,
           );
+        } catch (err) {
+          console.warn(
+            `[spirit-agent-run] failed to seed mcp_tool_classifications for server="${resolution.serverId}":`,
+            err,
+          );
         }
-      } catch {
-        toolList = this.repo.getMcpToolCache(ctx.organizationId, resolution.serverId)?.tools ?? [];
       }
 
       // Per-tool grant filter. When the agent has at least one row in
