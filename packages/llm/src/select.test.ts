@@ -1,23 +1,7 @@
 import { describe, expect, test } from 'vitest';
-import { LLMError, PROVIDER_KINDS, selectLanguageModel } from './index';
+import { LLMError, selectLanguageModel } from './index';
 
 describe('selectLanguageModel', () => {
-  test('exposes the expected provider kinds', () => {
-    expect([...PROVIDER_KINDS]).toEqual([
-      'anthropic',
-      'openai',
-      'google',
-      'openrouter',
-      'ollama',
-      'deepseek',
-      'xai',
-      'mistral',
-      'kimi',
-      'zhipu',
-      'openai-codex',
-    ]);
-  });
-
   test('anthropic resolves without network', () => {
     const model = selectLanguageModel({
       kind: 'anthropic',

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { compareVersions } from './main.js';
+import { compareVersions } from './version.js';
 
 describe('CLI main utilities', () => {
   describe('compareVersions', () => {

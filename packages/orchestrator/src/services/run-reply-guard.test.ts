@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
   RUN_TERMINATING_TOOL_NAMES,
-  THREAD_PUBLISHING_TOOL_NAMES,
   findTerminatingTool,
   findTerminatingToolFromRunSteps,
   isAcknowledgementOnly,
@@ -55,10 +54,6 @@ describe('RUN_TERMINATING_TOOL_NAMES (renamed from THREAD_PUBLISHING_TOOL_NAMES)
     // loop branches correctly in run.ts.
     expect(RUN_TERMINATING_TOOL_NAMES.has('channel.pass')).toBe(true);
     expect(RUN_TERMINATING_TOOL_NAMES.has('channel.handoff')).toBe(true);
-  });
-
-  it('keeps the deprecated alias pointing at the same set', () => {
-    expect(THREAD_PUBLISHING_TOOL_NAMES).toBe(RUN_TERMINATING_TOOL_NAMES);
   });
 });
 

@@ -1,5 +1,4 @@
-#!/usr/bin/env node
-import { readFileSync, mkdirSync, existsSync } from 'node:fs';
+import { readFileSync, mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { spawn } from 'node:child_process';
@@ -13,6 +12,9 @@ import {
   resolveWebServerCwd,
   resolveWebServerEntry,
 } from './runtime-paths.js';
+import { compareVersions, getLocalVersion } from './version.js';
+
+export { compareVersions, getLocalVersion } from './version.js';
 
 function resolveHomeDir(): string {
   const fromEnv = process.env.UJIMA_HOME;
@@ -241,54 +243,6 @@ async function cmdStart(argv: string[]): Promise<void> {
   await cmdStartMonorepo(root, argv);
 }
 
-export function compareVersions(v1: string, v2: string): number {
-  const parse = (v: string) => {
-    const clean = (v.replace(/^v/, '').split('-')[0] as string) || '';
-    return clean.split('.').map(Number);
-  };
-
-  const p1 = parse(v1);
-  const p2 = parse(v2);
-
-  for (let i = 0; i < 3; i++) {
-    const n1 = p1[i] ?? 0;
-    const n2 = p2[i] ?? 0;
-    if (n1 !== n2) return n1 - n2;
-  }
-  return 0;
-}
-
-function tryReadVersion(path: string): string | null {
-  try {
-    if (existsSync(path)) {
-      const parsed = JSON.parse(readFileSync(path, 'utf8')) as { version?: unknown };
-      if (typeof parsed.version === 'string') return parsed.version;
-    }
-  } catch {
-    // Ignore error
-  }
-  return null;
-}
-
-export function getLocalVersion(): string {
-  const v1 = tryReadVersion(join(__dirname, 'manifest.json'));
-  if (v1) return v1;
-
-  const v2 = tryReadVersion(join(__dirname, '..', 'package.json'));
-  if (v2) return v2;
-
-  const root = findMonorepoRoot(__dirname);
-  if (root) {
-    const v3 = tryReadVersion(join(root, 'packages', 'distribution', 'package.json'));
-    if (v3) return v3;
-
-    const v4 = tryReadVersion(join(root, 'package.json'));
-    if (v4) return v4;
-  }
-
-  return '0.0.0-dev';
-}
-
 function printUsage(): void {
   const version = getLocalVersion();
   process.stdout.write(
@@ -468,7 +422,7 @@ async function cmdUpdate(argv: string[]): Promise<void> {
   });
 }
 
-async function main(): Promise<void> {
+export async function main(): Promise<void> {
   const [, , command, ...rest] = process.argv;
 
   // Handle global help
@@ -504,7 +458,3 @@ async function main(): Promise<void> {
   }
 }
 
-void main().catch((err: unknown) => {
-  process.stderr.write(`ujima: ${err instanceof Error ? err.message : String(err)}\n`);
-  process.exit(1);
-});

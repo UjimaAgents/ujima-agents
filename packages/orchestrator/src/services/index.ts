@@ -102,6 +102,11 @@ export {
 } from './scheduler.js';
 export type { SchedulerServiceOptions } from './scheduler.js';
 export { SettingsService } from './settings.js';
+export {
+  applyDashboardTeamOverrides,
+  deleteDashboardTeamOverride,
+  upsertDashboardTeamOverride,
+} from './dashboard-team-overrides.js';
 export { orgWorkspaceId, organizationIdFromWorkspaceId } from '@ujima/shared';
 export {
   assertGrantableOwnerFromParentOrg,

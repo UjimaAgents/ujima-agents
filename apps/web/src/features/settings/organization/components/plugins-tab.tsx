@@ -7,6 +7,7 @@ import { ConfirmDialog } from "@/features/settings/shared/confirm-dialog";
 import { settingsFetch, settingsFetchVoid } from "@/features/settings/shared/settings-api";
 import { SettingsErrorAlert } from "@/features/settings/shared/settings-alert";
 import {
+  SettingsDestructiveButton,
   SettingsGhostIconButton,
   SettingsPrimaryButton,
   SettingsSecondaryButton,
@@ -240,13 +241,10 @@ export function PluginsTab({ bootstrap, createdBy }: { bootstrap: BootstrapRespo
                     </span>
                   </div>
                   {selectedSkillIds.length > 0 ? (
-                    <SettingsSecondaryButton
-                      onClick={() => setPendingBulkDelete(true)}
-                      className="!py-1 !px-2.5 text-xs text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 border-red-200 dark:border-red-900 bg-red-50/50 hover:bg-red-50 dark:bg-red-950/20 dark:hover:bg-red-950/50 flex items-center gap-1.5"
-                    >
+                    <SettingsDestructiveButton onClick={() => setPendingBulkDelete(true)}>
                       <Trash2 className="h-3.5 w-3.5" />
                       Delete Selected
-                    </SettingsSecondaryButton>
+                    </SettingsDestructiveButton>
                   ) : null}
                 </div>
 

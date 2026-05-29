@@ -4,13 +4,13 @@
   "private": true,
   "main": "./dist/main.js",
   "bin": {
-    "ujima": "./dist/main.js"
+    "ujima": "./dist/cli.js"
   },
   "files": ["dist"],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsc -p tsconfig.json --watch --preserveWatchOutput",
-    "start": "node dist/main.js",
+    "start": "node dist/cli.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint src",
     "test": "vitest run --passWithNoTests",
