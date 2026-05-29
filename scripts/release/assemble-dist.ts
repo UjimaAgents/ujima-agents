@@ -152,7 +152,7 @@ async function materializeWebStandaloneDeps(): Promise<void> {
 async function bundleCli(): Promise<void> {
   log("Bundling CLI…");
   await build({
-    entryPoints: [join(REPO_ROOT, "packages/cli/src/main.ts")],
+    entryPoints: [join(REPO_ROOT, "packages/cli/src/cli.ts")],
     outfile: join(DIST_OUT_DIR, "cli.js"),
     bundle: true,
     platform: "node",
