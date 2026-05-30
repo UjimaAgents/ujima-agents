@@ -14,20 +14,22 @@ interface ToolCallLike {
 const GOAL_ARTIFACT_DIR = '.ujima-goals';
 const GOAL_STATUS_VALUES = ['draft', 'planning', 'in_progress', 'completed', 'failed'] as const;
 
-export async function appendGoalArtifactToolCall(
+export async function appendArtifactFileToolCall(
   toolCalls: readonly ToolCallLike[],
   workspaceRoot: string,
 ): Promise<MessageToolCall | undefined> {
-  const writeCall = [...toolCalls].reverse().find(isGoalArtifactWrite);
+  const writeCall = [...toolCalls].reverse().find(isArtifactFileWrite);
   if (!writeCall) return undefined;
 
-  const resourcePath = goalArtifactWritePath(writeCall);
+  const resourcePath = artifactFileWritePath(writeCall);
   if (!resourcePath) return undefined;
 
   const resolvedPath = assertWorkspaceBoundary(workspaceRoot, resourcePath);
   const rootPath = existsSync(workspaceRoot) ? realpathSync(path.resolve(workspaceRoot)) : path.resolve(workspaceRoot);
   const relativePath = normalizePath(path.relative(rootPath, resolvedPath));
-  if (!relativePath.startsWith(`${GOAL_ARTIFACT_DIR}/`)) return undefined;
+
+  // Accept any .md file in the workspace or any file under .ujima-goals/
+  if (!relativePath.endsWith('.md') && !relativePath.startsWith(`${GOAL_ARTIFACT_DIR}/`)) return undefined;
 
   let content: string;
   try {
@@ -35,19 +37,19 @@ export async function appendGoalArtifactToolCall(
   } catch {
     return undefined;
   }
-  const card = buildGoalArtifactCard(relativePath, content);
+  const card = buildArtifactFileCard(relativePath, content);
 
   return {
     toolCallId: randomUUID(),
-    toolName: 'card.goal.file',
+    toolName: 'card.artifact.file',
     args: card as Record<string, unknown>,
     result: card,
     isError: false,
   };
 }
 
-export function buildGoalArtifactMessage(input: {
-  goalArtifactToolCall: MessageToolCall;
+export function buildArtifactFileMessage(input: {
+  artifactFileToolCall: MessageToolCall;
   organizationId: string;
   threadId: string;
   channelId?: string | null;
@@ -65,34 +67,34 @@ export function buildGoalArtifactMessage(input: {
     senderId: input.senderId,
     senderKind: input.senderKind,
     kind: input.kind,
-    content: input.content ?? 'Goal artifact updated.',
+    content: input.content ?? 'Artifact updated.',
     metadata: input.runId ? { runId: input.runId } : {},
-    toolCalls: [input.goalArtifactToolCall],
+    toolCalls: [input.artifactFileToolCall],
     createdAt: new Date().toISOString(),
   });
 }
 
-function isGoalArtifactWrite(call: ToolCallLike): boolean {
-  return goalArtifactWritePath(call) !== undefined;
+function isArtifactFileWrite(call: ToolCallLike): boolean {
+  return artifactFileWritePath(call) !== undefined;
 }
 
-function buildGoalArtifactCard(
-  goalFilePath: string,
+function buildArtifactFileCard(
+  filePath: string,
   content: string,
 ): MessageCard {
   return {
     cardId: randomUUID(),
-    kind: 'goal.file',
-    goalId: goalFilePath,
-    goalName: path.basename(goalFilePath, path.extname(goalFilePath)) || 'Goal',
-    goalFilePath,
+    kind: 'artifact.file',
+    artifactId: filePath,
+    name: path.basename(filePath, path.extname(filePath)) || 'Artifact',
+    filePath,
     html: content,
-    artifactFormat: inferArtifactFormat(goalFilePath, content),
+    artifactFormat: inferArtifactFormat(filePath, content),
     status: inferGoalStatus(content),
   };
 }
 
-function goalArtifactWritePath(call: ToolCallLike): string | undefined {
+function artifactFileWritePath(call: ToolCallLike): string | undefined {
   const toolName = call.toolName?.toLowerCase();
   const resourcePath = readStringField(call, 'resourcePath');
   if (!resourcePath) return undefined;
@@ -101,8 +103,8 @@ function goalArtifactWritePath(call: ToolCallLike): string | undefined {
     : undefined;
 }
 
-function inferArtifactFormat(goalFilePath: string, content: string): 'html' | 'markdown' {
-  if (goalFilePath.toLowerCase().endsWith('.html')) return 'html';
+function inferArtifactFormat(filePath: string, content: string): 'html' | 'markdown' {
+  if (filePath.toLowerCase().endsWith('.html')) return 'html';
   const trimmed = content.trimStart().toLowerCase();
   return trimmed.startsWith('<!doctype html') || trimmed.startsWith('<html') ? 'html' : 'markdown';
 }

@@ -741,4 +741,35 @@ describe('team config reconcile', () => {
     expect(liveTeam?.agents.map((item) => item.name)).not.toContain(agent.id);
     expect(liveTeam?.getAgent(agent.id)).toBeUndefined();
   });
+
+  it('preserves member shellApprovalMode when config reconciliations run', async () => {
+    const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
+    const teamStore = createTeamStore();
+    const syncService = new ConfigSyncService(repo, teamStore);
+    const settings = new SettingsService(repo, teamStore);
+    const dir = await mkdtemp(join(tmpdir(), 'ujima-config-sync-'));
+    tempDirs.push(dir);
+    const configPath = join(dir, 'ujima.config.js');
+
+    await writeConfigFile(configPath, teamConfig());
+    const first = await syncService.loadAndReconcileFromFile(configPath);
+
+    // Update frontend-alice's shellApprovalMode to 'auto_review'
+    settings.patchMemberPreferences({
+      organizationId: first.organization.id,
+      memberId: 'frontend-alice',
+      shellApprovalMode: 'auto_review',
+    });
+
+    // Verify it is saved in the database
+    const beforeReconcile = repo.getMember(first.organization.id, 'frontend-alice');
+    expect(beforeReconcile?.shellApprovalMode).toBe('auto_review');
+
+    // Run reconciliation again
+    const second = await syncService.loadAndReconcileFromFile(configPath, first.organization.id);
+    const afterReconcile = repo.getMember(first.organization.id, 'frontend-alice');
+
+    // Verify it is preserved after reconcile!
+    expect(afterReconcile?.shellApprovalMode).toBe('auto_review');
+  });
 });

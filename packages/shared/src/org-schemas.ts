@@ -459,12 +459,12 @@ export const TaskSummaryCardSchema = z.object({
   taskSlug: z.string().min(1).optional(),
 });
 
-export const GoalArtifactCardSchema = z.object({
+export const ArtifactFileCardSchema = z.object({
   ...MessageCardCommon,
-  kind: z.literal('goal.file'),
-  goalId: IdSchema,
-  goalName: z.string().min(1),
-  goalFilePath: z.string().min(1),
+  kind: z.literal('artifact.file'),
+  artifactId: IdSchema,
+  name: z.string().min(1),
+  filePath: z.string().min(1),
   html: z.string(),
   artifactFormat: z.enum(['html', 'markdown']).default('html'),
   status: GoalStatusSchema,
@@ -503,7 +503,7 @@ export const MessageCardSchema = z.discriminatedUnion('kind', [
   TaskJoinCardSchema,
   TaskOriginLinkCardSchema,
   TaskSummaryCardSchema,
-  GoalArtifactCardSchema,
+  ArtifactFileCardSchema,
   ApprovalCardSchema,
   PromotionConfirmCardSchema,
   ToolCallCardSchema,

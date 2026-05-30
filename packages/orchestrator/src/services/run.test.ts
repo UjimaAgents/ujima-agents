@@ -6,7 +6,7 @@ import { loadAgentTeam } from '@ujima/framework';
 import { AGENT_KIND, SocketEventNames, type RunChunkEvent, type RunState } from '@ujima/shared';
 import { SpiritService } from './spirit.js';
 import { ToolApprovalRequiredError } from './tool-loop-result.js';
-import { appendGoalArtifactToolCall } from './goal-artifact-card.js';
+import { appendArtifactFileToolCall } from './artifact-file-card.js';
 
 function expectRunState(result: RunState | unknown): asserts result is RunState {
   if (!result || typeof result !== 'object' || !('startedAt' in result) || !('status' in result)) {
@@ -334,12 +334,11 @@ describe('SpiritService run path', () => {
     const result = await (service as any).advanceRun(run);
 
     expect(result.status).toBe('completed');
-    expect(messages).toHaveLength(3);
+    expect(messages).toHaveLength(2);
     expect(messages[0].content).toBe('Drafted.');
     expect(messages[0].toolCalls ?? []).toHaveLength(0);
     expect(messages[1].content).toBe('Done.');
-    expect(messages[1].toolCalls ?? []).toHaveLength(0);
-    expect(messages[2].toolCalls.some((toolCall: any) => toolCall.toolName === 'card.goal.file')).toBe(true);
+    expect(messages[1].toolCalls.some((toolCall: any) => toolCall.toolName === 'card.artifact.file')).toBe(true);
   });
 
   it('builds persisted goal cards for workspace write tool HTML files', async () => {
@@ -350,13 +349,13 @@ describe('SpiritService run path', () => {
       '<!doctype html><html><body><h1>Goal</h1></body></html>',
     );
 
-    const card = await appendGoalArtifactToolCall(
+    const card = await appendArtifactFileToolCall(
       [{ toolName: 'write', args: { resourcePath: '.ujima-goals/plan.html' } }],
       workspaceRoot,
     );
 
-    expect(card?.toolName).toBe('card.goal.file');
-    expect(card?.args.goalFilePath).toBe('.ujima-goals/plan.html');
+    expect(card?.toolName).toBe('card.artifact.file');
+    expect(card?.args.filePath).toBe('.ujima-goals/plan.html');
     expect(card?.args.artifactFormat).toBe('html');
   });
 
@@ -470,7 +469,7 @@ describe('SpiritService run path', () => {
     await (service as any).advanceRun(run);
 
     expect(messages.some((message) => message.content.includes('[tool turn —'))).toBe(false);
-    expect(messages.some((message) => message.toolCalls?.some((toolCall: any) => toolCall.toolName === 'card.goal.file'))).toBe(true);
+    expect(messages.some((message) => message.toolCalls?.some((toolCall: any) => toolCall.toolName === 'card.artifact.file'))).toBe(true);
   });
 
   it('persists each non-reasoning assistant step as a chat message', async () => {

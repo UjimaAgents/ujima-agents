@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { isLoopFinished, type ToolSet } from 'ai';
+import { type ToolSet } from 'ai';
 import { buildAgentSystemPrompt, normalizeProviderKey } from '@ujima/framework';
 import { DEFAULT_SPIRIT_TEMPERATURE, type Message, type SpiritRole, type WakeReason } from '@ujima/shared';
 import { runAgentLoop, type AgentLoopChunk } from './services/agent-loop.js';
@@ -221,7 +221,7 @@ export class AiService {
       system,
       messages,
       tools: toolDefs,
-      stopWhen: isLoopFinished(),
+      stopWhen: () => false,
       maxOutputTokens: 800,
       temperature: 0.2,
       toolChoice: 'auto',
@@ -536,17 +536,15 @@ export class AiService {
       system: systemPrompt,
       messages,
       tools: toolDefs,
-      stopWhen: isLoopFinished(),
+      stopWhen: () => false,
       maxOutputTokens: turnMaxOutputTokens,
       // Lower temperature for mandatory mention wakes: at 0.2 the model is
       // more willing to commit to a structured posting tool. Other runs keep
       // the shared default.
       temperature: wakeReplyPolicy.mandatoryReply ? 0.2 : DEFAULT_SPIRIT_TEMPERATURE,
-      // L1/L2: force a tool call on the FIRST step only so the model
-      // picks `channel.pass` or a posting tool fast. Continuation
-      // steps go back to `auto` so multi-step read→write→reply
-      // sequences still work.
-      toolChoice: 'required-first-step',
+      // L1/L2: Use 'auto' tool choice so the model can choose whether
+      // to make a tool call or respond directly.
+      toolChoice: 'auto',
       abortSignal: input.abortSignal,
       onChunk: input.onChunk,
       loadInterruptMessages: () => {

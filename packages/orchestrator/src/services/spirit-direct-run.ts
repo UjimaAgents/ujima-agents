@@ -20,17 +20,16 @@ import { pendingApprovalRunSummary } from './approval-summary.js';
 import {
   findTerminatingTool,
   findTerminatingToolFromRunSteps,
-  isAcknowledgementOnly,
   runUsedChannelPass,
-  runUsedThreadPublishingTool,
+
 } from './run-reply-guard.js';
 import type { CreateRunInput, RunDetail } from './spirit-types.js';
 import { aggregateToolUsage } from './spirit-run-detail.js';
 import type { RunSpiritOutcome } from './spirit-types.js';
 import { SpiritServiceSupervisor } from './spirit-supervisor.js';
-import { appendGoalArtifactToolCall } from './goal-artifact-card.js';
+import { appendArtifactFileToolCall } from './artifact-file-card.js';
 import {
-  appendGoalArtifactFromRunSteps,
+  appendArtifactFileFromRunSteps,
   collectRunStepToolCalls,
   collectToolStatuses,
   publishRunReplyTrace,
@@ -427,24 +426,24 @@ export class SpiritServiceDirectRun extends SpiritServiceSupervisor {
       }
 
       const statuses = collectToolStatuses(result);
-      const text = (result.text || streamedTrace.text).trim();
+      const text = result.text.trim();
       const reasoningContent = extractReasoningChunk(result) ?? (streamedTrace.reasoning.trim() || undefined);
       const runSteps = this.repo.listRunSteps?.(run.organizationId, run.id) ?? [];
       const goalToolCalls = collectRunStepToolCalls(result);
-      const goalArtifactToolCall =
-        (await appendGoalArtifactToolCall(goalToolCalls, team.workspace.root)) ??
-        (await appendGoalArtifactFromRunSteps(this.repo, run, team.workspace.root));
+      const artifactFileToolCall =
+        (await appendArtifactFileToolCall(goalToolCalls, team.workspace.root)) ??
+        (await appendArtifactFileFromRunSteps(this.repo, run, team.workspace.root));
       if (statuses.includes('blocked')) {
         await publishRunReplyTrace({
           repo: this.repo,
           conversations: this.conversations,
           run: running,
           result,
-          reply: text || (goalArtifactToolCall ? 'Goal artifact updated.' : ''),
+          reply: text || (artifactFileToolCall ? 'Artifact updated.' : ''),
           reasoningContent,
           teamRoot: team.workspace.root,
-          goalArtifactToolCall,
-          skipFinalThreadMessage: findTerminatingToolFromRunSteps(runSteps) !== null,
+          artifactFileToolCall,
+
           suppressDmAlerts: true,
           failureTrace: true,
         });
@@ -510,11 +509,9 @@ export class SpiritServiceDirectRun extends SpiritServiceSupervisor {
         return this.completeSilentRun(running, 'acked', 'channel.ack', wakeReason);
       }
 
-      if (!terminatingTool && isAcknowledgementOnly(text)) {
-        return this.completeSilentRun(running, 'acked', 'channel.ack', wakeReason);
-      }
 
-      if (!terminatingTool && text.length === 0 && !goalArtifactToolCall) {
+
+      if (!terminatingTool && text.length === 0 && !artifactFileToolCall) {
         if (wakeReason === 'mention') {
           const byMemberId = running.byMemberId ?? run.agentId;
           const messageId = running.sourceMessageId;
@@ -550,7 +547,7 @@ export class SpiritServiceDirectRun extends SpiritServiceSupervisor {
         return this.completeRun(running, 'empty', null);
       }
 
-      const reply = text || 'Goal artifact updated.';
+      const reply = text || 'Artifact updated.';
       await publishRunReplyTrace({
         repo: this.repo,
         conversations: this.conversations,
@@ -559,8 +556,8 @@ export class SpiritServiceDirectRun extends SpiritServiceSupervisor {
         reply,
         reasoningContent,
         teamRoot: team.workspace.root,
-        goalArtifactToolCall,
-        skipFinalThreadMessage: terminatingTool !== null || runUsedThreadPublishingTool(result),
+        artifactFileToolCall,
+
       });
 
       return this.completeRun(running, terminatingTool ?? reply, terminatingTool);

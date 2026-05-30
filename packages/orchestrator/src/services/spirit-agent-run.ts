@@ -43,7 +43,7 @@ import { findToolApprovalRequiredError } from './tool-loop-result.js';
 import { extractReasoningChunk } from '../utils/extract-reasoning.js';
 import { errorMessage } from '../utils/error-message.js';
 import { buildRunTranscript } from '../utils/run-transcript.js';
-import { appendGoalArtifactToolCall } from './goal-artifact-card.js';
+import { appendArtifactFileToolCall } from './artifact-file-card.js';
 import { pendingApprovalRunSummary } from './approval-summary.js';
 import {
   findTerminatingTool,
@@ -242,7 +242,7 @@ ${activeMemories
         stopWhen: stepCountIs(maxIterations),
         ...(this.maxOutputTokens !== undefined ? { maxOutputTokens: this.maxOutputTokens } : {}),
         temperature: this.temperature,
-        toolChoice: 'required-first-step',
+        toolChoice: 'auto',
         onChunk: (chunk) => {
           if (chunk.kind === 'reasoning') streamedReasoning += chunk.delta;
           this.emitRunChunk(
@@ -291,15 +291,15 @@ ${activeMemories
         }
 
         const toolCalls = this.toMessageToolCalls(stepToolCalls, stepToolResults, spirit);
-        const goalArtifactToolCall = await appendGoalArtifactToolCall(
+        const artifactFileToolCall = await appendArtifactFileToolCall(
           stepToolCalls,
           team.workspace.root,
         );
-        const messageToolCalls = goalArtifactToolCall ? [...toolCalls, goalArtifactToolCall] : toolCalls;
+        const messageToolCalls = artifactFileToolCall ? [...toolCalls, artifactFileToolCall] : toolCalls;
         const reasoningContent =
           extractReasoningChunk(step) ??
           (index === steps.length - 1 ? streamedReasoning.trim() || undefined : undefined);
-        if (!stepText && !goalArtifactToolCall) {
+        if (!stepText && !artifactFileToolCall) {
           continue;
         }
         const message = MessageSchema.parse({
@@ -310,7 +310,7 @@ ${activeMemories
           senderId: member.id,
           senderKind: AGENT_KIND,
           kind: AGENT_KIND,
-          content: stepText || 'Goal artifact updated.',
+          content: stepText || 'Artifact updated.',
           toolCalls: messageToolCalls,
           metadata: { runId: spirit.runId ?? spirit.id },
           ...(reasoningContent ? { reasoningContent } : {}),

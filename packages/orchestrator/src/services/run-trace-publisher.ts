@@ -3,9 +3,13 @@ import { AGENT_KIND, MessageSchema, type MessageToolCall, type RunState } from '
 import type { AiService } from '../ai-service.js';
 import { extractReasoningChunk } from '../utils/extract-reasoning.js';
 import type { ConversationService } from './conversation.js';
-import { appendGoalArtifactToolCall, buildGoalArtifactMessage } from './goal-artifact-card.js';
+import { appendArtifactFileToolCall, buildArtifactFileMessage } from './artifact-file-card.js';
 import type { ApiRepository } from './repository-reader.js';
-import { runUsedThreadPublishingTool } from './run-reply-guard.js';
+import {
+  findTerminatingTool,
+  findTerminatingToolFromRunSteps,
+  runUsedThreadPublishingTool,
+} from './run-reply-guard.js';
 
 export type RunReplyResult = Awaited<ReturnType<AiService['generateRunReply']>>;
 export interface StreamedRunTrace {
@@ -13,7 +17,7 @@ export interface StreamedRunTrace {
   reasoning: string;
 }
 export type StreamedTraceOutcome = 'failed' | 'stopped';
-type GoalArtifactToolCallLike = Parameters<typeof appendGoalArtifactToolCall>[0][number];
+type ArtifactFileToolCallLike = Parameters<typeof appendArtifactFileToolCall>[0][number];
 
 export function collectToolStatuses(result: Pick<RunReplyResult, 'toolResults' | 'steps'>): string[] {
   return [
@@ -24,13 +28,13 @@ export function collectToolStatuses(result: Pick<RunReplyResult, 'toolResults' |
     .filter((status): status is string => typeof status === 'string');
 }
 
-export function collectRunStepToolCalls(result: Pick<RunReplyResult, 'steps'>): GoalArtifactToolCallLike[] {
+export function collectRunStepToolCalls(result: Pick<RunReplyResult, 'steps'>): ArtifactFileToolCallLike[] {
   return result.steps.flatMap((step) =>
-    Array.isArray(step.toolCalls) ? (step.toolCalls as GoalArtifactToolCallLike[]) : [],
+    Array.isArray(step.toolCalls) ? (step.toolCalls as ArtifactFileToolCallLike[]) : [],
   );
 }
 
-export async function appendGoalArtifactFromRunSteps(
+export async function appendArtifactFileFromRunSteps(
   repo: ApiRepository,
   run: RunState,
   workspaceRoot: string,
@@ -38,7 +42,7 @@ export async function appendGoalArtifactFromRunSteps(
 ): Promise<MessageToolCall | undefined> {
   const runSteps = repo.listRunSteps?.(run.organizationId, run.id) ?? [];
   const steps = toolCallId ? runSteps.filter((step) => step.toolCallId === toolCallId) : runSteps;
-  return appendGoalArtifactToolCall(
+  return appendArtifactFileToolCall(
     steps.map((step) => ({
       toolName: step.toolId,
       input: {
@@ -55,12 +59,12 @@ export async function publishRunReplyTrace(input: {
   repo: ApiRepository;
   conversations?: ConversationService;
   run: RunState;
-  result: Pick<RunReplyResult, 'steps'>;
+  result: Pick<RunReplyResult, 'steps' | 'toolResults'>;
   reply: string;
   reasoningContent?: string;
   teamRoot: string;
-  goalArtifactToolCall?: MessageToolCall;
-  skipFinalThreadMessage?: boolean;
+  artifactFileToolCall?: MessageToolCall;
+
   suppressDmAlerts?: boolean;
   failureTrace?: boolean;
 }): Promise<void> {
@@ -72,32 +76,31 @@ export async function publishRunReplyTrace(input: {
   const metadata = input.failureTrace
     ? { runId: input.run.id, failedTrace: true }
     : { runId: input.run.id };
+  let publishedArtifactFile = false;
   let publishedMessages = 0;
-  let publishedGoalArtifact = false;
-  let lastPublishedContent: string | undefined;
 
   for (const [index, step] of input.result.steps.entries()) {
     const stepText = typeof step.text === 'string' ? step.text.trim() : '';
     const stepToolCalls = Array.isArray(step.toolCalls) ? (step.toolCalls as MessageToolCall[]) : [];
     if (!stepText && stepToolCalls.length === 0) continue;
 
-    const stepGoalArtifactToolCall =
+    const stepArtifactFileToolCall =
       stepToolCalls.length > 0
-        ? (await appendGoalArtifactToolCall(stepToolCalls, input.teamRoot)) ??
-          (await appendGoalArtifactFromRunSteps(
+        ? (await appendArtifactFileToolCall(stepToolCalls, input.teamRoot)) ??
+          (await appendArtifactFileFromRunSteps(
             input.repo,
             input.run,
             input.teamRoot,
             stepToolCalls.at(-1)?.toolCallId,
           ))
         : undefined;
-    if (stepGoalArtifactToolCall) publishedGoalArtifact = true;
+    if (stepArtifactFileToolCall) publishedArtifactFile = true;
 
-    if (runUsedThreadPublishingTool({ steps: [step] }) && !stepGoalArtifactToolCall) continue;
-    if (!stepText && !stepGoalArtifactToolCall && !input.failureTrace) continue;
+    if (runUsedThreadPublishingTool({ steps: [step] }) && !stepArtifactFileToolCall) continue;
+    if (!stepText && !stepArtifactFileToolCall && !input.failureTrace) continue;
 
-    const content = stepText || (stepGoalArtifactToolCall ? 'Goal artifact updated.' : 'Tool actions recorded.');
-    const toolCalls = [...stepToolCalls, ...(stepGoalArtifactToolCall ? [stepGoalArtifactToolCall] : [])];
+    const content = stepText || (stepArtifactFileToolCall ? 'Artifact updated.' : 'Tool actions recorded.');
+    const toolCalls = [...stepToolCalls, ...(stepArtifactFileToolCall ? [stepArtifactFileToolCall] : [])];
     const stepReasoning =
       extractReasoningChunk(step) ??
       (index === input.result.steps.length - 1 ? input.reasoningContent : undefined);
@@ -121,17 +124,17 @@ export async function publishRunReplyTrace(input: {
       undefined,
       publishOptions,
     );
-    publishedMessages += 1;
-    lastPublishedContent = content;
+    publishedMessages++;
   }
 
-  const finalArtifactMessageNeeded = !!input.goalArtifactToolCall && !publishedGoalArtifact;
-  const shouldPublishFinalMessage =
-    input.reply.length > 0 &&
-    !input.skipFinalThreadMessage &&
-    (publishedMessages === 0 || input.reply !== lastPublishedContent || finalArtifactMessageNeeded);
-
-  if (shouldPublishFinalMessage) {
+  // Fallback: if the per-step loop published nothing (e.g. the AI
+  // returned text with zero steps) and we have reply text, publish a
+  // single message so the reply is visible in the thread.
+  // Do not publish if a terminating/thread-publishing tool was fired.
+  const runSteps = input.repo.listRunSteps?.(input.run.organizationId, input.run.id) ?? [];
+  const terminatingTool = findTerminatingTool(input.result) ?? findTerminatingToolFromRunSteps(runSteps);
+  const usedTerminator = terminatingTool !== null;
+  if (publishedMessages === 0 && input.reply.length > 0 && !usedTerminator) {
     input.conversations?.publishMessage(
       MessageSchema.parse({
         id: randomUUID(),
@@ -152,10 +155,12 @@ export async function publishRunReplyTrace(input: {
     );
   }
 
-  if (finalArtifactMessageNeeded && input.goalArtifactToolCall) {
+
+  const finalArtifactMessageNeeded = !!input.artifactFileToolCall && !publishedArtifactFile;
+  if (finalArtifactMessageNeeded && input.artifactFileToolCall) {
     input.conversations?.publishMessage(
-      buildGoalArtifactMessage({
-        goalArtifactToolCall: input.goalArtifactToolCall,
+      buildArtifactFileMessage({
+        artifactFileToolCall: input.artifactFileToolCall,
         organizationId: input.run.organizationId,
         threadId,
         channelId,
