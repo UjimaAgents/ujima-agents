@@ -1122,6 +1122,65 @@ const MIGRATIONS: {id: string; up: string}[] = [
       ALTER TABLE members ADD COLUMN shell_approval_mode TEXT;
     `,
   },
+  {
+    id: "035_governance_rules",
+    up: `
+      CREATE TABLE IF NOT EXISTS governance_rules (
+        id              TEXT PRIMARY KEY,
+        organization_id TEXT NOT NULL,
+        agent_id        TEXT NOT NULL,
+        mcp_id          TEXT NOT NULL,
+        tool_name       TEXT NOT NULL,
+        state           TEXT NOT NULL DEFAULT 'allow',
+        reason          TEXT,
+        updated_at      TEXT NOT NULL,
+        updated_by      TEXT,
+        UNIQUE (organization_id, agent_id, mcp_id, tool_name)
+      );
+      CREATE INDEX IF NOT EXISTS idx_governance_rules_org
+        ON governance_rules(organization_id, agent_id);
+      CREATE INDEX IF NOT EXISTS idx_governance_rules_state
+        ON governance_rules(organization_id, state);
+    `,
+  },
+  {
+    // Backfill UNIQUE constraints on plugin_installs and
+    // organization_skill_installs. Migration 029 declared them as
+    // table-level UNIQUE clauses, but DBs that had previously applied
+    // the original 026_plugin_registry (before the renumber) created
+    // these tables without the constraint, and `CREATE TABLE IF NOT
+    // EXISTS` is a no-op for existing tables. Without them, the
+    // repository's `INSERT ... ON CONFLICT(...)` statements fail at
+    // SQL parse time with "ON CONFLICT clause does not match any
+    // PRIMARY KEY or UNIQUE constraint", blocking plugin installs.
+    // Dedupe defensively before creating the unique indexes — keeping
+    // the earliest row by rowid — so the migration is safe even on
+    // dogfood DBs that accidentally accumulated duplicates.
+    id: "036_plugin_registry_unique_indexes",
+    up: `
+      DELETE FROM organization_skill_installs
+       WHERE plugin_install_id NOT IN (SELECT id FROM plugin_installs);
+
+      DELETE FROM plugin_installs WHERE rowid NOT IN (
+        SELECT MIN(rowid) FROM plugin_installs
+         GROUP BY organization_id, source_url
+      );
+
+      DELETE FROM organization_skill_installs
+       WHERE plugin_install_id NOT IN (SELECT id FROM plugin_installs);
+
+      DELETE FROM organization_skill_installs WHERE rowid NOT IN (
+        SELECT MIN(rowid) FROM organization_skill_installs
+         GROUP BY organization_id, plugin_install_id, skill_name
+      );
+
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_plugin_installs_unique_source
+        ON plugin_installs(organization_id, source_url);
+
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_org_skill_installs_unique
+        ON organization_skill_installs(organization_id, plugin_install_id, skill_name);
+    `,
+  },
 ];
 
 export interface DbOptions {

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { type ToolSet } from 'ai';
 import { buildAgentSystemPrompt, normalizeProviderKey } from '@ujima/framework';
 import { DEFAULT_SPIRIT_TEMPERATURE, type Message, type SpiritRole, type WakeReason } from '@ujima/shared';
-import { runAgentLoop, type AgentLoopChunk } from './services/agent-loop.js';
+import { runAgentLoop, type AgentLoopChunk, type AgentLoopStep } from './services/agent-loop.js';
 import type { ApiRepository } from './services/repository-reader.js';
 import type { TeamStore } from './services/team-store.js';
 import type { ToolService } from './services/tool-service.js';
@@ -53,6 +53,7 @@ export interface GenerateRunReplyInput {
   systemPromptSuffix?: string;
   abortSignal?: AbortSignal;
   onChunk?: (chunk: AgentLoopChunk) => PromiseLike<void> | void;
+  onStepFinish?: (step: AgentLoopStep, steps: AgentLoopStep[]) => PromiseLike<void> | void;
 }
 
 export interface GenerateMemoryReviewInput {
@@ -547,6 +548,7 @@ export class AiService {
       toolChoice: 'auto',
       abortSignal: input.abortSignal,
       onChunk: input.onChunk,
+      onStepFinish: input.onStepFinish,
       loadInterruptMessages: () => {
         const interrupts = this.loadRunInterrupts(input, interruptCursor);
         return toModelMessages(interrupts, input.agentId);

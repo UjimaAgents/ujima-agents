@@ -1,6 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
 import {
   AGENT_KIND,
   ChannelSchema,
@@ -8,9 +6,6 @@ import {
   MemberShellApprovalModeSchema,
   PROVIDER_KINDS,
   shellApprovalModeFromLegacyRequireShell,
-  emptyGovernancePolicy,
-  GovernancePolicy,
-  removeAgentRule,
   type Organization,
   type Member,
   type Channel,
@@ -29,7 +24,6 @@ import {
 } from './member-channels.js';
 import {
   assertWorkspaceRootPathExists,
-  requireExistingOrganizationWorkspaceRoot,
   upsertWorkspaceMemberScopes,
 } from './workspace-root.js';
 import {
@@ -714,49 +708,21 @@ export class SettingsService {
     return ownership?.owner === 'config' && !ownership.allowDashboardOverride;
   }
 
-  private readGovernancePolicy(
-    organizationId: string,
-  ): { policy: GovernancePolicy; workspaceRoot: string } {
-    const org = requireExistingOrganizationWorkspaceRoot(this.repo, organizationId);
-    const path = join(org.workspace.root, '.ujima', 'governance.json');
-    if (!existsSync(path)) {
-      return { policy: emptyGovernancePolicy(), workspaceRoot: org.workspace.root };
-    }
-    const raw = readFileSync(path, 'utf-8');
-    const parsed = JSON.parse(raw);
-    const policy = GovernancePolicy.parse(parsed);
-    return { policy, workspaceRoot: org.workspace.root };
-  }
-
-  private writeGovernancePolicy(
-    organizationId: string,
-    policy: GovernancePolicy,
-  ): void {
-    const org = requireExistingOrganizationWorkspaceRoot(this.repo, organizationId);
-    const path = join(org.workspace.root, '.ujima', 'governance.json');
-    writeFileSync(path, JSON.stringify(policy, null, 2), 'utf-8');
-  }
-
   /** List all `state: 'allow'` rules from the governance policy across all agents. */
   listAllowRules(organizationId: string): PolicyAllowRuleRecord[] {
-    const { policy } = this.readGovernancePolicy(organizationId);
-    const rules: PolicyAllowRuleRecord[] = [];
-    for (const [agentId, agentRules] of Object.entries(policy.agents)) {
-      for (const rule of agentRules ?? []) {
-        if (rule.state === 'allow') {
-          rules.push({
-            agentId,
-            mcpId: rule.mcp_id,
-            toolName: rule.tool_name,
-            state: rule.state,
-            reason: rule.reason,
-            updatedAt: rule.updated_at,
-            updatedBy: rule.updated_by,
-          });
-        }
-      }
+    if (this.repo.listGovernanceRules) {
+      const rows = this.repo.listGovernanceRules(organizationId, 'allow');
+      return rows.map((row) => ({
+        agentId: row.agentId,
+        mcpId: row.mcpId,
+        toolName: row.toolName,
+        state: row.state as ToolPolicyState,
+        reason: row.reason ?? undefined,
+        updatedAt: row.updatedAt,
+        updatedBy: row.updatedBy ?? undefined,
+      }));
     }
-    return rules;
+    return [];
   }
 
   /** Revoke (remove) a specific allow rule from the governance policy. */
@@ -766,9 +732,9 @@ export class SettingsService {
     mcpId: string,
     toolName: string,
   ): void {
-    const { policy } = this.readGovernancePolicy(organizationId);
-    const updated = removeAgentRule(policy, agentId, mcpId, toolName);
-    this.writeGovernancePolicy(organizationId, updated);
+    if (this.repo.deleteGovernanceRule) {
+      this.repo.deleteGovernanceRule(organizationId, agentId, mcpId, toolName);
+    }
   }
 }
 

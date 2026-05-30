@@ -66,6 +66,7 @@ export async function runAgentLoop(input: {
   abortSignal?: AbortSignal;
   loadInterruptMessages?: (step: AgentLoopStep) => Promise<ModelMessage[]> | ModelMessage[];
   onChunk?: (chunk: AgentLoopChunk) => PromiseLike<void> | void;
+  onStepFinish?: (step: AgentLoopStep, steps: AgentLoopStep[]) => PromiseLike<void> | void;
 }): Promise<AgentLoopResult> {
   const steps: AgentLoopStep[] = [];
   const messages = [...input.messages];
@@ -133,9 +134,12 @@ export async function runAgentLoop(input: {
         messages.splice(0, messages.length, ...nextMessages, ...interrupts);
         return { messages };
       },
-      onStepFinish: (step) => {
+      onStepFinish: async (step) => {
         const loopStep = step as unknown as AgentLoopStep;
         steps.push(loopStep);
+        if (input.onStepFinish) {
+          await input.onStepFinish(loopStep, steps);
+        }
       },
     });
 

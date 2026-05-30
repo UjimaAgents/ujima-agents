@@ -64,6 +64,8 @@ export async function publishRunReplyTrace(input: {
   reasoningContent?: string;
   teamRoot: string;
   artifactFileToolCall?: MessageToolCall;
+  publishedArtifactFile?: boolean;
+  publishedContent?: Set<string>;
 
   suppressDmAlerts?: boolean;
   failureTrace?: boolean;
@@ -76,8 +78,8 @@ export async function publishRunReplyTrace(input: {
   const metadata = input.failureTrace
     ? { runId: input.run.id, failedTrace: true }
     : { runId: input.run.id };
-  let publishedArtifactFile = false;
-  const publishedContent = new Set<string>();
+  let publishedArtifactFile = input.publishedArtifactFile ?? false;
+  const publishedContent = input.publishedContent ?? new Set<string>();
 
   for (const [index, step] of input.result.steps.entries()) {
     const stepText = typeof step.text === 'string' ? step.text.trim() : '';

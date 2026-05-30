@@ -235,6 +235,12 @@ import {
   saveMcpToolCache as writeMcpToolCache,
 } from './mcp-servers.js';
 import { createPluginRepository, type PluginRepository } from './plugins.js';
+import {
+  deleteGovernanceRule as removeGovernanceRule,
+  listGovernanceRules as readGovernanceRules,
+  saveGovernanceRule as writeGovernanceRule,
+  type GovernanceRuleRow,
+} from './governance-rules.js';
 
 /* eslint-disable @typescript-eslint/no-unsafe-declaration-merging -- PluginRepository methods are mixed onto Repository via Object.assign */
 export class Repository {
@@ -752,6 +758,28 @@ export class Repository {
 
   getBootstrapSnapshot = (organizationId?: string): BootstrapSnapshot =>
     readBootstrapSnapshot(this.db, organizationId);
+
+  listGovernanceRules = (organizationId: string, state?: string): GovernanceRuleRow[] =>
+    readGovernanceRules(this.db, organizationId, state);
+
+  deleteGovernanceRule = (
+    organizationId: string,
+    agentId: string,
+    mcpId: string,
+    toolName: string,
+  ): GovernanceRuleRow | null =>
+    removeGovernanceRule(this.db, organizationId, agentId, mcpId, toolName);
+
+  saveGovernanceRule = (rule: {
+    id: string;
+    organizationId: string;
+    agentId: string;
+    mcpId: string;
+    toolName: string;
+    state: string;
+    reason?: string;
+    updatedBy?: string;
+  }): GovernanceRuleRow => writeGovernanceRule(this.db, rule);
 }
 
 /* eslint-disable @typescript-eslint/no-empty-object-type */
@@ -765,4 +793,5 @@ export type {
   PaginatedRuns,
   StoredAuthSession,
   StoredAuthUser,
+  GovernanceRuleRow,
 };

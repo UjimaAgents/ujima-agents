@@ -10,6 +10,7 @@ import {
   type Spirit,
   type WakeReason,
   AGENT_KIND,
+  MessageSchema,
 } from '@ujima/shared';
 import { applyDashboardTeamOverrides } from './dashboard-team-overrides.js';
 import { isLiveRunStatus } from './live-status.js';
@@ -21,7 +22,7 @@ import {
   findTerminatingTool,
   findTerminatingToolFromRunSteps,
   runUsedChannelPass,
-
+  runUsedThreadPublishingTool,
 } from './run-reply-guard.js';
 import type { CreateRunInput, RunDetail } from './spirit-types.js';
 import { aggregateToolUsage } from './spirit-run-detail.js';
@@ -373,6 +374,9 @@ export class SpiritServiceDirectRun extends SpiritServiceSupervisor {
     const abortController = new AbortController();
     this.runAbortControllers.set(abortKey, abortController);
     const streamedTrace: StreamedRunTrace = { text: '', reasoning: '' };
+    let persistedStepCount = 0;
+    let publishedArtifactFile = false;
+    const publishedContent = new Set<string>();
 
     try {
       const systemPromptSuffix = this.resolveSystemPromptSuffix({
@@ -403,6 +407,57 @@ export class SpiritServiceDirectRun extends SpiritServiceSupervisor {
             },
             chunk,
           );
+        },
+        onStepFinish: async (step, currentSteps) => {
+          const unpersisted = currentSteps.slice(persistedStepCount);
+          for (const s of unpersisted) {
+            persistedStepCount++;
+            const stepText = typeof s.text === 'string' ? s.text.trim() : '';
+            const stepToolCalls = Array.isArray(s.toolCalls) ? s.toolCalls : [];
+            if (!stepText && stepToolCalls.length === 0) continue;
+
+            const stepArtifactFileToolCall =
+              stepToolCalls.length > 0
+                ? (await appendArtifactFileToolCall(stepToolCalls, team.workspace.root)) ??
+                  (await appendArtifactFileFromRunSteps(
+                    this.repo,
+                    running,
+                    team.workspace.root,
+                    stepToolCalls.at(-1)?.toolCallId,
+                  ))
+                : undefined;
+            if (stepArtifactFileToolCall) publishedArtifactFile = true;
+
+            if (runUsedThreadPublishingTool({ steps: [s] }) && !stepArtifactFileToolCall) continue;
+            if (!stepText && !stepArtifactFileToolCall) continue;
+
+            const content = stepText || (stepArtifactFileToolCall ? 'Artifact updated.' : 'Tool actions recorded.');
+            const toolCalls = [...stepToolCalls, ...(stepArtifactFileToolCall ? [stepArtifactFileToolCall] : [])];
+            const stepReasoning = extractReasoningChunk(s);
+
+            const finalThreadId = running.threadId;
+            if (!finalThreadId) continue;
+            const channelId = this.repo.getThread(running.organizationId, finalThreadId)
+              ?.channelId;
+
+            this.conversations?.publishMessage(
+              MessageSchema.parse({
+                id: randomUUID(),
+                organizationId: running.organizationId,
+                threadId: finalThreadId,
+                channelId: channelId ?? undefined,
+                senderId: running.agentId,
+                senderKind: AGENT_KIND,
+                kind: AGENT_KIND,
+                content,
+                metadata: { runId: running.id },
+                ...(toolCalls.length > 0 ? { toolCalls } : {}),
+                ...(stepReasoning ? { reasoningContent: stepReasoning } : {}),
+                createdAt: new Date().toISOString(),
+              }),
+            );
+            publishedContent.add(content);
+          }
         },
       });
 
@@ -552,12 +607,16 @@ export class SpiritServiceDirectRun extends SpiritServiceSupervisor {
         repo: this.repo,
         conversations: this.conversations,
         run: running,
-        result,
+        result: {
+          ...result,
+          steps: result.steps.slice(persistedStepCount),
+        },
         reply,
         reasoningContent,
         teamRoot: team.workspace.root,
         artifactFileToolCall,
-
+        publishedArtifactFile,
+        publishedContent,
       });
 
       return this.completeRun(running, terminatingTool ?? reply, terminatingTool);

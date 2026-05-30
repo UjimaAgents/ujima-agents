@@ -223,7 +223,7 @@ export const ChatMessage = memo(function ChatMessage({
                   {message.detail}
                 </p>
               )}
-              {message.pending && (
+              {message.pending && message.kind !== "agent" && (
                 <div className="mt-1 inline-flex items-center gap-1.5 rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-semibold text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
                   <Loader2 className="h-3 w-3 animate-spin" />
                   Sending

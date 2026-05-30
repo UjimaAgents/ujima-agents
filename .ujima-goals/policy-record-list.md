@@ -86,10 +86,11 @@ All 5 tasks are implemented and compiling cleanly:
 1. **API Schema** — Added `PolicyAllowRuleSchema`, `PolicyRulesResponseSchema`, `RevokePolicyRuleSchema` to `packages/api-schema/src/settings.ts`
 2. **Orchestrator Service** — Added `listAllowRules()`, `revokeAllowRule()`, plus private helpers `readGovernancePolicy()` and `writeGovernancePolicy()` to `SettingsService` in `packages/orchestrator/src/services/settings.ts`. The service reads `.ujima/governance.json` from the workspace root filesystem and uses `removeAgentRule()` from `@ujima/shared` to revoke rules.
 3. **API Route** — Added `GET /orgs/:orgId/policies/rules` and `DELETE /orgs/:orgId/policies/rules` to the Fastify settings routes.
-4. **Next.js Proxy** — Added `GET` and `DELETE` handlers to `apps/web/src/app/api/orgs/[orgId]/policies/route.ts` that proxy to the daemon.
+4. **Next.js Proxy** — Added `GET` and `DELETE` handlers to `apps/web/src/app/api/orgs/[orgId]/policies/rules/route.ts` that proxy to the daemon. The earlier `/policies` route stays in place for the PATCH endpoint.
 5. **Frontend UI** — Extended `PoliciesTab` with a "Policy Records" section showing a table of allow rules (Agent, MCP, Tool, Reason, Granted At, Granted By) with per-row Revoke buttons, a ConfirmDialog for confirmation, loading skeletons, error state with retry, and empty state.
 
 ## Questions / Blockers
 
 - The settings service currently uses `ApiRepository`; governance policy needs filesystem access. We may need to inject a filesystem adapter or use `node:fs` directly with the workspace root path.
 - The governance policy file may not exist yet (no one set up rules). Handle gracefully with empty response.
+- The 404 on `http://localhost:3452/api/orgs/:orgId/policies/rules` came from a missing Next.js proxy route. Added `apps/web/src/app/api/orgs/[orgId]/policies/rules/route.ts` to match the frontend call path.

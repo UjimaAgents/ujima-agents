@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { access, mkdir, readFile, readdir, rm } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import {
   PluginInstallSchema,
@@ -93,13 +93,27 @@ function deriveFallbackDescription(body: string, name: string): string {
   return line ?? `Skill ${name}`;
 }
 
-function readPluginManifest(source: string): PluginManifest {
+interface ParsedPluginManifest {
+  manifest: PluginManifest;
+  skillsDir?: string;
+}
+
+function normalizeRelativeDir(value: string): string | undefined {
+  const trimmed = value.trim().replace(/^\.\/+/, '').replace(/^\/+|\/+$/g, '');
+  if (!trimmed) return undefined;
+  if (trimmed.startsWith('..') || trimmed.includes('/../') || /[<>:"|?*]/.test(trimmed)) {
+    return undefined;
+  }
+  return trimmed;
+}
+
+function readPluginManifest(source: string): ParsedPluginManifest {
   const raw = JSON.parse(source) as {
     name?: string;
     description?: string;
     version?: string;
     author?: string | { name?: string };
-    skills?: Record<string, unknown>[];
+    skills?: string | Record<string, unknown>[] | unknown;
   };
   const author =
     typeof raw.author === 'string'
@@ -107,26 +121,39 @@ function readPluginManifest(source: string): PluginManifest {
       : typeof raw.author?.name === 'string'
         ? raw.author.name
         : undefined;
-  const skills = (raw.skills ?? [])
-    .map((skill) => {
-      if (typeof skill.name !== 'string') return null;
-      return {
-        name: skill.name,
-        description: typeof skill.description === 'string' ? skill.description : skill.name,
-        userInvocable: skill.userInvocable === true,
-        disableModelInvocation: skill.disableModelInvocation === true,
-        metadata: {},
-      };
-    })
-    .filter((skill): skill is NonNullable<typeof skill> => skill !== null);
 
-  return PluginManifestSchema.parse({
-    name: raw.name,
-    description: raw.description ?? '',
-    version: raw.version ?? '0.0.0',
-    author,
-    skills,
-  });
+  let skills: PluginManifest['skills'] = [];
+  let skillsDir: string | undefined;
+
+  if (Array.isArray(raw.skills)) {
+    skills = raw.skills
+      .map((skill) => {
+        if (!skill || typeof skill !== 'object') return null;
+        const item = skill as Record<string, unknown>;
+        if (typeof item.name !== 'string') return null;
+        return {
+          name: item.name,
+          description: typeof item.description === 'string' ? item.description : item.name,
+          userInvocable: item.userInvocable === true,
+          disableModelInvocation: item.disableModelInvocation === true,
+          metadata: {},
+        };
+      })
+      .filter((skill): skill is NonNullable<typeof skill> => skill !== null);
+  } else if (typeof raw.skills === 'string') {
+    skillsDir = normalizeRelativeDir(raw.skills);
+  }
+
+  return {
+    manifest: PluginManifestSchema.parse({
+      name: raw.name,
+      description: raw.description ?? '',
+      version: raw.version ?? '0.0.0',
+      author,
+      skills,
+    }),
+    skillsDir,
+  };
 }
 
 function githubCloneUrl(url: URL): string {
@@ -157,10 +184,14 @@ function normalizeTreeSourceUrl(sourceUrl: string): { cloneUrl: string; subdir: 
   const url = new URL(urlWithoutHash.startsWith('http') ? urlWithoutHash : `https://${urlWithoutHash}`);
   const parts = url.pathname.split('/').filter(Boolean);
   const treeIndex = parts.indexOf('tree');
-  if (url.hostname === 'github.com' && parts.length >= 4 && treeIndex >= 0) {
+  const blobIndex = parts.indexOf('blob');
+  const segmentIndex = treeIndex >= 0 ? treeIndex : blobIndex;
+  if (url.hostname === 'github.com' && parts.length >= 4 && segmentIndex >= 0) {
     const cloneUrl = `${url.origin}/${parts[0]}/${parts[1]}.git`;
-    const ref = parts[treeIndex + 1] ?? hashRef;
-    const subdir = parts.slice(treeIndex + 2).join('/');
+    const ref = parts[segmentIndex + 1] ?? hashRef;
+    const pathParts = parts.slice(segmentIndex + 2);
+    // For blob (file) URLs, drop the trailing filename so we clone the directory containing it.
+    const subdir = (treeIndex < 0 && blobIndex >= 0 ? pathParts.slice(0, -1) : pathParts).join('/');
     return { cloneUrl, ref, subdir };
   }
   if (url.hostname === 'github.com') {
@@ -266,14 +297,22 @@ function renderLoadedSkill(
 
 async function listSkillCollectionSources(repoRoot: string, relativeDir: string): Promise<SkillSource[]> {
   const skillDirs = await readdir(join(repoRoot, relativeDir), { withFileTypes: true }).catch(() => []);
-  return skillDirs
-    .filter((entry) => entry.isDirectory())
+  const candidates = skillDirs
+    .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.'))
     .map((entry) => ({
       skillPath: join(relativeDir, entry.name, 'SKILL.md'),
     }));
+
+  const verified: SkillSource[] = [];
+  for (const candidate of candidates) {
+    if (await pathExists(join(repoRoot, candidate.skillPath))) {
+      verified.push(candidate);
+    }
+  }
+  return verified;
 }
 
-async function readRepoPluginManifest(repoRoot: string): Promise<PluginManifest | null> {
+async function readRepoPluginManifest(repoRoot: string): Promise<ParsedPluginManifest | null> {
   for (const dir of ['.codex-plugin', '.claude-plugin'] as const) {
     const manifestPath = join(repoRoot, dir, 'plugin.json');
     if (await pathExists(manifestPath)) {
@@ -312,20 +351,30 @@ async function readMarketplaceLocalPlugins(repoRoot: string): Promise<Marketplac
 }
 
 async function discoverSkillSources(repoRoot: string): Promise<{ manifest?: PluginManifest; sources: SkillSource[] }> {
-  const manifest = await readRepoPluginManifest(repoRoot);
-  if (manifest) {
+  const parsed = await readRepoPluginManifest(repoRoot);
+  if (parsed) {
+    const { manifest, skillsDir } = parsed;
     const manifestSkills = new Map(
       manifest.skills.map((skill) => [slugify(skill.name), skill] as const),
     );
-    const sources = await listSkillCollectionSources(repoRoot, 'skills');
-    const resolved = sources.map((source) => ({
-      ...source,
-      fallback: manifestSkills.get(slugify(source.skillPath.split('/').at(-2) ?? '')),
-    }));
-    if (resolved.length === 0) {
-      throw new Error('Plugin manifest found but no skills/*/SKILL.md directories exist.');
+
+    const candidateDirs = [
+      ...(skillsDir ? [skillsDir] : []),
+      'skills',
+      ...SKILL_COLLECTION_DIRS.filter((dir) => dir !== 'skills'),
+    ];
+
+    for (const relativeDir of candidateDirs) {
+      const sources = await listSkillCollectionSources(repoRoot, relativeDir);
+      if (sources.length === 0) continue;
+      const resolved = sources.map((source) => ({
+        ...source,
+        fallback: manifestSkills.get(slugify(source.skillPath.split('/').at(-2) ?? '')),
+      }));
+      return { manifest, sources: resolved };
     }
-    return { manifest, sources: resolved };
+
+    throw new Error('Plugin manifest found but no skills directory exists.');
   }
 
   if (await pathExists(join(repoRoot, 'SKILL.md'))) {
@@ -337,6 +386,13 @@ async function discoverSkillSources(repoRoot: string): Promise<{ manifest?: Plug
     if (sources.length > 0) {
       return { sources };
     }
+  }
+
+  // The repo root itself may be a skills-collection folder (e.g. when the user pastes
+  // a tree URL pointing at a `skills/` directory, or a tarball whose top-level dirs are skills).
+  const rootCollection = await listSkillCollectionSources(repoRoot, '.');
+  if (rootCollection.length > 0) {
+    return { sources: rootCollection };
   }
 
   throw new Error(
@@ -443,9 +499,24 @@ export class PluginRegistryService {
   ): Promise<{ plugin: PluginInstall; skills: SkillInstall[] }> {
     const { manifest, sources } = await discoverSkillSources(repoRoot);
     const standalone = !manifest;
-    const firstSource = sources[0];
+
+    const parsedSources: { source: SkillSource; parsed: ParsedSkill }[] = [];
+    for (const source of sources) {
+      const parsed = await parseSkillFile(join(repoRoot, source.skillPath), source.fallback);
+      if (parsed) parsedSources.push({ source, parsed });
+    }
+
+    if (parsedSources.length === 0) {
+      throw new Error('Skill files were found but none could be parsed.');
+    }
+
+    const firstSkill = parsedSources[0]?.parsed.manifest.name;
+    const firstDirName = sources[0]?.skillPath.split('/').at(-2);
     const pluginName =
-      manifest?.name ?? slugify(firstSource?.skillPath.split('/').at(-2) ?? 'skill');
+      manifest?.name ??
+      (standalone && parsedSources.length === 1 ? firstSkill : undefined) ??
+      slugify(firstDirName ?? basename(repoRoot) ?? 'skill') ??
+      'skill';
     const pluginId = slugify(pluginName);
 
     const existing = this.repo.getPluginInstallBySourceUrl(input.organizationId, sourceUrl);
@@ -470,11 +541,12 @@ export class PluginRegistryService {
     );
 
     const installs: SkillInstall[] = [];
-    for (const source of sources) {
-      const skillFile = join(repoRoot, source.skillPath);
-      const parsed = await parseSkillFile(skillFile, source.fallback);
-      if (!parsed) continue;
-      const commandName = toCommandName(pluginName, parsed.manifest.name, standalone && sources.length === 1);
+    for (const { source, parsed } of parsedSources) {
+      const commandName = toCommandName(
+        pluginName,
+        parsed.manifest.name,
+        standalone && parsedSources.length === 1,
+      );
       const skill = this.repo.saveOrganizationSkillInstall(
         SkillInstallSchema.parse({
           id: randomUUID(),
@@ -493,10 +565,6 @@ export class PluginRegistryService {
         }),
       );
       installs.push(skill);
-    }
-
-    if (installs.length === 0) {
-      throw new Error('Skill files were found but none could be parsed.');
     }
 
     return { plugin, skills: installs };

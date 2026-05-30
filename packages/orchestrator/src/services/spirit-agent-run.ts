@@ -232,6 +232,8 @@ ${activeMemories
     let totalTokens = 0;
     let lastText = '';
     let streamedReasoning = '';
+    let lastMessageId: string | undefined;
+    let persistedStepCount = 0;
 
     try {
       const result = await runAgentLoop({
@@ -254,6 +256,42 @@ ${activeMemories
             },
             chunk,
           );
+        },
+        onStepFinish: async (step, currentSteps) => {
+          const unpersisted = currentSteps.slice(persistedStepCount);
+          for (const s of unpersisted) {
+            persistedStepCount++;
+            totalTurns += 1;
+            const stepText = typeof s.text === 'string' ? s.text : '';
+            const stepToolCalls = Array.isArray(s.toolCalls) ? s.toolCalls : [];
+            const stepToolResults = Array.isArray(s.toolResults) ? s.toolResults : [];
+            totalToolCalls += stepToolCalls.length;
+
+            if (!stepText && stepToolCalls.length === 0) {
+              continue;
+            }
+
+            const toolCalls = this.toMessageToolCalls(stepToolCalls, stepToolResults, spirit);
+            const artifactFileToolCall = await appendArtifactFileToolCall(
+              stepToolCalls,
+              team.workspace.root,
+            );
+            const messageToolCalls = artifactFileToolCall ? [...toolCalls, artifactFileToolCall] : toolCalls;
+            const reasoningContent = extractReasoningChunk(s);
+            if (!stepText && !artifactFileToolCall) {
+              continue;
+            }
+            lastMessageId = this.saveAndEmitAgentMessage({
+              organizationId: input.organizationId,
+              channelId: session.channelId,
+              senderId: member.id,
+              content: stepText || 'Artifact updated.',
+              toolCalls: messageToolCalls,
+              metadata: { runId: spirit.runId ?? spirit.id },
+              reasoningContent,
+            });
+            lastText = stepText || lastText;
+          }
         },
         loadInterruptMessages: () => {
           const page = this.repo
@@ -278,8 +316,9 @@ ${activeMemories
       // `kind='agent'` message per step that produced text or tool
       // calls, with tool-call cards inlined. This keeps the channel
       // history readable as a turn-by-turn timeline.
-      let lastMessageId: string | undefined;
-      for (const [index, step] of steps.entries()) {
+      for (let index = persistedStepCount; index < steps.length; index++) {
+        const step = steps[index];
+        if (!step) continue;
         totalTurns += 1;
         const stepText = typeof step.text === 'string' ? step.text : '';
         const stepToolCalls = Array.isArray(step.toolCalls) ? step.toolCalls : [];
