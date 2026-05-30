@@ -570,7 +570,7 @@ export function ChannelView({
             isAgent && agentMember && onMemberUpdated ? (
               <div className="flex items-center gap-2">
                 <AgentChatHeaderControls
-                  orgId={organizationId ?? bootstrap.organization?.id ?? ""}
+                  orgId={bootstrap.organization?.id ?? ""}
                   member={agentMember}
                   providers={bootstrap.providers}
                   orgShellApprovalMode={orgShellApprovalMode}
