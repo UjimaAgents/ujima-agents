@@ -38,7 +38,10 @@ export function McpsTab({
   members: Member[];
 }) {
   const { mcpServers: servers, setMcpServers } = useSettingsPage();
-  const agents = useMemo(() => members.filter((m) => m.kind === "agent"), [members]);
+  const agents = useMemo(
+    () => members.filter((m) => m.kind === "agent" && !m.retiredAt),
+    [members],
+  );
 
   const [formServer, setFormServer] = useState<McpServerPublic | null | "new">(null);
   const [showImport, setShowImport] = useState(false);

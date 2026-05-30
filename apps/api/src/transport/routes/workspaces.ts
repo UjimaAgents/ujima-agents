@@ -100,6 +100,7 @@ export function registerWorkspaceRoutes(
       const created = workspaces.createWorkspace(readSessionToken(req), {
         organizationName,
         workspaceRoot,
+        copyProviderKeys: body.copy_providers,
       });
       const row = host.workspaces.get(created.id);
       if (!row) {

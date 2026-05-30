@@ -3,8 +3,10 @@ import {
   IdSchema,
   MemberKindSchema,
   MemberSchema,
+  MemberShellApprovalModeSchema,
   OrganizationChartSchema,
   OrganizationSchema,
+  ShellApprovalModeSchema,
   ToolCapabilitySchema,
   WorkspaceConfigSchema,
 } from '@ujima/shared';
@@ -38,7 +40,8 @@ const TeamSettingsChannelSchema = ChannelSchema.extend({
 
 const TeamSettingsPolicySchema = z.object({
   requireApprovalForWrites: z.boolean(),
-  requireApprovalForShell: z.boolean(),
+  requireApprovalForShell: z.boolean().optional(),
+  shellApprovalMode: ShellApprovalModeSchema,
   workspaceBoundaryMode: z.string(),
 });
 
@@ -102,6 +105,13 @@ export const PoliciesUpdateSchema = z.object({
   organizationId: IdSchema,
   requireApprovalForWrites: z.boolean().optional(),
   requireApprovalForShell: z.boolean().optional(),
+  shellApprovalMode: ShellApprovalModeSchema.optional(),
+});
+
+export const MemberShellApprovalUpdateSchema = z.object({
+  shellApprovalMode: MemberShellApprovalModeSchema.optional(),
+  llm: z.string().min(1).optional(),
+  model: z.string().min(1).optional(),
 });
 export type PoliciesUpdateRequest = z.infer<typeof PoliciesUpdateSchema>;
 

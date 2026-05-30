@@ -1,66 +1,64 @@
 "use client";
 
-const FIELDS = [
-  {
-    key: "requireApprovalForWrites" as const,
-    label: "Require approval for writes",
-    description: "Agent write operations must be approved before execution.",
-  },
-  {
-    key: "requireApprovalForShell" as const,
-    label: "Require approval for shell",
-    description: "Shell execution must be reviewed before commands run.",
-  },
-] as const;
+import type { ShellApprovalMode } from "@ujima/shared/browser";
+import { ShellApprovalOrgModeField } from "@/features/providers/shell-approval-mode-field";
 
-type PolicyKey = (typeof FIELDS)[number]["key"];
+const WRITE_FIELD = {
+  key: "requireApprovalForWrites" as const,
+  label: "Require approval for writes",
+  description: "Agent write operations must be approved before execution.",
+};
+
+type WritePolicyKey = typeof WRITE_FIELD.key;
 
 export function PolicyApprovalFields({
   values,
   onChange,
+  onShellModeChange,
   variant = "checkbox",
 }: {
-  values: Record<PolicyKey, boolean>;
-  onChange: (key: PolicyKey, value: boolean) => void;
+  values: {
+    requireApprovalForWrites: boolean;
+    shellApprovalMode: ShellApprovalMode;
+  };
+  onChange: (key: WritePolicyKey, value: boolean) => void;
+  onShellModeChange: (value: ShellApprovalMode) => void;
   variant?: "checkbox" | "toggle";
 }) {
+  const writeChecked = values.requireApprovalForWrites;
+
   return (
     <div className="space-y-3">
-      {FIELDS.map((field) => {
-        const checked = values[field.key];
-        if (variant === "toggle") {
-          return (
-            <PolicyToggleRow
-              key={field.key}
-              label={field.label}
-              description={field.description}
-              checked={checked}
-              onChange={(value) => onChange(field.key, value)}
-            />
-          );
-        }
-        return (
-          <label
-            key={field.key}
-            className="flex items-center justify-between rounded-2xl border border-zinc-200 px-4 py-4 dark:border-zinc-800"
-          >
-            <span>
-              <span className="block text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-                {field.label}
-              </span>
-              <span className="mt-1 block text-sm text-zinc-500 dark:text-zinc-400">
-                {field.description}
-              </span>
+      {variant === "toggle" ? (
+        <PolicyToggleRow
+          label={WRITE_FIELD.label}
+          description={WRITE_FIELD.description}
+          checked={writeChecked}
+          onChange={(value) => onChange(WRITE_FIELD.key, value)}
+        />
+      ) : (
+        <label className="flex items-center justify-between rounded-2xl border border-zinc-200 px-4 py-4 dark:border-zinc-800">
+          <span>
+            <span className="block text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+              {WRITE_FIELD.label}
             </span>
-            <input
-              type="checkbox"
-              checked={checked}
-              onChange={(event) => onChange(field.key, event.target.checked)}
-              className="h-4 w-4 rounded border-zinc-300 text-zinc-900 focus:ring-zinc-500 dark:border-zinc-600"
-            />
-          </label>
-        );
-      })}
+            <span className="mt-1 block text-sm text-zinc-500 dark:text-zinc-400">
+              {WRITE_FIELD.description}
+            </span>
+          </span>
+          <input
+            type="checkbox"
+            checked={writeChecked}
+            onChange={(event) => onChange(WRITE_FIELD.key, event.target.checked)}
+            className="h-4 w-4 rounded border-zinc-300 text-zinc-900 focus:ring-zinc-500 dark:border-zinc-600"
+          />
+        </label>
+      )}
+      <ShellApprovalOrgModeField
+        value={values.shellApprovalMode}
+        onChange={onShellModeChange}
+        variant={variant === "toggle" ? "toggle" : "checkbox"}
+      />
       <p className="text-xs text-zinc-500 dark:text-zinc-400">
         Workspace boundary mode is <span className="font-medium text-zinc-700 dark:text-zinc-300">hard</span> — agents cannot read or write outside their workspace scopes.
       </p>

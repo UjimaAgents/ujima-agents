@@ -194,7 +194,10 @@ function OrganizationSettingsContent({
           />
         )}
         {activeTab === "workspaces" && (
-          <WorkspacesTab currentWorkspaceRoot={teamSettings?.workspace.root ?? ""} />
+          <WorkspacesTab
+            currentWorkspaceRoot={teamSettings?.workspace.root ?? ""}
+            configuredProviders={providers}
+          />
         )}
         {activeTab === "culture" && (
           <CultureTab organizationId={orgId} channelId={null} />
@@ -214,9 +217,6 @@ function OrganizationSettingsContent({
             }}
             onMemberCreated={(member) => {
               setMembers((prev) => [...prev, member]);
-            }}
-            onMemberDeleted={(memberId) => {
-              setMembers((prev) => prev.filter((m) => m.id !== memberId));
             }}
           />
         )}
@@ -240,7 +240,7 @@ function OrganizationSettingsContent({
             policies={
               teamSettings?.policies ?? {
                 requireApprovalForWrites: true,
-                requireApprovalForShell: true,
+                shellApprovalMode: "always_review",
                 workspaceBoundaryMode: "hard",
               }
             }

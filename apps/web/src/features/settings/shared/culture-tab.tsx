@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ShieldCheck, Trash2 } from "lucide-react";
 import { SettingsPrimaryButton } from "@/features/settings/shared/settings-buttons";
+import { ConfirmDialog } from "@/features/settings/shared/confirm-dialog";
 
 interface ProcedureSummary {
   scope: "org" | "channel" | "agent";
@@ -67,6 +68,7 @@ export function CultureTab({ organizationId, channelId }: CultureTabProps) {
     existing: boolean;
   } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [pendingRemove, setPendingRemove] = useState<string | null>(null);
   const inflightRef = useRef<AbortController | null>(null);
 
   const isOrg = channelId === null;
@@ -185,8 +187,9 @@ export function CultureTab({ organizationId, channelId }: CultureTabProps) {
     }
   };
 
-  const remove = async (name: string) => {
-    if (!window.confirm(`Remove "${name}"?`)) return;
+  const remove = async () => {
+    if (!pendingRemove) return;
+    const name = pendingRemove;
     setBusy(true);
     setError(null);
     try {
@@ -198,6 +201,7 @@ export function CultureTab({ organizationId, channelId }: CultureTabProps) {
         setError(await errorMessage(res, "Remove failed"));
         return;
       }
+      setPendingRemove(null);
       void refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Remove failed.");
@@ -356,7 +360,7 @@ export function CultureTab({ organizationId, channelId }: CultureTabProps) {
                 </button>
                 <button
                   type="button"
-                  onClick={() => void remove(item.name)}
+                  onClick={() => setPendingRemove(item.name)}
                   className="rounded border border-red-300 px-2 py-1 text-xs text-red-700 hover:bg-red-50 dark:border-red-800 dark:text-red-300 dark:hover:bg-red-950"
                   title="Remove"
                 >
@@ -367,6 +371,16 @@ export function CultureTab({ organizationId, channelId }: CultureTabProps) {
           ))}
         </ul>
       )}
+
+      <ConfirmDialog
+        isOpen={Boolean(pendingRemove)}
+        onClose={() => setPendingRemove(null)}
+        title="Remove culture pack"
+        message={`Remove "${pendingRemove}"?`}
+        confirmLabel="Remove"
+        busy={busy}
+        onConfirm={remove}
+      />
     </div>
   );
 }

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { MemberShellApprovalModeSchema } from './shell-approval.js';
 import { GoalStatusSchema } from './goal-schemas.js';
 
 export const IdSchema = z.string().min(1);
@@ -105,6 +106,7 @@ export const MemberSchema = z.object({
   roleName: z.string().min(1),
   llm: z.string().min(1).optional(),
   model: z.string().min(1).optional(),
+  shellApprovalMode: MemberShellApprovalModeSchema.optional(),
   presence: PresenceStateSchema.default('offline'),
   createdAt: TimestampSchema.optional(),
   retiredAt: TimestampSchema.optional(),

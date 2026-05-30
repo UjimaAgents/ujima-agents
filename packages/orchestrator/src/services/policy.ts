@@ -1,6 +1,6 @@
 import { relative, sep } from 'node:path';
 import type { AgentTeamHandle } from '@ujima/framework';
-import type { ToolAction, SpiritRole, WakeReason } from '@ujima/shared';
+import type { ShellApprovalMode, ToolAction, SpiritRole, WakeReason } from '@ujima/shared';
 import { isSensitiveWorkspacePath } from '@ujima/shared/workspace-file-filters';
 import {
   assertWorkspaceBoundary,
@@ -14,7 +14,23 @@ import { buildPassDenialReason, resolveWakeReplyPolicy } from '../utils/wake-rep
 export interface PolicyResult {
   allowed: boolean;
   requiresApproval: boolean;
+  /** When true, ToolService may LLM-review shell before human approval. */
+  shellAutoReview?: boolean;
   reason?: string;
+}
+
+export function resolveShellExecutePolicy(
+  mode: ShellApprovalMode | undefined,
+): Pick<PolicyResult, 'requiresApproval' | 'shellAutoReview'> | null {
+  if (!mode) return null;
+  switch (mode) {
+    case 'allow_all':
+      return { requiresApproval: false, shellAutoReview: false };
+    case 'auto_review':
+      return { requiresApproval: true, shellAutoReview: true };
+    case 'always_review':
+      return { requiresApproval: true, shellAutoReview: false };
+  }
 }
 
 export interface CheckToolPolicyOptions {
@@ -26,6 +42,7 @@ export interface CheckToolPolicyOptions {
    */
   wakeReason?: WakeReason | null;
   threadId?: string;
+  effectiveShellApprovalMode?: ShellApprovalMode;
 }
 
 export function checkToolPolicy(
@@ -227,6 +244,13 @@ export function checkToolPolicy(
       };
     }
     inScopeFileAccess = isInScopeFileTool(toolId, action);
+  }
+
+  if (toolId === 'shell' && action === 'execute') {
+    const shellPolicy = resolveShellExecutePolicy(options.effectiveShellApprovalMode);
+    if (shellPolicy) {
+      return { allowed: true, ...shellPolicy };
+    }
   }
 
   return {

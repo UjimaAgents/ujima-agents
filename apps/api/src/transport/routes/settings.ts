@@ -13,6 +13,7 @@ import {
   OrganizationSettingsQuerySchema,
   OrganizationSettingsResponseSchema,
   OrganizationSettingsUpdateSchema,
+  MemberShellApprovalUpdateSchema,
   PoliciesUpdateSchema,
   ProviderSecretsUpsertResponseSchema,
   ProviderSecretsUpsertSchema,
@@ -38,6 +39,7 @@ const AddMemberRequestSchema = z.object({
   channelIds: z.array(IdSchema).default([]),
   llm: z.string().min(1).optional(),
   model: z.string().min(1).optional(),
+  shellApprovalMode: MemberShellApprovalUpdateSchema.shape.shellApprovalMode,
   personalityName: z.string().min(1).optional(),
   role: RoleConfigSchema.optional(),
 });
@@ -46,6 +48,7 @@ const UpdateMemberRequestSchema = AddMemberRequestSchema.omit({ kind: true }).ex
   channelIds: z.array(IdSchema).optional(),
   role: RoleConfigSchema,
   personalityName: z.string().min(1),
+  shellApprovalMode: MemberShellApprovalUpdateSchema.shape.shellApprovalMode,
 });
 const CreateChannelRequestSchema = z.object({
   name: z.string().min(1),
@@ -302,6 +305,7 @@ export function registerSettingsRoutes(
         channelIds: req.body.channelIds,
         llm: req.body.llm,
         model: req.body.model,
+        shellApprovalMode: req.body.shellApprovalMode,
         personalityName: req.body.personalityName,
         role: req.body.role,
       });
@@ -347,6 +351,7 @@ export function registerSettingsRoutes(
         channelIds: req.body.channelIds,
         llm: req.body.llm,
         model: req.body.model,
+        shellApprovalMode: req.body.shellApprovalMode,
         personalityName: req.body.personalityName,
         role: req.body.role,
       });
@@ -439,9 +444,41 @@ export function registerSettingsRoutes(
         organizationId: req.params.orgId,
         requireApprovalForWrites: req.body.requireApprovalForWrites,
         requireApprovalForShell: req.body.requireApprovalForShell,
+        shellApprovalMode: req.body.shellApprovalMode,
       });
     } catch (err) {
       return routeError(reply, err, { notFound: 'Organization not found', workspaceRoot: true });
+    }
+  });
+
+  app.patch('/orgs/:orgId/members/:memberId/preferences', {
+    schema: {
+      description: 'Update agent shell approval mode and model preferences',
+      tags: ['Settings'],
+      params: z.object({ orgId: IdSchema, memberId: IdSchema }),
+      body: MemberShellApprovalUpdateSchema,
+      response: {
+        200: MemberSchema,
+        400: ApiErrorSchema,
+        401: ApiErrorSchema,
+        403: ApiErrorSchema,
+        404: ApiErrorSchema,
+      },
+    },
+  }, async (req, reply) => {
+    try {
+      assertReadyWorkspaceRoot(repo, req.params.orgId);
+      const forbidden = requireOrgSession(auth, req, reply, req.params.orgId);
+      if (forbidden) return forbidden;
+      return settings.patchMemberPreferences({
+        organizationId: req.params.orgId,
+        memberId: req.params.memberId,
+        shellApprovalMode: req.body.shellApprovalMode,
+        llm: req.body.llm,
+        model: req.body.model,
+      });
+    } catch (err) {
+      return routeError(reply, err, { notFound: 'Member not found', workspaceRoot: true });
     }
   });
 

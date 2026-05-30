@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadAgentTeam, type AgentTeamHandle } from '@ujima/framework';
-import { checkToolPolicy } from './policy.js';
+import { checkToolPolicy, resolveShellExecutePolicy } from './policy.js';
 
 describe('checkToolPolicy', () => {
   let workspaceRoot: string;
@@ -308,6 +308,66 @@ describe('checkToolPolicy', () => {
       }
     });
 
+  });
+
+  describe('resolveShellExecutePolicy', () => {
+    it('maps each shell approval mode', () => {
+      expect(resolveShellExecutePolicy('allow_all')).toEqual({
+        requiresApproval: false,
+        shellAutoReview: false,
+      });
+      expect(resolveShellExecutePolicy('always_review')).toEqual({
+        requiresApproval: true,
+        shellAutoReview: false,
+      });
+      expect(resolveShellExecutePolicy('auto_review')).toEqual({
+        requiresApproval: true,
+        shellAutoReview: true,
+      });
+      expect(resolveShellExecutePolicy(undefined)).toBeNull();
+    });
+  });
+
+  describe('shell approval modes', () => {
+    function shellTeam() {
+      return teamWithRole({
+        name: 'shell-runner',
+        title: 'Shell Runner',
+        instructions: 'Can run shell when enabled.',
+        provider: 'openai',
+        model: 'gpt-5.4',
+        workspaceScopes: ['.'],
+        tools: ['shell'],
+        channels: ['general'],
+      });
+    }
+
+    it('allow_all skips approval for shell execute', () => {
+      const team = shellTeam();
+      expect(
+        checkToolPolicy(team, 'shell-runner', 'shell', 'execute', '.', {
+          effectiveShellApprovalMode: 'allow_all',
+        }),
+      ).toEqual({ allowed: true, requiresApproval: false, shellAutoReview: false });
+    });
+
+    it('always_review requires human approval only', () => {
+      const team = shellTeam();
+      expect(
+        checkToolPolicy(team, 'shell-runner', 'shell', 'execute', '.', {
+          effectiveShellApprovalMode: 'always_review',
+        }),
+      ).toEqual({ allowed: true, requiresApproval: true, shellAutoReview: false });
+    });
+
+    it('auto_review requires approval with LLM auto-review first', () => {
+      const team = shellTeam();
+      expect(
+        checkToolPolicy(team, 'shell-runner', 'shell', 'execute', '.', {
+          effectiveShellApprovalMode: 'auto_review',
+        }),
+      ).toEqual({ allowed: true, requiresApproval: true, shellAutoReview: true });
+    });
   });
 
   describe('mandatory-reply enforcement (L3)', () => {

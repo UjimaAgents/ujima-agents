@@ -11,7 +11,12 @@ import {
 import { SettingsEmptyState } from "@/features/settings/shared/settings-empty-state";
 import { SettingsTabActions } from "@/features/settings/shared/settings-layout";
 import { SettingsList, SettingsListRow } from "@/features/settings/shared/settings-list-row";
-import { WorkspaceCreateModal } from "./workspaces/workspace-create-modal";
+import { ConfirmDialog } from "@/features/settings/shared/confirm-dialog";
+import {
+  WorkspaceCreateModal,
+  type WorkspaceCreateSubmitInput,
+} from "./workspaces/workspace-create-modal";
+import type { ProviderStatus } from "@ujima/api-schema";
 
 interface Workspace {
   id: string;
@@ -24,6 +29,7 @@ interface Workspace {
 
 interface WorkspacesTabProps {
   currentWorkspaceRoot?: string;
+  configuredProviders?: ProviderStatus[];
 }
 
 function normalizePath(value: string): string {
@@ -40,13 +46,17 @@ function isCurrentWorkspace(
   return normalizePath(rootPath) === normalizePath(currentWorkspaceRoot);
 }
 
-export function WorkspacesTab({ currentWorkspaceRoot }: WorkspacesTabProps) {
+export function WorkspacesTab({
+  currentWorkspaceRoot,
+  configuredProviders = [],
+}: WorkspacesTabProps) {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [switchingId, setSwitchingId] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<Workspace | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const fetchWorkspaces = useCallback(async () => {
@@ -80,13 +90,14 @@ export function WorkspacesTab({ currentWorkspaceRoot }: WorkspacesTabProps) {
     setRefreshing(false);
   };
 
-  const createWorkspace = async (name: string, rootPath: string) => {
+  const createWorkspace = async (input: WorkspaceCreateSubmitInput) => {
     const res = await fetch("/api/workspaces", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        root_path: rootPath,
-        label: name,
+        root_path: input.rootPath,
+        label: input.name,
+        copy_providers: input.copyProviders,
       }),
     });
     if (!res.ok) {
@@ -112,14 +123,9 @@ export function WorkspacesTab({ currentWorkspaceRoot }: WorkspacesTabProps) {
     }
   };
 
-  const handleDelete = async (workspaceId: string) => {
-    if (
-      !confirm(
-        "Are you sure you want to delete this workspace? This will permanently delete all its data, members, and channels.",
-      )
-    ) {
-      return;
-    }
+  const handleDelete = async () => {
+    if (!deleteTarget) return;
+    const workspaceId = deleteTarget.id;
     setDeletingId(workspaceId);
     setError(null);
     try {
@@ -131,6 +137,7 @@ export function WorkspacesTab({ currentWorkspaceRoot }: WorkspacesTabProps) {
         throw new Error(body?.message || "Failed to delete workspace");
       }
       setWorkspaces((prev) => prev.filter((ws) => ws.id !== workspaceId));
+      setDeleteTarget(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to delete workspace");
     } finally {
@@ -172,7 +179,6 @@ export function WorkspacesTab({ currentWorkspaceRoot }: WorkspacesTabProps) {
         <SettingsEmptyState
           icon={FolderKanban}
           title="No workspaces yet"
-          description="Add another workspace when you want a separate project folder and team."
           action={
             <SettingsPrimaryButton onClick={() => setCreateOpen(true)}>
               <Plus className="h-4 w-4" />
@@ -215,7 +221,7 @@ export function WorkspacesTab({ currentWorkspaceRoot }: WorkspacesTabProps) {
                       <button
                         type="button"
                         disabled={Boolean(switchingId) || Boolean(deletingId)}
-                        onClick={() => void handleDelete(ws.id)}
+                        onClick={() => setDeleteTarget(ws)}
                         className="flex items-center gap-1.5 rounded-xl border border-red-200 px-3 py-2.5 text-sm font-medium text-red-600 transition hover:bg-red-50 hover:border-red-300 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-950/30 dark:text-red-400 dark:hover:bg-red-950/20"
                       >
                         {isDeleting ? (
@@ -237,7 +243,18 @@ export function WorkspacesTab({ currentWorkspaceRoot }: WorkspacesTabProps) {
       <WorkspaceCreateModal
         isOpen={createOpen}
         onClose={() => setCreateOpen(false)}
+        configuredProviders={configuredProviders}
         onSubmit={createWorkspace}
+      />
+
+      <ConfirmDialog
+        isOpen={Boolean(deleteTarget)}
+        onClose={() => setDeleteTarget(null)}
+        title="Delete workspace"
+        message={`Delete "${deleteTarget?.label ?? deleteTarget?.id}"?`}
+        confirmLabel="Delete"
+        busy={Boolean(deletingId)}
+        onConfirm={handleDelete}
       />
     </>
   );
