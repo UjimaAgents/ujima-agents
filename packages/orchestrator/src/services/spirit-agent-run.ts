@@ -232,6 +232,8 @@ ${activeMemories
     let totalTokens = 0;
     let lastText = '';
     let streamedReasoning = '';
+    let lastMessageId: string | undefined;
+    let persistedStepCount = 0;
 
     try {
       const result = await runAgentLoop({
@@ -254,6 +256,42 @@ ${activeMemories
             },
             chunk,
           );
+        },
+        onStepFinish: async (step, currentSteps) => {
+          const unpersisted = currentSteps.slice(persistedStepCount);
+          for (const s of unpersisted) {
+            persistedStepCount++;
+            totalTurns += 1;
+            const stepText = typeof s.text === 'string' ? s.text : '';
+            const stepToolCalls = Array.isArray(s.toolCalls) ? s.toolCalls : [];
+            const stepToolResults = Array.isArray(s.toolResults) ? s.toolResults : [];
+            totalToolCalls += stepToolCalls.length;
+
+            if (!stepText && stepToolCalls.length === 0) {
+              continue;
+            }
+
+            const toolCalls = this.toMessageToolCalls(stepToolCalls, stepToolResults, spirit);
+            const artifactFileToolCall = await appendArtifactFileToolCall(
+              stepToolCalls,
+              team.workspace.root,
+            );
+            const messageToolCalls = artifactFileToolCall ? [...toolCalls, artifactFileToolCall] : toolCalls;
+            const reasoningContent = extractReasoningChunk(s);
+            if (!stepText && !artifactFileToolCall) {
+              continue;
+            }
+            lastMessageId = this.saveAndEmitAgentMessage({
+              organizationId: input.organizationId,
+              channelId: session.channelId,
+              senderId: member.id,
+              content: stepText || 'Artifact updated.',
+              toolCalls: messageToolCalls,
+              metadata: { runId: spirit.runId ?? spirit.id },
+              reasoningContent,
+            });
+            lastText = stepText || lastText;
+          }
         },
         loadInterruptMessages: () => {
           const page = this.repo
@@ -278,8 +316,9 @@ ${activeMemories
       // `kind='agent'` message per step that produced text or tool
       // calls, with tool-call cards inlined. This keeps the channel
       // history readable as a turn-by-turn timeline.
-      let lastMessageId: string | undefined;
-      for (const [index, step] of steps.entries()) {
+      for (let index = persistedStepCount; index < steps.length; index++) {
+        const step = steps[index];
+        if (!step) continue;
         totalTurns += 1;
         const stepText = typeof step.text === 'string' ? step.text : '';
         const stepToolCalls = Array.isArray(step.toolCalls) ? step.toolCalls : [];
@@ -302,32 +341,33 @@ ${activeMemories
         if (!stepText && !artifactFileToolCall) {
           continue;
         }
-        const message = MessageSchema.parse({
-          id: randomUUID(),
+        lastMessageId = this.saveAndEmitAgentMessage({
           organizationId: input.organizationId,
-          threadId: session.channelId,
           channelId: session.channelId,
           senderId: member.id,
-          senderKind: AGENT_KIND,
-          kind: AGENT_KIND,
           content: stepText || 'Artifact updated.',
           toolCalls: messageToolCalls,
           metadata: { runId: spirit.runId ?? spirit.id },
-          ...(reasoningContent ? { reasoningContent } : {}),
-          createdAt: new Date().toISOString(),
+          reasoningContent,
         });
-        this.repo.saveMessage(message);
-        this.realtime.emit(
-          SocketEventNames.channelMessage,
-          {
-            organizationId: input.organizationId,
-            channelId: session.channelId,
-            message,
-          },
-          [orgRoom(input.organizationId), channelRoom(session.channelId)],
-        );
         lastText = stepText || lastText;
-        lastMessageId = message.id;
+      }
+
+      const persistedRunSteps = spirit.runId
+        ? this.repo.listRunSteps?.(input.organizationId, spirit.runId) ?? []
+        : [];
+      const detectedTerminatingTool =
+        findTerminatingTool(result) ?? findTerminatingToolFromRunSteps(persistedRunSteps);
+      const finalText = result.text.trim();
+      if (finalText && finalText !== lastText && !detectedTerminatingTool) {
+        lastMessageId = this.saveAndEmitAgentMessage({
+          organizationId: input.organizationId,
+          channelId: session.channelId,
+          senderId: member.id,
+          content: finalText,
+          metadata: { runId: spirit.runId ?? spirit.id },
+        });
+        lastText = finalText;
       }
 
       // Prefer the provider-supplied `totalTokens` over our own
@@ -361,13 +401,7 @@ ${activeMemories
       this.repo.saveSpirit(completed);
       this.registry.unregister(completed.organizationId, completed.memberId, completed.id);
       // Persisted run-steps act as a safety net when provider/SDK
-      // result shapes drop tool names from the final step object —
-      // the tool service writes the canonical id after each call.
-      const persistedRunSteps = spirit.runId
-        ? this.repo.listRunSteps?.(input.organizationId, spirit.runId) ?? []
-        : [];
-      const detectedTerminatingTool =
-        findTerminatingTool(result) ?? findTerminatingToolFromRunSteps(persistedRunSteps);
+      // result shapes drop tool names from the final step object.
       // Resolve the final terminator, preserving any silent
       // terminator a mid-run side-effect (mirror-loop guard, vacuous-
       // ack suppression) already wrote onto the run row. Without this
@@ -549,6 +583,42 @@ ${activeMemories
         isError,
       };
     });
+  }
+
+  private saveAndEmitAgentMessage(input: {
+    organizationId: string;
+    channelId: string;
+    senderId: string;
+    content: string;
+    metadata: Record<string, unknown>;
+    toolCalls?: MessageToolCall[];
+    reasoningContent?: string;
+  }): string {
+    const message = MessageSchema.parse({
+      id: randomUUID(),
+      organizationId: input.organizationId,
+      threadId: input.channelId,
+      channelId: input.channelId,
+      senderId: input.senderId,
+      senderKind: AGENT_KIND,
+      kind: AGENT_KIND,
+      content: input.content,
+      metadata: input.metadata,
+      ...(input.toolCalls && input.toolCalls.length > 0 ? { toolCalls: input.toolCalls } : {}),
+      ...(input.reasoningContent ? { reasoningContent: input.reasoningContent } : {}),
+      createdAt: new Date().toISOString(),
+    });
+    this.repo.saveMessage(message);
+    this.realtime.emit(
+      SocketEventNames.channelMessage,
+      {
+        organizationId: input.organizationId,
+        channelId: input.channelId,
+        message,
+      },
+      [orgRoom(input.organizationId), channelRoom(input.channelId)],
+    );
+    return message.id;
   }
 
   async buildMcpToolDefinitions(ctx: {

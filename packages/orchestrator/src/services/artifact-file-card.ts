@@ -96,11 +96,10 @@ function buildArtifactFileCard(
 
 function artifactFileWritePath(call: ToolCallLike): string | undefined {
   const toolName = call.toolName?.toLowerCase();
-  const resourcePath = readStringField(call, 'resourcePath');
+  const resourcePath = readStringField(call, 'resourcePath') ?? readStringField(call, 'file_path');
   if (!resourcePath) return undefined;
-  return toolName === 'write' || toolName === 'edit' || toolName === 'multiedit'
-    ? resourcePath
-    : undefined;
+  if (toolName === 'write' || toolName === 'edit' || toolName === 'multiedit') return resourcePath;
+  return readStringField(call, 'action') === 'write' ? resourcePath : undefined;
 }
 
 function inferArtifactFormat(filePath: string, content: string): 'html' | 'markdown' {

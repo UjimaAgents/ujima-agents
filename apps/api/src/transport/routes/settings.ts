@@ -15,9 +15,11 @@ import {
   OrganizationSettingsUpdateSchema,
   MemberShellApprovalUpdateSchema,
   PoliciesUpdateSchema,
+  PolicyRulesResponseSchema,
   ProviderSecretsUpsertResponseSchema,
   ProviderSecretsUpsertSchema,
   ProviderStatusSchema,
+  RevokePolicyRuleSchema,
 } from '@ujima/api-schema';
 import type { AuthService, SettingsService } from '@ujima/orchestrator';
 import { z } from 'zod';
@@ -446,6 +448,60 @@ export function registerSettingsRoutes(
         requireApprovalForShell: req.body.requireApprovalForShell,
         shellApprovalMode: req.body.shellApprovalMode,
       });
+    } catch (err) {
+      return routeError(reply, err, { notFound: 'Organization not found', workspaceRoot: true });
+    }
+  });
+
+  app.get('/orgs/:orgId/policies/rules', {
+    schema: {
+      description: 'List all permanent allow rules from the governance policy',
+      tags: ['Settings'],
+      params: OrgIdParamsSchema,
+      response: {
+        200: PolicyRulesResponseSchema,
+        400: ApiErrorSchema,
+        401: ApiErrorSchema,
+        403: ApiErrorSchema,
+        404: ApiErrorSchema,
+      },
+    },
+  }, async (req, reply) => {
+    try {
+      const forbidden = requireOrgSession(auth, req, reply, req.params.orgId);
+      if (forbidden) return forbidden;
+      return { rules: settings.listAllowRules(req.params.orgId) };
+    } catch (err) {
+      return routeError(reply, err, { notFound: 'Organization not found' });
+    }
+  });
+
+  app.delete('/orgs/:orgId/policies/rules', {
+    schema: {
+      description: 'Revoke a permanent allow rule from the governance policy',
+      tags: ['Settings'],
+      params: OrgIdParamsSchema,
+      body: RevokePolicyRuleSchema,
+      response: {
+        200: z.object({ success: z.literal(true) }),
+        400: ApiErrorSchema,
+        401: ApiErrorSchema,
+        403: ApiErrorSchema,
+        404: ApiErrorSchema,
+      },
+    },
+  }, async (req, reply) => {
+    try {
+      assertReadyWorkspaceRoot(repo, req.params.orgId);
+      const forbidden = requireOrgSession(auth, req, reply, req.params.orgId);
+      if (forbidden) return forbidden;
+      settings.revokeAllowRule(
+        req.params.orgId,
+        req.body.agentId,
+        req.body.mcpId,
+        req.body.toolName,
+      );
+      return { success: true as const };
     } catch (err) {
       return routeError(reply, err, { notFound: 'Organization not found', workspaceRoot: true });
     }

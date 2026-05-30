@@ -55,7 +55,7 @@ export interface PermissionMiddlewareDeps {
   platformDefaults?: PlatformDefaults;
   mcpPolicies?: Record<string, MCPPolicy>;
   sessionOverrides?: Record<string, SessionOverride>;
-  governancePolicy?: GovernancePolicy | (() => GovernancePolicy | undefined);
+  governancePolicy?: GovernancePolicy | ((taskId?: string) => GovernancePolicy | undefined);
   now?: () => number;
 }
 
@@ -91,14 +91,14 @@ export function createPermissionMiddleware(
   const now = deps.now ?? (() => Date.now());
 
   let governancePolicy: GovernancePolicy | undefined;
-  let governancePolicyFn: (() => GovernancePolicy | undefined) | undefined;
+  let governancePolicyFn: ((taskId?: string) => GovernancePolicy | undefined) | undefined;
   if (typeof deps.governancePolicy === 'function') {
     governancePolicyFn = deps.governancePolicy;
   } else {
     governancePolicy = deps.governancePolicy;
   }
-  const resolveGovernancePolicy = (): GovernancePolicy | undefined =>
-    governancePolicyFn ? governancePolicyFn() : governancePolicy;
+  const resolveGovernancePolicy = (taskId?: string): GovernancePolicy | undefined =>
+    governancePolicyFn ? governancePolicyFn(taskId) : governancePolicy;
 
   async function writeAudit(
     input: PermissionCheckInput,
@@ -166,7 +166,7 @@ export function createPermissionMiddleware(
         return decision;
       }
 
-      const policy = resolveGovernancePolicy();
+      const policy = resolveGovernancePolicy(input.taskId);
       let policyAllowOverride = false;
       if (policy) {
         const evaluation = evaluatePolicy(policy, {

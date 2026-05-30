@@ -124,7 +124,7 @@ export const ChatMessage = memo(function ChatMessage({
       ? parseRelayFilesystemBody(systemBodyMarkdown, systemLabel)
       : null;
   const artifactFile = getArtifactFileCard(message.toolCalls);
-  const showBody = message.content.trim().length > 0;
+  const showBody = message.content.trim().length > 0 && !(artifactFile && isInternalMarkerContent(message.content));
 
   return (
     <>
@@ -223,7 +223,7 @@ export const ChatMessage = memo(function ChatMessage({
                   {message.detail}
                 </p>
               )}
-              {message.pending && (
+              {message.pending && message.kind !== "agent" && (
                 <div className="mt-1 inline-flex items-center gap-1.5 rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-semibold text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
                   <Loader2 className="h-3 w-3 animate-spin" />
                   Sending
@@ -261,6 +261,14 @@ function getSystemMessageLabel(content: string): string {
     return firstLine.length > 0 ? firstLine : "Approval needed";
   }
   return "System summary";
+}
+
+function isInternalMarkerContent(content: string): boolean {
+  return (
+    content.startsWith(CONVERSATION_ARCHIVE_MARKER) ||
+    content.startsWith(CONVERSATION_SUMMARY_MARKER) ||
+    content.startsWith(SELF_NOTE_SUMMARY_MARKER)
+  );
 }
 
 /** Body below the title line for system messages that carry multi-line context (e.g. approval relay). */
@@ -337,17 +345,16 @@ function formatArtifactStatus(status: string): string {
 }
 
 export function getArtifactFileCard(toolCalls?: ChatMessageData["toolCalls"]): ArtifactFileView | null {
-  const card = toolCalls?.find((entry) => entry.toolName === "card.artifact.file");
+  const card = toolCalls?.find(
+    (entry) => entry.toolName === "card.artifact.file" || entry.toolName === "card.goal.file",
+  );
   if (!card) return null;
-  const { name, filePath, html, artifactFormat, status } = card.args;
-  if (
-    typeof name !== "string" ||
-    typeof filePath !== "string" ||
-    typeof html !== "string" ||
-    typeof status !== "string"
-  ) {
-    return null;
-  }
+  const name = stringArg(card.args, "name") ?? stringArg(card.args, "goalName");
+  const filePath = stringArg(card.args, "filePath") ?? stringArg(card.args, "goalFilePath");
+  const html = stringArg(card.args, "html");
+  const artifactFormat = card.args.artifactFormat;
+  const status = stringArg(card.args, "status");
+  if (!name || !filePath || !html || !status) return null;
   return {
     name,
     filePath,
@@ -355,6 +362,11 @@ export function getArtifactFileCard(toolCalls?: ChatMessageData["toolCalls"]): A
     artifactFormat: artifactFormat === "html" ? "html" : "markdown",
     status,
   };
+}
+
+function stringArg(args: Record<string, unknown>, key: string): string | undefined {
+  const value = args[key];
+  return typeof value === "string" ? value : undefined;
 }
 
 function ArtifactFilePreview({ artifact }: { artifact: ArtifactFileView }) {

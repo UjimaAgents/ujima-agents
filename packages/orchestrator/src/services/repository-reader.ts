@@ -35,6 +35,18 @@ import type {
   WorkspaceMember,
 } from '@ujima/shared';
 
+export interface GovernanceRuleRow {
+  id: string;
+  organizationId: string;
+  agentId: string;
+  mcpId: string;
+  toolName: string;
+  state: string;
+  reason: string | null;
+  updatedAt: string;
+  updatedBy: string | null;
+}
+
 export interface PaginatedTaskSessions {
   data: TaskSession[];
   nextCursor?: string;
@@ -538,4 +550,21 @@ export interface ApiRepository extends ConversationRepository {
   listMemories(organizationId: string, memberId: string): MemoryEntry[];
   listOrgMemories(organizationId: string): MemoryEntry[];
   deleteMemory(organizationId: string, memoryId: string): void;
+  listGovernanceRules?(organizationId: string, state?: string): GovernanceRuleRow[];
+  deleteGovernanceRule?(
+    organizationId: string,
+    agentId: string,
+    mcpId: string,
+    toolName: string,
+  ): GovernanceRuleRow | null;
+  saveGovernanceRule?(rule: {
+    id: string;
+    organizationId: string;
+    agentId: string;
+    mcpId: string;
+    toolName: string;
+    state: string;
+    reason?: string;
+    updatedBy?: string;
+  }): GovernanceRuleRow;
 }

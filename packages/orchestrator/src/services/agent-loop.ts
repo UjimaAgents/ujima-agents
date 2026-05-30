@@ -66,6 +66,7 @@ export async function runAgentLoop(input: {
   abortSignal?: AbortSignal;
   loadInterruptMessages?: (step: AgentLoopStep) => Promise<ModelMessage[]> | ModelMessage[];
   onChunk?: (chunk: AgentLoopChunk) => PromiseLike<void> | void;
+  onStepFinish?: (step: AgentLoopStep, steps: AgentLoopStep[]) => PromiseLike<void> | void;
 }): Promise<AgentLoopResult> {
   const steps: AgentLoopStep[] = [];
   const messages = [...input.messages];
@@ -107,12 +108,13 @@ export async function runAgentLoop(input: {
       ...(onChunk
         ? {
             onChunk: async ({ chunk }) => {
+              const delta = chunkDelta(chunk);
               if (chunk.type === 'text-delta') {
-                await onChunk({ kind: 'text', delta: chunk.text });
+                if (delta) await onChunk({ kind: 'text', delta });
                 return;
               }
               if (chunk.type === 'reasoning-delta') {
-                await onChunk({ kind: 'reasoning', delta: chunk.text });
+                if (delta) await onChunk({ kind: 'reasoning', delta });
               }
             },
           }
@@ -132,9 +134,12 @@ export async function runAgentLoop(input: {
         messages.splice(0, messages.length, ...nextMessages, ...interrupts);
         return { messages };
       },
-      onStepFinish: (step) => {
+      onStepFinish: async (step) => {
         const loopStep = step as unknown as AgentLoopStep;
         steps.push(loopStep);
+        if (input.onStepFinish) {
+          await input.onStepFinish(loopStep, steps);
+        }
       },
     });
 
@@ -154,4 +159,14 @@ export async function runAgentLoop(input: {
   };
 
   return execute();
+}
+
+function chunkDelta(chunk: unknown): string {
+  if (!chunk || typeof chunk !== 'object') return '';
+  const record = chunk as Record<string, unknown>;
+  return typeof record.delta === 'string'
+    ? record.delta
+    : typeof record.text === 'string'
+      ? record.text
+      : '';
 }

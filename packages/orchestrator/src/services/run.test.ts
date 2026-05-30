@@ -353,10 +353,15 @@ describe('SpiritService run path', () => {
       [{ toolName: 'write', args: { resourcePath: '.ujima-goals/plan.html' } }],
       workspaceRoot,
     );
+    const aliasCard = await appendArtifactFileToolCall(
+      [{ toolName: 'filesystem', args: { action: 'write', file_path: '.ujima-goals/plan.html' } }],
+      workspaceRoot,
+    );
 
     expect(card?.toolName).toBe('card.artifact.file');
     expect(card?.args.filePath).toBe('.ujima-goals/plan.html');
     expect(card?.args.artifactFormat).toBe('html');
+    expect(aliasCard?.toolName).toBe('card.artifact.file');
   });
 
   it('does not publish tool-turn placeholders for goal-file writes', async () => {
@@ -470,6 +475,7 @@ describe('SpiritService run path', () => {
 
     expect(messages.some((message) => message.content.includes('[tool turn —'))).toBe(false);
     expect(messages.some((message) => message.toolCalls?.some((toolCall: any) => toolCall.toolName === 'card.artifact.file'))).toBe(true);
+    expect(messages.some((message) => message.content === 'Done.')).toBe(true);
   });
 
   it('persists each non-reasoning assistant step as a chat message', async () => {

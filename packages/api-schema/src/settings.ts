@@ -8,6 +8,7 @@ import {
   OrganizationSchema,
   ShellApprovalModeSchema,
   ToolCapabilitySchema,
+  ToolPolicyState,
   WorkspaceConfigSchema,
 } from '@ujima/shared';
 import { z } from 'zod';
@@ -126,3 +127,27 @@ export const ChannelOperationParamsSchema = z.object({
   orgId: IdSchema,
   channelId: IdSchema,
 });
+
+/** A single allow-rule record, readable by the frontend. */
+export const PolicyAllowRuleSchema = z.object({
+  agentId: z.string(),
+  mcpId: z.string(),
+  toolName: z.string(),
+  state: ToolPolicyState,
+  reason: z.string().optional(),
+  updatedAt: z.string().optional(),
+  updatedBy: z.string().optional(),
+});
+export type PolicyAllowRule = z.infer<typeof PolicyAllowRuleSchema>;
+
+export const PolicyRulesResponseSchema = z.object({
+  rules: z.array(PolicyAllowRuleSchema),
+});
+export type PolicyRulesResponse = z.infer<typeof PolicyRulesResponseSchema>;
+
+export const RevokePolicyRuleSchema = z.object({
+  agentId: z.string(),
+  mcpId: z.string(),
+  toolName: z.string(),
+});
+export type RevokePolicyRuleRequest = z.infer<typeof RevokePolicyRuleSchema>;

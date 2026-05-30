@@ -11,6 +11,7 @@ import {
   type Channel,
   type MemberShellApprovalMode,
   type ShellApprovalMode,
+  type ToolPolicyState,
 } from '@ujima/shared';
 import { AgentTeam, createAgent, defineRole, loadAgentTeam, normalizeProviderKey, type RoleConfig } from '@ujima/framework';
 import type { ApiRepository } from './repository-reader.js';
@@ -121,6 +122,16 @@ export interface UpdateChannelInput {
   name?: string;
   topic?: string;
   memberIds?: string[];
+}
+
+export interface PolicyAllowRuleRecord {
+  agentId: string;
+  mcpId: string;
+  toolName: string;
+  state: ToolPolicyState;
+  reason?: string;
+  updatedAt?: string;
+  updatedBy?: string;
 }
 
 export interface ProviderTestResult {
@@ -695,6 +706,35 @@ export class SettingsService {
       fieldName,
     );
     return ownership?.owner === 'config' && !ownership.allowDashboardOverride;
+  }
+
+  /** List all `state: 'allow'` rules from the governance policy across all agents. */
+  listAllowRules(organizationId: string): PolicyAllowRuleRecord[] {
+    if (this.repo.listGovernanceRules) {
+      const rows = this.repo.listGovernanceRules(organizationId, 'allow');
+      return rows.map((row) => ({
+        agentId: row.agentId,
+        mcpId: row.mcpId,
+        toolName: row.toolName,
+        state: row.state as ToolPolicyState,
+        reason: row.reason ?? undefined,
+        updatedAt: row.updatedAt,
+        updatedBy: row.updatedBy ?? undefined,
+      }));
+    }
+    return [];
+  }
+
+  /** Revoke (remove) a specific allow rule from the governance policy. */
+  revokeAllowRule(
+    organizationId: string,
+    agentId: string,
+    mcpId: string,
+    toolName: string,
+  ): void {
+    if (this.repo.deleteGovernanceRule) {
+      this.repo.deleteGovernanceRule(organizationId, agentId, mcpId, toolName);
+    }
   }
 }
 
