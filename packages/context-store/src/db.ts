@@ -1116,6 +1116,12 @@ const MIGRATIONS: {id: string; up: string}[] = [
         AND m.sender_kind = 'agent';
     `,
   },
+  {
+    id: "034_member_shell_approval_mode",
+    up: `
+      ALTER TABLE members ADD COLUMN shell_approval_mode TEXT;
+    `,
+  },
 ];
 
 export interface DbOptions {

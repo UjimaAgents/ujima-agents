@@ -43,6 +43,7 @@ import {
   type ToolService,
 } from './tool-service.js';
 import { ToolServiceImpl, type ApprovalRequester } from './tool-service-impl.js';
+import { createSpiritModelResolver } from '../utils/create-spirit-model-resolver.js';
 
 export type { ApiServiceContext, RealtimeService } from './context.js';
 export { createTeamStore } from './team-store.js';
@@ -111,8 +112,10 @@ export { orgWorkspaceId, organizationIdFromWorkspaceId } from '@ujima/shared';
 export {
   assertGrantableOwnerFromParentOrg,
   copyProviderCredentials,
+  grantOrganizationAccessForMember,
   grantWorkspaceOwnerForMember,
   grantWorkspaceOwnerFromParentOrg,
+  WORKSPACE_OWNER_MEMBER_ID,
 } from './workspace-org-provision.js';
 export {
   ensureChannelThread,
@@ -472,6 +475,10 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
 
   const supervisorTodos = new SupervisorTodoService(context.repo);
 
+  const spiritModelResolver =
+    context.spiritModelResolver ??
+    createSpiritModelResolver(context.teamStore, context.repo);
+
   const innerTools = new ToolServiceImpl(
     context.teamStore,
     context.repo,
@@ -480,6 +487,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     context.realtime,
     supervisorTodos,
     context.mcpPool,
+    spiritModelResolver,
   );
 
   const tools = createPermissionGatedToolService(
@@ -523,7 +531,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     {
       conversations,
       ai,
-      modelResolver: context.spiritModelResolver,
+      modelResolver: spiritModelResolver,
       registry: activeSpirits,
       mcpPool: context.mcpPool,
     },

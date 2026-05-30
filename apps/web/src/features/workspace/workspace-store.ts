@@ -102,7 +102,7 @@ const DETAILS_AUTO_OPEN_DISMISSED_KEY = "ujima.workspace.detailsAutoOpenDismisse
 const MAX_LIVE_ACTIVITY_EVENTS = 2_000;
 
 const EMPTY_ACTIVITY = {
-  sidebarWidth: 25,
+  sidebarWidth: 18,
   activeTab: "conversation" as WorkspaceTab,
   showDetails: false,
   detailsAutoOpenDismissed: readDetailsAutoOpenDismissed(),

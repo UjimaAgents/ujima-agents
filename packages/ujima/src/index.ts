@@ -8,6 +8,7 @@ export {
 
 export {
   AgentTeam,
+  createEmptyWorkspaceTeamConfig,
   createStarterAgentTeamConfig,
   validateAgentTeamConfig,
   type AgentTeamHandle,

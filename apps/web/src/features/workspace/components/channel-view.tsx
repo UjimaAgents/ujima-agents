@@ -49,6 +49,8 @@ import { pendingApprovalVisibleInChannelView, queueApprovals } from "../approval
 import { ReasoningTracePanel } from "./reasoning-trace-panel";
 import { buildTabCounts, collectBlockedRunReasons, collectConversationAttachments, isLiveRun } from "../feed-selectors";
 import { ChannelGoalsStrip } from "./channel-goals-strip";
+import { AgentChatHeaderControls } from "./chat/agent-chat-header-controls";
+import type { Member, ShellApprovalMode } from "@ujima/shared/browser";
 
 const CHANNEL_TABS: ChatTab[] = [
   { id: "conversation", label: "Conversation" },
@@ -75,20 +77,24 @@ interface ChannelViewProps {
   bootstrap: BootstrapResponse;
   conversation: SelectedConversation;
   members: BootstrapResponse["members"];
+  orgShellApprovalMode: ShellApprovalMode;
   onOpenAgentEditor?: () => void;
   goalMode: boolean;
   onGoalModeChange: (active: boolean) => void;
   onSelectConversation?: (conv: SelectedConversation) => void;
+  onMemberUpdated?: (member: Member) => void;
 }
 
 export function ChannelView({
   bootstrap,
   conversation,
   members,
+  orgShellApprovalMode,
   onOpenAgentEditor,
   goalMode,
   onGoalModeChange,
   onSelectConversation,
+  onMemberUpdated,
 }: ChannelViewProps) {
   const [resolvingApprovals, setResolvingApprovals] = useState<Record<string, boolean>>({});
   const [approvalErrors, setApprovalErrors] = useState<Record<string, string>>({});
@@ -280,6 +286,7 @@ export function ChannelView({
   );
 
   const isAgent = conversation.type === "agent";
+  const agentMember = isAgent ? memberById.get(conversation.id) : undefined;
   const tabs = isAgent ? AGENT_TABS : CHANNEL_TABS;
   const tabIds = useMemo(() => new Set(tabs.map((tab) => tab.id)), [tabs]);
   const conversationColorIndex = Math.max(memberIndexById.get(conversation.id) ?? 0, 0);
@@ -560,15 +567,27 @@ export function ChannelView({
           statusLabel={selectedStatus.label}
           subtitle={headerSubtitle}
           actions={
-            isAgent ? (
-              <button
-                type="button"
-                onClick={onOpenAgentEditor}
-                className="inline-flex items-center gap-1.5 rounded-md border border-zinc-200 bg-zinc-50 px-2 py-1 text-[11px] font-semibold text-zinc-700 transition hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
-              >
-                <SquarePen className="h-3.5 w-3.5" />
-                Edit
-              </button>
+            isAgent && agentMember && onMemberUpdated ? (
+              <div className="flex items-center gap-2">
+                <AgentChatHeaderControls
+                  orgId={organizationId ?? bootstrap.organization?.id ?? ""}
+                  member={agentMember}
+                  providers={bootstrap.providers}
+                  orgShellApprovalMode={orgShellApprovalMode}
+                  goalMode={goalMode}
+                  onMemberUpdated={onMemberUpdated}
+                />
+                {onOpenAgentEditor ? (
+                  <button
+                    type="button"
+                    onClick={onOpenAgentEditor}
+                    className="inline-flex items-center gap-1.5 rounded-md border border-zinc-200 bg-zinc-50 px-2 py-1 text-[11px] font-semibold text-zinc-700 transition hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                  >
+                    <SquarePen className="h-3.5 w-3.5" />
+                    Edit
+                  </button>
+                ) : null}
+              </div>
             ) : undefined
           }
           showDetails={showDetails}

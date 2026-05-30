@@ -14,6 +14,7 @@ import {
 import Link from "next/link";
 import { Avatar } from "./chat/primitives";
 import type { BootstrapResponse } from "@ujima/api-schema";
+import { slugifyMemberId } from "@ujima/shared";
 import type { CreateAgentHandler, UpdateAgentHandler } from "@/features/team/agent-mutations";
 import type { SelectedConversation, WorkspaceRoleInput } from "../types";
 import { useState, useMemo, useEffect, useRef, memo, useCallback } from "react";
@@ -32,7 +33,11 @@ import { SidebarSectionEmpty } from "./sidebar/sidebar-section-empty";
 import { switchOrganization, switchToWorkspace, orgWorkspaceId } from "../switch-workspace";
 import { visibleWorkspaceChannels } from "../workspace-channels";
 import { WORKSPACE_DOCK_ROW_CLASS } from "../workspace-dock";
-import { WorkspaceCreateModal } from "../../settings/organization/components/workspaces/workspace-create-modal";
+import {
+  WorkspaceCreateModal,
+  type WorkspaceCreateSubmitInput,
+} from "../../settings/organization/components/workspaces/workspace-create-modal";
+import { ConfirmDialog } from "@/features/settings/shared/confirm-dialog";
 
 type WorkspaceSchedule = {
   id: string;
@@ -76,11 +81,7 @@ export interface WorkspaceSidebarProps {
 }
 
 export function slugifyRoleName(value: string) {
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
+  return slugifyMemberId(value);
 }
 
 export function roleFromTemplate(template: RolePresetTemplate): WorkspaceRoleInput {
@@ -232,6 +233,9 @@ export function WorkspaceSidebar({
   const [isAgentModalOpen, setIsAgentModalOpen] = useState(false);
   const [isCreateWorkspaceOpen, setIsCreateWorkspaceOpen] = useState(false);
   const [switchingOrgId, setSwitchingOrgId] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<{ workspaceId: string; name: string } | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deletingWorkspace, setDeletingWorkspace] = useState(false);
   const [schedules, setSchedules] = useState<WorkspaceSchedule[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [visibleCounts, setVisibleCounts] = useState({
@@ -324,13 +328,14 @@ export function WorkspaceSidebar({
     router.push("/settings/organization?tab=schedules");
   }, [router]);
 
-  const handleCreateWorkspace = useCallback(async (name: string, rootPath: string) => {
+  const handleCreateWorkspace = useCallback(async (input: WorkspaceCreateSubmitInput) => {
     const res = await fetch("/api/workspaces", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        root_path: rootPath,
-        label: name,
+        root_path: input.rootPath,
+        label: input.name,
+        copy_providers: input.copyProviders,
       }),
     });
     if (!res.ok) {
@@ -341,25 +346,27 @@ export function WorkspaceSidebar({
     await switchToWorkspace(created.id, "/workspace");
   }, []);
 
-  const handleDeleteWorkspace = useCallback(async (orgId: string, name: string) => {
-    const confirmed = window.confirm(`Are you sure you want to delete the workspace "${name}"? This action cannot be undone.`);
-    if (!confirmed) return;
-
+  const handleDeleteWorkspace = useCallback(async () => {
+    if (!pendingDelete) return;
+    setDeletingWorkspace(true);
+    setDeleteError(null);
     try {
-      const workspaceId = orgWorkspaceId(orgId);
-      const res = await fetch(`/api/workspaces/${encodeURIComponent(workspaceId)}`, {
-        method: "DELETE",
-      });
+      const res = await fetch(
+        `/api/workspaces/${encodeURIComponent(pendingDelete.workspaceId)}`,
+        { method: "DELETE" },
+      );
       if (!res.ok) {
         const body = await res.json().catch(() => null);
         throw new Error(body?.message || "Failed to delete workspace");
       }
-      
+      setPendingDelete(null);
       window.location.reload();
     } catch (err) {
-      alert(err instanceof Error ? err.message : "Failed to delete workspace");
+      setDeleteError(err instanceof Error ? err.message : "Failed to delete workspace");
+    } finally {
+      setDeletingWorkspace(false);
     }
-  }, []);
+  }, [pendingDelete]);
 
   return (
     <aside className="relative flex h-full w-full flex-col border-r border-zinc-200 bg-white dark:border-zinc-800 dark:bg-[#09090b]">
@@ -419,7 +426,11 @@ export function WorkspaceSidebar({
                             type="button"
                             onClick={(e) => {
                               e.stopPropagation();
-                              void handleDeleteWorkspace(org.id, org.name);
+                              setDeleteError(null);
+                              setPendingDelete({
+                                workspaceId: orgWorkspaceId(org.id),
+                                name: org.name,
+                              });
                             }}
                             className="mr-1 rounded p-1 text-zinc-400 hover:bg-red-500/10 hover:text-red-500 transition-colors"
                             title="Delete Workspace"
@@ -609,6 +620,7 @@ export function WorkspaceSidebar({
       <WorkspaceCreateModal
         isOpen={isCreateWorkspaceOpen}
         onClose={() => setIsCreateWorkspaceOpen(false)}
+        configuredProviders={bootstrap.providers}
         onSubmit={handleCreateWorkspace}
       />
 
@@ -621,6 +633,20 @@ export function WorkspaceSidebar({
         primaryChannelId={primaryChannel?.id}
         onCreateAgent={onCreateAgent}
         onSelect={onSelect}
+      />
+
+      {deleteError ? (
+        <p className="mx-4 mb-2 text-xs text-red-600 dark:text-red-400">{deleteError}</p>
+      ) : null}
+
+      <ConfirmDialog
+        isOpen={Boolean(pendingDelete)}
+        onClose={() => setPendingDelete(null)}
+        title="Delete workspace"
+        message={`Delete "${pendingDelete?.name}"? This cannot be undone.`}
+        confirmLabel="Delete"
+        busy={deletingWorkspace}
+        onConfirm={handleDeleteWorkspace}
       />
 
       {agentEditorTargetId ? (

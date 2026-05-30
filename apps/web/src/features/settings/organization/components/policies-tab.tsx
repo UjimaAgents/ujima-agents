@@ -1,6 +1,8 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import type { ShellApprovalMode } from "@ujima/shared/browser";
+import { normalizeOrgShellApprovalMode } from "@ujima/shared/browser";
 import { PolicyApprovalFields } from "@/features/providers/policy-approval-fields";
 import { settingsFetchVoid } from "@/features/settings/shared/settings-api";
 import { SettingsPrimaryButton } from "@/features/settings/shared/settings-buttons";
@@ -10,14 +12,19 @@ export function PoliciesTab({
   policies,
 }: {
   orgId: string;
-  policies: { requireApprovalForWrites: boolean; requireApprovalForShell: boolean; workspaceBoundaryMode: string };
+  policies: {
+    requireApprovalForWrites: boolean;
+    requireApprovalForShell?: boolean;
+    shellApprovalMode?: ShellApprovalMode;
+    workspaceBoundaryMode: string;
+  };
 }) {
+  const initialShellMode = normalizeOrgShellApprovalMode(policies);
+
   const [requireApprovalForWrites, setRequireApprovalForWrites] = useState(
     policies.requireApprovalForWrites,
   );
-  const [requireApprovalForShell, setRequireApprovalForShell] = useState(
-    policies.requireApprovalForShell,
-  );
+  const [shellApprovalMode, setShellApprovalMode] = useState<ShellApprovalMode>(initialShellMode);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
@@ -25,13 +32,8 @@ export function PoliciesTab({
   const dirty = useMemo(
     () =>
       requireApprovalForWrites !== policies.requireApprovalForWrites ||
-      requireApprovalForShell !== policies.requireApprovalForShell,
-    [
-      requireApprovalForWrites,
-      requireApprovalForShell,
-      policies.requireApprovalForWrites,
-      policies.requireApprovalForShell,
-    ],
+      shellApprovalMode !== initialShellMode,
+    [requireApprovalForWrites, shellApprovalMode, policies.requireApprovalForWrites, initialShellMode],
   );
 
   const handleSave = async () => {
@@ -48,7 +50,7 @@ export function PoliciesTab({
           body: JSON.stringify({
             organizationId: orgId,
             requireApprovalForWrites,
-            requireApprovalForShell,
+            shellApprovalMode,
           }),
         },
         "Failed to update policies.",
@@ -67,12 +69,12 @@ export function PoliciesTab({
         variant="toggle"
         values={{
           requireApprovalForWrites,
-          requireApprovalForShell,
+          shellApprovalMode,
         }}
         onChange={(key, value) => {
           if (key === "requireApprovalForWrites") setRequireApprovalForWrites(value);
-          else setRequireApprovalForShell(value);
         }}
+        onShellModeChange={setShellApprovalMode}
       />
 
       {dirty || success || error ? (

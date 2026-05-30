@@ -5,7 +5,10 @@ import { listItemIdle, listItemSelected } from "@/lib/list-item-styles";
 
 export interface SelectOption {
   value: string;
+  /** Shown in the dropdown list */
   label: string;
+  /** Shown on the closed trigger when selected; defaults to `label` */
+  selectedLabel?: string;
   disabled?: boolean;
 }
 
@@ -16,9 +19,27 @@ export interface SelectProps {
   options: SelectOption[];
   placeholder?: string;
   className?: string;
+  size?: "default" | "sm";
+  disabled?: boolean;
+  ariaLabel?: string;
 }
 
-export function Select({ id, value, onChange, options, placeholder = "Select an option", className = "" }: SelectProps) {
+const triggerSizeClass = {
+  default: "px-4 py-2.5 text-sm",
+  sm: "px-2.5 py-1.5 text-xs",
+} as const;
+
+export function Select({
+  id,
+  value,
+  onChange,
+  options,
+  placeholder = "Select an option",
+  className = "",
+  size = "default",
+  disabled = false,
+  ariaLabel,
+}: SelectProps) {
   const [isOpen, setIsOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -39,13 +60,17 @@ export function Select({ id, value, onChange, options, placeholder = "Select an 
       <button
         type="button"
         id={id}
-        onClick={() => setIsOpen(!isOpen)}
-        className="flex w-full items-center justify-between rounded-lg border border-zinc-200 bg-white px-4 py-2.5 text-sm text-zinc-900 outline-none transition focus:border-violet-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+        disabled={disabled}
+        aria-label={ariaLabel ?? placeholder}
+        onClick={() => !disabled && setIsOpen(!isOpen)}
+        className={`flex w-full items-center justify-between gap-2 rounded-lg border border-zinc-200 bg-white text-zinc-900 outline-none transition focus:border-violet-500 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 ${triggerSizeClass[size]}`}
       >
-        <span className={selectedOption ? "" : "text-zinc-400"}>
-          {selectedOption ? selectedOption.label : placeholder}
+        <span className={`min-w-0 truncate ${selectedOption ? "" : "text-zinc-400"}`}>
+          {selectedOption ? (selectedOption.selectedLabel ?? selectedOption.label) : placeholder}
         </span>
-        <ChevronDown className={`h-4 w-4 text-zinc-400 transition-transform ${isOpen ? "rotate-180" : ""}`} />
+        <ChevronDown
+          className={`shrink-0 text-zinc-400 transition-transform ${size === "sm" ? "h-3.5 w-3.5" : "h-4 w-4"} ${isOpen ? "rotate-180" : ""}`}
+        />
       </button>
 
       {isOpen && (
