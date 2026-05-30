@@ -141,10 +141,10 @@ export class WorkspaceService {
 
     reclaimOrphanOrganizationsAtPath(this.repo, this.workspaces, normalizedNewRoot);
 
-    const accessibleOrgs = this.auth.listAccessibleOrganizations(sessionToken);
+    const allOrgs = this.repo.listOrganizations();
     assertProjectFolderAvailable(
       this.repo,
-      accessibleOrgs,
+      allOrgs,
       normalizedNewRoot,
       authState.user.organizationId,
     );

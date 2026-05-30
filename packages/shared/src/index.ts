@@ -32,7 +32,6 @@ export * from "./workspace-file-filters.js";
 export { formatPathEscapeError, type PathEscapeReason } from "./path-escape.js";
 export { slugifyMemberId } from "./slugify-member-id.js";
 export * from "./shell-approval.js";
-export * from "./shell-approval.js";
 export {
   listConfiguredProviderModels,
 } from "./configured-provider-models.js";
