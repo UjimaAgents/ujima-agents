@@ -2,7 +2,11 @@ import { stepCountIs, tool, type LanguageModel } from 'ai';
 import { MockLanguageModelV3, simulateReadableStream } from 'ai/test';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { runAgentLoop } from './agent-loop.js';
+import {
+  runAgentLoop,
+  ModelNotFoundError,
+  SchemaTooLargeError,
+} from './agent-loop.js';
 
 function v3Usage(inputTotal: number, outputTotal: number) {
   return {
@@ -106,6 +110,66 @@ describe('runAgentLoop toolChoice fallback', () => {
     expect(result.text).toBe('ok');
     expect(calls).toBe(2);
     expect(seenToolChoices).toEqual([{ type: 'required' }, { type: 'auto' }]);
+  });
+
+  it('classifies google "model not found" 404 as ModelNotFoundError', async () => {
+    const apiError = Object.assign(new Error(
+      'models/gemini-3.1-pro is not found for API version v1beta, or is not supported for generateContent.',
+    ), {
+      name: 'AI_APICallError',
+      statusCode: 404,
+      url: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-pro:streamGenerateContent?alt=sse',
+    });
+    const model = new MockLanguageModelV3({
+      doStream: async () => ({
+        stream: simulateReadableStream({
+          chunks: [{ type: 'error' as const, error: apiError }],
+        }),
+      }),
+    }) as unknown as LanguageModel;
+
+    const promise = runAgentLoop({
+      model,
+      system: 'system',
+      messages: [{ role: 'user', content: 'hello' }],
+      tools: {},
+      stopWhen: stepCountIs(1),
+      toolChoice: 'auto',
+    });
+
+    await expect(promise).rejects.toBeInstanceOf(ModelNotFoundError);
+    await expect(promise).rejects.toMatchObject({
+      modelId: 'gemini-3.1-pro',
+      providerKindHint: 'google',
+    });
+  });
+
+  it('classifies gemini "too many states" 400 as SchemaTooLargeError', async () => {
+    const apiError = Object.assign(new Error(
+      'The specified schema produces a constraint that has too many states for serving.',
+    ), {
+      name: 'AI_APICallError',
+      statusCode: 400,
+      url: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse',
+    });
+    const model = new MockLanguageModelV3({
+      doStream: async () => ({
+        stream: simulateReadableStream({
+          chunks: [{ type: 'error' as const, error: apiError }],
+        }),
+      }),
+    }) as unknown as LanguageModel;
+
+    await expect(
+      runAgentLoop({
+        model,
+        system: 'system',
+        messages: [{ role: 'user', content: 'hello' }],
+        tools: {},
+        stopWhen: stepCountIs(1),
+        toolChoice: 'auto',
+      }),
+    ).rejects.toBeInstanceOf(SchemaTooLargeError);
   });
 
   it('does not retry unrelated provider errors', async () => {

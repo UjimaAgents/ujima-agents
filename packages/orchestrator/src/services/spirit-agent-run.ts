@@ -30,7 +30,11 @@ import {
   resolveWakeReplyPolicy,
 } from '../utils/wake-reply-policy.js';
 import { requireTeam } from '../utils/require-team.js';
-import { runAgentLoop } from './agent-loop.js';
+import {
+  runAgentLoop,
+  ModelNotFoundError,
+  SchemaTooLargeError,
+} from './agent-loop.js';
 import { toModelMessages, buildToolDefinitions } from '../utils/to-model-messages.js';
 import {
   ALWAYS_AVAILABLE_AGENT_TOOLS,
@@ -202,12 +206,24 @@ export class SpiritServiceAgentRun extends SpiritServiceLifecycle {
     let lastText = '';
     let streamedReasoning = '';
 
-    try {
-      const result = await runAgentLoop({
-        model,
+    // Recoverable runtime failures (model 404, schema too large) come
+    // back as typed errors from runAgentLoop. We wrap a tight retry
+    // here that mutates only `currentModel` and `currentToolDefs`,
+    // then re-invokes the same loop. One retry per error class is
+    // enough — both conditions are stable until the operator changes
+    // config, and we don't want to amplify load on a flapping
+    // provider.
+    let currentModel = model;
+    let currentToolDefs = toolDefs;
+    let modelFallbackApplied = false;
+    let paletteReduced = false;
+
+    const invokeLoop = () =>
+      runAgentLoop({
+        model: currentModel,
         system: systemPrompt,
         messages,
-        tools: toolDefs,
+        tools: currentToolDefs,
         stopWhen: stepCountIs(maxIterations),
         ...(this.maxOutputTokens !== undefined ? { maxOutputTokens: this.maxOutputTokens } : {}),
         temperature: this.temperature,
@@ -241,6 +257,50 @@ export class SpiritServiceAgentRun extends SpiritServiceLifecycle {
           return toModelMessages(interrupts, member.id);
         },
       });
+
+    const runLoopWithRetry = async () => {
+      // Retry budget: at most one model-fallback AND one
+      // palette-reduction. Both can fire in the same run if e.g. the
+      // member is on a bad model id AND has too many MCPs.
+      while (true) {
+        try {
+          return await invokeLoop();
+        } catch (error) {
+          if (error instanceof ModelNotFoundError && !modelFallbackApplied) {
+            modelFallbackApplied = true;
+            console.warn(
+              `[spirit-agent-run] model "${error.modelId}" rejected by provider; ` +
+                `falling back to safeFallbackModelForProvider for member="${input.memberId}"`,
+            );
+            currentModel = await Promise.resolve(
+              this.modelResolver({
+                organizationId: input.organizationId,
+                memberId: input.memberId,
+                role,
+                forceSafeFallback: true,
+              }),
+            );
+            continue;
+          }
+          if (error instanceof SchemaTooLargeError && !paletteReduced) {
+            paletteReduced = true;
+            const dropped = dropHeaviestMcp(currentToolDefs, attachedMcpServers);
+            if (dropped) {
+              console.warn(
+                `[spirit-agent-run] gemini "too many states" — dropped MCP "${dropped.serverName}" ` +
+                  `(${dropped.toolNames.length} tools) and retrying for member="${input.memberId}"`,
+              );
+              currentToolDefs = dropped.toolDefs;
+              continue;
+            }
+          }
+          throw error;
+        }
+      }
+    };
+
+    try {
+      const result = await runLoopWithRetry();
       const { steps, usage } = result;
 
       // Each step in `steps` is one model turn. We persist one
@@ -731,4 +791,37 @@ export class SpiritServiceAgentRun extends SpiritServiceLifecycle {
     ) as ToolSet;
     return { toolSet, servers };
   }
+}
+
+// Recovery helper for `SchemaTooLargeError`. Picks the MCP server
+// that contributed the most tools to the live palette and removes
+// its tools from `toolDefs`. Returns the trimmed ToolSet plus the
+// dropped server (for logging). Built-in always-on tools are
+// untouched — they are not the source of the FSM blow-up and we
+// need them to keep the run usable (channel.*, self.note, …).
+//
+// The match between an entry in `attachedMcpServers` and the keys
+// in `toolDefs` uses the same `mcp__<nsSlug>__` prefix that
+// `buildMcpToolDefinitions` generates, so a key is considered to
+// belong to a server iff it starts with that prefix.
+function dropHeaviestMcp(
+  toolDefs: ToolSet,
+  attachedMcpServers: { serverName: string; serverId: string; toolNames: string[] }[],
+): { serverName: string; toolNames: string[]; toolDefs: ToolSet } | null {
+  if (attachedMcpServers.length === 0) return null;
+  const heaviest = [...attachedMcpServers].sort(
+    (a, b) => b.toolNames.length - a.toolNames.length,
+  )[0];
+  if (!heaviest || heaviest.toolNames.length === 0) return null;
+  const nsSlug = buildMcpNamespace(heaviest.serverName, heaviest.serverId);
+  const prefix = `mcp__${nsSlug}__`;
+  const filtered: ToolSet = {};
+  for (const [key, def] of Object.entries(toolDefs)) {
+    if (!key.startsWith(prefix)) filtered[key] = def;
+  }
+  return {
+    serverName: heaviest.serverName,
+    toolNames: heaviest.toolNames,
+    toolDefs: filtered,
+  };
 }

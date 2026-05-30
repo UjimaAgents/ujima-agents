@@ -21,6 +21,9 @@ export {
   MODEL_OPTIONS_BY_PROVIDER,
   defaultModelForProvider,
   getModelOptionsForProvider,
+  SAFE_FALLBACK_MODELS,
+  safeFallbackModelForProvider,
+  isKnownModelForProvider,
 } from "./model-catalog.js";
 export type {ProviderModelOption} from "./model-catalog.js";
 export * from "./socket-events.js";

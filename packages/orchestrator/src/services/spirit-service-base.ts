@@ -13,6 +13,7 @@ import {
   AGENT_KIND,
   isDirectMessageThread,
 } from '@ujima/shared';
+import { safeFallbackModelForProvider } from '@ujima/shared';
 import { composeSystemPromptSuffix, runWakeReason } from './spirit-run-detail.js';
 import type { ActiveSpiritEntry } from './active-spirit-registry.js';
 import type { ToolInvocationInput } from './tool-service.js';
@@ -415,12 +416,24 @@ export class SpiritServiceBase {
   }
 
   protected defaultModelResolver(): ModelResolver {
-    return ({ organizationId, memberId, role }) => {
+    return ({ organizationId, memberId, role, forceSafeFallback }) => {
       const team = requireTeam(this.teamStore, organizationId);
       const member = this.repo.getMember(organizationId, memberId);
       if (!member) {
         throw new Error(`Member not found: ${memberId}`);
       }
+      // `forceSafeFallback` is set by spirit-agent-run.ts after the
+      // live provider returns 404 for the originally-resolved model
+      // id. We swap the resolver to one that ignores per-member /
+      // per-role overrides AND ignores the team-configured provider
+      // default — and instead returns the conservative
+      // `safeFallbackModelForProvider` baseline for the provider's
+      // kind. That id is the one we've verified the live API will
+      // actually serve, so the retry succeeds.
+      const resolveModelId = forceSafeFallback
+        ? (_r: { model?: string }, p: { kind?: string; defaultModel?: string }) =>
+            safeFallbackModelForProvider(p.kind ?? '') ?? p.defaultModel
+        : defaultResolveModelId;
       return resolveSpiritModel({
         organizationId,
         memberId,
@@ -429,7 +442,7 @@ export class SpiritServiceBase {
         team,
         getProviderCredential: (orgId, key) => this.repo.getProviderCredential(orgId, key),
         resolveProviderName: defaultResolveProviderName,
-        resolveModelId: defaultResolveModelId,
+        resolveModelId,
       });
     };
   }

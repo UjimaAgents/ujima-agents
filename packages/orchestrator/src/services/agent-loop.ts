@@ -2,6 +2,74 @@ import { streamText, type LanguageModel, type ModelMessage, type ToolSet } from 
 import { RUN_TERMINATING_TOOL_NAMES } from './run-reply-guard.js';
 import { findToolApprovalRequiredError, ToolApprovalRequiredError } from './tool-loop-result.js';
 
+// Typed errors so callers can mount targeted recovery without
+// pattern-matching error strings at every site. Both extend Error so
+// they propagate normally if the caller chooses not to handle them.
+//
+// ModelNotFoundError: the configured model id 404'd at the provider.
+// Usually means the admin saved an aspirational id (e.g. before the
+// model was actually released) — the caller can swap to the
+// provider's SAFE_FALLBACK_MODELS entry and retry once.
+export class ModelNotFoundError extends Error {
+  constructor(
+    readonly modelId: string,
+    readonly providerKindHint: string | undefined,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'ModelNotFoundError';
+  }
+}
+
+// SchemaTooLargeError: Gemini's structured-generation FSM rejected
+// the combined tool schema as having too many states. Caller can
+// drop the heaviest MCP from the palette and retry once.
+export class SchemaTooLargeError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'SchemaTooLargeError';
+  }
+}
+
+// Maps a raw `AI_APICallError` from the Vercel AI SDK to one of the
+// typed errors above when the message+status pattern matches a known
+// recoverable condition. Returns `null` for errors we don't have a
+// targeted recovery for — caller re-throws the original.
+function classifyApiError(error: unknown): Error | null {
+  if (!error || typeof error !== 'object') return null;
+  const e = error as Record<string, unknown>;
+  if (e.name !== 'AI_APICallError') return null;
+  const message = typeof e.message === 'string' ? e.message : '';
+  const url = typeof e.url === 'string' ? e.url : '';
+  const status = typeof e.statusCode === 'number' ? e.statusCode : undefined;
+
+  // Google "model not found" (404 NOT_FOUND). Pattern is stable
+  // across gemini-* ids: the response body always says "is not found
+  // for API version" or "is not supported for generateContent". URL
+  // looks like .../v1beta/models/<id>:streamGenerateContent.
+  if (
+    status === 404 &&
+    /is not found for API version|is not supported for generateContent/i.test(message)
+  ) {
+    const modelMatch = url.match(/models\/([^:]+):/);
+    const modelId = modelMatch?.[1] ?? 'unknown';
+    const providerHint = url.includes('generativelanguage.googleapis.com')
+      ? 'google'
+      : undefined;
+    return new ModelNotFoundError(modelId, providerHint, message);
+  }
+
+  // Gemini's structured-generation rejection. Comes back as 400
+  // INVALID_ARGUMENT with a verbose explanation about "too many
+  // states for serving" — caused by the combined tool palette
+  // compiling to an FSM that exceeds the model's limit.
+  if (status === 400 && /too many states for serving/i.test(message)) {
+    return new SchemaTooLargeError(message);
+  }
+
+  return null;
+}
+
 export interface AgentLoopStep {
   text?: string;
   toolCalls?: { toolCallId?: string; toolName?: string; input?: unknown }[];
@@ -149,6 +217,8 @@ export async function runAgentLoop(input: {
       if (part.type === 'error') {
         const approvalError = findToolApprovalRequiredError(part.error);
         if (approvalError) throw approvalError;
+        const classified = classifyApiError(part.error);
+        if (classified) throw classified;
         throw part.error;
       }
     }
