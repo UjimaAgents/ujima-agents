@@ -18,6 +18,7 @@ function classifyPatchLine(line: string): PatchLineKind {
     line.startsWith("diff --git ") ||
     line.startsWith("Index: ") ||
     line.startsWith("index ") ||
+    line.startsWith("===") ||
     line.startsWith("new file mode ") ||
     line.startsWith("deleted file mode ") ||
     line.startsWith("similarity index ") ||
@@ -131,9 +132,19 @@ export function looksLikeUnifiedDiff(text: string): boolean {
 export function UnifiedDiffView({ text }: { text: string }) {
   const rows = useMemo(() => buildUnifiedDiffRows(text), [text]);
 
+  const displayRows = useMemo(
+    () =>
+      rows.filter(
+        (row) =>
+          (row.kind !== "meta" && row.kind !== "hunk") ||
+          row.text === "… (truncated)",
+      ),
+    [rows],
+  );
+
   return (
     <div className="min-w-0 font-mono text-[11px] leading-[1.45]">
-      {rows.map((row, i) => {
+      {displayRows.map((row, i) => {
         const display = row.text.length === 0 ? " " : row.text;
         return (
           <div

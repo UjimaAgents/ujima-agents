@@ -290,6 +290,7 @@ export class ConfigSyncService {
           roleName: agent.roleName,
           llm: existing?.llm,
           model: existing?.model,
+          shellApprovalMode: existing?.shellApprovalMode,
           presence: existing?.presence ?? 'offline',
           createdAt: existing?.createdAt ?? now,
           retiredAt: undefined,
