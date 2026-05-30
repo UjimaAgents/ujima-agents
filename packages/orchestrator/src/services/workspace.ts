@@ -1,13 +1,17 @@
 import { randomUUID } from 'node:crypto';
-import { createStarterAgentTeamConfig, type ProviderConfig } from '@ujima/framework';
+import { createEmptyWorkspaceTeamConfig, type ProviderConfig } from '@ujima/framework';
 import type { Organization } from '@ujima/shared';
 import type { AuthService } from './auth.js';
-import { assertWorkspaceRootPathExists } from './workspace-root.js';
+import { assertWorkspaceRootPathExists, normalizeProjectFolderPath } from './workspace-root.js';
 import type { ApiRepository } from './repository-reader.js';
 import type { TeamStore } from './team-store.js';
 import { provisionOrganization } from './provision-organization.js';
+import {
+  assertProjectFolderAvailable,
+  reclaimOrphanOrganizationsAtPath,
+  sweepOrphanCatalogRowsAtPath,
+} from './workspace-path-claim.js';
 import { orgWorkspaceId, organizationIdFromWorkspaceId } from '@ujima/shared';
-import { resolve } from 'node:path';
 
 export interface WorkspaceListItem {
   id: string;
@@ -27,6 +31,7 @@ export interface ListAccessibleWorkspacesResult {
 export interface CreateWorkspaceInput {
   organizationName: string;
   workspaceRoot: string;
+  copyProviderKeys?: string[];
 }
 
 export interface WorkspaceCatalogRow {
@@ -39,6 +44,7 @@ export interface WorkspaceCatalogRow {
 
 export interface WorkspaceCatalog {
   get(id: string): WorkspaceCatalogRow | undefined;
+  list?(): WorkspaceCatalogRow[];
   remove?(id: string): boolean;
 }
 
@@ -61,18 +67,6 @@ function toWorkspaceListItem(
     updated_at: row.updated_at,
     is_current: isCurrent,
   };
-}
-
-function providerConfigsFromCredentials(
-  repo: ApiRepository,
-  organizationId: string,
-): Record<string, ProviderConfig> {
-  return Object.fromEntries(
-    Object.keys(repo.listProviderCredentials(organizationId)).map((providerName) => [
-      providerName,
-      { kind: providerName },
-    ]),
-  ) as Record<string, ProviderConfig>;
 }
 
 export class WorkspaceService {
@@ -131,16 +125,17 @@ export class WorkspaceService {
     }
 
     const workspaceRoot = assertWorkspaceRootPathExists(input.workspaceRoot);
+    const normalizedNewRoot = normalizeProjectFolderPath(workspaceRoot);
 
-    const normalizedNewRoot = resolve(workspaceRoot.trim()).replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
-    const existingOrgs = this.repo.listOrganizations();
-    for (const org of existingOrgs) {
-      if (!org.workspace?.root) continue;
-      const normalizedExisting = resolve(org.workspace.root.trim()).replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
-      if (normalizedExisting === normalizedNewRoot) {
-        throw new Error(`A workspace with the project folder "${org.workspace.root}" already exists.`);
-      }
-    }
+    reclaimOrphanOrganizationsAtPath(this.repo, this.workspaces, normalizedNewRoot);
+
+    const allOrgs = this.repo.listOrganizations();
+    assertProjectFolderAvailable(
+      this.repo,
+      allOrgs,
+      normalizedNewRoot,
+      authState.user.organizationId,
+    );
 
     const templateOrganizationId = authState.user.organizationId;
     const templateOrganization = this.repo.getOrganization(templateOrganizationId);
@@ -148,10 +143,18 @@ export class WorkspaceService {
       throw new Error('current workspace was not found');
     }
 
-    const teamConfig = createStarterAgentTeamConfig({
+    const copyProviderKeys = input.copyProviderKeys ?? [];
+    const teamConfig = createEmptyWorkspaceTeamConfig({
       name: organizationName,
       workspaceRoot,
-      providers: providerConfigsFromCredentials(this.repo, templateOrganizationId),
+      providers:
+        copyProviderKeys.length > 0
+          ? Object.fromEntries(
+              copyProviderKeys
+                .filter((key) => this.repo.listProviderCredentials(templateOrganizationId)[key] != null)
+                .map((key) => [key, { kind: key } as ProviderConfig]),
+            )
+          : {},
     });
 
     const organization = provisionOrganization({
@@ -161,13 +164,13 @@ export class WorkspaceService {
       name: organizationName,
       workspaceRoot,
       teamConfig,
-      organizationChart: templateOrganization.organizationChart,
       owner: {
         kind: 'member',
         templateOrganizationId,
         templateMemberId: authState.member.id,
       },
       credentialSourceOrganizationId: templateOrganizationId,
+      copyProviderKeys,
     });
 
     const workspaceId = orgWorkspaceId(organization.id);
@@ -205,10 +208,21 @@ export class WorkspaceService {
       throw new Error('Workspace not found or access denied');
     }
 
+    const deletedOrg = this.repo.getOrganization(organizationId);
+    const deletedRoot = deletedOrg?.workspace?.root;
+
     this.repo.deleteOrganizationData(organizationId);
     this.teamStore.clearTeam(organizationId);
     if (this.workspaces.remove) {
       this.workspaces.remove(workspaceId);
+    }
+
+    if (deletedRoot?.trim()) {
+      sweepOrphanCatalogRowsAtPath(
+        this.repo,
+        this.workspaces,
+        normalizeProjectFolderPath(deletedRoot),
+      );
     }
   }
 }

@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadAgentTeam, type AgentTeamHandle } from '@ujima/framework';
-import { checkToolPolicy } from './policy.js';
+import { checkToolPolicy, resolveShellExecutePolicy } from './policy.js';
 
 describe('checkToolPolicy', () => {
   let workspaceRoot: string;
@@ -308,6 +308,49 @@ describe('checkToolPolicy', () => {
       }
     });
 
+  });
+
+  describe('resolveShellExecutePolicy', () => {
+    it('maps each shell approval mode', () => {
+      expect(resolveShellExecutePolicy('allow_all')).toEqual({
+        requiresApproval: false,
+        shellAutoReview: false,
+      });
+      expect(resolveShellExecutePolicy('always_review')).toEqual({
+        requiresApproval: true,
+        shellAutoReview: false,
+      });
+      expect(resolveShellExecutePolicy('auto_review')).toEqual({
+        requiresApproval: true,
+        shellAutoReview: true,
+      });
+      expect(resolveShellExecutePolicy(undefined)).toBeNull();
+    });
+  });
+
+  describe('shell approval modes', () => {
+    it.each([
+      ['allow_all', false, false] as const,
+      ['always_review', true, false] as const,
+      ['auto_review', true, true] as const,
+    ])('handles shell approval mode %s', (mode, requiresApproval, shellAutoReview) => {
+      expect(
+        checkToolPolicy(
+          teamWithRole({
+            name: 'shell-runner',
+            title: 'Shell Runner',
+            instructions: 'Can run shell when enabled.',
+            provider: 'openai',
+            model: 'gpt-5.4',
+            workspaceScopes: ['.'],
+            tools: ['shell'],
+            channels: ['general'],
+          }),
+          'shell-runner', 'shell', 'execute', '.',
+          { effectiveShellApprovalMode: mode },
+        ),
+      ).toEqual({ allowed: true, requiresApproval, shellAutoReview });
+    });
   });
 
   describe('mandatory-reply enforcement (L3)', () => {

@@ -97,6 +97,13 @@ export function listOrganizationsForUser(db: DbHandle, emailNormalized: string):
 }
 
 /** Organizations that have at least one owner login (excludes failed/partial onboarding). */
+export function organizationHasAuthUsers(db: DbHandle, organizationId: string): boolean {
+  const row = db
+    .prepare('SELECT 1 AS n FROM auth_users WHERE organization_id = ? LIMIT 1')
+    .get(organizationId) as { n: number } | null | undefined;
+  return row != null;
+}
+
 export function listOrganizationsWithSignIn(db: DbHandle): Organization[] {
   const rows = db
     .prepare(

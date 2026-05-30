@@ -12,6 +12,7 @@ import {
   type SocketEventName,
 } from "@ujima/shared/browser";
 import { WorkspaceSidebar } from "./workspace-sidebar";
+import { normalizeOrgShellApprovalMode, type ShellApprovalMode } from "@ujima/shared/browser";
 import { ChannelView } from "./channel-view";
 import { CommandPalette, type SearchResult } from "@/components/ui/command-palette";
 import type { BootstrapResponse } from "@ujima/api-schema";
@@ -49,6 +50,11 @@ type WorkspaceTeamSettings = {
   workspace?: { root: string; roleScopes?: Record<string, string[]> };
   agents: { name: string; roleName: string; personalityName: string; kind: string }[];
   roles: WorkspaceTeamRole[];
+  policies?: {
+    requireApprovalForWrites: boolean;
+    shellApprovalMode: ShellApprovalMode;
+    workspaceBoundaryMode: string;
+  };
 } | null;
 
 export function WorkspaceShell(props: {
@@ -423,9 +429,13 @@ export function WorkspaceShell(props: {
               bootstrap={bootstrap}
               conversation={resolvedSelected}
               members={members}
+              orgShellApprovalMode={normalizeOrgShellApprovalMode(
+                props.teamSettings?.policies ?? {},
+              )}
               goalMode={goalMode}
               onGoalModeChange={setGoalMode}
               onSelectConversation={handleSelect}
+              onMemberUpdated={appendMember}
               onOpenAgentEditor={() => {
                 if (resolvedSelected.type === "agent") {
                   setAgentEditorTargetId(resolvedSelected.id);

@@ -494,6 +494,7 @@ export interface ApiRepository extends ConversationRepository {
   getLatestOrganization(): Organization | null;
   listOrganizations(): Organization[];
   listOrganizationsWithSignIn(): Organization[];
+  organizationHasAuthUsers(organizationId: string): boolean;
   deleteOrganizationData(organizationId: string): void;
   saveWorkspaceSetting(organizationId: string, key: string, value: string): void;
   getWorkspaceSetting(organizationId: string, key: string): string | null;

@@ -10,9 +10,10 @@ import {
   normalizeWorkspaceRoot,
 } from '@ujima/shared/workspace';
 import { DEFAULT_TOOL_CATALOG } from './constants.js';
-import { createAgent, normalizeAgents, type AgentConfig } from './agents.js';
+import { normalizeAgents, type AgentConfig } from './agents.js';
 import { normalizeProviders } from './providers.js';
 import { createOrganizationChart } from './organization-chart.js';
+import { DEFAULT_ROLE_CHANNELS, DEFAULT_ROLE_TOOLS } from './roles/shared.js';
 import { defineRole, listStarterRolePresets, normalizeRoles } from './roles.js';
 import { migrateAgentTeamConfig, TEAM_CONFIG_VERSION } from './team-config-migrations.js';
 import {
@@ -134,10 +135,7 @@ export function createStarterAgentTeamConfig({
   const defaultRoleScopes = Object.fromEntries(
     starterRoles.map((preset) => [preset.name, preset.workspaceScopes]),
   ) as Record<string, string[]>;
-  const normalizedAgents = normalizeAgents(
-    agents ?? starterRoles.map((role) => createAgent(role.name, role.name)),
-    starterRoles,
-  );
+  const normalizedAgents = normalizeAgents(agents, starterRoles);
 
   return {
     name: name ?? 'Ujima Team',
@@ -157,7 +155,55 @@ export function createStarterAgentTeamConfig({
     tools: normalizeTools(tools),
     policies: PolicySchema.parse({
       requireApprovalForWrites: true,
-      requireApprovalForShell: true,
+      shellApprovalMode: 'always_review',
+      workspaceBoundaryMode: 'hard',
+    }),
+  };
+}
+
+const EMPTY_WORKSPACE_PLACEHOLDER_ROLE = defineRole({
+  name: 'agent',
+  title: 'Agent',
+  description: 'Default role for agents added in this workspace.',
+  instructions:
+    'Work within the workspace boundary. Prefer minimal, correct changes and clear communication.',
+  workspaceScopes: ['.'],
+  tools: [...DEFAULT_ROLE_TOOLS],
+  channels: [...DEFAULT_ROLE_CHANNELS],
+  kind: 'agent',
+  id: 'agent',
+});
+
+/** Settings "new workspace" — general channel and policies only; add agents manually. */
+export function createEmptyWorkspaceTeamConfig({
+  name,
+  workspaceRoot,
+  organizationChart,
+  agents,
+  providers = {},
+  tools = {},
+  roleScopes = {},
+}: Parameters<typeof createStarterAgentTeamConfig>[0] = {}): NormalizedAgentTeamConfig {
+  const root = normalizeWorkspaceRoot(workspaceRoot ?? '.');
+  const roles = normalizeRoles([EMPTY_WORKSPACE_PLACEHOLDER_ROLE], root);
+  const normalizedAgents = normalizeAgents(agents ?? [], roles);
+
+  return {
+    name: name ?? 'Ujima Team',
+    configVersion: TEAM_CONFIG_VERSION,
+    workspace: createWorkspaceConfig(root, roleScopes),
+    organizationChart: createOrganizationChart(
+      organizationChart?.reportsTo ?? {},
+      normalizedAgents,
+    ),
+    agents: normalizedAgents,
+    providers: normalizeProviders(providers),
+    roles,
+    channels: normalizeChannels([DEFAULT_GENERAL_CHANNEL]),
+    tools: normalizeTools(tools),
+    policies: PolicySchema.parse({
+      requireApprovalForWrites: true,
+      shellApprovalMode: 'always_review',
       workspaceBoundaryMode: 'hard',
     }),
   };

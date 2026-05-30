@@ -7,6 +7,7 @@ import {
   createPersonalityFromPreset,
   ROLE_PRESETS,
   createRoleFromPreset,
+  createEmptyWorkspaceTeamConfig,
   createStarterAgentTeamConfig,
   defineProvider,
   defineTool,
@@ -14,6 +15,21 @@ import {
   listRolePresets,
   validateAgentTeamConfig,
 } from './index.js';
+
+test('empty workspace config has roles but no agents', () => {
+  const config = createEmptyWorkspaceTeamConfig({
+    name: 'Empty Workspace',
+    workspaceRoot: '/tmp/empty-ws',
+  });
+
+  expect(config.agents).toEqual([]);
+  expect(config.organizationChart.reportsTo).toEqual({});
+  expect(config.roles).toHaveLength(1);
+  expect(config.roles[0]?.name).toBe('agent');
+  expect(config.roles[0]?.workspaceScopes).toEqual([path.resolve('/tmp/empty-ws')]);
+  expect(config.workspace.roleScopes).toEqual({});
+  expect(config.channels[0]?.name).toBe('general');
+});
 
 test('starter config includes the preset team shape', () => {
   const config = createStarterAgentTeamConfig({

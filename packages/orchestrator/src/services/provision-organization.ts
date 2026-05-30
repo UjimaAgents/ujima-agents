@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import { loadAgentTeam } from '@ujima/framework';
 import { OrganizationSchema, type Organization } from '@ujima/shared';
 import { ConfigSyncService, persistTeamConfig } from './config-sync.js';
@@ -9,8 +8,9 @@ import {
   assertGrantableOwnerFromParentOrg,
   assertGrantableOwnerFromMemberOrg,
   copyProviderCredentials,
-  grantWorkspaceOwnerForMember,
+  grantOrganizationAccessForMember,
   grantWorkspaceOwnerFromParentOrg,
+  WORKSPACE_OWNER_MEMBER_ID,
 } from './workspace-org-provision.js';
 
 export type OrganizationOwnerSource =
@@ -27,6 +27,8 @@ export interface ProvisionOrganizationInput {
   organizationChart?: Organization['organizationChart'];
   owner: OrganizationOwnerSource;
   credentialSourceOrganizationId: string;
+  /** When omitted, copies all provider keys from the source org (migration). When `[]`, copies none. */
+  copyProviderKeys?: string[];
 }
 
 function grantOwner(
@@ -34,17 +36,16 @@ function grantOwner(
   organizationId: string,
   owner: OrganizationOwnerSource,
 ): void {
-  const ownerMemberId = randomUUID();
   if (owner.kind === 'parent') {
     grantWorkspaceOwnerFromParentOrg(
       repo,
       owner.parentOrganizationId,
       organizationId,
-      ownerMemberId,
+      WORKSPACE_OWNER_MEMBER_ID,
     );
     return;
   }
-  grantWorkspaceOwnerForMember(
+  grantOrganizationAccessForMember(
     repo,
     owner.templateOrganizationId,
     owner.templateMemberId,
@@ -91,11 +92,14 @@ export function provisionOrganization(input: ProvisionOrganizationInput): Organi
   });
   input.repo.saveOrganization(organization);
   grantOwner(input.repo, input.organizationId, input.owner);
-  copyProviderCredentials(
-    input.repo,
-    input.credentialSourceOrganizationId,
-    input.organizationId,
-  );
+  if (input.copyProviderKeys === undefined || input.copyProviderKeys.length > 0) {
+    copyProviderCredentials(
+      input.repo,
+      input.credentialSourceOrganizationId,
+      input.organizationId,
+      input.copyProviderKeys,
+    );
+  }
 
   persistTeamConfig(input.repo, input.organizationId, team);
   const configSync = new ConfigSyncService(input.repo, input.teamStore);

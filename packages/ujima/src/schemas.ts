@@ -5,8 +5,10 @@ import {
   OrganizationChartSchema,
   PROVIDER_KINDS,
   RoleScopesSchema,
+  ShellApprovalModeSchema,
   ToolCapabilitySchema,
   WorkspaceConfigSchema,
+  normalizeOrgShellApprovalMode,
 } from '@ujima/shared';
 
 export const ProviderKindSchema = z.enum(PROVIDER_KINDS);
@@ -22,12 +24,20 @@ export const ProviderConfigSchema = z.object({
 });
 export type ProviderConfig = z.infer<typeof ProviderConfigSchema>;
 
-export const PolicySchema = z.object({
+const PolicySchemaBase = z.object({
   requireApprovalForWrites: z.boolean().default(true),
-  requireApprovalForShell: z.boolean().default(true),
+  requireApprovalForShell: z.boolean().optional(),
+  shellApprovalMode: ShellApprovalModeSchema.optional(),
   workspaceBoundaryMode: z.enum(['hard']).default('hard'),
 });
-export type PolicyConfig = z.infer<typeof PolicySchema>;
+
+export const PolicySchema = PolicySchemaBase.transform((policies) => ({
+  ...policies,
+  shellApprovalMode: normalizeOrgShellApprovalMode(policies),
+}));
+export type PolicyConfig = z.infer<typeof PolicySchemaBase> & {
+  shellApprovalMode: z.infer<typeof ShellApprovalModeSchema>;
+};
 
 export const PersonalityPresetSchema = z.object({
   name: z.string().min(1),
@@ -90,7 +100,7 @@ export const AgentTeamConfigSchema = z.object({
   tools: z.record(ToolCapabilitySchema).default({}),
   policies: PolicySchema.default({
     requireApprovalForWrites: true,
-    requireApprovalForShell: true,
+    shellApprovalMode: 'always_review',
     workspaceBoundaryMode: 'hard',
   }),
 });

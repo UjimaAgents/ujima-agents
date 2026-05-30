@@ -58,6 +58,8 @@ export const CreateWorkspaceRequestSchema = z.object({
   id: z.string().min(1).optional(),
   root_path: z.string().optional(),
   label: z.string().optional(),
+  /** Provider keys to copy from the current workspace. Omit or `[]` copies none. */
+  copy_providers: z.array(z.string().min(1)).optional(),
 });
 export type CreateWorkspaceRequest = z.infer<typeof CreateWorkspaceRequestSchema>;
 

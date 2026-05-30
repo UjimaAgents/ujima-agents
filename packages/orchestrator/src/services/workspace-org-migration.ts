@@ -11,6 +11,7 @@ import type { TeamStore } from './team-store.js';
 import { orgWorkspaceId } from '@ujima/shared';
 import { assertGrantableOwnerFromParentOrg } from './workspace-org-provision.js';
 import { provisionOrganization } from './provision-organization.js';
+import { stripProvisioningAgentsFromTeamConfig } from './team-config-sanitize.js';
 
 export const ORGANIZATION_WORKSPACE_IDS_KEY = 'organization_workspace_ids';
 const MIGRATION_DONE_KEY = 'workspace_org_unified_v1';
@@ -133,7 +134,7 @@ function splitWorkspaceToOrganization(input: {
 
   const storedTeam = repo.getWorkspaceSetting(parentOrganization.id, TEAM_CONFIG_SETTING_KEY);
   const baseConfig = storedTeam
-    ? (JSON.parse(storedTeam) as Record<string, unknown>)
+    ? stripProvisioningAgentsFromTeamConfig(JSON.parse(storedTeam) as Record<string, unknown>)
     : {};
 
   provisionOrganization({
@@ -143,7 +144,7 @@ function splitWorkspaceToOrganization(input: {
     name,
     workspaceRoot: resolvedRoot,
     teamConfig: baseConfig,
-    organizationChart: parentOrganization.organizationChart,
+    organizationChart: { reportsTo: {} },
     owner: { kind: 'parent', parentOrganizationId: parentOrganization.id },
     credentialSourceOrganizationId: parentOrganization.id,
   });

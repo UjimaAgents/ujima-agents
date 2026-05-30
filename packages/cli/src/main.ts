@@ -1,3 +1,4 @@
+import chalk from 'chalk';
 import { readFileSync, mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { homedir } from 'node:os';
@@ -13,6 +14,13 @@ import {
   resolveWebServerEntry,
 } from './runtime-paths.js';
 import { compareVersions, getLocalVersion } from './version.js';
+import {
+  printCommandRow,
+  printInfoRow,
+  printReadyLine,
+  printSplash,
+} from './cli-branding.js';
+import { maybeOpenBrowserAfterStart } from './open-browser.js';
 
 export { compareVersions, getLocalVersion } from './version.js';
 
@@ -138,7 +146,15 @@ async function cmdInit(argv: string[]): Promise<void> {
   process.stdout.write(`${text}\n`);
 }
 
+function parseStartArgv(argv: string[]) {
+  const noOpen = argv.includes('--no-open');
+  const passthrough = argv.filter((arg) => arg !== '--no-open');
+  return { passthrough, noOpen };
+}
+
 async function cmdStartPackaged(runtimeDir: string, argv: string[]): Promise<void> {
+  printSplash();
+  const { passthrough } = parseStartArgv(argv);
   const apiEntry = join(runtimeDir, 'api', 'main.js');
   const webRuntimeDir = join(runtimeDir, 'web');
   const webEntry = resolveWebServerEntry(webRuntimeDir);
@@ -154,9 +170,10 @@ async function cmdStartPackaged(runtimeDir: string, argv: string[]): Promise<voi
   const webPort = process.env.WEB_PORT ?? '3452';
   const webCwd = resolveWebServerCwd(webRuntimeDir, webEntry);
 
-  process.stdout.write('ujima start: launching packaged API and web UI…\n\n');
+  printReadyLine('Starting Ujima');
+  printInfoRow('Mode:', 'packaged API + web UI', { dim: true });
 
-  const apiChild = spawn(process.execPath, [apiEntry, ...argv], {
+  const apiChild = spawn(process.execPath, [apiEntry, ...passthrough], {
     env: { ...process.env, UJIMA_HOME: homeDir },
     stdio: 'inherit',
   });
@@ -178,6 +195,9 @@ async function cmdStartPackaged(runtimeDir: string, argv: string[]): Promise<voi
     { child: apiChild, label: 'API' },
     { child: webChild, label: 'web UI' },
   ];
+
+  maybeOpenBrowserAfterStart(argv);
+
   let shuttingDown = false;
   const shutdown = (signal: NodeJS.Signals) => {
     if (shuttingDown) return;
@@ -196,11 +216,14 @@ async function cmdStartPackaged(runtimeDir: string, argv: string[]): Promise<voi
 }
 
 async function cmdStartMonorepo(root: string, argv: string[]): Promise<void> {
-  process.stdout.write(
-    `ujima start: Found monorepo at ${root}\nStarting stack with 'bun run dev'…\n\n`,
-  );
+  const { passthrough } = parseStartArgv(argv);
+  printSplash();
+  printReadyLine('Starting Ujima');
+  printInfoRow('Mode:', `monorepo dev (${root})`, { dim: true });
 
-  const child = spawn('bun', ['run', 'dev', ...argv], {
+  maybeOpenBrowserAfterStart(argv);
+
+  const child = spawn('bun', ['run', 'dev', ...passthrough], {
     cwd: root,
     stdio: 'inherit',
     env: { ...process.env },
@@ -245,88 +268,62 @@ async function cmdStart(argv: string[]): Promise<void> {
 
 function printUsage(): void {
   const version = getLocalVersion();
-  process.stdout.write(
-    [
-      `Ujima Agents CLI v${version} — Build and run teams of autonomous AI agents.`,
-      '',
-      'Usage: ujima <command> [options]',
-      '',
-      'Commands:',
-      '  start   Start the local API daemon and web UI',
-      '  init    Onboard a new organization, owner, and workspace',
-      '  update  Check for and install updates to Ujima Agents CLI',
-      '  help    Display help information for a command',
-      '',
-      "Run 'ujima help <command>' or 'ujima <command> --help' to see detailed options for a specific command.",
-      '',
-      'Environment:',
-      '  UJIMA_HOME       Runtime home dir (default: ~/.ujima)',
-      '  UJIMA_TOKEN      Bearer token (default: read from $UJIMA_HOME/token)',
-      '  UJIMA_BIND_HOST  Daemon host (default: 127.0.0.1)',
-      '  UJIMA_PORT       Daemon port (default: 7511)',
-      '  WEB_PORT         Web UI port when using packaged start (default: 3452)',
-      '',
-    ].join('\n'),
-  );
+  printSplash();
+  printReadyLine(`Ujima CLI v${version}`);
+  printInfoRow('Usage:', 'ujima <command> [options]');
+  console.info(`   ${chalk.gray('↳')} ${chalk.white('Commands:')}`);
+  printCommandRow('start', 'Start the local API daemon and web UI');
+  printCommandRow('init', 'Onboard organization, owner, and workspace');
+  printCommandRow('update', 'Check for and install CLI updates');
+  printCommandRow('help', 'Display help for a command');
+  printInfoRow('More:', 'ujima help <command>  |  ujima <command> --help', { dim: true });
+  console.info(`   ${chalk.gray('↳')} ${chalk.white('Environment:')}`);
+  printInfoRow('UJIMA_HOME', '~/.ujima', { dim: true });
+  printInfoRow('UJIMA_TOKEN', '$UJIMA_HOME/token', { dim: true });
+  printInfoRow('UJIMA_BIND_HOST', '127.0.0.1', { dim: true });
+  printInfoRow('UJIMA_PORT', '7511', { dim: true });
+  printInfoRow('WEB_PORT', '3452', { dim: true });
 }
 
 function printCommandHelp(cmd: string): void {
+  printSplash();
   switch (cmd) {
     case 'start':
-      process.stdout.write(
-        [
-          'Usage: ujima start [options]',
-          '',
-          'Start the local Ujima stack, launching both the API daemon and the web UI processes.',
-          '',
-          'Options:',
-          '  None (takes default environment configuration)',
-          '',
-          'Environment Variables:',
-          '  UJIMA_HOME        Runtime data home directory (default: ~/.ujima)',
-          '  UJIMA_PORT        Daemon API port (default: 7511)',
-          '  UJIMA_BIND_HOST   Daemon API host interface (default: 127.0.0.1)',
-          '  WEB_PORT          Web UI port when using packaged start (default: 3452)',
-          '  WEB_HOST          Web UI host interface when using packaged start (default: 127.0.0.1)',
-          '',
-        ].join('\n'),
+      printReadyLine('Command: start');
+      printInfoRow('Usage:', 'ujima start [options]');
+      printInfoRow(
+        'Description:',
+        'Start the local API daemon and web UI (packaged or monorepo dev).',
+        { dim: true },
       );
+      printInfoRow('Options:', '--no-open   Do not open the browser after the web UI is ready', {
+        dim: true,
+      });
       break;
 
     case 'init':
-      process.stdout.write(
-        [
-          'Usage: ujima init [options]',
-          '',
-          'Run first-run onboarding against a running Ujima API daemon to configure a new organization, owner, and workspace.',
-          '',
-          'Options:',
-          '  --name, -n <name>         Organization name (required)',
-          '  --owner, -o <name>        Owner display name (required)',
-          '  --workspace, -w <path>    Absolute path to workspace root (required)',
-          '  --config, -c <path>       Path to ujima.config.ts configuration file (defaults to ./ujima.config.ts)',
-          '  --provider <name=key>     LLM provider API key to configure (repeatable, e.g. --provider openai=sk-...)',
-          '',
-          'Example:',
-          '  ujima init --name "Acme Corp" --owner "Alice Smith" --workspace /Users/alice/projects/acme',
-          '',
-        ].join('\n'),
+      printReadyLine('Command: init');
+      printInfoRow('Usage:', 'ujima init [options]');
+      printInfoRow(
+        'Description:',
+        'Onboard a new organization, owner, and workspace against a running API.',
+        { dim: true },
       );
+      console.info(`   ${chalk.gray('↳')} ${chalk.white('Options:')}`);
+      printInfoRow('--name, -n', 'Organization name (required)', { dim: true });
+      printInfoRow('--owner, -o', 'Owner display name (required)', { dim: true });
+      printInfoRow('--workspace, -w', 'Workspace root path (required)', { dim: true });
+      printInfoRow('--config, -c', 'Path to ujima.config.ts', { dim: true });
+      printInfoRow('--provider', 'name=key (repeatable)', { dim: true });
       break;
 
     case 'update':
-      process.stdout.write(
-        [
-          'Usage: ujima update [options]',
-          '',
-          'Check for updates to the Ujima Agents CLI (@ujima/agents) on the npm registry, compare with the currently installed version, and automatically update if a newer version is found.',
-          '',
-          'Options:',
-          '  --check-only              Only check for updates and print the status without executing the update',
-          '  --force                   Force re-installation/update even if already up-to-date',
-          '',
-        ].join('\n'),
-      );
+      printReadyLine('Command: update');
+      printInfoRow('Usage:', 'ujima update [options]');
+      printInfoRow('Description:', 'Check npm and install @ujima/agents updates.', { dim: true });
+      console.info(`   ${chalk.gray('↳')} ${chalk.white('Options:')}`);
+      printInfoRow('--check-only', 'Check without installing', { dim: true });
+      printInfoRow('--force', 'Re-install even if up to date', { dim: true });
       break;
 
     default:

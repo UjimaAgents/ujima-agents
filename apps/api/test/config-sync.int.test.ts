@@ -701,6 +701,7 @@ describe('team config reconcile', () => {
       kind: 'agent',
       roleName: 'frontend-engineer',
     });
+    expect(agent.id).toBe('delete-me-agent');
 
     const storedOverridesBefore = repo.getWorkspaceSetting(first.organization.id, 'dashboard.teamOverrides');
     expect(storedOverridesBefore).toBeTruthy();
@@ -731,9 +732,10 @@ describe('team config reconcile', () => {
       expect.objectContaining({ name: agent.id })
     );
 
-    expect(
-      settings.getOrganizationSettings(first.organization.id).members.map((m) => m.id),
-    ).not.toContain(agent.id);
+    const settingsMember = settings
+      .getOrganizationSettings(first.organization.id)
+      .members.find((m) => m.id === agent.id);
+    expect(settingsMember?.retiredAt).toBeTruthy();
 
     const liveTeam = teamStore.getTeam(first.organization.id);
     expect(liveTeam?.agents.map((item) => item.name)).not.toContain(agent.id);
