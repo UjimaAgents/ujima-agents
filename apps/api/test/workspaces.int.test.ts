@@ -1,8 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { createBufferLogger, createRuntimeHost, Repository, type RuntimeHost } from '@ujima/runtime-core';
+import { OrganizationSchema } from '@ujima/shared';
 import {
   AuthService,
   BootstrapService,
@@ -19,6 +21,12 @@ const TOKEN = 'c'.repeat(64);
 function stubProvider(): LLMProvider {
   throw new Error('no provider configured');
 }
+
+const authHeaders = () => ({
+  authorization: `Bearer ${TOKEN}`,
+  'content-type': 'application/json',
+  'x-ujima-session': sessionToken,
+});
 
 describe('workspace routes', () => {
   let homeDir: string;
@@ -202,14 +210,11 @@ describe('workspace routes', () => {
 
       const createResponse = await fetch(`${baseUrl}/api/workspaces`, {
         method: 'POST',
-        headers: {
-          authorization: `Bearer ${TOKEN}`,
-          'content-type': 'application/json',
-          'x-ujima-session': sessionToken,
-        },
+        headers: authHeaders(),
         body: JSON.stringify({
           root_path: otherHome,
           label: 'Second Workspace',
+          copy_providers: ['openai'],
         }),
       });
       expect(createResponse.status).toBe(200);
@@ -230,6 +235,18 @@ describe('workspace routes', () => {
       expect(storedTeam).toContain(otherHome);
       expect(repo.getWorkspaceSetting(newOrganizationId, 'dashboard.teamOverrides')).toBeNull();
       expect(repo.getProviderCredential(newOrganizationId, 'openai')).toBe('test-key');
+
+      const parsedTeam = JSON.parse(storedTeam!) as { agents?: unknown[]; roles?: unknown[] };
+      expect(parsedTeam.agents ?? []).toEqual([]);
+      expect(parsedTeam.roles ?? []).toHaveLength(1);
+      const agentMembers = repo
+        .listMembers(newOrganizationId)
+        .filter((member) => member.kind === 'agent' && !member.retiredAt);
+      expect(agentMembers).toHaveLength(0);
+      const ownerMember = repo
+        .listMembers(newOrganizationId)
+        .find((member) => member.kind === 'human' && member.roleName === 'owner');
+      expect(ownerMember?.id).toBe('owner');
 
       const listResponse = await fetch(`${baseUrl}/api/workspaces`, {
         headers: {
@@ -252,15 +269,12 @@ describe('workspace routes', () => {
 
       const switchResponse = await fetch(`${baseUrl}/api/auth/switch-org`, {
         method: 'POST',
-        headers: {
-          authorization: `Bearer ${TOKEN}`,
-          'content-type': 'application/json',
-          'x-ujima-session': sessionToken,
-        },
+        headers: authHeaders(),
         body: JSON.stringify({ organizationId: newOrganizationId }),
       });
       expect(switchResponse.status).toBe(200);
       const switched = (await switchResponse.json()) as { sessionToken: string };
+      sessionToken = switched.sessionToken;
 
       const bootstrapResponse = await fetch(`${baseUrl}/api/bootstrap`, {
         headers: {
@@ -276,9 +290,107 @@ describe('workspace routes', () => {
       expect(bootstrapBody.organization?.id).toBe(newOrganizationId);
       expect(bootstrapBody.organization?.name).toBe('Second Workspace');
       expect(bootstrapBody.team?.workspaceRoot).toBe(otherHome);
+
+      const restoreResponse = await fetch(`${baseUrl}/api/auth/switch-org`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ organizationId }),
+      });
+      expect(restoreResponse.status).toBe(200);
+      const restored = (await restoreResponse.json()) as { sessionToken: string };
+      sessionToken = restored.sessionToken;
     } finally {
       await rm(otherHome, { recursive: true, force: true });
       await rm(staleHome, { recursive: true, force: true });
+    }
+  });
+
+  it('allows creating the same project folder again after delete', async () => {
+    const recreateHome = await mkdtemp(join(tmpdir(), 'ujima-ws-recreate-'));
+    try {
+      const createResponse = await fetch(`${baseUrl}/api/workspaces`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({
+          root_path: recreateHome,
+          label: 'Recreate Workspace',
+        }),
+      });
+      expect(createResponse.status).toBe(200);
+      const created = (await createResponse.json()) as { id: string };
+      const createdOrgId = created.id.replace(/^ws_/, '');
+
+      const deleteResponse = await fetch(
+        `${baseUrl}/api/workspaces/${encodeURIComponent(created.id)}`,
+        {
+          method: 'DELETE',
+          headers: {
+            authorization: `Bearer ${TOKEN}`,
+            'x-ujima-session': sessionToken,
+          },
+        },
+      );
+      expect(deleteResponse.status).toBe(200);
+      expect(repo.getOrganization(createdOrgId)).toBeNull();
+
+      const recreateResponse = await fetch(`${baseUrl}/api/workspaces`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({
+          root_path: recreateHome,
+          label: 'Recreate Workspace Again',
+        }),
+      });
+      expect(recreateResponse.status).toBe(200);
+      const recreated = (await recreateResponse.json()) as {
+        id: string;
+        root_path: string | null;
+        label: string | null;
+      };
+      expect(recreated.root_path).toBe(recreateHome);
+      expect(recreated.label).toBe('Recreate Workspace Again');
+      const recreatedOrgId = recreated.id.replace(/^ws_/, '');
+      expect(repo.getProviderCredential(recreatedOrgId, 'openai')).toBeNull();
+    } finally {
+      await rm(recreateHome, { recursive: true, force: true });
+    }
+  });
+
+  it('reclaims orphan organizations at the same path when creating a workspace', async () => {
+    const orphanHome = await mkdtemp(join(tmpdir(), 'ujima-ws-orphan-'));
+    try {
+      const orphanOrgId = randomUUID();
+      repo.saveOrganization(
+        OrganizationSchema.parse({
+          id: orphanOrgId,
+          name: 'Zombie Workspace',
+          workspace: { root: orphanHome, roleScopes: {} },
+          organizationChart: { reportsTo: {} },
+        }),
+      );
+      host.workspaces.create({
+        id: `ws_orphan_${randomUUID().slice(0, 8)}`,
+        root_path: resolve(orphanHome),
+        label: 'Orphan catalog row',
+      });
+      expect(
+        repo.listOrganizationsWithSignIn().some((org) => org.id === orphanOrgId),
+      ).toBe(false);
+
+      const createResponse = await fetch(`${baseUrl}/api/workspaces`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({
+          root_path: orphanHome,
+          label: 'Reclaimed Workspace',
+        }),
+      });
+      expect(createResponse.status).toBe(200);
+      expect(repo.getOrganization(orphanOrgId)).toBeNull();
+      const created = (await createResponse.json()) as { id: string; label: string | null };
+      expect(created.label).toBe('Reclaimed Workspace');
+    } finally {
+      await rm(orphanHome, { recursive: true, force: true });
     }
   });
 });

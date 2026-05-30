@@ -13,6 +13,11 @@ import type { ApiRepository } from './repository-reader.js';
 export { ERR_PATH_ESCAPE, PathEscapeError };
 export type { PathResolver as ScopedPathResolver };
 
+/** Canonical form for comparing project folder paths across platforms. */
+export function normalizeProjectFolderPath(path: string): string {
+  return resolve(path.trim()).replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+}
+
 export const ERR_NO_WORKSPACE_ROOT = 'ERR_NO_WORKSPACE_ROOT';
 
 export class WorkspaceRootRequiredError extends Error {

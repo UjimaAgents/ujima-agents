@@ -1287,12 +1287,18 @@ function StepFields({
               variant="checkbox"
               values={{
                 requireApprovalForWrites: draft.policies.requireApprovalForWrites,
-                requireApprovalForShell: draft.policies.requireApprovalForShell,
+                shellApprovalMode: draft.policies.shellApprovalMode,
               }}
               onChange={(key, value) =>
                 onDraftChange({
                   ...draft,
                   policies: { ...draft.policies, [key]: value },
+                })
+              }
+              onShellModeChange={(shellApprovalMode) =>
+                onDraftChange({
+                  ...draft,
+                  policies: { ...draft.policies, shellApprovalMode },
                 })
               }
             />
@@ -1592,9 +1598,13 @@ function StepFields({
               </span>
             </div>
             <div className="flex items-center justify-between gap-4 text-sm">
-              <span className="text-zinc-600 dark:text-zinc-300">Require approval for shell</span>
+              <span className="text-zinc-600 dark:text-zinc-300">Approval for shell</span>
               <span className="font-semibold text-zinc-900 dark:text-zinc-100">
-                {draft.policies.requireApprovalForShell ? "On" : "Off"}
+                {draft.policies.shellApprovalMode === "always_review"
+                  ? "Always review"
+                  : draft.policies.shellApprovalMode === "auto_review"
+                    ? "Auto review"
+                    : "Allow all"}
               </span>
             </div>
             <div className="flex items-center justify-between gap-4 text-sm">

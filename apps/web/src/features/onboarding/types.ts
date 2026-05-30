@@ -1,4 +1,4 @@
-import { defaultModelForProvider } from "@ujima/shared/browser";
+import { defaultModelForProvider, type ShellApprovalMode } from "@ujima/shared/browser";
 
 export type OnboardingStepId = "organization" | "owner" | "team" | "review";
 export type TeamTabId = "agents" | "channels" | "org-chart" | "policies" | "providers";
@@ -47,7 +47,7 @@ export interface TeamReportDraft {
 
 export interface TeamPoliciesDraft {
   requireApprovalForWrites: boolean;
-  requireApprovalForShell: boolean;
+  shellApprovalMode: ShellApprovalMode;
   workspaceBoundaryMode: "hard";
 }
 
@@ -211,7 +211,7 @@ export const INITIAL_DRAFT: OnboardingDraft = {
   ],
   policies: {
     requireApprovalForWrites: true,
-    requireApprovalForShell: true,
+    shellApprovalMode: "always_review",
     workspaceBoundaryMode: "hard",
   },
 };
