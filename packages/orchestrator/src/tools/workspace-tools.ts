@@ -178,18 +178,28 @@ const WriteSchema = z.object({
   }
 });
 
+// Same rationale as FilePathFields above: the model-facing schema uses
+// `path` (the convention `grep` already follows), never `resourcePath`,
+// so Gemini doesn't pattern-match `resourcePath` onto unrelated tools
+// (channel.post / channel.dm) and trip additionalProperties:false. The
+// runtime reads from either alias for back-compat with older
+// serialized calls.
 const LsSchema = z.object({
-  resourcePath: z.string().min(1).default('.'),
+  path: z.string().min(1).default('.'),
   ignore: z.array(z.string().min(1)).default([]),
   depth: z.number().int().min(0).max(20).default(0),
   limit: z.number().int().min(1).max(TREE_LIMIT).default(TREE_LIMIT),
 });
 
 const GlobSchema = z.object({
-  resourcePath: z.string().min(1).default('.'),
+  path: z.string().min(1).default('.'),
   pattern: z.string().min(1),
   limit: z.number().int().min(1).max(TREE_LIMIT).default(GLOB_LIMIT),
 });
+
+function lsGlobPathFrom(args: { path?: string; resourcePath?: string }): string {
+  return args.path ?? args.resourcePath ?? '.';
+}
 
 export const viewTool: OrchestratorTool<typeof ViewSchema> = {
   id: 'view',
@@ -391,7 +401,7 @@ export const lsTool: OrchestratorTool<typeof LsSchema> = {
   toInvocation: (args) => ({
     action: 'read',
     resourceType: 'folder',
-    resourcePath: args.resourcePath,
+    resourcePath: lsGlobPathFrom(args),
     input: {
       ignore: args.ignore,
       depth: args.depth,
@@ -444,7 +454,7 @@ export const globTool: OrchestratorTool<typeof GlobSchema> = {
   toInvocation: (args) => ({
     action: 'read',
     resourceType: 'folder',
-    resourcePath: args.resourcePath,
+    resourcePath: lsGlobPathFrom(args),
     input: {
       pattern: args.pattern,
       limit: args.limit,
