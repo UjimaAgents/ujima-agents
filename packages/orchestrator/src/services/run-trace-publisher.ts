@@ -66,6 +66,7 @@ export async function publishRunReplyTrace(input: {
   artifactFileToolCall?: MessageToolCall;
   publishedArtifactFile?: boolean;
   publishedContent?: Set<string>;
+  publishedAnyText?: boolean;
 
   suppressDmAlerts?: boolean;
   failureTrace?: boolean;
@@ -80,6 +81,7 @@ export async function publishRunReplyTrace(input: {
     : { runId: input.run.id };
   let publishedArtifactFile = input.publishedArtifactFile ?? false;
   const publishedContent = input.publishedContent ?? new Set<string>();
+  let publishedAnyText = input.publishedAnyText ?? false;
 
   for (const [index, step] of input.result.steps.entries()) {
     const stepText = typeof step.text === 'string' ? step.text.trim() : '';
@@ -100,6 +102,10 @@ export async function publishRunReplyTrace(input: {
 
     if (runUsedThreadPublishingTool({ steps: [step] }) && !stepArtifactFileToolCall) continue;
     if (!stepText && !stepArtifactFileToolCall && !input.failureTrace) continue;
+
+    if (stepText) {
+      publishedAnyText = true;
+    }
 
     const content = stepText || (stepArtifactFileToolCall ? 'Artifact updated.' : 'Tool actions recorded.');
     const toolCalls = [...stepToolCalls, ...(stepArtifactFileToolCall ? [stepArtifactFileToolCall] : [])];
@@ -136,6 +142,7 @@ export async function publishRunReplyTrace(input: {
 
   if (
     input.reply.length > 0 &&
+    !publishedAnyText &&
     !usedTerminator &&
     !finalArtifactMessageNeeded &&
     !publishedContent.has(input.reply)

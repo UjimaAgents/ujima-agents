@@ -1,10 +1,11 @@
-import type {
-  AgentDef,
-  MCPDef,
-  TaskDef,
-  TeamDef,
-  UjimaEvent,
-  GovernancePolicy,
+import {
+  emptyGovernancePolicy,
+  type AgentDef,
+  type MCPDef,
+  type TaskDef,
+  type TeamDef,
+  type UjimaEvent,
+  type GovernancePolicy,
 } from '@ujima/shared';
 import type { UjimaDb } from '@ujima/context-store';
 import { openDb } from '@ujima/context-store';
@@ -92,7 +93,7 @@ export interface RuntimeHostDeps {
    * Returns the currently-active governance policy (hot-reload friendly) or
    * `undefined` if the workspace has none. Called on every tool check.
    */
-  policyResolver?: () => GovernancePolicy | undefined;
+  policyResolver?: (taskId?: string) => GovernancePolicy | undefined;
   gateResolver?: GateResolver;
 }
 
@@ -132,7 +133,36 @@ export async function createRuntimeHost(deps: RuntimeHostDeps, config: RuntimeHo
   const permissions = createPermissionMiddleware({
     audit: db.audit,
     agentState: db.agentState,
-    governancePolicy: deps.policyResolver,
+    governancePolicy: deps.policyResolver ?? ((taskId?: string) => {
+      if (!taskId) return undefined;
+      try {
+        const runRow = db.raw.prepare('SELECT organization_id FROM runs WHERE id = ?').get(taskId) as { organization_id: string } | undefined;
+        if (!runRow) return undefined;
+        const organizationId = runRow.organization_id;
+
+        const rows = db.raw.prepare('SELECT * FROM governance_rules WHERE organization_id = ?').all(organizationId) as any[];
+        const policy = emptyGovernancePolicy();
+
+        for (const row of rows) {
+          const agentId = row.agent_id;
+          if (!policy.agents[agentId]) {
+            policy.agents[agentId] = [];
+          }
+          policy.agents[agentId].push({
+            mcp_id: row.mcp_id,
+            tool_name: row.tool_name,
+            state: row.state as any,
+            reason: row.reason ?? undefined,
+            updated_at: row.updated_at,
+            updated_by: row.updated_by ?? undefined,
+          });
+        }
+        return policy;
+      } catch (err) {
+        logger.error('runtime-host: failed to resolve governance policy from database', { taskId, error: err instanceof Error ? err.message : String(err) });
+        return undefined;
+      }
+    }),
   });
   const pool = createMCPPool({});
   const workspaces = createWorkspaceStore(db.raw);

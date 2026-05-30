@@ -376,6 +376,7 @@ export class SpiritServiceDirectRun extends SpiritServiceSupervisor {
     const streamedTrace: StreamedRunTrace = { text: '', reasoning: '' };
     let persistedStepCount = 0;
     let publishedArtifactFile = false;
+    let publishedAnyText = false;
     const publishedContent = new Set<string>();
 
     try {
@@ -430,6 +431,10 @@ export class SpiritServiceDirectRun extends SpiritServiceSupervisor {
 
             if (runUsedThreadPublishingTool({ steps: [s] }) && !stepArtifactFileToolCall) continue;
             if (!stepText && !stepArtifactFileToolCall) continue;
+
+            if (stepText) {
+              publishedAnyText = true;
+            }
 
             const content = stepText || (stepArtifactFileToolCall ? 'Artifact updated.' : 'Tool actions recorded.');
             const toolCalls = [...stepToolCalls, ...(stepArtifactFileToolCall ? [stepArtifactFileToolCall] : [])];
@@ -498,6 +503,7 @@ export class SpiritServiceDirectRun extends SpiritServiceSupervisor {
           reasoningContent,
           teamRoot: team.workspace.root,
           artifactFileToolCall,
+          publishedAnyText,
 
           suppressDmAlerts: true,
           failureTrace: true,
@@ -617,6 +623,7 @@ export class SpiritServiceDirectRun extends SpiritServiceSupervisor {
         artifactFileToolCall,
         publishedArtifactFile,
         publishedContent,
+        publishedAnyText,
       });
 
       return this.completeRun(running, terminatingTool ?? reply, terminatingTool);
