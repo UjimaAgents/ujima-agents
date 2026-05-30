@@ -322,10 +322,17 @@ export function defaultResolveModelId(
 }
 
 // Fix #8: Shared tool-definition builder.
+//
+// The fallback schema used when no OrchestratorTool is registered
+// for a tool id. Exposes `path` (not `resourcePath`) for the same
+// reason the workspace tools do — keeping `resourcePath` out of any
+// model-facing JSON schema prevents Gemini from pattern-matching the
+// alias onto unrelated tools (channel.*, self.*) and tripping
+// `additionalProperties: false`.
 const GenericToolInvocationSchema = z.object({
   action: z.enum(['read', 'write', 'execute', 'mcp', 'message']),
   resourceType: z.enum(['file', 'folder', 'shell', 'mcp', 'message']),
-  resourcePath: z.string().min(1).optional(),
+  path: z.string().min(1).optional(),
   input: z.record(z.string(), z.unknown()).default({}),
 });
 
@@ -408,7 +415,7 @@ export function buildToolDefinition(
           toolId,
           action: args.action,
           resourceType: args.resourceType,
-          resourcePath: args.resourcePath,
+          resourcePath: args.path,
           input: args.input,
         });
         return toModelToolOutput(result);

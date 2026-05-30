@@ -16,11 +16,21 @@ const FetchSchema = z.object({
   timeout: z.number().int().min(1).max(600).default(30),
 });
 
+// Schema-facing field is `file_path` (matches workspace tools) so
+// Gemini doesn't see `resourcePath` anywhere in any palette and
+// misapply it to channel.* / self.* via additionalProperties:false.
+// The runtime still accepts `resourcePath` defensively via
+// downloadPathFrom for back-compat with older serialized calls.
 const DownloadSchema = z.object({
   url: z.string().min(1),
-  resourcePath: z.string().min(1),
+  file_path: z.string().min(1).optional(),
   timeout: z.number().int().min(1).max(600).default(30),
 });
+
+function downloadPathFrom(args: Record<string, unknown>): string {
+  const candidate = args.file_path ?? args.resourcePath;
+  return typeof candidate === 'string' ? candidate : '';
+}
 
 export const fetchTool: OrchestratorTool<typeof FetchSchema> = {
   id: 'fetch',
@@ -57,7 +67,7 @@ export const downloadTool: OrchestratorTool<typeof DownloadSchema> = {
   toInvocation: (args) => ({
     action: 'write',
     resourceType: 'file',
-    resourcePath: args.resourcePath,
+    resourcePath: downloadPathFrom(args as Record<string, unknown>),
     input: {
       url: args.url,
       timeout: args.timeout,
@@ -65,7 +75,7 @@ export const downloadTool: OrchestratorTool<typeof DownloadSchema> = {
   }),
   execute: async ({ invocation, team }) => {
     if (!invocation.resourcePath) {
-      throw new Error('resourcePath is required');
+      throw new Error('file_path is required (the destination workspace file path)');
     }
 
     const url = parseHttpUrl(String(invocation.input?.url ?? ''));
