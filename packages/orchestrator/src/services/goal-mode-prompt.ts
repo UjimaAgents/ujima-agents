@@ -59,6 +59,22 @@ export function goalModeEnabledFromMessage(
   return message?.metadata?.goalMode === true;
 }
 
+export interface GoalModeThreadReader {
+  getLatestHumanMessageInThread(
+    organizationId: string,
+    threadId: string,
+  ): { metadata?: { goalMode?: boolean } } | null;
+}
+
+export function isGoalModeActiveForThread(
+  repo: GoalModeThreadReader,
+  organizationId: string,
+  threadId: string | undefined | null,
+): boolean {
+  if (!threadId) return false;
+  return goalModeEnabledFromMessage(repo.getLatestHumanMessageInThread(organizationId, threadId));
+}
+
 function isGoalIntent(content: string | null | undefined): boolean {
   const text = content?.toLowerCase().trim();
   if (!text) return false;
