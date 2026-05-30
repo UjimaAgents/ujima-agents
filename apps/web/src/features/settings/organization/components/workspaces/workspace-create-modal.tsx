@@ -84,7 +84,7 @@ function WorkspaceCreateModalActive({
     if (!trimmedName || !trimmedRoot) return;
 
     const copyProviders = copyKeysEnabled
-      ? providersWithKeys.filter((provider) => selectedProviders[provider] ?? true)
+      ? providersWithKeys.filter((provider) => selectedProviders[provider] === true)
       : [];
 
     setSaving(true);

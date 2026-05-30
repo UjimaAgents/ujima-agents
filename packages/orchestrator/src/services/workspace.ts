@@ -69,18 +69,6 @@ function toWorkspaceListItem(
   };
 }
 
-function providerConfigsFromCredentials(
-  repo: ApiRepository,
-  organizationId: string,
-): Record<string, ProviderConfig> {
-  return Object.fromEntries(
-    Object.keys(repo.listProviderCredentials(organizationId)).map((providerName) => [
-      providerName,
-      { kind: providerName },
-    ]),
-  ) as Record<string, ProviderConfig>;
-}
-
 export class WorkspaceService {
   constructor(
     private readonly repo: ApiRepository,
@@ -161,7 +149,11 @@ export class WorkspaceService {
       workspaceRoot,
       providers:
         copyProviderKeys.length > 0
-          ? providerConfigsFromCredentials(this.repo, templateOrganizationId)
+          ? Object.fromEntries(
+              copyProviderKeys
+                .filter((key) => this.repo.listProviderCredentials(templateOrganizationId)[key] != null)
+                .map((key) => [key, { kind: key } as ProviderConfig]),
+            )
           : {},
     });
 
