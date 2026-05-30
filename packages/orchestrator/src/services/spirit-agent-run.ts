@@ -302,32 +302,33 @@ ${activeMemories
         if (!stepText && !artifactFileToolCall) {
           continue;
         }
-        const message = MessageSchema.parse({
-          id: randomUUID(),
+        lastMessageId = this.saveAndEmitAgentMessage({
           organizationId: input.organizationId,
-          threadId: session.channelId,
           channelId: session.channelId,
           senderId: member.id,
-          senderKind: AGENT_KIND,
-          kind: AGENT_KIND,
           content: stepText || 'Artifact updated.',
           toolCalls: messageToolCalls,
           metadata: { runId: spirit.runId ?? spirit.id },
-          ...(reasoningContent ? { reasoningContent } : {}),
-          createdAt: new Date().toISOString(),
+          reasoningContent,
         });
-        this.repo.saveMessage(message);
-        this.realtime.emit(
-          SocketEventNames.channelMessage,
-          {
-            organizationId: input.organizationId,
-            channelId: session.channelId,
-            message,
-          },
-          [orgRoom(input.organizationId), channelRoom(session.channelId)],
-        );
         lastText = stepText || lastText;
-        lastMessageId = message.id;
+      }
+
+      const persistedRunSteps = spirit.runId
+        ? this.repo.listRunSteps?.(input.organizationId, spirit.runId) ?? []
+        : [];
+      const detectedTerminatingTool =
+        findTerminatingTool(result) ?? findTerminatingToolFromRunSteps(persistedRunSteps);
+      const finalText = result.text.trim();
+      if (finalText && finalText !== lastText && !detectedTerminatingTool) {
+        lastMessageId = this.saveAndEmitAgentMessage({
+          organizationId: input.organizationId,
+          channelId: session.channelId,
+          senderId: member.id,
+          content: finalText,
+          metadata: { runId: spirit.runId ?? spirit.id },
+        });
+        lastText = finalText;
       }
 
       // Prefer the provider-supplied `totalTokens` over our own
@@ -361,13 +362,7 @@ ${activeMemories
       this.repo.saveSpirit(completed);
       this.registry.unregister(completed.organizationId, completed.memberId, completed.id);
       // Persisted run-steps act as a safety net when provider/SDK
-      // result shapes drop tool names from the final step object —
-      // the tool service writes the canonical id after each call.
-      const persistedRunSteps = spirit.runId
-        ? this.repo.listRunSteps?.(input.organizationId, spirit.runId) ?? []
-        : [];
-      const detectedTerminatingTool =
-        findTerminatingTool(result) ?? findTerminatingToolFromRunSteps(persistedRunSteps);
+      // result shapes drop tool names from the final step object.
       // Resolve the final terminator, preserving any silent
       // terminator a mid-run side-effect (mirror-loop guard, vacuous-
       // ack suppression) already wrote onto the run row. Without this
@@ -549,6 +544,42 @@ ${activeMemories
         isError,
       };
     });
+  }
+
+  private saveAndEmitAgentMessage(input: {
+    organizationId: string;
+    channelId: string;
+    senderId: string;
+    content: string;
+    metadata: Record<string, unknown>;
+    toolCalls?: MessageToolCall[];
+    reasoningContent?: string;
+  }): string {
+    const message = MessageSchema.parse({
+      id: randomUUID(),
+      organizationId: input.organizationId,
+      threadId: input.channelId,
+      channelId: input.channelId,
+      senderId: input.senderId,
+      senderKind: AGENT_KIND,
+      kind: AGENT_KIND,
+      content: input.content,
+      metadata: input.metadata,
+      ...(input.toolCalls && input.toolCalls.length > 0 ? { toolCalls: input.toolCalls } : {}),
+      ...(input.reasoningContent ? { reasoningContent: input.reasoningContent } : {}),
+      createdAt: new Date().toISOString(),
+    });
+    this.repo.saveMessage(message);
+    this.realtime.emit(
+      SocketEventNames.channelMessage,
+      {
+        organizationId: input.organizationId,
+        channelId: input.channelId,
+        message,
+      },
+      [orgRoom(input.organizationId), channelRoom(input.channelId)],
+    );
+    return message.id;
   }
 
   async buildMcpToolDefinitions(ctx: {

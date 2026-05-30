@@ -77,7 +77,7 @@ export async function publishRunReplyTrace(input: {
     ? { runId: input.run.id, failedTrace: true }
     : { runId: input.run.id };
   let publishedArtifactFile = false;
-  let publishedMessages = 0;
+  const publishedContent = new Set<string>();
 
   for (const [index, step] of input.result.steps.entries()) {
     const stepText = typeof step.text === 'string' ? step.text.trim() : '';
@@ -124,17 +124,20 @@ export async function publishRunReplyTrace(input: {
       undefined,
       publishOptions,
     );
-    publishedMessages++;
+    publishedContent.add(content);
   }
 
-  // Fallback: if the per-step loop published nothing (e.g. the AI
-  // returned text with zero steps) and we have reply text, publish a
-  // single message so the reply is visible in the thread.
-  // Do not publish if a terminating/thread-publishing tool was fired.
   const runSteps = input.repo.listRunSteps?.(input.run.organizationId, input.run.id) ?? [];
   const terminatingTool = findTerminatingTool(input.result) ?? findTerminatingToolFromRunSteps(runSteps);
   const usedTerminator = terminatingTool !== null;
-  if (publishedMessages === 0 && input.reply.length > 0 && !usedTerminator) {
+  const finalArtifactMessageNeeded = !!input.artifactFileToolCall && !publishedArtifactFile;
+
+  if (
+    input.reply.length > 0 &&
+    !usedTerminator &&
+    !finalArtifactMessageNeeded &&
+    !publishedContent.has(input.reply)
+  ) {
     input.conversations?.publishMessage(
       MessageSchema.parse({
         id: randomUUID(),
@@ -155,8 +158,6 @@ export async function publishRunReplyTrace(input: {
     );
   }
 
-
-  const finalArtifactMessageNeeded = !!input.artifactFileToolCall && !publishedArtifactFile;
   if (finalArtifactMessageNeeded && input.artifactFileToolCall) {
     input.conversations?.publishMessage(
       buildArtifactFileMessage({

@@ -46,4 +46,26 @@ describe('runAgentLoop', () => {
     expect(result.steps).toHaveLength(1);
     expect(result.steps[0].text).toBe('hello');
   });
+
+  it('emits streamed text deltas', async () => {
+    const model = new MockLanguageModelV3({
+      doStream: async () => {
+        return { stream: textStream('hello') };
+      },
+    }) as unknown as LanguageModel;
+    const chunks: string[] = [];
+
+    await runAgentLoop({
+      model,
+      system: 'system',
+      messages: [{ role: 'user', content: 'hi' }],
+      tools: {},
+      stopWhen: stepCountIs(1),
+      onChunk: (chunk) => {
+        if (chunk.kind === 'text') chunks.push(chunk.delta);
+      },
+    });
+
+    expect(chunks).toEqual(['hello']);
+  });
 });

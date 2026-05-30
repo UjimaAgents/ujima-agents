@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   AGENT_KIND,
   ChannelSchema,
@@ -6,11 +8,15 @@ import {
   MemberShellApprovalModeSchema,
   PROVIDER_KINDS,
   shellApprovalModeFromLegacyRequireShell,
+  emptyGovernancePolicy,
+  GovernancePolicy,
+  removeAgentRule,
   type Organization,
   type Member,
   type Channel,
   type MemberShellApprovalMode,
   type ShellApprovalMode,
+  type ToolPolicyState,
 } from '@ujima/shared';
 import { AgentTeam, createAgent, defineRole, loadAgentTeam, normalizeProviderKey, type RoleConfig } from '@ujima/framework';
 import type { ApiRepository } from './repository-reader.js';
@@ -23,6 +29,7 @@ import {
 } from './member-channels.js';
 import {
   assertWorkspaceRootPathExists,
+  requireExistingOrganizationWorkspaceRoot,
   upsertWorkspaceMemberScopes,
 } from './workspace-root.js';
 import {
@@ -121,6 +128,16 @@ export interface UpdateChannelInput {
   name?: string;
   topic?: string;
   memberIds?: string[];
+}
+
+export interface PolicyAllowRuleRecord {
+  agentId: string;
+  mcpId: string;
+  toolName: string;
+  state: ToolPolicyState;
+  reason?: string;
+  updatedAt?: string;
+  updatedBy?: string;
 }
 
 export interface ProviderTestResult {
@@ -695,6 +712,63 @@ export class SettingsService {
       fieldName,
     );
     return ownership?.owner === 'config' && !ownership.allowDashboardOverride;
+  }
+
+  private readGovernancePolicy(
+    organizationId: string,
+  ): { policy: GovernancePolicy; workspaceRoot: string } {
+    const org = requireExistingOrganizationWorkspaceRoot(this.repo, organizationId);
+    const path = join(org.workspace.root, '.ujima', 'governance.json');
+    if (!existsSync(path)) {
+      return { policy: emptyGovernancePolicy(), workspaceRoot: org.workspace.root };
+    }
+    const raw = readFileSync(path, 'utf-8');
+    const parsed = JSON.parse(raw);
+    const policy = GovernancePolicy.parse(parsed);
+    return { policy, workspaceRoot: org.workspace.root };
+  }
+
+  private writeGovernancePolicy(
+    organizationId: string,
+    policy: GovernancePolicy,
+  ): void {
+    const org = requireExistingOrganizationWorkspaceRoot(this.repo, organizationId);
+    const path = join(org.workspace.root, '.ujima', 'governance.json');
+    writeFileSync(path, JSON.stringify(policy, null, 2), 'utf-8');
+  }
+
+  /** List all `state: 'allow'` rules from the governance policy across all agents. */
+  listAllowRules(organizationId: string): PolicyAllowRuleRecord[] {
+    const { policy } = this.readGovernancePolicy(organizationId);
+    const rules: PolicyAllowRuleRecord[] = [];
+    for (const [agentId, agentRules] of Object.entries(policy.agents)) {
+      for (const rule of agentRules ?? []) {
+        if (rule.state === 'allow') {
+          rules.push({
+            agentId,
+            mcpId: rule.mcp_id,
+            toolName: rule.tool_name,
+            state: rule.state,
+            reason: rule.reason,
+            updatedAt: rule.updated_at,
+            updatedBy: rule.updated_by,
+          });
+        }
+      }
+    }
+    return rules;
+  }
+
+  /** Revoke (remove) a specific allow rule from the governance policy. */
+  revokeAllowRule(
+    organizationId: string,
+    agentId: string,
+    mcpId: string,
+    toolName: string,
+  ): void {
+    const { policy } = this.readGovernancePolicy(organizationId);
+    const updated = removeAgentRule(policy, agentId, mcpId, toolName);
+    this.writeGovernancePolicy(organizationId, updated);
   }
 }
 

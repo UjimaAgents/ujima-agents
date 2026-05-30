@@ -107,12 +107,13 @@ export async function runAgentLoop(input: {
       ...(onChunk
         ? {
             onChunk: async ({ chunk }) => {
+              const delta = chunkDelta(chunk);
               if (chunk.type === 'text-delta') {
-                await onChunk({ kind: 'text', delta: chunk.text });
+                if (delta) await onChunk({ kind: 'text', delta });
                 return;
               }
               if (chunk.type === 'reasoning-delta') {
-                await onChunk({ kind: 'reasoning', delta: chunk.text });
+                if (delta) await onChunk({ kind: 'reasoning', delta });
               }
             },
           }
@@ -154,4 +155,14 @@ export async function runAgentLoop(input: {
   };
 
   return execute();
+}
+
+function chunkDelta(chunk: unknown): string {
+  if (!chunk || typeof chunk !== 'object') return '';
+  const record = chunk as Record<string, unknown>;
+  return typeof record.delta === 'string'
+    ? record.delta
+    : typeof record.text === 'string'
+      ? record.text
+      : '';
 }

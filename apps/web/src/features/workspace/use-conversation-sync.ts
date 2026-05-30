@@ -802,7 +802,25 @@ function buildRunChunkItem(input: {
   sequence: number;
 }): RunChunkStoreItem {
   const activity = runChunkToActivity(input.chunk, input.sequence);
-  return { activity };
+  if (input.chunk.kind !== "text" || !input.chunk.delta) return { activity };
+  const member = input.members.find((item) => item.id === input.chunk.agentId);
+  const createdAt = new Date().toISOString();
+  return {
+    activity,
+    message: {
+      id: `stream:${input.chunk.runId}:${input.chunk.agentId}`,
+      senderId: input.chunk.agentId,
+      role: member?.roleName ?? "agent",
+      name: member?.name ?? input.chunk.agentId,
+      time: formatTime(createdAt),
+      content: input.chunk.delta,
+      kind: "agent",
+      createdAt,
+      threadId: input.chunk.threadId,
+      streamRunId: input.chunk.runId,
+      pending: true,
+    },
+  };
 }
 
 function formatTime(iso: string): string {

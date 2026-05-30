@@ -124,7 +124,7 @@ export const ChatMessage = memo(function ChatMessage({
       ? parseRelayFilesystemBody(systemBodyMarkdown, systemLabel)
       : null;
   const artifactFile = getArtifactFileCard(message.toolCalls);
-  const showBody = message.content.trim().length > 0;
+  const showBody = message.content.trim().length > 0 && !(artifactFile && isInternalMarkerContent(message.content));
 
   return (
     <>
@@ -263,6 +263,14 @@ function getSystemMessageLabel(content: string): string {
   return "System summary";
 }
 
+function isInternalMarkerContent(content: string): boolean {
+  return (
+    content.startsWith(CONVERSATION_ARCHIVE_MARKER) ||
+    content.startsWith(CONVERSATION_SUMMARY_MARKER) ||
+    content.startsWith(SELF_NOTE_SUMMARY_MARKER)
+  );
+}
+
 /** Body below the title line for system messages that carry multi-line context (e.g. approval relay). */
 function systemMessageBodyMarkdown(content: string): string | null {
   if (content.startsWith("[Approval needed]")) {
@@ -337,17 +345,16 @@ function formatArtifactStatus(status: string): string {
 }
 
 export function getArtifactFileCard(toolCalls?: ChatMessageData["toolCalls"]): ArtifactFileView | null {
-  const card = toolCalls?.find((entry) => entry.toolName === "card.artifact.file");
+  const card = toolCalls?.find(
+    (entry) => entry.toolName === "card.artifact.file" || entry.toolName === "card.goal.file",
+  );
   if (!card) return null;
-  const { name, filePath, html, artifactFormat, status } = card.args;
-  if (
-    typeof name !== "string" ||
-    typeof filePath !== "string" ||
-    typeof html !== "string" ||
-    typeof status !== "string"
-  ) {
-    return null;
-  }
+  const name = stringArg(card.args, "name") ?? stringArg(card.args, "goalName");
+  const filePath = stringArg(card.args, "filePath") ?? stringArg(card.args, "goalFilePath");
+  const html = stringArg(card.args, "html");
+  const artifactFormat = card.args.artifactFormat;
+  const status = stringArg(card.args, "status");
+  if (!name || !filePath || !html || !status) return null;
   return {
     name,
     filePath,
@@ -355,6 +362,11 @@ export function getArtifactFileCard(toolCalls?: ChatMessageData["toolCalls"]): A
     artifactFormat: artifactFormat === "html" ? "html" : "markdown",
     status,
   };
+}
+
+function stringArg(args: Record<string, unknown>, key: string): string | undefined {
+  const value = args[key];
+  return typeof value === "string" ? value : undefined;
 }
 
 function ArtifactFilePreview({ artifact }: { artifact: ArtifactFileView }) {
