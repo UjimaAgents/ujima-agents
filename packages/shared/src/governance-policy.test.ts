@@ -290,12 +290,18 @@ describe('evaluatePolicy: risk_defaults', () => {
     expect(r.source).toBe('platform_require_approval');
   });
 
-  it('missing classification falls into the unknown bucket', () => {
+  // risk_defaults only applies when `classificationLookup` returns
+  // something — including the literal 'unknown'. Built-in tools
+  // (channel.*, self.*, view, ls, …) are never classified and surface
+  // as `undefined`; treating them as the `unknown` bucket would block
+  // standups when admins set `risk_defaults.unknown=require_approval`,
+  // even though those built-ins have their own enforcement path.
+  it('missing classification on a non-MCP tool falls through (inherit)', () => {
     let p = emptyGovernancePolicy();
     p = setRiskDefaults(p, { unknown: 'require_approval' });
-    const r = evaluatePolicy(p, { agentId: 'a', mcpId: 'm', toolName: 't' });
-    expect(r.state).toBe('require_approval');
-    expect(r.source).toBe('risk_default');
+    const r = evaluatePolicy(p, { agentId: 'a', mcpId: 'channels', toolName: 'channel.pass' });
+    expect(r.state).toBe('inherit');
+    expect(r.source).toBe('default');
   });
 
   it('explicit classification=unknown also uses the unknown bucket', () => {

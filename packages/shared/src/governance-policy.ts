@@ -169,15 +169,26 @@ export function evaluatePolicy(
     };
   }
 
-  const bucket: keyof RiskDefaults = classification ?? 'unknown';
-  const riskState = policy.risk_defaults?.[bucket] ?? 'inherit';
-  if (riskState !== 'inherit') {
-    return {
-      state: riskState,
-      source: 'risk_default',
-      reason: `Org default for ${bucket} tools is ${riskState}`,
-      classification,
-    };
+  // risk_defaults only applies to *MCP* tools whose classification was
+  // looked up. Built-in tools (channel.*, self.*, supervisor.*, view,
+  // ls, glob, …) never have a classification — they have their own
+  // policy enforcement in the orchestrator (`checkToolPolicy`). If we
+  // treated `classification === undefined` as the `unknown` bucket,
+  // setting `risk_defaults.unknown = 'require_approval'` would block
+  // EVERY built-in messaging / read tool, breaking standups and
+  // mandatory-reply turns. Require an explicit `'unknown'` from the
+  // classificationLookup before applying the unknown bucket.
+  if (classification !== undefined) {
+    const bucket: keyof RiskDefaults = classification;
+    const riskState = policy.risk_defaults?.[bucket] ?? 'inherit';
+    if (riskState !== 'inherit') {
+      return {
+        state: riskState,
+        source: 'risk_default',
+        reason: `Org default for ${bucket} tools is ${riskState}`,
+        classification,
+      };
+    }
   }
 
   return { state: 'inherit', source: 'default', classification };
