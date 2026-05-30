@@ -22,12 +22,6 @@ function stubProvider(): LLMProvider {
   throw new Error('no provider configured');
 }
 
-const authHeaders = () => ({
-  authorization: `Bearer ${TOKEN}`,
-  'content-type': 'application/json',
-  'x-ujima-session': sessionToken,
-});
-
 describe('workspace routes', () => {
   let homeDir: string;
   let host: RuntimeHost;
@@ -36,6 +30,12 @@ describe('workspace routes', () => {
   let sessionToken: string;
   let organizationId: string;
   let repo: Repository;
+
+  const authHeaders = () => ({
+    authorization: `Bearer ${TOKEN}`,
+    'content-type': 'application/json',
+    'x-ujima-session': sessionToken,
+  });
 
   beforeAll(async () => {
     homeDir = await mkdtemp(join(tmpdir(), 'ujima-workspaces-'));
