@@ -19,4 +19,34 @@ describe("markdown streaming renderer", () => {
 
     expect(renderStreamingMarkdown(content, mentionNames)).toBe(renderMarkdown(content, mentionNames));
   });
+
+  it("correctly renders GFM tables", () => {
+    const content = `
+| Header 1 | Header 2 |
+|---|---|
+| Cell 1 | Cell 2 |
+`.trim();
+    const html = renderMarkdown(content, []);
+    expect(html).toContain("<table>");
+    expect(html).toContain("<thead>");
+    expect(html).toContain("<th>Header 1</th>");
+    expect(html).toContain("<tbody>");
+    expect(html).toContain("<td>Cell 1</td>");
+  });
+
+  it("correctly renders premium images", () => {
+    const content = '![logo](https://example.com/logo.png "Title")';
+    const html = renderMarkdown(content, []);
+    expect(html).toContain('<img src="https://example.com/logo.png" alt="logo" title="Title"');
+    expect(html).toContain('class="max-w-full my-4 rounded-lg border border-foreground/10 bg-foreground/5 shadow-sm inline-block"');
+  });
+
+  it("allows safe HTML tags and escapes other tags", () => {
+    const content = '<details><summary>Click me</summary><br>Plain text <iframe src="unsafe"></iframe></details>';
+    const html = renderMarkdown(content, []);
+    expect(html).toContain("<details>");
+    expect(html).toContain("<summary>");
+    expect(html).toContain("<br>");
+    expect(html).toContain("&lt;iframe src=&quot;unsafe&quot;&gt;&lt;/iframe&gt;");
+  });
 });

@@ -1,11 +1,13 @@
 import {
   emptyGovernancePolicy,
+  organizationIdFromWorkspaceId,
   type AgentDef,
   type MCPDef,
   type TaskDef,
   type TeamDef,
   type UjimaEvent,
   type GovernancePolicy,
+  type ToolPolicyState,
 } from '@ujima/shared';
 import type { UjimaDb } from '@ujima/context-store';
 import { openDb } from '@ujima/context-store';
@@ -130,38 +132,62 @@ export async function createRuntimeHost(deps: RuntimeHostDeps, config: RuntimeHo
   const dbPath = config.dbPath ?? join(deps.homeDir, 'data', 'ujima.db');
   const db = openDb({ dbPath });
   const bus = createLocalEventBus({ audit: db.audit, pendingEvents: db.pendingEvents });
+
+  // Maintains the (taskId → organizationId) mapping for the lifetime of each
+  // running task. Permissions middleware is wired up at host construction time
+  // before any task exists, so the resolver below dereferences this map on
+  // every tool check (rather than baking org IDs into closures). Populated by
+  // startTask, cleared when the run handle resolves.
+  const taskOrgIndex = new Map<string, string>();
+
+  function loadOrganizationGovernancePolicy(organizationId: string): GovernancePolicy | undefined {
+    try {
+      interface GovernanceRuleDbRow {
+        agent_id: string;
+        mcp_id: string;
+        tool_name: string;
+        state: ToolPolicyState;
+        reason: string | null;
+        updated_at: string;
+        updated_by: string | null;
+      }
+      const rows = db.raw
+        .prepare('SELECT * FROM governance_rules WHERE organization_id = ?')
+        .all(organizationId) as GovernanceRuleDbRow[];
+      const policy = emptyGovernancePolicy();
+
+      for (const row of rows) {
+        const agentId = row.agent_id;
+        if (!policy.agents[agentId]) {
+          policy.agents[agentId] = [];
+        }
+        policy.agents[agentId].push({
+          mcp_id: row.mcp_id,
+          tool_name: row.tool_name,
+          state: row.state,
+          reason: row.reason ?? undefined,
+          updated_at: row.updated_at,
+          updated_by: row.updated_by ?? undefined,
+        });
+      }
+      return policy;
+    } catch (err) {
+      logger.error('runtime-host: failed to resolve governance policy from database', {
+        organizationId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return undefined;
+    }
+  }
+
   const permissions = createPermissionMiddleware({
     audit: db.audit,
     agentState: db.agentState,
     governancePolicy: deps.policyResolver ?? ((taskId?: string) => {
       if (!taskId) return undefined;
-      try {
-        const runRow = db.raw.prepare('SELECT organization_id FROM runs WHERE id = ?').get(taskId) as { organization_id: string } | undefined;
-        if (!runRow) return undefined;
-        const organizationId = runRow.organization_id;
-
-        const rows = db.raw.prepare('SELECT * FROM governance_rules WHERE organization_id = ?').all(organizationId) as any[];
-        const policy = emptyGovernancePolicy();
-
-        for (const row of rows) {
-          const agentId = row.agent_id;
-          if (!policy.agents[agentId]) {
-            policy.agents[agentId] = [];
-          }
-          policy.agents[agentId].push({
-            mcp_id: row.mcp_id,
-            tool_name: row.tool_name,
-            state: row.state as any,
-            reason: row.reason ?? undefined,
-            updated_at: row.updated_at,
-            updated_by: row.updated_by ?? undefined,
-          });
-        }
-        return policy;
-      } catch (err) {
-        logger.error('runtime-host: failed to resolve governance policy from database', { taskId, error: err instanceof Error ? err.message : String(err) });
-        return undefined;
-      }
+      const organizationId = taskOrgIndex.get(taskId);
+      if (!organizationId) return undefined;
+      return loadOrganizationGovernancePolicy(organizationId);
     }),
   });
   const pool = createMCPPool({});
@@ -257,6 +283,17 @@ export async function createRuntimeHost(deps: RuntimeHostDeps, config: RuntimeHo
       handle,
     };
     active.set(task.task_id, running);
+
+    const organizationId = organizationIdFromWorkspaceId(ws.id);
+    if (organizationId) {
+      taskOrgIndex.set(task.task_id, organizationId);
+    } else {
+      logger.warn('runtime-host: workspace id missing org prefix; governance rules will not apply', {
+        taskId: task.task_id,
+        workspaceId: ws.id,
+      });
+    }
+
     logger.info('runtime-host: task started', {
       taskId: task.task_id,
       workspaceId: ws.id,
@@ -266,6 +303,7 @@ export async function createRuntimeHost(deps: RuntimeHostDeps, config: RuntimeHo
 
     void handle.result.finally(() => {
       active.delete(task.task_id);
+      taskOrgIndex.delete(task.task_id);
       logger.info('runtime-host: task completed', { taskId: task.task_id });
     });
 

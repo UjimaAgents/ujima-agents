@@ -498,11 +498,16 @@ export class SpiritServiceDirectRun extends SpiritServiceSupervisor {
           repo: this.repo,
           conversations: this.conversations,
           run: running,
-          result,
+          result: {
+            ...result,
+            steps: result.steps.slice(persistedStepCount),
+          },
           reply: text || (artifactFileToolCall ? 'Artifact updated.' : ''),
           reasoningContent,
           teamRoot: team.workspace.root,
           artifactFileToolCall,
+          publishedArtifactFile,
+          publishedContent,
           publishedAnyText,
 
           suppressDmAlerts: true,
