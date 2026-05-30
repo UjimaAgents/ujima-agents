@@ -1,4 +1,4 @@
-import { AGENT_KIND, slugifyMemberId } from '@ujima/shared';
+import { slugifyMemberId } from '@ujima/shared';
 import type { ApiRepository } from './repository-reader.js';
 
 export function resolveAgentMemberId(
@@ -12,8 +12,8 @@ export function resolveAgentMemberId(
   }
 
   const existing = repo.getMember(organizationId, id);
-  if (existing && existing.kind === AGENT_KIND && !existing.retiredAt) {
-    throw new Error(`An active agent "${id}" already exists`);
+  if (existing && !existing.retiredAt) {
+    throw new Error(`A member with the id "${id}" already exists`);
   }
 
   return id;

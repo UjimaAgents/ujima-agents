@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { AgentTeamConfigSchema, RoleConfigSchema } from '@ujima/framework';
 import type { Repository } from '@ujima/runtime-core';
-import { AGENT_KIND, ChannelSchema, IdSchema, MemberSchema } from '@ujima/shared';
+import { AGENT_KIND, ChannelSchema, IdSchema, MemberSchema, MemberShellApprovalModeSchema } from '@ujima/shared';
 import { ensureDirectMessageConversation } from '@ujima/orchestrator';
 import {
   ApiErrorSchema,
@@ -39,7 +39,7 @@ const AddMemberRequestSchema = z.object({
   channelIds: z.array(IdSchema).default([]),
   llm: z.string().min(1).optional(),
   model: z.string().min(1).optional(),
-  shellApprovalMode: MemberShellApprovalUpdateSchema.shape.shellApprovalMode,
+  shellApprovalMode: MemberShellApprovalModeSchema.optional(),
   personalityName: z.string().min(1).optional(),
   role: RoleConfigSchema.optional(),
 });
@@ -48,7 +48,7 @@ const UpdateMemberRequestSchema = AddMemberRequestSchema.omit({ kind: true }).ex
   channelIds: z.array(IdSchema).optional(),
   role: RoleConfigSchema,
   personalityName: z.string().min(1),
-  shellApprovalMode: MemberShellApprovalUpdateSchema.shape.shellApprovalMode,
+  shellApprovalMode: MemberShellApprovalModeSchema.optional(),
 });
 const CreateChannelRequestSchema = z.object({
   name: z.string().min(1),

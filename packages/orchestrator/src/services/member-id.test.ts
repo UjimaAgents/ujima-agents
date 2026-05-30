@@ -12,7 +12,7 @@ describe('resolveAgentMemberId', () => {
     expect(() => resolveAgentMemberId(repo, 'org-1', '!!!')).toThrow(/letter or number/);
   });
 
-  it('rejects active agent with same id', () => {
+  it('rejects active member with same id', () => {
     const repo = {
       getMember: vi.fn(() => ({
         id: 'frontend-bot',
@@ -23,7 +23,18 @@ describe('resolveAgentMemberId', () => {
     expect(() => resolveAgentMemberId(repo, 'org-1', 'Frontend Bot')).toThrow(/already exists/);
   });
 
-  it('allows slug when only a retired agent holds it', () => {
+  it('rejects active human member (e.g. workspace owner)', () => {
+    const repo = {
+      getMember: vi.fn(() => ({
+        id: 'owner',
+        kind: 'human',
+        retiredAt: undefined,
+      })),
+    };
+    expect(() => resolveAgentMemberId(repo, 'org-1', 'Owner')).toThrow(/already exists/);
+  });
+
+  it('allows slug when only a retired member holds it', () => {
     const repo = {
       getMember: vi.fn(() => ({
         id: 'frontend-bot',
