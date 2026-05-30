@@ -525,13 +525,12 @@ export class AiService {
     }
     const systemPrompt = system;
 
-    // Self-followup wakes routinely produce multi-section
-    // deliverables (the scaffold now nudges agents to write them to
-    // disk, but compacted/short messages and small deliverables still
-    // get posted inline). 1200 tokens is too tight for a task list +
-    // its delivery note; bump to 4096 so the model has room to finish
-    // even when it ignores the "write to a file first" rule.
-    const turnMaxOutputTokens = wakeReasonForPalette === 'self-followup' ? 4096 : 1200;
+    // Multi-section deliverables (task lists, BRDs, PRDs, or file writing)
+    // routinely exceed the per-turn cap when pasted inline or written via tools,
+    // producing JSON parsing errors due to truncation. 1200 tokens is too tight
+    // for a task list, delivery note, or large file write. We set the turn limit
+    // to 4096 across all wakes so the model always has sufficient headroom.
+    const turnMaxOutputTokens = 4096;
     return runAgentLoop({
       model,
       system: systemPrompt,
