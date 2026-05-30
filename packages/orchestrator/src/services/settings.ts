@@ -40,6 +40,10 @@ function activeMembers(repo: ApiRepository, organizationId: string): Member[] {
   return repo.listMembers(organizationId).filter((member) => !member.retiredAt);
 }
 
+function parseShellApprovalMode(value: MemberShellApprovalMode | undefined, fallback: MemberShellApprovalMode | undefined): MemberShellApprovalMode | undefined {
+  return value !== undefined ? MemberShellApprovalModeSchema.parse(value) : fallback;
+}
+
 export interface TeamSettingsResponse {
   name: string;
   workspace: { root: string; roleScopes: Record<string, string[]> };
@@ -312,10 +316,7 @@ export class SettingsService {
       roleName: input.roleName,
       llm: input.llm ? normalizeProviderKey(input.llm) : undefined,
       model: input.model,
-      shellApprovalMode:
-        input.shellApprovalMode !== undefined
-          ? MemberShellApprovalModeSchema.parse(input.shellApprovalMode)
-          : existingMember?.shellApprovalMode,
+      shellApprovalMode: parseShellApprovalMode(input.shellApprovalMode, existingMember?.shellApprovalMode),
       createdAt: existingMember?.createdAt,
       retiredAt: undefined,
     });
@@ -376,10 +377,7 @@ export class SettingsService {
         roleName: input.roleName,
         llm: input.llm !== undefined ? normalizeProviderKey(input.llm) : member.llm,
         model: input.model !== undefined ? input.model : member.model,
-        shellApprovalMode:
-          input.shellApprovalMode !== undefined
-            ? MemberShellApprovalModeSchema.parse(input.shellApprovalMode)
-            : member.shellApprovalMode,
+        shellApprovalMode: parseShellApprovalMode(input.shellApprovalMode, member.shellApprovalMode),
       }),
     );
 
@@ -448,10 +446,7 @@ export class SettingsService {
         ...member,
         llm: input.llm !== undefined ? normalizeProviderKey(input.llm) : member.llm,
         model: input.model !== undefined ? input.model : member.model,
-        shellApprovalMode:
-          input.shellApprovalMode !== undefined
-            ? MemberShellApprovalModeSchema.parse(input.shellApprovalMode)
-            : member.shellApprovalMode,
+        shellApprovalMode: parseShellApprovalMode(input.shellApprovalMode, member.shellApprovalMode),
       }),
     );
   }

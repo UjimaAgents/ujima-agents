@@ -31,11 +31,12 @@ export function AgentChatHeaderControls({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const PROVIDER_LABELS: Record<string, string> = { openai: "OpenAI", anthropic: "Anthropic", google: "Google" };
   const modelOptions = useMemo(
     () =>
       listConfiguredProviderModels(
         providers,
-        (provider, model) => `${formatProviderLabel(provider)} · ${model}`,
+        (provider, model) => `${PROVIDER_LABELS[provider] ?? provider.charAt(0).toUpperCase() + provider.slice(1)} · ${model}`,
       ),
     [providers],
   );
@@ -101,11 +102,7 @@ export function AgentChatHeaderControls({
               if (!parsed) return;
               void patchPreferences({ llm: parsed.provider, model: parsed.model });
             }}
-            options={modelOptions.map((option) => ({
-              value: option.value,
-              label: option.label,
-              selectedLabel: option.selectedLabel,
-            }))}
+            options={modelOptions}
             placeholder="Select model"
             className="w-[10.5rem] sm:w-52"
           />
@@ -119,11 +116,4 @@ export function AgentChatHeaderControls({
       ) : null}
     </div>
   );
-}
-
-function formatProviderLabel(provider: string): string {
-  if (provider === "openai") return "OpenAI";
-  if (provider === "anthropic") return "Anthropic";
-  if (provider === "google") return "Google";
-  return provider.charAt(0).toUpperCase() + provider.slice(1);
 }
