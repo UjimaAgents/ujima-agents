@@ -3,38 +3,58 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { openDatabase } from '@ujima/context-store';
 import { OrganizationSchema } from '@ujima/shared';
-import { Repository } from '@ujima/runtime-core';
-import { createWorkspaceStore } from '@ujima/runtime-core';
+import type { ApiRepository } from './repository-reader.js';
 import { reclaimOrphanOrganizationsAtPath } from './workspace-path-claim.js';
 import { normalizeProjectFolderPath } from './workspace-root.js';
+import type { WorkspaceCatalog } from './workspace.js';
 
 describe('reclaimOrphanOrganizationsAtPath', () => {
   it('deletes organizations at the path with no auth_users', () => {
-    const db = openDatabase({ dbPath: ':memory:' });
-    const repo = new Repository(db);
-    const workspaces = createWorkspaceStore(db);
     const home = mkdtempSync(join(tmpdir(), 'ujima-reclaim-'));
     try {
-      const orphanId = randomUUID();
-      repo.saveOrganization(
-        OrganizationSchema.parse({
-          id: orphanId,
-          name: 'Zombie',
-          workspace: { root: home, roleScopes: {} },
-          organizationChart: { reportsTo: {} },
-        }),
-      );
-      expect(repo.organizationHasAuthUsers(orphanId)).toBe(false);
+      const orphan = OrganizationSchema.parse({
+        id: randomUUID(),
+        name: 'Zombie',
+        workspace: { root: home, roleScopes: {} },
+        organizationChart: { reportsTo: {} },
+      });
+      const deleted: string[] = [];
+      const repo: ApiRepository = {
+        listOrganizations: () => [orphan],
+        organizationHasAuthUsers: () => false,
+        deleteOrganizationData: (id: string) => { deleted.push(id); },
+        getOrganization: () => null,
+      } as unknown as ApiRepository;
+      const workspaces: WorkspaceCatalog = {};
 
-      reclaimOrphanOrganizationsAtPath(
-        repo,
-        workspaces,
-        normalizeProjectFolderPath(home),
-      );
+      reclaimOrphanOrganizationsAtPath(repo, workspaces, normalizeProjectFolderPath(home));
+      expect(deleted).toEqual([orphan.id]);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
 
-      expect(repo.getOrganization(orphanId)).toBeNull();
+  it('does not delete organizations with auth users', () => {
+    const home = mkdtempSync(join(tmpdir(), 'ujima-reclaim-auth-'));
+    try {
+      const active = OrganizationSchema.parse({
+        id: randomUUID(),
+        name: 'Active Org',
+        workspace: { root: home, roleScopes: {} },
+        organizationChart: { reportsTo: {} },
+      });
+      const deleted: string[] = [];
+      const repo: ApiRepository = {
+        listOrganizations: () => [active],
+        organizationHasAuthUsers: () => true,
+        deleteOrganizationData: (id: string) => { deleted.push(id); },
+        getOrganization: () => null,
+      } as unknown as ApiRepository;
+      const workspaces: WorkspaceCatalog = {};
+
+      reclaimOrphanOrganizationsAtPath(repo, workspaces, normalizeProjectFolderPath(home));
+      expect(deleted).toEqual([]);
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
