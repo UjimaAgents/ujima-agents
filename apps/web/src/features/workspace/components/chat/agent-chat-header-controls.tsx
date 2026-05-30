@@ -38,7 +38,7 @@ export function AgentChatHeaderControls({
         providers,
         (provider, model) => `${PROVIDER_LABELS[provider] ?? provider.charAt(0).toUpperCase() + provider.slice(1)} · ${model}`,
       ),
-    [providers],
+    [providers, PROVIDER_LABELS],
   );
 
   const selectedModelValue = resolveMemberModelSelection(member, providers);
