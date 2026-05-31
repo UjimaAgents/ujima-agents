@@ -292,14 +292,6 @@ function errMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function isAfterMessage(
-  candidate: { createdAt: string; id: string },
-  anchor: { createdAt: string; id: string },
-): boolean {
-  const byTime = candidate.createdAt.localeCompare(anchor.createdAt);
-  return byTime > 0 || (byTime === 0 && candidate.id > anchor.id);
-}
-
 function latestDelegateReply(
   repo: Pick<ApiRepository, 'listMessages'>,
   organizationId: string,
@@ -307,10 +299,12 @@ function latestDelegateReply(
   agentId: string,
   after: { createdAt: string; id: string },
 ) {
-  return repo
-    .listMessages(organizationId, threadId, undefined, 100)
-    .data.filter((message) => message.senderId === agentId && isAfterMessage(message, after))
-    .at(-1);
+  const messages = repo.listMessages(organizationId, threadId, undefined, 100).data;
+  const anchorIndex = messages.findIndex((message) => message.id === after.id);
+  const candidates = anchorIndex >= 0
+    ? messages.slice(anchorIndex + 1)
+    : messages.filter((message) => message.createdAt > after.createdAt);
+  return candidates.filter((message) => message.senderId === agentId).at(-1);
 }
 
 function delegateRunForMessage(
@@ -455,6 +449,7 @@ async function waitForAgentDelegateReply(input: {
   agentName: string;
   threadId: string;
   delegateMessage: { id: string; createdAt: string };
+  parentRunId: string;
   timeoutMs?: number;
   pollIntervalMs?: number;
 }): Promise<AgentDelegateResult> {
@@ -474,6 +469,7 @@ async function waitForAgentDelegateReply(input: {
       input.agentId,
       input.threadId,
     );
+    const blockingRun = activeRun?.id === input.parentRunId ? null : activeRun;
     const delegateRun = delegateRunForMessage(
       input.repo,
       input.organizationId,
@@ -492,7 +488,7 @@ async function waitForAgentDelegateReply(input: {
         error: delegateRun.summary,
       };
     }
-    if (reply && !activeRun) {
+    if (reply && !blockingRun) {
       return {
         status: 'completed',
         agent: input.agentName,
@@ -505,7 +501,7 @@ async function waitForAgentDelegateReply(input: {
     }
     if (
       !reply &&
-      !activeRun &&
+      !blockingRun &&
       delegateRun &&
       runIsTerminal(delegateRun.status)
     ) {
@@ -542,6 +538,15 @@ export async function runAgentDelegateTurn(input: {
     reason: string;
     wakeReason: WakeReason;
   }) => Promise<void> | void;
+  createRun: (run: {
+    organizationId: string;
+    agentId: string;
+    threadId: string;
+    summary?: string;
+    wakeReason?: WakeReason;
+    sourceMessageId?: string;
+    byMemberId?: string;
+  }) => Promise<unknown>;
   organizationId: string;
   fromMemberId: string;
   to: string;
@@ -577,7 +582,18 @@ export async function runAgentDelegateTurn(input: {
     metadata: { runId: input.runId, delegate: { parentRunId: input.runId } },
   });
 
-  if (!activeRun) {
+  const isSelfDelegation = input.fromMemberId === target.id;
+  if (isSelfDelegation) {
+    await input.createRun({
+      organizationId: input.organizationId,
+      agentId: target.id,
+      threadId,
+      summary: `Delegate task by ${input.fromMemberId} on message ${delegateMessage.id}`,
+      wakeReason: 'dm',
+      sourceMessageId: delegateMessage.id,
+      byMemberId: input.fromMemberId,
+    });
+  } else if (!activeRun) {
     await input.wakeMember({
       organizationId: input.organizationId,
       memberId: target.id,
@@ -597,6 +613,7 @@ export async function runAgentDelegateTurn(input: {
     agentName: target.name,
     threadId,
     delegateMessage,
+    parentRunId: input.runId,
     timeoutMs: input.timeoutMs,
     pollIntervalMs: input.pollIntervalMs,
   });
@@ -618,6 +635,9 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     reason: string;
     wakeReason: WakeReason;
   }) => Promise<void> | void = () => undefined;
+  let createDelegateRun: Parameters<typeof runAgentDelegateTurn>[0]['createRun'] = async () => {
+    throw new Error('createDelegateRun not wired');
+  };
 
   const conversations = new ConversationService(context.repo, context.realtime, {
     archiveStore: retention,
@@ -637,6 +657,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
       repo: context.repo,
       conversations,
       wakeMember,
+      createRun: createDelegateRun,
       ...input,
     });
 
@@ -731,6 +752,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
       mcpPool: context.mcpPool,
     },
   );
+  createDelegateRun = (run) => spirits.createRun(run);
 
   // Plug SpiritService's MCP tool resolver into AiService now that
   // both exist. This is what gives the wake-run path (advanceRun ->

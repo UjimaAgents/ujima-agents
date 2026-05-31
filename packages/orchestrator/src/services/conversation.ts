@@ -122,6 +122,7 @@ export class ConversationService {
   private readonly pairMentionWindows = new Map<string, number[]>();
   private readonly pairMentionCap = 3;
   private readonly pairMentionWindowMs = 90_000;
+  private readonly lastMessageCreatedAtByThread = new Map<string, number>();
 
   constructor(
     private readonly repo: ConversationRepository,
@@ -134,6 +135,17 @@ export class ConversationService {
     this.mentionWindowMs = options.mentionWindowMs ?? 60_000;
     this.channelReadCap = 100;
     this.channelReadWindowMs = 60_000;
+  }
+
+  private nextMessageCreatedAt(organizationId: string, threadId: string, requestedAt: string): string {
+    const key = `${organizationId}:${threadId}`;
+    const requestedMs = Date.parse(requestedAt);
+    const previousMs = this.lastMessageCreatedAtByThread.get(key) ?? 0;
+    const nextMs = Number.isFinite(requestedMs)
+      ? Math.max(requestedMs, previousMs + 1)
+      : previousMs + 1;
+    this.lastMessageCreatedAtByThread.set(key, nextMs);
+    return new Date(nextMs).toISOString();
   }
 
   listChannels(organizationId: string, cursor?: string, limit?: number) {
@@ -332,12 +344,13 @@ export class ConversationService {
     const resolvedMentions = options?.skipMentionResolution
       ? typedMentions ?? []
       : typedMentions ?? this.resolveMessageMentions(message.organizationId, message, channel);
+    const existing = this.repo.getMessage(message.organizationId, message.id);
     const finalMessage = MessageSchema.parse({
       ...message,
+      createdAt: existing?.createdAt ?? this.nextMessageCreatedAt(message.organizationId, message.threadId, message.createdAt),
       mentions: uniqueMentionIds(resolvedMentions),
       mentionNames: this.resolveMentionNames(message.organizationId, message.content, channel),
     });
-    const existing = this.repo.getMessage(finalMessage.organizationId, finalMessage.id);
     const messageAttachments = (finalMessage as { attachments?: { id: string }[] }).attachments ?? [];
     const linkedAttachmentIds = attachmentIds ?? messageAttachments.map((attachment) => attachment.id);
     if (linkedAttachmentIds.length > 0) {
