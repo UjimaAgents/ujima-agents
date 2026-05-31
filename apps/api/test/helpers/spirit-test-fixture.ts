@@ -88,6 +88,7 @@ export async function createSpiritTestFixture(opts: SpiritFixtureOptions = {}): 
       conversations,
       goals,
       noopRealtime(),
+      async () => ({ status: 'timed_out', agent: '', agent_id: '', thread_id: '', message_id: '' }),
     );
   } else {
     tools = {

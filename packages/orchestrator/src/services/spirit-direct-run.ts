@@ -39,6 +39,12 @@ import {
   type StreamedRunTrace,
 } from './run-trace-publisher.js';
 
+function isDelegateRun(run: RunState, repo: { getMessage(organizationId: string, messageId: string): { metadata?: unknown } | null }): boolean {
+  if (!run.sourceMessageId) return false;
+  const source = repo.getMessage(run.organizationId, run.sourceMessageId);
+  return !!(source?.metadata as { delegate?: unknown } | undefined)?.delegate;
+}
+
 export class SpiritServiceDirectRun extends SpiritServiceSupervisor {
   async resumeAfterApproval(
     organizationId: string,
@@ -689,6 +695,7 @@ export class SpiritServiceDirectRun extends SpiritServiceSupervisor {
         publishedArtifactFile,
         publishedContent,
         publishedAnyText,
+        suppressDmAlerts: isDelegateRun(running, this.repo),
       });
 
       return this.completeRun(running, terminatingTool ?? reply, terminatingTool);

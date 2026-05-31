@@ -1,7 +1,9 @@
 import type { PermissionMiddleware } from '@ujima/permissions';
 import {
+  AGENT_KIND,
   SocketEventNames,
   channelRoom,
+  getDirectMessageThreadId,
   memberRoom,
   orgRoom,
   threadRoom,
@@ -42,6 +44,7 @@ import {
 } from './tool-service.js';
 import { ToolServiceImpl, type ApprovalRequester } from './tool-service-impl.js';
 import { createSpiritModelResolver } from '../utils/create-spirit-model-resolver.js';
+import type { AgentDelegateResult } from '../tools/types.js';
 
 export type { ApiServiceContext, RealtimeService } from './context.js';
 export { createTeamStore } from './team-store.js';
@@ -242,6 +245,8 @@ export interface ApiServices {
 }
 
 type WakeMemberInput = PendingMemberAlert;
+const AGENT_DELEGATE_POLL_INTERVAL_MS = 500;
+const AGENT_DELEGATE_TIMEOUT_MS = 120_000;
 
 interface WakeMemberDeps {
   spirits: Pick<SpiritService, 'handleAlert'>;
@@ -285,6 +290,43 @@ async function withCreateRunMutex<T>(
 
 function errMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function isAfterMessage(
+  candidate: { createdAt: string; id: string },
+  anchor: { createdAt: string; id: string },
+): boolean {
+  const byTime = candidate.createdAt.localeCompare(anchor.createdAt);
+  return byTime > 0 || (byTime === 0 && candidate.id > anchor.id);
+}
+
+function latestDelegateReply(
+  repo: Pick<ApiRepository, 'listMessages'>,
+  organizationId: string,
+  threadId: string,
+  agentId: string,
+  after: { createdAt: string; id: string },
+) {
+  return repo
+    .listMessages(organizationId, threadId, undefined, 100)
+    .data.filter((message) => message.senderId === agentId && isAfterMessage(message, after))
+    .at(-1);
+}
+
+function delegateRunForMessage(
+  repo: Pick<ApiRepository, 'listThreadRuns'>,
+  organizationId: string,
+  threadId: string,
+  agentId: string,
+  messageId: string,
+): ReturnType<ApiRepository['listThreadRuns']>['data'][number] | undefined {
+  return repo
+    .listThreadRuns(organizationId, threadId, undefined, 25)
+    .data.find((candidate) => candidate.agentId === agentId && candidate.sourceMessageId === messageId);
+}
+
+function runIsTerminal(status: string): boolean {
+  return !['queued', 'running', 'waiting_for_approval', 'waiting_for_input'].includes(status);
 }
 
 function emitMemberAlertFailed(
@@ -406,6 +448,160 @@ export async function wakeMemberWithFailureEvents(
   });
 }
 
+async function waitForAgentDelegateReply(input: {
+  repo: ApiRepository;
+  organizationId: string;
+  agentId: string;
+  agentName: string;
+  threadId: string;
+  delegateMessage: { id: string; createdAt: string };
+  timeoutMs?: number;
+  pollIntervalMs?: number;
+}): Promise<AgentDelegateResult> {
+  const startedAt = Date.now();
+  const timeoutMs = input.timeoutMs ?? AGENT_DELEGATE_TIMEOUT_MS;
+  const pollIntervalMs = input.pollIntervalMs ?? AGENT_DELEGATE_POLL_INTERVAL_MS;
+  while (Date.now() - startedAt < timeoutMs) {
+    const reply = latestDelegateReply(
+      input.repo,
+      input.organizationId,
+      input.threadId,
+      input.agentId,
+      input.delegateMessage,
+    );
+    const activeRun = input.repo.findActiveRunForMemberThread(
+      input.organizationId,
+      input.agentId,
+      input.threadId,
+    );
+    const delegateRun = delegateRunForMessage(
+      input.repo,
+      input.organizationId,
+      input.threadId,
+      input.agentId,
+      input.delegateMessage.id,
+    );
+    if (delegateRun?.status === 'failed' || delegateRun?.status === 'cancelled') {
+      return {
+        status: 'delegate_failed',
+        agent: input.agentName,
+        agent_id: input.agentId,
+        thread_id: input.threadId,
+        message_id: input.delegateMessage.id,
+        run_status: delegateRun.status,
+        error: delegateRun.summary,
+      };
+    }
+    if (reply && !activeRun) {
+      return {
+        status: 'completed',
+        agent: input.agentName,
+        agent_id: input.agentId,
+        thread_id: input.threadId,
+        message_id: input.delegateMessage.id,
+        reply_id: reply.id,
+        reply_content: reply.content,
+      };
+    }
+    if (
+      !reply &&
+      !activeRun &&
+      delegateRun &&
+      runIsTerminal(delegateRun.status)
+    ) {
+      return {
+        status: 'no_reply',
+        agent: input.agentName,
+        agent_id: input.agentId,
+        thread_id: input.threadId,
+        message_id: input.delegateMessage.id,
+      };
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+  }
+
+  return {
+    status: 'timed_out',
+    agent: input.agentName,
+    agent_id: input.agentId,
+    thread_id: input.threadId,
+    message_id: input.delegateMessage.id,
+  };
+}
+
+export async function runAgentDelegateTurn(input: {
+  repo: ApiRepository;
+  conversations: ConversationService;
+  wakeMember: (alert: {
+    organizationId: string;
+    memberId: string;
+    threadId: string;
+    channelId?: string;
+    messageId: string;
+    byMemberId: string;
+    reason: string;
+    wakeReason: WakeReason;
+  }) => Promise<void> | void;
+  organizationId: string;
+  fromMemberId: string;
+  to: string;
+  message: string;
+  runId: string;
+  timeoutMs?: number;
+  pollIntervalMs?: number;
+}): Promise<AgentDelegateResult> {
+  const target = input.repo
+    .listMembers(input.organizationId)
+    .find((member) => member.kind === AGENT_KIND && (member.id === input.to || member.name === input.to));
+  if (!target) {
+    const names = input.repo
+      .listMembers(input.organizationId)
+      .filter((member) => member.kind === AGENT_KIND)
+      .map((member) => member.name)
+      .join(', ');
+    throw new Error(`Agent "${input.to}" not found. Available agents: ${names}`);
+  }
+
+  const threadId = getDirectMessageThreadId(input.fromMemberId, target.id);
+  const activeRun = input.repo.findActiveRunForMemberThread(
+    input.organizationId,
+    target.id,
+    threadId,
+  );
+  const delegateMessage = input.conversations.sendDirectMessage({
+    organizationId: input.organizationId,
+    senderId: input.fromMemberId,
+    recipientId: target.id,
+    content: input.message,
+    ignore: true,
+    metadata: { runId: input.runId, delegate: { parentRunId: input.runId } },
+  });
+
+  if (!activeRun) {
+    await input.wakeMember({
+      organizationId: input.organizationId,
+      memberId: target.id,
+      threadId,
+      channelId: threadId,
+      messageId: delegateMessage.id,
+      byMemberId: input.fromMemberId,
+      reason: 'dm',
+      wakeReason: 'dm',
+    });
+  }
+
+  return waitForAgentDelegateReply({
+    repo: input.repo,
+    organizationId: input.organizationId,
+    agentId: target.id,
+    agentName: target.name,
+    threadId,
+    delegateMessage,
+    timeoutMs: input.timeoutMs,
+    pollIntervalMs: input.pollIntervalMs,
+  });
+}
+
 export function createApiServices(context: ApiServicesContext): ApiServices {
   const retention = new ChannelRetentionService(
     context.repo,
@@ -427,6 +623,22 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     archiveStore: retention,
     onMemberAlerted: (input) => wakeMember(input),
   });
+
+  const delegateAgentTurn = async (input: {
+    organizationId: string;
+    fromMemberId: string;
+    to: string;
+    message: string;
+    runId: string;
+    timeoutMs?: number;
+    pollIntervalMs?: number;
+  }): Promise<AgentDelegateResult> =>
+    runAgentDelegateTurn({
+      repo: context.repo,
+      conversations,
+      wakeMember,
+      ...input,
+    });
 
   // Late-bound resume callback — runs is constructed below and plugged in.
   let resumeRun: (
@@ -468,6 +680,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     conversations,
     goals,
     context.realtime,
+    delegateAgentTurn,
     context.mcpPool,
     spiritModelResolver,
   );

@@ -180,19 +180,6 @@ export class GoalSystemService {
       updatedAt: now,
     });
 
-    if (question.runId && question.toolCallId) {
-      const step = this.repo
-        .listRunSteps(organizationId, question.runId)
-        .find((s) => s.toolCallId === question.toolCallId);
-      if (step) {
-        const existingOutput = step.output && typeof step.output === 'object' ? step.output : {};
-        this.repo.saveRunStep({
-          ...step,
-          output: { ...existingOutput, status: 'completed', selectedOption },
-        });
-      }
-    }
-
     if (question.goalId && selectedOption === IMPLEMENT_QUESTION_OPTION) {
       try {
         this.implement(organizationId, question.goalId);

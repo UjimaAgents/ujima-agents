@@ -17,6 +17,7 @@ import { jobKillTool, jobOutputTool } from './job-tools.js';
 import { downloadTool, fetchTool } from './web-tools.js';
 import { shellTool } from './shell.js';
 import { messageTool } from './message.js';
+import { agentDelegateTool } from './agent-delegate.js';
 import { scheduleTool } from './schedule.js';
 import { webSearchTool } from './web-search.js';
 import { memoryForgetTool, memoryRecallTool, memoryWriteTool } from './memory.js';
@@ -74,6 +75,7 @@ export const ORCHESTRATOR_TOOLS = {
   'memory.forget': memoryForgetTool,
   message: messageTool,
   schedule: scheduleTool,
+  'agent.delegate': agentDelegateTool,
 } as unknown as Record<string, OrchestratorTool>;
 
 // Tools an agent always has access to, regardless of its role's `tools`
@@ -148,6 +150,7 @@ export const ALWAYS_AVAILABLE_AGENT_TOOLS = Object.freeze([
   'memory.write',
   'memory.recall',
   'memory.forget',
+  'agent.delegate',
 ] as const);
 
 // Supervisor's strict tool allowlist — read-only / annotation-only tools

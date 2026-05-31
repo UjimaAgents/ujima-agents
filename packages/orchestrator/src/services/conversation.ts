@@ -779,7 +779,7 @@ export class ConversationService {
     mentions?: string[];
     parentMessageId?: string;
     attachmentIds?: string[];
-    metadata?: { runId?: string; goalMode?: boolean };
+    metadata?: { runId?: string; goalMode?: boolean; delegate?: { parentRunId?: string } };
     /** L10 — client-supplied idempotency key. */
     clientMessageId?: string;
   }) {
@@ -897,7 +897,7 @@ export class ConversationService {
     body: string;
     replyTo?: string;
     mentions?: string[];
-    metadata?: { runId?: string };
+    metadata?: { runId?: string; delegate?: { parentRunId?: string } };
   }) {
     const channel = this.requireActiveChannel(input.organizationId, input.channelId);
     let threadId = channel.id;
@@ -928,7 +928,7 @@ export class ConversationService {
     messageId: string;
     body: string;
     mentions?: string[];
-    metadata?: { runId?: string };
+    metadata?: { runId?: string; delegate?: { parentRunId?: string } };
   }) {
     const parent = this.requireMessage(input.organizationId, input.messageId);
     return this.sendMessage({
@@ -952,7 +952,7 @@ export class ConversationService {
     parentMessageId?: string;
     ignore?: boolean;
     attachmentIds?: string[];
-    metadata?: { runId?: string; goalMode?: boolean };
+    metadata?: { runId?: string; goalMode?: boolean; delegate?: { parentRunId?: string } };
     /** L10 — client-supplied idempotency key. */
     clientMessageId?: string;
   }) {
@@ -999,7 +999,9 @@ export class ConversationService {
       }
     }
 
-    const dmChannelName = [sender.name, recipient.name].sort().join(' / ');
+    const memberIds = [...new Set([sender.id, recipient.id])].sort();
+    const dmChannelName =
+      sender.id === recipient.id ? `${sender.name} (self delegation)` : [sender.name, recipient.name].sort().join(' / ');
     const now = new Date().toISOString();
 
     const channel = this.repo.saveChannel(ChannelSchema.parse({
@@ -1008,16 +1010,16 @@ export class ConversationService {
       name: dmChannelName,
       kind: 'dm',
       topic: '',
-      memberIds: [sender.id, recipient.id],
+      memberIds,
     }));
-    this.repo.setChannelMembers(channelId, [sender.id, recipient.id]);
+    this.repo.setChannelMembers(channelId, memberIds);
 
     this.repo.ensureThread({
       id: channel.id,
       organizationId: input.organizationId,
       channelId: channel.id,
       title: dmChannelName,
-      memberIds: [sender.id, recipient.id],
+      memberIds,
       createdAt: now,
     });
 
@@ -1068,7 +1070,9 @@ export class ConversationService {
     }
 
     const channelId = getDirectMessageThreadId(memberA.id, memberB.id);
-    const dmChannelName = [memberA.name, memberB.name].sort().join(' / ');
+    const memberIds = [...new Set([memberA.id, memberB.id])].sort();
+    const dmChannelName =
+      memberA.id === memberB.id ? `${memberA.name} (self delegation)` : [memberA.name, memberB.name].sort().join(' / ');
     const now = new Date().toISOString();
 
     const channel = this.repo.saveChannel(
@@ -1078,17 +1082,17 @@ export class ConversationService {
         name: dmChannelName,
         kind: 'dm',
         topic: '',
-        memberIds: [memberA.id, memberB.id],
+        memberIds,
       }),
     );
-    this.repo.setChannelMembers(channelId, [memberA.id, memberB.id]);
+    this.repo.setChannelMembers(channelId, memberIds);
 
     this.repo.ensureThread({
       id: channel.id,
       organizationId: input.organizationId,
       channelId: channel.id,
       title: dmChannelName,
-      memberIds: [memberA.id, memberB.id],
+      memberIds,
       createdAt: now,
     });
 

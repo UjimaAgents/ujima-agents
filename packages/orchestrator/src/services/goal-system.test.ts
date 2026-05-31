@@ -36,7 +36,12 @@ function startPlan(goals: GoalSystemService, organizationId: string, channelId: 
 function saveRunStep(
   repo: Repository,
   organizationId: string,
-  input: { runId: string; toolId: string; status?: 'waiting_for_input' | 'completed' },
+  input: {
+    runId: string;
+    toolId: string;
+    status?: 'waiting_for_input' | 'completed';
+    output?: Record<string, unknown>;
+  },
 ) {
   const now = new Date().toISOString();
   repo.saveRun({
@@ -61,7 +66,7 @@ function saveRunStep(
     resourceType: 'goal',
     resourcePath: '',
     input: {},
-    output: { status: 'completed' },
+    output: input.output ?? { status: 'completed' },
     status: 'ok',
     createdAt: now,
   });
@@ -133,7 +138,7 @@ describe('GoalSystemService.answer', () => {
     expect(repo.getGoal(orgId, goal.id)?.status).toBe('planning');
   });
 
-  it('rewrites the run step output so the resumed agent sees the chosen option', () => {
+  it('keeps the run step replayable so the resumed agent sees the chosen option', () => {
     const { repo, orgId } = bootstrap();
     const goals = new GoalSystemService(repo, async () => {
       // resume not exercised in this test
@@ -143,6 +148,7 @@ describe('GoalSystemService.answer', () => {
       runId,
       toolId: 'question.ask',
       status: 'waiting_for_input',
+      output: { status: 'waiting_for_input', questionId: 'question-1' },
     });
     const question = goals.ask({
       organizationId: orgId,
@@ -159,12 +165,12 @@ describe('GoalSystemService.answer', () => {
       .listRunSteps(orgId, runId)
       .find((s) => s.toolCallId === toolCallId);
     expect(updatedStep?.output).toEqual({
-      status: 'completed',
-      selectedOption: 'Yes (Recommended)',
+      status: 'waiting_for_input',
+      questionId: 'question-1',
     });
   });
 
-  it('preserves goal.start task ids when recording the implement answer', () => {
+  it('preserves goal.start task ids without finalizing the replayable step', () => {
     const { repo, orgId } = bootstrap();
     const goals = new GoalSystemService(repo, async () => {
       // resume not exercised in this test
@@ -199,8 +205,8 @@ describe('GoalSystemService.answer', () => {
 
     const updatedStep = repo.listRunSteps(orgId, runId).find((s) => s.toolCallId === toolCallId);
     expect(updatedStep?.output).toMatchObject({
-      status: 'completed',
-      selectedOption: IMPLEMENT_QUESTION_OPTION,
+      status: 'waiting_for_input',
+      questionId: 'question-output',
       tasks: [{ id: 'task-1' }],
     });
   });

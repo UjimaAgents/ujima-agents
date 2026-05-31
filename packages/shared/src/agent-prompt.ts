@@ -143,6 +143,15 @@ const COLLABORATION_PROTOCOL_DM_ONLY_BULLETS = [
   "- Do not call channel.pass in a DM because you think you were not @mentioned; that rule applies to shared channels only.",
 ] as const;
 
+const DELEGATION_GUIDANCE = [
+  "<delegation_guidance>",
+  "Use agent.delegate when work can be split into independent lanes, especially research over multiple non-overlapping sources, parallel investigation, review, QA, or other multitasking work.",
+  "Delegate to a specific agent with a clear one-turn message. You may delegate to yourself when you want a separate copy of your own agent to work in parallel.",
+  "Do not delegate tiny sequential work, work that needs one continuous context, or anything you can do directly faster than coordinating.",
+  "The delegated agent answers in its own agent-only DM thread. Read the tool result and continue in your original thread; do not reply inside the delegated thread after the final answer.",
+  "</delegation_guidance>",
+] as const;
+
 export function buildCollaborationProtocol(
   conversationKind: ConversationKind = "channel",
 ): string {
@@ -152,7 +161,7 @@ export function buildCollaborationProtocol(
       ? COLLABORATION_PROTOCOL_DM_ONLY_BULLETS
       : COLLABORATION_PROTOCOL_CHANNEL_ONLY_BULLETS),
   ];
-  return [COLLABORATION_PROTOCOL_HEADER, ...bullets].join("\n");
+  return [COLLABORATION_PROTOCOL_HEADER, ...bullets, "", ...DELEGATION_GUIDANCE].join("\n");
 }
 
 /** Default channel collaboration protocol. */

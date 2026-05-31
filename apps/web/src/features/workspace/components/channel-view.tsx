@@ -858,7 +858,7 @@ export function ChannelView({
                   <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
                 </span>
                 <span className="font-medium">
-                  {chat.agents.join(" & ")} {chat.agents.length > 1 ? "are" : "is"} chatting
+                  {chat.name} {chat.agents.length > 1 ? "are" : "is"} chatting
                 </span>
               </button>
             ))}

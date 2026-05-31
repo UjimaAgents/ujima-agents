@@ -140,6 +140,13 @@ export function checkToolPolicy(
     return { allowed: true, requiresApproval: false };
   }
 
+  // Agent delegation is an internal orchestration primitive — agents
+  // delegate work by posting DM messages, not by accessing
+  // the filesystem or shell. Allow without approval or role config.
+  if (toolId === 'agent.delegate') {
+    return { allowed: true, requiresApproval: false };
+  }
+
   // Durable memory, per-agent procedure, and goal/question
   // management tools are internal management surfaces — they
   // mutate first-party tables (memory_entries, procedures, goals,
