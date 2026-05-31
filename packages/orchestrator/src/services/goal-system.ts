@@ -3,6 +3,8 @@ import type { Goal, GoalTask, GoalTaskStatus, InteractiveQuestion } from '@ujima
 import type { ApiRepository } from './repository-reader.js';
 
 export const QUESTION_RECOMMENDED_SUFFIX = '(Recommended)';
+export const IMPLEMENT_QUESTION_TEXT = 'Do you want me to implement?';
+export const IMPLEMENT_QUESTION_OPTION = `Yes, implement ${QUESTION_RECOMMENDED_SUFFIX}`;
 
 export interface ParsedPlanTask {
   title: string;
@@ -172,6 +174,22 @@ export class GoalSystemService {
       updatedAt: now,
     });
 
+    // Implement-prompt: questions posted by maybePromptImplement carry a
+    // goalId but no runId. The recommended option transitions the goal
+    // from `planning` to `running` so dependent task scheduling can begin.
+    // The "do something different" option is a silent no-op — the user
+    // will follow up in the channel.
+    if (!question.runId && question.goalId && selectedOption === IMPLEMENT_QUESTION_OPTION) {
+      try {
+        this.implement(organizationId, question.goalId);
+      } catch {
+        // Surface failure quietly: the goal may have already been
+        // implemented or cancelled. The supervisor agent can re-prompt
+        // on a subsequent run if needed.
+      }
+      return answeredQuestion;
+    }
+
     const runId = question.runId;
     if (runId && this.resumeRun) {
       const run = this.repo.getRun(organizationId, runId);
@@ -231,8 +249,8 @@ export class GoalSystemService {
       organizationId: input.organizationId,
       channelId: input.channelId,
       goalId: goal.id,
-      questionText: 'Do you want me to implement?',
-      options: ['Yes, implement (Recommended)', `Tell ${input.agentName} to do something different`],
+      questionText: IMPLEMENT_QUESTION_TEXT,
+      options: [IMPLEMENT_QUESTION_OPTION, `Tell ${input.agentName} to do something different`],
     });
   }
 

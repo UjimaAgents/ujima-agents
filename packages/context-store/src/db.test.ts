@@ -195,6 +195,25 @@ describe('database migrations', () => {
     upgraded.close();
   });
 
+  it('opens a fresh database without re-adding interactive_questions.run_id (037 + 038)', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'ujima-db-fresh-'));
+    tempDirs.push(dir);
+    const dbPath = join(dir, 'fresh.sqlite');
+
+    const db = openDatabase({ dbPath });
+    const columns = (
+      db.prepare('PRAGMA table_info(interactive_questions)').all() as { name: string }[]
+    ).map((row) => row.name);
+    expect(columns).toContain('run_id');
+    const migrations = (
+      db.prepare('SELECT id FROM schema_migrations').all() as { id: string }[]
+    ).map((row) => row.id);
+    expect(migrations).toContain('037_goal_task_questions');
+    expect(migrations).toContain('038_interactive_questions_run_id');
+    expect(migrations).toContain('039_interactive_questions_tool_call_id');
+    db.close();
+  });
+
   it('migrates self notes to memory entries during 027 upgrade', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'ujima-db-migration-self-note-'));
     tempDirs.push(dir);

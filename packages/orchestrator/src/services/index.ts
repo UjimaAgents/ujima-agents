@@ -591,6 +591,22 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   // drain-pending-member-alert, memory-review's turn counter, and
   // the trajectory writer.
   spirits.setRunCompletedHook(async (run) => {
+    // Post the implement-prompt synchronously before any awaits so the
+    // question is persisted in the same tick as the run-completed SSE
+    // emit. Otherwise the frontend re-fetches questions before this
+    // callback creates one and the prompt never appears.
+    if (run.threadId) {
+      try {
+        const channelId = context.repo.getThread(run.organizationId, run.threadId)?.channelId;
+        if (channelId) {
+          const agentName = context.repo.getMember(run.organizationId, run.agentId)?.name || 'the agent';
+          goals.maybePromptImplement({ organizationId: run.organizationId, channelId, agentName });
+        }
+      } catch {
+        // best-effort: question posting is non-critical
+      }
+    }
+
     await drainPendingMemberAlertAfterRun(run, (pending) =>
       wakeMemberWithFailureEvents(wakeMemberDeps, pending),
     );
@@ -604,17 +620,6 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
       // best-effort
     }
 
-    if (run.threadId) {
-      try {
-        const channelId = context.repo.getThread(run.organizationId, run.threadId)?.channelId;
-        if (channelId) {
-          const agentName = context.repo.getMember(run.organizationId, run.agentId)?.name || 'the agent';
-          goals.maybePromptImplement({ organizationId: run.organizationId, channelId, agentName });
-        }
-      } catch {
-        // best-effort: question posting is non-critical
-      }
-    }
     // Memory-review counter — only ticks for publishing terminators
     // so empty wakes and silent acks don't burn the nudge.
     const isPublishing =
