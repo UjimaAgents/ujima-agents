@@ -69,9 +69,6 @@ export const SocketEventNames = Object.freeze({
   runEmptyCompletion: 'run:empty_completion',
   mirrorSuppressed: 'agent:mirror_suppressed',
   echoSuppressed: 'agent:echo_suppressed',
-  commitmentCreated: 'commitment:created',
-  commitmentUpdated: 'commitment:updated',
-  commitmentExpired: 'commitment:expired',
 });
 
 export type SocketEventName = (typeof SocketEventNames)[keyof typeof SocketEventNames];
@@ -94,7 +91,6 @@ export const WakeReasonSchema = z.enum([
   'channel-read',
   'handoff',
   'parent-thread',
-  'self-followup',
 ]);
 export type WakeReason = z.infer<typeof WakeReasonSchema>;
 
@@ -327,20 +323,6 @@ export const EchoSuppressedEventSchema = z.object({
 });
 export type EchoSuppressedEvent = z.infer<typeof EchoSuppressedEventSchema>;
 
-export const CommitmentEventSchema = z.object({
-  organizationId: IdSchema,
-  channelId: IdSchema.optional(),
-  threadId: IdSchema.optional(),
-  todoId: IdSchema,
-  taskSessionId: IdSchema.optional(),
-  ownerMemberId: IdSchema,
-  deliverable: z.string(),
-  status: z.string(),
-  dueAt: z.string().optional(),
-  occurredAt: TimestampSchema,
-});
-export type CommitmentEvent = z.infer<typeof CommitmentEventSchema>;
-
 export const WakeSuppressedReasonSchema = z.enum([
   'roster',
   'self-channel',
@@ -502,7 +484,4 @@ export const SocketEventSchemas = Object.freeze({
   [SocketEventNames.runEmptyCompletion]: RunEmptyCompletionEventSchema,
   [SocketEventNames.mirrorSuppressed]: MirrorSuppressedEventSchema,
   [SocketEventNames.echoSuppressed]: EchoSuppressedEventSchema,
-  [SocketEventNames.commitmentCreated]: CommitmentEventSchema,
-  [SocketEventNames.commitmentUpdated]: CommitmentEventSchema,
-  [SocketEventNames.commitmentExpired]: CommitmentEventSchema,
 });

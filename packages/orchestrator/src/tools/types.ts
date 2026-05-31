@@ -1,8 +1,8 @@
 import type { AgentTeamHandle } from '@ujima/framework';
 import type { z } from 'zod';
 import type { ConversationService } from '../services/conversation.js';
+import type { GoalSystemService } from '../services/goal-system.js';
 import type { ApiRepository, RepositoryReader } from '../services/repository-reader.js';
-import type { SupervisorTodoService } from '../services/supervisor-todo.js';
 import type { ToolInvocationInput } from '../services/tool-service.js';
 
 export interface ToolExecutionContext {
@@ -10,13 +10,8 @@ export interface ToolExecutionContext {
   team: AgentTeamHandle;
   repo: ApiRepository;
   conversations: ConversationService;
+  goals: GoalSystemService;
   reportProgress?: (output: unknown) => Promise<void> | void;
-  /**
-   * Phase 2.B — supervisor.todo.* tools route through this service.
-   * Optional so tests / pre-Phase-2 contexts that don't construct
-   * a SupervisorTodoService still work.
-   */
-  supervisorTodos?: SupervisorTodoService;
 }
 
 /**

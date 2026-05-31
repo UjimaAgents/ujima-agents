@@ -34,6 +34,10 @@ export function collectRunStepToolCalls(result: Pick<RunReplyResult, 'steps'>): 
   );
 }
 
+export function collectRunStepToolResults(result: Pick<RunReplyResult, 'steps'>): NonNullable<RunReplyResult['steps'][number]>['toolResults'] {
+  return result.steps.flatMap((step) => (Array.isArray(step.toolResults) ? step.toolResults : []));
+}
+
 export async function appendArtifactFileFromRunSteps(
   repo: ApiRepository,
   run: RunState,
@@ -44,6 +48,7 @@ export async function appendArtifactFileFromRunSteps(
   const steps = toolCallId ? runSteps.filter((step) => step.toolCallId === toolCallId) : runSteps;
   return appendArtifactFileToolCall(
     steps.map((step) => ({
+      toolCallId: step.toolCallId,
       toolName: step.toolId,
       input: {
         action: step.action,
@@ -86,11 +91,12 @@ export async function publishRunReplyTrace(input: {
   for (const [index, step] of input.result.steps.entries()) {
     const stepText = typeof step.text === 'string' ? step.text.trim() : '';
     const stepToolCalls = Array.isArray(step.toolCalls) ? (step.toolCalls as MessageToolCall[]) : [];
+    const stepToolResults = Array.isArray(step.toolResults) ? step.toolResults : [];
     if (!stepText && stepToolCalls.length === 0) continue;
 
     const stepArtifactFileToolCall =
       stepToolCalls.length > 0
-        ? (await appendArtifactFileToolCall(stepToolCalls, input.teamRoot)) ??
+        ? (await appendArtifactFileToolCall(stepToolCalls, input.teamRoot, stepToolResults)) ??
           (await appendArtifactFileFromRunSteps(
             input.repo,
             input.run,

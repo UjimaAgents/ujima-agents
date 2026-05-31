@@ -162,11 +162,17 @@ export class SpiritServiceBase {
         .map((approval) => approval.toolCallId as string),
     );
     return (this.repo.listRunSteps?.(organizationId, runId) ?? []).filter((step) => {
-      const output = step.output as { status?: unknown } | undefined;
-      return (
-        output?.status === 'waiting_for_approval' &&
-        !pendingApprovalToolCallIds.has(step.toolCallId)
-      );
+      const output = step.output as { status?: unknown; questionId?: unknown } | undefined;
+      if (output?.status === 'waiting_for_approval' && !pendingApprovalToolCallIds.has(step.toolCallId)) {
+        return true;
+      }
+      if (output?.status === 'waiting_for_input' && typeof output.questionId === 'string') {
+        const question = this.repo.getInteractiveQuestion(organizationId, output.questionId);
+        if (question && question.status === 'answered') {
+          return true;
+        }
+      }
+      return false;
     });
   }
 

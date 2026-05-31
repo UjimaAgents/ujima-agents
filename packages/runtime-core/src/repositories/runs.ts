@@ -89,7 +89,7 @@ export function getRun(
   return row ? rowToRun(row) : null;
 }
 
-const ACTIVE_RUN_STATUSES = ['queued', 'running', 'waiting_for_approval'] as const;
+const ACTIVE_RUN_STATUSES = ['queued', 'running', 'waiting_for_approval', 'waiting_for_input'] as const;
 
 /**
  * Returns a non-terminal run for the same agent + conversation thread, if any.

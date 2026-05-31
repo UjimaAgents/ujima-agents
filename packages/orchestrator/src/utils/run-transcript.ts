@@ -25,7 +25,7 @@ export function buildRunTranscript(
     ].filter(Boolean).join('\n');
   });
   return [
-    'Current run transcript from before the approval pause:',
+    'Current run transcript from before the approval/input pause:',
     'Continue from this state. Do not repeat tool calls that already have useful output.',
     lines.join('\n\n'),
   ].join('\n\n');

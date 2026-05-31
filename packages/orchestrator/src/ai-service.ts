@@ -18,7 +18,6 @@ import {
 } from './utils/to-model-messages.js';
 import { requireTeam } from './utils/require-team.js';
 import { buildRunTranscript } from './utils/run-transcript.js';
-import { buildSelfFollowupContextBlock } from './utils/self-followup-context.js';
 import {
   buildCacheableSystem,
   buildWakeContextMessages,
@@ -387,7 +386,7 @@ export class AiService {
     //
     // The base system prompt + the agent's procedures.md + the base
     // wake scaffold form Zone 1: invariant per (agent, thread). The
-    // per-wake mutations (anti-mirror line, self-followup contract)
+    // per-wake mutations (anti-mirror line)
     // are emitted SEPARATELY as user-role messages after the cache
     // breakpoint, so they no longer bust the Anthropic prompt cache
     // on every wake. The CI lint at packages/orchestrator/test/
@@ -417,7 +416,7 @@ export class AiService {
       // Use the DM vs channel scaffold from the wake-reply policy
       // (introduced by main as `wake-reply-policy.ts`). Per-thread
       // stable, so it remains in the cacheable prefix; the wake-
-      // reason-dependent anti-mirror + self-followup lines below
+      // reason-dependent anti-mirror lines below
       // are emitted as user-role messages and DON'T bust the cache.
       baseScaffold: wakeReplyPolicy.scaffoldBlock,
       // Bet 1b — gate memory/procedure guidance on tool availability
@@ -467,10 +466,9 @@ export class AiService {
       });
     }
 
-    // Bet 3 — workspace-state ground truth. Surfaces open commitments
-    // owned by this agent, recent channel decisions (decision_log),
-    // and any persistent memory entries (Bet 5) inline so the model
-    // sees its own durable context at every wake.
+    // Workspace-state ground truth. Surfaces recent artifacts, channel
+    // decisions, and persistent memory inline so the model sees durable
+    // context at every wake.
     const currentChannelIdForState = input.threadId
       ? this.repo.getThread(input.organizationId, input.threadId)?.channelId
       : undefined;
@@ -484,24 +482,6 @@ export class AiService {
       messages.push({
         role: 'user',
         content: workspaceStateBlock,
-      });
-    }
-
-    // Bet 2 — self-followup context. Re-attaches the original
-    // commitment message + artifact paths + empty-wake count so a
-    // scheduler-driven wake doesn't land blind to its own promise.
-    const selfFollowupBlock = buildSelfFollowupContextBlock({
-      organizationId: input.organizationId,
-      memberId: member.id,
-      runId: input.runId,
-      sourceMessageId,
-      wakeReason: (runRow?.wakeReason ?? null) as string | null,
-      repo: this.repo,
-    });
-    if (selfFollowupBlock) {
-      messages.push({
-        role: 'user',
-        content: selfFollowupBlock,
       });
     }
 

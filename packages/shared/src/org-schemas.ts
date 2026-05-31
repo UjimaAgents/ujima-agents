@@ -28,7 +28,7 @@ export type MemberKind = z.infer<typeof MemberKindSchema>;
 export const ChannelKindSchema = z.enum(['general', 'group', 'dm', 'task-run', 'self']);
 export type ChannelKind = z.infer<typeof ChannelKindSchema>;
 
-export const ToolActionSchema = z.enum(['read', 'write', 'execute', 'mcp', 'message']);
+export const ToolActionSchema = z.enum(['read', 'write', 'execute', 'mcp', 'message', 'create', 'update']);
 export type ToolAction = z.infer<typeof ToolActionSchema>;
 
 export const ProviderScopeSchema = z.enum(['organization', 'workspace', 'member']);
@@ -46,6 +46,7 @@ export type AuditStatus = z.infer<typeof AuditStatusSchema>;
 export const RunStatusSchema = z.enum([
   'queued',
   'running',
+  'waiting_for_input',
   'waiting_for_approval',
   'completed',
   'failed',
@@ -72,7 +73,7 @@ export type MessageMentionKind = z.infer<typeof MessageMentionKindSchema>;
 export const PresenceStateSchema = z.enum(['online', 'offline', 'busy', 'away']);
 export type PresenceState = z.infer<typeof PresenceStateSchema>;
 
-export const ResourceTypeSchema = z.enum(['file', 'folder', 'shell', 'mcp', 'message']);
+export const ResourceTypeSchema = z.enum(['file', 'folder', 'shell', 'mcp', 'message', 'goal', 'goal_task', 'question']);
 export type ResourceType = z.infer<typeof ResourceTypeSchema>;
 
 export const RoleScopesSchema = z.record(z.array(z.string().min(1))).default({});
@@ -466,6 +467,7 @@ export const ArtifactFileCardSchema = z.object({
   name: z.string().min(1),
   filePath: z.string().min(1),
   html: z.string(),
+  diff: z.string().optional(),
   artifactFormat: z.enum(['html', 'markdown']).default('html'),
   status: GoalStatusSchema,
 });
@@ -564,45 +566,6 @@ export const SpiritSchema = z.object({
   endedAt: TimestampSchema.optional(),
 });
 export type Spirit = z.infer<typeof SpiritSchema>;
-
-// -----------------------------------------------------------------------
-// Todo (Phase 2 — supervisor.todo.* tools)
-// -----------------------------------------------------------------------
-//
-// The `todos` table predates the task shell (migration 004), but it only
-// becomes user-facing in Phase 2 via the supervisor.todo.* tool family.
-// Adding `taskSessionId` lets a supervisor scope its add/check/list to
-// the active task without leaking todos across sessions.
-
-export const TodoStatusSchema = z.enum([
-  'pending',
-  'in_progress',
-  'completed',
-  'cancelled',
-  'expired',
-  'blocked',
-]);
-export type TodoStatus = z.infer<typeof TodoStatusSchema>;
-
-export const TodoSchema = z.object({
-  id: IdSchema,
-  organizationId: IdSchema,
-  taskSessionId: IdSchema.optional(),
-  runId: IdSchema.optional(),
-  memberId: IdSchema,
-  title: z.string().min(1),
-  status: TodoStatusSchema.default('pending'),
-  notes: z.string().default(''),
-  channelId: IdSchema.optional(),
-  sourceMessageId: IdSchema.optional(),
-  deliverableSummary: z.string().optional(),
-  dueAt: TimestampSchema.optional(),
-  lastProgressAt: TimestampSchema.optional(),
-  emptyWakeCount: z.number().int().nonnegative().default(0),
-  createdAt: TimestampSchema,
-  updatedAt: TimestampSchema,
-});
-export type Todo = z.infer<typeof TodoSchema>;
 
 // -----------------------------------------------------------------------
 // Memory KV — Bet 5

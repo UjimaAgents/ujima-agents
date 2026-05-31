@@ -2,7 +2,6 @@ import {
   AiService,
   ConversationService,
   SpiritService,
-  TaskPromoterService,
   TaskSessionService,
   type ModelResolver,
   type ToolService,
@@ -13,8 +12,6 @@ import { CHANNEL_AGENT_TOOLS, FRONTEND_CHANNELS, FRONTEND_ENGINEER_ROLE } from '
 
 export interface TaskShellFixtureOptions {
   modelResolver?: ModelResolver;
-  promoterEvaluator?: ConstructorParameters<typeof TaskPromoterService>[2]['evaluator'];
-  promoterAutoStart?: boolean;
 }
 
 export async function createTaskShellFixture(opts: TaskShellFixtureOptions = {}) {
@@ -42,20 +39,12 @@ export async function createTaskShellFixture(opts: TaskShellFixtureOptions = {})
     modelResolver: opts.modelResolver,
   });
   const taskSessions = new TaskSessionService(base.repo, conversations, spirits);
-  const taskPromoter = new TaskPromoterService(base.repo, spirits, {
-    teamStore: base.teamStore,
-    taskSessions,
-    conversations,
-    evaluator: opts.promoterEvaluator,
-    autoStart: opts.promoterAutoStart ?? false,
-  });
 
   return {
     archiveRoot: base.archiveRoot,
     repo: base.repo,
     conversations,
     taskSessions,
-    taskPromoter,
     runs: spirits,
     organizationId: base.organizationId,
     ownerId: base.ownerId,
