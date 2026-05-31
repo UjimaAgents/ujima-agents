@@ -45,7 +45,12 @@ import { formatTimestamp } from "./lib/format-timestamp";
 import { useWorkspaceStore } from "./workspace-store";
 
 function isActiveRun(run: RunState): boolean {
-  return run.status === "queued" || run.status === "running" || run.status === "waiting_for_approval";
+  return (
+    run.status === "queued" ||
+    run.status === "running" ||
+    run.status === "waiting_for_approval" ||
+    run.status === "waiting_for_input"
+  );
 }
 
 export interface ConversationSyncResult {

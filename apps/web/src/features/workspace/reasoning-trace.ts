@@ -244,6 +244,25 @@ function readNumberArg(
   return typeof nestedValue === "number" ? nestedValue : undefined;
 }
 
+function readIntegerArg(
+  args: Record<string, unknown> | undefined,
+  nested: Record<string, unknown> | undefined,
+  ...keys: string[]
+): number | undefined {
+  for (const source of [args, nested]) {
+    if (!source) continue;
+    for (const key of keys) {
+      const v = source[key];
+      if (typeof v === "number") return v;
+      if (typeof v === "string") {
+        const n = Number.parseInt(v, 10);
+        if (Number.isFinite(n)) return n;
+      }
+    }
+  }
+  return undefined;
+}
+
 function readBooleanArg(
   args: Record<string, unknown> | undefined,
   nested: Record<string, unknown> | undefined,
@@ -518,6 +537,8 @@ function inferToolAction(args?: Record<string, unknown>): {
   command?: string;
   offset?: number;
   limit?: number;
+  startLine?: number;
+  endLine?: number;
   query?: string;
   pattern?: string;
   depth?: number;
@@ -548,6 +569,10 @@ function inferToolAction(args?: Record<string, unknown>): {
       : typeof input?.limit === "number"
         ? input.limit
         : undefined;
+
+  const startLine = readIntegerArg(args, input, "startLine", "StartLine");
+  const endLine = readIntegerArg(args, input, "endLine", "EndLine");
+
   const query =
     typeof args?.query === "string"
       ? args.query
@@ -577,6 +602,8 @@ function inferToolAction(args?: Record<string, unknown>): {
     command,
     offset,
     limit,
+    startLine,
+    endLine,
     query,
     pattern,
     depth,
@@ -844,6 +871,211 @@ function appendRunChunkDetail(current: string, delta: string): string {
   return `…${next.slice(-(MAX_RUN_CHUNK_DETAIL_CHARS - 1))}`;
 }
 
+function formatHumanFriendlyObject(obj: unknown, indent = ""): string {
+  if (obj === null || obj === undefined) return "";
+  if (typeof obj !== "object") {
+    return String(obj);
+  }
+
+  if (Array.isArray(obj)) {
+    if (obj.length === 0) return "None";
+    return obj
+      .map((item) => {
+        if (typeof item === "object") {
+          return `${indent}-\n${formatHumanFriendlyObject(item, indent + "  ")}`;
+        }
+        return `${indent}- ${String(item)}`;
+      })
+      .join("\n");
+  }
+
+  const record = obj as Record<string, unknown>;
+  const lines: string[] = [];
+  for (const [key, val] of Object.entries(record)) {
+    if (val === null || val === undefined) continue;
+
+    // Convert snake_case or camelCase key to Sentence Case
+    const label = key
+      .replace(/([A-Z])/g, " $1")
+      .replace(/[_-]/g, " ")
+      .trim()
+      .split(" ")
+      .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+      .join(" ");
+
+    if (typeof val === "object") {
+      const formattedVal = formatHumanFriendlyObject(val, indent + "  ");
+      if (formattedVal.trim()) {
+        lines.push(`${indent}${label}:\n${formattedVal}`);
+      }
+    } else {
+      lines.push(`${indent}${label}: ${String(val)}`);
+    }
+  }
+  return lines.join("\n");
+}
+
+function formatStructuredToolDetail(
+  name: string,
+  args: unknown,
+  result: unknown,
+  narrativeDetail?: string,
+): string {
+  const parts: string[] = [];
+
+  const cleanVal = (val: unknown): string => {
+    if (val === undefined || val === null) return "";
+    if (typeof val === "object") {
+      try {
+        return typeof (val as { content?: string })?.content === "string"
+          ? (val as { content: string }).content
+          : JSON.stringify(val);
+      } catch {
+        return String(val);
+      }
+    }
+    return String(val);
+  };
+
+  const argsRecord = args && typeof args === "object" ? (args as Record<string, unknown>) : {};
+  const resultRecord = result && typeof result === "object" ? (result as Record<string, unknown>) : {};
+  const nestedInput = argsRecord.input && typeof argsRecord.input === "object"
+    ? (argsRecord.input as Record<string, unknown>)
+    : argsRecord;
+
+  if (name.includes("memory.write")) {
+    const value = nestedInput.value ?? nestedInput.content;
+    if (value) {
+      parts.push(cleanVal(value));
+    }
+  } else if (name.includes("memory.recall")) {
+    const query = nestedInput.query ?? nestedInput.key_prefix;
+    if (query) {
+      parts.push(`Query: "${cleanVal(query)}"`);
+    }
+
+    const entries = resultRecord.entries;
+    if (Array.isArray(entries) && entries.length > 0) {
+      const entryParts: string[] = [];
+      for (const entry of entries) {
+        if (entry && typeof entry === "object") {
+          const entryVal = entry.value ?? entry.content;
+          if (entryVal) {
+            entryParts.push(cleanVal(entryVal));
+          }
+        }
+      }
+      if (entryParts.length > 0) {
+        if (entryParts.length === 1) {
+          parts.push(`Recalled:\n${entryParts[0]}`);
+        } else {
+          parts.push(`Recalled:\n${entryParts.map(val => `- ${val}`).join("\n")}`);
+        }
+      } else {
+        parts.push("No matching memories found.");
+      }
+    } else {
+      parts.push("No matching memories found.");
+    }
+  } else if (name.includes("memory.forget")) {
+    const key = nestedInput.key;
+    if (key) {
+      parts.push(`Forgot memory: ${cleanVal(key)}`);
+    }
+  } else if (name.startsWith("self.procedure.add")) {
+    const procName = nestedInput.name;
+    const steps = nestedInput.steps ?? nestedInput.description ?? nestedInput.content;
+    if (procName) {
+      parts.push(`Procedure: ${cleanVal(procName)}`);
+    }
+    if (steps) {
+      parts.push(`Steps:\n${cleanVal(steps)}`);
+    }
+  } else if (name.startsWith("self.procedure.remove")) {
+    const procName = nestedInput.name;
+    if (procName) {
+      parts.push(`Removed procedure: ${cleanVal(procName)}`);
+    }
+  } else if (name === "goal.start") {
+    const title = nestedInput.title;
+    const plan = nestedInput.plan_markdown ?? nestedInput.planMarkdown;
+    if (title) {
+      parts.push(`Title: ${cleanVal(title)}`);
+    }
+    if (plan) {
+      parts.push(`Plan:\n${cleanVal(plan)}`);
+    }
+  } else if (name === "question.ask") {
+    const text = nestedInput.question_text ?? nestedInput.questionText;
+    const options = nestedInput.options;
+    if (text) {
+      parts.push(`Question: ${cleanVal(text)}`);
+    }
+    if (Array.isArray(options) && options.length > 0) {
+      parts.push(`Options:\n${options.map(opt => `- ${cleanVal(opt)}`).join("\n")}`);
+    }
+  } else if (name === "goal.task.update") {
+    const status = nestedInput.status;
+    const summary = nestedInput.handover_summary ?? nestedInput.handoverSummary;
+    if (status) {
+      parts.push(`Updated status to: ${cleanVal(status)}`);
+    }
+    if (summary) {
+      parts.push(`Handover Summary:\n${cleanVal(summary)}`);
+    }
+  } else if (name.includes("channel") || name.includes("slack") || name.includes("message")) {
+    const message = nestedInput.message ?? nestedInput.content ?? nestedInput.text ?? nestedInput.body;
+    if (message) {
+      parts.push(cleanVal(message));
+    }
+  } else {
+    const textVal =
+      nestedInput.value ??
+      nestedInput.content ??
+      nestedInput.text ??
+      nestedInput.body ??
+      nestedInput.message;
+
+    if (textVal) {
+      parts.push(cleanVal(textVal));
+    } else {
+      const filteredInput = { ...nestedInput };
+      delete filteredInput.bypassPermission;
+      delete filteredInput.resourceType;
+      delete filteredInput.action;
+
+      const formattedInput = formatHumanFriendlyObject(filteredInput);
+      if (formattedInput.trim()) {
+        parts.push(`Arguments:\n${formattedInput}`);
+      }
+    }
+
+    const outputVal = resultRecord.result ?? resultRecord.output ?? result;
+    if (outputVal !== undefined && outputVal !== null) {
+      if (typeof outputVal === "object") {
+        const recObj = outputVal as Record<string, unknown>;
+        const mainText = recObj.content ?? recObj.stdout ?? recObj.output ?? recObj.result;
+        if (typeof mainText === "string" && mainText.trim()) {
+          parts.push(mainText.trim());
+        } else {
+          const formattedOutput = formatHumanFriendlyObject(outputVal);
+          if (formattedOutput.trim()) {
+            parts.push(`Result:\n${formattedOutput}`);
+          }
+        }
+      } else if (String(outputVal).trim() !== "Saved.") {
+        parts.push(String(outputVal));
+      }
+    }
+  }
+
+  if (parts.length === 0) {
+    return narrativeDetail || `${name} executed.`;
+  }
+
+  return parts.join("\n\n");
+}
+
 function buildToolStep(
   input: ReasoningTraceInput,
   toolCallId: string,
@@ -1011,7 +1243,9 @@ function buildToolStep(
         resourcePath: fsArgs.resourcePath,
         meta:
           fsArgs.action === "read"
-            ? `[offset=${fsArgs.offset ?? 1}, limit=${fsArgs.limit ?? 20}]`
+            ? (parsed.startLine !== undefined && parsed.endLine !== undefined
+                ? `[startLine=${parsed.startLine}, endLine=${parsed.endLine}]`
+                : `[offset=${fsArgs.offset ?? 1}, limit=${fsArgs.limit ?? 20}]`)
             : undefined,
         body: resolved !== undefined && resolved.length > 0 ? resolved : undefined,
         bodyTone: isError ? "error" : "default",
@@ -1048,8 +1282,10 @@ function buildToolStep(
       action: name === "write" || name === "edit" || name === "multiedit" || name === "download" ? "write" : "read",
       resourcePath: parsed.resourcePath ?? "",
         meta:
-          name === "view"
-          ? `[offset=${parsed.offset ?? 1}, limit=${parsed.limit ?? 1000}]`
+          name === "view" || name === "read"
+          ? (parsed.startLine !== undefined && parsed.endLine !== undefined
+              ? `[startLine=${parsed.startLine}, endLine=${parsed.endLine}]`
+              : `[offset=${parsed.offset ?? 1}, limit=${parsed.limit ?? 1000}]`)
           : name === "ls"
             ? `[depth=${parsed.depth ?? 0}, limit=${parsed.limit ?? 1000}]`
             : name === "glob"
@@ -1130,7 +1366,14 @@ function buildToolStep(
   return {
     id: `tool:${toolCallId}:${call?.event_id ?? ""}:${result?.event_id ?? ""}`,
     title: line.title,
-    detail: hasRich ? "" : line.detail || resultOutput || argsPreview || `${name} called`,
+    detail: hasRich
+      ? ""
+      : formatStructuredToolDetail(
+          name,
+          mergedPayload?.toolCall?.args,
+          resultBody?.toolResult?.result,
+          line.detail,
+        ),
     time: formatTimestamp(ts),
     duration,
     status,
