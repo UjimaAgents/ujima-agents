@@ -20,11 +20,12 @@ eval "$(
 )"
 
 net=$(( additions - deletions ))
-mag="${net#-}"
 
-echo "PR lines added: ${additions}, removed: ${deletions}, net: ${net} (limit: ${MAX_LINES}, base: ${BASE_SHA:0:7}, head: ${HEAD_SHA:0:7})"
+echo "PR lines added: ${additions}, removed: ${deletions}, net: ${net} (limit: +${MAX_LINES}, base: ${BASE_SHA:0:7}, head: ${HEAD_SHA:0:7})"
 
-if [ "${mag}" -gt "${MAX_LINES}" ]; then
-  echo "::error::PR net diff magnitude ${net} exceeds ${MAX_LINES}. Split into smaller, focused PRs."
+# Cap net additions only. Cleanup PRs (large negative net) always pass —
+# we want to encourage deletion, not penalize it.
+if [ "${net}" -gt "${MAX_LINES}" ]; then
+  echo "::error::PR net additions ${net} exceed +${MAX_LINES}. Split into smaller, focused PRs."
   exit 1
 fi
