@@ -739,6 +739,7 @@ export function ChannelView({
         ) : activeTab === "members" ? (
           currentChannel ? (
             <ChannelMembersTab
+              key={currentThreadId ?? conversation.id}
               organizationId={organizationId}
               channel={{ ...currentChannel, memberIds: channelMemberIds }}
               members={members}
@@ -771,6 +772,7 @@ export function ChannelView({
         ) : activeTab === "tasks" ? (
           organizationId ? (
             <ChannelGoalsBoard
+              key={currentThreadId ?? conversation.id}
               channelId={currentThreadId ?? conversation.id}
               members={members}
             />

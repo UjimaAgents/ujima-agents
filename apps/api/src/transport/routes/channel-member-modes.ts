@@ -70,9 +70,9 @@ export function registerChannelMemberModeRoutes(
     },
   }, async (req, reply) => {
     try {
-      assertReadyWorkspaceRoot(repo, req.params.orgId);
       const forbidden = requireOrgSession(auth, req, reply, req.params.orgId);
       if (forbidden) return forbidden;
+      assertReadyWorkspaceRoot(repo, req.params.orgId);
       repo.setChannelMemberMode(req.params.channelId, req.body.memberId, req.body.mode);
       return { ok: true as const };
     } catch (err) {
