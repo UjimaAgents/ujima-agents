@@ -101,6 +101,11 @@ function createConversationFixture() {
       return value;
     },
     setChannelMembers: () => undefined,
+    setChannelMemberMode: () => undefined,
+    getChannelMemberMode: () => null,
+    listChannelMemberModes: () => [],
+    listChannelMemberModesForChannel: () => [],
+    deleteChannelMemberMode: () => undefined,
     getThread: (_organizationId: string, threadId: string) => threads.get(threadId) ?? null,
     ensureThread: (value: typeof thread) => {
       threads.set(value.id, value);

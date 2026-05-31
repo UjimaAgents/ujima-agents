@@ -369,6 +369,10 @@ export function ChannelView({
     if (!s || s.toLowerCase() === "running") return undefined;
     return s;
   }, [typingRuns]);
+  const typingStartedAt = useMemo(
+    () => typingRuns.map((run) => run.startedAt).filter(Boolean).sort()[0],
+    [typingRuns],
+  );
   const traceAutoScroll = reasoningTraceVisible && typingRuns.length > 0;
   const stoppableRunIds = useMemo(() => {
     const sorted = [...liveThreadRuns].sort((a, b) => {
@@ -722,6 +726,7 @@ export function ChannelView({
                       colorIndex={typingColorIndex}
                       names={typingMembers.map((member) => member.name)}
                       activeStep={activeStep}
+                      startedAt={typingStartedAt}
                     />
                   ) : null}
                 </>
@@ -766,7 +771,7 @@ export function ChannelView({
         ) : activeTab === "tasks" ? (
           organizationId ? (
             <ChannelGoalsBoard
-              channelId={conversation.id}
+              channelId={currentThreadId ?? conversation.id}
               members={members}
             />
           ) : (

@@ -150,6 +150,11 @@ describe('SchedulerService', () => {
       getScheduledJob: vi.fn(),
       getChannel: vi.fn(),
       setChannelMembers: vi.fn(),
+      setChannelMemberMode: vi.fn(),
+      getChannelMemberMode: vi.fn().mockReturnValue(null),
+      listChannelMemberModes: vi.fn().mockReturnValue([]),
+      listChannelMemberModesForChannel: vi.fn().mockReturnValue([]),
+      deleteChannelMemberMode: vi.fn(),
       getMember: vi.fn((organizationId: string, memberId: string) =>
         members.get(`${organizationId}:${memberId}`) ?? {
           id: memberId,

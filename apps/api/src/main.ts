@@ -73,12 +73,18 @@ async function main(): Promise<void> {
       if (process.env.NODE_ENV === 'production') {
         process.stderr.write(line + '\n');
       } else {
-        const log = JSON.parse(line);
-        const time = chalk.dim(new Date(log.ts).toLocaleTimeString());
-        const level = log.level === 'error' ? chalk.red(log.level) : log.level === 'warn' ? chalk.yellow(log.level) : chalk.blue(log.level);
-        const msg = chalk.white(log.message);
-        const comp = chalk.magenta(`[${log.component || 'sys'}]`);
-        process.stderr.write(`${time} ${level} ${comp} ${msg}\n`);
+        const { ts, level: lvl, message, component, ...rest } = JSON.parse(line) as {
+          ts: string;
+          level: string;
+          message: string;
+          component?: string;
+          [key: string]: unknown;
+        };
+        const time = chalk.dim(new Date(ts).toLocaleTimeString());
+        const level = lvl === 'error' ? chalk.red(lvl) : lvl === 'warn' ? chalk.yellow(lvl) : chalk.blue(lvl);
+        const comp = chalk.magenta(`[${component || 'sys'}]`);
+        const tail = Object.keys(rest).length > 0 ? ' ' + chalk.gray(JSON.stringify(rest)) : '';
+        process.stderr.write(`${time} ${level} ${comp} ${chalk.white(message)}${tail}\n`);
       }
     },
     level: (process.env.UJIMA_LOG_LEVEL as 'debug' | 'info' | 'warn' | 'error' | undefined) ?? 'info',
@@ -267,7 +273,10 @@ async function main(): Promise<void> {
       void shutdown('uncaughtException', 1);
     });
     process.on('unhandledRejection', (reason) => {
-      logger.error('runtime: unhandledRejection', { reason: reason instanceof Error ? reason.message : String(reason) });
+      logger.error('runtime: unhandledRejection', {
+        reason: reason instanceof Error ? reason.message : String(reason),
+        stack: reason instanceof Error ? reason.stack : undefined,
+      });
     });
   });
 

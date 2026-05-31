@@ -57,6 +57,7 @@ import {registerPluginRoutes} from "./routes/plugins.js";
 import {registerCultureRoutes} from "./routes/culture.js";
 import {registerWorkspaceRoutes} from "./routes/workspaces.js";
 import {registerAgentRoutes} from "./routes/agents.js";
+import {registerChannelMemberModeRoutes} from "./routes/channel-member-modes.js";
 import {registerOauthRoutes} from "./routes/oauth.js";
 import {registerScheduleRoutes} from "./routes/schedules.js";
 import {registerGoalRoutes} from "./routes/goals.js";
@@ -334,6 +335,10 @@ export function createTransport(opts: TransportOptions): Transport {
           auth: services.auth,
           goals: services.goals,
           conversations: services.conversations,
+        });
+        registerChannelMemberModeRoutes(api, {
+          repo: opts.apiServices.repo,
+          auth: services.auth,
         });
         scheduler = services.scheduler;
         scheduler?.start();

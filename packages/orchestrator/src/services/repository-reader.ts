@@ -7,6 +7,8 @@ import type {
   Attachment,
   Channel,
   ChannelKind,
+  ChannelMemberMode,
+  ChannelMemberSettings,
   ConfigFieldOwnership,
   ConversationThread,
   DecisionLogEntry,
@@ -159,6 +161,11 @@ export interface ConversationRepository extends RepositoryReader {
   ): PaginatedChannels;
   saveChannel(channel: Channel): Channel;
   setChannelMembers(channelId: string, memberIds: string[]): void;
+  setChannelMemberMode(channelId: string, memberId: string, mode: ChannelMemberMode): void;
+  getChannelMemberMode(channelId: string, memberId: string): ChannelMemberMode | null;
+  listChannelMemberModes(memberId: string): ChannelMemberSettings[];
+  listChannelMemberModesForChannel(channelId: string): ChannelMemberSettings[];
+  deleteChannelMemberMode(channelId: string, memberId: string): void;
   deleteChannel(channelId: string): void;
   getThread(organizationId: string, threadId: string): ConversationThread | null;
   ensureThread(thread: ConversationThread): ConversationThread;

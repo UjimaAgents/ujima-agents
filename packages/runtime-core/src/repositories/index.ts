@@ -8,6 +8,8 @@ import type {
   Attachment,
   Channel,
   ChannelKind,
+  ChannelMemberMode,
+  ChannelMemberSettings,
   ConfigFieldOwnership,
   ConversationThread,
   DecisionLogEntry,
@@ -68,6 +70,11 @@ import {
   listChannels as readChannels,
   saveChannel as writeChannel,
   setChannelMembers as writeChannelMembers,
+  setChannelMemberMode as writeChannelMemberMode,
+  getChannelMemberMode as readChannelMemberMode,
+  listChannelMemberModes as readChannelMemberModes,
+  listChannelMemberModesForChannel as readChannelMemberModesForChannel,
+  removeChannelMemberMode as deleteChannelMemberMode,
   type PaginatedChannels,
 } from './channels.js';
 import {
@@ -363,6 +370,16 @@ export class Repository {
     writeChannelMembers(this.db, channelId, memberIds);
   deleteChannel = (channelId: string): void =>
     removeChannel(this.db, channelId);
+  setChannelMemberMode = (channelId: string, memberId: string, mode: ChannelMemberMode): void =>
+    writeChannelMemberMode(this.db, channelId, memberId, mode);
+  getChannelMemberMode = (channelId: string, memberId: string): ChannelMemberMode | null =>
+    readChannelMemberMode(this.db, channelId, memberId);
+  listChannelMemberModes = (memberId: string): ChannelMemberSettings[] =>
+    readChannelMemberModes(this.db, memberId);
+  listChannelMemberModesForChannel = (channelId: string): ChannelMemberSettings[] =>
+    readChannelMemberModesForChannel(this.db, channelId);
+  deleteChannelMemberMode = (channelId: string, memberId: string): void =>
+    deleteChannelMemberMode(this.db, channelId, memberId);
 
   saveThread = (thread: ConversationThread): ConversationThread =>
     writeThread(this.db, thread);

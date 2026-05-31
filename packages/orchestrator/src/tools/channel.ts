@@ -691,3 +691,48 @@ export const channelHandoffTool: OrchestratorTool<typeof ChannelHandoffSchema> =
     return { status: 'handoff_sent', messageId: published.id, complete };
   },
 };
+
+// -----------------------------------------------------------------------
+// Channel member mode management
+// -----------------------------------------------------------------------
+
+const ChannelSetMemberModeSchema = z.object({
+  channel_id: z.string().min(1),
+  member_id: z.string().min(1),
+  mode: z.enum(['active', 'passive', 'muted', 'temp_disable']),
+});
+
+export const channelSetMemberModeTool: OrchestratorTool<typeof ChannelSetMemberModeSchema> = {
+  id: 'channel.set_member_mode',
+  schema: ChannelSetMemberModeSchema,
+  toInvocation: (args) => ({
+    action: 'write',
+    resourceType: 'message',
+    permissionMcpId: 'channels',
+    input: args,
+  }),
+  execute: ({ invocation, repo }) => {
+    const channelId = String(invocation.input.channel_id);
+    const memberId = String(invocation.input.member_id);
+    const mode = String(invocation.input.mode) as 'active' | 'passive' | 'muted' | 'temp_disable';
+
+    const channel = repo.getChannel(invocation.organizationId, channelId);
+    if (!channel) {
+      return { status: 'error', error: `Channel not found: ${channelId}` };
+    }
+
+    const member = repo.getMember(invocation.organizationId, memberId);
+    if (!member) {
+      return { status: 'error', error: `Member not found: ${memberId}` };
+    }
+
+    repo.setChannelMemberMode(channelId, memberId, mode);
+
+    return {
+      status: 'ok',
+      channelId,
+      memberId,
+      mode,
+    };
+  },
+};

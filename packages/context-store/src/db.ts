@@ -191,6 +191,14 @@ const MIGRATIONS: {id: string; up: string}[] = [
         PRIMARY KEY (channel_id, member_id)
       );
 
+      CREATE TABLE IF NOT EXISTS channel_member_modes (
+        channel_id  TEXT NOT NULL,
+        member_id   TEXT NOT NULL,
+        mode        TEXT NOT NULL DEFAULT 'active',
+        updated_at  TEXT NOT NULL,
+        PRIMARY KEY (channel_id, member_id)
+      );
+
       CREATE TABLE IF NOT EXISTS threads (
         id               TEXT PRIMARY KEY,
         organization_id  TEXT NOT NULL,
@@ -1255,6 +1263,20 @@ const MIGRATIONS: {id: string; up: string}[] = [
       ALTER TABLE interactive_questions ADD COLUMN tool_call_id TEXT;
       CREATE INDEX IF NOT EXISTS idx_interactive_questions_tool_call
         ON interactive_questions(organization_id, run_id, tool_call_id);
+    `,
+  },
+  {
+    // Backfill for DBs that passed 001_initial before channel_member_modes
+    // was added there. No-op on fresh installs.
+    id: "040_channel_member_modes_backfill",
+    up: `
+      CREATE TABLE IF NOT EXISTS channel_member_modes (
+        channel_id  TEXT NOT NULL,
+        member_id   TEXT NOT NULL,
+        mode        TEXT NOT NULL DEFAULT 'active',
+        updated_at  TEXT NOT NULL,
+        PRIMARY KEY (channel_id, member_id)
+      );
     `,
   },
 ];
