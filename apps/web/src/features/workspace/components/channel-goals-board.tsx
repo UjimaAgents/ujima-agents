@@ -51,6 +51,7 @@ const TASK_STATUS_OPTIONS: GoalTaskStatus[] = [
   "in_progress",
   "completed",
   "blocked",
+  "blocked_by_failure",
   "cancelled",
   "failed",
 ];

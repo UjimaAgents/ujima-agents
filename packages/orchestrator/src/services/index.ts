@@ -600,7 +600,12 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
         const channelId = context.repo.getThread(run.organizationId, run.threadId)?.channelId;
         if (channelId) {
           const agentName = context.repo.getMember(run.organizationId, run.agentId)?.name || 'the agent';
-          goals.maybePromptImplement({ organizationId: run.organizationId, channelId, agentName });
+          goals.maybePromptImplement({
+            organizationId: run.organizationId,
+            channelId,
+            agentName,
+            runId: run.id,
+          });
         }
       } catch {
         // best-effort: question posting is non-critical

@@ -174,6 +174,18 @@ export class GoalSystemService {
       updatedAt: now,
     });
 
+    if (question.runId && question.toolCallId) {
+      const step = this.repo
+        .listRunSteps(organizationId, question.runId)
+        .find((s) => s.toolCallId === question.toolCallId);
+      if (step) {
+        this.repo.saveRunStep({
+          ...step,
+          output: { status: 'completed', selectedOption },
+        });
+      }
+    }
+
     // Implement-prompt: questions posted by maybePromptImplement carry a
     // goalId but no runId. The recommended option transitions the goal
     // from `planning` to `running` so dependent task scheduling can begin.
@@ -233,14 +245,25 @@ export class GoalSystemService {
   /**
    * Auto-prompt the user after a planning-mode run completes:
    * once the agent has finished proposing the plan, ask whether
-   * to implement it (or redirect). No-op unless the channel has a
-   * goal in `planning` and no other question is pending.
+   * to implement it (or redirect). No-op unless:
+   *   1. the just-completed run actually called `goal.start` (so
+   *      unrelated chat replies in the channel don't keep spamming
+   *      the prompt),
+   *   2. the channel has a goal in `planning`,
+   *   3. and no other question is pending.
    */
   maybePromptImplement(input: {
     organizationId: string;
     channelId: string;
     agentName: string;
+    runId?: string;
   }): InteractiveQuestion | null {
+    if (input.runId) {
+      const ranGoalStart = this.repo
+        .listRunSteps(input.organizationId, input.runId)
+        .some((step) => step.toolId === 'goal.start' && step.status === 'ok');
+      if (!ranGoalStart) return null;
+    }
     const goal = this.repo.getGoalByChannel(input.organizationId, input.channelId);
     if (!goal || goal.status !== 'planning') return null;
     const pending = this.repo.listPendingInteractiveQuestions(input.organizationId, input.channelId);

@@ -22,18 +22,57 @@ function bootstrap() {
   return { repo, orgId };
 }
 
+function startPlan(goals: GoalSystemService, organizationId: string, channelId: string) {
+  return goals.start({
+    organizationId,
+    channelId,
+    supervisorId: 'supervisor-1',
+    title: 'Ship the thing',
+    planMarkdown: '## Plan',
+    tasks: [{ title: 'Step 1', assigneeId: 'agent-1' }],
+  });
+}
+
+function saveRunStep(
+  repo: Repository,
+  organizationId: string,
+  input: { runId: string; toolId: string; status?: 'waiting_for_input' | 'completed' },
+) {
+  const now = new Date().toISOString();
+  repo.saveRun({
+    id: input.runId,
+    organizationId,
+    agentId: 'agent-1',
+    threadId: 'thread-1',
+    status: input.status ?? 'completed',
+    step: input.status ?? 'completed',
+    summary: 'run',
+    startedAt: now,
+  });
+  repo.saveRunStep({
+    id: `${input.runId}-step`,
+    organizationId,
+    runId: input.runId,
+    threadId: 'thread-1',
+    agentId: 'agent-1',
+    toolCallId: `${input.runId}-call`,
+    toolId: input.toolId,
+    action: 'create',
+    resourceType: 'goal',
+    resourcePath: '',
+    input: {},
+    output: { status: 'completed' },
+    status: 'ok',
+    createdAt: now,
+  });
+  return `${input.runId}-call`;
+}
+
 describe('GoalSystemService.answer', () => {
   it('flips the goal from planning to running when the implement option is chosen', () => {
     const { repo, orgId } = bootstrap();
     const goals = new GoalSystemService(repo);
-    const goal = goals.start({
-      organizationId: orgId,
-      channelId: 'channel-impl',
-      supervisorId: 'supervisor-1',
-      title: 'Ship the thing',
-      planMarkdown: '## Plan',
-      tasks: [{ title: 'Step 1', assigneeId: 'agent-1' }],
-    });
+    const goal = startPlan(goals, orgId, 'channel-impl');
 
     const question = goals.maybePromptImplement({
       organizationId: orgId,
@@ -52,14 +91,7 @@ describe('GoalSystemService.answer', () => {
   it('does not start the goal when the user chooses "do something different"', () => {
     const { repo, orgId } = bootstrap();
     const goals = new GoalSystemService(repo);
-    const goal = goals.start({
-      organizationId: orgId,
-      channelId: 'channel-redirect',
-      supervisorId: 'supervisor-1',
-      title: 'Ship the thing',
-      planMarkdown: '## Plan',
-      tasks: [{ title: 'Step 1', assigneeId: 'agent-1' }],
-    });
+    const goal = startPlan(goals, orgId, 'channel-redirect');
     const question = goals.maybePromptImplement({
       organizationId: orgId,
       channelId: 'channel-redirect',
@@ -71,25 +103,45 @@ describe('GoalSystemService.answer', () => {
     expect(repo.getGoal(orgId, goal.id)?.status).toBe('planning');
   });
 
+  it('rewrites the run step output so the resumed agent sees the chosen option', () => {
+    const { repo, orgId } = bootstrap();
+    const goals = new GoalSystemService(repo, async () => {
+      // resume not exercised in this test
+    });
+    const runId = 'run-step-rewrite';
+    const toolCallId = saveRunStep(repo, orgId, {
+      runId,
+      toolId: 'question.ask',
+      status: 'waiting_for_input',
+    });
+    const question = goals.ask({
+      organizationId: orgId,
+      channelId: 'channel-rewrite',
+      runId,
+      toolCallId,
+      questionText: 'Pick one',
+      options: ['Yes (Recommended)', 'No'],
+    });
+
+    goals.answer(orgId, question.id, 'Yes (Recommended)');
+
+    const updatedStep = repo
+      .listRunSteps(orgId, runId)
+      .find((s) => s.toolCallId === toolCallId);
+    expect(updatedStep?.output).toEqual({
+      status: 'completed',
+      selectedOption: 'Yes (Recommended)',
+    });
+  });
+
   it('only resumes a run after every pending question for that run is answered', async () => {
     const { repo, orgId } = bootstrap();
     let resumeCalls = 0;
     const goals = new GoalSystemService(repo, async () => {
       resumeCalls += 1;
     });
-
     const runId = 'run-multi';
-    const now = new Date().toISOString();
-    repo.saveRun({
-      id: runId,
-      organizationId: orgId,
-      agentId: 'agent-1',
-      threadId: 'thread-1',
-      status: 'waiting_for_input',
-      step: 'waiting_for_input',
-      summary: 'q1',
-      startedAt: now,
-    });
+    saveRunStep(repo, orgId, { runId, toolId: 'question.ask', status: 'waiting_for_input' });
 
     const q1 = goals.ask({
       organizationId: orgId,
@@ -113,5 +165,41 @@ describe('GoalSystemService.answer', () => {
     goals.answer(orgId, q2.id, 'Yes (Recommended)');
     await new Promise((resolve) => setImmediate(resolve));
     expect(resumeCalls).toBe(1);
+  });
+});
+
+describe('GoalSystemService.maybePromptImplement', () => {
+  it('does nothing when the just-completed run did not call goal.start', () => {
+    const { repo, orgId } = bootstrap();
+    const goals = new GoalSystemService(repo);
+    startPlan(goals, orgId, 'channel-gate');
+    const runId = 'run-unrelated';
+    saveRunStep(repo, orgId, { runId, toolId: 'message.post' });
+
+    const question = goals.maybePromptImplement({
+      organizationId: orgId,
+      channelId: 'channel-gate',
+      agentName: 'planner',
+      runId,
+    });
+
+    expect(question).toBeNull();
+  });
+
+  it('prompts when the just-completed run actually authored the plan', () => {
+    const { repo, orgId } = bootstrap();
+    const goals = new GoalSystemService(repo);
+    startPlan(goals, orgId, 'channel-author');
+    const runId = 'run-author';
+    saveRunStep(repo, orgId, { runId, toolId: 'goal.start' });
+
+    const question = goals.maybePromptImplement({
+      organizationId: orgId,
+      channelId: 'channel-author',
+      agentName: 'planner',
+      runId,
+    });
+
+    expect(question?.questionText).toBe(IMPLEMENT_QUESTION_TEXT);
   });
 });
