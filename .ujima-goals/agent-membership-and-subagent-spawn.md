@@ -1,7 +1,7 @@
 # Agent Membership Controls & Parallel Subagent Spawn
 
 **Goal ID:** ffaebc34-d2ab-4ad8-acd4-4ec054039442
-**Status:** Planning
+**Status:** Planning — locked
 **Created:** 2026-05-30
 **Owner:** Carter Jordan
 
@@ -81,20 +81,15 @@ A `spawn_agent` tool (for agents) and `/spawn` command (for humans) that:
 
 ---
 
-## Open Questions
+## Decisions
 
-Asked 2026-05-31. Awaiting answers.
+Asked 2026-05-31. Re-asked 2026-05-31. Answers locked.
 
-1. **Membership controls** — who can change an agent's mode? Any channel admin, or only org admins?
-   → *Pending answer*
-2. **Passive behavior** — should passive agents still read messages for context, or be truly silent?
-   → *Pending answer*
-3. **Subagent security** — what tool access should spawned subagents have by default?
-   → *Pending answer*
-4. **Orphan handling** — what happens to running subagents if parent errors or is stopped?
-   → *Pending answer*
-5. **Prioritization** — which feature to build first?
-   → *Pending answer*
+1. **Membership controls** — any channel admin can change an agent's mode.
+2. **Passive behavior** — passive agents still read messages for context, but never auto-reply.
+3. **Subagent security** — subagents inherit parent access, but production/deploy tools stay blocked by default.
+4. **Orphan handling** — kill subagents immediately if the parent errors or is stopped.
+5. **Prioritization** — build Feature 2 (Channel-Level Agent Membership Controls) first.
 
 ---
 

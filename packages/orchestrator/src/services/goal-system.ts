@@ -175,7 +175,14 @@ export class GoalSystemService {
     const runId = question.runId;
     if (runId && this.resumeRun) {
       const run = this.repo.getRun(organizationId, runId);
-      if (run && run.status === 'waiting_for_input') {
+      // Only resume once *every* question this run posted has been
+      // resolved. A run that asked two questions must not get its
+      // execution back after just one answer — the agent would
+      // proceed with a partially-known context.
+      const stillPending = (
+        this.repo.listInteractiveQuestionsByRunId?.(organizationId, runId) ?? []
+      ).some((q) => q.status === 'pending');
+      if (run && run.status === 'waiting_for_input' && !stillPending) {
         void Promise.resolve(this.resumeRun(organizationId, runId)).catch((error) => {
           const current = this.repo.getRun(organizationId, runId);
           if (!current || current.status !== 'waiting_for_input') return;

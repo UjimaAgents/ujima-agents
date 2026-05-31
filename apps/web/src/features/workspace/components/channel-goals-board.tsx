@@ -177,17 +177,32 @@ export function ChannelGoalsBoard({ channelId, members }: ChannelGoalsBoardProps
     );
   };
 
-  const handleAnswerQuestion = (questionId: string, option: string) =>
-    runAction(
-      questionId,
-      () =>
-        fetch(`/api/questions/${encodeURIComponent(questionId)}/answer`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ selectedOption: option }),
-        }),
-      "Failed to submit answer.",
-    );
+  const handleAnswerQuestion = async (questionId: string, option: string) => {
+    setActionLoading(questionId);
+    setBoard((prev) => ({
+      ...prev,
+      questions: prev.questions.map((q) =>
+        q.id === questionId ? { ...q, status: "answered", selectedOption: option } : q,
+      ),
+    }));
+    try {
+      const res = await fetch(`/api/questions/${encodeURIComponent(questionId)}/answer`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ selectedOption: option }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as { message?: string } | null;
+        throw new Error(body?.message || "Failed to submit answer.");
+      }
+      await refresh();
+    } catch (err) {
+      setError(errorMessage(err, "Failed to submit answer."));
+      await refresh();
+    } finally {
+      setActionLoading(null);
+    }
+  };
 
   const columnTasks = useMemo(() => {
     const groups: Record<ColumnId, GoalTask[]> = {

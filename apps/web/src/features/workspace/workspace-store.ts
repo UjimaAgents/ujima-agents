@@ -12,6 +12,7 @@ import {
 } from "@ujima/shared/browser";
 import type { SelectedConversation } from "./types";
 import { resolveDefaultConversation } from "./workspace-channels";
+import { isLiveRun } from "./feed-selectors";
 import type { ChatMessageData, ApprovalCardData } from "./components/chat";
 import type { ActivityState } from "./activity-state";
 import { presenceToActivityState } from "./activity-state";
@@ -371,7 +372,7 @@ export function selectActiveAgentChats(
     if (
       !run.threadId ||
       run.threadId === currentThreadId ||
-      (run.status !== "running" && run.status !== "waiting_for_approval") ||
+      !isLiveRun(run) ||
       !isAgentOnlyThread(run.threadId, state)
     ) {
       continue;

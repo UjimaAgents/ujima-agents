@@ -893,6 +893,7 @@ export function ChannelView({
               ))}
               {activeQuestion ? (
                 <QuestionCard
+                  key={activeQuestion.id}
                   question={activeQuestion}
                   resolving={!!resolvingQuestions[activeQuestion.id]}
                   error={questionErrors[activeQuestion.id]}
