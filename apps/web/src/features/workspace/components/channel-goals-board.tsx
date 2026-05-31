@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState, useMemo, useCallback } from "react";
-import { AlertCircle, AlertTriangle, Clock, KanbanSquare, PlayCircle } from "lucide-react";
+import { useEffect, useState, useMemo, useCallback, useRef } from "react";
+import { AlertCircle, AlertTriangle, Clock, GripVertical, KanbanSquare, PlayCircle } from "lucide-react";
 import type {
   Goal,
   GoalStatus,
@@ -37,6 +37,13 @@ const STATUS_TO_COLUMN: Record<GoalTaskStatus, ColumnId> = {
   cancelled: "blocked",
 };
 
+const COLUMN_TO_STATUS: Record<ColumnId, GoalTaskStatus> = {
+  pending: "pending",
+  blocked: "blocked",
+  in_progress: "in_progress",
+  completed: "completed",
+};
+
 const GOAL_STATUS_BADGE: Record<GoalStatus, string> = {
   planning: "bg-amber-100/80 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400",
   running: "bg-violet-100/80 text-violet-700 dark:bg-violet-500/10 dark:text-violet-400",
@@ -44,16 +51,6 @@ const GOAL_STATUS_BADGE: Record<GoalStatus, string> = {
   suspended: "bg-zinc-100/80 text-zinc-700 dark:bg-zinc-500/10 dark:text-zinc-400",
   cancelled: "bg-rose-100/80 text-rose-700 dark:bg-rose-500/10 dark:text-rose-400",
 };
-
-const TASK_STATUS_OPTIONS: GoalTaskStatus[] = [
-  "pending",
-  "in_progress",
-  "completed",
-  "blocked",
-  "blocked_by_failure",
-  "cancelled",
-  "failed",
-];
 
 function errorMessage(value: unknown, fallback: string): string {
   return value instanceof Error ? value.message : fallback;
@@ -98,6 +95,9 @@ export function ChannelGoalsBoard({ channelId, members }: ChannelGoalsBoardProps
   const [board, setBoard] = useState<GoalBoardData>(EMPTY_BOARD);
   const [error, setError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+
+  const dragTaskId = useRef<string | null>(null);
+  const [dragOverColumn, setDragOverColumn] = useState<ColumnId | null>(null);
 
   const memberById = useMemo(() => new Map(members.map((m) => [m.id, m])), [members]);
 
@@ -186,6 +186,46 @@ export function ChannelGoalsBoard({ channelId, members }: ChannelGoalsBoardProps
       "Failed to update status.",
     );
   };
+
+  // -- drag and drop --
+
+  const onDragStart = useCallback((taskId: string) => {
+    dragTaskId.current = taskId;
+  }, []);
+
+  const onDragEnd = useCallback(() => {
+    dragTaskId.current = null;
+    setDragOverColumn(null);
+  }, []);
+
+  const onDragOver = useCallback((e: React.DragEvent, colId: ColumnId) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    setDragOverColumn(colId);
+  }, []);
+
+  const onDragLeave = useCallback((e: React.DragEvent, colId: ColumnId) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const { clientX, clientY } = e;
+    if (clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom) {
+      setDragOverColumn((prev) => (prev === colId ? null : prev));
+    }
+  }, []);
+
+  const onDrop = useCallback(
+    (colId: ColumnId) => {
+      const taskId = dragTaskId.current;
+      setDragOverColumn(null);
+      if (!taskId) return;
+      const task = tasks.find((t) => t.id === taskId);
+      if (!task) return;
+      const currentCol = STATUS_TO_COLUMN[task.status];
+      if (currentCol === colId) return;
+      const newStatus = COLUMN_TO_STATUS[colId];
+      handleUpdateStatus(task, newStatus);
+    },
+    [tasks, handleUpdateStatus],
+  );
 
   const handleAnswerQuestion = async (questionId: string, option: string) => {
     setActionLoading(questionId);
@@ -318,7 +358,13 @@ export function ChannelGoalsBoard({ channelId, members }: ChannelGoalsBoardProps
           {COLUMNS.map((col) => {
             const tasksInCol = columnTasks[col.id];
             return (
-              <div key={col.id} className="flex flex-col h-full min-h-[400px] rounded-xl border border-zinc-200/60 bg-zinc-50/30 p-3 dark:border-zinc-800/50 dark:bg-zinc-900/10">
+              <div
+                key={col.id}
+                onDragOver={(e) => onDragOver(e, col.id)}
+                onDragLeave={(e) => onDragLeave(e, col.id)}
+                onDrop={() => onDrop(col.id)}
+                className={`flex flex-col h-full min-h-[400px] rounded-xl border p-3 transition-colors duration-150 ${dragOverColumn === col.id ? "border-violet-400 bg-violet-50/30 dark:border-violet-600 dark:bg-violet-950/10" : "border-zinc-200/60 bg-zinc-50/30 dark:border-zinc-800/50 dark:bg-zinc-900/10"}`}
+              >
                 <div className="flex items-center justify-between pb-3 mb-3 border-b border-zinc-200/60 dark:border-zinc-800/60">
                   <div className="flex items-center gap-2">
                     <span className="w-2 h-2 rounded-full bg-violet-500" />
@@ -331,8 +377,10 @@ export function ChannelGoalsBoard({ channelId, members }: ChannelGoalsBoardProps
 
                 <div className="flex-1 space-y-2.5 overflow-y-auto min-h-0 max-h-[600px] pr-1">
                   {tasksInCol.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center py-10 border border-dashed border-zinc-200 rounded-lg dark:border-zinc-800">
-                      <p className="text-[10px] text-zinc-400 dark:text-zinc-500 font-medium">Empty column</p>
+                    <div className={`flex flex-col items-center justify-center py-10 border border-dashed rounded-lg transition-colors duration-150 ${dragOverColumn === col.id ? "border-violet-400 dark:border-violet-600" : "border-zinc-200 dark:border-zinc-800"}`}>
+                      <p className="text-[10px] text-zinc-400 dark:text-zinc-500 font-medium">
+                        {dragOverColumn === col.id ? "Drop here" : "Empty column"}
+                      </p>
                     </div>
                   ) : (
                     tasksInCol.map((task) => {
@@ -341,7 +389,10 @@ export function ChannelGoalsBoard({ channelId, members }: ChannelGoalsBoardProps
                       return (
                         <div
                           key={task.id}
-                          className="group relative flex flex-col p-3 rounded-lg border border-zinc-200 bg-white shadow-sm transition hover:shadow dark:border-zinc-800 dark:bg-[#09090b]"
+                          draggable
+                          onDragStart={() => onDragStart(task.id)}
+                          onDragEnd={onDragEnd}
+                          className={`group relative flex flex-col p-3 rounded-lg border bg-white shadow-sm transition hover:shadow cursor-grab active:cursor-grabbing dark:bg-[#09090b] ${actionLoading === task.id ? "opacity-50" : ""} border-zinc-200 dark:border-zinc-800`}
                         >
                           <h4 className="text-xs font-bold text-zinc-900 dark:text-zinc-100 leading-snug line-clamp-2 mb-2">
                             {task.title}
@@ -368,18 +419,7 @@ export function ChannelGoalsBoard({ channelId, members }: ChannelGoalsBoardProps
                               </span>
                             </div>
 
-                            <select
-                              disabled={actionLoading === task.id}
-                              value={task.status}
-                              onChange={(e) => handleUpdateStatus(task, e.target.value as GoalTaskStatus)}
-                              className="text-[10px] font-bold py-0.5 pl-1.5 pr-6 bg-zinc-50 border border-zinc-200 text-zinc-700 rounded-md transition hover:bg-zinc-100 dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-300 outline-none select-none cursor-pointer"
-                            >
-                              {TASK_STATUS_OPTIONS.map((status) => (
-                                <option key={status} value={status}>
-                                  {status.replace(/_/g, " ")}
-                                </option>
-                              ))}
-                            </select>
+                            <GripVertical className="h-3.5 w-3.5 text-zinc-300 dark:text-zinc-600 group-hover:text-zinc-400 dark:group-hover:text-zinc-500 transition" />
                           </div>
                         </div>
                       );

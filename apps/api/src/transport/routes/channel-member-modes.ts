@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { ChannelMemberModeSchema, ChannelMemberSettingsSchema, IdSchema } from '@ujima/shared';
-import { ApiErrorSchema, OrganizationQuerySchema } from '@ujima/api-schema';
+import { ApiErrorSchema } from '@ujima/api-schema';
 import type { Repository } from '@ujima/runtime-core';
 import type { AuthService } from '@ujima/orchestrator';
 import { z } from 'zod';
@@ -36,7 +36,6 @@ export function registerChannelMemberModeRoutes(
       description: 'List member modes for a channel',
       tags: ['Settings'],
       params: ChannelIdParamsSchema,
-      querystring: OrganizationQuerySchema,
       response: {
         200: z.array(ChannelMemberSettingsSchema),
         400: ApiErrorSchema,

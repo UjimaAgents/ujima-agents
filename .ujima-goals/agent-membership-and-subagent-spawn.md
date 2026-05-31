@@ -60,6 +60,23 @@ Currently no per-channel agent control. Every agent in a channel sees every mess
 - Next.js proxy route at `/api/orgs/[orgId]/channels/[channelId]/modes` — proxies GET/PUT to daemon
 - Repository class updated with the missing alias methods
 
+### Bugs Fixed (2026-05-31)
+
+| Bug | Severity | Fix | File |
+|-----|----------|-----|------|
+| `GET /modes` 400 due to missing query param | Medium | Removed `querystring: OrganizationQuerySchema` from route schema — `orgId` already in params | `apps/api/src/transport/routes/channel-member-modes.ts:39` |
+
+**Bug 1 (Passive skipped on @mentions):** Verified code is already correct. `alertMentionedMembers` only skips `muted`/`temp_disable` — `passive` agents pass through and receive mentions. Broadcast path correctly suppresses `passive`.
+
+### Goal Board Redesign (2026-05-31)
+
+- Removed the status `<select>` dropdown from each task card
+- Added native HTML5 drag-and-drop: drag cards between Todo / Blocked / In Progress / Done columns
+- Drag handle (`GripVertical` icon) appears on hover
+- Drop target columns highlight with violet border when dragging over
+- Empty columns show "Drop here" prompt during drag
+- Loading tasks dim to 50% opacity while status update is in flight
+
 ## Feature 3: Parallel Subagent Spawn Tool
 
 ### Problem
