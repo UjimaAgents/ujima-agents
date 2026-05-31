@@ -160,6 +160,7 @@ import {
   deleteGoalTasks as removeGoalTasks,
   getGoal as readGoal,
   getGoalByChannel as readGoalByChannel,
+  getGoalTask as readGoalTask,
   getInteractiveQuestion as readInteractiveQuestion,
   listGoalTasks as readGoalTasks,
   listGoals as readGoals,
@@ -583,6 +584,8 @@ export class Repository {
   saveGoalTask = (task: GoalTask): GoalTask => writeGoalTask(this.db, task);
   deleteGoalTasks = (organizationId: string, goalId: string): void =>
     removeGoalTasks(this.db, organizationId, goalId);
+  getGoalTask = (organizationId: string, taskId: string): GoalTask | null =>
+    readGoalTask(this.db, organizationId, taskId);
   listGoalTasks = (organizationId: string, goalId: string): GoalTask[] =>
     readGoalTasks(this.db, organizationId, goalId);
   updateGoalTaskStatus = (

@@ -360,6 +360,7 @@ export interface ApiRepository extends ConversationRepository {
   listGoals(organizationId: string): Goal[];
   saveGoalTask(task: GoalTask): GoalTask;
   deleteGoalTasks(organizationId: string, goalId: string): void;
+  getGoalTask(organizationId: string, taskId: string): GoalTask | null;
   listGoalTasks(organizationId: string, goalId: string): GoalTask[];
   updateGoalTaskStatus(
     organizationId: string,

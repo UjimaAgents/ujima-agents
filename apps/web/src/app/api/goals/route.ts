@@ -4,9 +4,11 @@ import { daemonFetch, getSessionTokenFromCookie } from "@/server/ujima-daemon";
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
-    const response = await daemonFetch("/api/goals", {}, await getSessionTokenFromCookie());
+    const channelId = new URL(request.url).searchParams.get("channelId");
+    const path = channelId ? `/api/goals?channelId=${encodeURIComponent(channelId)}` : "/api/goals";
+    const response = await daemonFetch(path, {}, await getSessionTokenFromCookie());
     const body = await response.json().catch(() => null);
 
     if (!response.ok) {

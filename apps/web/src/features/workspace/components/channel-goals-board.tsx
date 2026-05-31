@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useMemo, useCallback } from "react";
-import { AlertCircle, AlertTriangle, Clock, HelpCircle, KanbanSquare, PlayCircle } from "lucide-react";
+import { AlertCircle, AlertTriangle, Clock, KanbanSquare, PlayCircle } from "lucide-react";
 import type {
   Goal,
   GoalStatus,
@@ -11,10 +11,10 @@ import type {
 } from "@ujima/shared/browser";
 import { Avatar } from "./chat/primitives";
 import { Markdown } from "./markdown";
+import { QuestionCard } from "./chat/question-card";
 import type { BootstrapResponse } from "@ujima/api-schema";
 
 interface ChannelGoalsBoardProps {
-  organizationId: string;
   channelId: string;
   members: BootstrapResponse["members"];
 }
@@ -67,16 +67,14 @@ interface GoalBoardData {
 
 const EMPTY_BOARD: GoalBoardData = { goal: null, tasks: [], questions: [] };
 
-async function fetchGoalBoard(organizationId: string, channelId: string): Promise<GoalBoardData> {
-  const res = await fetch(`/api/goals?organizationId=${encodeURIComponent(organizationId)}`);
+async function fetchGoalBoard(channelId: string): Promise<GoalBoardData> {
+  const res = await fetch(`/api/goals?channelId=${encodeURIComponent(channelId)}`);
   if (!res.ok) throw new Error("Failed to fetch goals.");
   const data = (await res.json()) as { goals?: Goal[] };
-  const activeGoal = (data.goals ?? []).find((g) => g.channelId === channelId);
+  const activeGoal = (data.goals ?? [])[0];
   if (!activeGoal) return EMPTY_BOARD;
 
-  const detailRes = await fetch(
-    `/api/goals/${encodeURIComponent(activeGoal.id)}?organizationId=${encodeURIComponent(organizationId)}`,
-  );
+  const detailRes = await fetch(`/api/goals/${encodeURIComponent(activeGoal.id)}`);
   if (!detailRes.ok) throw new Error("Failed to fetch goal details.");
   const detail = (await detailRes.json()) as {
     goal: Goal;
@@ -86,7 +84,7 @@ async function fetchGoalBoard(organizationId: string, channelId: string): Promis
   return { goal: detail.goal, tasks: detail.tasks ?? [], questions: detail.questions ?? [] };
 }
 
-export function ChannelGoalsBoard({ organizationId, channelId, members }: ChannelGoalsBoardProps) {
+export function ChannelGoalsBoard({ channelId, members }: ChannelGoalsBoardProps) {
   const [loading, setLoading] = useState(true);
   const [board, setBoard] = useState<GoalBoardData>(EMPTY_BOARD);
   const [error, setError] = useState<string | null>(null);
@@ -96,7 +94,7 @@ export function ChannelGoalsBoard({ organizationId, channelId, members }: Channe
 
   const refresh = useCallback(async () => {
     try {
-      const next = await fetchGoalBoard(organizationId, channelId);
+      const next = await fetchGoalBoard(channelId);
       setBoard(next);
       setError(null);
     } catch (err) {
@@ -104,13 +102,13 @@ export function ChannelGoalsBoard({ organizationId, channelId, members }: Channe
     } finally {
       setLoading(false);
     }
-  }, [channelId, organizationId]);
+  }, [channelId]);
 
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       try {
-        const next = await fetchGoalBoard(organizationId, channelId);
+        const next = await fetchGoalBoard(channelId);
         if (cancelled) return;
         setBoard(next);
         setError(null);
@@ -124,7 +122,7 @@ export function ChannelGoalsBoard({ organizationId, channelId, members }: Channe
     return () => {
       cancelled = true;
     };
-  }, [channelId, organizationId]);
+  }, [channelId]);
 
   const runAction = useCallback(
     async (key: string, fn: () => Promise<Response>, fallbackMessage: string) => {
@@ -277,29 +275,12 @@ export function ChannelGoalsBoard({ organizationId, channelId, members }: Channe
       </div>
 
       {pendingQuestions.map((q) => (
-        <div key={q.id} className="p-4 rounded-xl border border-violet-200 bg-violet-50/40 dark:border-violet-800/60 dark:bg-violet-950/20 backdrop-blur shadow-sm animate-in slide-in-from-top duration-300">
-          <div className="flex items-start gap-3">
-            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-violet-500/10 text-violet-600 dark:bg-violet-500/10 dark:text-violet-300">
-              <HelpCircle className="h-4.5 w-4.5" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <h4 className="text-xs font-bold text-zinc-900 dark:text-zinc-100 mb-1">Interactive Action Required</h4>
-              <p className="text-sm font-semibold text-zinc-800 dark:text-zinc-200 mb-3">{q.questionText}</p>
-              <div className="flex flex-wrap gap-2">
-                {q.options.map((opt) => (
-                  <button
-                    key={opt}
-                    disabled={actionLoading === q.id}
-                    onClick={() => handleAnswerQuestion(q.id, opt)}
-                    className="inline-flex items-center gap-1 px-3 py-1 bg-white hover:bg-zinc-50 border border-zinc-200 text-zinc-800 rounded-lg text-xs font-bold shadow-sm transition dark:bg-zinc-900 dark:hover:bg-zinc-800 dark:border-zinc-700 dark:text-zinc-200 disabled:opacity-50"
-                  >
-                    {opt}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
+        <QuestionCard
+          key={q.id}
+          question={q}
+          resolving={actionLoading === q.id}
+          onAnswer={(option) => handleAnswerQuestion(q.id, option)}
+        />
       ))}
 
       {goal.status === "planning" ? (

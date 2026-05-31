@@ -64,7 +64,7 @@ export const QuestionCard = memo(function QuestionCard({
         <div className="space-y-1.5">
           {question.options.map((opt, index) => (
             <button
-              key={opt}
+              key={`${question.id}:${index}:${opt}`}
               type="button"
               disabled={resolving}
               onClick={() => onAnswer?.(opt)}

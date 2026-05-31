@@ -158,6 +158,18 @@ export function listGoalTasks(db: DbHandle, organizationId: string, goalId: stri
     .all(organizationId, goalId) as Row[]).map(toTask);
 }
 
+export function getGoalTask(
+  db: DbHandle,
+  organizationId: string,
+  taskId: string,
+): GoalTask | null {
+  const row = db.prepare('SELECT * FROM goal_tasks WHERE organization_id = ? AND id = ?').get(
+    organizationId,
+    taskId,
+  ) as Row | null;
+  return row ? toTask(row) : null;
+}
+
 export function updateGoalTaskStatus(
   db: DbHandle,
   organizationId: string,
@@ -170,9 +182,17 @@ export function updateGoalTaskStatus(
     taskId,
   ) as Row | null;
   if (!existing) return null;
+  const existingTask = toTask(existing);
+  if ((status === 'in_progress' || status === 'completed') && existingTask.dependsOnTaskId) {
+    const dependency = getGoalTask(db, organizationId, existingTask.dependsOnTaskId);
+    if (!dependency || dependency.status !== 'completed') {
+      throw new Error('Cannot start or complete a task before its dependency is completed');
+    }
+  }
   if (
     status === 'completed' &&
     !options.handoverSummary &&
+    !existingTask.handoverSummary &&
     db.prepare('SELECT 1 FROM goal_tasks WHERE organization_id = ? AND depends_on_task_id = ? LIMIT 1').get(
       organizationId,
       taskId,
@@ -204,6 +224,19 @@ export function updateGoalTaskStatus(
        UPDATE goal_tasks SET status = 'blocked_by_failure', updated_at = ?
        WHERE organization_id = ? AND id IN (SELECT id FROM downstream)
          AND status NOT IN ('completed', 'cancelled', 'failed')`,
+    ).run(organizationId, taskId, organizationId, now, organizationId);
+  } else if (status !== 'completed') {
+    db.prepare(
+      `WITH RECURSIVE downstream(id) AS (
+         SELECT id FROM goal_tasks WHERE organization_id = ? AND depends_on_task_id = ?
+         UNION ALL
+         SELECT goal_tasks.id FROM goal_tasks
+         JOIN downstream ON goal_tasks.depends_on_task_id = downstream.id
+         WHERE goal_tasks.organization_id = ?
+       )
+       UPDATE goal_tasks SET status = 'blocked', updated_at = ?
+       WHERE organization_id = ? AND id IN (SELECT id FROM downstream)
+         AND status IN ('pending', 'in_progress')`,
     ).run(organizationId, taskId, organizationId, now, organizationId);
   }
   const row = db.prepare('SELECT * FROM goal_tasks WHERE organization_id = ? AND id = ?').get(

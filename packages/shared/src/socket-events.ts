@@ -48,7 +48,6 @@ export const SocketEventNames = Object.freeze({
   memberAlerted: 'member.alerted',
   memberAlertFailed: 'member.alert_failed',
   memberMustReplyFailed: 'member.must_reply_failed',
-  memberEmptyWake: 'member.empty_wake',
   channelArchived: 'channel.archived',
   toolCalled: 'tool:called',
   toolResult: 'tool:result',
@@ -427,19 +426,6 @@ export const MemberMustReplyFailedEventSchema = z.object({
 });
 export type MemberMustReplyFailedEvent = z.infer<typeof MemberMustReplyFailedEventSchema>;
 
-export const MemberEmptyWakeEventSchema = z.object({
-  organizationId: IdSchema,
-  memberId: IdSchema,
-  runId: IdSchema,
-  channelId: IdSchema.optional(),
-  threadId: IdSchema.optional(),
-  todoId: IdSchema,
-  emptyWakeCount: z.number().int().nonnegative(),
-  escalated: z.boolean(),
-  occurredAt: TimestampSchema,
-});
-export type MemberEmptyWakeEvent = z.infer<typeof MemberEmptyWakeEventSchema>;
-
 export const ScheduledJobExecutedEventSchema = z.object({
   organizationId: IdSchema,
   jobName: z.string().min(1),
@@ -463,7 +449,6 @@ export const SocketEventSchemas = Object.freeze({
   [SocketEventNames.memberAlerted]: MemberAlertedEventSchema,
   [SocketEventNames.memberAlertFailed]: MemberAlertFailedEventSchema,
   [SocketEventNames.memberMustReplyFailed]: MemberMustReplyFailedEventSchema,
-  [SocketEventNames.memberEmptyWake]: MemberEmptyWakeEventSchema,
   [SocketEventNames.channelArchived]: ChannelUpdatedEventSchema,
   [SocketEventNames.toolCalled]: ToolCalledEventSchema,
   [SocketEventNames.toolResult]: ToolResultEventSchema,

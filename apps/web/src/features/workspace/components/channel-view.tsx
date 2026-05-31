@@ -358,6 +358,10 @@ export function ChannelView({
     () => liveThreadRuns.filter((run) => run.status === "waiting_for_input").map((run) => run.id),
     [liveThreadRuns],
   );
+  const questionRefreshSignal = useMemo(
+    () => feed.runs.map((run) => `${run.id}:${run.status}:${run.endedAt ?? ""}:${run.summary}`).join("|"),
+    [feed.runs],
+  );
   const typingRuns = activeTab === "conversation" ? liveThreadRuns : EMPTY_RUNS;
   const activeStep = useMemo(() => {
     const running = typingRuns.find((r) => r.status === "running");
@@ -463,7 +467,7 @@ export function ChannelView({
     return () => {
       cancelled = true;
     };
-  }, [currentThreadId, organizationId, waitingInputRunIds.join(",")]);
+  }, [currentThreadId, organizationId, questionRefreshSignal, waitingInputRunIds]);
 
   const headerSubtitle =
     typingLabel ?? (feed.loading ? "Syncing live history from the backend…" : undefined);
@@ -628,6 +632,8 @@ export function ChannelView({
   }, [activeTab, setActiveTab, tabIds]);
 
   const detailsCol = showDetails ? `${Math.max(detailsWidth, 33)}%` : "0px";
+  const activeQuestion = pendingQuestions[activeQuestionIndex];
+  const hasBlockingPrompts = pendingThreadApprovals.length > 0 || Boolean(activeQuestion);
 
   return (
     <div
@@ -760,7 +766,6 @@ export function ChannelView({
         ) : activeTab === "tasks" ? (
           organizationId ? (
             <ChannelGoalsBoard
-              organizationId={organizationId}
               channelId={conversation.id}
               members={members}
             />
@@ -875,7 +880,7 @@ export function ChannelView({
             )}
           </div>
         )}
-        {pendingThreadApprovals.length > 0 ? (
+        {hasBlockingPrompts ? (
           <div className="shrink-0 px-3 pt-1.5 pb-3">
             <div className="space-y-2">
               {pendingThreadApprovals.map((approval) => (
@@ -886,24 +891,20 @@ export function ChannelView({
                   onResolve={(resolution) => resolveApproval(approval.id, resolution)}
                 />
               ))}
+              {activeQuestion ? (
+                <QuestionCard
+                  question={activeQuestion}
+                  resolving={!!resolvingQuestions[activeQuestion.id]}
+                  error={questionErrors[activeQuestion.id]}
+                  activeQuestionIndex={activeQuestionIndex}
+                  totalQuestions={pendingQuestions.length}
+                  onIndexChange={setActiveQuestionIndex}
+                  onAnswer={(option) => {
+                    void answerQuestion(activeQuestion.id, option);
+                  }}
+                />
+              ) : null}
             </div>
-          </div>
-        ) : pendingQuestions.length > 0 ? (
-          <div className="shrink-0 px-3 pt-1.5 pb-3">
-            {pendingQuestions[activeQuestionIndex] ? (
-              <QuestionCard
-                question={pendingQuestions[activeQuestionIndex]}
-                resolving={!!resolvingQuestions[pendingQuestions[activeQuestionIndex].id]}
-                error={questionErrors[pendingQuestions[activeQuestionIndex].id]}
-                activeQuestionIndex={activeQuestionIndex}
-                totalQuestions={pendingQuestions.length}
-                onIndexChange={setActiveQuestionIndex}
-                onAnswer={(option) => {
-                  const question = pendingQuestions[activeQuestionIndex];
-                  if (question) void answerQuestion(question.id, option);
-                }}
-              />
-            ) : null}
           </div>
         ) : (
           <ChatInput

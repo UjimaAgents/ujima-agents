@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { GoalTaskStatusSchema } from '@ujima/shared';
+import { QUESTION_RECOMMENDED_SUFFIX } from '../services/goal-system.js';
 import type { ToolExecutionContext, OrchestratorTool } from './types.js';
 
 const goalStartSchema = (assigneeIdSchema: z.ZodType<string> = z.string().min(1)) => z.object({
@@ -16,7 +17,13 @@ const GoalStartSchema = goalStartSchema();
 const QuestionAskSchema = z.object({
   goal_id: z.string().min(1).optional(),
   question_text: z.string().min(1),
-  options: z.array(z.string().min(1)).min(1),
+  options: z.array(z.string().min(1))
+    .min(2)
+    .refine((options) => new Set(options).size === options.length, 'options must be unique')
+    .refine(
+      (options) => options.filter((option) => option.endsWith(QUESTION_RECOMMENDED_SUFFIX)).length === 1,
+      `exactly one option must end with ${QUESTION_RECOMMENDED_SUFFIX}`,
+    ),
 });
 
 const GoalTaskUpdateSchema = z.object({

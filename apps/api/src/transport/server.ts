@@ -333,6 +333,7 @@ export function createTransport(opts: TransportOptions): Transport {
           repo: opts.apiServices.repo,
           auth: services.auth,
           goals: services.goals,
+          conversations: services.conversations,
         });
         scheduler = services.scheduler;
         scheduler?.start();
