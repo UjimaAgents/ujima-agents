@@ -8,6 +8,7 @@ import {
   channelPostTool,
   channelReadTool,
   channelReplyTool,
+  channelSetMemberModeTool,
 } from './channel.js';
 import { channelRecallTool } from './channel-recall.js';
 import { grepTool } from './grep.js';
@@ -44,6 +45,7 @@ export const ORCHESTRATOR_TOOLS = {
   'channel.pass': channelPassTool,
   'channel.ack': channelAckTool,
   'channel.handoff': channelHandoffTool,
+  'channel.set_member_mode': channelSetMemberModeTool,
   view: viewTool,
   write: writeTool,
   edit: editTool,

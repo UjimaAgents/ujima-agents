@@ -25,6 +25,17 @@ export function createPaginatedSchema<T extends z.ZodTypeAny>(itemSchema: T) {
 export const MemberKindSchema = z.enum(['human', 'agent']);
 export type MemberKind = z.infer<typeof MemberKindSchema>;
 
+export const ChannelMemberModeSchema = z.enum(['active', 'passive', 'muted', 'temp_disable']);
+export type ChannelMemberMode = z.infer<typeof ChannelMemberModeSchema>;
+
+export const ChannelMemberSettingsSchema = z.object({
+  channelId: IdSchema,
+  memberId: IdSchema,
+  mode: ChannelMemberModeSchema.default('active'),
+  updatedAt: TimestampSchema.optional(),
+});
+export type ChannelMemberSettings = z.infer<typeof ChannelMemberSettingsSchema>;
+
 export const ChannelKindSchema = z.enum(['general', 'group', 'dm', 'task-run', 'self']);
 export type ChannelKind = z.infer<typeof ChannelKindSchema>;
 

@@ -1,6 +1,10 @@
 import { z } from 'zod';
 import { GoalTaskStatusSchema } from '@ujima/shared';
-import { QUESTION_RECOMMENDED_SUFFIX } from '../services/goal-system.js';
+import {
+  IMPLEMENT_QUESTION_OPTION,
+  IMPLEMENT_QUESTION_TEXT,
+  QUESTION_RECOMMENDED_SUFFIX,
+} from '../services/goal-system.js';
 import type { ToolExecutionContext, OrchestratorTool } from './types.js';
 
 const goalStartSchema = (assigneeIdSchema: z.ZodType<string> = z.string().min(1)) => z.object({
@@ -55,7 +59,26 @@ export const goalStartTool: OrchestratorTool<typeof GoalStartSchema> = {
   }),
   execute: (ctx) => {
     const input = ctx.invocation.input as z.infer<typeof GoalStartSchema>;
-    return ctx.goals.start({
+    const runId = ctx.invocation.runId;
+    if (runId) {
+      const existingQuestions = ctx.repo.listInteractiveQuestionsByRunId?.(ctx.invocation.organizationId, runId) ?? [];
+      const matching = existingQuestions.find((q) => q.toolCallId === ctx.invocation.toolCallId);
+      if (matching?.status === 'answered') {
+        const existingStep = ctx.repo
+          .listRunSteps(ctx.invocation.organizationId, runId)
+          .find((step) => step.toolCallId === ctx.invocation.toolCallId);
+        return {
+          ...((existingStep?.output && typeof existingStep.output === 'object') ? existingStep.output : {}),
+          status: 'completed',
+          selectedOption: matching.selectedOption,
+        };
+      }
+      if (matching?.status === 'pending') {
+        return { status: 'waiting_for_input', questionId: matching.id };
+      }
+    }
+
+    const result = ctx.goals.start({
       organizationId: ctx.invocation.organizationId,
       channelId: invocationChannelId(ctx),
       supervisorId: ctx.invocation.memberId,
@@ -67,6 +90,28 @@ export const goalStartTool: OrchestratorTool<typeof GoalStartSchema> = {
         dependsOnTaskIndex: task.depends_on_task_index,
       })),
     });
+    if (!runId) return result;
+
+    const memberName = ctx.repo.getMember(ctx.invocation.organizationId, ctx.invocation.memberId)?.name ?? ctx.invocation.memberId;
+    const question = ctx.goals.ask({
+      organizationId: ctx.invocation.organizationId,
+      channelId: result.goal.channelId,
+      goalId: result.goal.id,
+      runId,
+      toolCallId: ctx.invocation.toolCallId,
+      questionText: IMPLEMENT_QUESTION_TEXT,
+      options: [IMPLEMENT_QUESTION_OPTION, `Tell ${memberName} to do something different`],
+    });
+    const run = ctx.repo.getRun(ctx.invocation.organizationId, runId);
+    if (run) {
+      ctx.repo.saveRun({
+        ...run,
+        status: 'waiting_for_input',
+        step: 'waiting_for_input',
+        summary: question.questionText,
+      });
+    }
+    return { status: 'waiting_for_input', questionId: question.id, goal: result.goal, tasks: result.tasks };
   },
 };
 

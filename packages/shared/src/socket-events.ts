@@ -332,6 +332,8 @@ export const WakeSuppressedReasonSchema = z.enum([
   'non-agent-member',
   'retired',
   'cross-org',
+  'mode-blocked',
+  'mode-passive',
 ]);
 export type WakeSuppressedReason = z.infer<typeof WakeSuppressedReasonSchema>;
 

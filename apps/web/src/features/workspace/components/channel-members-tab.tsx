@@ -1,12 +1,35 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
-import { Save } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChevronDown, Save } from "lucide-react";
 import type { BootstrapResponse } from "@ujima/api-schema";
+import type { ChannelMemberMode } from "@ujima/shared";
 import { Avatar } from "./chat";
 
 type Channel = BootstrapResponse["channels"][number];
 type Member = BootstrapResponse["members"][number];
+
+interface MemberMode {
+  channelId: string;
+  memberId: string;
+  mode: ChannelMemberMode;
+}
+
+const MODE_LABELS: Record<ChannelMemberMode, string> = {
+  active: "Active",
+  passive: "Passive",
+  muted: "Muted",
+  temp_disable: "Temp Disabled",
+};
+
+const MODE_ORDER: ChannelMemberMode[] = ["active", "passive", "muted", "temp_disable"];
+
+const MODE_DESCRIPTIONS: Record<ChannelMemberMode, string> = {
+  active: "Responds to all messages and @mentions",
+  passive: "Reads context but only replies when @mentioned",
+  muted: "Ignored in this channel",
+  temp_disable: "Temporarily disabled",
+};
 
 function normalizeMemberIds(memberIds: string[]): string[] {
   return [...new Set(memberIds)].sort();
@@ -38,6 +61,10 @@ export function ChannelMembersTab({
   const [draftMemberIds, setDraftMemberIds] = useState(savedMemberIds);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | undefined>();
+  const [memberModes, setMemberModes] = useState<Map<string, ChannelMemberMode>>(new Map());
+  const [loadingModes, setLoadingModes] = useState(true);
+  const [savingMode, setSavingMode] = useState<string | undefined>();
+  const modesFetched = useRef(false);
 
   const selectedMemberIds = useMemo(() => new Set(draftMemberIds), [draftMemberIds]);
   const selectedMembers = useMemo(
@@ -49,6 +76,48 @@ export function ChannelMembersTab({
     [members, selectedMemberIds],
   );
   const dirty = !sameMemberIds(savedMemberIds, draftMemberIds);
+
+  // Fetch member modes on mount
+  useEffect(() => {
+    if (!organizationId || modesFetched.current) return;
+    modesFetched.current = true;
+    setLoadingModes(true);
+    void (async () => {
+      try {
+        const res = await fetch(
+          `/api/orgs/${encodeURIComponent(organizationId)}/channels/${encodeURIComponent(channel.id)}/modes`,
+        );
+        if (!res.ok) return;
+        const modes: MemberMode[] = await res.json().catch(() => []);
+        setMemberModes(new Map(modes.map((m) => [m.memberId, m.mode])));
+      } finally {
+        setLoadingModes(false);
+      }
+    })();
+  }, [organizationId, channel.id]);
+
+  const setMode = useCallback(async (memberId: string, mode: ChannelMemberMode) => {
+    if (!organizationId) return;
+    setSavingMode(memberId);
+    try {
+      const res = await fetch(
+        `/api/orgs/${encodeURIComponent(organizationId)}/channels/${encodeURIComponent(channel.id)}/modes`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ memberId, mode }),
+        },
+      );
+      if (!res.ok) return;
+      setMemberModes((prev) => {
+        const next = new Map(prev);
+        next.set(memberId, mode);
+        return next;
+      });
+    } finally {
+      setSavingMode(undefined);
+    }
+  }, [organizationId, channel.id]);
 
   const toggleMember = useCallback((memberId: string) => {
     setDraftMemberIds((current) => {
@@ -129,6 +198,9 @@ export function ChannelMembersTab({
                   disabled={saving}
                   onToggle={toggleMember}
                   colorIndex={index}
+                  mode={member.kind === "agent" ? memberModes.get(member.id) ?? "active" : undefined}
+                  modeLoading={loadingModes || savingMode === member.id}
+                  onModeChange={member.kind === "agent" ? (mode) => void setMode(member.id, mode) : undefined}
                 />
               ))
             ) : (
@@ -151,6 +223,9 @@ export function ChannelMembersTab({
                   disabled={saving}
                   onToggle={toggleMember}
                   colorIndex={selectedMembers.length + index}
+                  mode={member.kind === "agent" ? memberModes.get(member.id) ?? "active" : undefined}
+                  modeLoading={loadingModes || savingMode === member.id}
+                  onModeChange={member.kind === "agent" ? (mode) => void setMode(member.id, mode) : undefined}
                 />
               ))
             ) : (
@@ -169,13 +244,21 @@ function MemberRow({
   disabled,
   onToggle,
   colorIndex,
+  mode,
+  modeLoading,
+  onModeChange,
 }: {
   member: Member;
   checked: boolean;
   disabled: boolean;
   onToggle: (memberId: string) => void;
   colorIndex: number;
+  mode?: ChannelMemberMode;
+  modeLoading?: boolean;
+  onModeChange?: (mode: ChannelMemberMode) => void;
 }) {
+  const [open, setOpen] = useState(false);
+
   return (
     <label className="flex items-center gap-3 py-2.5">
       <input
@@ -194,6 +277,50 @@ function MemberRow({
           <span className="rounded-full bg-zinc-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
             {member.kind}
           </span>
+          {mode !== undefined && onModeChange ? (
+            <div className="relative ml-auto">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  setOpen(!open);
+                }}
+                disabled={modeLoading}
+                className="inline-flex items-center gap-1 rounded border border-zinc-200 bg-white px-1.5 py-0.5 text-[10px] font-medium text-zinc-600 transition hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-400 dark:hover:bg-zinc-900"
+              >
+                {modeLoading ? "..." : MODE_LABELS[mode]}
+                <ChevronDown className="h-3 w-3" />
+              </button>
+              {open && (
+                <>
+                  <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
+                  <div className="absolute right-0 top-full z-20 mt-1 w-44 rounded-lg border border-zinc-200 bg-white py-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
+                    {MODE_ORDER.map((m) => (
+                      <button
+                        key={m}
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          onModeChange(m);
+                          setOpen(false);
+                        }}
+                        className={`flex w-full flex-col gap-0.5 px-2.5 py-1.5 text-left transition hover:bg-zinc-100 dark:hover:bg-zinc-800 ${
+                          m === mode ? "bg-violet-500/10" : ""
+                        }`}
+                      >
+                        <span className="text-xs font-medium text-zinc-900 dark:text-zinc-100">
+                          {MODE_LABELS[m]}
+                        </span>
+                        <span className="text-[10px] text-zinc-500 dark:text-zinc-400">
+                          {MODE_DESCRIPTIONS[m]}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          ) : null}
         </div>
         <p className="truncate text-xs text-zinc-500 dark:text-zinc-400">{member.roleName}</p>
       </div>

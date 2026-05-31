@@ -214,6 +214,29 @@ describe('database migrations', () => {
     db.close();
   });
 
+  it('backfills channel_member_modes on existing databases that pre-date the table (040)', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'ujima-db-cmm-backfill-'));
+    tempDirs.push(dir);
+    const dbPath = join(dir, 'legacy.sqlite');
+
+    // Simulate a DB that passed 001_initial before channel_member_modes
+    // was added to it: drop the table and forget the 040 row, re-open.
+    const tableExists = (db: ReturnType<typeof openDatabase>) =>
+      (db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='channel_member_modes'").all() as { name: string }[]).length;
+
+    let db = openDatabase({ dbPath });
+    db.exec('DROP TABLE channel_member_modes');
+    db.prepare("DELETE FROM schema_migrations WHERE id = '040_channel_member_modes_backfill'").run();
+    expect(tableExists(db)).toBe(0);
+    db.close();
+
+    db = openDatabase({ dbPath });
+    expect(tableExists(db)).toBe(1);
+    const migrations = (db.prepare('SELECT id FROM schema_migrations').all() as { id: string }[]).map((row) => row.id);
+    expect(migrations).toContain('040_channel_member_modes_backfill');
+    db.close();
+  });
+
   it('migrates self notes to memory entries during 027 upgrade', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'ujima-db-migration-self-note-'));
     tempDirs.push(dir);

@@ -156,9 +156,16 @@ function ExpandableRow({
   );
 }
 
-function AggregatedRunPanel({ operations }: { operations: AggregatedOperation[] }) {
-  const [isOpen, setIsOpen] = useState(false);
+function AggregatedRunPanel({
+  operations,
+  autoOpen = false,
+}: {
+  operations: AggregatedOperation[];
+  autoOpen?: boolean;
+}) {
+  const [isOpen, setIsOpen] = useState<boolean | undefined>();
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const panelOpen = isOpen ?? autoOpen;
 
   const counts = operations.reduce<Record<AggregatedOperation["type"], number>>(
     (acc, op) => ({ ...acc, [op.type]: (acc[op.type] ?? 0) + 1 }),
@@ -202,7 +209,7 @@ function AggregatedRunPanel({ operations }: { operations: AggregatedOperation[] 
   return (
     <div className="w-full">
       <button
-        onClick={() => setIsOpen(!isOpen)}
+        onClick={() => setIsOpen(!panelOpen)}
         className="flex w-full items-center justify-between gap-2 rounded-lg border border-foreground/10 bg-foreground/[0.02] px-3 py-2 text-left text-xs font-medium text-foreground/75 shadow-sm transition-all hover:bg-foreground/[0.04] active:bg-foreground/[0.06]"
       >
         <span className="flex min-w-0 flex-1 items-center gap-1.5">
@@ -211,13 +218,14 @@ function AggregatedRunPanel({ operations }: { operations: AggregatedOperation[] 
             {summaryText || "Executed tool actions"}
           </span>
         </span>
-        <Chevron open={isOpen} />
+        <Chevron open={panelOpen} />
       </button>
 
-      {isOpen && operations.length > 0 && (
+      {panelOpen && operations.length > 0 && (
         <div className="mt-2 pl-2 space-y-2 animate-in fade-in slide-in-from-top-1 duration-200">
-          {operations.map((op) => {
-            const isExpanded = !!expanded[op.id];
+          {operations.map((op, index) => {
+            const autoExpandOperation = autoOpen && (op.status === "running" || index === operations.length - 1);
+            const isExpanded = expanded[op.id] ?? autoExpandOperation;
 
             if (op.type === "edit" || op.type === "delete") {
               const verb = op.type === "edit" ? "Edited" : "Deleted";
@@ -428,7 +436,10 @@ export const TraceStep = memo(function TraceStep({
   const rowMargin = step.title.startsWith("Run ·") ? "mt-2" : "";
   const rowPadding = isLast ? "pb-0" : "pb-4";
   const body = step.aggregatedOperations && step.aggregatedOperations.length > 0 ? (
-    <AggregatedRunPanel operations={step.aggregatedOperations} />
+    <AggregatedRunPanel
+      operations={step.aggregatedOperations}
+      autoOpen={Boolean(isLast && step.status === "running")}
+    />
   ) : step.terminal?.streamingJob ? (
     <BackgroundShellJobPane
       cwd={step.terminal.cwd}

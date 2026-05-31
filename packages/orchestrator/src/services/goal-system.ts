@@ -12,6 +12,11 @@ export interface ParsedPlanTask {
   dependsOnTaskIndex?: number;
 }
 
+export interface GoalStartResult {
+  goal: Goal;
+  tasks: GoalTask[];
+}
+
 function validatePlanTasks(tasks: ParsedPlanTask[]): ParsedPlanTask[] {
   if (tasks.length === 0) {
     throw new Error('Plan must contain at least one task');
@@ -59,7 +64,7 @@ export class GoalSystemService {
     title: string;
     planMarkdown: string;
     tasks: ParsedPlanTask[];
-  }): Goal {
+  }): GoalStartResult {
     const now = new Date().toISOString();
     const tasks = validatePlanTasks(input.tasks);
     return this.repo.transaction(() => {
@@ -85,10 +90,11 @@ export class GoalSystemService {
         });
       }
       const taskIds = tasks.map(() => randomUUID());
+      const savedTasks: GoalTask[] = [];
       tasks.forEach((task, index) => {
         const taskId = taskIds[index];
         if (!taskId) throw new Error(`Missing task id for "${task.title}"`);
-        this.repo.saveGoalTask({
+        savedTasks.push(this.repo.saveGoalTask({
           id: taskId,
           organizationId: input.organizationId,
           goalId: goal.id,
@@ -101,9 +107,9 @@ export class GoalSystemService {
             task.dependsOnTaskIndex === undefined ? undefined : taskIds[task.dependsOnTaskIndex],
           createdAt: now,
           updatedAt: now,
-        });
+        }));
       });
-      return goal;
+      return { goal, tasks: savedTasks };
     });
   }
 
@@ -125,11 +131,11 @@ export class GoalSystemService {
     taskId: string;
     status: GoalTaskStatus;
     handoverSummary?: string;
-  }): GoalTask | null {
+  }): GoalTask {
     const task = this.repo.updateGoalTaskStatus(input.organizationId, input.taskId, input.status, {
       handoverSummary: input.handoverSummary,
     });
-    if (!task) return null;
+    if (!task) throw new Error(`Goal task not found: ${input.taskId}`);
     this.syncGoalStatus(input.organizationId, task.goalId);
     return task;
   }
@@ -179,19 +185,15 @@ export class GoalSystemService {
         .listRunSteps(organizationId, question.runId)
         .find((s) => s.toolCallId === question.toolCallId);
       if (step) {
+        const existingOutput = step.output && typeof step.output === 'object' ? step.output : {};
         this.repo.saveRunStep({
           ...step,
-          output: { status: 'completed', selectedOption },
+          output: { ...existingOutput, status: 'completed', selectedOption },
         });
       }
     }
 
-    // Implement-prompt: questions posted by maybePromptImplement carry a
-    // goalId but no runId. The recommended option transitions the goal
-    // from `planning` to `running` so dependent task scheduling can begin.
-    // The "do something different" option is a silent no-op — the user
-    // will follow up in the channel.
-    if (!question.runId && question.goalId && selectedOption === IMPLEMENT_QUESTION_OPTION) {
+    if (question.goalId && selectedOption === IMPLEMENT_QUESTION_OPTION) {
       try {
         this.implement(organizationId, question.goalId);
       } catch {
@@ -199,7 +201,6 @@ export class GoalSystemService {
         // implemented or cancelled. The supervisor agent can re-prompt
         // on a subsequent run if needed.
       }
-      return answeredQuestion;
     }
 
     const runId = question.runId;

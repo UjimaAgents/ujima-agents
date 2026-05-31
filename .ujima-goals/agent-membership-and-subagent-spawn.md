@@ -2,6 +2,7 @@
 
 **Goal ID:** ffaebc34-d2ab-4ad8-acd4-4ec054039442
 **Status:** Planning — locked
+**Branch:** feat/agent-membership-controls
 **Created:** 2026-05-30
 **Owner:** Carter Jordan
 
@@ -39,15 +40,42 @@ Currently no per-channel agent control. Every agent in a channel sees every mess
 
 | # | Task | Status | Notes |
 |---|------|--------|-------|
-| 2.1 | DB migration: add `membership_state` to agent_channel_members | Pending | Enum: active, passive, muted, temp_disabled |
-| 2.2 | API schema: define `AgentMembershipState` enum + membership update payload | Pending | In packages/api-schema |
-| 2.3 | Repository method: update membership state, list members with state | Pending | In runtime-core repositories |
-| 2.4 | Orchestrator service + API route: PATCH /channels/:id/members/:agentId/mode | Pending | Also GET /channels/:id/members with state |
-| 2.5 | Next.js proxy: route handler for the membership endpoints | Pending | apps/web/src/app/api/channels/... |
-| 2.6 | Frontend UI: Membership panel in channel header/settings | Pending | Active/Passive/Muted/Temp Disable controls |
-| 2.7 | Runtime enforcement: filter muted agents from message delivery + context building | Pending | In the message pipeline |
+| 2.1 | Shared types: add `ChannelMemberMode` enum + `ChannelMemberSettings` schema | ✅ Done | packages/shared/src/org-schemas.ts |
+| 2.2 | DB: add `channel_member_modes` table | ✅ Done | packages/context-store/src/db.ts |
+| 2.3 | Repo methods: CRUD for channel member modes | ✅ Done | packages/runtime-core/src/repositories/channels.ts |
+| 2.4 | Repo reader interface: expose new methods | ✅ Done | packages/orchestrator/src/services/repository-reader.ts |
+| 2.5 | Wake suppressed reasons: add `mode-blocked` and `mode-passive` | ✅ Done | packages/shared/src/socket-events.ts |
+| 2.6 | Wake enforcement: check mode in `alertChannelReaders`, `alertMentionedMembers`, `alertDirectMessageParticipants` | ✅ Done | packages/orchestrator/src/services/conversation.ts |
+| 2.7 | Orchestrator tool: `channel.set_member_mode` | ✅ Done | packages/orchestrator/src/tools/channel.ts |
+| 2.8 | Build & test pass | ✅ Done | Shared, runtime-core, orchestrator all compile clean; 74+28+26+123+3 tests pass |
+| 2.9 | Member mode UI: Web frontend settings | ✅ Done | Channel Members tab shows mode dropdown for agents |
+| 2.10 | API routes: Daemon + Next.js proxy | ✅ Done | GET/PUT /api/orgs/:orgId/channels/:channelId/modes |
+| 2.11 | Repository class: wire member modes | ✅ Done | Added to runtime-core Repository class |
 
 ---
+
+**Web frontend changes:**
+- `channel-members-tab.tsx` — each agent row shows a mode dropdown (Active/Passive/Muted/Temp Disabled) with descriptions. Fetches modes on mount, saves via PUT.
+- Daemon Fastify route `channel-member-modes.ts` — GET returns modes, PUT updates a member's mode
+- Next.js proxy route at `/api/orgs/[orgId]/channels/[channelId]/modes` — proxies GET/PUT to daemon
+- Repository class updated with the missing alias methods
+
+### Bugs Fixed (2026-05-31)
+
+| Bug | Severity | Fix | File |
+|-----|----------|-----|------|
+| `GET /modes` 400 due to missing query param | Medium | Removed `querystring: OrganizationQuerySchema` from route schema — `orgId` already in params | `apps/api/src/transport/routes/channel-member-modes.ts:39` |
+
+**Bug 1 (Passive skipped on @mentions):** Verified code is already correct. `alertMentionedMembers` only skips `muted`/`temp_disable` — `passive` agents pass through and receive mentions. Broadcast path correctly suppresses `passive`.
+
+### Goal Board Redesign (2026-05-31)
+
+- Removed the status `<select>` dropdown from each task card
+- Added native HTML5 drag-and-drop: drag cards between Todo / Blocked / In Progress / Done columns
+- Drag handle (`GripVertical` icon) appears on hover
+- Drop target columns highlight with violet border when dragging over
+- Empty columns show "Drop here" prompt during drag
+- Loading tasks dim to 50% opacity while status update is in flight
 
 ## Feature 3: Parallel Subagent Spawn Tool
 

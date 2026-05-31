@@ -172,9 +172,17 @@ function groupTraceSteps(steps: TraceStepData[]): TraceStepData[] {
         grouped.push(currentGroup);
       }
       currentGroup.aggregatedOperations.push(toolStepToOperation(step));
-      if (step.status === "failed") currentGroup.status = "failed";
+      currentGroup.status = currentGroup.aggregatedOperations.some((op) => op.status === "failed")
+        ? "failed"
+        : step.status === "running"
+          ? "running"
+          : "success";
       currentGroup.title = `${getAgentName(currentGroup.title)} · ${
-        currentGroup.status === "failed" ? "failed" : "completed"
+        currentGroup.status === "failed"
+          ? "failed"
+          : currentGroup.status === "running"
+            ? "running"
+            : "completed"
       }`;
       currentGroup.duration = step.duration;
       continue;
