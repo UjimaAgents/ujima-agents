@@ -2,6 +2,63 @@ import { streamText, type LanguageModel, type ModelMessage, type ToolSet } from 
 import { RUN_TERMINATING_TOOL_NAMES } from './run-reply-guard.js';
 import { findToolApprovalRequiredError, ToolApprovalRequiredError } from './tool-loop-result.js';
 
+// Both wake-run (ai-service.generateRunReply) and direct-spirit
+// (spirit-agent-run.runOnce) call runAgentLoop and both can hit the
+// same two recoverable conditions: bad model id (404) + Gemini
+// "too many states" (400). Keeping the retry shape in one helper
+// here so the two call sites can't drift — adding a third recovery
+// type means editing one place.
+export interface RunAgentLoopRetryHooks {
+  /**
+   * Called on `ModelNotFoundError`. Must return a fresh
+   * LanguageModel (typically the provider's safe-default id) for
+   * the next attempt. Return `null` to give up and re-throw.
+   */
+  onModelNotFound?: (error: ModelNotFoundError) => Promise<LanguageModel | null> | LanguageModel | null;
+  /**
+   * Called on `SchemaTooLargeError`. Must return a trimmed ToolSet
+   * (typically with the heaviest MCP dropped) for the next attempt.
+   * Return `null` to give up and re-throw.
+   */
+  onSchemaTooLarge?: (error: SchemaTooLargeError) => Promise<ToolSet | null> | ToolSet | null;
+}
+
+export async function runAgentLoopWithRetry(
+  buildArgs: () => Parameters<typeof runAgentLoop>[0],
+  setModel: (next: LanguageModel) => void,
+  setTools: (next: ToolSet) => void,
+  hooks: RunAgentLoopRetryHooks = {},
+): Promise<Awaited<ReturnType<typeof runAgentLoop>>> {
+  // Each recovery class fires at most once per outer call — a bad
+  // model with too many tools recovers in two attempts; everything
+  // beyond that propagates.
+  let modelFallbackApplied = false;
+  let paletteReduced = false;
+  while (true) {
+    try {
+      return await runAgentLoop(buildArgs());
+    } catch (error) {
+      if (error instanceof ModelNotFoundError && !modelFallbackApplied && hooks.onModelNotFound) {
+        const replacement = await hooks.onModelNotFound(error);
+        if (replacement) {
+          modelFallbackApplied = true;
+          setModel(replacement);
+          continue;
+        }
+      }
+      if (error instanceof SchemaTooLargeError && !paletteReduced && hooks.onSchemaTooLarge) {
+        const trimmed = await hooks.onSchemaTooLarge(error);
+        if (trimmed) {
+          paletteReduced = true;
+          setTools(trimmed);
+          continue;
+        }
+      }
+      throw error;
+    }
+  }
+}
+
 // Typed errors so callers can mount targeted recovery without
 // pattern-matching error strings at every site. Both extend Error so
 // they propagate normally if the caller chooses not to handle them.
@@ -213,17 +270,44 @@ export async function runAgentLoop(input: {
       },
     });
 
-    for await (const part of result.fullStream) {
-      if (part.type === 'error') {
-        const approvalError = findToolApprovalRequiredError(part.error);
-        if (approvalError) throw approvalError;
-        const classified = classifyApiError(part.error);
-        if (classified) throw classified;
-        throw part.error;
+    // The AI SDK surfaces 4xx/5xx from the provider through *both*
+    // `fullStream` (as `{ type: 'error', error }`) AND as a Promise
+    // rejection on `result.text` / `result.usage` / the
+    // async-iterator itself. We have to classify in every branch —
+    // a 400 "too many states" sometimes arrives only through the
+    // text-promise rejection, and the original
+    // `for await … part.type === 'error'` catch never sees it.
+    // Wrapping both paths is the only way to guarantee the typed
+    // error gets thrown so spirit-agent-run's retry-with-fallback
+    // can fire.
+    try {
+      for await (const part of result.fullStream) {
+        if (part.type === 'error') {
+          const approvalError = findToolApprovalRequiredError(part.error);
+          if (approvalError) throw approvalError;
+          const classified = classifyApiError(part.error);
+          if (classified) throw classified;
+          throw part.error;
+        }
       }
+    } catch (streamError) {
+      if (findToolApprovalRequiredError(streamError)) throw streamError;
+      const classified = classifyApiError(streamError);
+      if (classified) throw classified;
+      throw streamError;
     }
 
-    const [text, usage] = await Promise.all([result.text, result.usage]);
+    let text: string;
+    let usage: AgentLoopResult['usage'];
+    try {
+      [text, usage] = await Promise.all([result.text, result.usage]);
+    } catch (resolveError) {
+      if (findToolApprovalRequiredError(resolveError)) throw resolveError;
+      const classified = classifyApiError(resolveError);
+      if (classified) throw classified;
+      throw resolveError;
+    }
+
     const toolResults = steps.flatMap((step) => step.toolResults ?? []);
     const approvalId = approvalWaitFromSteps(steps);
     if (approvalId) throw new ToolApprovalRequiredError(approvalId);
@@ -243,6 +327,13 @@ export async function runAgentLoop(input: {
       isUnsupportedToolChoiceError(error)
     ) {
       return execute('auto');
+    }
+    // Classify here too — same rationale as inside execute(). The
+    // outer try is the last chance to convert a raw AI_APICallError
+    // into the typed error before it escapes runAgentLoop.
+    if (!(error instanceof ModelNotFoundError) && !(error instanceof SchemaTooLargeError)) {
+      const classified = classifyApiError(error);
+      if (classified) throw classified;
     }
     throw error;
   }
