@@ -8,6 +8,7 @@ import { AttachmentGrid } from "./attachment-grid";
 import { TerminalPane } from "./terminal-pane";
 import { FilesystemToolPane } from "./filesystem-tool-pane";
 import { Modal } from "@/components/ui/modal";
+import { UnifiedDiffView } from "./unified-diff-view";
 
 const CONVERSATION_ARCHIVE_MARKER = "[[CONVERSATION_ARCHIVE_V1]]";
 const CONVERSATION_SUMMARY_MARKER = "[[CONVERSATION_SUMMARY_V1]]";
@@ -332,6 +333,7 @@ interface ArtifactFileView {
   name: string;
   filePath: string;
   content: string;
+  diff?: string;
   artifactFormat: "html" | "markdown";
   status: string;
 }
@@ -352,6 +354,7 @@ export function getArtifactFileCard(toolCalls?: ChatMessageData["toolCalls"]): A
   const name = stringArg(card.args, "name") ?? stringArg(card.args, "goalName");
   const filePath = stringArg(card.args, "filePath") ?? stringArg(card.args, "goalFilePath");
   const html = stringArg(card.args, "html");
+  const diff = stringArg(card.args, "diff");
   const artifactFormat = card.args.artifactFormat;
   const status = stringArg(card.args, "status");
   if (!name || !filePath || !html || !status) return null;
@@ -359,6 +362,7 @@ export function getArtifactFileCard(toolCalls?: ChatMessageData["toolCalls"]): A
     name,
     filePath,
     content: html,
+    diff,
     artifactFormat: artifactFormat === "html" ? "html" : "markdown",
     status,
   };
@@ -369,6 +373,39 @@ function stringArg(args: Record<string, unknown>, key: string): string | undefin
   return typeof value === "string" ? value : undefined;
 }
 
+type ArtifactViewMode = "preview" | "markdown";
+
+function ArtifactViewToggle({
+  mode,
+  onChange,
+}: {
+  mode: ArtifactViewMode;
+  onChange: (next: ArtifactViewMode) => void;
+}) {
+  const options: { id: ArtifactViewMode; label: string }[] = [
+    { id: "preview", label: "Preview" },
+    { id: "markdown", label: "Markdown" },
+  ];
+  return (
+    <div className="flex items-center gap-1 text-[10px] font-mono leading-none text-zinc-500 dark:text-zinc-400">
+      {options.map(({ id, label }) => (
+        <button
+          key={id}
+          type="button"
+          onClick={() => onChange(id)}
+          className={`rounded-md px-2 py-1 transition-colors ${
+            mode === id
+              ? "bg-foreground/[0.06] text-foreground dark:bg-white/10 dark:text-zinc-50"
+              : "hover:bg-foreground/[0.03] hover:text-foreground dark:hover:bg-white/[0.04] dark:hover:text-zinc-200"
+          }`}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function ArtifactFilePreview({ artifact }: { artifact: ArtifactFileView }) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -377,6 +414,14 @@ function ArtifactFilePreview({ artifact }: { artifact: ArtifactFileView }) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const copiedTimerRef = useRef<number | null>(null);
   const isHtml = artifact.artifactFormat === "html";
+
+  const diff = artifact.diff;
+  const [viewMode, setViewMode] = useState<ArtifactViewMode>(diff ? "markdown" : "preview");
+  const [lastDiff, setLastDiff] = useState(diff);
+  if (lastDiff !== diff) {
+    setLastDiff(diff);
+    setViewMode(diff ? "markdown" : "preview");
+  }
 
   const measureIframeHeight = useCallback(() => {
     const iframe = iframeRef.current;
@@ -425,7 +470,8 @@ function ArtifactFilePreview({ artifact }: { artifact: ArtifactFileView }) {
               {artifact.filePath}
             </p>
           </div>
-          <div className="flex shrink-0 items-center gap-1">
+          <div className="flex shrink-0 items-center gap-2">
+            {diff && <ArtifactViewToggle mode={viewMode} onChange={setViewMode} />}
             <span className="rounded-full bg-violet-100/80 px-2 py-0.5 text-[10px] font-semibold text-violet-700 dark:bg-violet-500/10 dark:text-violet-300">
               {formatArtifactStatus(artifact.status)}
             </span>
@@ -454,7 +500,13 @@ function ArtifactFilePreview({ artifact }: { artifact: ArtifactFileView }) {
           </div>
         </div>
         <div className="relative">
-          {isHtml ? (
+          {viewMode === "markdown" && diff ? (
+            <div className={isExpanded ? "" : "max-h-[540px] overflow-hidden"}>
+              <div className="px-4 py-3 bg-zinc-950 text-zinc-50 dark:bg-zinc-950/80 animate-in fade-in-50 duration-200">
+                <UnifiedDiffView text={diff} />
+              </div>
+            </div>
+          ) : isHtml ? (
             <iframe
               ref={iframeRef}
               title={artifact.name}
@@ -501,12 +553,32 @@ function ArtifactFilePreview({ artifact }: { artifact: ArtifactFileView }) {
                 {artifact.filePath}
               </p>
             </div>
-            <span className="rounded-full bg-violet-100/80 px-2 py-0.5 text-[10px] font-semibold text-violet-700 dark:bg-violet-500/10 dark:text-violet-300">
-              {formatArtifactStatus(artifact.status)}
-            </span>
+            <div className="flex shrink-0 items-center gap-2">
+              {diff && <ArtifactViewToggle mode={viewMode} onChange={setViewMode} />}
+              <span className="rounded-full bg-violet-100/80 px-2 py-0.5 text-[10px] font-semibold text-violet-700 dark:bg-violet-500/10 dark:text-violet-300">
+                {formatArtifactStatus(artifact.status)}
+              </span>
+              <button
+                type="button"
+                onClick={copyArtifact}
+                className={`inline-flex h-8 w-8 items-center justify-center rounded-full transition ${
+                  copied
+                    ? "bg-emerald-500/10 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-400"
+                    : "text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+                }`}
+                title="Copy artifact"
+                aria-label="Copy artifact"
+              >
+                {copied ? <CheckCircle2 className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+              </button>
+            </div>
           </div>
           <div className="overflow-hidden rounded-xl ring-1 ring-zinc-200/60 dark:ring-zinc-800/70">
-            {isHtml ? (
+            {viewMode === "markdown" && diff ? (
+              <div className="max-h-[calc(100vh-12rem)] overflow-auto px-4 py-3 bg-zinc-950 text-zinc-50 dark:bg-zinc-950/80">
+                <UnifiedDiffView text={diff} />
+              </div>
+            ) : isHtml ? (
               <div className="max-h-[calc(100vh-12rem)] overflow-auto">
                 <iframe
                   title={artifact.name}

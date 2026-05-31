@@ -29,8 +29,10 @@ import type {
   SkillInstall,
   TaskSession,
   TaskSessionStatus,
-  Todo,
-  TodoStatus,
+  Goal,
+  GoalTask,
+  GoalTaskStatus,
+  InteractiveQuestion,
   WorkspaceFile,
   WorkspaceMember,
 } from '@ujima/shared';
@@ -212,6 +214,9 @@ export interface ConversationRepository extends RepositoryReader {
    * silently no-ops in that case.
    */
   saveRun?(run: RunState): RunState;
+  saveInteractiveQuestion?(question: InteractiveQuestion): InteractiveQuestion;
+  listPendingInteractiveQuestions?(organizationId: string, channelId: string): InteractiveQuestion[];
+  listInteractiveQuestionsByRunId?(organizationId: string, runId: string): InteractiveQuestion[];
   findActiveRunForMemberThread(
     organizationId: string,
     agentId: string,
@@ -349,61 +354,24 @@ export interface ApiRepository extends ConversationRepository {
   getOrganizationSkillInstall(organizationId: string, installId: string): SkillInstall | null;
   listOrganizationSkillInstalls(organizationId: string): SkillInstall[];
   deleteOrganizationSkillInstall(organizationId: string, installId: string): void;
-  saveTodo(todo: Todo): Todo;
-  getTodo(organizationId: string, todoId: string): Todo | null;
-  listTodosForSession(
+  saveGoal(goal: Goal): Goal;
+  getGoal(organizationId: string, goalId: string): Goal | null;
+  getGoalByChannel(organizationId: string, channelId: string): Goal | null;
+  listGoals(organizationId: string): Goal[];
+  saveGoalTask(task: GoalTask): GoalTask;
+  deleteGoalTasks(organizationId: string, goalId: string): void;
+  getGoalTask(organizationId: string, taskId: string): GoalTask | null;
+  listGoalTasks(organizationId: string, goalId: string): GoalTask[];
+  updateGoalTaskStatus(
     organizationId: string,
-    taskSessionId: string,
-    options?: { status?: TodoStatus; memberId?: string },
-  ): Todo[];
-  listTodosForChannel?(
-    organizationId: string,
-    channelId: string,
-    options?: { status?: TodoStatus; memberId?: string },
-  ): Todo[];
-  listIdleCommitments?(options: {
-    idleSinceIso: string;
-    statuses?: readonly TodoStatus[];
-    limit?: number;
-  }): Todo[];
-  /**
-   * Open commitments owned by `memberId` across every channel.
-   * Surfaces into `<workspace-state>` so an agent juggling multiple
-   * channels sees what's owed across the workspace, not just the
-   * current channel. Optional because the narrow test repo doesn't
-   * implement it.
-   */
-  listOpenCommitmentsForMember?(
-    organizationId: string,
-    memberId: string,
-    options?: { statuses?: readonly TodoStatus[]; limit?: number },
-  ): Todo[];
-  listExpiredCommitments?(options: { nowIso: string; limit?: number }): Todo[];
-  /**
-   * Atomic flip from "open + past due" → `expired`. Returns true on
-   * successful claim. The sweeper claims first, then publishes the
-   * system message, so a crash causes one missed letter rather than a
-   * duplicate one.
-   */
-  claimExpiredCommitment?(todoId: string, nowIso: string): boolean;
-  /**
-   * Dedup lookup for the commitment extractor. Returns the most-
-   * recently-created open commitment for a `(org, channel, member)`
-   * triple within `sinceIso`. Optional because the existing in-memory
-   * test repository doesn't implement it — the service falls back to
-   * "always insert" if absent.
-   */
-  findOpenChannelCommitmentForMember?(
-    organizationId: string,
-    channelId: string,
-    memberId: string,
-    sinceIso: string,
-  ): Todo | null;
-  /** Reverse-lookup from a source message to its originating commitment. */
-  findCommitmentBySourceMessage?(
-    organizationId: string,
-    sourceMessageId: string,
-  ): Todo | null;
+    taskId: string,
+    status: GoalTaskStatus,
+    options?: { handoverSummary?: string },
+  ): GoalTask | null;
+  saveInteractiveQuestion(question: InteractiveQuestion): InteractiveQuestion;
+  getInteractiveQuestion(organizationId: string, questionId: string): InteractiveQuestion | null;
+  listPendingInteractiveQuestions(organizationId: string, channelId: string): InteractiveQuestion[];
+  listInteractiveQuestionsByRunId(organizationId: string, runId: string): InteractiveQuestion[];
 
   // Bet 5 — memory_entries KV. All optional because the in-memory
   // test repos don't implement them; services degrade gracefully
@@ -495,12 +463,6 @@ export interface ApiRepository extends ConversationRepository {
     runId: string,
   ): RunProcedureApplied[];
 
-  updateTodoStatus(
-    organizationId: string,
-    todoId: string,
-    status: TodoStatus,
-    options?: { notes?: string },
-  ): Todo | null;
   deleteMessages(organizationId: string, messageIds: string[]): void;
   saveOrganization(organization: Organization): Organization;
   getLatestOrganization(): Organization | null;

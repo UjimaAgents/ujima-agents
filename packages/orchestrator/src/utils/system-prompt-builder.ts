@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { ModelMessage } from 'ai';
 import type { WakeReason } from '@ujima/shared';
-import { ANTI_MIRROR_SCAFFOLD_LINE, SELF_FOLLOWUP_SCAFFOLD_LINES } from './wake-reply-policy.js';
+import { ANTI_MIRROR_SCAFFOLD_LINE } from './wake-reply-policy.js';
 import { loadProceduresForSystemPrompt as loadProceduresIndex } from '../tools/self-procedure.js';
 import { aggregateProcedures, type AggregatorOutput } from './procedures.js';
 
@@ -9,7 +9,7 @@ import { aggregateProcedures, type AggregatorOutput } from './procedures.js';
  * Bet 1 — cache-stable system prompt.
  *
  * Today's wake-run path bakes per-wake mutations (anti-mirror line
- * for gemini-flash, self-followup publish contract) into the
+ * for gemini-flash) into the
  * `system` string before handing it to the AI-SDK. Every wake of
  * the same agent+thread therefore busts Anthropic's prefix cache,
  * even though 80%+ of the prompt is identical.
@@ -19,7 +19,7 @@ import { aggregateProcedures, type AggregatorOutput } from './procedures.js';
  *   - `system: string` carries only Zone 1 (truly invariant per
  *     agent+thread): role identity, collaboration protocol, base
  *     scaffold, the agent's own procedural memory.
- *   - Per-wake variations (anti-mirror, self-followup contract) live
+ *   - Per-wake variations live
  *     in a SEPARATE block appended to the messages array AFTER the
  *     cache breakpoint. They mutate freely without invalidating the
  *     cached prefix.
@@ -163,9 +163,7 @@ export interface WakeContextInput {
 /**
  * Per-wake mutations land here as user-role messages AFTER the
  * cache breakpoint. The anti-mirror line targets `gemini-*-flash`
- * (the only family that needs the explicit nudge today); the
- * self-followup contract is the publish-or-pass instruction that
- * lands on scheduler-driven wakes.
+ * (the only family that needs the explicit nudge today).
  *
  * Returns an empty array when no per-wake content applies — caller
  * appends as-is to its messages array.
@@ -175,10 +173,6 @@ export function buildWakeContextMessages(input: WakeContextInput): ModelMessage[
 
   if (input.isMirrorFragile) {
     lines.push(ANTI_MIRROR_SCAFFOLD_LINE);
-  }
-
-  if (input.wakeReason === 'self-followup') {
-    lines.push(...SELF_FOLLOWUP_SCAFFOLD_LINES);
   }
 
   if (lines.length === 0) return [];

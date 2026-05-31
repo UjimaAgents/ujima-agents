@@ -12,6 +12,7 @@ import {
 } from "@ujima/shared/browser";
 import type { SelectedConversation } from "./types";
 import { resolveDefaultConversation } from "./workspace-channels";
+import { isLiveRun } from "./feed-selectors";
 import type { ChatMessageData, ApprovalCardData } from "./components/chat";
 import type { ActivityState } from "./activity-state";
 import { presenceToActivityState } from "./activity-state";
@@ -26,7 +27,7 @@ export type WorkspaceTab =
   | "tasks"
   | "members"
   | "culture";
-export type WorkspaceDetailsTab = "Reasoning trace" | "Changes" | "Metadata";
+export type WorkspaceDetailsTab = "Thinking trace" | "Changes" | "Metadata";
 
 export interface ActiveJob {
   runId: string;
@@ -107,7 +108,7 @@ const EMPTY_ACTIVITY = {
   showDetails: false,
   detailsAutoOpenDismissed: readDetailsAutoOpenDismissed(),
   detailsWidth: 33,
-  detailsTab: "Reasoning trace" as WorkspaceDetailsTab,
+  detailsTab: "Thinking trace" as WorkspaceDetailsTab,
   selectedConversation: undefined,
   channels: [],
   members: [],
@@ -172,14 +173,8 @@ function ensureReplyPreviews(messages: ChatMessageData[]): ChatMessageData[] {
 function pruneStreamingMessage(current: ChatMessageData[], incoming: ChatMessageData): ChatMessageData[] {
   if (incoming.kind !== "agent" || incoming.pending || !incoming.streamRunId) return current;
   const rid = incoming.streamRunId;
-  return current.filter(
-    (message) =>
-      !(
-        message.streamRunId &&
-        message.streamRunId === rid &&
-        message.threadId === incoming.threadId
-      ),
-  );
+  const streamPlaceholderId = `stream:${rid}:${incoming.senderId}`;
+  return current.filter((message) => message.id !== streamPlaceholderId);
 }
 
 function mergeApprovals(current: ApprovalCardData[], incoming: ApprovalCardData[]): ApprovalCardData[] {
@@ -377,7 +372,7 @@ export function selectActiveAgentChats(
     if (
       !run.threadId ||
       run.threadId === currentThreadId ||
-      (run.status !== "running" && run.status !== "waiting_for_approval") ||
+      !isLiveRun(run) ||
       !isAgentOnlyThread(run.threadId, state)
     ) {
       continue;

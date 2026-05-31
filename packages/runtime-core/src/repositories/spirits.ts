@@ -129,7 +129,7 @@ export function listActiveSpiritsForMember(
     .prepare(
       `SELECT * FROM spirits
        WHERE organization_id = ? AND member_id = ?
-         AND status IN ('queued','running','waiting_for_approval')
+         AND status IN ('queued','running','waiting_for_approval','waiting_for_input')
          AND role = 'worker'
        ORDER BY updated_at DESC`,
     )

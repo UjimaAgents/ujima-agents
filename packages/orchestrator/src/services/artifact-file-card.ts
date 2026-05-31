@@ -6,17 +6,45 @@ import { MessageSchema, type GoalStatus, type Message, type MessageCard, type Me
 import { assertWorkspaceBoundary } from '@ujima/shared/workspace';
 
 interface ToolCallLike {
+  toolCallId?: string;
   toolName?: string;
   args?: Record<string, unknown>;
   input?: unknown;
 }
 
+interface ToolResultLike {
+  toolCallId?: string;
+  output?: unknown;
+  result?: unknown;
+}
+
 const GOAL_ARTIFACT_DIR = '.ujima-goals';
-const GOAL_STATUS_VALUES = ['draft', 'planning', 'in_progress', 'completed', 'failed'] as const;
+
+// Maps both the canonical GoalStatus values and a few legacy aliases
+// that historically appeared in agent-authored goal docs.
+const GOAL_STATUS_ALIASES: Record<string, GoalStatus> = {
+  draft: 'planning',
+  planning: 'planning',
+  in_progress: 'running',
+  running: 'running',
+  completed: 'completed',
+  suspended: 'suspended',
+  failed: 'cancelled',
+  cancelled: 'cancelled',
+};
+
+const GOAL_STATUS_PATTERN = Object.keys(GOAL_STATUS_ALIASES).join('|');
+const GOAL_STATUS_INLINE_RE = new RegExp(
+  `(?:^|\\n)[\\s-*]*status[\\s-*]*[:=]\\s*[*_]*(${GOAL_STATUS_PATTERN})\\b`,
+);
+const GOAL_STATUS_META_RE = new RegExp(
+  `<meta[^>]+name=["']goal-status["'][^>]+content=["'](${GOAL_STATUS_PATTERN})["']`,
+);
 
 export async function appendArtifactFileToolCall(
   toolCalls: readonly ToolCallLike[],
   workspaceRoot: string,
+  toolResults: readonly ToolResultLike[] = [],
 ): Promise<MessageToolCall | undefined> {
   const writeCall = [...toolCalls].reverse().find(isArtifactFileWrite);
   if (!writeCall) return undefined;
@@ -37,7 +65,7 @@ export async function appendArtifactFileToolCall(
   } catch {
     return undefined;
   }
-  const card = buildArtifactFileCard(relativePath, content);
+  const card = buildArtifactFileCard(relativePath, content, findDiffForCall(writeCall, toolResults));
 
   return {
     toolCallId: randomUUID(),
@@ -81,6 +109,7 @@ function isArtifactFileWrite(call: ToolCallLike): boolean {
 function buildArtifactFileCard(
   filePath: string,
   content: string,
+  diff?: string,
 ): MessageCard {
   return {
     cardId: randomUUID(),
@@ -89,9 +118,23 @@ function buildArtifactFileCard(
     name: path.basename(filePath, path.extname(filePath)) || 'Artifact',
     filePath,
     html: content,
+    ...(diff ? { diff } : {}),
     artifactFormat: inferArtifactFormat(filePath, content),
     status: inferGoalStatus(content),
   };
+}
+
+function findDiffForCall(call: ToolCallLike, toolResults: readonly ToolResultLike[]): string | undefined {
+  if (!call.toolCallId) return undefined;
+  const match = toolResults.find((result) => result.toolCallId === call.toolCallId);
+  return readDiff(match?.output) ?? readDiff(match?.result);
+}
+
+function readDiff(value: unknown): string | undefined {
+  if (!isRecord(value)) return undefined;
+  const direct = value.diff;
+  if (typeof direct === 'string' && direct.trim()) return direct.trimEnd();
+  return readDiff(value.result) ?? readDiff(value.output);
 }
 
 function artifactFileWritePath(call: ToolCallLike): string | undefined {
@@ -110,18 +153,12 @@ function inferArtifactFormat(filePath: string, content: string): 'html' | 'markd
 
 function inferGoalStatus(content: string): GoalStatus {
   const lower = content.toLowerCase();
-  const match =
-    lower.match(/(?:^|\n)\s*status\s*[:=]\s*(draft|planning|in_progress|completed|failed)\b/)?.[1] ??
-    lower.match(/<meta[^>]+name=["']goal-status["'][^>]+content=["'](draft|planning|in_progress|completed|failed)["']/)?.[1];
-  return isGoalStatus(match) ? match : 'in_progress';
+  const match = lower.match(GOAL_STATUS_INLINE_RE)?.[1] ?? lower.match(GOAL_STATUS_META_RE)?.[1];
+  return match !== undefined ? (GOAL_STATUS_ALIASES[match] ?? 'running') : 'running';
 }
 
 function normalizePath(value: string): string {
   return value.split(path.sep).join('/');
-}
-
-function isGoalStatus(value: string | undefined): value is GoalStatus {
-  return !!value && GOAL_STATUS_VALUES.includes(value as (typeof GOAL_STATUS_VALUES)[number]);
 }
 
 function readStringField(call: ToolCallLike, key: string): string | undefined {

@@ -9,15 +9,9 @@ import {
   RunningTaskSchema,
   StartTaskRequestSchema,
   StartTaskResponseSchema,
-  TaskPromotionRequestSchema,
-  TaskPromotionResponseSchema,
 } from '@ujima/api-schema';
 import { z } from 'zod';
 import {
-  type TaskPromoterService,
-} from '@ujima/orchestrator';
-import {
-  assertReadyWorkspaceRoot,
   isWorkspaceRootNotReadyError,
 } from './workspace-root.js';
 import { apiError, errorMessage } from './route-errors.js';
@@ -25,7 +19,6 @@ import { apiError, errorMessage } from './route-errors.js';
 export interface TaskRoutesOptions {
   host: RuntimeHost;
   repo: Repository;
-  taskPromoter: TaskPromoterService;
 }
 
 const TaskIdParamsSchema = z.object({ id: z.string().min(1) });
@@ -35,7 +28,7 @@ const TaskAgentKillParamsSchema = z.object({
 });
 
 export function registerTaskRoutes(_app: FastifyInstance, options: TaskRoutesOptions): void {
-  const { host, repo, taskPromoter } = options;
+  const { host } = options;
   const app = _app.withTypeProvider<ZodTypeProvider>();
 
   app.get('/tasks', {
@@ -140,30 +133,6 @@ export function registerTaskRoutes(_app: FastifyInstance, options: TaskRoutesOpt
     return { killed: host.killAgent(req.params.taskId, req.params.agentId) };
   });
 
-  app.post('/tasks/promote', {
-    schema: {
-      description: 'Promote a task to a different stage or team',
-      tags: ['Tasks'],
-      body: TaskPromotionRequestSchema,
-      response: {
-        200: TaskPromotionResponseSchema,
-        400: ApiErrorSchema,
-        409: ApiErrorSchema,
-        404: ApiErrorSchema,
-      },
-    },
-  }, async (req, reply) => {
-    try {
-      assertReadyWorkspaceRoot(repo, req.body.organizationId);
-      return await taskPromoter.promote(req.body);
-    } catch (err) {
-      if (isWorkspaceRootNotReadyError(err)) {
-        return apiError(reply, 409, errorMessage(err), ERR_NO_WORKSPACE_ROOT);
-      }
-      const message = errorMessage(err);
-      return apiError(reply, message.startsWith('Organization not found') ? 404 : 400, message);
-    }
-  });
 }
 
 function toTaskDto(t: {

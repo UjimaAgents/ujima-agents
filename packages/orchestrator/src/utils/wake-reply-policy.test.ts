@@ -56,16 +56,6 @@ describe('resolveWakeReplyPolicy', () => {
 });
 
 describe('buildWakeRunScaffold', () => {
-  it('prepends self-followup publish-contract lines', () => {
-    const policy = resolveWakeReplyPolicy({ threadId: 'thread-1', wakeReason: 'self-followup' });
-    const scaffold = buildWakeRunScaffold({
-      policy,
-      wakeReason: 'self-followup',
-    });
-    expect(scaffold).toContain('commitment you made earlier');
-    expect(scaffold).toContain('Delivered — see');
-  });
-
   it('prepends anti-mirror line for fragile models', () => {
     const policy = resolveWakeReplyPolicy({ threadId: 'thread-1' });
     const scaffold = buildWakeRunScaffold({ policy, mirrorFragile: true });

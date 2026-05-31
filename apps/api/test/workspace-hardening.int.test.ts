@@ -8,6 +8,7 @@ import {
   ALWAYS_AVAILABLE_AGENT_TOOLS,
   ConversationService,
   AuthService,
+  GoalSystemService,
   OnboardingService,
   ToolServiceImpl,
   createApiServices,
@@ -295,16 +296,6 @@ describe('workspace-root REST gating', () => {
           organizationId,
           agentId: 'frontend-alice',
           threadId: 'thread-1',
-        },
-      },
-      {
-        url: `${baseUrl}/api/tasks/promote`,
-        method: 'POST',
-        body: {
-          organizationId,
-          channelId: 'general',
-          requestedBy: 'owner-1',
-          prompt: 'Please handle this',
         },
       },
       {
@@ -619,11 +610,13 @@ describe('workspace path hardening', () => {
     const onboarding = new OnboardingService(repo, teamStore);
     const realtime = createNoopRealtime();
     const conversations = new ConversationService(repo, realtime);
+    const goals = new GoalSystemService(repo);
     const tools = new ToolServiceImpl(
       teamStore,
       repo,
       { requestApproval: () => ({ id: 'approval-1' }) },
       conversations,
+      goals,
       realtime,
     );
 

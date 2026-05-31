@@ -16,7 +16,10 @@ import {
   SocketEventNames,
   SpiritSchema,
   channelRoom,
+  memberRoom,
   orgRoom,
+  runRoom,
+  threadRoom,
   type MessageCard,
   type MessageToolCall,
   type Spirit,
@@ -39,7 +42,7 @@ import {
   filterDeprecatedToolIds,
 } from '../tools/index.js';
 import type { ApiRepository } from './repository-reader.js';
-import { findToolApprovalRequiredError } from './tool-loop-result.js';
+import { findToolApprovalRequiredError, findToolInputRequiredError } from './tool-loop-result.js';
 import { extractReasoningChunk } from '../utils/extract-reasoning.js';
 import { errorMessage } from '../utils/error-message.js';
 import { buildRunTranscript } from '../utils/run-transcript.js';
@@ -275,6 +278,7 @@ ${activeMemories
             const artifactFileToolCall = await appendArtifactFileToolCall(
               stepToolCalls,
               team.workspace.root,
+              stepToolResults,
             );
             const messageToolCalls = artifactFileToolCall ? [...toolCalls, artifactFileToolCall] : toolCalls;
             const reasoningContent = extractReasoningChunk(s);
@@ -333,6 +337,7 @@ ${activeMemories
         const artifactFileToolCall = await appendArtifactFileToolCall(
           stepToolCalls,
           team.workspace.root,
+          stepToolResults,
         );
         const messageToolCalls = artifactFileToolCall ? [...toolCalls, artifactFileToolCall] : toolCalls;
         const reasoningContent =
@@ -445,6 +450,49 @@ ${activeMemories
         terminatingTool,
       };
     } catch (err) {
+      const inputRequiredError = findToolInputRequiredError(err);
+      if (inputRequiredError) {
+        const waiting: Spirit = SpiritSchema.parse({
+          ...running,
+          status: 'waiting_for_input',
+          updatedAt: new Date().toISOString(),
+        });
+        this.repo.saveSpirit(waiting);
+
+        if (spirit.runId) {
+          const run = this.repo.getRun(input.organizationId, spirit.runId);
+          if (run) {
+            const question = this.repo.getInteractiveQuestion(input.organizationId, inputRequiredError.questionId);
+            const waitingRun = this.repo.saveRun({
+              ...run,
+              status: 'waiting_for_input',
+              step: 'waiting_for_input',
+              summary: question?.questionText ?? run.summary ?? 'Waiting for user input',
+            });
+            this.realtime.emit(
+              SocketEventNames.runUpdated,
+              { organizationId: input.organizationId, run: waitingRun },
+              [
+                orgRoom(input.organizationId),
+                runRoom(waitingRun.id),
+                memberRoom(input.memberId),
+                ...(waitingRun.threadId ? [threadRoom(waitingRun.threadId)] : []),
+                channelRoom(session.channelId),
+              ],
+            );
+          }
+        }
+        this.emit(SocketEventNames.spiritUpdated, waiting);
+        return {
+          spirit: waiting,
+          finalText: lastText,
+          iterations: totalTurns,
+          toolCalls: totalToolCalls,
+          tokensUsed: totalTokens,
+          terminatingTool: null,
+        };
+      }
+
       if (findToolApprovalRequiredError(err)) {
         const waiting: Spirit = SpiritSchema.parse({
           ...running,

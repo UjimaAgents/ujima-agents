@@ -16,7 +16,7 @@ import { BootstrapService } from './bootstrap.js';
 import { ChannelRetentionService } from './channel-retention.js';
 import type { ApiServiceContext } from './context.js';
 import { ConversationService } from './conversation.js';
-import { CommitmentService } from './commitment-service.js';
+import { GoalSystemService } from './goal-system.js';
 import { MemoryReviewService } from './memory-review.js';
 import { TrajectoryService } from './trajectory.js';
 import { McpRegistryService } from './mcp-registry.js';
@@ -31,9 +31,7 @@ import type { ApiRepository } from './repository-reader.js';
 import { SettingsService } from './settings.js';
 import { WorkspaceService, type WorkspaceCatalog } from './workspace.js';
 import { SpiritService, type ModelResolver, type SpiritMcpPool } from './spirit.js';
-import { SupervisorTodoService } from './supervisor-todo.js';
 import { SchedulerService } from './scheduler.js';
-import { TaskPromoterService, type TaskPromotionEvaluator } from './task-promoter.js';
 import { TaskSessionService } from './task-session.js';
 import type { TeamStore } from './team-store.js';
 import {
@@ -76,6 +74,8 @@ export {
   persistTeamConfig,
 } from './config-sync.js';
 export { ConversationService } from './conversation.js';
+export { GoalSystemService } from './goal-system.js';
+export type { ParsedPlanTask } from './goal-system.js';
 export {
   SELF_NOTE_COMPACTED_MARKER,
   SELF_NOTE_SUMMARY_MARKER,
@@ -138,17 +138,8 @@ export type {
   TeamSettingsResponse,
   UpdateOrganizationInput,
 } from './settings.js';
-export { TaskPromoterService } from './task-promoter.js';
 export { TaskSessionService, taskRunChannelId } from './task-session.js';
 export type { CreateTaskSessionInput, TaskSessionDetail } from './task-session.js';
-export type { TaskPromotionInput, TaskPromotionResult } from './task-promoter.js';
-export type { TaskPromotionDecision, TaskPromotionEvaluator } from './task-promoter.js';
-export { SupervisorTodoService } from './supervisor-todo.js';
-export type {
-  SupervisorTodoAddInput,
-  SupervisorTodoCheckInput,
-  SupervisorTodoListInput,
-} from './supervisor-todo.js';
 export { ActiveSpiritRegistry, isAliveStatus } from './active-spirit-registry.js';
 export type { ActiveSpiritEntry } from './active-spirit-registry.js';
 export { SpiritService, pickProviderModel } from './spirit.js';
@@ -219,7 +210,6 @@ export interface ApiServicesContext extends ApiServiceContext {
    * the SpiritService walks the team config + provider credentials.
    */
   spiritModelResolver?: ModelResolver;
-  taskPromoterEvaluator?: TaskPromotionEvaluator;
   /**
    * Optional MCP pool. When provided, SpiritService injects per-agent
    * attached MCP tools into the runtime palette. Production wires the
@@ -227,9 +217,6 @@ export interface ApiServicesContext extends ApiServiceContext {
    * (the spirit run path still works without MCP tools).
    */
   mcpPool?: SpiritMcpPool;
-  commitmentIdleThresholdMs?: number;
-  commitmentDefaultDueOffsetMs?: number;
-  commitmentSweeperIntervalMs?: number;
 }
 
 export interface ApiServices {
@@ -246,23 +233,12 @@ export interface ApiServices {
   settings: SettingsService;
   workspaces: WorkspaceService;
   scheduler: SchedulerService;
-  taskPromoter: TaskPromoterService;
   taskSessions: TaskSessionService;
+  goals: GoalSystemService;
   spirits: SpiritService;
-  supervisorTodos: SupervisorTodoService;
   activeSpirits: ActiveSpiritRegistry;
   mcpRegistry: McpRegistryService;
   pluginRegistry: PluginRegistryService;
-  commitments: CommitmentService;
-  /**
-   * Tears down background timers (commitment sweeper, anything else
-   * createApiServices started) and awaits any in-flight sweep so
-   * a SIGTERM doesn't tear the DB handle out from under the wake
-   * path. Tests with `commitmentSweeperIntervalMs: 0` never start
-   * the timer and don't need to call this; production calls it
-   * during daemon shutdown BEFORE closing the DB.
-   */
-  stop(): Promise<void>;
 }
 
 type WakeMemberInput = PendingMemberAlert;
@@ -462,6 +438,13 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     throw new Error('resumeRun not wired');
   };
 
+  let resumeInputRun: (
+    organizationId: string,
+    runId: string,
+  ) => Promise<unknown> | unknown = () => {
+    throw new Error('resumeInputRun not wired');
+  };
+
   const approvalsImpl = new ApprovalService(
     context.repo,
     context.realtime,
@@ -473,19 +456,18 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     requestApproval: (input) => approvalsImpl.requestApproval(input),
   };
 
-  const supervisorTodos = new SupervisorTodoService(context.repo);
-
   const spiritModelResolver =
     context.spiritModelResolver ??
     createSpiritModelResolver(context.teamStore, context.repo);
+  const goals = new GoalSystemService(context.repo, (orgId, runId) => resumeInputRun(orgId, runId));
 
   const innerTools = new ToolServiceImpl(
     context.teamStore,
     context.repo,
     approvalRequester,
     conversations,
+    goals,
     context.realtime,
-    supervisorTodos,
     context.mcpPool,
     spiritModelResolver,
   );
@@ -547,6 +529,8 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   const runs = spirits;
   resumeRun = async (orgId, runId, allowRun = true, approvalScope) =>
     spirits.resumeAfterApproval(orgId, runId, allowRun, approvalScope);
+  resumeInputRun = async (orgId, runId) =>
+    spirits.resumeAfterInput(orgId, runId);
   // Hydrate the in-memory registry from persisted spirits BEFORE alert
   // handling begins. Without this, a daemon restart would see an empty
   // registry and fall through to regular wake runs for already-active work.
@@ -581,30 +565,12 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     auth,
   );
   const taskSessions = new TaskSessionService(context.repo, conversations, spirits);
-  const taskPromoter = new TaskPromoterService(context.repo, spirits, {
-    teamStore: context.teamStore,
-    taskSessions,
-    conversations,
-    evaluator: context.taskPromoterEvaluator,
-  });
   const mcpRegistry = new McpRegistryService(context.repo);
   const pluginRegistry = new PluginRegistryService(
     context.repo,
     context.archiveRoot ?? process.env.UJIMA_HOME ?? process.cwd(),
   );
 
-  const commitments = new CommitmentService(
-    context.repo,
-    conversations,
-    context.realtime,
-    {
-      idleThresholdMs: context.commitmentIdleThresholdMs,
-      defaultDueOffsetMs: context.commitmentDefaultDueOffsetMs,
-    },
-  );
-  conversations.setMessagePublishedHook((message) =>
-    commitments.onAgentMessagePublished(message),
-  );
   // Bet 5 (Hermes review) — trajectory JSONL projection. One JSONL
   // line per completed run, gated by env var. Fire-and-forget, no
   // schema, no service dependencies: pure projection over runs +
@@ -622,16 +588,33 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   );
 
   // Late-bind the run-completed hook. The single hook routes to
-  // every subscriber: main's drain-pending-member-alert (skills
-  // library merge), memory-review's turn counter, and the
-  // trajectory writer. (Empty-wake handling moved into the
-  // commitment-service sweeper as part of the main merge.)
+  // drain-pending-member-alert, memory-review's turn counter, and
+  // the trajectory writer.
   spirits.setRunCompletedHook(async (run) => {
+    // Post the implement-prompt synchronously before any awaits so the
+    // question is persisted in the same tick as the run-completed SSE
+    // emit. Otherwise the frontend re-fetches questions before this
+    // callback creates one and the prompt never appears.
+    if (run.threadId) {
+      try {
+        const channelId = context.repo.getThread(run.organizationId, run.threadId)?.channelId;
+        if (channelId) {
+          const agentName = context.repo.getMember(run.organizationId, run.agentId)?.name || 'the agent';
+          goals.maybePromptImplement({
+            organizationId: run.organizationId,
+            channelId,
+            agentName,
+            runId: run.id,
+          });
+        }
+      } catch {
+        // best-effort: question posting is non-critical
+      }
+    }
+
     await drainPendingMemberAlertAfterRun(run, (pending) =>
       wakeMemberWithFailureEvents(wakeMemberDeps, pending),
     );
-    // Resolve workspace root lazily — only when the trajectory
-    // writer is actually enabled (env-gated).
     try {
       const team = context.teamStore.getTeam(run.organizationId);
       const workspaceRoot = team?.workspace.root;
@@ -641,6 +624,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     } catch {
       // best-effort
     }
+
     // Memory-review counter — only ticks for publishing terminators
     // so empty wakes and silent acks don't burn the nudge.
     const isPublishing =
@@ -658,58 +642,6 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
       });
     }
   });
-  // Scheduler tick (Bet 4). Production runs it every 60s; tests
-  // can pass `commitmentSweeperIntervalMs: 0` to opt out and call
-  // `commitments.sweepIdle()` / `sweepExpired()` directly. The
-  // interval is captured by `stop()` so daemon shutdown cancels it.
-  const sweepInterval =
-    context.commitmentSweeperIntervalMs ?? 60_000;
-  let commitmentSweeperHandle: ReturnType<typeof setInterval> | null = null;
-  // Track the in-flight sweep so `stop()` can await it — without
-  // this, a SIGTERM mid-sweep tears the DB handle out from under
-  // the wake path and produces half-published deadline-letters +
-  // SQLITE_MISUSE traces.
-  let inFlightSweep: Promise<unknown> | null = null;
-  const runSweepTick = async (): Promise<void> => {
-    try {
-      await commitments.sweepIdle();
-      await commitments.sweepExpired();
-    } catch {
-      return;
-    }
-  };
-  if (sweepInterval > 0) {
-    commitmentSweeperHandle = setInterval(() => {
-      // Skip if a previous tick is still running — guards against
-      // sweep latency exceeding the interval (would otherwise queue
-      // concurrent ticks against the same row set).
-      if (inFlightSweep) return;
-      inFlightSweep = runSweepTick().finally(() => {
-        inFlightSweep = null;
-      });
-    }, sweepInterval);
-    if (typeof (commitmentSweeperHandle as { unref?: () => void }).unref === 'function') {
-      (commitmentSweeperHandle as { unref?: () => void }).unref?.();
-    }
-  }
-
-  const stop = async (): Promise<void> => {
-    if (commitmentSweeperHandle) {
-      clearInterval(commitmentSweeperHandle);
-      commitmentSweeperHandle = null;
-    }
-    // Drain any tick currently mid-flight before returning. The
-    // daemon's shutdown sequence calls this BEFORE closing the DB
-    // handle so a sweep doesn't run against a torn-down connection.
-    if (inFlightSweep) {
-      try {
-        await inFlightSweep;
-      } catch {
-        // best-effort
-      }
-      inFlightSweep = null;
-    }
-  };
 
   return {
     ai,
@@ -724,15 +656,12 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     onboarding,
     settings,
     workspaces,
-    taskPromoter,
     taskSessions,
+    goals,
     spirits,
     scheduler,
-    supervisorTodos,
     activeSpirits,
     mcpRegistry,
     pluginRegistry,
-    commitments,
-    stop,
   };
 }

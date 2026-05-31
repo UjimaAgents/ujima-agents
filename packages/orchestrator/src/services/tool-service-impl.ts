@@ -15,11 +15,11 @@ import {
 } from "@ujima/shared";
 import type { RealtimeService } from "./context.js";
 import type { ConversationService } from "./conversation.js";
+import type { GoalSystemService } from "./goal-system.js";
 import { requireTeam } from "../utils/require-team.js";
 import { checkToolPolicy } from "./policy.js";
 import { isToolApprovalSatisfied } from "./tool-approval-gate.js";
 import type { ApiRepository } from "./repository-reader.js";
-import type { SupervisorTodoService } from "./supervisor-todo.js";
 import type { TeamStore } from "./team-store.js";
 import {
   ORCHESTRATOR_TOOLS,
@@ -81,13 +81,8 @@ export class ToolServiceImpl implements ToolService {
     private readonly repo: ApiRepository,
     private readonly approvals: ApprovalRequester,
     private readonly conversations: ConversationService,
+    private readonly goals: GoalSystemService,
     private readonly realtime: RealtimeService,
-    /**
-     * Phase 2.B — optional supervisor.todo.* backing service. Tools tagged
-     * `permissionMcpId: 'supervisor'` go through here. Optional so the
-     * pre-Phase-2 wiring still constructs.
-     */
-    private readonly supervisorTodos?: SupervisorTodoService,
     private readonly mcpPool?: McpRuntimePool,
     private readonly modelResolver?: ModelResolver,
     private readonly shellAutoReview = new ShellAutoReviewService(),
@@ -335,6 +330,18 @@ export class ToolServiceImpl implements ToolService {
         rooms,
       );
 
+      if (isWaitingForInputResult(result)) {
+        const waitingRun = this.repo.getRun(preparedInvocation.organizationId, preparedInvocation.runId);
+        if (waitingRun) {
+          this.realtime.emit(
+            SocketEventNames.runUpdated,
+            { organizationId: preparedInvocation.organizationId, run: waitingRun },
+            rooms,
+          );
+        }
+        return { ok: true, output: result };
+      }
+
       return { ok: true, output: { status: "completed", result } };
     } catch (error) {
       if (isPathEscapeError(error)) {
@@ -385,7 +392,7 @@ export class ToolServiceImpl implements ToolService {
         team: requireTeam(this.teamStore, invocation.organizationId),
         repo: this.repo,
         conversations: this.conversations,
-        supervisorTodos: this.supervisorTodos,
+        goals: this.goals,
         reportProgress: (output) => this.emitToolProgress(invocation, output),
       });
     }
@@ -721,6 +728,15 @@ export class ToolServiceImpl implements ToolService {
       });
     }
   }
+}
+
+function isWaitingForInputResult(value: unknown): value is { status: "waiting_for_input"; questionId: string } {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    (value as { status?: unknown }).status === "waiting_for_input" &&
+    typeof (value as { questionId?: unknown }).questionId === "string"
+  );
 }
 
 export function summarizeToolOutput(value: unknown): unknown {

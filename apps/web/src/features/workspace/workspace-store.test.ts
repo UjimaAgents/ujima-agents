@@ -172,6 +172,22 @@ describe("workspace-store helpers", () => {
     ]);
   });
 
+  it("keeps waiting_for_input runs visible in active agent chats", () => {
+    useWorkspaceStore.setState({
+      channels: [
+        { id: "agents", name: "agents", kind: "general" as const, topic: "", memberIds: ["ava", "bo"] },
+      ],
+      members,
+      globalActiveRuns: [
+        run({ id: "run-1", agentId: "ava", threadId: "agents", status: "waiting_for_input" }),
+      ],
+    });
+
+    expect(selectActiveAgentChats(useWorkspaceStore.getState(), "current")).toEqual([
+      { threadId: "agents", name: "agents", agents: ["Ava", "Bo"] },
+    ]);
+  });
+
 });
 
 function run(input: Pick<RunState, "id" | "agentId" | "threadId" | "status">): RunState {

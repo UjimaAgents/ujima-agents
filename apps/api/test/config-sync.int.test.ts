@@ -10,7 +10,6 @@ import {
   ConfigSyncService,
   SettingsService,
   SpiritService,
-  TaskPromoterService,
   createTeamStore,
 } from '@ujima/orchestrator';
 
@@ -565,7 +564,7 @@ describe('team config reconcile', () => {
     ).toThrow(/channel is archived/i);
   });
 
-  it('rejects retired config agents from new runs and task promotion', async () => {
+  it('rejects retired config agents from new runs', async () => {
     const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
     const teamStore = createTeamStore();
     const syncService = new ConfigSyncService(repo, teamStore);
@@ -581,7 +580,6 @@ describe('team config reconcile', () => {
         ai: { generateRunReply: async () => ({ text: '', toolResults: [], steps: [] }) } as never,
       },
     );
-    const promoter = new TaskPromoterService(repo, runs);
     const dir = await mkdtemp(join(tmpdir(), 'ujima-config-sync-'));
     tempDirs.push(dir);
     const configPath = join(dir, 'ujima.config.js');
@@ -613,16 +611,6 @@ describe('team config reconcile', () => {
         summary: 'do work',
       }),
     ).rejects.toThrow(/retired/i);
-
-    await expect(
-      promoter.promote({
-        organizationId: first.organization.id,
-        channelId: 'general',
-        requestedBy: 'pm',
-        prompt: 'take this task',
-        assignedAgentId: 'frontend-alice',
-      }),
-    ).rejects.toThrow(/no agent member available/i);
 
     const retiredAgent = repo.getMember(first.organization.id, 'frontend-alice');
     expect(retiredAgent?.retiredAt).toBeTruthy();

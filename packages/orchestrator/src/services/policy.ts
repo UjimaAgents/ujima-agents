@@ -115,20 +115,7 @@ export function checkToolPolicy(
     return { allowed: true, requiresApproval: false };
   }
 
-  // Supervisor-only tools (`supervisor.todo.*`) are gated on TWO axes:
-  //   1. The invocation must be tagged `spiritRole === 'supervisor'`
-  //      by SpiritService — the only legitimate caller.
-  //   2. The tool id must be in SUPERVISOR_TOOL_ALLOWLIST (enforced
-  //      downstream in ToolServiceImpl).
-  //
-  // Without the role-tag check, a worker role configured with
-  // `tools: ['supervisor.todo.add']` could mutate scoped state outside
-  // the supervisor path — the audit's stated leak. We refuse the
-  // bypass when the invocation came from a worker turn, and the
-  // normal role-allowlist check below then rejects it. Importantly,
-  // this stays restrictive even when the role does list the tool
-  // explicitly: the supervisor.* family is structurally not a worker
-  // surface.
+  // Supervisor-only tool families are structurally not a worker surface.
   if (toolId.startsWith('supervisor.')) {
     if (options.spiritRole === 'supervisor') {
       return { allowed: true, requiresApproval: false };
@@ -153,13 +140,22 @@ export function checkToolPolicy(
     return { allowed: true, requiresApproval: false };
   }
 
-  // Durable memory and per-agent procedure tools are private
-  // knowledge-management surfaces. They are intentionally present
-  // in ALWAYS_AVAILABLE_AGENT_TOOLS, but they use action='message'
-  // for audit classification, so without this branch they fall
-  // through to the generic non-read approval rule and silently stall
-  // background memory writes behind approvals nobody asked for.
-  if (toolId.startsWith('memory.') || toolId.startsWith('self.procedure.')) {
+  // Durable memory, per-agent procedure, and goal/question
+  // management tools are internal management surfaces — they
+  // mutate first-party tables (memory_entries, procedures, goals,
+  // goal_tasks, interactive_questions), not the workspace or shell.
+  // They are intentionally present in ALWAYS_AVAILABLE_AGENT_TOOLS
+  // and tagged `bypassPermission: true`, but they use non-read
+  // actions ('create', 'update', 'message') so without this branch
+  // they fall through to the generic approval rule and stall behind
+  // an ApprovalRequest schema that requires a non-empty resourcePath
+  // these tools don't have.
+  if (
+    toolId.startsWith('memory.') ||
+    toolId.startsWith('self.procedure.') ||
+    toolId.startsWith('goal.') ||
+    toolId.startsWith('question.')
+  ) {
     return { allowed: true, requiresApproval: false };
   }
 
@@ -169,9 +165,7 @@ export function checkToolPolicy(
   // `resolveToolAllowlist` / `ai-service.ts` so the run-time gate
   // doesn't reject a tool the model just received in its schema.
   // Writes (`filesystem`, `edit`, `multiedit`, `write`, `shell`)
-  // stay opt-in via `role.tools`. `schedule` is in
-  // `ALWAYS_AVAILABLE_AGENT_TOOLS` so it falls through this check
-  // without a dedicated branch.
+  // stay opt-in via `role.tools`.
   const baselineToolIds = ALWAYS_AVAILABLE_AGENT_TOOLS as readonly string[];
   if (!baselineToolIds.includes(toolId) && !role.tools.includes(toolId)) {
     return {

@@ -23,7 +23,6 @@ import {
   toSlashSkillCommands,
 } from "./chat";
 import { ChannelMembersTab } from "./channel-members-tab";
-import { ChannelTasksTab } from "./channel-tasks-tab";
 import { CultureTab } from "@/features/settings/shared/culture-tab";
 import { getDirectMessageThreadId, RunStateSchema, type RunState } from "@ujima/shared/browser";
 import { settingsFetch } from "@/features/settings/shared/settings-api";
@@ -36,8 +35,8 @@ import {
 } from "../workspace-store";
 import { EmptyChat } from "./empty-chat";
 import { TypingIndicator } from "./typing-indicator";
-import { RunCard } from "./run-card";
 import { ActivityRow } from "./activity-row";
+import { ChannelGoalsBoard } from "./channel-goals-board";
 import { ConversationSkeleton } from "./conversation-skeleton";
 import { ActivityListSkeleton } from "./activity-list-skeleton";
 import { FileListSkeleton } from "./file-list-skeleton";
@@ -47,10 +46,10 @@ import { resolveWorkspaceApproval } from "../approval-resolution";
 import { runToActivity } from "../activity-events";
 import { pendingApprovalVisibleInChannelView, queueApprovals } from "../approval-thread-filter";
 import { ReasoningTracePanel } from "./reasoning-trace-panel";
-import { buildTabCounts, collectBlockedRunReasons, collectConversationAttachments, isLiveRun } from "../feed-selectors";
-import { ChannelGoalsStrip } from "./channel-goals-strip";
+import { QuestionCard } from "./chat/question-card";
+import { buildTabCounts, collectConversationAttachments, isLiveRun } from "../feed-selectors";
 import { AgentChatHeaderControls } from "./chat/agent-chat-header-controls";
-import type { Member, ShellApprovalMode } from "@ujima/shared/browser";
+import type { Member, ShellApprovalMode, InteractiveQuestion } from "@ujima/shared/browser";
 
 const CHANNEL_TABS: ChatTab[] = [
   { id: "conversation", label: "Conversation" },
@@ -98,6 +97,10 @@ export function ChannelView({
 }: ChannelViewProps) {
   const [resolvingApprovals, setResolvingApprovals] = useState<Record<string, boolean>>({});
   const [approvalErrors, setApprovalErrors] = useState<Record<string, string>>({});
+  const [pendingQuestions, setPendingQuestions] = useState<InteractiveQuestion[]>([]);
+  const [activeQuestionIndex, setActiveQuestionIndex] = useState(0);
+  const [resolvingQuestions, setResolvingQuestions] = useState<Record<string, boolean>>({});
+  const [questionErrors, setQuestionErrors] = useState<Record<string, string>>({});
   const [replyTo, setReplyTo] = useState<ChatMessageData | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -232,7 +235,7 @@ export function ChannelView({
       })),
     [members],
   );
-  const reasoningTraceVisible = showDetails && detailsTab === "Reasoning trace";
+  const reasoningTraceVisible = showDetails && detailsTab === "Thinking trace";
   const liveTraceActivity = useMemo(
     () => (reasoningTraceVisible ? feed.activity.slice(-MAX_LIVE_TRACE_ACTIVITY) : []),
     [feed.activity, reasoningTraceVisible],
@@ -351,8 +354,15 @@ export function ChannelView({
     if (!currentThreadId) return EMPTY_RUNS;
     return feed.runs.filter((run) => isLiveRun(run) && run.threadId === currentThreadId);
   }, [currentThreadId, feed.runs]);
+  const waitingInputRunIds = useMemo(
+    () => liveThreadRuns.filter((run) => run.status === "waiting_for_input").map((run) => run.id),
+    [liveThreadRuns],
+  );
+  const questionRefreshSignal = useMemo(
+    () => feed.runs.map((run) => `${run.id}:${run.status}:${run.endedAt ?? ""}:${run.summary}`).join("|"),
+    [feed.runs],
+  );
   const typingRuns = activeTab === "conversation" ? liveThreadRuns : EMPTY_RUNS;
-  const taskRuns = activeTab === "tasks" ? liveThreadRuns : EMPTY_RUNS;
   const activeStep = useMemo(() => {
     const running = typingRuns.find((r) => r.status === "running");
     const s = running?.step;
@@ -394,6 +404,9 @@ export function ChannelView({
     if (typingRuns[0].status === "waiting_for_approval") {
       return `${memberName} is waiting for approval`;
     }
+    if (typingRuns[0].status === "waiting_for_input") {
+      return `${memberName} is waiting for your answer`;
+    }
     return isAgent
       ? `${conversation.name} is responding`
       : `${memberName} is responding`;
@@ -421,8 +434,43 @@ export function ChannelView({
       }));
   }, [bootstrap.auth.member?.id, members]);
   const organizationId = bootstrap.organization?.id;
+  useEffect(() => {
+    let cancelled = false;
+    if (!organizationId || !currentThreadId) {
+      setPendingQuestions([]);
+      setActiveQuestionIndex(0);
+      return;
+    }
+    void (async () => {
+      const byThread = fetch(`/api/questions?threadId=${encodeURIComponent(currentThreadId)}`)
+        .then(async (res) => {
+          if (!res.ok) return [];
+          const body = (await res.json().catch(() => null)) as { questions?: InteractiveQuestion[] } | null;
+          return body?.questions ?? [];
+        });
+      const pages = await Promise.all(
+        [
+          byThread,
+          ...waitingInputRunIds.map(async (runId) => {
+            const res = await fetch(`/api/questions?runId=${encodeURIComponent(runId)}`);
+            if (!res.ok) return [];
+            const body = (await res.json().catch(() => null)) as { questions?: InteractiveQuestion[] } | null;
+            return body?.questions ?? [];
+          }),
+        ],
+      );
+      if (cancelled) return;
+      const next = Array.from(new Map(pages.flat().map((question) => [question.id, question])).values());
+      setPendingQuestions(next);
+      setActiveQuestionIndex((index) => Math.min(index, Math.max(next.length - 1, 0)));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentThreadId, organizationId, questionRefreshSignal, waitingInputRunIds]);
+
   const headerSubtitle =
-    feed.error ?? typingLabel ?? (feed.loading ? "Syncing live history from the backend…" : undefined);
+    typingLabel ?? (feed.loading ? "Syncing live history from the backend…" : undefined);
   const resolveApproval = useCallback(
     async (
       approvalId: string,
@@ -487,6 +535,44 @@ export function ChannelView({
     },
     [organizationId, upsertRun],
   );
+  const answerQuestion = useCallback(
+    async (questionId: string, selectedOption: string) => {
+      setResolvingQuestions((state) => ({ ...state, [questionId]: true }));
+      setQuestionErrors((state) => {
+        const next = { ...state };
+        delete next[questionId];
+        return next;
+      });
+      try {
+        const response = await fetch(`/api/questions/${encodeURIComponent(questionId)}/answer`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ selectedOption }),
+        });
+        const body = await response.json().catch(() => null);
+        if (!response.ok) {
+          const message =
+            body && typeof body === "object" && "message" in body && typeof body.message === "string"
+              ? body.message
+              : "Unable to answer question.";
+          setQuestionErrors((state) => ({ ...state, [questionId]: message }));
+          return;
+        }
+        setPendingQuestions((state) => {
+          const next = state.filter((question) => question.id !== questionId);
+          setActiveQuestionIndex((index) => Math.min(index, Math.max(next.length - 1, 0)));
+          return next;
+        });
+      } finally {
+        setResolvingQuestions((state) => {
+          const next = { ...state };
+          delete next[questionId];
+          return next;
+        });
+      }
+    },
+    [],
+  );
   const handleTabChange = useCallback(
     (tab: string) => {
       setActiveTab(tab as typeof activeTab);
@@ -531,11 +617,6 @@ export function ChannelView({
     [conversationAttachmentsSource],
   );
 
-  const blockedRunActivity = activeTab === "tasks" ? feed.activity : null;
-  const blockedRunReasons = useMemo(
-    () => (blockedRunActivity ? collectBlockedRunReasons(blockedRunActivity) : new Map<string, string>()),
-    [blockedRunActivity],
-  );
   const visibleActivity = useMemo(
     () =>
       activeTab === "activity"
@@ -551,6 +632,8 @@ export function ChannelView({
   }, [activeTab, setActiveTab, tabIds]);
 
   const detailsCol = showDetails ? `${Math.max(detailsWidth, 33)}%` : "0px";
+  const activeQuestion = pendingQuestions[activeQuestionIndex];
+  const hasBlockingPrompts = pendingThreadApprovals.length > 0 || Boolean(activeQuestion);
 
   return (
     <div
@@ -598,13 +681,6 @@ export function ChannelView({
           activeTab={activeTab}
           onTabChange={handleTabChange}
         />
-        {conversation.type === "channel" && organizationId ? (
-          <ChannelGoalsStrip
-            organizationId={organizationId}
-            channelId={conversation.id}
-            memberNameLookup={(memberId) => memberById.get(memberId)?.name}
-          />
-        ) : null}
         {activeTab === "conversation" ? (
           <div className="relative flex flex-1 min-h-0 flex-col">
             <ChatMessageList ref={listRef} onScroll={handleScroll}>
@@ -688,28 +764,13 @@ export function ChannelView({
             <TabEmpty context="approvals" label="No approvals." />
           )
         ) : activeTab === "tasks" ? (
-          conversation.type === "channel" && organizationId ? (
-            // Channel context — render the per-channel commitments
-            // management surface (in_progress / blocked / completed /
-            // expired with human-driven status overrides). The agent
-            // context below keeps the legacy "live runs" view.
-            <TabPanel>
-              <ChannelTasksTab
-                organizationId={organizationId}
-                channelId={conversation.id}
-                memberNameLookup={(memberId) => memberById.get(memberId)?.name}
-              />
-            </TabPanel>
-          ) : taskRuns.length > 0 ? (
-            <TabPanel>
-              <div className="space-y-2">
-                {taskRuns.map((run) => (
-                  <RunCard key={run.id} run={run} blockedReason={blockedRunReasons.get(run.id)} />
-                ))}
-              </div>
-            </TabPanel>
+          organizationId ? (
+            <ChannelGoalsBoard
+              channelId={conversation.id}
+              members={members}
+            />
           ) : (
-            <TabEmpty context="tasks" label="No active tasks." />
+            <TabEmpty context="tasks" label="No organization context available." />
           )
         ) : activeTab === "culture" ? (
           conversation.type === "channel" && organizationId ? (
@@ -819,7 +880,7 @@ export function ChannelView({
             )}
           </div>
         )}
-        {pendingThreadApprovals.length > 0 ? (
+        {hasBlockingPrompts ? (
           <div className="shrink-0 px-3 pt-1.5 pb-3">
             <div className="space-y-2">
               {pendingThreadApprovals.map((approval) => (
@@ -830,6 +891,20 @@ export function ChannelView({
                   onResolve={(resolution) => resolveApproval(approval.id, resolution)}
                 />
               ))}
+              {activeQuestion ? (
+                <QuestionCard
+                  key={activeQuestion.id}
+                  question={activeQuestion}
+                  resolving={!!resolvingQuestions[activeQuestion.id]}
+                  error={questionErrors[activeQuestion.id]}
+                  activeQuestionIndex={activeQuestionIndex}
+                  totalQuestions={pendingQuestions.length}
+                  onIndexChange={setActiveQuestionIndex}
+                  onAnswer={(option) => {
+                    void answerQuestion(activeQuestion.id, option);
+                  }}
+                />
+              ) : null}
             </div>
           </div>
         ) : (
@@ -899,14 +974,14 @@ export function ChannelView({
             agentColorIndex={conversationColorIndex}
             statusLabel={selectedStatus.label}
             timeLabel="—"
-            tabs={["Reasoning trace", "Changes", "Metadata"]}
+            tabs={["Thinking trace", "Changes", "Metadata"]}
             activeTab={detailsTab}
             onTabChange={(tab) => setDetailsTab(tab as typeof detailsTab)}
             onClose={() => setShowDetails(false, { userIntent: true })}
           >
-            {detailsTab === "Reasoning trace" ? (
+            {detailsTab === "Thinking trace" ? (
               <ReasoningTracePanel
-                key={`${currentThreadId ?? conversation.id}:${reasoningTraceSteps.length > 0 ? "live" : "history"}`}
+                key={currentThreadId ?? conversation.id}
                 organizationId={bootstrap.organization?.id}
                 threadId={currentThreadId}
                 conversationName={conversation.name}

@@ -2,7 +2,12 @@ import type { ActivityEvent, RunState } from "@ujima/shared/browser";
 import type { ChatMessageData } from "./components/chat";
 
 export function isLiveRun(run: RunState): boolean {
-  return run.status === "queued" || run.status === "running" || run.status === "waiting_for_approval";
+  return (
+    run.status === "queued" ||
+    run.status === "running" ||
+    run.status === "waiting_for_approval" ||
+    run.status === "waiting_for_input"
+  );
 }
 
 export function buildTabCounts(input: {

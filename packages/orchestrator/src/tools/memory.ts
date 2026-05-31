@@ -23,8 +23,7 @@ import { forgetMemoryEntry, recallMemoryEntries, writeMemoryEntry } from '../uti
  *   - `key` is the lookup. Two writes to the same `(org, member, key)`
  *     UPSERT — there's exactly one current value per key.
  *   - TTL is opt-in via `expiresInDays`. Without it the entry is
- *     persistent. Expired entries are dropped lazily on read AND by
- *     the commitment sweeper's periodic tick.
+ *     persistent. Expired entries are dropped lazily on read.
  */
 
 const MEMORY_KIND_DEFAULT = 'fact' as const;

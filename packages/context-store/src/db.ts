@@ -552,12 +552,10 @@ const MIGRATIONS: {id: string; up: string}[] = [
     up: `
       -- Phase 2.B — extend the existing todos table (introduced in
       -- migration 004_additive_ports) with a task_session_id pointer
-      -- so the supervisor.todo.* tools can scope reads/writes to the
-      -- active task without leaking across sessions.
+      -- so legacy scoped task rows do not leak across sessions.
       --
       -- Pre-existing todos rows continue to work with NULL — the
-      -- supervisor surface only writes scoped rows, but legacy
-      -- callers of the table aren't affected.
+      -- legacy callers of the table aren't affected.
       ALTER TABLE todos ADD COLUMN task_session_id TEXT;
       CREATE INDEX IF NOT EXISTS idx_todos_task_session ON todos(task_session_id);
     `,
@@ -782,7 +780,7 @@ const MIGRATIONS: {id: string; up: string}[] = [
     // populates these on agent self-commitments ("I'll draft X"); the
     // scheduler reads `last_progress_at` to re-wake idle owners and
     // `due_at` to surface deadline-letter system messages. All
-    // nullable so existing supervisor.todo.* writes keep working.
+    // nullable so legacy todo rows keep working.
     id: "022_todos_commitment_fields",
     up: `
       ALTER TABLE todos ADD COLUMN channel_id TEXT;
@@ -804,8 +802,7 @@ const MIGRATIONS: {id: string; up: string}[] = [
     // the sweeper was doing a full-table scan + tempfile sort. This
     // index covers the hot path directly. The
     // `WHERE deliverable_summary IS NOT NULL` clause makes it a
-    // partial index so the size stays small (commitment todos only,
-    // not supervisor.todo.* rows).
+    // partial index so the size stays small.
     id: "023_todos_idle_progress_index",
     up: `
       CREATE INDEX IF NOT EXISTS idx_todos_idle_progress
@@ -1181,6 +1178,85 @@ const MIGRATIONS: {id: string; up: string}[] = [
         ON organization_skill_installs(organization_id, plugin_install_id, skill_name);
     `,
   },
+  {
+    // Goals, goal_tasks, and interactive_questions back the
+    // GoalSystemService — a single backend service that replaced the
+    // old todo/task promotion stack. The `interactive_questions.run_id` column is in this
+    // migration's table definition; migration 038 below handles older
+    // DBs that applied an early variant of 037 without that column.
+    id: "037_goal_task_questions",
+    up: `
+      CREATE TABLE IF NOT EXISTS goals (
+        id            TEXT PRIMARY KEY,
+        organization_id TEXT NOT NULL,
+        channel_id    TEXT NOT NULL,
+        title         TEXT NOT NULL,
+        status        TEXT NOT NULL CHECK (status IN ('planning', 'running', 'completed', 'suspended', 'cancelled')),
+        supervisor_id TEXT NOT NULL,
+        plan_markdown TEXT NOT NULL DEFAULT '',
+        plan_version  INTEGER NOT NULL DEFAULT 1,
+        created_at    TEXT NOT NULL,
+        updated_at    TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_goals_org ON goals(organization_id, status);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_goals_org_channel ON goals(organization_id, channel_id);
+
+      CREATE TABLE IF NOT EXISTS goal_tasks (
+        id                 TEXT PRIMARY KEY,
+        organization_id    TEXT NOT NULL,
+        goal_id            TEXT NOT NULL,
+        title              TEXT NOT NULL,
+        description        TEXT NOT NULL DEFAULT '',
+        status             TEXT NOT NULL CHECK (status IN ('pending', 'in_progress', 'completed', 'blocked', 'cancelled', 'failed', 'blocked_by_failure')),
+        assignee_id        TEXT NOT NULL,
+        created_by         TEXT NOT NULL,
+        depends_on_task_id TEXT,
+        handover_summary   TEXT,
+        created_at         TEXT NOT NULL,
+        updated_at         TEXT NOT NULL,
+        FOREIGN KEY (goal_id) REFERENCES goals(id) ON DELETE CASCADE,
+        FOREIGN KEY (depends_on_task_id) REFERENCES goal_tasks(id) ON DELETE SET NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_goal_tasks_goal ON goal_tasks(goal_id, status);
+      CREATE INDEX IF NOT EXISTS idx_goal_tasks_dep ON goal_tasks(depends_on_task_id);
+
+      CREATE TABLE IF NOT EXISTS interactive_questions (
+        id              TEXT PRIMARY KEY,
+        organization_id TEXT NOT NULL,
+        channel_id      TEXT NOT NULL,
+        goal_id         TEXT,
+        run_id          TEXT,
+        tool_call_id    TEXT,
+        question_text   TEXT NOT NULL,
+        options_json    TEXT NOT NULL,
+        status          TEXT NOT NULL CHECK (status IN ('pending', 'answered', 'superseded')),
+        selected_option TEXT,
+        created_at      TEXT NOT NULL,
+        updated_at      TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_interactive_questions_channel
+        ON interactive_questions(organization_id, channel_id, status);
+      CREATE INDEX IF NOT EXISTS idx_interactive_questions_tool_call
+        ON interactive_questions(organization_id, run_id, tool_call_id);
+    `,
+  },
+  {
+    // Backfill `run_id` on `interactive_questions` for DBs that ran an
+    // early variant of 037 before the column was added. The runMigrations
+    // guard skips this on DBs where the column already exists or the
+    // table itself is missing (fresh DBs hit 037 first), so the migration
+    // is a true no-op in the common case.
+    id: "038_interactive_questions_run_id",
+    up: `ALTER TABLE interactive_questions ADD COLUMN run_id TEXT;`,
+  },
+  {
+    id: "039_interactive_questions_tool_call_id",
+    up: `
+      ALTER TABLE interactive_questions ADD COLUMN tool_call_id TEXT;
+      CREATE INDEX IF NOT EXISTS idx_interactive_questions_tool_call
+        ON interactive_questions(organization_id, run_id, tool_call_id);
+    `,
+  },
 ];
 
 export interface DbOptions {
@@ -1235,6 +1311,20 @@ function runMigrations(db: DbHandle): void {
       continue;
     }
     if (m.id === "020_run_wake_metadata" && !hasTable(db, "runs")) {
+      insert.run(m.id, Date.now());
+      continue;
+    }
+    if (
+      m.id === "038_interactive_questions_run_id" &&
+      (!hasTable(db, "interactive_questions") || hasColumn(db, "interactive_questions", "run_id"))
+    ) {
+      insert.run(m.id, Date.now());
+      continue;
+    }
+    if (
+      m.id === "039_interactive_questions_tool_call_id" &&
+      (!hasTable(db, "interactive_questions") || hasColumn(db, "interactive_questions", "tool_call_id"))
+    ) {
       insert.run(m.id, Date.now());
       continue;
     }

@@ -28,8 +28,10 @@ import type {
   SpiritRole,
   TaskSession,
   TaskSessionStatus,
-  Todo,
-  TodoStatus,
+  Goal,
+  GoalTask,
+  GoalTaskStatus,
+  InteractiveQuestion,
   WorkspaceFile,
   WorkspaceMember,
 } from '@ujima/shared';
@@ -155,18 +157,20 @@ import {
   type PaginatedTaskSessions,
 } from './task-sessions.js';
 import {
-  claimExpiredCommitment as runClaimExpiredCommitment,
-  findCommitmentBySourceMessage as readCommitmentBySourceMessage,
-  findOpenChannelCommitmentForMember as readOpenChannelCommitmentForMember,
-  getTodo as readTodo,
-  listExpiredCommitments as readExpiredCommitments,
-  listIdleCommitments as readIdleCommitments,
-  listOpenCommitmentsForMember as readOpenCommitmentsForMember,
-  listTodosForChannel as readTodosForChannel,
-  listTodosForSession as readTodosForSession,
-  saveTodo as writeTodo,
-  updateTodoStatus as writeTodoStatus,
-} from './todos.js';
+  deleteGoalTasks as removeGoalTasks,
+  getGoal as readGoal,
+  getGoalByChannel as readGoalByChannel,
+  getGoalTask as readGoalTask,
+  getInteractiveQuestion as readInteractiveQuestion,
+  listGoalTasks as readGoalTasks,
+  listGoals as readGoals,
+  listPendingInteractiveQuestions as readPendingInteractiveQuestions,
+  listInteractiveQuestionsByRunId as readInteractiveQuestionsByRunId,
+  saveGoal as writeGoal,
+  saveGoalTask as writeGoalTask,
+  saveInteractiveQuestion as writeInteractiveQuestion,
+  updateGoalTaskStatus as writeGoalTaskStatus,
+} from './goals.js';
 import {
   deleteExpiredMemoryEntries as removeExpiredMemoryEntries,
   deleteMemoryEntry as removeMemoryEntry,
@@ -571,50 +575,37 @@ export class Repository {
   listActiveSpiritsForMember = (organizationId: string, memberId: string): Spirit[] =>
     readActiveSpiritsForMember(this.db, organizationId, memberId);
 
-  saveTodo = (todo: Todo): Todo => writeTodo(this.db, todo);
-  getTodo = (organizationId: string, todoId: string): Todo | null =>
-    readTodo(this.db, organizationId, todoId);
-  listTodosForSession = (
+  saveGoal = (goal: Goal): Goal => writeGoal(this.db, goal);
+  getGoal = (organizationId: string, goalId: string): Goal | null =>
+    readGoal(this.db, organizationId, goalId);
+  getGoalByChannel = (organizationId: string, channelId: string): Goal | null =>
+    readGoalByChannel(this.db, organizationId, channelId);
+  listGoals = (organizationId: string): Goal[] => readGoals(this.db, organizationId);
+  saveGoalTask = (task: GoalTask): GoalTask => writeGoalTask(this.db, task);
+  deleteGoalTasks = (organizationId: string, goalId: string): void =>
+    removeGoalTasks(this.db, organizationId, goalId);
+  getGoalTask = (organizationId: string, taskId: string): GoalTask | null =>
+    readGoalTask(this.db, organizationId, taskId);
+  listGoalTasks = (organizationId: string, goalId: string): GoalTask[] =>
+    readGoalTasks(this.db, organizationId, goalId);
+  updateGoalTaskStatus = (
     organizationId: string,
-    taskSessionId: string,
-    options?: { status?: TodoStatus; memberId?: string },
-  ): Todo[] => readTodosForSession(this.db, organizationId, taskSessionId, options);
-  listTodosForChannel = (
-    organizationId: string,
-    channelId: string,
-    options?: { status?: TodoStatus; memberId?: string },
-  ): Todo[] => readTodosForChannel(this.db, organizationId, channelId, options);
-  listIdleCommitments = (options: {
-    idleSinceIso: string;
-    statuses?: readonly TodoStatus[];
-    limit?: number;
-  }): Todo[] => readIdleCommitments(this.db, options);
-  listOpenCommitmentsForMember = (
-    organizationId: string,
-    memberId: string,
-    options?: { statuses?: readonly TodoStatus[]; limit?: number },
-  ): Todo[] => readOpenCommitmentsForMember(this.db, organizationId, memberId, options);
-  listExpiredCommitments = (options: { nowIso: string; limit?: number }): Todo[] =>
-    readExpiredCommitments(this.db, options);
-  claimExpiredCommitment = (todoId: string, nowIso: string): boolean =>
-    runClaimExpiredCommitment(this.db, todoId, nowIso);
-  findOpenChannelCommitmentForMember = (
+    taskId: string,
+    status: GoalTaskStatus,
+    options?: { handoverSummary?: string },
+  ): GoalTask | null => writeGoalTaskStatus(this.db, organizationId, taskId, status, options);
+  saveInteractiveQuestion = (question: InteractiveQuestion): InteractiveQuestion =>
+    writeInteractiveQuestion(this.db, question);
+  getInteractiveQuestion = (organizationId: string, questionId: string): InteractiveQuestion | null =>
+    readInteractiveQuestion(this.db, organizationId, questionId);
+  listPendingInteractiveQuestions = (
     organizationId: string,
     channelId: string,
-    memberId: string,
-    sinceIso: string,
-  ): Todo | null =>
-    readOpenChannelCommitmentForMember(this.db, organizationId, channelId, memberId, sinceIso);
-  findCommitmentBySourceMessage = (
+  ): InteractiveQuestion[] => readPendingInteractiveQuestions(this.db, organizationId, channelId);
+  listInteractiveQuestionsByRunId = (
     organizationId: string,
-    sourceMessageId: string,
-  ): Todo | null => readCommitmentBySourceMessage(this.db, organizationId, sourceMessageId);
-  updateTodoStatus = (
-    organizationId: string,
-    todoId: string,
-    status: TodoStatus,
-    options?: { notes?: string },
-  ): Todo | null => writeTodoStatus(this.db, organizationId, todoId, status, options);
+    runId: string,
+  ): InteractiveQuestion[] => readInteractiveQuestionsByRunId(this.db, organizationId, runId);
 
   // Bet 5 — memory_entries KV
   upsertMemoryEntry = (entry: MemoryEntry): MemoryEntry =>

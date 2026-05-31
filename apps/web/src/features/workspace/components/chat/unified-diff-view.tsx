@@ -110,15 +110,15 @@ export function buildUnifiedDiffRows(text: string): UnifiedDiffRow[] {
 function rowClasses(kind: PatchLineKind): string {
   switch (kind) {
     case "add":
-      return "border-l-2 border-emerald-600/25 bg-emerald-500/[0.03] text-foreground/90 dark:border-emerald-400/20 dark:bg-emerald-400/[0.05]";
+      return "border-l-[3px] border-emerald-500/70 bg-emerald-500/[0.1] text-emerald-950 dark:bg-emerald-500/15 dark:text-emerald-100/95";
     case "del":
-      return "border-l-2 border-red-600/25 bg-red-500/[0.03] text-foreground/90 dark:border-red-400/20 dark:bg-red-400/[0.05]";
+      return "border-l-[3px] border-red-500/70 bg-red-500/[0.09] text-red-950 dark:bg-red-500/15 dark:text-red-100/95";
     case "hunk":
-      return "border-l-2 border-foreground/12 bg-foreground/[0.04] text-foreground/70";
+      return "border-l-[3px] border-violet-500/55 bg-foreground/[0.06] text-foreground/80 dark:border-violet-400/45";
     case "meta":
-      return "border-l-2 border-transparent text-foreground/45";
+      return "border-l-[3px] border-transparent text-foreground/45";
     default:
-      return "border-l-2 border-transparent text-foreground/[0.82]";
+      return "border-l-[3px] border-transparent text-foreground/[0.82]";
   }
 }
 

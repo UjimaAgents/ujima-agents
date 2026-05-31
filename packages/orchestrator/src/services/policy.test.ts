@@ -400,6 +400,20 @@ describe('checkToolPolicy', () => {
       });
     });
 
+    it('skips the approval gate for goal/question management tools', () => {
+      const team = buildTeam();
+      for (const [tool, action] of [
+        ['goal.start', 'create'],
+        ['goal.task.update', 'update'],
+        ['question.ask', 'create'],
+      ] as const) {
+        expect(checkToolPolicy(team, 'engineer', tool, action)).toEqual({
+          allowed: true,
+          requiresApproval: false,
+        });
+      }
+    });
+
     it('rejects channel.pass in direct-message threads', () => {
       const team = buildTeam();
       const result = checkToolPolicy(team, 'engineer', 'channel.pass', 'message', undefined, {

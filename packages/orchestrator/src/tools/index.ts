@@ -11,6 +11,7 @@ import {
 } from './channel.js';
 import { channelRecallTool } from './channel-recall.js';
 import { grepTool } from './grep.js';
+import { goalStartTool, goalTaskUpdateTool, questionAskTool } from './goal.js';
 import { jobKillTool, jobOutputTool } from './job-tools.js';
 import { downloadTool, fetchTool } from './web-tools.js';
 import { shellTool } from './shell.js';
@@ -25,11 +26,6 @@ import {
   selfProcedureViewTool,
 } from './self-procedure.js';
 import { procedureListTool, procedureViewTool } from './procedure-read.js';
-import {
-  supervisorTodoAddTool,
-  supervisorTodoCheckTool,
-  supervisorTodoListTool,
-} from './supervisor-todo.js';
 import {
   editTool,
   globTool,
@@ -68,14 +64,14 @@ export const ORCHESTRATOR_TOOLS = {
   'procedure.list': procedureListTool,
   'procedure.view': procedureViewTool,
   'channel.recall': channelRecallTool,
+  'goal.start': goalStartTool,
+  'goal.task.update': goalTaskUpdateTool,
+  'question.ask': questionAskTool,
   'memory.write': memoryWriteTool,
   'memory.recall': memoryRecallTool,
   'memory.forget': memoryForgetTool,
   message: messageTool,
   schedule: scheduleTool,
-  'supervisor.todo.add': supervisorTodoAddTool,
-  'supervisor.todo.check': supervisorTodoCheckTool,
-  'supervisor.todo.list': supervisorTodoListTool,
 } as unknown as Record<string, OrchestratorTool>;
 
 // Tools an agent always has access to, regardless of its role's `tools`
@@ -144,6 +140,9 @@ export const ALWAYS_AVAILABLE_AGENT_TOOLS = Object.freeze([
   'glob',
   'grep',
   'schedule',
+  'goal.start',
+  'goal.task.update',
+  'question.ask',
   'memory.write',
   'memory.recall',
   'memory.forget',
@@ -152,8 +151,7 @@ export const ALWAYS_AVAILABLE_AGENT_TOOLS = Object.freeze([
 // Supervisor's strict tool allowlist — read-only / annotation-only tools
 // plus the same channel surface we let workers use.
 // The supervisor turn never gets `filesystem`, `shell`, or any MCP write.
-// Channel reads, channel replies/DMs, and the three `supervisor.todo.*` jot
-// tools are the entire surface (E4.2.4).
+// Channel reads and replies/DMs are the supervisor side-effect surface.
 //
 // The list is enforced in two complementary places:
 //   1. SpiritService.resolveToolAllowlist restricts what enters the model
@@ -177,9 +175,9 @@ export const SUPERVISOR_TOOL_ALLOWLIST = Object.freeze([
   'fetch',
   'job_output',
   'web_search',
-  'supervisor.todo.add',
-  'supervisor.todo.check',
-  'supervisor.todo.list',
+  'goal.start',
+  'goal.task.update',
+  'question.ask',
   'memory.write',
   'memory.recall',
 ] as const);
