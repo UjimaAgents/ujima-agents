@@ -155,18 +155,6 @@ export interface CatalogResult {
   agentViewId?: string;
 }
 
-type Scope = 'worker' | 'supervisor' | 'both';
-
-// True when an MCP attachment with `attachment` scope covers a grant
-// requested at `grant` scope. 'both' covers either side; otherwise
-// scopes must match exactly. Used by grantToolToAgent to decide
-// whether the existing attachment needs to be promoted to 'both' so
-// the grant actually reaches the requested spirit role at runtime.
-function scopeSatisfies(attachment: Scope, grant: Scope): boolean {
-  if (attachment === 'both') return true;
-  return attachment === grant;
-}
-
 export class McpRegistryService {
   constructor(
     private readonly repo: ApiRepository,
@@ -751,20 +739,17 @@ export class McpRegistryService {
         createdAt: now,
         updatedAt: now,
       });
-    } else if (!scopeSatisfies(existingServerAttachment.scope, scope)) {
-      // The MCP attachment scope doesn't cover the requested grant
-      // scope (e.g. worker-only attachment + supervisor grant). Without
-      // promotion the grant would land but listAttachedServersForSpirit
-      // would never resolve the server for the requested role, so the
-      // tool would silently not reach the model. Promote to 'both' to
-      // honour the caller's intent — they explicitly asked for this
-      // scope, so the attachment must support it.
-      this.repo.saveAgentMcpAttachment({
-        ...existingServerAttachment,
-        scope: 'both',
-        updatedAt: now,
-      });
     }
+    // Intentionally do NOT promote an existing attachment to 'both'
+    // when the grant scope doesn't match. Promotion broadens the
+    // SERVER attachment beyond the one tool being granted, and the
+    // runtime's "no matching per-tool grants = all-tools mode"
+    // fallback can then re-expose the full MCP to the sibling role.
+    // The grant's scope is honoured at the runtime resolver layer
+    // (listAttachedServersForSpirit was extended to also surface
+    // servers reachable via per-tool grants for the role), so the
+    // single granted tool reaches the requested role without
+    // touching the attachment scope.
 
     const attachment = this.repo.saveAgentToolAttachment({
       organizationId: input.organizationId,

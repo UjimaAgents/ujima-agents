@@ -932,6 +932,85 @@ describe('McpRegistryService — Phase 3 MCP integration', () => {
     ).toHaveLength(1);
   });
 
+  // Regression — the recurring high-severity finding from the bug
+  // checker: a per-tool grant whose scope does not match the
+  // existing MCP attachment must NOT widen the attachment to 'both'.
+  // Pre-fix the attachment was promoted, and the spirit-agent-run
+  // "no matching grants = all-tools" fallback then re-exposed the
+  // full MCP to the sibling role even though the operator only
+  // clicked one tool. The fix keeps the attachment scope unchanged
+  // and lets per-tool grants surface the server via
+  // listAttachedServersForSpirit instead.
+  it('grantToolToAgent: cross-role grant does NOT widen the existing attachment scope', async () => {
+    const fixture = await createFixture();
+    tempDirs.push(fixture.archiveRoot);
+
+    const server = fixture.registry.create({
+      organizationId: fixture.organizationId,
+      createdBy: fixture.ownerId,
+      name: 'isolation-mcp',
+      transport: 'stdio',
+      command: 'x',
+    });
+    fixture.repo.saveMcpToolCache({
+      mcpServerId: server.id,
+      organizationId: fixture.organizationId,
+      tools: [
+        { name: 'a', description: '' },
+        { name: 'b', description: '' },
+      ],
+      fetchedAt: new Date().toISOString(),
+    });
+
+    // Seed: agent has a worker-only attachment with one worker grant
+    // (the "happy path" allowlist state).
+    fixture.registry.grantToolToAgent({
+      organizationId: fixture.organizationId,
+      memberId: 'agent-x',
+      mcpServerId: server.id,
+      toolName: 'a',
+      scope: 'worker',
+    });
+
+    // Now grant tool 'b' under the supervisor role. Previously this
+    // promoted the attachment to 'both', which let the all-tools
+    // fallback fire for whichever role had zero matching grants.
+    fixture.registry.grantToolToAgent({
+      organizationId: fixture.organizationId,
+      memberId: 'agent-x',
+      mcpServerId: server.id,
+      toolName: 'b',
+      scope: 'supervisor',
+    });
+
+    // Attachment scope MUST stay worker.
+    const mcpAttachments = fixture.repo
+      .listAgentMcpAttachments(fixture.organizationId, 'agent-x')
+      .filter((a) => a.mcpServerId === server.id);
+    expect(mcpAttachments).toHaveLength(1);
+    expect(mcpAttachments[0]!.scope).toBe('worker');
+
+    // Per-tool grants are stored separately, each with their own scope.
+    const grants = fixture.repo
+      .listAgentToolAttachments(fixture.organizationId, 'agent-x', server.id)
+      .sort((x, y) => x.toolName.localeCompare(y.toolName));
+    expect(grants.map((g) => [g.toolName, g.scope])).toEqual([
+      ['a', 'worker'],
+      ['b', 'supervisor'],
+    ]);
+
+    // The supervisor's resolver must still see the server (the per-
+    // tool grant brings it in) so the grant is reachable from the
+    // supervisor spawn path.
+    expect(
+      fixture.repo.listAttachedServersForSpirit(
+        fixture.organizationId,
+        'agent-x',
+        'supervisor',
+      ),
+    ).toHaveLength(1);
+  });
+
   // Regression: low-confidence inferred tools must carry the
   // needsReview flag through the catalog so the review queue
   // surfaces them before re-test. Pre-fix only inf.risk was threaded
@@ -1368,11 +1447,15 @@ describe('McpRegistryService — Phase 3 MCP integration', () => {
   });
 
   // Regression: granting from a UI view scoped to a specific role
-  // must promote the MCP attachment when the existing scope can't
-  // reach that role. Pre-fix the grant landed with the right scope
-  // but the attachment stayed worker-only, so a supervisor grant
-  // was silently invisible at runtime.
-  it('grantToolToAgent: promotes a mismatched MCP attachment to "both" so the grant is reachable', async () => {
+  // must reach that role at runtime WITHOUT widening the existing
+  // MCP attachment scope. The pre-fix code promoted the attachment
+  // to 'both', which let the "no matching grants = all-tools"
+  // fallback in spirit-agent-run re-expose the full MCP to the
+  // sibling role even though only one tool was granted. The fix
+  // keeps the attachment scope unchanged; the runtime resolver
+  // (listAttachedServersForSpirit) surfaces the server for the
+  // granted role via the per-tool grant alone.
+  it('grantToolToAgent: cross-role grant is reachable without widening the attachment', async () => {
     const fixture = await createFixture();
     tempDirs.push(fixture.archiveRoot);
 
@@ -1409,8 +1492,10 @@ describe('McpRegistryService — Phase 3 MCP integration', () => {
       .listAgentMcpAttachments(fixture.organizationId, 'agent-x')
       .filter((a) => a.mcpServerId === server.id);
     expect(mcpAttachments).toHaveLength(1);
-    // Promoted so supervisor can actually resolve the server.
-    expect(mcpAttachments[0]!.scope).toBe('both');
+    // Critical: attachment scope MUST stay worker. Promotion would
+    // let the all-tools fallback leak the rest of the MCP to the
+    // sibling role.
+    expect(mcpAttachments[0]!.scope).toBe('worker');
 
     // The grant carries the requested supervisor scope.
     const grants = fixture.repo.listAgentToolAttachments(
@@ -1421,9 +1506,8 @@ describe('McpRegistryService — Phase 3 MCP integration', () => {
     expect(grants).toHaveLength(1);
     expect(grants[0]!.scope).toBe('supervisor');
 
-    // Confirm runtime reachability for BOTH roles now (the worker grant
-    // was honoured implicitly by the original attachment, and the
-    // supervisor grant lands because of the promotion).
+    // Runtime reachability: worker still sees the server (attachment
+    // scope), supervisor now sees it via the per-tool grant alone.
     expect(
       fixture.repo.listAttachedServersForSpirit(
         fixture.organizationId,

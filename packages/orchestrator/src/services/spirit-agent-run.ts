@@ -35,12 +35,7 @@ import {
 } from '../utils/wake-reply-policy.js';
 import { recallMemoryEntries } from '../utils/memory.js';
 import { requireTeam } from '../utils/require-team.js';
-import {
-  runAgentLoop,
-  runAgentLoopWithRetry,
-  ModelNotFoundError,
-  SchemaTooLargeError,
-} from './agent-loop.js';
+import { runAgentLoopWithRetry } from './agent-loop.js';
 import { toModelMessages, buildToolDefinitions } from '../utils/to-model-messages.js';
 import {
   ALWAYS_AVAILABLE_AGENT_TOOLS,

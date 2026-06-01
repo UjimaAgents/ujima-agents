@@ -249,6 +249,17 @@ export function listAttachedServersForSpirit(
   const allowedScopes: McpAttachmentScope[] =
     role === 'supervisor' ? ['supervisor', 'both'] : ['worker', 'both'];
   const placeholders = allowedScopes.map(() => '?').join(', ');
+  // The server is reachable for `role` when EITHER
+  //   (a) the agent_mcp_attachments scope covers the role, OR
+  //   (b) the agent has at least one per-tool grant whose scope
+  //       covers the role on this server.
+  // (b) used to be coupled with promoting the attachment to 'both'
+  // in McpRegistryService.grantToolToAgent, which broadened the
+  // SERVER attachment beyond the granted tool and re-exposed the
+  // full MCP to the sibling role via the "no matching grants =
+  // all-tools" fallback in spirit-agent-run. Now the attachment
+  // scope stays untouched and the grant alone is enough to surface
+  // the server here.
   const rows = db
     .prepare(
       `SELECT a.*, s.id AS s_id, s.organization_id AS s_organization_id,
@@ -273,10 +284,19 @@ export function listAttachedServersForSpirit(
         WHERE a.organization_id = ? AND a.member_id = ?
           AND s.status = 'active'
           AND m.retired_at IS NULL
-          AND a.scope IN (${placeholders})
+          AND (
+            a.scope IN (${placeholders})
+            OR EXISTS (
+              SELECT 1 FROM agent_tool_attachments g
+              WHERE g.organization_id = a.organization_id
+                AND g.member_id = a.member_id
+                AND g.mcp_server_id = a.mcp_server_id
+                AND g.scope IN (${placeholders})
+            )
+          )
         ORDER BY s.name ASC`,
     )
-    .all(organizationId, memberId, ...allowedScopes) as Row[];
+    .all(organizationId, memberId, ...allowedScopes, ...allowedScopes) as Row[];
 
   return rows.map((row) => ({
     attachment: AgentMcpAttachmentSchema.parse({

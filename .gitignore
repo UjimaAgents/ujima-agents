@@ -74,3 +74,6 @@ apps/api/google-co-snapshot.md
 mcp_governance_plan.md
 .cursor/commands/.deslop.md.swp
 .gstack/
+apps/api/dorq_app_snapshot.md
+apps/api/dorq_homepage_snapshot.md
+apps/api/dorq-app-homepage-snapshot.yml
