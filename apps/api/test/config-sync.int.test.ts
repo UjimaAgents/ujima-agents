@@ -10,7 +10,6 @@ import {
   ConfigSyncService,
   SettingsService,
   SpiritService,
-  TaskPromoterService,
   createTeamStore,
 } from '@ujima/orchestrator';
 
@@ -565,7 +564,7 @@ describe('team config reconcile', () => {
     ).toThrow(/channel is archived/i);
   });
 
-  it('rejects retired config agents from new runs and task promotion', async () => {
+  it('rejects retired config agents from new runs', async () => {
     const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
     const teamStore = createTeamStore();
     const syncService = new ConfigSyncService(repo, teamStore);
@@ -581,7 +580,6 @@ describe('team config reconcile', () => {
         ai: { generateRunReply: async () => ({ text: '', toolResults: [], steps: [] }) } as never,
       },
     );
-    const promoter = new TaskPromoterService(repo, runs);
     const dir = await mkdtemp(join(tmpdir(), 'ujima-config-sync-'));
     tempDirs.push(dir);
     const configPath = join(dir, 'ujima.config.js');
@@ -613,16 +611,6 @@ describe('team config reconcile', () => {
         summary: 'do work',
       }),
     ).rejects.toThrow(/retired/i);
-
-    await expect(
-      promoter.promote({
-        organizationId: first.organization.id,
-        channelId: 'general',
-        requestedBy: 'pm',
-        prompt: 'take this task',
-        assignedAgentId: 'frontend-alice',
-      }),
-    ).rejects.toThrow(/no agent member available/i);
 
     const retiredAgent = repo.getMember(first.organization.id, 'frontend-alice');
     expect(retiredAgent?.retiredAt).toBeTruthy();
@@ -679,5 +667,97 @@ describe('team config reconcile', () => {
     expect(ids).toContain('triage');
     expect(ids).not.toContain('self_pm');
     expect(ids).not.toContain('dm_pm_alice');
+  });
+
+  it('can delete/retire a dashboard-created agent, removes its overrides, and rejects deleting humans', async () => {
+    const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
+    const teamStore = createTeamStore();
+    const syncService = new ConfigSyncService(repo, teamStore);
+    const settings = new SettingsService(repo, teamStore);
+    const dir = await mkdtemp(join(tmpdir(), 'ujima-config-sync-delete-'));
+    tempDirs.push(dir);
+    const configPath = join(dir, 'ujima.config.js');
+
+    await writeConfigFile(configPath, teamConfig());
+    const first = await syncService.loadAndReconcileFromFile(configPath);
+    repo.saveWorkspaceSetting(first.organization.id, 'config_sync.path', configPath);
+
+    // 1. Add a new agent member
+    const agent = settings.addMember({
+      organizationId: first.organization.id,
+      name: 'delete-me-agent',
+      kind: 'agent',
+      roleName: 'frontend-engineer',
+    });
+    expect(agent.id).toBe('delete-me-agent');
+
+    const storedOverridesBefore = repo.getWorkspaceSetting(first.organization.id, 'dashboard.teamOverrides');
+    expect(storedOverridesBefore).toBeTruthy();
+    expect(JSON.parse(storedOverridesBefore!).agents).toContainEqual(
+      expect.objectContaining({ name: agent.id })
+    );
+
+    // 2. Try to delete a human member
+    const human = settings.addMember({
+      organizationId: first.organization.id,
+      name: 'human-owner',
+      kind: 'human',
+      roleName: 'pm',
+    });
+    expect(() => settings.deleteMember(first.organization.id, human.id)).toThrow(/Only agents can be deleted/);
+
+    // 3. Delete the agent member
+    settings.deleteMember(first.organization.id, agent.id);
+
+    // 4. Verify agent has retiredAt timestamp set
+    const deletedAgent = repo.getMember(first.organization.id, agent.id);
+    expect(deletedAgent?.retiredAt).toBeTruthy();
+
+    // 5. Verify agent is removed from dashboard team overrides
+    const storedOverridesAfter = repo.getWorkspaceSetting(first.organization.id, 'dashboard.teamOverrides');
+    expect(storedOverridesAfter).toBeTruthy();
+    expect(JSON.parse(storedOverridesAfter!).agents).not.toContainEqual(
+      expect.objectContaining({ name: agent.id })
+    );
+
+    const settingsMember = settings
+      .getOrganizationSettings(first.organization.id)
+      .members.find((m) => m.id === agent.id);
+    expect(settingsMember?.retiredAt).toBeTruthy();
+
+    const liveTeam = teamStore.getTeam(first.organization.id);
+    expect(liveTeam?.agents.map((item) => item.name)).not.toContain(agent.id);
+    expect(liveTeam?.getAgent(agent.id)).toBeUndefined();
+  });
+
+  it('preserves member shellApprovalMode when config reconciliations run', async () => {
+    const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
+    const teamStore = createTeamStore();
+    const syncService = new ConfigSyncService(repo, teamStore);
+    const settings = new SettingsService(repo, teamStore);
+    const dir = await mkdtemp(join(tmpdir(), 'ujima-config-sync-'));
+    tempDirs.push(dir);
+    const configPath = join(dir, 'ujima.config.js');
+
+    await writeConfigFile(configPath, teamConfig());
+    const first = await syncService.loadAndReconcileFromFile(configPath);
+
+    // Update frontend-alice's shellApprovalMode to 'auto_review'
+    settings.patchMemberPreferences({
+      organizationId: first.organization.id,
+      memberId: 'frontend-alice',
+      shellApprovalMode: 'auto_review',
+    });
+
+    // Verify it is saved in the database
+    const beforeReconcile = repo.getMember(first.organization.id, 'frontend-alice');
+    expect(beforeReconcile?.shellApprovalMode).toBe('auto_review');
+
+    // Run reconciliation again
+    const second = await syncService.loadAndReconcileFromFile(configPath, first.organization.id);
+    const afterReconcile = repo.getMember(first.organization.id, 'frontend-alice');
+
+    // Verify it is preserved after reconcile!
+    expect(afterReconcile?.shellApprovalMode).toBe('auto_review');
   });
 });

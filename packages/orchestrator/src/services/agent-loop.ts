@@ -173,8 +173,6 @@ function approvalWaitFromSteps(steps: readonly AgentLoopStep[]): string | null {
  * every step. The per-step strategy avoids that loop while still
  * making the first decision explicit.
  */
-export type AgentLoopToolChoice = 'auto' | 'required-first-step';
-
 export async function runAgentLoop(input: {
   model: LanguageModel;
   system: string;
@@ -189,14 +187,14 @@ export async function runAgentLoop(input: {
   stopWhen: NonNullable<Parameters<typeof streamText>[0]['stopWhen']>;
   maxOutputTokens?: number;
   temperature?: number;
-  toolChoice?: AgentLoopToolChoice;
+  toolChoice?: Parameters<typeof streamText>[0]['toolChoice'];
   abortSignal?: AbortSignal;
   loadInterruptMessages?: (step: AgentLoopStep) => Promise<ModelMessage[]> | ModelMessage[];
   onChunk?: (chunk: AgentLoopChunk) => PromiseLike<void> | void;
+  onStepFinish?: (step: AgentLoopStep, steps: AgentLoopStep[]) => PromiseLike<void> | void;
 }): Promise<AgentLoopResult> {
   const steps: AgentLoopStep[] = [];
   const messages = [...input.messages];
-  const toolChoiceStrategy: AgentLoopToolChoice = input.toolChoice ?? 'auto';
   const userStopWhen = input.stopWhen;
   const onChunk = input.onChunk;
 
@@ -221,7 +219,7 @@ export async function runAgentLoop(input: {
     return false;
   };
 
-  const execute = async (strategy: AgentLoopToolChoice): Promise<AgentLoopResult> => {
+  const execute = async (): Promise<AgentLoopResult> => {
     const result = streamText({
       model: input.model,
       system: input.system,
@@ -231,42 +229,42 @@ export async function runAgentLoop(input: {
       ...(input.maxOutputTokens !== undefined ? { maxOutputTokens: input.maxOutputTokens } : {}),
       ...(input.temperature !== undefined ? { temperature: input.temperature } : {}),
       ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),
+      ...(input.toolChoice !== undefined ? { toolChoice: input.toolChoice } : {}),
       ...(onChunk
         ? {
             onChunk: async ({ chunk }) => {
+              const delta = chunkDelta(chunk);
               if (chunk.type === 'text-delta') {
-                await onChunk({ kind: 'text', delta: chunk.text });
+                if (delta) await onChunk({ kind: 'text', delta });
                 return;
               }
               if (chunk.type === 'reasoning-delta') {
-                await onChunk({ kind: 'reasoning', delta: chunk.text });
+                if (delta) await onChunk({ kind: 'reasoning', delta });
               }
             },
           }
         : {}),
       prepareStep: async ({ stepNumber, messages: nextMessages }) => {
-        const stepToolChoice =
-          strategy === 'required-first-step' && stepNumber === 0
-            ? ('required' as const)
-            : undefined;
-
         if (stepNumber === 0) {
-          return stepToolChoice ? { toolChoice: stepToolChoice } : undefined;
+          return undefined;
         }
         const previousStep = steps.at(-1);
         if (!previousStep) {
-          return stepToolChoice ? { toolChoice: stepToolChoice } : undefined;
+          return undefined;
         }
         const interrupts = await input.loadInterruptMessages?.(previousStep);
         if (!interrupts?.length) {
-          return stepToolChoice ? { toolChoice: stepToolChoice } : undefined;
+          return undefined;
         }
         messages.splice(0, messages.length, ...nextMessages, ...interrupts);
-        return stepToolChoice ? { messages, toolChoice: stepToolChoice } : { messages };
+        return { messages };
       },
-      onStepFinish: (step) => {
+      onStepFinish: async (step) => {
         const loopStep = step as unknown as AgentLoopStep;
         steps.push(loopStep);
+        if (input.onStepFinish) {
+          await input.onStepFinish(loopStep, steps);
+        }
       },
     });
 
@@ -315,22 +313,14 @@ export async function runAgentLoop(input: {
   };
 
   try {
-    return await execute(toolChoiceStrategy);
+    return await execute();
   } catch (error) {
-    // Retry with `auto` when the provider rejects `toolChoice: required` on
-    // step 0. Some models (e.g. deepseek-v4-flash in thinking mode) may
-    // stream reasoning tokens before the HTTP error arrives; we still retry
-    // because `onStepFinish` has not run and no tool results were committed.
-    if (
-      toolChoiceStrategy === 'required-first-step' &&
-      steps.length === 0 &&
-      isUnsupportedToolChoiceError(error)
-    ) {
-      return execute('auto');
-    }
-    // Classify here too — same rationale as inside execute(). The
-    // outer try is the last chance to convert a raw AI_APICallError
-    // into the typed error before it escapes runAgentLoop.
+    // Outer-catch classifier. The inner catches around `for await`
+    // and `Promise.all` already convert AI_APICallError to our
+    // typed errors, but if an unusual streamText invocation throws
+    // synchronously before either of those runs, this is the last
+    // chance to surface the typed error so the retry wrapper in
+    // ai-service / spirit-agent-run can mount recovery.
     if (!(error instanceof ModelNotFoundError) && !(error instanceof SchemaTooLargeError)) {
       const classified = classifyApiError(error);
       if (classified) throw classified;
@@ -339,43 +329,12 @@ export async function runAgentLoop(input: {
   }
 }
 
-function isUnsupportedToolChoiceError(error: unknown): boolean {
-  const text = collectErrorText(error).toLowerCase();
-  const referencesToolChoice =
-    text.includes('tool_choice') ||
-    text.includes('toolchoice') ||
-    text.includes('tool choice');
-  if (!referencesToolChoice) return false;
-  return (
-    text.includes('does not support') ||
-    text.includes('not support') ||
-    text.includes('unsupported')
-  );
-}
-
-function collectErrorText(error: unknown, seen = new Set<unknown>()): string {
-  if (error == null) return '';
-  if (typeof error === 'string') return error;
-  if (typeof error === 'number' || typeof error === 'boolean' || typeof error === 'bigint') {
-    return String(error);
-  }
-  if (typeof error !== 'object') return '';
-  if (seen.has(error)) return '';
-  seen.add(error);
-
-  const record = error as Record<string, unknown>;
-  const parts: string[] = [];
-  for (const key of ['name', 'message', 'statusText', 'code', 'type']) {
-    const value = record[key];
-    if (typeof value === 'string') parts.push(value);
-  }
-  for (const key of ['cause', 'error']) {
-    if (key in record) parts.push(collectErrorText(record[key], seen));
-  }
-  try {
-    parts.push(JSON.stringify(error));
-  } catch {
-    // Ignore objects that cannot be stringified.
-  }
-  return parts.filter(Boolean).join(' ');
+function chunkDelta(chunk: unknown): string {
+  if (!chunk || typeof chunk !== 'object') return '';
+  const record = chunk as Record<string, unknown>;
+  return typeof record.delta === 'string'
+    ? record.delta
+    : typeof record.text === 'string'
+      ? record.text
+      : '';
 }

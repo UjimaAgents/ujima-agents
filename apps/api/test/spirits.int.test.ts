@@ -11,11 +11,9 @@ import {
   ActiveSpiritRegistry,
   ALWAYS_AVAILABLE_AGENT_TOOLS,
   ConversationService,
-  ORCHESTRATOR_TOOLS,
   OnboardingService,
   SUPERVISOR_TOOL_ALLOWLIST,
   SpiritService,
-  SupervisorTodoService,
   TaskSessionService,
   ToolServiceImpl,
   createApiServices,
@@ -50,7 +48,7 @@ import { ChannelSchema, MemberSchema, OrganizationSchema, type MCPDef } from '@u
 import { MessageCardSchema } from '@ujima/shared';
 
 // ---------------------------------------------------------------------
-// Phase 2.A–C — spirits + supervisor.todo.* + supervisor (lazy split).
+// Phase 2.A-C - spirits + supervisor (lazy split).
 // ---------------------------------------------------------------------
 
 function mcpDef(id: string, name: string): MCPDef {
@@ -472,110 +470,6 @@ describe('SpiritService — Phase 2.A lifecycle', () => {
 });
 
 // =====================================================================
-// Phase 2.B — supervisor.todo.* round-trip via SupervisorTodoService
-// =====================================================================
-
-describe('supervisor.todo.* (Phase 2.B)', () => {
-  const tempDirs: string[] = [];
-  afterEach(async () => {
-    await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
-  });
-
-  it('add → list round-trip is scoped per task session via SupervisorTodoService', async () => {
-    const fixture = await createFixture();
-    tempDirs.push(fixture.archiveRoot);
-
-    const { session: sessionA } = fixture.taskSessions.create({
-      organizationId: fixture.organizationId,
-      requestedBy: fixture.ownerId,
-      prompt: 'Task A',
-      team: ['frontend-alice'],
-      slug: 'task-a',
-    });
-    const { session: sessionB } = fixture.taskSessions.create({
-      organizationId: fixture.organizationId,
-      requestedBy: fixture.ownerId,
-      prompt: 'Task B',
-      team: ['frontend-alice'],
-      slug: 'task-b',
-    });
-
-    const callTool = async (
-      toolId: string,
-      taskSessionId: string,
-      input: Record<string, unknown>,
-    ): Promise<unknown> => {
-      const t = ORCHESTRATOR_TOOLS[toolId];
-      if (!t) throw new Error(`tool ${toolId} not registered`);
-      return t.execute({
-        invocation: {
-          organizationId: fixture.organizationId,
-          runId: '',
-          memberId: 'frontend-alice',
-          threadId: '',
-          toolCallId: `${toolId}-call`,
-          toolId,
-          action: 'message',
-          resourceType: 'message',
-          input,
-          taskSessionId,
-        },
-        team: {} as never,
-        repo: fixture.repo,
-        conversations: fixture.conversations,
-        supervisorTodos: fixture.supervisorTodos,
-      });
-    };
-
-    const addedA1 = (await callTool('supervisor.todo.add', sessionA.id, {
-      body: 'Wire auth',
-    })) as { todo: { id: string; taskSessionId?: string } };
-    const addedA2 = (await callTool('supervisor.todo.add', sessionA.id, {
-      body: 'Add tests',
-    })) as { todo: { id: string } };
-    const addedB1 = (await callTool('supervisor.todo.add', sessionB.id, {
-      body: 'Different task',
-    })) as { todo: { id: string } };
-
-    expect(addedA1.todo.taskSessionId).toBe(sessionA.id);
-
-    const listedA = (await callTool('supervisor.todo.list', sessionA.id, {})) as {
-      todos: { id: string; title: string }[];
-    };
-    expect(listedA.todos.map((t) => t.id).sort()).toEqual(
-      [addedA1.todo.id, addedA2.todo.id].sort(),
-    );
-
-    const listedB = (await callTool('supervisor.todo.list', sessionB.id, {})) as {
-      todos: { id: string }[];
-    };
-    expect(listedB.todos.map((t) => t.id)).toEqual([addedB1.todo.id]);
-
-    // Cross-session check is rejected by SupervisorTodoService.
-    const crossCheck = (await callTool('supervisor.todo.check', sessionA.id, {
-      id: addedB1.todo.id,
-      status: 'completed',
-    })) as { error?: string };
-    expect(crossCheck.error).toBeDefined();
-    expect(crossCheck.error).toMatch(/different task session/i);
-
-    // Same-session check works.
-    const okCheck = (await callTool('supervisor.todo.check', sessionA.id, {
-      id: addedA1.todo.id,
-      status: 'completed',
-    })) as { todo: { status: string } };
-    expect(okCheck.todo.status).toBe('completed');
-
-    // Status filter on list().
-    const completedOnly = (await callTool('supervisor.todo.list', sessionA.id, {
-      status: 'completed',
-    })) as { todos: { id: string }[] };
-    expect(completedOnly.todos).toHaveLength(1);
-    expect(completedOnly.todos[0]!.id).toBe(addedA1.todo.id);
-  });
-});
-
-// =====================================================================
 // Phase 2.C — SpiritService alert gate, mutex, cap, allowlist enforcement
 // =====================================================================
 
@@ -949,15 +843,17 @@ describe('SpiritService alert dispatch — Phase 2.C', () => {
     expect((result.output as { code?: string }).code).toBe('ERR_SUPERVISOR_ALLOWLIST');
   });
 
-  it('SUPERVISOR_TOOL_ALLOWLIST contains supervisor.todo.* and web_search, excludes filesystem/shell', () => {
-    expect(SUPERVISOR_TOOL_ALLOWLIST).toContain('supervisor.todo.add');
-    expect(SUPERVISOR_TOOL_ALLOWLIST).toContain('supervisor.todo.check');
-    expect(SUPERVISOR_TOOL_ALLOWLIST).toContain('supervisor.todo.list');
-    expect(SUPERVISOR_TOOL_ALLOWLIST).toContain('self.note');
+  it('SUPERVISOR_TOOL_ALLOWLIST contains goal/question + memory tools, excludes filesystem/shell', () => {
+    expect(SUPERVISOR_TOOL_ALLOWLIST).toContain('goal.start');
+    expect(SUPERVISOR_TOOL_ALLOWLIST).toContain('goal.task.update');
+    expect(SUPERVISOR_TOOL_ALLOWLIST).toContain('question.ask');
+    expect(SUPERVISOR_TOOL_ALLOWLIST).toContain('memory.write');
+    expect(SUPERVISOR_TOOL_ALLOWLIST).toContain('memory.recall');
     expect(SUPERVISOR_TOOL_ALLOWLIST).toContain('web_search');
     expect(SUPERVISOR_TOOL_ALLOWLIST).not.toContain('filesystem');
     expect(SUPERVISOR_TOOL_ALLOWLIST).not.toContain('shell');
-    expect(ALWAYS_AVAILABLE_AGENT_TOOLS).toContain('self.note');
+    expect(ALWAYS_AVAILABLE_AGENT_TOOLS).toContain('memory.write');
+    expect(ALWAYS_AVAILABLE_AGENT_TOOLS).toContain('memory.recall');
   });
 
   it('pickProviderModel returns supervisorModel when available, falls back to defaultModel', () => {
@@ -1700,198 +1596,6 @@ describe('TaskSessionService.create — audit fix regressions', () => {
     // exactly once.
     const refreshed = repo.getTaskSession(owner.organizationId, session.id)!;
     expect(refreshed.supervisorTurnCount).toBe(1);
-  });
-
-  // -------------------------------------------------------------------
-  // NEW (audit fix): supervisor.todo.* is rejected from worker turns
-  // even when the role's tool allowlist names them.
-  // -------------------------------------------------------------------
-  it('worker turn cannot call supervisor.todo.* even when the role lists them in `tools`', async () => {
-    // Role config carries `supervisor.todo.add` in `tools`. Pre-fix,
-    // checkToolPolicy unconditionally allowed the supervisor.* family
-    // and a regular worker invocation slipped through. Post-fix, the
-    // bypass is gated on `spiritRole === 'supervisor'`, so a worker
-    // invocation (no spiritRole tag, or spiritRole='worker') is
-    // refused even when the role explicitly names the tool.
-    //
-    // We bypass `OnboardingService` here because that path goes
-    // through `loadAgentTeam`'s starter-tools catalog and doesn't
-    // forward a custom `tools` map. To reproduce the misconfiguration
-    // the audit flagged ("an admin lists supervisor.todo.* on a
-    // worker role"), we build the team handle directly with a
-    // catalog that includes those tool ids.
-    const archiveRoot = await mkdtemp(join(tmpdir(), 'ujima-supervisor-gate-'));
-    tempDirs.push(archiveRoot);
-    const db = openDatabase({ dbPath: ':memory:' });
-    const repo = new Repository(db);
-    const teamStore = createTeamStore();
-
-    const team = AgentTeam({
-      name: 'Gate Org',
-      workspace: { root: archiveRoot, roleScopes: {} },
-      tools: {
-        'supervisor.todo.add': {
-          id: 'supervisor.todo.add',
-          name: 'supervisor.todo.add',
-          description: 'Supervisor add (test catalog entry)',
-          actions: ['message'],
-          pathScopes: [],
-          requiresApproval: false,
-        },
-        'supervisor.todo.list': {
-          id: 'supervisor.todo.list',
-          name: 'supervisor.todo.list',
-          description: 'Supervisor list (test catalog entry)',
-          actions: ['read'],
-          pathScopes: [],
-          requiresApproval: false,
-        },
-      },
-      providers: { local: { kind: 'openai', defaultModel: 'm' } },
-      roles: [
-        {
-          name: 'naughty-eng',
-          title: 'Naughty Eng',
-          instructions: 'i',
-          // The exploit surface: role allowlist contains supervisor.todo.*.
-          tools: ['supervisor.todo.add', 'supervisor.todo.list'],
-          channels: ['general'],
-          provider: 'local',
-          model: 'm',
-        },
-      ],
-      channels: [{ name: 'general', kind: 'general', topic: '' }],
-      agents: [{ name: 'naughty-x', roleName: 'naughty-eng', personalityName: 'direct' }],
-    });
-    const orgId = 'gate-org';
-    teamStore.setTeam(team, orgId);
-
-    // Persist the org + members directly so the repo reads succeed.
-    repo.saveOrganization(
-      OrganizationSchema.parse({
-        id: orgId,
-        name: 'Gate Org',
-        workspace: { root: archiveRoot, roleScopes: {} },
-        organizationChart: { reportsTo: {} },
-      }),
-    );
-    repo.saveMember(
-      MemberSchema.parse({
-        id: 'owner-1',
-        organizationId: orgId,
-        name: 'Owner',
-        kind: 'human',
-        roleName: 'owner',
-        presence: 'offline',
-        createdAt: new Date().toISOString(),
-      }),
-    );
-    repo.saveMember(
-      MemberSchema.parse({
-        id: 'naughty-x',
-        organizationId: orgId,
-        name: 'naughty-x',
-        kind: 'agent',
-        roleName: 'naughty-eng',
-        presence: 'offline',
-        createdAt: new Date().toISOString(),
-      }),
-    );
-    repo.saveChannel(
-      ChannelSchema.parse({
-        id: 'general',
-        organizationId: orgId,
-        name: 'general',
-        kind: 'general',
-        topic: '',
-        memberIds: ['owner-1', 'naughty-x'],
-      }),
-    );
-    repo.setChannelMembers('general', ['owner-1', 'naughty-x']);
-
-    const conversations = new ConversationService(repo, noopRealtime());
-    const supervisorTodos = new SupervisorTodoService(repo);
-    const approvalRequester: ApprovalRequester = {
-      requestApproval: () => ({ id: 'fake-approval-id' }),
-    };
-    const tools = new ToolServiceImpl(
-      teamStore,
-      repo,
-      approvalRequester,
-      conversations,
-      noopRealtime(),
-      supervisorTodos,
-    );
-    const taskSessions = new TaskSessionService(repo, conversations);
-
-    const { session } = taskSessions.create({
-      organizationId: orgId,
-      requestedBy: 'owner-1',
-      prompt: 'p',
-      team: ['naughty-x'],
-    });
-    const owner = { id: 'owner-1', organizationId: orgId };
-
-    // Worker-mode invocation — no spiritRole, mimicking what a
-    // worker turn (or a misuse path) would emit. The role allowlist
-    // permits supervisor.todo.add but the policy gate must refuse.
-    const workerCall = await tools.invoke({
-      organizationId: owner.organizationId,
-      runId: 'r',
-      memberId: 'naughty-x',
-      threadId: session.channelId,
-      toolCallId: 'tc-1',
-      toolId: 'supervisor.todo.add',
-      action: 'message',
-      resourceType: 'message',
-      input: { body: 'should not land' },
-      permissionMcpId: 'supervisor',
-      taskSessionId: session.id,
-      // spiritRole intentionally omitted — i.e. `worker` semantics.
-    });
-    expect(workerCall.ok).toBe(false);
-    expect(workerCall.error).toMatch(/supervisor-only|SUPERVISOR_TOOL_ALLOWLIST/);
-
-    // Even an explicit spiritRole='worker' tag is refused.
-    const explicitWorkerCall = await tools.invoke({
-      organizationId: owner.organizationId,
-      runId: 'r',
-      memberId: 'naughty-x',
-      threadId: session.channelId,
-      toolCallId: 'tc-2',
-      toolId: 'supervisor.todo.add',
-      action: 'message',
-      resourceType: 'message',
-      input: { body: 'still should not land' },
-      permissionMcpId: 'supervisor',
-      taskSessionId: session.id,
-      spiritRole: 'worker',
-    });
-    expect(explicitWorkerCall.ok).toBe(false);
-
-    // No todos were written.
-    expect(supervisorTodos.list({ organizationId: owner.organizationId, taskSessionId: session.id }))
-      .toHaveLength(0);
-
-    // Sanity: the supervisor path still works for the same tool.
-    const supervisorCall = await tools.invoke({
-      organizationId: owner.organizationId,
-      runId: 'r',
-      memberId: 'naughty-x',
-      threadId: session.channelId,
-      toolCallId: 'tc-3',
-      toolId: 'supervisor.todo.add',
-      action: 'message',
-      resourceType: 'message',
-      input: { body: 'legit supervisor jot' },
-      permissionMcpId: 'supervisor',
-      taskSessionId: session.id,
-      spiritRole: 'supervisor',
-    });
-    expect(supervisorCall.ok).toBe(true);
-    expect(
-      supervisorTodos.list({ organizationId: owner.organizationId, taskSessionId: session.id }),
-    ).toHaveLength(1);
   });
 
   // -------------------------------------------------------------------

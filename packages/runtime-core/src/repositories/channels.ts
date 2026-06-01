@@ -1,5 +1,5 @@
 import type { SqliteDbHandle as DbHandle } from '@ujima/context-store';
-import { ChannelSchema, type Channel, type ChannelKind } from '@ujima/shared';
+import { ChannelSchema, type Channel, type ChannelKind, type ChannelMemberMode, type ChannelMemberSettings } from '@ujima/shared';
 import { now, replaceMemberLinks, rowString } from './common.js';
 import { cursorWhereClause, decodeCursor, encodeCursor } from '@ujima/shared';
 import { listThreadIdsForChannel } from './threads.js';
@@ -193,5 +193,70 @@ function listChannelMemberIdsForChannelIds(
 
 export function deleteChannel(db: DbHandle, channelId: string): void {
   db.prepare('DELETE FROM channel_members WHERE channel_id = ?').run(channelId);
+  db.prepare('DELETE FROM channel_member_modes WHERE channel_id = ?').run(channelId);
   db.prepare('DELETE FROM channels WHERE id = ?').run(channelId);
+}
+
+// -----------------------------------------------------------------------
+// Channel member modes (active / passive / muted / temp_disable)
+// -----------------------------------------------------------------------
+
+export function setChannelMemberMode(
+  db: DbHandle,
+  channelId: string,
+  memberId: string,
+  mode: ChannelMemberMode,
+): void {
+  const timestamp = now();
+  db.prepare(
+    `INSERT INTO channel_member_modes (channel_id, member_id, mode, updated_at)
+     VALUES (?, ?, ?, ?)
+     ON CONFLICT(channel_id, member_id) DO UPDATE SET
+       mode = excluded.mode,
+       updated_at = excluded.updated_at`,
+  ).run(channelId, memberId, mode, timestamp);
+}
+
+export function getChannelMemberMode(
+  db: DbHandle,
+  channelId: string,
+  memberId: string,
+): ChannelMemberMode | null {
+  const row = db
+    .prepare('SELECT mode FROM channel_member_modes WHERE channel_id = ? AND member_id = ?')
+    .get(channelId, memberId) as { mode: string } | null;
+  return row?.mode as ChannelMemberMode | null;
+}
+
+export function listChannelMemberModes(db: DbHandle, memberId: string): ChannelMemberSettings[] {
+  const rows = db
+    .prepare('SELECT channel_id, member_id, mode, updated_at FROM channel_member_modes WHERE member_id = ?')
+    .all(memberId) as { channel_id: string; member_id: string; mode: string; updated_at: string }[];
+
+  return rows.map((row) => ({
+    channelId: row.channel_id,
+    memberId: row.member_id,
+    mode: row.mode as ChannelMemberMode,
+    updatedAt: row.updated_at,
+  }));
+}
+
+export function listChannelMemberModesForChannel(
+  db: DbHandle,
+  channelId: string,
+): ChannelMemberSettings[] {
+  const rows = db
+    .prepare('SELECT channel_id, member_id, mode, updated_at FROM channel_member_modes WHERE channel_id = ?')
+    .all(channelId) as { channel_id: string; member_id: string; mode: string; updated_at: string }[];
+
+  return rows.map((row) => ({
+    channelId: row.channel_id,
+    memberId: row.member_id,
+    mode: row.mode as ChannelMemberMode,
+    updatedAt: row.updated_at,
+  }));
+}
+
+export function removeChannelMemberMode(db: DbHandle, channelId: string, memberId: string): void {
+  db.prepare('DELETE FROM channel_member_modes WHERE channel_id = ? AND member_id = ?').run(channelId, memberId);
 }

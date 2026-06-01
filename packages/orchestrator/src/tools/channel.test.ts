@@ -7,7 +7,6 @@ import {
   channelPostTool,
   channelReadTool,
   channelReplyTool,
-  selfNoteTool,
 } from './channel.js';
 import { ALWAYS_AVAILABLE_AGENT_TOOLS } from './index.js';
 
@@ -248,11 +247,6 @@ describe('channel.* tools — toInvocation()', () => {
     },
   );
 
-  it('self.note keeps its bypassPermission flag', () => {
-    const inv = selfNoteTool.toInvocation({ body: 'thinking…' });
-    expect(inv.bypassPermission).toBe(true);
-    expect(inv.resourcePath).toBeUndefined();
-  });
 });
 
 // Regression: ALWAYS_AVAILABLE_AGENT_TOOLS includes the baseline
@@ -275,14 +269,16 @@ describe('ALWAYS_AVAILABLE_AGENT_TOOLS', () => {
         'channel.recall',
         'channel.reply',
         'glob',
+        'goal.start',
+        'goal.task.update',
         'grep',
         'ls',
         'memory.forget',
         'memory.recall',
         'memory.write',
         'message',
+        'question.ask',
         'schedule',
-        'self.note',
         'procedure.list',
         'procedure.view',
         'self.procedure.add',

@@ -8,6 +8,7 @@ import {
   ALWAYS_AVAILABLE_AGENT_TOOLS,
   ConversationService,
   AuthService,
+  GoalSystemService,
   OnboardingService,
   ToolServiceImpl,
   createApiServices,
@@ -298,16 +299,6 @@ describe('workspace-root REST gating', () => {
         },
       },
       {
-        url: `${baseUrl}/api/tasks/promote`,
-        method: 'POST',
-        body: {
-          organizationId,
-          channelId: 'general',
-          requestedBy: 'owner-1',
-          prompt: 'Please handle this',
-        },
-      },
-      {
         url: `${baseUrl}/api/orgs/${organizationId}/members`,
         method: 'POST',
         body: {
@@ -563,6 +554,20 @@ describe('workspace-root REST gating', () => {
     const retryBody = (await retry.json()) as { id: string };
     expect(retryBody.id).toBe(body.id);
   });
+
+  it('returns 403 Forbidden when trying to delete a human member', async () => {
+    const response = await fetch(`${baseUrl}/api/orgs/${readyOrganizationId}/members/ready-owner`, {
+      method: 'DELETE',
+      headers: {
+        authorization: `Bearer ${TOKEN}`,
+        'x-ujima-session': readyOwnerSessionToken,
+      },
+    });
+    expect(response.status).toBe(403);
+    const body = (await response.json()) as { code: string; message: string };
+    expect(body.code).toBe('ERR_FORBIDDEN');
+    expect(body.message).toBe('Only agents can be deleted');
+  });
 });
 
 function memberUpdateBody(overrides: Record<string, unknown> = {}) {
@@ -605,11 +610,13 @@ describe('workspace path hardening', () => {
     const onboarding = new OnboardingService(repo, teamStore);
     const realtime = createNoopRealtime();
     const conversations = new ConversationService(repo, realtime);
+    const goals = new GoalSystemService(repo);
     const tools = new ToolServiceImpl(
       teamStore,
       repo,
       { requestApproval: () => ({ id: 'approval-1' }) },
       conversations,
+      goals,
       realtime,
     );
 

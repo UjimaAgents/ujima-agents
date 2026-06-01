@@ -1,6 +1,6 @@
 import { relative, sep } from 'node:path';
 import type { AgentTeamHandle } from '@ujima/framework';
-import type { ToolAction, SpiritRole, WakeReason } from '@ujima/shared';
+import type { ShellApprovalMode, ToolAction, SpiritRole, WakeReason } from '@ujima/shared';
 import { isSensitiveWorkspacePath } from '@ujima/shared/workspace-file-filters';
 import {
   assertWorkspaceBoundary,
@@ -9,28 +9,40 @@ import {
 } from '@ujima/shared/workspace';
 import { isInScopeFileTool } from '../path-scoped-tools.js';
 import { ALWAYS_AVAILABLE_AGENT_TOOLS } from '../tools/index.js';
-import {
-  buildPassOrSelfNoteDenialReason,
-  resolveWakeReplyPolicy,
-  shouldSuppressPassAndSelfNote,
-} from '../utils/wake-reply-policy.js';
+import { buildPassDenialReason, resolveWakeReplyPolicy } from '../utils/wake-reply-policy.js';
 
 export interface PolicyResult {
   allowed: boolean;
   requiresApproval: boolean;
+  /** When true, ToolService may LLM-review shell before human approval. */
+  shellAutoReview?: boolean;
   reason?: string;
+}
+
+export function resolveShellExecutePolicy(
+  mode: ShellApprovalMode | undefined,
+): Pick<PolicyResult, 'requiresApproval' | 'shellAutoReview'> | null {
+  if (!mode) return null;
+  switch (mode) {
+    case 'allow_all':
+      return { requiresApproval: false, shellAutoReview: false };
+    case 'auto_review':
+      return { requiresApproval: true, shellAutoReview: true };
+    case 'always_review':
+      return { requiresApproval: true, shellAutoReview: false };
+  }
 }
 
 export interface CheckToolPolicyOptions {
   spiritRole?: SpiritRole;
   /**
    * Why the run was woken. When `wakeReason === 'mention'` the
-   * mandatory-reply contract kicks in: `channel.pass` and
-   * `self.note` are both rejected so the agent has to call a
-   * posting tool. Other reasons leave both tools available.
+   * mandatory-reply contract kicks in: `channel.pass` is rejected so
+   * the agent has to call a posting tool.
    */
   wakeReason?: WakeReason | null;
   threadId?: string;
+  effectiveShellApprovalMode?: ShellApprovalMode;
 }
 
 export function checkToolPolicy(
@@ -46,30 +58,33 @@ export function checkToolPolicy(
     return { allowed: false, requiresApproval: false, reason: `Unknown role: ${roleName}` };
   }
 
+  if (toolId === 'self.note') {
+    return {
+      allowed: false,
+      requiresApproval: false,
+      reason: 'self.note was removed; use memory.write / memory.recall instead.',
+    };
+  }
+  if (toolId === 'memory.save') {
+    return {
+      allowed: false,
+      requiresApproval: false,
+      reason: 'memory.save was renamed; use memory.write instead.',
+    };
+  }
+
   // L3 — wake/DM reply contract (palette + policy share resolveWakeReplyPolicy).
   const wakeReplyPolicy = resolveWakeReplyPolicy({
     threadId: options.threadId ?? '',
     wakeReason: options.wakeReason,
   });
 
-  if (
-    shouldSuppressPassAndSelfNote(wakeReplyPolicy) &&
-    (toolId === 'channel.pass' || toolId === 'self.note')
-  ) {
+  if (wakeReplyPolicy.suppressPassTool && toolId === 'channel.pass') {
     return {
       allowed: false,
       requiresApproval: false,
-      reason: buildPassOrSelfNoteDenialReason(toolId, wakeReplyPolicy),
+      reason: buildPassDenialReason(wakeReplyPolicy),
     };
-  }
-
-  // self.note is the agent's private scratchpad. Per the channels-as-substrate
-  // principle, an agent must always be able to think to itself — even if its
-  // role doesn't explicitly list `self.note` in `tools`. Always allowed,
-  // never approval-gated — EXCEPT for the `wakeReason === 'mention'`
-  // case above, which already returned.
-  if (toolId === 'self.note') {
-    return { allowed: true, requiresApproval: false };
   }
 
   // channel.pass is the always-available silent-outcome tool. Every
@@ -100,20 +115,7 @@ export function checkToolPolicy(
     return { allowed: true, requiresApproval: false };
   }
 
-  // Supervisor-only tools (`supervisor.todo.*`) are gated on TWO axes:
-  //   1. The invocation must be tagged `spiritRole === 'supervisor'`
-  //      by SpiritService — the only legitimate caller.
-  //   2. The tool id must be in SUPERVISOR_TOOL_ALLOWLIST (enforced
-  //      downstream in ToolServiceImpl).
-  //
-  // Without the role-tag check, a worker role configured with
-  // `tools: ['supervisor.todo.add']` could mutate scoped state outside
-  // the supervisor path — the audit's stated leak. We refuse the
-  // bypass when the invocation came from a worker turn, and the
-  // normal role-allowlist check below then rejects it. Importantly,
-  // this stays restrictive even when the role does list the tool
-  // explicitly: the supervisor.* family is structurally not a worker
-  // surface.
+  // Supervisor-only tool families are structurally not a worker surface.
   if (toolId.startsWith('supervisor.')) {
     if (options.spiritRole === 'supervisor') {
       return { allowed: true, requiresApproval: false };
@@ -138,13 +140,22 @@ export function checkToolPolicy(
     return { allowed: true, requiresApproval: false };
   }
 
-  // Durable memory and per-agent procedure tools are private
-  // knowledge-management surfaces. They are intentionally present
-  // in ALWAYS_AVAILABLE_AGENT_TOOLS, but they use action='message'
-  // for audit classification, so without this branch they fall
-  // through to the generic non-read approval rule and silently stall
-  // background memory writes behind approvals nobody asked for.
-  if (toolId.startsWith('memory.') || toolId.startsWith('self.procedure.')) {
+  // Durable memory, per-agent procedure, and goal/question
+  // management tools are internal management surfaces — they
+  // mutate first-party tables (memory_entries, procedures, goals,
+  // goal_tasks, interactive_questions), not the workspace or shell.
+  // They are intentionally present in ALWAYS_AVAILABLE_AGENT_TOOLS
+  // and tagged `bypassPermission: true`, but they use non-read
+  // actions ('create', 'update', 'message') so without this branch
+  // they fall through to the generic approval rule and stall behind
+  // an ApprovalRequest schema that requires a non-empty resourcePath
+  // these tools don't have.
+  if (
+    toolId.startsWith('memory.') ||
+    toolId.startsWith('self.procedure.') ||
+    toolId.startsWith('goal.') ||
+    toolId.startsWith('question.')
+  ) {
     return { allowed: true, requiresApproval: false };
   }
 
@@ -154,9 +165,7 @@ export function checkToolPolicy(
   // `resolveToolAllowlist` / `ai-service.ts` so the run-time gate
   // doesn't reject a tool the model just received in its schema.
   // Writes (`filesystem`, `edit`, `multiedit`, `write`, `shell`)
-  // stay opt-in via `role.tools`. `schedule` is in
-  // `ALWAYS_AVAILABLE_AGENT_TOOLS` so it falls through this check
-  // without a dedicated branch.
+  // stay opt-in via `role.tools`.
   const baselineToolIds = ALWAYS_AVAILABLE_AGENT_TOOLS as readonly string[];
   if (!baselineToolIds.includes(toolId) && !role.tools.includes(toolId)) {
     return {
@@ -229,6 +238,13 @@ export function checkToolPolicy(
       };
     }
     inScopeFileAccess = isInScopeFileTool(toolId, action);
+  }
+
+  if (toolId === 'shell' && action === 'execute') {
+    const shellPolicy = resolveShellExecutePolicy(options.effectiveShellApprovalMode);
+    if (shellPolicy) {
+      return { allowed: true, ...shellPolicy };
+    }
   }
 
   return {

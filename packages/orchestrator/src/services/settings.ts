@@ -1,5 +1,18 @@
 import { randomUUID } from 'node:crypto';
-import { AGENT_KIND, ChannelSchema, MemberSchema, PROVIDER_KINDS, type Organization, type Member, type Channel } from '@ujima/shared';
+import {
+  AGENT_KIND,
+  ChannelSchema,
+  MemberSchema,
+  MemberShellApprovalModeSchema,
+  PROVIDER_KINDS,
+  shellApprovalModeFromLegacyRequireShell,
+  type Organization,
+  type Member,
+  type Channel,
+  type MemberShellApprovalMode,
+  type ShellApprovalMode,
+  type ToolPolicyState,
+} from '@ujima/shared';
 import { AgentTeam, createAgent, defineRole, loadAgentTeam, normalizeProviderKey, type RoleConfig } from '@ujima/framework';
 import type { ApiRepository } from './repository-reader.js';
 import type { TeamStore } from './team-store.js';
@@ -13,11 +26,24 @@ import {
   assertWorkspaceRootPathExists,
   upsertWorkspaceMemberScopes,
 } from './workspace-root.js';
-import { upsertDashboardTeamOverride } from './dashboard-team-overrides.js';
+import {
+  deleteDashboardTeamOverride,
+  stripAgentFromPersistedTeamConfig,
+  upsertDashboardTeamOverride,
+} from './dashboard-team-overrides.js';
 import { ConfigSyncService, persistTeamConfig } from './config-sync.js';
 import { requireTeam } from '../utils/require-team.js';
 import { requireOrganization } from '../utils/require-organization.js';
 import { visiblePublicChannels } from './channel-visibility.js';
+import { resolveAgentMemberId } from './member-id.js';
+
+function activeMembers(repo: ApiRepository, organizationId: string): Member[] {
+  return repo.listMembers(organizationId).filter((member) => !member.retiredAt);
+}
+
+function parseShellApprovalMode(value: MemberShellApprovalMode | undefined, fallback: MemberShellApprovalMode | undefined): MemberShellApprovalMode | undefined {
+  return value !== undefined ? MemberShellApprovalModeSchema.parse(value) : fallback;
+}
 
 export interface TeamSettingsResponse {
   name: string;
@@ -51,6 +77,7 @@ export interface AddMemberInput {
   channelIds?: string[];
   llm?: string;
   model?: string;
+  shellApprovalMode?: MemberShellApprovalMode;
   personalityName?: string;
   role?: RoleConfig;
 }
@@ -63,8 +90,17 @@ export interface UpdateMemberInput {
   channelIds?: string[];
   llm?: string;
   model?: string;
+  shellApprovalMode?: MemberShellApprovalMode;
   personalityName: string;
   role: RoleConfig;
+}
+
+export interface PatchMemberPreferencesInput {
+  organizationId: string;
+  memberId: string;
+  shellApprovalMode?: MemberShellApprovalMode;
+  llm?: string;
+  model?: string;
 }
 
 export interface CreateChannelInput {
@@ -77,6 +113,7 @@ export interface UpdatePoliciesInput {
   organizationId: string;
   requireApprovalForWrites?: boolean;
   requireApprovalForShell?: boolean;
+  shellApprovalMode?: ShellApprovalMode;
 }
 
 export interface UpdateChannelInput {
@@ -85,6 +122,16 @@ export interface UpdateChannelInput {
   name?: string;
   topic?: string;
   memberIds?: string[];
+}
+
+export interface PolicyAllowRuleRecord {
+  agentId: string;
+  mcpId: string;
+  toolName: string;
+  state: ToolPolicyState;
+  reason?: string;
+  updatedAt?: string;
+  updatedBy?: string;
 }
 
 export interface ProviderTestResult {
@@ -266,14 +313,23 @@ export class SettingsService {
           model: input.role?.model ?? existingRole?.model,
         })
       : undefined;
+    const memberId =
+      input.kind === AGENT_KIND
+        ? resolveAgentMemberId(this.repo, input.organizationId, input.name)
+        : randomUUID();
+    const existingMember =
+      input.kind === AGENT_KIND ? this.repo.getMember(input.organizationId, memberId) : null;
     const member = MemberSchema.parse({
-      id: randomUUID(),
+      id: memberId,
       organizationId: input.organizationId,
       name: input.name,
       kind: input.kind,
       roleName: input.roleName,
       llm: input.llm ? normalizeProviderKey(input.llm) : undefined,
       model: input.model,
+      shellApprovalMode: parseShellApprovalMode(input.shellApprovalMode, existingMember?.shellApprovalMode),
+      createdAt: existingMember?.createdAt,
+      retiredAt: undefined,
     });
     const saved = this.repo.saveMember(member);
     if (input.kind === AGENT_KIND) {
@@ -332,6 +388,7 @@ export class SettingsService {
         roleName: input.roleName,
         llm: input.llm !== undefined ? normalizeProviderKey(input.llm) : member.llm,
         model: input.model !== undefined ? input.model : member.model,
+        shellApprovalMode: parseShellApprovalMode(input.shellApprovalMode, member.shellApprovalMode),
       }),
     );
 
@@ -378,6 +435,91 @@ export class SettingsService {
     return saved;
   }
 
+  patchMemberPreferences(input: PatchMemberPreferencesInput): Member {
+    requireOrganization(this.repo, input.organizationId);
+    const member = this.repo.getMember(input.organizationId, input.memberId);
+    if (!member) {
+      throw new Error(`Member not found: ${input.memberId}`);
+    }
+    if (member.kind !== AGENT_KIND) {
+      throw new Error('Only agents can be edited here');
+    }
+    if (
+      input.shellApprovalMode === undefined &&
+      input.llm === undefined &&
+      input.model === undefined
+    ) {
+      throw new Error('At least one preference field is required');
+    }
+
+    return this.repo.saveMember(
+      MemberSchema.parse({
+        ...member,
+        llm: input.llm !== undefined ? normalizeProviderKey(input.llm) : member.llm,
+        model: input.model !== undefined ? input.model : member.model,
+        shellApprovalMode: parseShellApprovalMode(input.shellApprovalMode, member.shellApprovalMode),
+      }),
+    );
+  }
+
+  deleteMember(organizationId: string, memberId: string): void {
+    requireOrganization(this.repo, organizationId);
+    const member = this.repo.getMember(organizationId, memberId);
+    if (!member) {
+      throw new Error(`Member not found: ${memberId}`);
+    }
+    if (member.kind !== AGENT_KIND) {
+      throw new Error('Only agents can be deleted');
+    }
+
+    const now = new Date().toISOString();
+    this.repo.saveMember({
+      ...member,
+      retiredAt: now,
+    });
+
+    const otherAgentsUseRole = this.repo.listMembers(organizationId).some(
+      (item) =>
+        item.kind === AGENT_KIND &&
+        item.id !== memberId &&
+        !item.retiredAt &&
+        item.roleName === member.roleName,
+    );
+
+    stripAgentFromPersistedTeamConfig(
+      this.repo,
+      organizationId,
+      memberId,
+      member.roleName,
+      otherAgentsUseRole,
+    );
+
+    deleteDashboardTeamOverride(
+      this.repo,
+      organizationId,
+      this.teamStore,
+      memberId,
+      member.roleName,
+    );
+
+    // Remove the retired member from all channel memberships
+    const allChannels = this.repo.listAllChannels(organizationId);
+    for (const channel of allChannels) {
+      if (channel.memberIds.includes(memberId)) {
+        const nextMemberIds = channel.memberIds.filter((id) => id !== memberId);
+        this.repo.setChannelMembers(channel.id, nextMemberIds);
+      }
+    }
+
+    // Delete all scheduled jobs owned by the retired member
+    const allJobs = this.repo.listScheduledJobs(organizationId);
+    for (const job of allJobs) {
+      if (job.memberId === memberId) {
+        this.repo.deleteScheduledJob(organizationId, job.id);
+      }
+    }
+  }
+
   addChannel(input: CreateChannelInput): Channel {
     requireOrganization(this.repo, input.organizationId);
     const channel = this.repo.saveChannel(
@@ -401,8 +543,15 @@ export class SettingsService {
     if (input.requireApprovalForWrites !== undefined) {
       team.config.policies.requireApprovalForWrites = input.requireApprovalForWrites;
     }
-    if (input.requireApprovalForShell !== undefined) {
+    if (input.shellApprovalMode !== undefined) {
+      team.config.policies.shellApprovalMode = input.shellApprovalMode;
+      team.config.policies.requireApprovalForShell =
+        input.shellApprovalMode !== 'allow_all';
+    } else if (input.requireApprovalForShell !== undefined) {
       team.config.policies.requireApprovalForShell = input.requireApprovalForShell;
+      team.config.policies.shellApprovalMode = shellApprovalModeFromLegacyRequireShell(
+        input.requireApprovalForShell,
+      );
     }
 
     persistTeamConfig(this.repo, input.organizationId, team);
@@ -539,7 +688,7 @@ export class SettingsService {
 
     return {
       organization: updated,
-      members: this.repo.listMembers(input.organizationId),
+      members: activeMembers(this.repo, input.organizationId),
       channels: visiblePublicChannels(visibleChannelsFromRepo(this.repo, input.organizationId)),
     };
   }
@@ -557,6 +706,35 @@ export class SettingsService {
       fieldName,
     );
     return ownership?.owner === 'config' && !ownership.allowDashboardOverride;
+  }
+
+  /** List all `state: 'allow'` rules from the governance policy across all agents. */
+  listAllowRules(organizationId: string): PolicyAllowRuleRecord[] {
+    if (this.repo.listGovernanceRules) {
+      const rows = this.repo.listGovernanceRules(organizationId, 'allow');
+      return rows.map((row) => ({
+        agentId: row.agentId,
+        mcpId: row.mcpId,
+        toolName: row.toolName,
+        state: row.state as ToolPolicyState,
+        reason: row.reason ?? undefined,
+        updatedAt: row.updatedAt,
+        updatedBy: row.updatedBy ?? undefined,
+      }));
+    }
+    return [];
+  }
+
+  /** Revoke (remove) a specific allow rule from the governance policy. */
+  revokeAllowRule(
+    organizationId: string,
+    agentId: string,
+    mcpId: string,
+    toolName: string,
+  ): void {
+    if (this.repo.deleteGovernanceRule) {
+      this.repo.deleteGovernanceRule(organizationId, agentId, mcpId, toolName);
+    }
   }
 }
 

@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
-  buildPassOrSelfNoteDenialReason,
+  buildPassDenialReason,
   buildWakeRunScaffold,
   filterToolsForWakeReplyPolicy,
   resolveWakeReplyPolicy,
 } from './wake-reply-policy.js';
 
 describe('resolveWakeReplyPolicy', () => {
-  it('mention wake on channel thread suppresses pass and self.note', () => {
+  it('mention wake on channel thread suppresses pass', () => {
     const policy = resolveWakeReplyPolicy({
       threadId: 'thread-general',
       wakeReason: 'mention',
@@ -56,16 +56,6 @@ describe('resolveWakeReplyPolicy', () => {
 });
 
 describe('buildWakeRunScaffold', () => {
-  it('prepends self-followup publish-contract lines', () => {
-    const policy = resolveWakeReplyPolicy({ threadId: 'thread-1', wakeReason: 'self-followup' });
-    const scaffold = buildWakeRunScaffold({
-      policy,
-      wakeReason: 'self-followup',
-    });
-    expect(scaffold).toContain('commitment you made earlier');
-    expect(scaffold).toContain('Delivered — see');
-  });
-
   it('prepends anti-mirror line for fragile models', () => {
     const policy = resolveWakeReplyPolicy({ threadId: 'thread-1' });
     const scaffold = buildWakeRunScaffold({ policy, mirrorFragile: true });
@@ -73,16 +63,14 @@ describe('buildWakeRunScaffold', () => {
   });
 });
 
-describe('buildPassOrSelfNoteDenialReason', () => {
+describe('buildPassDenialReason', () => {
   it('matches mandatory-reply strings used by checkToolPolicy', () => {
     const policy = resolveWakeReplyPolicy({ threadId: 'thread-1', wakeReason: 'mention' });
-    expect(buildPassOrSelfNoteDenialReason('channel.pass', policy)).toMatch(/mandatory-reply/);
-    expect(buildPassOrSelfNoteDenialReason('self.note', policy)).toMatch(/mandatory-reply/);
+    expect(buildPassDenialReason(policy)).toMatch(/mandatory-reply/);
   });
 
   it('matches direct-message strings for dm threads', () => {
     const policy = resolveWakeReplyPolicy({ threadId: 'dm:a:b' });
-    expect(buildPassOrSelfNoteDenialReason('channel.pass', policy)).toMatch(/direct-message/);
-    expect(buildPassOrSelfNoteDenialReason('self.note', policy)).toMatch(/direct-message/);
+    expect(buildPassDenialReason(policy)).toMatch(/direct-message/);
   });
 });

@@ -171,7 +171,7 @@ const ViewSchema = z.object({
 
 const WriteSchema = z.object({
   ...FilePathFields,
-  content: z.string().describe('Complete file contents to write. For small changes, prefer edit or multiedit.'),
+  content: z.string().max(VIEW_MAX_BYTES).describe('Complete file contents to write. For small changes, prefer edit or multiedit.'),
 }).superRefine((value, ctx) => {
   if (!filePathFrom(value).trim()) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['file_path'], message: 'file_path is required' });

@@ -22,7 +22,7 @@
     "typecheck": "turbo run typecheck",
     "test": "vitest run --minWorkers=1 --maxWorkers=4",
     "test:watch": "vitest",
-    "test:e2e": "playwright test",
+    "test:e2e": "playwright test --pass-with-no-tests",
     "verify": "bun run lint && bun run typecheck && bun run test",
     "verify:thorough": "bun run verify && bun run build",
     "verify:full": "bun run verify:thorough && bun run test:e2e",

@@ -83,3 +83,38 @@ export async function PATCH(
     );
   }
 }
+
+export async function DELETE(
+  _request: Request,
+  { params }: { params: Promise<{ orgId: string; memberId: string }> },
+) {
+  try {
+    const { orgId, memberId } = await params;
+
+    const forbidden = await requireProxyOrgAccess(orgId);
+    if (forbidden) return forbidden;
+
+    const response = await daemonFetch(
+      `/api/orgs/${encodeURIComponent(orgId)}/members/${encodeURIComponent(memberId)}`,
+      { method: "DELETE" },
+      await getSessionTokenFromCookie(),
+    );
+
+    if (!response.ok) {
+      const body = await response.json().catch(() => null);
+      return NextResponse.json(
+        parseApiError(body, "Unable to delete member right now."),
+        { status: response.status },
+      );
+    }
+
+    return NextResponse.json({ success: true }, { status: 200 });
+  } catch (error) {
+    return NextResponse.json(
+      upstreamUnavailable(
+        error instanceof Error ? error.message : "Unable to reach the Ujima daemon.",
+      ),
+      { status: 503 },
+    );
+  }
+}

@@ -89,28 +89,11 @@ export interface MemberAlertInput {
   wakeReason: WakeReason;
 }
 
-/**
- * Optional post-publish hook fired after a message is successfully
- * persisted and broadcast. Used by the commitment service to extract
- * "I'll draft X" promises from agent messages and create durable
- * todos. Failures inside the hook do NOT roll the publish back —
- * keeping the chat surface live is more important than the side-
- * effect succeeding.
- */
-export type PublishMessageHook = (message: Message) => Promise<void> | void;
-
 export interface ConversationServiceOptions {
   archiveStore?: ArchivedChannelMessageStore;
   onMemberAlerted?: (input: MemberAlertInput) => Promise<void> | void;
   mentionFanoutCap?: number;
   mentionWindowMs?: number;
-  /**
-   * Hook fired after a message is published. Late-bound from
-   * services/index.ts so the commitment service can react to agent
-   * "I'll draft X" promises without conversation.ts knowing about
-   * it directly. Multiple hooks supported; failures swallowed.
-   */
-  onMessagePublished?: PublishMessageHook;
 }
 
 export class ConversationService {
@@ -139,7 +122,6 @@ export class ConversationService {
   private readonly pairMentionWindows = new Map<string, number[]>();
   private readonly pairMentionCap = 3;
   private readonly pairMentionWindowMs = 90_000;
-  private messagePublishedHook?: PublishMessageHook;
 
   constructor(
     private readonly repo: ConversationRepository,
@@ -152,18 +134,6 @@ export class ConversationService {
     this.mentionWindowMs = options.mentionWindowMs ?? 60_000;
     this.channelReadCap = 100;
     this.channelReadWindowMs = 60_000;
-    this.messagePublishedHook = options.onMessagePublished;
-  }
-
-  /**
-   * Plug in (or replace) the post-publish hook. Used by
-   * services/index.ts to late-bind `CommitmentService` after both
-   * services exist (commitment-service needs the conversations
-   * instance, conversations needs the hook — same chicken-and-egg
-   * we resolved for AiService.setMcpToolResolver).
-   */
-  setMessagePublishedHook(hook: PublishMessageHook | undefined): void {
-    this.messagePublishedHook = hook;
   }
 
   listChannels(organizationId: string, cursor?: string, limit?: number) {
@@ -424,24 +394,30 @@ export class ConversationService {
         rooms,
       );
 
-      void this.alertMentionedMembers(emittedMessage, resolvedMentions, channel);
+      this.fanout('alertMentionedMembers', this.alertMentionedMembers(emittedMessage, resolvedMentions, channel));
       if (!options?.suppressDmAlerts && !this.shouldSuppressDmWake(emittedMessage, channel)) {
-        void this.alertDirectMessageParticipants(emittedMessage, channel);
+        this.fanout('alertDirectMessageParticipants', this.alertDirectMessageParticipants(emittedMessage, channel));
       }
       // Phase 2 — broad-read fanout for public channels. Every agent
       // in the channel (or every org agent for empty-roster channels)
       // wakes on human-authored, non-system messages. Mentioned
       // agents are already alerted above with reason='mention';
       // we skip them here to avoid double-fire.
-      void this.alertChannelReaders(emittedMessage, channel, resolvedMentions);
-    }
-    // Fire-and-forget; a hook failure must never roll back the publish.
-    if (this.messagePublishedHook) {
-      void Promise.resolve()
-        .then(() => this.messagePublishedHook?.(emittedMessage))
-        .catch(() => undefined);
+      this.fanout('alertChannelReaders', this.alertChannelReaders(emittedMessage, channel, resolvedMentions));
     }
     return emittedMessage;
+  }
+
+  // Fire-and-forget alert fanout: the message is already published and
+  // the HTTP response is on its way, so a downstream throw (schema drift,
+  // realtime emit failure) must not become an unhandledRejection.
+  private fanout(label: string, promise: Promise<unknown>): void {
+    promise.catch((error) => {
+      console.error(
+        `conversation: ${label} failed`,
+        error instanceof Error ? error.stack ?? error.message : String(error),
+      );
+    });
   }
 
   /**
@@ -507,6 +483,17 @@ export class ConversationService {
       // channel chatter doesn't starve the mention-fanout quota.
       if (!this.consumeChannelReadQuota(message.organizationId, member.id, channel.id)) {
         this.emitWakeSuppressed(message, channel, member.id, 'quota');
+        continue;
+      }
+      // Channel member mode check (active / passive / muted / temp_disable)
+      const memberMode = this.repo.getChannelMemberMode(channel.id, member.id);
+      if (memberMode === 'muted' || memberMode === 'temp_disable') {
+        this.emitWakeSuppressed(message, channel, member.id, 'mode-blocked');
+        continue;
+      }
+      if (memberMode === 'passive') {
+        // Passive agents read context but don't auto-reply on broadcasts.
+        this.emitWakeSuppressed(message, channel, member.id, 'mode-passive');
         continue;
       }
       fanout.push(this.alertMember(message, member.id, channel, 'channel-read'));
@@ -845,12 +832,12 @@ export class ConversationService {
       // 5-step thread re-pinged everyone tagged anywhere upstream.
       //
       // New rule: always carry forward `parent.senderId` (so
-      // task-promoter assignment threading and supervisor-reply
-      // re-alerts keep working — both rely on the parent sender
-      // being mentioned). Drop transitive parent.mentions
-      // entirely. Three-party hand-offs (A→B→C→A) must include
-      // explicit @-mentions in the new message body; the
-      // rewritten prompt documents this requirement.
+      // assignment threading and reply re-alerts keep working —
+      // both rely on the parent sender being mentioned). Drop
+      // transitive parent.mentions entirely. Three-party hand-offs
+      // (A→B→C→A) must include explicit @-mentions in the new
+      // message body; the rewritten prompt documents this
+      // requirement.
       //
       // Bet 3 — vacuous-ack suppression: when the new body is a
       // pure acknowledgement ("Understood", "I'll await", etc.)
@@ -885,8 +872,22 @@ export class ConversationService {
     });
 
     const published = this.publishMessage(message, undefined, input.attachmentIds);
+    this.supersedePendingQuestionsOnHumanReply(message);
     this.compactConversationIfNeeded(input.organizationId, input.threadId, input.senderId);
     return published;
+  }
+
+  private supersedePendingQuestionsOnHumanReply(message: Message): void {
+    if (message.senderKind !== 'human' || !message.channelId) return;
+    const pending = this.repo.listPendingInteractiveQuestions?.(message.organizationId, message.channelId) ?? [];
+    const now = new Date().toISOString();
+    for (const question of pending) {
+      this.repo.saveInteractiveQuestion?.({
+        ...question,
+        status: 'superseded',
+        updatedAt: now,
+      });
+    }
   }
 
   postToChannel(input: {
@@ -1286,6 +1287,14 @@ export class ConversationService {
         continue;
       }
 
+      // Muted/temp_disable agents don't wake even on @mention
+      if (channel) {
+        const memberMode = this.repo.getChannelMemberMode(channel.id, member.id);
+        if (memberMode === 'muted' || memberMode === 'temp_disable') {
+          continue;
+        }
+      }
+
       // Mention fan-out must not leak across channel boundaries.
       //
       // - `self` channels are private agent scratchpads; no fan-out at all.
@@ -1437,6 +1446,9 @@ export class ConversationService {
     const recipients = channel.memberIds.filter((memberId) => memberId !== message.senderId);
     await Promise.all(
       recipients.map(async (recipientId) => {
+        // Muted/temp_disable agents don't receive DMs either
+        const memberMode = this.repo.getChannelMemberMode(channel.id, recipientId);
+        if (memberMode === 'muted' || memberMode === 'temp_disable') return;
         try {
           const countInWindow = this.recordPairMentionWake(
             message.organizationId,
@@ -1920,6 +1932,12 @@ export class ConversationService {
   }
 
   private canMemberAccessChannel(channel: Channel, memberId: string): boolean {
+    const member = channel.organizationId
+      ? this.repo.getMember(channel.organizationId, memberId)
+      : null;
+    if (!member || member.retiredAt) {
+      return false;
+    }
     // Self channels and DMs are the only private channel kinds in the current
     // substrate. Everything else stays org-visible by default.
     if (channel.kind === 'self' || channel.kind === 'dm') {

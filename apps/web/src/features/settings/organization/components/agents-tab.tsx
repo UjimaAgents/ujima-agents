@@ -1,6 +1,6 @@
 "use client";
 
-import { Bot, PencilLine, Plus } from "lucide-react";
+import { Bot, PencilLine, Plus, Trash2 } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 import type {
   BootstrapResponse,
@@ -13,11 +13,14 @@ import type {
   CreateAgentHandler,
   UpdateAgentHandler,
 } from "@/features/team/agent-mutations";
-import { settingsFetch } from "@/features/settings/shared/settings-api";
+import { settingsFetch, settingsFetchVoid } from "@/features/settings/shared/settings-api";
+import { ConfirmDialog } from "@/features/settings/shared/confirm-dialog";
+import { SettingsErrorAlert } from "@/features/settings/shared/settings-alert";
 import { AgentEditorModal } from "@/features/workspace/components/sidebar/agent-editor-modal";
 import { CreateAgentModal } from "@/features/workspace/components/sidebar/create-agent-modal";
 import { Avatar } from "@/features/workspace/components/chat/primitives";
 import {
+  SettingsDestructiveButton,
   SettingsPrimaryButton,
   SettingsSecondaryButton,
 } from "@/features/settings/shared/settings-buttons";
@@ -48,8 +51,13 @@ export function AgentsTab({
   onMemberCreated: (member: Member) => void;
 }) {
   const agentMembers = members.filter((m) => m.kind === "agent");
+  const activeAgents = agentMembers.filter((m) => !m.retiredAt);
+  const retiredAgents = agentMembers.filter((m) => m.retiredAt);
   const [editingAgent, setEditingAgent] = useState<Member | null>(null);
   const [showCreate, setShowCreate] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<Member | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const initialProvider = useMemo(() => {
     const configured = providers.find((p) => p.hasKey);
@@ -103,6 +111,72 @@ export function AgentsTab({
     [orgId, onMemberCreated],
   );
 
+  const deleteAgent = async () => {
+    if (!deleteTarget || !orgId) return;
+    setDeleting(true);
+    setError(null);
+    try {
+      await settingsFetchVoid(
+        `/api/orgs/${encodeURIComponent(orgId)}/members/${encodeURIComponent(deleteTarget.id)}`,
+        { method: "DELETE" },
+        "Failed to delete agent.",
+      );
+      onMemberUpdated({
+        ...deleteTarget,
+        retiredAt: new Date().toISOString(),
+      });
+      setDeleteTarget(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to delete agent.");
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const agentRow = (member: Member, idx: number, retired?: boolean) => {
+    const role = teamSettings?.roles.find((r) => r.name === member.roleName);
+    return (
+      <SettingsListRow
+        key={member.id}
+        className={retired ? "opacity-60" : undefined}
+        leading={<Avatar name={member.name} colorIndex={idx} size="sm" />}
+        primary={
+          <span className="flex flex-wrap items-center gap-2">
+            {member.name}
+            <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+              {member.roleName}
+            </span>
+            {retired ? (
+              <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-950 dark:bg-amber-900 dark:text-amber-100">
+                Retired
+              </span>
+            ) : null}
+          </span>
+        }
+        secondary={
+          <>
+            {member.llm ?? role?.provider ?? "—"}
+            {member.model ? ` / ${member.model}` : ""}
+          </>
+        }
+        actions={
+          retired ? undefined : (
+            <>
+              <SettingsSecondaryButton onClick={() => setEditingAgent(member)}>
+                <PencilLine className="h-3.5 w-3.5" />
+                Edit
+              </SettingsSecondaryButton>
+              <SettingsDestructiveButton onClick={() => setDeleteTarget(member)}>
+                <Trash2 className="h-3.5 w-3.5" />
+                Delete
+              </SettingsDestructiveButton>
+            </>
+          )
+        }
+      />
+    );
+  };
+
   return (
     <>
       <SettingsTabActions>
@@ -112,11 +186,12 @@ export function AgentsTab({
         </SettingsPrimaryButton>
       </SettingsTabActions>
 
-      {agentMembers.length === 0 ? (
+      {error ? <SettingsErrorAlert message={error} /> : null}
+
+      {activeAgents.length === 0 && retiredAgents.length === 0 ? (
         <SettingsEmptyState
           icon={Bot}
           title="No agents"
-          description="Add agents to run tasks and respond in your channels."
           action={
             <SettingsPrimaryButton onClick={() => setShowCreate(true)}>
               <Plus className="h-4 w-4" />
@@ -125,37 +200,24 @@ export function AgentsTab({
           }
         />
       ) : (
-        <SettingsList>
-          {agentMembers.map((member, idx) => {
-            const role = teamSettings?.roles.find((r) => r.name === member.roleName);
-            return (
-              <SettingsListRow
-                key={member.id}
-                leading={<Avatar name={member.name} colorIndex={idx} size="sm" />}
-                primary={
-                  <span className="flex flex-wrap items-center gap-2">
-                    {member.name}
-                    <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
-                      {member.roleName}
-                    </span>
-                  </span>
-                }
-                secondary={
-                  <>
-                    {member.llm ?? role?.provider ?? "—"}
-                    {member.model ? ` / ${member.model}` : ""}
-                  </>
-                }
-                actions={
-                  <SettingsSecondaryButton onClick={() => setEditingAgent(member)}>
-                    <PencilLine className="h-3.5 w-3.5" />
-                    Edit
-                  </SettingsSecondaryButton>
-                }
-              />
-            );
-          })}
-        </SettingsList>
+        <div className="space-y-6">
+          {activeAgents.length > 0 ? (
+            <SettingsList>
+              {activeAgents.map((member, idx) => agentRow(member, idx))}
+            </SettingsList>
+          ) : null}
+
+          {retiredAgents.length > 0 ? (
+            <div className="space-y-2">
+              <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                Retired
+              </p>
+              <SettingsList>
+                {retiredAgents.map((member, idx) => agentRow(member, idx, true))}
+              </SettingsList>
+            </div>
+          ) : null}
+        </div>
       )}
 
       <CreateAgentModal
@@ -179,6 +241,20 @@ export function AgentsTab({
           onUpdateAgent={onUpdateAgent}
         />
       ) : null}
+
+      <ConfirmDialog
+        isOpen={Boolean(deleteTarget)}
+        onClose={() => setDeleteTarget(null)}
+        title="Delete agent"
+        message={
+          deleteTarget
+            ? `Delete ${deleteTarget.name}? This cannot be undone.`
+            : ""
+        }
+        confirmLabel="Delete"
+        busy={deleting}
+        onConfirm={deleteAgent}
+      />
     </>
   );
 }

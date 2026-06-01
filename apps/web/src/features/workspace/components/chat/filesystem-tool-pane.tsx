@@ -108,7 +108,7 @@ export function FilesystemToolPane({
   bodyTone?: "default" | "error";
 }) {
   const trimmed = body?.trimEnd() ?? "";
-  const showBody = trimmed.length > 0;
+  const showBody = action !== "read" && trimmed.length > 0;
   const isPatchWrite = action === "write";
   const useDiffUi = isPatchWrite && looksLikeUnifiedDiff(trimmed);
   const label = action === "read" ? "Read" : "Patch";

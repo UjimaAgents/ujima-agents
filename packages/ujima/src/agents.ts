@@ -40,17 +40,21 @@ function validateAgentPersonalities(agents: AgentConfig[]) {
   }
 }
 
-export function normalizeAgents(agents: unknown[] = [], roles: RoleConfig[] = []): AgentConfig[] {
-  const input = agents.length
-    ? agents
-    : roles.map((role) =>
-        AgentConfigSchema.parse({
-          name: role.name,
-          roleName: role.name,
-          personalityName: 'direct',
-          kind: 'agent' satisfies MemberKind,
-        }),
-      );
+export function normalizeAgents(
+  agents: unknown[] | undefined,
+  roles: RoleConfig[] = [],
+): AgentConfig[] {
+  const input =
+    agents === undefined
+      ? roles.map((role) =>
+          AgentConfigSchema.parse({
+            name: role.name,
+            roleName: role.name,
+            personalityName: 'direct',
+            kind: 'agent' satisfies MemberKind,
+          }),
+        )
+      : agents;
 
   const normalized = input.map((agent) => {
     const record = isRecord(agent) ? agent : {};

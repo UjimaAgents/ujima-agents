@@ -17,7 +17,10 @@ import {
   SocketEventNames,
   SpiritSchema,
   channelRoom,
+  memberRoom,
   orgRoom,
+  runRoom,
+  threadRoom,
   type MessageCard,
   type MessageToolCall,
   type Spirit,
@@ -30,6 +33,7 @@ import {
   filterToolsForWakeReplyPolicy,
   resolveWakeReplyPolicy,
 } from '../utils/wake-reply-policy.js';
+import { recallMemoryEntries } from '../utils/memory.js';
 import { requireTeam } from '../utils/require-team.js';
 import {
   runAgentLoop,
@@ -41,13 +45,14 @@ import { toModelMessages, buildToolDefinitions } from '../utils/to-model-message
 import {
   ALWAYS_AVAILABLE_AGENT_TOOLS,
   SUPERVISOR_TOOL_ALLOWLIST,
+  filterDeprecatedToolIds,
 } from '../tools/index.js';
 import type { ApiRepository } from './repository-reader.js';
-import { findToolApprovalRequiredError } from './tool-loop-result.js';
+import { findToolApprovalRequiredError, findToolInputRequiredError } from './tool-loop-result.js';
 import { extractReasoningChunk } from '../utils/extract-reasoning.js';
 import { errorMessage } from '../utils/error-message.js';
 import { buildRunTranscript } from '../utils/run-transcript.js';
-import { appendGoalArtifactToolCall } from './goal-artifact-card.js';
+import { appendArtifactFileToolCall } from './artifact-file-card.js';
 import { pendingApprovalRunSummary } from './approval-summary.js';
 import {
   findTerminatingTool,
@@ -120,6 +125,35 @@ export class SpiritServiceAgentRun extends SpiritServiceLifecycle {
     );
     if (runTranscript) {
       messages.push({ role: 'user', content: runTranscript });
+    }
+
+    try {
+      const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      const memories = recallMemoryEntries(this.repo, {
+        organizationId: input.organizationId,
+        memberId: input.memberId,
+        limit: 15,
+        touch: false,
+      });
+      const activeMemories = memories.filter((m) => m.createdAt >= oneDayAgo);
+
+      if (activeMemories.length > 0) {
+        const memoryPrompt = `=== YOUR RECENT WORK MEMORY ===
+Here are key facts, actions, decisions, and corrections you've made across chats and channels within the last 24 hours. Keep these in mind as you respond to ensure seamless, unified actions:
+${activeMemories
+  .map(
+    (m) =>
+      `- [${m.kind}] (${new Date(m.createdAt).toLocaleTimeString([], {
+        hour: '2-digit',
+        minute: '2-digit',
+      })}): ${m.content}`,
+  )
+  .join('\n')}
+================================`;
+        messages.push({ role: 'user', content: memoryPrompt });
+      }
+    } catch {
+      // Degrade gracefully if memory query fails
     }
 
     const running: Spirit = SpiritSchema.parse({
@@ -207,6 +241,8 @@ export class SpiritServiceAgentRun extends SpiritServiceLifecycle {
     let totalTokens = 0;
     let lastText = '';
     let streamedReasoning = '';
+    let lastMessageId: string | undefined;
+    let persistedStepCount = 0;
 
     // Wrap runAgentLoop in the shared retry helper so the wake-run
     // and direct-spirit paths share one recovery contract (defined
@@ -225,7 +261,7 @@ export class SpiritServiceAgentRun extends SpiritServiceLifecycle {
           stopWhen: stepCountIs(maxIterations),
           ...(this.maxOutputTokens !== undefined ? { maxOutputTokens: this.maxOutputTokens } : {}),
           temperature: this.temperature,
-          toolChoice: 'required-first-step',
+          toolChoice: 'auto',
           onChunk: (chunk) => {
             if (chunk.kind === 'reasoning') streamedReasoning += chunk.delta;
             this.emitRunChunk(
@@ -237,6 +273,49 @@ export class SpiritServiceAgentRun extends SpiritServiceLifecycle {
               },
               chunk,
             );
+          },
+          onStepFinish: async (_step, currentSteps) => {
+            // Incrementally persist each step as it completes (main's
+            // change) so cancellation/crash mid-loop still leaves the
+            // partial transcript on the channel. The retry wrapper
+            // re-invokes the same builder when recovery fires, but
+            // `persistedStepCount` is shared across attempts so we
+            // never re-persist the same step twice.
+            const unpersisted = currentSteps.slice(persistedStepCount);
+            for (const s of unpersisted) {
+              persistedStepCount++;
+              totalTurns += 1;
+              const stepText = typeof s.text === 'string' ? s.text : '';
+              const stepToolCalls = Array.isArray(s.toolCalls) ? s.toolCalls : [];
+              const stepToolResults = Array.isArray(s.toolResults) ? s.toolResults : [];
+              totalToolCalls += stepToolCalls.length;
+
+              if (!stepText && stepToolCalls.length === 0) {
+                continue;
+              }
+
+              const toolCalls = this.toMessageToolCalls(stepToolCalls, stepToolResults, spirit);
+              const artifactFileToolCall = await appendArtifactFileToolCall(
+                stepToolCalls,
+                team.workspace.root,
+                stepToolResults,
+              );
+              const messageToolCalls = artifactFileToolCall ? [...toolCalls, artifactFileToolCall] : toolCalls;
+              const reasoningContent = extractReasoningChunk(s);
+              if (!stepText && !artifactFileToolCall) {
+                continue;
+              }
+              lastMessageId = this.saveAndEmitAgentMessage({
+                organizationId: input.organizationId,
+                channelId: session.channelId,
+                senderId: member.id,
+                content: stepText || 'Artifact updated.',
+                toolCalls: messageToolCalls,
+                metadata: { runId: spirit.runId ?? spirit.id },
+                reasoningContent,
+              });
+              lastText = stepText || lastText;
+            }
           },
           loadInterruptMessages: () => {
             const page = this.repo
@@ -293,8 +372,9 @@ export class SpiritServiceAgentRun extends SpiritServiceLifecycle {
       // `kind='agent'` message per step that produced text or tool
       // calls, with tool-call cards inlined. This keeps the channel
       // history readable as a turn-by-turn timeline.
-      let lastMessageId: string | undefined;
-      for (const [index, step] of steps.entries()) {
+      for (let index = persistedStepCount; index < steps.length; index++) {
+        const step = steps[index];
+        if (!step) continue;
         totalTurns += 1;
         const stepText = typeof step.text === 'string' ? step.text : '';
         const stepToolCalls = Array.isArray(step.toolCalls) ? step.toolCalls : [];
@@ -306,43 +386,45 @@ export class SpiritServiceAgentRun extends SpiritServiceLifecycle {
         }
 
         const toolCalls = this.toMessageToolCalls(stepToolCalls, stepToolResults, spirit);
-        const goalArtifactToolCall = await appendGoalArtifactToolCall(
+        const artifactFileToolCall = await appendArtifactFileToolCall(
           stepToolCalls,
           team.workspace.root,
+          stepToolResults,
         );
-        const messageToolCalls = goalArtifactToolCall ? [...toolCalls, goalArtifactToolCall] : toolCalls;
+        const messageToolCalls = artifactFileToolCall ? [...toolCalls, artifactFileToolCall] : toolCalls;
         const reasoningContent =
           extractReasoningChunk(step) ??
           (index === steps.length - 1 ? streamedReasoning.trim() || undefined : undefined);
-        if (!stepText && !goalArtifactToolCall) {
+        if (!stepText && !artifactFileToolCall) {
           continue;
         }
-        const message = MessageSchema.parse({
-          id: randomUUID(),
+        lastMessageId = this.saveAndEmitAgentMessage({
           organizationId: input.organizationId,
-          threadId: session.channelId,
           channelId: session.channelId,
           senderId: member.id,
-          senderKind: AGENT_KIND,
-          kind: AGENT_KIND,
-          content: stepText || 'Goal artifact updated.',
+          content: stepText || 'Artifact updated.',
           toolCalls: messageToolCalls,
           metadata: { runId: spirit.runId ?? spirit.id },
-          ...(reasoningContent ? { reasoningContent } : {}),
-          createdAt: new Date().toISOString(),
+          reasoningContent,
         });
-        this.repo.saveMessage(message);
-        this.realtime.emit(
-          SocketEventNames.channelMessage,
-          {
-            organizationId: input.organizationId,
-            channelId: session.channelId,
-            message,
-          },
-          [orgRoom(input.organizationId), channelRoom(session.channelId)],
-        );
         lastText = stepText || lastText;
-        lastMessageId = message.id;
+      }
+
+      const persistedRunSteps = spirit.runId
+        ? this.repo.listRunSteps?.(input.organizationId, spirit.runId) ?? []
+        : [];
+      const detectedTerminatingTool =
+        findTerminatingTool(result) ?? findTerminatingToolFromRunSteps(persistedRunSteps);
+      const finalText = result.text.trim();
+      if (finalText && finalText !== lastText && !detectedTerminatingTool) {
+        lastMessageId = this.saveAndEmitAgentMessage({
+          organizationId: input.organizationId,
+          channelId: session.channelId,
+          senderId: member.id,
+          content: finalText,
+          metadata: { runId: spirit.runId ?? spirit.id },
+        });
+        lastText = finalText;
       }
 
       // Prefer the provider-supplied `totalTokens` over our own
@@ -376,13 +458,7 @@ export class SpiritServiceAgentRun extends SpiritServiceLifecycle {
       this.repo.saveSpirit(completed);
       this.registry.unregister(completed.organizationId, completed.memberId, completed.id);
       // Persisted run-steps act as a safety net when provider/SDK
-      // result shapes drop tool names from the final step object —
-      // the tool service writes the canonical id after each call.
-      const persistedRunSteps = spirit.runId
-        ? this.repo.listRunSteps?.(input.organizationId, spirit.runId) ?? []
-        : [];
-      const detectedTerminatingTool =
-        findTerminatingTool(result) ?? findTerminatingToolFromRunSteps(persistedRunSteps);
+      // result shapes drop tool names from the final step object.
       // Resolve the final terminator, preserving any silent
       // terminator a mid-run side-effect (mirror-loop guard, vacuous-
       // ack suppression) already wrote onto the run row. Without this
@@ -426,6 +502,49 @@ export class SpiritServiceAgentRun extends SpiritServiceLifecycle {
         terminatingTool,
       };
     } catch (err) {
+      const inputRequiredError = findToolInputRequiredError(err);
+      if (inputRequiredError) {
+        const waiting: Spirit = SpiritSchema.parse({
+          ...running,
+          status: 'waiting_for_input',
+          updatedAt: new Date().toISOString(),
+        });
+        this.repo.saveSpirit(waiting);
+
+        if (spirit.runId) {
+          const run = this.repo.getRun(input.organizationId, spirit.runId);
+          if (run) {
+            const question = this.repo.getInteractiveQuestion(input.organizationId, inputRequiredError.questionId);
+            const waitingRun = this.repo.saveRun({
+              ...run,
+              status: 'waiting_for_input',
+              step: 'waiting_for_input',
+              summary: question?.questionText ?? run.summary ?? 'Waiting for user input',
+            });
+            this.realtime.emit(
+              SocketEventNames.runUpdated,
+              { organizationId: input.organizationId, run: waitingRun },
+              [
+                orgRoom(input.organizationId),
+                runRoom(waitingRun.id),
+                memberRoom(input.memberId),
+                ...(waitingRun.threadId ? [threadRoom(waitingRun.threadId)] : []),
+                channelRoom(session.channelId),
+              ],
+            );
+          }
+        }
+        this.emit(SocketEventNames.spiritUpdated, waiting);
+        return {
+          spirit: waiting,
+          finalText: lastText,
+          iterations: totalTurns,
+          toolCalls: totalToolCalls,
+          tokensUsed: totalTokens,
+          terminatingTool: null,
+        };
+      }
+
       if (findToolApprovalRequiredError(err)) {
         const waiting: Spirit = SpiritSchema.parse({
           ...running,
@@ -507,7 +626,9 @@ export class SpiritServiceAgentRun extends SpiritServiceLifecycle {
     if (role === 'supervisor') {
       return SUPERVISOR_TOOL_ALLOWLIST;
     }
-    return [...new Set([...roleTools, ...ALWAYS_AVAILABLE_AGENT_TOOLS])];
+    return filterDeprecatedToolIds([
+      ...new Set([...roleTools, ...ALWAYS_AVAILABLE_AGENT_TOOLS]),
+    ]);
   }
 
   protected buildToolDefinitions(
@@ -562,6 +683,42 @@ export class SpiritServiceAgentRun extends SpiritServiceLifecycle {
         isError,
       };
     });
+  }
+
+  private saveAndEmitAgentMessage(input: {
+    organizationId: string;
+    channelId: string;
+    senderId: string;
+    content: string;
+    metadata: Record<string, unknown>;
+    toolCalls?: MessageToolCall[];
+    reasoningContent?: string;
+  }): string {
+    const message = MessageSchema.parse({
+      id: randomUUID(),
+      organizationId: input.organizationId,
+      threadId: input.channelId,
+      channelId: input.channelId,
+      senderId: input.senderId,
+      senderKind: AGENT_KIND,
+      kind: AGENT_KIND,
+      content: input.content,
+      metadata: input.metadata,
+      ...(input.toolCalls && input.toolCalls.length > 0 ? { toolCalls: input.toolCalls } : {}),
+      ...(input.reasoningContent ? { reasoningContent: input.reasoningContent } : {}),
+      createdAt: new Date().toISOString(),
+    });
+    this.repo.saveMessage(message);
+    this.realtime.emit(
+      SocketEventNames.channelMessage,
+      {
+        organizationId: input.organizationId,
+        channelId: input.channelId,
+        message,
+      },
+      [orgRoom(input.organizationId), channelRoom(input.channelId)],
+    );
+    return message.id;
   }
 
   async buildMcpToolDefinitions(ctx: {

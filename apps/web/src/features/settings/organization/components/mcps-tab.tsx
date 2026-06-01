@@ -51,7 +51,10 @@ export function McpsTab({
   members: Member[];
 }) {
   const { mcpServers: servers, setMcpServers } = useSettingsPage();
-  const agents = useMemo(() => members.filter((m) => m.kind === "agent"), [members]);
+  const agents = useMemo(
+    () => members.filter((m) => m.kind === "agent" && !m.retiredAt),
+    [members],
+  );
   const catalog = useMcpCatalog(orgId);
 
   const [subtab, setSubtab] = useState<Subtab>("tools");

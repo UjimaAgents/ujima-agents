@@ -24,7 +24,8 @@ const InlineTeamConfigSchema = z.object({
   policies: z
     .object({
       requireApprovalForWrites: z.boolean(),
-      requireApprovalForShell: z.boolean(),
+      requireApprovalForShell: z.boolean().optional(),
+      shellApprovalMode: z.enum(['always_review', 'auto_review', 'allow_all']).optional(),
       workspaceBoundaryMode: z.literal('hard'),
     })
     .optional(),

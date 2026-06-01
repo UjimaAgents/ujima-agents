@@ -101,9 +101,9 @@ describe('grantWorkspaceOwnerFromParentOrg', () => {
       return input.user;
     };
 
-    grantWorkspaceOwnerFromParentOrg(repo, 'parent-org', 'child-org', 'child-owner-id');
+    grantWorkspaceOwnerFromParentOrg(repo, 'parent-org', 'child-org', 'owner');
 
     expect(saved.organizationId).toBe('child-org');
-    expect(saved.memberId).toBe('child-owner-id');
+    expect(saved.memberId).toBe('owner');
   });
 });

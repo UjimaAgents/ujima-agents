@@ -98,31 +98,6 @@ describe('buildWakeContextMessages — per-wake additions (NOT part of cacheable
     const text = String(out[0]?.content ?? '');
     expect(text).toContain('anti-mirror');
   });
-
-  it('emits BOTH the self-followup publish-contract lines on self-followup wakes', () => {
-    const out = buildWakeContextMessages({
-      wakeReason: 'self-followup',
-      modelIdString: 'claude-opus-4',
-      isMirrorFragile: false,
-    });
-    expect(out).toHaveLength(1);
-    const text = String(out[0]?.content ?? '');
-    expect(text).toContain('self.note alone is NOT a valid termination');
-    expect(text).toContain('write');
-    expect(text).toContain('save the artifact to a file');
-  });
-
-  it('combines anti-mirror + self-followup when both apply', () => {
-    const out = buildWakeContextMessages({
-      wakeReason: 'self-followup',
-      modelIdString: 'gemini-2.5-flash',
-      isMirrorFragile: true,
-    });
-    expect(out).toHaveLength(1);
-    const text = String(out[0]?.content ?? '');
-    expect(text).toContain('anti-mirror');
-    expect(text).toContain('self.note alone is NOT a valid termination');
-  });
 });
 
 // The lint: the cacheable system MUST NOT vary by wakeReason or

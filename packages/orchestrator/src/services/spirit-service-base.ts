@@ -13,15 +13,10 @@ import {
   AGENT_KIND,
   isDirectMessageThread,
 } from '@ujima/shared';
-import { safeFallbackModelForProvider } from '@ujima/shared';
 import { composeSystemPromptSuffix, runWakeReason } from './spirit-run-detail.js';
 import type { ActiveSpiritEntry } from './active-spirit-registry.js';
 import type { ToolInvocationInput } from './tool-service.js';
-import {
-  resolveSpiritModel,
-  defaultResolveProviderName,
-  defaultResolveModelId,
-} from '../utils/to-model-messages.js';
+import { createSpiritModelResolver } from '../utils/create-spirit-model-resolver.js';
 import { ActiveSpiritRegistry } from './active-spirit-registry.js';
 import type { ConversationService } from './conversation.js';
 import type { RealtimeService } from './context.js';
@@ -30,7 +25,6 @@ import type { TeamStore } from './team-store.js';
 import type { ToolService } from './tool-service.js';
 import { goalModeEnabledFromMessage } from './goal-mode-prompt.js';
 import type { AiService } from '../ai-service.js';
-import { requireTeam } from '../utils/require-team.js';
 import type { AgentLoopChunk } from './agent-loop.js';
 import { materializeMcpDef } from './mcp-runtime.js';
 import type {
@@ -168,11 +162,17 @@ export class SpiritServiceBase {
         .map((approval) => approval.toolCallId as string),
     );
     return (this.repo.listRunSteps?.(organizationId, runId) ?? []).filter((step) => {
-      const output = step.output as { status?: unknown } | undefined;
-      return (
-        output?.status === 'waiting_for_approval' &&
-        !pendingApprovalToolCallIds.has(step.toolCallId)
-      );
+      const output = step.output as { status?: unknown; questionId?: unknown } | undefined;
+      if (output?.status === 'waiting_for_approval' && !pendingApprovalToolCallIds.has(step.toolCallId)) {
+        return true;
+      }
+      if (output?.status === 'waiting_for_input' && typeof output.questionId === 'string') {
+        const question = this.repo.getInteractiveQuestion(organizationId, output.questionId);
+        if (question && question.status === 'answered') {
+          return true;
+        }
+      }
+      return false;
     });
   }
 
@@ -416,35 +416,7 @@ export class SpiritServiceBase {
   }
 
   protected defaultModelResolver(): ModelResolver {
-    return ({ organizationId, memberId, role, forceSafeFallback }) => {
-      const team = requireTeam(this.teamStore, organizationId);
-      const member = this.repo.getMember(organizationId, memberId);
-      if (!member) {
-        throw new Error(`Member not found: ${memberId}`);
-      }
-      // `forceSafeFallback` is set by spirit-agent-run.ts after the
-      // live provider returns 404 for the originally-resolved model
-      // id. We swap the resolver to one that ignores per-member /
-      // per-role overrides AND ignores the team-configured provider
-      // default — and instead returns the conservative
-      // `safeFallbackModelForProvider` baseline for the provider's
-      // kind. That id is the one we've verified the live API will
-      // actually serve, so the retry succeeds.
-      const resolveModelId = forceSafeFallback
-        ? (_r: { model?: string }, p: { kind?: string; defaultModel?: string }) =>
-            safeFallbackModelForProvider(p.kind ?? '') ?? p.defaultModel
-        : defaultResolveModelId;
-      return resolveSpiritModel({
-        organizationId,
-        memberId,
-        role,
-        member,
-        team,
-        getProviderCredential: (orgId, key) => this.repo.getProviderCredential(orgId, key),
-        resolveProviderName: defaultResolveProviderName,
-        resolveModelId,
-      });
-    };
+    return createSpiritModelResolver(this.teamStore, this.repo);
   }
 
   protected defaultMcpResolver(): SpiritMcpResolver {

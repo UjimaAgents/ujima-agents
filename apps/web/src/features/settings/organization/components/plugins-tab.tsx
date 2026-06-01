@@ -7,6 +7,7 @@ import { ConfirmDialog } from "@/features/settings/shared/confirm-dialog";
 import { settingsFetch, settingsFetchVoid } from "@/features/settings/shared/settings-api";
 import { SettingsErrorAlert } from "@/features/settings/shared/settings-alert";
 import {
+  SettingsDestructiveButton,
   SettingsGhostIconButton,
   SettingsPrimaryButton,
   SettingsSecondaryButton,
@@ -51,6 +52,10 @@ export function PluginsTab({ bootstrap, createdBy }: { bootstrap: BootstrapRespo
   const [busy, setBusy] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<{ id: string; commandName: string } | null>(null);
 
+  // New selection states
+  const [selectedSkillIds, setSelectedSkillIds] = useState<string[]>([]);
+  const [pendingBulkDelete, setPendingBulkDelete] = useState(false);
+
   const filteredSkills = useMemo(
     () => installedSkills.filter((skill) => matchesSkillSearch(skill, searchQuery)),
     [installedSkills, searchQuery],
@@ -66,6 +71,27 @@ export function PluginsTab({ bootstrap, createdBy }: { bootstrap: BootstrapRespo
 
   const rangeStart = filteredSkills.length === 0 ? 0 : safePage * SKILLS_PAGE_SIZE + 1;
   const rangeEnd = Math.min((safePage + 1) * SKILLS_PAGE_SIZE, filteredSkills.length);
+
+  // Selection state helpers
+  const isAllPageSelected = visibleSkills.length > 0 && visibleSkills.every((skill) => selectedSkillIds.includes(skill.id));
+  const isSomePageSelected = visibleSkills.length > 0 && visibleSkills.some((skill) => selectedSkillIds.includes(skill.id)) && !isAllPageSelected;
+  const hasMoreMatchingSkills = filteredSkills.length > visibleSkills.length;
+  const isGlobalSelectAllActive = selectedSkillIds.length === filteredSkills.length && filteredSkills.length > 0;
+
+  const handleToggleSelectPage = () => {
+    if (isAllPageSelected) {
+      const visibleIds = visibleSkills.map((s) => s.id);
+      setSelectedSkillIds((prev) => prev.filter((id) => !visibleIds.includes(id)));
+    } else {
+      const newSelections = [...selectedSkillIds];
+      for (const skill of visibleSkills) {
+        if (!newSelections.includes(skill.id)) {
+          newSelections.push(skill.id);
+        }
+      }
+      setSelectedSkillIds(newSelections);
+    }
+  };
 
   const install = async (nextSourceUrl = sourceUrl) => {
     if (!nextSourceUrl.trim()) return;
@@ -108,9 +134,33 @@ export function PluginsTab({ bootstrap, createdBy }: { bootstrap: BootstrapRespo
         "Failed to delete skill.",
       );
       setRemovedSkillIds((current) => [...current, skillId]);
+      setSelectedSkillIds((current) => current.filter((id) => id !== skillId));
       setPendingDelete(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to delete skill.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const deleteMultipleSkills = async (ids: string[]) => {
+    setError(null);
+    setBusy("bulk-delete");
+    try {
+      await Promise.all(
+        ids.map((id) =>
+          settingsFetchVoid(
+            `/api/settings/skills/${encodeURIComponent(id)}?organizationId=${encodeURIComponent(orgId)}`,
+            { method: "DELETE" },
+            "Failed to delete skill.",
+          )
+        )
+      );
+      setRemovedSkillIds((current) => [...current, ...ids]);
+      setSelectedSkillIds([]);
+      setPendingBulkDelete(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to delete selected skills.");
     } finally {
       setBusy(null);
     }
@@ -173,11 +223,76 @@ export function PluginsTab({ bootstrap, createdBy }: { bootstrap: BootstrapRespo
               />
             ) : (
               <>
+                <div className="mb-4 flex items-center justify-between rounded-lg bg-zinc-50/50 border border-zinc-100 p-2 pl-3 dark:bg-zinc-900/20 dark:border-zinc-800/50">
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="checkbox"
+                      checked={isAllPageSelected}
+                      ref={(el) => {
+                        if (el) {
+                          el.indeterminate = isSomePageSelected;
+                        }
+                      }}
+                      onChange={handleToggleSelectPage}
+                      className="h-4 w-4 cursor-pointer rounded border-zinc-300 text-zinc-600 focus:ring-zinc-500 dark:border-zinc-700 dark:bg-zinc-900"
+                    />
+                    <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400">
+                      {selectedSkillIds.length > 0 ? `${selectedSkillIds.length} selected` : "Select Page"}
+                    </span>
+                  </div>
+                  {selectedSkillIds.length > 0 ? (
+                    <SettingsDestructiveButton onClick={() => setPendingBulkDelete(true)}>
+                      <Trash2 className="h-3.5 w-3.5" />
+                      Delete Selected
+                    </SettingsDestructiveButton>
+                  ) : null}
+                </div>
+
+                {isAllPageSelected && hasMoreMatchingSkills && !isGlobalSelectAllActive ? (
+                  <div className="mb-4 rounded-lg bg-zinc-50 dark:bg-zinc-900/50 border border-zinc-200 dark:border-zinc-800 p-2.5 text-center text-xs text-zinc-600 dark:text-zinc-400">
+                    All {visibleSkills.length} skills on this page are selected.{" "}
+                    <button
+                      onClick={() => setSelectedSkillIds(filteredSkills.map((s) => s.id))}
+                      className="font-medium text-zinc-950 hover:underline dark:text-zinc-100"
+                    >
+                      Select all {filteredSkills.length} matching skills
+                    </button>
+                  </div>
+                ) : null}
+
+                {isGlobalSelectAllActive ? (
+                  <div className="mb-4 rounded-lg bg-zinc-50 dark:bg-zinc-900/50 border border-zinc-200 dark:border-zinc-800 p-2.5 text-center text-xs text-zinc-600 dark:text-zinc-400">
+                    All {filteredSkills.length} matching skills are selected.{" "}
+                    <button
+                      onClick={() => setSelectedSkillIds([])}
+                      className="font-medium text-zinc-950 hover:underline dark:text-zinc-100"
+                    >
+                      Clear selection
+                    </button>
+                  </div>
+                ) : null}
+
                 <SettingsList>
                   {visibleSkills.map((skill) => (
                     <SettingsListRow
                       key={skill.id}
-                      leading={<SettingsRowIcon icon={Package} />}
+                      leading={
+                        <div className="flex items-center gap-3">
+                          <input
+                            type="checkbox"
+                            checked={selectedSkillIds.includes(skill.id)}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setSelectedSkillIds((prev) => [...prev, skill.id]);
+                              } else {
+                                setSelectedSkillIds((prev) => prev.filter((id) => id !== skill.id));
+                              }
+                            }}
+                            className="h-4 w-4 cursor-pointer rounded border-zinc-300 text-zinc-600 focus:ring-zinc-500 dark:border-zinc-700 dark:bg-zinc-900"
+                          />
+                          <SettingsRowIcon icon={Package} />
+                        </div>
+                      }
                       primary={skill.commandName}
                       secondary={skill.description || skill.pluginName}
                       actions={
@@ -243,6 +358,16 @@ export function PluginsTab({ bootstrap, createdBy }: { bootstrap: BootstrapRespo
         onConfirm={() => {
           if (pendingDelete) void deleteSkill(pendingDelete.id);
         }}
+      />
+
+      <ConfirmDialog
+        isOpen={pendingBulkDelete}
+        onClose={() => setPendingBulkDelete(false)}
+        title="Delete multiple skills?"
+        message={`Are you sure you want to delete ${selectedSkillIds.length} selected skill${selectedSkillIds.length === 1 ? "" : "s"}?`}
+        confirmLabel="Delete Selected"
+        busy={busy === "bulk-delete"}
+        onConfirm={() => void deleteMultipleSkills(selectedSkillIds)}
       />
     </>
   );

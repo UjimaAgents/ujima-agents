@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto';
-import { isLoopFinished, type ToolSet } from 'ai';
+import { type ToolSet } from 'ai';
 import { buildAgentSystemPrompt, normalizeProviderKey } from '@ujima/framework';
 import { DEFAULT_SPIRIT_TEMPERATURE, type Message, type SpiritRole, type WakeReason } from '@ujima/shared';
 import {
   runAgentLoop,
   runAgentLoopWithRetry,
   type AgentLoopChunk,
+  type AgentLoopStep,
 } from './services/agent-loop.js';
 import { dropHeaviestAttachedMcp } from './services/spirit-mcp-helpers.js';
 import { safeFallbackModelForProvider } from '@ujima/shared';
@@ -13,7 +14,10 @@ import { selectLanguageModel } from '@ujima/llm';
 import type { ApiRepository } from './services/repository-reader.js';
 import type { TeamStore } from './services/team-store.js';
 import type { ToolService } from './services/tool-service.js';
-import { ALWAYS_AVAILABLE_AGENT_TOOLS } from './tools/index.js';
+import {
+  ALWAYS_AVAILABLE_AGENT_TOOLS,
+  filterDeprecatedToolIds,
+} from './tools/index.js';
 import { isMirrorFragileModel } from './services/mirror-guard.js';
 import {
   toModelMessages,
@@ -22,7 +26,6 @@ import {
 } from './utils/to-model-messages.js';
 import { requireTeam } from './utils/require-team.js';
 import { buildRunTranscript } from './utils/run-transcript.js';
-import { buildSelfFollowupContextBlock } from './utils/self-followup-context.js';
 import {
   buildCacheableSystem,
   buildWakeContextMessages,
@@ -57,6 +60,7 @@ export interface GenerateRunReplyInput {
   systemPromptSuffix?: string;
   abortSignal?: AbortSignal;
   onChunk?: (chunk: AgentLoopChunk) => PromiseLike<void> | void;
+  onStepFinish?: (step: AgentLoopStep, steps: AgentLoopStep[]) => PromiseLike<void> | void;
 }
 
 export interface GenerateMemoryReviewInput {
@@ -225,7 +229,7 @@ export class AiService {
       system,
       messages,
       tools: toolDefs,
-      stopWhen: isLoopFinished(),
+      stopWhen: () => false,
       maxOutputTokens: 800,
       temperature: 0.2,
       toolChoice: 'auto',
@@ -277,8 +281,8 @@ export class AiService {
 
     // Mandatory-reply enforcement at the tool-palette layer.
     // When wakeReason === 'mention' (the agent was @mentioned, or
-    // included via @all expansion), `channel.pass` and `self.note`
-    // are stripped so the model literally cannot opt out of
+    // included via @all expansion), `channel.pass`
+    // is stripped so the model literally cannot opt out of
     // replying. Posting tools (`channel.reply`, `channel.post`,
     // `channel.dm`, `message`) stay available via
     // `ALWAYS_AVAILABLE_AGENT_TOOLS`, so the model has a clear
@@ -295,7 +299,9 @@ export class AiService {
       wakeReplyPolicy,
     );
     const roleTools = filterToolsForWakeReplyPolicy(role.tools, wakeReplyPolicy);
-    const toolIds = [...new Set([...roleTools, ...baseAlwaysAvailable])];
+    const toolIds = filterDeprecatedToolIds([
+      ...new Set([...roleTools, ...baseAlwaysAvailable]),
+    ]);
     const builtInToolDefs = buildToolDefinitions(toolIds, team, this.tools, {
       organizationId: input.organizationId,
       runId: input.runId,
@@ -388,7 +394,7 @@ export class AiService {
     //
     // The base system prompt + the agent's procedures.md + the base
     // wake scaffold form Zone 1: invariant per (agent, thread). The
-    // per-wake mutations (anti-mirror line, self-followup contract)
+    // per-wake mutations (anti-mirror line)
     // are emitted SEPARATELY as user-role messages after the cache
     // breakpoint, so they no longer bust the Anthropic prompt cache
     // on every wake. The CI lint at packages/orchestrator/test/
@@ -418,7 +424,7 @@ export class AiService {
       // Use the DM vs channel scaffold from the wake-reply policy
       // (introduced by main as `wake-reply-policy.ts`). Per-thread
       // stable, so it remains in the cacheable prefix; the wake-
-      // reason-dependent anti-mirror + self-followup lines below
+      // reason-dependent anti-mirror lines below
       // are emitted as user-role messages and DON'T bust the cache.
       baseScaffold: wakeReplyPolicy.scaffoldBlock,
       // Bet 1b — gate memory/procedure guidance on tool availability
@@ -468,10 +474,9 @@ export class AiService {
       });
     }
 
-    // Bet 3 — workspace-state ground truth. Surfaces open commitments
-    // owned by this agent, recent channel decisions (decision_log),
-    // and any persistent memory entries (Bet 5) inline so the model
-    // sees its own durable context at every wake.
+    // Workspace-state ground truth. Surfaces recent artifacts, channel
+    // decisions, and persistent memory inline so the model sees durable
+    // context at every wake.
     const currentChannelIdForState = input.threadId
       ? this.repo.getThread(input.organizationId, input.threadId)?.channelId
       : undefined;
@@ -485,24 +490,6 @@ export class AiService {
       messages.push({
         role: 'user',
         content: workspaceStateBlock,
-      });
-    }
-
-    // Bet 2 — self-followup context. Re-attaches the original
-    // commitment message + artifact paths + empty-wake count so a
-    // scheduler-driven wake doesn't land blind to its own promise.
-    const selfFollowupBlock = buildSelfFollowupContextBlock({
-      organizationId: input.organizationId,
-      memberId: member.id,
-      runId: input.runId,
-      sourceMessageId,
-      wakeReason: (runRow?.wakeReason ?? null) as string | null,
-      repo: this.repo,
-    });
-    if (selfFollowupBlock) {
-      messages.push({
-        role: 'user',
-        content: selfFollowupBlock,
       });
     }
 
@@ -526,19 +513,16 @@ export class AiService {
     }
     const systemPrompt = system;
 
-    // Self-followup wakes routinely produce multi-section
-    // deliverables (the scaffold now nudges agents to write them to
-    // disk, but compacted/short messages and small deliverables still
-    // get posted inline). 1200 tokens is too tight for a task list +
-    // its delivery note; bump to 4096 so the model has room to finish
-    // even when it ignores the "write to a file first" rule.
-    const turnMaxOutputTokens = wakeReasonForPalette === 'self-followup' ? 4096 : 1200;
-    // Wake-run path retry. Same recovery contract as the
-    // direct-spirit path (spirit-agent-run.ts) — bad model id swap
-    // and "too many states" palette reduction — but the model
-    // re-resolution is inline here because the wake path's model
-    // resolver is composed locally (uses `member.llm` / `member.model`)
-    // rather than going through SpiritService's modelResolver.
+    // Multi-section deliverables (task lists, BRDs, PRDs, or file writing)
+    // routinely exceed the per-turn cap when pasted inline or written via
+    // tools. 4096 tokens across all wakes gives the model enough headroom.
+    const turnMaxOutputTokens = 4096;
+    // Wake-run path retry. Same recovery contract as the direct-spirit
+    // path (spirit-agent-run.ts) — bad model id swap and "too many
+    // states" palette reduction — but the model re-resolution is inline
+    // here because the wake path's model resolver is composed locally
+    // (uses `member.llm` / `member.model`) rather than going through
+    // SpiritService's modelResolver.
     let currentModel = model;
     let currentToolDefs = toolDefs;
     const providerName = normalizeProviderKey(member.llm ?? role.provider ?? '');
@@ -549,12 +533,17 @@ export class AiService {
         system: systemPrompt,
         messages,
         tools: currentToolDefs,
-        stopWhen: isLoopFinished(),
+        stopWhen: () => false,
         maxOutputTokens: turnMaxOutputTokens,
+        // Lower temperature for mandatory mention wakes: at 0.2 the
+        // model is more willing to commit to a structured posting tool.
         temperature: wakeReplyPolicy.mandatoryReply ? 0.2 : DEFAULT_SPIRIT_TEMPERATURE,
-        toolChoice: 'required-first-step',
+        // L1/L2: 'auto' lets the model choose whether to call a tool
+        // or respond directly.
+        toolChoice: 'auto',
         abortSignal: input.abortSignal,
         onChunk: input.onChunk,
+        onStepFinish: input.onStepFinish,
         loadInterruptMessages: () => {
           const interrupts = this.loadRunInterrupts(input, interruptCursor);
           return toModelMessages(interrupts, input.agentId);

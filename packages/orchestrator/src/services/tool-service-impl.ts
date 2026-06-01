@@ -6,18 +6,23 @@ import {
   classifyTool,
   evaluatePolicy,
   memberRoom,
+  normalizeOrgShellApprovalMode,
   resolveClassification,
+  resolveEffectiveShellApprovalMode,
   runRoom,
   threadRoom,
   type AuditStatus,
+  type Member,
+  type SpiritRole,
   type WakeReason,
 } from "@ujima/shared";
 import type { RealtimeService } from "./context.js";
 import type { ConversationService } from "./conversation.js";
+import type { GoalSystemService } from "./goal-system.js";
 import { requireTeam } from "../utils/require-team.js";
 import { checkToolPolicy } from "./policy.js";
+import { isToolApprovalSatisfied } from "./tool-approval-gate.js";
 import type { ApiRepository } from "./repository-reader.js";
-import type { SupervisorTodoService } from "./supervisor-todo.js";
 import type { TeamStore } from "./team-store.js";
 import {
   ORCHESTRATOR_TOOLS,
@@ -38,7 +43,10 @@ import {
   type PathEscapeError,
 } from "./workspace-root.js";
 import { pathEscapeToolResult } from "./tool-service.js";
+import { isGoalModeActiveForThread } from "./goal-mode-prompt.js";
 import { normalizeShellScope } from "./shell-scope.js";
+import type { ModelResolver } from "./spirit-types.js";
+import { ShellAutoReviewService } from "./shell-auto-review.js";
 import { materializeMcpDef, type McpRuntimePool } from "./mcp-runtime.js";
 import { ApprovedRunScopeTracker } from "../utils/approved-run-scopes.js";
 import { formatReadableToolOutput } from "../utils/tool-output.js";
@@ -76,14 +84,11 @@ export class ToolServiceImpl implements ToolService {
     private readonly repo: ApiRepository,
     private readonly approvals: ApprovalRequester,
     private readonly conversations: ConversationService,
+    private readonly goals: GoalSystemService,
     private readonly realtime: RealtimeService,
-    /**
-     * Phase 2.B — optional supervisor.todo.* backing service. Tools tagged
-     * `permissionMcpId: 'supervisor'` go through here. Optional so the
-     * pre-Phase-2 wiring still constructs.
-     */
-    private readonly supervisorTodos?: SupervisorTodoService,
     private readonly mcpPool?: McpRuntimePool,
+    private readonly modelResolver?: ModelResolver,
+    private readonly shellAutoReview = new ShellAutoReviewService(),
   ) {}
 
   allowRun(organizationId: string, runId: string, approvalScope?: string): void {
@@ -207,9 +212,19 @@ export class ToolServiceImpl implements ToolService {
       preparedInvocation.wakeReason ??
       (run?.wakeReason as WakeReason | null | undefined);
     const threadId = preparedInvocation.threadId ?? run?.threadId;
+    const goalModeActive = isGoalModeActiveForThread(
+      this.repo,
+      preparedInvocation.organizationId,
+      threadId,
+    );
+    const effectiveShellApprovalMode = resolveEffectiveShellApprovalMode({
+      orgMode: normalizeOrgShellApprovalMode(team.config.policies),
+      memberMode: member.shellApprovalMode,
+      goalModeActive,
+    });
 
     const policy = isSubOperation
-      ? { allowed: true, requiresApproval: false, reason: "sub-operation" }
+      ? { allowed: true, requiresApproval: false, shellAutoReview: false, reason: "sub-operation" }
       : preparedInvocation.toolId === "mcp"
         ? this.resolveMcpPolicy(preparedInvocation)
       : checkToolPolicy(
@@ -218,7 +233,12 @@ export class ToolServiceImpl implements ToolService {
           preparedInvocation.toolId,
           preparedInvocation.action,
           preparedInvocation.resourcePath,
-          { spiritRole: preparedInvocation.spiritRole, wakeReason, threadId },
+          {
+            spiritRole: preparedInvocation.spiritRole,
+            wakeReason,
+            threadId,
+            effectiveShellApprovalMode,
+          },
         );
 
     if (!policy.allowed) {
@@ -254,44 +274,39 @@ export class ToolServiceImpl implements ToolService {
     const approvalScope = buildToolApprovalScope(preparedInvocation);
 
     if (
-      policy.requiresApproval &&
-      !this.approvedRunScopes.consumeApprovedRun(
-        invocation.organizationId,
-        invocation.runId,
+      !isToolApprovalSatisfied({
+        policy,
+        organizationId: invocation.organizationId,
+        runId: invocation.runId,
         approvalScope,
-      ) &&
-      !this.repo.hasApprovalGrant({
-        organizationId: preparedInvocation.organizationId,
-        resourceType: preparedInvocation.resourceType,
-        action: preparedInvocation.action,
-        approvalScope,
+        approvedRunScopes: this.approvedRunScopes,
+        repo: this.repo,
+        invocation: preparedInvocation,
       })
     ) {
-      const displayScope = enrichToolApprovalScopeForRequest(approvalScope, preparedInvocation);
-      const approval = this.approvals.requestApproval({
-        organizationId: preparedInvocation.organizationId,
-        runId: preparedInvocation.runId,
-        toolCallId: preparedInvocation.toolCallId,
-        requestedBy: preparedInvocation.memberId,
-        resourceType: preparedInvocation.resourceType,
-        resourcePath: preparedInvocation.resourcePath ?? "",
-        action: preparedInvocation.action,
-        reason: `Tool action requires approval;scope=${encodeURIComponent(displayScope)}`,
-        approvalScope,
-      });
-
-      this.audit(preparedInvocation, "ok", {
-        approvalId: approval.id,
-        status: "pending_approval",
-      });
-      if (approval.toolCallId === preparedInvocation.toolCallId) {
-        this.saveRunStep(preparedInvocation, "ok", {
-          status: "waiting_for_approval",
-          approvalId: approval.id,
+      if (policy.shellAutoReview) {
+        await this.tryAutoReviewShell({
+          invocation: preparedInvocation,
+          member,
+          teamRoleName: member.roleName,
+          approvalScope,
+          spiritRole: preparedInvocation.spiritRole ?? "worker",
         });
       }
 
-      return approvalWaitResult(approval.id);
+      if (
+        !isToolApprovalSatisfied({
+          policy,
+          organizationId: invocation.organizationId,
+          runId: invocation.runId,
+          approvalScope,
+          approvedRunScopes: this.approvedRunScopes,
+          repo: this.repo,
+          invocation: preparedInvocation,
+        })
+      ) {
+        return this.requestHumanApproval(preparedInvocation, approvalScope);
+      }
     }
 
     try {
@@ -317,6 +332,18 @@ export class ToolServiceImpl implements ToolService {
         },
         rooms,
       );
+
+      if (isWaitingForInputResult(result)) {
+        const waitingRun = this.repo.getRun(preparedInvocation.organizationId, preparedInvocation.runId);
+        if (waitingRun) {
+          this.realtime.emit(
+            SocketEventNames.runUpdated,
+            { organizationId: preparedInvocation.organizationId, run: waitingRun },
+            rooms,
+          );
+        }
+        return { ok: true, output: result };
+      }
 
       return { ok: true, output: { status: "completed", result } };
     } catch (error) {
@@ -368,7 +395,7 @@ export class ToolServiceImpl implements ToolService {
         team: requireTeam(this.teamStore, invocation.organizationId),
         repo: this.repo,
         conversations: this.conversations,
-        supervisorTodos: this.supervisorTodos,
+        goals: this.goals,
         reportProgress: (output) => this.emitToolProgress(invocation, output),
       });
     }
@@ -387,6 +414,7 @@ export class ToolServiceImpl implements ToolService {
   private resolveMcpPolicy(invocation: ToolInvocationInput): {
     allowed: boolean;
     requiresApproval: boolean;
+    shellAutoReview: boolean;
     reason?: string;
   } {
     const serverId =
@@ -400,6 +428,7 @@ export class ToolServiceImpl implements ToolService {
       return {
         allowed: false,
         requiresApproval: false,
+        shellAutoReview: false,
         reason: "MCP invocation missing serverId or toolName",
       };
     }
@@ -448,18 +477,19 @@ export class ToolServiceImpl implements ToolService {
         return {
           allowed: false,
           requiresApproval: false,
+          shellAutoReview: false,
           reason:
             evaluation.reason ??
             `Tool "${rawToolName}" denied by governance policy`,
         };
       case "allow":
-        return { allowed: true, requiresApproval: false, reason: evaluation.reason };
+        return { allowed: true, requiresApproval: false, shellAutoReview: false, reason: evaluation.reason };
       case "require_approval":
       case "require_input":
-        return { allowed: true, requiresApproval: true, reason: evaluation.reason };
+        return { allowed: true, requiresApproval: true, shellAutoReview: false, reason: evaluation.reason };
       case "inherit":
       default:
-        return { allowed: true, requiresApproval: true };
+        return { allowed: true, requiresApproval: true, shellAutoReview: false };
     }
   }
 
@@ -696,6 +726,104 @@ export class ToolServiceImpl implements ToolService {
       input: nextInput,
     };
   }
+
+  private requestHumanApproval(
+    preparedInvocation: ToolInvocationInput,
+    approvalScope: string,
+  ): ToolInvocationResult {
+    const displayScope = enrichToolApprovalScopeForRequest(approvalScope, preparedInvocation);
+    const approval = this.approvals.requestApproval({
+      organizationId: preparedInvocation.organizationId,
+      runId: preparedInvocation.runId,
+      toolCallId: preparedInvocation.toolCallId,
+      requestedBy: preparedInvocation.memberId,
+      resourceType: preparedInvocation.resourceType,
+      resourcePath: preparedInvocation.resourcePath ?? "",
+      action: preparedInvocation.action,
+      reason: `Tool action requires approval;scope=${encodeURIComponent(displayScope)}`,
+      approvalScope,
+    });
+
+    this.audit(preparedInvocation, "ok", {
+      approvalId: approval.id,
+      status: "pending_approval",
+    });
+    if (approval.toolCallId === preparedInvocation.toolCallId) {
+      this.saveRunStep(preparedInvocation, "ok", {
+        status: "waiting_for_approval",
+        approvalId: approval.id,
+      });
+    }
+
+    return approvalWaitResult(approval.id);
+  }
+
+  private async tryAutoReviewShell(input: {
+    invocation: ToolInvocationInput;
+    member: Member;
+    teamRoleName: string;
+    approvalScope: string;
+    spiritRole: SpiritRole;
+  }): Promise<void> {
+    if (!this.modelResolver) {
+      this.audit(input.invocation, "ok", {
+        status: "auto_review_escalated",
+        reason: "auto_review:escalated;note=Model resolver unavailable",
+      });
+      return;
+    }
+    try {
+      const model = await Promise.resolve(
+        this.modelResolver({
+          organizationId: input.invocation.organizationId,
+          memberId: input.invocation.memberId,
+          role: input.spiritRole,
+        }),
+      );
+      const scope = normalizeShellScope({
+        input: input.invocation.input ?? {},
+        resourcePath: input.invocation.resourcePath,
+      });
+      const review = await this.shellAutoReview.review({
+        model,
+        scope,
+        memberName: input.member.name,
+        roleName: input.teamRoleName,
+      });
+      const note = review.rationale.trim() || "Auto review";
+      if (review.decision === "approve") {
+        this.allowRun(
+          input.invocation.organizationId,
+          input.invocation.runId,
+          input.approvalScope,
+        );
+        this.audit(input.invocation, "ok", {
+          status: "auto_review_approved",
+          reason: `auto_review:approved;note=${note}`,
+        });
+        return;
+      }
+      this.audit(input.invocation, "ok", {
+        status: "auto_review_escalated",
+        reason: `auto_review:escalated;note=${note}`,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Auto review failed";
+      this.audit(input.invocation, "ok", {
+        status: "auto_review_escalated",
+        reason: `auto_review:escalated;note=${message}`,
+      });
+    }
+  }
+}
+
+function isWaitingForInputResult(value: unknown): value is { status: "waiting_for_input"; questionId: string } {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    (value as { status?: unknown }).status === "waiting_for_input" &&
+    typeof (value as { questionId?: unknown }).questionId === "string"
+  );
 }
 
 export function summarizeToolOutput(value: unknown): unknown {

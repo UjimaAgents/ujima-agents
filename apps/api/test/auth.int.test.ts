@@ -60,7 +60,7 @@ describe('auth flow', () => {
             bootstrap,
             onboarding,
             settings: {},
-            taskPromoter: {},
+            goals: {},
           } as any),
       },
     });

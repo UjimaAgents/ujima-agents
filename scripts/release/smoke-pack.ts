@@ -40,7 +40,7 @@ async function main(): Promise<void> {
 
   assertDistributionReadme(DIST_PKG_DIR);
 
-  const packOutput = packResult.stdout.toString();
+  const packOutput = `${packResult.stdout}\n${packResult.stderr}`;
   assertPackManifestIncludesReadme(packOutput);
   const tarballName =
     packOutput.match(new RegExp(`${expectedTarball.replace('.', '\\.')}`))?.[0] ??

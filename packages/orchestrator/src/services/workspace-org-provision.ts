@@ -2,13 +2,19 @@ import { randomUUID } from 'node:crypto';
 import { MemberSchema } from '@ujima/shared';
 import type { ApiRepository } from './repository-reader.js';
 
+/** Fixed human owner member id in every organization (multi-workspace identity). */
+export const WORKSPACE_OWNER_MEMBER_ID = 'owner';
+
 export function copyProviderCredentials(
   repo: ApiRepository,
   fromOrganizationId: string,
   toOrganizationId: string,
+  providerNames?: string[],
 ): void {
-  const providers = repo.listProviderCredentials(fromOrganizationId);
-  for (const providerName of Object.keys(providers)) {
+  const available = repo.listProviderCredentials(fromOrganizationId);
+  const names =
+    providerNames === undefined ? Object.keys(available) : providerNames;
+  for (const providerName of names) {
     const keyRef = repo.getProviderCredential(fromOrganizationId, providerName);
     if (keyRef) {
       repo.saveProviderCredential(toOrganizationId, providerName, keyRef);
@@ -78,7 +84,8 @@ function saveWorkspaceOwner(
   });
 }
 
-export function grantWorkspaceOwnerForMember(
+/** Grants the current user access to a new org via their existing login (fixed owner member id). */
+export function grantOrganizationAccessForMember(
   repo: ApiRepository,
   templateOrganizationId: string,
   templateMemberId: string,
@@ -93,10 +100,13 @@ export function grantWorkspaceOwnerForMember(
     repo,
     grantable.stored,
     newOrganizationId,
-    randomUUID(),
+    WORKSPACE_OWNER_MEMBER_ID,
     grantable.templateMember.name,
   );
 }
+
+/** @deprecated Use grantOrganizationAccessForMember */
+export const grantWorkspaceOwnerForMember = grantOrganizationAccessForMember;
 
 interface GrantableParentOwner {
   stored: NonNullable<ReturnType<ApiRepository['getAuthUserCredentials']>>;

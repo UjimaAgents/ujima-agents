@@ -2,8 +2,8 @@ import type { LanguageModel } from 'ai';
 import {
   ActiveSpiritRegistry,
   ConversationService,
+  GoalSystemService,
   SpiritService,
-  SupervisorTodoService,
   TaskSessionService,
   ToolServiceImpl,
   type ApiRepository,
@@ -40,7 +40,7 @@ export interface SpiritFixture {
   repo: ApiRepository;
   conversations: ConversationService;
   spirits: SpiritService;
-  supervisorTodos: SupervisorTodoService;
+  goals: GoalSystemService;
   taskSessions: TaskSessionService;
   registry: ActiveSpiritRegistry;
   tools: ToolService;
@@ -58,7 +58,7 @@ export async function createSpiritTestFixture(opts: SpiritFixtureOptions = {}): 
   });
 
   const conversations = new ConversationService(base.repo, noopRealtime());
-  const supervisorTodos = new SupervisorTodoService(base.repo);
+  const goals = new GoalSystemService(base.repo);
 
   const modelCalls: { input: ModelCall; resolved: LanguageModel }[] = [];
   let queueIndex = 0;
@@ -86,8 +86,8 @@ export async function createSpiritTestFixture(opts: SpiritFixtureOptions = {}): 
       base.repo,
       approvalRequester,
       conversations,
+      goals,
       noopRealtime(),
-      supervisorTodos,
     );
   } else {
     tools = {
@@ -117,7 +117,7 @@ export async function createSpiritTestFixture(opts: SpiritFixtureOptions = {}): 
     repo: base.repo,
     conversations,
     spirits,
-    supervisorTodos,
+    goals,
     taskSessions,
     registry,
     tools,

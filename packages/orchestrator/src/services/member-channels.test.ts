@@ -154,6 +154,11 @@ function createRepo(): ApiRepository {
       return channel;
     },
     setChannelMembers: () => undefined,
+    setChannelMemberMode: () => undefined,
+    getChannelMemberMode: () => null,
+    listChannelMemberModes: () => [],
+    listChannelMemberModesForChannel: () => [],
+    deleteChannelMemberMode: () => undefined,
     getThread: (_organizationId: string, threadId: string) => threads.get(threadId) ?? null,
     ensureThread: (thread: ConversationThread) => {
       threads.set(thread.id, thread);

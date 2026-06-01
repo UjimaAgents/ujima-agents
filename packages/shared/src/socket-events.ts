@@ -48,7 +48,6 @@ export const SocketEventNames = Object.freeze({
   memberAlerted: 'member.alerted',
   memberAlertFailed: 'member.alert_failed',
   memberMustReplyFailed: 'member.must_reply_failed',
-  memberEmptyWake: 'member.empty_wake',
   channelArchived: 'channel.archived',
   toolCalled: 'tool:called',
   toolResult: 'tool:result',
@@ -69,16 +68,13 @@ export const SocketEventNames = Object.freeze({
   runEmptyCompletion: 'run:empty_completion',
   mirrorSuppressed: 'agent:mirror_suppressed',
   echoSuppressed: 'agent:echo_suppressed',
-  commitmentCreated: 'commitment:created',
-  commitmentUpdated: 'commitment:updated',
-  commitmentExpired: 'commitment:expired',
 });
 
 export type SocketEventName = (typeof SocketEventNames)[keyof typeof SocketEventNames];
 
 /**
  * Why an agent was woken. Drives mandatory-reply enforcement
- * (`channel.pass` and `self.note` are stripped from the tool
+ * (`channel.pass` is stripped from the tool
  * palette when `wakeReason === 'mention'`, so the model
  * structurally cannot opt out of replying) and observability
  * events.
@@ -94,7 +90,6 @@ export const WakeReasonSchema = z.enum([
   'channel-read',
   'handoff',
   'parent-thread',
-  'self-followup',
 ]);
 export type WakeReason = z.infer<typeof WakeReasonSchema>;
 
@@ -327,20 +322,6 @@ export const EchoSuppressedEventSchema = z.object({
 });
 export type EchoSuppressedEvent = z.infer<typeof EchoSuppressedEventSchema>;
 
-export const CommitmentEventSchema = z.object({
-  organizationId: IdSchema,
-  channelId: IdSchema.optional(),
-  threadId: IdSchema.optional(),
-  todoId: IdSchema,
-  taskSessionId: IdSchema.optional(),
-  ownerMemberId: IdSchema,
-  deliverable: z.string(),
-  status: z.string(),
-  dueAt: z.string().optional(),
-  occurredAt: TimestampSchema,
-});
-export type CommitmentEvent = z.infer<typeof CommitmentEventSchema>;
-
 export const WakeSuppressedReasonSchema = z.enum([
   'roster',
   'self-channel',
@@ -351,6 +332,8 @@ export const WakeSuppressedReasonSchema = z.enum([
   'non-agent-member',
   'retired',
   'cross-org',
+  'mode-blocked',
+  'mode-passive',
 ]);
 export type WakeSuppressedReason = z.infer<typeof WakeSuppressedReasonSchema>;
 
@@ -445,19 +428,6 @@ export const MemberMustReplyFailedEventSchema = z.object({
 });
 export type MemberMustReplyFailedEvent = z.infer<typeof MemberMustReplyFailedEventSchema>;
 
-export const MemberEmptyWakeEventSchema = z.object({
-  organizationId: IdSchema,
-  memberId: IdSchema,
-  runId: IdSchema,
-  channelId: IdSchema.optional(),
-  threadId: IdSchema.optional(),
-  todoId: IdSchema,
-  emptyWakeCount: z.number().int().nonnegative(),
-  escalated: z.boolean(),
-  occurredAt: TimestampSchema,
-});
-export type MemberEmptyWakeEvent = z.infer<typeof MemberEmptyWakeEventSchema>;
-
 export const ScheduledJobExecutedEventSchema = z.object({
   organizationId: IdSchema,
   jobName: z.string().min(1),
@@ -481,7 +451,6 @@ export const SocketEventSchemas = Object.freeze({
   [SocketEventNames.memberAlerted]: MemberAlertedEventSchema,
   [SocketEventNames.memberAlertFailed]: MemberAlertFailedEventSchema,
   [SocketEventNames.memberMustReplyFailed]: MemberMustReplyFailedEventSchema,
-  [SocketEventNames.memberEmptyWake]: MemberEmptyWakeEventSchema,
   [SocketEventNames.channelArchived]: ChannelUpdatedEventSchema,
   [SocketEventNames.toolCalled]: ToolCalledEventSchema,
   [SocketEventNames.toolResult]: ToolResultEventSchema,
@@ -502,7 +471,4 @@ export const SocketEventSchemas = Object.freeze({
   [SocketEventNames.runEmptyCompletion]: RunEmptyCompletionEventSchema,
   [SocketEventNames.mirrorSuppressed]: MirrorSuppressedEventSchema,
   [SocketEventNames.echoSuppressed]: EchoSuppressedEventSchema,
-  [SocketEventNames.commitmentCreated]: CommitmentEventSchema,
-  [SocketEventNames.commitmentUpdated]: CommitmentEventSchema,
-  [SocketEventNames.commitmentExpired]: CommitmentEventSchema,
 });

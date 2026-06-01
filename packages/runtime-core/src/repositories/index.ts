@@ -9,6 +9,8 @@ import type {
   Attachment,
   Channel,
   ChannelKind,
+  ChannelMemberMode,
+  ChannelMemberSettings,
   ConfigFieldOwnership,
   ConversationThread,
   DecisionLogEntry,
@@ -31,8 +33,10 @@ import type {
   SpiritRole,
   TaskSession,
   TaskSessionStatus,
-  Todo,
-  TodoStatus,
+  Goal,
+  GoalTask,
+  GoalTaskStatus,
+  InteractiveQuestion,
   WorkspaceFile,
   WorkspaceMember,
 } from '@ujima/shared';
@@ -69,6 +73,11 @@ import {
   listChannels as readChannels,
   saveChannel as writeChannel,
   setChannelMembers as writeChannelMembers,
+  setChannelMemberMode as writeChannelMemberMode,
+  getChannelMemberMode as readChannelMemberMode,
+  listChannelMemberModes as readChannelMemberModes,
+  listChannelMemberModesForChannel as readChannelMemberModesForChannel,
+  removeChannelMemberMode as deleteChannelMemberMode,
   type PaginatedChannels,
 } from './channels.js';
 import {
@@ -127,6 +136,7 @@ import {
   listOrganizations as readOrganizations,
   listOrganizationsForUser as readOrganizationsForUser,
   listOrganizationsWithSignIn as readOrganizationsWithSignIn,
+  organizationHasAuthUsers as readOrganizationHasAuthUsers,
   deleteOrganizationData as removeOrganizationData,
   listProviderCredentials as readProviderCredentials,
   saveWorkspaceSetting as writeWorkspaceSetting,
@@ -157,18 +167,20 @@ import {
   type PaginatedTaskSessions,
 } from './task-sessions.js';
 import {
-  claimExpiredCommitment as runClaimExpiredCommitment,
-  findCommitmentBySourceMessage as readCommitmentBySourceMessage,
-  findOpenChannelCommitmentForMember as readOpenChannelCommitmentForMember,
-  getTodo as readTodo,
-  listExpiredCommitments as readExpiredCommitments,
-  listIdleCommitments as readIdleCommitments,
-  listOpenCommitmentsForMember as readOpenCommitmentsForMember,
-  listTodosForChannel as readTodosForChannel,
-  listTodosForSession as readTodosForSession,
-  saveTodo as writeTodo,
-  updateTodoStatus as writeTodoStatus,
-} from './todos.js';
+  deleteGoalTasks as removeGoalTasks,
+  getGoal as readGoal,
+  getGoalByChannel as readGoalByChannel,
+  getGoalTask as readGoalTask,
+  getInteractiveQuestion as readInteractiveQuestion,
+  listGoalTasks as readGoalTasks,
+  listGoals as readGoals,
+  listPendingInteractiveQuestions as readPendingInteractiveQuestions,
+  listInteractiveQuestionsByRunId as readInteractiveQuestionsByRunId,
+  saveGoal as writeGoal,
+  saveGoalTask as writeGoalTask,
+  saveInteractiveQuestion as writeInteractiveQuestion,
+  updateGoalTaskStatus as writeGoalTaskStatus,
+} from './goals.js';
 import {
   deleteExpiredMemoryEntries as removeExpiredMemoryEntries,
   deleteMemoryEntry as removeMemoryEntry,
@@ -216,6 +228,13 @@ import {
   saveScheduledJob as writeScheduledJob,
 } from './scheduled-jobs.js';
 import {
+  deleteMemory as removeMemory,
+  getMemory as readMemory,
+  listMemories as readMemories,
+  listOrgMemories as readOrgMemories,
+  saveMemory as writeMemory,
+} from './memory.js';
+import {
   deleteAgentMcpAttachment as removeAgentMcpAttachment,
   deleteMcpServer as removeMcpServer,
   getMcpServer as readMcpServer,
@@ -250,6 +269,12 @@ import {
   saveAgentToolAttachment as writeAgentToolAttachment,
 } from './agent-tool-attachments.js';
 import { createPluginRepository, type PluginRepository } from './plugins.js';
+import {
+  deleteGovernanceRule as removeGovernanceRule,
+  listGovernanceRules as readGovernanceRules,
+  saveGovernanceRule as writeGovernanceRule,
+  type GovernanceRuleRow,
+} from './governance-rules.js';
 
 /* eslint-disable @typescript-eslint/no-unsafe-declaration-merging -- PluginRepository methods are mixed onto Repository via Object.assign */
 export class Repository {
@@ -270,6 +295,8 @@ export class Repository {
   listOrganizationsForUser = (emailNormalized: string): Organization[] =>
     readOrganizationsForUser(this.db, emailNormalized);
   listOrganizationsWithSignIn = (): Organization[] => readOrganizationsWithSignIn(this.db);
+  organizationHasAuthUsers = (organizationId: string): boolean =>
+    readOrganizationHasAuthUsers(this.db, organizationId);
   deleteOrganizationData = (organizationId: string): void => removeOrganizationData(this.db, organizationId);
   saveOrganization = (organization: Organization): Organization =>
     writeOrganization(this.db, organization);
@@ -366,6 +393,16 @@ export class Repository {
     writeChannelMembers(this.db, channelId, memberIds);
   deleteChannel = (channelId: string): void =>
     removeChannel(this.db, channelId);
+  setChannelMemberMode = (channelId: string, memberId: string, mode: ChannelMemberMode): void =>
+    writeChannelMemberMode(this.db, channelId, memberId, mode);
+  getChannelMemberMode = (channelId: string, memberId: string): ChannelMemberMode | null =>
+    readChannelMemberMode(this.db, channelId, memberId);
+  listChannelMemberModes = (memberId: string): ChannelMemberSettings[] =>
+    readChannelMemberModes(this.db, memberId);
+  listChannelMemberModesForChannel = (channelId: string): ChannelMemberSettings[] =>
+    readChannelMemberModesForChannel(this.db, channelId);
+  deleteChannelMemberMode = (channelId: string, memberId: string): void =>
+    deleteChannelMemberMode(this.db, channelId, memberId);
 
   saveThread = (thread: ConversationThread): ConversationThread =>
     writeThread(this.db, thread);
@@ -578,50 +615,37 @@ export class Repository {
   listActiveSpiritsForMember = (organizationId: string, memberId: string): Spirit[] =>
     readActiveSpiritsForMember(this.db, organizationId, memberId);
 
-  saveTodo = (todo: Todo): Todo => writeTodo(this.db, todo);
-  getTodo = (organizationId: string, todoId: string): Todo | null =>
-    readTodo(this.db, organizationId, todoId);
-  listTodosForSession = (
+  saveGoal = (goal: Goal): Goal => writeGoal(this.db, goal);
+  getGoal = (organizationId: string, goalId: string): Goal | null =>
+    readGoal(this.db, organizationId, goalId);
+  getGoalByChannel = (organizationId: string, channelId: string): Goal | null =>
+    readGoalByChannel(this.db, organizationId, channelId);
+  listGoals = (organizationId: string): Goal[] => readGoals(this.db, organizationId);
+  saveGoalTask = (task: GoalTask): GoalTask => writeGoalTask(this.db, task);
+  deleteGoalTasks = (organizationId: string, goalId: string): void =>
+    removeGoalTasks(this.db, organizationId, goalId);
+  getGoalTask = (organizationId: string, taskId: string): GoalTask | null =>
+    readGoalTask(this.db, organizationId, taskId);
+  listGoalTasks = (organizationId: string, goalId: string): GoalTask[] =>
+    readGoalTasks(this.db, organizationId, goalId);
+  updateGoalTaskStatus = (
     organizationId: string,
-    taskSessionId: string,
-    options?: { status?: TodoStatus; memberId?: string },
-  ): Todo[] => readTodosForSession(this.db, organizationId, taskSessionId, options);
-  listTodosForChannel = (
-    organizationId: string,
-    channelId: string,
-    options?: { status?: TodoStatus; memberId?: string },
-  ): Todo[] => readTodosForChannel(this.db, organizationId, channelId, options);
-  listIdleCommitments = (options: {
-    idleSinceIso: string;
-    statuses?: readonly TodoStatus[];
-    limit?: number;
-  }): Todo[] => readIdleCommitments(this.db, options);
-  listOpenCommitmentsForMember = (
-    organizationId: string,
-    memberId: string,
-    options?: { statuses?: readonly TodoStatus[]; limit?: number },
-  ): Todo[] => readOpenCommitmentsForMember(this.db, organizationId, memberId, options);
-  listExpiredCommitments = (options: { nowIso: string; limit?: number }): Todo[] =>
-    readExpiredCommitments(this.db, options);
-  claimExpiredCommitment = (todoId: string, nowIso: string): boolean =>
-    runClaimExpiredCommitment(this.db, todoId, nowIso);
-  findOpenChannelCommitmentForMember = (
+    taskId: string,
+    status: GoalTaskStatus,
+    options?: { handoverSummary?: string },
+  ): GoalTask | null => writeGoalTaskStatus(this.db, organizationId, taskId, status, options);
+  saveInteractiveQuestion = (question: InteractiveQuestion): InteractiveQuestion =>
+    writeInteractiveQuestion(this.db, question);
+  getInteractiveQuestion = (organizationId: string, questionId: string): InteractiveQuestion | null =>
+    readInteractiveQuestion(this.db, organizationId, questionId);
+  listPendingInteractiveQuestions = (
     organizationId: string,
     channelId: string,
-    memberId: string,
-    sinceIso: string,
-  ): Todo | null =>
-    readOpenChannelCommitmentForMember(this.db, organizationId, channelId, memberId, sinceIso);
-  findCommitmentBySourceMessage = (
+  ): InteractiveQuestion[] => readPendingInteractiveQuestions(this.db, organizationId, channelId);
+  listInteractiveQuestionsByRunId = (
     organizationId: string,
-    sourceMessageId: string,
-  ): Todo | null => readCommitmentBySourceMessage(this.db, organizationId, sourceMessageId);
-  updateTodoStatus = (
-    organizationId: string,
-    todoId: string,
-    status: TodoStatus,
-    options?: { notes?: string },
-  ): Todo | null => writeTodoStatus(this.db, organizationId, todoId, status, options);
+    runId: string,
+  ): InteractiveQuestion[] => readInteractiveQuestionsByRunId(this.db, organizationId, runId);
 
   // Bet 5 — memory_entries KV
   upsertMemoryEntry = (entry: MemoryEntry): MemoryEntry =>
@@ -819,8 +843,40 @@ export class Repository {
     mcpServerId?: string,
   ): void => removeToolAttachmentsForAgent(this.db, organizationId, memberId, mcpServerId);
 
+  saveMemory = (entry: MemoryEntry): MemoryEntry => writeMemory(this.db, entry);
+  getMemory = (organizationId: string, memoryId: string): MemoryEntry | null =>
+    readMemory(this.db, organizationId, memoryId);
+  listMemories = (organizationId: string, memberId: string): MemoryEntry[] =>
+    readMemories(this.db, organizationId, memberId);
+  listOrgMemories = (organizationId: string): MemoryEntry[] =>
+    readOrgMemories(this.db, organizationId);
+  deleteMemory = (organizationId: string, memoryId: string): void =>
+    removeMemory(this.db, organizationId, memoryId);
+
   getBootstrapSnapshot = (organizationId?: string): BootstrapSnapshot =>
     readBootstrapSnapshot(this.db, organizationId);
+
+  listGovernanceRules = (organizationId: string, state?: string): GovernanceRuleRow[] =>
+    readGovernanceRules(this.db, organizationId, state);
+
+  deleteGovernanceRule = (
+    organizationId: string,
+    agentId: string,
+    mcpId: string,
+    toolName: string,
+  ): GovernanceRuleRow | null =>
+    removeGovernanceRule(this.db, organizationId, agentId, mcpId, toolName);
+
+  saveGovernanceRule = (rule: {
+    id: string;
+    organizationId: string;
+    agentId: string;
+    mcpId: string;
+    toolName: string;
+    state: string;
+    reason?: string;
+    updatedBy?: string;
+  }): GovernanceRuleRow => writeGovernanceRule(this.db, rule);
 }
 
 /* eslint-disable @typescript-eslint/no-empty-object-type */
@@ -834,4 +890,5 @@ export type {
   PaginatedRuns,
   StoredAuthSession,
   StoredAuthUser,
+  GovernanceRuleRow,
 };

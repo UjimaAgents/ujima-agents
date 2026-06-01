@@ -29,4 +29,12 @@ export * from "./mentions.js";
 export * from "./approval-scope.js";
 export * from "./tool-call-display-args.js";
 export * from "./workspace-file-filters.js";
+export * from "./shell-approval.js";
+export {
+  listConfiguredProviderModels,
+  configuredProviderModelValue,
+  parseConfiguredProviderModelValue,
+  resolveMemberModelSelection,
+} from "./configured-provider-models.js";
+export type { ConfiguredProviderModelOption } from "./configured-provider-models.js";
 export * from "./goal-schemas.js";
