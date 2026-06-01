@@ -8,6 +8,7 @@ import {
   orgRoom,
   threadRoom,
   type MemberAlertFailureStage,
+  type Message,
   type WakeReason,
 } from '@ujima/shared';
 import { AiService } from '../ai-service.js';
@@ -664,7 +665,8 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     throw new Error('createDelegateRun not wired');
   };
 
-  let handleMessagePublished: ((msg: import('@ujima/shared').Message) => void) | undefined;
+  // eslint-disable-next-line prefer-const
+  let handleMessagePublished: ((msg: Message) => void) | undefined;
   const conversations = new ConversationService(context.repo, context.realtime, {
     archiveStore: retention,
     onMemberAlerted: (input) => wakeMember(input),

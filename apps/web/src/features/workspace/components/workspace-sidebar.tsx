@@ -40,12 +40,12 @@ import {
 } from "../../settings/organization/components/workspaces/workspace-create-modal";
 import { ConfirmDialog } from "@/features/settings/shared/confirm-dialog";
 
-type WorkspaceSchedule = {
+interface WorkspaceSchedule {
   id: string;
   name: string;
   status: "active" | "paused" | "completed" | "failed";
   runCount: number;
-};
+}
 
 export interface WorkspaceSidebarProps {
   bootstrap: BootstrapResponse;

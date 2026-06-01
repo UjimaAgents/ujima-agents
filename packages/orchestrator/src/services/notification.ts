@@ -45,8 +45,8 @@ export class NotificationService {
    * Required when no webhook is set (local-first). Call once after setup.
    */
   startPolling(intervalMs = 2000): void {
-    this.pollOnce().catch(() => {});
-    const timer = setInterval(() => this.pollOnce().catch(() => {}), intervalMs);
+    this.pollOnce().catch(() => undefined);
+    const timer = setInterval(() => this.pollOnce().catch(() => undefined), intervalMs);
     this.pollTimers.set('_global', timer);
     if (this.logErrors) console.error('[notify] telegram polling started every', intervalMs, 'ms');
   }
@@ -80,7 +80,7 @@ export class NotificationService {
         const url = `https://api.telegram.org/bot${token}/getUpdates?offset=${offset}&timeout=5&allowed_updates=["callback_query"]`;
         const res = await fetch(url);
         if (!res.ok) continue;
-        const body = await res.json() as { ok: boolean; result: Array<{ update_id: number; callback_query?: { id: string; data: string } }> };
+        const body = await res.json() as { ok: boolean; result: { update_id: number; callback_query?: { id: string; data: string } }[] };
         if (!body.ok || !body.result) continue;
 
         for (const update of body.result) {
@@ -101,7 +101,7 @@ export class NotificationService {
               text: err ? `Failed: ${err}` : 'Approved ✓',
               show_alert: !!err,
             }),
-          }).catch(() => {});
+          }).catch(() => undefined);
         }
       } catch (e) {
         if (this.logErrors) console.error('[notify] poll error:', e);

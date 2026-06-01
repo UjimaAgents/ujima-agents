@@ -45,7 +45,7 @@ export function NotificationsTab() {
   useEffect(() => {
     if (fetched.current) return;
     fetched.current = true;
-    fetchChannels().catch(() => {});
+    fetchChannels().catch(() => undefined);
   }, [fetchChannels]);
 
   const createChannel = async () => {
