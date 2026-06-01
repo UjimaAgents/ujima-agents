@@ -1,5 +1,5 @@
 import { generateKeyPairSync, sign } from 'node:crypto';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -11,6 +11,7 @@ import {
   verifyToken,
   type LicensePayload,
 } from './index';
+import { _resetMemoForTests } from './revocation';
 
 interface TestKeys {
   privPem: string;
@@ -119,6 +120,31 @@ describe('activate', () => {
     // need the bad-signature branch to win because the verify happens first.
     const result = activate('nope.nope', { revokedIds: new Set(['LIC-0001']) });
     expect(result.ok).toBe(false);
+  });
+
+  // Regression for a bot finding where activate() only honoured the
+  // `revokedIds` test override and never the local cache, so the CLI
+  // happily wrote a revoked token to disk during ujima init.
+  it('refuses a properly signed token whose licenseId is in the local revocation cache', () => {
+    const keys = freshKeys();
+    const revokedPayload: LicensePayload = { ...samplePayload, licenseId: 'LIC-9999' };
+    const token = signToken(keys, revokedPayload);
+
+    // Seed the revocation cache file in the test home dir, then reset
+    // the in-process memo so isRevoked re-reads it on next call.
+    const cachePath = join(tmpHome, 'revoked.json');
+    writeFileSync(
+      cachePath,
+      JSON.stringify({ fetchedAt: new Date().toISOString(), ids: ['LIC-9999'] }),
+    );
+    _resetMemoForTests();
+
+    const result = activate(token, { publicKeySpkiBase64: keys.pubB64 });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('revoked');
+    // Critical: no file written. Pre-fix, the revoked token was
+    // persisted to ~/.ujima/license.json and the CLI reported success.
+    expect(loadLocalLicense()).toBeNull();
   });
 });
 

@@ -57,9 +57,20 @@ export function isRevoked(licenseId: string): boolean {
   return ids.has(licenseId);
 }
 
-export async function refreshRevocations(now: Date = new Date()): Promise<void> {
+export interface RefreshOptions {
+  // Bypass the 24h TTL and force a network fetch. Used by the explicit
+  // `ujima license refresh` command, which must always reach the feed —
+  // otherwise an operator who just revoked a key can't pull the new
+  // list down for up to 24h.
+  force?: boolean;
+}
+
+export async function refreshRevocations(
+  now: Date = new Date(),
+  options: RefreshOptions = {},
+): Promise<void> {
   const existing = readCache();
-  if (existing) {
+  if (!options.force && existing) {
     const age = now.getTime() - Date.parse(existing.fetchedAt);
     if (Number.isFinite(age) && age >= 0 && age < REFRESH_INTERVAL_MS) {
       // Cache fresh; keep memoized view in sync if the file got hot-

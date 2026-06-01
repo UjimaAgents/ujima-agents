@@ -12,6 +12,7 @@ import {
   checkLicenseForStartup,
   clearLocalLicense,
   isDevMode,
+  isRevoked,
   loadLocalLicense,
   refreshRevocations,
   verifyToken,
@@ -124,6 +125,10 @@ async function ensureLicenseForInit(licenseKey: string | undefined): Promise<voi
   if (existing && verifyToken(existing.token).ok) return;
   const token = (licenseKey ?? process.env.UJIMA_LICENSE ?? '').trim();
   const provided = token !== '' ? token : await promptForLicenseKey();
+  // Refresh the revocation list before activating so a token revoked
+  // since the last daily fetch can't be written to disk. Non-fatal:
+  // activate() falls back to the cached list if the network is down.
+  await refreshRevocations().catch(() => undefined);
   const result = activateLicense(provided);
   if (!result.ok) {
     process.stderr.write(
@@ -532,6 +537,17 @@ async function cmdLicense(argv: string[]): Promise<void> {
         process.stdout.write(`ujima license: stored license is ${result.reason}. Re-activate.\n`);
         return;
       }
+      // Daily-cached refresh + revocation check. A token that's
+      // signature-valid but on the revoked list must report revoked,
+      // otherwise this command silently lies for up to expiry.
+      await refreshRevocations().catch(() => undefined);
+      if (isRevoked(result.payload.licenseId)) {
+        process.stdout.write(
+          `ujima license: revoked — ${result.payload.licenseId} ` +
+            `(${result.payload.subjectEmail}). Re-activate with a fresh key.\n`,
+        );
+        return;
+      }
       const exp = result.payload.expiresAt ? ` (expires ${result.payload.expiresAt})` : '';
       process.stdout.write(
         `ujima license: active — ${result.payload.subjectEmail} ` +
@@ -540,7 +556,9 @@ async function cmdLicense(argv: string[]): Promise<void> {
       return;
     }
     case 'refresh': {
-      await refreshRevocations();
+      // Always hit the network — the whole point of an explicit
+      // refresh is to bypass the daily TTL.
+      await refreshRevocations(new Date(), { force: true });
       process.stdout.write('ujima license: revocation list refreshed.\n');
       return;
     }

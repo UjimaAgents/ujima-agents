@@ -141,13 +141,22 @@ export interface ActivateOptions {
   now?: Date;
   // Override for tests; production reads from network with caching.
   revokedIds?: Set<string>;
+  // Test seam — see verifyToken's matching parameter.
+  publicKeySpkiBase64?: string;
 }
 
 export function activate(token: string, options: ActivateOptions = {}): VerifyResult {
   const now = options.now ?? new Date();
-  const verified = verifyToken(token, now);
+  const verified = verifyToken(token, now, options.publicKeySpkiBase64);
   if (!verified.ok) return verified;
-  if (options.revokedIds && options.revokedIds.has(verified.payload.licenseId)) {
+  // Always consult the local revocation cache so a token revoked
+  // before activation can't be written to disk. Tests can still pass
+  // an explicit `revokedIds` override to force the path without
+  // populating the cache. Callers that want the freshest possible
+  // answer should `await refreshRevocations()` first.
+  const inExplicit =
+    options.revokedIds?.has(verified.payload.licenseId) ?? false;
+  if (inExplicit || isRevoked(verified.payload.licenseId)) {
     return { ok: false, reason: 'revoked', detail: verified.payload.licenseId };
   }
   writeLocalLicense({
