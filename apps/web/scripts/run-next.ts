@@ -1,6 +1,8 @@
 #!/usr/bin/env bun
+import { spawn } from 'node:child_process';
 import net from 'node:net';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const mode = process.argv[2];
 if (mode !== 'dev' && mode !== 'start') {
@@ -16,7 +18,7 @@ if (!Number.isInteger(portNum) || portNum < 0 || portNum > 65535) {
 }
 
 const extra = process.argv.slice(3);
-const root = join(import.meta.dir, '..');
+const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 const portInUse = await new Promise<boolean>((resolve) => {
   const probe = net.createServer();
@@ -41,10 +43,10 @@ if (process.env.WEB_USE_WEBPACK === '1') {
 }
 nextArgs.push(...extra);
 
-const proc = Bun.spawn(nextArgs, {
+const proc = spawn('bun', nextArgs, {
   cwd: root,
   env: { ...process.env, WEB_PORT: port },
   stdio: ['inherit', 'inherit', 'inherit'],
 });
 
-process.exit(await proc.exited);
+process.exit(await new Promise<number | null>((resolve) => proc.on('exit', resolve)));

@@ -1,8 +1,9 @@
 import type { NextConfig } from "next";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 /** Monorepo root — keeps standalone output from pulling absolute host paths into the npm tarball. */
-const appRoot = import.meta.dirname;
+const appRoot = dirname(fileURLToPath(import.meta.url));
 const monorepoRoot = join(appRoot, "../..");
 const isReleaseBuild = process.env.RELEASE === "1";
 
