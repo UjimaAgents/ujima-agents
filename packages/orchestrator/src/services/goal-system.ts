@@ -168,20 +168,34 @@ export class GoalSystemService {
       input.description !== undefined ||
       input.assigneeId !== undefined;
     if (editsPlan) {
+      // Authorization is MANDATORY for plan edits — supervisor only.
+      // Pre-fix this was opt-in: missing callerMemberId short-circuited
+      // the check and any caller could rewrite another user's plan.
+      // Require the field and assert exact-match against supervisorId.
+      if (!input.callerMemberId) {
+        throw new Error(
+          'callerMemberId is required when editing task title / description / assignee.',
+        );
+      }
       const existing = this.repo.getGoalTask(input.organizationId, input.taskId);
       if (!existing) throw new Error(`Goal task not found: ${input.taskId}`);
       const goal = this.repo.getGoal(input.organizationId, existing.goalId);
       if (!goal) throw new Error(`Goal not found for task: ${input.taskId}`);
-      if (input.callerMemberId && input.callerMemberId !== goal.supervisorId) {
+      if (input.callerMemberId !== goal.supervisorId) {
         throw new Error(
           `Only the goal supervisor (${goal.supervisorId}) can edit task title / description / assignee.`,
         );
       }
+      // Merge handoverSummary into the same save when present —
+      // a single call combining plan + handover used to silently
+      // drop the note because the second branch was gated on
+      // !editsPlan.
       this.repo.saveGoalTask({
         ...existing,
         title: input.title ?? existing.title,
         description: input.description ?? existing.description,
         assigneeId: input.assigneeId ?? existing.assigneeId,
+        handoverSummary: input.handoverSummary ?? existing.handoverSummary,
         updatedAt: new Date().toISOString(),
       });
     }
@@ -196,8 +210,11 @@ export class GoalSystemService {
       }
       return task;
     }
-    // Plan-only edit path (or handover_summary without status). Read
-    // back the row so the caller sees the merged state.
+    // handoverSummary-only path: when there's no status AND no plan
+    // edits, persist the note on its own. (When plan edits are
+    // present we already folded handoverSummary into that save
+    // above; when status is set we route through
+    // updateGoalTaskStatus which carries it natively.)
     if (input.handoverSummary !== undefined && !editsPlan) {
       const existing = this.repo.getGoalTask(input.organizationId, input.taskId);
       if (!existing) throw new Error(`Goal task not found: ${input.taskId}`);

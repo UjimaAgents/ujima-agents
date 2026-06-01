@@ -407,6 +407,57 @@ describe('GoalSystemService.updateTask', () => {
     ).toThrow(/Only the goal supervisor/);
   });
 
+  // Regression: callerMemberId must be REQUIRED when editing the
+  // plan, not opt-in. The previous shape `if (callerMemberId && ...)`
+  // short-circuited the check when callerMemberId was omitted, so
+  // any caller could rewrite another user's task definition.
+  it('rejects plan-edits when callerMemberId is missing', () => {
+    const { repo, orgId } = bootstrap();
+    const goals = new GoalSystemService(repo);
+    const { tasks } = goals.start({
+      organizationId: orgId,
+      channelId: 'channel-edit-anon',
+      supervisorId: 'supervisor-1',
+      title: 'Plan',
+      planMarkdown: '## Plan',
+      tasks: [{ title: 'Original', assigneeId: 'agent-a' }],
+    });
+    expect(() =>
+      goals.updateTask({
+        organizationId: orgId,
+        taskId: tasks[0]!.id,
+        title: 'Anon hijack',
+        // callerMemberId intentionally omitted
+      }),
+    ).toThrow(/callerMemberId is required/);
+  });
+
+  // Regression: a single call that combines plan edits +
+  // handoverSummary must persist BOTH. Pre-fix the
+  // `if (handoverSummary && !editsPlan)` branch swallowed the note
+  // whenever the same call also rewrote title/description/assignee.
+  it('persists handoverSummary on the same call as a plan edit', () => {
+    const { repo, orgId } = bootstrap();
+    const goals = new GoalSystemService(repo);
+    const { tasks } = goals.start({
+      organizationId: orgId,
+      channelId: 'channel-edit-handover',
+      supervisorId: 'supervisor-1',
+      title: 'Plan',
+      planMarkdown: '## Plan',
+      tasks: [{ title: 'Original', assigneeId: 'agent-a' }],
+    });
+    const updated = goals.updateTask({
+      organizationId: orgId,
+      taskId: tasks[0]!.id,
+      title: 'Renamed',
+      handoverSummary: 'Why the rename matters',
+      callerMemberId: 'supervisor-1',
+    });
+    expect(updated.title).toBe('Renamed');
+    expect(updated.handoverSummary).toBe('Why the rename matters');
+  });
+
   it('fails loudly when the agent updates a task that was never created', () => {
     const { repo, orgId } = bootstrap();
     const goals = new GoalSystemService(repo);
