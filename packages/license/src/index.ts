@@ -218,21 +218,33 @@ export async function checkLicenseForStartup(
       },
     };
   }
-  // Resolution order: persisted license first (the steady-state
-  // path), then UJIMA_LICENSE env var as a fallback so users can
-  // recover from a wiped ~/.ujima without re-running ujima init
-  // — which is what both ujima start and the daemon advertise in
-  // their failure messages. Without this fallback the gate would
-  // contradict its own remediation hint.
-  const state = loadLocalLicense();
-  const envToken = (process.env.UJIMA_LICENSE ?? '').trim();
-  const token = state?.token ?? (envToken !== '' ? envToken : null);
-  if (!token) return { ok: false, reason: 'no-license' };
+  // Resolution: try persisted first (steady-state). If persisted
+  // succeeds, env is ignored. If persisted is missing OR fails
+  // verification (revoked, expired, signature mismatch), fall back
+  // to UJIMA_LICENSE so the env var actually recovers in every
+  // scenario where the remediation message tells the operator to
+  // set it. Without the persisted-failure branch the env-var
+  // contract would be honest only when ~/.ujima was empty.
   if (!options.offlineOnly) {
-    // Best-effort daily refresh; failure to fetch is non-fatal.
     await refreshRevocations().catch(() => undefined);
   }
-  return verifyAndCheckRevocation(token, options.now ?? new Date());
+  const now = options.now ?? new Date();
+  const state = loadLocalLicense();
+  let persistedResult: VerifyResult | null = null;
+  if (state) {
+    persistedResult = verifyAndCheckRevocation(state.token, now);
+    if (persistedResult.ok) return persistedResult;
+  }
+  const envToken = (process.env.UJIMA_LICENSE ?? '').trim();
+  if (envToken !== '') {
+    const envResult = verifyAndCheckRevocation(envToken, now);
+    if (envResult.ok) return envResult;
+    // Both paths failed — prefer the persisted error if we had one,
+    // since the operator's saved state is the more meaningful
+    // diagnostic for them.
+    return persistedResult ?? envResult;
+  }
+  return persistedResult ?? { ok: false, reason: 'no-license' };
 }
 
 // Dev-mode detection: short-circuit license enforcement when:
