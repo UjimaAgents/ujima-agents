@@ -5,12 +5,31 @@ import type { GoalSystemService } from '../services/goal-system.js';
 import type { ApiRepository, RepositoryReader } from '../services/repository-reader.js';
 import type { ToolInvocationInput } from '../services/tool-service.js';
 
+export interface AgentDelegateResult {
+  status: 'completed' | 'no_reply' | 'timed_out' | 'delegate_failed';
+  agent: string;
+  agent_id: string;
+  thread_id: string;
+  message_id: string;
+  reply_id?: string;
+  reply_content?: string;
+  run_status?: string;
+  error?: string;
+}
+
 export interface ToolExecutionContext {
   invocation: ToolInvocationInput;
   team: AgentTeamHandle;
   repo: ApiRepository;
   conversations: ConversationService;
   goals: GoalSystemService;
+  delegateAgentTurn: (input: {
+    organizationId: string;
+    fromMemberId: string;
+    to: string;
+    message: string;
+    runId: string;
+  }) => Promise<AgentDelegateResult>;
   reportProgress?: (output: unknown) => Promise<void> | void;
 }
 

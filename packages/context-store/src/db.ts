@@ -1207,7 +1207,7 @@ const MIGRATIONS: {id: string; up: string}[] = [
         updated_at    TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_goals_org ON goals(organization_id, status);
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_goals_org_channel ON goals(organization_id, channel_id);
+      CREATE INDEX IF NOT EXISTS idx_goals_org_channel ON goals(organization_id, channel_id, updated_at);
 
       CREATE TABLE IF NOT EXISTS goal_tasks (
         id                 TEXT PRIMARY KEY,
@@ -1280,18 +1280,20 @@ const MIGRATIONS: {id: string; up: string}[] = [
     `,
   },
   {
-    // MCP governance — per-tool risk classification, admin-owned.
-    // Lives alongside (not inside) mcp_tool_cache so re-running Test
-    // on an MCP server cannot clobber admin decisions. Seeding from
-    // discovery uses INSERT OR IGNORE; manual edits never get
-    // overwritten by construction.
-    //
-    // Renumbered from 033 to 041 during the main merge: main claimed
-    // 033–040 with goal/memory migrations. CREATE TABLE IF NOT EXISTS
-    // is idempotent so dev DBs that already applied the original 033
-    // shape end up with the same table + a harmless orphan row in
-    // schema_migrations.
-    id: '041_mcp_tool_classifications',
+    id: "041_goals_allow_multiple_per_channel",
+    up: `
+      DROP INDEX IF EXISTS idx_goals_org_channel;
+      CREATE INDEX IF NOT EXISTS idx_goals_org_channel
+        ON goals(organization_id, channel_id, updated_at);
+    `,
+  },
+  {
+    // MCP governance — per-tool risk classification. Renumbered
+    // through merges (was 033 originally, then 041 during the first
+    // main merge, now 042 since main claimed 041 for the
+    // multiple-goals-per-channel index drop). CREATE TABLE IF NOT
+    // EXISTS keeps dev DBs idempotent across the renumber.
+    id: '042_mcp_tool_classifications',
     up: `
       CREATE TABLE IF NOT EXISTS mcp_tool_classifications (
         organization_id TEXT NOT NULL,
@@ -1312,11 +1314,8 @@ const MIGRATIONS: {id: string; up: string}[] = [
     `,
   },
   {
-    // Per-tool agent grants. Zero rows for (agent, server) → runtime
-    // exposes the full tool list (back-compat). Any rows → only those
-    // tools are exposed, shrinking the model's prompt palette.
-    // Renumbered from 034 to 042 for the same reason as 041 above.
-    id: '042_agent_tool_attachments',
+    // Per-tool agent grants. Same renumber story as 042 above.
+    id: '043_agent_tool_attachments',
     up: `
       CREATE TABLE IF NOT EXISTS agent_tool_attachments (
         organization_id TEXT NOT NULL,
@@ -1337,12 +1336,7 @@ const MIGRATIONS: {id: string; up: string}[] = [
     `,
   },
   {
-    // Persists the goal-task sweeper's last nudge timestamp so the
-    // UI can render a "next nudge in M:SS" countdown and the dedup
-    // window survives a daemon restart (the in-memory Map in
-    // GoalSystemService.lastNudgedAt is the fast path; this column
-    // is the durable mirror).
-    id: '043_goal_tasks_last_nudged_at',
+    id: '044_goal_tasks_last_nudged_at',
     up: `ALTER TABLE goal_tasks ADD COLUMN last_nudged_at TEXT;`,
   },
 ];

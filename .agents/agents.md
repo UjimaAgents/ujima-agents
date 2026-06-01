@@ -21,7 +21,26 @@ For **runtime agent persona and tone** (what models feel like in chat), see `SOU
 
 - Reproduce with the smallest possible loop; gather traces and logs before editing.
 - Trim scope to the failing interaction; prefer small, verifiable patches over sprawling refactors unless boundaries demand it.
-- Add or adjust tests or scripted scenarios that lock in the desired behavior; avoid brittle heuristics.
+- Prioritize high-impact, critical user paths.
+
+### Testing discipline
+
+Default: **do not add new tests.** Ship the fix, run the existing suite, move on.
+
+Only add or adjust a test when one of these is true:
+
+- The user explicitly asked for tests.
+- You are fixing a regression that had no coverage, and a single focused test locks the contract in so it cannot silently regress again.
+- You are introducing a new public contract (a tool, a service method, an API route) that has no existing coverage at all.
+
+Do not add a test when:
+
+- The change is a small guard, filter, or error-message refinement.
+- The behavior is already exercised by an existing integration test downstream.
+- The test would only restate the implementation (mocks calling mocks).
+- You are tempted to add a test "to be thorough" — that is the signal to stop.
+
+Prefer extending an existing test file over creating a new one. One sharp test beats five defensive ones. If a behavior is hard to test cheaply, that is usually a design signal, not a reason to add scaffolding.
 
 ### Anti-patterns
 

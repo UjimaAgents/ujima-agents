@@ -67,6 +67,23 @@ import type { RunSpiritInput, RunSpiritOutcome } from './spirit-types.js';
 import { isToolCardError } from './spirit-run-detail.js';
 import { SpiritServiceLifecycle } from './spirit-lifecycle.js';
 
+function isDelegateMessage(message: { metadata?: unknown } | null | undefined): boolean {
+  return !!(message?.metadata as { delegate?: unknown } | undefined)?.delegate;
+}
+
+function filterDelegateTurnTools(toolIds: readonly string[]): string[] {
+  const postingTools = new Set([
+    'channel.post',
+    'channel.reply',
+    'channel.dm',
+    'channel.handoff',
+    'channel.pass',
+    'channel.ack',
+    'message',
+  ]);
+  return toolIds.filter((toolId) => !postingTools.has(toolId));
+}
+
 export class SpiritServiceAgentRun extends SpiritServiceLifecycle {
   async run(input: RunSpiritInput): Promise<RunSpiritOutcome> {
     const role = input.role ?? 'worker';
@@ -176,14 +193,19 @@ ${activeMemories
       spirit.runId !== undefined
         ? this.repo.getRun(input.organizationId, spirit.runId)
         : undefined;
+    const sourceMessage = supervisorRunRow?.sourceMessageId
+      ? this.repo.getMessage(input.organizationId, supervisorRunRow.sourceMessageId)
+      : null;
+    const isDelegateTurn = isDelegateMessage(sourceMessage);
     const supervisorWakePolicy = resolveWakeReplyPolicy({
       threadId: session.channelId,
       wakeReason: supervisorRunRow?.wakeReason as WakeReason | undefined,
     });
-    const allowedToolIds = filterToolsForWakeReplyPolicy(
+    const baseAllowedToolIds = filterToolsForWakeReplyPolicy(
       resolvedAllowlist,
       supervisorWakePolicy,
     );
+    const allowedToolIds = isDelegateTurn ? filterDelegateTurnTools(baseAllowedToolIds) : baseAllowedToolIds;
     const builtInToolDefs = this.buildToolDefinitions(allowedToolIds, {
       organizationId: input.organizationId,
       runId: spirit.runId ?? spirit.id,
@@ -233,7 +255,17 @@ ${activeMemories
       messageContent: input.promptMessageContent,
       goalMode: input.promptGoalMode,
     });
-    const systemPrompt = systemPromptSuffix ? `${system}\n\n${systemPromptSuffix}` : system;
+    const delegateSuffix = isDelegateTurn
+      ? [
+          '<delegate_turn>',
+          'You are handling one agent.delegate task. Use tools as needed, then finish with final assistant text only.',
+          'Do not call channel.post, channel.reply, channel.dm, message, channel.pass, channel.ack, or channel.handoff.',
+          'Your final text is returned to the delegating agent as the tool result and ends this delegated turn.',
+          '</delegate_turn>',
+        ].join('\n')
+      : '';
+    const suffixes = [systemPromptSuffix, delegateSuffix].filter(Boolean);
+    const systemPrompt = suffixes.length ? `${system}\n\n${suffixes.join('\n\n')}` : system;
 
     const maxIterations = input.maxIterations ?? this.maxIterationsPerRun;
     let totalTurns = 0;
@@ -323,7 +355,7 @@ ${activeMemories
               .data;
             const interrupts = page.filter(
               (message) =>
-                message.kind === 'human' &&
+                (message.kind === 'human' || isDelegateMessage(message)) &&
                 message.senderId !== member.id &&
                 isMessageAfterCursor(message, interruptCursor),
             );

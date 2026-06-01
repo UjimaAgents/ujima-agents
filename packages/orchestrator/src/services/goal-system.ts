@@ -90,7 +90,11 @@ export class GoalSystemService {
     const now = new Date().toISOString();
     const tasks = validatePlanTasks(input.tasks);
     return this.repo.transaction(() => {
-      const existing = this.repo.getGoalByChannel(input.organizationId, input.channelId);
+      const channel = this.repo.getChannel(input.organizationId, input.channelId);
+      const existing =
+        channel?.kind === 'dm' || channel?.kind === 'self'
+          ? this.repo.getGoalByChannel(input.organizationId, input.channelId)
+          : null;
       const goal = this.repo.saveGoal({
         id: existing?.id ?? randomUUID(),
         organizationId: input.organizationId,
@@ -103,13 +107,12 @@ export class GoalSystemService {
         createdAt: existing?.createdAt ?? now,
         updatedAt: now,
       });
-      this.repo.deleteGoalTasks(input.organizationId, goal.id);
-      for (const question of this.repo.listPendingInteractiveQuestions(input.organizationId, input.channelId)) {
-        this.repo.saveInteractiveQuestion({
-          ...question,
-          status: 'superseded',
-          updatedAt: now,
-        });
+      if (existing) {
+        this.repo.deleteGoalTasks(input.organizationId, goal.id);
+        for (const question of this.repo.listPendingInteractiveQuestions(input.organizationId, input.channelId)) {
+          if (question.goalId !== goal.id) continue;
+          this.repo.saveInteractiveQuestion({ ...question, status: 'superseded', updatedAt: now });
+        }
       }
       const taskIds = tasks.map(() => randomUUID());
       const savedTasks: GoalTask[] = [];
@@ -360,12 +363,14 @@ export class GoalSystemService {
     if (question.runId && question.toolCallId) {
       const step = this.repo
         .listRunSteps(organizationId, question.runId)
-        .find((s) => s.toolCallId === question.toolCallId);
+        .find((candidate) => candidate.toolCallId === question.toolCallId);
       if (step) {
-        const existingOutput = step.output && typeof step.output === 'object' ? step.output : {};
+        const output = step.output && typeof step.output === 'object' && !Array.isArray(step.output)
+          ? step.output as Record<string, unknown>
+          : {};
         this.repo.saveRunStep({
           ...step,
-          output: { ...existingOutput, status: 'completed', selectedOption },
+          output: { ...output, status: 'completed', selectedOption },
         });
       }
     }
@@ -442,10 +447,14 @@ export class GoalSystemService {
         .some((step) => step.toolId === 'goal.start' && step.status === 'ok');
       if (!ranGoalStart) return null;
     }
-    const goal = this.repo.getGoalByChannel(input.organizationId, input.channelId);
-    if (!goal || goal.status !== 'planning') return null;
     const pending = this.repo.listPendingInteractiveQuestions(input.organizationId, input.channelId);
-    if (pending.length > 0) return null;
+    const goal = this.repo
+      .listGoalsByChannel(input.organizationId, input.channelId)
+      .find((candidate) => (
+        candidate.status === 'planning' &&
+        !pending.some((question) => question.goalId === candidate.id)
+      ));
+    if (!goal || goal.status !== 'planning') return null;
     return this.ask({
       organizationId: input.organizationId,
       channelId: input.channelId,

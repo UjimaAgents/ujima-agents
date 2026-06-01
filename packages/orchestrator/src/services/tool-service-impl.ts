@@ -28,6 +28,7 @@ import {
   ORCHESTRATOR_TOOLS,
   SUPERVISOR_TOOL_ALLOWLIST,
 } from "../tools/index.js";
+import type { AgentDelegateResult } from "../tools/types.js";
 import {
   approvalWaitResult,
   buildToolApprovalScope,
@@ -86,6 +87,13 @@ export class ToolServiceImpl implements ToolService {
     private readonly conversations: ConversationService,
     private readonly goals: GoalSystemService,
     private readonly realtime: RealtimeService,
+    private readonly delegateAgentTurn: (input: {
+      organizationId: string;
+      fromMemberId: string;
+      to: string;
+      message: string;
+      runId: string;
+    }) => Promise<AgentDelegateResult>,
     private readonly mcpPool?: McpRuntimePool,
     private readonly modelResolver?: ModelResolver,
     private readonly shellAutoReview = new ShellAutoReviewService(),
@@ -396,6 +404,7 @@ export class ToolServiceImpl implements ToolService {
         repo: this.repo,
         conversations: this.conversations,
         goals: this.goals,
+        delegateAgentTurn: this.delegateAgentTurn,
         reportProgress: (output) => this.emitToolProgress(invocation, output),
       });
     }

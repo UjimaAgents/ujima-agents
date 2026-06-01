@@ -66,7 +66,9 @@ export function ensureDirectMessageConversation(
   memberB: MemberRef,
 ): string {
   const channelId = getDirectMessageThreadId(memberA.id, memberB.id);
-  const dmChannelName = [memberA.name, memberB.name].sort().join(' / ');
+  const memberIds = [...new Set([memberA.id, memberB.id])].sort();
+  const dmChannelName =
+    memberA.id === memberB.id ? `${memberA.name} (self delegation)` : [memberA.name, memberB.name].sort().join(' / ');
   const now = new Date().toISOString();
 
   const existing = repo.getChannel(organizationId, channelId);
@@ -76,19 +78,19 @@ export function ensureDirectMessageConversation(
     name: dmChannelName,
     kind: 'dm',
     topic: '',
-    memberIds: [memberA.id, memberB.id],
+    memberIds,
     createdAt: existing?.createdAt ?? now,
     archivedAt: existing?.archivedAt,
     parentMessageId: existing?.parentMessageId,
   });
   repo.saveChannel(channel);
-  repo.setChannelMembers(channelId, [memberA.id, memberB.id].sort());
+  repo.setChannelMembers(channelId, memberIds);
   repo.ensureThread({
     id: channel.id,
     organizationId,
     channelId: channel.id,
     title: dmChannelName,
-    memberIds: [memberA.id, memberB.id],
+    memberIds,
     createdAt: channel.createdAt ?? now,
   });
   return channelId;

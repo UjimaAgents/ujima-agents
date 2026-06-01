@@ -11,14 +11,20 @@ export interface PendingMemberAlert {
   wakeReason: WakeReason;
 }
 
-const pendingByThread = new Map<string, PendingMemberAlert>();
+const pendingByThread = new Map<string, PendingMemberAlert[]>();
 
 function pendingKey(organizationId: string, memberId: string, threadId: string): string {
   return `${organizationId}:${memberId}:${threadId}`;
 }
 
 export function enqueuePendingMemberAlert(alert: PendingMemberAlert): void {
-  pendingByThread.set(pendingKey(alert.organizationId, alert.memberId, alert.threadId), alert);
+  const key = pendingKey(alert.organizationId, alert.memberId, alert.threadId);
+  const queue = pendingByThread.get(key);
+  if (queue) {
+    queue.push(alert);
+  } else {
+    pendingByThread.set(key, [alert]);
+  }
 }
 
 export function takePendingMemberAlert(
@@ -27,8 +33,15 @@ export function takePendingMemberAlert(
   threadId: string,
 ): PendingMemberAlert | undefined {
   const key = pendingKey(organizationId, memberId, threadId);
-  const pending = pendingByThread.get(key);
-  pendingByThread.delete(key);
+  const queue = pendingByThread.get(key);
+  if (!queue || queue.length === 0) {
+    pendingByThread.delete(key);
+    return undefined;
+  }
+  const pending = queue.shift();
+  if (queue.length === 0) {
+    pendingByThread.delete(key);
+  }
   return pending;
 }
 
@@ -39,8 +52,22 @@ export async function drainPendingMemberAlertAfterRun(
   wake: (input: PendingMemberAlert) => Promise<void>,
 ): Promise<void> {
   if (!TERMINAL_RUN_STATUSES.has(run.status) || !run.threadId) return;
-  const pending = takePendingMemberAlert(run.organizationId, run.agentId, run.threadId);
-  if (pending) await wake(pending);
+  let pending: PendingMemberAlert | undefined;
+  while ((pending = takePendingMemberAlert(run.organizationId, run.agentId, run.threadId))) {
+    await wake(pending);
+  }
+}
+
+export function hasPendingMemberAlert(
+  organizationId: string,
+  memberId: string,
+  threadId: string,
+  messageId: string,
+): boolean {
+  const key = pendingKey(organizationId, memberId, threadId);
+  const queue = pendingByThread.get(key);
+  if (!queue) return false;
+  return queue.some((alert) => alert.messageId === messageId);
 }
 
 export function clearPendingMemberAlertsForTests(): void {

@@ -45,6 +45,22 @@ import {
   type MessageCursor,
 } from './utils/message-interrupts.js';
 
+function isDelegateMessage(message: Message | null | undefined): boolean {
+  return !!(message?.metadata as { delegate?: unknown } | undefined)?.delegate;
+}
+
+function filterDelegateTurnTools(toolIds: readonly string[]): string[] {
+  const postingTools = new Set([
+    'channel.post',
+    'channel.reply',
+    'channel.dm',
+    'channel.handoff',
+    'channel.pass',
+    'channel.ack',
+    'message',
+  ]);
+  return toolIds.filter((toolId) => !postingTools.has(toolId));
+}
 
 // Resolver now delegates to the canonical `@ujima/llm` surface so every
 // AI-SDK-driven code path (this `/api/runs` service, the upcoming
@@ -288,8 +304,13 @@ export class AiService {
     // `ALWAYS_AVAILABLE_AGENT_TOOLS`, so the model has a clear
     // path to comply with the "you must reply" contract regardless
     // of how the role config declares its `tools`.
-    const wakeReasonForPalette = (this.repo.getRun?.(input.organizationId, input.runId)
-      ?.wakeReason ?? null) as WakeReason | null;
+    const runRow = this.repo.getRun?.(input.organizationId, input.runId);
+    const sourceMessageId = (runRow?.sourceMessageId ?? undefined) as string | undefined;
+    const sourceMessage = sourceMessageId
+      ? this.repo.getMessage(input.organizationId, sourceMessageId)
+      : null;
+    const isDelegateTurn = isDelegateMessage(sourceMessage);
+    const wakeReasonForPalette = (runRow?.wakeReason ?? null) as WakeReason | null;
     const wakeReplyPolicy = resolveWakeReplyPolicy({
       threadId: input.threadId,
       wakeReason: wakeReasonForPalette,
@@ -299,9 +320,10 @@ export class AiService {
       wakeReplyPolicy,
     );
     const roleTools = filterToolsForWakeReplyPolicy(role.tools, wakeReplyPolicy);
-    const toolIds = filterDeprecatedToolIds([
+    const resolvedToolIds = filterDeprecatedToolIds([
       ...new Set([...roleTools, ...baseAlwaysAvailable]),
     ]);
+    const toolIds = isDelegateTurn ? filterDelegateTurnTools(resolvedToolIds) : resolvedToolIds;
     const builtInToolDefs = buildToolDefinitions(toolIds, team, this.tools, {
       organizationId: input.organizationId,
       runId: input.runId,
@@ -458,8 +480,6 @@ export class AiService {
     // agnostic (XML wrapper, works on Claude / DeepSeek / GPT / Gemini).
     // Resolved from the wake's sourceMessageId when available so the
     // "responders since wake" computation is correct on long threads.
-    const runRow = this.repo.getRun?.(input.organizationId, input.runId);
-    const sourceMessageId = (runRow?.sourceMessageId ?? undefined) as string | undefined;
     const threadStateBlock = buildThreadStateBlock({
       messages: initialThreadMessages,
       currentMember: { id: member.id, name: member.name },
@@ -510,6 +530,18 @@ export class AiService {
     });
     for (const wakeMessage of wakeContextMessages) {
       messages.push(wakeMessage);
+    }
+    if (isDelegateTurn) {
+      messages.push({
+        role: 'user',
+        content: [
+          '<delegate_turn>',
+          'You are handling one agent.delegate task. Use tools as needed, then finish with final assistant text only.',
+          'Do not call channel.post, channel.reply, channel.dm, message, channel.pass, channel.ack, or channel.handoff.',
+          'Your final text is returned to the delegating agent as the tool result and ends this delegated turn.',
+          '</delegate_turn>',
+        ].join('\n'),
+      });
     }
     const systemPrompt = system;
 
@@ -598,7 +630,7 @@ export class AiService {
     const page = this.repo.listMessages(input.organizationId, input.threadId, undefined, 100).data;
     const interrupts = page.filter(
       (message) =>
-        message.kind === 'human' &&
+        (message.kind === 'human' || isDelegateMessage(message)) &&
         message.senderId !== input.agentId &&
         isMessageAfterCursor(message, cursor),
     );

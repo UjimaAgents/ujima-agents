@@ -145,6 +145,7 @@ describe("workspace-store helpers", () => {
 
     expect(isAgentOnlyThread("agents", state)).toBe(true);
     expect(isAgentOnlyThread("dm:ava:bo", state)).toBe(true);
+    expect(isAgentOnlyThread("dm:ava:ava", state)).toBe(true);
     expect(isAgentOnlyThread("mixed", state)).toBe(false);
     expect(isAgentOnlyThread("dm:ava:human", state)).toBe(false);
   });
@@ -169,6 +170,20 @@ describe("workspace-store helpers", () => {
     expect(selectActiveAgentChats(useWorkspaceStore.getState(), "current")).toEqual([
       { threadId: "agents", name: "agents", agents: ["Ava", "Bo"] },
       { threadId: "dm:ava:bo", name: "Ava & Bo", agents: ["Ava", "Bo"] },
+    ]);
+  });
+
+  it("labels active self-delegation chats clearly", () => {
+    useWorkspaceStore.setState({
+      channels: [],
+      members,
+      globalActiveRuns: [
+        run({ id: "run-1", agentId: "ava", threadId: "dm:ava:ava", status: "running" }),
+      ],
+    });
+
+    expect(selectActiveAgentChats(useWorkspaceStore.getState(), "current")).toEqual([
+      { threadId: "dm:ava:ava", name: "Ava (self delegation)", agents: ["Ava"] },
     ]);
   });
 
