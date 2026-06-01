@@ -32,7 +32,7 @@ export function saveChannel(db: DbHandle, channel: Channel): Channel {
   db.prepare(
     `INSERT INTO channels (id, organization_id, name, kind, topic, created_at, updated_at, parent_message_id, archived_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(id) DO UPDATE SET
+     ON CONFLICT(organization_id, id) DO UPDATE SET
        name = excluded.name,
        kind = excluded.kind,
        topic = excluded.topic,

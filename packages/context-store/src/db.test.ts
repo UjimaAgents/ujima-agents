@@ -43,7 +43,8 @@ describe('database migrations', () => {
         role_name TEXT NOT NULL,
         presence TEXT NOT NULL DEFAULT 'offline',
         created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
+        updated_at TEXT NOT NULL,
+        retired_at TEXT
       );
 
       CREATE TABLE messages (
