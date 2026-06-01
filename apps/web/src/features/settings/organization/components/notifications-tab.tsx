@@ -317,7 +317,7 @@ function GuideModal({ provider, onClose }: { provider: "telegram" | "whatsapp" |
           </li>
           <li className="flex gap-3">
             <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-violet-100 text-xs font-bold text-violet-700 dark:bg-violet-500/20 dark:text-violet-300">3</span>
-            <span>Wait 1–2 minutes — you'll receive a reply with your <strong>API key</strong></span>
+            <span>Wait 1–2 minutes — you&apos;ll receive a reply with your <strong>API key</strong></span>
           </li>
           <li className="flex gap-3">
             <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-violet-100 text-xs font-bold text-violet-700 dark:bg-violet-500/20 dark:text-violet-300">4</span>

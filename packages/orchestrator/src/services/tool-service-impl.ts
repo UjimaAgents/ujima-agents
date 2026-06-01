@@ -280,11 +280,6 @@ export class ToolServiceImpl implements ToolService {
     }
 
     const approvalScope = buildToolApprovalScope(preparedInvocation);
-    const requiresApproval = this.shouldRequireApproval(
-      team,
-      preparedInvocation,
-      policy.requiresApproval,
-    );
 
     if (
       !isToolApprovalSatisfied({
