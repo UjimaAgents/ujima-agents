@@ -565,12 +565,14 @@ describe('McpRegistryService — Phase 3 MCP integration', () => {
     const disabledBefore = fixture.repo.getMcpServer(fixture.organizationId, server.id);
     expect(disabledBefore?.status).toBe('disabled');
     const registry = new McpRegistryService(fixture.repo, async () => ({
-      id: 'mock-connection',
-      def: {} as never,
-      listTools: async () => [{ name: 'ping', description: 'Ping' }],
-      callTool: async () => ({ content: { ok: true } }),
-      close: async () => undefined,
-      isOpen: () => true,
+      connection: {
+        id: 'mock-connection',
+        def: {} as never,
+        listTools: async () => [{ name: 'ping', description: 'Ping' }],
+        callTool: async () => ({ content: { ok: true } }),
+        close: async () => undefined,
+        isOpen: () => true,
+      },
     }));
 
     const result = await registry.test(fixture.organizationId, server.id);
@@ -1252,8 +1254,8 @@ describe('McpRegistryService — Phase 3 MCP integration', () => {
     // has no destructive verb but is marked `destructive=true` by
     // the server's annotations. Pre-fix this hint was discarded; the
     // classifier would then call this `write` based on `update_thing`.
-    const fakeConnect = async (): Promise<MCPConnection> =>
-      ({
+    const fakeConnect = async () => ({
+      connection: {
         listTools: async () => [
           {
             name: 'update_thing',
@@ -1264,7 +1266,8 @@ describe('McpRegistryService — Phase 3 MCP integration', () => {
         ],
         callTool: async () => ({ content: 'ok' }),
         close: async () => undefined,
-      }) as unknown as MCPConnection;
+      } as unknown as MCPConnection,
+    });
 
     const registry = new McpRegistryService(fixture.repo, fakeConnect);
     const server = registry.create({
