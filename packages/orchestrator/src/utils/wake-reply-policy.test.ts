@@ -28,6 +28,7 @@ describe('resolveWakeReplyPolicy', () => {
     expect(policy.mandatoryReply).toBe(false);
     expect(policy.suppressPassTool).toBe(true);
     expect(policy.scaffoldBlock).toContain('direct message (1:1)');
+    expect(policy.scaffoldBlock).toContain('natural stopping point');
   });
 
   it('dm thread allows pass when wake reason is channel-read (backpressure demoted)', () => {

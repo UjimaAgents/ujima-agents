@@ -186,8 +186,9 @@ export function registerGoalRoutes(api: FastifyInstance, deps: GoalRouteDeps): v
     if (!auth) return;
     if (req.query.channelId) {
       if (!requireThreadAccess(deps, reply, auth.user.organizationId, req.query.channelId, auth.member.id, 'read')) return;
-      const goal = deps.repo.getGoalByChannel(auth.user.organizationId, req.query.channelId);
-      return reply.status(200).send({ goals: goal ? [goal] : [] });
+      return reply.status(200).send({
+        goals: deps.repo.listGoalsByChannel(auth.user.organizationId, req.query.channelId),
+      });
     }
     return reply.status(200).send({
       goals: deps.repo

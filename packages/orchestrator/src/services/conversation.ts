@@ -1461,11 +1461,15 @@ export class ConversationService {
   ): Promise<void> {
     if (!channel || channel.kind !== 'dm') return;
     const recipients = channel.memberIds.filter((memberId) => memberId !== message.senderId);
+    const sender = this.repo.getMember(message.organizationId, message.senderId);
     await Promise.all(
       recipients.map(async (recipientId) => {
         // Muted/temp_disable agents don't receive DMs either
         const memberMode = this.repo.getChannelMemberMode(channel.id, recipientId);
         if (memberMode === 'muted' || memberMode === 'temp_disable') return;
+        const recipient = this.repo.getMember(message.organizationId, recipientId);
+        const pairCap =
+          sender?.kind === 'agent' && recipient?.kind === 'agent' ? 1 : this.pairMentionCap;
         try {
           const countInWindow = this.recordPairMentionWake(
             message.organizationId,
@@ -1474,7 +1478,7 @@ export class ConversationService {
             recipientId,
           );
           const wakeReason: WakeReason =
-            countInWindow > this.pairMentionCap ? 'channel-read' : 'dm';
+            countInWindow > pairCap ? 'channel-read' : 'dm';
 
           if (wakeReason === 'channel-read') {
             this.emitEchoSuppressed({

@@ -13,6 +13,8 @@ import {
 import { ShellApprovalMemberModeField } from "@/features/providers/shell-approval-mode-field";
 import { Select } from "@/components/ui/select";
 
+const PROVIDER_LABELS: Record<string, string> = { openai: "OpenAI", anthropic: "Anthropic", google: "Google" };
+
 export function AgentChatHeaderControls({
   orgId,
   member,
@@ -31,14 +33,13 @@ export function AgentChatHeaderControls({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const PROVIDER_LABELS: Record<string, string> = { openai: "OpenAI", anthropic: "Anthropic", google: "Google" };
   const modelOptions = useMemo(
     () =>
       listConfiguredProviderModels(
         providers,
         (provider, model) => `${PROVIDER_LABELS[provider] ?? provider.charAt(0).toUpperCase() + provider.slice(1)} · ${model}`,
       ),
-    [providers, PROVIDER_LABELS],
+    [providers],
   );
 
   const selectedModelValue = resolveMemberModelSelection(member, providers);

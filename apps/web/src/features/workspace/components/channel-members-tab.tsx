@@ -260,9 +260,10 @@ function MemberRow({
   const [open, setOpen] = useState(false);
 
   return (
-    <label className="flex items-center gap-3 py-2.5">
+    <div className="flex items-center gap-3 py-2.5">
       <input
         type="checkbox"
+        aria-label={`${checked ? "Remove" : "Add"} ${member.name}`}
         checked={checked}
         disabled={disabled}
         onChange={() => onToggle(member.id)}
@@ -324,6 +325,6 @@ function MemberRow({
         </div>
         <p className="truncate text-xs text-zinc-500 dark:text-zinc-400">{member.roleName}</p>
       </div>
-    </label>
+    </div>
   );
 }

@@ -1354,6 +1354,7 @@ test('saves, gets and lists goals, tasks and questions', () => {
   expect(repo.getGoal(orgId, 'goal-1')).toEqual(goal);
   expect(repo.getGoalByChannel(orgId, 'channel-1')).toEqual(goal);
   expect(repo.listGoals(orgId)).toEqual([goal]);
+  expect(repo.listGoalsByChannel(orgId, 'channel-1')).toEqual([goal]);
 
   const task1 = repo.saveGoalTask({
     id: 'task-1',

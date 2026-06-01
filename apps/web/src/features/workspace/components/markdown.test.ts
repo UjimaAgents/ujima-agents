@@ -41,12 +41,12 @@ describe("markdown streaming renderer", () => {
     expect(html).toContain('class="max-w-full my-4 rounded-lg border border-foreground/10 bg-foreground/5 shadow-sm inline-block"');
   });
 
-  it("allows safe HTML tags and escapes other tags", () => {
-    const content = '<details><summary>Click me</summary><br>Plain text <iframe src="unsafe"></iframe></details>';
+  it("escapes raw HTML from model output", () => {
+    const content = '<details><summary>Click me</summary><a href="javascript:alert(1)">x</a></details>';
     const html = renderMarkdown(content, []);
-    expect(html).toContain("<details>");
-    expect(html).toContain("<summary>");
-    expect(html).toContain("<br>");
-    expect(html).toContain("&lt;iframe src=&quot;unsafe&quot;&gt;&lt;/iframe&gt;");
+    expect(html).not.toContain("<details>");
+    expect(html).not.toContain('href="javascript:alert(1)"');
+    expect(html).toContain("&lt;details&gt;");
+    expect(html).toContain("&lt;a href=&quot;javascript:alert(1)&quot;&gt;x&lt;/a&gt;");
   });
 });

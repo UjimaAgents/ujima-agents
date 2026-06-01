@@ -100,11 +100,29 @@ export function getGoalByChannel(
   organizationId: string,
   channelId: string,
 ): Goal | null {
-  const row = db.prepare('SELECT * FROM goals WHERE organization_id = ? AND channel_id = ?').get(
-    organizationId,
-    channelId,
-  ) as Row | null;
+  const row = db
+    .prepare(
+      `SELECT * FROM goals
+       WHERE organization_id = ? AND channel_id = ?
+       ORDER BY updated_at DESC, created_at DESC
+       LIMIT 1`,
+    )
+    .get(organizationId, channelId) as Row | null;
   return row ? toGoal(row) : null;
+}
+
+export function listGoalsByChannel(
+  db: DbHandle,
+  organizationId: string,
+  channelId: string,
+): Goal[] {
+  return (db
+    .prepare(
+      `SELECT * FROM goals
+       WHERE organization_id = ? AND channel_id = ?
+       ORDER BY updated_at DESC, created_at DESC`,
+    )
+    .all(organizationId, channelId) as Row[]).map(toGoal);
 }
 
 export function listGoals(db: DbHandle, organizationId: string): Goal[] {

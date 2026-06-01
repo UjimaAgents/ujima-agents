@@ -6,6 +6,7 @@ import {
   Clock,
   Command,
   Hash,
+  KanbanSquare,
   Plus,
   Search,
   Settings,
@@ -74,6 +75,8 @@ export interface WorkspaceSidebarProps {
   memberActivity: Record<string, ActivityState>;
   conversationUnreadCounts: Record<string, number>;
   selected?: SelectedConversation;
+  tasksActive?: boolean;
+  onOpenTasks?: () => void;
   onSelect: (conv: SelectedConversation) => void;
   onCreateChannel: (name: string) => Promise<SelectedConversation | null>;
   onCreateAgent: CreateAgentHandler;
@@ -222,6 +225,8 @@ export function WorkspaceSidebar({
   memberActivity,
   conversationUnreadCounts,
   selected,
+  tasksActive = false,
+  onOpenTasks,
   onSelect,
   onCreateChannel,
   onCreateAgent,
@@ -480,6 +485,18 @@ export function WorkspaceSidebar({
       </div>
 
       <div className="relative z-10 flex-1 overflow-y-auto px-2 py-3">
+        <div className="mb-5">
+          <SidebarSectionHeader title="Workspace" />
+          <div className="mt-1.5 space-y-0.5">
+            <SidebarItem
+              icon={<KanbanSquare className="h-4 w-4" />}
+              label="Tasks"
+              active={tasksActive}
+              onClick={onOpenTasks}
+            />
+          </div>
+        </div>
+
         <div className="mb-5">
           <SidebarSectionHeader title="Channels" onAdd={() => setIsChannelModalOpen(true)} />
           <div className="mt-1.5 space-y-0.5">

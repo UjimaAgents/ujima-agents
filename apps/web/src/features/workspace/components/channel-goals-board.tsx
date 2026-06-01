@@ -4,7 +4,6 @@ import { useEffect, useState, useMemo, useCallback, useRef } from "react";
 import { AlertCircle, AlertTriangle, Clock, GripVertical, KanbanSquare, PlayCircle } from "lucide-react";
 import type {
   Goal,
-  GoalStatus,
   GoalTask,
   GoalTaskStatus,
   InteractiveQuestion,
@@ -14,7 +13,7 @@ import { QuestionCard } from "./chat/question-card";
 import type { BootstrapResponse } from "@ujima/api-schema";
 
 interface ChannelGoalsBoardProps {
-  channelId: string;
+  channelId?: string;
   members: BootstrapResponse["members"];
 }
 
@@ -44,14 +43,6 @@ const COLUMN_TO_STATUS: Record<ColumnId, GoalTaskStatus> = {
   completed: "completed",
 };
 
-const GOAL_STATUS_BADGE: Record<GoalStatus, string> = {
-  planning: "bg-amber-100/80 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400",
-  running: "bg-violet-100/80 text-violet-700 dark:bg-violet-500/10 dark:text-violet-400",
-  completed: "bg-emerald-100/80 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400",
-  suspended: "bg-zinc-100/80 text-zinc-700 dark:bg-zinc-500/10 dark:text-zinc-400",
-  cancelled: "bg-rose-100/80 text-rose-700 dark:bg-rose-500/10 dark:text-rose-400",
-};
-
 function errorMessage(value: unknown, fallback: string): string {
   return value instanceof Error ? value.message : fallback;
 }
@@ -64,8 +55,8 @@ interface GoalBoardData {
 
 const EMPTY_BOARD: GoalBoardData = { goals: [], tasks: [], questions: [] };
 
-async function fetchGoalBoard(channelId: string): Promise<GoalBoardData> {
-  const res = await fetch(`/api/goals?channelId=${encodeURIComponent(channelId)}`);
+async function fetchGoalBoard(channelId?: string): Promise<GoalBoardData> {
+  const res = await fetch(channelId ? `/api/goals?channelId=${encodeURIComponent(channelId)}` : "/api/goals");
   if (res.status === 404) return EMPTY_BOARD;
   if (!res.ok) throw new Error("Failed to fetch goals.");
   const data = (await res.json()) as { goals?: Goal[] };
@@ -100,6 +91,7 @@ export function ChannelGoalsBoard({ channelId, members }: ChannelGoalsBoardProps
   const [dragOverColumn, setDragOverColumn] = useState<ColumnId | null>(null);
 
   const memberById = useMemo(() => new Map(members.map((m) => [m.id, m])), [members]);
+  const scopeLabel = channelId ? "this conversation" : "the workspace";
 
   const refresh = useCallback(async () => {
     try {
@@ -153,22 +145,21 @@ export function ChannelGoalsBoard({ channelId, members }: ChannelGoalsBoardProps
   );
 
   const { goals, tasks, questions } = board;
-  const primaryGoal = goals[0] ?? null;
+  const goalById = useMemo(() => new Map(goals.map((goal) => [goal.id, goal])), [goals]);
+  const pendingQuestions = questions.filter((q) => q.status === "pending");
 
-  const handleImplement = () => {
-    if (!primaryGoal) return;
-    return runAction(
-      "implement",
+  const handleImplement = (goal: Goal) =>
+    runAction(
+      `implement:${goal.id}`,
       () =>
-        fetch(`/api/goals/${encodeURIComponent(primaryGoal.id)}/implement`, {
+        fetch(`/api/goals/${encodeURIComponent(goal.id)}/implement`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
         }),
       "Failed to implement plan.",
     );
-  };
 
-  const handleUpdateStatus = (task: GoalTask, newStatus: GoalTaskStatus) => {
+  const handleUpdateStatus = useCallback((task: GoalTask, newStatus: GoalTaskStatus) => {
     const hasDependents = tasks.some((candidate) => candidate.dependsOnTaskId === task.id);
     const handoverSummary =
       newStatus === "completed" && hasDependents
@@ -185,7 +176,7 @@ export function ChannelGoalsBoard({ channelId, members }: ChannelGoalsBoardProps
         }),
       "Failed to update status.",
     );
-  };
+  }, [runAction, tasks]);
 
   // -- drag and drop --
 
@@ -269,8 +260,8 @@ export function ChannelGoalsBoard({ channelId, members }: ChannelGoalsBoardProps
 
   if (loading) {
     return (
-      <div className="flex flex-1 min-h-0 w-full flex-col items-center justify-center px-4 py-10 text-zinc-400">
-        <Clock className="h-8 w-8 animate-spin text-violet-500 mb-3" />
+      <div className="flex h-full flex-1 min-h-0 w-full flex-col items-center justify-center bg-white px-4 py-10 text-zinc-400 dark:bg-[#09090b]">
+        <Clock className="h-8 w-8 animate-spin mb-3" />
         <p className="text-sm font-medium">Loading goals and board state...</p>
       </div>
     );
@@ -278,13 +269,13 @@ export function ChannelGoalsBoard({ channelId, members }: ChannelGoalsBoardProps
 
   if (error) {
     return (
-      <div className="flex flex-1 min-h-0 w-full flex-col items-center justify-center px-4 py-10 text-center">
-        <AlertTriangle className="mb-3 h-7 w-7 text-amber-500" />
+      <div className="flex h-full flex-1 min-h-0 w-full flex-col items-center justify-center bg-white px-4 py-10 text-center dark:bg-[#09090b]">
+        <AlertTriangle className="mb-3 h-7 w-7 text-zinc-400" />
         <h3 className="mb-1 text-sm font-semibold text-zinc-900 dark:text-zinc-100">Tasks unavailable</h3>
         <p className="mb-4 max-w-sm text-xs text-zinc-500 dark:text-zinc-400">{error}</p>
         <button
           onClick={() => void refresh()}
-          className="rounded-md border border-zinc-200 px-3 py-1.5 text-xs font-semibold text-zinc-700 transition hover:bg-zinc-50 dark:border-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-900"
+          className="rounded-md border border-zinc-200 px-3 py-1.5 text-xs font-semibold text-zinc-700 transition hover:bg-white dark:border-zinc-800 dark:text-zinc-300 dark:hover:bg-[#09090b]"
         >
           Retry
         </button>
@@ -292,57 +283,61 @@ export function ChannelGoalsBoard({ channelId, members }: ChannelGoalsBoardProps
     );
   }
 
-  if (tasks.length === 0) {
+  if (goals.length === 0 && tasks.length === 0 && pendingQuestions.length === 0) {
     return (
-      <div className="flex flex-1 min-h-0 w-full flex-col items-center justify-center px-4 py-10 text-center">
-        <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-lg bg-zinc-100 text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400">
+      <div className="flex h-full flex-1 min-h-0 w-full flex-col items-center justify-center bg-white px-4 py-10 text-center dark:bg-[#09090b]">
+        <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-lg border border-zinc-200 text-zinc-500 dark:border-zinc-800 dark:text-zinc-400">
           <KanbanSquare className="h-6 w-6" />
         </div>
         <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100 mb-1">No tasks</h3>
         <p className="max-w-sm text-xs text-zinc-500 dark:text-zinc-400">
-          Tasks from this conversation will appear here.
+          Tasks from {scopeLabel} will appear here.
         </p>
       </div>
     );
   }
 
-  const pendingQuestions = questions.filter((q) => q.status === "pending");
-
   return (
-    <div className="flex flex-col flex-1 h-full min-h-0 min-w-0 px-4 py-4 space-y-4 overflow-y-auto">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 p-4 rounded-xl border border-zinc-200/80 bg-zinc-50/50 dark:border-zinc-800/80 dark:bg-zinc-950/20 backdrop-blur">
+    <div className="flex flex-col flex-1 h-full min-h-0 min-w-0 space-y-4 overflow-y-auto bg-white px-4 py-4 dark:bg-[#09090b]">
+      <div className="flex flex-col gap-3">
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2 mb-1">
-            {primaryGoal ? (
-              <>
-                <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${GOAL_STATUS_BADGE[primaryGoal.status]}`}>
-                  {primaryGoal.status}
-                </span>
-                <span className="text-[10px] text-zinc-400 dark:text-zinc-500">
-                  Supervisor: @{memberById.get(primaryGoal.supervisorId)?.name ?? primaryGoal.supervisorId}
-                </span>
-              </>
-            ) : null}
-          </div>
-          <h2 className="text-base font-extrabold text-zinc-900 dark:text-white truncate">
-            {primaryGoal ? primaryGoal.title : "Tasks"}
+          <h2 className="text-base font-extrabold text-zinc-900 dark:text-white">
+            Goals & tasks
           </h2>
+          <p className="text-xs text-zinc-500 dark:text-zinc-400">
+            {goals.length} {goals.length === 1 ? "goal" : "goals"} across {scopeLabel}.
+          </p>
         </div>
 
-        {primaryGoal?.status === "planning" && (
-          <button
-            onClick={handleImplement}
-            disabled={actionLoading === "implement"}
-            className="inline-flex shrink-0 items-center justify-center gap-1.5 px-4 py-2 bg-violet-600 hover:bg-violet-700 disabled:bg-violet-400 text-white rounded-lg text-xs font-bold shadow transition-all duration-200"
-          >
-            {actionLoading === "implement" ? (
-              <Clock className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <PlayCircle className="h-3.5 w-3.5" />
-            )}
-            Implement Plan
-          </button>
-        )}
+        <div className="flex flex-wrap gap-2">
+          {goals.map((goal) => (
+            <div key={goal.id} className="flex items-center gap-2 rounded-md border border-zinc-200 px-2.5 py-1.5 dark:border-zinc-800">
+              <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[9px] font-bold uppercase text-zinc-500 dark:text-zinc-400">
+                {goal.status}
+              </span>
+              <span className="max-w-[220px] truncate text-xs font-semibold text-zinc-800 dark:text-zinc-200">
+                {goal.title}
+              </span>
+              <span className="text-[10px] text-zinc-400">
+                @{memberById.get(goal.supervisorId)?.name ?? goal.supervisorId}
+              </span>
+              {goal.status === "planning" ? (
+                <button
+                  onClick={() => handleImplement(goal)}
+                  disabled={actionLoading === `implement:${goal.id}`}
+                  className="inline-flex items-center gap-1 rounded-md bg-zinc-900 px-2 py-1 text-[10px] font-bold text-white transition hover:bg-zinc-700 disabled:bg-zinc-400 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-white"
+                >
+                  {actionLoading === `implement:${goal.id}` ? (
+                    <Clock className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <PlayCircle className="h-3 w-3" />
+                  )}
+                  Implement
+                </button>
+              ) : null}
+            </div>
+          ))}
+        </div>
       </div>
 
       {pendingQuestions.map((q) => (
@@ -363,21 +358,20 @@ export function ChannelGoalsBoard({ channelId, members }: ChannelGoalsBoardProps
                 onDragOver={(e) => onDragOver(e, col.id)}
                 onDragLeave={(e) => onDragLeave(e, col.id)}
                 onDrop={() => onDrop(col.id)}
-                className={`flex flex-col h-full min-h-[400px] rounded-xl border p-3 transition-colors duration-150 ${dragOverColumn === col.id ? "border-violet-400 bg-violet-50/30 dark:border-violet-600 dark:bg-violet-950/10" : "border-zinc-200/60 bg-zinc-50/30 dark:border-zinc-800/50 dark:bg-zinc-900/10"}`}
+                className={`flex flex-col h-full min-h-[400px] rounded-lg border bg-white p-3 transition-colors duration-150 dark:bg-[#09090b] ${dragOverColumn === col.id ? "border-zinc-400 dark:border-zinc-600" : "border-zinc-200/60 dark:border-zinc-800/50"}`}
               >
                 <div className="flex items-center justify-between pb-3 mb-3 border-b border-zinc-200/60 dark:border-zinc-800/60">
                   <div className="flex items-center gap-2">
-                    <span className="w-2 h-2 rounded-full bg-violet-500" />
                     <span className="text-xs font-bold text-zinc-800 dark:text-zinc-200">{col.label}</span>
                   </div>
-                  <span className="inline-flex items-center justify-center rounded-full bg-zinc-200/60 dark:bg-zinc-800 text-[10px] font-bold px-2 py-0.5 text-zinc-600 dark:text-zinc-400">
+                  <span className="inline-flex items-center justify-center rounded-full text-[10px] font-bold px-2 py-0.5 text-zinc-500 dark:text-zinc-400">
                     {tasksInCol.length}
                   </span>
                 </div>
 
                 <div className="flex-1 space-y-2.5 overflow-y-auto min-h-0 max-h-[600px] pr-1">
                   {tasksInCol.length === 0 ? (
-                    <div className={`flex flex-col items-center justify-center py-10 border border-dashed rounded-lg transition-colors duration-150 ${dragOverColumn === col.id ? "border-violet-400 dark:border-violet-600" : "border-zinc-200 dark:border-zinc-800"}`}>
+                    <div className={`flex flex-col items-center justify-center py-10 border border-dashed rounded-lg transition-colors duration-150 ${dragOverColumn === col.id ? "border-zinc-400 dark:border-zinc-600" : "border-zinc-200 dark:border-zinc-800"}`}>
                       <p className="text-[10px] text-zinc-400 dark:text-zinc-500 font-medium">
                         {dragOverColumn === col.id ? "Drop here" : "Empty column"}
                       </p>
@@ -386,6 +380,7 @@ export function ChannelGoalsBoard({ channelId, members }: ChannelGoalsBoardProps
                     tasksInCol.map((task) => {
                       const assignee = memberById.get(task.assigneeId);
                       const assigneeName = assignee?.name ?? task.assigneeId;
+                      const goal = goalById.get(task.goalId);
                       return (
                         <div
                           key={task.id}
@@ -397,16 +392,21 @@ export function ChannelGoalsBoard({ channelId, members }: ChannelGoalsBoardProps
                           <h4 className="text-xs font-bold text-zinc-900 dark:text-zinc-100 leading-snug line-clamp-2 mb-2">
                             {task.title}
                           </h4>
+                          {goal ? (
+                            <span className="mb-2 w-fit max-w-full truncate rounded border border-zinc-200 px-1.5 py-0.5 text-[9px] font-semibold text-zinc-500 dark:border-zinc-800 dark:text-zinc-400">
+                              {goal.title}
+                            </span>
+                          ) : null}
 
                           {task.dependsOnTaskId && (
-                            <div className="flex items-center gap-1 mb-2 px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 dark:bg-amber-950/20 dark:text-amber-400 text-[9px] font-semibold w-fit">
+                            <div className="flex items-center gap-1 mb-2 px-1.5 py-0.5 rounded border border-zinc-200 text-zinc-600 dark:border-zinc-800 dark:text-zinc-400 text-[9px] font-semibold w-fit">
                               <AlertCircle className="h-3 w-3 shrink-0" />
                               <span>Depends on prior task</span>
                             </div>
                           )}
 
                           {task.handoverSummary && (
-                            <div className="mb-2 p-1.5 rounded bg-zinc-50 dark:bg-zinc-900 text-[9px] text-zinc-500 dark:text-zinc-400 italic">
+                            <div className="mb-2 p-1.5 rounded border border-zinc-100 dark:border-zinc-900 text-[9px] text-zinc-500 dark:text-zinc-400 italic">
                               &ldquo;{task.handoverSummary}&rdquo;
                             </div>
                           )}

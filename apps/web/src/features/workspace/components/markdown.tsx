@@ -19,23 +19,7 @@ function createRenderer(mentionNames: string[]) {
   const renderer = new marked.Renderer();
 
   renderer.html = function ({ text }: { text: string }) {
-    const tagRegex = /(<\/?[a-zA-Z0-9]+(?:\s+[^>]*?)?>)/g;
-    const allowedTags = new Set([
-      'br', 'kbd', 'sub', 'sup', 'details', 'summary',
-      'p', 'div', 'span', 'code', 'pre', 'a', 'strong', 'em',
-      'ul', 'ol', 'li'
-    ]);
-
-    return text.replace(tagRegex, (match) => {
-      const tagNameMatch = match.match(/^<\/?([a-zA-Z0-9]+)/);
-      if (tagNameMatch) {
-        const tagName = tagNameMatch[1]?.toLowerCase();
-        if (tagName && allowedTags.has(tagName)) {
-          return match;
-        }
-      }
-      return h(match);
-    });
+    return h(text);
   };
 
   renderer.code = function ({ text, lang }: { text: string; lang?: string }) {

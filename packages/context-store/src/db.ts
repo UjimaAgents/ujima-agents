@@ -1207,7 +1207,7 @@ const MIGRATIONS: {id: string; up: string}[] = [
         updated_at    TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_goals_org ON goals(organization_id, status);
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_goals_org_channel ON goals(organization_id, channel_id);
+      CREATE INDEX IF NOT EXISTS idx_goals_org_channel ON goals(organization_id, channel_id, updated_at);
 
       CREATE TABLE IF NOT EXISTS goal_tasks (
         id                 TEXT PRIMARY KEY,
@@ -1277,6 +1277,14 @@ const MIGRATIONS: {id: string; up: string}[] = [
         updated_at  TEXT NOT NULL,
         PRIMARY KEY (channel_id, member_id)
       );
+    `,
+  },
+  {
+    id: "041_goals_allow_multiple_per_channel",
+    up: `
+      DROP INDEX IF EXISTS idx_goals_org_channel;
+      CREATE INDEX IF NOT EXISTS idx_goals_org_channel
+        ON goals(organization_id, channel_id, updated_at);
     `,
   },
 ];
