@@ -898,34 +898,40 @@ export class McpRegistryService {
       );
     }
 
-    this.repo.deleteMcpToolClassification(organizationId, serverId, toolName);
+    // Atomic: delete the manual override + reseed the inferred row
+    // in one transaction so a transient seed failure (DB lock, IO
+    // error, …) doesn't leave the tool unclassified with the
+    // operator's manual decision already destroyed.
     const inf = classifyTool({
       name: descriptor?.name ?? toolName,
       description: descriptor?.description,
       category: server.category,
       declaredDestructive: descriptor?.destructive,
     });
-    this.repo.seedInferredClassifications(organizationId, serverId, [
-      {
-        toolName: descriptor?.name ?? toolName,
-        risk: inf.risk,
-        needsReview: inf.needsReview,
-        reason: inf.reason,
-      },
-    ]);
-    const row = this.repo.getMcpToolClassification(
-      organizationId,
-      serverId,
-      toolName,
-    );
-    if (!row) {
-      // requireTool + seed guarantee a row exists; this branch is
-      // a programmer-error rail, not a code path admins ever see.
-      throw new Error(
-        `Tool not found: "${toolName}" on MCP server "${serverId}" after reseed`,
+    return this.repo.transaction(() => {
+      this.repo.deleteMcpToolClassification(organizationId, serverId, toolName);
+      this.repo.seedInferredClassifications(organizationId, serverId, [
+        {
+          toolName: descriptor?.name ?? toolName,
+          risk: inf.risk,
+          needsReview: inf.needsReview,
+          reason: inf.reason,
+        },
+      ]);
+      const row = this.repo.getMcpToolClassification(
+        organizationId,
+        serverId,
+        toolName,
       );
-    }
-    return row;
+      if (!row) {
+        // requireTool + seed guarantee a row exists; this branch is
+        // a programmer-error rail, not a code path admins ever see.
+        throw new Error(
+          `Tool not found: "${toolName}" on MCP server "${serverId}" after reseed`,
+        );
+      }
+      return row;
+    });
   }
 
   // ----------------- Attachments ---------------------------------------
