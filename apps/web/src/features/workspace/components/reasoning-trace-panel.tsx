@@ -9,6 +9,15 @@ import { TraceStep, type TraceStepData } from "./chat/details-sidebar";
 const TRACE_PAGE_SIZE = 15;
 const TOP_LOAD_THRESHOLD = 40;
 
+function formatElapsed(ms: number): string {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  if (minutes < 1) return `${totalSeconds}s`;
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}hr`;
+}
+
 interface TraceRowData {
   key: string;
   step: TraceStepData;
@@ -217,6 +226,7 @@ export function ReasoningTracePanel({
   members,
   liveSteps,
   autoScroll,
+  startedAt,
 }: {
   organizationId?: string;
   threadId?: string;
@@ -226,6 +236,7 @@ export function ReasoningTracePanel({
   liveSteps: TraceStepData[];
   /** When true, keep the view pinned to the newest trace while it is live. */
   autoScroll?: boolean;
+  startedAt?: string;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
   const pendingPrependRef = useRef<{ scrollHeight: number; scrollTop: number } | null>(null);
@@ -238,6 +249,20 @@ export function ReasoningTracePanel({
   const [error, setError] = useState<string | undefined>();
   const [filter, setFilter] = useState<"all" | "errors" | "files" | "shell" | "search">("all");
   const [showScrollBottom, setShowScrollBottom] = useState(false);
+
+  const [now, setNow] = useState(() => Date.now());
+  const startedAtMs = useMemo(() => {
+    if (!startedAt) return undefined;
+    const ms = Date.parse(startedAt);
+    return Number.isFinite(ms) ? ms : undefined;
+  }, [startedAt]);
+  const elapsed = startedAtMs === undefined ? undefined : formatElapsed(now - startedAtMs);
+
+  useEffect(() => {
+    if (startedAtMs === undefined) return;
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, [startedAtMs]);
 
   const historyEnabled = !!organizationId && !!threadId;
 
@@ -482,8 +507,34 @@ export function ReasoningTracePanel({
       <div ref={rootRef} className="relative min-h-0">
         <div className="space-y-1.5">
           {traceRows.map((row) => (
-            <TraceStep key={row.key} step={row.step} isLast={row.isLast} />
+            <TraceStep
+              key={row.key}
+              step={row.step}
+              isLast={row.isLast && !elapsed}
+            />
           ))}
+          {elapsed ? (
+            <div className="relative pl-6 pb-2 pt-1 animate-in fade-in duration-300">
+              {traceRows.length > 0 ? (
+                <div
+                  className="absolute left-1 -top-2 h-4 w-px bg-foreground/10"
+                  aria-hidden
+                />
+              ) : null}
+              <div
+                className="absolute left-0 top-1.5 z-[1] h-2 w-2 rounded-full bg-violet-500 animate-ping"
+                aria-hidden
+              />
+              <div
+                className="absolute left-0 top-1.5 z-[1] h-2 w-2 rounded-full bg-violet-600 ring-[3px] ring-violet-500/20 dark:bg-violet-500"
+                aria-hidden
+              />
+              <div className="flex items-center gap-2 text-[11px] font-semibold text-violet-600/90 dark:text-violet-400/90 tabular-nums">
+                <Loader2 className="h-3 w-3 animate-spin shrink-0 text-violet-500" />
+                <span>Working for {elapsed}</span>
+              </div>
+            </div>
+          ) : null}
         </div>
         {traceEmptyLabel ? (
           <TraceEmpty
@@ -499,7 +550,7 @@ export function ReasoningTracePanel({
     </>
   );
 
-  if (traceRows.length > 0) {
+  if (traceRows.length > 0 || elapsed) {
     return <div className="flex flex-col gap-4">{filterBar}{traceList}</div>;
   }
 

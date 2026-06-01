@@ -205,7 +205,8 @@ export function registerGoalRoutes(api: FastifyInstance, deps: GoalRouteDeps): v
     return reply.status(200).send({
       goal,
       tasks: deps.repo.listGoalTasks(auth.user.organizationId, goal.id),
-      questions: listVisiblePendingQuestions(deps, auth.user.organizationId, goal.channelId, auth.member.id),
+      questions: listVisiblePendingQuestions(deps, auth.user.organizationId, goal.channelId, auth.member.id)
+        .filter((q) => q.goalId === goal.id),
     });
   });
 

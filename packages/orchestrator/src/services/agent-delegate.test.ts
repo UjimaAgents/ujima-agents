@@ -223,7 +223,7 @@ describe('agent delegation', () => {
     });
 
     expect(conversations.sendDirectMessage).toHaveBeenCalledTimes(1);
-    expect(wakeMember).not.toHaveBeenCalled();
+    expect(wakeMember).toHaveBeenCalled();
     expect(createRun).not.toHaveBeenCalled();
     expect(result.status).toBe('no_reply');
   });

@@ -568,11 +568,6 @@ export async function runAgentDelegateTurn(input: {
   }
 
   const threadId = getDirectMessageThreadId(input.fromMemberId, target.id);
-  const activeRun = input.repo.findActiveRunForMemberThread(
-    input.organizationId,
-    target.id,
-    threadId,
-  );
   const delegateMessage = input.conversations.sendDirectMessage({
     organizationId: input.organizationId,
     senderId: input.fromMemberId,
@@ -593,7 +588,7 @@ export async function runAgentDelegateTurn(input: {
       sourceMessageId: delegateMessage.id,
       byMemberId: input.fromMemberId,
     });
-  } else if (!activeRun) {
+  } else {
     await input.wakeMember({
       organizationId: input.organizationId,
       memberId: target.id,
