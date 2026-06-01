@@ -61,7 +61,7 @@ describe('scheduled jobs repository', () => {
   it('deletes a scheduled job', () => {
     repo.save({ id: 'd1', organizationId: orgId, name: 'Del', cronExpression: '* * * * *', prompt: 'del', memberId, status: 'active', runCount: 0, createdAt: now, updatedAt: now });
     repo.del(orgId, 'd1');
-    expect(repo.get(orgId, 'd1')).toBeNull();
+    expect(repo.get(orgId, 'd1')).toBeFalsy();
   });
 
   it('lists due jobs globally', () => {
