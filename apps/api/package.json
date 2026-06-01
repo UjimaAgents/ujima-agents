@@ -26,7 +26,6 @@
     "@ujima/context-store": "workspace:*",
     "@ujima/event-bus": "workspace:*",
     "@ujima/framework": "workspace:*",
-    "@ujima/license": "workspace:*",
     "@ujima/llm": "workspace:*",
     "@ujima/mcp-client": "workspace:*",
     "@ujima/orchestrator": "workspace:*",
