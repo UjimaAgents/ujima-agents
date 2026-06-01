@@ -42,7 +42,6 @@
         "@ujima/context-store": "workspace:*",
         "@ujima/event-bus": "workspace:*",
         "@ujima/framework": "workspace:*",
-        "@ujima/license": "workspace:*",
         "@ujima/llm": "workspace:*",
         "@ujima/mcp-client": "workspace:*",
         "@ujima/orchestrator": "workspace:*",
@@ -157,7 +156,6 @@
       "dependencies": {
         "@ujima/api-schema": "workspace:*",
         "@ujima/framework": "workspace:*",
-        "@ujima/license": "workspace:*",
         "@ujima/orchestrator": "workspace:*",
         "@ujima/runtime-core": "workspace:*",
         "@ujima/shared": "workspace:*",
@@ -190,7 +188,7 @@
     },
     "packages/distribution": {
       "name": "@ujima/agents",
-      "version": "0.0.14",
+      "version": "0.0.13",
       "bin": {
         "ujima": "./dist/cli.js",
       },
@@ -205,10 +203,6 @@
         "@ujima/context-store": "workspace:*",
         "@ujima/shared": "workspace:*",
       },
-    },
-    "packages/license": {
-      "name": "@ujima/license",
-      "version": "0.0.0",
     },
     "packages/llm": {
       "name": "@ujima/llm",
@@ -256,6 +250,7 @@
       },
       "devDependencies": {
         "@types/diff": "^8.0.0",
+        "@ujima/runtime-core": "workspace:*",
       },
     },
     "packages/permissions": {
@@ -843,8 +838,6 @@
     "@ujima/event-bus": ["@ujima/event-bus@workspace:packages/event-bus"],
 
     "@ujima/framework": ["@ujima/framework@workspace:packages/ujima"],
-
-    "@ujima/license": ["@ujima/license@workspace:packages/license"],
 
     "@ujima/llm": ["@ujima/llm@workspace:packages/llm"],
 

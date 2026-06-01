@@ -19,7 +19,6 @@ import {
   migrateUnifiedWorkspaceOrg,
   type PermissionContextBuilder,
 } from '@ujima/orchestrator';
-import { checkLicenseForStartup } from '@ujima/license';
 import { createTransport } from './transport/server.js';
 import { ensureBearerToken } from './transport/token.js';
 import { DEFAULT_BIND_HOST, DEFAULT_BIND_PORT } from '@ujima/api-schema';
@@ -71,19 +70,6 @@ function wasDirtyShutdown(homeDir: string): boolean {
 }
 
 async function main(): Promise<void> {
-  // License gate runs BEFORE any logger/disk setup so a missing or
-  // revoked key produces a single clean stderr line instead of a noisy
-  // bootstrap log followed by an exit. Dev mode (running from the
-  // monorepo or UJIMA_DEV=1) short-circuits inside the check.
-  const license = await checkLicenseForStartup();
-  if (!license.ok) {
-    process.stderr.write(
-      `ujima-runtime: refusing to start — license ${license.reason}. ` +
-        `Run \`ujima init --license <key>\` or set UJIMA_LICENSE.\n`,
-    );
-    process.exit(1);
-  }
-
   const port = Number.parseInt(process.env.UJIMA_PORT ?? String(DEFAULT_BIND_PORT), 10);
   const homeDir = resolveHomeDir();
   mkdirSync(homeDir, { recursive: true });
