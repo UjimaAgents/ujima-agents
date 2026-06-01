@@ -525,11 +525,21 @@ export class McpRegistryService {
     const matchesRole = (grantScope: 'worker' | 'supervisor' | 'both'): boolean =>
       role ? grantScope === role || grantScope === 'both' : true;
 
-    // Per-agent perspective state, computed once and reused per row.
-    // The scope filter MUST apply to MCP attachments too — otherwise a
-    // supervisor-only server attachment would count as "reachable" for
-    // the worker view and the catalog would report `exposed: true`
-    // (via hasMcp) even though the runtime never resolves the server.
+    // Per-agent perspective: track presence of an attachment row (any
+    // scope) separately from a role-matching attachment, because the
+    // runtime's reachability rule (listAttachedServersForSpirit) is
+    //   exists(attachment row) AND (attachment.scope matches OR
+    //   exists(grant with matching scope)).
+    // The catalog must mirror that — without the all-scope set, a
+    // worker attachment + supervisor-only grant looked unreachable in
+    // the supervisor view even though the runtime exposes it.
+    const agentMcpAttachmentsAnyScope = agentId
+      ? new Set(
+          this.repo
+            .listAgentMcpAttachments(organizationId, agentId)
+            .map((a) => a.mcpServerId),
+        )
+      : null;
     const agentMcpAttachments = agentId
       ? new Set(
           this.repo
@@ -659,16 +669,19 @@ export class McpRegistryService {
             toolName: d.name,
             classification: effective.risk,
           });
-          const hasMcp = agentMcpAttachments?.has(server.id) ?? false;
+          const hasAnyAttachment =
+            agentMcpAttachmentsAnyScope?.has(server.id) ?? false;
+          const hasScopedAttachment = agentMcpAttachments?.has(server.id) ?? false;
           const toolGrants = agentToolGrantsByServer.get(server.id);
           const hasToolGrant = toolGrants?.has(d.name) ?? false;
           const allowlistMode = (toolGrants?.size ?? 0) > 0;
-          const exposed = !hasMcp
-            ? false
-            : allowlistMode
-              ? hasToolGrant
-              : true;
-          const exposureReason: CatalogAgentView['exposureReason'] = !hasMcp
+          // Server reachability mirrors listAttachedServersForSpirit:
+          // attachment row must exist AND (scope matches OR an in-scope
+          // grant exists). A cross-scope attachment with no grant is
+          // not reachable, so we collapse it to 'no-mcp-attachment'.
+          const reachable = hasAnyAttachment && (hasScopedAttachment || allowlistMode);
+          const exposed = reachable && (!allowlistMode || hasToolGrant);
+          const exposureReason: CatalogAgentView['exposureReason'] = !reachable
             ? 'no-mcp-attachment'
             : allowlistMode
               ? hasToolGrant
