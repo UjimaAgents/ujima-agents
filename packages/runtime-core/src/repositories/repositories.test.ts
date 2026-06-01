@@ -1121,14 +1121,18 @@ test('channel membership stays mirrored and reads tolerate drift', () => {
     createdAt: '2026-04-27T08:00:00.000Z',
   });
 
-  repo.setChannelMembers('general', ['ava']);
+  repo.setChannelMembers(orgId, 'general', ['ava']);
   const mirroredThreadMembers = db
     .prepare('SELECT member_id FROM thread_members WHERE thread_id = ? ORDER BY member_id ASC')
     .all('general') as { member_id: string }[];
   expect(mirroredThreadMembers.map((row) => row.member_id)).toEqual(['ava']);
 
-  db.prepare('DELETE FROM channel_members WHERE channel_id = ?').run('general');
-  db.prepare('INSERT INTO channel_members (channel_id, member_id) VALUES (?, ?)').run('general', 'phoebe');
+  db.prepare(
+    'DELETE FROM channel_members WHERE organization_id = ? AND channel_id = ?',
+  ).run(orgId, 'general');
+  db.prepare(
+    'INSERT INTO channel_members (organization_id, channel_id, member_id) VALUES (?, ?, ?)',
+  ).run(orgId, 'general', 'phoebe');
 
   expect(repo.getChannel(orgId, 'general')?.memberIds).toEqual(['ava', 'phoebe']);
 });

@@ -1,6 +1,12 @@
 import type { SqliteDbHandle as DbHandle } from '@ujima/context-store';
 import { ConversationThreadSchema, type ConversationThread } from '@ujima/shared';
-import { now, optionalRowString, replaceMemberLinks, rowString } from './common.js';
+import {
+  now,
+  optionalRowString,
+  replaceChannelMemberLinks,
+  replaceThreadMemberLinks,
+  rowString,
+} from './common.js';
 
 type Row = Record<string, unknown>;
 
@@ -26,7 +32,7 @@ export function saveThread(db: DbHandle, thread: ConversationThread): Conversati
     now(),
   );
 
-  setThreadMembers(db, payload.id, payload.memberIds);
+  setThreadMembers(db, payload.organizationId, payload.id, payload.memberIds);
   return payload;
 }
 
@@ -63,13 +69,14 @@ export function getThread(
 
 export function setThreadMembers(
   db: DbHandle,
+  organizationId: string,
   threadId: string,
   memberIds: string[],
 ): void {
-  replaceMemberLinks(db, 'thread_members', 'thread_id', threadId, memberIds);
+  replaceThreadMemberLinks(db, threadId, memberIds);
   const channelId = getThreadChannelId(db, threadId);
   if (channelId) {
-    replaceMemberLinks(db, 'channel_members', 'channel_id', channelId, memberIds);
+    replaceChannelMemberLinks(db, organizationId, channelId, memberIds);
   }
 }
 
@@ -91,10 +98,16 @@ export function getThreadChannelId(db: DbHandle, threadId: string): string | und
   return row ? optionalRowString(row, 'channel_id') : undefined;
 }
 
-export function listThreadIdsForChannel(db: DbHandle, channelId: string): string[] {
+export function listThreadIdsForChannel(
+  db: DbHandle,
+  organizationId: string,
+  channelId: string,
+): string[] {
   const rows = db
-    .prepare('SELECT id FROM threads WHERE channel_id = ? OR id = ? ORDER BY id ASC')
-    .all(channelId, channelId) as { id: string }[];
+    .prepare(
+      'SELECT id FROM threads WHERE organization_id = ? AND (channel_id = ? OR id = ?) ORDER BY id ASC',
+    )
+    .all(organizationId, channelId, channelId) as { id: string }[];
 
   return rows.map((row) => row.id);
 }

@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { AgentTeamHandle } from '@ujima/framework';
 import {
@@ -13,9 +13,18 @@ import type { ApiRepository } from './repository-reader.js';
 export { ERR_PATH_ESCAPE, PathEscapeError };
 export type { PathResolver as ScopedPathResolver };
 
-/** Canonical form for comparing project folder paths across platforms. */
+/**
+ * Canonical form for comparing project folder paths across platforms.
+ *
+ * Resolves symlinks when the path exists on disk so that paths like
+ * `/var/tmp/foo` and `/private/var/tmp/foo` (where `/var` is a symlink to
+ * `/private/var` on macOS) collapse to the same workspace identity instead of
+ * registering as two orgs writing to the same physical directory.
+ */
 export function normalizeProjectFolderPath(path: string): string {
-  return resolve(path.trim()).replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+  const resolved = resolve(path.trim());
+  const canonical = existsSync(resolved) ? realpathSync(resolved) : resolved;
+  return canonical.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
 }
 
 export const ERR_NO_WORKSPACE_ROOT = 'ERR_NO_WORKSPACE_ROOT';

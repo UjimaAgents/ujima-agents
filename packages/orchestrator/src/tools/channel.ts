@@ -726,7 +726,7 @@ export const channelSetMemberModeTool: OrchestratorTool<typeof ChannelSetMemberM
       return { status: 'error', error: `Member not found: ${memberId}` };
     }
 
-    repo.setChannelMemberMode(channelId, memberId, mode);
+    repo.setChannelMemberMode(invocation.organizationId, channelId, memberId, mode);
 
     return {
       status: 'ok',

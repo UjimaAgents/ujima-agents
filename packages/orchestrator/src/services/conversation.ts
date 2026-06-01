@@ -499,7 +499,11 @@ export class ConversationService {
         continue;
       }
       // Channel member mode check (active / passive / muted / temp_disable)
-      const memberMode = this.repo.getChannelMemberMode(channel.id, member.id);
+      const memberMode = this.repo.getChannelMemberMode(
+        message.organizationId,
+        channel.id,
+        member.id,
+      );
       if (memberMode === 'muted' || memberMode === 'temp_disable') {
         this.emitWakeSuppressed(message, channel, member.id, 'mode-blocked');
         continue;
@@ -1025,7 +1029,7 @@ export class ConversationService {
       topic: '',
       memberIds,
     }));
-    this.repo.setChannelMembers(channelId, memberIds);
+    this.repo.setChannelMembers(input.organizationId, channelId, memberIds);
 
     this.repo.ensureThread({
       id: channel.id,
@@ -1098,7 +1102,7 @@ export class ConversationService {
         memberIds,
       }),
     );
-    this.repo.setChannelMembers(channelId, memberIds);
+    this.repo.setChannelMembers(input.organizationId, channelId, memberIds);
 
     this.repo.ensureThread({
       id: channel.id,
@@ -1152,7 +1156,7 @@ export class ConversationService {
         topic: 'Private working notes',
         memberIds: [member.id],
       });
-      this.repo.setChannelMembers(channelId, [member.id]);
+      this.repo.setChannelMembers(input.organizationId, channelId, [member.id]);
     }
     this.repo.ensureThread({
       id: channelId,
@@ -1306,7 +1310,11 @@ export class ConversationService {
 
       // Muted/temp_disable agents don't wake even on @mention
       if (channel) {
-        const memberMode = this.repo.getChannelMemberMode(channel.id, member.id);
+        const memberMode = this.repo.getChannelMemberMode(
+          message.organizationId,
+          channel.id,
+          member.id,
+        );
         if (memberMode === 'muted' || memberMode === 'temp_disable') {
           continue;
         }
@@ -1465,7 +1473,11 @@ export class ConversationService {
     await Promise.all(
       recipients.map(async (recipientId) => {
         // Muted/temp_disable agents don't receive DMs either
-        const memberMode = this.repo.getChannelMemberMode(channel.id, recipientId);
+        const memberMode = this.repo.getChannelMemberMode(
+          message.organizationId,
+          channel.id,
+          recipientId,
+        );
         if (memberMode === 'muted' || memberMode === 'temp_disable') return;
         const recipient = this.repo.getMember(message.organizationId, recipientId);
         const pairCap =

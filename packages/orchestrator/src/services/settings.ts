@@ -354,7 +354,7 @@ export class SettingsService {
       if (!channel) continue;
       const memberIds = new Set(channel.memberIds);
       memberIds.add(saved.id);
-      this.repo.setChannelMembers(channelId, [...memberIds].sort());
+      this.repo.setChannelMembers(input.organizationId, channelId, [...memberIds].sort());
     }
     return saved;
   }
@@ -428,7 +428,7 @@ export class SettingsService {
         } else {
           memberIds.delete(saved.id);
         }
-        this.repo.setChannelMembers(channel.id, [...memberIds].sort());
+        this.repo.setChannelMembers(input.organizationId, channel.id, [...memberIds].sort());
       }
     }
 
@@ -507,7 +507,7 @@ export class SettingsService {
     for (const channel of allChannels) {
       if (channel.memberIds.includes(memberId)) {
         const nextMemberIds = channel.memberIds.filter((id) => id !== memberId);
-        this.repo.setChannelMembers(channel.id, nextMemberIds);
+        this.repo.setChannelMembers(organizationId, channel.id, nextMemberIds);
       }
     }
 
@@ -574,7 +574,11 @@ export class SettingsService {
       }),
     );
     if (input.memberIds !== undefined) {
-      this.repo.setChannelMembers(existing.id, [...new Set(input.memberIds)].sort());
+      this.repo.setChannelMembers(
+        input.organizationId,
+        existing.id,
+        [...new Set(input.memberIds)].sort(),
+      );
     }
 
     return this.repo.getChannel(input.organizationId, existing.id) ?? existing;
@@ -586,7 +590,7 @@ export class SettingsService {
     if (!existing) {
       throw new Error(`Channel not found: ${channelId}`);
     }
-    this.repo.deleteChannel(channelId);
+    this.repo.deleteChannel(organizationId, channelId);
   }
 
   getOrganizationSettings(organizationId: string): OrganizationSettingsResponse {
