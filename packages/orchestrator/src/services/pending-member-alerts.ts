@@ -58,6 +58,18 @@ export async function drainPendingMemberAlertAfterRun(
   }
 }
 
+export function hasPendingMemberAlert(
+  organizationId: string,
+  memberId: string,
+  threadId: string,
+  messageId: string,
+): boolean {
+  const key = pendingKey(organizationId, memberId, threadId);
+  const queue = pendingByThread.get(key);
+  if (!queue) return false;
+  return queue.some((alert) => alert.messageId === messageId);
+}
+
 export function clearPendingMemberAlertsForTests(): void {
   pendingByThread.clear();
 }

@@ -363,10 +363,8 @@ export function ChannelGoalsBoard({
 
         <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
           {goals.map((goal) => {
-            const isRunning =
-              goal.status === "in_progress" || goal.status === "running";
-            const isCompleted =
-              goal.status === "completed" || goal.status === "success";
+            const isRunning = goal.status === "running";
+            const isCompleted = goal.status === "completed";
             return (
               <div key={goal.id} className="flex items-center gap-2 text-xs">
                 <span

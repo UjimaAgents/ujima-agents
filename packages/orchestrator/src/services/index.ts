@@ -27,6 +27,7 @@ import { OnboardingService } from './onboarding.js';
 import {
   drainPendingMemberAlertAfterRun,
   enqueuePendingMemberAlert,
+  hasPendingMemberAlert,
   type PendingMemberAlert,
 } from './pending-member-alerts.js';
 import type { ApiRepository } from './repository-reader.js';
@@ -453,10 +454,19 @@ async function waitForAgentDelegateReply(input: {
   timeoutMs?: number;
   pollIntervalMs?: number;
 }): Promise<AgentDelegateResult> {
-  const startedAt = Date.now();
+  let startedAt = Date.now();
   const timeoutMs = input.timeoutMs ?? AGENT_DELEGATE_TIMEOUT_MS;
   const pollIntervalMs = input.pollIntervalMs ?? AGENT_DELEGATE_POLL_INTERVAL_MS;
   while (Date.now() - startedAt < timeoutMs) {
+    const isAlertQueued = hasPendingMemberAlert(
+      input.organizationId,
+      input.agentId,
+      input.threadId,
+      input.delegateMessage.id,
+    );
+    if (isAlertQueued) {
+      startedAt = Date.now();
+    }
     const reply = latestDelegateReply(
       input.repo,
       input.organizationId,

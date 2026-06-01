@@ -1,8 +1,13 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemberSchema, MessageSchema, type Message, type RunState } from '@ujima/shared';
 import { runAgentDelegateTurn } from './index.js';
 import type { ApiRepository } from './repository-reader.js';
 import type { ConversationService } from './conversation.js';
+import { clearPendingMemberAlertsForTests, enqueuePendingMemberAlert } from './pending-member-alerts.js';
+
+beforeEach(() => {
+  clearPendingMemberAlertsForTests();
+});
 
 const orgId = 'org-1';
 const caller = MemberSchema.parse({
@@ -327,6 +332,45 @@ describe('agent delegation', () => {
       pollIntervalMs: 0,
     });
 
+    expect(result.status).toBe('timed_out');
+  });
+
+  it('suspends the timeout countdown while the alert is queued', async () => {
+    const { repo, conversations, createRun, delegateMessage } = repoFixture({ runs: [] });
+
+    // Enqueue the pending member alert
+    enqueuePendingMemberAlert({
+      organizationId: orgId,
+      memberId: target.id,
+      threadId: 'dm:agent-1:agent-2',
+      channelId: 'dm:agent-1:agent-2',
+      messageId: delegateMessage.id,
+      byMemberId: caller.id,
+      reason: 'dm',
+      wakeReason: 'dm',
+    });
+
+    // Clear the pending alert queue after 15ms
+    setTimeout(() => {
+      clearPendingMemberAlertsForTests();
+    }, 15);
+
+    const result = await runAgentDelegateTurn({
+      repo: repo as unknown as ApiRepository,
+      conversations: conversations as unknown as ConversationService,
+      wakeMember: vi.fn(),
+      createRun,
+      organizationId: orgId,
+      fromMemberId: caller.id,
+      to: target.id,
+      message: 'please check this',
+      runId: 'run-1',
+      timeoutMs: 10,
+      pollIntervalMs: 5,
+    });
+
+    // Timeout begins ticking only after the queue is drained at 15ms. 
+    // It should time out at 10ms + 15ms = 25ms total, verifying timeout suspension.
     expect(result.status).toBe('timed_out');
   });
 });
