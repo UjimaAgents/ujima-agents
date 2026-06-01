@@ -48,7 +48,7 @@ export function registerChannelMemberModeRoutes(
     try {
       const forbidden = requireOrgSession(auth, req, reply, req.params.orgId);
       if (forbidden) return forbidden;
-      return repo.listChannelMemberModesForChannel(req.params.channelId);
+      return repo.listChannelMemberModesForChannel(req.params.orgId, req.params.channelId);
     } catch (err) {
       return routeError(reply, err, { notFound: 'Channel not found' });
     }
@@ -73,7 +73,12 @@ export function registerChannelMemberModeRoutes(
       const forbidden = requireOrgSession(auth, req, reply, req.params.orgId);
       if (forbidden) return forbidden;
       assertReadyWorkspaceRoot(repo, req.params.orgId);
-      repo.setChannelMemberMode(req.params.channelId, req.body.memberId, req.body.mode);
+      repo.setChannelMemberMode(
+        req.params.orgId,
+        req.params.channelId,
+        req.body.memberId,
+        req.body.mode,
+      );
       return { ok: true as const };
     } catch (err) {
       return routeError(reply, err, { notFound: ['Channel not found', 'Member not found'], workspaceRoot: true });

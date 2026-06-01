@@ -1334,6 +1334,50 @@ const MIGRATIONS: {id: string; up: string}[] = [
       CREATE INDEX IF NOT EXISTS idx_channels_org ON channels(organization_id);
     `,
   },
+  {
+    id: "043_channel_join_tables_org_scope",
+    up: `
+      -- Migration 042 made (organization_id, id) the composite primary key on
+      -- channels and members, which means a bare channel_id/member_id is no
+      -- longer globally unique. The link tables still keyed off the bare ids,
+      -- so deleting or rewriting membership for one tenant's "general" channel
+      -- could wipe or leak rows belonging to another tenant's same-named
+      -- channel. Rebuild the join tables with organization_id baked into the
+      -- primary key and backfill from the parent rows.
+
+      ALTER TABLE channel_members RENAME TO channel_members_old;
+      CREATE TABLE channel_members (
+        organization_id TEXT NOT NULL,
+        channel_id      TEXT NOT NULL,
+        member_id       TEXT NOT NULL,
+        PRIMARY KEY (organization_id, channel_id, member_id)
+      );
+      INSERT OR IGNORE INTO channel_members (organization_id, channel_id, member_id)
+      SELECT c.organization_id, cm.channel_id, cm.member_id
+      FROM channel_members_old cm
+      JOIN channels c ON c.id = cm.channel_id;
+      DROP TABLE channel_members_old;
+      CREATE INDEX IF NOT EXISTS idx_channel_members_member
+        ON channel_members(organization_id, member_id);
+
+      ALTER TABLE channel_member_modes RENAME TO channel_member_modes_old;
+      CREATE TABLE channel_member_modes (
+        organization_id TEXT NOT NULL,
+        channel_id      TEXT NOT NULL,
+        member_id       TEXT NOT NULL,
+        mode            TEXT NOT NULL DEFAULT 'active',
+        updated_at      TEXT NOT NULL,
+        PRIMARY KEY (organization_id, channel_id, member_id)
+      );
+      INSERT OR IGNORE INTO channel_member_modes (organization_id, channel_id, member_id, mode, updated_at)
+      SELECT c.organization_id, cmm.channel_id, cmm.member_id, cmm.mode, cmm.updated_at
+      FROM channel_member_modes_old cmm
+      JOIN channels c ON c.id = cmm.channel_id;
+      DROP TABLE channel_member_modes_old;
+      CREATE INDEX IF NOT EXISTS idx_channel_member_modes_member
+        ON channel_member_modes(organization_id, member_id);
+    `,
+  },
 ];
 
 export interface DbOptions {

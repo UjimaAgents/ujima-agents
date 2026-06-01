@@ -27,7 +27,7 @@ export function ensureMemberSelfChannel(
     archivedAt: existing?.archivedAt,
   });
   repo.saveChannel(channel);
-  repo.setChannelMembers(channel.id, [member.id]);
+  repo.setChannelMembers(organizationId, channel.id, [member.id]);
   if (!repo.getThread(organizationId, channel.id)) {
     repo.ensureThread({
       id: channel.id,
@@ -84,7 +84,7 @@ export function ensureDirectMessageConversation(
     parentMessageId: existing?.parentMessageId,
   });
   repo.saveChannel(channel);
-  repo.setChannelMembers(channelId, memberIds);
+  repo.setChannelMembers(organizationId, channelId, memberIds);
   repo.ensureThread({
     id: channel.id,
     organizationId,
@@ -125,6 +125,6 @@ export function addMemberToDefaultChannels(
     if (!channel) continue;
     const memberIds = new Set(channel.memberIds);
     memberIds.add(member.id);
-    repo.setChannelMembers(channelId, [...memberIds].sort());
+    repo.setChannelMembers(organizationId, channelId, [...memberIds].sort());
   }
 }
