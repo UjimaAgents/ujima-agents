@@ -71,18 +71,20 @@ const TREE_LIMIT = 1000;
 const GLOB_LIMIT = 100;
 const IGNORED_DIRECTORIES = new Set(['.git', '.next', 'build', 'coverage', 'dist', 'node_modules']);
 
-// Only `file_path` is exposed in the model-facing JSON schema. Some
-// callers (older serialized tool calls, internal invocations) may
-// still pass `resourcePath`; the runtime reader continues to accept
-// it via filePathFrom, but it is intentionally absent from the
-// schema so models don't pattern-match it onto unrelated tools
-// (channel.post, channel.dm) and trip additionalProperties:false.
+// Only `file_path` is exposed in the model-facing JSON schema.
+// Models don't see `resourcePath` because exposing the alias let
+// Gemini pattern-match it onto unrelated tools (channel.post,
+// channel.dm) and trip `additionalProperties: false`. There is no
+// alias-back-compat: Zod's `.object()` strips unknown keys before
+// our helpers run, so any caller passing `resourcePath` instead of
+// `file_path` would already have failed validation regardless of
+// what filePathFrom claimed.
 const FilePathFields = {
   file_path: z.string().min(1).optional().describe('Workspace file path.'),
 };
 
-function filePathFrom(args: { resourcePath?: string; file_path?: string }): string {
-  return args.file_path ?? args.resourcePath ?? '';
+function filePathFrom(args: { file_path?: string }): string {
+  return args.file_path ?? '';
 }
 
 function stringFrom(args: Record<string, unknown>, primary: string, alias: string): string {
@@ -197,8 +199,8 @@ const GlobSchema = z.object({
   limit: z.number().int().min(1).max(TREE_LIMIT).default(GLOB_LIMIT),
 });
 
-function lsGlobPathFrom(args: { path?: string; resourcePath?: string }): string {
-  return args.path ?? args.resourcePath ?? '.';
+function lsGlobPathFrom(args: { path?: string }): string {
+  return args.path ?? '.';
 }
 
 export const viewTool: OrchestratorTool<typeof ViewSchema> = {

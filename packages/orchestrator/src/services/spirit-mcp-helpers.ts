@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { jsonSchema, type FlexibleSchema } from 'ai';
+import { jsonSchema, type FlexibleSchema, type ToolSet } from 'ai';
 import { z } from 'zod';
 
 export interface McpServerSummary {
@@ -28,7 +28,6 @@ export function sanitizeMcpNamespace(name: string): string {
 // (ai-service.ts) and the direct-spirit path
 // (spirit-agent-run.ts) drop the same shape — adding a new
 // recovery heuristic means editing one function.
-import type { ToolSet } from 'ai';
 
 export interface AttachedMcpServerSummary {
   serverName: string;

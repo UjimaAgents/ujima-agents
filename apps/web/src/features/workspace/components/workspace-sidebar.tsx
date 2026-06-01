@@ -66,6 +66,11 @@ export interface WorkspaceSidebarProps {
       channels: string[];
       skills: string[];
     }[];
+    // Full org tool catalog (id → capability). Source for the
+    // agent-editor's tool chip picker so opt-in baseline tools
+    // (shell, download, filesystem, etc.) are selectable without
+    // typing the id into the CSV freeform input.
+    tools?: Record<string, { id: string; name?: string; description?: string }>;
   } | null;
   goalMode: boolean;
   agentEditorTargetId?: string | null;
