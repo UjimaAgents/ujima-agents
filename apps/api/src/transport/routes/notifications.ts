@@ -43,7 +43,7 @@ export function registerNotificationRoutes(api: FastifyInstance, deps: Notificat
     schema: { description: 'List notification channels', tags: ['Notifications'] },
   }, async (req, reply) => {
     const authState = deps.auth.getAuthState(req.headers['x-ujima-session'] as string | undefined);
-    if (!authState.authenticated) return reply.status(401).send({ code: 'ERR_UNAUTHORIZED', message: 'Unauthorized' });
+    if (!authState.authenticated || !authState.user) return reply.status(401).send({ code: 'ERR_UNAUTHORIZED', message: 'Unauthorized' });
     const channels = deps.repo.listNotificationChannels(authState.user.organizationId);
     return reply.status(200).send({ channels });
   });
@@ -52,7 +52,7 @@ export function registerNotificationRoutes(api: FastifyInstance, deps: Notificat
     schema: { description: 'Create a notification channel', tags: ['Notifications'] },
   }, async (req, reply) => {
     const authState = deps.auth.getAuthState(req.headers['x-ujima-session'] as string | undefined);
-    if (!authState.authenticated) return reply.status(401).send({ code: 'ERR_UNAUTHORIZED', message: 'Unauthorized' });
+    if (!authState.authenticated || !authState.user) return reply.status(401).send({ code: 'ERR_UNAUTHORIZED', message: 'Unauthorized' });
     const body = CreateChannelSchema.parse(req.body);
     const now = new Date().toISOString();
     deps.repo.saveNotificationChannel({
@@ -73,7 +73,7 @@ export function registerNotificationRoutes(api: FastifyInstance, deps: Notificat
     schema: { description: 'Update a notification channel', tags: ['Notifications'] },
   }, async (req, reply) => {
     const authState = deps.auth.getAuthState(req.headers['x-ujima-session'] as string | undefined);
-    if (!authState.authenticated) return reply.status(401).send({ code: 'ERR_UNAUTHORIZED', message: 'Unauthorized' });
+    if (!authState.authenticated || !authState.user) return reply.status(401).send({ code: 'ERR_UNAUTHORIZED', message: 'Unauthorized' });
     const { id } = req.params as { id: string };
     const existing = deps.repo.getNotificationChannel(authState.user.organizationId, id);
     if (!existing) return reply.status(404).send({ code: 'ERR_NOT_FOUND', message: 'Channel not found' });
@@ -93,7 +93,7 @@ export function registerNotificationRoutes(api: FastifyInstance, deps: Notificat
     schema: { description: 'Delete a notification channel', tags: ['Notifications'] },
   }, async (req, reply) => {
     const authState = deps.auth.getAuthState(req.headers['x-ujima-session'] as string | undefined);
-    if (!authState.authenticated) return reply.status(401).send({ code: 'ERR_UNAUTHORIZED', message: 'Unauthorized' });
+    if (!authState.authenticated || !authState.user) return reply.status(401).send({ code: 'ERR_UNAUTHORIZED', message: 'Unauthorized' });
     const { id } = req.params as { id: string };
     deps.repo.deleteNotificationChannel(authState.user.organizationId, id);
     return reply.status(204).send();
