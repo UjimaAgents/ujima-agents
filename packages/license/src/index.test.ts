@@ -9,6 +9,7 @@ import {
   loadLocalLicense,
   parseToken,
   verifyToken,
+  verifyAndCheckRevocation,
   type LicensePayload,
 } from './index';
 import { _resetMemoForTests } from './revocation';
@@ -120,6 +121,29 @@ describe('activate', () => {
     // need the bad-signature branch to win because the verify happens first.
     const result = activate('nope.nope', { revokedIds: new Set(['LIC-0001']) });
     expect(result.ok).toBe(false);
+  });
+
+  // Regression for the verifyAndCheckRevocation helper that backs
+  // the daemon startup check, the init fast path, and `ujima license
+  // status`. A signature-valid token whose licenseId is on the
+  // local revocation cache must be reported as revoked from every
+  // call site, not just from activate().
+  it('verifyAndCheckRevocation rejects a signature-valid token whose id is in the cache', () => {
+    const keys = freshKeys();
+    const token = signToken(keys, { ...samplePayload, licenseId: 'LIC-7777' });
+    const cachePath = join(tmpHome, 'revoked.json');
+    writeFileSync(
+      cachePath,
+      JSON.stringify({ fetchedAt: new Date().toISOString(), ids: ['LIC-7777'] }),
+    );
+    _resetMemoForTests();
+
+    const result = verifyAndCheckRevocation(token, new Date('2026-06-01'), keys.pubB64);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toBe('revoked');
+      expect(result.detail).toBe('LIC-7777');
+    }
   });
 
   // Regression for a bot finding where activate() only honoured the

@@ -39,11 +39,26 @@ function requireAdmin(req: Request, env: Env): Response | null {
 }
 
 async function listLicenses(env: Env): Promise<LicenseRecord[]> {
-  const all = await env.LICENSES.list({ prefix: 'lic:' });
+  // KV.list paginates at ~1000 keys/page; we must follow `cursor` until
+  // `list_complete` or registry entries past the first page silently
+  // disappear from the regenerated revoked.json — the exact bug a bot
+  // review flagged, which would have shipped a partial revocation
+  // feed once the waitlist grew past a single page.
   const out: LicenseRecord[] = [];
-  for (const k of all.keys) {
-    const value = await env.LICENSES.get<LicenseRecord>(k.name, 'json');
-    if (value) out.push(value);
+  let cursor: string | undefined;
+  for (;;) {
+    const page = await env.LICENSES.list({ prefix: 'lic:', cursor });
+    for (const k of page.keys) {
+      const value = await env.LICENSES.get<LicenseRecord>(k.name, 'json');
+      if (value) out.push(value);
+    }
+    // KV result is either { list_complete: true } or
+    // { list_complete: false, cursor }. We exit on either complete or
+    // the (defensively-checked) case of a missing cursor.
+    if ('list_complete' in page && page.list_complete) break;
+    const nextCursor = (page as { cursor?: string }).cursor;
+    if (!nextCursor) break;
+    cursor = nextCursor;
   }
   out.sort((a, b) => a.grantedAt.localeCompare(b.grantedAt));
   return out;

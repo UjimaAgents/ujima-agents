@@ -167,6 +167,26 @@ export function activate(token: string, options: ActivateOptions = {}): VerifyRe
   return verified;
 }
 
+// Pure-sync helper: verify the signature, expiry, and the local
+// revocation cache in one shot. Callers are responsible for any
+// freshness work (refreshRevocations) before invoking this so the
+// cache reflects the latest feed. Single source of truth for the
+// "is this token currently good?" question — used by the daemon
+// startup check, the init fast path, and `ujima license status`,
+// so the three can't drift on which checks they enforce.
+export function verifyAndCheckRevocation(
+  token: string,
+  now: Date = new Date(),
+  publicKeySpkiBase64?: string,
+): VerifyResult {
+  const verified = verifyToken(token, now, publicKeySpkiBase64);
+  if (!verified.ok) return verified;
+  if (isRevoked(verified.payload.licenseId)) {
+    return { ok: false, reason: 'revoked', detail: verified.payload.licenseId };
+  }
+  return verified;
+}
+
 // Daemon/CLI startup check. Returns ok when:
 //   - dev mode (running from the monorepo OR UJIMA_DEV=1)
 //   - a locally stored license verifies AND isn't on the revoked list
@@ -196,17 +216,11 @@ export async function checkLicenseForStartup(
   }
   const state = loadLocalLicense();
   if (!state) return { ok: false, reason: 'no-license' };
-  const now = options.now ?? new Date();
-  const verified = verifyToken(state.token, now);
-  if (!verified.ok) return verified;
   if (!options.offlineOnly) {
     // Best-effort daily refresh; failure to fetch is non-fatal.
     await refreshRevocations().catch(() => undefined);
   }
-  if (isRevoked(verified.payload.licenseId)) {
-    return { ok: false, reason: 'revoked', detail: verified.payload.licenseId };
-  }
-  return verified;
+  return verifyAndCheckRevocation(state.token, options.now ?? new Date());
 }
 
 // Dev-mode detection: short-circuit license enforcement when:

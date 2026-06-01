@@ -12,10 +12,9 @@ import {
   checkLicenseForStartup,
   clearLocalLicense,
   isDevMode,
-  isRevoked,
   loadLocalLicense,
   refreshRevocations,
-  verifyToken,
+  verifyAndCheckRevocation,
 } from '@ujima/license';
 import {
   findMonorepoRoot,
@@ -120,15 +119,23 @@ function parseInitArgs(argv: string[]): InitOptions {
 
 async function ensureLicenseForInit(licenseKey: string | undefined): Promise<void> {
   if (isDevMode()) return;
-  // Already activated and still valid? Skip the prompt entirely.
+  // Refresh the revocation list once, up front. The cached-license
+  // fast path AND the freshly-prompted activate path both rely on
+  // isRevoked() reading from this. Non-fatal: missing network just
+  // leaves the previous daily cache in place.
+  await refreshRevocations().catch(() => undefined);
+  // Already activated and still valid (signature ok AND not revoked)?
+  // Skip the prompt entirely. Pre-fix this returned on signature-ok
+  // alone, so a revoked-but-unexpired cached token re-onboarded
+  // silently. Clear and fall through to a fresh prompt when invalid.
   const existing = loadLocalLicense();
-  if (existing && verifyToken(existing.token).ok) return;
+  if (existing) {
+    const cached = verifyAndCheckRevocation(existing.token);
+    if (cached.ok) return;
+    clearLocalLicense();
+  }
   const token = (licenseKey ?? process.env.UJIMA_LICENSE ?? '').trim();
   const provided = token !== '' ? token : await promptForLicenseKey();
-  // Refresh the revocation list before activating so a token revoked
-  // since the last daily fetch can't be written to disk. Non-fatal:
-  // activate() falls back to the cached list if the network is down.
-  await refreshRevocations().catch(() => undefined);
   const result = activateLicense(provided);
   if (!result.ok) {
     process.stderr.write(
@@ -532,20 +539,21 @@ async function cmdLicense(argv: string[]): Promise<void> {
         process.stdout.write('ujima license: no license activated. Run `ujima init --license <key>`.\n');
         return;
       }
-      const result = verifyToken(state.token);
-      if (!result.ok) {
-        process.stdout.write(`ujima license: stored license is ${result.reason}. Re-activate.\n`);
-        return;
-      }
-      // Daily-cached refresh + revocation check. A token that's
-      // signature-valid but on the revoked list must report revoked,
-      // otherwise this command silently lies for up to expiry.
+      // Daily-cached refresh first so the verify-and-revocation
+      // check below sees the freshest list possible. Non-fatal.
       await refreshRevocations().catch(() => undefined);
-      if (isRevoked(result.payload.licenseId)) {
-        process.stdout.write(
-          `ujima license: revoked — ${result.payload.licenseId} ` +
-            `(${result.payload.subjectEmail}). Re-activate with a fresh key.\n`,
-        );
+      const result = verifyAndCheckRevocation(state.token);
+      if (!result.ok) {
+        if (result.reason === 'revoked') {
+          process.stdout.write(
+            `ujima license: revoked — ${result.detail ?? 'unknown id'}. ` +
+              `Re-activate with a fresh key.\n`,
+          );
+        } else {
+          process.stdout.write(
+            `ujima license: stored license is ${result.reason}. Re-activate.\n`,
+          );
+        }
         return;
       }
       const exp = result.payload.expiresAt ? ` (expires ${result.payload.expiresAt})` : '';
