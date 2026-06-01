@@ -199,12 +199,16 @@ export interface CheckOptions {
   // Disable network refresh (tests, CI). When true, only the local
   // revoked-cache is consulted; missing cache means "assume not revoked".
   offlineOnly?: boolean;
+  // Override the dev-mode detection starting dir. Tests pin this
+  // to a temp dir to exercise the production code path even when
+  // running from inside the monorepo.
+  cwd?: string;
 }
 
 export async function checkLicenseForStartup(
   options: CheckOptions = {},
 ): Promise<VerifyResult> {
-  if (isDevMode()) {
+  if (isDevMode(options.cwd)) {
     return {
       ok: true,
       payload: {
@@ -214,13 +218,21 @@ export async function checkLicenseForStartup(
       },
     };
   }
+  // Resolution order: persisted license first (the steady-state
+  // path), then UJIMA_LICENSE env var as a fallback so users can
+  // recover from a wiped ~/.ujima without re-running ujima init
+  // — which is what both ujima start and the daemon advertise in
+  // their failure messages. Without this fallback the gate would
+  // contradict its own remediation hint.
   const state = loadLocalLicense();
-  if (!state) return { ok: false, reason: 'no-license' };
+  const envToken = (process.env.UJIMA_LICENSE ?? '').trim();
+  const token = state?.token ?? (envToken !== '' ? envToken : null);
+  if (!token) return { ok: false, reason: 'no-license' };
   if (!options.offlineOnly) {
     // Best-effort daily refresh; failure to fetch is non-fatal.
     await refreshRevocations().catch(() => undefined);
   }
-  return verifyAndCheckRevocation(state.token, options.now ?? new Date());
+  return verifyAndCheckRevocation(token, options.now ?? new Date());
 }
 
 // Dev-mode detection: short-circuit license enforcement when:

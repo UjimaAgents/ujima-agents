@@ -124,19 +124,34 @@ async function ensureLicenseForInit(licenseKey: string | undefined): Promise<voi
   // isRevoked() reading from this. Non-fatal: missing network just
   // leaves the previous daily cache in place.
   await refreshRevocations().catch(() => undefined);
-  // Already activated and still valid (signature ok AND not revoked)?
-  // Skip the prompt entirely. Pre-fix this returned on signature-ok
-  // alone, so a revoked-but-unexpired cached token re-onboarded
-  // silently. Clear and fall through to a fresh prompt when invalid.
+
+  // Explicit key wins: if the operator supplied --license or
+  // UJIMA_LICENSE they're asking us to rotate / reissue, so we
+  // must NOT silently keep an older cached license. Pre-fix the
+  // cached-valid fast path returned before reading the new key,
+  // which made `ujima init --license <new>` a no-op when an old
+  // license was still on disk.
+  const explicit = (licenseKey ?? process.env.UJIMA_LICENSE ?? '').trim();
+  if (explicit !== '') {
+    activateOrExit(explicit);
+    return;
+  }
+
+  // No explicit key: keep the cached fast path. Already activated
+  // and still valid (signature ok AND not revoked)? Skip the prompt
+  // entirely. Otherwise clear and fall through to a fresh prompt.
   const existing = loadLocalLicense();
   if (existing) {
     const cached = verifyAndCheckRevocation(existing.token);
     if (cached.ok) return;
     clearLocalLicense();
   }
-  const token = (licenseKey ?? process.env.UJIMA_LICENSE ?? '').trim();
-  const provided = token !== '' ? token : await promptForLicenseKey();
-  const result = activateLicense(provided);
+  const prompted = (await promptForLicenseKey()).trim();
+  activateOrExit(prompted);
+}
+
+function activateOrExit(token: string): void {
+  const result = activateLicense(token);
   if (!result.ok) {
     process.stderr.write(
       `ujima init: license activation failed (${result.reason}). ` +
