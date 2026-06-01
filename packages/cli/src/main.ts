@@ -1,11 +1,21 @@
 import chalk from 'chalk';
-import { readFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { spawn } from 'node:child_process';
+import { createInterface } from 'node:readline/promises';
 import { superviseChildren } from './start-supervisor.js';
 import { maybeLoadTeam } from '@ujima/runtime-core';
 import { DEFAULT_BIND_HOST, DEFAULT_BIND_PORT } from '@ujima/api-schema';
+import {
+  activate as activateLicense,
+  checkLicenseForStartup,
+  clearLocalLicense,
+  isDevMode,
+  loadLocalLicense,
+  refreshRevocations,
+  verifyToken,
+} from '@ujima/license';
 import {
   findMonorepoRoot,
   resolvePackagedRuntimeDir,
@@ -54,6 +64,7 @@ interface InitOptions {
   workspaceRoot: string;
   configPath?: string;
   providerKeys: Record<string, string>;
+  licenseKey?: string;
 }
 
 function parseInitArgs(argv: string[]): InitOptions {
@@ -84,6 +95,9 @@ function parseInitArgs(argv: string[]): InitOptions {
       case '-c':
         result.configPath = resolve(next());
         break;
+      case '--license':
+        result.licenseKey = next();
+        break;
       case '--provider': {
         const spec = next();
         const eq = spec.indexOf('=');
@@ -103,8 +117,42 @@ function parseInitArgs(argv: string[]): InitOptions {
   return result as InitOptions;
 }
 
+async function ensureLicenseForInit(licenseKey: string | undefined): Promise<void> {
+  if (isDevMode()) return;
+  // Already activated and still valid? Skip the prompt entirely.
+  const existing = loadLocalLicense();
+  if (existing && verifyToken(existing.token).ok) return;
+  const token = (licenseKey ?? process.env.UJIMA_LICENSE ?? '').trim();
+  const provided = token !== '' ? token : await promptForLicenseKey();
+  const result = activateLicense(provided);
+  if (!result.ok) {
+    process.stderr.write(
+      `ujima init: license activation failed (${result.reason}). ` +
+        `Request access at https://ujima.dev/waitlist\n`,
+    );
+    process.exit(1);
+  }
+  process.stdout.write(
+    `License activated for ${result.payload.subjectEmail} (${result.payload.licenseId}).\n`,
+  );
+}
+
+async function promptForLicenseKey(): Promise<string> {
+  process.stdout.write(
+    "Ujima is invite-only during early access. Paste your license key (or set UJIMA_LICENSE):\n",
+  );
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const answer = await rl.question('License key: ');
+    return answer.trim();
+  } finally {
+    rl.close();
+  }
+}
+
 async function cmdInit(argv: string[]): Promise<void> {
   const opts = parseInitArgs(argv);
+  await ensureLicenseForInit(opts.licenseKey);
   const homeDir = resolveHomeDir();
   const token = loadToken(homeDir);
 
@@ -247,6 +295,20 @@ async function cmdStartMonorepo(root: string, argv: string[]): Promise<void> {
 }
 
 async function cmdStart(argv: string[]): Promise<void> {
+  // License first — fail fast with a clear message rather than letting
+  // the daemon boot and reject. Dev mode short-circuits inside the check.
+  const license = await checkLicenseForStartup();
+  if (!license.ok) {
+    process.stderr.write(
+      `ujima start: ${describeLicenseFailure(license.reason)}\n` +
+        `  Activate with: ujima init --license <key>\n`,
+    );
+    process.exit(1);
+  }
+  // Then the freshness prompt — never in dev mode (running from a repo
+  // checkout) and never when running from a packaged self-update script.
+  await maybeOfferUpdate(argv);
+
   const packagedRuntime = resolvePackagedRuntimeDir(__dirname);
   if (packagedRuntime) {
     await cmdStartPackaged(packagedRuntime, argv);
@@ -266,6 +328,22 @@ async function cmdStart(argv: string[]): Promise<void> {
   await cmdStartMonorepo(root, argv);
 }
 
+function describeLicenseFailure(reason: string): string {
+  switch (reason) {
+    case 'no-license':
+      return 'no license found. Run `ujima init` to activate, or set UJIMA_LICENSE.';
+    case 'expired':
+      return 'license expired. Request a renewal at https://ujima.dev/waitlist.';
+    case 'revoked':
+      return 'license has been revoked. Contact the operator if this is unexpected.';
+    case 'bad-signature':
+    case 'malformed':
+      return 'license is invalid. Re-run `ujima init --license <key>` with the key you were issued.';
+    default:
+      return `license check failed (${reason}).`;
+  }
+}
+
 function printUsage(): void {
   const version = getLocalVersion();
   printSplash();
@@ -275,6 +353,7 @@ function printUsage(): void {
   printCommandRow('start', 'Start the local API daemon and web UI');
   printCommandRow('init', 'Onboard organization, owner, and workspace');
   printCommandRow('update', 'Check for and install CLI updates');
+  printCommandRow('license', 'Show or manage the local license (status, refresh, deactivate)');
   printCommandRow('help', 'Display help for a command');
   printInfoRow('More:', 'ujima help <command>  |  ujima <command> --help', { dim: true });
   console.info(`   ${chalk.gray('↳')} ${chalk.white('Environment:')}`);
@@ -315,6 +394,17 @@ function printCommandHelp(cmd: string): void {
       printInfoRow('--workspace, -w', 'Workspace root path (required)', { dim: true });
       printInfoRow('--config, -c', 'Path to ujima.config.ts', { dim: true });
       printInfoRow('--provider', 'name=key (repeatable)', { dim: true });
+      printInfoRow('--license', 'License key (or set UJIMA_LICENSE)', { dim: true });
+      break;
+
+    case 'license':
+      printReadyLine('Command: license');
+      printInfoRow('Usage:', 'ujima license [status|refresh|deactivate]', { dim: true });
+      printInfoRow(
+        'Description:',
+        'Show or manage the local license. Default subcommand is status.',
+        { dim: true },
+      );
       break;
 
     case 'update':
@@ -329,6 +419,138 @@ function printCommandHelp(cmd: string): void {
     default:
       process.stderr.write(`ujima help: unknown command "${cmd}"\n`);
       printUsage();
+      process.exit(2);
+  }
+}
+
+interface UpdateCheckCache {
+  checkedAt: string;
+  latest: string;
+}
+
+function updateCheckCachePath(): string {
+  return join(resolveHomeDir(), 'update-check.json');
+}
+
+async function maybeOfferUpdate(argv: string[]): Promise<void> {
+  if (isDevMode()) return;
+  if (resolvePackagedRuntimeDir(__dirname) === null) return;
+  if (argv.includes('--no-update-check')) return;
+  const local = getLocalVersion();
+  const latest = await fetchLatestVersionCached();
+  if (!latest) return;
+  if (compareVersions(latest, local) <= 0) return;
+  process.stdout.write(
+    `\nA new version of @ujima/agents is available: ${chalk.green(latest)} (installed: ${local}).\n`,
+  );
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  let answer = 'y';
+  try {
+    answer = (await rl.question('Update now? [Y/n] ')).trim().toLowerCase();
+  } finally {
+    rl.close();
+  }
+  if (answer === 'n' || answer === 'no') return;
+  await runNpmGlobalInstall(latest);
+  process.stdout.write(`Updated to ${latest}. Re-running ujima start…\n`);
+  // Re-exec the freshly-installed CLI with the original argv. The npm
+  // install replaced our binary on disk; node's exec resolution will
+  // pick up the new copy.
+  const child = spawn(process.execPath, [process.argv[1] ?? 'ujima', 'start', ...argv], {
+    stdio: 'inherit',
+  });
+  await new Promise<void>((resolveExit) => {
+    child.on('exit', (code) => {
+      process.exit(code ?? 0);
+      resolveExit();
+    });
+  });
+}
+
+async function fetchLatestVersionCached(): Promise<string | null> {
+  const cachePath = updateCheckCachePath();
+  const TTL_MS = 24 * 60 * 60 * 1000;
+  try {
+    const raw = readFileSync(cachePath, 'utf8');
+    const parsed = JSON.parse(raw) as UpdateCheckCache;
+    const age = Date.now() - Date.parse(parsed.checkedAt);
+    if (Number.isFinite(age) && age >= 0 && age < TTL_MS) return parsed.latest;
+  } catch {
+    // No cache; fall through.
+  }
+  try {
+    const res = await fetch('https://registry.npmjs.org/@ujima/agents/latest', {
+      headers: { 'user-agent': 'ujima-cli-update-check' },
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { version?: unknown };
+    if (typeof data.version !== 'string') return null;
+    mkdirSync(resolveHomeDir(), { recursive: true });
+    const next: UpdateCheckCache = {
+      checkedAt: new Date().toISOString(),
+      latest: data.version,
+    };
+    try {
+      writeFileSync(cachePath, JSON.stringify(next, null, 2));
+    } catch {
+      // best-effort cache write
+    }
+    return data.version;
+  } catch {
+    return null;
+  }
+}
+
+async function runNpmGlobalInstall(version: string): Promise<void> {
+  await new Promise<void>((resolveExit, rejectExit) => {
+    const child = spawn('npm', ['install', '-g', `@ujima/agents@${version}`], {
+      stdio: 'inherit',
+    });
+    child.on('error', (err) => rejectExit(err));
+    child.on('exit', (code) => {
+      if (code === 0) resolveExit();
+      else rejectExit(new Error(`npm install exited ${code ?? 'null'}`));
+    });
+  });
+}
+
+async function cmdLicense(argv: string[]): Promise<void> {
+  const sub = argv[0] ?? 'status';
+  switch (sub) {
+    case 'status': {
+      if (isDevMode()) {
+        process.stdout.write('ujima license: dev mode (running from the monorepo). License skipped.\n');
+        return;
+      }
+      const state = loadLocalLicense();
+      if (!state) {
+        process.stdout.write('ujima license: no license activated. Run `ujima init --license <key>`.\n');
+        return;
+      }
+      const result = verifyToken(state.token);
+      if (!result.ok) {
+        process.stdout.write(`ujima license: stored license is ${result.reason}. Re-activate.\n`);
+        return;
+      }
+      const exp = result.payload.expiresAt ? ` (expires ${result.payload.expiresAt})` : '';
+      process.stdout.write(
+        `ujima license: active — ${result.payload.subjectEmail} ` +
+          `(${result.payload.licenseId})${exp}.\n`,
+      );
+      return;
+    }
+    case 'refresh': {
+      await refreshRevocations();
+      process.stdout.write('ujima license: revocation list refreshed.\n');
+      return;
+    }
+    case 'deactivate': {
+      clearLocalLicense();
+      process.stdout.write('ujima license: cleared local license.\n');
+      return;
+    }
+    default:
+      process.stderr.write(`ujima license: unknown subcommand "${sub}". Try status, refresh, deactivate.\n`);
       process.exit(2);
   }
 }
@@ -447,6 +669,9 @@ export async function main(): Promise<void> {
       return;
     case 'update':
       await cmdUpdate(rest);
+      return;
+    case 'license':
+      await cmdLicense(rest);
       return;
     default:
       process.stderr.write(`ujima: unknown command "${command}"\n`);
