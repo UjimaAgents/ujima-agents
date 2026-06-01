@@ -1,30 +1,37 @@
 "use client";
 
-import { useEffect, useState, useMemo, useCallback, useRef } from "react";
-import { AlertCircle, AlertTriangle, Clock, GripVertical, KanbanSquare, PlayCircle } from "lucide-react";
+import {useEffect, useState, useMemo, useCallback, useRef} from "react";
+import {
+  AlertCircle,
+  AlertTriangle,
+  Clock,
+  GripVertical,
+  KanbanSquare,
+  MessageSquare,
+  PlayCircle,
+} from "lucide-react";
 import type {
   Goal,
-  GoalStatus,
   GoalTask,
   GoalTaskStatus,
   InteractiveQuestion,
 } from "@ujima/shared/browser";
-import { Avatar } from "./chat/primitives";
-import { QuestionCard } from "./chat/question-card";
-import type { BootstrapResponse } from "@ujima/api-schema";
+import {Avatar} from "./chat/primitives";
+import {QuestionCard} from "./chat/question-card";
+import type {BootstrapResponse} from "@ujima/api-schema";
 
 interface ChannelGoalsBoardProps {
-  channelId: string;
+  channelId?: string;
   members: BootstrapResponse["members"];
 }
 
 type ColumnId = "pending" | "blocked" | "in_progress" | "completed";
 
-const COLUMNS: { id: ColumnId; label: string }[] = [
-  { id: "pending", label: "To Do" },
-  { id: "blocked", label: "Blocked" },
-  { id: "in_progress", label: "In Progress" },
-  { id: "completed", label: "Done" },
+const COLUMNS: {id: ColumnId; label: string}[] = [
+  {id: "pending", label: "To Do"},
+  {id: "blocked", label: "Blocked"},
+  {id: "in_progress", label: "In Progress"},
+  {id: "completed", label: "Done"},
 ];
 
 const STATUS_TO_COLUMN: Record<GoalTaskStatus, ColumnId> = {
@@ -44,14 +51,6 @@ const COLUMN_TO_STATUS: Record<ColumnId, GoalTaskStatus> = {
   completed: "completed",
 };
 
-const GOAL_STATUS_BADGE: Record<GoalStatus, string> = {
-  planning: "bg-amber-100/80 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400",
-  running: "bg-violet-100/80 text-violet-700 dark:bg-violet-500/10 dark:text-violet-400",
-  completed: "bg-emerald-100/80 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400",
-  suspended: "bg-zinc-100/80 text-zinc-700 dark:bg-zinc-500/10 dark:text-zinc-400",
-  cancelled: "bg-rose-100/80 text-rose-700 dark:bg-rose-500/10 dark:text-rose-400",
-};
-
 function errorMessage(value: unknown, fallback: string): string {
   return value instanceof Error ? value.message : fallback;
 }
@@ -62,26 +61,32 @@ interface GoalBoardData {
   questions: InteractiveQuestion[];
 }
 
-const EMPTY_BOARD: GoalBoardData = { goals: [], tasks: [], questions: [] };
+const EMPTY_BOARD: GoalBoardData = {goals: [], tasks: [], questions: []};
 
-async function fetchGoalBoard(channelId: string): Promise<GoalBoardData> {
-  const res = await fetch(`/api/goals?channelId=${encodeURIComponent(channelId)}`);
+async function fetchGoalBoard(channelId?: string): Promise<GoalBoardData> {
+  const res = await fetch(
+    channelId
+      ? `/api/goals?channelId=${encodeURIComponent(channelId)}`
+      : "/api/goals"
+  );
   if (res.status === 404) return EMPTY_BOARD;
   if (!res.ok) throw new Error("Failed to fetch goals.");
-  const data = (await res.json()) as { goals?: Goal[] };
+  const data = (await res.json()) as {goals?: Goal[]};
   const goals = data.goals ?? [];
   if (goals.length === 0) return EMPTY_BOARD;
 
   const details = await Promise.all(
     goals.map(async (goal) => {
-      const detailRes = await fetch(`/api/goals/${encodeURIComponent(goal.id)}`);
+      const detailRes = await fetch(
+        `/api/goals/${encodeURIComponent(goal.id)}`
+      );
       if (!detailRes.ok) throw new Error("Failed to fetch goal details.");
       return (await detailRes.json()) as {
         goal: Goal;
         tasks?: GoalTask[];
         questions?: InteractiveQuestion[];
       };
-    }),
+    })
   );
   return {
     goals: details.map((detail) => detail.goal),
@@ -90,7 +95,10 @@ async function fetchGoalBoard(channelId: string): Promise<GoalBoardData> {
   };
 }
 
-export function ChannelGoalsBoard({ channelId, members }: ChannelGoalsBoardProps) {
+export function ChannelGoalsBoard({
+  channelId,
+  members,
+}: ChannelGoalsBoardProps) {
   const [loading, setLoading] = useState(true);
   const [board, setBoard] = useState<GoalBoardData>(EMPTY_BOARD);
   const [error, setError] = useState<string | null>(null);
@@ -99,7 +107,11 @@ export function ChannelGoalsBoard({ channelId, members }: ChannelGoalsBoardProps
   const dragTaskId = useRef<string | null>(null);
   const [dragOverColumn, setDragOverColumn] = useState<ColumnId | null>(null);
 
-  const memberById = useMemo(() => new Map(members.map((m) => [m.id, m])), [members]);
+  const memberById = useMemo(
+    () => new Map(members.map((m) => [m.id, m])),
+    [members]
+  );
+  const scopeLabel = channelId ? "this conversation" : "the workspace";
 
   const refresh = useCallback(async () => {
     try {
@@ -134,12 +146,18 @@ export function ChannelGoalsBoard({ channelId, members }: ChannelGoalsBoardProps
   }, [channelId]);
 
   const runAction = useCallback(
-    async (key: string, fn: () => Promise<Response>, fallbackMessage: string) => {
+    async (
+      key: string,
+      fn: () => Promise<Response>,
+      fallbackMessage: string
+    ) => {
       setActionLoading(key);
       try {
         const res = await fn();
         if (!res.ok) {
-          const body = (await res.json().catch(() => null)) as { message?: string } | null;
+          const body = (await res.json().catch(() => null)) as {
+            message?: string;
+          } | null;
           throw new Error(body?.message || fallbackMessage);
         }
         await refresh();
@@ -149,43 +167,49 @@ export function ChannelGoalsBoard({ channelId, members }: ChannelGoalsBoardProps
         setActionLoading(null);
       }
     },
-    [refresh],
+    [refresh]
   );
 
-  const { goals, tasks, questions } = board;
-  const primaryGoal = goals[0] ?? null;
+  const {goals, tasks, questions} = board;
+  const pendingQuestions = questions.filter((q) => q.status === "pending");
 
-  const handleImplement = () => {
-    if (!primaryGoal) return;
-    return runAction(
-      "implement",
+  const handleImplement = (goal: Goal) =>
+    runAction(
+      `implement:${goal.id}`,
       () =>
-        fetch(`/api/goals/${encodeURIComponent(primaryGoal.id)}/implement`, {
+        fetch(`/api/goals/${encodeURIComponent(goal.id)}/implement`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {"Content-Type": "application/json"},
         }),
-      "Failed to implement plan.",
+      "Failed to implement plan."
     );
-  };
 
-  const handleUpdateStatus = (task: GoalTask, newStatus: GoalTaskStatus) => {
-    const hasDependents = tasks.some((candidate) => candidate.dependsOnTaskId === task.id);
-    const handoverSummary =
-      newStatus === "completed" && hasDependents
-        ? window.prompt("Handover summary for dependent tasks")
-        : undefined;
-    if (handoverSummary === null) return;
-    return runAction(
-      task.id,
-      () =>
-        fetch(`/api/goal-tasks/${encodeURIComponent(task.id)}/status`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ status: newStatus, ...(handoverSummary ? { handoverSummary } : {}) }),
-        }),
-      "Failed to update status.",
-    );
-  };
+  const handleUpdateStatus = useCallback(
+    (task: GoalTask, newStatus: GoalTaskStatus) => {
+      const hasDependents = tasks.some(
+        (candidate) => candidate.dependsOnTaskId === task.id
+      );
+      const handoverSummary =
+        newStatus === "completed" && hasDependents
+          ? window.prompt("Handover summary for dependent tasks")
+          : undefined;
+      if (handoverSummary === null) return;
+      return runAction(
+        task.id,
+        () =>
+          fetch(`/api/goal-tasks/${encodeURIComponent(task.id)}/status`, {
+            method: "PATCH",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({
+              status: newStatus,
+              ...(handoverSummary ? {handoverSummary} : {}),
+            }),
+          }),
+        "Failed to update status."
+      );
+    },
+    [runAction, tasks]
+  );
 
   // -- drag and drop --
 
@@ -206,8 +230,13 @@ export function ChannelGoalsBoard({ channelId, members }: ChannelGoalsBoardProps
 
   const onDragLeave = useCallback((e: React.DragEvent, colId: ColumnId) => {
     const rect = e.currentTarget.getBoundingClientRect();
-    const { clientX, clientY } = e;
-    if (clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom) {
+    const {clientX, clientY} = e;
+    if (
+      clientX < rect.left ||
+      clientX > rect.right ||
+      clientY < rect.top ||
+      clientY > rect.bottom
+    ) {
       setDragOverColumn((prev) => (prev === colId ? null : prev));
     }
   }, []);
@@ -224,7 +253,7 @@ export function ChannelGoalsBoard({ channelId, members }: ChannelGoalsBoardProps
       const newStatus = COLUMN_TO_STATUS[colId];
       handleUpdateStatus(task, newStatus);
     },
-    [tasks, handleUpdateStatus],
+    [tasks, handleUpdateStatus]
   );
 
   const handleAnswerQuestion = async (questionId: string, option: string) => {
@@ -232,17 +261,24 @@ export function ChannelGoalsBoard({ channelId, members }: ChannelGoalsBoardProps
     setBoard((prev) => ({
       ...prev,
       questions: prev.questions.map((q) =>
-        q.id === questionId ? { ...q, status: "answered", selectedOption: option } : q,
+        q.id === questionId
+          ? {...q, status: "answered", selectedOption: option}
+          : q
       ),
     }));
     try {
-      const res = await fetch(`/api/questions/${encodeURIComponent(questionId)}/answer`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ selectedOption: option }),
-      });
+      const res = await fetch(
+        `/api/questions/${encodeURIComponent(questionId)}/answer`,
+        {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({selectedOption: option}),
+        }
+      );
       if (!res.ok) {
-        const body = (await res.json().catch(() => null)) as { message?: string } | null;
+        const body = (await res.json().catch(() => null)) as {
+          message?: string;
+        } | null;
         throw new Error(body?.message || "Failed to submit answer.");
       }
       await refresh();
@@ -269,8 +305,8 @@ export function ChannelGoalsBoard({ channelId, members }: ChannelGoalsBoardProps
 
   if (loading) {
     return (
-      <div className="flex flex-1 min-h-0 w-full flex-col items-center justify-center px-4 py-10 text-zinc-400">
-        <Clock className="h-8 w-8 animate-spin text-violet-500 mb-3" />
+      <div className="flex h-full flex-1 min-h-0 w-full flex-col items-center justify-center bg-white px-4 py-10 text-zinc-400 dark:bg-[#09090b]">
+        <Clock className="h-8 w-8 animate-spin mb-3" />
         <p className="text-sm font-medium">Loading goals and board state...</p>
       </div>
     );
@@ -278,13 +314,17 @@ export function ChannelGoalsBoard({ channelId, members }: ChannelGoalsBoardProps
 
   if (error) {
     return (
-      <div className="flex flex-1 min-h-0 w-full flex-col items-center justify-center px-4 py-10 text-center">
-        <AlertTriangle className="mb-3 h-7 w-7 text-amber-500" />
-        <h3 className="mb-1 text-sm font-semibold text-zinc-900 dark:text-zinc-100">Tasks unavailable</h3>
-        <p className="mb-4 max-w-sm text-xs text-zinc-500 dark:text-zinc-400">{error}</p>
+      <div className="flex h-full flex-1 min-h-0 w-full flex-col items-center justify-center bg-white px-4 py-10 text-center dark:bg-[#09090b]">
+        <AlertTriangle className="mb-3 h-7 w-7 text-zinc-400" />
+        <h3 className="mb-1 text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+          Tasks unavailable
+        </h3>
+        <p className="mb-4 max-w-sm text-xs text-zinc-500 dark:text-zinc-400">
+          {error}
+        </p>
         <button
           onClick={() => void refresh()}
-          className="rounded-md border border-zinc-200 px-3 py-1.5 text-xs font-semibold text-zinc-700 transition hover:bg-zinc-50 dark:border-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-900"
+          className="rounded-md border border-zinc-200 px-3 py-1.5 text-xs font-semibold text-zinc-700 transition hover:bg-white dark:border-zinc-800 dark:text-zinc-300 dark:hover:bg-[#09090b]"
         >
           Retry
         </button>
@@ -292,57 +332,71 @@ export function ChannelGoalsBoard({ channelId, members }: ChannelGoalsBoardProps
     );
   }
 
-  if (tasks.length === 0) {
+  if (
+    goals.length === 0 &&
+    tasks.length === 0 &&
+    pendingQuestions.length === 0
+  ) {
     return (
-      <div className="flex flex-1 min-h-0 w-full flex-col items-center justify-center px-4 py-10 text-center">
-        <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-lg bg-zinc-100 text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400">
+      <div className="flex h-full flex-1 min-h-0 w-full flex-col items-center justify-center bg-white px-4 py-10 text-center dark:bg-[#09090b]">
+        <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-lg border border-zinc-200 text-zinc-500 dark:border-zinc-800 dark:text-zinc-400">
           <KanbanSquare className="h-6 w-6" />
         </div>
-        <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100 mb-1">No tasks</h3>
+        <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100 mb-1">
+          No tasks
+        </h3>
         <p className="max-w-sm text-xs text-zinc-500 dark:text-zinc-400">
-          Tasks from this conversation will appear here.
+          Tasks from {scopeLabel} will appear here.
         </p>
       </div>
     );
   }
 
-  const pendingQuestions = questions.filter((q) => q.status === "pending");
-
   return (
-    <div className="flex flex-col flex-1 h-full min-h-0 min-w-0 px-4 py-4 space-y-4 overflow-y-auto">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 p-4 rounded-xl border border-zinc-200/80 bg-zinc-50/50 dark:border-zinc-800/80 dark:bg-zinc-950/20 backdrop-blur">
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2 mb-1">
-            {primaryGoal ? (
-              <>
-                <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${GOAL_STATUS_BADGE[primaryGoal.status]}`}>
-                  {primaryGoal.status}
-                </span>
-                <span className="text-[10px] text-zinc-400 dark:text-zinc-500">
-                  Supervisor: @{memberById.get(primaryGoal.supervisorId)?.name ?? primaryGoal.supervisorId}
-                </span>
-              </>
-            ) : null}
-          </div>
-          <h2 className="text-base font-extrabold text-zinc-900 dark:text-white truncate">
-            {primaryGoal ? primaryGoal.title : "Tasks"}
+    <div className="flex flex-col flex-1 h-full min-h-0 min-w-0 space-y-4 overflow-y-auto bg-white px-4 py-4 dark:bg-[#09090b]">
+      <div className="flex flex-col gap-2.5 pb-2.5 border-b border-zinc-100 dark:border-zinc-900/40">
+        <div className="flex items-center justify-between">
+          <h2 className="text-xs font-bold tracking-wider uppercase text-zinc-400 dark:text-zinc-500 flex items-center gap-2">
+            Goals & tasks
           </h2>
         </div>
 
-        {primaryGoal?.status === "planning" && (
-          <button
-            onClick={handleImplement}
-            disabled={actionLoading === "implement"}
-            className="inline-flex shrink-0 items-center justify-center gap-1.5 px-4 py-2 bg-violet-600 hover:bg-violet-700 disabled:bg-violet-400 text-white rounded-lg text-xs font-bold shadow transition-all duration-200"
-          >
-            {actionLoading === "implement" ? (
-              <Clock className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <PlayCircle className="h-3.5 w-3.5" />
-            )}
-            Implement Plan
-          </button>
-        )}
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+          {goals.map((goal) => {
+            const isRunning = goal.status === "running";
+            const isCompleted = goal.status === "completed";
+            return (
+              <div key={goal.id} className="flex items-center gap-2 text-xs">
+                <span
+                  className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                    isRunning
+                      ? "bg-violet-500 animate-pulse"
+                      : isCompleted
+                        ? "bg-emerald-500"
+                        : "bg-zinc-400 dark:bg-zinc-600"
+                  }`}
+                />
+                <span className="font-semibold text-zinc-800 dark:text-zinc-200">
+                  {goal.title}
+                </span>
+                {goal.status === "planning" ? (
+                  <button
+                    onClick={() => handleImplement(goal)}
+                    disabled={actionLoading === `implement:${goal.id}`}
+                    className="ml-2 inline-flex items-center gap-1 bg-violet-600 hover:bg-violet-500 text-white text-[9px] font-bold px-2 py-0.5 rounded transition shadow-sm disabled:bg-zinc-400"
+                  >
+                    {actionLoading === `implement:${goal.id}` ? (
+                      <Clock className="h-2.5 w-2.5 animate-spin" />
+                    ) : (
+                      <PlayCircle className="h-2.5 w-2.5" />
+                    )}
+                    <span>Implement</span>
+                  </button>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
       </div>
 
       {pendingQuestions.map((q) => (
@@ -355,80 +409,86 @@ export function ChannelGoalsBoard({ channelId, members }: ChannelGoalsBoardProps
       ))}
 
       <div className="flex-1 grid grid-cols-1 md:grid-cols-4 gap-4 min-h-0 overflow-y-auto pb-6">
-          {COLUMNS.map((col) => {
-            const tasksInCol = columnTasks[col.id];
-            return (
-              <div
-                key={col.id}
-                onDragOver={(e) => onDragOver(e, col.id)}
-                onDragLeave={(e) => onDragLeave(e, col.id)}
-                onDrop={() => onDrop(col.id)}
-                className={`flex flex-col h-full min-h-[400px] rounded-xl border p-3 transition-colors duration-150 ${dragOverColumn === col.id ? "border-violet-400 bg-violet-50/30 dark:border-violet-600 dark:bg-violet-950/10" : "border-zinc-200/60 bg-zinc-50/30 dark:border-zinc-800/50 dark:bg-zinc-900/10"}`}
-              >
-                <div className="flex items-center justify-between pb-3 mb-3 border-b border-zinc-200/60 dark:border-zinc-800/60">
-                  <div className="flex items-center gap-2">
-                    <span className="w-2 h-2 rounded-full bg-violet-500" />
-                    <span className="text-xs font-bold text-zinc-800 dark:text-zinc-200">{col.label}</span>
-                  </div>
-                  <span className="inline-flex items-center justify-center rounded-full bg-zinc-200/60 dark:bg-zinc-800 text-[10px] font-bold px-2 py-0.5 text-zinc-600 dark:text-zinc-400">
-                    {tasksInCol.length}
+        {COLUMNS.map((col) => {
+          const tasksInCol = columnTasks[col.id];
+          return (
+            <div
+              key={col.id}
+              onDragOver={(e) => onDragOver(e, col.id)}
+              onDragLeave={(e) => onDragLeave(e, col.id)}
+              onDrop={() => onDrop(col.id)}
+              className={`flex flex-col h-full min-h-[400px] rounded-xl border bg-white p-4 transition-all duration-150 dark:bg-[#09090b] ${dragOverColumn === col.id ? "border-zinc-400 dark:border-zinc-600" : "border-zinc-200/60 dark:border-zinc-800/50"}`}
+            >
+              <div className="flex items-center justify-between pb-3.5 mb-3.5 border-b border-zinc-200/60 dark:border-zinc-800/60">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">
+                    {col.label}
                   </span>
                 </div>
-
-                <div className="flex-1 space-y-2.5 overflow-y-auto min-h-0 max-h-[600px] pr-1">
-                  {tasksInCol.length === 0 ? (
-                    <div className={`flex flex-col items-center justify-center py-10 border border-dashed rounded-lg transition-colors duration-150 ${dragOverColumn === col.id ? "border-violet-400 dark:border-violet-600" : "border-zinc-200 dark:border-zinc-800"}`}>
-                      <p className="text-[10px] text-zinc-400 dark:text-zinc-500 font-medium">
-                        {dragOverColumn === col.id ? "Drop here" : "Empty column"}
-                      </p>
-                    </div>
-                  ) : (
-                    tasksInCol.map((task) => {
-                      const assignee = memberById.get(task.assigneeId);
-                      const assigneeName = assignee?.name ?? task.assigneeId;
-                      return (
-                        <div
-                          key={task.id}
-                          draggable
-                          onDragStart={() => onDragStart(task.id)}
-                          onDragEnd={onDragEnd}
-                          className={`group relative flex flex-col p-3 rounded-lg border bg-white shadow-sm transition hover:shadow cursor-grab active:cursor-grabbing dark:bg-[#09090b] ${actionLoading === task.id ? "opacity-50" : ""} border-zinc-200 dark:border-zinc-800`}
-                        >
-                          <h4 className="text-xs font-bold text-zinc-900 dark:text-zinc-100 leading-snug line-clamp-2 mb-2">
-                            {task.title}
-                          </h4>
-
-                          {task.dependsOnTaskId && (
-                            <div className="flex items-center gap-1 mb-2 px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 dark:bg-amber-950/20 dark:text-amber-400 text-[9px] font-semibold w-fit">
-                              <AlertCircle className="h-3 w-3 shrink-0" />
-                              <span>Depends on prior task</span>
-                            </div>
-                          )}
-
-                          {task.handoverSummary && (
-                            <div className="mb-2 p-1.5 rounded bg-zinc-50 dark:bg-zinc-900 text-[9px] text-zinc-500 dark:text-zinc-400 italic">
-                              &ldquo;{task.handoverSummary}&rdquo;
-                            </div>
-                          )}
-
-                          <div className="flex items-center justify-between mt-auto pt-2 border-t border-zinc-100 dark:border-zinc-900">
-                            <div className="flex items-center gap-1.5 min-w-0">
-                              <Avatar name={assigneeName} size="xs" />
-                              <span className="text-[10px] font-semibold text-zinc-600 dark:text-zinc-400 truncate">
-                                @{assigneeName}
-                              </span>
-                            </div>
-
-                            <GripVertical className="h-3.5 w-3.5 text-zinc-300 dark:text-zinc-600 group-hover:text-zinc-400 dark:group-hover:text-zinc-500 transition" />
-                          </div>
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
+                <span className="inline-flex items-center justify-center rounded-full bg-zinc-100 dark:bg-zinc-900 text-[10px] font-bold px-2 py-0.5 text-zinc-500 dark:text-zinc-400 border border-zinc-200/20 dark:border-zinc-800/20">
+                  {tasksInCol.length}
+                </span>
               </div>
-            );
-          })}
+
+              <div className="flex-1 space-y-3 overflow-y-auto min-h-0 max-h-[600px] pr-1">
+                {tasksInCol.length === 0 ? (
+                  <div
+                    className={`flex flex-col items-center justify-center py-10 border border-dashed rounded-xl transition-colors duration-150 ${dragOverColumn === col.id ? "border-zinc-400 dark:border-zinc-600" : "border-zinc-200 dark:border-zinc-800"}`}
+                  >
+                    <p className="text-[10px] text-zinc-400 dark:text-zinc-500 font-medium">
+                      {dragOverColumn === col.id ? "Drop here" : "Empty column"}
+                    </p>
+                  </div>
+                ) : (
+                  tasksInCol.map((task) => {
+                    const assignee = memberById.get(task.assigneeId);
+                    const assigneeName = assignee?.name ?? task.assigneeId;
+                    return (
+                      <div
+                        key={task.id}
+                        draggable
+                        onDragStart={() => onDragStart(task.id)}
+                        onDragEnd={onDragEnd}
+                        className={`group relative flex flex-col p-4 rounded-xl border bg-white dark:bg-zinc-900 shadow-[0_1px_3px_0_rgba(0,0,0,0.05)] hover:shadow-[0_4px_12px_-2px_rgba(0,0,0,0.08)] hover:-translate-y-[1px] transition-all duration-200 cursor-grab active:cursor-grabbing ${actionLoading === task.id ? "opacity-50" : ""} border-zinc-200 dark:border-zinc-800 hover:border-zinc-300 dark:hover:border-zinc-700`}
+                      >
+                        {task.dependsOnTaskId && (
+                          <div
+                            className="absolute top-3.5 right-3.5 flex items-center justify-center text-amber-500 dark:text-amber-400 bg-amber-500/5 dark:bg-amber-500/10 border border-amber-500/15 rounded-md p-1"
+                            title="Depends on prior task"
+                          >
+                            <AlertCircle className="h-3.5 w-3.5" />
+                          </div>
+                        )}
+
+                        <h4
+                          className={`text-xs font-semibold text-zinc-900 dark:text-zinc-100 leading-relaxed line-clamp-2 mb-2.5 ${task.dependsOnTaskId ? "pr-6" : ""}`}
+                        >
+                          {task.title}
+                        </h4>
+
+                        <div className="flex items-center justify-between mt-auto pt-3 border-t border-zinc-100 dark:border-zinc-900/60">
+                          <div className="flex items-center gap-2">
+                            <Avatar name={assigneeName} size="xs" />
+                            {task.handoverSummary && (
+                              <div
+                                className="text-zinc-400 dark:text-zinc-500 cursor-help"
+                                title={task.handoverSummary}
+                              >
+                                <MessageSquare className="h-3.5 w-3.5" />
+                              </div>
+                            )}
+                          </div>
+
+                          <GripVertical className="h-3.5 w-3.5 text-zinc-300 dark:text-zinc-600 group-hover:text-zinc-400 dark:group-hover:text-zinc-500 transition-colors" />
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );

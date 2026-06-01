@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { goalStartTool } from './goal.js';
+import { goalStartTool, questionAskTool } from './goal.js';
 
 describe('goal.start', () => {
   it('creates tasks and pauses for implement approval before execution continues', () => {
@@ -104,6 +104,50 @@ describe('goal.start', () => {
       status: 'completed',
       selectedOption: 'Yes, implement (Recommended)',
       tasks: [{ id: 'task-1' }],
+    });
+  });
+
+  it('replays an answered question with the selected option', () => {
+    const result = questionAskTool.execute({
+      invocation: {
+        organizationId: 'org-1',
+        runId: 'run-2',
+        memberId: 'carter-jordan',
+        toolCallId: 'call-2',
+        toolId: 'question.ask',
+        action: 'create',
+        resourceType: 'question',
+        input: {
+          question_text: 'Pick one',
+          options: ['Yes (Recommended)', 'No'],
+        },
+        threadId: 'thread-1',
+      } as never,
+      repo: {
+        getThread: () => ({ channelId: 'dm:carter-jordan:owner' }),
+        listInteractiveQuestionsByRunId: () => [
+          {
+            status: 'answered',
+            selectedOption: 'Yes (Recommended)',
+            toolCallId: 'call-2',
+          },
+        ],
+        listRunSteps: () => [
+          {
+            toolCallId: 'call-2',
+            output: {
+              status: 'waiting_for_input',
+              questionId: 'question-2',
+            },
+          },
+        ],
+      } as never,
+      goals: {} as never,
+    } as never);
+
+    expect(result).toEqual({
+      status: 'completed',
+      selectedOption: 'Yes (Recommended)',
     });
   });
 });

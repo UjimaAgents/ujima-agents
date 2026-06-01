@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { OrganizationSchema } from '@ujima/shared';
+import { ChannelSchema, OrganizationSchema } from '@ujima/shared';
 import { openDatabase } from '@ujima/context-store';
 import { Repository } from '@ujima/runtime-core';
 import {
   GoalSystemService,
   IMPLEMENT_QUESTION_OPTION,
   IMPLEMENT_QUESTION_TEXT,
-} from './goal-system.js';
+} from '@ujima/orchestrator';
 
 function bootstrap() {
   const db = openDatabase({ dbPath: ':memory:' });
@@ -33,10 +33,103 @@ function startPlan(goals: GoalSystemService, organizationId: string, channelId: 
   });
 }
 
+describe('GoalSystemService.start', () => {
+  it('keeps multiple goals in the same channel instead of overwriting the previous one', () => {
+    const { repo, orgId } = bootstrap();
+    const goals = new GoalSystemService(repo);
+
+    const first = startPlan(goals, orgId, 'channel-shared');
+    const second = goals.start({
+      organizationId: orgId,
+      channelId: 'channel-shared',
+      supervisorId: 'supervisor-2',
+      title: 'Ship the other thing',
+      planMarkdown: '## Plan 2',
+      tasks: [{ title: 'Step 2', assigneeId: 'agent-2' }],
+    });
+
+    expect(first.goal.id).not.toBe(second.goal.id);
+    expect(repo.listGoalsByChannel(orgId, 'channel-shared').map((goal) => goal.id).sort()).toEqual(
+      [first.goal.id, second.goal.id].sort(),
+    );
+    expect(repo.listGoalTasks(orgId, first.goal.id)).toHaveLength(1);
+    expect(repo.listGoalTasks(orgId, second.goal.id)).toHaveLength(1);
+  });
+
+  it('keeps agent DM goal assignment single-goal and replaces its task list', () => {
+    const { repo, orgId } = bootstrap();
+    const goals = new GoalSystemService(repo);
+    repo.saveChannel(ChannelSchema.parse({
+      id: 'dm:agent-1:agent-2',
+      organizationId: orgId,
+      name: 'agent DM',
+      kind: 'dm',
+      topic: '',
+      memberIds: ['agent-1', 'agent-2'],
+      createdAt: new Date().toISOString(),
+    }));
+
+    const first = startPlan(goals, orgId, 'dm:agent-1:agent-2');
+    const oldPrompt = goals.maybePromptImplement({
+      organizationId: orgId,
+      channelId: 'dm:agent-1:agent-2',
+      agentName: 'planner',
+    })!;
+    const second = goals.start({
+      organizationId: orgId,
+      channelId: 'dm:agent-1:agent-2',
+      supervisorId: 'supervisor-2',
+      title: 'Updated DM goal',
+      planMarkdown: '## Plan 2',
+      tasks: [{ title: 'Replacement step', assigneeId: 'agent-2' }],
+    });
+
+    expect(second.goal.id).toBe(first.goal.id);
+    expect(second.goal.planVersion).toBe(2);
+    expect(repo.listGoalsByChannel(orgId, 'dm:agent-1:agent-2')).toHaveLength(1);
+    expect(repo.listGoalTasks(orgId, first.goal.id).map((task) => task.title)).toEqual(['Replacement step']);
+    expect(repo.getInteractiveQuestion(orgId, oldPrompt.id)?.status).toBe('superseded');
+  });
+});
+
+describe('GoalSystemService.maybePromptImplement', () => {
+  it('prompts for each planning goal in a channel without superseding the others', () => {
+    const { repo, orgId } = bootstrap();
+    const goals = new GoalSystemService(repo);
+    const first = startPlan(goals, orgId, 'channel-many-prompts');
+    const second = goals.start({
+      organizationId: orgId,
+      channelId: 'channel-many-prompts',
+      supervisorId: 'supervisor-2',
+      title: 'Ship the other thing',
+      planMarkdown: '## Plan 2',
+      tasks: [{ title: 'Step 2', assigneeId: 'agent-2' }],
+    });
+
+    const prompt1 = goals.maybePromptImplement({
+      organizationId: orgId,
+      channelId: 'channel-many-prompts',
+      agentName: 'planner',
+    });
+    const prompt2 = goals.maybePromptImplement({
+      organizationId: orgId,
+      channelId: 'channel-many-prompts',
+      agentName: 'planner',
+    });
+
+    expect([prompt1?.goalId, prompt2?.goalId].sort()).toEqual([first.goal.id, second.goal.id].sort());
+  });
+});
+
 function saveRunStep(
   repo: Repository,
   organizationId: string,
-  input: { runId: string; toolId: string; status?: 'waiting_for_input' | 'completed' },
+  input: {
+    runId: string;
+    toolId: string;
+    status?: 'waiting_for_input' | 'completed';
+    output?: Record<string, unknown>;
+  },
 ) {
   const now = new Date().toISOString();
   repo.saveRun({
@@ -61,7 +154,7 @@ function saveRunStep(
     resourceType: 'goal',
     resourcePath: '',
     input: {},
-    output: { status: 'completed' },
+    output: input.output ?? { status: 'completed' },
     status: 'ok',
     createdAt: now,
   });
@@ -133,7 +226,7 @@ describe('GoalSystemService.answer', () => {
     expect(repo.getGoal(orgId, goal.id)?.status).toBe('planning');
   });
 
-  it('rewrites the run step output so the resumed agent sees the chosen option', () => {
+  it('keeps the run step replayable so the resumed agent sees the chosen option', () => {
     const { repo, orgId } = bootstrap();
     const goals = new GoalSystemService(repo, async () => {
       // resume not exercised in this test
@@ -143,6 +236,7 @@ describe('GoalSystemService.answer', () => {
       runId,
       toolId: 'question.ask',
       status: 'waiting_for_input',
+      output: { status: 'waiting_for_input', questionId: 'question-1' },
     });
     const question = goals.ask({
       organizationId: orgId,
@@ -160,11 +254,12 @@ describe('GoalSystemService.answer', () => {
       .find((s) => s.toolCallId === toolCallId);
     expect(updatedStep?.output).toEqual({
       status: 'completed',
+      questionId: 'question-1',
       selectedOption: 'Yes (Recommended)',
     });
   });
 
-  it('preserves goal.start task ids when recording the implement answer', () => {
+  it('preserves goal.start task ids while recording the chosen option', () => {
     const { repo, orgId } = bootstrap();
     const goals = new GoalSystemService(repo, async () => {
       // resume not exercised in this test
@@ -200,6 +295,7 @@ describe('GoalSystemService.answer', () => {
     const updatedStep = repo.listRunSteps(orgId, runId).find((s) => s.toolCallId === toolCallId);
     expect(updatedStep?.output).toMatchObject({
       status: 'completed',
+      questionId: 'question-output',
       selectedOption: IMPLEMENT_QUESTION_OPTION,
       tasks: [{ id: 'task-1' }],
     });

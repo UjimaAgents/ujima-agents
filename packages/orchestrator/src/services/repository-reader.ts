@@ -364,6 +364,7 @@ export interface ApiRepository extends ConversationRepository {
   saveGoal(goal: Goal): Goal;
   getGoal(organizationId: string, goalId: string): Goal | null;
   getGoalByChannel(organizationId: string, channelId: string): Goal | null;
+  listGoalsByChannel(organizationId: string, channelId: string): Goal[];
   listGoals(organizationId: string): Goal[];
   saveGoalTask(task: GoalTask): GoalTask;
   deleteGoalTasks(organizationId: string, goalId: string): void;

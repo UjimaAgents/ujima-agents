@@ -331,7 +331,9 @@ function findMember(id: string, members: WorkspaceMember[]): WorkspaceMember | u
 function agentThreadMembers(threadId: string, state: Pick<WorkspaceState, "channels" | "members">): WorkspaceMember[] {
   const dm = parseDmThreadId(threadId);
   if (dm) {
-    return [findMember(dm.participantA, state.members), findMember(dm.participantB, state.members)]
+    const memberIds = [...new Set([dm.participantA, dm.participantB])];
+    return memberIds
+      .map((memberId) => findMember(memberId, state.members))
       .filter((member): member is WorkspaceMember => member?.kind === "agent");
   }
 
@@ -359,6 +361,11 @@ export function agentOnlyThreadName(
 ): string | undefined {
   const channel = state.channels.find((entry) => entry.id === threadId);
   if (channel) return channel.name;
+  const dm = parseDmThreadId(threadId);
+  if (dm && dm.participantA === dm.participantB) {
+    const agent = findMember(dm.participantA, state.members);
+    return agent?.kind === "agent" ? `${agent.name} (self delegation)` : undefined;
+  }
   const agents = agentThreadMembers(threadId, state);
   return agents.length === 2 ? agents.map((agent) => agent.name).join(" & ") : undefined;
 }

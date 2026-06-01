@@ -122,6 +122,7 @@ export class ConversationService {
   private readonly pairMentionWindows = new Map<string, number[]>();
   private readonly pairMentionCap = 3;
   private readonly pairMentionWindowMs = 90_000;
+  private readonly lastMessageCreatedAtByThread = new Map<string, number>();
 
   constructor(
     private readonly repo: ConversationRepository,
@@ -134,6 +135,17 @@ export class ConversationService {
     this.mentionWindowMs = options.mentionWindowMs ?? 60_000;
     this.channelReadCap = 100;
     this.channelReadWindowMs = 60_000;
+  }
+
+  private nextMessageCreatedAt(organizationId: string, threadId: string, requestedAt: string): string {
+    const key = `${organizationId}:${threadId}`;
+    const requestedMs = Date.parse(requestedAt);
+    const previousMs = this.lastMessageCreatedAtByThread.get(key) ?? 0;
+    const nextMs = Number.isFinite(requestedMs)
+      ? Math.max(requestedMs, previousMs + 1)
+      : previousMs + 1;
+    this.lastMessageCreatedAtByThread.set(key, nextMs);
+    return new Date(nextMs).toISOString();
   }
 
   listChannels(organizationId: string, cursor?: string, limit?: number) {
@@ -332,12 +344,13 @@ export class ConversationService {
     const resolvedMentions = options?.skipMentionResolution
       ? typedMentions ?? []
       : typedMentions ?? this.resolveMessageMentions(message.organizationId, message, channel);
+    const existing = this.repo.getMessage(message.organizationId, message.id);
     const finalMessage = MessageSchema.parse({
       ...message,
+      createdAt: existing?.createdAt ?? this.nextMessageCreatedAt(message.organizationId, message.threadId, message.createdAt),
       mentions: uniqueMentionIds(resolvedMentions),
       mentionNames: this.resolveMentionNames(message.organizationId, message.content, channel),
     });
-    const existing = this.repo.getMessage(finalMessage.organizationId, finalMessage.id);
     const messageAttachments = (finalMessage as { attachments?: { id: string }[] }).attachments ?? [];
     const linkedAttachmentIds = attachmentIds ?? messageAttachments.map((attachment) => attachment.id);
     if (linkedAttachmentIds.length > 0) {
@@ -779,7 +792,7 @@ export class ConversationService {
     mentions?: string[];
     parentMessageId?: string;
     attachmentIds?: string[];
-    metadata?: { runId?: string; goalMode?: boolean };
+    metadata?: { runId?: string; goalMode?: boolean; delegate?: { parentRunId?: string } };
     /** L10 — client-supplied idempotency key. */
     clientMessageId?: string;
   }) {
@@ -897,7 +910,7 @@ export class ConversationService {
     body: string;
     replyTo?: string;
     mentions?: string[];
-    metadata?: { runId?: string };
+    metadata?: { runId?: string; delegate?: { parentRunId?: string } };
   }) {
     const channel = this.requireActiveChannel(input.organizationId, input.channelId);
     let threadId = channel.id;
@@ -928,7 +941,7 @@ export class ConversationService {
     messageId: string;
     body: string;
     mentions?: string[];
-    metadata?: { runId?: string };
+    metadata?: { runId?: string; delegate?: { parentRunId?: string } };
   }) {
     const parent = this.requireMessage(input.organizationId, input.messageId);
     return this.sendMessage({
@@ -952,7 +965,7 @@ export class ConversationService {
     parentMessageId?: string;
     ignore?: boolean;
     attachmentIds?: string[];
-    metadata?: { runId?: string; goalMode?: boolean };
+    metadata?: { runId?: string; goalMode?: boolean; delegate?: { parentRunId?: string } };
     /** L10 — client-supplied idempotency key. */
     clientMessageId?: string;
   }) {
@@ -999,7 +1012,9 @@ export class ConversationService {
       }
     }
 
-    const dmChannelName = [sender.name, recipient.name].sort().join(' / ');
+    const memberIds = [...new Set([sender.id, recipient.id])].sort();
+    const dmChannelName =
+      sender.id === recipient.id ? `${sender.name} (self delegation)` : [sender.name, recipient.name].sort().join(' / ');
     const now = new Date().toISOString();
 
     const channel = this.repo.saveChannel(ChannelSchema.parse({
@@ -1008,16 +1023,16 @@ export class ConversationService {
       name: dmChannelName,
       kind: 'dm',
       topic: '',
-      memberIds: [sender.id, recipient.id],
+      memberIds,
     }));
-    this.repo.setChannelMembers(channelId, [sender.id, recipient.id]);
+    this.repo.setChannelMembers(channelId, memberIds);
 
     this.repo.ensureThread({
       id: channel.id,
       organizationId: input.organizationId,
       channelId: channel.id,
       title: dmChannelName,
-      memberIds: [sender.id, recipient.id],
+      memberIds,
       createdAt: now,
     });
 
@@ -1068,7 +1083,9 @@ export class ConversationService {
     }
 
     const channelId = getDirectMessageThreadId(memberA.id, memberB.id);
-    const dmChannelName = [memberA.name, memberB.name].sort().join(' / ');
+    const memberIds = [...new Set([memberA.id, memberB.id])].sort();
+    const dmChannelName =
+      memberA.id === memberB.id ? `${memberA.name} (self delegation)` : [memberA.name, memberB.name].sort().join(' / ');
     const now = new Date().toISOString();
 
     const channel = this.repo.saveChannel(
@@ -1078,17 +1095,17 @@ export class ConversationService {
         name: dmChannelName,
         kind: 'dm',
         topic: '',
-        memberIds: [memberA.id, memberB.id],
+        memberIds,
       }),
     );
-    this.repo.setChannelMembers(channelId, [memberA.id, memberB.id]);
+    this.repo.setChannelMembers(channelId, memberIds);
 
     this.repo.ensureThread({
       id: channel.id,
       organizationId: input.organizationId,
       channelId: channel.id,
       title: dmChannelName,
-      memberIds: [memberA.id, memberB.id],
+      memberIds,
       createdAt: now,
     });
 
@@ -1444,11 +1461,15 @@ export class ConversationService {
   ): Promise<void> {
     if (!channel || channel.kind !== 'dm') return;
     const recipients = channel.memberIds.filter((memberId) => memberId !== message.senderId);
+    const sender = this.repo.getMember(message.organizationId, message.senderId);
     await Promise.all(
       recipients.map(async (recipientId) => {
         // Muted/temp_disable agents don't receive DMs either
         const memberMode = this.repo.getChannelMemberMode(channel.id, recipientId);
         if (memberMode === 'muted' || memberMode === 'temp_disable') return;
+        const recipient = this.repo.getMember(message.organizationId, recipientId);
+        const pairCap =
+          sender?.kind === 'agent' && recipient?.kind === 'agent' ? 1 : this.pairMentionCap;
         try {
           const countInWindow = this.recordPairMentionWake(
             message.organizationId,
@@ -1457,7 +1478,7 @@ export class ConversationService {
             recipientId,
           );
           const wakeReason: WakeReason =
-            countInWindow > this.pairMentionCap ? 'channel-read' : 'dm';
+            countInWindow > pairCap ? 'channel-read' : 'dm';
 
           if (wakeReason === 'channel-read') {
             this.emitEchoSuppressed({

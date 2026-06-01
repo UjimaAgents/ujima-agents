@@ -1,5 +1,6 @@
 import { memo, useState } from "react";
 import { CheckCircle2, X, ChevronDown, ChevronRight, Pencil, Search, Terminal, Brain, Target, HelpCircle, BookOpen } from "lucide-react";
+import {Markdown} from "../markdown";
 import {TERMINAL_PANEL, TERMINAL_SECTION} from "./terminal-chrome";
 import {Avatar} from "./primitives";
 import {TerminalPane} from "./terminal-pane";
@@ -482,9 +483,7 @@ export const TraceStep = memo(function TraceStep({
       results={step.webSearch.results}
     />
   ) : step.detail.trim() ? (
-    <p className="whitespace-pre-wrap font-mono text-[11px] leading-relaxed text-foreground/60">
-      {step.detail}
-    </p>
+    <Markdown content={step.detail} className="!text-[11px] !leading-relaxed !text-foreground/60 mt-0! [&_p]:!my-2.5 [&_ul]:!my-2.5 [&_ol]:!my-2.5 [&_hr]:!my-2.5 [&_table]:!my-2.5" />
   ) : null;
 
   return (
@@ -530,9 +529,7 @@ export const TraceStep = memo(function TraceStep({
             <summary className="cursor-pointer list-none text-[11px] leading-snug text-foreground/45">
               Thinking
             </summary>
-            <p className="mt-1 whitespace-pre-wrap font-mono text-[11px] leading-relaxed text-foreground/60">
-              {step.reasoning}
-            </p>
+            <Markdown content={step.reasoning} className="!text-[11px] !leading-relaxed !text-foreground/60 mt-1! [&_p]:!my-2.5 [&_ul]:!my-2.5 [&_ol]:!my-2.5 [&_hr]:!my-2.5 [&_table]:!my-2.5" />
           </details>
         ) : null}
         {body ? <div className="mt-2">{body}</div> : null}

@@ -260,6 +260,7 @@ describe('ALWAYS_AVAILABLE_AGENT_TOOLS', () => {
   it('contains the baseline conversational primitives, read-only workspace tools, and silent terminators', () => {
     expect([...ALWAYS_AVAILABLE_AGENT_TOOLS].sort()).toEqual(
       [
+        'agent.delegate',
         'channel.ack',
         'channel.dm',
         'channel.list',
@@ -296,6 +297,10 @@ describe('ALWAYS_AVAILABLE_AGENT_TOOLS', () => {
       expect([...ALWAYS_AVAILABLE_AGENT_TOOLS]).not.toContain(toolId);
     },
   );
+
+  it('does not keep the old agent.spawn alias', () => {
+    expect([...ALWAYS_AVAILABLE_AGENT_TOOLS]).not.toContain('agent.spawn');
+  });
 });
 
 // L13 — `already_handled` and `duplicate_reply` reasons require a

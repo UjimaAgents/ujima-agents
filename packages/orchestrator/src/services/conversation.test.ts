@@ -385,6 +385,42 @@ describe('ConversationService @all mentions', () => {
     expect(alerts).toEqual(['agent-2']);
   });
 
+  it('keeps same-millisecond messages ordered without relying on ids', () => {
+    const { savedMessages, service, thread } = createConversationFixture();
+
+    service.publishMessage({
+      id: 'z-message',
+      organizationId: 'org-1',
+      threadId: thread.id,
+      channelId: 'general',
+      senderId: 'agent-1',
+      senderKind: 'agent',
+      kind: 'agent',
+      content: 'Delegate request',
+      createdAt: '2026-05-07T00:00:01.000Z',
+      mentions: [],
+      toolCalls: [],
+      attachments: [],
+    });
+    service.publishMessage({
+      id: 'a-message',
+      organizationId: 'org-1',
+      threadId: thread.id,
+      channelId: 'general',
+      senderId: 'agent-2',
+      senderKind: 'agent',
+      kind: 'agent',
+      content: 'Delegate reply',
+      createdAt: '2026-05-07T00:00:01.000Z',
+      mentions: [],
+      toolCalls: [],
+      attachments: [],
+    });
+
+    const [first, second] = savedMessages as { createdAt: string }[];
+    expect(Date.parse(second.createdAt)).toBeGreaterThan(Date.parse(first.createdAt));
+  });
+
   it('skips DM wake fanout when the message is a completed channel.handoff', async () => {
     const { alerts, service } = createConversationFixture();
 
@@ -431,6 +467,36 @@ describe('ConversationService @all mentions', () => {
     await new Promise((resolve) => setImmediate(resolve));
 
     expect(alerts).toEqual(['agent-2']);
+  });
+
+  it('demotes repeated agent-agent DM wakes quickly so the next agent can pass', async () => {
+    const { alertWakeReasons, service } = createConversationFixture();
+
+    await service.sendDirectMessage({
+      organizationId: 'org-1',
+      senderId: 'agent-1',
+      recipientId: 'agent-2',
+      content: 'Can you review the plan?',
+    });
+    await service.sendDirectMessage({
+      organizationId: 'org-1',
+      senderId: 'agent-2',
+      recipientId: 'agent-1',
+      content: 'I reviewed it. Looks fine.',
+    });
+    await service.sendDirectMessage({
+      organizationId: 'org-1',
+      senderId: 'agent-1',
+      recipientId: 'agent-2',
+      content: 'Thanks, anything else?',
+    });
+
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(alertWakeReasons).toEqual([
+      { memberId: 'agent-2', wakeReason: 'dm' },
+      { memberId: 'agent-1', wakeReason: 'dm' },
+      { memberId: 'agent-2', wakeReason: 'channel-read' },
+    ]);
   });
 
   it('resolves multi-word mentions in message content', async () => {

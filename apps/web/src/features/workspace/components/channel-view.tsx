@@ -373,7 +373,11 @@ export function ChannelView({
     () => typingRuns.map((run) => run.startedAt).filter(Boolean).sort()[0],
     [typingRuns],
   );
-  const traceAutoScroll = reasoningTraceVisible && typingRuns.length > 0;
+  const traceStartedAt = useMemo(
+    () => liveThreadRuns.map((run) => run.startedAt).filter(Boolean).sort()[0],
+    [liveThreadRuns],
+  );
+  const traceAutoScroll = reasoningTraceVisible && liveThreadRuns.length > 0;
   const stoppableRunIds = useMemo(() => {
     const sorted = [...liveThreadRuns].sort((a, b) => {
       const pri = (r: RunState) =>
@@ -858,7 +862,7 @@ export function ChannelView({
                   <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
                 </span>
                 <span className="font-medium">
-                  {chat.agents.join(" & ")} {chat.agents.length > 1 ? "are" : "is"} chatting
+                  {chat.name} {chat.agents.length > 1 ? "are" : "is"} chatting
                 </span>
               </button>
             ))}
@@ -996,6 +1000,7 @@ export function ChannelView({
                 members={traceMembers}
                 liveSteps={reasoningTraceSteps}
                 autoScroll={traceAutoScroll}
+                startedAt={traceStartedAt}
               />
             ) : detailsTab === "Changes" ? (
               <p className="text-xs text-zinc-500 dark:text-zinc-400">Diffs unavailable.</p>

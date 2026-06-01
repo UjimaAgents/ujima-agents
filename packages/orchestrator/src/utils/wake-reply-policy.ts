@@ -11,6 +11,7 @@ export interface WakeReplyPolicy {
 const DM_WAKE_SCAFFOLD = [
   'Before you pick a tool, read the <thread-state> block in the most recent user message.',
   'This is a direct message (1:1) thread. Messages from your conversation partner are addressed to you — reply when they ask you to do something or expect a response.',
+  'If the peer is another agent and the conversation has reached a natural stopping point, call channel.ack instead of sending a filler reply.',
   'Do not call channel.pass in a DM because you think you were not @mentioned; that rule applies to shared channels only.',
   'Use a posting tool (channel.reply, channel.dm, or message) to respond.',
 ].join('\n');

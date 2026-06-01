@@ -239,6 +239,9 @@ export type HandoffMetadata = z.infer<typeof HandoffMetadataSchema>;
 
 export const MessageMetadataSchema = z.object({
   goalMode: z.boolean().optional(),
+  delegate: z.object({
+    parentRunId: IdSchema.optional(),
+  }).optional(),
   /**
    * Set by the `channel.handoff` tool. `complete: true` signals
    * the chain terminated (replaces the old `'Acknowledged.'`

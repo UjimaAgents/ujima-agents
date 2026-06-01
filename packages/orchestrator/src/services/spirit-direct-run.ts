@@ -39,6 +39,14 @@ import {
   type StreamedRunTrace,
 } from './run-trace-publisher.js';
 
+function isDelegateRun(run: RunState, repo: { getMessage(organizationId: string, messageId: string): { metadata?: unknown } | null }): boolean {
+  if (!run.sourceMessageId) return false;
+  const source = repo.getMessage(run.organizationId, run.sourceMessageId);
+  return !!(source?.metadata as { delegate?: unknown } | undefined)?.delegate;
+}
+
+const VISIBLE_TERMINATING_TOOLS = new Set(['message', 'channel.post', 'channel.reply', 'channel.dm', 'channel.handoff']);
+
 export class SpiritServiceDirectRun extends SpiritServiceSupervisor {
   async resumeAfterApproval(
     organizationId: string,
@@ -673,6 +681,10 @@ export class SpiritServiceDirectRun extends SpiritServiceSupervisor {
         return this.completeRun(running, 'empty', null);
       }
 
+      if (terminatingTool && VISIBLE_TERMINATING_TOOLS.has(terminatingTool) && !artifactFileToolCall) {
+        return this.completeRun(running, terminatingTool, terminatingTool);
+      }
+
       const reply = text || 'Artifact updated.';
       await publishRunReplyTrace({
         repo: this.repo,
@@ -689,6 +701,7 @@ export class SpiritServiceDirectRun extends SpiritServiceSupervisor {
         publishedArtifactFile,
         publishedContent,
         publishedAnyText,
+        suppressDmAlerts: isDelegateRun(running, this.repo),
       });
 
       return this.completeRun(running, terminatingTool ?? reply, terminatingTool);

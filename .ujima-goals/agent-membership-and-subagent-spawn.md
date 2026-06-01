@@ -83,29 +83,23 @@ Currently no per-channel agent control. Every agent in a channel sees every mess
 An agent can only work on one task at a time. For a system selling "AI agents, organized like a team," the inability to parallelize is the biggest gap.
 
 ### What's Needed
-A `spawn_agent` tool (for agents) and `/spawn` command (for humans) that:
-1. Creates a fresh, stateless agent instance
-2. Gives it specific instructions
-3. Supports **wait** (blocking, get result) or **fire-and-forget** (async, results posted back to thread)
-4. Subagent inherits parent's workspace, channel, and tool bindings
-5. Results appear in the same thread as a reply from the subagent
-
-### Technical Approach
-- `agent-runtime` already has `spawn.ts` and `concurrent.ts` primitives — productize as a user-facing tool
-- Subagent lifecycle: spawn → run → post results → die (stateless, no persistence)
-- Rate limits: cap concurrent subagents per parent
-- Audit log tracks subagent spawns as child runs of parent run
+An `agent.delegate` tool (for agents) that:
+1. Sends a one-on-one DM turn to another agent, including itself
+2. Wakes the delegated agent exactly once
+3. Waits for that agent's turn to finish and returns the final answer
+4. Keeps the subagent conversation visible as an agent-only DM thread
+5. Ends after returning the final subagent message
 
 ### Tasks
 
 | # | Task | Status | Notes |
 |---|------|--------|-------|
-| 3.1 | Tool schemas: define `SpawnAgentInput` / `SpawnAgentResult` | Pending | In agent-skills or tool schemas package |
-| 3.2 | Tool implementation: `spawnAgent` function in agent-runtime | Pending | Wraps existing spawn.ts primitives |
-| 3.3 | Agent loop integration: register as available tool, handle wait vs fire-and-forget | Pending | In agent-runtime agent loop |
+| 3.1 | Tool schemas: define `AgentDelegateInput` / `AgentDelegateResult` | ✅ Done | `packages/orchestrator/src/tools/agent-delegate.ts` |
+| 3.2 | Tool implementation: `agent.delegate` function | ✅ Done | DM-based wake, waits for delegated turn |
+| 3.3 | Agent loop integration: register as available tool | ✅ Done | Registered in `ORCHESTRATOR_TOOLS`, `ALWAYS_AVAILABLE_AGENT_TOOLS`, policy branch |
 | 3.4 | Session tracking: limit concurrent subagents, orphan cleanup on parent error | Pending | Lifecycle management |
-| 3.5 | Result relay: subagent output → parent's thread as reply | Pending | Wire through message service |
-| 3.6 | Frontend: status indicator (spawning, running, completed) + `/spawn` slash command | Pending | Chat input + thread UI |
+| 3.5 | Result relay: delegated agent output → caller tool result | ✅ Done | Tool returns reply content and `thread_id` |
+| 3.6 | Frontend: status indicator for delegated runs | Pending | Active agent DM UI |
 
 ---
 
