@@ -374,10 +374,18 @@ export class McpRegistryService {
     const def = this.toMcpDef(server);
     const testedAt = new Date().toISOString();
     let connection: MCPConnection | undefined;
+    // Two-phase: (1) live fetch isolated in its own try; (2) post-fetch
+    // persistence writes isolated. Pre-fix a single try wrapped both,
+    // so a transient cache/seed/server-row write failure dumped into
+    // the catch and rewrote the cache with `existingCache?.tools ?? []`
+    // — turning a successful listTools result into an empty inventory
+    // on first-ever test of a server. The split mirrors the wake-run
+    // path in spirit-agent-run.ts.
+    let descriptors: McpToolDescriptor[];
     try {
       connection = await this.connect(def);
       const tools = await connection.listTools();
-      const descriptors: McpToolDescriptor[] = tools.map((tool) => {
+      descriptors = tools.map((tool) => {
         // Carry the server-declared destructive intent through so the
         // classifier honours it before the verb heuristic kicks in.
         // Pre-fix this hint was dropped at the descriptor boundary and
@@ -396,6 +404,35 @@ export class McpRegistryService {
           ...(declared !== undefined ? { destructive: declared } : {}),
         };
       });
+    } catch (err) {
+      const message = errorMessage(err);
+      // Live fetch genuinely failed — preserve the previous cache
+      // (this is the legacy "transient outage" behaviour).
+      const existingCache = this.repo.getMcpToolCache(organizationId, server.id);
+      this.repo.saveMcpToolCache({
+        mcpServerId: server.id,
+        organizationId,
+        tools: existingCache?.tools ?? [],
+        fetchedAt: existingCache?.fetchedAt ?? testedAt,
+        error: message,
+      });
+      this.repo.saveMcpServer({
+        ...server,
+        lastTestedAt: testedAt,
+        lastTestError: message,
+        updatedAt: testedAt,
+      });
+      if (connection) {
+        try { await connection.close(); } catch { /* ignore */ }
+      }
+      return {
+        ok: false,
+        tools: existingCache?.tools ?? [],
+        error: message,
+        testedAt,
+      };
+    }
+    try {
       this.repo.saveMcpToolCache({
         mcpServerId: server.id,
         organizationId,
@@ -426,31 +463,26 @@ export class McpRegistryService {
       return { ok: true, tools: descriptors, testedAt };
     } catch (err) {
       const message = errorMessage(err);
-      // Preserve the previous tool inventory on failure — a transient
-      // listTools outage shouldn't destroy the cache that SpiritService
-      // uses as a fallback. Only the server row's `last_test_error` is
-      // updated. If no cache exists yet (first-ever test failed),
-      // write an empty placeholder so the cache row still surfaces the
-      // error to the settings UI.
-      const existingCache = this.repo.getMcpToolCache(organizationId, server.id);
-      this.repo.saveMcpToolCache({
-        mcpServerId: server.id,
-        organizationId,
-        tools: existingCache?.tools ?? [],
-        fetchedAt: existingCache?.fetchedAt ?? testedAt,
-        error: message,
-      });
-      this.repo.saveMcpServer({
-        ...server,
-        // Don't auto-flip to disabled — operator decides. Just record
-        // the test failure so the UI can show it.
-        lastTestedAt: testedAt,
-        lastTestError: message,
-        updatedAt: testedAt,
-      });
+      // Persistence write failed AFTER a successful live fetch. Surface
+      // the error in the server row but keep the freshly fetched
+      // descriptors in the response so the UI shows the real tool
+      // inventory instead of an empty list. Don't overwrite the cache:
+      // either the saveMcpToolCache itself failed and there's nothing
+      // we can do, or a later step did and the cache is already
+      // up-to-date with the live tools.
+      try {
+        this.repo.saveMcpServer({
+          ...server,
+          lastTestedAt: testedAt,
+          lastTestError: message,
+          updatedAt: testedAt,
+        });
+      } catch {
+        // best-effort
+      }
       return {
         ok: false,
-        tools: existingCache?.tools ?? [],
+        tools: descriptors,
         error: message,
         testedAt,
       };
@@ -549,9 +581,28 @@ export class McpRegistryService {
       // When the caller scoped the catalog by `role`, only grants with
       // a matching scope contribute — a supervisor-only grant must not
       // make the worker view think the agent is in allowlist mode.
+      //
+      // Source-of-truth for grantedByTool is the per-tool grant
+      // rows on this server, filtered by role scope. Pre-fix the
+      // loop only iterated attachedAgents (role-filtered server
+      // attachments), so any agent reachable for this role via a
+      // per-tool grant on a sibling-role attachment was dropped —
+      // the runtime resolver still exposed the tool (since
+      // listAttachedServersForSpirit was extended to surface via
+      // grants), so the catalog disagreed with reality.
+      //
+      // Build the candidate-member set from BOTH attachedAgents
+      // AND every member who has a per-tool grant on this server
+      // matching the requested role, then iterate the union.
+      const candidateMembers = new Set<string>(attachedAgents);
+      for (const d of descriptors) {
+        const grantHolders =
+          this.repo.listAgentsForTool?.(organizationId, server.id, d.name) ?? [];
+        for (const m of grantHolders) candidateMembers.add(m);
+      }
       const grantedByTool = new Map<string, Set<string>>();
       const allowlistAgents = new Set<string>();
-      for (const member of attachedAgents) {
+      for (const member of candidateMembers) {
         const rows = this.repo
           .listAgentToolAttachments(organizationId, member, server.id)
           .filter((r) => matchesRole(r.scope));
@@ -729,36 +780,39 @@ export class McpRegistryService {
     const scope =
       input.scope ?? existingServerAttachment?.scope ?? 'both';
 
-    if (!existingServerAttachment) {
-      this.repo.saveAgentMcpAttachment({
-        id: randomUUID(),
+    // Wrap the (optional) attachment insert + per-tool grant write
+    // in one transaction. Without it, a transient failure on the
+    // grant write would leave a fresh attachment with zero matching
+    // per-tool rows, which the runtime treats as "all tools" mode
+    // for the granted role — silently widening access beyond the
+    // single tool the operator clicked.
+    //
+    // We do NOT promote an existing attachment to 'both' when the
+    // grant scope doesn't match. The runtime resolver
+    // (listAttachedServersForSpirit) surfaces the server for the
+    // granted role via the per-tool grant alone, so the tool reaches
+    // the requested role without touching the attachment scope.
+    const attachment = this.repo.transaction(() => {
+      if (!existingServerAttachment) {
+        this.repo.saveAgentMcpAttachment({
+          id: randomUUID(),
+          organizationId: input.organizationId,
+          memberId: input.memberId,
+          mcpServerId: input.mcpServerId,
+          scope,
+          createdAt: now,
+          updatedAt: now,
+        });
+      }
+      return this.repo.saveAgentToolAttachment({
         organizationId: input.organizationId,
         memberId: input.memberId,
         mcpServerId: input.mcpServerId,
+        toolName: input.toolName,
         scope,
         createdAt: now,
         updatedAt: now,
       });
-    }
-    // Intentionally do NOT promote an existing attachment to 'both'
-    // when the grant scope doesn't match. Promotion broadens the
-    // SERVER attachment beyond the one tool being granted, and the
-    // runtime's "no matching per-tool grants = all-tools mode"
-    // fallback can then re-expose the full MCP to the sibling role.
-    // The grant's scope is honoured at the runtime resolver layer
-    // (listAttachedServersForSpirit was extended to also surface
-    // servers reachable via per-tool grants for the role), so the
-    // single granted tool reaches the requested role without
-    // touching the attachment scope.
-
-    const attachment = this.repo.saveAgentToolAttachment({
-      organizationId: input.organizationId,
-      memberId: input.memberId,
-      mcpServerId: input.mcpServerId,
-      toolName: input.toolName,
-      scope,
-      createdAt: now,
-      updatedAt: now,
     });
     return { attachment };
   }

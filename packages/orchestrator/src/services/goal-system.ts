@@ -167,6 +167,12 @@ export class GoalSystemService {
       input.title !== undefined ||
       input.description !== undefined ||
       input.assigneeId !== undefined;
+    // Wrap the plan-save + status-update + handover-save in one
+    // transaction so a rejected status transition (e.g. dependency
+    // not completed) rolls back any plan edits applied earlier in
+    // the same call. Pre-fix the plan-save committed first and a
+    // later status throw left the task renamed/reassigned anyway.
+    return this.repo.transaction((): GoalTask => {
     if (editsPlan) {
       // Authorization is MANDATORY for plan edits — supervisor only.
       // Pre-fix this was opt-in: missing callerMemberId short-circuited
@@ -227,6 +233,7 @@ export class GoalSystemService {
     const refreshed = this.repo.getGoalTask(input.organizationId, input.taskId);
     if (!refreshed) throw new Error(`Goal task not found: ${input.taskId}`);
     return refreshed;
+    });
   }
 
   // Dependency-wake: when `completedTask` flips to completed, find
@@ -301,9 +308,24 @@ export class GoalSystemService {
     completedDependency?: GoalTask,
   ): void {
     if (!this.conversations) return;
-    const lastAt = this.lastNudgedAt.get(task.id);
     const now = Date.now();
-    if (lastAt && now - lastAt < NUDGE_DEDUP_WINDOW_MS) return;
+    // Dedup checks BOTH the in-memory map (fast path, no DB read)
+    // AND the persisted task.lastNudgedAt (durable, survives a
+    // daemon restart). Pre-fix the in-memory map was the only
+    // gate, so a process recycle inside the dedup window let the
+    // sweeper immediately re-nudge a task the UI was still showing
+    // as "Next nudge in M:SS".
+    const lastInMemory = this.lastNudgedAt.get(task.id);
+    if (lastInMemory && now - lastInMemory < NUDGE_DEDUP_WINDOW_MS) return;
+    if (task.lastNudgedAt) {
+      const persistedMs = Date.parse(task.lastNudgedAt);
+      if (Number.isFinite(persistedMs) && now - persistedMs < NUDGE_DEDUP_WINDOW_MS) {
+        // Hydrate the in-memory map so subsequent ticks short-circuit
+        // on the fast path until the window expires.
+        this.lastNudgedAt.set(task.id, persistedMs);
+        return;
+      }
+    }
     const goal = this.repo.getGoal(organizationId, task.goalId);
     if (!goal) return;
     const sender = goal.supervisorId;
