@@ -51,6 +51,44 @@ const COLUMN_TO_STATUS: Record<ColumnId, GoalTaskStatus> = {
   completed: "completed",
 };
 
+// Dedup window the backend's GoalSystemService.nudgeAssignee uses
+// to suppress repeat nudges. The countdown re-derives time-until-
+// next from this constant + lastNudgedAt — keep it in sync if you
+// change NUDGE_DEDUP_WINDOW_MS in goal-system.ts.
+const NUDGE_DEDUP_WINDOW_MS = 10 * 60 * 1000;
+
+function formatMmSs(ms: number): string {
+  const total = Math.max(0, Math.ceil(ms / 1000));
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
+function NudgeCountdown({ lastNudgedAtIso }: { lastNudgedAtIso: string }): JSX.Element | null {
+  const lastMs = useMemo(() => Date.parse(lastNudgedAtIso), [lastNudgedAtIso]);
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  if (!Number.isFinite(lastMs)) return null;
+  const remaining = lastMs + NUDGE_DEDUP_WINDOW_MS - now;
+  if (remaining <= 0) {
+    return (
+      <div className="flex items-center gap-1 mb-2 px-1.5 py-0.5 rounded bg-violet-50 text-violet-700 dark:bg-violet-500/10 dark:text-violet-300 text-[9px] font-semibold w-fit">
+        <Clock className="h-3 w-3 shrink-0" />
+        <span>Nudging next tick</span>
+      </div>
+    );
+  }
+  return (
+    <div className="flex items-center gap-1 mb-2 px-1.5 py-0.5 rounded bg-zinc-50 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300 text-[9px] font-semibold w-fit">
+      <Clock className="h-3 w-3 shrink-0" />
+      <span>Next nudge in {formatMmSs(remaining)}</span>
+    </div>
+  );
+}
+
 function errorMessage(value: unknown, fallback: string): string {
   return value instanceof Error ? value.message : fallback;
 }
@@ -465,6 +503,10 @@ export function ChannelGoalsBoard({
                         >
                           {task.title}
                         </h4>
+
+                        {task.status === 'pending' && task.lastNudgedAt && (
+                          <NudgeCountdown lastNudgedAtIso={task.lastNudgedAt} />
+                        )}
 
                         <div className="flex items-center justify-between mt-auto pt-3 border-t border-zinc-100 dark:border-zinc-900/60">
                           <div className="flex items-center gap-2">

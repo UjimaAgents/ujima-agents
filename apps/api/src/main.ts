@@ -23,6 +23,11 @@ import { createTransport } from './transport/server.js';
 import { ensureBearerToken } from './transport/token.js';
 import { DEFAULT_BIND_HOST, DEFAULT_BIND_PORT } from '@ujima/api-schema';
 import { startTeamConfigWatcher } from './config-sync.js';
+import {
+  buildPolicyResolver,
+  buildClassificationLookup,
+  type DaemonRepoRef,
+} from './governance-resolvers.js';
 
 const STARTUP_SPLASH = `
    █  █   █ █ █▀▄▀█ █▀█
@@ -97,6 +102,17 @@ async function main(): Promise<void> {
   }
   writeDirtyFlag(homeDir);
 
+  // Late ref so the policy/classification resolvers can reach the
+  // Repository wrapper that's constructed after the host. Without this
+  // wire-up, the runtime-host's permission middleware would never see
+  // the governance policy or per-tool classifications — risk_defaults
+  // / classification gating would be silently skipped on the headless
+  // runtime path even though tool-service-impl already enforces them
+  // on the orchestrator path. The closures resolve the active org via
+  // `getLatestOrganization()` since the daemon is single-org per
+  // process (matches the migrateUnifiedWorkspaceOrg assumption).
+  const lateRepoRef: DaemonRepoRef = { current: undefined };
+
   const host = await createRuntimeHost(
     {
       homeDir,
@@ -112,6 +128,8 @@ async function main(): Promise<void> {
       getModel: (agent: AgentDef): LanguageModel => {
         throw new Error(`runtime: no model configured for agent "${agent.id}"`);
       },
+      policyResolver: buildPolicyResolver(lateRepoRef),
+      classificationLookup: buildClassificationLookup(lateRepoRef),
     },
     {},
   );
@@ -122,6 +140,7 @@ async function main(): Promise<void> {
 
   const secretStore = createFileSecretStore({ homeDir });
   const repository = new Repository(host.db.raw, secretStore);
+  lateRepoRef.current = repository;
   closeOrphanedActiveRuns(repository);
   const teamStore = createTeamStore();
   const migration = migrateUnifiedWorkspaceOrg({

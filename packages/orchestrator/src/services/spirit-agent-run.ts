@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { stepCountIs, tool, type ToolSet } from 'ai';
-import type { McpToolDescriptor } from '@ujima/shared';
-import { mcpPermissionToolName } from './mcp-runtime.js';
+import { classifyTool, type McpToolDescriptor } from '@ujima/shared';
 import { toModelToolErrorOutput, toModelToolOutput } from './tool-loop-result.js';
 import type { SpiritMcpResolution } from './spirit-types.js';
+import { mcpPermissionToolName } from './mcp-runtime.js';
 import {
   buildMcpNamespace,
+  dropHeaviestAttachedMcp,
   mcpToolInputSchema,
   sanitizeMcpToolName,
   uniqueMcpToolId,
@@ -34,7 +35,7 @@ import {
 } from '../utils/wake-reply-policy.js';
 import { recallMemoryEntries } from '../utils/memory.js';
 import { requireTeam } from '../utils/require-team.js';
-import { runAgentLoop } from './agent-loop.js';
+import { runAgentLoopWithRetry } from './agent-loop.js';
 import { toModelMessages, buildToolDefinitions } from '../utils/to-model-messages.js';
 import {
   ALWAYS_AVAILABLE_AGENT_TOOLS,
@@ -270,82 +271,128 @@ ${activeMemories
     let lastMessageId: string | undefined;
     let persistedStepCount = 0;
 
+    // Wrap runAgentLoop in the shared retry helper so the wake-run
+    // and direct-spirit paths share one recovery contract (defined
+    // in agent-loop.ts). Local mutable refs feed the buildArgs
+    // closure so the retry can swap the model or trim the toolset
+    // on the fly without re-flowing all the loop context.
+    let currentModel = model;
+    let currentToolDefs = toolDefs;
     try {
-      const result = await runAgentLoop({
-        model,
-        system: systemPrompt,
-        messages,
-        tools: toolDefs,
-        stopWhen: stepCountIs(maxIterations),
-        ...(this.maxOutputTokens !== undefined ? { maxOutputTokens: this.maxOutputTokens } : {}),
-        temperature: this.temperature,
-        toolChoice: 'auto',
-        onChunk: (chunk) => {
-          if (chunk.kind === 'reasoning') streamedReasoning += chunk.delta;
-          this.emitRunChunk(
-            {
-              organizationId: input.organizationId,
-              runId: spirit.runId ?? spirit.id,
-              threadId: session.channelId,
-              agentId: input.memberId,
-            },
-            chunk,
-          );
-        },
-        onStepFinish: async (step, currentSteps) => {
-          const unpersisted = currentSteps.slice(persistedStepCount);
-          for (const s of unpersisted) {
-            persistedStepCount++;
-            totalTurns += 1;
-            const stepText = typeof s.text === 'string' ? s.text : '';
-            const stepToolCalls = Array.isArray(s.toolCalls) ? s.toolCalls : [];
-            const stepToolResults = Array.isArray(s.toolResults) ? s.toolResults : [];
-            totalToolCalls += stepToolCalls.length;
-
-            if (!stepText && stepToolCalls.length === 0) {
-              continue;
-            }
-
-            const toolCalls = this.toMessageToolCalls(stepToolCalls, stepToolResults, spirit);
-            const artifactFileToolCall = await appendArtifactFileToolCall(
-              stepToolCalls,
-              team.workspace.root,
-              stepToolResults,
+      const result = await runAgentLoopWithRetry(
+        () => ({
+          model: currentModel,
+          system: systemPrompt,
+          messages,
+          tools: currentToolDefs,
+          stopWhen: stepCountIs(maxIterations),
+          ...(this.maxOutputTokens !== undefined ? { maxOutputTokens: this.maxOutputTokens } : {}),
+          temperature: this.temperature,
+          toolChoice: 'auto',
+          onChunk: (chunk) => {
+            if (chunk.kind === 'reasoning') streamedReasoning += chunk.delta;
+            this.emitRunChunk(
+              {
+                organizationId: input.organizationId,
+                runId: spirit.runId ?? spirit.id,
+                threadId: session.channelId,
+                agentId: input.memberId,
+              },
+              chunk,
             );
-            const messageToolCalls = artifactFileToolCall ? [...toolCalls, artifactFileToolCall] : toolCalls;
-            const reasoningContent = extractReasoningChunk(s);
-            if (!stepText && !artifactFileToolCall) {
-              continue;
+          },
+          onStepFinish: async (_step, currentSteps) => {
+            // Incrementally persist each step as it completes (main's
+            // change) so cancellation/crash mid-loop still leaves the
+            // partial transcript on the channel. The retry wrapper
+            // re-invokes the same builder when recovery fires, but
+            // `persistedStepCount` is shared across attempts so we
+            // never re-persist the same step twice.
+            const unpersisted = currentSteps.slice(persistedStepCount);
+            for (const s of unpersisted) {
+              persistedStepCount++;
+              totalTurns += 1;
+              const stepText = typeof s.text === 'string' ? s.text : '';
+              const stepToolCalls = Array.isArray(s.toolCalls) ? s.toolCalls : [];
+              const stepToolResults = Array.isArray(s.toolResults) ? s.toolResults : [];
+              totalToolCalls += stepToolCalls.length;
+
+              if (!stepText && stepToolCalls.length === 0) {
+                continue;
+              }
+
+              const toolCalls = this.toMessageToolCalls(stepToolCalls, stepToolResults, spirit);
+              const artifactFileToolCall = await appendArtifactFileToolCall(
+                stepToolCalls,
+                team.workspace.root,
+                stepToolResults,
+              );
+              const messageToolCalls = artifactFileToolCall ? [...toolCalls, artifactFileToolCall] : toolCalls;
+              const reasoningContent = extractReasoningChunk(s);
+              if (!stepText && !artifactFileToolCall) {
+                continue;
+              }
+              lastMessageId = this.saveAndEmitAgentMessage({
+                organizationId: input.organizationId,
+                channelId: session.channelId,
+                senderId: member.id,
+                content: stepText || 'Artifact updated.',
+                toolCalls: messageToolCalls,
+                metadata: { runId: spirit.runId ?? spirit.id },
+                reasoningContent,
+              });
+              lastText = stepText || lastText;
             }
-            lastMessageId = this.saveAndEmitAgentMessage({
-              organizationId: input.organizationId,
-              channelId: session.channelId,
-              senderId: member.id,
-              content: stepText || 'Artifact updated.',
-              toolCalls: messageToolCalls,
-              metadata: { runId: spirit.runId ?? spirit.id },
-              reasoningContent,
-            });
-            lastText = stepText || lastText;
-          }
+          },
+          loadInterruptMessages: () => {
+            const page = this.repo
+              .listChannelMessages(input.organizationId, session.channelId, { limit: 100 })
+              .data;
+            const interrupts = page.filter(
+              (message) =>
+                (message.kind === 'human' || isDelegateMessage(message)) &&
+                message.senderId !== member.id &&
+                isMessageAfterCursor(message, interruptCursor),
+            );
+            const latest = page.at(-1);
+            if (latest) {
+              moveCursor(interruptCursor, latest);
+            }
+            return toModelMessages(interrupts, member.id);
+          },
+        }),
+        (next) => {
+          currentModel = next;
         },
-        loadInterruptMessages: () => {
-          const page = this.repo
-            .listChannelMessages(input.organizationId, session.channelId, { limit: 100 })
-            .data;
-          const interrupts = page.filter(
-            (message) =>
-              (message.kind === 'human' || isDelegateMessage(message)) &&
-              message.senderId !== member.id &&
-              isMessageAfterCursor(message, interruptCursor),
-          );
-          const latest = page.at(-1);
-          if (latest) {
-            moveCursor(interruptCursor, latest);
-          }
-          return toModelMessages(interrupts, member.id);
+        (next) => {
+          currentToolDefs = next;
         },
-      });
+        {
+          onModelNotFound: async (error) => {
+            console.warn(
+              `[spirit-agent-run] model "${error.modelId}" rejected by provider; ` +
+                `falling back to safeFallbackModelForProvider for member="${input.memberId}"`,
+            );
+            return await Promise.resolve(
+              this.modelResolver({
+                organizationId: input.organizationId,
+                memberId: input.memberId,
+                role,
+                forceSafeFallback: true,
+              }),
+            );
+          },
+          onSchemaTooLarge: () => {
+            const dropped = dropHeaviestAttachedMcp(currentToolDefs, attachedMcpServers);
+            if (!dropped) return null;
+            console.warn(
+              `[spirit-agent-run] gemini "too many states" — dropped MCP "${dropped.serverName}" ` +
+                `(${dropped.toolNames.length} tools) and retrying for member="${input.memberId}"`,
+            );
+            return dropped.toolDefs;
+          },
+        },
+      );
       const { steps, usage } = result;
 
       // Each step in `steps` is one model turn. We persist one
@@ -737,21 +784,114 @@ ${activeMemories
     const usedToolIds = new Set<string>();
     const pool = this.mcpPool;
     for (const resolution of resolutions) {
+      // Two separate try blocks: the listTools fallback must NOT mask
+      // failures from the post-fetch seed writes. Pre-fix a single
+      // try/catch wrapped both, so a transient DB lock on the cache
+      // write would land in the catch and overwrite the freshly
+      // fetched live tools with stale cache data (or an empty list)
+      // — the agent silently lost its MCP tools even though the
+      // server had responded successfully.
       let toolList: McpToolDescriptor[] = [];
       try {
         const connection = await pool.get(resolution.def, { agentId: ctx.memberId });
         const liveTools = await connection.listTools();
-        toolList = liveTools.map((t) => ({
-          name: t.name,
-          description: t.description ?? '',
-          inputSchema:
-            t.inputSchema && typeof t.inputSchema === 'object' && !Array.isArray(t.inputSchema)
-              ? (t.inputSchema as Record<string, unknown>)
-              : undefined,
-        }));
+        toolList = liveTools.map((t) => {
+          const declared = typeof (t as { destructive?: boolean }).destructive === 'boolean'
+            ? (t as { destructive?: boolean }).destructive
+            : undefined;
+          return {
+            name: t.name,
+            description: t.description ?? '',
+            inputSchema:
+              t.inputSchema && typeof t.inputSchema === 'object' && !Array.isArray(t.inputSchema)
+                ? (t.inputSchema as Record<string, unknown>)
+                : undefined,
+            ...(declared !== undefined ? { destructive: declared } : {}),
+          };
+        });
       } catch {
         toolList = this.repo.getMcpToolCache(ctx.organizationId, resolution.serverId)?.tools ?? [];
       }
+
+      // Post-fetch seeds: refresh the tool cache AND insert inferred
+      // classifications. The cache write makes a runtime spawn the
+      // equivalent of an MCP Test for governance-UI visibility — the
+      // Tools tab and `requireTool` both read from mcp_tool_cache, so
+      // without this write a brand-new server's tools couldn't be
+      // governed from the UI until the operator manually ran Test.
+      // The classifications seed uses INSERT OR IGNORE so manual
+      // overrides survive; the cache write uses UPSERT and is safe to
+      // repeat concurrently.
+      //
+      // Failures here are non-fatal — they don't justify throwing
+      // away the toolList we just fetched. Log and move on so the
+      // agent keeps its palette and a transient lock doesn't strand
+      // it from its MCP.
+      if (toolList.length > 0) {
+        try {
+          this.repo.saveMcpToolCache({
+            mcpServerId: resolution.serverId,
+            organizationId: ctx.organizationId,
+            tools: toolList,
+            fetchedAt: new Date().toISOString(),
+          });
+        } catch (err) {
+          console.warn(
+            `[spirit-agent-run] failed to write mcp_tool_cache for server="${resolution.serverId}":`,
+            err,
+          );
+        }
+        try {
+          const seedEntries = toolList.map((d) => {
+            const inf = classifyTool({
+              name: d.name,
+              description: d.description,
+              category: resolution.def.category,
+              declaredDestructive: d.destructive,
+            });
+            return {
+              toolName: d.name,
+              risk: inf.risk,
+              needsReview: inf.needsReview,
+              reason: inf.reason,
+            };
+          });
+          this.repo.seedInferredClassifications(
+            ctx.organizationId,
+            resolution.serverId,
+            seedEntries,
+          );
+        } catch (err) {
+          console.warn(
+            `[spirit-agent-run] failed to seed mcp_tool_classifications for server="${resolution.serverId}":`,
+            err,
+          );
+        }
+      }
+
+      // Per-tool grant filter. When the agent has at least one row in
+      // agent_tool_attachments for this server *that applies to the
+      // current spirit role*, narrow the palette to those tools.
+      // Zero matching rows = "all tools" mode (back-compat).
+      //
+      // Role filter is load-bearing: a worker-only grant must not flip
+      // the palette into allowlist mode for supervisor runs, and vice
+      // versa. Pre-fix the scope column was stored but the filter
+      // ignored it, so a worker grant could erase the supervisor's
+      // tools or expose them to the wrong role entirely.
+      const grants = this.repo.listAgentToolAttachments(
+        ctx.organizationId,
+        ctx.memberId,
+        resolution.serverId,
+      );
+      const applicableGrants = grants.filter(
+        (g) => g.scope === ctx.role || g.scope === 'both',
+      );
+      if (applicableGrants.length > 0) {
+        const allowedNames = new Set(applicableGrants.map((g) => g.toolName));
+        toolList = toolList.filter((t) => allowedNames.has(t.name));
+      }
+
       const nsSlug = buildMcpNamespace(resolution.serverName, resolution.serverId);
       if (toolList.length > 0) {
         servers.push({
@@ -800,6 +940,9 @@ ${activeMemories
                 resourceType: 'mcp',
                 resourcePath: `${entry.serverId}:${entry.toolName}`,
                 permissionMcpId: entry.serverId,
+                // Synthetic id namespaces MCP tools away from built-in tool ids
+                // (e.g. `self.note`) for the legacy allowed_tools match path.
+                // Governance reads the raw name from input.toolName below.
                 permissionToolName: mcpPermissionToolName(entry.serverId, entry.toolName),
                 input: {
                   mcpServerId: entry.serverId,

@@ -57,6 +57,9 @@ export const GoalTaskSchema = z.object({
   handoverSummary: z.string().optional(),
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,
+  // Set by GoalSystemService.nudgeAssignee. The frontend uses it to
+  // render a "next nudge in M:SS" countdown on pending task cards.
+  lastNudgedAt: TimestampSchema.optional(),
 });
 export type GoalTask = z.infer<typeof GoalTaskSchema>;
 

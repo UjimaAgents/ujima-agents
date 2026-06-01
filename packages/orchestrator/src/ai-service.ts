@@ -2,7 +2,15 @@ import { randomUUID } from 'node:crypto';
 import { type ToolSet } from 'ai';
 import { buildAgentSystemPrompt, normalizeProviderKey } from '@ujima/framework';
 import { DEFAULT_SPIRIT_TEMPERATURE, type Message, type SpiritRole, type WakeReason } from '@ujima/shared';
-import { runAgentLoop, type AgentLoopChunk, type AgentLoopStep } from './services/agent-loop.js';
+import {
+  runAgentLoop,
+  runAgentLoopWithRetry,
+  type AgentLoopChunk,
+  type AgentLoopStep,
+} from './services/agent-loop.js';
+import { dropHeaviestAttachedMcp } from './services/spirit-mcp-helpers.js';
+import { safeFallbackModelForProvider } from '@ujima/shared';
+import { selectLanguageModel } from '@ujima/llm';
 import type { ApiRepository } from './services/repository-reader.js';
 import type { TeamStore } from './services/team-store.js';
 import type { ToolService } from './services/tool-service.js';
@@ -538,33 +546,81 @@ export class AiService {
     const systemPrompt = system;
 
     // Multi-section deliverables (task lists, BRDs, PRDs, or file writing)
-    // routinely exceed the per-turn cap when pasted inline or written via tools,
-    // producing JSON parsing errors due to truncation. 1200 tokens is too tight
-    // for a task list, delivery note, or large file write. We set the turn limit
-    // to 4096 across all wakes so the model always has sufficient headroom.
+    // routinely exceed the per-turn cap when pasted inline or written via
+    // tools. 4096 tokens across all wakes gives the model enough headroom.
     const turnMaxOutputTokens = 4096;
-    return runAgentLoop({
-      model,
-      system: systemPrompt,
-      messages,
-      tools: toolDefs,
-      stopWhen: () => false,
-      maxOutputTokens: turnMaxOutputTokens,
-      // Lower temperature for mandatory mention wakes: at 0.2 the model is
-      // more willing to commit to a structured posting tool. Other runs keep
-      // the shared default.
-      temperature: wakeReplyPolicy.mandatoryReply ? 0.2 : DEFAULT_SPIRIT_TEMPERATURE,
-      // L1/L2: Use 'auto' tool choice so the model can choose whether
-      // to make a tool call or respond directly.
-      toolChoice: 'auto',
-      abortSignal: input.abortSignal,
-      onChunk: input.onChunk,
-      onStepFinish: input.onStepFinish,
-      loadInterruptMessages: () => {
-        const interrupts = this.loadRunInterrupts(input, interruptCursor);
-        return toModelMessages(interrupts, input.agentId);
+    // Wake-run path retry. Same recovery contract as the direct-spirit
+    // path (spirit-agent-run.ts) — bad model id swap and "too many
+    // states" palette reduction — but the model re-resolution is inline
+    // here because the wake path's model resolver is composed locally
+    // (uses `member.llm` / `member.model`) rather than going through
+    // SpiritService's modelResolver.
+    let currentModel = model;
+    let currentToolDefs = toolDefs;
+    const providerName = normalizeProviderKey(member.llm ?? role.provider ?? '');
+    const provider = team.getProvider(providerName);
+    return runAgentLoopWithRetry(
+      () => ({
+        model: currentModel,
+        system: systemPrompt,
+        messages,
+        tools: currentToolDefs,
+        stopWhen: () => false,
+        maxOutputTokens: turnMaxOutputTokens,
+        // Lower temperature for mandatory mention wakes: at 0.2 the
+        // model is more willing to commit to a structured posting tool.
+        temperature: wakeReplyPolicy.mandatoryReply ? 0.2 : DEFAULT_SPIRIT_TEMPERATURE,
+        // L1/L2: 'auto' lets the model choose whether to call a tool
+        // or respond directly.
+        toolChoice: 'auto',
+        abortSignal: input.abortSignal,
+        onChunk: input.onChunk,
+        onStepFinish: input.onStepFinish,
+        loadInterruptMessages: () => {
+          const interrupts = this.loadRunInterrupts(input, interruptCursor);
+          return toModelMessages(interrupts, input.agentId);
+        },
+      }),
+      (next) => {
+        currentModel = next;
       },
-    });
+      (next) => {
+        currentToolDefs = next;
+      },
+      {
+        onModelNotFound: (error) => {
+          // Hop directly to the provider's safe-default id. We can't
+          // re-call the local resolveSpiritModel here without
+          // duplicating the closure — and the recovery target is the
+          // same regardless (`safeFallbackModelForProvider(kind)`).
+          const kind = provider?.kind ?? error.providerKindHint ?? '';
+          const fallbackId = safeFallbackModelForProvider(kind);
+          const apiKey = providerName
+            ? this.repo.getProviderCredential(input.organizationId, providerName)
+            : null;
+          if (!fallbackId || !apiKey || !provider) return null;
+          console.warn(
+            `[ai-service] model "${error.modelId}" rejected by provider; ` +
+              `falling back to "${fallbackId}" for member="${input.agentId}"`,
+          );
+          return selectLanguageModel({
+            kind: provider.kind,
+            modelId: fallbackId,
+            apiKey,
+            baseUrl: provider.baseUrl,
+          });
+        },
+        onSchemaTooLarge: () => {
+          const dropped = dropHeaviestAttachedMcp(currentToolDefs, attachedMcpServers);
+          if (!dropped) return null;
+          console.warn(
+            `[ai-service] gemini "too many states" — dropped MCP "${dropped.serverName}" ` +
+              `(${dropped.toolNames.length} tools) and retrying for member="${input.agentId}"`,
+          );
+          return dropped.toolDefs;
+        },
+      },
+    );
   }
 
   private loadRunInterrupts(
