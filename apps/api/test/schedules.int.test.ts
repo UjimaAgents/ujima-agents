@@ -1,4 +1,4 @@
-import { test, expect, beforeEach } from 'bun:test';
+import { describe, expect, it, beforeEach } from 'vitest';
 import { openDatabase } from '@ujima/context-store';
 
 function createRepo() {
@@ -28,58 +28,60 @@ function createRepo() {
   };
 }
 
-let repo: ReturnType<typeof createRepo>;
-const orgId = 'test-org';
-const memberId = 'test-member';
-const now = new Date().toISOString();
+describe('scheduled jobs repository', () => {
+  let repo: ReturnType<typeof createRepo>;
+  const orgId = 'test-org';
+  const memberId = 'test-member';
+  const now = new Date().toISOString();
 
-beforeEach(() => {
-  repo = createRepo();
-});
+  beforeEach(() => {
+    repo = createRepo();
+  });
 
-test('creates and retrieves a scheduled job', () => {
-  repo.save({ id: 'job-1', organizationId: orgId, name: 'Standup', cronExpression: '0 9 * * 1-5', prompt: 'Time for standup!', channelId: 'general', memberId, status: 'active', runCount: 0, createdAt: now, updatedAt: now });
-  const job = repo.get(orgId, 'job-1')!;
-  expect(job.name).toBe('Standup');
-});
+  it('creates and retrieves a scheduled job', () => {
+    repo.save({ id: 'job-1', organizationId: orgId, name: 'Standup', cronExpression: '0 9 * * 1-5', prompt: 'Time for standup!', channelId: 'general', memberId, status: 'active', runCount: 0, createdAt: now, updatedAt: now });
+    const job = repo.get(orgId, 'job-1')!;
+    expect(job.name).toBe('Standup');
+  });
 
-test('lists scheduled jobs', () => {
-  const base = { organizationId: orgId, memberId, status: 'active', runCount: 0, createdAt: now, updatedAt: now };
-  repo.save({ id: 'j1', name: 'A', cronExpression: '* * * * *', prompt: 'a', ...base });
-  repo.save({ id: 'j2', name: 'B', cronExpression: '* * * * *', prompt: 'b', ...base });
-  expect(repo.list(orgId)).toHaveLength(2);
-});
+  it('lists scheduled jobs', () => {
+    const base = { organizationId: orgId, memberId, status: 'active', runCount: 0, createdAt: now, updatedAt: now };
+    repo.save({ id: 'j1', name: 'A', cronExpression: '* * * * *', prompt: 'a', ...base });
+    repo.save({ id: 'j2', name: 'B', cronExpression: '* * * * *', prompt: 'b', ...base });
+    expect(repo.list(orgId)).toHaveLength(2);
+  });
 
-test('updates a scheduled job', () => {
-  repo.save({ id: 'u1', organizationId: orgId, name: 'Old', cronExpression: '0 9 * * *', prompt: 'old', memberId, status: 'active', runCount: 0, createdAt: now, updatedAt: now });
-  repo.save({ id: 'u1', organizationId: orgId, name: 'New', cronExpression: '0 10 * * *', prompt: 'new', memberId, status: 'active', runCount: 0, createdAt: now, updatedAt: new Date().toISOString() });
-  expect((repo.get(orgId, 'u1') as any).name).toBe('New');
-  expect((repo.get(orgId, 'u1') as any).cron_expression).toBe('0 10 * * *');
-});
+  it('updates a scheduled job', () => {
+    repo.save({ id: 'u1', organizationId: orgId, name: 'Old', cronExpression: '0 9 * * *', prompt: 'old', memberId, status: 'active', runCount: 0, createdAt: now, updatedAt: now });
+    repo.save({ id: 'u1', organizationId: orgId, name: 'New', cronExpression: '0 10 * * *', prompt: 'new', memberId, status: 'active', runCount: 0, createdAt: now, updatedAt: new Date().toISOString() });
+    expect((repo.get(orgId, 'u1') as any).name).toBe('New');
+    expect((repo.get(orgId, 'u1') as any).cron_expression).toBe('0 10 * * *');
+  });
 
-test('deletes a scheduled job', () => {
-  repo.save({ id: 'd1', organizationId: orgId, name: 'Del', cronExpression: '* * * * *', prompt: 'del', memberId, status: 'active', runCount: 0, createdAt: now, updatedAt: now });
-  repo.del(orgId, 'd1');
-  expect(repo.get(orgId, 'd1')).toBeNull();
-});
+  it('deletes a scheduled job', () => {
+    repo.save({ id: 'd1', organizationId: orgId, name: 'Del', cronExpression: '* * * * *', prompt: 'del', memberId, status: 'active', runCount: 0, createdAt: now, updatedAt: now });
+    repo.del(orgId, 'd1');
+    expect(repo.get(orgId, 'd1')).toBeNull();
+  });
 
-test('lists due jobs globally', () => {
-  const past = new Date(Date.now() - 60000).toISOString();
-  const future = new Date(Date.now() + 3600000).toISOString();
-  const base = { organizationId: orgId, memberId, runCount: 0, createdAt: now, updatedAt: now };
-  repo.save({ id: 'due', name: 'Due', cronExpression: '* * * * *', prompt: 'due', status: 'active', nextRunAt: past, ...base });
-  repo.save({ id: 'not-due', name: 'Not', cronExpression: '0 0 1 1 0', prompt: 'not', status: 'active', nextRunAt: future, ...base });
-  repo.save({ id: 'paused', name: 'Paused', cronExpression: '* * * * *', prompt: 'pause', status: 'paused', nextRunAt: past, ...base });
-  const due = repo.due();
-  expect(due.some((j: any) => j.id === 'due')).toBe(true);
-  expect(due.some((j: any) => j.id === 'not-due')).toBe(false);
-  expect(due.some((j: any) => j.id === 'paused')).toBe(false);
-});
+  it('lists due jobs globally', () => {
+    const past = new Date(Date.now() - 60000).toISOString();
+    const future = new Date(Date.now() + 3600000).toISOString();
+    const base = { organizationId: orgId, memberId, runCount: 0, createdAt: now, updatedAt: now };
+    repo.save({ id: 'due', name: 'Due', cronExpression: '* * * * *', prompt: 'due', status: 'active', nextRunAt: past, ...base });
+    repo.save({ id: 'not-due', name: 'Not', cronExpression: '0 0 1 1 0', prompt: 'not', status: 'active', nextRunAt: future, ...base });
+    repo.save({ id: 'paused', name: 'Paused', cronExpression: '* * * * *', prompt: 'pause', status: 'paused', nextRunAt: past, ...base });
+    const due = repo.due();
+    expect(due.some((j: any) => j.id === 'due')).toBe(true);
+    expect(due.some((j: any) => j.id === 'not-due')).toBe(false);
+    expect(due.some((j: any) => j.id === 'paused')).toBe(false);
+  });
 
-test('tracks run count and lastError', () => {
-  repo.save({ id: 'stats', organizationId: orgId, name: 'Stats', cronExpression: '* * * * *', prompt: 'stats', memberId, status: 'active', runCount: 0, createdAt: now, updatedAt: now });
-  repo.save({ id: 'stats', organizationId: orgId, name: 'Stats', cronExpression: '* * * * *', prompt: 'stats', memberId, status: 'active', runCount: 5, lastRunAt: new Date().toISOString(), createdAt: now, updatedAt: new Date().toISOString() });
-  expect((repo.get(orgId, 'stats') as any).run_count).toBe(5);
-  repo.save({ id: 'stats', organizationId: orgId, name: 'Stats', cronExpression: '* * * * *', prompt: 'stats', memberId, status: 'active', runCount: 5, lastError: 'error!', createdAt: now, updatedAt: new Date().toISOString() });
-  expect((repo.get(orgId, 'stats') as any).last_error).toBe('error!');
+  it('tracks run count and lastError', () => {
+    repo.save({ id: 'stats', organizationId: orgId, name: 'Stats', cronExpression: '* * * * *', prompt: 'stats', memberId, status: 'active', runCount: 0, createdAt: now, updatedAt: now });
+    repo.save({ id: 'stats', organizationId: orgId, name: 'Stats', cronExpression: '* * * * *', prompt: 'stats', memberId, status: 'active', runCount: 5, lastRunAt: new Date().toISOString(), createdAt: now, updatedAt: new Date().toISOString() });
+    expect((repo.get(orgId, 'stats') as any).run_count).toBe(5);
+    repo.save({ id: 'stats', organizationId: orgId, name: 'Stats', cronExpression: '* * * * *', prompt: 'stats', memberId, status: 'active', runCount: 5, lastError: 'error!', createdAt: now, updatedAt: new Date().toISOString() });
+    expect((repo.get(orgId, 'stats') as any).last_error).toBe('error!');
+  });
 });
