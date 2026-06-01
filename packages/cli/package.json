@@ -20,6 +20,7 @@
     "chalk": "^5.6.2",
     "@ujima/api-schema": "workspace:*",
     "@ujima/framework": "workspace:*",
+    "@ujima/license": "workspace:*",
     "@ujima/orchestrator": "workspace:*",
     "@ujima/runtime-core": "workspace:*",
     "@ujima/shared": "workspace:*"
