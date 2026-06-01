@@ -179,6 +179,7 @@ import {
   saveGoal as writeGoal,
   saveGoalTask as writeGoalTask,
   saveInteractiveQuestion as writeInteractiveQuestion,
+  setGoalTaskLastNudgedAt as writeGoalTaskLastNudgedAt,
   updateGoalTaskStatus as writeGoalTaskStatus,
 } from './goals.js';
 import {
@@ -628,6 +629,11 @@ export class Repository {
     readGoalTask(this.db, organizationId, taskId);
   listGoalTasks = (organizationId: string, goalId: string): GoalTask[] =>
     readGoalTasks(this.db, organizationId, goalId);
+  setGoalTaskLastNudgedAt = (
+    organizationId: string,
+    taskId: string,
+    isoTimestamp: string,
+  ): void => writeGoalTaskLastNudgedAt(this.db, organizationId, taskId, isoTimestamp);
   updateGoalTaskStatus = (
     organizationId: string,
     taskId: string,

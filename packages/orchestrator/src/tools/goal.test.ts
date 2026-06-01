@@ -105,5 +105,11 @@ describe('goal.start', () => {
       selectedOption: 'Yes, implement (Recommended)',
       tasks: [{ id: 'task-1' }],
     });
+    // Regression guard: the resumed-after-answer shape must NOT
+    // leak `questionId` from the prior waiting_for_input step. The
+    // model interpreted that dangling field as "tool still wants
+    // input" and hallucinated an "interactive user input required"
+    // error in chat (see goal.ts:70-94 for the fix rationale).
+    expect((result as Record<string, unknown>).questionId).toBeUndefined();
   });
 });

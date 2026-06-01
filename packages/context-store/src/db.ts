@@ -1336,6 +1336,15 @@ const MIGRATIONS: {id: string; up: string}[] = [
         ON agent_tool_attachments(organization_id, mcp_server_id, tool_name);
     `,
   },
+  {
+    // Persists the goal-task sweeper's last nudge timestamp so the
+    // UI can render a "next nudge in M:SS" countdown and the dedup
+    // window survives a daemon restart (the in-memory Map in
+    // GoalSystemService.lastNudgedAt is the fast path; this column
+    // is the durable mirror).
+    id: '043_goal_tasks_last_nudged_at',
+    up: `ALTER TABLE goal_tasks ADD COLUMN last_nudged_at TEXT;`,
+  },
 ];
 
 export interface DbOptions {

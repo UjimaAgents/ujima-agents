@@ -261,6 +261,7 @@ export interface ApiRepository extends ConversationRepository {
     cursor?: string,
     limit?: number,
   ): PaginatedRuns;
+  listActiveRuns?(organizationId: string): RunState[];
   listThreadRuns(
     organizationId: string,
     threadId: string,
@@ -433,6 +434,11 @@ export interface ApiRepository extends ConversationRepository {
   deleteGoalTasks(organizationId: string, goalId: string): void;
   getGoalTask(organizationId: string, taskId: string): GoalTask | null;
   listGoalTasks(organizationId: string, goalId: string): GoalTask[];
+  setGoalTaskLastNudgedAt?(
+    organizationId: string,
+    taskId: string,
+    isoTimestamp: string,
+  ): void;
   updateGoalTaskStatus(
     organizationId: string,
     taskId: string,

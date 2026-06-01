@@ -462,7 +462,11 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   const spiritModelResolver =
     context.spiritModelResolver ??
     createSpiritModelResolver(context.teamStore, context.repo);
-  const goals = new GoalSystemService(context.repo, (orgId, runId) => resumeInputRun(orgId, runId));
+  const goals = new GoalSystemService(
+    context.repo,
+    (orgId, runId) => resumeInputRun(orgId, runId),
+    conversations,
+  );
 
   const innerTools = new ToolServiceImpl(
     context.teamStore,
@@ -559,7 +563,9 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   const auth = new AuthService(context.repo);
   const bootstrap = new BootstrapService(context.repo, context.teamStore, auth);
   const onboarding = new OnboardingService(context.repo, context.teamStore);
-  const scheduler = new SchedulerService(context.repo, conversations, context.realtime);
+  const scheduler = new SchedulerService(context.repo, conversations, context.realtime, {
+    onTick: () => goals.sweepAllPendingTasks(),
+  });
   const settings = new SettingsService(context.repo, context.teamStore);
   const workspaces = new WorkspaceService(
     context.repo,

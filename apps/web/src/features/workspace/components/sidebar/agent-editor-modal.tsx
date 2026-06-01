@@ -49,12 +49,19 @@ export function AgentEditorModal({
 
   const availableTools = useMemo(() => {
     if (!draft) return [];
+    // Pull from the full team tool catalog so opt-in baseline tools
+    // (shell, download, filesystem, etc.) appear as selectable
+    // chips. Pre-fix the picker only listed tools already wired
+    // into some role/preset, so tools nobody had granted yet were
+    // invisible — admins had to type the id into the freeform CSV
+    // input to grant them, which nobody knew to do.
     return uniqueSorted([
+      ...Object.keys(teamSettings?.tools ?? {}),
       ...rolePresets.flatMap((preset) => preset.tools ?? []),
       ...(teamSettings?.roles.flatMap((role: TeamRole) => role.tools ?? []) ?? []),
       ...draft.tools,
     ]);
-  }, [draft, rolePresets, teamSettings?.roles]);
+  }, [draft, rolePresets, teamSettings?.roles, teamSettings?.tools]);
 
   if (!agent || !draft) return null;
 
