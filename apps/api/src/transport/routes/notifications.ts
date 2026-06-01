@@ -1,4 +1,4 @@
-import type { FastifyInstance, FastifyReply } from 'fastify';
+import type { FastifyInstance } from 'fastify';
 import { randomUUID } from 'node:crypto';
 import type { Repository } from '@ujima/runtime-core';
 import type { AuthService, ApprovalResolver } from '@ujima/orchestrator';
@@ -157,7 +157,7 @@ export function registerNotificationRoutes(api: FastifyInstance, deps: Notificat
           text: err ? `Failed: ${err}` : 'Approved ✓',
           show_alert: !!err,
         }),
-      }).catch(() => {});
+      }).catch(() => undefined);
     }
 
     return reply.status(200).send({ ok: !err });
