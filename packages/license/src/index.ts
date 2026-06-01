@@ -1,5 +1,5 @@
 import { createPublicKey, verify } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { SIGNING_PUBLIC_KEY_SPKI_BASE64 } from './keypair.js';
@@ -225,25 +225,41 @@ export async function checkLicenseForStartup(
 
 // Dev-mode detection: short-circuit license enforcement when:
 //   - UJIMA_DEV=1 explicitly set, OR
-//   - the process is running from inside THIS monorepo (turbo.json
-//     AND packages/license/package.json both present at some
-//     ancestor).
-// The two-marker check matters because contributors run `bun run
-// dev:local` without ever installing the published package — forcing
-// them to mint a key would be hostile to development. The package.json
-// marker pins detection to OUR repo so a user who happens to run
-// `ujima` from inside an unrelated Turborepo project doesn't bypass
-// the gate by accident.
+//   - the process is running from inside THIS monorepo, identified
+//     by reading the root package.json and the @ujima/license
+//     package.json and matching their declared "name" fields.
+//
+// Filename-only checks (turbo.json + a packages/license dir) are
+// not enough — an unrelated Turborepo workspace that happens to
+// have a packages/license/ folder would slip through. Reading the
+// name field pins detection to OUR specific package identity,
+// which no third-party workspace can spoof without claiming our
+// scope/name.
+const ROOT_PACKAGE_NAME = 'ujima-agents';
+const MONOREPO_FINGERPRINT_PACKAGE_NAME = '@ujima/license';
+
+function readJsonName(path: string): string | null {
+  try {
+    const parsed = JSON.parse(readFileSync(path, 'utf8')) as { name?: unknown };
+    return typeof parsed.name === 'string' ? parsed.name : null;
+  } catch {
+    return null;
+  }
+}
+
+function looksLikeUjimaMonorepoRoot(dir: string): boolean {
+  if (readJsonName(join(dir, 'package.json')) !== ROOT_PACKAGE_NAME) return false;
+  return (
+    readJsonName(join(dir, 'packages', 'license', 'package.json')) ===
+    MONOREPO_FINGERPRINT_PACKAGE_NAME
+  );
+}
+
 export function isDevMode(cwd: string = process.cwd()): boolean {
   if (process.env.UJIMA_DEV === '1') return true;
   let dir = resolve(cwd);
   for (;;) {
-    if (
-      existsSync(join(dir, 'turbo.json')) &&
-      existsSync(join(dir, 'packages', 'license', 'package.json'))
-    ) {
-      return true;
-    }
+    if (looksLikeUjimaMonorepoRoot(dir)) return true;
     const parent = dirname(dir);
     if (parent === dir) return false;
     dir = parent;

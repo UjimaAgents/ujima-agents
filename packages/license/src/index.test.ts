@@ -1,5 +1,5 @@
 import { generateKeyPairSync, sign } from 'node:crypto';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -199,8 +199,6 @@ describe('isDevMode', () => {
   // Regression for a bot finding: pre-fix isDevMode walked up looking
   // for ANY turbo.json, so a packaged install run from inside an
   // unrelated Turborepo project skipped the license gate entirely.
-  // Now we require BOTH turbo.json AND packages/license/package.json
-  // at the same ancestor to count.
   it('does NOT bypass the gate for an unrelated repo that just happens to use Turbo', () => {
     const prev = process.env.UJIMA_DEV;
     delete process.env.UJIMA_DEV;
@@ -209,6 +207,35 @@ describe('isDevMode', () => {
       writeFileSync(join(fakeRepo, 'turbo.json'), '{}');
       // No packages/license/package.json here — this is some other
       // person's Turborepo project, not ours.
+      expect(isDevMode(fakeRepo)).toBe(false);
+    } finally {
+      rmSync(fakeRepo, { recursive: true, force: true });
+      if (prev !== undefined) process.env.UJIMA_DEV = prev;
+    }
+  });
+
+  // Second-round bot finding: file-existence checks weren't enough —
+  // an unrelated workspace could trivially create a packages/license/
+  // directory and bypass the gate. The fix reads the declared "name"
+  // fields from BOTH the root package.json and packages/license/
+  // package.json, which a third-party workspace can't replicate
+  // without claiming our package identity.
+  it('does NOT bypass the gate when an unrelated workspace shares the same path layout', () => {
+    const prev = process.env.UJIMA_DEV;
+    delete process.env.UJIMA_DEV;
+    const fakeRepo = mkdtempSync(join(tmpdir(), 'ujima-imposter-'));
+    try {
+      writeFileSync(join(fakeRepo, 'turbo.json'), '{}');
+      writeFileSync(
+        join(fakeRepo, 'package.json'),
+        JSON.stringify({ name: 'someone-elses-monorepo' }),
+      );
+      const licDir = join(fakeRepo, 'packages', 'license');
+      mkdirSync(licDir, { recursive: true });
+      writeFileSync(
+        join(licDir, 'package.json'),
+        JSON.stringify({ name: '@someone-else/license' }),
+      );
       expect(isDevMode(fakeRepo)).toBe(false);
     } finally {
       rmSync(fakeRepo, { recursive: true, force: true });
