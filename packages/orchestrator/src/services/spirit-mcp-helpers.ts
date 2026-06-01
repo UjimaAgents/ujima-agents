@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { jsonSchema, type FlexibleSchema } from 'ai';
+import { jsonSchema, type FlexibleSchema, type ToolSet } from 'ai';
 import { z } from 'zod';
 
 export interface McpServerSummary {
@@ -15,6 +15,46 @@ export function sanitizeMcpNamespace(name: string): string {
     .replace(/_+/g, '_')
     .replace(/^_+|_+$/g, '')
     .slice(0, 40) || 'mcp';
+}
+
+// Trim the heaviest attached MCP server's tools out of a ToolSet.
+// Used by the runtime SchemaTooLargeError recovery path: when
+// Gemini rejects the combined tool schema with "too many states",
+// callers ask this helper to drop the largest contributor and
+// retry. Built-in tools (channel.*, self.*, view, ls, …) live
+// outside the `mcp__` namespace and stay untouched.
+//
+// Lives here (not in the call sites) so the wake-run path
+// (ai-service.ts) and the direct-spirit path
+// (spirit-agent-run.ts) drop the same shape — adding a new
+// recovery heuristic means editing one function.
+
+export interface AttachedMcpServerSummary {
+  serverName: string;
+  serverId: string;
+  toolNames: string[];
+}
+
+export function dropHeaviestAttachedMcp(
+  toolDefs: ToolSet,
+  attachedMcpServers: readonly AttachedMcpServerSummary[],
+): { serverName: string; toolNames: string[]; toolDefs: ToolSet } | null {
+  if (attachedMcpServers.length === 0) return null;
+  const heaviest = [...attachedMcpServers].sort(
+    (a, b) => b.toolNames.length - a.toolNames.length,
+  )[0];
+  if (!heaviest || heaviest.toolNames.length === 0) return null;
+  const nsSlug = buildMcpNamespace(heaviest.serverName, heaviest.serverId);
+  const prefix = `mcp__${nsSlug}__`;
+  const filtered: ToolSet = {};
+  for (const [key, def] of Object.entries(toolDefs)) {
+    if (!key.startsWith(prefix)) filtered[key] = def;
+  }
+  return {
+    serverName: heaviest.serverName,
+    toolNames: heaviest.toolNames,
+    toolDefs: filtered,
+  };
 }
 
 export function buildMcpNamespace(name: string, serverId: string): string {

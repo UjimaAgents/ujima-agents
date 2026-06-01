@@ -1,22 +1,36 @@
 import type { AgentTeamHandle } from '@ujima/framework';
 import type { z } from 'zod';
 import type { ConversationService } from '../services/conversation.js';
+import type { GoalSystemService } from '../services/goal-system.js';
 import type { ApiRepository, RepositoryReader } from '../services/repository-reader.js';
-import type { SupervisorTodoService } from '../services/supervisor-todo.js';
 import type { ToolInvocationInput } from '../services/tool-service.js';
+
+export interface AgentDelegateResult {
+  status: 'completed' | 'no_reply' | 'timed_out' | 'delegate_failed';
+  agent: string;
+  agent_id: string;
+  thread_id: string;
+  message_id: string;
+  reply_id?: string;
+  reply_content?: string;
+  run_status?: string;
+  error?: string;
+}
 
 export interface ToolExecutionContext {
   invocation: ToolInvocationInput;
   team: AgentTeamHandle;
   repo: ApiRepository;
   conversations: ConversationService;
+  goals: GoalSystemService;
+  delegateAgentTurn: (input: {
+    organizationId: string;
+    fromMemberId: string;
+    to: string;
+    message: string;
+    runId: string;
+  }) => Promise<AgentDelegateResult>;
   reportProgress?: (output: unknown) => Promise<void> | void;
-  /**
-   * Phase 2.B — supervisor.todo.* tools route through this service.
-   * Optional so tests / pre-Phase-2 contexts that don't construct
-   * a SupervisorTodoService still work.
-   */
-  supervisorTodos?: SupervisorTodoService;
 }
 
 /**

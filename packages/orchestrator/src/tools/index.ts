@@ -8,14 +8,16 @@ import {
   channelPostTool,
   channelReadTool,
   channelReplyTool,
-  selfNoteTool,
+  channelSetMemberModeTool,
 } from './channel.js';
 import { channelRecallTool } from './channel-recall.js';
 import { grepTool } from './grep.js';
+import { goalStartTool, goalTaskUpdateTool, questionAskTool } from './goal.js';
 import { jobKillTool, jobOutputTool } from './job-tools.js';
 import { downloadTool, fetchTool } from './web-tools.js';
 import { shellTool } from './shell.js';
 import { messageTool } from './message.js';
+import { agentDelegateTool } from './agent-delegate.js';
 import { scheduleTool } from './schedule.js';
 import { webSearchTool } from './web-search.js';
 import { memoryForgetTool, memoryRecallTool, memoryWriteTool } from './memory.js';
@@ -26,11 +28,6 @@ import {
   selfProcedureViewTool,
 } from './self-procedure.js';
 import { procedureListTool, procedureViewTool } from './procedure-read.js';
-import {
-  supervisorTodoAddTool,
-  supervisorTodoCheckTool,
-  supervisorTodoListTool,
-} from './supervisor-todo.js';
 import {
   editTool,
   globTool,
@@ -49,6 +46,7 @@ export const ORCHESTRATOR_TOOLS = {
   'channel.pass': channelPassTool,
   'channel.ack': channelAckTool,
   'channel.handoff': channelHandoffTool,
+  'channel.set_member_mode': channelSetMemberModeTool,
   view: viewTool,
   write: writeTool,
   edit: editTool,
@@ -62,7 +60,6 @@ export const ORCHESTRATOR_TOOLS = {
   job_output: jobOutputTool,
   job_kill: jobKillTool,
   web_search: webSearchTool,
-  'self.note': selfNoteTool,
   'self.procedure.add': selfProcedureAddTool,
   'self.procedure.remove': selfProcedureRemoveTool,
   'self.procedure.list': selfProcedureListTool,
@@ -70,14 +67,15 @@ export const ORCHESTRATOR_TOOLS = {
   'procedure.list': procedureListTool,
   'procedure.view': procedureViewTool,
   'channel.recall': channelRecallTool,
+  'goal.start': goalStartTool,
+  'goal.task.update': goalTaskUpdateTool,
+  'question.ask': questionAskTool,
   'memory.write': memoryWriteTool,
   'memory.recall': memoryRecallTool,
   'memory.forget': memoryForgetTool,
   message: messageTool,
   schedule: scheduleTool,
-  'supervisor.todo.add': supervisorTodoAddTool,
-  'supervisor.todo.check': supervisorTodoCheckTool,
-  'supervisor.todo.list': supervisorTodoListTool,
+  'agent.delegate': agentDelegateTool,
 } as unknown as Record<string, OrchestratorTool>;
 
 // Tools an agent always has access to, regardless of its role's `tools`
@@ -99,9 +97,8 @@ export const ORCHESTRATOR_TOOLS = {
 // conversational primitive.
 //
 // Mandatory-reply and DM wake policy (`resolveWakeReplyPolicy`) strips
-// `channel.pass` and `self.note` from the palette at wake-time in
-// ai-service.ts and spirit.ts, keeping posting tools available so the
-// agent can comply.
+// `channel.pass` from the palette at wake-time in ai-service.ts and
+// spirit.ts, keeping posting tools available so the agent can comply.
 //
 // Read-only workspace tools (`view`, `ls`, `glob`, `grep`) are
 // baseline because the product mental model is "an employee with a
@@ -114,8 +111,19 @@ export const ORCHESTRATOR_TOOLS = {
 // approval-gated. `channel.ack` is the silent terminator used to
 // satisfy the mandatory-reply contract without producing a wake-able
 // message (Bet 3 — kills the echo-loop pathology).
+const DEPRECATED_TOOL_ALIASES: Record<string, string> = {
+  'memory.save': 'memory.write',
+};
+
+export function filterDeprecatedToolIds(toolIds: readonly string[]): string[] {
+  const normalized = toolIds.map((toolId) => {
+    if (toolId === 'self.note') return null;
+    return DEPRECATED_TOOL_ALIASES[toolId] ?? toolId;
+  });
+  return [...new Set(normalized.filter((toolId): toolId is string => toolId !== null))];
+}
+
 export const ALWAYS_AVAILABLE_AGENT_TOOLS = Object.freeze([
-  'self.note',
   'self.procedure.add',
   'self.procedure.remove',
   'self.procedure.list',
@@ -136,16 +144,19 @@ export const ALWAYS_AVAILABLE_AGENT_TOOLS = Object.freeze([
   'glob',
   'grep',
   'schedule',
+  'goal.start',
+  'goal.task.update',
+  'question.ask',
   'memory.write',
   'memory.recall',
   'memory.forget',
+  'agent.delegate',
 ] as const);
 
 // Supervisor's strict tool allowlist — read-only / annotation-only tools
 // plus the same channel surface we let workers use.
 // The supervisor turn never gets `filesystem`, `shell`, or any MCP write.
-// Channel reads, channel replies/DMs, and the three `supervisor.todo.*` jot
-// tools are the entire surface (E4.2.4).
+// Channel reads and replies/DMs are the supervisor side-effect surface.
 //
 // The list is enforced in two complementary places:
 //   1. SpiritService.resolveToolAllowlist restricts what enters the model
@@ -156,7 +167,6 @@ export const ALWAYS_AVAILABLE_AGENT_TOOLS = Object.freeze([
 //      out-of-band invocations (e.g. a custom tool that hardcodes
 //      `permissionMcpId: 'supervisor'` on a non-allowlisted tool id).
 export const SUPERVISOR_TOOL_ALLOWLIST = Object.freeze([
-  'self.note',
   'channel.read',
   'channel.list',
   'channel.post',
@@ -170,9 +180,11 @@ export const SUPERVISOR_TOOL_ALLOWLIST = Object.freeze([
   'fetch',
   'job_output',
   'web_search',
-  'supervisor.todo.add',
-  'supervisor.todo.check',
-  'supervisor.todo.list',
+  'goal.start',
+  'goal.task.update',
+  'question.ask',
+  'memory.write',
+  'memory.recall',
 ] as const);
 
 /** @deprecated Renamed to {@link SUPERVISOR_TOOL_ALLOWLIST}. Kept for one cycle. */

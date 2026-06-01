@@ -89,33 +89,18 @@ export interface MemberAlertInput {
   wakeReason: WakeReason;
 }
 
-/**
- * Optional post-publish hook fired after a message is successfully
- * persisted and broadcast. Used by the commitment service to extract
- * "I'll draft X" promises from agent messages and create durable
- * todos. Failures inside the hook do NOT roll the publish back —
- * keeping the chat surface live is more important than the side-
- * effect succeeding.
- */
-export type PublishMessageHook = (message: Message) => Promise<void> | void;
-
 export interface ConversationServiceOptions {
   archiveStore?: ArchivedChannelMessageStore;
   onMemberAlerted?: (input: MemberAlertInput) => Promise<void> | void;
   mentionFanoutCap?: number;
   mentionWindowMs?: number;
-  /**
-   * Hook fired after a message is published. Late-bound from
-   * services/index.ts so the commitment service can react to agent
-   * "I'll draft X" promises without conversation.ts knowing about
-   * it directly. Multiple hooks supported; failures swallowed.
-   */
-  onMessagePublished?: PublishMessageHook;
+  onMessagePublished?: (message: Message) => void | Promise<void>;
 }
 
 export class ConversationService {
   private readonly archiveStore?: ArchivedChannelMessageStore;
   private readonly onMemberAlerted?: (input: MemberAlertInput) => Promise<void> | void;
+  private readonly onMessagePublished?: (message: Message) => void | Promise<void>;
   private readonly mentionFanoutCap: number;
   private readonly mentionWindowMs: number;
   private readonly mentionWindows = new Map<string, number[]>();
@@ -139,7 +124,7 @@ export class ConversationService {
   private readonly pairMentionWindows = new Map<string, number[]>();
   private readonly pairMentionCap = 3;
   private readonly pairMentionWindowMs = 90_000;
-  private messagePublishedHook?: PublishMessageHook;
+  private readonly lastMessageCreatedAtByThread = new Map<string, number>();
 
   constructor(
     private readonly repo: ConversationRepository,
@@ -148,22 +133,22 @@ export class ConversationService {
   ) {
     this.archiveStore = options.archiveStore;
     this.onMemberAlerted = options.onMemberAlerted;
+    this.onMessagePublished = options.onMessagePublished;
     this.mentionFanoutCap = options.mentionFanoutCap ?? 10;
     this.mentionWindowMs = options.mentionWindowMs ?? 60_000;
     this.channelReadCap = 100;
     this.channelReadWindowMs = 60_000;
-    this.messagePublishedHook = options.onMessagePublished;
   }
 
-  /**
-   * Plug in (or replace) the post-publish hook. Used by
-   * services/index.ts to late-bind `CommitmentService` after both
-   * services exist (commitment-service needs the conversations
-   * instance, conversations needs the hook — same chicken-and-egg
-   * we resolved for AiService.setMcpToolResolver).
-   */
-  setMessagePublishedHook(hook: PublishMessageHook | undefined): void {
-    this.messagePublishedHook = hook;
+  private nextMessageCreatedAt(organizationId: string, threadId: string, requestedAt: string): string {
+    const key = `${organizationId}:${threadId}`;
+    const requestedMs = Date.parse(requestedAt);
+    const previousMs = this.lastMessageCreatedAtByThread.get(key) ?? 0;
+    const nextMs = Number.isFinite(requestedMs)
+      ? Math.max(requestedMs, previousMs + 1)
+      : previousMs + 1;
+    this.lastMessageCreatedAtByThread.set(key, nextMs);
+    return new Date(nextMs).toISOString();
   }
 
   listChannels(organizationId: string, cursor?: string, limit?: number) {
@@ -362,12 +347,13 @@ export class ConversationService {
     const resolvedMentions = options?.skipMentionResolution
       ? typedMentions ?? []
       : typedMentions ?? this.resolveMessageMentions(message.organizationId, message, channel);
+    const existing = this.repo.getMessage(message.organizationId, message.id);
     const finalMessage = MessageSchema.parse({
       ...message,
+      createdAt: existing?.createdAt ?? this.nextMessageCreatedAt(message.organizationId, message.threadId, message.createdAt),
       mentions: uniqueMentionIds(resolvedMentions),
       mentionNames: this.resolveMentionNames(message.organizationId, message.content, channel),
     });
-    const existing = this.repo.getMessage(finalMessage.organizationId, finalMessage.id);
     const messageAttachments = (finalMessage as { attachments?: { id: string }[] }).attachments ?? [];
     const linkedAttachmentIds = attachmentIds ?? messageAttachments.map((attachment) => attachment.id);
     if (linkedAttachmentIds.length > 0) {
@@ -424,24 +410,34 @@ export class ConversationService {
         rooms,
       );
 
-      void this.alertMentionedMembers(emittedMessage, resolvedMentions, channel);
+      this.fanout('alertMentionedMembers', this.alertMentionedMembers(emittedMessage, resolvedMentions, channel));
       if (!options?.suppressDmAlerts && !this.shouldSuppressDmWake(emittedMessage, channel)) {
-        void this.alertDirectMessageParticipants(emittedMessage, channel);
+        this.fanout('alertDirectMessageParticipants', this.alertDirectMessageParticipants(emittedMessage, channel));
       }
       // Phase 2 — broad-read fanout for public channels. Every agent
       // in the channel (or every org agent for empty-roster channels)
       // wakes on human-authored, non-system messages. Mentioned
       // agents are already alerted above with reason='mention';
       // we skip them here to avoid double-fire.
-      void this.alertChannelReaders(emittedMessage, channel, resolvedMentions);
-    }
-    // Fire-and-forget; a hook failure must never roll back the publish.
-    if (this.messagePublishedHook) {
-      void Promise.resolve()
-        .then(() => this.messagePublishedHook?.(emittedMessage))
-        .catch(() => undefined);
+      this.fanout('alertChannelReaders', this.alertChannelReaders(emittedMessage, channel, resolvedMentions));
+
+      if (this.onMessagePublished) {
+        this.fanout('onMessagePublished', Promise.resolve(this.onMessagePublished(emittedMessage)));
+      }
     }
     return emittedMessage;
+  }
+
+  // Fire-and-forget alert fanout: the message is already published and
+  // the HTTP response is on its way, so a downstream throw (schema drift,
+  // realtime emit failure) must not become an unhandledRejection.
+  private fanout(label: string, promise: Promise<unknown>): void {
+    promise.catch((error) => {
+      console.error(
+        `conversation: ${label} failed`,
+        error instanceof Error ? error.stack ?? error.message : String(error),
+      );
+    });
   }
 
   /**
@@ -507,6 +503,21 @@ export class ConversationService {
       // channel chatter doesn't starve the mention-fanout quota.
       if (!this.consumeChannelReadQuota(message.organizationId, member.id, channel.id)) {
         this.emitWakeSuppressed(message, channel, member.id, 'quota');
+        continue;
+      }
+      // Channel member mode check (active / passive / muted / temp_disable)
+      const memberMode = this.repo.getChannelMemberMode(
+        message.organizationId,
+        channel.id,
+        member.id,
+      );
+      if (memberMode === 'muted' || memberMode === 'temp_disable') {
+        this.emitWakeSuppressed(message, channel, member.id, 'mode-blocked');
+        continue;
+      }
+      if (memberMode === 'passive') {
+        // Passive agents read context but don't auto-reply on broadcasts.
+        this.emitWakeSuppressed(message, channel, member.id, 'mode-passive');
         continue;
       }
       fanout.push(this.alertMember(message, member.id, channel, 'channel-read'));
@@ -792,7 +803,7 @@ export class ConversationService {
     mentions?: string[];
     parentMessageId?: string;
     attachmentIds?: string[];
-    metadata?: { runId?: string; goalMode?: boolean };
+    metadata?: { runId?: string; goalMode?: boolean; delegate?: { parentRunId?: string } };
     /** L10 — client-supplied idempotency key. */
     clientMessageId?: string;
   }) {
@@ -845,12 +856,12 @@ export class ConversationService {
       // 5-step thread re-pinged everyone tagged anywhere upstream.
       //
       // New rule: always carry forward `parent.senderId` (so
-      // task-promoter assignment threading and supervisor-reply
-      // re-alerts keep working — both rely on the parent sender
-      // being mentioned). Drop transitive parent.mentions
-      // entirely. Three-party hand-offs (A→B→C→A) must include
-      // explicit @-mentions in the new message body; the
-      // rewritten prompt documents this requirement.
+      // assignment threading and reply re-alerts keep working —
+      // both rely on the parent sender being mentioned). Drop
+      // transitive parent.mentions entirely. Three-party hand-offs
+      // (A→B→C→A) must include explicit @-mentions in the new
+      // message body; the rewritten prompt documents this
+      // requirement.
       //
       // Bet 3 — vacuous-ack suppression: when the new body is a
       // pure acknowledgement ("Understood", "I'll await", etc.)
@@ -885,8 +896,22 @@ export class ConversationService {
     });
 
     const published = this.publishMessage(message, undefined, input.attachmentIds);
+    this.supersedePendingQuestionsOnHumanReply(message);
     this.compactConversationIfNeeded(input.organizationId, input.threadId, input.senderId);
     return published;
+  }
+
+  private supersedePendingQuestionsOnHumanReply(message: Message): void {
+    if (message.senderKind !== 'human' || !message.channelId) return;
+    const pending = this.repo.listPendingInteractiveQuestions?.(message.organizationId, message.channelId) ?? [];
+    const now = new Date().toISOString();
+    for (const question of pending) {
+      this.repo.saveInteractiveQuestion?.({
+        ...question,
+        status: 'superseded',
+        updatedAt: now,
+      });
+    }
   }
 
   postToChannel(input: {
@@ -896,7 +921,7 @@ export class ConversationService {
     body: string;
     replyTo?: string;
     mentions?: string[];
-    metadata?: { runId?: string };
+    metadata?: { runId?: string; delegate?: { parentRunId?: string } };
   }) {
     const channel = this.requireActiveChannel(input.organizationId, input.channelId);
     let threadId = channel.id;
@@ -927,7 +952,7 @@ export class ConversationService {
     messageId: string;
     body: string;
     mentions?: string[];
-    metadata?: { runId?: string };
+    metadata?: { runId?: string; delegate?: { parentRunId?: string } };
   }) {
     const parent = this.requireMessage(input.organizationId, input.messageId);
     return this.sendMessage({
@@ -951,7 +976,7 @@ export class ConversationService {
     parentMessageId?: string;
     ignore?: boolean;
     attachmentIds?: string[];
-    metadata?: { runId?: string; goalMode?: boolean };
+    metadata?: { runId?: string; goalMode?: boolean; delegate?: { parentRunId?: string } };
     /** L10 — client-supplied idempotency key. */
     clientMessageId?: string;
   }) {
@@ -998,7 +1023,9 @@ export class ConversationService {
       }
     }
 
-    const dmChannelName = [sender.name, recipient.name].sort().join(' / ');
+    const memberIds = [...new Set([sender.id, recipient.id])].sort();
+    const dmChannelName =
+      sender.id === recipient.id ? `${sender.name} (self delegation)` : [sender.name, recipient.name].sort().join(' / ');
     const now = new Date().toISOString();
 
     const channel = this.repo.saveChannel(ChannelSchema.parse({
@@ -1007,16 +1034,16 @@ export class ConversationService {
       name: dmChannelName,
       kind: 'dm',
       topic: '',
-      memberIds: [sender.id, recipient.id],
+      memberIds,
     }));
-    this.repo.setChannelMembers(channelId, [sender.id, recipient.id]);
+    this.repo.setChannelMembers(input.organizationId, channelId, memberIds);
 
     this.repo.ensureThread({
       id: channel.id,
       organizationId: input.organizationId,
       channelId: channel.id,
       title: dmChannelName,
-      memberIds: [sender.id, recipient.id],
+      memberIds,
       createdAt: now,
     });
 
@@ -1067,7 +1094,9 @@ export class ConversationService {
     }
 
     const channelId = getDirectMessageThreadId(memberA.id, memberB.id);
-    const dmChannelName = [memberA.name, memberB.name].sort().join(' / ');
+    const memberIds = [...new Set([memberA.id, memberB.id])].sort();
+    const dmChannelName =
+      memberA.id === memberB.id ? `${memberA.name} (self delegation)` : [memberA.name, memberB.name].sort().join(' / ');
     const now = new Date().toISOString();
 
     const channel = this.repo.saveChannel(
@@ -1077,17 +1106,17 @@ export class ConversationService {
         name: dmChannelName,
         kind: 'dm',
         topic: '',
-        memberIds: [memberA.id, memberB.id],
+        memberIds,
       }),
     );
-    this.repo.setChannelMembers(channelId, [memberA.id, memberB.id]);
+    this.repo.setChannelMembers(input.organizationId, channelId, memberIds);
 
     this.repo.ensureThread({
       id: channel.id,
       organizationId: input.organizationId,
       channelId: channel.id,
       title: dmChannelName,
-      memberIds: [memberA.id, memberB.id],
+      memberIds,
       createdAt: now,
     });
 
@@ -1134,7 +1163,7 @@ export class ConversationService {
         topic: 'Private working notes',
         memberIds: [member.id],
       });
-      this.repo.setChannelMembers(channelId, [member.id]);
+      this.repo.setChannelMembers(input.organizationId, channelId, [member.id]);
     }
     this.repo.ensureThread({
       id: channelId,
@@ -1286,6 +1315,18 @@ export class ConversationService {
         continue;
       }
 
+      // Muted/temp_disable agents don't wake even on @mention
+      if (channel) {
+        const memberMode = this.repo.getChannelMemberMode(
+          message.organizationId,
+          channel.id,
+          member.id,
+        );
+        if (memberMode === 'muted' || memberMode === 'temp_disable') {
+          continue;
+        }
+      }
+
       // Mention fan-out must not leak across channel boundaries.
       //
       // - `self` channels are private agent scratchpads; no fan-out at all.
@@ -1435,8 +1476,19 @@ export class ConversationService {
   ): Promise<void> {
     if (!channel || channel.kind !== 'dm') return;
     const recipients = channel.memberIds.filter((memberId) => memberId !== message.senderId);
+    const sender = this.repo.getMember(message.organizationId, message.senderId);
     await Promise.all(
       recipients.map(async (recipientId) => {
+        // Muted/temp_disable agents don't receive DMs either
+        const memberMode = this.repo.getChannelMemberMode(
+          message.organizationId,
+          channel.id,
+          recipientId,
+        );
+        if (memberMode === 'muted' || memberMode === 'temp_disable') return;
+        const recipient = this.repo.getMember(message.organizationId, recipientId);
+        const pairCap =
+          sender?.kind === 'agent' && recipient?.kind === 'agent' ? 1 : this.pairMentionCap;
         try {
           const countInWindow = this.recordPairMentionWake(
             message.organizationId,
@@ -1445,7 +1497,7 @@ export class ConversationService {
             recipientId,
           );
           const wakeReason: WakeReason =
-            countInWindow > this.pairMentionCap ? 'channel-read' : 'dm';
+            countInWindow > pairCap ? 'channel-read' : 'dm';
 
           if (wakeReason === 'channel-read') {
             this.emitEchoSuppressed({
@@ -1920,6 +1972,12 @@ export class ConversationService {
   }
 
   private canMemberAccessChannel(channel: Channel, memberId: string): boolean {
+    const member = channel.organizationId
+      ? this.repo.getMember(channel.organizationId, memberId)
+      : null;
+    if (!member || member.retiredAt) {
+      return false;
+    }
     // Self channels and DMs are the only private channel kinds in the current
     // substrate. Everything else stays org-visible by default.
     if (channel.kind === 'self' || channel.kind === 'dm') {

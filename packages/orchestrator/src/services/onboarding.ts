@@ -15,7 +15,8 @@ import type { ApiRepository } from './repository-reader.js';
 import type { TeamStore } from './team-store.js';
 import { summarizeTeam, validateProviderKeys, type TeamSummary } from './team.js';
 import { addMemberToDefaultChannels, ensureMemberSelfChannel } from './member-channels.js';
-import { upsertWorkspaceMemberScopes } from './workspace-root.js';
+import { normalizeProjectFolderPath, upsertWorkspaceMemberScopes } from './workspace-root.js';
+import { reclaimOrphanOrganizationsAtPath } from './workspace-path-claim.js';
 import { persistTeamConfig } from './config-sync.js';
 import { visibleChannelsFromRepo } from './settings.js';
 import { visiblePublicChannels } from './channel-visibility.js';
@@ -136,12 +137,14 @@ export class OnboardingService {
     }
 
     const workspaceRoot = resolve(input.workspaceRoot);
-    const normalizedNewRoot = workspaceRoot.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
-    const existingOrgs = this.repo.listOrganizations();
+    const normalizedNewRoot = normalizeProjectFolderPath(workspaceRoot);
+    const emptyCatalog = { get: () => undefined };
+    reclaimOrphanOrganizationsAtPath(this.repo, emptyCatalog, normalizedNewRoot);
+
+    const existingOrgs = this.repo.listOrganizationsWithSignIn();
     for (const org of existingOrgs) {
       if (!org.workspace?.root) continue;
-      const normalizedExisting = resolve(org.workspace.root.trim()).replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
-      if (normalizedExisting === normalizedNewRoot) {
+      if (normalizeProjectFolderPath(org.workspace.root) === normalizedNewRoot) {
         throw new Error(`A workspace with the project folder "${org.workspace.root}" already exists.`);
       }
     }
@@ -275,7 +278,7 @@ export class OnboardingService {
     }
 
     for (const [id, ids] of channelMemberships) {
-      this.repo.setChannelMembers(id, [...ids]);
+      this.repo.setChannelMembers(organizationId, id, [...ids]);
     }
 
     for (const member of members) {

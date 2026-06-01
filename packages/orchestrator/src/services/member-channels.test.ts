@@ -133,6 +133,37 @@ describe('member-channels conversation provisioning', () => {
       /Forbidden/,
     );
   });
+
+  it('creates readable self-delegation dm threads without duplicate members', () => {
+    const repo = createRepo();
+    const agent = MemberSchema.parse({
+      id: 'agent-1',
+      organizationId: 'org-1',
+      name: 'Ava',
+      kind: 'agent',
+      roleName: 'assistant',
+      presence: 'offline',
+    });
+    const human = MemberSchema.parse({
+      id: 'human-1',
+      organizationId: 'org-1',
+      name: 'Owner',
+      kind: 'human',
+      roleName: 'owner',
+      presence: 'offline',
+    });
+    repo.saveMember(agent);
+    repo.saveMember(human);
+
+    const threadId = ensureDirectMessageConversation(repo, 'org-1', agent, agent);
+    const channel = repo.getChannel('org-1', threadId);
+    const conversations = new ConversationService(repo, { emit: () => undefined });
+
+    expect(threadId).toBe('dm:agent-1:agent-1');
+    expect(channel?.name).toBe('Ava (self delegation)');
+    expect(channel?.memberIds).toEqual(['agent-1']);
+    expect(() => conversations.requireThreadAccess('org-1', threadId, human.id, 'read')).not.toThrow();
+  });
 });
 
 function createRepo(): ApiRepository {
@@ -154,6 +185,11 @@ function createRepo(): ApiRepository {
       return channel;
     },
     setChannelMembers: () => undefined,
+    setChannelMemberMode: () => undefined,
+    getChannelMemberMode: () => null,
+    listChannelMemberModes: () => [],
+    listChannelMemberModesForChannel: () => [],
+    deleteChannelMemberMode: () => undefined,
     getThread: (_organizationId: string, threadId: string) => threads.get(threadId) ?? null,
     ensureThread: (thread: ConversationThread) => {
       threads.set(thread.id, thread);

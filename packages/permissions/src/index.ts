@@ -1,4 +1,10 @@
-import type { AgentDef, MCPDef, GovernancePolicy, ToolPolicyRule } from '@ujima/shared';
+import type {
+  AgentDef,
+  MCPDef,
+  GovernancePolicy,
+  ToolPolicyRule,
+  ToolRiskClass,
+} from '@ujima/shared';
 import { evaluatePolicy } from '@ujima/shared';
 import type { AuditLog, AgentStateStore } from '@ujima/context-store';
 
@@ -49,13 +55,19 @@ export interface SessionOverride {
   paused?: boolean;
 }
 
+export type ClassificationLookup = (
+  mcpId: string,
+  toolName: string,
+) => ToolRiskClass | 'unknown' | undefined;
+
 export interface PermissionMiddlewareDeps {
   audit?: AuditLog;
   agentState?: AgentStateStore;
   platformDefaults?: PlatformDefaults;
   mcpPolicies?: Record<string, MCPPolicy>;
   sessionOverrides?: Record<string, SessionOverride>;
-  governancePolicy?: GovernancePolicy | (() => GovernancePolicy | undefined);
+  governancePolicy?: GovernancePolicy | ((taskId?: string) => GovernancePolicy | undefined);
+  classificationLookup?: ClassificationLookup;
   now?: () => number;
 }
 
@@ -91,14 +103,14 @@ export function createPermissionMiddleware(
   const now = deps.now ?? (() => Date.now());
 
   let governancePolicy: GovernancePolicy | undefined;
-  let governancePolicyFn: (() => GovernancePolicy | undefined) | undefined;
+  let governancePolicyFn: ((taskId?: string) => GovernancePolicy | undefined) | undefined;
   if (typeof deps.governancePolicy === 'function') {
     governancePolicyFn = deps.governancePolicy;
   } else {
     governancePolicy = deps.governancePolicy;
   }
-  const resolveGovernancePolicy = (): GovernancePolicy | undefined =>
-    governancePolicyFn ? governancePolicyFn() : governancePolicy;
+  const resolveGovernancePolicy = (taskId?: string): GovernancePolicy | undefined =>
+    governancePolicyFn ? governancePolicyFn(taskId) : governancePolicy;
 
   async function writeAudit(
     input: PermissionCheckInput,
@@ -166,13 +178,15 @@ export function createPermissionMiddleware(
         return decision;
       }
 
-      const policy = resolveGovernancePolicy();
+      const policy = resolveGovernancePolicy(input.taskId);
       let policyAllowOverride = false;
       if (policy) {
+        const classification = deps.classificationLookup?.(mcp.id, toolName);
         const evaluation = evaluatePolicy(policy, {
           agentId: agent.id,
           mcpId: mcp.id,
           toolName,
+          classification,
         });
         if (evaluation.state === 'deny') {
           const decision: PermissionDecision = {

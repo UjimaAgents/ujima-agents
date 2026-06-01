@@ -1,6 +1,11 @@
 import type { SqliteDbHandle as DbHandle } from '@ujima/context-store';
-import { ChannelSchema, type Channel, type ChannelKind } from '@ujima/shared';
-import { now, replaceMemberLinks, rowString } from './common.js';
+import { ChannelSchema, type Channel, type ChannelKind, type ChannelMemberMode, type ChannelMemberSettings } from '@ujima/shared';
+import {
+  now,
+  replaceChannelMemberLinks,
+  replaceThreadMemberLinks,
+  rowString,
+} from './common.js';
 import { cursorWhereClause, decodeCursor, encodeCursor } from '@ujima/shared';
 import { listThreadIdsForChannel } from './threads.js';
 
@@ -32,7 +37,7 @@ export function saveChannel(db: DbHandle, channel: Channel): Channel {
   db.prepare(
     `INSERT INTO channels (id, organization_id, name, kind, topic, created_at, updated_at, parent_message_id, archived_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(id) DO UPDATE SET
+     ON CONFLICT(organization_id, id) DO UPDATE SET
        name = excluded.name,
        kind = excluded.kind,
        topic = excluded.topic,
@@ -67,7 +72,7 @@ export function getChannel(
     return null;
   }
 
-  return rowToChannel(row, listChannelMemberIds(db, rowString(row, 'id')));
+  return rowToChannel(row, listChannelMemberIds(db, organizationId, rowString(row, 'id')));
 }
 
 function rowToChannel(row: Row, memberIds: string[]): Channel {
@@ -121,7 +126,11 @@ export function listChannels(
     rows.pop();
   }
 
-  const memberIds = listChannelMemberIdsForChannelIds(db, rows.map((row) => rowString(row, 'id')));
+  const memberIds = listChannelMemberIdsForChannelIds(
+    db,
+    organizationId,
+    rows.map((row) => rowString(row, 'id')),
+  );
   const data = rows.map((row) => rowToChannel(row, memberIds.get(rowString(row, 'id')) ?? []));
 
   const tail = hasMore ? data[data.length - 1] : undefined;
@@ -135,23 +144,39 @@ export function listAllChannels(db: DbHandle, organizationId: string): Channel[]
     .prepare('SELECT * FROM channels WHERE organization_id = ? ORDER BY created_at DESC, id DESC')
     .all(organizationId) as Row[];
 
-  const memberIds = listChannelMemberIdsForChannelIds(db, rows.map((row) => rowString(row, 'id')));
+  const memberIds = listChannelMemberIdsForChannelIds(
+    db,
+    organizationId,
+    rows.map((row) => rowString(row, 'id')),
+  );
   return rows.map((row) => rowToChannel(row, memberIds.get(rowString(row, 'id')) ?? []));
 }
 
-export function setChannelMembers(db: DbHandle, channelId: string, memberIds: string[]): void {
-  replaceMemberLinks(db, 'channel_members', 'channel_id', channelId, memberIds);
-  for (const threadId of listThreadIdsForChannel(db, channelId)) {
-    replaceMemberLinks(db, 'thread_members', 'thread_id', threadId, memberIds);
+export function setChannelMembers(
+  db: DbHandle,
+  organizationId: string,
+  channelId: string,
+  memberIds: string[],
+): void {
+  replaceChannelMemberLinks(db, organizationId, channelId, memberIds);
+  for (const threadId of listThreadIdsForChannel(db, organizationId, channelId)) {
+    replaceThreadMemberLinks(db, threadId, memberIds);
   }
 }
 
-export function listChannelMemberIds(db: DbHandle, channelId: string): string[] {
-  return listChannelMemberIdsForChannelIds(db, [channelId]).get(channelId) ?? [];
+export function listChannelMemberIds(
+  db: DbHandle,
+  organizationId: string,
+  channelId: string,
+): string[] {
+  return (
+    listChannelMemberIdsForChannelIds(db, organizationId, [channelId]).get(channelId) ?? []
+  );
 }
 
 function listChannelMemberIdsForChannelIds(
   db: DbHandle,
+  organizationId: string,
   channelIds: string[],
 ): Map<string, string[]> {
   if (channelIds.length === 0) return new Map();
@@ -162,7 +187,7 @@ function listChannelMemberIdsForChannelIds(
     .prepare(
       `SELECT channel_id, member_id
          FROM channel_members
-        WHERE channel_id IN (${placeholders})
+        WHERE organization_id = ? AND channel_id IN (${placeholders})
        UNION
        SELECT
          CASE
@@ -172,9 +197,17 @@ function listChannelMemberIdsForChannelIds(
          tm.member_id
          FROM thread_members tm
          JOIN threads t ON t.id = tm.thread_id
-        WHERE t.channel_id IN (${placeholders}) OR t.id IN (${placeholders})`,
+        WHERE t.organization_id = ?
+          AND (t.channel_id IN (${placeholders}) OR t.id IN (${placeholders}))`,
     )
-    .all(...channelIds, ...channelIds, ...channelIds, ...channelIds) as {
+    .all(
+      organizationId,
+      ...channelIds,
+      ...channelIds,
+      organizationId,
+      ...channelIds,
+      ...channelIds,
+    ) as {
       channel_id: string;
       member_id: string;
     }[];
@@ -191,7 +224,103 @@ function listChannelMemberIdsForChannelIds(
   );
 }
 
-export function deleteChannel(db: DbHandle, channelId: string): void {
-  db.prepare('DELETE FROM channel_members WHERE channel_id = ?').run(channelId);
-  db.prepare('DELETE FROM channels WHERE id = ?').run(channelId);
+export function deleteChannel(
+  db: DbHandle,
+  organizationId: string,
+  channelId: string,
+): void {
+  db.prepare(
+    'DELETE FROM channel_members WHERE organization_id = ? AND channel_id = ?',
+  ).run(organizationId, channelId);
+  db.prepare(
+    'DELETE FROM channel_member_modes WHERE organization_id = ? AND channel_id = ?',
+  ).run(organizationId, channelId);
+  db.prepare('DELETE FROM channels WHERE organization_id = ? AND id = ?').run(
+    organizationId,
+    channelId,
+  );
+}
+
+// -----------------------------------------------------------------------
+// Channel member modes (active / passive / muted / temp_disable)
+// -----------------------------------------------------------------------
+
+export function setChannelMemberMode(
+  db: DbHandle,
+  organizationId: string,
+  channelId: string,
+  memberId: string,
+  mode: ChannelMemberMode,
+): void {
+  const timestamp = now();
+  db.prepare(
+    `INSERT INTO channel_member_modes (organization_id, channel_id, member_id, mode, updated_at)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(organization_id, channel_id, member_id) DO UPDATE SET
+       mode = excluded.mode,
+       updated_at = excluded.updated_at`,
+  ).run(organizationId, channelId, memberId, mode, timestamp);
+}
+
+export function getChannelMemberMode(
+  db: DbHandle,
+  organizationId: string,
+  channelId: string,
+  memberId: string,
+): ChannelMemberMode | null {
+  const row = db
+    .prepare(
+      'SELECT mode FROM channel_member_modes WHERE organization_id = ? AND channel_id = ? AND member_id = ?',
+    )
+    .get(organizationId, channelId, memberId) as { mode: string } | null;
+  return row?.mode as ChannelMemberMode | null;
+}
+
+export function listChannelMemberModes(
+  db: DbHandle,
+  organizationId: string,
+  memberId: string,
+): ChannelMemberSettings[] {
+  const rows = db
+    .prepare(
+      'SELECT channel_id, member_id, mode, updated_at FROM channel_member_modes WHERE organization_id = ? AND member_id = ?',
+    )
+    .all(organizationId, memberId) as { channel_id: string; member_id: string; mode: string; updated_at: string }[];
+
+  return rows.map((row) => ({
+    channelId: row.channel_id,
+    memberId: row.member_id,
+    mode: row.mode as ChannelMemberMode,
+    updatedAt: row.updated_at,
+  }));
+}
+
+export function listChannelMemberModesForChannel(
+  db: DbHandle,
+  organizationId: string,
+  channelId: string,
+): ChannelMemberSettings[] {
+  const rows = db
+    .prepare(
+      'SELECT channel_id, member_id, mode, updated_at FROM channel_member_modes WHERE organization_id = ? AND channel_id = ?',
+    )
+    .all(organizationId, channelId) as { channel_id: string; member_id: string; mode: string; updated_at: string }[];
+
+  return rows.map((row) => ({
+    channelId: row.channel_id,
+    memberId: row.member_id,
+    mode: row.mode as ChannelMemberMode,
+    updatedAt: row.updated_at,
+  }));
+}
+
+export function removeChannelMemberMode(
+  db: DbHandle,
+  organizationId: string,
+  channelId: string,
+  memberId: string,
+): void {
+  db.prepare(
+    'DELETE FROM channel_member_modes WHERE organization_id = ? AND channel_id = ? AND member_id = ?',
+  ).run(organizationId, channelId, memberId);
 }

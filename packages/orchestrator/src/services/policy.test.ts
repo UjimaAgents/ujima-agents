@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadAgentTeam, type AgentTeamHandle } from '@ujima/framework';
-import { checkToolPolicy } from './policy.js';
+import { checkToolPolicy, resolveShellExecutePolicy } from './policy.js';
 
 describe('checkToolPolicy', () => {
   let workspaceRoot: string;
@@ -308,36 +308,49 @@ describe('checkToolPolicy', () => {
       }
     });
 
-    it('self.note is always allowed even when the role does not list it', () => {
-      // Per the channels-as-substrate principle: an agent must be able to
-      // think to itself even if its role omits self.note from `tools`.
-      const team = loadAgentTeam({
-        name: 'Quiet Org',
-        workspace: { root: workspaceRoot },
-        providers: {
-          openai: { kind: 'openai', defaultModel: 'gpt-5.4', models: ['gpt-5.4'] },
-        },
-        roles: [
-          {
-            name: 'silent-role',
-            title: 'Silent',
-            instructions: 'No declared tools beyond filesystem.',
+  });
+
+  describe('resolveShellExecutePolicy', () => {
+    it('maps each shell approval mode', () => {
+      expect(resolveShellExecutePolicy('allow_all')).toEqual({
+        requiresApproval: false,
+        shellAutoReview: false,
+      });
+      expect(resolveShellExecutePolicy('always_review')).toEqual({
+        requiresApproval: true,
+        shellAutoReview: false,
+      });
+      expect(resolveShellExecutePolicy('auto_review')).toEqual({
+        requiresApproval: true,
+        shellAutoReview: true,
+      });
+      expect(resolveShellExecutePolicy(undefined)).toBeNull();
+    });
+  });
+
+  describe('shell approval modes', () => {
+    it.each([
+      ['allow_all', false, false] as const,
+      ['always_review', true, false] as const,
+      ['auto_review', true, true] as const,
+    ])('handles shell approval mode %s', (mode, requiresApproval, shellAutoReview) => {
+      expect(
+        checkToolPolicy(
+          teamWithRole({
+            name: 'shell-runner',
+            title: 'Shell Runner',
+            instructions: 'Can run shell when enabled.',
             provider: 'openai',
             model: 'gpt-5.4',
-            workspaceScopes: ['apps/web'],
-            tools: ['filesystem'],
+            workspaceScopes: ['.'],
+            tools: ['shell'],
             channels: ['general'],
-          },
-        ],
-        agents: [],
-        channels: [{ name: 'general', kind: 'general', topic: 'General' }],
-      } as Record<string, unknown>);
-
-      expect(
-        checkToolPolicy(team, 'silent-role', 'self.note', 'message'),
-      ).toEqual({ allowed: true, requiresApproval: false });
+          }),
+          'shell-runner', 'shell', 'execute', '.',
+          { effectiveShellApprovalMode: mode },
+        ),
+      ).toEqual({ allowed: true, requiresApproval, shellAutoReview });
     });
-
   });
 
   describe('mandatory-reply enforcement (L3)', () => {
@@ -374,13 +387,31 @@ describe('checkToolPolicy', () => {
       expect(result.reason).toMatch(/mandatory-reply/);
     });
 
-    it('rejects self.note when wakeReason === mention (escape-hatch closed)', () => {
+    it('rejects deprecated self.note in favor of memory tools', () => {
       const team = buildTeam();
-      const result = checkToolPolicy(team, 'engineer', 'self.note', 'message', undefined, {
-        wakeReason: 'mention',
+      expect(checkToolPolicy(team, 'engineer', 'self.note', 'message')).toEqual({
+        allowed: false,
+        requiresApproval: false,
+        reason: 'self.note was removed; use memory.write / memory.recall instead.',
       });
-      expect(result.allowed).toBe(false);
-      expect(result.reason).toMatch(/mandatory-reply/);
+      expect(checkToolPolicy(team, 'engineer', 'memory.write', 'message')).toEqual({
+        allowed: true,
+        requiresApproval: false,
+      });
+    });
+
+    it('skips the approval gate for goal/question management tools', () => {
+      const team = buildTeam();
+      for (const [tool, action] of [
+        ['goal.start', 'create'],
+        ['goal.task.update', 'update'],
+        ['question.ask', 'create'],
+      ] as const) {
+        expect(checkToolPolicy(team, 'engineer', tool, action)).toEqual({
+          allowed: true,
+          requiresApproval: false,
+        });
+      }
     });
 
     it('rejects channel.pass in direct-message threads', () => {
@@ -410,14 +441,6 @@ describe('checkToolPolicy', () => {
       ).toEqual({ allowed: true, requiresApproval: false });
     });
 
-    it('allows self.note for non-mention wake reasons', () => {
-      const team = buildTeam();
-      expect(
-        checkToolPolicy(team, 'engineer', 'self.note', 'message', undefined, {
-          wakeReason: 'channel-read',
-        }),
-      ).toEqual({ allowed: true, requiresApproval: false });
-    });
 
     it('keeps channel.reply available for mention runs (the contract IS to reply)', () => {
       const team = buildTeam();

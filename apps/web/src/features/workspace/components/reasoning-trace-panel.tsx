@@ -9,6 +9,15 @@ import { TraceStep, type TraceStepData } from "./chat/details-sidebar";
 const TRACE_PAGE_SIZE = 15;
 const TOP_LOAD_THRESHOLD = 40;
 
+function formatElapsed(ms: number): string {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  if (minutes < 1) return `${totalSeconds}s`;
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}hr`;
+}
+
 interface TraceRowData {
   key: string;
   step: TraceStepData;
@@ -44,6 +53,171 @@ function TraceEmpty({ label, detail, loading }: { label: string; detail?: string
   );
 }
 
+function getDiffStats(body?: string): { additions: number; deletions: number } {
+  if (!body) return { additions: 0, deletions: 0 };
+  let additions = 0;
+  let deletions = 0;
+  for (const line of body.split("\n")) {
+    if (line.startsWith("+") && !line.startsWith("+++")) additions++;
+    else if (line.startsWith("-") && !line.startsWith("---")) deletions++;
+  }
+  return { additions, deletions };
+}
+
+const AGENT_NAME_SEPARATORS = [
+  " sent a message ",
+  " responded to ",
+  " called tool ",
+  " used ",
+  " updated ",
+  " posted ",
+  " created ",
+  " ran ",
+  " finished ",
+  " · ",
+];
+
+function getAgentName(title: string): string {
+  const trimmed = title.trim();
+  if (!trimmed) return "Agent";
+  for (const sep of AGENT_NAME_SEPARATORS) {
+    const idx = trimmed.indexOf(sep);
+    if (idx > 0) return trimmed.slice(0, idx);
+  }
+  const space = trimmed.indexOf(" ");
+  return space > 0 ? trimmed.slice(0, space) : trimmed;
+}
+
+type AggregatedOperation = NonNullable<TraceStepData["aggregatedOperations"]>[number];
+
+function parseLineRange(meta: string): string | undefined {
+  const range = meta.match(/startLine=(\d+),\s*endLine=(\d+)/i);
+  if (range) return `${range[1]}-${range[2]}`;
+  const offset = meta.match(/offset=(\d+),\s*limit=(\d+)/i);
+  if (offset) {
+    const start = Number.parseInt(offset[1], 10);
+    const limit = Number.parseInt(offset[2], 10);
+    return `${start}-${start + limit - 1}`;
+  }
+  return undefined;
+}
+
+function toolStepToOperation(step: TraceStepData): AggregatedOperation {
+  const base = { id: step.id, additions: 0, deletions: 0, status: step.status };
+
+  if (step.filesystem) {
+    const isWrite = step.filesystem.action === "write";
+    const isDelete = step.title.toLowerCase().includes("deleted");
+    const body = step.filesystem.body || "";
+    return {
+      ...base,
+      type: isDelete ? "delete" : isWrite ? "edit" : "read",
+      file: step.filesystem.resourcePath,
+      body,
+      lines: step.filesystem.meta ? parseLineRange(step.filesystem.meta) : undefined,
+      ...(isWrite || isDelete ? getDiffStats(body) : {}),
+    };
+  }
+  if (step.grep) {
+    return { ...base, type: "search", query: step.grep.query, file: step.grep.path };
+  }
+  if (step.webSearch) {
+    return { ...base, type: "search", query: step.webSearch.query };
+  }
+  if (step.terminal) {
+    return {
+      ...base,
+      type: "shell",
+      command: step.terminal.commandLine,
+      file: step.terminal.cwd,
+      terminal: step.terminal,
+    };
+  }
+
+  const calledIdx = step.title.indexOf(" called tool ");
+  const toolName = calledIdx >= 0 ? step.title.slice(calledIdx + " called tool ".length).trim() : "tool";
+  if (toolName.startsWith("memory.")) {
+    return { ...base, type: "memory", toolName, detail: step.detail || "" };
+  }
+  if (toolName.startsWith("goal.")) {
+    return { ...base, type: "goal", toolName, detail: step.detail || "" };
+  }
+  if (toolName.startsWith("question.")) {
+    return { ...base, type: "question", toolName, detail: step.detail || "" };
+  }
+  if (toolName.startsWith("self.procedure.")) {
+    return { ...base, type: "procedure", toolName, detail: step.detail || "" };
+  }
+  return { ...base, type: "tool", toolName, detail: step.detail || "" };
+}
+
+function isToolStep(step: TraceStepData): boolean {
+  return !!(
+    step.filesystem ||
+    step.grep ||
+    step.webSearch ||
+    step.terminal ||
+    step.id.startsWith("tool:") ||
+    step.title.includes(" called tool ")
+  );
+}
+
+function groupTraceSteps(steps: TraceStepData[]): TraceStepData[] {
+  const grouped: TraceStepData[] = [];
+  let currentGroup: (TraceStepData & { aggregatedOperations: AggregatedOperation[] }) | null = null;
+
+  for (const step of steps) {
+    if (isToolStep(step)) {
+      if (!currentGroup) {
+        currentGroup = {
+          id: `aggregated-run-${step.id}`,
+          title: `${getAgentName(step.title)} · running`,
+          detail: "",
+          time: step.time,
+          duration: step.duration,
+          status: step.status,
+          aggregatedOperations: [],
+        };
+        grouped.push(currentGroup);
+      }
+      currentGroup.aggregatedOperations.push(toolStepToOperation(step));
+      currentGroup.status = currentGroup.aggregatedOperations.some((op) => op.status === "failed")
+        ? "failed"
+        : step.status === "running"
+          ? "running"
+          : "success";
+      currentGroup.title = `${getAgentName(currentGroup.title)} · ${
+        currentGroup.status === "failed"
+          ? "failed"
+          : currentGroup.status === "running"
+            ? "running"
+            : "completed"
+      }`;
+      currentGroup.duration = step.duration;
+      continue;
+    }
+
+    if (step.title.startsWith("Run ·")) {
+      currentGroup = {
+        id: `aggregated-run-${step.id}`,
+        title: `${getAgentName(step.title)} · ${step.status}`,
+        detail: "",
+        time: step.time,
+        duration: step.duration,
+        status: step.status,
+        aggregatedOperations: [],
+      };
+      grouped.push(currentGroup);
+      continue;
+    }
+
+    currentGroup = null;
+    grouped.push(step);
+  }
+
+  return grouped;
+}
+
 export function ReasoningTracePanel({
   organizationId,
   threadId,
@@ -52,6 +226,7 @@ export function ReasoningTracePanel({
   members,
   liveSteps,
   autoScroll,
+  startedAt,
 }: {
   organizationId?: string;
   threadId?: string;
@@ -61,6 +236,7 @@ export function ReasoningTracePanel({
   liveSteps: TraceStepData[];
   /** When true, keep the view pinned to the newest trace while it is live. */
   autoScroll?: boolean;
+  startedAt?: string;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
   const pendingPrependRef = useRef<{ scrollHeight: number; scrollTop: number } | null>(null);
@@ -74,7 +250,21 @@ export function ReasoningTracePanel({
   const [filter, setFilter] = useState<"all" | "errors" | "files" | "shell" | "search">("all");
   const [showScrollBottom, setShowScrollBottom] = useState(false);
 
-  const historyEnabled = liveSteps.length === 0 && !!organizationId && !!threadId;
+  const [now, setNow] = useState(() => Date.now());
+  const startedAtMs = useMemo(() => {
+    if (!startedAt) return undefined;
+    const ms = Date.parse(startedAt);
+    return Number.isFinite(ms) ? ms : undefined;
+  }, [startedAt]);
+  const elapsed = startedAtMs === undefined ? undefined : formatElapsed(now - startedAtMs);
+
+  useEffect(() => {
+    if (startedAtMs === undefined) return;
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, [startedAtMs]);
+
+  const historyEnabled = !!organizationId && !!threadId;
 
   useEffect(() => {
     if (liveSteps.length > 0 && autoScroll) {
@@ -225,35 +415,34 @@ export function ReasoningTracePanel({
   }, [history, liveSteps, showScrollBottom]);
 
   const traceRows = useMemo<TraceRowData[]>(() => {
-    if (liveSteps.length > 0) {
-      const filtered = liveSteps.filter((step) => matchesTraceFilter(step, filter));
-      return filtered.map((step, index) => ({
-        key: step.id,
-        step,
-        isLast: index === filtered.length - 1,
-      }));
-    }
+    const historySteps = historyEnabled
+      ? history.flatMap((entry) => {
+          return buildHistoricalTraceSteps({
+            conversationName,
+            conversationType,
+            members,
+            run: entry.run,
+            steps: entry.steps,
+            message: entry.message,
+            organizationId,
+          }).filter((step) => matchesTraceFilter(step, filter));
+        })
+      : [];
 
-    if (!historyEnabled) return [];
+    const liveFiltered = liveSteps.filter((step) => matchesTraceFilter(step, filter));
 
-    return history.flatMap((entry) => {
-      const steps = buildHistoricalTraceSteps({
-        conversationName,
-        conversationType,
-        members,
-        run: entry.run,
-        steps: entry.steps,
-        message: entry.message,
-        organizationId,
-      });
+    // Deduplicate any overlapping steps by ID
+    const historyStepIds = new Set(historySteps.map((step) => step.id));
+    const uniqueLiveSteps = liveFiltered.filter((step) => !historyStepIds.has(step.id));
 
-      const filtered = steps.filter((step) => matchesTraceFilter(step, filter));
-      return filtered.map((step, index) => ({
-        key: `${entry.run.id}:${step.id}`,
-        step,
-        isLast: index === filtered.length - 1,
-      }));
-    });
+    const rawSteps = [...historySteps, ...uniqueLiveSteps];
+    const grouped = groupTraceSteps(rawSteps);
+
+    return grouped.map((step, index) => ({
+      key: step.id,
+      step,
+      isLast: index === grouped.length - 1,
+    }));
   }, [
     conversationName,
     conversationType,
@@ -318,8 +507,34 @@ export function ReasoningTracePanel({
       <div ref={rootRef} className="relative min-h-0">
         <div className="space-y-1.5">
           {traceRows.map((row) => (
-            <TraceStep key={row.key} step={row.step} isLast={row.isLast} />
+            <TraceStep
+              key={row.key}
+              step={row.step}
+              isLast={row.isLast && !elapsed}
+            />
           ))}
+          {elapsed ? (
+            <div className="relative pl-6 pb-2 pt-1 animate-in fade-in duration-300">
+              {traceRows.length > 0 ? (
+                <div
+                  className="absolute left-1 -top-2 h-4 w-px bg-foreground/10"
+                  aria-hidden
+                />
+              ) : null}
+              <div
+                className="absolute left-0 top-1.5 z-[1] h-2 w-2 rounded-full bg-violet-500 animate-ping"
+                aria-hidden
+              />
+              <div
+                className="absolute left-0 top-1.5 z-[1] h-2 w-2 rounded-full bg-violet-600 ring-[3px] ring-violet-500/20 dark:bg-violet-500"
+                aria-hidden
+              />
+              <div className="flex items-center gap-2 text-[11px] font-semibold text-violet-600/90 dark:text-violet-400/90 tabular-nums">
+                <Loader2 className="h-3 w-3 animate-spin shrink-0 text-violet-500" />
+                <span>Working for {elapsed}</span>
+              </div>
+            </div>
+          ) : null}
         </div>
         {traceEmptyLabel ? (
           <TraceEmpty
@@ -335,19 +550,20 @@ export function ReasoningTracePanel({
     </>
   );
 
-  if (liveSteps.length > 0) {
+  if (traceRows.length > 0 || elapsed) {
     return <div className="flex flex-col gap-4">{filterBar}{traceList}</div>;
   }
 
-  if (historyEnabled && history.length === 0) {
+  if (loadingMore || (historyEnabled && history.length === 0 && !error)) {
     return <TraceEmpty label="Loading traces..." loading />;
   }
 
-  if (history.length === 0) {
-    return <TraceEmpty label={error ?? "No trace steps yet."} detail="Reasoning and tool activity will appear here while the agent works." />;
-  }
-
-  return <div className="flex flex-col gap-4">{filterBar}{traceList}</div>;
+  return (
+    <TraceEmpty
+      label={error ?? "No trace steps yet."}
+      detail="Reasoning and tool activity will appear here while the agent works."
+    />
+  );
 }
 
 async function loadTracePage(input: {

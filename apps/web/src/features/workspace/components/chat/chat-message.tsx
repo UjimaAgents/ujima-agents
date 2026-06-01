@@ -8,6 +8,7 @@ import { AttachmentGrid } from "./attachment-grid";
 import { TerminalPane } from "./terminal-pane";
 import { FilesystemToolPane } from "./filesystem-tool-pane";
 import { Modal } from "@/components/ui/modal";
+import { UnifiedDiffView } from "./unified-diff-view";
 
 const CONVERSATION_ARCHIVE_MARKER = "[[CONVERSATION_ARCHIVE_V1]]";
 const CONVERSATION_SUMMARY_MARKER = "[[CONVERSATION_SUMMARY_V1]]";
@@ -123,8 +124,8 @@ export const ChatMessage = memo(function ChatMessage({
     message.kind === "system" && systemLabel?.includes("Filesystem") && systemBodyMarkdown
       ? parseRelayFilesystemBody(systemBodyMarkdown, systemLabel)
       : null;
-  const goalArtifact = getGoalArtifactCard(message.toolCalls);
-  const showBody = message.content.trim().length > 0;
+  const artifactFile = getArtifactFileCard(message.toolCalls);
+  const showBody = message.content.trim().length > 0 && !(artifactFile && isInternalMarkerContent(message.content));
 
   return (
     <>
@@ -155,7 +156,7 @@ export const ChatMessage = memo(function ChatMessage({
                 </p>
                 <p className="shrink-0 text-[11px] text-zinc-400">{message.time}</p>
               </div>
-              {goalArtifact ? <GoalArtifactPreview artifact={goalArtifact} /> : null}
+              {artifactFile ? <ArtifactFilePreview artifact={artifactFile} /> : null}
               {approvalShellTerminal ? (
                 <TerminalPane
                   className="mt-1.5"
@@ -171,7 +172,7 @@ export const ChatMessage = memo(function ChatMessage({
                   body={approvalFsTerminal.body}
                 />
               ) : systemBodyMarkdown !== null ? (
-                <div className={goalArtifact ? "mt-3" : "mt-1"}>
+                <div className={artifactFile ? "mt-3" : "mt-1"}>
                   <Markdown
                     content={systemBodyMarkdown}
                     mentionNames={message.mentionNames}
@@ -205,8 +206,8 @@ export const ChatMessage = memo(function ChatMessage({
                   />
                 </div>
               )}
-              {goalArtifact ? <GoalArtifactPreview artifact={goalArtifact} /> : null}
-              <div className={goalArtifact ? "mt-3" : "mt-1"}>
+              {artifactFile ? <ArtifactFilePreview artifact={artifactFile} /> : null}
+              <div className={artifactFile ? "mt-3" : "mt-1"}>
                 {showBody ? (
                   <Markdown
                     content={message.content}
@@ -223,7 +224,7 @@ export const ChatMessage = memo(function ChatMessage({
                   {message.detail}
                 </p>
               )}
-              {message.pending && (
+              {message.pending && message.kind !== "agent" && (
                 <div className="mt-1 inline-flex items-center gap-1.5 rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-semibold text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
                   <Loader2 className="h-3 w-3 animate-spin" />
                   Sending
@@ -261,6 +262,14 @@ function getSystemMessageLabel(content: string): string {
     return firstLine.length > 0 ? firstLine : "Approval needed";
   }
   return "System summary";
+}
+
+function isInternalMarkerContent(content: string): boolean {
+  return (
+    content.startsWith(CONVERSATION_ARCHIVE_MARKER) ||
+    content.startsWith(CONVERSATION_SUMMARY_MARKER) ||
+    content.startsWith(SELF_NOTE_SUMMARY_MARKER)
+  );
 }
 
 /** Body below the title line for system messages that carry multi-line context (e.g. approval relay). */
@@ -320,15 +329,16 @@ function parseRelayFilesystemBody(
   return { action, resourcePath, meta, body: patchBody };
 }
 
-interface GoalArtifactView {
-  goalName: string;
-  goalFilePath: string;
+interface ArtifactFileView {
+  name: string;
+  filePath: string;
   content: string;
+  diff?: string;
   artifactFormat: "html" | "markdown";
   status: string;
 }
 
-function formatGoalStatus(status: string): string {
+function formatArtifactStatus(status: string): string {
   return status
     .trim()
     .toLowerCase()
@@ -336,28 +346,67 @@ function formatGoalStatus(status: string): string {
     .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
-export function getGoalArtifactCard(toolCalls?: ChatMessageData["toolCalls"]): GoalArtifactView | null {
-  const card = toolCalls?.find((entry) => entry.toolName === "card.goal.file");
+export function getArtifactFileCard(toolCalls?: ChatMessageData["toolCalls"]): ArtifactFileView | null {
+  const card = toolCalls?.find(
+    (entry) => entry.toolName === "card.artifact.file" || entry.toolName === "card.goal.file",
+  );
   if (!card) return null;
-  const { goalName, goalFilePath, html, artifactFormat, status } = card.args;
-  if (
-    typeof goalName !== "string" ||
-    typeof goalFilePath !== "string" ||
-    typeof html !== "string" ||
-    typeof status !== "string"
-  ) {
-    return null;
-  }
+  const name = stringArg(card.args, "name") ?? stringArg(card.args, "goalName");
+  const filePath = stringArg(card.args, "filePath") ?? stringArg(card.args, "goalFilePath");
+  const html = stringArg(card.args, "html");
+  const diff = stringArg(card.args, "diff");
+  const artifactFormat = card.args.artifactFormat;
+  const status = stringArg(card.args, "status");
+  if (!name || !filePath || !html || !status) return null;
   return {
-    goalName,
-    goalFilePath,
+    name,
+    filePath,
     content: html,
+    diff,
     artifactFormat: artifactFormat === "html" ? "html" : "markdown",
     status,
   };
 }
 
-function GoalArtifactPreview({ artifact }: { artifact: GoalArtifactView }) {
+function stringArg(args: Record<string, unknown>, key: string): string | undefined {
+  const value = args[key];
+  return typeof value === "string" ? value : undefined;
+}
+
+type ArtifactViewMode = "preview" | "markdown";
+
+function ArtifactViewToggle({
+  mode,
+  onChange,
+}: {
+  mode: ArtifactViewMode;
+  onChange: (next: ArtifactViewMode) => void;
+}) {
+  const options: { id: ArtifactViewMode; label: string }[] = [
+    { id: "preview", label: "Preview" },
+    { id: "markdown", label: "Markdown" },
+  ];
+  return (
+    <div className="flex items-center gap-1 text-[10px] font-mono leading-none text-zinc-500 dark:text-zinc-400">
+      {options.map(({ id, label }) => (
+        <button
+          key={id}
+          type="button"
+          onClick={() => onChange(id)}
+          className={`rounded-md px-2 py-1 transition-colors ${
+            mode === id
+              ? "bg-foreground/[0.06] text-foreground dark:bg-white/10 dark:text-zinc-50"
+              : "hover:bg-foreground/[0.03] hover:text-foreground dark:hover:bg-white/[0.04] dark:hover:text-zinc-200"
+          }`}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function ArtifactFilePreview({ artifact }: { artifact: ArtifactFileView }) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [iframeHeight, setIframeHeight] = useState(540);
@@ -365,6 +414,14 @@ function GoalArtifactPreview({ artifact }: { artifact: GoalArtifactView }) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const copiedTimerRef = useRef<number | null>(null);
   const isHtml = artifact.artifactFormat === "html";
+
+  const diff = artifact.diff;
+  const [viewMode, setViewMode] = useState<ArtifactViewMode>(diff ? "markdown" : "preview");
+  const [lastDiff, setLastDiff] = useState(diff);
+  if (lastDiff !== diff) {
+    setLastDiff(diff);
+    setViewMode(diff ? "markdown" : "preview");
+  }
 
   const measureIframeHeight = useCallback(() => {
     const iframe = iframeRef.current;
@@ -410,12 +467,13 @@ function GoalArtifactPreview({ artifact }: { artifact: GoalArtifactView }) {
         <div className="flex items-center justify-between gap-3 border-b border-zinc-200/60 px-3 py-2 dark:border-zinc-800/60">
           <div className="min-w-0">
             <p className="truncate text-[11px] leading-none text-zinc-400 dark:text-zinc-500">
-              {artifact.goalFilePath}
+              {artifact.filePath}
             </p>
           </div>
-          <div className="flex shrink-0 items-center gap-1">
+          <div className="flex shrink-0 items-center gap-2">
+            {diff && <ArtifactViewToggle mode={viewMode} onChange={setViewMode} />}
             <span className="rounded-full bg-violet-100/80 px-2 py-0.5 text-[10px] font-semibold text-violet-700 dark:bg-violet-500/10 dark:text-violet-300">
-              {formatGoalStatus(artifact.status)}
+              {formatArtifactStatus(artifact.status)}
             </span>
             <button
               type="button"
@@ -442,10 +500,16 @@ function GoalArtifactPreview({ artifact }: { artifact: GoalArtifactView }) {
           </div>
         </div>
         <div className="relative">
-          {isHtml ? (
+          {viewMode === "markdown" && diff ? (
+            <div className={isExpanded ? "" : "max-h-[540px] overflow-hidden"}>
+              <div className="px-4 py-3 bg-zinc-950 text-zinc-50 dark:bg-zinc-950/80 animate-in fade-in-50 duration-200">
+                <UnifiedDiffView text={diff} />
+              </div>
+            </div>
+          ) : isHtml ? (
             <iframe
               ref={iframeRef}
-              title={artifact.goalName}
+              title={artifact.name}
               sandbox=""
               srcDoc={artifact.content}
               onLoad={measureIframeHeight}
@@ -479,25 +543,45 @@ function GoalArtifactPreview({ artifact }: { artifact: GoalArtifactView }) {
       <Modal
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
-        title={artifact.goalName}
+        title={artifact.name}
         contentClassName="max-w-6xl"
       >
         <div className="space-y-4">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <p className="truncate text-sm text-zinc-500 dark:text-zinc-400">
-                {artifact.goalFilePath}
+                {artifact.filePath}
               </p>
             </div>
-            <span className="rounded-full bg-violet-100/80 px-2 py-0.5 text-[10px] font-semibold text-violet-700 dark:bg-violet-500/10 dark:text-violet-300">
-              {formatGoalStatus(artifact.status)}
-            </span>
+            <div className="flex shrink-0 items-center gap-2">
+              {diff && <ArtifactViewToggle mode={viewMode} onChange={setViewMode} />}
+              <span className="rounded-full bg-violet-100/80 px-2 py-0.5 text-[10px] font-semibold text-violet-700 dark:bg-violet-500/10 dark:text-violet-300">
+                {formatArtifactStatus(artifact.status)}
+              </span>
+              <button
+                type="button"
+                onClick={copyArtifact}
+                className={`inline-flex h-8 w-8 items-center justify-center rounded-full transition ${
+                  copied
+                    ? "bg-emerald-500/10 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-400"
+                    : "text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+                }`}
+                title="Copy artifact"
+                aria-label="Copy artifact"
+              >
+                {copied ? <CheckCircle2 className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+              </button>
+            </div>
           </div>
           <div className="overflow-hidden rounded-xl ring-1 ring-zinc-200/60 dark:ring-zinc-800/70">
-            {isHtml ? (
+            {viewMode === "markdown" && diff ? (
+              <div className="max-h-[calc(100vh-12rem)] overflow-auto px-4 py-3 bg-zinc-950 text-zinc-50 dark:bg-zinc-950/80">
+                <UnifiedDiffView text={diff} />
+              </div>
+            ) : isHtml ? (
               <div className="max-h-[calc(100vh-12rem)] overflow-auto">
                 <iframe
-                  title={artifact.goalName}
+                  title={artifact.name}
                   sandbox=""
                   srcDoc={artifact.content}
                   className="w-full border-0 bg-white dark:bg-zinc-950"

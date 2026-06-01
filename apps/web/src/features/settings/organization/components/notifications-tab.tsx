@@ -1,8 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Bell, Plus, Trash2, RefreshCw, AlertCircle, MessageSquare, ShieldCheck } from "lucide-react";
+import { Bell, ExternalLink, Plus, Trash2, RefreshCw, AlertCircle, MessageSquare, ShieldCheck } from "lucide-react";
 import { TextInput } from "@/components/ui/form-fields";
+import { Modal } from "@/components/ui/modal";
 
 interface NotificationChannel {
   id: string;
@@ -21,6 +22,7 @@ export function NotificationsTab() {
   const [saving, setSaving] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const [formProvider, setFormProvider] = useState<"telegram" | "whatsapp" | "webhook">("telegram");
+  const [guideProvider, setGuideProvider] = useState<"telegram" | "whatsapp" | "webhook" | null>(null);
   const [formBotToken, setFormBotToken] = useState("");
   const [formChatId, setFormChatId] = useState("");
   const [formPhone, setFormPhone] = useState("");
@@ -139,7 +141,7 @@ export function NotificationsTab() {
 
       {showForm && (
         <div className="rounded-2xl border border-violet-200 bg-violet-50 p-4 space-y-3 dark:border-violet-500/30 dark:bg-violet-500/5">
-          <div className="flex gap-3">
+          <div className="flex flex-wrap gap-3">
             <button
               type="button"
               onClick={() => setFormProvider("telegram")}
@@ -172,25 +174,31 @@ export function NotificationsTab() {
                 <label className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300 mb-1">Chat ID</label>
                 <TextInput type="text" placeholder="-1001234567890" value={formChatId} onChange={(e) => setFormChatId(e.target.value)} className="bg-white dark:bg-zinc-900" />
               </div>
+              <button type="button" onClick={() => setGuideProvider("telegram")} className="w-full rounded-lg border border-dashed border-zinc-300 py-2 text-xs font-semibold text-violet-600 transition hover:bg-violet-50 dark:border-zinc-700 dark:text-violet-400 dark:hover:bg-violet-500/5">
+                See how to get a bot token &amp; chat ID →
+              </button>
             </>
           ) : formProvider === "whatsapp" ? (
             <>
               <div>
                 <label className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300 mb-1">Phone (international format)</label>
-                <TextInput type="tel" placeholder="1234567890" value={formPhone} onChange={(e) => setFormPhone(e.target.value)} className="bg-white dark:bg-zinc-900" />
+                <TextInput type="tel" placeholder="+447778727920" value={formPhone} onChange={(e) => setFormPhone(e.target.value)} className="bg-white dark:bg-zinc-900" />
               </div>
               <div>
                 <label className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300 mb-1">CallMeBot API Key</label>
                 <TextInput type="password" placeholder="123456" value={formApiKey} onChange={(e) => setFormApiKey(e.target.value)} className="bg-white dark:bg-zinc-900" />
               </div>
-              <p className="text-[10px] text-zinc-500 dark:text-zinc-400">
-                Uses the free CallMeBot API. Send "I allow callmebot to send me messages" to the WhatsApp number +34 644 53 94 78, then get your API key at callmebot.com.
-              </p>
+              <button type="button" onClick={() => setGuideProvider("whatsapp")} className="w-full rounded-lg border border-dashed border-zinc-300 py-2 text-xs font-semibold text-violet-600 transition hover:bg-violet-50 dark:border-zinc-700 dark:text-violet-400 dark:hover:bg-violet-500/5">
+                See how to get a phone &amp; API key →
+              </button>
             </>
           ) : (
             <div>
               <label className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300 mb-1">Webhook URL</label>
               <TextInput type="url" placeholder="https://hooks.example.com/notify" value={formWebhookUrl} onChange={(e) => setFormWebhookUrl(e.target.value)} className="bg-white dark:bg-zinc-900" />
+              <button type="button" onClick={() => setGuideProvider("webhook")} className="mt-3 w-full rounded-lg border border-dashed border-zinc-300 py-2 text-xs font-semibold text-violet-600 transition hover:bg-violet-50 dark:border-zinc-700 dark:text-violet-400 dark:hover:bg-violet-500/5">
+                See how to get a webhook URL →
+              </button>
             </div>
           )}
           <div className="flex items-center gap-2">
@@ -254,6 +262,114 @@ export function NotificationsTab() {
           })}
         </div>
       )}
+
+      <GuideModal provider={guideProvider} onClose={() => setGuideProvider(null)} />
     </div>
+  );
+}
+
+function GuideModal({ provider, onClose }: { provider: "telegram" | "whatsapp" | "webhook" | null; onClose: () => void }) {
+  if (!provider) return null;
+
+  const guides: Record<string, { title: string; steps: React.ReactNode }> = {
+    telegram: {
+      title: "Telegram setup",
+      steps: (
+        <ol className="space-y-4 text-sm text-zinc-700 dark:text-zinc-300">
+          <li className="flex gap-3">
+            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-violet-100 text-xs font-bold text-violet-700 dark:bg-violet-500/20 dark:text-violet-300">1</span>
+            <span>Open Telegram and search for <strong>@BotFather</strong></span>
+          </li>
+          <li className="flex gap-3">
+            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-violet-100 text-xs font-bold text-violet-700 dark:bg-violet-500/20 dark:text-violet-300">2</span>
+            <span>Send <code className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-xs dark:bg-zinc-800">/newbot</code> and follow the prompts to create a bot</span>
+          </li>
+          <li className="flex gap-3">
+            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-violet-100 text-xs font-bold text-violet-700 dark:bg-violet-500/20 dark:text-violet-300">3</span>
+            <span>Copy the <strong>bot token</strong> BotFather gives you (looks like <code className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-xs dark:bg-zinc-800">123456:ABC-DEF1234ghIkl</code>)</span>
+          </li>
+          <li className="flex gap-3">
+            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-violet-100 text-xs font-bold text-violet-700 dark:bg-violet-500/20 dark:text-violet-300">4</span>
+            <span>Start a chat with your bot and send any message</span>
+          </li>
+          <li className="flex gap-3">
+            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-violet-100 text-xs font-bold text-violet-700 dark:bg-violet-500/20 dark:text-violet-300">5</span>
+            <div>
+              <p>Visit this URL in your browser (replace YOUR_TOKEN):</p>
+              <code className="mt-1 block break-all rounded bg-zinc-100 px-2 py-1 font-mono text-xs dark:bg-zinc-800">https://api.telegram.org/bot&lt;YOUR_TOKEN&gt;/getUpdates</code>
+              <p className="mt-1">Look for <code className="rounded bg-zinc-100 px-1 font-mono text-xs dark:bg-zinc-800">&quot;chat&quot;:&#123;&quot;id&quot;:-10012345&#125;</code> — that number is your <strong>chat ID</strong></p>
+            </div>
+          </li>
+        </ol>
+      ),
+    },
+    whatsapp: {
+      title: "WhatsApp setup (CallMeBot)",
+      steps: (
+        <ol className="space-y-4 text-sm text-zinc-700 dark:text-zinc-300">
+          <li className="flex gap-3">
+            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-violet-100 text-xs font-bold text-violet-700 dark:bg-violet-500/20 dark:text-violet-300">1</span>
+            <span>Save the number <strong>+34 644 76 66 43</strong> in your phone contacts</span>
+          </li>
+          <li className="flex gap-3">
+            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-violet-100 text-xs font-bold text-violet-700 dark:bg-violet-500/20 dark:text-violet-300">2</span>
+            <span>Open WhatsApp and send the following message to that number: <code className="mt-1 block rounded bg-zinc-100 px-2 py-1 font-mono text-xs dark:bg-zinc-800">I allow callmebot to send me messages</code></span>
+          </li>
+          <li className="flex gap-3">
+            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-violet-100 text-xs font-bold text-violet-700 dark:bg-violet-500/20 dark:text-violet-300">3</span>
+            <span>Wait 1–2 minutes — you'll receive a reply with your <strong>API key</strong></span>
+          </li>
+          <li className="flex gap-3">
+            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-violet-100 text-xs font-bold text-violet-700 dark:bg-violet-500/20 dark:text-violet-300">4</span>
+            <span>Enter your phone number (digits only, e.g. <code className="rounded bg-zinc-100 px-1 py-0.5 font-mono text-xs dark:bg-zinc-800">1234567890</code>) and the API key in the fields above</span>
+          </li>
+        </ol>
+      ),
+    },
+    webhook: {
+      title: "Webhook setup",
+      steps: (
+        <ol className="space-y-4 text-sm text-zinc-700 dark:text-zinc-300">
+          <li className="flex gap-3">
+            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-violet-100 text-xs font-bold text-violet-700 dark:bg-violet-500/20 dark:text-violet-300">1</span>
+            <span>Get a webhook URL from your service (Discord, Slack, n8n, Zapier, or any custom endpoint)</span>
+          </li>
+          <li className="flex gap-3">
+            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-violet-100 text-xs font-bold text-violet-700 dark:bg-violet-500/20 dark:text-violet-300">2</span>
+            <div>
+              <p>The service will receive a POST request with this JSON body:</p>
+              <code className="mt-1 block rounded bg-zinc-100 px-2 py-1 font-mono text-xs dark:bg-zinc-800">{JSON.stringify({ text: "💬 Sender in #channel:\nMessage content here" }, null, 2)}</code>
+            </div>
+          </li>
+          <li className="flex gap-3">
+            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-violet-100 text-xs font-bold text-violet-700 dark:bg-violet-500/20 dark:text-violet-300">3</span>
+            <div>
+              <p><strong>Discord:</strong> Server Settings → Integrations → Webhooks → New Webhook</p>
+              <p className="mt-1"><strong>Slack:</strong> Create an <a href="https://api.slack.com/messaging/webhooks" target="_blank" rel="noopener noreferrer" className="text-violet-600 underline hover:text-violet-800 dark:text-violet-400">Incoming Webhook</a> app</p>
+            </div>
+          </li>
+        </ol>
+      ),
+    },
+  };
+
+  const guide = guides[provider];
+  return (
+    <Modal isOpen onClose={onClose} title={guide.title}>
+      <div className="space-y-4">
+        {guide.steps}
+        <p className="pt-2 text-xs text-zinc-400 dark:text-zinc-500">
+          Need help? Visit the{" "}
+          <a
+            href={provider === "telegram" ? "https://core.telegram.org/bots#6-botfather" : provider === "whatsapp" ? "https://www.callmebot.com/blog/free-api-whatsapp-messages/" : "https://en.wikipedia.org/wiki/Webhook"}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1 text-violet-600 underline hover:text-violet-800 dark:text-violet-400"
+          >
+            {provider} docs <ExternalLink className="h-3 w-3" />
+          </a>
+        </p>
+      </div>
+    </Modal>
   );
 }

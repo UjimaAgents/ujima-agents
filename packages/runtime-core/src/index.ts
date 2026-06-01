@@ -55,6 +55,7 @@ export type { SecretStore, FileSecretStoreOptions } from './secret-store';
 export { Repository } from './repositories/index';
 export type {
   BootstrapSnapshot,
+  GovernanceRuleRow,
   PaginatedChannels,
   PaginatedMessages,
   PaginatedRuns,

@@ -16,11 +16,21 @@ const FetchSchema = z.object({
   timeout: z.number().int().min(1).max(600).default(30),
 });
 
+// Schema-facing field is `file_path` (matches workspace tools) so
+// Gemini doesn't see `resourcePath` anywhere in any palette and
+// misapply it to channel.* / self.* via additionalProperties:false.
+// No resourcePath alias-back-compat: Zod strips unknown keys
+// before our helper runs, so a caller passing `resourcePath` would
+// already fail validation regardless.
 const DownloadSchema = z.object({
   url: z.string().min(1),
-  resourcePath: z.string().min(1),
+  file_path: z.string().min(1).optional(),
   timeout: z.number().int().min(1).max(600).default(30),
 });
+
+function downloadPathFrom(args: { file_path?: string }): string {
+  return typeof args.file_path === 'string' ? args.file_path : '';
+}
 
 export const fetchTool: OrchestratorTool<typeof FetchSchema> = {
   id: 'fetch',
@@ -57,7 +67,7 @@ export const downloadTool: OrchestratorTool<typeof DownloadSchema> = {
   toInvocation: (args) => ({
     action: 'write',
     resourceType: 'file',
-    resourcePath: args.resourcePath,
+    resourcePath: downloadPathFrom(args),
     input: {
       url: args.url,
       timeout: args.timeout,
@@ -65,7 +75,7 @@ export const downloadTool: OrchestratorTool<typeof DownloadSchema> = {
   }),
   execute: async ({ invocation, team }) => {
     if (!invocation.resourcePath) {
-      throw new Error('resourcePath is required');
+      throw new Error('file_path is required (the destination workspace file path)');
     }
 
     const url = parseHttpUrl(String(invocation.input?.url ?? ''));

@@ -11,9 +11,8 @@ import {
   TaskSessionListQuerySchema,
   TaskSessionListResponseSchema,
   TaskSessionSpiritsResponseSchema,
-  TaskSessionTodosResponseSchema,
 } from '@ujima/api-schema';
-import { TaskSessionSchema, TodoStatusSchema } from '@ujima/shared';
+import { TaskSessionSchema } from '@ujima/shared';
 import type { ApiRepository, TaskSessionService } from '@ujima/orchestrator';
 import { apiError, errorMessage } from './route-errors.js';
 
@@ -27,11 +26,6 @@ import { apiError, errorMessage } from './route-errors.js';
 
 export interface TaskSessionRoutesOptions {
   taskSessions: TaskSessionService;
-  /**
-   * Phase 2 — repo handle for the workers/todos read endpoints. The
-   * routes file shouldn't grow into a service shim, so reads go
-   * straight to the repo (the same pattern bootstrap.ts uses).
-   */
   repo: ApiRepository;
 }
 
@@ -39,10 +33,6 @@ const TaskSessionIdParamsSchema = z.object({ id: z.string().min(1) });
 
 const TaskSessionScopedQuerySchema = z.object({
   organizationId: z.string().min(1),
-});
-
-const TaskSessionTodosQuerySchema = TaskSessionScopedQuerySchema.extend({
-  status: TodoStatusSchema.optional(),
 });
 
 export function registerTaskSessionRoutes(
@@ -202,25 +192,4 @@ export function registerTaskSessionRoutes(
     return { spirits };
   });
 
-  app.get('/task-sessions/:id/todos', {
-    schema: {
-      description: 'List supervisor todos scoped to a task session',
-      tags: ['Task Sessions'],
-      params: TaskSessionIdParamsSchema,
-      querystring: TaskSessionTodosQuerySchema,
-      response: {
-        200: TaskSessionTodosResponseSchema,
-        404: ApiErrorSchema,
-      },
-    },
-  }, async (req, reply) => {
-    const session = repo.getTaskSession(req.query.organizationId, req.params.id);
-    if (!session) {
-      return apiError(reply, 404, `task session "${req.params.id}" not found`);
-    }
-    const todos = repo.listTodosForSession(req.query.organizationId, req.params.id, {
-      status: req.query.status,
-    });
-    return { todos };
-  });
 }

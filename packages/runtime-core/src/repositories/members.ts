@@ -13,6 +13,7 @@ function rowToMember(row: Row): Member {
     roleName: rowString(row, 'role_name'),
     llm: optionalRowString(row, 'llm'),
     model: optionalRowString(row, 'model'),
+    shellApprovalMode: optionalRowString(row, 'shell_approval_mode'),
     presence: rowString(row, 'presence'),
     createdAt: optionalRowString(row, 'created_at'),
     retiredAt: optionalRowString(row, 'retired_at'),
@@ -24,14 +25,15 @@ export function saveMember(db: DbHandle, member: Member): Member {
   const timestamp = now();
 
   db.prepare(
-    `INSERT INTO members (id, organization_id, name, kind, role_name, llm, model, presence, created_at, updated_at, retired_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(id) DO UPDATE SET
+    `INSERT INTO members (id, organization_id, name, kind, role_name, llm, model, shell_approval_mode, presence, created_at, updated_at, retired_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(organization_id, id) DO UPDATE SET
        name = excluded.name,
        kind = excluded.kind,
        role_name = excluded.role_name,
        llm = excluded.llm,
        model = excluded.model,
+       shell_approval_mode = excluded.shell_approval_mode,
        presence = excluded.presence,
        retired_at = excluded.retired_at,
        updated_at = excluded.updated_at`,
@@ -43,6 +45,7 @@ export function saveMember(db: DbHandle, member: Member): Member {
     payload.roleName,
     payload.llm ?? null,
     payload.model ?? null,
+    payload.shellApprovalMode ?? null,
     payload.presence,
     payload.createdAt ?? timestamp,
     timestamp,

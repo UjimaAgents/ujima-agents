@@ -1,5 +1,6 @@
 import type {
   AgentMcpAttachment,
+  AgentToolAttachment,
   ApprovalRequest,
   AuthSession,
   AuthUser,
@@ -7,13 +8,17 @@ import type {
   Attachment,
   Channel,
   ChannelKind,
+  ChannelMemberMode,
+  ChannelMemberSettings,
   ConfigFieldOwnership,
   ConversationThread,
   DecisionLogEntry,
+  GovernancePolicy,
   ProcedureRevision,
   RunProcedureApplied,
   McpServer,
   McpToolCache,
+  McpToolClassification,
   PluginInstall,
   Member,
   MemoryEntry,
@@ -29,11 +34,26 @@ import type {
   SkillInstall,
   TaskSession,
   TaskSessionStatus,
-  Todo,
-  TodoStatus,
+  Goal,
+  GoalTask,
+  GoalTaskStatus,
+  InteractiveQuestion,
+  ToolRiskClass,
   WorkspaceFile,
   WorkspaceMember,
 } from '@ujima/shared';
+
+export interface GovernanceRuleRow {
+  id: string;
+  organizationId: string;
+  agentId: string;
+  mcpId: string;
+  toolName: string;
+  state: string;
+  reason: string | null;
+  updatedAt: string;
+  updatedBy: string | null;
+}
 
 /** Matches `@ujima/runtime-core` notification channel rows (kept here to avoid a circular import). */
 export interface NotificationChannelRow {
@@ -157,8 +177,29 @@ export interface ConversationRepository extends RepositoryReader {
     excludeKinds?: readonly ChannelKind[],
   ): PaginatedChannels;
   saveChannel(channel: Channel): Channel;
-  setChannelMembers(channelId: string, memberIds: string[]): void;
-  deleteChannel(channelId: string): void;
+  setChannelMembers(organizationId: string, channelId: string, memberIds: string[]): void;
+  setChannelMemberMode(
+    organizationId: string,
+    channelId: string,
+    memberId: string,
+    mode: ChannelMemberMode,
+  ): void;
+  getChannelMemberMode(
+    organizationId: string,
+    channelId: string,
+    memberId: string,
+  ): ChannelMemberMode | null;
+  listChannelMemberModes(organizationId: string, memberId: string): ChannelMemberSettings[];
+  listChannelMemberModesForChannel(
+    organizationId: string,
+    channelId: string,
+  ): ChannelMemberSettings[];
+  deleteChannelMemberMode(
+    organizationId: string,
+    channelId: string,
+    memberId: string,
+  ): void;
+  deleteChannel(organizationId: string, channelId: string): void;
   getThread(organizationId: string, threadId: string): ConversationThread | null;
   ensureThread(thread: ConversationThread): ConversationThread;
   getMessage(organizationId: string, messageId: string): Message | null;
@@ -213,6 +254,9 @@ export interface ConversationRepository extends RepositoryReader {
    * silently no-ops in that case.
    */
   saveRun?(run: RunState): RunState;
+  saveInteractiveQuestion?(question: InteractiveQuestion): InteractiveQuestion;
+  listPendingInteractiveQuestions?(organizationId: string, channelId: string): InteractiveQuestion[];
+  listInteractiveQuestionsByRunId?(organizationId: string, runId: string): InteractiveQuestion[];
   findActiveRunForMemberThread(
     organizationId: string,
     agentId: string,
@@ -250,6 +294,7 @@ export interface ApiRepository extends ConversationRepository {
     cursor?: string,
     limit?: number,
   ): PaginatedRuns;
+  listActiveRuns?(organizationId: string): RunState[];
   listThreadRuns(
     organizationId: string,
     threadId: string,
@@ -342,6 +387,66 @@ export interface ApiRepository extends ConversationRepository {
   ): { attachment: AgentMcpAttachment; server: McpServer }[];
   saveMcpToolCache(cache: McpToolCache): McpToolCache;
   getMcpToolCache(organizationId: string, mcpServerId: string): McpToolCache | null;
+  getMcpToolClassification(
+    organizationId: string,
+    mcpServerId: string,
+    toolName: string,
+  ): McpToolClassification | null;
+  listMcpToolClassifications(
+    organizationId: string,
+    mcpServerId?: string,
+  ): McpToolClassification[];
+  upsertMcpToolClassification(
+    payload: McpToolClassification,
+  ): McpToolClassification;
+  seedInferredClassifications(
+    organizationId: string,
+    mcpServerId: string,
+    entries: readonly {
+      toolName: string;
+      risk: ToolRiskClass;
+      needsReview?: boolean;
+      reason?: string;
+    }[],
+    updatedBy?: string,
+  ): number;
+  deleteMcpToolClassification(
+    organizationId: string,
+    mcpServerId: string,
+    toolName: string,
+  ): void;
+  getGovernancePolicy(organizationId: string): GovernancePolicy;
+  saveGovernancePolicy(
+    organizationId: string,
+    policy: GovernancePolicy,
+  ): GovernancePolicy;
+  saveAgentToolAttachment(attachment: AgentToolAttachment): AgentToolAttachment;
+  deleteAgentToolAttachment(
+    organizationId: string,
+    memberId: string,
+    mcpServerId: string,
+    toolName: string,
+  ): void;
+  listAgentToolAttachments(
+    organizationId: string,
+    memberId: string,
+    mcpServerId?: string,
+  ): AgentToolAttachment[];
+  listAgentsForTool(
+    organizationId: string,
+    mcpServerId: string,
+    toolName: string,
+  ): string[];
+  countAgentToolAttachments(
+    organizationId: string,
+    memberId: string,
+    mcpServerId: string,
+  ): number;
+  deleteAgentToolAttachmentsForAgent(
+    organizationId: string,
+    memberId: string,
+    mcpServerId?: string,
+  ): void;
   savePluginInstall(install: PluginInstall): PluginInstall;
   getPluginInstall(organizationId: string, installId: string): PluginInstall | null;
   getPluginInstallBySourceUrl(
@@ -354,61 +459,30 @@ export interface ApiRepository extends ConversationRepository {
   getOrganizationSkillInstall(organizationId: string, installId: string): SkillInstall | null;
   listOrganizationSkillInstalls(organizationId: string): SkillInstall[];
   deleteOrganizationSkillInstall(organizationId: string, installId: string): void;
-  saveTodo(todo: Todo): Todo;
-  getTodo(organizationId: string, todoId: string): Todo | null;
-  listTodosForSession(
+  saveGoal(goal: Goal): Goal;
+  getGoal(organizationId: string, goalId: string): Goal | null;
+  getGoalByChannel(organizationId: string, channelId: string): Goal | null;
+  listGoalsByChannel(organizationId: string, channelId: string): Goal[];
+  listGoals(organizationId: string): Goal[];
+  saveGoalTask(task: GoalTask): GoalTask;
+  deleteGoalTasks(organizationId: string, goalId: string): void;
+  getGoalTask(organizationId: string, taskId: string): GoalTask | null;
+  listGoalTasks(organizationId: string, goalId: string): GoalTask[];
+  setGoalTaskLastNudgedAt?(
     organizationId: string,
-    taskSessionId: string,
-    options?: { status?: TodoStatus; memberId?: string },
-  ): Todo[];
-  listTodosForChannel?(
+    taskId: string,
+    isoTimestamp: string,
+  ): void;
+  updateGoalTaskStatus(
     organizationId: string,
-    channelId: string,
-    options?: { status?: TodoStatus; memberId?: string },
-  ): Todo[];
-  listIdleCommitments?(options: {
-    idleSinceIso: string;
-    statuses?: readonly TodoStatus[];
-    limit?: number;
-  }): Todo[];
-  /**
-   * Open commitments owned by `memberId` across every channel.
-   * Surfaces into `<workspace-state>` so an agent juggling multiple
-   * channels sees what's owed across the workspace, not just the
-   * current channel. Optional because the narrow test repo doesn't
-   * implement it.
-   */
-  listOpenCommitmentsForMember?(
-    organizationId: string,
-    memberId: string,
-    options?: { statuses?: readonly TodoStatus[]; limit?: number },
-  ): Todo[];
-  listExpiredCommitments?(options: { nowIso: string; limit?: number }): Todo[];
-  /**
-   * Atomic flip from "open + past due" → `expired`. Returns true on
-   * successful claim. The sweeper claims first, then publishes the
-   * system message, so a crash causes one missed letter rather than a
-   * duplicate one.
-   */
-  claimExpiredCommitment?(todoId: string, nowIso: string): boolean;
-  /**
-   * Dedup lookup for the commitment extractor. Returns the most-
-   * recently-created open commitment for a `(org, channel, member)`
-   * triple within `sinceIso`. Optional because the existing in-memory
-   * test repository doesn't implement it — the service falls back to
-   * "always insert" if absent.
-   */
-  findOpenChannelCommitmentForMember?(
-    organizationId: string,
-    channelId: string,
-    memberId: string,
-    sinceIso: string,
-  ): Todo | null;
-  /** Reverse-lookup from a source message to its originating commitment. */
-  findCommitmentBySourceMessage?(
-    organizationId: string,
-    sourceMessageId: string,
-  ): Todo | null;
+    taskId: string,
+    status: GoalTaskStatus,
+    options?: { handoverSummary?: string },
+  ): GoalTask | null;
+  saveInteractiveQuestion(question: InteractiveQuestion): InteractiveQuestion;
+  getInteractiveQuestion(organizationId: string, questionId: string): InteractiveQuestion | null;
+  listPendingInteractiveQuestions(organizationId: string, channelId: string): InteractiveQuestion[];
+  listInteractiveQuestionsByRunId(organizationId: string, runId: string): InteractiveQuestion[];
 
   // Bet 5 — memory_entries KV. All optional because the in-memory
   // test repos don't implement them; services degrade gracefully
@@ -500,17 +574,12 @@ export interface ApiRepository extends ConversationRepository {
     runId: string,
   ): RunProcedureApplied[];
 
-  updateTodoStatus(
-    organizationId: string,
-    todoId: string,
-    status: TodoStatus,
-    options?: { notes?: string },
-  ): Todo | null;
   deleteMessages(organizationId: string, messageIds: string[]): void;
   saveOrganization(organization: Organization): Organization;
   getLatestOrganization(): Organization | null;
   listOrganizations(): Organization[];
   listOrganizationsWithSignIn(): Organization[];
+  organizationHasAuthUsers(organizationId: string): boolean;
   deleteOrganizationData(organizationId: string): void;
   saveWorkspaceSetting(organizationId: string, key: string, value: string): void;
   getWorkspaceSetting(organizationId: string, key: string): string | null;
@@ -549,4 +618,26 @@ export interface ApiRepository extends ConversationRepository {
   revokeAuthSession(sessionId: string, revokedAt?: string): AuthSession | null;
   touchAuthSession(sessionId: string, lastSeenAt?: string): AuthSession | null;
   getBootstrapSnapshot(organizationId?: string): BootstrapSnapshot;
+  saveMemory(entry: MemoryEntry): MemoryEntry;
+  getMemory(organizationId: string, memoryId: string): MemoryEntry | null;
+  listMemories(organizationId: string, memberId: string): MemoryEntry[];
+  listOrgMemories(organizationId: string): MemoryEntry[];
+  deleteMemory(organizationId: string, memoryId: string): void;
+  listGovernanceRules?(organizationId: string, state?: string): GovernanceRuleRow[];
+  deleteGovernanceRule?(
+    organizationId: string,
+    agentId: string,
+    mcpId: string,
+    toolName: string,
+  ): GovernanceRuleRow | null;
+  saveGovernanceRule?(rule: {
+    id: string;
+    organizationId: string;
+    agentId: string;
+    mcpId: string;
+    toolName: string;
+    state: string;
+    reason?: string;
+    updatedBy?: string;
+  }): GovernanceRuleRow;
 }

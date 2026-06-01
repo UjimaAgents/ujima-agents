@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { MemberShellApprovalModeSchema } from './shell-approval.js';
 import { GoalStatusSchema } from './goal-schemas.js';
 
 export const IdSchema = z.string().min(1);
@@ -24,10 +25,21 @@ export function createPaginatedSchema<T extends z.ZodTypeAny>(itemSchema: T) {
 export const MemberKindSchema = z.enum(['human', 'agent']);
 export type MemberKind = z.infer<typeof MemberKindSchema>;
 
+export const ChannelMemberModeSchema = z.enum(['active', 'passive', 'muted', 'temp_disable']);
+export type ChannelMemberMode = z.infer<typeof ChannelMemberModeSchema>;
+
+export const ChannelMemberSettingsSchema = z.object({
+  channelId: IdSchema,
+  memberId: IdSchema,
+  mode: ChannelMemberModeSchema.default('active'),
+  updatedAt: TimestampSchema.optional(),
+});
+export type ChannelMemberSettings = z.infer<typeof ChannelMemberSettingsSchema>;
+
 export const ChannelKindSchema = z.enum(['general', 'group', 'dm', 'task-run', 'self']);
 export type ChannelKind = z.infer<typeof ChannelKindSchema>;
 
-export const ToolActionSchema = z.enum(['read', 'write', 'execute', 'mcp', 'message']);
+export const ToolActionSchema = z.enum(['read', 'write', 'execute', 'mcp', 'message', 'create', 'update']);
 export type ToolAction = z.infer<typeof ToolActionSchema>;
 
 export const ProviderScopeSchema = z.enum(['organization', 'workspace', 'member']);
@@ -45,6 +57,7 @@ export type AuditStatus = z.infer<typeof AuditStatusSchema>;
 export const RunStatusSchema = z.enum([
   'queued',
   'running',
+  'waiting_for_input',
   'waiting_for_approval',
   'completed',
   'failed',
@@ -71,7 +84,7 @@ export type MessageMentionKind = z.infer<typeof MessageMentionKindSchema>;
 export const PresenceStateSchema = z.enum(['online', 'offline', 'busy', 'away']);
 export type PresenceState = z.infer<typeof PresenceStateSchema>;
 
-export const ResourceTypeSchema = z.enum(['file', 'folder', 'shell', 'mcp', 'message']);
+export const ResourceTypeSchema = z.enum(['file', 'folder', 'shell', 'mcp', 'message', 'goal', 'goal_task', 'question']);
 export type ResourceType = z.infer<typeof ResourceTypeSchema>;
 
 export const RoleScopesSchema = z.record(z.array(z.string().min(1))).default({});
@@ -105,6 +118,7 @@ export const MemberSchema = z.object({
   roleName: z.string().min(1),
   llm: z.string().min(1).optional(),
   model: z.string().min(1).optional(),
+  shellApprovalMode: MemberShellApprovalModeSchema.optional(),
   presence: PresenceStateSchema.default('offline'),
   createdAt: TimestampSchema.optional(),
   retiredAt: TimestampSchema.optional(),
@@ -225,6 +239,9 @@ export type HandoffMetadata = z.infer<typeof HandoffMetadataSchema>;
 
 export const MessageMetadataSchema = z.object({
   goalMode: z.boolean().optional(),
+  delegate: z.object({
+    parentRunId: IdSchema.optional(),
+  }).optional(),
   /**
    * Set by the `channel.handoff` tool. `complete: true` signals
    * the chain terminated (replaces the old `'Acknowledged.'`
@@ -337,7 +354,7 @@ export const RunStateSchema = z.object({
   endedAt: TimestampSchema.optional(),
   // Why this run was created. Drives mandatory-reply enforcement and
   // observability. `mention` runs cannot terminate via `channel.pass`
-  // or `self.note` (policy rejects both). Persisted as a string so a
+  // (policy rejects it). Persisted as a string so a
   // future enum value doesn't break the schema parser on old rows.
   wakeReason: z.string().nullable().optional(),
   // The terminating tool the run ended with. One of the entries in
@@ -457,13 +474,14 @@ export const TaskSummaryCardSchema = z.object({
   taskSlug: z.string().min(1).optional(),
 });
 
-export const GoalArtifactCardSchema = z.object({
+export const ArtifactFileCardSchema = z.object({
   ...MessageCardCommon,
-  kind: z.literal('goal.file'),
-  goalId: IdSchema,
-  goalName: z.string().min(1),
-  goalFilePath: z.string().min(1),
+  kind: z.literal('artifact.file'),
+  artifactId: IdSchema,
+  name: z.string().min(1),
+  filePath: z.string().min(1),
   html: z.string(),
+  diff: z.string().optional(),
   artifactFormat: z.enum(['html', 'markdown']).default('html'),
   status: GoalStatusSchema,
 });
@@ -501,7 +519,7 @@ export const MessageCardSchema = z.discriminatedUnion('kind', [
   TaskJoinCardSchema,
   TaskOriginLinkCardSchema,
   TaskSummaryCardSchema,
-  GoalArtifactCardSchema,
+  ArtifactFileCardSchema,
   ApprovalCardSchema,
   PromotionConfirmCardSchema,
   ToolCallCardSchema,
@@ -562,45 +580,6 @@ export const SpiritSchema = z.object({
   endedAt: TimestampSchema.optional(),
 });
 export type Spirit = z.infer<typeof SpiritSchema>;
-
-// -----------------------------------------------------------------------
-// Todo (Phase 2 — supervisor.todo.* tools)
-// -----------------------------------------------------------------------
-//
-// The `todos` table predates the task shell (migration 004), but it only
-// becomes user-facing in Phase 2 via the supervisor.todo.* tool family.
-// Adding `taskSessionId` lets a supervisor scope its add/check/list to
-// the active task without leaking todos across sessions.
-
-export const TodoStatusSchema = z.enum([
-  'pending',
-  'in_progress',
-  'completed',
-  'cancelled',
-  'expired',
-  'blocked',
-]);
-export type TodoStatus = z.infer<typeof TodoStatusSchema>;
-
-export const TodoSchema = z.object({
-  id: IdSchema,
-  organizationId: IdSchema,
-  taskSessionId: IdSchema.optional(),
-  runId: IdSchema.optional(),
-  memberId: IdSchema,
-  title: z.string().min(1),
-  status: TodoStatusSchema.default('pending'),
-  notes: z.string().default(''),
-  channelId: IdSchema.optional(),
-  sourceMessageId: IdSchema.optional(),
-  deliverableSummary: z.string().optional(),
-  dueAt: TimestampSchema.optional(),
-  lastProgressAt: TimestampSchema.optional(),
-  emptyWakeCount: z.number().int().nonnegative().default(0),
-  createdAt: TimestampSchema,
-  updatedAt: TimestampSchema,
-});
-export type Todo = z.infer<typeof TodoSchema>;
 
 // -----------------------------------------------------------------------
 // Memory KV — Bet 5
@@ -869,15 +848,30 @@ export const AgentMcpAttachmentSchema = z.object({
 });
 export type AgentMcpAttachment = z.infer<typeof AgentMcpAttachmentSchema>;
 
+// Per-tool grant. When an agent has any grants on a server, the runtime
+// only exposes those specific tools — shrinking the model's tool palette.
+export const AgentToolAttachmentSchema = z.object({
+  organizationId: IdSchema,
+  memberId: IdSchema,
+  mcpServerId: IdSchema,
+  toolName: z.string().min(1),
+  scope: McpAttachmentScopeSchema.default('worker'),
+  createdAt: TimestampSchema,
+  updatedAt: TimestampSchema,
+});
+export type AgentToolAttachment = z.infer<typeof AgentToolAttachmentSchema>;
+
 /**
  * Tool entry as stored in the cache. Mirrors what MCP's `listTools`
- * returns. `destructive` is optional metadata the policy layer reads
- * to decide whether a tool needs explicit approval beyond the default.
+ * returns. `destructive` is a deprecated boolean alias kept for one
+ * release — new code should read the `risk` field on the matching
+ * `McpToolClassificationSchema` row instead.
  */
 export const McpToolDescriptorSchema = z.object({
   name: z.string().min(1),
   description: z.string().default(''),
   inputSchema: z.record(z.string(), z.unknown()).optional(),
+  /** @deprecated use McpToolClassification.risk via the classifications table. */
   destructive: z.boolean().optional(),
 });
 export type McpToolDescriptor = z.infer<typeof McpToolDescriptorSchema>;
@@ -890,6 +884,21 @@ export const McpToolCacheSchema = z.object({
   error: z.string().optional(),
 });
 export type McpToolCache = z.infer<typeof McpToolCacheSchema>;
+
+// Per-tool risk classification. Manual rows survive re-test because
+// seeding uses INSERT OR IGNORE.
+export const McpToolClassificationSchema = z.object({
+  organizationId: IdSchema,
+  mcpServerId: IdSchema,
+  toolName: z.string().min(1),
+  risk: z.enum(['read', 'write', 'destructive']),
+  source: z.enum(['inferred', 'manual', 'registry']),
+  needsReview: z.boolean().default(false),
+  reason: z.string().optional(),
+  updatedAt: TimestampSchema,
+  updatedBy: z.string().optional(),
+});
+export type McpToolClassification = z.infer<typeof McpToolClassificationSchema>;
 
 export const PluginSkillManifestSchema = z.object({
   name: z.string().min(1),

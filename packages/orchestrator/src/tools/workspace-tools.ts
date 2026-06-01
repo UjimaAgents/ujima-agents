@@ -71,13 +71,20 @@ const TREE_LIMIT = 1000;
 const GLOB_LIMIT = 100;
 const IGNORED_DIRECTORIES = new Set(['.git', '.next', 'build', 'coverage', 'dist', 'node_modules']);
 
+// Only `file_path` is exposed in the model-facing JSON schema.
+// Models don't see `resourcePath` because exposing the alias let
+// Gemini pattern-match it onto unrelated tools (channel.post,
+// channel.dm) and trip `additionalProperties: false`. There is no
+// alias-back-compat: Zod's `.object()` strips unknown keys before
+// our helpers run, so any caller passing `resourcePath` instead of
+// `file_path` would already have failed validation regardless of
+// what filePathFrom claimed.
 const FilePathFields = {
-  resourcePath: z.string().min(1).optional().describe('Workspace file path. `file_path` is also accepted.'),
-  file_path: z.string().min(1).optional().describe('Workspace file path. Prefer this for file editing tools.'),
+  file_path: z.string().min(1).optional().describe('Workspace file path.'),
 };
 
-function filePathFrom(args: { resourcePath?: string; file_path?: string }): string {
-  return args.file_path ?? args.resourcePath ?? '';
+function filePathFrom(args: { file_path?: string }): string {
+  return args.file_path ?? '';
 }
 
 function stringFrom(args: Record<string, unknown>, primary: string, alias: string): string {
@@ -166,25 +173,35 @@ const ViewSchema = z.object({
 
 const WriteSchema = z.object({
   ...FilePathFields,
-  content: z.string().describe('Complete file contents to write. For small changes, prefer edit or multiedit.'),
+  content: z.string().max(VIEW_MAX_BYTES).describe('Complete file contents to write. For small changes, prefer edit or multiedit.'),
 }).superRefine((value, ctx) => {
   if (!filePathFrom(value).trim()) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['file_path'], message: 'file_path is required' });
   }
 });
 
+// Same rationale as FilePathFields above: the model-facing schema uses
+// `path` (the convention `grep` already follows), never `resourcePath`,
+// so Gemini doesn't pattern-match `resourcePath` onto unrelated tools
+// (channel.post / channel.dm) and trip additionalProperties:false. The
+// runtime reads from either alias for back-compat with older
+// serialized calls.
 const LsSchema = z.object({
-  resourcePath: z.string().min(1).default('.'),
+  path: z.string().min(1).default('.'),
   ignore: z.array(z.string().min(1)).default([]),
   depth: z.number().int().min(0).max(20).default(0),
   limit: z.number().int().min(1).max(TREE_LIMIT).default(TREE_LIMIT),
 });
 
 const GlobSchema = z.object({
-  resourcePath: z.string().min(1).default('.'),
+  path: z.string().min(1).default('.'),
   pattern: z.string().min(1),
   limit: z.number().int().min(1).max(TREE_LIMIT).default(GLOB_LIMIT),
 });
+
+function lsGlobPathFrom(args: { path?: string }): string {
+  return args.path ?? '.';
+}
 
 export const viewTool: OrchestratorTool<typeof ViewSchema> = {
   id: 'view',
@@ -200,7 +217,7 @@ export const viewTool: OrchestratorTool<typeof ViewSchema> = {
   }),
   execute: async ({ invocation, team }) => {
     if (!invocation.resourcePath) {
-      throw new Error('resourcePath is required');
+      throw new Error('file_path is required (the workspace file path)');
     }
 
     const resolved = resolveWorkspacePath(team.workspace.root, invocation.resourcePath);
@@ -240,7 +257,7 @@ export const writeTool: OrchestratorTool<typeof WriteSchema> = {
   execute: async (ctx) => {
     const { invocation, team } = ctx;
     if (!invocation.resourcePath) {
-      throw new Error('resourcePath is required');
+      throw new Error('file_path is required (the workspace file path)');
     }
     assertAgentWritePermitted(invocation.memberId, invocation.resourcePath);
 
@@ -285,7 +302,7 @@ export const editTool: OrchestratorTool<typeof EditSchema> = {
   execute: async (ctx) => {
     const { invocation, team } = ctx;
     if (!invocation.resourcePath) {
-      throw new Error('resourcePath is required');
+      throw new Error('file_path is required (the workspace file path)');
     }
     assertAgentWritePermitted(invocation.memberId, invocation.resourcePath);
 
@@ -338,7 +355,7 @@ export const multieditTool: OrchestratorTool<typeof MultiEditSchema> = {
   execute: async (ctx) => {
     const { invocation, team } = ctx;
     if (!invocation.resourcePath) {
-      throw new Error('resourcePath is required');
+      throw new Error('file_path is required (the workspace file path)');
     }
     assertAgentWritePermitted(invocation.memberId, invocation.resourcePath);
 
@@ -386,7 +403,7 @@ export const lsTool: OrchestratorTool<typeof LsSchema> = {
   toInvocation: (args) => ({
     action: 'read',
     resourceType: 'folder',
-    resourcePath: args.resourcePath,
+    resourcePath: lsGlobPathFrom(args),
     input: {
       ignore: args.ignore,
       depth: args.depth,
@@ -439,7 +456,7 @@ export const globTool: OrchestratorTool<typeof GlobSchema> = {
   toInvocation: (args) => ({
     action: 'read',
     resourceType: 'folder',
-    resourcePath: args.resourcePath,
+    resourcePath: lsGlobPathFrom(args),
     input: {
       pattern: args.pattern,
       limit: args.limit,

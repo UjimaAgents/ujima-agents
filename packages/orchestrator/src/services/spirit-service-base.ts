@@ -16,11 +16,7 @@ import {
 import { composeSystemPromptSuffix, runWakeReason } from './spirit-run-detail.js';
 import type { ActiveSpiritEntry } from './active-spirit-registry.js';
 import type { ToolInvocationInput } from './tool-service.js';
-import {
-  resolveSpiritModel,
-  defaultResolveProviderName,
-  defaultResolveModelId,
-} from '../utils/to-model-messages.js';
+import { createSpiritModelResolver } from '../utils/create-spirit-model-resolver.js';
 import { ActiveSpiritRegistry } from './active-spirit-registry.js';
 import type { ConversationService } from './conversation.js';
 import type { RealtimeService } from './context.js';
@@ -29,7 +25,6 @@ import type { TeamStore } from './team-store.js';
 import type { ToolService } from './tool-service.js';
 import { goalModeEnabledFromMessage } from './goal-mode-prompt.js';
 import type { AiService } from '../ai-service.js';
-import { requireTeam } from '../utils/require-team.js';
 import type { AgentLoopChunk } from './agent-loop.js';
 import { materializeMcpDef } from './mcp-runtime.js';
 import type {
@@ -167,11 +162,17 @@ export class SpiritServiceBase {
         .map((approval) => approval.toolCallId as string),
     );
     return (this.repo.listRunSteps?.(organizationId, runId) ?? []).filter((step) => {
-      const output = step.output as { status?: unknown } | undefined;
-      return (
-        output?.status === 'waiting_for_approval' &&
-        !pendingApprovalToolCallIds.has(step.toolCallId)
-      );
+      const output = step.output as { status?: unknown; questionId?: unknown } | undefined;
+      if (output?.status === 'waiting_for_approval' && !pendingApprovalToolCallIds.has(step.toolCallId)) {
+        return true;
+      }
+      if (output?.status === 'waiting_for_input' && typeof output.questionId === 'string') {
+        const question = this.repo.getInteractiveQuestion(organizationId, output.questionId);
+        if (question && question.status === 'answered') {
+          return true;
+        }
+      }
+      return false;
     });
   }
 
@@ -415,23 +416,7 @@ export class SpiritServiceBase {
   }
 
   protected defaultModelResolver(): ModelResolver {
-    return ({ organizationId, memberId, role }) => {
-      const team = requireTeam(this.teamStore, organizationId);
-      const member = this.repo.getMember(organizationId, memberId);
-      if (!member) {
-        throw new Error(`Member not found: ${memberId}`);
-      }
-      return resolveSpiritModel({
-        organizationId,
-        memberId,
-        role,
-        member,
-        team,
-        getProviderCredential: (orgId, key) => this.repo.getProviderCredential(orgId, key),
-        resolveProviderName: defaultResolveProviderName,
-        resolveModelId: defaultResolveModelId,
-      });
-    };
+    return createSpiritModelResolver(this.teamStore, this.repo);
   }
 
   protected defaultMcpResolver(): SpiritMcpResolver {

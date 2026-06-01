@@ -16,8 +16,8 @@ export function OrgChartTab({
   members: Member[];
   organizationChart: { reportsTo: Record<string, string> };
 }) {
-  const agentMembers = members.filter((m) => m.kind === "agent");
-  const humanMembers = members.filter((m) => m.kind === "human");
+  const agentMembers = members.filter((m) => m.kind === "agent" && !m.retiredAt);
+  const humanMembers = members.filter((m) => m.kind === "human" && !m.retiredAt);
   const owner = humanMembers.find((m) => m.roleName === "owner");
 
   const [reportsTo, setReportsTo] = useState<Record<string, string>>(() => {

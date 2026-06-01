@@ -97,6 +97,13 @@ export function listOrganizationsForUser(db: DbHandle, emailNormalized: string):
 }
 
 /** Organizations that have at least one owner login (excludes failed/partial onboarding). */
+export function organizationHasAuthUsers(db: DbHandle, organizationId: string): boolean {
+  const row = db
+    .prepare('SELECT 1 AS n FROM auth_users WHERE organization_id = ? LIMIT 1')
+    .get(organizationId) as { n: number } | null | undefined;
+  return row != null;
+}
+
 export function listOrganizationsWithSignIn(db: DbHandle): Organization[] {
   const rows = db
     .prepare(
@@ -124,14 +131,57 @@ export function deleteOrganizationData(db: DbHandle, organizationId: string): vo
     run('DELETE FROM auth_sessions WHERE organization_id = ?', organizationId);
     run('DELETE FROM auth_users WHERE organization_id = ?', organizationId);
     run('DELETE FROM conversation_reads WHERE organization_id = ?', organizationId);
+    run('DELETE FROM interactive_questions WHERE organization_id = ?', organizationId);
+    run('DELETE FROM goal_tasks WHERE organization_id = ?', organizationId);
+    run('DELETE FROM goals WHERE organization_id = ?', organizationId);
+    run('DELETE FROM channel_members WHERE organization_id = ?', organizationId);
+    run('DELETE FROM channel_member_modes WHERE organization_id = ?', organizationId);
+    run('DELETE FROM channels WHERE organization_id = ?', organizationId);
     run(
-      'DELETE FROM channel_members WHERE channel_id IN (SELECT id FROM channels WHERE organization_id = ?)',
+      'DELETE FROM thread_members WHERE thread_id IN (SELECT id FROM threads WHERE organization_id = ?)',
       organizationId,
     );
-    run('DELETE FROM channels WHERE organization_id = ?', organizationId);
+    run('DELETE FROM threads WHERE organization_id = ?', organizationId);
+    run(
+      'DELETE FROM message_attachments WHERE message_id IN (SELECT id FROM messages WHERE organization_id = ?)',
+      organizationId,
+    );
+    run(
+      'DELETE FROM message_mentions WHERE message_id IN (SELECT id FROM messages WHERE organization_id = ?)',
+      organizationId,
+    );
+    run('DELETE FROM messages WHERE organization_id = ?', organizationId);
+    run('DELETE FROM runs WHERE organization_id = ?', organizationId);
+    run('DELETE FROM run_steps WHERE organization_id = ?', organizationId);
+    run('DELETE FROM approvals WHERE organization_id = ?', organizationId);
+    run('DELETE FROM audit_events WHERE organization_id = ?', organizationId);
+    run('DELETE FROM memory_entries WHERE organization_id = ?', organizationId);
+    run('DELETE FROM tool_activity WHERE organization_id = ?', organizationId);
+    run('DELETE FROM todos WHERE organization_id = ?', organizationId);
+    run('DELETE FROM provider_bindings WHERE organization_id = ?', organizationId);
+    run('DELETE FROM task_sessions WHERE organization_id = ?', organizationId);
+    run('DELETE FROM spirits WHERE organization_id = ?', organizationId);
+    run('DELETE FROM attachments WHERE organization_id = ?', organizationId);
+    run('DELETE FROM mcp_servers WHERE organization_id = ?', organizationId);
+    run('DELETE FROM agent_mcp_attachments WHERE organization_id = ?', organizationId);
+    run('DELETE FROM mcp_tool_cache WHERE organization_id = ?', organizationId);
+    run('DELETE FROM scheduled_jobs WHERE organization_id = ?', organizationId);
+    run('DELETE FROM workspace_files WHERE organization_id = ?', organizationId);
+    run('DELETE FROM decision_log WHERE organization_id = ?', organizationId);
+    run('DELETE FROM procedure_revisions WHERE organization_id = ?', organizationId);
+    run('DELETE FROM run_procedures_applied WHERE organization_id = ?', organizationId);
     run('DELETE FROM workspace_members WHERE organization_id = ?', organizationId);
     run('DELETE FROM members WHERE organization_id = ?', organizationId);
     run('DELETE FROM provider_credentials WHERE organization_id = ?', organizationId);
+    // Governance tables are org-scoped but have no FK cascade, so the
+    // cleanup must reach them explicitly. Without these, a re-used
+    // org id would resurface stale per-tool grants / classifications
+    // straight into the runtime palette and the catalog UI.
+    run('DELETE FROM agent_tool_attachments WHERE organization_id = ?', organizationId);
+    run('DELETE FROM mcp_tool_classifications WHERE organization_id = ?', organizationId);
+    run('DELETE FROM agent_mcp_attachments WHERE organization_id = ?', organizationId);
+    run('DELETE FROM mcp_tool_cache WHERE organization_id = ?', organizationId);
+    run('DELETE FROM mcp_servers WHERE organization_id = ?', organizationId);
     run('DELETE FROM workspace_settings WHERE organization_id = ?', organizationId);
     run('DELETE FROM config_field_ownership WHERE organization_id = ?', organizationId);
     run('DELETE FROM workspaces WHERE id = ?', `ws_${organizationId}`);

@@ -8,6 +8,10 @@ import type { RolePresetTemplate } from "@/features/onboarding/types";
 
 export const WEB_SESSION_COOKIE = "ujima_web_session";
 const DEFAULT_DAEMON_PORT = process.env.UJIMA_PORT ?? "7511";
+const DAEMON_FETCH_TIMEOUT_MS = Number.parseInt(
+  process.env.UJIMA_DAEMON_FETCH_TIMEOUT_MS ?? "5000",
+  10,
+);
 
 interface DaemonErrorPayload {
   code?: string;
@@ -42,7 +46,16 @@ export function readDaemonBearerToken(): string {
     return fromEnv.trim();
   }
 
-  return readFileSync(join(resolveHomeDir(), "token"), "utf8").trim();
+  const tokenPath = join(resolveHomeDir(), "token");
+  try {
+    return readFileSync(tokenPath, "utf8").trim();
+  } catch {
+    throw new DaemonRequestError(
+      503,
+      "ERR_DAEMON_TOKEN_MISSING",
+      `Missing daemon token at ${tokenPath}. Run \`bun run dev:stack\` or \`ujima start\` so the API can issue a token.`,
+    );
+  }
 }
 
 export function sessionCookieOptions(expiresAt?: string) {
@@ -94,19 +107,44 @@ export async function daemonFetch(
   }
 
   const url = `${daemonBaseUrl()}${path}`;
+  const timeoutMs =
+    Number.isFinite(DAEMON_FETCH_TIMEOUT_MS) && DAEMON_FETCH_TIMEOUT_MS > 0
+      ? DAEMON_FETCH_TIMEOUT_MS
+      : 5000;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  const upstreamSignal = init.signal;
+  if (upstreamSignal) {
+    if (upstreamSignal.aborted) {
+      controller.abort();
+    } else {
+      upstreamSignal.addEventListener("abort", () => controller.abort(), { once: true });
+    }
+  }
+
   try {
     return await fetch(url, {
       ...init,
       headers,
       cache: "no-store",
+      signal: controller.signal,
     });
   } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new DaemonRequestError(
+        503,
+        "ERR_DAEMON_TIMEOUT",
+        `Timed out reaching the Ujima daemon at ${url} after ${timeoutMs}ms. The API may still be starting — retry in a few seconds, or run \`bun run dev:stack\` instead of full \`bun run dev\`.`,
+      );
+    }
     const reason = error instanceof Error ? error.message : String(error);
     throw new DaemonRequestError(
       503,
       "ERR_DAEMON_UNAVAILABLE",
-      `Unable to reach the Ujima daemon at ${url}. Run \`ujima start\` (npm install) or \`bun run dev\` (monorepo) and ensure the API is listening on port ${DEFAULT_DAEMON_PORT}. (${reason})`,
+      `Unable to reach the Ujima daemon at ${url}. Run \`ujima start\` (npm install) or \`bun run dev:stack\` / \`bun run dev\` and ensure the API is listening on port ${DEFAULT_DAEMON_PORT}. (${reason})`,
     );
+  } finally {
+    clearTimeout(timeout);
   }
 }
 

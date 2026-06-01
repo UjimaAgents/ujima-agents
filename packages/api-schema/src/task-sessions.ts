@@ -5,7 +5,6 @@ import {
   TaskExecutionModeSchema,
   TaskSessionSchema,
   TaskSessionStatusSchema,
-  TodoSchema,
 } from '@ujima/shared';
 
 // HTTP shapes for the unified task shell (Phase 1).
@@ -71,8 +70,3 @@ export const TaskSessionSpiritsResponseSchema = z.object({
   spirits: z.array(SpiritSchema),
 });
 export type TaskSessionSpiritsResponse = z.infer<typeof TaskSessionSpiritsResponseSchema>;
-
-export const TaskSessionTodosResponseSchema = z.object({
-  todos: z.array(TodoSchema),
-});
-export type TaskSessionTodosResponse = z.infer<typeof TaskSessionTodosResponseSchema>;

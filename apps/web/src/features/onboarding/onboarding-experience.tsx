@@ -1,6 +1,7 @@
 "use client";
 
 import type { ApiError } from "@ujima/api-schema";
+import { normalizeOrgShellApprovalMode } from "@ujima/shared";
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { Home, Sparkles } from "lucide-react";
@@ -149,10 +150,14 @@ function normalizeDraft(raw: unknown, baseline: OnboardingDraft): OnboardingDraf
         typeof source.policies?.requireApprovalForWrites === "boolean"
           ? source.policies.requireApprovalForWrites
           : baseline.policies.requireApprovalForWrites,
-      requireApprovalForShell:
-        typeof source.policies?.requireApprovalForShell === "boolean"
-          ? source.policies.requireApprovalForShell
-          : baseline.policies.requireApprovalForShell,
+      shellApprovalMode: source.policies
+        ? normalizeOrgShellApprovalMode({
+            shellApprovalMode: source.policies.shellApprovalMode,
+            requireApprovalForShell: (
+              source.policies as { requireApprovalForShell?: boolean }
+            ).requireApprovalForShell,
+          })
+        : baseline.policies.shellApprovalMode,
       workspaceBoundaryMode: "hard",
     },
   };

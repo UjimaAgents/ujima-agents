@@ -3,9 +3,12 @@ import {
   IdSchema,
   MemberKindSchema,
   MemberSchema,
+  MemberShellApprovalModeSchema,
   OrganizationChartSchema,
   OrganizationSchema,
+  ShellApprovalModeSchema,
   ToolCapabilitySchema,
+  ToolPolicyState,
   WorkspaceConfigSchema,
 } from '@ujima/shared';
 import { z } from 'zod';
@@ -38,7 +41,8 @@ const TeamSettingsChannelSchema = ChannelSchema.extend({
 
 const TeamSettingsPolicySchema = z.object({
   requireApprovalForWrites: z.boolean(),
-  requireApprovalForShell: z.boolean(),
+  requireApprovalForShell: z.boolean().optional(),
+  shellApprovalMode: ShellApprovalModeSchema,
   workspaceBoundaryMode: z.string(),
 });
 
@@ -102,6 +106,13 @@ export const PoliciesUpdateSchema = z.object({
   organizationId: IdSchema,
   requireApprovalForWrites: z.boolean().optional(),
   requireApprovalForShell: z.boolean().optional(),
+  shellApprovalMode: ShellApprovalModeSchema.optional(),
+});
+
+export const MemberShellApprovalUpdateSchema = z.object({
+  shellApprovalMode: MemberShellApprovalModeSchema.optional(),
+  llm: z.string().min(1).optional(),
+  model: z.string().min(1).optional(),
 });
 export type PoliciesUpdateRequest = z.infer<typeof PoliciesUpdateSchema>;
 
@@ -116,3 +127,27 @@ export const ChannelOperationParamsSchema = z.object({
   orgId: IdSchema,
   channelId: IdSchema,
 });
+
+/** A single allow-rule record, readable by the frontend. */
+export const PolicyAllowRuleSchema = z.object({
+  agentId: z.string(),
+  mcpId: z.string(),
+  toolName: z.string(),
+  state: ToolPolicyState,
+  reason: z.string().optional(),
+  updatedAt: z.string().optional(),
+  updatedBy: z.string().optional(),
+});
+export type PolicyAllowRule = z.infer<typeof PolicyAllowRuleSchema>;
+
+export const PolicyRulesResponseSchema = z.object({
+  rules: z.array(PolicyAllowRuleSchema),
+});
+export type PolicyRulesResponse = z.infer<typeof PolicyRulesResponseSchema>;
+
+export const RevokePolicyRuleSchema = z.object({
+  agentId: z.string(),
+  mcpId: z.string(),
+  toolName: z.string(),
+});
+export type RevokePolicyRuleRequest = z.infer<typeof RevokePolicyRuleSchema>;

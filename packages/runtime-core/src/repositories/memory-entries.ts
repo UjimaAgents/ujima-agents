@@ -151,9 +151,7 @@ export function recallMemoryEntries(
 }
 
 /**
- * Drop expired memory entries. Called periodically by the same
- * sweeper that handles commitment expiry — best-effort, no return
- * value beyond the count.
+ * Drop expired memory entries. Best-effort, no return value beyond the count.
  */
 export function deleteExpiredMemoryEntries(db: DbHandle, nowIso: string): number {
   const result = db

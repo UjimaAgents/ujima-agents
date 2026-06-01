@@ -12,14 +12,14 @@ import type {
   AuthService,
   BootstrapService,
   ConversationService,
+  GoalSystemService,
   McpRegistryService,
+  GovernanceService,
   PluginRegistryService,
   OnboardingService,
   SchedulerService,
   SettingsService,
   SpiritService,
-  SupervisorTodoService,
-  TaskPromoterService,
   TaskSessionService,
   TeamStore,
   WorkspaceService,
@@ -54,15 +54,16 @@ import {registerSettingsRoutes} from "./routes/settings.js";
 import {registerTaskRoutes} from "./routes/tasks.js";
 import {registerTaskSessionRoutes} from "./routes/task-sessions.js";
 import {registerMcpRoutes} from "./routes/mcps.js";
+import {registerGovernanceRoutes} from "./routes/governance.js";
 import {registerPluginRoutes} from "./routes/plugins.js";
-import {registerChannelGoalsRoutes} from "./routes/channel-goals.js";
-import {registerChannelTasksRoutes} from "./routes/channel-tasks.js";
 import {registerCultureRoutes} from "./routes/culture.js";
 import {registerWorkspaceRoutes} from "./routes/workspaces.js";
 import {registerAgentRoutes} from "./routes/agents.js";
+import {registerChannelMemberModeRoutes} from "./routes/channel-member-modes.js";
 import {registerOauthRoutes} from "./routes/oauth.js";
 import {registerScheduleRoutes} from "./routes/schedules.js";
 import {registerNotificationRoutes} from "./routes/notifications.js";
+import {registerGoalRoutes} from "./routes/goals.js";
 
 const WS_QUEUE_CAP = 256;
 const STARTED_AT = Date.now();
@@ -93,12 +94,12 @@ export interface TransportOptions {
       scheduler?: SchedulerService;
       settings: SettingsService;
       workspaces: WorkspaceService;
-      taskPromoter: TaskPromoterService;
       taskSessions: TaskSessionService;
+      goals: GoalSystemService;
       spirits: SpiritService;
-      supervisorTodos: SupervisorTodoService;
       activeSpirits: ActiveSpiritRegistry;
       mcpRegistry: McpRegistryService;
+      governance: GovernanceService;
       pluginRegistry: PluginRegistryService;
     };
   };
@@ -289,7 +290,6 @@ export function createTransport(opts: TransportOptions): Transport {
           repo: opts.apiServices.repo,
           conversations: services.conversations,
           auth: services.auth,
-          taskPromoter: services.taskPromoter,
         });
         registerRunRoutes(api, {
           repo: opts.apiServices.repo,
@@ -313,7 +313,6 @@ export function createTransport(opts: TransportOptions): Transport {
         registerTaskRoutes(api, {
           host,
           repo: opts.apiServices.repo,
-          taskPromoter: services.taskPromoter,
         });
         registerTaskSessionRoutes(api, {
           taskSessions: services.taskSessions,
@@ -323,18 +322,13 @@ export function createTransport(opts: TransportOptions): Transport {
           auth: services.auth,
           mcpRegistry: services.mcpRegistry,
         });
+        registerGovernanceRoutes(api, {
+          auth: services.auth,
+          governance: services.governance,
+        });
         registerPluginRoutes(api, {
           auth: services.auth,
           pluginRegistry: services.pluginRegistry,
-        });
-        registerChannelGoalsRoutes(api, {
-          repo: opts.apiServices.repo,
-          auth: services.auth,
-        });
-        registerChannelTasksRoutes(api, {
-          repo: opts.apiServices.repo,
-          auth: services.auth,
-          realtime,
         });
         registerCultureRoutes(api, {
           repo: opts.apiServices.repo,
@@ -345,6 +339,19 @@ export function createTransport(opts: TransportOptions): Transport {
           auth: services.auth,
         });
         registerNotificationRoutes(api, {
+          repo: opts.apiServices.repo,
+          auth: services.auth,
+          resolveApproval: async (orgId, approvalId, status) => {
+            await services.approvals.resolveApproval({ organizationId: orgId, approvalId, status });
+          },
+        });
+        registerGoalRoutes(api, {
+          repo: opts.apiServices.repo,
+          auth: services.auth,
+          goals: services.goals,
+          conversations: services.conversations,
+        });
+        registerChannelMemberModeRoutes(api, {
           repo: opts.apiServices.repo,
           auth: services.auth,
         });

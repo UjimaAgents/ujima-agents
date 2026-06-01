@@ -80,6 +80,8 @@ const LEGACY_DEFAULT_ROLE_TOOL_SET = new Set<string>([
   'job_output',
   'job_kill',
   'web_search',
+  'memory.save',
+  'memory.write',
 ]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -97,19 +99,19 @@ function isLegacyDefaultRoleToolList(value: unknown): boolean {
 
 export function upgradeLegacyDefaultRoleTools<T extends Record<string, unknown>>(role: T): T {
   if (!Array.isArray(role.tools)) return role;
-  if (isLegacyDefaultRoleToolList(role.tools)) {
-    return {
-      ...role,
-      tools: [...DEFAULT_ROLE_TOOLS],
-    } as T;
+  let tools = [...(role.tools as string[])];
+  if (isLegacyDefaultRoleToolList(tools)) {
+    tools = [...DEFAULT_ROLE_TOOLS];
+  } else if (tools.includes('filesystem')) {
+    tools = tools.filter((tool) => tool !== 'filesystem');
   }
-  if (role.tools.includes('filesystem')) {
-    return {
-      ...role,
-      tools: role.tools.filter((tool) => tool !== 'filesystem'),
-    } as T;
+  if (tools.includes('self.note')) {
+    tools = tools.filter((tool) => tool !== 'self.note');
   }
-  return role;
+  if (tools.includes('memory.save')) {
+    tools = tools.map((tool) => (tool === 'memory.save' ? 'memory.write' : tool));
+  }
+  return { ...role, tools } as T;
 }
 
 /**
@@ -145,7 +147,17 @@ function migrateToV3(config: Record<string, unknown>): Record<string, unknown> {
     ? config.roles.map((role) => (isRecord(role) ? upgradeLegacyDefaultRoleTools(role) : role))
     : config.roles;
   const tools = isRecord(config.tools)
-    ? Object.fromEntries([...Object.entries(DEFAULT_TOOL_CATALOG), ...Object.entries(config.tools)])
+    ? (() => {
+        const toolEntries = Object.entries(config.tools).filter(([toolName]) => toolName !== 'memory.save');
+        const legacyMemorySave = config.tools['memory.save'];
+        return Object.fromEntries([
+          ...Object.entries(DEFAULT_TOOL_CATALOG),
+          ...toolEntries,
+          ...(legacyMemorySave !== undefined && !('memory.write' in config.tools)
+            ? [['memory.write', legacyMemorySave] as const]
+            : []),
+        ]);
+      })()
     : DEFAULT_TOOL_CATALOG;
 
   return {

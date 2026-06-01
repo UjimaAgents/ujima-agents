@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { AgentTeamConfigSchema, RoleConfigSchema } from '@ujima/framework';
 import type { Repository } from '@ujima/runtime-core';
-import { AGENT_KIND, ChannelSchema, IdSchema, MemberSchema } from '@ujima/shared';
+import { AGENT_KIND, ChannelSchema, IdSchema, MemberSchema, MemberShellApprovalModeSchema } from '@ujima/shared';
 import { ensureDirectMessageConversation } from '@ujima/orchestrator';
 import {
   ApiErrorSchema,
@@ -13,10 +13,13 @@ import {
   OrganizationSettingsQuerySchema,
   OrganizationSettingsResponseSchema,
   OrganizationSettingsUpdateSchema,
+  MemberShellApprovalUpdateSchema,
   PoliciesUpdateSchema,
+  PolicyRulesResponseSchema,
   ProviderSecretsUpsertResponseSchema,
   ProviderSecretsUpsertSchema,
   ProviderStatusSchema,
+  RevokePolicyRuleSchema,
 } from '@ujima/api-schema';
 import type { AuthService, SettingsService } from '@ujima/orchestrator';
 import { z } from 'zod';
@@ -38,6 +41,7 @@ const AddMemberRequestSchema = z.object({
   channelIds: z.array(IdSchema).default([]),
   llm: z.string().min(1).optional(),
   model: z.string().min(1).optional(),
+  shellApprovalMode: MemberShellApprovalModeSchema.optional(),
   personalityName: z.string().min(1).optional(),
   role: RoleConfigSchema.optional(),
 });
@@ -46,6 +50,7 @@ const UpdateMemberRequestSchema = AddMemberRequestSchema.omit({ kind: true }).ex
   channelIds: z.array(IdSchema).optional(),
   role: RoleConfigSchema,
   personalityName: z.string().min(1),
+  shellApprovalMode: MemberShellApprovalModeSchema.optional(),
 });
 const CreateChannelRequestSchema = z.object({
   name: z.string().min(1),
@@ -302,6 +307,7 @@ export function registerSettingsRoutes(
         channelIds: req.body.channelIds,
         llm: req.body.llm,
         model: req.body.model,
+        shellApprovalMode: req.body.shellApprovalMode,
         personalityName: req.body.personalityName,
         role: req.body.role,
       });
@@ -347,10 +353,41 @@ export function registerSettingsRoutes(
         channelIds: req.body.channelIds,
         llm: req.body.llm,
         model: req.body.model,
+        shellApprovalMode: req.body.shellApprovalMode,
         personalityName: req.body.personalityName,
         role: req.body.role,
       });
     } catch (err) {
+      return routeError(reply, err, { notFound: 'Member not found', workspaceRoot: true });
+    }
+  });
+
+  app.delete('/orgs/:orgId/members/:memberId', {
+    schema: {
+      description: 'Delete/retire an agent member',
+      tags: ['Settings'],
+      params: z.object({ orgId: IdSchema, memberId: IdSchema }),
+      response: {
+        200: z.object({ success: z.literal(true) }),
+        400: ApiErrorSchema,
+        401: ApiErrorSchema,
+        403: ApiErrorSchema,
+        404: ApiErrorSchema,
+        409: ApiErrorSchema,
+      },
+    },
+  }, async (req, reply) => {
+    try {
+      assertReadyWorkspaceRoot(repo, req.params.orgId);
+      const forbidden = requireOrgSession(auth, req, reply, req.params.orgId);
+      if (forbidden) return forbidden;
+      settings.deleteMember(req.params.orgId, req.params.memberId);
+      return { success: true as const };
+    } catch (err) {
+      const message = errorMessage(err);
+      if (message === 'Only agents can be deleted') {
+        return apiError(reply, 403, message);
+      }
       return routeError(reply, err, { notFound: 'Member not found', workspaceRoot: true });
     }
   });
@@ -409,9 +446,95 @@ export function registerSettingsRoutes(
         organizationId: req.params.orgId,
         requireApprovalForWrites: req.body.requireApprovalForWrites,
         requireApprovalForShell: req.body.requireApprovalForShell,
+        shellApprovalMode: req.body.shellApprovalMode,
       });
     } catch (err) {
       return routeError(reply, err, { notFound: 'Organization not found', workspaceRoot: true });
+    }
+  });
+
+  app.get('/orgs/:orgId/policies/rules', {
+    schema: {
+      description: 'List all permanent allow rules from the governance policy',
+      tags: ['Settings'],
+      params: OrgIdParamsSchema,
+      response: {
+        200: PolicyRulesResponseSchema,
+        400: ApiErrorSchema,
+        401: ApiErrorSchema,
+        403: ApiErrorSchema,
+        404: ApiErrorSchema,
+      },
+    },
+  }, async (req, reply) => {
+    try {
+      const forbidden = requireOrgSession(auth, req, reply, req.params.orgId);
+      if (forbidden) return forbidden;
+      return { rules: settings.listAllowRules(req.params.orgId) };
+    } catch (err) {
+      return routeError(reply, err, { notFound: 'Organization not found' });
+    }
+  });
+
+  app.delete('/orgs/:orgId/policies/rules', {
+    schema: {
+      description: 'Revoke a permanent allow rule from the governance policy',
+      tags: ['Settings'],
+      params: OrgIdParamsSchema,
+      body: RevokePolicyRuleSchema,
+      response: {
+        200: z.object({ success: z.literal(true) }),
+        400: ApiErrorSchema,
+        401: ApiErrorSchema,
+        403: ApiErrorSchema,
+        404: ApiErrorSchema,
+      },
+    },
+  }, async (req, reply) => {
+    try {
+      assertReadyWorkspaceRoot(repo, req.params.orgId);
+      const forbidden = requireOrgSession(auth, req, reply, req.params.orgId);
+      if (forbidden) return forbidden;
+      settings.revokeAllowRule(
+        req.params.orgId,
+        req.body.agentId,
+        req.body.mcpId,
+        req.body.toolName,
+      );
+      return { success: true as const };
+    } catch (err) {
+      return routeError(reply, err, { notFound: 'Organization not found', workspaceRoot: true });
+    }
+  });
+
+  app.patch('/orgs/:orgId/members/:memberId/preferences', {
+    schema: {
+      description: 'Update agent shell approval mode and model preferences',
+      tags: ['Settings'],
+      params: z.object({ orgId: IdSchema, memberId: IdSchema }),
+      body: MemberShellApprovalUpdateSchema,
+      response: {
+        200: MemberSchema,
+        400: ApiErrorSchema,
+        401: ApiErrorSchema,
+        403: ApiErrorSchema,
+        404: ApiErrorSchema,
+      },
+    },
+  }, async (req, reply) => {
+    try {
+      assertReadyWorkspaceRoot(repo, req.params.orgId);
+      const forbidden = requireOrgSession(auth, req, reply, req.params.orgId);
+      if (forbidden) return forbidden;
+      return settings.patchMemberPreferences({
+        organizationId: req.params.orgId,
+        memberId: req.params.memberId,
+        shellApprovalMode: req.body.shellApprovalMode,
+        llm: req.body.llm,
+        model: req.body.model,
+      });
+    } catch (err) {
+      return routeError(reply, err, { notFound: 'Member not found', workspaceRoot: true });
     }
   });
 

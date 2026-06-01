@@ -23,6 +23,11 @@ import { createTransport } from './transport/server.js';
 import { ensureBearerToken } from './transport/token.js';
 import { DEFAULT_BIND_HOST, DEFAULT_BIND_PORT } from '@ujima/api-schema';
 import { startTeamConfigWatcher } from './config-sync.js';
+import {
+  buildPolicyResolver,
+  buildClassificationLookup,
+  type DaemonRepoRef,
+} from './governance-resolvers.js';
 
 const STARTUP_SPLASH = `
    █  █   █ █ █▀▄▀█ █▀█
@@ -73,12 +78,18 @@ async function main(): Promise<void> {
       if (process.env.NODE_ENV === 'production') {
         process.stderr.write(line + '\n');
       } else {
-        const log = JSON.parse(line);
-        const time = chalk.dim(new Date(log.ts).toLocaleTimeString());
-        const level = log.level === 'error' ? chalk.red(log.level) : log.level === 'warn' ? chalk.yellow(log.level) : chalk.blue(log.level);
-        const msg = chalk.white(log.message);
-        const comp = chalk.magenta(`[${log.component || 'sys'}]`);
-        process.stderr.write(`${time} ${level} ${comp} ${msg}\n`);
+        const { ts, level: lvl, message, component, ...rest } = JSON.parse(line) as {
+          ts: string;
+          level: string;
+          message: string;
+          component?: string;
+          [key: string]: unknown;
+        };
+        const time = chalk.dim(new Date(ts).toLocaleTimeString());
+        const level = lvl === 'error' ? chalk.red(lvl) : lvl === 'warn' ? chalk.yellow(lvl) : chalk.blue(lvl);
+        const comp = chalk.magenta(`[${component || 'sys'}]`);
+        const tail = Object.keys(rest).length > 0 ? ' ' + chalk.gray(JSON.stringify(rest)) : '';
+        process.stderr.write(`${time} ${level} ${comp} ${chalk.white(message)}${tail}\n`);
       }
     },
     level: (process.env.UJIMA_LOG_LEVEL as 'debug' | 'info' | 'warn' | 'error' | undefined) ?? 'info',
@@ -90,6 +101,17 @@ async function main(): Promise<void> {
     logger.warn('runtime: recovering from dirty shutdown', { previousPid: prevPid });
   }
   writeDirtyFlag(homeDir);
+
+  // Late ref so the policy/classification resolvers can reach the
+  // Repository wrapper that's constructed after the host. Without this
+  // wire-up, the runtime-host's permission middleware would never see
+  // the governance policy or per-tool classifications — risk_defaults
+  // / classification gating would be silently skipped on the headless
+  // runtime path even though tool-service-impl already enforces them
+  // on the orchestrator path. The closures resolve the active org via
+  // `getLatestOrganization()` since the daemon is single-org per
+  // process (matches the migrateUnifiedWorkspaceOrg assumption).
+  const lateRepoRef: DaemonRepoRef = { current: undefined };
 
   const host = await createRuntimeHost(
     {
@@ -106,6 +128,8 @@ async function main(): Promise<void> {
       getModel: (agent: AgentDef): LanguageModel => {
         throw new Error(`runtime: no model configured for agent "${agent.id}"`);
       },
+      policyResolver: buildPolicyResolver(lateRepoRef),
+      classificationLookup: buildClassificationLookup(lateRepoRef),
     },
     {},
   );
@@ -116,6 +140,7 @@ async function main(): Promise<void> {
 
   const secretStore = createFileSecretStore({ homeDir });
   const repository = new Repository(host.db.raw, secretStore);
+  lateRepoRef.current = repository;
   closeOrphanedActiveRuns(repository);
   const teamStore = createTeamStore();
   const migration = migrateUnifiedWorkspaceOrg({
@@ -267,7 +292,10 @@ async function main(): Promise<void> {
       void shutdown('uncaughtException', 1);
     });
     process.on('unhandledRejection', (reason) => {
-      logger.error('runtime: unhandledRejection', { reason: reason instanceof Error ? reason.message : String(reason) });
+      logger.error('runtime: unhandledRejection', {
+        reason: reason instanceof Error ? reason.message : String(reason),
+        stack: reason instanceof Error ? reason.stack : undefined,
+      });
     });
   });
 

@@ -179,11 +179,7 @@ export function listTaskSessions(
   return { data, hasMore, nextCursor };
 }
 
-/**
- * Find the most recent open task session for a channel, if one
- * exists. Used by the commitment extractor before parking a todo on
- * the channel.
- */
+/** Find the most recent open task session for a channel, if one exists. */
 export function findOpenTaskSessionForChannel(
   db: DbHandle,
   organizationId: string,

@@ -8,7 +8,7 @@ import {
 } from './pending-member-alerts.js';
 
 describe('pending-member-alerts', () => {
-  it('coalesces alerts per org/member/thread', () => {
+  it('queues alerts FIFO per org/member/thread', () => {
     clearPendingMemberAlertsForTests();
     enqueuePendingMemberAlert({
       organizationId: 'org-1',
@@ -28,7 +28,9 @@ describe('pending-member-alerts', () => {
       reason: 'dm',
       wakeReason: 'dm',
     });
+    expect(takePendingMemberAlert('org-1', 'agent-1', 'thread-1')?.messageId).toBe('msg-1');
     expect(takePendingMemberAlert('org-1', 'agent-1', 'thread-1')?.messageId).toBe('msg-2');
+    expect(takePendingMemberAlert('org-1', 'agent-1', 'thread-1')).toBeUndefined();
   });
 
   it('drains the latest pending alert after a terminal run completes', async () => {

@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { ModelMessage } from 'ai';
 import type { WakeReason } from '@ujima/shared';
+import { ANTI_MIRROR_SCAFFOLD_LINE } from './wake-reply-policy.js';
 import { loadProceduresForSystemPrompt as loadProceduresIndex } from '../tools/self-procedure.js';
 import { aggregateProcedures, type AggregatorOutput } from './procedures.js';
 
@@ -8,7 +9,7 @@ import { aggregateProcedures, type AggregatorOutput } from './procedures.js';
  * Bet 1 — cache-stable system prompt.
  *
  * Today's wake-run path bakes per-wake mutations (anti-mirror line
- * for gemini-flash, self-followup publish contract) into the
+ * for gemini-flash) into the
  * `system` string before handing it to the AI-SDK. Every wake of
  * the same agent+thread therefore busts Anthropic's prefix cache,
  * even though 80%+ of the prompt is identical.
@@ -18,7 +19,7 @@ import { aggregateProcedures, type AggregatorOutput } from './procedures.js';
  *   - `system: string` carries only Zone 1 (truly invariant per
  *     agent+thread): role identity, collaboration protocol, base
  *     scaffold, the agent's own procedural memory.
- *   - Per-wake variations (anti-mirror, self-followup contract) live
+ *   - Per-wake variations live
  *     in a SEPARATE block appended to the messages array AFTER the
  *     cache breakpoint. They mutate freely without invalidating the
  *     cached prefix.
@@ -162,9 +163,7 @@ export interface WakeContextInput {
 /**
  * Per-wake mutations land here as user-role messages AFTER the
  * cache breakpoint. The anti-mirror line targets `gemini-*-flash`
- * (the only family that needs the explicit nudge today); the
- * self-followup contract is the publish-or-pass instruction that
- * lands on scheduler-driven wakes.
+ * (the only family that needs the explicit nudge today).
  *
  * Returns an empty array when no per-wake content applies — caller
  * appends as-is to its messages array.
@@ -173,18 +172,7 @@ export function buildWakeContextMessages(input: WakeContextInput): ModelMessage[
   const lines: string[] = [];
 
   if (input.isMirrorFragile) {
-    lines.push(
-      'IMPORTANT — anti-mirror rule: Do NOT paraphrase the previous message. If your intended reply restates what the previous turn already said, differs only by swapping names, or amounts to "noted / understood / I will await", call channel.ack with no body. Filler acknowledgements waste team attention and trigger redundant wakes.',
-    );
-  }
-
-  if (input.wakeReason === 'self-followup') {
-    lines.push(
-      'You are waking on a commitment you made earlier in this channel. Before you stop, do one of: (a) call channel.post or channel.reply with concrete progress — a path you wrote, a result, or the actual artifact; (b) call channel.pass with a real reason ("still gathering inputs", "blocked on X") if you have no publishable progress yet; (c) call supervisor.todo.update if you need to mark the commitment blocked or completed. self.note alone is NOT a valid termination — every team member will notice you went silent on your own promise.',
-    );
-    lines.push(
-      'For ANY deliverable longer than ~10 lines (task lists, BRDs, PRDs, specs, multi-section docs): use the `write` tool to save the artifact to a file in the workspace (e.g. ai/memory-bank/tasks/<name>.md) FIRST, then post a short channel.post that says "Delivered — see <path>". Pasting long markdown inline gets truncated at the token cap and the reader sees a half-written document.',
-    );
+    lines.push(ANTI_MIRROR_SCAFFOLD_LINE);
   }
 
   if (lines.length === 0) return [];

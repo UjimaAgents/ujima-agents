@@ -1,12 +1,11 @@
 import { ROLE_PRESETS } from './roles/index.js';
 import type { PersonalityPreset } from './schemas.js';
 import type { ToolCapability } from '@ujima/shared';
-
 export const DEFAULT_TOOL_CATALOG: Record<string, ToolCapability> = {
   view: {
     id: 'view',
     name: 'View',
-    description: 'Read a workspace file in a numbered window. Accepts file_path or resourcePath, offset, and limit.',
+    description: 'Read a workspace file in a numbered window. Accepts file_path, offset, and limit.',
     actions: ['read'],
     pathScopes: ['.'],
     requiresApproval: false,
@@ -163,10 +162,42 @@ export const DEFAULT_TOOL_CATALOG: Record<string, ToolCapability> = {
     pathScopes: [],
     requiresApproval: false,
   },
-  'self.note': {
-    id: 'self.note',
-    name: 'Self Note',
-    description: 'Write a private note into the member self-channel.',
+  'goal.start': {
+    id: 'goal.start',
+    name: 'Goal Start',
+    description: 'Open the channel goal board with a plan and a task list. Use ONLY for kicking off a fresh project; once the goal exists, evolve it via goal_task_update (do not call goal_start twice for the same plan).',
+    actions: ['create'],
+    pathScopes: [],
+    requiresApproval: false,
+  },
+  'goal.task.update': {
+    id: 'goal.task.update',
+    name: 'Goal Task Update',
+    description: 'THE task tracking system for this org. Update a task by its task_id: change status (pending/in_progress/completed/blocked/failed/cancelled), record a handover_summary, or — supervisors only — edit title, description, or assignee_id. Always call this when anyone asks to update task status or move a card on the board.',
+    actions: ['update'],
+    pathScopes: [],
+    requiresApproval: false,
+  },
+  'question.ask': {
+    id: 'question.ask',
+    name: 'Question Ask',
+    description: 'Pose a structured multiple-choice question to a human and pause the run until they pick an option.',
+    actions: ['create'],
+    pathScopes: [],
+    requiresApproval: false,
+  },
+  'memory.write': {
+    id: 'memory.write',
+    name: 'Memory Write',
+    description: 'Save a durable memory fact, decision, action summary, or correction to persist across runs and channels.',
+    actions: ['message'],
+    pathScopes: [],
+    requiresApproval: false,
+  },
+  'memory.recall': {
+    id: 'memory.recall',
+    name: 'Memory Recall',
+    description: 'Recall active memories to maintain cross-spirit consistency across DMs and channels.',
     actions: ['message'],
     pathScopes: [],
     requiresApproval: false,

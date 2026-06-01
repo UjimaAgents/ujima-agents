@@ -5,8 +5,6 @@ import {
   OrganizationSchema,
   RunStateSchema,
   ApprovalRequestSchema,
-  TaskSessionSchema,
-  TodoSchema,
 } from '@ujima/shared';
 import { openDatabase } from '@ujima/context-store';
 import type { SecretStore } from '../secret-store.js';
@@ -1123,14 +1121,18 @@ test('channel membership stays mirrored and reads tolerate drift', () => {
     createdAt: '2026-04-27T08:00:00.000Z',
   });
 
-  repo.setChannelMembers('general', ['ava']);
+  repo.setChannelMembers(orgId, 'general', ['ava']);
   const mirroredThreadMembers = db
     .prepare('SELECT member_id FROM thread_members WHERE thread_id = ? ORDER BY member_id ASC')
     .all('general') as { member_id: string }[];
   expect(mirroredThreadMembers.map((row) => row.member_id)).toEqual(['ava']);
 
-  db.prepare('DELETE FROM channel_members WHERE channel_id = ?').run('general');
-  db.prepare('INSERT INTO channel_members (channel_id, member_id) VALUES (?, ?)').run('general', 'phoebe');
+  db.prepare(
+    'DELETE FROM channel_members WHERE organization_id = ? AND channel_id = ?',
+  ).run(orgId, 'general');
+  db.prepare(
+    'INSERT INTO channel_members (organization_id, channel_id, member_id) VALUES (?, ?, ?)',
+  ).run(orgId, 'general', 'phoebe');
 
   expect(repo.getChannel(orgId, 'general')?.memberIds).toEqual(['ava', 'phoebe']);
 });
@@ -1323,224 +1325,116 @@ test('listChannels paginates correctly when the boundary id contains a pipe', ()
 });
 
 // ---------------------------------------------------------------------
-// Post-PR-review regression coverage.
+// Goal System Repository tests
 // ---------------------------------------------------------------------
-//
-// 1. `listTodosForChannel` used to filter strictly on `todos.channel_id`,
-//    so legacy session-scoped todos (where SupervisorTodoService.add
-//    only set `task_session_id`) silently dropped out of the goals rail
-//    and the Tasks tab. The fix joins through `task_sessions.channel_id`
-//    so we union both code paths.
-//
-// 2. `claimExpiredCommitment` is the new atomic claim — it flips the
-//    row to `expired` BEFORE the deadline-letter publishes. Without it
-//    a crash after publish but before persist would re-publish the same
-//    letter on the next sweep.
 
-test('listTodosForChannel surfaces session-scoped todos via task_sessions.channel_id', () => {
-  const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
-  const orgId = 'org-todo-rail';
-  const channelId = 'channel-1';
-  const sessionId = 'session-1';
-  const memberId = 'member-1';
-  const now = '2026-05-22T13:00:00.000Z';
+test('saves, gets and lists goals, tasks and questions', () => {
+  const db = openDatabase({ dbPath: ':memory:' });
+  const repo = new Repository(db);
+  const orgId = 'org-goals-test';
+  const now = new Date().toISOString();
 
   repo.saveOrganization(
     OrganizationSchema.parse({
       id: orgId,
-      name: 'Todo Rail Org',
-      workspace: { root: '/tmp/todo-rail-org', roleScopes: {} },
-    }),
-  );
-  repo.saveTaskSession(
-    TaskSessionSchema.parse({
-      id: sessionId,
-      organizationId: orgId,
-      slug: 'todo-rail-session',
-      channelId,
-      requestedBy: memberId,
-      executionMode: 'concurrent',
-      status: 'running',
-      prompt: '',
-      summary: '',
-      teamMemberIds: [memberId],
-      origin: {},
-      promotionMetadata: {},
-      supervisorTurnCount: 0,
-      createdAt: now,
-      updatedAt: now,
+      name: 'Goals Test Org',
+      workspace: { root: '/tmp/goals-test-org', roleScopes: {} },
     }),
   );
 
-  // Direct-channel todo — the commitment extractor would produce this.
-  repo.saveTodo(
-    TodoSchema.parse({
-      id: 'todo-direct',
-      organizationId: orgId,
-      memberId,
-      title: 'direct channel todo',
-      status: 'in_progress',
-      notes: '',
-      channelId,
-      createdAt: now,
-      updatedAt: now,
-    }),
-  );
+  const goal = repo.saveGoal({
+    id: 'goal-1',
+    organizationId: orgId,
+    channelId: 'channel-1',
+    title: 'Implement Auth',
+    status: 'planning',
+    supervisorId: 'supervisor-1',
+    planMarkdown: '## Plan',
+    planVersion: 1,
+    createdAt: now,
+    updatedAt: now,
+  });
 
-  // Session-only todo — legacy supervisor.todo.add path that didn't
-  // carry channel_id. Pre-fix this would NOT appear in
-  // listTodosForChannel.
-  repo.saveTodo(
-    TodoSchema.parse({
-      id: 'todo-session-only',
-      organizationId: orgId,
-      taskSessionId: sessionId,
-      memberId,
-      title: 'session-only todo',
-      status: 'pending',
-      notes: '',
-      createdAt: now,
-      updatedAt: now,
-    }),
-  );
+  expect(repo.getGoal(orgId, 'goal-1')).toEqual(goal);
+  expect(repo.getGoalByChannel(orgId, 'channel-1')).toEqual(goal);
+  expect(repo.listGoals(orgId)).toEqual([goal]);
+  expect(repo.listGoalsByChannel(orgId, 'channel-1')).toEqual([goal]);
 
-  const channelTodos = repo.listTodosForChannel(orgId, channelId);
-  const ids = channelTodos.map((t) => t.id).sort();
-  expect(ids).toEqual(['todo-direct', 'todo-session-only']);
-});
+  const task1 = repo.saveGoalTask({
+    id: 'task-1',
+    organizationId: orgId,
+    goalId: 'goal-1',
+    title: 'Design DB',
+    description: '',
+    status: 'pending',
+    assigneeId: 'assignee-1',
+    createdBy: 'creator-1',
+    createdAt: now,
+    updatedAt: now,
+  });
 
-test('listTodosForChannel respects status + member filters when joining session todos', () => {
-  const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
-  const orgId = 'org-todo-filters';
-  const channelId = 'channel-1';
-  const sessionId = 'session-1';
-  const now = '2026-05-22T13:00:00.000Z';
+  const task2 = repo.saveGoalTask({
+    id: 'task-2',
+    organizationId: orgId,
+    goalId: 'goal-1',
+    title: 'Code schemas',
+    description: '',
+    status: 'blocked',
+    assigneeId: 'assignee-1',
+    createdBy: 'creator-1',
+    dependsOnTaskId: 'task-1',
+    createdAt: now,
+    updatedAt: now,
+  });
 
-  repo.saveOrganization(
+  const sortedTasks = repo.listGoalTasks(orgId, 'goal-1').sort((a, b) => a.id.localeCompare(b.id));
+  const expectedTasks = [task1, task2].sort((a, b) => a.id.localeCompare(b.id));
+  expect(sortedTasks).toEqual(expectedTasks);
+
+  // Completing task-1 should not require a handover summary if there are no dependents? Wait, task-2 depends on task-1!
+  // So updateGoalTaskStatus(status = 'completed') without handoverSummary on task-1 should throw because task-2 depends on it.
+  expect(() =>
+    repo.updateGoalTaskStatus(orgId, 'task-1', 'completed'),
+  ).toThrow('handover_summary is required when completing a task with downstream dependents');
+
+  // Completing it with handoverSummary should succeed.
+  const completedTask1 = repo.updateGoalTaskStatus(orgId, 'task-1', 'completed', {
+    handoverSummary: 'Done design.',
+  });
+  expect(completedTask1?.status).toBe('completed');
+  expect(completedTask1?.handoverSummary).toBe('Done design.');
+
+  // Check cascading failures: failing task-1 should mark task-2 as 'blocked_by_failure'
+  const db2 = openDatabase({ dbPath: ':memory:' });
+  const repo2 = new Repository(db2);
+  repo2.saveOrganization(
     OrganizationSchema.parse({
       id: orgId,
-      name: 'Filter Org',
-      workspace: { root: '/tmp/filter-org', roleScopes: {} },
+      name: 'Goals Test Org 2',
+      workspace: { root: '/tmp/goals-test-org-2', roleScopes: {} },
     }),
   );
-  repo.saveTaskSession(
-    TaskSessionSchema.parse({
-      id: sessionId,
-      organizationId: orgId,
-      slug: 'filter-session',
-      channelId,
-      requestedBy: 'member-a',
-      executionMode: 'concurrent',
-      status: 'running',
-      prompt: '',
-      summary: '',
-      teamMemberIds: ['member-a', 'member-b'],
-      origin: {},
-      promotionMetadata: {},
-      supervisorTurnCount: 0,
-      createdAt: now,
-      updatedAt: now,
-    }),
-  );
-  for (const [id, owner, status] of [
-    ['t1', 'member-a', 'in_progress'],
-    ['t2', 'member-b', 'in_progress'],
-    ['t3', 'member-a', 'completed'],
-  ] as const) {
-    repo.saveTodo(
-      TodoSchema.parse({
-        id,
-        organizationId: orgId,
-        taskSessionId: sessionId,
-        memberId: owner,
-        title: id,
-        status,
-        notes: '',
-        createdAt: now,
-        updatedAt: now,
-      }),
-    );
-  }
+  repo2.saveGoal(goal);
+  repo2.saveGoalTask(task1);
+  repo2.saveGoalTask(task2);
 
-  expect(
-    repo.listTodosForChannel(orgId, channelId, { status: 'in_progress' }).map((t) => t.id).sort(),
-  ).toEqual(['t1', 't2']);
-  expect(
-    repo
-      .listTodosForChannel(orgId, channelId, { status: 'in_progress', memberId: 'member-a' })
-      .map((t) => t.id),
-  ).toEqual(['t1']);
-});
+  const failedTask1 = repo2.updateGoalTaskStatus(orgId, 'task-1', 'failed');
+  expect(failedTask1?.status).toBe('failed');
+  const tasks = repo2.listGoalTasks(orgId, 'goal-1');
+  const updatedTask2 = tasks.find((t) => t.id === 'task-2');
+  expect(updatedTask2?.status).toBe('blocked_by_failure');
 
-test('claimExpiredCommitment is idempotent: only the first call wins, repeat calls return false', () => {
-  const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
-  const orgId = 'org-claim';
-  const created = '2026-05-22T10:00:00.000Z';
-  const dueAt = '2026-05-22T11:00:00.000Z';
-  const sweepAt = '2026-05-22T12:00:00.000Z';
+  const question = repo.saveInteractiveQuestion({
+    id: 'question-1',
+    organizationId: orgId,
+    channelId: 'channel-1',
+    goalId: 'goal-1',
+    questionText: 'Are you ready?',
+    options: ['Yes', 'No'],
+    status: 'pending',
+    createdAt: now,
+    updatedAt: now,
+  });
 
-  repo.saveOrganization(
-    OrganizationSchema.parse({
-      id: orgId,
-      name: 'Claim Org',
-      workspace: { root: '/tmp/claim-org', roleScopes: {} },
-    }),
-  );
-  repo.saveTodo(
-    TodoSchema.parse({
-      id: 'todo-deadline',
-      organizationId: orgId,
-      memberId: 'member-x',
-      title: 'past-due commitment',
-      status: 'in_progress',
-      notes: '',
-      channelId: 'channel-1',
-      deliverableSummary: 'past-due commitment',
-      dueAt,
-      createdAt: created,
-      updatedAt: created,
-    }),
-  );
-
-  expect(repo.claimExpiredCommitment('todo-deadline', sweepAt)).toBe(true);
-  // The status flipped to `expired` — a second sweep against the same
-  // sweepAt finds nothing to claim. This is the property the
-  // deadline-letter idempotency fix relies on.
-  expect(repo.claimExpiredCommitment('todo-deadline', sweepAt)).toBe(false);
-  const final = repo.getTodo(orgId, 'todo-deadline');
-  expect(final?.status).toBe('expired');
-});
-
-test('claimExpiredCommitment refuses to claim a row whose due_at is still in the future', () => {
-  const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
-  const orgId = 'org-future-due';
-  const created = '2026-05-22T10:00:00.000Z';
-  const futureDue = '2026-05-22T20:00:00.000Z';
-  const sweepAt = '2026-05-22T12:00:00.000Z';
-
-  repo.saveOrganization(
-    OrganizationSchema.parse({
-      id: orgId,
-      name: 'Future Org',
-      workspace: { root: '/tmp/future-org', roleScopes: {} },
-    }),
-  );
-  repo.saveTodo(
-    TodoSchema.parse({
-      id: 'todo-future',
-      organizationId: orgId,
-      memberId: 'member-x',
-      title: 'still ahead of due',
-      status: 'in_progress',
-      notes: '',
-      channelId: 'channel-1',
-      deliverableSummary: 'still ahead of due',
-      dueAt: futureDue,
-      createdAt: created,
-      updatedAt: created,
-    }),
-  );
-
-  expect(repo.claimExpiredCommitment('todo-future', sweepAt)).toBe(false);
-  expect(repo.getTodo(orgId, 'todo-future')?.status).toBe('in_progress');
+  expect(repo.listPendingInteractiveQuestions(orgId, 'channel-1')).toEqual([question]);
 });

@@ -1,15 +1,10 @@
 # Ujima Agents
 
-![Ujima Agents Banner](https://cdn.jsdelivr.net/npm/@ujima/agents@0.0.5/assets/banner.png)
+![Ujima Agents Banner](https://cdn.jsdelivr.net/npm/@ujima/agents@0.0.12/assets/banner.png)
 
 [![npm version](https://img.shields.io/npm/v/@ujima/agents.svg)](https://www.npmjs.com/package/@ujima/agents)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Open Source](https://img.shields.io/badge/Open%20Source-Coming%20Soon-lightgrey)](https://github.com/UjimaAgents/ujima-agents)
-[![X @vincent_presh](https://img.shields.io/badge/X-@vincent_presh-000000?logo=x)](https://x.com/vincent_presh)
-
-> **Ujima Agents is not open source yet.** The runtime ships today via npm; the full monorepo and contributor workflow will be published when we open-source the project.
->
-> **Open source — coming soon.** Follow [@vincent_presh on X](https://x.com/vincent_presh) for updates.
 
 ---
 
@@ -203,7 +198,15 @@ graph TD
 
 ## Contact
 
-Questions or updates: follow [@vincent_presh on X](https://x.com/vincent_presh).
+Questions or updates: follow [@vincent_presh on X](https://x.com/vincent_presh) or contact Seyi at [oluwaseyinexus137@gmail.com](mailto:oluwaseyinexus137@gmail.com) / [@OluwaseyiAjadi4 on X](https://x.com/OluwaseyiAjadi4).
+
+---
+
+## 👥 Contributors
+
+* [**Oluwaseyi Ajadi**](https://github.com/BlazinArtemis) (oluwaseyinexus137@gmail.com / [@OluwaseyiAjadi4 on X](https://x.com/OluwaseyiAjadi4))
+* [**Vincent Precious**](https://github.com/Vincent-presh)
+* [**Israel Akin Akinsanya**](https://github.com/Lightsource-Pris) (israelakinakinsanya@gmail.com / [@__light_source__ on X](https://x.com/__light_source__))
 
 ---
 

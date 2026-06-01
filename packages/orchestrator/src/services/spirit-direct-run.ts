@@ -10,17 +10,17 @@ import {
   type Spirit,
   type WakeReason,
   AGENT_KIND,
+  MessageSchema,
 } from '@ujima/shared';
 import { applyDashboardTeamOverrides } from './dashboard-team-overrides.js';
 import { isLiveRunStatus } from './live-status.js';
 import { requireTeam } from '../utils/require-team.js';
-import { findToolApprovalRequiredError } from './tool-loop-result.js';
+import { findToolApprovalRequiredError, findToolInputRequiredError } from './tool-loop-result.js';
 import { extractReasoningChunk } from '../utils/extract-reasoning.js';
 import { pendingApprovalRunSummary } from './approval-summary.js';
 import {
   findTerminatingTool,
   findTerminatingToolFromRunSteps,
-  isAcknowledgementOnly,
   runUsedChannelPass,
   runUsedThreadPublishingTool,
 } from './run-reply-guard.js';
@@ -28,15 +28,24 @@ import type { CreateRunInput, RunDetail } from './spirit-types.js';
 import { aggregateToolUsage } from './spirit-run-detail.js';
 import type { RunSpiritOutcome } from './spirit-types.js';
 import { SpiritServiceSupervisor } from './spirit-supervisor.js';
-import { appendGoalArtifactToolCall } from './goal-artifact-card.js';
+import { appendArtifactFileToolCall } from './artifact-file-card.js';
 import {
-  appendGoalArtifactFromRunSteps,
+  appendArtifactFileFromRunSteps,
   collectRunStepToolCalls,
+  collectRunStepToolResults,
   collectToolStatuses,
   publishRunReplyTrace,
   publishStreamedTrace,
   type StreamedRunTrace,
 } from './run-trace-publisher.js';
+
+function isDelegateRun(run: RunState, repo: { getMessage(organizationId: string, messageId: string): { metadata?: unknown } | null }): boolean {
+  if (!run.sourceMessageId) return false;
+  const source = repo.getMessage(run.organizationId, run.sourceMessageId);
+  return !!(source?.metadata as { delegate?: unknown } | undefined)?.delegate;
+}
+
+const VISIBLE_TERMINATING_TOOLS = new Set(['message', 'channel.post', 'channel.reply', 'channel.dm', 'channel.handoff']);
 
 export class SpiritServiceDirectRun extends SpiritServiceSupervisor {
   async resumeAfterApproval(
@@ -114,6 +123,58 @@ export class SpiritServiceDirectRun extends SpiritServiceSupervisor {
     });
   }
 
+  async resumeAfterInput(
+    organizationId: string,
+    runId: string,
+  ): Promise<RunSpiritOutcome | Spirit | RunState | null> {
+    const spirit = this.resolveSpiritForRun(organizationId, runId);
+    if (spirit) {
+      if (spirit.status === 'running') {
+        return spirit;
+      }
+
+      if (spirit.status !== 'waiting_for_input') {
+        return spirit;
+      }
+
+      const running: Spirit = {
+        ...spirit,
+        status: 'running',
+        updatedAt: new Date().toISOString(),
+      };
+      this.repo.saveSpirit(running);
+      this.emit(SocketEventNames.spiritUpdated, running);
+
+      await this.replayApprovedToolsForSpirit(running);
+      return this.run({
+        organizationId,
+        taskSessionId: running.taskSessionId,
+        memberId: running.memberId,
+        role: running.role,
+      });
+    }
+
+    const run = this.repo.getRun(organizationId, runId);
+    if (!run) return null;
+
+    if (run.status === 'running') {
+      const afterApprovedTools = await this.executePendingApprovedRunTools(run);
+      return this.advanceRun(afterApprovedTools);
+    }
+
+    if (run.status !== 'waiting_for_input') {
+      return run;
+    }
+
+    const afterApprovedTools = await this.executePendingApprovedRunTools(run);
+    return this.advanceRun({
+      ...afterApprovedTools,
+      status: 'running',
+      step: 'running',
+      summary: 'Run resumed after user input',
+    });
+  }
+
   async createRun(input: CreateRunInput): Promise<RunState> {
     if (!this.ai) {
       throw new Error('Run execution is not wired into SpiritService');
@@ -166,6 +227,11 @@ export class SpiritServiceDirectRun extends SpiritServiceSupervisor {
       }
       if (findToolApprovalRequiredError(error)) {
         return this.waitForApproval(run, pendingApprovalRunSummary(this.repo, run.organizationId, run.id));
+      }
+      const inputError = findToolInputRequiredError(error);
+      if (inputError) {
+        const question = this.repo.getInteractiveQuestion(run.organizationId, inputError.questionId);
+        return this.waitForInput(run, question?.questionText ?? 'Waiting for user input');
       }
       return this.failRun(run, (error as Error).message);
     }
@@ -374,6 +440,10 @@ export class SpiritServiceDirectRun extends SpiritServiceSupervisor {
     const abortController = new AbortController();
     this.runAbortControllers.set(abortKey, abortController);
     const streamedTrace: StreamedRunTrace = { text: '', reasoning: '' };
+    let persistedStepCount = 0;
+    let publishedArtifactFile = false;
+    let publishedAnyText = false;
+    const publishedContent = new Set<string>();
 
     try {
       const systemPromptSuffix = this.resolveSystemPromptSuffix({
@@ -405,6 +475,62 @@ export class SpiritServiceDirectRun extends SpiritServiceSupervisor {
             chunk,
           );
         },
+        onStepFinish: async (step, currentSteps) => {
+          const unpersisted = currentSteps.slice(persistedStepCount);
+          for (const s of unpersisted) {
+            persistedStepCount++;
+            const stepText = typeof s.text === 'string' ? s.text.trim() : '';
+            const stepToolCalls = Array.isArray(s.toolCalls) ? s.toolCalls : [];
+            const stepToolResults = Array.isArray(s.toolResults) ? s.toolResults : [];
+            if (!stepText && stepToolCalls.length === 0) continue;
+
+            const stepArtifactFileToolCall =
+              stepToolCalls.length > 0
+                ? (await appendArtifactFileToolCall(stepToolCalls, team.workspace.root, stepToolResults)) ??
+                  (await appendArtifactFileFromRunSteps(
+                    this.repo,
+                    running,
+                    team.workspace.root,
+                    stepToolCalls.at(-1)?.toolCallId,
+                  ))
+                : undefined;
+            if (stepArtifactFileToolCall) publishedArtifactFile = true;
+
+            if (runUsedThreadPublishingTool({ steps: [s] }) && !stepArtifactFileToolCall) continue;
+            if (!stepText && !stepArtifactFileToolCall) continue;
+
+            if (stepText) {
+              publishedAnyText = true;
+            }
+
+            const content = stepText || (stepArtifactFileToolCall ? 'Artifact updated.' : 'Tool actions recorded.');
+            const toolCalls = [...stepToolCalls, ...(stepArtifactFileToolCall ? [stepArtifactFileToolCall] : [])];
+            const stepReasoning = extractReasoningChunk(s);
+
+            const finalThreadId = running.threadId;
+            if (!finalThreadId) continue;
+            const channelId = this.repo.getThread(running.organizationId, finalThreadId)
+              ?.channelId;
+
+            this.conversations?.publishMessage(
+              MessageSchema.parse({
+                id: randomUUID(),
+                organizationId: running.organizationId,
+                threadId: finalThreadId,
+                channelId: channelId ?? undefined,
+                senderId: running.agentId,
+                senderKind: AGENT_KIND,
+                kind: AGENT_KIND,
+                content,
+                metadata: { runId: running.id },
+                ...(toolCalls.length > 0 ? { toolCalls } : {}),
+                ...(stepReasoning ? { reasoningContent: stepReasoning } : {}),
+                createdAt: new Date().toISOString(),
+              }),
+            );
+            publishedContent.add(content);
+          }
+        },
       });
 
       const latestRun = this.repo.getRun(run.organizationId, run.id);
@@ -427,24 +553,31 @@ export class SpiritServiceDirectRun extends SpiritServiceSupervisor {
       }
 
       const statuses = collectToolStatuses(result);
-      const text = (result.text || streamedTrace.text).trim();
+      const text = result.text.trim();
       const reasoningContent = extractReasoningChunk(result) ?? (streamedTrace.reasoning.trim() || undefined);
       const runSteps = this.repo.listRunSteps?.(run.organizationId, run.id) ?? [];
       const goalToolCalls = collectRunStepToolCalls(result);
-      const goalArtifactToolCall =
-        (await appendGoalArtifactToolCall(goalToolCalls, team.workspace.root)) ??
-        (await appendGoalArtifactFromRunSteps(this.repo, run, team.workspace.root));
+      const goalToolResults = collectRunStepToolResults(result);
+      const artifactFileToolCall =
+        (await appendArtifactFileToolCall(goalToolCalls, team.workspace.root, goalToolResults)) ??
+        (await appendArtifactFileFromRunSteps(this.repo, run, team.workspace.root));
       if (statuses.includes('blocked')) {
         await publishRunReplyTrace({
           repo: this.repo,
           conversations: this.conversations,
           run: running,
-          result,
-          reply: text || (goalArtifactToolCall ? 'Goal artifact updated.' : ''),
+          result: {
+            ...result,
+            steps: result.steps.slice(persistedStepCount),
+          },
+          reply: text || (artifactFileToolCall ? 'Artifact updated.' : ''),
           reasoningContent,
           teamRoot: team.workspace.root,
-          goalArtifactToolCall,
-          skipFinalThreadMessage: findTerminatingToolFromRunSteps(runSteps) !== null,
+          artifactFileToolCall,
+          publishedArtifactFile,
+          publishedContent,
+          publishedAnyText,
+
           suppressDmAlerts: true,
           failureTrace: true,
         });
@@ -510,11 +643,9 @@ export class SpiritServiceDirectRun extends SpiritServiceSupervisor {
         return this.completeSilentRun(running, 'acked', 'channel.ack', wakeReason);
       }
 
-      if (!terminatingTool && isAcknowledgementOnly(text)) {
-        return this.completeSilentRun(running, 'acked', 'channel.ack', wakeReason);
-      }
 
-      if (!terminatingTool && text.length === 0 && !goalArtifactToolCall) {
+
+      if (!terminatingTool && text.length === 0 && !artifactFileToolCall) {
         if (wakeReason === 'mention') {
           const byMemberId = running.byMemberId ?? run.agentId;
           const messageId = running.sourceMessageId;
@@ -550,17 +681,27 @@ export class SpiritServiceDirectRun extends SpiritServiceSupervisor {
         return this.completeRun(running, 'empty', null);
       }
 
-      const reply = text || 'Goal artifact updated.';
+      if (terminatingTool && VISIBLE_TERMINATING_TOOLS.has(terminatingTool) && !artifactFileToolCall) {
+        return this.completeRun(running, terminatingTool, terminatingTool);
+      }
+
+      const reply = text || 'Artifact updated.';
       await publishRunReplyTrace({
         repo: this.repo,
         conversations: this.conversations,
         run: running,
-        result,
+        result: {
+          ...result,
+          steps: result.steps.slice(persistedStepCount),
+        },
         reply,
         reasoningContent,
         teamRoot: team.workspace.root,
-        goalArtifactToolCall,
-        skipFinalThreadMessage: terminatingTool !== null || runUsedThreadPublishingTool(result),
+        artifactFileToolCall,
+        publishedArtifactFile,
+        publishedContent,
+        publishedAnyText,
+        suppressDmAlerts: isDelegateRun(running, this.repo),
       });
 
       return this.completeRun(running, terminatingTool ?? reply, terminatingTool);
@@ -571,6 +712,11 @@ export class SpiritServiceDirectRun extends SpiritServiceSupervisor {
           return this.advanceRun(afterApprovedTools);
         }
         return this.waitForApproval(running, pendingApprovalRunSummary(this.repo, running.organizationId, running.id));
+      }
+      const inputError = findToolInputRequiredError(error);
+      if (inputError) {
+        const question = this.repo.getInteractiveQuestion(run.organizationId, inputError.questionId);
+        return this.waitForInput(running, question?.questionText ?? 'Waiting for user input');
       }
       const latestAfterError = this.repo.getRun(run.organizationId, run.id);
       if (latestAfterError?.status === 'cancelled') {
@@ -642,6 +788,23 @@ export class SpiritServiceDirectRun extends SpiritServiceSupervisor {
       ...run,
       status: 'waiting_for_approval',
       step: 'waiting_for_approval',
+      summary,
+    });
+
+    this.realtime.emit(
+      SocketEventNames.runUpdated,
+      { organizationId: run.organizationId, run: waiting },
+      this.getRooms(run),
+    );
+
+    return waiting;
+  }
+
+  protected waitForInput(run: RunState, summary: string): RunState {
+    const waiting = this.repo.saveRun({
+      ...run,
+      status: 'waiting_for_input',
+      step: 'waiting_for_input',
       summary,
     });
 

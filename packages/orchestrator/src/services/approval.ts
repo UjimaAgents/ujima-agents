@@ -243,6 +243,21 @@ export class ApprovalService {
     }
 
     if (approval.status === 'approved' && approval.runId) {
+      if (canPersistGrant && existing && this.repo.saveGovernanceRule) {
+        const mcpId = existing.resourceType === 'mcp' ? existing.resourcePath : existing.resourceType;
+        const toolName = existing.action;
+        this.repo.saveGovernanceRule({
+          id: randomUUID(),
+          organizationId: input.organizationId,
+          agentId: existing.requestedBy,
+          mcpId,
+          toolName,
+          state: 'allow',
+          reason: input.reason ?? '',
+          updatedBy: 'human',
+        });
+      }
+
       await this.resumeRun(
         approval.organizationId,
         approval.runId,

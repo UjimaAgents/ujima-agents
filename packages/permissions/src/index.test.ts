@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { AgentDef } from '@ujima/shared';
-import { emptyGovernancePolicy, setAgentRule, setPlatformRule } from '@ujima/shared';
+import {
+  emptyGovernancePolicy,
+  setAgentRule,
+  setPlatformRule,
+  setRiskDefaults,
+} from '@ujima/shared';
 import { openDb, type UjimaDb } from '@ujima/context-store';
 import { createPermissionMiddleware, type PermissionMiddleware } from './index';
 
@@ -431,5 +436,116 @@ describe('permission middleware — governance policy layer', () => {
     const rows = await db.audit.query({ taskId: 't1', eventType: 'permission_check' });
     expect(rows[0]?.allowed).toBe(false);
     expect(rows[0]?.block_reason).toBe('requires_approval: senior review required');
+  });
+});
+
+describe('permission middleware — classification + risk_defaults', () => {
+  let db: UjimaDb;
+
+  beforeEach(() => {
+    db = openDb({ dbPath: ':memory:' });
+  });
+  afterEach(async () => {
+    await db.close();
+  });
+
+  const ctx = { mcp: { id: 'fs' }, taskId: 't1', sessionId: 's1' } as const;
+
+  it('read tool with risk_defaults.read=allow executes without an explicit allow rule', async () => {
+    const policy = setRiskDefaults(emptyGovernancePolicy(), { read: 'allow' });
+    const mw = createPermissionMiddleware({
+      audit: db.audit,
+      governancePolicy: policy,
+      classificationLookup: () => 'read',
+    });
+    const d = await mw.check({
+      agent: agent({
+        permissions: {
+          allowed_tools: [],
+          blocked_tools: ['get_file'], // would normally block — admin allow wins
+          rate_limit: { max_session_tokens: 1000 },
+        },
+      }),
+      ...ctx,
+      toolName: 'get_file',
+      args: {},
+    });
+    expect(d.allowed).toBe(true);
+  });
+
+  it('destructive tool defaults to require_approval when risk_defaults.destructive=require_approval', async () => {
+    const policy = setRiskDefaults(emptyGovernancePolicy(), {
+      destructive: 'require_approval',
+    });
+    const mw = createPermissionMiddleware({
+      audit: db.audit,
+      governancePolicy: policy,
+      classificationLookup: () => 'destructive',
+    });
+    const d = await mw.check({
+      agent: agent(),
+      ...ctx,
+      toolName: 'delete_file',
+      args: {},
+    });
+    expect(d.allowed).toBe(false);
+    if (!d.allowed) {
+      expect(d.code).toBe('requires_approval');
+      expect(d.gate).toBe('approval');
+    }
+  });
+
+  it('unknown classification routes through the unknown bucket', async () => {
+    const policy = setRiskDefaults(emptyGovernancePolicy(), { unknown: 'deny' });
+    const mw = createPermissionMiddleware({
+      audit: db.audit,
+      governancePolicy: policy,
+      classificationLookup: () => 'unknown',
+    });
+    const d = await mw.check({
+      agent: agent(),
+      ...ctx,
+      toolName: 'mystery_tool',
+      args: {},
+    });
+    expect(d.allowed).toBe(false);
+    if (!d.allowed) expect(d.code).toBe('policy_deny');
+  });
+
+  it('explicit agent rule still beats risk_default', async () => {
+    let policy = emptyGovernancePolicy();
+    policy = setRiskDefaults(policy, { destructive: 'deny' });
+    policy = setAgentRule(policy, 'agent-1', {
+      mcp_id: 'fs',
+      tool_name: 'delete_file',
+      state: 'allow',
+    });
+    const mw = createPermissionMiddleware({
+      audit: db.audit,
+      governancePolicy: policy,
+      classificationLookup: () => 'destructive',
+    });
+    const d = await mw.check({
+      agent: agent(),
+      ...ctx,
+      toolName: 'delete_file',
+      args: {},
+    });
+    expect(d.allowed).toBe(true);
+  });
+
+  it('no classificationLookup preserves pre-classification behaviour', async () => {
+    // The middleware should behave exactly as before when no
+    // classification lookup is wired — this is the back-compat guarantee.
+    const policy = setRiskDefaults(emptyGovernancePolicy(), { read: 'allow' });
+    const mw = createPermissionMiddleware({
+      audit: db.audit,
+      governancePolicy: policy,
+    });
+    const d = await mw.check({ agent: agent(), ...ctx, toolName: 'read', args: {} });
+    // Without classification, the unknown bucket fires; with default
+    // `inherit` it falls through to legacy → allowed (agent has no
+    // blocked_tools, empty allowed_tools means everything).
+    expect(d.allowed).toBe(true);
   });
 });

@@ -1,7 +1,9 @@
 import type { PermissionMiddleware } from '@ujima/permissions';
 import {
+  AGENT_KIND,
   SocketEventNames,
   channelRoom,
+  getDirectMessageThreadId,
   memberRoom,
   orgRoom,
   threadRoom,
@@ -16,25 +18,25 @@ import { BootstrapService } from './bootstrap.js';
 import { ChannelRetentionService } from './channel-retention.js';
 import type { ApiServiceContext } from './context.js';
 import { ConversationService } from './conversation.js';
-import { CommitmentService } from './commitment-service.js';
+import { GoalSystemService } from './goal-system.js';
 import { MemoryReviewService } from './memory-review.js';
 import { TrajectoryService } from './trajectory.js';
 import { McpRegistryService } from './mcp-registry.js';
+import { GovernanceService } from './governance-service.js';
 import { PluginRegistryService } from './plugin-registry.js';
 import { OnboardingService } from './onboarding.js';
 import {
   drainPendingMemberAlertAfterRun,
   enqueuePendingMemberAlert,
+  hasPendingMemberAlert,
   type PendingMemberAlert,
 } from './pending-member-alerts.js';
 import type { ApiRepository } from './repository-reader.js';
 import { SettingsService } from './settings.js';
 import { WorkspaceService, type WorkspaceCatalog } from './workspace.js';
 import { SpiritService, type ModelResolver, type SpiritMcpPool } from './spirit.js';
-import { SupervisorTodoService } from './supervisor-todo.js';
 import { SchedulerService } from './scheduler.js';
 import { NotificationService } from './notification.js';
-import { TaskPromoterService, type TaskPromotionEvaluator } from './task-promoter.js';
 import { TaskSessionService } from './task-session.js';
 import type { TeamStore } from './team-store.js';
 import {
@@ -44,6 +46,8 @@ import {
   type ToolService,
 } from './tool-service.js';
 import { ToolServiceImpl, type ApprovalRequester } from './tool-service-impl.js';
+import { createSpiritModelResolver } from '../utils/create-spirit-model-resolver.js';
+import type { AgentDelegateResult } from '../tools/types.js';
 
 export type { ApiServiceContext, RealtimeService } from './context.js';
 export { createTeamStore } from './team-store.js';
@@ -77,6 +81,12 @@ export {
 } from './config-sync.js';
 export { ConversationService } from './conversation.js';
 export {
+  GoalSystemService,
+  IMPLEMENT_QUESTION_OPTION,
+  IMPLEMENT_QUESTION_TEXT,
+} from './goal-system.js';
+export type { ParsedPlanTask } from './goal-system.js';
+export {
   SELF_NOTE_COMPACTED_MARKER,
   SELF_NOTE_SUMMARY_MARKER,
   buildStructuredConversationSummary,
@@ -103,12 +113,19 @@ export {
 } from './scheduler.js';
 export type { SchedulerServiceOptions } from './scheduler.js';
 export { SettingsService } from './settings.js';
+export {
+  applyDashboardTeamOverrides,
+  deleteDashboardTeamOverride,
+  upsertDashboardTeamOverride,
+} from './dashboard-team-overrides.js';
 export { orgWorkspaceId, organizationIdFromWorkspaceId } from '@ujima/shared';
 export {
   assertGrantableOwnerFromParentOrg,
   copyProviderCredentials,
+  grantOrganizationAccessForMember,
   grantWorkspaceOwnerForMember,
   grantWorkspaceOwnerFromParentOrg,
+  WORKSPACE_OWNER_MEMBER_ID,
 } from './workspace-org-provision.js';
 export {
   ensureChannelThread,
@@ -131,17 +148,8 @@ export type {
   TeamSettingsResponse,
   UpdateOrganizationInput,
 } from './settings.js';
-export { TaskPromoterService } from './task-promoter.js';
 export { TaskSessionService, taskRunChannelId } from './task-session.js';
 export type { CreateTaskSessionInput, TaskSessionDetail } from './task-session.js';
-export type { TaskPromotionInput, TaskPromotionResult } from './task-promoter.js';
-export type { TaskPromotionDecision, TaskPromotionEvaluator } from './task-promoter.js';
-export { SupervisorTodoService } from './supervisor-todo.js';
-export type {
-  SupervisorTodoAddInput,
-  SupervisorTodoCheckInput,
-  SupervisorTodoListInput,
-} from './supervisor-todo.js';
 export { ActiveSpiritRegistry, isAliveStatus } from './active-spirit-registry.js';
 export type { ActiveSpiritEntry } from './active-spirit-registry.js';
 export { SpiritService, pickProviderModel } from './spirit.js';
@@ -162,6 +170,7 @@ export type {
   TestMcpResult,
   UpdateMcpServerInput,
 } from './mcp-registry.js';
+export { GovernanceService } from './governance-service.js';
 export { PluginRegistryService } from './plugin-registry.js';
 export type {
   PluginInstallInput,
@@ -212,7 +221,6 @@ export interface ApiServicesContext extends ApiServiceContext {
    * the SpiritService walks the team config + provider credentials.
    */
   spiritModelResolver?: ModelResolver;
-  taskPromoterEvaluator?: TaskPromotionEvaluator;
   /**
    * Optional MCP pool. When provided, SpiritService injects per-agent
    * attached MCP tools into the runtime palette. Production wires the
@@ -220,9 +228,6 @@ export interface ApiServicesContext extends ApiServiceContext {
    * (the spirit run path still works without MCP tools).
    */
   mcpPool?: SpiritMcpPool;
-  commitmentIdleThresholdMs?: number;
-  commitmentDefaultDueOffsetMs?: number;
-  commitmentSweeperIntervalMs?: number;
 }
 
 export interface ApiServices {
@@ -240,26 +245,18 @@ export interface ApiServices {
   workspaces: WorkspaceService;
   scheduler: SchedulerService;
   notifications: NotificationService;
-  taskPromoter: TaskPromoterService;
   taskSessions: TaskSessionService;
+  goals: GoalSystemService;
   spirits: SpiritService;
-  supervisorTodos: SupervisorTodoService;
   activeSpirits: ActiveSpiritRegistry;
   mcpRegistry: McpRegistryService;
+  governance: GovernanceService;
   pluginRegistry: PluginRegistryService;
-  commitments: CommitmentService;
-  /**
-   * Tears down background timers (commitment sweeper, anything else
-   * createApiServices started) and awaits any in-flight sweep so
-   * a SIGTERM doesn't tear the DB handle out from under the wake
-   * path. Tests with `commitmentSweeperIntervalMs: 0` never start
-   * the timer and don't need to call this; production calls it
-   * during daemon shutdown BEFORE closing the DB.
-   */
-  stop(): Promise<void>;
 }
 
 type WakeMemberInput = PendingMemberAlert;
+const AGENT_DELEGATE_POLL_INTERVAL_MS = 500;
+const AGENT_DELEGATE_TIMEOUT_MS = 120_000;
 
 interface WakeMemberDeps {
   spirits: Pick<SpiritService, 'handleAlert'>;
@@ -303,6 +300,37 @@ async function withCreateRunMutex<T>(
 
 function errMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function latestDelegateReply(
+  repo: Pick<ApiRepository, 'listMessages'>,
+  organizationId: string,
+  threadId: string,
+  agentId: string,
+  after: { createdAt: string; id: string },
+) {
+  const messages = repo.listMessages(organizationId, threadId, undefined, 100).data;
+  const anchorIndex = messages.findIndex((message) => message.id === after.id);
+  const candidates = anchorIndex >= 0
+    ? messages.slice(anchorIndex + 1)
+    : messages.filter((message) => message.createdAt > after.createdAt);
+  return candidates.filter((message) => message.senderId === agentId).at(-1);
+}
+
+function delegateRunForMessage(
+  repo: Pick<ApiRepository, 'listThreadRuns'>,
+  organizationId: string,
+  threadId: string,
+  agentId: string,
+  messageId: string,
+): ReturnType<ApiRepository['listThreadRuns']>['data'][number] | undefined {
+  return repo
+    .listThreadRuns(organizationId, threadId, undefined, 25)
+    .data.find((candidate) => candidate.agentId === agentId && candidate.sourceMessageId === messageId);
+}
+
+function runIsTerminal(status: string): boolean {
+  return !['queued', 'running', 'waiting_for_approval', 'waiting_for_input'].includes(status);
 }
 
 function emitMemberAlertFailed(
@@ -424,6 +452,198 @@ export async function wakeMemberWithFailureEvents(
   });
 }
 
+async function waitForAgentDelegateReply(input: {
+  repo: ApiRepository;
+  organizationId: string;
+  agentId: string;
+  agentName: string;
+  threadId: string;
+  delegateMessage: { id: string; createdAt: string };
+  parentRunId: string;
+  timeoutMs?: number;
+  pollIntervalMs?: number;
+}): Promise<AgentDelegateResult> {
+  let startedAt = Date.now();
+  const timeoutMs = input.timeoutMs ?? AGENT_DELEGATE_TIMEOUT_MS;
+  const pollIntervalMs = input.pollIntervalMs ?? AGENT_DELEGATE_POLL_INTERVAL_MS;
+  while (Date.now() - startedAt < timeoutMs) {
+    const isAlertQueued = hasPendingMemberAlert(
+      input.organizationId,
+      input.agentId,
+      input.threadId,
+      input.delegateMessage.id,
+    );
+    if (isAlertQueued) {
+      startedAt = Date.now();
+    }
+    const reply = latestDelegateReply(
+      input.repo,
+      input.organizationId,
+      input.threadId,
+      input.agentId,
+      input.delegateMessage,
+    );
+    const activeRun = input.repo.findActiveRunForMemberThread(
+      input.organizationId,
+      input.agentId,
+      input.threadId,
+    );
+    const blockingRun = activeRun?.id === input.parentRunId ? null : activeRun;
+    const delegateRun = delegateRunForMessage(
+      input.repo,
+      input.organizationId,
+      input.threadId,
+      input.agentId,
+      input.delegateMessage.id,
+    );
+    if (delegateRun?.status === 'failed' || delegateRun?.status === 'cancelled') {
+      return {
+        status: 'delegate_failed',
+        agent: input.agentName,
+        agent_id: input.agentId,
+        thread_id: input.threadId,
+        message_id: input.delegateMessage.id,
+        run_status: delegateRun.status,
+        error: delegateRun.summary,
+      };
+    }
+    if (reply && !blockingRun) {
+      return {
+        status: 'completed',
+        agent: input.agentName,
+        agent_id: input.agentId,
+        thread_id: input.threadId,
+        message_id: input.delegateMessage.id,
+        reply_id: reply.id,
+        reply_content: reply.content,
+      };
+    }
+    if (
+      !reply &&
+      !blockingRun &&
+      delegateRun &&
+      runIsTerminal(delegateRun.status)
+    ) {
+      return {
+        status: 'no_reply',
+        agent: input.agentName,
+        agent_id: input.agentId,
+        thread_id: input.threadId,
+        message_id: input.delegateMessage.id,
+      };
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+  }
+
+  return {
+    status: 'timed_out',
+    agent: input.agentName,
+    agent_id: input.agentId,
+    thread_id: input.threadId,
+    message_id: input.delegateMessage.id,
+  };
+}
+
+export async function runAgentDelegateTurn(input: {
+  repo: ApiRepository;
+  conversations: ConversationService;
+  wakeMember: (alert: {
+    organizationId: string;
+    memberId: string;
+    threadId: string;
+    channelId?: string;
+    messageId: string;
+    byMemberId: string;
+    reason: string;
+    wakeReason: WakeReason;
+  }) => Promise<void> | void;
+  createRun: (run: {
+    organizationId: string;
+    agentId: string;
+    threadId: string;
+    summary?: string;
+    wakeReason?: WakeReason;
+    sourceMessageId?: string;
+    byMemberId?: string;
+  }) => Promise<unknown>;
+  organizationId: string;
+  fromMemberId: string;
+  to: string;
+  message: string;
+  runId: string;
+  timeoutMs?: number;
+  pollIntervalMs?: number;
+}): Promise<AgentDelegateResult> {
+  const members = input.repo.listMembers(input.organizationId);
+  const activeAgents = members.filter(
+    (member) => member.kind === AGENT_KIND && !member.retiredAt,
+  );
+  const target = activeAgents.find(
+    (member) => member.id === input.to || member.name === input.to,
+  );
+  if (!target) {
+    const names = activeAgents.map((member) => member.name).join(', ');
+    const retiredMatch = members.find(
+      (member) =>
+        member.kind === AGENT_KIND &&
+        member.retiredAt &&
+        (member.id === input.to || member.name === input.to),
+    );
+    if (retiredMatch) {
+      throw new Error(
+        `Agent "${input.to}" has been retired. Available agents: ${names}`,
+      );
+    }
+    throw new Error(`Agent "${input.to}" not found. Available agents: ${names}`);
+  }
+
+  const threadId = getDirectMessageThreadId(input.fromMemberId, target.id);
+  const delegateMessage = input.conversations.sendDirectMessage({
+    organizationId: input.organizationId,
+    senderId: input.fromMemberId,
+    recipientId: target.id,
+    content: input.message,
+    ignore: true,
+    metadata: { runId: input.runId, delegate: { parentRunId: input.runId } },
+  });
+
+  const isSelfDelegation = input.fromMemberId === target.id;
+  if (isSelfDelegation) {
+    await input.createRun({
+      organizationId: input.organizationId,
+      agentId: target.id,
+      threadId,
+      summary: `Delegate task by ${input.fromMemberId} on message ${delegateMessage.id}`,
+      wakeReason: 'dm',
+      sourceMessageId: delegateMessage.id,
+      byMemberId: input.fromMemberId,
+    });
+  } else {
+    await input.wakeMember({
+      organizationId: input.organizationId,
+      memberId: target.id,
+      threadId,
+      channelId: threadId,
+      messageId: delegateMessage.id,
+      byMemberId: input.fromMemberId,
+      reason: 'dm',
+      wakeReason: 'dm',
+    });
+  }
+
+  return waitForAgentDelegateReply({
+    repo: input.repo,
+    organizationId: input.organizationId,
+    agentId: target.id,
+    agentName: target.name,
+    threadId,
+    delegateMessage,
+    parentRunId: input.runId,
+    timeoutMs: input.timeoutMs,
+    pollIntervalMs: input.pollIntervalMs,
+  });
+}
+
 export function createApiServices(context: ApiServicesContext): ApiServices {
   const retention = new ChannelRetentionService(
     context.repo,
@@ -440,11 +660,33 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     reason: string;
     wakeReason: WakeReason;
   }) => Promise<void> | void = () => undefined;
+  let createDelegateRun: Parameters<typeof runAgentDelegateTurn>[0]['createRun'] = async () => {
+    throw new Error('createDelegateRun not wired');
+  };
 
+  let handleMessagePublished: ((msg: import('@ujima/shared').Message) => void) | undefined;
   const conversations = new ConversationService(context.repo, context.realtime, {
     archiveStore: retention,
     onMemberAlerted: (input) => wakeMember(input),
+    onMessagePublished: (msg) => handleMessagePublished?.(msg),
   });
+
+  const delegateAgentTurn = async (input: {
+    organizationId: string;
+    fromMemberId: string;
+    to: string;
+    message: string;
+    runId: string;
+    timeoutMs?: number;
+    pollIntervalMs?: number;
+  }): Promise<AgentDelegateResult> =>
+    runAgentDelegateTurn({
+      repo: context.repo,
+      conversations,
+      wakeMember,
+      createRun: createDelegateRun,
+      ...input,
+    });
 
   // Late-bound resume callback — runs is constructed below and plugged in.
   let resumeRun: (
@@ -454,6 +696,13 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     approvalScope?: string,
   ) => Promise<unknown> | unknown = () => {
     throw new Error('resumeRun not wired');
+  };
+
+  let resumeInputRun: (
+    organizationId: string,
+    runId: string,
+  ) => Promise<unknown> | unknown = () => {
+    throw new Error('resumeInputRun not wired');
   };
 
   const approvalsImpl = new ApprovalService(
@@ -467,16 +716,25 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     requestApproval: (input) => approvalsImpl.requestApproval(input),
   };
 
-  const supervisorTodos = new SupervisorTodoService(context.repo);
+  const spiritModelResolver =
+    context.spiritModelResolver ??
+    createSpiritModelResolver(context.teamStore, context.repo);
+  const goals = new GoalSystemService(
+    context.repo,
+    (orgId, runId) => resumeInputRun(orgId, runId),
+    conversations,
+  );
 
   const innerTools = new ToolServiceImpl(
     context.teamStore,
     context.repo,
     approvalRequester,
     conversations,
+    goals,
     context.realtime,
-    supervisorTodos,
+    delegateAgentTurn,
     context.mcpPool,
+    spiritModelResolver,
   );
 
   const tools = createPermissionGatedToolService(
@@ -520,11 +778,12 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     {
       conversations,
       ai,
-      modelResolver: context.spiritModelResolver,
+      modelResolver: spiritModelResolver,
       registry: activeSpirits,
       mcpPool: context.mcpPool,
     },
   );
+  createDelegateRun = (run) => spirits.createRun(run);
 
   // Plug SpiritService's MCP tool resolver into AiService now that
   // both exist. This is what gives the wake-run path (advanceRun ->
@@ -536,6 +795,8 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   const runs = spirits;
   resumeRun = async (orgId, runId, allowRun = true, approvalScope) =>
     spirits.resumeAfterApproval(orgId, runId, allowRun, approvalScope);
+  resumeInputRun = async (orgId, runId) =>
+    spirits.resumeAfterInput(orgId, runId);
   // Hydrate the in-memory registry from persisted spirits BEFORE alert
   // handling begins. Without this, a daemon restart would see an empty
   // registry and fall through to regular wake runs for already-active work.
@@ -561,18 +822,38 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   const auth = new AuthService(context.repo);
   const bootstrap = new BootstrapService(context.repo, context.teamStore, auth);
   const onboarding = new OnboardingService(context.repo, context.teamStore);
-  const scheduler = new SchedulerService(context.repo, conversations, context.realtime);
+  const scheduler = new SchedulerService(context.repo, conversations, context.realtime, {
+    onTick: () => goals.sweepAllPendingTasks(),
+  });
   const notifications = new NotificationService(context.repo);
-  conversations.setMessagePublishedHook((msg) => {
+  handleMessagePublished = (msg) => {
     if (msg.senderId !== '__ujima_scheduler__') {
+      const id = msg.channelId ?? msg.threadId;
+      let channelName = id;
+      if (id.startsWith('self:')) {
+        const m = context.repo.getMember(msg.organizationId, id.slice(5));
+        channelName = m ? `${m.name} (self)` : 'Self';
+      } else if (id.startsWith('dm:')) {
+        const parts = id.split(':');
+        const other = parts[2] || parts[1] || '';
+        const m = other ? context.repo.getMember(msg.organizationId, other) : null;
+        channelName = m ? `DM with @${m.name}` : 'DM';
+      } else {
+        const ch = context.repo.getChannel(msg.organizationId, id);
+        if (ch?.name) channelName = ch.name;
+      }
       void notifications.notifyMessage({
         organizationId: msg.organizationId,
-        channelName: msg.channelId ?? msg.threadId,
+        channelName,
         senderName: context.repo.getMember(msg.organizationId, msg.senderId)?.name ?? msg.senderId,
         content: msg.content ?? '',
       });
     }
+  };
+  notifications.setApprovalResolver(async (orgId, approvalId, status) => {
+    await approvalsImpl.resolveApproval({ organizationId: orgId, approvalId, status });
   });
+  notifications.startPolling();
   approvalsImpl.setOnApprovalRequested((input) => {
     void notifications.notifyApproval({
       organizationId: input.organizationId,
@@ -593,30 +874,13 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     auth,
   );
   const taskSessions = new TaskSessionService(context.repo, conversations, spirits);
-  const taskPromoter = new TaskPromoterService(context.repo, spirits, {
-    teamStore: context.teamStore,
-    taskSessions,
-    conversations,
-    evaluator: context.taskPromoterEvaluator,
-  });
   const mcpRegistry = new McpRegistryService(context.repo);
+  const governance = new GovernanceService(context.repo);
   const pluginRegistry = new PluginRegistryService(
     context.repo,
     context.archiveRoot ?? process.env.UJIMA_HOME ?? process.cwd(),
   );
 
-  const commitments = new CommitmentService(
-    context.repo,
-    conversations,
-    context.realtime,
-    {
-      idleThresholdMs: context.commitmentIdleThresholdMs,
-      defaultDueOffsetMs: context.commitmentDefaultDueOffsetMs,
-    },
-  );
-  conversations.setMessagePublishedHook((message) =>
-    commitments.onAgentMessagePublished(message),
-  );
   // Bet 5 (Hermes review) — trajectory JSONL projection. One JSONL
   // line per completed run, gated by env var. Fire-and-forget, no
   // schema, no service dependencies: pure projection over runs +
@@ -634,16 +898,12 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   );
 
   // Late-bind the run-completed hook. The single hook routes to
-  // every subscriber: main's drain-pending-member-alert (skills
-  // library merge), memory-review's turn counter, and the
-  // trajectory writer. (Empty-wake handling moved into the
-  // commitment-service sweeper as part of the main merge.)
+  // drain-pending-member-alert, memory-review's turn counter, and
+  // the trajectory writer.
   spirits.setRunCompletedHook(async (run) => {
     await drainPendingMemberAlertAfterRun(run, (pending) =>
       wakeMemberWithFailureEvents(wakeMemberDeps, pending),
     );
-    // Resolve workspace root lazily — only when the trajectory
-    // writer is actually enabled (env-gated).
     try {
       const team = context.teamStore.getTeam(run.organizationId);
       const workspaceRoot = team?.workspace.root;
@@ -653,6 +913,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     } catch {
       // best-effort
     }
+
     // Memory-review counter — only ticks for publishing terminators
     // so empty wakes and silent acks don't burn the nudge.
     const isPublishing =
@@ -670,58 +931,6 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
       });
     }
   });
-  // Scheduler tick (Bet 4). Production runs it every 60s; tests
-  // can pass `commitmentSweeperIntervalMs: 0` to opt out and call
-  // `commitments.sweepIdle()` / `sweepExpired()` directly. The
-  // interval is captured by `stop()` so daemon shutdown cancels it.
-  const sweepInterval =
-    context.commitmentSweeperIntervalMs ?? 60_000;
-  let commitmentSweeperHandle: ReturnType<typeof setInterval> | null = null;
-  // Track the in-flight sweep so `stop()` can await it — without
-  // this, a SIGTERM mid-sweep tears the DB handle out from under
-  // the wake path and produces half-published deadline-letters +
-  // SQLITE_MISUSE traces.
-  let inFlightSweep: Promise<unknown> | null = null;
-  const runSweepTick = async (): Promise<void> => {
-    try {
-      await commitments.sweepIdle();
-      await commitments.sweepExpired();
-    } catch {
-      return;
-    }
-  };
-  if (sweepInterval > 0) {
-    commitmentSweeperHandle = setInterval(() => {
-      // Skip if a previous tick is still running — guards against
-      // sweep latency exceeding the interval (would otherwise queue
-      // concurrent ticks against the same row set).
-      if (inFlightSweep) return;
-      inFlightSweep = runSweepTick().finally(() => {
-        inFlightSweep = null;
-      });
-    }, sweepInterval);
-    if (typeof (commitmentSweeperHandle as { unref?: () => void }).unref === 'function') {
-      (commitmentSweeperHandle as { unref?: () => void }).unref?.();
-    }
-  }
-
-  const stop = async (): Promise<void> => {
-    if (commitmentSweeperHandle) {
-      clearInterval(commitmentSweeperHandle);
-      commitmentSweeperHandle = null;
-    }
-    // Drain any tick currently mid-flight before returning. The
-    // daemon's shutdown sequence calls this BEFORE closing the DB
-    // handle so a sweep doesn't run against a torn-down connection.
-    if (inFlightSweep) {
-      try {
-        await inFlightSweep;
-      } catch {
-        // best-effort
-      }
-      inFlightSweep = null;
-    }
-  };
 
   return {
     ai,
@@ -736,16 +945,14 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     onboarding,
     settings,
     workspaces,
-    taskPromoter,
     taskSessions,
+    goals,
     spirits,
     scheduler,
     notifications,
-    supervisorTodos,
     activeSpirits,
     mcpRegistry,
+    governance,
     pluginRegistry,
-    commitments,
-    stop,
   };
 }

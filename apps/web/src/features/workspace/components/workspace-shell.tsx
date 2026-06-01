@@ -12,7 +12,9 @@ import {
   type SocketEventName,
 } from "@ujima/shared/browser";
 import { WorkspaceSidebar } from "./workspace-sidebar";
+import { normalizeOrgShellApprovalMode, type ShellApprovalMode } from "@ujima/shared/browser";
 import { ChannelView } from "./channel-view";
+import { ChannelGoalsBoard } from "./channel-goals-board";
 import { CommandPalette, type SearchResult } from "@/components/ui/command-palette";
 import type { BootstrapResponse } from "@ujima/api-schema";
 import { resolveSelectedConversationFromSearchParams } from "../conversation-routing";
@@ -49,6 +51,11 @@ type WorkspaceTeamSettings = {
   workspace?: { root: string; roleScopes?: Record<string, string[]> };
   agents: { name: string; roleName: string; personalityName: string; kind: string }[];
   roles: WorkspaceTeamRole[];
+  policies?: {
+    requireApprovalForWrites: boolean;
+    shellApprovalMode: ShellApprovalMode;
+    workspaceBoundaryMode: string;
+  };
 } | null;
 
 export function WorkspaceShell(props: {
@@ -87,18 +94,20 @@ export function WorkspaceShell(props: {
     [channels, initialConversation],
   );
 
+  const workspaceTasksActive = searchParams.get("view") === "tasks";
   const urlConversation = useMemo(
     () => resolveSelectedConversationFromSearchParams(searchParams, bootstrap),
     [searchParams, bootstrap],
   );
 
   const resolvedSelected = urlConversation ?? selected ?? defaultConversation;
+  const activeConversation = workspaceTasksActive ? undefined : resolvedSelected;
   const goalModeKey = useMemo(
     () =>
-      resolvedSelected
-        ? goalModePreferenceKey(bootstrap.organization?.id, resolvedSelected.id)
+      activeConversation
+        ? goalModePreferenceKey(bootstrap.organization?.id, activeConversation.id)
         : null,
-    [bootstrap.organization?.id, resolvedSelected],
+    [activeConversation, bootstrap.organization?.id],
   );
 
   useEffect(() => {
@@ -122,6 +131,7 @@ export function WorkspaceShell(props: {
     (conversation: SelectedConversation) => {
       setSelectedConversation(conversation);
       const params = new URLSearchParams(searchParams.toString());
+      params.delete("view");
       if (conversation.type === "channel") {
         params.set("channelId", conversation.id);
         params.delete("agentId");
@@ -133,6 +143,13 @@ export function WorkspaceShell(props: {
     },
     [router, searchParams, setSelectedConversation],
   );
+  const handleOpenTasks = useCallback(() => {
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("view", "tasks");
+    params.delete("channelId");
+    params.delete("agentId");
+    router.replace(`?${params.toString()}`, { scroll: false });
+  }, [router, searchParams]);
 
   const handleCreateChannel = useCallback(
     async (name: string) => {
@@ -232,11 +249,13 @@ export function WorkspaceShell(props: {
   );
 
   useLayoutEffect(() => {
-    const conversationName = resolvedSelected?.name?.trim();
+    const conversationName = workspaceTasksActive
+      ? "Tasks"
+      : activeConversation?.name?.trim();
     document.title = conversationName
       ? `Ujima Agents - ${conversationName}`
       : "Ujima Agents";
-  }, [resolvedSelected?.id, resolvedSelected?.name, resolvedSelected?.type]);
+  }, [activeConversation?.id, activeConversation?.name, activeConversation?.type, workspaceTasksActive]);
 
   // Cmd+K to open global search
   useEffect(() => {
@@ -256,7 +275,7 @@ export function WorkspaceShell(props: {
       channels: bootstrap.channels,
       members: bootstrap.members,
       conversationUnreadCounts: bootstrap.conversationUnreadCounts,
-      selectedConversation: resolvedSelected,
+      selectedConversation: activeConversation,
       globalActiveRuns: bootstrap.activeRuns,
     });
     for (const run of bootstrap.activeRuns) {
@@ -269,7 +288,7 @@ export function WorkspaceShell(props: {
     bootstrap.channels,
     bootstrap.conversationUnreadCounts,
     bootstrap.members,
-    resolvedSelected,
+    activeConversation,
     setMemberActivity,
     syncWorkspace,
   ]);
@@ -318,11 +337,11 @@ export function WorkspaceShell(props: {
       if (!conversationId) return;
 
       if (
-        resolvedSelected &&
-        ((resolvedSelected.type === "channel" &&
+        activeConversation &&
+        ((activeConversation.type === "channel" &&
           envelope.event !== SocketEventNames.dmMessage &&
-          resolvedSelected.id === conversationId) ||
-          (resolvedSelected.type === "agent" && resolvedSelected.id === conversationId))
+          activeConversation.id === conversationId) ||
+          (activeConversation.type === "agent" && activeConversation.id === conversationId))
       ) {
         return;
       }
@@ -347,23 +366,23 @@ export function WorkspaceShell(props: {
     bootstrap.organization?.id,
     incrementConversationUnreadCount,
     organizationId,
-    resolvedSelected,
+    activeConversation,
     setMemberActivity,
     upsertGlobalActiveRun,
   ]);
 
   useEffect(() => {
-    if (!organizationId || !bootstrap.auth.member || !resolvedSelected) return;
+    if (!organizationId || !bootstrap.auth.member || !activeConversation) return;
     const threadId =
-      resolvedSelected.type === "agent"
-        ? getDirectMessageThreadId(bootstrap.auth.member.id, resolvedSelected.id)
-        : resolvedSelected.id;
-    clearConversationUnreadCount(resolvedSelected.id);
+      activeConversation.type === "agent"
+        ? getDirectMessageThreadId(bootstrap.auth.member.id, activeConversation.id)
+        : activeConversation.id;
+    clearConversationUnreadCount(activeConversation.id);
     void fetch(
       `/api/conversations/${encodeURIComponent(threadId)}/read?organizationId=${encodeURIComponent(organizationId)}`,
       { method: "POST" },
     ).catch(() => undefined);
-  }, [bootstrap.auth.member, clearConversationUnreadCount, organizationId, resolvedSelected]);
+  }, [activeConversation, bootstrap.auth.member, clearConversationUnreadCount, organizationId]);
 
   const searchResults = useMemo(() => {
     const results: SearchResult[] = [];
@@ -404,10 +423,12 @@ export function WorkspaceShell(props: {
           channels={channels}
           members={members}
           memberActivity={memberActivity}
-          selected={resolvedSelected}
+          selected={activeConversation}
+          tasksActive={workspaceTasksActive}
           agentEditorTargetId={agentEditorTargetId}
           conversationUnreadCounts={conversationUnreadCounts}
           onSelect={handleSelect}
+          onOpenTasks={handleOpenTasks}
           onCreateChannel={handleCreateChannel}
           onCreateAgent={handleCreateAgent}
           onUpdateAgent={handleUpdateAgent}
@@ -415,20 +436,26 @@ export function WorkspaceShell(props: {
         />
       </div>
       <DragHandle onResize={setSidebarWidth} />
-      <main className="flex h-full min-w-0 flex-1 overflow-hidden">
+      <main className="flex h-full min-w-0 flex-1 overflow-hidden bg-white dark:bg-[#09090b]">
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-          {resolvedSelected ? (
+          {workspaceTasksActive ? (
+            <ChannelGoalsBoard key="workspace-goals" members={members} />
+          ) : activeConversation ? (
             <ChannelView
-              key={`${resolvedSelected.type}:${resolvedSelected.id}`}
+              key={`${activeConversation.type}:${activeConversation.id}`}
               bootstrap={bootstrap}
-              conversation={resolvedSelected}
+              conversation={activeConversation}
               members={members}
+              orgShellApprovalMode={normalizeOrgShellApprovalMode(
+                props.teamSettings?.policies ?? {},
+              )}
               goalMode={goalMode}
               onGoalModeChange={setGoalMode}
               onSelectConversation={handleSelect}
+              onMemberUpdated={appendMember}
               onOpenAgentEditor={() => {
-                if (resolvedSelected.type === "agent") {
-                  setAgentEditorTargetId(resolvedSelected.id);
+                if (activeConversation.type === "agent") {
+                  setAgentEditorTargetId(activeConversation.id);
                 }
               }}
             />

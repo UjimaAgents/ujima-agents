@@ -13,7 +13,7 @@ export { SHARED_AGENT_SYSTEM_PROMPT } from '@ujima/shared';
 
 export const MESSAGE_TOOL_USAGE_GUIDANCE = [
   'Most messages do not need a reply from you. If a message is not addressed to you, not in your domain, or already handled by another agent, call channel.pass with the appropriate reason and stop. Do not emit any chat text alongside channel.pass.',
-  'If you are @mentioned, reply is mandatory. The runtime will reject channel.pass and self.note for mentioned runs. Use channel.reply (or message) to respond, even if your answer is short.',
+  'If you are @mentioned, reply is mandatory. The runtime will reject channel.pass for mentioned runs. Use channel.reply (or message) to respond, even if your answer is short.',
   'Hand-offs use channel.handoff({ to, reason, deliverable, complete }). Set complete: true only when the chain is genuinely finished. Do not write [HANDOFF] or [DONE] in plain text — the handoff tool stamps them.',
   'Never call a posting tool and also produce assistant chat text in the same turn. Either tool or text, not both. If you used a posting tool, leave the final assistant text empty.',
   'Pick exactly one terminating tool per turn: channel.reply, channel.post, channel.dm, channel.handoff, message, or channel.pass. The runtime drops any assistant prose you emit alongside a terminating tool.',
@@ -279,7 +279,7 @@ export function buildAgentSystemPrompt(
       ? MESSAGE_TOOL_USAGE_GUIDANCE.filter(
           (line) =>
             !line.includes('channel.pass with the appropriate reason') &&
-            !line.includes('channel.pass and self.note for mentioned runs'),
+            !line.includes('channel.pass for mentioned runs'),
         )
       : MESSAGE_TOOL_USAGE_GUIDANCE),
     '',

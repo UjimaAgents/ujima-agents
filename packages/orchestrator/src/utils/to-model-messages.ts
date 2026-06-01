@@ -179,6 +179,7 @@ export function resolveSpiritModel(params: {
      * and almost certainly won't resolve on the fallback provider.
      */
     isFallback: boolean,
+    memberModel?: string,
   ) => string | undefined;
 }): LanguageModel {
   const agent = params.team.getAgent(params.member.id) ?? params.team.getAgent(params.member.name);
@@ -238,6 +239,7 @@ export function resolveSpiritModel(params: {
       providerForResolve,
       params.role,
       isFallback,
+      params.member.model,
     );
     if (!modelId) {
       tried.push({ name: providerName, rejected: 'no model id resolved (provider config is missing defaultModel and there is no built-in default for this kind)' });
@@ -293,39 +295,44 @@ function defaultModelIdForKind(kind: string): string | undefined {
   }
 }
 
-// Fix #7: Default provider-name resolver (uses role.provider directly).
+// Fix #7: Default provider-name resolver (uses agent/member llm first).
 export function defaultResolveProviderName(
-  _member: { llm?: string },
+  member: { llm?: string },
   teamRole: { provider?: string },
 ): string {
-  if (!teamRole.provider) {
+  const provider = member.llm ?? teamRole.provider;
+  if (!provider) {
     throw new Error(`Role is missing a provider`);
   }
-  return teamRole.provider;
+  return provider;
 }
 
-// Fix #7: Default model-ID resolver using the cheaper-tier picker.
-// `isFallback` is accepted to satisfy the contract but ignored here —
-// this resolver only reads `teamRole.model` (already cleared on
-// fallback by `resolveSpiritModel`) and `provider.*`, neither of
-// which is member-specific.
+// Fix #7: Default model-ID resolver using the cheaper-tier picker (uses agent/member model first).
 export function defaultResolveModelId(
   teamRole: { model?: string },
   provider: { defaultModel?: string; supervisorModel?: string; supervisor_model?: string },
   role: SpiritRole,
-  _isFallback?: boolean,
+  isFallback?: boolean,
+  memberModel?: string,
 ): string | undefined {
-  const baseModel = teamRole.model ?? provider.defaultModel;
+  const baseModel = (isFallback ? undefined : memberModel) ?? teamRole.model ?? provider.defaultModel;
   if (role !== 'supervisor') return baseModel;
   const supervisorTier = provider.supervisorModel ?? provider.supervisor_model;
   return supervisorTier ?? baseModel;
 }
 
 // Fix #8: Shared tool-definition builder.
+//
+// The fallback schema used when no OrchestratorTool is registered
+// for a tool id. Exposes `path` (not `resourcePath`) for the same
+// reason the workspace tools do — keeping `resourcePath` out of any
+// model-facing JSON schema prevents Gemini from pattern-matching the
+// alias onto unrelated tools (channel.*, self.*) and tripping
+// `additionalProperties: false`.
 const GenericToolInvocationSchema = z.object({
   action: z.enum(['read', 'write', 'execute', 'mcp', 'message']),
   resourceType: z.enum(['file', 'folder', 'shell', 'mcp', 'message']),
-  resourcePath: z.string().min(1).optional(),
+  path: z.string().min(1).optional(),
   input: z.record(z.string(), z.unknown()).default({}),
 });
 
@@ -408,7 +415,7 @@ export function buildToolDefinition(
           toolId,
           action: args.action,
           resourceType: args.resourceType,
-          resourcePath: args.resourcePath,
+          resourcePath: args.path,
           input: args.input,
         });
         return toModelToolOutput(result);

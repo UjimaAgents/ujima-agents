@@ -35,7 +35,13 @@ if (portInUse) {
   process.exit(1);
 }
 
-const proc = Bun.spawn(['bunx', 'next', mode, '--port', port, ...extra], {
+const nextArgs = ['bunx', 'next', mode, '--port', port];
+if (process.env.WEB_USE_WEBPACK === '1') {
+  nextArgs.push('--webpack');
+}
+nextArgs.push(...extra);
+
+const proc = Bun.spawn(nextArgs, {
   cwd: root,
   env: { ...process.env, WEB_PORT: port },
   stdio: ['inherit', 'inherit', 'inherit'],

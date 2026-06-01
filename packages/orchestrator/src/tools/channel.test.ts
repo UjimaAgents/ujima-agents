@@ -7,7 +7,6 @@ import {
   channelPostTool,
   channelReadTool,
   channelReplyTool,
-  selfNoteTool,
 } from './channel.js';
 import { ALWAYS_AVAILABLE_AGENT_TOOLS } from './index.js';
 
@@ -248,11 +247,6 @@ describe('channel.* tools — toInvocation()', () => {
     },
   );
 
-  it('self.note keeps its bypassPermission flag', () => {
-    const inv = selfNoteTool.toInvocation({ body: 'thinking…' });
-    expect(inv.bypassPermission).toBe(true);
-    expect(inv.resourcePath).toBeUndefined();
-  });
 });
 
 // Regression: ALWAYS_AVAILABLE_AGENT_TOOLS includes the baseline
@@ -266,6 +260,7 @@ describe('ALWAYS_AVAILABLE_AGENT_TOOLS', () => {
   it('contains the baseline conversational primitives, read-only workspace tools, and silent terminators', () => {
     expect([...ALWAYS_AVAILABLE_AGENT_TOOLS].sort()).toEqual(
       [
+        'agent.delegate',
         'channel.ack',
         'channel.dm',
         'channel.list',
@@ -275,14 +270,16 @@ describe('ALWAYS_AVAILABLE_AGENT_TOOLS', () => {
         'channel.recall',
         'channel.reply',
         'glob',
+        'goal.start',
+        'goal.task.update',
         'grep',
         'ls',
         'memory.forget',
         'memory.recall',
         'memory.write',
         'message',
+        'question.ask',
         'schedule',
-        'self.note',
         'procedure.list',
         'procedure.view',
         'self.procedure.add',
@@ -300,6 +297,10 @@ describe('ALWAYS_AVAILABLE_AGENT_TOOLS', () => {
       expect([...ALWAYS_AVAILABLE_AGENT_TOOLS]).not.toContain(toolId);
     },
   );
+
+  it('does not keep the old agent.spawn alias', () => {
+    expect([...ALWAYS_AVAILABLE_AGENT_TOOLS]).not.toContain('agent.spawn');
+  });
 });
 
 // L13 — `already_handled` and `duplicate_reply` reasons require a

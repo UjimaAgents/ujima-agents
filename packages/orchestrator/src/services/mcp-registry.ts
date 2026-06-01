@@ -2,10 +2,19 @@ import { randomUUID } from 'node:crypto';
 import {
   McpServerPublicSchema,
   McpServerSchema,
+  classifyTool,
+  evaluatePolicy,
+  resolveClassification,
+  type AgentToolAttachment,
   type McpAttachmentScope,
   type McpServer,
   type McpServerPublic,
+  type McpToolClassification,
   type McpToolDescriptor,
+  type PolicyEvaluation,
+  type RiskDefaults,
+  type ToolPolicyState,
+  type ToolRiskClass,
 } from '@ujima/shared';
 import { connectMCP, parseMCPConfigJSON, type MCPConnection } from '@ujima/mcp-client';
 import type { MCPDef } from '@ujima/shared';
@@ -88,6 +97,62 @@ export interface TestMcpResult {
   tools: McpToolDescriptor[];
   error?: string;
   testedAt: string;
+}
+
+export interface CatalogTool {
+  name: string;
+  description: string;
+  risk: ToolRiskClass;
+  source: 'inferred' | 'manual' | 'registry' | 'unknown';
+  needsReview: boolean;
+  // Org-default decision (no specific agent).
+  effective: {
+    state: ToolPolicyState;
+    source: PolicyEvaluation['source'];
+    reason?: string;
+  };
+  // Agents that have this exact tool granted (per-tool attachments).
+  grantedAgents: string[];
+  // Agents the parent MCP server is attached to but no per-tool grant
+  // exists — they currently see this tool via the back-compat "all tools"
+  // expansion.
+  attachedAgents: string[];
+}
+
+export interface CatalogServer {
+  id: string;
+  name: string;
+  status: string;
+  category: string;
+  toolCount: number;
+  // Agents in allowlist mode on this server (have ≥1 per-tool grant
+  // for this server). Driving the per-agent "exposed" decision from a
+  // server-scoped set avoids globally aggregated grant counts leaking
+  // across agents.
+  allowlistAgents: string[];
+  tools: CatalogTool[];
+}
+
+// Per-agent perspective row — only present when caller asked for ?agentId.
+export interface CatalogAgentView {
+  agentId: string;
+  // Effective decision the runtime would make for this (agent, tool).
+  state: ToolPolicyState;
+  source: PolicyEvaluation['source'];
+  reason?: string;
+  // Is the tool exposed to the model right now for this agent?
+  exposed: boolean;
+  // Why it is or isn't exposed.
+  exposureReason: 'no-mcp-attachment' | 'no-tool-grant' | 'granted' | 'all-tools-mode';
+}
+
+export interface CatalogResult {
+  servers: CatalogServer[];
+  riskDefaults: RiskDefaults;
+  // Per-(server,tool) per-agent decisions when ?agentId was passed.
+  // Keyed by `${serverId}::${toolName}` so the UI can look up in O(1).
+  agentView?: Record<string, CatalogAgentView>;
+  agentViewId?: string;
 }
 
 export class McpRegistryService {
@@ -309,38 +374,40 @@ export class McpRegistryService {
     const def = this.toMcpDef(server);
     const testedAt = new Date().toISOString();
     let connection: MCPConnection | undefined;
+    // Two-phase: (1) live fetch isolated in its own try; (2) post-fetch
+    // persistence writes isolated. Pre-fix a single try wrapped both,
+    // so a transient cache/seed/server-row write failure dumped into
+    // the catch and rewrote the cache with `existingCache?.tools ?? []`
+    // — turning a successful listTools result into an empty inventory
+    // on first-ever test of a server. The split mirrors the wake-run
+    // path in spirit-agent-run.ts.
+    let descriptors: McpToolDescriptor[];
     try {
       connection = await this.connect(def);
       const tools = await connection.listTools();
-      const descriptors: McpToolDescriptor[] = tools.map((tool) => ({
-        name: tool.name,
-        description: tool.description ?? '',
-        inputSchema:
-          tool.inputSchema && typeof tool.inputSchema === 'object'
-            ? (tool.inputSchema as Record<string, unknown>)
-            : undefined,
-      }));
-      this.repo.saveMcpToolCache({
-        mcpServerId: server.id,
-        organizationId,
-        tools: descriptors,
-        fetchedAt: testedAt,
+      descriptors = tools.map((tool) => {
+        // Carry the server-declared destructive intent through so the
+        // classifier honours it before the verb heuristic kicks in.
+        // Pre-fix this hint was dropped at the descriptor boundary and
+        // every reclassification went straight to verb-based inference.
+        const declared =
+          typeof (tool as { destructive?: boolean }).destructive === 'boolean'
+            ? (tool as { destructive?: boolean }).destructive
+            : undefined;
+        return {
+          name: tool.name,
+          description: tool.description ?? '',
+          inputSchema:
+            tool.inputSchema && typeof tool.inputSchema === 'object'
+              ? (tool.inputSchema as Record<string, unknown>)
+              : undefined,
+          ...(declared !== undefined ? { destructive: declared } : {}),
+        };
       });
-      this.repo.saveMcpServer({
-        ...server,
-        lastTestedAt: testedAt,
-        lastTestError: undefined,
-        updatedAt: testedAt,
-      });
-      return { ok: true, tools: descriptors, testedAt };
     } catch (err) {
       const message = errorMessage(err);
-      // Preserve the previous tool inventory on failure — a transient
-      // listTools outage shouldn't destroy the cache that SpiritService
-      // uses as a fallback. Only the server row's `last_test_error` is
-      // updated. If no cache exists yet (first-ever test failed),
-      // write an empty placeholder so the cache row still surfaces the
-      // error to the settings UI.
+      // Live fetch genuinely failed — preserve the previous cache
+      // (this is the legacy "transient outage" behaviour).
       const existingCache = this.repo.getMcpToolCache(organizationId, server.id);
       this.repo.saveMcpToolCache({
         mcpServerId: server.id,
@@ -351,15 +418,71 @@ export class McpRegistryService {
       });
       this.repo.saveMcpServer({
         ...server,
-        // Don't auto-flip to disabled — operator decides. Just record
-        // the test failure so the UI can show it.
         lastTestedAt: testedAt,
         lastTestError: message,
         updatedAt: testedAt,
       });
+      if (connection) {
+        try { await connection.close(); } catch { /* ignore */ }
+      }
       return {
         ok: false,
         tools: existingCache?.tools ?? [],
+        error: message,
+        testedAt,
+      };
+    }
+    try {
+      this.repo.saveMcpToolCache({
+        mcpServerId: server.id,
+        organizationId,
+        tools: descriptors,
+        fetchedAt: testedAt,
+      });
+      const seedEntries = descriptors.map((d) => {
+        const out = classifyTool({
+          name: d.name,
+          description: d.description,
+          category: server.category,
+          declaredDestructive: d.destructive,
+        });
+        return {
+          toolName: d.name,
+          risk: out.risk,
+          needsReview: out.needsReview,
+          reason: out.reason,
+        };
+      });
+      this.repo.seedInferredClassifications(organizationId, server.id, seedEntries);
+      this.repo.saveMcpServer({
+        ...server,
+        lastTestedAt: testedAt,
+        lastTestError: undefined,
+        updatedAt: testedAt,
+      });
+      return { ok: true, tools: descriptors, testedAt };
+    } catch (err) {
+      const message = errorMessage(err);
+      // Persistence write failed AFTER a successful live fetch. Surface
+      // the error in the server row but keep the freshly fetched
+      // descriptors in the response so the UI shows the real tool
+      // inventory instead of an empty list. Don't overwrite the cache:
+      // either the saveMcpToolCache itself failed and there's nothing
+      // we can do, or a later step did and the cache is already
+      // up-to-date with the live tools.
+      try {
+        this.repo.saveMcpServer({
+          ...server,
+          lastTestedAt: testedAt,
+          lastTestError: message,
+          updatedAt: testedAt,
+        });
+      } catch {
+        // best-effort
+      }
+      return {
+        ok: false,
+        tools: descriptors,
         error: message,
         testedAt,
       };
@@ -383,6 +506,432 @@ export class McpRegistryService {
     this.requireServer(organizationId, serverId);
     const cache = this.repo.getMcpToolCache(organizationId, serverId);
     return cache?.tools ?? [];
+  }
+
+  // ----------------- Governance catalog --------------------------------
+
+  getCatalog(
+    organizationId: string,
+    agentId?: string,
+    role?: 'worker' | 'supervisor',
+  ): CatalogResult {
+    this.requireOrganization(organizationId);
+    const policy = this.repo.getGovernancePolicy(organizationId);
+    const servers = this.repo.listMcpServers(organizationId);
+
+    // A grant applies to the current view when its scope matches the
+    // requested role (or is 'both'). When `role` is unspecified the
+    // catalog is the role-agnostic union — the UI's planning surface.
+    const matchesRole = (grantScope: 'worker' | 'supervisor' | 'both'): boolean =>
+      role ? grantScope === role || grantScope === 'both' : true;
+
+    // Per-agent perspective: track presence of an attachment row (any
+    // scope) separately from a role-matching attachment, because the
+    // runtime's reachability rule (listAttachedServersForSpirit) is
+    //   exists(attachment row) AND (attachment.scope matches OR
+    //   exists(grant with matching scope)).
+    // The catalog must mirror that — without the all-scope set, a
+    // worker attachment + supervisor-only grant looked unreachable in
+    // the supervisor view even though the runtime exposes it.
+    const agentMcpAttachmentsAnyScope = agentId
+      ? new Set(
+          this.repo
+            .listAgentMcpAttachments(organizationId, agentId)
+            .map((a) => a.mcpServerId),
+        )
+      : null;
+    const agentMcpAttachments = agentId
+      ? new Set(
+          this.repo
+            .listAgentMcpAttachments(organizationId, agentId)
+            .filter((a) => matchesRole(a.scope))
+            .map((a) => a.mcpServerId),
+        )
+      : null;
+    // For each server: tool-grant set + whether the agent is in "allowlist
+    // mode" (has any per-tool rows for that server with a matching scope).
+    const agentToolGrantsByServer = new Map<string, Set<string>>();
+    if (agentId) {
+      for (const row of this.repo.listAgentToolAttachments(organizationId, agentId)) {
+        if (!matchesRole(row.scope)) continue;
+        let set = agentToolGrantsByServer.get(row.mcpServerId);
+        if (!set) {
+          set = new Set();
+          agentToolGrantsByServer.set(row.mcpServerId, set);
+        }
+        set.add(row.toolName);
+      }
+    }
+
+    const agentView: Record<string, CatalogAgentView> | undefined = agentId
+      ? {}
+      : undefined;
+
+    const out: CatalogResult['servers'] = [];
+    for (const server of servers) {
+      const cache = this.repo.getMcpToolCache(organizationId, server.id);
+      const descriptors = cache?.tools ?? [];
+      // Role-scope the per-server attachment list: a worker-only
+      // attachment must not surface in the supervisor catalog (and
+      // vice versa) because listAttachedServersForSpirit ignores it
+      // at the runtime resolver. attachedAgents flows into both
+      // tool.attachedAgents (the row-level field the UI uses to
+      // decide exposure in all-tools mode) AND the loop that builds
+      // grantedByTool / allowlistAgents — so this single filter
+      // keeps the catalog and the runtime in lock-step.
+      const attachments = this.repo
+        .listMcpServerAttachments(organizationId, server.id)
+        .filter((a) => matchesRole(a.scope));
+      const attachedAgents = [...new Set(attachments.map((a) => a.memberId))];
+
+      // Per-server: agents → tools-granted, for fast row-level "grantedAgents".
+      // Also collect the set of agents in allowlist mode on this server
+      // (any per-tool grant for the (agent, server) pair flips them in).
+      //
+      // When the caller scoped the catalog by `role`, only grants with
+      // a matching scope contribute — a supervisor-only grant must not
+      // make the worker view think the agent is in allowlist mode.
+      //
+      // Source-of-truth for grantedByTool is the per-tool grant
+      // rows on this server, filtered by role scope. Pre-fix the
+      // loop only iterated attachedAgents (role-filtered server
+      // attachments), so any agent reachable for this role via a
+      // per-tool grant on a sibling-role attachment was dropped —
+      // the runtime resolver still exposed the tool (since
+      // listAttachedServersForSpirit was extended to surface via
+      // grants), so the catalog disagreed with reality.
+      //
+      // Build the candidate-member set from BOTH attachedAgents
+      // AND every member who has a per-tool grant on this server
+      // matching the requested role, then iterate the union.
+      const candidateMembers = new Set<string>(attachedAgents);
+      for (const d of descriptors) {
+        const grantHolders =
+          this.repo.listAgentsForTool?.(organizationId, server.id, d.name) ?? [];
+        for (const m of grantHolders) candidateMembers.add(m);
+      }
+      const grantedByTool = new Map<string, Set<string>>();
+      const allowlistAgents = new Set<string>();
+      for (const member of candidateMembers) {
+        const rows = this.repo
+          .listAgentToolAttachments(organizationId, member, server.id)
+          .filter((r) => matchesRole(r.scope));
+        if (rows.length > 0) allowlistAgents.add(member);
+        for (const row of rows) {
+          let set = grantedByTool.get(row.toolName);
+          if (!set) {
+            set = new Set();
+            grantedByTool.set(row.toolName, set);
+          }
+          set.add(member);
+        }
+      }
+
+      const tools = descriptors.map((d) => {
+        const stored: McpToolClassification | null = this.repo.getMcpToolClassification(
+          organizationId,
+          server.id,
+          d.name,
+        );
+        // Preserve the full classifier output for tools without a
+        // stored row — `needsReview` (and `reason`) drives the admin
+        // review queue. Pre-fix only `inf.risk` was threaded through,
+        // and the catalog defaulted needsReview to false because
+        // resolveClassification returns source='inferred' (not
+        // 'unknown') when an inferred fallback is supplied — so
+        // low-confidence inferences silently never surfaced.
+        let inferred: { risk: ToolRiskClass; needsReview: boolean } | undefined;
+        if (!stored) {
+          const inf = classifyTool({
+            name: d.name,
+            description: d.description,
+            category: server.category,
+            declaredDestructive: d.destructive,
+          });
+          inferred = { risk: inf.risk, needsReview: inf.needsReview };
+        }
+        const effective = resolveClassification(stored, inferred?.risk);
+        const evaluation = evaluatePolicy(policy, {
+          // Synthetic agent id so agent rules don't fire — only platform
+          // + risk defaults inform the org-default chip.
+          agentId: '*org-default*',
+          mcpId: server.id,
+          toolName: d.name,
+          classification: effective.risk,
+        });
+
+        const grantedAgents = [...(grantedByTool.get(d.name) ?? [])];
+
+        if (agentView && agentId) {
+          const perAgentEval = evaluatePolicy(policy, {
+            agentId,
+            mcpId: server.id,
+            toolName: d.name,
+            classification: effective.risk,
+          });
+          const hasAnyAttachment =
+            agentMcpAttachmentsAnyScope?.has(server.id) ?? false;
+          const hasScopedAttachment = agentMcpAttachments?.has(server.id) ?? false;
+          const toolGrants = agentToolGrantsByServer.get(server.id);
+          const hasToolGrant = toolGrants?.has(d.name) ?? false;
+          const allowlistMode = (toolGrants?.size ?? 0) > 0;
+          // Server reachability mirrors listAttachedServersForSpirit:
+          // attachment row must exist AND (scope matches OR an in-scope
+          // grant exists). A cross-scope attachment with no grant is
+          // not reachable, so we collapse it to 'no-mcp-attachment'.
+          const reachable = hasAnyAttachment && (hasScopedAttachment || allowlistMode);
+          const exposed = reachable && (!allowlistMode || hasToolGrant);
+          const exposureReason: CatalogAgentView['exposureReason'] = !reachable
+            ? 'no-mcp-attachment'
+            : allowlistMode
+              ? hasToolGrant
+                ? 'granted'
+                : 'no-tool-grant'
+              : 'all-tools-mode';
+          agentView[`${server.id}::${d.name}`] = {
+            agentId,
+            state: perAgentEval.state,
+            source: perAgentEval.source,
+            reason: perAgentEval.reason,
+            exposed,
+            exposureReason,
+          };
+        }
+
+        return {
+          name: d.name,
+          description: d.description ?? '',
+          risk: (effective.risk === 'unknown' ? 'write' : effective.risk) as ToolRiskClass,
+          source: effective.source,
+          needsReview:
+            stored?.needsReview ??
+            inferred?.needsReview ??
+            effective.source === 'unknown',
+          effective: {
+            state: evaluation.state,
+            source: evaluation.source,
+            reason: evaluation.reason,
+          },
+          grantedAgents,
+          attachedAgents,
+        };
+      });
+
+      out.push({
+        id: server.id,
+        name: server.name,
+        status: server.status,
+        category: server.category,
+        toolCount: tools.length,
+        allowlistAgents: [...allowlistAgents],
+        tools,
+      });
+    }
+    return {
+      servers: out,
+      riskDefaults: policy.risk_defaults,
+      ...(agentView ? { agentView, agentViewId: agentId } : {}),
+    };
+  }
+
+  /**
+   * Grant a single tool to an agent. Idempotent. Auto-attaches the MCP
+   * server if no attachment exists.
+   *
+   * Scope rules:
+   *   - existing MCP attachment → mirror its scope so the grant lines
+   *     up with whatever spirit role the operator already authorised.
+   *   - no MCP attachment + caller specified scope → use it.
+   *   - no MCP attachment + no caller scope → default to 'both' so a
+   *     per-tool grant works regardless of which spirit role runs.
+   *     ('worker' is the wrong default here because a single-tool
+   *     grant is a precise op and the operator probably wants it to
+   *     be visible everywhere the agent can act.)
+   */
+  grantToolToAgent(input: {
+    organizationId: string;
+    memberId: string;
+    mcpServerId: string;
+    toolName: string;
+    scope?: 'worker' | 'supervisor' | 'both';
+  }): { attachment: AgentToolAttachment } {
+    const server = this.requireServer(input.organizationId, input.mcpServerId);
+    if (server.status === 'disabled') {
+      throw new Error(`MCP server "${server.name}" is disabled`);
+    }
+    // Reject phantom tool names BEFORE any persistence. A typo could
+    // otherwise persist a grant that doesn't match any live tool,
+    // flipping the agent into an empty-allowlist mode → the runtime
+    // palette filter would strip every real tool and the server would
+    // vanish from the agent's model context.
+    this.requireTool(input.organizationId, input.mcpServerId, input.toolName);
+
+    const member = this.repo.getMember(input.organizationId, input.memberId);
+    if (!member) throw new Error(`Member not found: ${input.memberId}`);
+    if (member.kind !== 'agent') {
+      throw new Error(`Cannot grant tool to non-agent member "${input.memberId}"`);
+    }
+    if (member.retiredAt) {
+      throw new Error(`Cannot grant tool to retired member "${input.memberId}"`);
+    }
+
+    const now = new Date().toISOString();
+    const existingAttachments = this.repo.listAgentMcpAttachments(
+      input.organizationId,
+      input.memberId,
+    );
+    const existingServerAttachment = existingAttachments.find(
+      (a) => a.mcpServerId === input.mcpServerId,
+    );
+
+    // Scope resolution rules:
+    //   - Caller supplied scope → use it (the active UI role lands here).
+    //   - No caller scope + existing attachment → mirror it (preserves
+    //     whatever the operator authorised at the server level).
+    //   - No caller scope + no attachment → default 'both' so the
+    //     grant reaches whichever spirit role runs.
+    const scope =
+      input.scope ?? existingServerAttachment?.scope ?? 'both';
+
+    // Wrap the (optional) attachment insert + per-tool grant write
+    // in one transaction. Without it, a transient failure on the
+    // grant write would leave a fresh attachment with zero matching
+    // per-tool rows, which the runtime treats as "all tools" mode
+    // for the granted role — silently widening access beyond the
+    // single tool the operator clicked.
+    //
+    // We do NOT promote an existing attachment to 'both' when the
+    // grant scope doesn't match. The runtime resolver
+    // (listAttachedServersForSpirit) surfaces the server for the
+    // granted role via the per-tool grant alone, so the tool reaches
+    // the requested role without touching the attachment scope.
+    const attachment = this.repo.transaction(() => {
+      if (!existingServerAttachment) {
+        this.repo.saveAgentMcpAttachment({
+          id: randomUUID(),
+          organizationId: input.organizationId,
+          memberId: input.memberId,
+          mcpServerId: input.mcpServerId,
+          scope,
+          createdAt: now,
+          updatedAt: now,
+        });
+      }
+      return this.repo.saveAgentToolAttachment({
+        organizationId: input.organizationId,
+        memberId: input.memberId,
+        mcpServerId: input.mcpServerId,
+        toolName: input.toolName,
+        scope,
+        createdAt: now,
+        updatedAt: now,
+      });
+    });
+    return { attachment };
+  }
+
+  // Revoke a single tool grant. MCP attachment is preserved so removing
+  // the last grant flips the agent back to "all tools" mode rather than
+  // silently detaching the server. UI exposes a separate "Detach MCP"
+  // affordance for the all-or-nothing op.
+  revokeToolFromAgent(
+    organizationId: string,
+    memberId: string,
+    mcpServerId: string,
+    toolName: string,
+  ): void {
+    this.repo.deleteAgentToolAttachment(organizationId, memberId, mcpServerId, toolName);
+  }
+
+  listToolGrants(
+    organizationId: string,
+    memberId: string,
+  ): AgentToolAttachment[] {
+    return this.repo.listAgentToolAttachments(organizationId, memberId);
+  }
+
+  setToolClassification(input: {
+    organizationId: string;
+    serverId: string;
+    toolName: string;
+    risk: ToolRiskClass;
+    reason?: string;
+    updatedBy: string;
+  }): McpToolClassification {
+    this.requireServer(input.organizationId, input.serverId);
+    // Validate up-front so a typo or removed tool can't leave an
+    // orphaned manual row in mcp_tool_classifications — a future tool
+    // with the same name would otherwise inherit the wrong class.
+    this.requireTool(input.organizationId, input.serverId, input.toolName);
+    return this.repo.upsertMcpToolClassification({
+      organizationId: input.organizationId,
+      mcpServerId: input.serverId,
+      toolName: input.toolName,
+      risk: input.risk,
+      source: 'manual',
+      needsReview: false,
+      reason: input.reason,
+      updatedAt: new Date().toISOString(),
+      updatedBy: input.updatedBy,
+    });
+  }
+
+  resetToolClassification(
+    organizationId: string,
+    serverId: string,
+    toolName: string,
+  ): McpToolClassification {
+    const server = this.requireServer(organizationId, serverId);
+    // Reset is a CLEANUP op — strictly less restrictive than
+    // grantToolToAgent / setToolClassification. The admin is asking
+    // to undo a manual override. They must be allowed to do that
+    // even if the cache has drifted (renamed tool, MCP upgrade) as
+    // long as some persisted state ties the name to this server:
+    //
+    //   - cache descriptor present → reseed from live descriptor
+    //   - cache gone but classification row exists → delete the
+    //     manual row + reseed from a name-only classify (safe
+    //     fallback; same heuristic as runtime spawn for unseeded
+    //     tools)
+    //   - nothing anywhere → pure typo, throw
+    //
+    // Grant/setClassification stay strict because phantom writes
+    // there are exploitable; reset only deletes / re-seeds an
+    // inferred row, neither of which corrupts the runtime palette.
+    const cache = this.repo.getMcpToolCache(organizationId, serverId);
+    const descriptor = cache?.tools.find((t) => t.name === toolName);
+    const stored = this.repo.getMcpToolClassification(
+      organizationId,
+      serverId,
+      toolName,
+    );
+    if (!descriptor && !stored) {
+      throw new Error(
+        `Tool not found: "${toolName}" on MCP server "${serverId}". Run Test on the server first or check the tool name.`,
+      );
+    }
+
+    // Single upsert: ON CONFLICT REPLACE collapses delete+reseed into
+    // one statement, so a transient failure can't strand the tool
+    // unclassified between the two writes.
+    const inf = classifyTool({
+      name: descriptor?.name ?? toolName,
+      description: descriptor?.description,
+      category: server.category,
+      declaredDestructive: descriptor?.destructive,
+    });
+    const now = new Date().toISOString();
+    return this.repo.upsertMcpToolClassification({
+      organizationId,
+      mcpServerId: serverId,
+      toolName: descriptor?.name ?? toolName,
+      risk: inf.risk,
+      source: 'inferred',
+      needsReview: inf.needsReview,
+      reason: inf.reason,
+      updatedAt: now,
+      updatedBy: 'system:inference',
+    });
   }
 
   // ----------------- Attachments ---------------------------------------
@@ -419,6 +968,15 @@ export class McpRegistryService {
   detach(organizationId: string, memberId: string, mcpServerId: string): void {
     this.requireOrganization(organizationId);
     this.repo.deleteAgentMcpAttachment(organizationId, memberId, mcpServerId);
+    // Cascade per-tool grants too. Without this, re-attaching later
+    // would immediately restore stale grants — flipping the agent
+    // back into allowlist mode with whatever tools were granted
+    // before, none of which the operator explicitly re-authorised.
+    this.repo.deleteAgentToolAttachmentsForAgent(
+      organizationId,
+      memberId,
+      mcpServerId,
+    );
   }
 
   listAttachments(organizationId: string, memberId: string) {
@@ -521,5 +1079,32 @@ export class McpRegistryService {
       throw new Error(`MCP server not found: ${serverId}`);
     }
     return server;
+  }
+
+  // Validates the tool exists in the *current* cached inventory. The
+  // cache is the source of truth for "is this tool live right now":
+  // both McpRegistryService.test() and the runtime spawn path
+  // (buildMcpToolDefinitions) populate it from a fresh listTools, so
+  // any cache row reflects a tool the MCP just confirmed exists.
+  //
+  // Classification rows are NOT accepted as proof of existence:
+  // mcp_tool_classifications outlives the cache (manual overrides
+  // are sticky by design), so a stale row from a renamed/removed
+  // tool could otherwise authorise grants whose names never match
+  // anything live — the runtime palette filter would then narrow
+  // the agent's tool list to that phantom name and the whole server
+  // would vanish from the model context.
+  //
+  // Throws "Tool not found ..." so the route mapper can return 404.
+  private requireTool(
+    organizationId: string,
+    serverId: string,
+    toolName: string,
+  ): void {
+    const cache = this.repo.getMcpToolCache(organizationId, serverId);
+    if (cache?.tools?.some((t) => t.name === toolName)) return;
+    throw new Error(
+      `Tool not found: "${toolName}" on MCP server "${serverId}". Run Test on the server first or check the tool name.`,
+    );
   }
 }
