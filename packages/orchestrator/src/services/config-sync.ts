@@ -364,7 +364,7 @@ export class ConfigSyncService {
     }
 
     for (const [id, memberIds] of channelMemberships) {
-      this.repo.setChannelMembers(id, [...memberIds].sort());
+      this.repo.setChannelMembers(organizationId, id, [...memberIds].sort());
     }
 
     for (const channel of existingChannels) {

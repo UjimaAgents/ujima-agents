@@ -48,17 +48,47 @@ export function parseJsonArrayRaw(value: unknown): unknown[] {
   return Array.isArray(parsed) ? parsed : [];
 }
 
-export function replaceMemberLinks(
+/**
+ * Replace the channel_members rows for one tenant's channel. Scoping by
+ * organization_id is required: post-migration 042 the channel id is only
+ * unique inside an organization, so deleting by channel_id alone would wipe
+ * another tenant's identically-named channel.
+ */
+export function replaceChannelMemberLinks(
   db: DbHandle,
-  table: 'channel_members' | 'thread_members',
-  keyColumn: 'channel_id' | 'thread_id',
-  keyValue: string,
+  organizationId: string,
+  channelId: string,
   memberIds: string[],
 ): void {
   const uniqueMemberIds = [...new Set(memberIds)].sort();
-  db.prepare(`DELETE FROM ${table} WHERE ${keyColumn} = ?`).run(keyValue);
-  const insert = db.prepare(`INSERT INTO ${table} (${keyColumn}, member_id) VALUES (?, ?)`);
+  db.prepare(
+    'DELETE FROM channel_members WHERE organization_id = ? AND channel_id = ?',
+  ).run(organizationId, channelId);
+  const insert = db.prepare(
+    'INSERT INTO channel_members (organization_id, channel_id, member_id) VALUES (?, ?, ?)',
+  );
   for (const memberId of uniqueMemberIds) {
-    insert.run(keyValue, memberId);
+    insert.run(organizationId, channelId, memberId);
+  }
+}
+
+/**
+ * Replace the thread_members rows for a thread. Thread ids are still globally
+ * unique (threads.id remains the sole primary key), so no organization scope
+ * is required here — but callers must still resolve the thread id from a
+ * tenant-scoped lookup before reaching this point.
+ */
+export function replaceThreadMemberLinks(
+  db: DbHandle,
+  threadId: string,
+  memberIds: string[],
+): void {
+  const uniqueMemberIds = [...new Set(memberIds)].sort();
+  db.prepare('DELETE FROM thread_members WHERE thread_id = ?').run(threadId);
+  const insert = db.prepare(
+    'INSERT INTO thread_members (thread_id, member_id) VALUES (?, ?)',
+  );
+  for (const memberId of uniqueMemberIds) {
+    insert.run(threadId, memberId);
   }
 }

@@ -270,7 +270,7 @@ export class SchedulerService {
         !channel.memberIds.includes(job.memberId)
       ) {
         const nextMemberIds = [...channel.memberIds, job.memberId].sort();
-        this.repo.setChannelMembers(channel.id, nextMemberIds);
+        this.repo.setChannelMembers(job.organizationId, channel.id, nextMemberIds);
       }
 
       await this.conversations.sendMessage({

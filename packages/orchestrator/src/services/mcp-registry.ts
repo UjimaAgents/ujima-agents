@@ -898,39 +898,26 @@ export class McpRegistryService {
       );
     }
 
-    // Atomic: delete the manual override + reseed the inferred row
-    // in one transaction so a transient seed failure (DB lock, IO
-    // error, …) doesn't leave the tool unclassified with the
-    // operator's manual decision already destroyed.
+    // Single upsert: ON CONFLICT REPLACE collapses delete+reseed into
+    // one statement, so a transient failure can't strand the tool
+    // unclassified between the two writes.
     const inf = classifyTool({
       name: descriptor?.name ?? toolName,
       description: descriptor?.description,
       category: server.category,
       declaredDestructive: descriptor?.destructive,
     });
-    return this.repo.transaction(() => {
-      this.repo.deleteMcpToolClassification(organizationId, serverId, toolName);
-      this.repo.seedInferredClassifications(organizationId, serverId, [
-        {
-          toolName: descriptor?.name ?? toolName,
-          risk: inf.risk,
-          needsReview: inf.needsReview,
-          reason: inf.reason,
-        },
-      ]);
-      const row = this.repo.getMcpToolClassification(
-        organizationId,
-        serverId,
-        toolName,
-      );
-      if (!row) {
-        // requireTool + seed guarantee a row exists; this branch is
-        // a programmer-error rail, not a code path admins ever see.
-        throw new Error(
-          `Tool not found: "${toolName}" on MCP server "${serverId}" after reseed`,
-        );
-      }
-      return row;
+    const now = new Date().toISOString();
+    return this.repo.upsertMcpToolClassification({
+      organizationId,
+      mcpServerId: serverId,
+      toolName: descriptor?.name ?? toolName,
+      risk: inf.risk,
+      source: 'inferred',
+      needsReview: inf.needsReview,
+      reason: inf.reason,
+      updatedAt: now,
+      updatedBy: 'system:inference',
     });
   }
 

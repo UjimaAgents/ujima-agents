@@ -278,7 +278,7 @@ export class OnboardingService {
     }
 
     for (const [id, ids] of channelMemberships) {
-      this.repo.setChannelMembers(id, [...ids]);
+      this.repo.setChannelMembers(organizationId, id, [...ids]);
     }
 
     for (const member of members) {

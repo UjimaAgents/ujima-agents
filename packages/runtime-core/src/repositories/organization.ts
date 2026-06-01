@@ -134,10 +134,8 @@ export function deleteOrganizationData(db: DbHandle, organizationId: string): vo
     run('DELETE FROM interactive_questions WHERE organization_id = ?', organizationId);
     run('DELETE FROM goal_tasks WHERE organization_id = ?', organizationId);
     run('DELETE FROM goals WHERE organization_id = ?', organizationId);
-    run(
-      'DELETE FROM channel_members WHERE channel_id IN (SELECT id FROM channels WHERE organization_id = ?)',
-      organizationId,
-    );
+    run('DELETE FROM channel_members WHERE organization_id = ?', organizationId);
+    run('DELETE FROM channel_member_modes WHERE organization_id = ?', organizationId);
     run('DELETE FROM channels WHERE organization_id = ?', organizationId);
     run(
       'DELETE FROM thread_members WHERE thread_id IN (SELECT id FROM threads WHERE organization_id = ?)',

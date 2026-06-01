@@ -192,7 +192,7 @@ export class TaskSessionService {
         });
         this.repo.transaction(() => {
           this.repo.saveChannel(channelToSave);
-          this.repo.setChannelMembers(channelId, channelMemberIds);
+          this.repo.setChannelMembers(input.organizationId, channelId, channelMemberIds);
           this.repo.ensureThread({
             id: channelId,
             organizationId: input.organizationId,

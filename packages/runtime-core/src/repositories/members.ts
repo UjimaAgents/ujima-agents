@@ -27,7 +27,7 @@ export function saveMember(db: DbHandle, member: Member): Member {
   db.prepare(
     `INSERT INTO members (id, organization_id, name, kind, role_name, llm, model, shell_approval_mode, presence, created_at, updated_at, retired_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(id) DO UPDATE SET
+     ON CONFLICT(organization_id, id) DO UPDATE SET
        name = excluded.name,
        kind = excluded.kind,
        role_name = excluded.role_name,

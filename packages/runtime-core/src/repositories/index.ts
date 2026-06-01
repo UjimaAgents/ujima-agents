@@ -391,20 +391,39 @@ export class Repository {
     limit?: number,
     excludeKinds?: readonly ChannelKind[],
   ): PaginatedChannels => readChannels(this.db, organizationId, cursor, limit, excludeKinds);
-  setChannelMembers = (channelId: string, memberIds: string[]): void =>
-    writeChannelMembers(this.db, channelId, memberIds);
-  deleteChannel = (channelId: string): void =>
-    removeChannel(this.db, channelId);
-  setChannelMemberMode = (channelId: string, memberId: string, mode: ChannelMemberMode): void =>
-    writeChannelMemberMode(this.db, channelId, memberId, mode);
-  getChannelMemberMode = (channelId: string, memberId: string): ChannelMemberMode | null =>
-    readChannelMemberMode(this.db, channelId, memberId);
-  listChannelMemberModes = (memberId: string): ChannelMemberSettings[] =>
-    readChannelMemberModes(this.db, memberId);
-  listChannelMemberModesForChannel = (channelId: string): ChannelMemberSettings[] =>
-    readChannelMemberModesForChannel(this.db, channelId);
-  deleteChannelMemberMode = (channelId: string, memberId: string): void =>
-    deleteChannelMemberMode(this.db, channelId, memberId);
+  setChannelMembers = (
+    organizationId: string,
+    channelId: string,
+    memberIds: string[],
+  ): void => writeChannelMembers(this.db, organizationId, channelId, memberIds);
+  deleteChannel = (organizationId: string, channelId: string): void =>
+    removeChannel(this.db, organizationId, channelId);
+  setChannelMemberMode = (
+    organizationId: string,
+    channelId: string,
+    memberId: string,
+    mode: ChannelMemberMode,
+  ): void => writeChannelMemberMode(this.db, organizationId, channelId, memberId, mode);
+  getChannelMemberMode = (
+    organizationId: string,
+    channelId: string,
+    memberId: string,
+  ): ChannelMemberMode | null =>
+    readChannelMemberMode(this.db, organizationId, channelId, memberId);
+  listChannelMemberModes = (
+    organizationId: string,
+    memberId: string,
+  ): ChannelMemberSettings[] => readChannelMemberModes(this.db, organizationId, memberId);
+  listChannelMemberModesForChannel = (
+    organizationId: string,
+    channelId: string,
+  ): ChannelMemberSettings[] =>
+    readChannelMemberModesForChannel(this.db, organizationId, channelId);
+  deleteChannelMemberMode = (
+    organizationId: string,
+    channelId: string,
+    memberId: string,
+  ): void => deleteChannelMemberMode(this.db, organizationId, channelId, memberId);
 
   saveThread = (thread: ConversationThread): ConversationThread =>
     writeThread(this.db, thread);
@@ -412,8 +431,11 @@ export class Repository {
     ensureThreadRecord(this.db, thread);
   getThread = (organizationId: string, threadId: string): ConversationThread | null =>
     readThread(this.db, organizationId, threadId);
-  setThreadMembers = (threadId: string, memberIds: string[]): void =>
-    writeThreadMembers(this.db, threadId, memberIds);
+  setThreadMembers = (
+    organizationId: string,
+    threadId: string,
+    memberIds: string[],
+  ): void => writeThreadMembers(this.db, organizationId, threadId, memberIds);
 
   saveMessage = (message: Message): Message => writeMessage(this.db, message);
   updateMessage = (message: Message): Message => writeMessageUpdate(this.db, message);

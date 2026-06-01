@@ -43,7 +43,25 @@ describe('database migrations', () => {
         role_name TEXT NOT NULL,
         presence TEXT NOT NULL DEFAULT 'offline',
         created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
+        updated_at TEXT NOT NULL,
+        retired_at TEXT
+      );
+
+      -- Link tables introduced by 003_org_mode_core. Migration 043 ALTERs
+      -- both into composite-keyed shapes, so they must exist on legacy
+      -- fixtures that claim 003 was applied or the rename fails.
+      CREATE TABLE channel_members (
+        channel_id TEXT NOT NULL,
+        member_id  TEXT NOT NULL,
+        PRIMARY KEY (channel_id, member_id)
+      );
+
+      CREATE TABLE channel_member_modes (
+        channel_id TEXT NOT NULL,
+        member_id  TEXT NOT NULL,
+        mode       TEXT NOT NULL DEFAULT 'active',
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (channel_id, member_id)
       );
 
       CREATE TABLE messages (

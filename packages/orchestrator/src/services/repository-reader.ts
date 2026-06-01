@@ -164,13 +164,29 @@ export interface ConversationRepository extends RepositoryReader {
     excludeKinds?: readonly ChannelKind[],
   ): PaginatedChannels;
   saveChannel(channel: Channel): Channel;
-  setChannelMembers(channelId: string, memberIds: string[]): void;
-  setChannelMemberMode(channelId: string, memberId: string, mode: ChannelMemberMode): void;
-  getChannelMemberMode(channelId: string, memberId: string): ChannelMemberMode | null;
-  listChannelMemberModes(memberId: string): ChannelMemberSettings[];
-  listChannelMemberModesForChannel(channelId: string): ChannelMemberSettings[];
-  deleteChannelMemberMode(channelId: string, memberId: string): void;
-  deleteChannel(channelId: string): void;
+  setChannelMembers(organizationId: string, channelId: string, memberIds: string[]): void;
+  setChannelMemberMode(
+    organizationId: string,
+    channelId: string,
+    memberId: string,
+    mode: ChannelMemberMode,
+  ): void;
+  getChannelMemberMode(
+    organizationId: string,
+    channelId: string,
+    memberId: string,
+  ): ChannelMemberMode | null;
+  listChannelMemberModes(organizationId: string, memberId: string): ChannelMemberSettings[];
+  listChannelMemberModesForChannel(
+    organizationId: string,
+    channelId: string,
+  ): ChannelMemberSettings[];
+  deleteChannelMemberMode(
+    organizationId: string,
+    channelId: string,
+    memberId: string,
+  ): void;
+  deleteChannel(organizationId: string, channelId: string): void;
   getThread(organizationId: string, threadId: string): ConversationThread | null;
   ensureThread(thread: ConversationThread): ConversationThread;
   getMessage(organizationId: string, messageId: string): Message | null;
