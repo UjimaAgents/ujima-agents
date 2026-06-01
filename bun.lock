@@ -188,7 +188,7 @@
     },
     "packages/distribution": {
       "name": "@ujima/agents",
-      "version": "0.0.9",
+      "version": "0.0.13",
       "bin": {
         "ujima": "./dist/cli.js",
       },
@@ -250,6 +250,7 @@
       },
       "devDependencies": {
         "@types/diff": "^8.0.0",
+        "@ujima/runtime-core": "workspace:*",
       },
     },
     "packages/permissions": {

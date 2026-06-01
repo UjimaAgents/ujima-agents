@@ -6,7 +6,7 @@ import {
   GoalSystemService,
   IMPLEMENT_QUESTION_OPTION,
   IMPLEMENT_QUESTION_TEXT,
-} from './goal-system.js';
+} from '@ujima/orchestrator';
 
 function bootstrap() {
   const db = openDatabase({ dbPath: ':memory:' });

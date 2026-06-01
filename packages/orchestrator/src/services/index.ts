@@ -78,7 +78,11 @@ export {
   persistTeamConfig,
 } from './config-sync.js';
 export { ConversationService } from './conversation.js';
-export { GoalSystemService } from './goal-system.js';
+export {
+  GoalSystemService,
+  IMPLEMENT_QUESTION_OPTION,
+  IMPLEMENT_QUESTION_TEXT,
+} from './goal-system.js';
 export type { ParsedPlanTask } from './goal-system.js';
 export {
   SELF_NOTE_COMPACTED_MARKER,
@@ -565,15 +569,26 @@ export async function runAgentDelegateTurn(input: {
   timeoutMs?: number;
   pollIntervalMs?: number;
 }): Promise<AgentDelegateResult> {
-  const target = input.repo
-    .listMembers(input.organizationId)
-    .find((member) => member.kind === AGENT_KIND && (member.id === input.to || member.name === input.to));
+  const members = input.repo.listMembers(input.organizationId);
+  const activeAgents = members.filter(
+    (member) => member.kind === AGENT_KIND && !member.retiredAt,
+  );
+  const target = activeAgents.find(
+    (member) => member.id === input.to || member.name === input.to,
+  );
   if (!target) {
-    const names = input.repo
-      .listMembers(input.organizationId)
-      .filter((member) => member.kind === AGENT_KIND)
-      .map((member) => member.name)
-      .join(', ');
+    const names = activeAgents.map((member) => member.name).join(', ');
+    const retiredMatch = members.find(
+      (member) =>
+        member.kind === AGENT_KIND &&
+        member.retiredAt &&
+        (member.id === input.to || member.name === input.to),
+    );
+    if (retiredMatch) {
+      throw new Error(
+        `Agent "${input.to}" has been retired. Available agents: ${names}`,
+      );
+    }
     throw new Error(`Agent "${input.to}" not found. Available agents: ${names}`);
   }
 
