@@ -83,11 +83,6 @@ async function main(): Promise<void> {
       WEB_PORT,
       WEB_HOST: '127.0.0.1',
       PATH: `${join(installRoot, 'bin')}:${process.env.PATH ?? ''}`,
-      // This smoke test exercises the pack/install/start mechanics
-      // from a tarball install — license enforcement is tested
-      // separately by @ujima/license unit tests, and isn't what
-      // we're validating here. Without this, the new license gate
-      // would refuse to start the daemon.
       UJIMA_DEV: '1',
     },
     stdout: 'pipe',
