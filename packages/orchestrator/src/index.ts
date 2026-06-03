@@ -67,6 +67,7 @@ export {
   deleteDashboardTeamOverride,
   upsertDashboardTeamOverride,
   McpRegistryService,
+  GovernanceService,
   PluginRegistryService,
   SpiritService,
   SchedulerService,

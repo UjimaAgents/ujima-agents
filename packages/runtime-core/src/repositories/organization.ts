@@ -173,6 +173,15 @@ export function deleteOrganizationData(db: DbHandle, organizationId: string): vo
     run('DELETE FROM workspace_members WHERE organization_id = ?', organizationId);
     run('DELETE FROM members WHERE organization_id = ?', organizationId);
     run('DELETE FROM provider_credentials WHERE organization_id = ?', organizationId);
+    // Governance tables are org-scoped but have no FK cascade, so the
+    // cleanup must reach them explicitly. Without these, a re-used
+    // org id would resurface stale per-tool grants / classifications
+    // straight into the runtime palette and the catalog UI.
+    run('DELETE FROM agent_tool_attachments WHERE organization_id = ?', organizationId);
+    run('DELETE FROM mcp_tool_classifications WHERE organization_id = ?', organizationId);
+    run('DELETE FROM agent_mcp_attachments WHERE organization_id = ?', organizationId);
+    run('DELETE FROM mcp_tool_cache WHERE organization_id = ?', organizationId);
+    run('DELETE FROM mcp_servers WHERE organization_id = ?', organizationId);
     run('DELETE FROM workspace_settings WHERE organization_id = ?', organizationId);
     run('DELETE FROM config_field_ownership WHERE organization_id = ?', organizationId);
     run('DELETE FROM workspaces WHERE id = ?', `ws_${organizationId}`);

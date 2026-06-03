@@ -22,6 +22,7 @@ import { GoalSystemService } from './goal-system.js';
 import { MemoryReviewService } from './memory-review.js';
 import { TrajectoryService } from './trajectory.js';
 import { McpRegistryService } from './mcp-registry.js';
+import { GovernanceService } from './governance-service.js';
 import { PluginRegistryService } from './plugin-registry.js';
 import { OnboardingService } from './onboarding.js';
 import {
@@ -168,6 +169,7 @@ export type {
   TestMcpResult,
   UpdateMcpServerInput,
 } from './mcp-registry.js';
+export { GovernanceService } from './governance-service.js';
 export { PluginRegistryService } from './plugin-registry.js';
 export type {
   PluginInstallInput,
@@ -246,6 +248,7 @@ export interface ApiServices {
   spirits: SpiritService;
   activeSpirits: ActiveSpiritRegistry;
   mcpRegistry: McpRegistryService;
+  governance: GovernanceService;
   pluginRegistry: PluginRegistryService;
 }
 
@@ -712,7 +715,11 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   const spiritModelResolver =
     context.spiritModelResolver ??
     createSpiritModelResolver(context.teamStore, context.repo);
-  const goals = new GoalSystemService(context.repo, (orgId, runId) => resumeInputRun(orgId, runId));
+  const goals = new GoalSystemService(
+    context.repo,
+    (orgId, runId) => resumeInputRun(orgId, runId),
+    conversations,
+  );
 
   const innerTools = new ToolServiceImpl(
     context.teamStore,
@@ -811,7 +818,9 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   const auth = new AuthService(context.repo);
   const bootstrap = new BootstrapService(context.repo, context.teamStore, auth);
   const onboarding = new OnboardingService(context.repo, context.teamStore);
-  const scheduler = new SchedulerService(context.repo, conversations, context.realtime);
+  const scheduler = new SchedulerService(context.repo, conversations, context.realtime, {
+    onTick: () => goals.sweepAllPendingTasks(),
+  });
   const settings = new SettingsService(context.repo, context.teamStore);
   const workspaces = new WorkspaceService(
     context.repo,
@@ -821,6 +830,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   );
   const taskSessions = new TaskSessionService(context.repo, conversations, spirits);
   const mcpRegistry = new McpRegistryService(context.repo);
+  const governance = new GovernanceService(context.repo);
   const pluginRegistry = new PluginRegistryService(
     context.repo,
     context.archiveRoot ?? process.env.UJIMA_HOME ?? process.cwd(),
@@ -896,6 +906,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     scheduler,
     activeSpirits,
     mcpRegistry,
+    governance,
     pluginRegistry,
   };
 }

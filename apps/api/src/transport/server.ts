@@ -14,6 +14,7 @@ import type {
   ConversationService,
   GoalSystemService,
   McpRegistryService,
+  GovernanceService,
   PluginRegistryService,
   OnboardingService,
   SchedulerService,
@@ -53,6 +54,7 @@ import {registerSettingsRoutes} from "./routes/settings.js";
 import {registerTaskRoutes} from "./routes/tasks.js";
 import {registerTaskSessionRoutes} from "./routes/task-sessions.js";
 import {registerMcpRoutes} from "./routes/mcps.js";
+import {registerGovernanceRoutes} from "./routes/governance.js";
 import {registerPluginRoutes} from "./routes/plugins.js";
 import {registerCultureRoutes} from "./routes/culture.js";
 import {registerWorkspaceRoutes} from "./routes/workspaces.js";
@@ -96,6 +98,7 @@ export interface TransportOptions {
       spirits: SpiritService;
       activeSpirits: ActiveSpiritRegistry;
       mcpRegistry: McpRegistryService;
+      governance: GovernanceService;
       pluginRegistry: PluginRegistryService;
     };
   };
@@ -317,6 +320,10 @@ export function createTransport(opts: TransportOptions): Transport {
         registerMcpRoutes(api, {
           auth: services.auth,
           mcpRegistry: services.mcpRegistry,
+        });
+        registerGovernanceRoutes(api, {
+          auth: services.auth,
+          governance: services.governance,
         });
         registerPluginRoutes(api, {
           auth: services.auth,

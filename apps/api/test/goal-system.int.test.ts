@@ -360,6 +360,104 @@ describe('GoalSystemService.updateTask', () => {
     );
   });
 
+  // Supervisor can rename a task without going through goal.start.
+  // Plan-edit fields (title/description/assignee_id) require the
+  // caller to be the goal's supervisor; status edits do not.
+  it('lets the supervisor rename a task and reassign it', () => {
+    const { repo, orgId } = bootstrap();
+    const goals = new GoalSystemService(repo);
+    const { tasks } = goals.start({
+      organizationId: orgId,
+      channelId: 'channel-edit',
+      supervisorId: 'supervisor-1',
+      title: 'Plan',
+      planMarkdown: '## Plan',
+      tasks: [{ title: 'Original title', assigneeId: 'agent-a' }],
+    });
+    const updated = goals.updateTask({
+      organizationId: orgId,
+      taskId: tasks[0]!.id,
+      title: 'Renamed title',
+      assigneeId: 'agent-b',
+      callerMemberId: 'supervisor-1',
+    });
+    expect(updated.title).toBe('Renamed title');
+    expect(updated.assigneeId).toBe('agent-b');
+    expect(updated.status).toBe('pending');
+  });
+
+  it('rejects plan-edits from a non-supervisor caller', () => {
+    const { repo, orgId } = bootstrap();
+    const goals = new GoalSystemService(repo);
+    const { tasks } = goals.start({
+      organizationId: orgId,
+      channelId: 'channel-edit-auth',
+      supervisorId: 'supervisor-1',
+      title: 'Plan',
+      planMarkdown: '## Plan',
+      tasks: [{ title: 'Original', assigneeId: 'agent-a' }],
+    });
+    expect(() =>
+      goals.updateTask({
+        organizationId: orgId,
+        taskId: tasks[0]!.id,
+        title: 'Hijack',
+        callerMemberId: 'agent-a',
+      }),
+    ).toThrow(/Only the goal supervisor/);
+  });
+
+  // Regression: callerMemberId must be REQUIRED when editing the
+  // plan, not opt-in. The previous shape `if (callerMemberId && ...)`
+  // short-circuited the check when callerMemberId was omitted, so
+  // any caller could rewrite another user's task definition.
+  it('rejects plan-edits when callerMemberId is missing', () => {
+    const { repo, orgId } = bootstrap();
+    const goals = new GoalSystemService(repo);
+    const { tasks } = goals.start({
+      organizationId: orgId,
+      channelId: 'channel-edit-anon',
+      supervisorId: 'supervisor-1',
+      title: 'Plan',
+      planMarkdown: '## Plan',
+      tasks: [{ title: 'Original', assigneeId: 'agent-a' }],
+    });
+    expect(() =>
+      goals.updateTask({
+        organizationId: orgId,
+        taskId: tasks[0]!.id,
+        title: 'Anon hijack',
+        // callerMemberId intentionally omitted
+      }),
+    ).toThrow(/callerMemberId is required/);
+  });
+
+  // Regression: a single call that combines plan edits +
+  // handoverSummary must persist BOTH. Pre-fix the
+  // `if (handoverSummary && !editsPlan)` branch swallowed the note
+  // whenever the same call also rewrote title/description/assignee.
+  it('persists handoverSummary on the same call as a plan edit', () => {
+    const { repo, orgId } = bootstrap();
+    const goals = new GoalSystemService(repo);
+    const { tasks } = goals.start({
+      organizationId: orgId,
+      channelId: 'channel-edit-handover',
+      supervisorId: 'supervisor-1',
+      title: 'Plan',
+      planMarkdown: '## Plan',
+      tasks: [{ title: 'Original', assigneeId: 'agent-a' }],
+    });
+    const updated = goals.updateTask({
+      organizationId: orgId,
+      taskId: tasks[0]!.id,
+      title: 'Renamed',
+      handoverSummary: 'Why the rename matters',
+      callerMemberId: 'supervisor-1',
+    });
+    expect(updated.title).toBe('Renamed');
+    expect(updated.handoverSummary).toBe('Why the rename matters');
+  });
+
   it('fails loudly when the agent updates a task that was never created', () => {
     const { repo, orgId } = bootstrap();
     const goals = new GoalSystemService(repo);
@@ -371,6 +469,151 @@ describe('GoalSystemService.updateTask', () => {
         status: 'completed',
       }),
     ).toThrow('Goal task not found: missing-task');
+  });
+
+  // Replaces the deleted commitment-sweeper hand-off behaviour.
+  // When Task A completes, every PENDING task whose
+  // depends_on_task_id was A must get a single nudge posted to the
+  // goal's channel @-mentioning its assignee.
+  it('nudges the dependent task assignee when a blocking task completes', () => {
+    const { repo, orgId } = bootstrap();
+    const posts: { channelId: string; senderId: string; body: string; mentions?: string[] }[] = [];
+    const conversations = {
+      postToChannel: (args: {
+        organizationId: string;
+        senderId: string;
+        channelId: string;
+        body: string;
+        mentions?: string[];
+      }) => {
+        posts.push({
+          channelId: args.channelId,
+          senderId: args.senderId,
+          body: args.body,
+          mentions: args.mentions,
+        });
+        return undefined as never;
+      },
+    };
+    const goals = new GoalSystemService(repo, undefined, conversations as never);
+    const { tasks } = goals.start({
+      organizationId: orgId,
+      channelId: 'channel-handoff',
+      supervisorId: 'supervisor-1',
+      title: 'Two-step',
+      planMarkdown: '## Plan',
+      tasks: [
+        { title: 'Step 1', assigneeId: 'agent-a' },
+        { title: 'Step 2', assigneeId: 'agent-b', dependsOnTaskIndex: 0 },
+      ],
+    });
+
+    goals.updateTask({
+      organizationId: orgId,
+      taskId: tasks[0]!.id,
+      status: 'completed',
+      handoverSummary: 'Step 1 done; Step 2 inputs ready.',
+    });
+
+    expect(posts).toHaveLength(1);
+    expect(posts[0]?.channelId).toBe('channel-handoff');
+    expect(posts[0]?.senderId).toBe('supervisor-1');
+    expect(posts[0]?.mentions).toEqual(['agent-b']);
+    expect(posts[0]?.body).toContain('Step 2');
+    expect(posts[0]?.body).toContain('unblocked');
+  });
+
+  // sweepAllPendingTasks must also poke in-progress tasks that
+  // have gone stale, BUT skip when the assignee has an active run
+  // (the "is the agent still working?" guard). Without the guard
+  // we'd interrupt agents mid-tool-call.
+  it('sweep nudges stalled in-progress tasks but skips when assignee has an active run', () => {
+    const { repo, orgId } = bootstrap();
+    const posts: { body: string }[] = [];
+    const conversations = {
+      postToChannel: (args: { body: string }) => {
+        posts.push({ body: args.body });
+        return undefined as never;
+      },
+    };
+    const goals = new GoalSystemService(repo, undefined, conversations as never);
+    const { tasks, goal } = goals.start({
+      organizationId: orgId,
+      channelId: 'channel-stalled',
+      supervisorId: 'supervisor-1',
+      title: 'Solo',
+      planMarkdown: '## Plan',
+      tasks: [{ title: 'Step 1', assigneeId: 'agent-a' }],
+    });
+    // Flip the (only) task to in_progress and backdate updated_at
+    // past the IN_PROGRESS idle threshold so the sweep will consider
+    // it stalled. saveGoalTask round-trips updated_at.
+    const t = tasks[0]!;
+    const stalledAt = new Date(Date.now() - 11 * 60 * 1000).toISOString();
+    repo.saveGoalTask({ ...t, status: 'in_progress', updatedAt: stalledAt });
+    // Mark the goal running so the sweep enters it.
+    repo.saveGoal({ ...goal, status: 'running', updatedAt: stalledAt });
+
+    // First sweep: no active run → must nudge.
+    goals.sweepAllPendingTasks();
+    expect(posts).toHaveLength(1);
+    expect(posts[0]?.body).toContain('in progress with no update');
+
+    // Reset dedup so the next sweep can fire, then add an active
+    // run for the assignee — must NOT nudge.
+    (goals as unknown as { lastNudgedAt: Map<string, number> }).lastNudgedAt.clear();
+    repo.saveRun({
+      id: 'active-run-1',
+      organizationId: orgId,
+      agentId: 'agent-a',
+      threadId: 'channel-stalled',
+      status: 'running',
+      step: 'running',
+      summary: 'working',
+      startedAt: new Date().toISOString(),
+    });
+    goals.sweepAllPendingTasks();
+    expect(posts).toHaveLength(1);
+  });
+
+  // Dedup guard: a second completion that would re-target the
+  // same task within the dedup window must be a no-op. Without
+  // this, a goal whose task gets re-completed (e.g. a status
+  // toggle in the UI) would spam every dependent assignee.
+  it('does not re-nudge the same dependent within the dedup window', () => {
+    const { repo, orgId } = bootstrap();
+    const posts: unknown[] = [];
+    const conversations = {
+      postToChannel: () => {
+        posts.push(true);
+        return undefined as never;
+      },
+    };
+    const goals = new GoalSystemService(repo, undefined, conversations as never);
+    const { tasks } = goals.start({
+      organizationId: orgId,
+      channelId: 'channel-dedup',
+      supervisorId: 'supervisor-1',
+      title: 'Two-step',
+      planMarkdown: '## Plan',
+      tasks: [
+        { title: 'Step 1', assigneeId: 'agent-a' },
+        { title: 'Step 2', assigneeId: 'agent-b', dependsOnTaskIndex: 0 },
+      ],
+    });
+    goals.updateTask({
+      organizationId: orgId,
+      taskId: tasks[0]!.id,
+      status: 'completed',
+      handoverSummary: 'Step 1 done; Step 2 inputs ready.',
+    });
+    goals.updateTask({
+      organizationId: orgId,
+      taskId: tasks[0]!.id,
+      status: 'completed',
+      handoverSummary: 'Step 1 done; Step 2 inputs ready.',
+    });
+    expect(posts).toHaveLength(1);
   });
 });
 

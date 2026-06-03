@@ -32,9 +32,25 @@ const QuestionAskSchema = z.object({
 
 const GoalTaskUpdateSchema = z.object({
   task_id: z.string().min(1),
-  status: GoalTaskStatusSchema,
+  // All edit fields are optional. Anyone may set `status` /
+  // `handover_summary`; `title` / `description` / `assignee_id`
+  // require the caller to be the goal's supervisor (enforced in
+  // GoalSystemService.updateTask). At least one field must be set
+  // — refined below.
+  status: GoalTaskStatusSchema.optional(),
   handover_summary: z.string().min(1).optional(),
-});
+  title: z.string().min(1).optional(),
+  description: z.string().optional(),
+  assignee_id: z.string().min(1).optional(),
+}).refine(
+  (v) =>
+    v.status !== undefined ||
+    v.handover_summary !== undefined ||
+    v.title !== undefined ||
+    v.description !== undefined ||
+    v.assignee_id !== undefined,
+  { message: 'goal_task_update requires at least one field to change' },
+);
 
 function invocationChannelId(ctx: ToolExecutionContext): string {
   const threadId = ctx.invocation.threadId;
@@ -64,17 +80,51 @@ export const goalStartTool: OrchestratorTool<typeof GoalStartSchema> = {
       const existingQuestions = ctx.repo.listInteractiveQuestionsByRunId?.(ctx.invocation.organizationId, runId) ?? [];
       const matching = existingQuestions.find((q) => q.toolCallId === ctx.invocation.toolCallId);
       if (matching?.status === 'answered') {
+        // Resume after the implement-question was answered. Re-read
+        // the goal + tasks from the previous step's output and
+        // explicitly omit `status` and `questionId` before applying
+        // the answered shape. The earlier spread-then-override
+        // pattern leaked a stale `questionId` from the
+        // waiting_for_input step; the model then read that dangling
+        // `questionId` as "tool is still asking" and hallucinated
+        // an "interactive user input required" error even though
+        // the override flipped status to 'completed'. Stripping the
+        // two contradictory fields removes the ambiguity.
         const existingStep = ctx.repo
           .listRunSteps(ctx.invocation.organizationId, runId)
           .find((step) => step.toolCallId === ctx.invocation.toolCallId);
+        const carry =
+          existingStep?.output && typeof existingStep.output === 'object'
+            ? (existingStep.output as Record<string, unknown>)
+            : {};
+        const { status: _staleStatus, questionId: _staleQuestionId, ...rest } = carry;
         return {
-          ...((existingStep?.output && typeof existingStep.output === 'object') ? existingStep.output : {}),
+          ...rest,
           status: 'completed',
           selectedOption: matching.selectedOption,
         };
       }
       if (matching?.status === 'pending') {
         return { status: 'waiting_for_input', questionId: matching.id };
+      }
+      // Same-run, different toolCallId dedup. The model occasionally
+      // retries goal.start within a few hundred ms (different
+      // toolCallId so the (runId, toolCallId) check above doesn't
+      // fire). The second call's create-or-replace path runs
+      // `supersede pending questions for this channel` — which
+      // includes the FIRST call's own question, orphaning the
+      // originating run in waiting_for_input forever. Detect the
+      // duplicate by looking for any pending question this run has
+      // already raised in this channel and return its id instead of
+      // creating a fresh goal + question pair.
+      const channelId = invocationChannelId(ctx);
+      const pendingForChannel = ctx.repo.listPendingInteractiveQuestions?.(
+        ctx.invocation.organizationId,
+        channelId,
+      ) ?? [];
+      const ownPending = pendingForChannel.find((q) => q.runId === runId);
+      if (ownPending) {
+        return { status: 'waiting_for_input', questionId: ownPending.id };
       }
     }
 
@@ -180,6 +230,10 @@ export const goalTaskUpdateTool: OrchestratorTool<typeof GoalTaskUpdateSchema> =
       taskId: input.task_id,
       status: input.status,
       handoverSummary: input.handover_summary,
+      title: input.title,
+      description: input.description,
+      assigneeId: input.assignee_id,
+      callerMemberId: ctx.invocation.memberId,
     });
   },
 };

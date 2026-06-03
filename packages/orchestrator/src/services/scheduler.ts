@@ -140,12 +140,17 @@ function parseCronField(field: string): ((value: number) => boolean) | null {
 export interface SchedulerServiceOptions {
   /** How often to check for due jobs, in ms (default 30000). */
   pollIntervalMs?: number;
+  // Fired at the end of every tick. Used by GoalSystemService to
+  // sweep idle pending tasks on the same cadence as cron jobs
+  // (avoids a second timer + lock).
+  onTick?: () => Promise<void> | void;
 }
 
 
 export class SchedulerService {
   private timer: ReturnType<typeof setInterval> | null = null;
   private readonly pollIntervalMs: number;
+  private readonly onTick?: () => Promise<void> | void;
   private running = false;
   private tickInFlight = false;
 
@@ -156,6 +161,7 @@ export class SchedulerService {
     options: SchedulerServiceOptions = {},
   ) {
     this.pollIntervalMs = options.pollIntervalMs ?? 30000;
+    this.onTick = options.onTick;
   }
 
   start(): void {
@@ -226,6 +232,12 @@ export class SchedulerService {
     } catch {
       // Swallow tick-level errors so the loop continues
     } finally {
+      try {
+        await this.onTick?.();
+      } catch {
+        // onTick failures (e.g. GoalSystemService.sweepAllPendingTasks)
+        // must never break the cron loop.
+      }
       this.tickInFlight = false;
     }
   }

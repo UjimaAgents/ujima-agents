@@ -9,6 +9,20 @@ export const ToolPolicyState = z.enum([
 ]);
 export type ToolPolicyState = z.infer<typeof ToolPolicyState>;
 
+/**
+ * Risk classification assigned per MCP tool. Drives the `risk_defaults`
+ * fallback in the policy evaluator when no explicit rule matches.
+ */
+export const ToolRiskClass = z.enum(['read', 'write', 'destructive']);
+export type ToolRiskClass = z.infer<typeof ToolRiskClass>;
+
+/**
+ * How a classification was assigned. `manual` survives re-test;
+ * `inferred` and `registry` are recomputable.
+ */
+export const ToolClassificationSource = z.enum(['inferred', 'manual', 'registry']);
+export type ToolClassificationSource = z.infer<typeof ToolClassificationSource>;
+
 export const ToolPolicyRule = z.object({
   mcp_id: z.string(),
   tool_name: z.string(),
@@ -18,6 +32,27 @@ export const ToolPolicyRule = z.object({
   updated_by: z.string().optional(),
 });
 export type ToolPolicyRule = z.infer<typeof ToolPolicyRule>;
+
+// Per-class fallback policy. `inherit` everywhere by default so adding
+// risk_defaults to an existing policy is a no-op until an admin opts in.
+export const RiskDefaultsSchema = z
+  .object({
+    read: ToolPolicyState.default('inherit'),
+    write: ToolPolicyState.default('inherit'),
+    destructive: ToolPolicyState.default('inherit'),
+    unknown: ToolPolicyState.default('inherit'),
+  })
+  .default({});
+export type RiskDefaults = z.infer<typeof RiskDefaultsSchema>;
+
+export function emptyRiskDefaults(): RiskDefaults {
+  return {
+    read: 'inherit',
+    write: 'inherit',
+    destructive: 'inherit',
+    unknown: 'inherit',
+  };
+}
 
 export const GovernancePolicy = z
   .object({
@@ -29,12 +64,14 @@ export const GovernancePolicy = z
       })
       .default({ always_deny: [], default_require_approval: [] }),
     agents: z.record(z.string(), z.array(ToolPolicyRule)).default({}),
+    risk_defaults: RiskDefaultsSchema,
     updated_at: z.string().optional(),
   })
   .default({
     version: 1,
     platform: { always_deny: [], default_require_approval: [] },
     agents: {},
+    risk_defaults: emptyRiskDefaults(),
   });
 export type GovernancePolicy = z.infer<typeof GovernancePolicy>;
 
@@ -43,6 +80,7 @@ export function emptyGovernancePolicy(): GovernancePolicy {
     version: 1,
     platform: { always_deny: [], default_require_approval: [] },
     agents: {},
+    risk_defaults: emptyRiskDefaults(),
   };
 }
 
@@ -62,23 +100,36 @@ export function matchRule(
 
 export interface PolicyEvaluation {
   state: ToolPolicyState;
-  source: 'platform_deny' | 'agent_rule' | 'platform_require_approval' | 'default';
+  source:
+    | 'platform_deny'
+    | 'agent_rule'
+    | 'platform_require_approval'
+    | 'risk_default'
+    | 'default';
   rule?: ToolPolicyRule;
   reason?: string;
+  /** The classification the evaluator consulted, if any. */
+  classification?: ToolRiskClass | 'unknown';
 }
 
 /**
  * Resolve a final state for (agent, mcp, tool). Precedence:
- *   1. platform.always_deny — hard kill-switch; nothing overrides this.
- *   2. agent rule (most specific match wins — exact beats prefix beats '*').
- *   3. platform.default_require_approval — applies when no agent rule says otherwise.
- *   4. default → 'inherit' (caller falls back to legacy allowed_tools/blocked_tools).
+ *   1. platform.always_deny — hard kill-switch.
+ *   2. agent rule (exact > prefix > '*').
+ *   3. platform.default_require_approval.
+ *   4. risk_defaults[classification ?? 'unknown'].
+ *   5. 'inherit' (caller falls back to legacy allowed_tools/blocked_tools).
  */
 export function evaluatePolicy(
   policy: GovernancePolicy,
-  query: { agentId: string; mcpId: string; toolName: string },
+  query: {
+    agentId: string;
+    mcpId: string;
+    toolName: string;
+    classification?: ToolRiskClass | 'unknown';
+  },
 ): PolicyEvaluation {
-  const { agentId, mcpId, toolName } = query;
+  const { agentId, mcpId, toolName, classification } = query;
 
   const platformDeny = bestMatch(policy.platform.always_deny, mcpId, toolName);
   if (platformDeny) {
@@ -87,6 +138,7 @@ export function evaluatePolicy(
       source: 'platform_deny',
       rule: platformDeny,
       reason: platformDeny.reason ?? 'Denied by platform kill-switch',
+      classification,
     };
   }
 
@@ -98,6 +150,7 @@ export function evaluatePolicy(
       source: 'agent_rule',
       rule: agentRule,
       reason: agentRule.reason,
+      classification,
     };
   }
 
@@ -112,10 +165,33 @@ export function evaluatePolicy(
       source: 'platform_require_approval',
       rule: platformApproval,
       reason: platformApproval.reason ?? 'Platform default requires approval',
+      classification,
     };
   }
 
-  return { state: 'inherit', source: 'default' };
+  // risk_defaults only applies to *MCP* tools whose classification was
+  // looked up. Built-in tools (channel.*, self.*, supervisor.*, view,
+  // ls, glob, …) never have a classification — they have their own
+  // policy enforcement in the orchestrator (`checkToolPolicy`). If we
+  // treated `classification === undefined` as the `unknown` bucket,
+  // setting `risk_defaults.unknown = 'require_approval'` would block
+  // EVERY built-in messaging / read tool, breaking standups and
+  // mandatory-reply turns. Require an explicit `'unknown'` from the
+  // classificationLookup before applying the unknown bucket.
+  if (classification !== undefined) {
+    const bucket: keyof RiskDefaults = classification;
+    const riskState = policy.risk_defaults?.[bucket] ?? 'inherit';
+    if (riskState !== 'inherit') {
+      return {
+        state: riskState,
+        source: 'risk_default',
+        reason: `Org default for ${bucket} tools is ${riskState}`,
+        classification,
+      };
+    }
+  }
+
+  return { state: 'inherit', source: 'default', classification };
 }
 
 export function setAgentRule(
@@ -183,6 +259,23 @@ export function setPlatformRule(
     ...policy,
     platform: { ...policy.platform, [bucket]: [...filtered, rule] },
     updated_at: rule.updated_at ?? new Date().toISOString(),
+  };
+}
+
+export function setRiskDefaults(
+  policy: GovernancePolicy,
+  next: Partial<RiskDefaults>,
+): GovernancePolicy {
+  const merged: RiskDefaults = {
+    read: next.read ?? policy.risk_defaults.read,
+    write: next.write ?? policy.risk_defaults.write,
+    destructive: next.destructive ?? policy.risk_defaults.destructive,
+    unknown: next.unknown ?? policy.risk_defaults.unknown,
+  };
+  return {
+    ...policy,
+    risk_defaults: merged,
+    updated_at: new Date().toISOString(),
   };
 }
 

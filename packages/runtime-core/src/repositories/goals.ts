@@ -40,6 +40,7 @@ const toTask = (row: Row): GoalTask =>
     handoverSummary: optionalRowString(row, 'handover_summary'),
     createdAt: rowString(row, 'created_at'),
     updatedAt: rowString(row, 'updated_at'),
+    lastNudgedAt: optionalRowString(row, 'last_nudged_at'),
   });
 
 const toQuestion = (row: Row): InteractiveQuestion =>
@@ -262,6 +263,20 @@ export function updateGoalTaskStatus(
     taskId,
   ) as Row;
   return toTask(row);
+}
+
+// One-line writer used by GoalSystemService.nudgeAssignee. Kept
+// separate from saveGoalTask so the sweeper only touches the one
+// column it owns (avoids racing the agent's own updates).
+export function setGoalTaskLastNudgedAt(
+  db: DbHandle,
+  organizationId: string,
+  taskId: string,
+  isoTimestamp: string,
+): void {
+  db.prepare(
+    'UPDATE goal_tasks SET last_nudged_at = ? WHERE organization_id = ? AND id = ?',
+  ).run(isoTimestamp, organizationId, taskId);
 }
 
 export function saveInteractiveQuestion(db: DbHandle, question: InteractiveQuestion): InteractiveQuestion {

@@ -848,15 +848,30 @@ export const AgentMcpAttachmentSchema = z.object({
 });
 export type AgentMcpAttachment = z.infer<typeof AgentMcpAttachmentSchema>;
 
+// Per-tool grant. When an agent has any grants on a server, the runtime
+// only exposes those specific tools — shrinking the model's tool palette.
+export const AgentToolAttachmentSchema = z.object({
+  organizationId: IdSchema,
+  memberId: IdSchema,
+  mcpServerId: IdSchema,
+  toolName: z.string().min(1),
+  scope: McpAttachmentScopeSchema.default('worker'),
+  createdAt: TimestampSchema,
+  updatedAt: TimestampSchema,
+});
+export type AgentToolAttachment = z.infer<typeof AgentToolAttachmentSchema>;
+
 /**
  * Tool entry as stored in the cache. Mirrors what MCP's `listTools`
- * returns. `destructive` is optional metadata the policy layer reads
- * to decide whether a tool needs explicit approval beyond the default.
+ * returns. `destructive` is a deprecated boolean alias kept for one
+ * release — new code should read the `risk` field on the matching
+ * `McpToolClassificationSchema` row instead.
  */
 export const McpToolDescriptorSchema = z.object({
   name: z.string().min(1),
   description: z.string().default(''),
   inputSchema: z.record(z.string(), z.unknown()).optional(),
+  /** @deprecated use McpToolClassification.risk via the classifications table. */
   destructive: z.boolean().optional(),
 });
 export type McpToolDescriptor = z.infer<typeof McpToolDescriptorSchema>;
@@ -869,6 +884,21 @@ export const McpToolCacheSchema = z.object({
   error: z.string().optional(),
 });
 export type McpToolCache = z.infer<typeof McpToolCacheSchema>;
+
+// Per-tool risk classification. Manual rows survive re-test because
+// seeding uses INSERT OR IGNORE.
+export const McpToolClassificationSchema = z.object({
+  organizationId: IdSchema,
+  mcpServerId: IdSchema,
+  toolName: z.string().min(1),
+  risk: z.enum(['read', 'write', 'destructive']),
+  source: z.enum(['inferred', 'manual', 'registry']),
+  needsReview: z.boolean().default(false),
+  reason: z.string().optional(),
+  updatedAt: TimestampSchema,
+  updatedBy: z.string().optional(),
+});
+export type McpToolClassification = z.infer<typeof McpToolClassificationSchema>;
 
 export const PluginSkillManifestSchema = z.object({
   name: z.string().min(1),

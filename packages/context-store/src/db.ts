@@ -1378,6 +1378,52 @@ const MIGRATIONS: {id: string; up: string}[] = [
         ON channel_member_modes(organization_id, member_id);
     `,
   },
+  {
+    id: '044_mcp_tool_classifications',
+    up: `
+      CREATE TABLE IF NOT EXISTS mcp_tool_classifications (
+        organization_id TEXT NOT NULL,
+        mcp_server_id   TEXT NOT NULL,
+        tool_name       TEXT NOT NULL,
+        risk            TEXT NOT NULL CHECK (risk IN ('read','write','destructive')),
+        source          TEXT NOT NULL CHECK (source IN ('inferred','manual','registry')),
+        needs_review    INTEGER NOT NULL DEFAULT 0,
+        reason          TEXT,
+        updated_at      TEXT NOT NULL,
+        updated_by      TEXT,
+        PRIMARY KEY (organization_id, mcp_server_id, tool_name)
+      );
+      CREATE INDEX IF NOT EXISTS idx_mcp_tool_classifications_org
+        ON mcp_tool_classifications(organization_id);
+      CREATE INDEX IF NOT EXISTS idx_mcp_tool_classifications_org_mcp
+        ON mcp_tool_classifications(organization_id, mcp_server_id);
+    `,
+  },
+  {
+    id: '045_agent_tool_attachments',
+    up: `
+      CREATE TABLE IF NOT EXISTS agent_tool_attachments (
+        organization_id TEXT NOT NULL,
+        member_id       TEXT NOT NULL,
+        mcp_server_id   TEXT NOT NULL,
+        tool_name       TEXT NOT NULL,
+        scope           TEXT NOT NULL DEFAULT 'worker',
+        created_at      TEXT NOT NULL,
+        updated_at      TEXT NOT NULL,
+        PRIMARY KEY (organization_id, member_id, mcp_server_id, tool_name)
+      );
+      CREATE INDEX IF NOT EXISTS idx_agent_tool_attachments_member
+        ON agent_tool_attachments(organization_id, member_id);
+      CREATE INDEX IF NOT EXISTS idx_agent_tool_attachments_member_server
+        ON agent_tool_attachments(organization_id, member_id, mcp_server_id);
+      CREATE INDEX IF NOT EXISTS idx_agent_tool_attachments_tool
+        ON agent_tool_attachments(organization_id, mcp_server_id, tool_name);
+    `,
+  },
+  {
+    id: '046_goal_tasks_last_nudged_at',
+    up: `ALTER TABLE goal_tasks ADD COLUMN last_nudged_at TEXT;`,
+  },
 ];
 
 export interface DbOptions {
@@ -1452,6 +1498,15 @@ function runMigrations(db: DbHandle): void {
     if (
       m.id === "019_message_reasoning_content" &&
       hasColumn(db, "messages", "reasoning_content")
+    ) {
+      insert.run(m.id, Date.now());
+      continue;
+    }
+    // Renumbered through merges (was 044 before main claimed 044/045).
+    // Dev DBs that ran the earlier id already have the column.
+    if (
+      m.id === "046_goal_tasks_last_nudged_at" &&
+      hasColumn(db, "goal_tasks", "last_nudged_at")
     ) {
       insert.run(m.id, Date.now());
       continue;

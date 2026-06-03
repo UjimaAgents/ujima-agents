@@ -95,3 +95,45 @@ export function getModelOptionsForProvider(provider: string): readonly ProviderM
 export function defaultModelForProvider(provider: string): string {
   return getModelOptionsForProvider(provider)[0]?.value ?? "gpt-5.4";
 }
+
+// Runtime safety-net catalog (separate from the UI dropdown above).
+//
+// MODEL_OPTIONS_BY_PROVIDER above is intentionally aspirational — it
+// includes preview / not-yet-shipped model ids so the UI can offer
+// them as soon as they go live. SAFE_FALLBACK_MODELS is the opposite:
+// the ids in this list are the conservative known-good choices we
+// trust the live API to actually serve TODAY. The runtime uses these
+// as the recovery target when an `AI_APICallError` with HTTP 404
+// "model not found" fires (e.g. an admin saved gemini-3.1-pro before
+// Google released it). One miss → swap to the safe default → keep
+// the run alive instead of dead-stopping with a 404.
+//
+// Update cadence: bump these when the previous "safe" id is
+// deprecated by the provider — not when a new flagship ships. Bias
+// toward "boring and reliable" over "newest".
+export const SAFE_FALLBACK_MODELS: Record<string, string> = {
+  google: "gemini-2.5-flash",
+  openai: "gpt-4o",
+  anthropic: "claude-sonnet-4-6",
+  deepseek: "deepseek-chat",
+  xai: "grok-3",
+  mistral: "mistral-large-latest",
+  kimi: "kimi-k2.5",
+  zhipu: "glm-4.5",
+  "openai-codex": "gpt-4o",
+  openrouter: "openai/gpt-4o",
+  ollama: "llama3.1",
+};
+
+export function safeFallbackModelForProvider(provider: string): string | undefined {
+  return SAFE_FALLBACK_MODELS[normalizeProviderToken(provider)];
+}
+
+// Validation helper for the config-save path. Returns `true` when the
+// id is in the catalog the UI offers — admins typing an id off-list
+// get rejected (or auto-corrected, depending on the caller).
+export function isKnownModelForProvider(provider: string, modelId: string): boolean {
+  const options = MODEL_OPTIONS_BY_PROVIDER[normalizeProviderToken(provider)];
+  if (!options) return false;
+  return options.some((o) => o.value === modelId);
+}

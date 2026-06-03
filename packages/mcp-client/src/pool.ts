@@ -1,6 +1,5 @@
 import type { MCPDef } from '@ujima/shared';
 import {
-  connectMCP,
   isConnectionClosedError,
   type ConnectOptions,
   type MCPConnection,
@@ -8,6 +7,7 @@ import {
   type ToolCallResult,
   type ToolInfo,
 } from './connection';
+import { connectMCPWithCacheRecovery } from './cache-recovery';
 
 export interface PoolGetOptions {
   /**
@@ -42,8 +42,16 @@ export function createMCPPool(defaults: ConnectOptions = {}): MCPPool {
   const pending = new Map<string, Promise<MCPConnection>>();
 
   async function spawn(def: MCPDef, key: string): Promise<MCPConnection> {
-    const p = connectMCP(def, defaults).then(
-      (raw) => {
+    const p = connectMCPWithCacheRecovery(def, defaults).then(
+      ({ connection: raw, recovery }) => {
+        if (recovery) {
+          // Single-line breadcrumb so operators can see why this MCP
+          // is suddenly downloading every cold start. The Test path
+          // surfaces this same condition to the UI as a chip.
+          console.warn(
+            `[mcp-pool] "${def.id}": retried with isolated npm cache (${recovery.cacheDir}) — host npm cache looks corrupted`,
+          );
+        }
         const wrapped = wrapWithReconnect(raw, () => {
           // On closed-connection fault, detach from cache so the next
           // call spawns a fresh process.

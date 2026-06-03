@@ -3,16 +3,23 @@ import { z } from 'zod';
 import {
   AgentMcpAttachInputSchema,
   AgentMcpAttachmentsResponseSchema,
+  AgentToolGrantsResponseSchema,
   ApiErrorSchema,
   CreateMcpServerRequestSchema,
+  GrantToolRequestSchema,
+  GrantToolResponseSchema,
   ImportMcpServersRequestSchema,
   ImportMcpServersResponseSchema,
+  McpCatalogQuerySchema,
+  McpCatalogResponseSchema,
   McpScopedQuerySchema,
   McpServerListResponseSchema,
   McpServerResponseSchema,
   McpToolsResponseSchema,
   TestMcpResponseSchema,
+  ToolClassificationResponseSchema,
   UpdateMcpServerRequestSchema,
+  UpdateToolClassificationRequestSchema,
 } from '@ujima/api-schema';
 import type { AuthService, McpRegistryService } from '@ujima/orchestrator';
 import { apiError } from './route-errors.js';
@@ -28,9 +35,18 @@ export interface McpRoutesOptions {
 }
 
 const ServerIdParamsSchema = z.object({ id: z.string().min(1) });
+const ServerIdToolParamsSchema = z.object({
+  id: z.string().min(1),
+  toolName: z.string().min(1),
+});
 const AgentMcpParamsSchema = z.object({
   agentId: z.string().min(1),
   mcpServerId: z.string().min(1),
+});
+const AgentToolParamsSchema = z.object({
+  agentId: z.string().min(1),
+  mcpServerId: z.string().min(1),
+  toolName: z.string().min(1),
 });
 const AgentParamsSchema = z.object({ agentId: z.string().min(1) });
 
@@ -157,6 +173,98 @@ export function registerMcpRoutes(
     }),
   });
 
+  // ----- Governance catalog + classification ------------------------
+
+  registerOrgSettingsRoute(app, 'get', '/settings/mcps/catalog', auth, {
+    tags: ['MCP'],
+    description:
+      'Unified governance catalog. When `agentId` is set, the response includes per-(server,tool) effective decisions for that agent plus an `exposed` flag indicating whether the tool reaches the model.',
+    querystring: McpCatalogQuerySchema,
+    response: { 200: McpCatalogResponseSchema, ...mcpErrors },
+    organizationId: (req) => (req.query as { organizationId: string }).organizationId,
+    onError: mcpHandle,
+    handler: async (req, organizationId) => {
+      const query = req.query as {
+        organizationId: string;
+        agentId?: string;
+        role?: 'worker' | 'supervisor';
+      };
+      return mcpRegistry.getCatalog(organizationId, query.agentId, query.role);
+    },
+  });
+
+  registerOrgSettingsRoute(
+    app,
+    'patch',
+    '/settings/mcps/:id/tools/:toolName/classification',
+    auth,
+    {
+      tags: ['MCP'],
+      description:
+        'Set the risk classification for a single MCP tool. Always writes source=manual and clears needsReview.',
+      params: ServerIdToolParamsSchema,
+      body: UpdateToolClassificationRequestSchema,
+      response: { 200: ToolClassificationResponseSchema, ...mcpWriteErrors },
+      organizationId: (req) => (req.body as { organizationId: string }).organizationId,
+      onError: mcpHandle,
+      handler: async (req, organizationId) => {
+        const params = req.params as { id: string; toolName: string };
+        const body = req.body as z.infer<typeof UpdateToolClassificationRequestSchema>;
+        const updatedBy =
+          (req.headers['x-actor-id'] as string | undefined) ?? 'web-admin';
+        mcpRegistry.setToolClassification({
+          organizationId,
+          serverId: params.id,
+          toolName: params.toolName,
+          risk: body.risk,
+          reason: body.reason,
+          updatedBy,
+        });
+        // Refresh from catalog so the response carries the same shape
+        // the UI gets elsewhere (with `effective` + `attachedAgents`).
+        const catalog = mcpRegistry.getCatalog(organizationId);
+        const server = catalog.servers.find((s) => s.id === params.id);
+        const tool = server?.tools.find((t) => t.name === params.toolName);
+        if (!tool) {
+          throw new Error(`Tool "${params.toolName}" not found after update`);
+        }
+        return { tool };
+      },
+    },
+  );
+
+  registerOrgSettingsRoute(
+    app,
+    'delete',
+    '/settings/mcps/:id/tools/:toolName/classification',
+    auth,
+    {
+      tags: ['MCP'],
+      description:
+        'Reset a tool to its inferred classification. Drops the manual row and re-seeds from the heuristic.',
+      params: ServerIdToolParamsSchema,
+      querystring: McpScopedQuerySchema,
+      response: { 200: ToolClassificationResponseSchema, ...mcpErrors },
+      organizationId: (req) => (req.query as { organizationId: string }).organizationId,
+      onError: mcpHandle,
+      handler: async (req, organizationId) => {
+        const params = req.params as { id: string; toolName: string };
+        mcpRegistry.resetToolClassification(
+          organizationId,
+          params.id,
+          params.toolName,
+        );
+        const catalog = mcpRegistry.getCatalog(organizationId);
+        const server = catalog.servers.find((s) => s.id === params.id);
+        const tool = server?.tools.find((t) => t.name === params.toolName);
+        if (!tool) {
+          throw new Error(`Tool "${params.toolName}" not found after reset`);
+        }
+        return { tool };
+      },
+    },
+  );
+
   registerOrgSettingsRoute(app, 'get', '/settings/agents/:agentId/mcps', auth, {
     tags: ['MCP'],
     description: 'List the MCP attachments for an agent',
@@ -207,6 +315,89 @@ export function registerMcpRoutes(
       mcpRegistry.detach(organizationId, params.agentId, params.mcpServerId);
     },
   });
+
+  // ---------------- Per-tool grants ----------------------------------
+
+  registerOrgSettingsRoute(app, 'get', '/settings/agents/:agentId/tools', auth, {
+    tags: ['MCP'],
+    description:
+      'List the per-tool grants for an agent. When the list is empty for an attached MCP, the runtime exposes all tools (back-compat). Any rows for a server flip it into allowlist mode.',
+    params: AgentParamsSchema,
+    querystring: McpScopedQuerySchema,
+    response: { 200: AgentToolGrantsResponseSchema, ...mcpErrors },
+    organizationId: (req) => (req.query as { organizationId: string }).organizationId,
+    onError: mcpHandle,
+    handler: async (req, organizationId) => {
+      const params = req.params as { agentId: string };
+      return {
+        agentId: params.agentId,
+        grants: mcpRegistry.listToolGrants(organizationId, params.agentId),
+      };
+    },
+  });
+
+  registerOrgSettingsRoute(
+    app,
+    'put',
+    '/settings/agents/:agentId/tools/:mcpServerId/:toolName',
+    auth,
+    {
+      tags: ['MCP'],
+      description:
+        'Grant a single MCP tool to an agent. Auto-attaches the MCP server if missing. Adding the first tool grant for an (agent, server) pair flips the runtime palette into allowlist mode for that server.',
+      params: AgentToolParamsSchema,
+      body: GrantToolRequestSchema,
+      response: { 200: GrantToolResponseSchema, ...mcpWriteErrors },
+      organizationId: (req) => (req.body as { organizationId: string }).organizationId,
+      onError: mcpHandle,
+      handler: async (req, organizationId) => {
+        const params = req.params as {
+          agentId: string;
+          mcpServerId: string;
+          toolName: string;
+        };
+        const body = req.body as { scope?: 'worker' | 'supervisor' | 'both' };
+        return mcpRegistry.grantToolToAgent({
+          organizationId,
+          memberId: params.agentId,
+          mcpServerId: params.mcpServerId,
+          toolName: params.toolName,
+          scope: body.scope,
+        });
+      },
+    },
+  );
+
+  registerOrgSettingsRoute(
+    app,
+    'delete',
+    '/settings/agents/:agentId/tools/:mcpServerId/:toolName',
+    auth,
+    {
+      tags: ['MCP'],
+      description:
+        'Revoke a single tool grant. Removing the last grant for a server flips it back to "all tools" mode but does NOT detach the MCP server.',
+      params: AgentToolParamsSchema,
+      querystring: McpScopedQuerySchema,
+      response: { 204: z.null(), ...mcpErrors },
+      organizationId: (req) => (req.query as { organizationId: string }).organizationId,
+      onError: mcpHandle,
+      successStatus: 204,
+      handler: async (req, organizationId) => {
+        const params = req.params as {
+          agentId: string;
+          mcpServerId: string;
+          toolName: string;
+        };
+        mcpRegistry.revokeToolFromAgent(
+          organizationId,
+          params.agentId,
+          params.mcpServerId,
+          params.toolName,
+        );
+      },
+    },
+  );
 }
 
 export function mapMcpRouteError(err: unknown): {
@@ -218,7 +409,8 @@ export function mapMcpRouteError(err: unknown): {
   if (
     message.startsWith('Organization not found') ||
     message.startsWith('MCP server not found') ||
-    message.startsWith('Member not found')
+    message.startsWith('Member not found') ||
+    message.startsWith('Tool not found')
   ) {
     return { status: 404, code: 'ERR_NOT_FOUND', message };
   }

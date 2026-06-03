@@ -3,8 +3,11 @@ import { resolve } from "node:path";
 import type { AgentTeamHandle } from "@ujima/framework";
 import {
   SocketEventNames,
+  classifyTool,
+  evaluatePolicy,
   memberRoom,
   normalizeOrgShellApprovalMode,
+  resolveClassification,
   resolveEffectiveShellApprovalMode,
   runRoom,
   threadRoom,
@@ -229,9 +232,9 @@ export class ToolServiceImpl implements ToolService {
     });
 
     const policy = isSubOperation
-      ? { allowed: true, requiresApproval: false, reason: "sub-operation" }
+      ? { allowed: true, requiresApproval: false, shellAutoReview: false, reason: "sub-operation" }
       : preparedInvocation.toolId === "mcp"
-        ? { allowed: true, requiresApproval: true }
+        ? this.resolveMcpPolicy(preparedInvocation)
       : checkToolPolicy(
           team,
           member.roleName,
@@ -413,6 +416,90 @@ export class ToolServiceImpl implements ToolService {
     throw new Error(
       `Tool "${invocation.toolId}" action "${invocation.action}" is not implemented`,
     );
+  }
+
+  // Evaluate the governance policy + classification for an MCP call.
+  // `inherit` preserves the pre-governance default of "require approval".
+  private resolveMcpPolicy(invocation: ToolInvocationInput): {
+    allowed: boolean;
+    requiresApproval: boolean;
+    shellAutoReview: boolean;
+    reason?: string;
+  } {
+    const serverId =
+      invocation.permissionMcpId ?? readString(invocation.input, "mcpServerId");
+    const rawToolName =
+      readString(invocation.input, "toolName") ??
+      (invocation.permissionToolName?.startsWith("mcp:")
+        ? undefined
+        : invocation.permissionToolName);
+    if (!serverId || !rawToolName) {
+      return {
+        allowed: false,
+        requiresApproval: false,
+        shellAutoReview: false,
+        reason: "MCP invocation missing serverId or toolName",
+      };
+    }
+
+    const policy = this.repo.getGovernancePolicy(invocation.organizationId);
+    const stored = this.repo.getMcpToolClassification(
+      invocation.organizationId,
+      serverId,
+      rawToolName,
+    );
+    // Inferred fallback for tools that reached us via a live MCP
+    // listTools but haven't been seeded into the classifications
+    // table yet (no Test run, or first-seen tool surfaced
+    // dynamically). Only classify when we have a real cache
+    // descriptor — without one the heuristic falls through to its
+    // "no signal" default ('write') and the policy would fire the
+    // wrong bucket for a tool the system has literally never seen.
+    // When no descriptor exists, leave `inferred` undefined so
+    // evaluatePolicy hits the `unknown` bucket and the catalog +
+    // runtime decisions agree.
+    let inferred: ReturnType<typeof classifyTool>["risk"] | undefined;
+    if (!stored) {
+      const cache = this.repo.getMcpToolCache(invocation.organizationId, serverId);
+      const descriptor = cache?.tools.find((t) => t.name === rawToolName);
+      if (descriptor) {
+        const server = this.repo.getMcpServer(invocation.organizationId, serverId);
+        const inf = classifyTool({
+          name: rawToolName,
+          description: descriptor.description,
+          category: server?.category,
+          declaredDestructive: descriptor.destructive,
+        });
+        inferred = inf.risk;
+      }
+    }
+    const effective = resolveClassification(stored, inferred);
+    const evaluation = evaluatePolicy(policy, {
+      agentId: invocation.memberId,
+      mcpId: serverId,
+      toolName: rawToolName,
+      classification: effective.risk,
+    });
+
+    switch (evaluation.state) {
+      case "deny":
+        return {
+          allowed: false,
+          requiresApproval: false,
+          shellAutoReview: false,
+          reason:
+            evaluation.reason ??
+            `Tool "${rawToolName}" denied by governance policy`,
+        };
+      case "allow":
+        return { allowed: true, requiresApproval: false, shellAutoReview: false, reason: evaluation.reason };
+      case "require_approval":
+      case "require_input":
+        return { allowed: true, requiresApproval: true, shellAutoReview: false, reason: evaluation.reason };
+      case "inherit":
+      default:
+        return { allowed: true, requiresApproval: true, shellAutoReview: false };
+    }
   }
 
   private async executeMcpTool(invocation: ToolInvocationInput): Promise<unknown> {

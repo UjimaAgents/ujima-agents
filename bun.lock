@@ -42,6 +42,7 @@
         "@ujima/context-store": "workspace:*",
         "@ujima/event-bus": "workspace:*",
         "@ujima/framework": "workspace:*",
+        "@ujima/license": "workspace:*",
         "@ujima/llm": "workspace:*",
         "@ujima/mcp-client": "workspace:*",
         "@ujima/orchestrator": "workspace:*",
@@ -177,6 +178,7 @@
       "dependencies": {
         "@ujima/api-schema": "workspace:*",
         "@ujima/framework": "workspace:*",
+        "@ujima/license": "workspace:*",
         "@ujima/orchestrator": "workspace:*",
         "@ujima/runtime-core": "workspace:*",
         "@ujima/shared": "workspace:*",
@@ -224,6 +226,10 @@
         "@ujima/context-store": "workspace:*",
         "@ujima/shared": "workspace:*",
       },
+    },
+    "packages/license": {
+      "name": "@ujima/license",
+      "version": "0.0.0",
     },
     "packages/llm": {
       "name": "@ujima/llm",
@@ -858,6 +864,8 @@
     "@ujima/event-bus": ["@ujima/event-bus@workspace:packages/event-bus"],
 
     "@ujima/framework": ["@ujima/framework@workspace:packages/ujima"],
+
+    "@ujima/license": ["@ujima/license@workspace:packages/license"],
 
     "@ujima/llm": ["@ujima/llm@workspace:packages/llm"],
 

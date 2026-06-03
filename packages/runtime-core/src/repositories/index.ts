@@ -1,6 +1,7 @@
 import type { SqliteDbHandle as DbHandle } from '@ujima/context-store';
 import type {
   AgentMcpAttachment,
+  AgentToolAttachment,
   ApprovalRequest,
   AuthSession,
   AuthUser,
@@ -13,10 +14,12 @@ import type {
   ConfigFieldOwnership,
   ConversationThread,
   DecisionLogEntry,
+  GovernancePolicy,
   ProcedureRevision,
   RunProcedureApplied,
   McpServer,
   McpToolCache,
+  McpToolClassification,
   Member,
   MemoryEntry,
   MemoryEntryKind,
@@ -177,6 +180,7 @@ import {
   saveGoal as writeGoal,
   saveGoalTask as writeGoalTask,
   saveInteractiveQuestion as writeInteractiveQuestion,
+  setGoalTaskLastNudgedAt as writeGoalTaskLastNudgedAt,
   updateGoalTaskStatus as writeGoalTaskStatus,
 } from './goals.js';
 import {
@@ -246,6 +250,26 @@ import {
   saveMcpServer as writeMcpServer,
   saveMcpToolCache as writeMcpToolCache,
 } from './mcp-servers.js';
+import {
+  deleteMcpToolClassification as removeMcpToolClassification,
+  getMcpToolClassification as readMcpToolClassification,
+  listMcpToolClassifications as readMcpToolClassifications,
+  seedInferredClassifications as writeSeedClassifications,
+  upsertMcpToolClassification as writeMcpToolClassification,
+  type SeedClassificationEntry,
+} from './mcp-tool-classifications.js';
+import {
+  getGovernancePolicyForOrg as readGovernancePolicy,
+  saveGovernancePolicyForOrg as writeGovernancePolicy,
+} from './governance-policy-store.js';
+import {
+  countAgentToolAttachments as countToolAttachments,
+  deleteAgentToolAttachment as removeAgentToolAttachment,
+  deleteAgentToolAttachmentsForAgent as removeToolAttachmentsForAgent,
+  listAgentToolAttachments as readAgentToolAttachments,
+  listAgentsForTool as readAgentsForTool,
+  saveAgentToolAttachment as writeAgentToolAttachment,
+} from './agent-tool-attachments.js';
 import { createPluginRepository, type PluginRepository } from './plugins.js';
 import {
   deleteGovernanceRule as removeGovernanceRule,
@@ -630,6 +654,11 @@ export class Repository {
     readGoalTask(this.db, organizationId, taskId);
   listGoalTasks = (organizationId: string, goalId: string): GoalTask[] =>
     readGoalTasks(this.db, organizationId, goalId);
+  setGoalTaskLastNudgedAt = (
+    organizationId: string,
+    taskId: string,
+    isoTimestamp: string,
+  ): void => writeGoalTaskLastNudgedAt(this.db, organizationId, taskId, isoTimestamp);
   updateGoalTaskStatus = (
     organizationId: string,
     taskId: string,
@@ -778,6 +807,72 @@ export class Repository {
   saveMcpToolCache = (cache: McpToolCache): McpToolCache => writeMcpToolCache(this.db, cache);
   getMcpToolCache = (organizationId: string, mcpServerId: string): McpToolCache | null =>
     readMcpToolCache(this.db, organizationId, mcpServerId);
+
+  getMcpToolClassification = (
+    organizationId: string,
+    mcpServerId: string,
+    toolName: string,
+  ): McpToolClassification | null =>
+    readMcpToolClassification(this.db, organizationId, mcpServerId, toolName);
+  listMcpToolClassifications = (
+    organizationId: string,
+    mcpServerId?: string,
+  ): McpToolClassification[] =>
+    readMcpToolClassifications(this.db, organizationId, mcpServerId);
+  upsertMcpToolClassification = (
+    payload: McpToolClassification,
+  ): McpToolClassification => writeMcpToolClassification(this.db, payload);
+  seedInferredClassifications = (
+    organizationId: string,
+    mcpServerId: string,
+    entries: readonly SeedClassificationEntry[],
+    updatedBy?: string,
+  ): number => writeSeedClassifications(this.db, organizationId, mcpServerId, entries, updatedBy);
+  deleteMcpToolClassification = (
+    organizationId: string,
+    mcpServerId: string,
+    toolName: string,
+  ): void => removeMcpToolClassification(this.db, organizationId, mcpServerId, toolName);
+
+  getGovernancePolicy = (organizationId: string): GovernancePolicy =>
+    readGovernancePolicy(this.db, organizationId);
+  saveGovernancePolicy = (
+    organizationId: string,
+    policy: GovernancePolicy,
+  ): GovernancePolicy => writeGovernancePolicy(this.db, organizationId, policy);
+
+  // Per-tool agent grants. When any rows exist for (agent, mcp_server),
+  // the runtime palette filters to exactly those tools.
+  saveAgentToolAttachment = (
+    attachment: AgentToolAttachment,
+  ): AgentToolAttachment => writeAgentToolAttachment(this.db, attachment);
+  deleteAgentToolAttachment = (
+    organizationId: string,
+    memberId: string,
+    mcpServerId: string,
+    toolName: string,
+  ): void => removeAgentToolAttachment(this.db, organizationId, memberId, mcpServerId, toolName);
+  listAgentToolAttachments = (
+    organizationId: string,
+    memberId: string,
+    mcpServerId?: string,
+  ): AgentToolAttachment[] =>
+    readAgentToolAttachments(this.db, organizationId, memberId, mcpServerId);
+  listAgentsForTool = (
+    organizationId: string,
+    mcpServerId: string,
+    toolName: string,
+  ): string[] => readAgentsForTool(this.db, organizationId, mcpServerId, toolName);
+  countAgentToolAttachments = (
+    organizationId: string,
+    memberId: string,
+    mcpServerId: string,
+  ): number => countToolAttachments(this.db, organizationId, memberId, mcpServerId);
+  deleteAgentToolAttachmentsForAgent = (
+    organizationId: string,
+    memberId: string,
+    mcpServerId?: string,
+  ): void => removeToolAttachmentsForAgent(this.db, organizationId, memberId, mcpServerId);
 
   saveMemory = (entry: MemoryEntry): MemoryEntry => writeMemory(this.db, entry);
   getMemory = (organizationId: string, memoryId: string): MemoryEntry | null =>

@@ -5,6 +5,7 @@ import {
   type MCPDef,
   type TaskDef,
   type TeamDef,
+  type ToolRiskClass,
   type UjimaEvent,
   type GovernancePolicy,
   type ToolPolicyState,
@@ -96,6 +97,10 @@ export interface RuntimeHostDeps {
    * `undefined` if the workspace has none. Called on every tool check.
    */
   policyResolver?: (taskId?: string) => GovernancePolicy | undefined;
+  classificationLookup?: (
+    mcpId: string,
+    toolName: string,
+  ) => ToolRiskClass | 'unknown' | undefined;
   gateResolver?: GateResolver;
 }
 
@@ -189,6 +194,7 @@ export async function createRuntimeHost(deps: RuntimeHostDeps, config: RuntimeHo
       if (!organizationId) return undefined;
       return loadOrganizationGovernancePolicy(organizationId);
     }),
+    classificationLookup: deps.classificationLookup,
   });
   const pool = createMCPPool({});
   const workspaces = createWorkspaceStore(db.raw);
