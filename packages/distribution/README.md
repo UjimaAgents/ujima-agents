@@ -1,6 +1,6 @@
 # Ujima Agents
 
-![Ujima Agents Banner](https://cdn.jsdelivr.net/npm/@ujima/agents@latest/assets/banner.png)
+![Ujima Agents Banner](https://cdn.jsdelivr.net/npm/@ujima/agents@0.0.16/assets/banner.png)
 
 [![npm version](https://img.shields.io/npm/v/@ujima/agents.svg)](https://www.npmjs.com/package/@ujima/agents)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)

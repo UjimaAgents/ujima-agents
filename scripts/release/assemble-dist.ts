@@ -236,6 +236,12 @@ async function main(): Promise<void> {
   }
 
   ensureCleanDist();
+  log("Bootstrapping workspace builds…");
+  const build = await $`bun run build`.cwd(REPO_ROOT).nothrow();
+  if (build.exitCode !== 0) {
+    console.error(build.stderr.toString());
+    process.exit(build.exitCode ?? 1);
+  }
   await buildWebStandalone();
   await bundleApi();
   await copyWebStandalone();
