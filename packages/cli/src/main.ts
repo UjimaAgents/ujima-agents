@@ -50,7 +50,7 @@ function baseUrl(): string {
 }
 
 function isDevMode(): boolean {
-  return findMonorepoRoot(__dirname) !== null;
+  return process.env.UJIMA_DEV === '1' || findMonorepoRoot(__dirname) !== null;
 }
 
 interface InitOptions {
