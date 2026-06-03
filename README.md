@@ -4,7 +4,6 @@
 
 [![npm version](https://img.shields.io/npm/v/@ujima/agents.svg)](https://www.npmjs.com/package/@ujima/agents)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Open Source](https://img.shields.io/badge/Open%20Source-Coming%20Soon-lightgrey)](https://github.com/UjimaAgents/ujima-agents)
 
 ---
 
@@ -60,17 +59,9 @@ ujima --help
 
 ---
 
-## Open source (coming soon)
+## Source
 
-The **source code is not public yet**. This repository and a full local development setup will be released when we open-source Ujima Agents.
-
-Until then:
-
-- Install and run from **npm** (above) — not from a git clone
-- Do not expect public issues, PRs, or contributor docs yet
-- Watch [GitHub](https://github.com/UjimaAgents/ujima-agents) and [@vincent_presh on X](https://x.com/vincent_presh) for the open-source announcement
-
-When the project opens, we will publish clone-and-contribute instructions here (monorepo layout, `bun run dev:local`, tests, and package map).
+The full source and local development setup live in this repository.
 
 ---
 
@@ -212,4 +203,4 @@ Questions or updates: follow [@vincent_presh on X](https://x.com/vincent_presh) 
 
 ## 📜 License
 
-The **`@ujima/agents`** npm distribution is licensed under the [MIT License](./LICENSE). Open-source release of the full repository is **coming soon**; terms for the source tree will be published at that time.
+The **`@ujima/agents`** npm distribution is licensed under the [MIT License](./LICENSE).

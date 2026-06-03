@@ -45,15 +45,6 @@ function ensureCleanDist(): void {
   mkdirSync(RUNTIME_DIR, {recursive: true});
 }
 
-async function runMonorepoBuild(): Promise<void> {
-  log("Running turbo build…");
-  const result = await $`bun run build`.cwd(REPO_ROOT).nothrow();
-  if (result.exitCode !== 0) {
-    console.error(result.stderr.toString());
-    process.exit(result.exitCode ?? 1);
-  }
-}
-
 async function buildWebStandalone(): Promise<void> {
   log("Building Next.js standalone web (RELEASE=1)…");
   const result = await $`bun run build`
@@ -245,7 +236,12 @@ async function main(): Promise<void> {
   }
 
   ensureCleanDist();
-  await runMonorepoBuild();
+  log("Bootstrapping workspace builds…");
+  const build = await $`bun run build`.cwd(REPO_ROOT).nothrow();
+  if (build.exitCode !== 0) {
+    console.error(build.stderr.toString());
+    process.exit(build.exitCode ?? 1);
+  }
   await buildWebStandalone();
   await bundleApi();
   await copyWebStandalone();

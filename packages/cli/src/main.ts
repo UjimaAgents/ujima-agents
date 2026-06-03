@@ -8,15 +8,6 @@ import { superviseChildren } from './start-supervisor.js';
 import { maybeLoadTeam } from '@ujima/runtime-core';
 import { DEFAULT_BIND_HOST, DEFAULT_BIND_PORT } from '@ujima/api-schema';
 import {
-  activate as activateLicense,
-  checkLicenseForStartup,
-  clearLocalLicense,
-  isDevMode,
-  loadLocalLicense,
-  refreshRevocations,
-  verifyAndCheckRevocation,
-} from '@ujima/license';
-import {
   findMonorepoRoot,
   resolvePackagedRuntimeDir,
   buildPackagedWebNodePath,
@@ -58,13 +49,16 @@ function baseUrl(): string {
   return `http://${host}:${port}`;
 }
 
+function isDevMode(): boolean {
+  return process.env.UJIMA_DEV === '1' || findMonorepoRoot(__dirname) !== null;
+}
+
 interface InitOptions {
   organizationName: string;
   ownerName: string;
   workspaceRoot: string;
   configPath?: string;
   providerKeys: Record<string, string>;
-  licenseKey?: string;
 }
 
 function parseInitArgs(argv: string[]): InitOptions {
@@ -95,9 +89,6 @@ function parseInitArgs(argv: string[]): InitOptions {
       case '-c':
         result.configPath = resolve(next());
         break;
-      case '--license':
-        result.licenseKey = next();
-        break;
       case '--provider': {
         const spec = next();
         const eq = spec.indexOf('=');
@@ -117,69 +108,8 @@ function parseInitArgs(argv: string[]): InitOptions {
   return result as InitOptions;
 }
 
-async function ensureLicenseForInit(licenseKey: string | undefined): Promise<void> {
-  if (isDevMode()) return;
-  // Refresh the revocation list once, up front. The cached-license
-  // fast path AND the freshly-prompted activate path both rely on
-  // isRevoked() reading from this. Non-fatal: missing network just
-  // leaves the previous daily cache in place.
-  await refreshRevocations().catch(() => undefined);
-
-  // Explicit key wins: if the operator supplied --license or
-  // UJIMA_LICENSE they're asking us to rotate / reissue, so we
-  // must NOT silently keep an older cached license. Pre-fix the
-  // cached-valid fast path returned before reading the new key,
-  // which made `ujima init --license <new>` a no-op when an old
-  // license was still on disk.
-  const explicit = (licenseKey ?? process.env.UJIMA_LICENSE ?? '').trim();
-  if (explicit !== '') {
-    activateOrExit(explicit);
-    return;
-  }
-
-  // No explicit key: keep the cached fast path. Already activated
-  // and still valid (signature ok AND not revoked)? Skip the prompt
-  // entirely. Otherwise clear and fall through to a fresh prompt.
-  const existing = loadLocalLicense();
-  if (existing) {
-    const cached = verifyAndCheckRevocation(existing.token);
-    if (cached.ok) return;
-    clearLocalLicense();
-  }
-  const prompted = (await promptForLicenseKey()).trim();
-  activateOrExit(prompted);
-}
-
-function activateOrExit(token: string): void {
-  const result = activateLicense(token);
-  if (!result.ok) {
-    process.stderr.write(
-      `ujima init: license activation failed (${result.reason}). ` +
-        `Request access at https://ujima.dev/waitlist\n`,
-    );
-    process.exit(1);
-  }
-  process.stdout.write(
-    `License activated for ${result.payload.subjectEmail} (${result.payload.licenseId}).\n`,
-  );
-}
-
-async function promptForLicenseKey(): Promise<string> {
-  process.stdout.write(
-    "Ujima is invite-only during early access. Paste your license key (or set UJIMA_LICENSE):\n",
-  );
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  try {
-    const answer = await rl.question('License key: ');
-    return answer.trim();
-  } finally {
-    rl.close();
-  }
-}
-
 async function cmdInit(argv: string[]): Promise<void> {
   const opts = parseInitArgs(argv);
-  await ensureLicenseForInit(opts.licenseKey);
   const homeDir = resolveHomeDir();
   const token = loadToken(homeDir);
 
@@ -322,16 +252,6 @@ async function cmdStartMonorepo(root: string, argv: string[]): Promise<void> {
 }
 
 async function cmdStart(argv: string[]): Promise<void> {
-  // License first — fail fast with a clear message rather than letting
-  // the daemon boot and reject. Dev mode short-circuits inside the check.
-  const license = await checkLicenseForStartup();
-  if (!license.ok) {
-    process.stderr.write(
-      `ujima start: ${describeLicenseFailure(license.reason)}\n` +
-        `  Activate with: ujima init --license <key>\n`,
-    );
-    process.exit(1);
-  }
   // Then the freshness prompt — never in dev mode (running from a repo
   // checkout) and never when running from a packaged self-update script.
   await maybeOfferUpdate(argv);
@@ -355,22 +275,6 @@ async function cmdStart(argv: string[]): Promise<void> {
   await cmdStartMonorepo(root, argv);
 }
 
-function describeLicenseFailure(reason: string): string {
-  switch (reason) {
-    case 'no-license':
-      return 'no license found. Run `ujima init` to activate, or set UJIMA_LICENSE.';
-    case 'expired':
-      return 'license expired. Request a renewal at https://ujima.dev/waitlist.';
-    case 'revoked':
-      return 'license has been revoked. Contact the operator if this is unexpected.';
-    case 'bad-signature':
-    case 'malformed':
-      return 'license is invalid. Re-run `ujima init --license <key>` with the key you were issued.';
-    default:
-      return `license check failed (${reason}).`;
-  }
-}
-
 function printUsage(): void {
   const version = getLocalVersion();
   printSplash();
@@ -380,7 +284,6 @@ function printUsage(): void {
   printCommandRow('start', 'Start the local API daemon and web UI');
   printCommandRow('init', 'Onboard organization, owner, and workspace');
   printCommandRow('update', 'Check for and install CLI updates');
-  printCommandRow('license', 'Show or manage the local license (status, refresh, deactivate)');
   printCommandRow('help', 'Display help for a command');
   printInfoRow('More:', 'ujima help <command>  |  ujima <command> --help', { dim: true });
   console.info(`   ${chalk.gray('↳')} ${chalk.white('Environment:')}`);
@@ -421,17 +324,6 @@ function printCommandHelp(cmd: string): void {
       printInfoRow('--workspace, -w', 'Workspace root path (required)', { dim: true });
       printInfoRow('--config, -c', 'Path to ujima.config.ts', { dim: true });
       printInfoRow('--provider', 'name=key (repeatable)', { dim: true });
-      printInfoRow('--license', 'License key (or set UJIMA_LICENSE)', { dim: true });
-      break;
-
-    case 'license':
-      printReadyLine('Command: license');
-      printInfoRow('Usage:', 'ujima license [status|refresh|deactivate]', { dim: true });
-      printInfoRow(
-        'Description:',
-        'Show or manage the local license. Default subcommand is status.',
-        { dim: true },
-      );
       break;
 
     case 'update':
@@ -539,70 +431,6 @@ async function runNpmGlobalInstall(version: string): Promise<void> {
       else rejectExit(new Error(`npm install exited ${code ?? 'null'}`));
     });
   });
-}
-
-async function cmdLicense(argv: string[]): Promise<void> {
-  const sub = argv[0] ?? 'status';
-  switch (sub) {
-    case 'status': {
-      if (isDevMode()) {
-        process.stdout.write('ujima license: dev mode (running from the monorepo). License skipped.\n');
-        return;
-      }
-      const state = loadLocalLicense();
-      if (!state) {
-        process.stdout.write('ujima license: no license activated. Run `ujima init --license <key>`.\n');
-        return;
-      }
-      // Daily-cached refresh first so the verify-and-revocation
-      // check below sees the freshest list possible. Non-fatal.
-      await refreshRevocations().catch(() => undefined);
-      const result = verifyAndCheckRevocation(state.token);
-      if (!result.ok) {
-        if (result.reason === 'revoked') {
-          process.stdout.write(
-            `ujima license: revoked — ${result.detail ?? 'unknown id'}. ` +
-              `Re-activate with a fresh key.\n`,
-          );
-        } else {
-          process.stdout.write(
-            `ujima license: stored license is ${result.reason}. Re-activate.\n`,
-          );
-        }
-        return;
-      }
-      const exp = result.payload.expiresAt ? ` (expires ${result.payload.expiresAt})` : '';
-      process.stdout.write(
-        `ujima license: active — ${result.payload.subjectEmail} ` +
-          `(${result.payload.licenseId})${exp}.\n`,
-      );
-      return;
-    }
-    case 'refresh': {
-      // Always hit the network — the whole point of an explicit
-      // refresh is to bypass the daily TTL. Failure must be loud
-      // (pre-fix the helper silently wrote ids=[] with fetchedAt=now
-      // and pretended to succeed, locking out retries for 24h).
-      try {
-        await refreshRevocations(new Date(), { force: true });
-      } catch (err) {
-        process.stderr.write(
-          `ujima license: refresh failed — ${err instanceof Error ? err.message : String(err)}\n`,
-        );
-        process.exit(1);
-      }
-      process.stdout.write('ujima license: revocation list refreshed.\n');
-      return;
-    }
-    case 'deactivate': {
-      clearLocalLicense();
-      process.stdout.write('ujima license: cleared local license.\n');
-      return;
-    }
-    default:
-      process.stderr.write(`ujima license: unknown subcommand "${sub}". Try status, refresh, deactivate.\n`);
-      process.exit(2);
-  }
 }
 
 async function cmdUpdate(argv: string[]): Promise<void> {
@@ -720,13 +548,9 @@ export async function main(): Promise<void> {
     case 'update':
       await cmdUpdate(rest);
       return;
-    case 'license':
-      await cmdLicense(rest);
-      return;
     default:
       process.stderr.write(`ujima: unknown command "${command}"\n`);
       printUsage();
       process.exit(2);
   }
 }
-
