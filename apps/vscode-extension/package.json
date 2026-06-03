@@ -239,7 +239,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint src",
     "test": "vitest run",
-    "package": "node esbuild.mjs --production && bun --filter @ujima/webview build && rm -rf webview && mkdir -p webview && cp -R ../../packages/webview/dist webview/dist && vsce package --no-dependencies --out ujima.vsix && node scripts/bundle-native.mjs && rm -rf webview",
+    "package": "bun run build && node esbuild.mjs --production && bun --filter @ujima/webview build && rm -rf webview && mkdir -p webview && cp -R ../../packages/webview/dist webview/dist && vsce package --no-dependencies --out ujima.vsix && node scripts/bundle-native.mjs && rm -rf webview",
     "clean": "rm -rf dist webview .turbo *.tsbuildinfo *.vsix"
   },
   "dependencies": {
