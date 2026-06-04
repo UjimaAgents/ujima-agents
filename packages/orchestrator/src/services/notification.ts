@@ -75,24 +75,20 @@ export class NotificationService {
 
   private async pollOnce(): Promise<void> {
     if (!this.approvalResolver) return;
-    // List all notification channels across orgs to find Telegram bots
-    // We iterate known orgs — in practice there's usually 1 org.
-    // For a multi-org setup, the scheduler background task handles this.
-    const allChannels: NotificationChannel[] = [];
-    // Walk through all organizations to collect Telegram channels
+    const telegramBotTokens = new Set<string>();
     for (const org of this.repo.listOrganizations()) {
       for (const ch of this.repo.listNotificationChannels(org.id)) {
-        allChannels.push(ch);
+        if (ch.provider !== 'telegram' || !ch.enabled) continue;
+        const config = tryParseJson(ch.configJson);
+        const token = config?.botToken;
+        if (typeof token === 'string' && token) {
+          telegramBotTokens.add(token);
+        }
       }
     }
 
-    for (const channel of allChannels) {
-      if (channel.provider !== 'telegram' || !channel.enabled) continue;
-      const config = tryParseJson(channel.configJson);
-      const token = config?.botToken;
-      if (typeof token !== 'string') continue;
-
-      const offset = this.pollOffsets.get(channel.id) ?? 0;
+    for (const token of telegramBotTokens) {
+      const offset = this.pollOffsets.get(token) ?? 0;
       try {
         const url = `https://api.telegram.org/bot${token}/getUpdates?offset=${offset}&timeout=5&allowed_updates=["callback_query"]`;
         const res = await fetch(url);
@@ -104,7 +100,7 @@ export class NotificationService {
           const cb = update.callback_query;
           if (!cb?.data) continue;
           const newOffset = update.update_id + 1;
-          this.pollOffsets.set(channel.id, newOffset);
+          this.pollOffsets.set(token, newOffset);
 
           // Resolve the approval
           const err = await resolveApprovalFromTelegram(
