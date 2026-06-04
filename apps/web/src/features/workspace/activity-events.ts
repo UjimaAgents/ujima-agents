@@ -55,6 +55,7 @@ export function runChunkToActivity(chunk: RunChunkEvent, sequence: number): Acti
     type: "run_chunk",
     publisher: chunk.agentId,
     timestamp: new Date().toISOString(),
+    order: sequence,
     task_id: chunk.runId,
     payload: chunk,
   };

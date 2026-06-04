@@ -13,7 +13,7 @@ import {
   MessageSchema,
 } from '@ujima/shared';
 import { applyDashboardTeamOverrides } from './dashboard-team-overrides.js';
-import { isLiveRunStatus } from './live-status.js';
+import { isLiveRunStatus, isLiveSpiritStatus } from './live-status.js';
 import { requireTeam } from '../utils/require-team.js';
 import { findToolApprovalRequiredError, findToolInputRequiredError } from './tool-loop-result.js';
 import { extractReasoningChunk } from '../utils/extract-reasoning.js';
@@ -298,13 +298,37 @@ export class SpiritServiceDirectRun extends SpiritServiceSupervisor {
     const key = this.runKey(organizationId, runId);
     this.deferredApprovalResumes.delete(key);
 
+    const cancelledAt = new Date().toISOString();
+    const pendingQuestions = this.repo.listInteractiveQuestionsByRunId?.(organizationId, runId) ?? [];
+    for (const question of pendingQuestions) {
+      if (question.status !== 'pending') continue;
+      this.repo.saveInteractiveQuestion?.({
+        ...question,
+        status: 'superseded',
+        updatedAt: cancelledAt,
+      });
+    }
     const cancelled = this.repo.saveRun({
       ...run,
       status: 'cancelled',
       step: 'cancelled',
       summary: 'Stopped by user',
-      endedAt: new Date().toISOString(),
+      endedAt: cancelledAt,
     });
+    const spirit = this.repo.getSpiritByRunId?.(organizationId, runId) ?? null;
+    if (spirit && isLiveSpiritStatus(spirit.status)) {
+      const cancelledSpirit: Spirit = {
+        ...spirit,
+        status: 'cancelled',
+        lastError: 'Stopped by user',
+        updatedAt: cancelledAt,
+        endedAt: spirit.endedAt ?? cancelledAt,
+      };
+      this.repo.saveSpirit(cancelledSpirit);
+      this.registry.unregister(cancelledSpirit.organizationId, cancelledSpirit.memberId, cancelledSpirit.id);
+      this.emit(SocketEventNames.spiritCompleted, cancelledSpirit);
+      this.maybeFinalizeTaskSession(cancelledSpirit.organizationId, cancelledSpirit.taskSessionId, 'Stopped by user');
+    }
 
     this.realtime.emit(
       SocketEventNames.runCompleted,
@@ -556,6 +580,18 @@ export class SpiritServiceDirectRun extends SpiritServiceSupervisor {
       const text = result.text.trim();
       const reasoningContent = extractReasoningChunk(result) ?? (streamedTrace.reasoning.trim() || undefined);
       const runSteps = this.repo.listRunSteps?.(run.organizationId, run.id) ?? [];
+      if (statuses.includes('waiting_for_input')) {
+        const waitingStep = runSteps.find((step) => {
+          const output = step.output as { status?: unknown; questionId?: unknown } | undefined;
+          return output?.status === 'waiting_for_input' && typeof output.questionId === 'string';
+        });
+        const questionId =
+          (waitingStep?.output as { questionId?: string } | undefined)?.questionId;
+        const question = questionId
+          ? this.repo.getInteractiveQuestion(run.organizationId, questionId)
+          : null;
+        return this.waitForInput(running, question?.questionText ?? 'Waiting for user input');
+      }
       const goalToolCalls = collectRunStepToolCalls(result);
       const goalToolResults = collectRunStepToolResults(result);
       const artifactFileToolCall =

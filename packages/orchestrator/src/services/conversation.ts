@@ -889,22 +889,8 @@ export class ConversationService {
     });
 
     const published = this.publishMessage(message, undefined, input.attachmentIds);
-    this.supersedePendingQuestionsOnHumanReply(message);
     this.compactConversationIfNeeded(input.organizationId, input.threadId, input.senderId);
     return published;
-  }
-
-  private supersedePendingQuestionsOnHumanReply(message: Message): void {
-    if (message.senderKind !== 'human' || !message.channelId) return;
-    const pending = this.repo.listPendingInteractiveQuestions?.(message.organizationId, message.channelId) ?? [];
-    const now = new Date().toISOString();
-    for (const question of pending) {
-      this.repo.saveInteractiveQuestion?.({
-        ...question,
-        status: 'superseded',
-        updatedAt: now,
-      });
-    }
   }
 
   postToChannel(input: {

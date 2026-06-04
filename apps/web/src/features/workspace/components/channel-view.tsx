@@ -4,7 +4,7 @@ import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, use
 import { useChatScrollToBottom } from "../hooks/use-chat-scroll-to-bottom";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { buildReasoningTraceSteps } from "../reasoning-trace";
-import { File, FileArchive, FileAudio, FileImage, FileText, FileVideo, SquarePen, Terminal } from "lucide-react";
+import { File, FileArchive, FileAudio, FileImage, FileText, FileVideo, Square, SquarePen, Terminal } from "lucide-react";
 import type { BootstrapResponse, SkillInvocationResponse } from "@ujima/api-schema";
 import type { SelectedConversation } from "../types";
 import { useConversationSync } from "../use-conversation-sync";
@@ -101,6 +101,7 @@ export function ChannelView({
   const [activeQuestionIndex, setActiveQuestionIndex] = useState(0);
   const [resolvingQuestions, setResolvingQuestions] = useState<Record<string, boolean>>({});
   const [questionErrors, setQuestionErrors] = useState<Record<string, string>>({});
+  const [stoppingRunId, setStoppingRunId] = useState<string | undefined>();
   const [replyTo, setReplyTo] = useState<ChatMessageData | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -543,6 +544,16 @@ export function ChannelView({
     },
     [organizationId, upsertRun],
   );
+  const stopFirstRun = useCallback(async () => {
+    const runId = stoppableRunIds[0];
+    if (!runId) return;
+    setStoppingRunId(runId);
+    try {
+      await stopAgentRun(runId);
+    } finally {
+      setStoppingRunId(undefined);
+    }
+  }, [stopAgentRun, stoppableRunIds]);
   const answerQuestion = useCallback(
     async (questionId: string, selectedOption: string) => {
       setResolvingQuestions((state) => ({ ...state, [questionId]: true }));
@@ -894,6 +905,19 @@ export function ChannelView({
         {hasBlockingPrompts ? (
           <div className="shrink-0 px-3 pt-1.5 pb-3">
             <div className="space-y-2">
+              {stoppableRunIds.length > 0 ? (
+                <div className="flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => void stopFirstRun()}
+                    disabled={!!stoppingRunId}
+                    className="inline-flex h-7 items-center gap-1.5 rounded-md bg-red-600 px-2.5 text-[11px] font-semibold text-white shadow-lg shadow-red-500/20 transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <Square className="h-3 w-3 fill-current" />
+                    {stoppingRunId ? "Stopping" : "Stop run"}
+                  </button>
+                </div>
+              ) : null}
               {pendingThreadApprovals.map((approval) => (
                 <ApprovalCard
                   key={approval.id}

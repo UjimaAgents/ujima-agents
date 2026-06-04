@@ -1,6 +1,11 @@
 import { streamText, type LanguageModel, type ModelMessage, type ToolSet } from 'ai';
 import { RUN_TERMINATING_TOOL_NAMES } from './run-reply-guard.js';
-import { findToolApprovalRequiredError, ToolApprovalRequiredError } from './tool-loop-result.js';
+import {
+  findToolApprovalRequiredError,
+  findToolInputRequiredError,
+  ToolApprovalRequiredError,
+  ToolInputRequiredError,
+} from './tool-loop-result.js';
 
 // Both wake-run (ai-service.generateRunReply) and direct-spirit
 // (spirit-agent-run.runOnce) call runAgentLoop and both can hit the
@@ -160,6 +165,19 @@ function approvalWaitFromSteps(steps: readonly AgentLoopStep[]): string | null {
   return null;
 }
 
+function inputWaitFromSteps(steps: readonly AgentLoopStep[]): string | null {
+  for (const step of steps) {
+    const results = Array.isArray(step.toolResults) ? step.toolResults : [];
+    for (const result of results) {
+      const output = result?.output as { status?: unknown; questionId?: unknown } | undefined;
+      if (output?.status === 'waiting_for_input' && typeof output.questionId === 'string') {
+        return output.questionId;
+      }
+    }
+  }
+  return null;
+}
+
 /**
  * `toolChoice` strategy. The default for ad-hoc / programmatic runs
  * is `auto`, leaving the model free to mix tool calls and free text.
@@ -200,6 +218,7 @@ export async function runAgentLoop(input: {
 
   const stopWhen: NonNullable<Parameters<typeof streamText>[0]['stopWhen']> = (info) => {
     if (approvalWaitFromSteps(steps)) return true;
+    if (inputWaitFromSteps(steps)) return true;
     for (const step of steps) {
       const calls = Array.isArray(step.toolCalls) ? step.toolCalls : [];
       for (const call of calls) {
@@ -283,6 +302,8 @@ export async function runAgentLoop(input: {
         if (part.type === 'error') {
           const approvalError = findToolApprovalRequiredError(part.error);
           if (approvalError) throw approvalError;
+          const inputError = findToolInputRequiredError(part.error);
+          if (inputError) throw inputError;
           const classified = classifyApiError(part.error);
           if (classified) throw classified;
           throw part.error;
@@ -290,6 +311,7 @@ export async function runAgentLoop(input: {
       }
     } catch (streamError) {
       if (findToolApprovalRequiredError(streamError)) throw streamError;
+      if (findToolInputRequiredError(streamError)) throw streamError;
       const classified = classifyApiError(streamError);
       if (classified) throw classified;
       throw streamError;
@@ -301,6 +323,7 @@ export async function runAgentLoop(input: {
       [text, usage] = await Promise.all([result.text, result.usage]);
     } catch (resolveError) {
       if (findToolApprovalRequiredError(resolveError)) throw resolveError;
+      if (findToolInputRequiredError(resolveError)) throw resolveError;
       const classified = classifyApiError(resolveError);
       if (classified) throw classified;
       throw resolveError;
@@ -309,6 +332,8 @@ export async function runAgentLoop(input: {
     const toolResults = steps.flatMap((step) => step.toolResults ?? []);
     const approvalId = approvalWaitFromSteps(steps);
     if (approvalId) throw new ToolApprovalRequiredError(approvalId);
+    const questionId = inputWaitFromSteps(steps);
+    if (questionId) throw new ToolInputRequiredError(questionId);
     return { text, steps, toolResults, usage } as unknown as AgentLoopResult;
   };
 
