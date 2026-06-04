@@ -1,8 +1,9 @@
 import chalk from 'chalk';
-import { readFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { spawn } from 'node:child_process';
+import { createInterface } from 'node:readline/promises';
 import { superviseChildren } from './start-supervisor.js';
 import { maybeLoadTeam } from '@ujima/runtime-core';
 import { DEFAULT_BIND_HOST, DEFAULT_BIND_PORT } from '@ujima/api-schema';
@@ -46,6 +47,10 @@ function baseUrl(): string {
   const host = process.env.UJIMA_BIND_HOST ?? DEFAULT_BIND_HOST;
   const port = process.env.UJIMA_PORT ?? String(DEFAULT_BIND_PORT);
   return `http://${host}:${port}`;
+}
+
+function isDevMode(): boolean {
+  return process.env.UJIMA_DEV === '1' || findMonorepoRoot(__dirname) !== null;
 }
 
 interface InitOptions {
@@ -247,6 +252,10 @@ async function cmdStartMonorepo(root: string, argv: string[]): Promise<void> {
 }
 
 async function cmdStart(argv: string[]): Promise<void> {
+  // Then the freshness prompt — never in dev mode (running from a repo
+  // checkout) and never when running from a packaged self-update script.
+  await maybeOfferUpdate(argv);
+
   const packagedRuntime = resolvePackagedRuntimeDir(__dirname);
   if (packagedRuntime) {
     await cmdStartPackaged(packagedRuntime, argv);
@@ -331,6 +340,97 @@ function printCommandHelp(cmd: string): void {
       printUsage();
       process.exit(2);
   }
+}
+
+interface UpdateCheckCache {
+  checkedAt: string;
+  latest: string;
+}
+
+function updateCheckCachePath(): string {
+  return join(resolveHomeDir(), 'update-check.json');
+}
+
+async function maybeOfferUpdate(argv: string[]): Promise<void> {
+  if (isDevMode()) return;
+  if (resolvePackagedRuntimeDir(__dirname) === null) return;
+  if (argv.includes('--no-update-check')) return;
+  const local = getLocalVersion();
+  const latest = await fetchLatestVersionCached();
+  if (!latest) return;
+  if (compareVersions(latest, local) <= 0) return;
+  process.stdout.write(
+    `\nA new version of @ujima/agents is available: ${chalk.green(latest)} (installed: ${local}).\n`,
+  );
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  let answer = 'y';
+  try {
+    answer = (await rl.question('Update now? [Y/n] ')).trim().toLowerCase();
+  } finally {
+    rl.close();
+  }
+  if (answer === 'n' || answer === 'no') return;
+  await runNpmGlobalInstall(latest);
+  process.stdout.write(`Updated to ${latest}. Re-running ujima start…\n`);
+  // Re-exec the freshly-installed CLI with the original argv. The npm
+  // install replaced our binary on disk; node's exec resolution will
+  // pick up the new copy.
+  const child = spawn(process.execPath, [process.argv[1] ?? 'ujima', 'start', ...argv], {
+    stdio: 'inherit',
+  });
+  await new Promise<void>((resolveExit) => {
+    child.on('exit', (code) => {
+      process.exit(code ?? 0);
+      resolveExit();
+    });
+  });
+}
+
+async function fetchLatestVersionCached(): Promise<string | null> {
+  const cachePath = updateCheckCachePath();
+  const TTL_MS = 24 * 60 * 60 * 1000;
+  try {
+    const raw = readFileSync(cachePath, 'utf8');
+    const parsed = JSON.parse(raw) as UpdateCheckCache;
+    const age = Date.now() - Date.parse(parsed.checkedAt);
+    if (Number.isFinite(age) && age >= 0 && age < TTL_MS) return parsed.latest;
+  } catch {
+    // No cache; fall through.
+  }
+  try {
+    const res = await fetch('https://registry.npmjs.org/@ujima/agents/latest', {
+      headers: { 'user-agent': 'ujima-cli-update-check' },
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { version?: unknown };
+    if (typeof data.version !== 'string') return null;
+    mkdirSync(resolveHomeDir(), { recursive: true });
+    const next: UpdateCheckCache = {
+      checkedAt: new Date().toISOString(),
+      latest: data.version,
+    };
+    try {
+      writeFileSync(cachePath, JSON.stringify(next, null, 2));
+    } catch {
+      // best-effort cache write
+    }
+    return data.version;
+  } catch {
+    return null;
+  }
+}
+
+async function runNpmGlobalInstall(version: string): Promise<void> {
+  await new Promise<void>((resolveExit, rejectExit) => {
+    const child = spawn('npm', ['install', '-g', `@ujima/agents@${version}`], {
+      stdio: 'inherit',
+    });
+    child.on('error', (err) => rejectExit(err));
+    child.on('exit', (code) => {
+      if (code === 0) resolveExit();
+      else rejectExit(new Error(`npm install exited ${code ?? 'null'}`));
+    });
+  });
 }
 
 async function cmdUpdate(argv: string[]): Promise<void> {
@@ -454,4 +554,3 @@ export async function main(): Promise<void> {
       process.exit(2);
   }
 }
-

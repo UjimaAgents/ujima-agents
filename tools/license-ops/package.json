@@ -1,0 +1,15 @@
+{
+  "name": "@ujima/license-ops",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Cloudflare Worker that stores license_ids in KV and serves the revoked list. NOT shipped in the npm package.",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev",
+    "tail": "wrangler tail"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20251101.0",
+    "wrangler": "^3.95.0"
+  }
+}

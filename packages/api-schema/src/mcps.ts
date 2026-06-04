@@ -82,11 +82,18 @@ export const ImportMcpServersResponseSchema = z.object({
   skipped: z.array(z.object({ name: z.string(), reason: z.string() })),
 });
 
+export const CacheRecoverySchema = z.object({
+  isolatedCache: z.literal(true),
+  reason: z.literal('npm-cache-corrupted'),
+  cacheDir: z.string(),
+});
+
 export const TestMcpResponseSchema = z.object({
   ok: z.boolean(),
   tools: z.array(McpToolDescriptorSchema),
   error: z.string().optional(),
   testedAt: z.string(),
+  recovery: CacheRecoverySchema.optional(),
 });
 
 export const McpToolsResponseSchema = z.object({

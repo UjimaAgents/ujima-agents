@@ -66,6 +66,7 @@ export function McpsTab({
   const [showImport, setShowImport] = useState(false);
   const [showAttach, setShowAttach] = useState(false);
   const [importResult, setImportResult] = useState<string | null>(null);
+  const [recoveryNotice, setRecoveryNotice] = useState<string | null>(null);
   const [toolCounts, setToolCounts] = useState<Record<string, number>>({});
   const [toolsByServer, setToolsByServer] = useState<Record<string, TestMcpResponse["tools"]>>({});
   const [expandedToolsId, setExpandedToolsId] = useState<string | null>(null);
@@ -179,6 +180,11 @@ export function McpsTab({
       setToolCounts((prev) => ({ ...prev, [serverId]: result.tools.length }));
       setToolsByServer((prev) => ({ ...prev, [serverId]: result.tools }));
       setExpandedToolsId(serverId);
+      setRecoveryNotice(
+        result.recovery
+          ? `Test succeeded after retrying with an isolated npm cache at ${result.recovery.cacheDir}. Your host npm cache looks corrupted — run \`npm cache verify\` (or \`npm cache clean --force\`) on this machine to clear it.`
+          : null,
+      );
       await refreshServers();
       await catalog.refresh();
     } catch (err) {
@@ -229,6 +235,9 @@ export function McpsTab({
 
       {error || catalog.error ? (
         <SettingsErrorAlert message={error ?? catalog.error ?? ""} />
+      ) : null}
+      {recoveryNotice ? (
+        <p className="text-sm text-amber-600 dark:text-amber-400">{recoveryNotice}</p>
       ) : null}
       {importResult ? (
         <p className="text-sm text-emerald-600 dark:text-emerald-400">{importResult}</p>

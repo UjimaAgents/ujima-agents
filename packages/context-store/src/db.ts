@@ -1488,6 +1488,15 @@ function runMigrations(db: DbHandle): void {
       insert.run(m.id, Date.now());
       continue;
     }
+    // Renumbered through merges (was 044 before main claimed 044/045).
+    // Dev DBs that ran the earlier id already have the column.
+    if (
+      m.id === "046_goal_tasks_last_nudged_at" &&
+      hasColumn(db, "goal_tasks", "last_nudged_at")
+    ) {
+      insert.run(m.id, Date.now());
+      continue;
+    }
     db.exec("BEGIN");
     try {
       db.exec(m.up);
