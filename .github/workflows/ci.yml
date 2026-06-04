@@ -32,8 +32,6 @@ jobs:
         with:
           bun-version: 1.3.13
 
-      # Force update the lockfile on the runner and commit it locally
-      # This ensures whatever rogue script runs later sees a perfectly clean state.
       - name: Force Sync and Commit Lockfile on Runner
         run: |
           git config --global user.name "github-actions[bot]"
