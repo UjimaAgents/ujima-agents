@@ -24,6 +24,9 @@ jobs:
 
   build:
     runs-on: ubuntu-latest
+    env:
+      BUN_CONFIG_FROZEN_LOCKFILE: 'false'
+
     steps:
       - uses: actions/checkout@v4
 
