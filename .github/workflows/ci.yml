@@ -36,7 +36,6 @@ jobs:
         run: |
           mkdir -p ~/.config/bun
           echo -e "[install]\nfrozen-lockfile = false" > ~/.config/bun/bunfig.toml
-          bun config set install.frozen-lockfile false
 
       - name: Create local workspace fallback config
         run: echo -e "[install]\nfrozen-lockfile = false" > ./bunfig.toml
