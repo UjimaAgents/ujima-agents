@@ -42,7 +42,6 @@
         "@ujima/context-store": "workspace:*",
         "@ujima/event-bus": "workspace:*",
         "@ujima/framework": "workspace:*",
-        "@ujima/license": "workspace:*",
         "@ujima/llm": "workspace:*",
         "@ujima/mcp-client": "workspace:*",
         "@ujima/orchestrator": "workspace:*",
@@ -178,7 +177,6 @@
       "dependencies": {
         "@ujima/api-schema": "workspace:*",
         "@ujima/framework": "workspace:*",
-        "@ujima/license": "workspace:*",
         "@ujima/orchestrator": "workspace:*",
         "@ujima/runtime-core": "workspace:*",
         "@ujima/shared": "workspace:*",
@@ -211,7 +209,7 @@
     },
     "packages/distribution": {
       "name": "@ujima/agents",
-      "version": "0.0.14",
+      "version": "0.0.16",
       "bin": {
         "ujima": "./dist/cli.js",
       },
