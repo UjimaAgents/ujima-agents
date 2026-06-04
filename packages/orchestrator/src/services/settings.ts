@@ -545,6 +545,7 @@ export class SettingsService {
     const team = this.loadTeamForOrganization(input.organizationId);
     const previousRequireApprovalForWrites = team.config.policies.requireApprovalForWrites;
     const previousRequireApprovalForShell = team.config.policies.requireApprovalForShell;
+    const previousShellApprovalMode = team.config.policies.shellApprovalMode;
 
     if (input.requireApprovalForWrites !== undefined) {
       team.config.policies.requireApprovalForWrites = input.requireApprovalForWrites;
@@ -562,12 +563,15 @@ export class SettingsService {
 
     persistTeamConfig(this.repo, input.organizationId, team);
 
+    const effectiveRequireApprovalForWrites = team.config.policies.requireApprovalForWrites;
+    const effectiveRequireApprovalForShell = team.config.policies.requireApprovalForShell;
+    const effectiveShellApprovalMode = team.config.policies.shellApprovalMode;
     const writesApprovalTurnedOff =
       previousRequireApprovalForWrites !== false &&
-      input.requireApprovalForWrites === false;
+      effectiveRequireApprovalForWrites === false;
     const shellApprovalTurnedOff =
-      previousRequireApprovalForShell !== false &&
-      input.requireApprovalForShell === false;
+      (previousRequireApprovalForShell !== false || previousShellApprovalMode !== 'allow_all') &&
+      (effectiveRequireApprovalForShell === false || effectiveShellApprovalMode === 'allow_all');
 
     if (writesApprovalTurnedOff || shellApprovalTurnedOff) {
       await this.autoApprovePendingByPolicy(input.organizationId, {

@@ -35,6 +35,7 @@ export class NotificationService {
   private approvalResolver?: ApprovalResolver;
   private pollTimers = new Map<string, ReturnType<typeof setInterval>>();
   private pollOffsets = new Map<string, number>();
+  private pollInFlight = false;
 
   constructor(private readonly repo: ApiRepository) {}
 
@@ -47,8 +48,11 @@ export class NotificationService {
    * Required when no webhook is set (local-first). Call once after setup.
    */
   startPolling(intervalMs = 2000): void {
-    this.pollOnce().catch(() => undefined);
-    const timer = setInterval(() => this.pollOnce().catch(() => undefined), intervalMs);
+    if (this.pollTimers.has('_global')) return;
+    void this.runPollingTick();
+    const timer = setInterval(() => {
+      void this.runPollingTick();
+    }, intervalMs);
     this.pollTimers.set('_global', timer);
     if (this.logErrors) console.error('[notify] telegram polling started every', intervalMs, 'ms');
   }
@@ -56,6 +60,17 @@ export class NotificationService {
   stopPolling(): void {
     for (const timer of this.pollTimers.values()) clearInterval(timer);
     this.pollTimers.clear();
+    this.pollInFlight = false;
+  }
+
+  private async runPollingTick(): Promise<void> {
+    if (this.pollInFlight) return;
+    this.pollInFlight = true;
+    try {
+      await this.pollOnce();
+    } finally {
+      this.pollInFlight = false;
+    }
   }
 
   private async pollOnce(): Promise<void> {
