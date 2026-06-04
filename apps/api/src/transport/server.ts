@@ -92,6 +92,9 @@ export interface TransportOptions {
       teamStore: TeamStore;
       onboarding: OnboardingService;
       scheduler?: SchedulerService;
+      notifications: {
+        stopPolling(): void;
+      };
       settings: SettingsService;
       workspaces: WorkspaceService;
       taskSessions: TaskSessionService;
@@ -138,6 +141,7 @@ export function createTransport(opts: TransportOptions): Transport {
 
   fastify.setValidatorCompiler(validatorCompiler);
   fastify.setSerializerCompiler(serializerCompiler);
+  let notifications: { stopPolling(): void } | undefined;
 
   // Documentation (Public)
   fastify.register(swagger, {
@@ -356,6 +360,7 @@ export function createTransport(opts: TransportOptions): Transport {
           auth: services.auth,
         });
         scheduler = services.scheduler;
+        notifications = services.notifications;
         scheduler?.start();
       }
     },
@@ -385,6 +390,7 @@ export function createTransport(opts: TransportOptions): Transport {
     },
     async close() {
       scheduler?.stop();
+      notifications?.stopPolling();
       io.disconnectSockets(true);
       io.close();
       await fastify.close();

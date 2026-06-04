@@ -831,6 +831,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   handleMessagePublished = (msg) => {
     if (msg.senderId !== '__ujima_scheduler__') {
       const id = msg.channelId ?? msg.threadId;
+      if (!id) return;
       let channelName = id;
       if (id.startsWith('self:')) {
         const m = context.repo.getMember(msg.organizationId, id.slice(5));

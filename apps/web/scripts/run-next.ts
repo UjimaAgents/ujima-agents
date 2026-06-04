@@ -49,4 +49,5 @@ const proc = spawn('bun', nextArgs, {
   stdio: ['inherit', 'inherit', 'inherit'],
 });
 
-process.exit(await new Promise<number | null>((resolve) => proc.on('exit', resolve)));
+const exitCode = await new Promise<number | null>((resolve) => proc.on('exit', resolve));
+process.exit(exitCode ?? 0);
