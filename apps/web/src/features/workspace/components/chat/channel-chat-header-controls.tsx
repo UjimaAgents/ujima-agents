@@ -18,6 +18,7 @@ export function ChannelChatHeaderControls({
     <div className="flex min-w-0 flex-col items-end gap-1.5">
       <ShellApprovalOrgModeSelect
         value={value}
+        size="sm"
         disabled={saving}
         className="w-[10.5rem] sm:w-52"
         menuPlacement="down"

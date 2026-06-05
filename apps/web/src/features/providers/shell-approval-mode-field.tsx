@@ -54,6 +54,7 @@ export function ShellApprovalOrgModeSelect({
   ariaLabel = "Shell approval",
   className = "w-full min-w-[11rem] sm:w-52",
   menuPlacement = "down",
+  size = "default",
 }: {
   value: ShellApprovalMode;
   onChange: (value: ShellApprovalMode) => void;
@@ -61,6 +62,7 @@ export function ShellApprovalOrgModeSelect({
   ariaLabel?: string;
   className?: string;
   menuPlacement?: "down" | "up";
+  size?: "default" | "sm";
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
@@ -69,6 +71,8 @@ export function ShellApprovalOrgModeSelect({
   const menuRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const selectedOption = ORG_APPROVAL_OPTIONS.find((option) => option.value === value);
+  const triggerSizeClass =
+    size === "sm" ? "px-2.5 py-1.5 text-xs" : "px-4 py-2.5 text-sm";
 
   useEffect(() => {
     setMounted(true);
@@ -122,7 +126,7 @@ export function ShellApprovalOrgModeSelect({
         aria-label={ariaLabel}
         aria-expanded={isOpen}
         onClick={() => !disabled && setIsOpen(!isOpen)}
-        className="flex w-full items-center justify-between gap-2 rounded-lg border border-zinc-200 bg-white px-4 py-2.5 text-sm text-zinc-900 outline-none transition focus:border-violet-500 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+        className={`flex w-full cursor-pointer items-center justify-between gap-2 rounded-lg border border-zinc-200 bg-white text-zinc-900 outline-none transition focus:border-violet-500 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 ${triggerSizeClass}`}
       >
         <span className="min-w-0 truncate">{selectedOption?.label ?? "Shell approval"}</span>
         <ChevronDown
@@ -134,41 +138,41 @@ export function ShellApprovalOrgModeSelect({
         ? createPortal(
             <div
               ref={menuRef}
-              className="z-50 max-h-[min(28rem,calc(100vh-1.5rem))] overflow-auto rounded-2xl bg-zinc-900 text-zinc-100 shadow-2xl shadow-black/30 ring-1 ring-black/20"
+              className="z-50 max-h-[min(28rem,calc(100vh-1.5rem))] overflow-auto rounded-xl border border-violet-500/[0.08] bg-zinc-950/95 p-2 text-zinc-100 shadow-2xl shadow-black/30 backdrop-blur-md dark:border-white/[0.08]"
               style={menuStyle}
             >
-              <div className="p-2">
-                {ORG_APPROVAL_OPTIONS.map((option) => {
-                  const Icon = option.icon;
-                  const selected = option.value === value;
-                  return (
-                    <button
-                      key={option.value}
-                      type="button"
-                      onClick={() => {
-                        onChange(option.value);
-                        setIsOpen(false);
-                      }}
-                      className={`flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left transition ${
-                        selected ? "bg-white/10" : "hover:bg-white/5"
-                      }`}
-                    >
-                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/5 text-zinc-200">
-                        <Icon className="h-4 w-4" />
+              {ORG_APPROVAL_OPTIONS.map((option) => {
+                const Icon = option.icon;
+                const selected = option.value === value;
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => {
+                      onChange(option.value);
+                      setIsOpen(false);
+                    }}
+                    className={`flex w-full cursor-pointer items-center gap-3 rounded-lg px-3 py-3 text-left transition ${
+                      selected
+                        ? "bg-white/6 text-zinc-50"
+                        : "text-zinc-200 hover:bg-white/[0.04] hover:text-zinc-50"
+                    }`}
+                  >
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/[0.04] text-zinc-100 transition">
+                      <Icon className="h-4 w-4" />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="flex items-center gap-2">
+                        <span className="text-sm font-medium">{option.label}</span>
+                        {selected ? <Check className="h-4 w-4 text-zinc-100" /> : null}
                       </span>
-                      <span className="min-w-0 flex-1">
-                        <span className="flex items-center gap-2">
-                          <span className="text-sm font-medium text-zinc-50">{option.label}</span>
-                          {selected ? <Check className="h-4 w-4 text-zinc-100" /> : null}
-                        </span>
-                        <span className="mt-0.5 block text-sm leading-5 text-zinc-400">
-                          {option.description}
-                        </span>
+                      <span className="mt-0.5 block text-sm leading-5 text-zinc-400">
+                        {option.description}
                       </span>
-                    </button>
-                  );
-                })}
-              </div>
+                    </span>
+                  </button>
+                );
+              })}
             </div>,
             document.body,
           )

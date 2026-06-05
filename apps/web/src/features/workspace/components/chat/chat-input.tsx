@@ -1055,7 +1055,8 @@ export function ChatInput({
                 placeholder="Reasoning"
                 ariaLabel="Reasoning effort"
                 menuPlacement="up"
-                className="w-[8.5rem]"
+                className="w-[8.5rem] sm:w-[10.5rem]"
+                menuClassName="min-w-full w-max max-w-[calc(100vw-1.5rem)]"
                 disabled={readOnly}
               />
               {canStopRun && !showStopInsteadOfSend && (
