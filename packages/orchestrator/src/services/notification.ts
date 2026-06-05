@@ -98,29 +98,45 @@ export class NotificationService {
 
         for (const update of body.result) {
           const cb = update.callback_query;
-          if (!cb?.data) continue;
           const newOffset = update.update_id + 1;
-          this.pollOffsets.set(token, newOffset);
+          if (!cb?.data) {
+            this.pollOffsets.set(token, newOffset);
+            continue;
+          }
 
-          // Resolve the approval
-          const err = await resolveApprovalFromTelegram(
-            cb.data,
-            token,
-            (approvalId) => findApprovalById(this.repo, approvalId),
-            this.approvalResolver,
-            this.logErrors,
-          ).catch(e => e?.message ?? 'error');
+          let err: string | null;
+          try {
+            err = await resolveApprovalFromTelegram(
+              cb.data,
+              token,
+              (approvalId) => findApprovalById(this.repo, approvalId),
+              this.approvalResolver,
+              this.logErrors,
+            );
+          } catch (e) {
+            if (this.logErrors) console.error('[notify] resolve callback failed:', e);
+            continue;
+          }
 
-          // Answer callback to clear loading state
-          await fetch(`https://api.telegram.org/bot${token}/answerCallbackQuery`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              callback_query_id: cb.id,
-              text: err ? `Failed: ${err}` : 'Approved ✓',
-              show_alert: !!err,
-            }),
-          }).catch(() => undefined);
+          let ackOk = false;
+          try {
+            const ackRes = await fetch(`https://api.telegram.org/bot${token}/answerCallbackQuery`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                callback_query_id: cb.id,
+                text: err ? `Failed: ${err}` : 'Approved ✓',
+                show_alert: !!err,
+              }),
+            });
+            ackOk = ackRes.ok;
+          } catch (e) {
+            if (this.logErrors) console.error('[notify] answer callback failed:', e);
+          }
+
+          if (ackOk) {
+            this.pollOffsets.set(token, newOffset);
+          }
         }
       } catch (e) {
         if (this.logErrors) console.error('[notify] poll error:', e);

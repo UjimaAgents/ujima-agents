@@ -19,6 +19,30 @@ const CreateChannelSchema = z.object({
   enabled: z.boolean().default(true),
 });
 
+function parseNotificationConfig(raw: string): Record<string, string> {
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const config: Record<string, string> = {};
+    for (const [key, value] of Object.entries(parsed)) {
+      if (typeof value === 'string') config[key] = value;
+    }
+    return config;
+  } catch {
+    return {};
+  }
+}
+
+function mergeNotificationConfig(
+  existingJson: string,
+  patch: Record<string, string | undefined>,
+): string {
+  const merged = parseNotificationConfig(existingJson);
+  for (const [key, value] of Object.entries(patch)) {
+    if (value !== undefined) merged[key] = value;
+  }
+  return JSON.stringify(merged);
+}
+
 const UpdateChannelSchema = z.object({
   config: z.object({
     webhookUrl: z.string().optional(),
@@ -150,7 +174,9 @@ export function registerNotificationRoutes(api: FastifyInstance, deps: Notificat
     const body = UpdateChannelSchema.parse(req.body);
     deps.repo.saveNotificationChannel({
       ...existing,
-      configJson: body.config ? JSON.stringify(body.config) : existing.configJson,
+      configJson: body.config
+        ? mergeNotificationConfig(existing.configJson, body.config)
+        : existing.configJson,
       enabled: body.enabled ?? existing.enabled,
       notifyMessages: body.notifyMessages ?? existing.notifyMessages,
       notifyApprovals: body.notifyApprovals ?? existing.notifyApprovals,
