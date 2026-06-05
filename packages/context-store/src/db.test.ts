@@ -316,4 +316,30 @@ describe('database migrations', () => {
 
     upgraded.close();
   });
+
+  it('migration 049 lands server_id/tool_name/args_json on the live audit_events (not the pre-003 renamed table)', () => {
+    // Locks in that 049 targets the post-003 audit_events table, the one
+    // the dispatch plan's §12 audit-write layer (PR 7) will populate.
+    // Migration 003 both RENAMEs the original audit_events to
+    // task_audit_events and CREATEs a fresh audit_events with the
+    // action/target_type shape — both happen in the same 003 body, so
+    // by the time 049 runs the live table exists and the ALTERs apply
+    // to the right rows. A previous review iteration mistook the rename
+    // for a destruction; this test refutes that class of concern.
+    const db = openDatabase({ dbPath: ':memory:' });
+    const cols = (
+      db.prepare('PRAGMA table_info(audit_events)').all() as { name: string }[]
+    ).map((c) => c.name);
+    expect(cols).toEqual(expect.arrayContaining(['server_id', 'tool_name', 'args_json']));
+
+    const taskCols = (
+      db.prepare('PRAGMA table_info(task_audit_events)').all() as { name: string }[]
+    ).map((c) => c.name);
+    // The pre-003 renamed table is untouched by 049 — proof that we
+    // ALTERed the right table.
+    expect(taskCols).not.toContain('server_id');
+    expect(taskCols).not.toContain('args_json');
+
+    db.close();
+  });
 });
