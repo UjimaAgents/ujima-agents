@@ -656,12 +656,30 @@ export function instantiateFromRegistry(
   const args = entry.defaults.args.map((arg) => substitute(arg, subs));
   const env = { ...entry.defaults.env, ...(options.envOverrides ?? {}) };
 
+  // Substitute headers from the resolved env map so PAT-auth remote
+  // entries like `Bearer ${GITHUB_TOKEN}` become `Bearer ghp_actual_…`
+  // when the caller supplies the token via envOverrides. Without this,
+  // buildTransport (transport.ts:requestOptions) forwards the literal
+  // placeholder as the Authorization header and the vendor's API
+  // returns 401 with no clue that a substitution was expected.
+  // Placeholders that aren't in env fall through unchanged — same
+  // semantics as the args substitution above. The caller is responsible
+  // for supplying every value its chosen entry's `requires.envVars`
+  // declares; the instantiate path doesn't enforce that, but settings
+  // forms should validate before instantiating.
+  const headers = entry.defaults.headers
+    ? Object.fromEntries(
+        Object.entries(entry.defaults.headers).map(([k, v]) => [k, substitute(v, env)]),
+      )
+    : undefined;
+
   return {
     ...entry.defaults,
     id: options.overrideId ?? entry.id,
     name: options.overrideName ?? entry.name,
     args,
     env,
+    ...(headers !== undefined ? { headers } : {}),
   };
 }
 

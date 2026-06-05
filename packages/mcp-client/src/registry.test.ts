@@ -138,13 +138,24 @@ describe('curated registry', () => {
     }
   });
 
-  it('a PAT-auth remote entry instantiates to an http-streamable MCPDef with a Bearer header', () => {
-    // Sanity-check the remote-PAT path end-to-end on one representative
-    // entry. If the headers map or transport shape regress, every PAT
-    // entry in Track A breaks at attach time — this catches it cheap.
-    const def = instantiateFromRegistry('github-mcp');
-    expect(def.transport).toBe('http-streamable');
-    expect(def.url).toBe('https://api.githubcopilot.com/mcp/');
-    expect(def.headers).toEqual({ Authorization: 'Bearer ${GITHUB_TOKEN}' });
+  it('a PAT-auth remote entry instantiates to an http-streamable MCPDef and substitutes header tokens from envOverrides', () => {
+    // Two invariants in one assertion chain:
+    //   1. No envOverrides → headers retain the literal placeholder
+    //      (same semantics as args substitution; caller is responsible
+    //      for supplying values).
+    //   2. envOverrides supplied → the token is interpolated into the
+    //      Authorization header before the MCPDef leaves this function.
+    // Without (2) buildTransport would forward `Bearer ${GITHUB_TOKEN}`
+    // as the literal Authorization header and every PAT-auth Track A
+    // entry would fail auth in production with no useful error.
+    const unbound = instantiateFromRegistry('github-mcp');
+    expect(unbound.transport).toBe('http-streamable');
+    expect(unbound.url).toBe('https://api.githubcopilot.com/mcp/');
+    expect(unbound.headers).toEqual({ Authorization: 'Bearer ${GITHUB_TOKEN}' });
+
+    const bound = instantiateFromRegistry('github-mcp', {
+      envOverrides: { GITHUB_TOKEN: 'ghp_test_token' },
+    });
+    expect(bound.headers).toEqual({ Authorization: 'Bearer ghp_test_token' });
   });
 });
