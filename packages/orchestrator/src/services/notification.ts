@@ -36,6 +36,7 @@ export class NotificationService {
   private pollTimers = new Map<string, ReturnType<typeof setInterval>>();
   private pollOffsets = new Map<string, number>();
   private pollInFlight = false;
+  private pollAbort?: AbortController;
 
   constructor(private readonly repo: ApiRepository) {}
 
@@ -59,6 +60,7 @@ export class NotificationService {
       if (this.logErrors) console.error('[notify] telegram polling not started (no poll-mode bots configured)');
       return;
     }
+    this.pollAbort = new AbortController();
     void this.runPollingTick();
     const timer = setInterval(() => {
       void this.runPollingTick();
@@ -68,6 +70,8 @@ export class NotificationService {
   }
 
   stopPolling(): void {
+    this.pollAbort?.abort();
+    this.pollAbort = undefined;
     for (const timer of this.pollTimers.values()) clearInterval(timer);
     this.pollTimers.clear();
     this.pollInFlight = false;
@@ -85,13 +89,16 @@ export class NotificationService {
 
   private async pollOnce(): Promise<void> {
     if (!this.approvalResolver) return;
+    const signal = this.pollAbort?.signal;
+    if (signal?.aborted) return;
     const telegramBotTokens = listTelegramPollingBotTokens(this.repo);
 
     for (const token of telegramBotTokens) {
+      if (signal?.aborted) return;
       const offset = this.pollOffsets.get(token) ?? 0;
       try {
         const url = `https://api.telegram.org/bot${token}/getUpdates?offset=${offset}&timeout=5&allowed_updates=["callback_query"]`;
-        const res = await fetch(url);
+        const res = await fetch(url, signal ? { signal } : undefined);
         if (!res.ok) continue;
         const body = await res.json() as { ok: boolean; result: { update_id: number; callback_query?: { id: string; data: string } }[] };
         if (!body.ok || !body.result) continue;
@@ -129,12 +136,15 @@ export class NotificationService {
                 text: err ? `Failed: ${err}` : 'Approved ✓',
                 show_alert: !!err,
               }),
+              ...(signal ? { signal } : {}),
             });
           } catch (e) {
+            if (isAbortError(e)) return;
             if (this.logErrors) console.error('[notify] answer callback failed:', e);
           }
         }
       } catch (e) {
+        if (isAbortError(e)) return;
         if (this.logErrors) console.error('[notify] poll error:', e);
       }
     }
@@ -206,6 +216,10 @@ export class NotificationService {
         break;
     }
   }
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === 'AbortError';
 }
 
 function configFromChannel(channel: NotificationChannel): Record<string, unknown> {
