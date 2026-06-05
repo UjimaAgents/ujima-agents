@@ -12,7 +12,7 @@ import {
   runUsedThreadPublishingTool,
 } from './run-reply-guard.js';
 import { isToolCardError } from './spirit-run-detail.js';
-import { hasTokenUsage, normalizeTokenUsage } from './token-usage.js';
+import { normalizeTokenUsage, persistMessageTokens } from './token-usage.js';
 
 export type RunReplyResult = Awaited<ReturnType<AiService['generateRunReply']>>;
 export interface StreamedRunTrace {
@@ -174,13 +174,8 @@ export async function publishRunReplyTrace(input: {
       undefined,
       publishOptions,
     );
-    if (isLastStep && hasTokenUsage(usage) && published) {
-      input.repo.updateMessage({
-        ...published,
-        inputTokens: usage.inputTokens,
-        outputTokens: usage.outputTokens,
-        editedAt: new Date().toISOString(),
-      });
+    if (isLastStep && published) {
+      persistMessageTokens(input.repo, published, usage);
     }
     publishedContent.add(content);
   }
@@ -211,13 +206,8 @@ export async function publishRunReplyTrace(input: {
       undefined,
       publishOptions,
     );
-    if (hasTokenUsage(usage) && published) {
-      input.repo.updateMessage({
-        ...published,
-        inputTokens: usage.inputTokens,
-        outputTokens: usage.outputTokens,
-        editedAt: new Date().toISOString(),
-      });
+    if (published) {
+      persistMessageTokens(input.repo, published, usage);
     }
   }
 

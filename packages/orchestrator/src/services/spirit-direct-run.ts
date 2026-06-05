@@ -468,10 +468,15 @@ export class SpiritServiceDirectRun extends SpiritServiceSupervisor {
     this.runAbortControllers.set(abortKey, abortController);
     const streamedTrace: StreamedRunTrace = { text: '', reasoning: '' };
     let persistedStepCount = 0;
-    const turn = new RunTurnPublisher((message) => {
-      this.conversations?.publishMessage(message);
-      return message;
-    });
+    const turn = new RunTurnPublisher(
+      (message) => {
+        this.conversations?.publishMessage(message);
+        return message;
+      },
+      (message) => {
+        this.repo.updateMessage(message);
+      },
+    );
 
     try {
       const systemPromptSuffix = this.resolveSystemPromptSuffix({
@@ -510,7 +515,6 @@ export class SpiritServiceDirectRun extends SpiritServiceSupervisor {
             const stepText = typeof s.text === 'string' ? s.text.trim() : '';
             const stepToolCalls = Array.isArray(s.toolCalls) ? s.toolCalls : [];
             const stepToolResults = Array.isArray(s.toolResults) ? s.toolResults : [];
-            if (!stepText && stepToolCalls.length === 0) continue;
 
             const stepArtifactFileToolCall =
               stepToolCalls.length > 0
@@ -525,8 +529,12 @@ export class SpiritServiceDirectRun extends SpiritServiceSupervisor {
             if (stepArtifactFileToolCall) turn.markArtifactFilePublished();
 
             if (runUsedThreadPublishingTool({ steps: [s] }) && !stepArtifactFileToolCall) continue;
+            // Skip tool-only steps with no artifact card — they'd
+            // render as empty agent bubbles. Tool execution data
+            // already lives in run_steps for the trace panel.
+            if (!stepText && !stepArtifactFileToolCall) continue;
 
-            const content = stepText || (stepArtifactFileToolCall ? 'Artifact updated.' : '');
+            const content = stepText || 'Artifact updated.';
             const toolCalls = [
               ...normalizeRunStepToolCalls(stepToolCalls, stepToolResults),
               ...(stepArtifactFileToolCall ? [stepArtifactFileToolCall] : []),
@@ -651,15 +659,12 @@ export class SpiritServiceDirectRun extends SpiritServiceSupervisor {
       const terminatingTool: string | null = persistedIsSilent
         ? persistedTerminator
         : detectedTerminatingTool;
-      const tokenFooter = turn.backfillTokens({
+      turn.backfillTokens({
         finalText: text,
         lastText: turn.lastContentValue,
         terminatingTool,
         usage,
       });
-      if (tokenFooter) {
-        this.repo.updateMessage(tokenFooter);
-      }
       const usedPass = runUsedChannelPass(result) || terminatingTool === 'channel.pass';
       const finalThreadId = run.threadId;
       const channelId = finalThreadId

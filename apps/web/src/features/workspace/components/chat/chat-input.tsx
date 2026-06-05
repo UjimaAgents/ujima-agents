@@ -603,7 +603,20 @@ export function ChatInput({
   };
 
   const confirmClear = async () => {
-    await runSlashCommand({ command: "clear", label: "/clear", description: "Archive the thread and empty the visible chat.", kind: "builtin" });
+    setIsCommanding(true);
+    try {
+      const currentContent = content;
+      await onCommand("clear", currentContent);
+      setContent("");
+      setSelection({ start: 0, end: 0 });
+      setAttachments([]);
+      setUploadProgress(0);
+      setClearConfirmation(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to run clear command.");
+    } finally {
+      setIsCommanding(false);
+    }
   };
 
   const submitComposer = async () => {

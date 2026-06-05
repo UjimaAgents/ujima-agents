@@ -1,5 +1,5 @@
 import chalk from 'chalk';
-import { readFileSync, mkdirSync, writeFileSync } from 'node:fs';
+import { readFileSync, mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { spawn } from 'node:child_process';
@@ -38,7 +38,10 @@ function loadToken(homeDir: string): string {
     return readFileSync(join(homeDir, 'token'), 'utf8').trim();
   } catch {
     throw new Error(
-      `ujima: no token found. Set UJIMA_TOKEN or start the runtime to generate ${join(homeDir, 'token')}.`,
+      `ujima: no token found.\n` +
+      `  The API daemon must be running to generate a token.\n` +
+      `  Fix: Run 'ujima start' in a separate terminal, then run 'ujima init' here.\n` +
+      `  Token location: ${join(homeDir, 'token')}`,
     );
   }
 }
@@ -61,11 +64,13 @@ interface InitOptions {
   workspaceRoot: string;
   configPath?: string;
   providerKeys: Record<string, string>;
+  promptPassword: boolean;
 }
 
 function parseInitArgs(argv: string[]): InitOptions {
   const result: Partial<InitOptions> & { providerKeys: Record<string, string> } = {
     providerKeys: {},
+    promptPassword: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -88,12 +93,24 @@ function parseInitArgs(argv: string[]): InitOptions {
         result.ownerEmail = next();
         break;
       case '--owner-password':
-      case '-p':
-        result.ownerPassword = next();
+      case '-p': {
+        const value = next();
+        if (value === '-') {
+          result.promptPassword = true;
+        } else {
+          result.ownerPassword = value;
+        }
+        break;
+      }
+      case '--prompt-password':
+        result.promptPassword = true;
         break;
       case '--workspace':
       case '-w':
         result.workspaceRoot = resolve(next());
+        if (!existsSync(result.workspaceRoot)) {
+          throw new Error(`ujima init: workspace path does not exist: ${result.workspaceRoot}`);
+        }
         break;
       case '--config':
       case '-c':
@@ -115,7 +132,9 @@ function parseInitArgs(argv: string[]): InitOptions {
   if (!result.organizationName) throw new Error('ujima init: --name is required');
   if (!result.ownerName) throw new Error('ujima init: --owner is required');
   if (!result.ownerEmail) throw new Error('ujima init: --owner-email is required');
-  if (!result.ownerPassword) throw new Error('ujima init: --owner-password is required');
+  if (!result.promptPassword && !result.ownerPassword) {
+    throw new Error('ujima init: --owner-password is required (use -p - to prompt securely)');
+  }
   if (!result.workspaceRoot) throw new Error('ujima init: --workspace is required');
   return result as InitOptions;
 }
@@ -124,6 +143,34 @@ async function cmdInit(argv: string[]): Promise<void> {
   const opts = parseInitArgs(argv);
   const homeDir = resolveHomeDir();
   const token = loadToken(homeDir);
+
+  let ownerPassword = opts.ownerPassword;
+  if (opts.promptPassword) {
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    process.stdout.write('Owner password (min 8 chars): ');
+    try {
+      // Read password with hidden input (stdin raw mode)
+      process.stdin.setRawMode?.(true);
+      ownerPassword = '';
+      for await (const char of process.stdin) {
+        if (char === '\n' || char === '\r' || char === '\u0004') break;
+        if (char === '\u0003') process.exit(1); // Ctrl+C
+        if (char === '\b' || char === '\u007f') {
+          if (ownerPassword.length > 0) {
+            ownerPassword = ownerPassword.slice(0, -1);
+            process.stdout.write('\b \b');
+          }
+        } else {
+          ownerPassword += char;
+          process.stdout.write('*');
+        }
+      }
+      process.stdout.write('\n');
+    } finally {
+      process.stdin.setRawMode?.(false);
+      rl.close();
+    }
+  }
 
   const team = await maybeLoadTeam(opts.configPath);
   const teamPayload = team
@@ -142,20 +189,30 @@ async function cmdInit(argv: string[]): Promise<void> {
     organizationName: opts.organizationName,
     ownerName: opts.ownerName,
     ownerEmail: opts.ownerEmail,
-    ownerPassword: opts.ownerPassword,
+    ownerPassword,
     workspaceRoot: opts.workspaceRoot,
     providerKeys: opts.providerKeys,
     team: teamPayload,
   };
 
-  const res = await fetch(`${baseUrl()}/api/onboarding`, {
-    method: 'POST',
-    headers: {
-      authorization: `Bearer ${token}`,
-      'content-type': 'application/json',
-    },
-    body: JSON.stringify(body),
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${baseUrl()}/api/onboarding`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${token}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    });
+  } catch (err) {
+    process.stderr.write(
+      `ujima init: cannot connect to API at ${baseUrl()}.\n` +
+      `  Is 'ujima start' running in another terminal?\n` +
+      `  Details: ${err instanceof Error ? err.message : String(err)}\n`,
+    );
+    process.exit(1);
+  }
 
   const text = await res.text();
   if (!res.ok) {
@@ -332,12 +389,18 @@ function printCommandHelp(cmd: string): void {
         'Onboard a new organization, owner, and workspace against a running API.',
         { dim: true },
       );
+      printInfoRow(
+        'Note:',
+        'Run "ujima start" first (in a separate terminal) to start the API daemon, then run init.',
+        { dim: true },
+      );
       console.info(`   ${chalk.gray('↳')} ${chalk.white('Options:')}`);
       printInfoRow('--name, -n', 'Organization name (required)', { dim: true });
       printInfoRow('--owner, -o', 'Owner display name (required)', { dim: true });
       printInfoRow('--owner-email, -e', 'Owner email address (required)', { dim: true });
-      printInfoRow('--owner-password, -p', 'Owner password (min 8 chars, required)', { dim: true });
-      printInfoRow('--workspace, -w', 'Workspace root path (required)', { dim: true });
+      printInfoRow('--owner-password, -p', 'Owner password (min 8 chars). Use -p - to prompt securely.', { dim: true });
+      printInfoRow('--prompt-password', 'Prompt for password securely (hidden input)', { dim: true });
+      printInfoRow('--workspace, -w', 'Workspace root path (required, must exist)', { dim: true });
       printInfoRow('--config, -c', 'Path to ujima.config.ts', { dim: true });
       printInfoRow('--provider', 'name=key (repeatable)', { dim: true });
       break;

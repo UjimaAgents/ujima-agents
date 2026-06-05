@@ -576,7 +576,7 @@ describe('SpiritService run path', () => {
     expect(messages.some((message) => message.content === 'Done.')).toBe(true);
   });
 
-  it('persists tool-only assistant steps as visible chat messages', async () => {
+  it('skips tool-only assistant steps that have no chat-renderable content', async () => {
     const organizationId = 'org-1';
     const runId = 'run-1';
     const agentId = 'Quinn Mason';
@@ -661,13 +661,15 @@ describe('SpiritService run path', () => {
 
     await (service as any).advanceRun(run);
 
+    // Tool-only steps with no artifact card and no model text must
+    // NOT publish — they'd render as empty bubbles in the chat. The
+    // tool execution data lives in `run_steps` for the trace panel.
     const toolOnlyMessage = messages.find(
       (message) =>
         Array.isArray(message.toolCalls) &&
         message.toolCalls.some((call: { toolCallId?: string }) => call.toolCallId === 'tool-call-1'),
     );
-    expect(toolOnlyMessage).toBeDefined();
-    expect(toolOnlyMessage?.content).toBe('');
+    expect(toolOnlyMessage).toBeUndefined();
   });
 
   it('persists token counts to the last visible bubble silently in a multi-step reply', async () => {

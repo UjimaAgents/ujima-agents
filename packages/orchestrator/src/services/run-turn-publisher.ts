@@ -15,7 +15,10 @@ export class RunTurnPublisher {
   private publishedArtifactFile = false;
   private publishedContent = new Set<string>();
 
-  constructor(private publish: (message: Message) => Message) {}
+  constructor(
+    private publish: (message: Message) => Message,
+    private persist?: (message: Message) => void,
+  ) {}
 
   publishMessage(message: Message): Message {
     const saved = this.publish(message);
@@ -33,20 +36,19 @@ export class RunTurnPublisher {
   }
 
   /**
-   * Return the last published message stamped with final token
-   * usage so the caller can persist it to the DB without a realtime
-   * re-broadcast. The live counter rides on `run:tokens`; this
-   * footer only matters after reload.
+   * Silently stamp final token usage onto the last published
+   * message. Persists via the optional repo callback; the live
+   * counter rides on `run:tokens`, so we never re-broadcast.
    */
   backfillTokens(input: {
     finalText: string;
     lastText: string;
     terminatingTool: string | null;
     usage: NormalizedTokenUsage;
-  }): Message | undefined {
-    if (!this.lastMessage || !hasTokenUsage(input.usage)) return undefined;
-    if (input.finalText && input.finalText !== input.lastText && !input.terminatingTool) return undefined;
-    if ((this.lastMessage.inputTokens ?? 0) > 0 || (this.lastMessage.outputTokens ?? 0) > 0) return undefined;
+  }): void {
+    if (!this.lastMessage || !hasTokenUsage(input.usage)) return;
+    if (input.finalText && input.finalText !== input.lastText && !input.terminatingTool) return;
+    if ((this.lastMessage.inputTokens ?? 0) > 0 || (this.lastMessage.outputTokens ?? 0) > 0) return;
     const updated: Message = {
       ...this.lastMessage,
       inputTokens: input.usage.inputTokens,
@@ -54,7 +56,7 @@ export class RunTurnPublisher {
       editedAt: new Date().toISOString(),
     };
     this.lastMessage = updated;
-    return updated;
+    this.persist?.(updated);
   }
 
   snapshot(): RunTurnPublishSnapshot {

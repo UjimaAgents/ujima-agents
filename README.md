@@ -40,11 +40,16 @@ Define persistent agent members, assign roles, and work in channels — the same
 npm install -g @ujima/agents
 # or: bun add -g @ujima/agents
 
-ujima init --name "Acme Engineering" --owner "Alex" --owner-email "alex@example.com" --owner-password "securepass123" --workspace "$(pwd)"
+# Terminal 1: Start the API daemon (generates auth token)
 ujima start
+
+# Terminal 2: Onboard your organization (uses the token)
+ujima init --name "Acme Engineering" --owner "Alex" --owner-email "alex@example.com" --owner-password "securepass123" --workspace "$(pwd)"
 ```
 
 Open **[http://localhost:3452](http://localhost:3452)** (web UI). API listens on **http://127.0.0.1:7511**.
+
+> **Note:** `ujima start` runs in the foreground. Use two terminals, or run `ujima start &` in background.
 
 ---
 
@@ -91,13 +96,26 @@ export OPENAI_API_KEY=sk-...
 ujima init [options]
 
 Options:
-  --name, -n           Organization name (required)
-  --owner, -o          Owner display name (required)
-  --owner-email, -e    Owner email address (required)
-  --owner-password, -p Owner password, min 8 chars (required)
-  --workspace, -w      Workspace root path (required)
-  --config, -c         Path to ujima.config.ts (optional)
-  --provider           Provider key: name=key (repeatable)
+  --name, -n             Organization name (required)
+  --owner, -o            Owner display name (required)
+  --owner-email, -e      Owner email address (required)
+  --owner-password, -p   Owner password, min 8 chars. Use -p - to prompt securely.
+  --prompt-password      Prompt for password securely (hidden input)
+  --workspace, -w        Workspace root path (required, must exist)
+  --config, -c           Path to ujima.config.ts (optional)
+  --provider             Provider key: name=key (repeatable)
+```
+
+### Secure password input
+
+Avoid putting passwords in shell history:
+
+```bash
+# Prompt securely (hidden input)
+ujima init --name "Acme" --owner "Alex" --owner-email "a@b.com" --prompt-password --workspace "$(pwd)"
+
+# Or read from stdin
+echo "securepass123" | ujima init --name "Acme" --owner "Alex" --owner-email "a@b.com" -p - --workspace "$(pwd)"
 ```
 
 ---
@@ -151,7 +169,7 @@ export default team;
 
 ---
 
-## What's Next After `ujima start`
+## What's Next After `ujima init`
 
 1. Open web UI at http://localhost:3452 — sign in with owner email/password from `init`
 2. Invite team members — Settings → Members → Invite (magic link email)
@@ -162,11 +180,19 @@ export default team;
 ### Common Commands
 
 ```bash
+# First-time setup (two terminals):
+# Terminal 1:
+ujima start
+# Terminal 2:
+ujima init --name "Acme" --owner "Alex" --owner-email "a@b.com" --prompt-password --workspace "$(pwd)"
+
+# Subsequent runs (single terminal):
 ujima start --no-open                    # Start without opening browser
-ujima update --check-only                # Check for updates only
-ujima update --force                     # Force reinstall
+ujima start &                            # Run in background
 UJIMA_PORT=8080 WEB_PORT=3000 ujima start  # Custom ports
 UJIMA_HOME=/data/ujima ujima start       # Custom data directory
+ujima update --check-only                # Check for updates only
+ujima update --force                     # Force reinstall
 ```
 
 ---
