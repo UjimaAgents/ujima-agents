@@ -102,7 +102,6 @@ export interface WorkspaceState {
 }
 
 const DETAILS_AUTO_OPEN_DISMISSED_KEY = "ujima.workspace.detailsAutoOpenDismissed";
-const MAX_LIVE_ACTIVITY_EVENTS = 2_000;
 
 const EMPTY_ACTIVITY = {
   sidebarWidth: 18,
@@ -222,12 +221,9 @@ function appendSequencedEvents(
     order: state.activitySequence + index,
   })).filter((event) => !seen.has(event.event_id));
   if (stamped.length === 0) return state;
-  const activity = state.activity.length + stamped.length > MAX_LIVE_ACTIVITY_EVENTS
-    ? [...state.activity, ...stamped].slice(-MAX_LIVE_ACTIVITY_EVENTS)
-    : [...state.activity, ...stamped];
   return {
     activitySequence: state.activitySequence + stamped.length,
-    activity,
+    activity: [...state.activity, ...stamped],
   };
 }
 

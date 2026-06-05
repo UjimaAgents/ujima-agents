@@ -67,7 +67,6 @@ const CHANNEL_TABS: ChatTab[] = [
   { id: "files", label: "Files" },
   { id: "activity", label: "Activity" },
 ];
-const MAX_LIVE_TRACE_ACTIVITY = 2_000;
 const MAX_ACTIVITY_ROWS = 100;
 const EMPTY_ACTIVITY_EVENTS = [] as ReturnType<typeof useConversationSync>["activity"];
 const EMPTY_RUNS = [] as RunState[];
@@ -256,7 +255,7 @@ export function ChannelView({
   );
   const reasoningTraceVisible = showDetails && detailsTab === "Thinking trace";
   const liveTraceActivity = useMemo(
-    () => (reasoningTraceVisible ? feed.activity.slice(-MAX_LIVE_TRACE_ACTIVITY) : []),
+    () => (reasoningTraceVisible ? feed.activity : []),
     [feed.activity, reasoningTraceVisible],
   );
   const liveTraceRuns = useMemo(
