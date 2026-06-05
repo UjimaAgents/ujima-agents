@@ -3,6 +3,7 @@ import {
   AGENT_KIND,
   MessageSchema,
   type Message,
+  type MessageCard,
   type MessageToolCall,
 } from '@ujima/shared';
 
@@ -79,6 +80,29 @@ export function buildSystemMessage(
     senderId: input.senderId ?? 'system',
     senderKind: 'human',
     kind: 'system',
+  });
+}
+
+export function buildSystemCardMessage(input: {
+  organizationId: string;
+  threadId: string;
+  channelId?: string;
+  content: string;
+  card: MessageCard;
+}): Message {
+  return buildSystemMessage({
+    organizationId: input.organizationId,
+    threadId: input.threadId,
+    channelId: input.channelId,
+    content: input.content,
+    toolCalls: [
+      {
+        toolCallId: input.card.cardId,
+        toolName: `card.${input.card.kind}`,
+        args: input.card as unknown as Record<string, unknown>,
+        isError: false,
+      },
+    ],
   });
 }
 

@@ -59,6 +59,7 @@ export interface WorkspaceState {
   approvals: ApprovalCardData[];
   runs: RunState[];
   globalActiveRuns: RunState[];
+  runTokenUsage: Record<string, { inputTokens: number; outputTokens: number }>;
   activeTerminals: ActiveJob[];
   activitySequence: number;
   activity: ActivityEvent[];
@@ -95,6 +96,7 @@ export interface WorkspaceState {
   upsertApproval(approval: ApprovalRequest, toCard: (approval: ApprovalRequest, state: Pick<WorkspaceState, "members">) => ApprovalCardData, toActivity: (approval: ApprovalRequest) => ActivityEvent): void;
   upsertRun(run: RunState, toActivity: (run: RunState) => ActivityEvent): void;
   upsertGlobalActiveRun(run: RunState): void;
+  setRunTokens(runId: string, inputTokens: number, outputTokens: number): void;
   setActiveTerminals(jobs: ActiveJob[]): void;
   appendActivity(event: ActivityEvent): void;
 }
@@ -118,6 +120,7 @@ const EMPTY_ACTIVITY = {
   approvals: [],
   runs: [],
   globalActiveRuns: [],
+  runTokenUsage: {},
   activeTerminals: [],
   activitySequence: 0,
   activity: [],
@@ -127,6 +130,15 @@ const EMPTY_ACTIVITY = {
 
 function sameRecord(left: unknown, right: unknown): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function omitKey<T>(record: Record<string, T>, key: string): Record<string, T> {
+  if (!(key in record)) return record;
+  const next: Record<string, T> = {};
+  for (const [k, v] of Object.entries(record)) {
+    if (k !== key) next[k] = v;
+  }
+  return next;
 }
 
 function mergeMembers(current: WorkspaceMember[], incoming: WorkspaceMember[]): WorkspaceMember[] {
@@ -613,17 +625,37 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
       ...appendSequencedEvents(state, [toActivity(approval)]),
     })),
   upsertRun: (run, toActivity) =>
-    set((state) => ({
-      runs: mergeRuns(state.runs, [run]),
-      ...appendSequencedEvents(state, [toActivity(run)]),
-    })),
+    set((state) => {
+      // Clear the live counter as soon as the run leaves live status;
+      // the persisted footer on the final message takes over.
+      const clearTokens = !isLiveRun(run) && run.id in state.runTokenUsage;
+      return {
+        runs: mergeRuns(state.runs, [run]),
+        ...(clearTokens ? { runTokenUsage: omitKey(state.runTokenUsage, run.id) } : {}),
+        ...appendSequencedEvents(state, [toActivity(run)]),
+      };
+    }),
   upsertGlobalActiveRun: (run) =>
     set((state) => {
       const isFinished = run.status === "completed" || run.status === "failed" || run.status === "cancelled";
       const nextGlobalRuns = isFinished
         ? state.globalActiveRuns.filter((r) => r.id !== run.id)
         : mergeRuns(state.globalActiveRuns, [run]);
-      return { globalActiveRuns: nextGlobalRuns };
+      const clearTokens = isFinished && run.id in state.runTokenUsage;
+      return {
+        globalActiveRuns: nextGlobalRuns,
+        ...(clearTokens ? { runTokenUsage: omitKey(state.runTokenUsage, run.id) } : {}),
+      };
+    }),
+  setRunTokens: (runId, inputTokens, outputTokens) =>
+    set((state) => {
+      const existing = state.runTokenUsage[runId];
+      if (existing && existing.inputTokens === inputTokens && existing.outputTokens === outputTokens) {
+        return state;
+      }
+      return {
+        runTokenUsage: { ...state.runTokenUsage, [runId]: { inputTokens, outputTokens } },
+      };
     }),
   setActiveTerminals: (activeTerminals) =>
     set((state) => (sameActiveJobs(state.activeTerminals, activeTerminals) ? state : { activeTerminals })),

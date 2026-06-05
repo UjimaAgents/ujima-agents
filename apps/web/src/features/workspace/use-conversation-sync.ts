@@ -7,12 +7,14 @@ import {
   MessageSchema,
   RunChunkEventSchema,
   RunStateSchema,
+  RunTokenUsageEventSchema,
   type ActivityEvent,
   type ApprovalRequest,
   type Member,
   type Message,
   type RunChunkEvent,
   type RunState,
+  type RunTokenUsageEvent,
   buildMentionHandleRegistry,
   scanMentionsInContent,
 } from "@ujima/shared/browser";
@@ -109,6 +111,7 @@ export function useConversationSync(
   const removeMessage = useWorkspaceStore((state) => state.removeMessage);
   const upsertApproval = useWorkspaceStore((state) => state.upsertApproval);
   const upsertRun = useWorkspaceStore((state) => state.upsertRun);
+  const setRunTokens = useWorkspaceStore((state) => state.setRunTokens);
   const appendActivity = useWorkspaceStore((state) => state.appendActivity);
   const appendMember = useWorkspaceStore((state) => state.appendMember);
   const setMemberActivity = useWorkspaceStore((state) => state.setMemberActivity);
@@ -231,6 +234,7 @@ export function useConversationSync(
         appendRunChunk: queueRunChunk,
         upsertApproval,
         upsertRun,
+        setRunTokens,
       });
     };
     source.onopen = () => {
@@ -263,6 +267,7 @@ export function useConversationSync(
     resetConversationFeed,
     setLoading,
     setMemberActivity,
+    setRunTokens,
     transport,
     upsertApproval,
     upsertRun,
@@ -557,6 +562,7 @@ function handleStreamEvent(
       toActivity: (approval: ApprovalRequest) => ActivityEvent,
     ): void;
     upsertRun(run: RunState, toActivity: (run: RunState) => ActivityEvent): void;
+    setRunTokens(runId: string, inputTokens: number, outputTokens: number): void;
   },
 ): void {
   if (envelope.type !== "socket") return;
@@ -607,6 +613,12 @@ function handleStreamEvent(
       const chunk = parseRunChunkPayload(envelope.payload);
       if (!chunk) return;
       actions.appendRunChunk(chunk);
+      return;
+    }
+    case "run:tokens": {
+      const usage = parseRunTokenUsagePayload(envelope.payload);
+      if (!usage) return;
+      actions.setRunTokens(usage.runId, usage.inputTokens, usage.outputTokens);
       return;
     }
     case "member.alerted": {
@@ -674,6 +686,11 @@ function parseApprovalPayload(payload: unknown): ApprovalRequest | null {
 
 function parseRunChunkPayload(payload: unknown): RunChunkEvent | null {
   const parsed = RunChunkEventSchema.safeParse(payload);
+  return parsed.success ? parsed.data : null;
+}
+
+function parseRunTokenUsagePayload(payload: unknown): RunTokenUsageEvent | null {
+  const parsed = RunTokenUsageEventSchema.safeParse(payload);
   return parsed.success ? parsed.data : null;
 }
 

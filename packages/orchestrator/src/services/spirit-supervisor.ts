@@ -12,6 +12,7 @@ import type {
   SpiritSupervisorReplyOutcome,
 } from './spirit-types.js';
 import { buildAgentMessage } from './message-factory.js';
+import { publishStoredMessage } from './message-publisher.js';
 import { goalModeEnabledFromMessage } from './goal-mode-prompt.js';
 import { SpiritServiceAgentRun } from './spirit-agent-run.js';
 
@@ -230,19 +231,24 @@ export class SpiritServiceSupervisor extends SpiritServiceAgentRun {
       senderId: input.memberId,
       content: body,
     });
-    this.conversations.publishMessage(message, []);
+    const publishedMessage = publishStoredMessage({
+      repo: this.repo,
+      realtime: this.realtime,
+      conversations: this.conversations,
+      message,
+    });
     this.realtime.emit(
       SocketEventNames.supervisorReplied,
       {
         organizationId: input.organizationId,
         taskSessionId,
         memberId: input.memberId,
-        message,
+        message: publishedMessage,
         reason: fallback ? 'fallback' : input.reason,
       },
       [orgRoom(input.organizationId), channelRoom(channelId), memberRoom(input.memberId)],
     );
-    return message;
+    return publishedMessage;
   }
 
   protected publishSupervisorFallback(

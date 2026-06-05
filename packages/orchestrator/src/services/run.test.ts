@@ -364,12 +364,13 @@ describe('SpiritService run path', () => {
     expect(aliasCard?.toolName).toBe('card.artifact.file');
   });
 
-  it('attaches token counts to the visible final reply when the step text is empty', async () => {
+  it('persists token counts to the final reply silently (no realtime re-broadcast)', async () => {
     const organizationId = 'org-1';
     const runId = 'run-1';
     const agentId = 'Quinn Mason';
     const threadId = 'thread-1';
     const messages: any[] = [];
+    const updatedMessages: any[] = [];
     let run: any = {
       id: runId,
       organizationId,
@@ -403,6 +404,10 @@ describe('SpiritService run path', () => {
       getLatestHumanMessageInThread: () => null,
       getSpiritByRunId: () => null,
       getThread: () => ({ channelId: 'channel-1' }),
+      updateMessage: (message: any) => {
+        updatedMessages.push(message);
+        return message;
+      },
     } as never;
 
     const service = createSpiritRunService(
@@ -425,7 +430,12 @@ describe('SpiritService run path', () => {
       } as never,
       repo,
       { emit: () => undefined } as never,
-      { publishMessage: (message: any) => messages.push(message) } as never,
+      {
+        publishMessage: (message: any) => {
+          messages.push(message);
+          return message;
+        },
+      } as never,
       {
         generateRunReply: async () => ({
           text: "Got it. Feature's done.",
@@ -442,8 +452,14 @@ describe('SpiritService run path', () => {
     expect(result.status).toBe('completed');
     expect(messages).toHaveLength(1);
     expect(messages[0].content).toBe("Got it. Feature's done.");
-    expect(messages[0].inputTokens).toBe(12);
-    expect(messages[0].outputTokens).toBe(34);
+    // The realtime emit went out token-free — the live counter under
+    // the typing indicator owns that visualization. Tokens are
+    // persisted silently to the DB so they survive a reload.
+    expect(messages[0].inputTokens).toBeUndefined();
+    expect(messages[0].outputTokens).toBeUndefined();
+    expect(updatedMessages).toHaveLength(1);
+    expect(updatedMessages[0].inputTokens).toBe(12);
+    expect(updatedMessages[0].outputTokens).toBe(34);
   });
 
   it('does not publish tool-turn placeholders for goal-file writes', async () => {
@@ -558,6 +574,200 @@ describe('SpiritService run path', () => {
     expect(messages.some((message) => message.content.includes('[tool turn —'))).toBe(false);
     expect(messages.some((message) => message.toolCalls?.some((toolCall: any) => toolCall.toolName === 'card.artifact.file'))).toBe(true);
     expect(messages.some((message) => message.content === 'Done.')).toBe(true);
+  });
+
+  it('persists tool-only assistant steps as visible chat messages', async () => {
+    const organizationId = 'org-1';
+    const runId = 'run-1';
+    const agentId = 'Quinn Mason';
+    const threadId = 'thread-1';
+    const messages: any[] = [];
+    let run: any = {
+      id: runId,
+      organizationId,
+      agentId,
+      threadId,
+      status: 'queued',
+      step: 'queued',
+      summary: 'Run queued',
+      startedAt: '2026-05-04T19:07:08.071Z',
+    };
+
+    const repo = {
+      getMember: () => ({
+        id: agentId,
+        organizationId,
+        name: agentId,
+        kind: AGENT_KIND,
+        roleName: 'backend-engineer',
+      }),
+      saveRun: (next: any) => {
+        run = next;
+        return next;
+      },
+      getRun: () => run,
+      getProviderCredential: () => null,
+      getWorkspaceSetting: () => null,
+      listMembers: () => [],
+      listPendingApprovals: () => [],
+      listRunSteps: () => [],
+      listMessages: () => ({ data: [], hasMore: false }),
+      getLatestHumanMessageInThread: () => null,
+      getSpiritByRunId: () => null,
+      getThread: () => ({ channelId: 'channel-1' }),
+    } as never;
+
+    const service = createSpiritRunService(
+      {
+        getTeam: () =>
+          loadAgentTeam({
+            name: 'Timetotest',
+            workspace: { root: '/tmp' },
+            roles: [
+              {
+                name: 'backend-engineer',
+                title: 'Backend Engineer',
+                instructions: 'Work on backend.',
+                tools: ['shell'],
+              },
+            ],
+            agents: [{ name: agentId, roleName: 'backend-engineer' }],
+          }),
+        setTeam: () => undefined,
+      } as never,
+      repo,
+      { emit: () => undefined } as never,
+      { publishMessage: (message: any) => messages.push(message) } as never,
+      {
+        generateRunReply: async (input: {
+          onStepFinish?: (step: unknown, steps: unknown[]) => Promise<void> | void;
+        }) => {
+          const step = {
+            toolCalls: [
+              {
+                toolCallId: 'tool-call-1',
+                toolName: 'shell',
+                input: { command: 'echo hi' },
+              },
+            ],
+            toolResults: [{ toolCallId: 'tool-call-1', output: { status: 'ok' } }],
+          };
+          await input.onStepFinish?.(step, [step]);
+          return { text: '', toolResults: [], steps: [step] };
+        },
+      } as never,
+      { allowRun: () => undefined, invoke: async () => ({ ok: true }) } as never,
+    );
+
+    await (service as any).advanceRun(run);
+
+    const toolOnlyMessage = messages.find(
+      (message) =>
+        Array.isArray(message.toolCalls) &&
+        message.toolCalls.some((call: { toolCallId?: string }) => call.toolCallId === 'tool-call-1'),
+    );
+    expect(toolOnlyMessage).toBeDefined();
+    expect(toolOnlyMessage?.content).toBe('');
+  });
+
+  it('persists token counts to the last visible bubble silently in a multi-step reply', async () => {
+    const organizationId = 'org-1';
+    const runId = 'run-1';
+    const agentId = 'Quinn Mason';
+    const threadId = 'thread-1';
+    const messages: any[] = [];
+    const updatedMessages: any[] = [];
+    let run: any = {
+      id: runId,
+      organizationId,
+      agentId,
+      threadId,
+      status: 'queued',
+      step: 'queued',
+      summary: 'Run queued',
+      startedAt: '2026-05-04T19:07:08.071Z',
+    };
+
+    const repo = {
+      getMember: () => ({
+        id: agentId,
+        organizationId,
+        name: agentId,
+        kind: AGENT_KIND,
+        roleName: 'backend-engineer',
+      }),
+      saveRun: (next: any) => {
+        run = next;
+        return next;
+      },
+      getRun: () => run,
+      getProviderCredential: () => null,
+      getWorkspaceSetting: () => null,
+      listMembers: () => [],
+      listPendingApprovals: () => [],
+      listRunSteps: () => [],
+      listMessages: () => ({ data: [], hasMore: false }),
+      getLatestHumanMessageInThread: () => null,
+      getSpiritByRunId: () => null,
+      getThread: () => ({ channelId: 'channel-1' }),
+      updateMessage: (message: any) => {
+        updatedMessages.push(message);
+        return message;
+      },
+    } as never;
+
+    const service = createSpiritRunService(
+      {
+        getTeam: () =>
+          loadAgentTeam({
+            name: 'Timetotest',
+            workspace: { root: '/tmp' },
+            roles: [
+              {
+                name: 'backend-engineer',
+                title: 'Backend Engineer',
+                instructions: 'Work on backend.',
+                tools: ['shell'],
+              },
+            ],
+            agents: [{ name: agentId, roleName: 'backend-engineer' }],
+          }),
+        setTeam: () => undefined,
+      } as never,
+      repo,
+      { emit: () => undefined } as never,
+      {
+        publishMessage: (message: any) => {
+          messages.push(message);
+          return message;
+        },
+      } as never,
+      {
+        generateRunReply: async (input: {
+          onStepFinish?: (step: unknown, steps: unknown[]) => Promise<void> | void;
+        }) => {
+          const first = { text: 'First pass' };
+          const second = { text: 'Second pass' };
+          await input.onStepFinish?.(first, [first]);
+          await input.onStepFinish?.(second, [first, second]);
+          return {
+            text: 'Second pass',
+            usage: { inputTokens: 12, outputTokens: 34, totalTokens: 46 },
+            toolResults: [],
+            steps: [first, second],
+          };
+        },
+      } as never,
+      { allowRun: () => undefined, invoke: async () => ({ ok: true }) } as never,
+    );
+
+    await (service as any).advanceRun(run);
+
+    expect(messages.at(-1).content).toBe('Second pass');
+    expect(messages.at(-1).inputTokens).toBeUndefined();
+    expect(messages.at(-1).outputTokens).toBeUndefined();
+    expect(updatedMessages.at(-1).inputTokens).toBe(12);
+    expect(updatedMessages.at(-1).outputTokens).toBe(34);
   });
 
   it('persists each non-reasoning assistant step as a chat message', async () => {

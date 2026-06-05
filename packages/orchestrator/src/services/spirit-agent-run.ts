@@ -20,6 +20,7 @@ import {
   orgRoom,
   runRoom,
   threadRoom,
+  type Message,
   type MessageCard,
   type MessageToolCall,
   type Spirit,
@@ -47,7 +48,8 @@ import { errorMessage } from '../utils/error-message.js';
 import { buildRunTranscript } from '../utils/run-transcript.js';
 import { appendArtifactFileToolCall } from './artifact-file-card.js';
 import { buildAgentMessage } from './message-factory.js';
-import { normalizeTokenUsage } from './token-usage.js';
+import { RunTurnPublisher } from './run-turn-publisher.js';
+import { hasTokenUsage, normalizeTokenUsage } from './token-usage.js';
 import { pendingApprovalRunSummary } from './approval-summary.js';
 import {
   findTerminatingTool,
@@ -270,6 +272,7 @@ ${activeMemories
     let streamedReasoning = '';
     let lastMessageId: string | undefined;
     let persistedStepCount = 0;
+    const turn = new RunTurnPublisher((message) => this.publishAgentMessage(message));
 
     // Wrap runAgentLoop in the shared retry helper so the wake-run
     // and direct-spirit paths share one recovery contract (defined
@@ -334,20 +337,26 @@ ${activeMemories
               );
               const messageToolCalls = artifactFileToolCall ? [...toolCalls, artifactFileToolCall] : toolCalls;
               const reasoningContent = extractReasoningChunk(s);
-              if (!stepText && !artifactFileToolCall) {
-                continue;
+              lastMessageId = turn
+                .publishMessage(
+                  buildAgentMessage({
+                    organizationId: input.organizationId,
+                    threadId: session.channelId,
+                    channelId: session.channelId,
+                    senderId: member.id,
+                    content: stepText || (artifactFileToolCall ? 'Artifact updated.' : ''),
+                    toolCalls: messageToolCalls,
+                    metadata: { runId },
+                    reasoningContent,
+                  }),
+                )
+                .id;
+              if (artifactFileToolCall) {
+                turn.markArtifactFilePublished();
               }
-              lastMessageId = this.saveAndEmitAgentMessage({
-                organizationId: input.organizationId,
-                channelId: session.channelId,
-                senderId: member.id,
-                content: stepText || 'Artifact updated.',
-                toolCalls: messageToolCalls,
-                metadata: { runId },
-                reasoningContent,
-              });
               lastText = stepText || lastText;
             }
+            this.emitRunTokens(input.organizationId, runId, session.channelId, member.id, currentSteps);
           },
           loadInterruptMessages: () => {
             const page = this.repo
@@ -433,37 +442,60 @@ ${activeMemories
         const reasoningContent =
           extractReasoningChunk(step) ??
           (index === steps.length - 1 ? streamedReasoning.trim() || undefined : undefined);
-        if (!stepText && !artifactFileToolCall) {
-          continue;
+        // Tokens are written silently below via backfillTokens; the
+        // live counter rides on `run:tokens`.
+        lastMessageId = turn
+          .publishMessage(
+            buildAgentMessage({
+              organizationId: input.organizationId,
+              threadId: session.channelId,
+              channelId: session.channelId,
+              senderId: member.id,
+              content: stepText || (artifactFileToolCall ? 'Artifact updated.' : ''),
+              toolCalls: messageToolCalls,
+              metadata: { runId: spirit.runId ?? spirit.id },
+              reasoningContent,
+            }),
+          )
+          .id;
+        if (artifactFileToolCall) {
+          turn.markArtifactFilePublished();
         }
-        const isLastStep = index === steps.length - 1;
-        const attachTokens = isLastStep && (!finalText || finalText === stepText.trim() || detectedTerminatingTool);
-        lastMessageId = this.saveAndEmitAgentMessage({
-          organizationId: input.organizationId,
-          channelId: session.channelId,
-          senderId: member.id,
-          content: stepText || 'Artifact updated.',
-          toolCalls: messageToolCalls,
-          metadata: { runId: spirit.runId ?? spirit.id },
-          reasoningContent,
-          ...(attachTokens ? { inputTokens: tokenUsage.inputTokens, outputTokens: tokenUsage.outputTokens } : {}),
-        });
         lastText = stepText || lastText;
       }
 
       const persistedRunSteps = spirit.runId ? this.repo.listRunSteps?.(input.organizationId, spirit.runId) ?? [] : [];
       const terminatingTool = detectedTerminatingTool ?? findTerminatingToolFromRunSteps(persistedRunSteps);
+      const tokenFooter = turn.backfillTokens({
+        finalText,
+        lastText,
+        terminatingTool,
+        usage: tokenUsage,
+      });
+      if (tokenFooter) {
+        this.repo.updateMessage(tokenFooter);
+      }
       if (finalText && finalText !== lastText && !terminatingTool) {
-        lastMessageId = this.saveAndEmitAgentMessage({
-          organizationId: input.organizationId,
-          channelId: session.channelId,
-          senderId: member.id,
-          content: finalText,
-          metadata: { runId },
-          inputTokens: tokenUsage.inputTokens,
-          outputTokens: tokenUsage.outputTokens,
-        });
+        const finalMessage = turn.publishMessage(
+          buildAgentMessage({
+            organizationId: input.organizationId,
+            threadId: session.channelId,
+            channelId: session.channelId,
+            senderId: member.id,
+            content: finalText,
+            metadata: { runId },
+          }),
+        );
+        lastMessageId = finalMessage.id;
         lastText = finalText;
+        if (hasTokenUsage(tokenUsage)) {
+          this.repo.updateMessage({
+            ...finalMessage,
+            inputTokens: tokenUsage.inputTokens,
+            outputTokens: tokenUsage.outputTokens,
+            editedAt: new Date().toISOString(),
+          });
+        }
       }
 
       // Prefer the provider-supplied `totalTokens` over our own
@@ -740,40 +772,25 @@ ${activeMemories
     });
   }
 
-  private saveAndEmitAgentMessage(input: {
-    organizationId: string;
-    channelId: string;
-    senderId: string;
-    content: string;
-    metadata: Record<string, unknown>;
-    toolCalls?: MessageToolCall[];
-    reasoningContent?: string;
-    inputTokens?: number;
-    outputTokens?: number;
-  }): string {
-    const message = buildAgentMessage({
-      organizationId: input.organizationId,
-      threadId: input.channelId,
-      channelId: input.channelId,
-      senderId: input.senderId,
-      content: input.content,
-      metadata: input.metadata,
-      ...(input.toolCalls && input.toolCalls.length > 0 ? { toolCalls: input.toolCalls } : {}),
-      ...(input.reasoningContent ? { reasoningContent: input.reasoningContent } : {}),
-      ...(input.inputTokens !== undefined ? { inputTokens: input.inputTokens } : {}),
-      ...(input.outputTokens !== undefined ? { outputTokens: input.outputTokens } : {}),
-    });
-    this.repo.saveMessage(message);
+  private publishAgentMessage(message: Message): Message {
+    const existing = this.repo.getMessage(message.organizationId, message.id);
+    const saved = existing
+      ? this.repo.updateMessage({
+          ...message,
+          createdAt: existing.createdAt,
+          editedAt: new Date().toISOString(),
+        })
+      : this.repo.saveMessage(message);
     this.realtime.emit(
       SocketEventNames.channelMessage,
       {
-        organizationId: input.organizationId,
-        channelId: input.channelId,
-        message,
+        organizationId: saved.organizationId,
+        channelId: saved.channelId ?? '',
+        message: saved,
       },
-      [orgRoom(input.organizationId), channelRoom(input.channelId)],
+      [orgRoom(saved.organizationId), channelRoom(saved.channelId ?? '')],
     );
-    return message.id;
+    return saved;
   }
 
   async buildMcpToolDefinitions(ctx: {

@@ -148,7 +148,8 @@ export async function publishRunReplyTrace(input: {
       publishedAnyText = true;
     }
 
-    const content = stepText || (stepArtifactFileToolCall ? 'Artifact updated.' : 'Tool actions recorded.');
+    // Tool-only steps publish with an empty body; the tool cards render from `toolCalls`.
+    const content = stepText || (stepArtifactFileToolCall ? 'Artifact updated.' : '');
     const toolCalls = [
       ...normalizeRunStepToolCalls(stepToolCalls, stepToolResults),
       ...(stepArtifactFileToolCall ? [stepArtifactFileToolCall] : []),
@@ -156,9 +157,9 @@ export async function publishRunReplyTrace(input: {
     const stepReasoning =
       extractReasoningChunk(step) ??
       (index === input.result.steps.length - 1 ? input.reasoningContent : undefined);
-    const attachTokens = index === input.result.steps.length - 1 && hasTokenUsage(usage);
+    const isLastStep = index === input.result.steps.length - 1;
 
-    input.conversations?.publishMessage(
+    const published = input.conversations?.publishMessage(
       buildAgentMessage({
         organizationId: input.run.organizationId,
         threadId,
@@ -168,12 +169,19 @@ export async function publishRunReplyTrace(input: {
         metadata,
         ...(toolCalls.length > 0 ? { toolCalls } : {}),
         ...(stepReasoning ? { reasoningContent: stepReasoning } : {}),
-        ...(attachTokens ? { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens } : {}),
       }),
       undefined,
       undefined,
       publishOptions,
     );
+    if (isLastStep && hasTokenUsage(usage) && published) {
+      input.repo.updateMessage({
+        ...published,
+        inputTokens: usage.inputTokens,
+        outputTokens: usage.outputTokens,
+        editedAt: new Date().toISOString(),
+      });
+    }
     publishedContent.add(content);
   }
 
@@ -189,7 +197,7 @@ export async function publishRunReplyTrace(input: {
     !finalArtifactMessageNeeded &&
     !publishedContent.has(input.reply)
   ) {
-    input.conversations?.publishMessage(
+    const published = input.conversations?.publishMessage(
       buildAgentMessage({
         organizationId: input.run.organizationId,
         threadId,
@@ -198,12 +206,19 @@ export async function publishRunReplyTrace(input: {
         content: input.reply,
         metadata,
         ...(input.reasoningContent ? { reasoningContent: input.reasoningContent } : {}),
-        ...(hasTokenUsage(usage) ? { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens } : {}),
       }),
       undefined,
       undefined,
       publishOptions,
     );
+    if (hasTokenUsage(usage) && published) {
+      input.repo.updateMessage({
+        ...published,
+        inputTokens: usage.inputTokens,
+        outputTokens: usage.outputTokens,
+        editedAt: new Date().toISOString(),
+      });
+    }
   }
 
   if (finalArtifactMessageNeeded && input.artifactFileToolCall) {

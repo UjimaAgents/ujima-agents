@@ -151,7 +151,7 @@ function getValidationMessage(stepId: OnboardingStepId, errors: DraftErrors): st
 const onboardingBorder = "border border-zinc-200/90 dark:border-zinc-800";
 const onboardingPanelClass = `rounded-xl ${onboardingBorder} bg-white p-4 dark:bg-zinc-950 sm:p-5`;
 const onboardingTileClass = `rounded-lg ${onboardingBorder} bg-zinc-50/50 p-3.5 text-left transition hover:border-violet-300/80 hover:bg-violet-50/70 dark:bg-zinc-900/25 dark:hover:border-violet-500/35 dark:hover:bg-violet-500/10`;
-const onboardingListClass = `rounded-xl ${onboardingBorder} overflow-hidden divide-y divide-zinc-200 dark:divide-zinc-800`;
+const onboardingListClass = `rounded-xl ${onboardingBorder} divide-y divide-zinc-200 dark:divide-zinc-800`;
 const onboardingCalloutClass =
   "rounded-xl border border-violet-200/80 bg-violet-50/90 p-4 dark:border-violet-500/25 dark:bg-violet-500/10 sm:flex sm:items-center sm:gap-5 sm:p-5";
 
@@ -416,7 +416,7 @@ function ModalShell({
         aria-modal="true"
         aria-labelledby={titleId}
         aria-describedby={description ? descriptionId : undefined}
-        className={`my-auto flex w-full max-w-xl max-h-[min(90dvh,720px)] flex-col overflow-hidden shadow-[0_24px_80px_rgba(15,23,42,0.22)] ${onboardingPanelClass} !p-0`}
+        className={`my-auto flex w-full max-w-xl max-h-[min(90dvh,720px)] flex-col shadow-[0_24px_80px_rgba(15,23,42,0.22)] ${onboardingPanelClass} !p-0`}
         onMouseDown={(event) => event.stopPropagation()}
       >
         <div className="flex shrink-0 items-start justify-between gap-4 border-b border-zinc-200/90 px-5 py-4 dark:border-zinc-800">

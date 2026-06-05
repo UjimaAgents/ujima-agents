@@ -4,9 +4,6 @@ import {
   SocketEventNames,
   SpiritSchema,
   TaskSessionSchema,
-  channelRoom,
-  orgRoom,
-  threadRoom,
   type MessageCard,
   type Spirit,
   AGENT_KIND,
@@ -19,7 +16,8 @@ import {
 } from './spirit-run-detail.js';
 import type { SpawnSpiritInput } from './spirit-types.js';
 import { SpiritServiceBase } from './spirit-service-base.js';
-import { buildSystemMessage } from './message-factory.js';
+import { buildSystemCardMessage } from './message-factory.js';
+import { publishStoredMessage } from './message-publisher.js';
 
 export class SpiritServiceLifecycle extends SpiritServiceBase {
   spawn(input: SpawnSpiritInput): Spirit {
@@ -303,43 +301,17 @@ export class SpiritServiceLifecycle extends SpiritServiceBase {
     content: string;
     card: MessageCard;
   }): void {
-    const message = buildSystemMessage({
-      organizationId: input.organizationId,
-      threadId: input.threadId,
-      channelId: input.channelId,
-      content: input.content,
-      toolCalls: [
-        {
-          toolCallId: input.card.cardId,
-          toolName: `card.${input.card.kind}`,
-          args: input.card as unknown as Record<string, unknown>,
-          isError: false,
-        },
-      ],
+    publishStoredMessage({
+      message: buildSystemCardMessage({
+        organizationId: input.organizationId,
+        threadId: input.threadId,
+        channelId: input.channelId,
+        content: input.content,
+        card: input.card,
+      }),
+      repo: this.repo,
+      realtime: this.realtime,
+      conversations: this.conversations,
     });
-
-    if (this.conversations) {
-      this.conversations.publishMessage(message, []);
-      return;
-    }
-
-    this.repo.saveMessage(message);
-    this.realtime.emit(
-      input.channelId ? SocketEventNames.channelMessage : SocketEventNames.threadMessage,
-      input.channelId
-        ? {
-            organizationId: input.organizationId,
-            channelId: input.channelId,
-            message,
-          }
-        : {
-            organizationId: input.organizationId,
-            threadId: input.threadId,
-            message,
-          },
-      input.channelId
-        ? [orgRoom(input.organizationId), channelRoom(input.channelId)]
-        : [orgRoom(input.organizationId), threadRoom(input.threadId)],
-    );
   }
 }

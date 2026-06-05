@@ -12,7 +12,8 @@ import {
 import type { ConversationService } from './conversation.js';
 import type { ApiRepository, PaginatedTaskSessions } from './repository-reader.js';
 import type { SpiritService } from './spirit.js';
-import { buildSystemMessage } from './message-factory.js';
+import { buildSystemCardMessage } from './message-factory.js';
+import { publishStoredMessage } from './message-publisher.js';
 import { requireOrganization } from '../utils/require-organization.js';
 
 // -----------------------------------------------------------------------
@@ -429,21 +430,16 @@ export class TaskSessionService {
     content: string;
     card: MessageCard;
   }): void {
-    const message = buildSystemMessage({
-      organizationId: input.organizationId,
-      threadId: input.threadId,
-      channelId: input.channelId,
-      content: input.content,
-      toolCalls: [
-        {
-          toolCallId: input.card.cardId,
-          toolName: `card.${input.card.kind}`,
-          args: input.card as unknown as Record<string, unknown>,
-          isError: false,
-        },
-      ],
+    publishStoredMessage({
+      conversations: this.conversations,
+      message: buildSystemCardMessage({
+        organizationId: input.organizationId,
+        threadId: input.threadId,
+        channelId: input.channelId,
+        content: input.content,
+        card: input.card,
+      }),
     });
-    this.conversations.publishMessage(message, []);
   }
 
   /**

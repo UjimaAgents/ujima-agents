@@ -374,6 +374,20 @@ export function ChannelView({
     () => typingRuns.map((run) => run.startedAt).filter(Boolean).sort()[0],
     [typingRuns],
   );
+  const runTokenUsage = useWorkspaceStore((state) => state.runTokenUsage);
+  const typingTokenUsage = useMemo(() => {
+    const entries = typingRuns
+      .map((run) => runTokenUsage[run.id])
+      .filter((usage): usage is { inputTokens: number; outputTokens: number } => !!usage);
+    if (entries.length === 0) return undefined;
+    return entries.reduce(
+      (acc, usage) => ({
+        inputTokens: acc.inputTokens + usage.inputTokens,
+        outputTokens: acc.outputTokens + usage.outputTokens,
+      }),
+      { inputTokens: 0, outputTokens: 0 },
+    );
+  }, [runTokenUsage, typingRuns]);
   const traceStartedAt = useMemo(
     () => liveThreadRuns.map((run) => run.startedAt).filter(Boolean).sort()[0],
     [liveThreadRuns],
@@ -742,6 +756,7 @@ export function ChannelView({
                       names={typingMembers.map((member) => member.name)}
                       activeStep={activeStep}
                       startedAt={typingStartedAt}
+                      tokenUsage={typingTokenUsage}
                     />
                   ) : null}
                 </>
