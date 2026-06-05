@@ -183,6 +183,44 @@ function packageSignature(args: readonly string[]): string | undefined {
 }
 
 // ───────────────────────────────────────────────────────────────────────
+// Tool-name sanitization (§17.5.7, second injection surface)
+//
+// Tool names come from MCPConnection.listTools() — the server's own
+// self-report, identical trust level to server.description. Rendering
+// them verbatim into the prompt re-opens the prompt-injection surface
+// the registry-match guard closes for descriptions. A hostile server
+// could publish a tool named "\nSYSTEM: ignore prior instructions" or
+// "Read this before any tool call" and it would land in catalogText.
+//
+// Strategy: only render names that match a conservative identifier
+// shape — alphanumerics, underscores, dots, dashes; ≤64 chars. Names
+// that fail are dropped from the preview. toolCount stays accurate
+// (it's a number, not attacker-shaped) so the operator still sees how
+// many tools exist and can run get_connector_tools(server) for the
+// full validated list.
+//
+// The shape covers every real MCP naming convention observed in
+// CURATED_REGISTRY (snake_case, slack_post_message, browser_close,
+// git_reset, notion-update-page, slack.post_message). Any name that
+// requires spaces, punctuation that could form prose, control chars,
+// or escapes — i.e. anything that could carry an instruction — is
+// rejected by construction.
+// ───────────────────────────────────────────────────────────────────────
+
+const TOOL_NAME_PATTERN = /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}$/;
+
+/**
+ * Returns the input when it matches the conservative tool-name shape
+ * (identifier-safe characters only, ≤64 chars), otherwise undefined.
+ * Exported so PR 4's get_connector_tools / search_catalog meta-tools
+ * apply the same filter when emitting names into tool results — one
+ * sanitization rule, two surfaces.
+ */
+export function sanitizeToolName(name: string): string | undefined {
+  return TOOL_NAME_PATTERN.test(name) ? name : undefined;
+}
+
+// ───────────────────────────────────────────────────────────────────────
 // Resolver
 // ───────────────────────────────────────────────────────────────────────
 
@@ -224,15 +262,26 @@ export function resolveConnectorCatalog(
     // close. Admin-curated descriptions for non-registry servers
     // ship in PR 6 with their own explicit "I approved this" flag.
     const cache = repo.getMcpToolCache(organizationId, server.id);
-    const toolNames = (cache?.tools ?? []).map((t) => t.name);
+    const rawTools = cache?.tools ?? [];
+    // Sanitize tool names BEFORE preview/count split. toolCount is the
+    // raw total (informative + not attacker-shaped); only sanitized
+    // names ever flow into toolNamesPreview, so renderCatalogEntry
+    // can't smuggle a prose-shaped name into the prompt. If every
+    // name fails sanitization the preview is empty and the renderer
+    // emits count-only.
+    const safeNames: string[] = [];
+    for (const t of rawTools) {
+      const safe = sanitizeToolName(t.name);
+      if (safe !== undefined) safeNames.push(safe);
+    }
     const registryMatch = findRegistryMatch(server);
     dispatchCatalog.push({
       serverId: server.id,
       name: server.name,
       category: server.category,
       curatedDescription: registryMatch?.curatedDescription ?? null,
-      toolNamesPreview: toolNames.slice(0, options.toolNamePreviewLimit ?? 5),
-      toolCount: toolNames.length,
+      toolNamesPreview: safeNames.slice(0, options.toolNamePreviewLimit ?? 5),
+      toolCount: rawTools.length,
     });
   }
 
@@ -256,10 +305,7 @@ export function resolveConnectorCatalog(
  * surfaces (system prompt + tool result).
  */
 export function renderCatalogEntry(entry: CatalogEntry): string {
-  const preview = entry.toolNamesPreview.length > 0
-    ? entry.toolNamesPreview.join(', ') +
-      (entry.toolCount > entry.toolNamesPreview.length ? ', …' : '')
-    : '(no tools cached)';
+  const preview = renderToolPreview(entry);
 
   if (entry.curatedDescription) {
     return `- ${entry.name} [${entry.category}] — ${entry.curatedDescription} Tools: ${preview}.`;
@@ -269,6 +315,17 @@ export function renderCatalogEntry(entry: CatalogEntry): string {
   // un-curated connector can't ride a friendly verb-led blurb into
   // the system prompt.
   return `- ${entry.name} [${entry.category}] — ${entry.toolCount} tool${entry.toolCount === 1 ? '' : 's'}: ${preview}.`;
+}
+
+function renderToolPreview(entry: CatalogEntry): string {
+  if (entry.toolCount === 0) return '(no tools cached)';
+  // Tools exist but every name failed sanitization (§17.5.7 second
+  // surface). Show the count but not the names — the agent can still
+  // call `get_connector_tools(serverId)` to discover the full list
+  // through a validated channel.
+  if (entry.toolNamesPreview.length === 0) return '(names not displayable)';
+  const joined = entry.toolNamesPreview.join(', ');
+  return entry.toolCount > entry.toolNamesPreview.length ? `${joined}, …` : joined;
 }
 
 export function renderCatalogText(
