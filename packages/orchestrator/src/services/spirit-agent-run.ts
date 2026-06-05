@@ -6,7 +6,6 @@ import type { SpiritMcpResolution } from './spirit-types.js';
 import { mcpPermissionToolName } from './mcp-runtime.js';
 import {
   buildMcpNamespace,
-  dropHeaviestAttachedMcp,
   mcpToolInputSchema,
   sanitizeMcpToolName,
   uniqueMcpToolId,
@@ -34,7 +33,8 @@ import {
 } from '../utils/wake-reply-policy.js';
 import { recallMemoryEntries } from '../utils/memory.js';
 import { requireTeam } from '../utils/require-team.js';
-import { runAgentLoopWithRetry, type AgentLoopStep } from './agent-loop.js';
+import { runAgentWithRetry, type AgentLoopStep } from './agent-loop.js';
+import { isDelegateMessage, filterDelegateTurnTools } from './run-reply-guard.js';
 import { toModelMessages, buildToolDefinitions } from '../utils/to-model-messages.js';
 import {
   ALWAYS_AVAILABLE_AGENT_TOOLS,
@@ -60,28 +60,14 @@ import {
   isMessageAfterCursor,
   moveCursor,
 } from '../utils/message-interrupts.js';
-import type { RunSpiritInput, RunSpiritOutcome } from './spirit-types.js';
+import type {
+  RunSpiritInput,
+  RunSpiritOutcome,
+} from './spirit-types.js';
 import { isToolCardError } from './spirit-run-detail.js';
-import { SpiritServiceLifecycle } from './spirit-lifecycle.js';
+import { SpiritServiceBase } from './spirit-service-base.js';
 
-function isDelegateMessage(message: { metadata?: unknown } | null | undefined): boolean {
-  return !!(message?.metadata as { delegate?: unknown } | undefined)?.delegate;
-}
-
-function filterDelegateTurnTools(toolIds: readonly string[]): string[] {
-  const postingTools = new Set([
-    'channel.post',
-    'channel.reply',
-    'channel.dm',
-    'channel.handoff',
-    'channel.pass',
-    'channel.ack',
-    'message',
-  ]);
-  return toolIds.filter((toolId) => !postingTools.has(toolId));
-}
-
-export class SpiritServiceAgentRun extends SpiritServiceLifecycle {
+export class SpiritServiceAgentRun extends SpiritServiceBase {
   async run(input: RunSpiritInput): Promise<RunSpiritOutcome> {
     const role = input.role ?? 'worker';
     const session = this.repo.getTaskSession(input.organizationId, input.taskSessionId);
@@ -279,117 +265,88 @@ ${activeMemories
       },
     );
 
-    // Wrap runAgentLoop in the shared retry helper so the wake-run
-    // and direct-spirit paths share one recovery contract (defined
-    // in agent-loop.ts). Local mutable refs feed the buildArgs
-    // closure so the retry can swap the model or trim the toolset
-    // on the fly without re-flowing all the loop context.
-    let currentModel = model;
-    let currentToolDefs = toolDefs;
     const runId = spirit.runId ?? spirit.id;
     const abortKey = this.runKey(input.organizationId, runId);
     const abortController = new AbortController();
     this.runAbortControllers.set(abortKey, abortController);
     try {
-      const result = await runAgentLoopWithRetry(
-        () => ({
-          model: currentModel,
-          system: systemPrompt,
-          messages,
-          tools: currentToolDefs,
-          stopWhen: stepCountIs(maxIterations),
-          ...(this.maxOutputTokens !== undefined ? { maxOutputTokens: this.maxOutputTokens } : {}),
-          temperature: this.temperature,
-          toolChoice: 'auto',
-          abortSignal: abortController.signal,
-          onChunk: (chunk) => {
-            if (chunk.kind === 'reasoning') streamedReasoning += chunk.delta;
-            this.emitRunChunk(
-              {
-                organizationId: input.organizationId,
-                runId,
-                threadId: session.channelId,
-                agentId: input.memberId,
-              },
-              chunk,
-            );
-          },
-          onStepFinish: async (_step, currentSteps) => {
-            // Incrementally persist each step as it completes (main's
-            // change) so cancellation/crash mid-loop still leaves the
-            // partial transcript on the channel. The retry wrapper
-            // re-invokes the same builder when recovery fires, but
-            // `persistedStepCount` is shared across attempts so we
-            // never re-persist the same step twice.
-            const unpersisted = currentSteps.slice(persistedStepCount);
-            for (const s of unpersisted) {
-              persistedStepCount++;
-              totalTurns += 1;
-              const out = await this.publishStepBubble({
-                step: s,
-                spirit,
-                turn,
-                organizationId: input.organizationId,
-                channelId: session.channelId,
-                senderId: member.id,
-                teamRoot: team.workspace.root,
-                runId,
-              });
-              totalToolCalls += out.toolCallCount;
-              if (out.messageId) lastMessageId = out.messageId;
-              if (out.stepText) lastText = out.stepText;
-            }
-            this.emitRunTokens(input.organizationId, runId, session.channelId, member.id, currentSteps);
-          },
-          loadInterruptMessages: () => {
-            const page = this.repo
-              .listChannelMessages(input.organizationId, session.channelId, { limit: 100 })
-              .data;
-            const interrupts = page.filter(
-              (message) =>
-                (message.kind === 'human' || isDelegateMessage(message)) &&
-                message.senderId !== member.id &&
-                isMessageAfterCursor(message, interruptCursor),
-            );
-            const latest = page.at(-1);
-            if (latest) {
-              moveCursor(interruptCursor, latest);
-            }
-            return toModelMessages(interrupts, member.id);
-          },
-        }),
-        (next) => {
-          currentModel = next;
+      const result = await runAgentWithRetry({
+        model,
+        system: systemPrompt,
+        messages,
+        tools: toolDefs,
+        attachedMcpServers,
+        stopWhen: stepCountIs(maxIterations),
+        maxOutputTokens: this.maxOutputTokens,
+        temperature: this.temperature,
+        toolChoice: 'auto',
+        abortSignal: abortController.signal,
+        onChunk: (chunk) => {
+          if (chunk.kind === 'reasoning') streamedReasoning += chunk.delta;
+          this.emitRunChunk(
+            {
+              organizationId: input.organizationId,
+              runId,
+              threadId: session.channelId,
+              agentId: input.memberId,
+            },
+            chunk,
+          );
         },
-        (next) => {
-          currentToolDefs = next;
+        onStepFinish: async (_step, currentSteps) => {
+          const unpersisted = currentSteps.slice(persistedStepCount);
+          for (const s of unpersisted) {
+            persistedStepCount++;
+            totalTurns += 1;
+            const out = await this.publishStepBubble({
+              step: s,
+              spirit,
+              turn,
+              organizationId: input.organizationId,
+              channelId: session.channelId,
+              senderId: member.id,
+              teamRoot: team.workspace.root,
+              runId,
+            });
+            totalToolCalls += out.toolCallCount;
+            if (out.messageId) lastMessageId = out.messageId;
+            if (out.stepText) lastText = out.stepText;
+          }
+          this.emitRunTokens(input.organizationId, runId, session.channelId, member.id, currentSteps);
         },
-        {
-          onModelNotFound: async (error) => {
-            console.warn(
-              `[spirit-agent-run] model "${error.modelId}" rejected by provider; ` +
-                `falling back to safeFallbackModelForProvider for member="${input.memberId}"`,
-            );
-            return await Promise.resolve(
-              this.modelResolver({
-                organizationId: input.organizationId,
-                memberId: input.memberId,
-                role,
-                forceSafeFallback: true,
-              }),
-            );
-          },
-          onSchemaTooLarge: () => {
-            const dropped = dropHeaviestAttachedMcp(currentToolDefs, attachedMcpServers);
-            if (!dropped) return null;
-            console.warn(
-              `[spirit-agent-run] gemini "too many states" — dropped MCP "${dropped.serverName}" ` +
-                `(${dropped.toolNames.length} tools) and retrying for member="${input.memberId}"`,
-            );
-            return dropped.toolDefs;
-          },
+        loadInterruptMessages: () => {
+          const page = this.repo
+            .listChannelMessages(input.organizationId, session.channelId, { limit: 100 })
+            .data;
+          const interrupts = page.filter(
+            (message) =>
+              (message.kind === 'human' || isDelegateMessage(message)) &&
+              message.senderId !== member.id &&
+              isMessageAfterCursor(message, interruptCursor),
+          );
+          const latest = page.at(-1);
+          if (latest) {
+            moveCursor(interruptCursor, latest);
+          }
+          return toModelMessages(interrupts, member.id);
         },
-      );
+        onModelNotFound: async (error) => {
+          console.warn(
+            `[spirit-agent-run] model "${error.modelId}" rejected by provider; ` +
+              `falling back to safeFallbackModelForProvider for member="${input.memberId}"`,
+          );
+          return await Promise.resolve(
+            this.modelResolver({
+              organizationId: input.organizationId,
+              memberId: input.memberId,
+              role,
+              forceSafeFallback: true,
+            }),
+          );
+        },
+        logLabel: 'spirit-agent-run',
+        memberLabel: input.memberId,
+      });
       const { steps, usage } = result;
 
       // Compute token counts early so they're available when persisting

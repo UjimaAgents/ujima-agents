@@ -19,18 +19,16 @@ import { SpiritServiceAgentRun } from './spirit-agent-run.js';
 export class SpiritServiceSupervisor extends SpiritServiceAgentRun {
   async handleAlert(input: SpiritAlertInput): Promise<SpiritAlertDispatchResult> {
     const active = this.registry.getActiveForMember(input.organizationId, input.memberId);
-    if (active.length === 0) {
-      return { kind: 'no-active-spirit' };
-    }
+    if (active.length === 0) return { kind: 'no-active-spirit' };
+
     const target = this.findActiveSpiritForThread(
       active,
       input.organizationId,
       input.threadId,
       input.channelId,
     );
-    if (!target) {
-      return { kind: 'no-active-spirit' };
-    }
+    if (!target) return { kind: 'no-active-spirit' };
+
     const debounceMessageKey =
       input.wakeReason === 'mention' || input.wakeReason === 'dm' ? input.messageId : undefined;
     if (
@@ -55,18 +53,9 @@ export class SpiritServiceSupervisor extends SpiritServiceAgentRun {
     );
 
     const mutexKey = this.supervisorMutexKey(input.organizationId, input.memberId, target.taskSessionId);
-    const previous = this.supervisorMutexes.get(mutexKey) ?? Promise.resolve();
-    const next = previous.then(() => this.runSupervisorAlertTurn(target.taskSessionId, input));
-    this.supervisorMutexes.set(
-      mutexKey,
-      next.catch(() => undefined).finally(() => {
-        if (this.supervisorMutexes.get(mutexKey) === next) {
-          this.supervisorMutexes.delete(mutexKey);
-        }
-      }),
+    const outcome = await this.supervisorMutex.run(mutexKey, () =>
+      this.runSupervisorAlertTurn(target.taskSessionId, input),
     );
-
-    const outcome = await next;
     return { kind: 'replied', outcome };
   }
 
@@ -153,12 +142,7 @@ export class SpiritServiceSupervisor extends SpiritServiceAgentRun {
         };
       }
       if (publishedViaTool) {
-        return {
-          taskSessionId,
-          message: null,
-          fallback: false,
-          reason: 'ok',
-        };
+        return { taskSessionId, message: null, fallback: false, reason: 'ok' };
       }
       const finalText = replyText || `Currently on step ${session.status} of #${session.slug}.`;
       const message = this.publishSupervisorReply(taskSessionId, input, finalText, false);

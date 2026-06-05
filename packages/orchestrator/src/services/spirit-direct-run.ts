@@ -50,7 +50,7 @@ function isDelegateRun(run: RunState, repo: { getMessage(organizationId: string,
 
 const VISIBLE_TERMINATING_TOOLS = new Set(['message', 'channel.post', 'channel.reply', 'channel.dm', 'channel.handoff']);
 
-export class SpiritServiceDirectRun extends SpiritServiceSupervisor {
+export class SpiritService extends SpiritServiceSupervisor {
   async resumeAfterApproval(
     organizationId: string,
     runId: string,
@@ -893,5 +893,3 @@ export class SpiritServiceDirectRun extends SpiritServiceSupervisor {
     return run;
   }
 }
-
-export class SpiritService extends SpiritServiceDirectRun {}
