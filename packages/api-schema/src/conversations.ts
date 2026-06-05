@@ -1,4 +1,4 @@
-import { IdSchema } from '@ujima/shared';
+import { IdSchema, ReasoningEffortSchema } from '@ujima/shared';
 import { z } from 'zod';
 
 export const OrganizationQuerySchema = z.object({
@@ -8,6 +8,7 @@ export type OrganizationQuery = z.infer<typeof OrganizationQuerySchema>;
 
 const MessageCreateMetadataSchema = z.object({
   goalMode: z.boolean().optional(),
+  reasoningEffort: ReasoningEffortSchema.optional(),
 }).optional();
 
 const ThreadMessageCreateSchema = z.object({

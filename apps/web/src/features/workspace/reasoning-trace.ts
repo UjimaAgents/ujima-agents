@@ -1514,8 +1514,9 @@ export function buildReasoningTraceSteps(input: ReasoningTraceInput): TraceStepD
     if (event.type === "run_chunk") {
       const chunkKey = runChunkKey(event);
       const previous = ordered[ordered.length - 1];
-      if (chunkKey && previous?.chunkKey === chunkKey) {
+      if (chunkKey && previous?.chunkKey === chunkKey && previous.sortIndex === index - 1) {
         previous.step = mergeRunChunkStep(previous.step, event);
+        previous.sortIndex = index;
         return;
       }
       ordered.push({

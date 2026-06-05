@@ -1,5 +1,5 @@
 "use client";
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import { ChevronDown, Check } from "lucide-react";
 import { listItemIdle, listItemSelected } from "@/lib/list-item-styles";
@@ -23,6 +23,8 @@ export interface SelectProps {
   size?: "default" | "sm";
   disabled?: boolean;
   ariaLabel?: string;
+  menuPlacement?: "down" | "up";
+  menuClassName?: string;
 }
 
 const triggerSizeClass = {
@@ -40,16 +42,23 @@ export function Select({
   size = "default",
   disabled = false,
   ariaLabel,
+  menuPlacement = "down",
+  menuClassName = "",
 }: SelectProps) {
   const [isOpen, setIsOpen] = useState(false);
+  const [mounted, setMounted] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
-  const [menuStyle, setMenuStyle] = useState<{ top: number; left: number; width: number } | null>(
+  const [menuStyle, setMenuStyle] = useState<CSSProperties | null>(
     null,
   );
 
   const selectedOption = options.find((opt) => opt.value === value);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -74,9 +83,13 @@ export function Select({
       const rect = triggerRef.current?.getBoundingClientRect();
       if (!rect) return;
       setMenuStyle({
-        top: rect.bottom + 4,
+        top: menuPlacement === "up" ? rect.top : rect.bottom,
         left: rect.left,
-        width: rect.width,
+        minWidth: rect.width,
+        transform:
+          menuPlacement === "up"
+            ? "translateY(calc(-100% - 4px))"
+            : "translateY(4px)",
       });
     }
 
@@ -87,7 +100,7 @@ export function Select({
       window.removeEventListener("resize", updateMenuPosition);
       window.removeEventListener("scroll", updateMenuPosition, true);
     };
-  }, [isOpen]);
+  }, [isOpen, menuPlacement]);
 
   return (
     <div ref={containerRef} className={`relative ${className}`}>
@@ -109,16 +122,15 @@ export function Select({
       </button>
 
       {isOpen &&
+        mounted &&
         menuStyle &&
         createPortal(
           <div
             ref={menuRef}
-            className="fixed z-[220] max-h-60 overflow-auto rounded-lg border border-zinc-200 bg-white py-1 text-sm shadow-lg dark:border-zinc-800 dark:bg-zinc-950"
-            style={{
-              top: menuStyle.top,
-              left: menuStyle.left,
-              width: menuStyle.width,
-            }}
+            className={`fixed z-[220] max-h-60 overflow-auto rounded-lg border border-zinc-200 bg-white py-1 text-sm shadow-lg dark:border-zinc-800 dark:bg-zinc-950 ${
+              menuClassName || ""
+            }`}
+            style={menuStyle}
           >
             {options.map((option) => (
               <button

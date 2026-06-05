@@ -428,10 +428,12 @@ function AggregatedRunPanel({
 export const TraceStep = memo(function TraceStep({
   step,
   isLast,
+  autoOpen,
 }: {
   step: TraceStepData;
   /** Hide the connector below the dot on the final row. */
   isLast?: boolean;
+  autoOpen?: boolean;
 }) {
   const {subject, remainder} = splitTraceTitle(step.title);
   const rowMargin = step.title.startsWith("Run ·") ? "mt-2" : "";
@@ -439,7 +441,7 @@ export const TraceStep = memo(function TraceStep({
   const body = step.aggregatedOperations && step.aggregatedOperations.length > 0 ? (
     <AggregatedRunPanel
       operations={step.aggregatedOperations}
-      autoOpen={Boolean(isLast && step.status === "running")}
+      autoOpen={Boolean(autoOpen || (isLast && step.status === "running"))}
     />
   ) : step.terminal?.streamingJob ? (
     <BackgroundShellJobPane

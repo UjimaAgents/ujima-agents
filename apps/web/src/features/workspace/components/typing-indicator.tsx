@@ -7,12 +7,19 @@ function formatTypingSubject(label: string): string {
     .replace(/\s+(?:is|are)\s+waiting for approval$/, '');
 }
 
+function formatTokenCount(value: number): string {
+  if (value < 1_000) return value.toString();
+  if (value < 1_000_000) return `${(value / 1_000).toFixed(value < 10_000 ? 1 : 0)}k`;
+  return `${(value / 1_000_000).toFixed(1)}M`;
+}
+
 export const TypingIndicator = memo(function TypingIndicator({
   label,
   name,
   colorIndex,
   names,
   activeStep,
+  tokenUsage,
 }: {
   label: string;
   name: string;
@@ -20,6 +27,7 @@ export const TypingIndicator = memo(function TypingIndicator({
   names: string[];
   activeStep?: string;
   startedAt?: string;
+  tokenUsage?: { inputTokens: number; outputTokens: number };
 }) {
   const visibleNames = names.slice(0, 3);
   const overflowCount = Math.max(names.length - visibleNames.length, 0);
@@ -64,6 +72,27 @@ export const TypingIndicator = memo(function TypingIndicator({
             <span className="h-1 w-1 animate-bounce rounded-full bg-current" />
           </span>
         </div>
+        {tokenUsage ? (
+          <div
+            className="inline-flex items-center gap-1.5 px-1 text-[10px] tabular-nums text-zinc-500 dark:text-zinc-400"
+            aria-live="polite"
+            aria-label={`Live token usage: ${tokenUsage.inputTokens} input, ${tokenUsage.outputTokens} output`}
+          >
+            <span>
+              <span className="opacity-70">in</span>{" "}
+              <span className="font-medium text-zinc-700 dark:text-zinc-200">
+                {formatTokenCount(tokenUsage.inputTokens)}
+              </span>
+            </span>
+            <span className="opacity-40">·</span>
+            <span>
+              <span className="opacity-70">out</span>{" "}
+              <span className="font-medium text-zinc-700 dark:text-zinc-200">
+                {formatTokenCount(tokenUsage.outputTokens)}
+              </span>
+            </span>
+          </div>
+        ) : null}
       </div>
     </div>
   );

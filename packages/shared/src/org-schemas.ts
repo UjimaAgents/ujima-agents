@@ -237,8 +237,12 @@ export const HandoffMetadataSchema = z.object({
 });
 export type HandoffMetadata = z.infer<typeof HandoffMetadataSchema>;
 
+export const ReasoningEffortSchema = z.enum(['none', 'low', 'medium', 'high', 'extra_high']);
+export type ReasoningEffort = z.infer<typeof ReasoningEffortSchema>;
+
 export const MessageMetadataSchema = z.object({
   goalMode: z.boolean().optional(),
+  reasoningEffort: ReasoningEffortSchema.optional(),
   delegate: z.object({
     parentRunId: IdSchema.optional(),
   }).optional(),
@@ -278,6 +282,9 @@ export const MessageSchema = z.object({
    * tuple so retried POSTs are no-ops.
    */
   clientMessageId: IdSchema.optional(),
+  /** Token counts from the LLM provider for this message (agent messages only). */
+  inputTokens: z.number().int().min(0).optional(),
+  outputTokens: z.number().int().min(0).optional(),
   createdAt: TimestampSchema,
   editedAt: TimestampSchema.optional(),
   deletedAt: TimestampSchema.optional(),

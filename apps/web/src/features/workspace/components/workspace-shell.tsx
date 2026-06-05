@@ -70,6 +70,9 @@ export function WorkspaceShell(props: {
   const searchParams = useSearchParams();
   const [agentEditorTargetId, setAgentEditorTargetId] = useState<string | null>(null);
   const [goalMode, setGoalMode] = useState(false);
+  const [orgShellApprovalMode, setOrgShellApprovalMode] = useState(
+    normalizeOrgShellApprovalMode(props.teamSettings?.policies ?? {}),
+  );
   const [searchPaletteOpen, setSearchPaletteOpen] = useState(false);
   const sidebarWidth = useWorkspaceStore((state) => state.sidebarWidth);
   const selected = useWorkspaceStore((state) => state.selectedConversation);
@@ -150,6 +153,29 @@ export function WorkspaceShell(props: {
     params.delete("agentId");
     router.replace(`?${params.toString()}`, { scroll: false });
   }, [router, searchParams]);
+
+  const handleOrgShellApprovalModeChange = useCallback(
+    async (shellApprovalMode: ShellApprovalMode) => {
+      const previous = orgShellApprovalMode;
+      setOrgShellApprovalMode(shellApprovalMode);
+      if (!organizationId) return;
+
+      const response = await fetch(`/api/orgs/${encodeURIComponent(organizationId)}/policies`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          organizationId,
+          shellApprovalMode,
+        }),
+      });
+      if (!response.ok) {
+        setOrgShellApprovalMode(previous);
+        const body = await response.json().catch(() => null);
+        throw new Error(body?.message ?? "Unable to update policies.");
+      }
+    },
+    [organizationId, orgShellApprovalMode],
+  );
 
   const handleCreateChannel = useCallback(
     async (name: string) => {
@@ -446,13 +472,12 @@ export function WorkspaceShell(props: {
               bootstrap={bootstrap}
               conversation={activeConversation}
               members={members}
-              orgShellApprovalMode={normalizeOrgShellApprovalMode(
-                props.teamSettings?.policies ?? {},
-              )}
+              orgShellApprovalMode={orgShellApprovalMode}
               goalMode={goalMode}
               onGoalModeChange={setGoalMode}
               onSelectConversation={handleSelect}
               onMemberUpdated={appendMember}
+              onOrgShellApprovalModeChange={handleOrgShellApprovalModeChange}
               onOpenAgentEditor={() => {
                 if (activeConversation.type === "agent") {
                   setAgentEditorTargetId(activeConversation.id);

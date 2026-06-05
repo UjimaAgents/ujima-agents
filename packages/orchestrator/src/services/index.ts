@@ -11,6 +11,7 @@ import {
   type Message,
   type WakeReason,
 } from '@ujima/shared';
+import { AsyncMutex } from '../utils/async-mutex.js';
 import { AiService } from '../ai-service.js';
 import { ActiveSpiritRegistry } from './active-spirit-registry.js';
 import { ApprovalService } from './approval.js';
@@ -266,37 +267,10 @@ interface WakeMemberDeps {
   repo: Pick<ApiRepository, 'findActiveRunForMemberThread'>;
 }
 
-/**
- * L10 — per-`(org, member, threadId)` async mutex around the
- * findActiveRunForMemberThread → createRun TOCTOU window. Without
- * this, two near-simultaneous broad-wake alerts for the same agent
- * on the same thread both observe "no active run" and each spawn
- * a fresh run, leaving two concurrent runs reading the same thread
- * state. Module-scoped so daemon-wide ordering is preserved across
- * the service builder.
- */
-const createRunMutexes = new Map<string, Promise<unknown>>();
+const createRunMutex = new AsyncMutex();
 
 function createRunMutexKey(input: WakeMemberInput): string {
   return `${input.organizationId}:${input.memberId}:${input.threadId}`;
-}
-
-async function withCreateRunMutex<T>(
-  input: WakeMemberInput,
-  body: () => Promise<T>,
-): Promise<T> {
-  const key = createRunMutexKey(input);
-  const previous = createRunMutexes.get(key) ?? Promise.resolve();
-  const next = previous.then(body, body);
-  createRunMutexes.set(
-    key,
-    next.catch(() => undefined).finally(() => {
-      if (createRunMutexes.get(key) === next) {
-        createRunMutexes.delete(key);
-      }
-    }),
-  );
-  return next;
 }
 
 function errMessage(error: unknown): string {
@@ -414,7 +388,7 @@ export async function wakeMemberWithFailureEvents(
   // window per `(org, member, threadId)` so two near-simultaneous
   // broad-wake alerts can't both observe "no run" and each spawn
   // their own.
-  await withCreateRunMutex(input, async () => {
+  await createRunMutex.run(createRunMutexKey(input), async () => {
     const activeRun = deps.repo.findActiveRunForMemberThread(
       input.organizationId,
       input.memberId,

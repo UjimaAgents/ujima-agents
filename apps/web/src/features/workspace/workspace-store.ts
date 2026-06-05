@@ -59,6 +59,7 @@ export interface WorkspaceState {
   approvals: ApprovalCardData[];
   runs: RunState[];
   globalActiveRuns: RunState[];
+  runTokenUsage: Record<string, { inputTokens: number; outputTokens: number }>;
   activeTerminals: ActiveJob[];
   activitySequence: number;
   activity: ActivityEvent[];
@@ -95,12 +96,12 @@ export interface WorkspaceState {
   upsertApproval(approval: ApprovalRequest, toCard: (approval: ApprovalRequest, state: Pick<WorkspaceState, "members">) => ApprovalCardData, toActivity: (approval: ApprovalRequest) => ActivityEvent): void;
   upsertRun(run: RunState, toActivity: (run: RunState) => ActivityEvent): void;
   upsertGlobalActiveRun(run: RunState): void;
+  setRunTokens(runId: string, inputTokens: number, outputTokens: number): void;
   setActiveTerminals(jobs: ActiveJob[]): void;
   appendActivity(event: ActivityEvent): void;
 }
 
 const DETAILS_AUTO_OPEN_DISMISSED_KEY = "ujima.workspace.detailsAutoOpenDismissed";
-const MAX_LIVE_ACTIVITY_EVENTS = 2_000;
 
 const EMPTY_ACTIVITY = {
   sidebarWidth: 18,
@@ -118,6 +119,7 @@ const EMPTY_ACTIVITY = {
   approvals: [],
   runs: [],
   globalActiveRuns: [],
+  runTokenUsage: {},
   activeTerminals: [],
   activitySequence: 0,
   activity: [],
@@ -127,6 +129,15 @@ const EMPTY_ACTIVITY = {
 
 function sameRecord(left: unknown, right: unknown): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function omitKey<T>(record: Record<string, T>, key: string): Record<string, T> {
+  if (!(key in record)) return record;
+  const next: Record<string, T> = {};
+  for (const [k, v] of Object.entries(record)) {
+    if (k !== key) next[k] = v;
+  }
+  return next;
 }
 
 function mergeMembers(current: WorkspaceMember[], incoming: WorkspaceMember[]): WorkspaceMember[] {
@@ -210,12 +221,9 @@ function appendSequencedEvents(
     order: state.activitySequence + index,
   })).filter((event) => !seen.has(event.event_id));
   if (stamped.length === 0) return state;
-  const activity = state.activity.length + stamped.length > MAX_LIVE_ACTIVITY_EVENTS
-    ? [...state.activity, ...stamped].slice(-MAX_LIVE_ACTIVITY_EVENTS)
-    : [...state.activity, ...stamped];
   return {
     activitySequence: state.activitySequence + stamped.length,
-    activity,
+    activity: [...state.activity, ...stamped],
   };
 }
 
@@ -227,15 +235,6 @@ function mergeRunChunkMessages(
   for (const item of items) {
     const message = item.message;
     if (!message) continue;
-    const hasFinalMessage = message.streamRunId
-      ? messages.some(
-          (entry) =>
-            entry.id !== message.id &&
-            entry.streamRunId === message.streamRunId &&
-            entry.threadId === message.threadId,
-        )
-      : false;
-    if (hasFinalMessage) continue;
     const index = messages.findIndex((entry) => entry.id === message.id);
     if (index === -1) {
       messages = messages === current ? [...current, message] : [...messages, message];
@@ -595,7 +594,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
           );
       if (withoutTemp.some((item) => item.id === nextMessage.id)) {
         return {
-          messages: ensureReplyPreviews(pruneStreamingMessage(withoutTemp, nextMessage)),
+          messages: ensureReplyPreviews(mergeChatMessages(pruneStreamingMessage(withoutTemp, nextMessage), [nextMessage])),
           ...appendSequencedEvents(state, [toActivity(message)]),
         };
       }
@@ -606,7 +605,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
     }),
   appendRunChunk: (message, activity) =>
     set((state) => {
-      const messages = mergeRunChunkMessages(state.messages, message ? [{ message }] : []);
+      const run = message?.streamRunId ? state.runs.find((item) => item.id === message.streamRunId) : undefined;
+      const liveMessage = run && !isLiveRun(run) ? undefined : message;
+      const messages = mergeRunChunkMessages(state.messages, liveMessage ? [{ message: liveMessage }] : []);
       return {
         ...(messages === state.messages ? {} : { messages }),
         ...appendSequencedEvents(state, [activity]),
@@ -620,17 +621,37 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
       ...appendSequencedEvents(state, [toActivity(approval)]),
     })),
   upsertRun: (run, toActivity) =>
-    set((state) => ({
-      runs: mergeRuns(state.runs, [run]),
-      ...appendSequencedEvents(state, [toActivity(run)]),
-    })),
+    set((state) => {
+      // Clear the live counter as soon as the run leaves live status;
+      // the persisted footer on the final message takes over.
+      const clearTokens = !isLiveRun(run) && run.id in state.runTokenUsage;
+      return {
+        runs: mergeRuns(state.runs, [run]),
+        ...(clearTokens ? { runTokenUsage: omitKey(state.runTokenUsage, run.id) } : {}),
+        ...appendSequencedEvents(state, [toActivity(run)]),
+      };
+    }),
   upsertGlobalActiveRun: (run) =>
     set((state) => {
       const isFinished = run.status === "completed" || run.status === "failed" || run.status === "cancelled";
       const nextGlobalRuns = isFinished
         ? state.globalActiveRuns.filter((r) => r.id !== run.id)
         : mergeRuns(state.globalActiveRuns, [run]);
-      return { globalActiveRuns: nextGlobalRuns };
+      const clearTokens = isFinished && run.id in state.runTokenUsage;
+      return {
+        globalActiveRuns: nextGlobalRuns,
+        ...(clearTokens ? { runTokenUsage: omitKey(state.runTokenUsage, run.id) } : {}),
+      };
+    }),
+  setRunTokens: (runId, inputTokens, outputTokens) =>
+    set((state) => {
+      const existing = state.runTokenUsage[runId];
+      if (existing && existing.inputTokens === inputTokens && existing.outputTokens === outputTokens) {
+        return state;
+      }
+      return {
+        runTokenUsage: { ...state.runTokenUsage, [runId]: { inputTokens, outputTokens } },
+      };
     }),
   setActiveTerminals: (activeTerminals) =>
     set((state) => (sameActiveJobs(state.activeTerminals, activeTerminals) ? state : { activeTerminals })),
