@@ -46,7 +46,6 @@ export function Select({
   menuClassName = "",
 }: SelectProps) {
   const [isOpen, setIsOpen] = useState(false);
-  const [mounted, setMounted] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -55,10 +54,7 @@ export function Select({
   );
 
   const selectedOption = options.find((opt) => opt.value === value);
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
+  const portalTarget = typeof document === "undefined" ? null : document.body;
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -122,8 +118,8 @@ export function Select({
       </button>
 
       {isOpen &&
-        mounted &&
         menuStyle &&
+        portalTarget &&
         createPortal(
           <div
             ref={menuRef}
@@ -150,7 +146,7 @@ export function Select({
               </button>
             ))}
           </div>,
-          document.body,
+          portalTarget,
         )}
     </div>
   );

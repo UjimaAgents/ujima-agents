@@ -16,6 +16,17 @@ export interface DbHandle {
 }
 
 type SqliteDatabaseCtor = new (path: string) => DbHandle;
+type NodeSqliteStatement = {
+  all(...params: unknown[]): unknown[];
+  get(...params: unknown[]): unknown;
+  run(...params: unknown[]): {changes?: number} | undefined;
+};
+type NodeSqliteDatabase = {
+  prepare(sql: string): NodeSqliteStatement;
+  exec(sql: string): void;
+  close(): void;
+};
+type NodeSqliteDatabaseCtor = new (path: string) => NodeSqliteDatabase;
 
 // Resolve the SQLite driver lazily so the import surface stays clean for
 // both runtimes:
@@ -32,10 +43,51 @@ function resolveDatabaseConstructor(): SqliteDatabaseCtor {
   if (cachedConstructor) return cachedConstructor;
   const isBun =
     typeof process !== "undefined" && Boolean(process.versions?.bun);
-  cachedConstructor = isBun
-    ? (requireSqlite("bun:sqlite") as {Database: SqliteDatabaseCtor}).Database
-    : (requireSqlite("better-sqlite3") as SqliteDatabaseCtor);
-  return cachedConstructor;
+  if (isBun) {
+    cachedConstructor = (requireSqlite("bun:sqlite") as {Database: SqliteDatabaseCtor}).Database;
+    return cachedConstructor;
+  }
+
+  try {
+    const DatabaseSync = (requireSqlite("node:sqlite") as {
+      DatabaseSync: NodeSqliteDatabaseCtor;
+    }).DatabaseSync;
+    cachedConstructor = class NodeSqliteHandle implements DbHandle {
+      private readonly db: NodeSqliteDatabase;
+
+      constructor(path: string) {
+        this.db = new DatabaseSync(path);
+      }
+
+      prepare(sql: string): StatementHandle {
+        const stmt = this.db.prepare(sql);
+        return {
+          all: (...params: unknown[]) => stmt.all(...params),
+          get: (...params: unknown[]) => stmt.get(...params),
+          run: (...params: unknown[]) => {
+            const result = stmt.run(...params) as {changes?: number} | undefined;
+            return {changes: result?.changes ?? 0};
+          },
+        };
+      }
+
+      exec(sql: string): void {
+        this.db.exec(sql);
+      }
+
+      pragma(sql: string): unknown {
+        return this.db.exec(`PRAGMA ${sql}`);
+      }
+
+      close(): void {
+        this.db.close();
+      }
+    };
+    return cachedConstructor;
+  } catch {
+    cachedConstructor = requireSqlite("better-sqlite3") as SqliteDatabaseCtor;
+    return cachedConstructor;
+  }
 }
 
 const MIGRATIONS: {id: string; up: string}[] = [

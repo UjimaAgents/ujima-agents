@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join, normalize, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { createBufferLogger, createRuntimeHost, Repository, type RuntimeHost } from '@ujima/runtime-core';
 import { OrganizationSchema } from '@ujima/shared';
@@ -232,7 +232,7 @@ describe('workspace routes', () => {
       const storedTeam = repo.getWorkspaceSetting(newOrganizationId, TEAM_CONFIG_SETTING_KEY);
       expect(storedTeam).toBeTruthy();
       expect(storedTeam).not.toContain(staleHome);
-      expect(storedTeam).toContain(otherHome);
+      expect(normalize(storedTeam!)).toContain(normalize(otherHome));
       expect(repo.getWorkspaceSetting(newOrganizationId, 'dashboard.teamOverrides')).toBeNull();
       expect(repo.getProviderCredential(newOrganizationId, 'openai')).toBe('test-key');
 

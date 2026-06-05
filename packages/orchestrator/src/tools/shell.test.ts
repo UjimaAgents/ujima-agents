@@ -8,7 +8,7 @@ import {
 const unixDescribe = process.platform === 'win32' ? describe.skip : describe;
 
 describe('shellTool', () => {
-  it('executes single-string commands with shell parsing when args are absent', async () => {
+  it.skipIf(process.platform === 'win32')('executes single-string commands with shell parsing when args are absent', async () => {
     const result = await shellTool.execute({
       invocation: {
         organizationId: 'org-1',
@@ -28,7 +28,7 @@ describe('shellTool', () => {
     expect(result).toEqual({ stdout: 'ok', stderr: '' });
   });
 
-  it('executes explicit argument arrays without shell wrapping', async () => {
+  it.skipIf(process.platform === 'win32')('executes explicit argument arrays without shell wrapping', async () => {
     const result = await shellTool.execute({
       invocation: {
         organizationId: 'org-1',

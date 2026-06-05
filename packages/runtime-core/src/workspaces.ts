@@ -95,7 +95,7 @@ export function createWorkspaceStore(raw: DbHandle): WorkspaceStore {
       return rowToWorkspace(getStmt.get(id));
     },
     findByRoot(rootPath: string): Workspace | undefined {
-      return rowToWorkspace(findByRootStmt.get(rootPath));
+      return rowToWorkspace(findByRootStmt.get(normalizeWorkspaceRootPath(rootPath)));
     },
     create(input: WorkspaceInsert): Workspace {
       const id = input.id ?? `ws_${Date.now().toString(36)}_${randomBytes(3).toString('hex')}`;

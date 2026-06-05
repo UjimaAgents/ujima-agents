@@ -35,7 +35,7 @@ const RISK_LABEL: Record<ToolRiskClass, string> = {
   destructive: "destructive",
 };
 
-export function ToolsSubtab({ orgId: _orgId, agents, catalog }: Props) {
+export function ToolsSubtab({ agents, catalog }: Props) {
   const { catalogByServer } = catalog;
 
   // Tools tab is the role-agnostic planning surface. If the Agents
