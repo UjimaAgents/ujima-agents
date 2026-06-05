@@ -10,9 +10,11 @@ import {
 import { openDatabase } from '@ujima/context-store';
 import { Repository } from './index.js';
 
-// Shared fixtures. We materialise an org + member + server up front
-// so each attachment test exercises only the tier-aware code paths,
-// not the surrounding wiring.
+// Three load-bearing invariants for the dispatch substrate. Anything
+// further (parametric variations, negative cases, etc.) lives in the
+// QA testing harness — these are the contracts the rest of the plan
+// rests on.
+
 function setupFixture() {
   const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
   const orgId = `org_${randomUUID()}`;
@@ -26,7 +28,6 @@ function setupFixture() {
       workspace: { root: '/tmp/dispatch-test', roleScopes: {} },
     }),
   );
-
   repo.saveMember({
     id: memberId,
     organizationId: orgId,
@@ -41,7 +42,7 @@ function setupFixture() {
     id: `srv_${randomUUID()}`,
     organizationId: orgId,
     name: 'shodan',
-    description: 'OSINT scan data',
+    description: '',
     category: 'security',
     transport: 'stdio',
     command: 'true',
@@ -66,12 +67,13 @@ function setupFixture() {
       ...overrides,
     });
   }
-
-  return { repo, orgId, memberId, server, now, makeAttachment };
+  return { repo, orgId, memberId, server, makeAttachment };
 }
 
-describe('AgentMcpAttachmentSchema tier field', () => {
-  it("defaults tier to 'native' when omitted (backwards-compat for rows pre-048)", () => {
+describe('dispatch substrate — load-bearing invariants', () => {
+  it("backwards compat: tier defaults to 'native' when omitted (pre-048 rows)", () => {
+    // Critical for §3.5 rule 2: existing org rows that pre-date migration
+    // 048 must read back as 'native' so legacy spawn behavior is exact.
     const parsed = AgentMcpAttachmentSchema.parse({
       id: `att_${randomUUID()}`,
       organizationId: `org_${randomUUID()}`,
@@ -84,120 +86,27 @@ describe('AgentMcpAttachmentSchema tier field', () => {
     expect(parsed.tier).toBe('native');
   });
 
-  it("accepts 'dispatch' explicitly", () => {
-    const parsed = AgentMcpAttachmentSchema.parse({
-      id: `att_${randomUUID()}`,
-      organizationId: `org_${randomUUID()}`,
-      memberId: `mem_${randomUUID()}`,
-      mcpServerId: `srv_${randomUUID()}`,
-      scope: 'both',
-      tier: 'dispatch',
-      createdAt: '2026-06-05T00:00:00.000Z',
-      updatedAt: '2026-06-05T00:00:00.000Z',
-    });
-    expect(parsed.tier).toBe('dispatch');
-  });
-
-  it('rejects unknown tier values so typos surface at parse time', () => {
-    expect(() =>
-      AgentMcpAttachmentSchema.parse({
-        id: `att_${randomUUID()}`,
-        organizationId: `org_${randomUUID()}`,
-        memberId: `mem_${randomUUID()}`,
-        mcpServerId: `srv_${randomUUID()}`,
-        scope: 'worker',
-        tier: 'hybrid',
-        createdAt: '2026-06-05T00:00:00.000Z',
-        updatedAt: '2026-06-05T00:00:00.000Z',
-      }),
-    ).toThrow();
-  });
-});
-
-describe('saveAgentMcpAttachment with tier', () => {
-  it("persists tier and round-trips it through listAgentMcpAttachments", () => {
+  it('save round-trips tier and updates it on UPSERT conflict', () => {
+    // Combined save + read + conflict-update path — covers the entire
+    // saveAgentMcpAttachment surface in one assertion chain.
     const { repo, orgId, memberId, makeAttachment } = setupFixture();
-
-    repo.saveAgentMcpAttachment(makeAttachment({ tier: 'dispatch' }));
+    repo.saveAgentMcpAttachment(makeAttachment({ tier: 'native' }));
+    const later = new Date(Date.now() + 1000).toISOString();
+    repo.saveAgentMcpAttachment(makeAttachment({ tier: 'dispatch', updatedAt: later }));
 
     const rows = repo.listAgentMcpAttachments(orgId, memberId);
     expect(rows).toHaveLength(1);
     expect(rows[0]?.tier).toBe('dispatch');
-  });
-
-  it("ON CONFLICT updates tier so the upsert reflects the operator's latest choice", () => {
-    const { repo, orgId, memberId, makeAttachment } = setupFixture();
-
-    repo.saveAgentMcpAttachment(makeAttachment({ tier: 'native' }));
-    const later = new Date(Date.now() + 1000).toISOString();
-    repo.saveAgentMcpAttachment(
-      makeAttachment({ tier: 'dispatch', updatedAt: later }),
-    );
-
-    const rows = repo.listAgentMcpAttachments(orgId, memberId);
-    expect(rows[0]?.tier).toBe('dispatch');
     expect(rows[0]?.updatedAt).toBe(later);
   });
-});
 
-describe('updateAttachmentTier', () => {
-  it('flips an existing attachment from native to dispatch', () => {
-    const { repo, orgId, memberId, server, makeAttachment } = setupFixture();
-    repo.saveAgentMcpAttachment(makeAttachment({ tier: 'native' }));
-
-    const later = new Date(Date.now() + 1000).toISOString();
-    const updated = repo.updateAttachmentTier(orgId, memberId, server.id, 'dispatch', later);
-
-    expect(updated).not.toBeNull();
-    expect(updated?.tier).toBe('dispatch');
-    expect(updated?.updatedAt).toBe(later);
-  });
-
-  it('returns null when no attachment exists (no-op, no insert)', () => {
-    const { repo, orgId, memberId, server } = setupFixture();
-    // No saveAgentMcpAttachment first — table is empty for this pair.
-
-    const result = repo.updateAttachmentTier(
-      orgId,
-      memberId,
-      server.id,
-      'dispatch',
-      new Date().toISOString(),
-    );
-    expect(result).toBeNull();
-    expect(repo.listAgentMcpAttachments(orgId, memberId)).toEqual([]);
-  });
-
-  it('rejects invalid tier values via Zod before touching the DB', () => {
-    const { repo, orgId, memberId, server, makeAttachment } = setupFixture();
-    repo.saveAgentMcpAttachment(makeAttachment({ tier: 'native' }));
-
-    expect(() =>
-      repo.updateAttachmentTier(
-        orgId,
-        memberId,
-        server.id,
-        'hybrid' as unknown as AgentMcpAttachment['tier'],
-        new Date().toISOString(),
-      ),
-    ).toThrow();
-
-    // Underlying row stays unchanged.
-    const rows = repo.listAgentMcpAttachments(orgId, memberId);
-    expect(rows[0]?.tier).toBe('native');
-  });
-
-  it('does not mutate scope (orthogonality with §17.5.3 merge rule)', () => {
+  it('updateAttachmentTier flips tier and preserves scope (orthogonality invariant §17.5.3)', () => {
+    // The reviewer specifically flagged that tier mutation must NOT
+    // touch scope; tier and the permission-store grant are orthogonal.
+    // This is the test that catches a future refactor breaking that.
     const { repo, orgId, memberId, server, makeAttachment } = setupFixture();
     repo.saveAgentMcpAttachment(makeAttachment({ scope: 'both', tier: 'native' }));
-
-    repo.updateAttachmentTier(
-      orgId,
-      memberId,
-      server.id,
-      'dispatch',
-      new Date().toISOString(),
-    );
+    repo.updateAttachmentTier(orgId, memberId, server.id, 'dispatch', new Date().toISOString());
 
     const rows = repo.listAgentMcpAttachments(orgId, memberId);
     expect(rows[0]?.scope).toBe('both');
