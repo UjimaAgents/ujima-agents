@@ -62,7 +62,10 @@ import {registerAgentRoutes} from "./routes/agents.js";
 import {registerChannelMemberModeRoutes} from "./routes/channel-member-modes.js";
 import {registerOauthRoutes} from "./routes/oauth.js";
 import {registerScheduleRoutes} from "./routes/schedules.js";
-import {registerNotificationRoutes} from "./routes/notifications.js";
+import {
+  registerNotificationRoutes,
+  registerTelegramWebhookRoute,
+} from "./routes/notifications.js";
 import {registerGoalRoutes} from "./routes/goals.js";
 
 const WS_QUEUE_CAP = 256;
@@ -245,10 +248,32 @@ export function createTransport(opts: TransportOptions): Transport {
 
   io.on("connection", (socket) => onSocketConnection(socket, host));
 
+  let services:
+    | ReturnType<NonNullable<TransportOptions["apiServices"]>["buildServices"]>
+    | undefined;
+  if (opts.apiServices) {
+    const realtime = new RealtimeService(io, opts.apiServices.repo);
+    services = opts.apiServices.buildServices(realtime);
+    scheduler = services.scheduler;
+    notifications = services.notifications;
+  }
+
   // Public APIs (No Auth Required)
   fastify.register(
     async (api) => {
       registerOauthRoutes(api);
+      if (opts.apiServices && services) {
+        registerTelegramWebhookRoute(api, {
+          repo: opts.apiServices.repo,
+          resolveApproval: async (orgId, approvalId, status) => {
+            await services.approvals.resolveApproval({
+              organizationId: orgId,
+              approvalId,
+              status,
+            });
+          },
+        });
+      }
     },
     {prefix: "/api"}
   );
@@ -272,10 +297,7 @@ export function createTransport(opts: TransportOptions): Transport {
       registerAgentRoutes(api, host);
       registerRoleRoutes(api);
 
-      if (opts.apiServices) {
-        const realtime = new RealtimeService(io, opts.apiServices.repo);
-        const services = opts.apiServices.buildServices(realtime);
-
+      if (opts.apiServices && services) {
         registerWorkspaceRoutes(api, {
           host,
           auth: services.auth,
@@ -345,9 +367,6 @@ export function createTransport(opts: TransportOptions): Transport {
         registerNotificationRoutes(api, {
           repo: opts.apiServices.repo,
           auth: services.auth,
-          resolveApproval: async (orgId, approvalId, status) => {
-            await services.approvals.resolveApproval({ organizationId: orgId, approvalId, status });
-          },
         });
         registerGoalRoutes(api, {
           repo: opts.apiServices.repo,
@@ -359,8 +378,6 @@ export function createTransport(opts: TransportOptions): Transport {
           repo: opts.apiServices.repo,
           auth: services.auth,
         });
-        scheduler = services.scheduler;
-        notifications = services.notifications;
         scheduler?.start();
       }
     },

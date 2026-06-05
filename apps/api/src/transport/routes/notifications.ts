@@ -35,7 +35,77 @@ const UpdateChannelSchema = z.object({
 interface NotificationRouteDeps {
   repo: Repository;
   auth: AuthService;
-  resolveApproval?: ApprovalResolver;
+}
+
+export interface TelegramWebhookDeps {
+  repo: Repository;
+  resolveApproval: ApprovalResolver;
+}
+
+export function registerTelegramWebhookRoute(api: FastifyInstance, deps: TelegramWebhookDeps): void {
+  // Called by Telegram servers (no session/bearer). Callback payloads are
+  // authenticated via HMAC signatures in resolveApprovalFromTelegram.
+  api.post('/notifications/telegram-webhook', {
+    schema: { description: 'Telegram bot webhook for inline keyboard callbacks', tags: ['Notifications'] },
+  }, async (req, reply) => {
+    const update = req.body as Record<string, unknown>;
+    const callbackQuery = update?.callback_query as Record<string, unknown> | undefined;
+    if (!callbackQuery?.data || !callbackQuery?.id) {
+      return reply.status(200).send({ ok: false, reason: 'not a callback query' });
+    }
+
+    const callbackData = callbackQuery.data as string;
+    const lookupApproval = (approvalId: string) => {
+      for (const org of deps.repo.listOrganizations()) {
+        const approval = deps.repo.getApproval(org.id, approvalId);
+        if (approval) return approval;
+      }
+      return null;
+    };
+
+    let botToken = '';
+    let err: string | null = 'telegram bot token not configured';
+    for (const org of deps.repo.listOrganizations()) {
+      for (const channel of deps.repo.listNotificationChannels(org.id)) {
+        if (channel.provider !== 'telegram' || !channel.enabled) continue;
+        let candidateToken = '';
+        try {
+          candidateToken = (JSON.parse(channel.configJson) as Record<string, string>).botToken ?? '';
+        } catch {
+          candidateToken = '';
+        }
+        if (!candidateToken) continue;
+
+        const candidateErr = await resolveApprovalFromTelegram(
+          callbackData,
+          candidateToken,
+          lookupApproval,
+          deps.resolveApproval,
+          true,
+        );
+        if (candidateErr !== 'Invalid callback data') {
+          botToken = candidateToken;
+          err = candidateErr;
+          break;
+        }
+      }
+      if (botToken) break;
+    }
+
+    if (botToken) {
+      await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          callback_query_id: callbackQuery.id,
+          text: err ? `Failed: ${err}` : 'Approved ✓',
+          show_alert: !!err,
+        }),
+      }).catch(() => undefined);
+    }
+
+    return reply.status(200).send({ ok: !err });
+  });
 }
 
 export function registerNotificationRoutes(api: FastifyInstance, deps: NotificationRouteDeps): void {
@@ -97,75 +167,5 @@ export function registerNotificationRoutes(api: FastifyInstance, deps: Notificat
     const { id } = req.params as { id: string };
     deps.repo.deleteNotificationChannel(authState.user.organizationId, id);
     return reply.status(204).send();
-  });
-
-  // Telegram bot webhook — called by Telegram servers when a user
-  // clicks an inline keyboard button on an approval notification.
-  // Expects POST with the standard Telegram Update JSON payload.
-  api.post('/notifications/telegram-webhook', {
-    schema: { description: 'Telegram bot webhook for inline keyboard callbacks', tags: ['Notifications'] },
-  }, async (req, reply) => {
-    const update = req.body as Record<string, unknown>;
-    const callbackQuery = update?.callback_query as Record<string, unknown> | undefined;
-    if (!callbackQuery?.data || !callbackQuery?.id) {
-      return reply.status(200).send({ ok: false, reason: 'not a callback query' });
-    }
-
-    if (!deps.resolveApproval) {
-      return reply.status(200).send({ ok: false, reason: 'no resolver configured' });
-    }
-
-    const callbackData = callbackQuery.data as string;
-    const lookupApproval = (approvalId: string) => {
-      for (const org of deps.repo.listOrganizations()) {
-        const approval = deps.repo.getApproval(org.id, approvalId);
-        if (approval) return approval;
-      }
-      return null;
-    };
-
-    let botToken = '';
-    let err: string | null = 'telegram bot token not configured';
-    for (const org of deps.repo.listOrganizations()) {
-      for (const channel of deps.repo.listNotificationChannels(org.id)) {
-        if (channel.provider !== 'telegram' || !channel.enabled) continue;
-        let candidateToken = '';
-        try {
-          candidateToken = (JSON.parse(channel.configJson) as Record<string, string>).botToken ?? '';
-        } catch {
-          candidateToken = '';
-        }
-        if (!candidateToken) continue;
-
-        const candidateErr = await resolveApprovalFromTelegram(
-          callbackData,
-          candidateToken,
-          lookupApproval,
-          deps.resolveApproval,
-          true,
-        );
-        if (candidateErr !== 'Invalid callback data') {
-          botToken = candidateToken;
-          err = candidateErr;
-          break;
-        }
-      }
-      if (botToken) break;
-    }
-
-    // Answer callback to clear the loading state on the button
-    if (botToken) {
-      await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          callback_query_id: callbackQuery.id,
-          text: err ? `Failed: ${err}` : 'Approved ✓',
-          show_alert: !!err,
-        }),
-      }).catch(() => undefined);
-    }
-
-    return reply.status(200).send({ ok: !err });
   });
 }
