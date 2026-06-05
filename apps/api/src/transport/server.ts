@@ -23,8 +23,8 @@ import type {
   TaskSessionService,
   TeamStore,
   WorkspaceService,
-  isTelegramPollingEnabled,
 } from "@ujima/orchestrator";
+import { isTelegramPollingEnabled } from "@ujima/orchestrator";
 import type {UjimaEvent} from "@ujima/shared";
 import {
   ApiErrorSchema,
