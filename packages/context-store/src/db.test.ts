@@ -237,6 +237,31 @@ describe('database migrations', () => {
     upgraded.close();
   });
 
+  it('opens a fresh database with notification channels and message token counts (047 + 048)', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'ujima-db-fresh-047-048-'));
+    tempDirs.push(dir);
+    const dbPath = join(dir, 'fresh.sqlite');
+
+    const db = openDatabase({ dbPath });
+    const migrations = (
+      db.prepare('SELECT id FROM schema_migrations ORDER BY id ASC').all() as { id: string }[]
+    ).map((row) => row.id);
+    expect(migrations).toContain('047_notification_channels');
+    expect(migrations).toContain('048_message_token_counts');
+
+    const notificationTables = (
+      db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='notification_channels'").all() as { name: string }[]
+    ).map((row) => row.name);
+    expect(notificationTables).toEqual(['notification_channels']);
+
+    const messageColumns = (
+      db.prepare('PRAGMA table_info(messages)').all() as { name: string }[]
+    ).map((row) => row.name);
+    expect(messageColumns).toContain('input_tokens');
+    expect(messageColumns).toContain('output_tokens');
+    db.close();
+  });
+
   it('opens a fresh database without re-adding interactive_questions.run_id (037 + 038)', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'ujima-db-fresh-'));
     tempDirs.push(dir);

@@ -1463,7 +1463,7 @@ const MIGRATIONS: {id: string; up: string}[] = [
     `,
   },
   {
-    id: '047_message_token_counts',
+    id: '048_message_token_counts',
     up: `
       ALTER TABLE messages ADD COLUMN input_tokens INTEGER;
       ALTER TABLE messages ADD COLUMN output_tokens INTEGER;
@@ -1548,7 +1548,7 @@ function runMigrations(db: DbHandle): void {
       continue;
     }
     if (
-      m.id === "047_message_token_counts" &&
+      m.id === "048_message_token_counts" &&
       hasColumn(db, "messages", "input_tokens") &&
       hasColumn(db, "messages", "output_tokens")
     ) {
