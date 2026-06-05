@@ -26,6 +26,10 @@ export {
   isKnownModelForProvider,
 } from "./model-catalog.js";
 export type {ProviderModelOption} from "./model-catalog.js";
+export {
+  clampReasoningEffortForProvider,
+  getReasoningEffortsForProvider,
+} from "./reasoning-catalog.js";
 export * from "./socket-events.js";
 export * from "./cursor.js";
 export * from "./conversations.js";

@@ -3,7 +3,6 @@ import {
   AGENT_KIND,
   ChannelSchema,
   MessageMentionSchema,
-  MessageSchema,
   SocketEventNames,
   channelRoom,
   encodeCursor,
@@ -14,6 +13,7 @@ import {
   type ChannelPassReason,
   type Message,
   type MessageMention,
+  type ReasoningEffort,
   buildMentionHandleRegistry,
   getDirectMessageThreadId,
   scanMentionsInContent,
@@ -23,21 +23,8 @@ import {
 } from '@ujima/shared';
 import type { RealtimeService } from './context.js';
 import { selfChannelId } from './member-channels.js';
-import {
-  CONVERSATION_ARCHIVE_MARKER,
-  CONVERSATION_COMPACTED_MARKER,
-  CONVERSATION_SUMMARY_MARKER,
-  SELF_NOTE_COMPACTED_MARKER,
-  SELF_NOTE_SUMMARY_MARKER,
-  buildSelfNoteSummary,
-  buildConversationArchiveSummary,
-  buildConversationSummary,
-  formatTimestampedContent,
-  isArchivedConversation,
-  isCompactedConversation,
-  isCompactedSelfNote,
-  isSelfSummaryNote,
-} from './conversation-summary.js';
+import { buildMessage, buildSystemMessage } from './message-factory.js';
+import { formatTimestampedContent } from './conversation-summary.js';
 import type {
   ConversationRepository,
   PaginatedMessages,
@@ -45,14 +32,28 @@ import type {
 import { requireOrganization } from '../utils/require-organization.js';
 import { isVacuousAck, shouldSuppressForMirror } from './mirror-guard.js';
 import { isAcknowledgementOnly } from './run-reply-guard.js';
+import {
+  compactSelfNotesIfNeeded,
+  compactConversationIfNeeded,
+  archiveConversation,
+  shouldHideCompactedMessage,
+  type CompactionContext,
+} from './conversation-compact.js';
+import {
+  MentionQuota,
+  ChannelReadQuota,
+  PairMentionTracker,
+} from './conversation-quota.js';
 
 const ATTACHMENT_FILE_LIMIT_BYTES = 25 * 1024 * 1024;
 const ATTACHMENT_MESSAGE_LIMIT_BYTES = 100 * 1024 * 1024;
-const COMPACTION_TRIGGER = 500;
-const SELF_NOTE_COMPACTION_BATCH_SIZE = 35;
-const SELF_NOTE_RECENT_RAW_COUNT = 15;
-const CONVERSATION_COMPACTION_BATCH_SIZE = 35;
-const CONVERSATION_RECENT_RAW_COUNT = 15;
+
+interface ConversationMessageMetadata {
+  runId?: string;
+  goalMode?: boolean;
+  reasoningEffort?: ReasoningEffort;
+  delegate?: { parentRunId?: string };
+}
 
 export interface ArchivedChannelMessageStore {
   listChannelMessages(input: {
@@ -103,27 +104,9 @@ export class ConversationService {
   private readonly onMessagePublished?: (message: Message) => void | Promise<void>;
   private readonly mentionFanoutCap: number;
   private readonly mentionWindowMs: number;
-  private readonly mentionWindows = new Map<string, number[]>();
-  // L11 — channel-read quota is a SEPARATE bucket from the mention
-  // quota so ordinary broad-wake chatter doesn't exhaust the
-  // mention/DM/handoff circuit-breaker. Cap is intentionally
-  // generous (100 / 60s per member/channel) since broad-wake is
-  // the expected steady-state load.
-  private readonly channelReadCap: number;
-  private readonly channelReadWindowMs: number;
-  private readonly channelReadWindows = new Map<string, number[]>();
-  // Bet 3 — per-pair mention back-pressure. Keyed by
-  // `${orgId}|${threadId}|${fromMember}|${toMember}` with a sliding
-  // window of recent wake timestamps. When a pair exchanges more
-  // than `pairMentionCap` mentions within `pairMentionWindowMs`,
-  // the next wake is demoted to `channel-read` so the recipient
-  // can `channel.pass` cleanly instead of being forced into another
-  // mandatory-reply turn. Resets on any third-party activity in
-  // the thread (the recipient gets a fresh quota when content
-  // actually changes).
-  private readonly pairMentionWindows = new Map<string, number[]>();
-  private readonly pairMentionCap = 3;
-  private readonly pairMentionWindowMs = 90_000;
+  private readonly mentionQuota: MentionQuota;
+  private readonly channelReadQuota: ChannelReadQuota;
+  private readonly pairMentionTracker: PairMentionTracker;
   private readonly lastMessageCreatedAtByThread = new Map<string, number>();
 
   constructor(
@@ -136,8 +119,9 @@ export class ConversationService {
     this.onMessagePublished = options.onMessagePublished;
     this.mentionFanoutCap = options.mentionFanoutCap ?? 10;
     this.mentionWindowMs = options.mentionWindowMs ?? 60_000;
-    this.channelReadCap = 100;
-    this.channelReadWindowMs = 60_000;
+    this.mentionQuota = new MentionQuota(this.mentionFanoutCap, this.mentionWindowMs);
+    this.channelReadQuota = new ChannelReadQuota(100, 60_000);
+    this.pairMentionTracker = new PairMentionTracker(3, 90_000);
   }
 
   private nextMessageCreatedAt(organizationId: string, threadId: string, requestedAt: string): string {
@@ -348,9 +332,11 @@ export class ConversationService {
       ? typedMentions ?? []
       : typedMentions ?? this.resolveMessageMentions(message.organizationId, message, channel);
     const existing = this.repo.getMessage(message.organizationId, message.id);
-    const finalMessage = MessageSchema.parse({
+    const finalMessage = buildMessage({
       ...message,
-      createdAt: existing?.createdAt ?? this.nextMessageCreatedAt(message.organizationId, message.threadId, message.createdAt),
+      createdAt:
+        existing?.createdAt ??
+        this.nextMessageCreatedAt(message.organizationId, message.threadId, message.createdAt),
       mentions: uniqueMentionIds(resolvedMentions),
       mentionNames: this.resolveMentionNames(message.organizationId, message.content, channel),
     });
@@ -387,7 +373,7 @@ export class ConversationService {
     }
     const emittedMessage =
       linkedAttachmentIds.length > 0
-        ? MessageSchema.parse({
+        ? buildMessage({
             ...finalMessage,
             attachments: this.repo.listMessageAttachments(finalMessage.id),
           })
@@ -426,6 +412,14 @@ export class ConversationService {
       }
     }
     return emittedMessage;
+  }
+
+  private compactionContext(): CompactionContext {
+    return {
+      repo: this.repo,
+      publishMessage: (message, mentions, attachmentIds, options) =>
+        this.publishMessage(message, mentions as never[], attachmentIds, options),
+    };
   }
 
   // Fire-and-forget alert fanout: the message is already published and
@@ -501,7 +495,7 @@ export class ConversationService {
       // Per-`(member, channelId)` channel-read quota bucket
       // (L11). Separate from the mention bucket so ordinary
       // channel chatter doesn't starve the mention-fanout quota.
-      if (!this.consumeChannelReadQuota(message.organizationId, member.id, channel.id)) {
+      if (!this.channelReadQuota.consume(`${message.organizationId}:${member.id}:${channel.id}`)) {
         this.emitWakeSuppressed(message, channel, member.id, 'quota');
         continue;
       }
@@ -803,7 +797,7 @@ export class ConversationService {
     mentions?: string[];
     parentMessageId?: string;
     attachmentIds?: string[];
-    metadata?: { runId?: string; goalMode?: boolean; delegate?: { parentRunId?: string } };
+    metadata?: ConversationMessageMetadata;
     /** L10 — client-supplied idempotency key. */
     clientMessageId?: string;
   }) {
@@ -879,8 +873,7 @@ export class ConversationService {
       }
     }
 
-    const message = MessageSchema.parse({
-      id: randomUUID(),
+    const message = buildMessage({
       organizationId: input.organizationId,
       threadId: input.threadId,
       channelId: input.channelId,
@@ -892,26 +885,11 @@ export class ConversationService {
       mentions: [...mentions],
       ...(input.metadata ? { metadata: input.metadata } : {}),
       ...(input.clientMessageId ? { clientMessageId: input.clientMessageId } : {}),
-      createdAt: new Date().toISOString(),
     });
 
     const published = this.publishMessage(message, undefined, input.attachmentIds);
-    this.supersedePendingQuestionsOnHumanReply(message);
-    this.compactConversationIfNeeded(input.organizationId, input.threadId, input.senderId);
+    compactConversationIfNeeded(this.compactionContext(), input.organizationId, input.threadId, input.senderId);
     return published;
-  }
-
-  private supersedePendingQuestionsOnHumanReply(message: Message): void {
-    if (message.senderKind !== 'human' || !message.channelId) return;
-    const pending = this.repo.listPendingInteractiveQuestions?.(message.organizationId, message.channelId) ?? [];
-    const now = new Date().toISOString();
-    for (const question of pending) {
-      this.repo.saveInteractiveQuestion?.({
-        ...question,
-        status: 'superseded',
-        updatedAt: now,
-      });
-    }
   }
 
   postToChannel(input: {
@@ -921,7 +899,7 @@ export class ConversationService {
     body: string;
     replyTo?: string;
     mentions?: string[];
-    metadata?: { runId?: string; delegate?: { parentRunId?: string } };
+    metadata?: ConversationMessageMetadata;
   }) {
     const channel = this.requireActiveChannel(input.organizationId, input.channelId);
     let threadId = channel.id;
@@ -952,7 +930,7 @@ export class ConversationService {
     messageId: string;
     body: string;
     mentions?: string[];
-    metadata?: { runId?: string; delegate?: { parentRunId?: string } };
+    metadata?: ConversationMessageMetadata;
   }) {
     const parent = this.requireMessage(input.organizationId, input.messageId);
     return this.sendMessage({
@@ -976,7 +954,7 @@ export class ConversationService {
     parentMessageId?: string;
     ignore?: boolean;
     attachmentIds?: string[];
-    metadata?: { runId?: string; goalMode?: boolean; delegate?: { parentRunId?: string } };
+    metadata?: ConversationMessageMetadata;
     /** L10 — client-supplied idempotency key. */
     clientMessageId?: string;
   }) {
@@ -1047,8 +1025,7 @@ export class ConversationService {
       createdAt: now,
     });
 
-    const message = MessageSchema.parse({
-      id: randomUUID(),
+    const message = buildMessage({
       organizationId: input.organizationId,
       threadId,
       channelId: replyChannelId,
@@ -1069,7 +1046,7 @@ export class ConversationService {
       input.attachmentIds,
       input.ignore ? { suppressDmAlerts: true } : undefined,
     );
-    this.compactConversationIfNeeded(input.organizationId, threadId, input.senderId);
+    compactConversationIfNeeded(this.compactionContext(), input.organizationId, threadId, input.senderId);
     return published;
   }
 
@@ -1120,16 +1097,11 @@ export class ConversationService {
       createdAt: now,
     });
 
-    const message = MessageSchema.parse({
-      id: randomUUID(),
+    const message = buildSystemMessage({
       organizationId: input.organizationId,
       threadId: channel.id,
       channelId: channel.id,
-      senderId: 'system',
-      senderKind: 'human',
-      kind: 'system',
       content: input.content,
-      mentions: [],
       createdAt: now,
     });
 
@@ -1186,8 +1158,7 @@ export class ConversationService {
       }
     }
 
-    const message = MessageSchema.parse({
-      id: randomUUID(),
+    const message = buildMessage({
       organizationId: input.organizationId,
       threadId: channelId,
       channelId,
@@ -1196,11 +1167,10 @@ export class ConversationService {
       kind: member.kind,
       content: input.body,
       ...(input.clientMessageId ? { clientMessageId: input.clientMessageId } : {}),
-      createdAt: new Date().toISOString(),
     });
 
     const published = this.publishMessage(message, [], input.attachmentIds);
-    this.compactSelfNotesIfNeeded(input.organizationId, member.id, channelId);
+    compactSelfNotesIfNeeded(this.compactionContext(), input.organizationId, member.id, channelId);
     return published;
   }
 
@@ -1218,33 +1188,7 @@ export class ConversationService {
       throw new Error(`Thread not found: ${input.threadId}`);
     }
 
-    const messages = this.listAllThreadMessages(input.organizationId, input.threadId);
-    const plan =
-      input.mode === 'clear'
-        ? {
-            summaryMarker: CONVERSATION_ARCHIVE_MARKER,
-            compactedMarker: CONVERSATION_ARCHIVE_MARKER,
-            keepRawCount: 0,
-            batchSize: Number.MAX_SAFE_INTEGER,
-            buildSummary: buildConversationArchiveSummary,
-            publishSummary: true,
-          }
-        : {
-            summaryMarker: CONVERSATION_SUMMARY_MARKER,
-            compactedMarker: CONVERSATION_COMPACTED_MARKER,
-            keepRawCount: CONVERSATION_RECENT_RAW_COUNT,
-            batchSize: CONVERSATION_COMPACTION_BATCH_SIZE,
-            buildSummary: buildConversationSummary,
-            publishSummary: true,
-          };
-
-    return this.compactThreadMessages({
-      organizationId: input.organizationId,
-      threadId: input.threadId,
-      senderId: input.memberId,
-      messages,
-      ...plan,
-    });
+    return archiveConversation(this.compactionContext(), input.organizationId, input.threadId, input.memberId, input.mode);
   }
 
   editMessage(input: {
@@ -1350,7 +1294,7 @@ export class ConversationService {
       // We keep the limiter here, before realtime emission and before the
       // follow-up run callback, so both delivery paths agree on whether a wake
       // should happen for this member.
-      if (!this.consumeMentionFanoutQuota(message.organizationId, member.id)) {
+      if (!this.mentionQuota.consume(`${message.organizationId}:${member.id}`)) {
         this.publishMentionThrottledSystemMessage(message.organizationId, member.id, message.senderId);
         continue;
       }
@@ -1361,14 +1305,11 @@ export class ConversationService {
       // of being forced into another mandatory reply. Emit an
       // observability event so the UI can show "X and Y are
       // looping — wakes demoted".
-      const countInWindow = this.recordPairMentionWake(
-        message.organizationId,
-        message.threadId,
-        message.senderId,
-        member.id,
+      const countInWindow = this.pairMentionTracker.record(
+        `${message.organizationId}|${message.threadId}|${message.senderId}|${member.id}`,
       );
       const wakeReason: WakeReason =
-        countInWindow > this.pairMentionCap ? 'channel-read' : 'mention';
+        countInWindow > 3 ? 'channel-read' : 'mention';
       if (wakeReason === 'channel-read') {
         this.emitEchoSuppressed({
           organizationId: message.organizationId,
@@ -1391,36 +1332,6 @@ export class ConversationService {
    * one. Caller compares against `pairMentionCap` to decide whether
    * to demote.
    */
-  private recordPairMentionWake(
-    organizationId: string,
-    threadId: string,
-    fromMemberId: string,
-    toMemberId: string,
-  ): number {
-    const key = `${organizationId}|${threadId}|${fromMemberId}|${toMemberId}`;
-    const now = Date.now();
-    const windowStart = now - this.pairMentionWindowMs;
-    const existing = this.pairMentionWindows.get(key) ?? [];
-    const kept = existing.filter((t) => t >= windowStart);
-    kept.push(now);
-    this.pairMentionWindows.set(key, kept);
-    // QA flagged: without eviction of empty keys, every distinct
-    // (org, thread, from, to) 4-tuple lives forever. Walk the map
-    // periodically (cheap when sizes are small) and delete keys
-    // whose newest timestamp has fallen outside the window. Bound
-    // the walk by sampling — only sweep when the map crosses a
-    // threshold so the cost stays O(1) amortised.
-    if (this.pairMentionWindows.size > 1024) {
-      for (const [k, timestamps] of this.pairMentionWindows) {
-        const last = timestamps[timestamps.length - 1];
-        if (last === undefined || last < windowStart) {
-          this.pairMentionWindows.delete(k);
-        }
-      }
-    }
-    return kept.length;
-  }
-
   private async alertMember(
     message: Message,
     memberId: string,
@@ -1488,13 +1399,10 @@ export class ConversationService {
         if (memberMode === 'muted' || memberMode === 'temp_disable') return;
         const recipient = this.repo.getMember(message.organizationId, recipientId);
         const pairCap =
-          sender?.kind === 'agent' && recipient?.kind === 'agent' ? 1 : this.pairMentionCap;
+          sender?.kind === 'agent' && recipient?.kind === 'agent' ? 1 : 3;
         try {
-          const countInWindow = this.recordPairMentionWake(
-            message.organizationId,
-            message.threadId,
-            message.senderId,
-            recipientId,
+          const countInWindow = this.pairMentionTracker.record(
+            `${message.organizationId}|${message.threadId}|${message.senderId}|${recipientId}`,
           );
           const wakeReason: WakeReason =
             countInWindow > pairCap ? 'channel-read' : 'dm';
@@ -1540,56 +1448,13 @@ export class ConversationService {
       .find((candidate) => candidate.name === 'general' || candidate.id === 'general');
     if (!channel) return;
 
-    const systemMessage = MessageSchema.parse({
-      id: randomUUID(),
+    const systemMessage = buildSystemMessage({
       organizationId,
       threadId: channel.id,
       channelId: channel.id,
-      senderId: 'system',
-      senderKind: 'human',
-      kind: 'system',
       content: `member.alert_throttled: mention delivery for "${memberId}" by "${byMemberId}" exceeded ${this.mentionFanoutCap} alerts in ${Math.floor(this.mentionWindowMs / 1000)}s`,
-      createdAt: new Date().toISOString(),
     });
     this.publishMessage(systemMessage, []);
-  }
-
-  private consumeMentionFanoutQuota(organizationId: string, memberId: string): boolean {
-    const key = `${organizationId}:${memberId}`;
-    const now = Date.now();
-    const cutoff = now - this.mentionWindowMs;
-    const recent = (this.mentionWindows.get(key) ?? []).filter((sample) => sample > cutoff);
-    if (recent.length >= this.mentionFanoutCap) {
-      this.mentionWindows.set(key, recent);
-      return false;
-    }
-    recent.push(now);
-    this.mentionWindows.set(key, recent);
-    return true;
-  }
-
-  /**
-   * L11 — channel-read quota keyed on `(org, member, channelId)`.
-   * Separate from the mention bucket so a heavy broad-wake channel
-   * doesn't starve the mention circuit-breaker. Cap is intentionally
-   * generous because broad-wake is the steady-state.
-   */
-  private consumeChannelReadQuota(
-    organizationId: string,
-    memberId: string,
-    channelId: string,
-  ): boolean {
-    const key = `${organizationId}:${memberId}:${channelId}`;
-    const now = Date.now();
-    const cutoff = now - this.channelReadWindowMs;
-    const recent = (this.channelReadWindows.get(key) ?? []).filter((sample) => sample > cutoff);
-    if (recent.length >= this.channelReadCap) {
-      this.channelReadWindows.set(key, recent);
-      return false;
-    }
-    recent.push(now);
-    this.channelReadWindows.set(key, recent);
-    return true;
   }
 
   private getPublishRooms(message: Message, channel: Channel | null): string[] {
@@ -1732,7 +1597,7 @@ export class ConversationService {
     channel: Channel | null,
   ): PaginatedMessages {
     const visible = paginated.data
-      .filter((message) => !this.shouldHideMessage(message, channel))
+      .filter((message) => !shouldHideCompactedMessage(message, channel))
     return {
       ...paginated,
       data: visible.map((message) => this.decorateMessage(message, organizationId, channel)),
@@ -1749,167 +1614,12 @@ export class ConversationService {
       resolvedChannel?.kind === 'self'
         ? formatTimestampedContent(message.content, message.createdAt)
         : message.content;
-    return MessageSchema.parse({
+    return buildMessage({
       ...message,
       content,
-      mentionNames: message.mentionNames ?? this.resolveMentionNames(organizationId, message.content, resolvedChannel),
+      mentionNames:
+        message.mentionNames ?? this.resolveMentionNames(organizationId, message.content, resolvedChannel),
     });
-  }
-
-  private compactSelfNotesIfNeeded(
-    organizationId: string,
-    memberId: string,
-    channelId: string,
-  ): void {
-    const messages = this.listAllChannelMessages(organizationId, channelId);
-    const uncompacted = messages.filter((message) => !isCompactedSelfNote(message));
-    if (uncompacted.length <= COMPACTION_TRIGGER) {
-      return;
-    }
-    void this.compactThreadMessages({
-      organizationId,
-      threadId: channelId,
-      senderId: memberId,
-      messages,
-      summaryMarker: SELF_NOTE_SUMMARY_MARKER,
-      compactedMarker: SELF_NOTE_COMPACTED_MARKER,
-      keepRawCount: SELF_NOTE_RECENT_RAW_COUNT,
-      batchSize: SELF_NOTE_COMPACTION_BATCH_SIZE,
-      buildSummary: buildSelfNoteSummary,
-      publishSummary: true,
-    });
-  }
-
-  private compactConversationIfNeeded(organizationId: string, threadId: string, senderId: string): void {
-    const thread = this.repo.getThread(organizationId, threadId);
-    const channel = thread?.channelId ? this.repo.getChannel(organizationId, thread.channelId) : null;
-    if (channel?.kind === 'self') return;
-
-    const messages = this.listAllThreadMessages(organizationId, threadId);
-    const uncompacted = messages.filter(
-      (message) =>
-        !isMessageWithAnyMarker(message, [
-          CONVERSATION_SUMMARY_MARKER,
-          CONVERSATION_COMPACTED_MARKER,
-          CONVERSATION_ARCHIVE_MARKER,
-        ]),
-    );
-    if (uncompacted.length <= COMPACTION_TRIGGER) {
-      return;
-    }
-
-    void this.compactThreadMessages({
-      organizationId,
-      threadId,
-      senderId,
-      messages,
-      summaryMarker: CONVERSATION_SUMMARY_MARKER,
-      compactedMarker: CONVERSATION_COMPACTED_MARKER,
-      keepRawCount: CONVERSATION_RECENT_RAW_COUNT,
-      batchSize: CONVERSATION_COMPACTION_BATCH_SIZE,
-      buildSummary: buildConversationSummary,
-      publishSummary: true,
-    });
-  }
-
-  private listAllChannelMessages(organizationId: string, channelId: string): Message[] {
-    const all: Message[] = [];
-    let cursor: string | undefined;
-    do {
-      const page = this.repo.listChannelMessages(organizationId, channelId, {
-        cursor,
-        limit: 200,
-      });
-      all.push(...page.data);
-      cursor = page.nextCursor;
-      if (!page.hasMore) break;
-    } while (cursor);
-    return all.sort((left, right) => {
-      const byTime = left.createdAt.localeCompare(right.createdAt);
-      return byTime !== 0 ? byTime : left.id.localeCompare(right.id);
-    });
-  }
-
-  private listAllThreadMessages(organizationId: string, threadId: string): Message[] {
-    const all: Message[] = [];
-    let cursor: string | undefined;
-    do {
-      const page = this.repo.listMessages(organizationId, threadId, cursor, 200);
-      all.push(...page.data);
-      cursor = page.nextCursor;
-      if (!page.hasMore) break;
-    } while (cursor);
-    return all.sort((left, right) => {
-      const byTime = left.createdAt.localeCompare(right.createdAt);
-      return byTime !== 0 ? byTime : left.id.localeCompare(right.id);
-    });
-  }
-
-  private compactThreadMessages(input: {
-    organizationId: string;
-    threadId: string;
-    senderId: string;
-    messages: Message[];
-    summaryMarker: string;
-    compactedMarker: string;
-    keepRawCount: number;
-    batchSize: number;
-    buildSummary: (messages: Message[]) => string;
-    publishSummary: boolean;
-  }): { summaryMessage: Message | null; compactedMessageIds: string[] } {
-    const activeSummaries = input.messages.filter((message) =>
-      isMessageWithAnyMarker(message, [input.summaryMarker]),
-    );
-    const uncompacted = input.messages.filter(
-      (message) =>
-        !isMessageWithAnyMarker(message, [
-          input.summaryMarker,
-          input.compactedMarker,
-          CONVERSATION_COMPACTED_MARKER,
-          CONVERSATION_ARCHIVE_MARKER,
-        ]),
-    );
-    const keepRawStart = Math.max(uncompacted.length - input.keepRawCount, 0);
-    const compactable = uncompacted.slice(0, keepRawStart).slice(0, input.batchSize);
-    const summarySources = [...activeSummaries, ...compactable];
-    if (summarySources.length === 0) {
-      return { summaryMessage: null, compactedMessageIds: [] };
-    }
-    const sourcesToCompact = [...summarySources];
-
-    const now = new Date().toISOString();
-    const summaryMessage = MessageSchema.parse({
-      id: randomUUID(),
-      organizationId: input.organizationId,
-      threadId: input.threadId,
-      channelId: this.repo.getThread(input.organizationId, input.threadId)?.channelId ?? undefined,
-      senderId: 'system',
-      senderKind: AGENT_KIND,
-      kind: 'system',
-      content: input.buildSummary(summarySources),
-      createdAt: now,
-    });
-    if (input.publishSummary) {
-      this.publishMessage(summaryMessage, [], undefined, {
-        suppressDmAlerts: true,
-        skipMentionResolution: true,
-      });
-    } else {
-      this.repo.saveMessage(summaryMessage);
-    }
-
-    for (const source of sourcesToCompact) {
-      this.repo.updateMessage({
-        ...source,
-        content: `${input.compactedMarker} compactedInto=${summaryMessage.id}`,
-        editedAt: now,
-      });
-    }
-
-    return {
-      summaryMessage,
-      compactedMessageIds: sourcesToCompact.map((message) => message.id),
-    };
   }
 
   private requireAttachments(organizationId: string, attachmentIds: string[]): void {
@@ -1984,15 +1694,6 @@ export class ConversationService {
       return channel.memberIds.includes(memberId);
     }
     return true;
-  }
-
-  private shouldHideMessage(message: Message, channel: Channel | null): boolean {
-    if (isCompactedSelfNote(message)) return true;
-    if (isSelfSummaryNote(message)) return true;
-    if (isCompactedConversation(message)) return true;
-    if (isArchivedConversation(message) && message.content.includes('compactedInto=')) return true;
-    if (channel?.kind === 'self' && message.content.startsWith(SELF_NOTE_COMPACTED_MARKER)) return true;
-    return false;
   }
 
   private canObserverReadThread(
@@ -2086,8 +1787,4 @@ function mergeRankedPaginatedMessages(
 
 function uniqueMentionIds(mentions: MessageMention[]): string[] {
   return [...new Set(mentions.map((mention) => mention.memberId))];
-}
-
-function isMessageWithAnyMarker(message: Message, markers: string[]): boolean {
-  return markers.some((marker) => message.content.startsWith(marker));
 }

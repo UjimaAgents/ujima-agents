@@ -69,12 +69,40 @@ describe("reasoning-trace ordering", () => {
         },
       },
       {
+        event_id: "run_chunk:run-1:1c:reasoning",
+        type: "run_chunk",
+        publisher: agentId,
+        timestamp: "2026-05-04T19:07:09.750Z",
+        order: 1.75,
+        payload: {
+          runId: run.id,
+          threadId,
+          agentId,
+          kind: "reasoning",
+          delta: " More thinking.",
+        },
+      },
+      {
         event_id: "run:run-1:running:running:0",
         type: "run_running",
         publisher: agentId,
         timestamp: runningTs,
         order: 0,
         payload: run,
+      },
+      {
+        event_id: "run_chunk:run-1:1d:reasoning",
+        type: "run_chunk",
+        publisher: agentId,
+        timestamp: "2026-05-04T19:07:10.500Z",
+        order: 2.5,
+        payload: {
+          runId: run.id,
+          threadId,
+          agentId,
+          kind: "reasoning",
+          delta: " Thinking after tool call.",
+        },
       },
       {
         event_id: "tool:result:run-1:tc-1",
@@ -124,11 +152,14 @@ describe("reasoning-trace ordering", () => {
       "Run · Running",
       "Quinn Mason · reasoning",
       "Quinn Mason · shell",
+      "Quinn Mason · reasoning",
       "Quinn Mason · text",
     ]);
-    expect(steps.find((step) => step.title === "Quinn Mason · reasoning")?.detail).toBe(
-      "Thinking first. Still thinking.",
-    );
+    const reasoningSteps = steps.filter((step) => step.title === "Quinn Mason · reasoning");
+    expect(reasoningSteps.map((step) => step.detail)).toEqual([
+      "Thinking first. Still thinking. More thinking.",
+      " Thinking after tool call.",
+    ]);
   });
 
   it("shows buffered output for running background jobs", () => {

@@ -22,6 +22,8 @@ export interface SelectProps {
   size?: "default" | "sm";
   disabled?: boolean;
   ariaLabel?: string;
+  menuPlacement?: "down" | "up";
+  menuClassName?: string;
 }
 
 const triggerSizeClass = {
@@ -39,6 +41,8 @@ export function Select({
   size = "default",
   disabled = false,
   ariaLabel,
+  menuPlacement = "down",
+  menuClassName = "",
 }: SelectProps) {
   const [isOpen, setIsOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -74,7 +78,11 @@ export function Select({
       </button>
 
       {isOpen && (
-        <div className="absolute z-50 mt-1 max-h-60 w-full overflow-auto rounded-lg border border-zinc-200 bg-white py-1 text-sm shadow-lg dark:border-zinc-800 dark:bg-zinc-950">
+        <div
+          className={`absolute z-50 max-h-60 overflow-auto rounded-lg border border-zinc-200 bg-white py-1 text-sm shadow-lg dark:border-zinc-800 dark:bg-zinc-950 ${
+            menuPlacement === "up" ? "bottom-full mb-1" : "mt-1"
+          } ${menuClassName || "w-full"}`}
+        >
           {options.map((option) => (
             <button
               key={option.value}

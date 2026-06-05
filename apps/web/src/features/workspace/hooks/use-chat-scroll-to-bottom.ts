@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useLayoutEffect, useRef, type RefObject } from "react";
+import { useCallback, useLayoutEffect, useRef, useState, type RefObject } from "react";
 
 interface ChatScrollFeed {
   messages: { length: number };
@@ -32,11 +32,13 @@ export function useChatScrollToBottom({
   const previousFeedSignal = useRef("");
   const isProgrammaticScroll = useRef(false);
   const prevMessagesLength = useRef(feed.messages.length);
+  const [newMessageCount, setNewMessageCount] = useState(0);
 
   const scrollToLatest = useCallback(
     (behavior: ScrollBehavior = "smooth") => {
       if (!bottomRef.current) return;
       isProgrammaticScroll.current = true;
+      setNewMessageCount(0);
       bottomRef.current.scrollIntoView({ block: "end", behavior });
       setTimeout(() => {
         isProgrammaticScroll.current = false;
@@ -50,17 +52,21 @@ export function useChatScrollToBottom({
     if (!list) return;
     if (isProgrammaticScroll.current) {
       isAtBottomRef.current = true;
+      setNewMessageCount(0);
       return;
     }
     const distanceFromBottom = list.scrollHeight - list.scrollTop - list.clientHeight;
-    isAtBottomRef.current = distanceFromBottom < 96;
+    const atBottom = distanceFromBottom < 96;
+    isAtBottomRef.current = atBottom;
+    if (atBottom) setNewMessageCount(0);
   }, [listRef]);
 
   useLayoutEffect(() => {
     isAtBottomRef.current = true;
     previousFeedSignal.current = "";
-    prevMessagesLength.current = feed.messages.length;
-  }, [conversationKey, feed.messages.length]);
+    prevMessagesLength.current = 0;
+    queueMicrotask(() => setNewMessageCount(0));
+  }, [conversationKey]);
 
   useLayoutEffect(() => {
     const signal = `${feed.messages.length}:${latestMessageSignal}:${feed.approvals.length}:${feed.runs.length}:${feed.loading ? 1 : 0}:${pendingApprovalIds}`;
@@ -78,6 +84,9 @@ export function useChatScrollToBottom({
     if (isAtBottomRef.current) {
       const isNewMessage = feed.messages.length > prevMessagesLength.current;
       scrollToLatest(isNewMessage ? "smooth" : "auto");
+    } else if (feed.messages.length > prevMessagesLength.current) {
+      const delta = feed.messages.length - prevMessagesLength.current;
+      queueMicrotask(() => setNewMessageCount((count) => count + delta));
     }
     prevMessagesLength.current = feed.messages.length;
   }, [
@@ -96,5 +105,5 @@ export function useChatScrollToBottom({
     }
   }, [virtualizerTotalSize, scrollToLatest, feed.messages.length]);
 
-  return { scrollToLatest, handleScroll };
+  return { scrollToLatest, handleScroll, newMessageCount };
 }

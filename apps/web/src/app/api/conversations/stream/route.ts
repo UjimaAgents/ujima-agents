@@ -209,6 +209,10 @@ function shouldForwardEvent(
       const body = payload as { threadId?: string };
       return typeof body.threadId === "string" && threadIds.has(body.threadId);
     }
+    case SocketEventNames.runTokens: {
+      const body = payload as { threadId?: string };
+      return typeof body.threadId === "string" && threadIds.has(body.threadId);
+    }
     case SocketEventNames.toolCalled:
     case SocketEventNames.toolResult: {
       const body = payload as { threadId?: string };
@@ -219,6 +223,10 @@ function shouldForwardEvent(
       return typeof body.threadId === "string" && threadIds.has(body.threadId);
     }
     case SocketEventNames.memberAlertFailed: {
+      const body = payload as { threadId?: string };
+      return typeof body.threadId === "string" && threadIds.has(body.threadId);
+    }
+    case SocketEventNames.memberMustReplyFailed: {
       const body = payload as { threadId?: string };
       return typeof body.threadId === "string" && threadIds.has(body.threadId);
     }

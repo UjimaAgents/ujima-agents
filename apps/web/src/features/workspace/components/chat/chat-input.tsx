@@ -15,7 +15,14 @@ import {
   Square,
   X,
 } from "lucide-react";
+import { ConfirmDialog } from "@/features/settings/shared/confirm-dialog";
 import { AttachmentSchema, type AttachmentCategory } from "@ujima/shared/browser";
+import {
+  clampReasoningEffortForProvider,
+  getReasoningEffortsForProvider,
+  type ReasoningEffort,
+} from "@ujima/shared/browser";
+import { Select } from "@/components/ui/select";
 import {
   listItemIdle,
   listItemSelected,
@@ -108,6 +115,9 @@ const BUILTIN_SLASH_COMMANDS: Array<{
 
 const MAX_COMPOSER_ROWS = 3;
 const SLASH_MENU_PREVIEW_COUNT = 5;
+function reasoningLabel(value: ReasoningEffort): string {
+  return value === "extra_high" ? "Extra High" : value.charAt(0).toUpperCase() + value.slice(1);
+}
 
 function RunningFigureIndicator() {
   return (
@@ -216,11 +226,12 @@ export function ChatInput({
   readOnly = false,
   skillCommands = [],
   onSkillCommand,
+  reasoningProvider,
 }: {
   placeholder?: string;
   organizationId?: string;
-  onSend: (content: string, attachmentIds?: string[], metadata?: { goalMode?: boolean }) => Promise<void> | void;
-  onCommand: (command: ThreadCommand, rawContent?: string) => Promise<void> | void;
+  onSend: (content: string, attachmentIds?: string[], metadata?: { goalMode?: boolean; reasoningEffort?: ReasoningEffort }) => Promise<void> | void;
+  onCommand: (command: ThreadCommand, rawContent?: string, metadata?: { goalMode?: boolean; reasoningEffort?: ReasoningEffort }) => Promise<void> | void;
   inlineError?: string;
   mentionSuggestions?: MentionSuggestion[];
   replyTo?: ChatMessageData | null;
@@ -231,10 +242,12 @@ export function ChatInput({
   onStopRun?: (runId: string) => Promise<void> | void;
   readOnly?: boolean;
   skillCommands?: SlashSkillCommand[];
-  onSkillCommand?: (skillId: string, rawContent?: string) => Promise<void> | void;
+  onSkillCommand?: (skillId: string, rawContent?: string, metadata?: { goalMode?: boolean; reasoningEffort?: ReasoningEffort }) => Promise<void> | void;
+  reasoningProvider?: string;
 }) {
   const goalMode = goalModeProp ?? false;
   const [content, setContent] = useState("");
+  const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>("none");
   const [isSending, setIsSending] = useState(false);
   const [isStopping, setIsStopping] = useState(false);
   const [isCommanding, setIsCommanding] = useState(false);
@@ -253,6 +266,15 @@ export function ChatInput({
   const attachmentsRef = useRef<UploadedAttachment[]>([]);
   const uploadControllersRef = useRef(new Map<string, AbortController>());
   const composerPlaceholder = readOnly ? `Observer Mode · ${placeholder}` : placeholder;
+  const reasoningOptions = useMemo(
+    () =>
+      getReasoningEffortsForProvider(reasoningProvider ?? "").map((value) => ({
+        value,
+        label: reasoningLabel(value),
+      })),
+    [reasoningProvider],
+  );
+  const selectedReasoningEffort = clampReasoningEffortForProvider(reasoningProvider ?? "", reasoningEffort);
 
   function revokePreviewUrl(attachment: UploadedAttachment) {
     if (attachment.previewUrl?.startsWith("blob:")) {
@@ -295,8 +317,7 @@ export function ChatInput({
     [skillCommands],
   );
   const exactSlashCommand = readOnly || hasAttachments ? null : getExactSlashCommandDefinition(content, allSlashCommands);
-  const canConfirmClear = !readOnly && clearConfirmation && exactSlashCommand?.command === "clear";
-  const slashQuery = readOnly || canConfirmClear || hasAttachments ? null : getSlashQuery(content);
+  const slashQuery = readOnly || hasAttachments ? null : getSlashQuery(content);
   const slashMenuOptions = useMemo(() => {
     if (slashQuery === null) return allSlashCommands;
     return allSlashCommands.filter((option) => option.command.startsWith(slashQuery));
@@ -547,7 +568,10 @@ export function ChatInput({
     setError(null);
     setIsSending(true);
     try {
-      await onSend(next, attachments.map((attachment) => attachment.id), goalMode ? { goalMode: true } : undefined);
+      await onSend(next, attachments.map((attachment) => attachment.id), {
+        ...(goalMode ? { goalMode: true } : {}),
+        reasoningEffort: selectedReasoningEffort,
+      });
       for (const attachment of attachments) {
         revokePreviewUrl(attachment);
       }
@@ -575,14 +599,9 @@ export function ChatInput({
       });
       return;
     }
-    if (command.kind === "builtin" && command.command === "clear" && !canConfirmClear) {
+    if (command.kind === "builtin" && command.command === "clear") {
       setClearConfirmation(true);
       setError(null);
-      setContent("/clear");
-      requestAnimationFrame(() => {
-        textareaRef.current?.focus();
-        textareaRef.current?.setSelectionRange(6, 6);
-      });
       return;
     }
 
@@ -591,9 +610,15 @@ export function ChatInput({
     try {
       const currentContent = content;
       if (command.kind === "skill") {
-        await onSkillCommand?.(command.id, currentContent);
+        await onSkillCommand?.(command.id, currentContent, {
+          ...(goalMode ? { goalMode: true } : {}),
+          reasoningEffort: selectedReasoningEffort,
+        });
       } else {
-        await onCommand(command.command as ThreadCommand, currentContent);
+        await onCommand(command.command as ThreadCommand, currentContent, {
+          ...(goalMode ? { goalMode: true } : {}),
+          reasoningEffort: selectedReasoningEffort,
+        });
       }
       setContent("");
       setSelection({ start: 0, end: 0 });
@@ -608,16 +633,25 @@ export function ChatInput({
   };
 
   const confirmClear = async () => {
-    await runSlashCommand({ command: "clear", label: "/clear", description: "Archive the thread and empty the visible chat.", kind: "builtin" });
+    setIsCommanding(true);
+    try {
+      const currentContent = content;
+      await onCommand("clear", currentContent);
+      setContent("");
+      setSelection({ start: 0, end: 0 });
+      setAttachments([]);
+      setUploadProgress(0);
+      setClearConfirmation(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to run clear command.");
+    } finally {
+      setIsCommanding(false);
+    }
   };
 
   const submitComposer = async () => {
     if (showStopInsteadOfSend) {
       await stopRun();
-      return;
-    }
-    if (canConfirmClear) {
-      await confirmClear();
       return;
     }
     if (exactSlashCommand) {
@@ -673,44 +707,16 @@ export function ChatInput({
             {inlineError}
           </p>
         ) : null}
-        {canConfirmClear ? (
-          <div className="relative z-10 mb-2 rounded-xl border border-red-200 bg-red-50/90 px-4 py-3 shadow-sm backdrop-blur dark:border-red-500/30 dark:bg-red-500/10">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="text-xs font-semibold text-red-800 dark:text-red-200">
-                  Archive and clear this conversation?
-                </p>
-                <p className="mt-0.5 text-[10px] leading-4 text-red-700/80 dark:text-red-200/80">
-                  This keeps a compact archive and empties the visible thread.
-                </p>
-              </div>
-              <div className="flex shrink-0 items-center gap-1.5">
-                <button
-                  type="button"
-                  onMouseDown={(event) => {
-                    event.preventDefault();
-                    setClearConfirmation(false);
-                    setContent("");
-                    setError(null);
-                  }}
-                  className="rounded-md border border-red-200 bg-white px-2 py-1 text-[10px] font-semibold text-red-700 transition hover:bg-red-100 dark:border-red-500/30 dark:bg-zinc-950 dark:text-red-200 dark:hover:bg-red-500/10"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onMouseDown={(event) => {
-                    event.preventDefault();
-                    void confirmClear();
-                  }}
-                  className="rounded-md bg-red-600 px-2 py-1 text-[10px] font-semibold text-white transition hover:bg-red-700"
-                >
-                  Clear
-                </button>
-              </div>
-            </div>
-          </div>
-        ) : null}
+        <ConfirmDialog
+          isOpen={clearConfirmation}
+          onClose={() => { setClearConfirmation(false); setContent(""); setError(null); }}
+          title="Clear conversation"
+          message="This will archive the thread and empty the visible chat. This action cannot be undone."
+          confirmLabel="Clear"
+          cancelLabel="Cancel"
+          variant="primary"
+          onConfirm={confirmClear}
+        />
         <input
           ref={fileInputRef}
           type="file"
@@ -925,19 +931,6 @@ export function ChatInput({
                 });
               }}
               onKeyDown={(event) => {
-                if (canConfirmClear) {
-                  if (event.key === "Escape") {
-                    event.preventDefault();
-                    setClearConfirmation(false);
-                    setContent("");
-                    return;
-                  }
-                  if (event.key === "Enter" && !event.shiftKey) {
-                    event.preventDefault();
-                    void confirmClear();
-                    return;
-                  }
-                }
                 if (exactSlashCommand && event.key === "Enter" && !event.shiftKey) {
                   event.preventDefault();
                   void runSlashCommand(exactSlashCommand);
@@ -1054,6 +1047,18 @@ export function ChatInput({
                   Goal
                 </button>
               ) : null}
+              <Select
+                size="sm"
+                value={selectedReasoningEffort}
+                onChange={(event) => setReasoningEffort(event.target.value as ReasoningEffort)}
+                options={reasoningOptions}
+                placeholder="Reasoning"
+                ariaLabel="Reasoning effort"
+                menuPlacement="up"
+                className="w-[8.5rem] sm:w-[10.5rem]"
+                menuClassName="min-w-full w-max max-w-[calc(100vw-1.5rem)]"
+                disabled={readOnly}
+              />
               {canStopRun && !showStopInsteadOfSend && (
                 <button
                   type="button"
@@ -1088,18 +1093,16 @@ export function ChatInput({
               ) : (
                 <button
                   type="button"
-                  disabled={working || (!hasDraft && !exactSlashCommand && !canConfirmClear)}
+                  disabled={working || (!hasDraft && !exactSlashCommand)}
                   onClick={() => void submitComposer()}
                   aria-label={
-                    canConfirmClear
-                      ? "Confirm clear conversation"
-                      : exactSlashCommand?.command === "clear"
-                        ? "Clear conversation"
+                    exactSlashCommand?.command === "clear"
+                      ? "Clear conversation"
                       : exactSlashCommand?.command === "summarize"
-                          ? "Run summarize"
-                          : exactSlashCommand?.command === "schedule"
-                            ? "Ask agent to schedule"
-                          : "Send message"
+                        ? "Run summarize"
+                        : exactSlashCommand?.command === "schedule"
+                          ? "Ask agent to schedule"
+                        : "Send message"
                   }
                   className="flex h-7 w-7 items-center justify-center rounded-md bg-violet-600 text-white shadow-lg shadow-violet-500/20 transition hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-50"
                 >

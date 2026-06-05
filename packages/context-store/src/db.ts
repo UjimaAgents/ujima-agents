@@ -1408,6 +1408,10 @@ const MIGRATIONS: {id: string; up: string}[] = [
       );
       CREATE INDEX IF NOT EXISTS idx_notification_channels_org
         ON notification_channels(organization_id);
+    id: '047_message_token_counts',
+    up: `
+      ALTER TABLE messages ADD COLUMN input_tokens INTEGER;
+      ALTER TABLE messages ADD COLUMN output_tokens INTEGER;
     `,
   },
 ];
@@ -1484,6 +1488,14 @@ function runMigrations(db: DbHandle): void {
     if (
       m.id === "019_message_reasoning_content" &&
       hasColumn(db, "messages", "reasoning_content")
+    ) {
+      insert.run(m.id, Date.now());
+      continue;
+    }
+    if (
+      m.id === "047_message_token_counts" &&
+      hasColumn(db, "messages", "input_tokens") &&
+      hasColumn(db, "messages", "output_tokens")
     ) {
       insert.run(m.id, Date.now());
       continue;
