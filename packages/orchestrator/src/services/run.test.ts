@@ -1868,6 +1868,19 @@ describe('SpiritService run path', () => {
       summary: 'Busy',
       startedAt: '2026-05-04T19:07:08.071Z',
     };
+    const questions: any[] = [
+      {
+        id: 'question-cancel-1',
+        organizationId,
+        channelId: 'channel-1',
+        runId,
+        questionText: 'Pick one',
+        options: ['Yes (Recommended)', 'No'],
+        status: 'pending',
+        createdAt: '2026-05-04T19:07:08.071Z',
+        updatedAt: '2026-05-04T19:07:08.071Z',
+      },
+    ];
     const repo = {
       getRun: () => run,
       saveRun: (next: any) => {
@@ -1875,6 +1888,12 @@ describe('SpiritService run path', () => {
         return next;
       },
       getThread: () => ({ channelId: 'channel-1' }),
+      listInteractiveQuestionsByRunId: () => questions,
+      saveInteractiveQuestion: (next: any) => {
+        const index = questions.findIndex((question) => question.id === next.id);
+        if (index >= 0) questions[index] = next;
+        return next;
+      },
     } as never;
     let completions = 0;
     const service = createSpiritRunService(
@@ -1898,8 +1917,152 @@ describe('SpiritService run path', () => {
     const result = service.cancelRun(organizationId, runId);
     expect(result.status).toBe('cancelled');
     expect(result.summary).toBe('Stopped by user');
+    expect(questions[0].status).toBe('superseded');
     expect(completions).toBe(1);
     expect(service.cancelRun(organizationId, runId).status).toBe('cancelled');
+  });
+
+  it('cancelRun also cancels the paired live spirit', () => {
+    const organizationId = 'org-1';
+    const runId = 'run-cancel-spirit-1';
+    let run: any = {
+      id: runId,
+      organizationId,
+      agentId: 'Quinn Mason',
+      threadId: 'thread-1',
+      status: 'waiting_for_input',
+      step: 'waiting_for_input',
+      summary: 'Waiting',
+      startedAt: '2026-05-04T19:07:08.071Z',
+    };
+    let spirit: any = {
+      id: 'spirit-1',
+      organizationId,
+      taskSessionId: 'session-1',
+      memberId: 'Quinn Mason',
+      role: 'worker',
+      runId,
+      status: 'waiting_for_input',
+      iteration: 0,
+      tokensUsed: 0,
+      createdAt: '2026-05-04T19:07:08.071Z',
+      updatedAt: '2026-05-04T19:07:08.071Z',
+    };
+    const repo = {
+      getRun: () => run,
+      saveRun: (next: any) => {
+        run = next;
+        return next;
+      },
+      getThread: () => ({ channelId: 'channel-1' }),
+      getSpiritByRunId: () => spirit,
+      saveSpirit: (next: any) => {
+        spirit = next;
+        return next;
+      },
+      getTaskSession: () => null,
+    } as never;
+    const service = createSpiritRunService(
+      {
+        getTeam: () =>
+          loadAgentTeam({
+            name: 'Timetotest',
+            workspace: { root: '/tmp' },
+            roles: [{ name: 'backend-engineer', title: 'BE', instructions: '.', tools: ['shell'] }],
+            agents: [{ name: 'Quinn Mason', roleName: 'backend-engineer' }],
+          }),
+        setTeam: () => undefined,
+      } as never,
+      repo,
+      { emit: () => undefined } as never,
+      {} as never,
+      { generateRunReply: async () => ({ text: '', toolResults: [], steps: [] }) } as never,
+      { allowRun: () => undefined, invoke: async () => ({ ok: true }) } as never,
+    );
+
+    service.cancelRun(organizationId, runId);
+
+    expect(run.status).toBe('cancelled');
+    expect(spirit.status).toBe('cancelled');
+    expect(spirit.lastError).toBe('Stopped by user');
+  });
+
+  it('keeps a run waiting when a question tool result leaks through normally', async () => {
+    const organizationId = 'org-1';
+    const runId = 'run-input-wait-1';
+    const agentId = 'Quinn Mason';
+    const threadId = 'thread-1';
+    const messages: any[] = [];
+    let run: any = {
+      id: runId,
+      organizationId,
+      agentId,
+      threadId,
+      status: 'queued',
+      step: 'queued',
+      summary: 'Run queued',
+      startedAt: '2026-05-04T19:07:08.071Z',
+    };
+    const repo = {
+      getMember: () => ({
+        id: agentId,
+        organizationId,
+        name: agentId,
+        kind: AGENT_KIND,
+        roleName: 'backend-engineer',
+      }),
+      getRun: () => run,
+      saveRun: (next: any) => {
+        run = next;
+        return next;
+      },
+      getProviderCredential: () => null,
+      getWorkspaceSetting: () => null,
+      listMembers: () => [],
+      listPendingApprovals: () => [],
+      listMessages: () => ({ data: [], hasMore: false }),
+      getLatestHumanMessageInThread: () => null,
+      getSpiritByRunId: () => null,
+      getThread: () => ({ channelId: 'channel-1' }),
+      listRunSteps: () => [
+        {
+          toolCallId: 'tool-call-1',
+          toolId: 'question.ask',
+          output: { status: 'waiting_for_input', questionId: 'question-1' },
+          status: 'ok',
+        },
+      ],
+      getInteractiveQuestion: () => ({ questionText: 'Pick one option' }),
+    } as never;
+    const service = createSpiritRunService(
+      {
+        getTeam: () =>
+          loadAgentTeam({
+            name: 'Timetotest',
+            workspace: { root: '/tmp' },
+            roles: [{ name: 'backend-engineer', title: 'BE', instructions: '.', tools: ['question.ask'] }],
+            agents: [{ name: agentId, roleName: 'backend-engineer' }],
+          }),
+        setTeam: () => undefined,
+      } as never,
+      repo,
+      { emit: () => undefined } as never,
+      { publishMessage: (message: any) => messages.push(message) } as never,
+      {
+        generateRunReply: async () => ({
+          text: 'I will wait for the answer.',
+          toolResults: [{ output: { status: 'waiting_for_input', questionId: 'question-1' } }],
+          steps: [],
+        }),
+      } as never,
+      { allowRun: () => undefined, invoke: async () => ({ ok: true }) } as never,
+    );
+
+    const result = await (service as any).advanceRun(run);
+
+    expect(result.status).toBe('waiting_for_input');
+    expect(result.summary).toBe('Pick one option');
+    expect(messages).toEqual([]);
   });
 
   it('persists streamed trace when a run is stopped', async () => {

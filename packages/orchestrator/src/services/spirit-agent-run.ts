@@ -278,6 +278,10 @@ ${activeMemories
     // on the fly without re-flowing all the loop context.
     let currentModel = model;
     let currentToolDefs = toolDefs;
+    const runId = spirit.runId ?? spirit.id;
+    const abortKey = this.runKey(input.organizationId, runId);
+    const abortController = new AbortController();
+    this.runAbortControllers.set(abortKey, abortController);
     try {
       const result = await runAgentLoopWithRetry(
         () => ({
@@ -289,12 +293,13 @@ ${activeMemories
           ...(this.maxOutputTokens !== undefined ? { maxOutputTokens: this.maxOutputTokens } : {}),
           temperature: this.temperature,
           toolChoice: 'auto',
+          abortSignal: abortController.signal,
           onChunk: (chunk) => {
             if (chunk.kind === 'reasoning') streamedReasoning += chunk.delta;
             this.emitRunChunk(
               {
                 organizationId: input.organizationId,
-                runId: spirit.runId ?? spirit.id,
+                runId,
                 threadId: session.channelId,
                 agentId: input.memberId,
               },
@@ -338,7 +343,7 @@ ${activeMemories
                 senderId: member.id,
                 content: stepText || 'Artifact updated.',
                 toolCalls: messageToolCalls,
-                metadata: { runId: spirit.runId ?? spirit.id },
+                metadata: { runId },
                 reasoningContent,
               });
               lastText = stepText || lastText;
@@ -449,7 +454,7 @@ ${activeMemories
           channelId: session.channelId,
           senderId: member.id,
           content: finalText,
-          metadata: { runId: spirit.runId ?? spirit.id },
+          metadata: { runId },
         });
         lastText = finalText;
       }
@@ -529,6 +534,28 @@ ${activeMemories
         terminatingTool,
       };
     } catch (err) {
+      const latestRun = this.repo.getRun(input.organizationId, runId);
+      if (latestRun?.status === 'cancelled') {
+        const cancelled: Spirit = SpiritSchema.parse({
+          ...running,
+          status: 'cancelled',
+          lastError: latestRun.summary || 'Stopped by user',
+          updatedAt: new Date().toISOString(),
+          endedAt: new Date().toISOString(),
+        });
+        this.repo.saveSpirit(cancelled);
+        this.registry.unregister(cancelled.organizationId, cancelled.memberId, cancelled.id);
+        this.emit(SocketEventNames.spiritCompleted, cancelled);
+        this.maybeFinalizeTaskSession(cancelled.organizationId, cancelled.taskSessionId, latestRun.summary);
+        return {
+          spirit: cancelled,
+          finalText: lastText,
+          iterations: totalTurns,
+          toolCalls: totalToolCalls,
+          tokensUsed: totalTokens,
+          terminatingTool: null,
+        };
+      }
       const inputRequiredError = findToolInputRequiredError(err);
       if (inputRequiredError) {
         const waiting: Spirit = SpiritSchema.parse({
@@ -641,6 +668,8 @@ ${activeMemories
       this.emit(SocketEventNames.spiritCompleted, failed);
       this.maybeFinalizeTaskSession(failed.organizationId, failed.taskSessionId, message);
       throw err;
+    } finally {
+      this.runAbortControllers.delete(abortKey);
     }
   }
 

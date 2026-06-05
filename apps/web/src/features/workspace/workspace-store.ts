@@ -227,15 +227,6 @@ function mergeRunChunkMessages(
   for (const item of items) {
     const message = item.message;
     if (!message) continue;
-    const hasFinalMessage = message.streamRunId
-      ? messages.some(
-          (entry) =>
-            entry.id !== message.id &&
-            entry.streamRunId === message.streamRunId &&
-            entry.threadId === message.threadId,
-        )
-      : false;
-    if (hasFinalMessage) continue;
     const index = messages.findIndex((entry) => entry.id === message.id);
     if (index === -1) {
       messages = messages === current ? [...current, message] : [...messages, message];
@@ -606,7 +597,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
     }),
   appendRunChunk: (message, activity) =>
     set((state) => {
-      const messages = mergeRunChunkMessages(state.messages, message ? [{ message }] : []);
+      const run = message?.streamRunId ? state.runs.find((item) => item.id === message.streamRunId) : undefined;
+      const liveMessage = run && !isLiveRun(run) ? undefined : message;
+      const messages = mergeRunChunkMessages(state.messages, liveMessage ? [{ message: liveMessage }] : []);
       return {
         ...(messages === state.messages ? {} : { messages }),
         ...appendSequencedEvents(state, [activity]),
