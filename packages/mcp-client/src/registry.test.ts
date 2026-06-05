@@ -122,4 +122,29 @@ describe('curated registry', () => {
       expect.arrayContaining(['slack_post_message']),
     );
   });
+
+  // PR 2 — connector dispatch substrate expansion. Two load-bearing
+  // invariants only; per-entry shape assertions are not worth the
+  // upkeep (typecheck already enforces the RegistryEntry contract).
+
+  it('OAuth-only entries throw on instantiate (clear error, not silent half-config)', () => {
+    // OAuth entries are listed for discovery but cannot instantiate
+    // until the OAuth flow lands. Throwing here means the admin sees
+    // "OAuth not yet supported" instead of an opaque connection
+    // failure at runtime. Cover one of each OAuth entry to catch
+    // accidental authMode flips.
+    for (const id of ['linear-mcp', 'vercel-mcp', 'atlassian-mcp', 'notion-remote']) {
+      expect(() => instantiateFromRegistry(id)).toThrow(/OAuth/i);
+    }
+  });
+
+  it('a PAT-auth remote entry instantiates to an http-streamable MCPDef with a Bearer header', () => {
+    // Sanity-check the remote-PAT path end-to-end on one representative
+    // entry. If the headers map or transport shape regress, every PAT
+    // entry in Track A breaks at attach time — this catches it cheap.
+    const def = instantiateFromRegistry('github-mcp');
+    expect(def.transport).toBe('http-streamable');
+    expect(def.url).toBe('https://api.githubcopilot.com/mcp/');
+    expect(def.headers).toEqual({ Authorization: 'Bearer ${GITHUB_TOKEN}' });
+  });
 });
