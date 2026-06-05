@@ -263,24 +263,32 @@ export function resolveConnectorCatalog(
     // ship in PR 6 with their own explicit "I approved this" flag.
     const cache = repo.getMcpToolCache(organizationId, server.id);
     const rawTools = cache?.tools ?? [];
-    // Sanitize tool names BEFORE preview/count split. toolCount is the
-    // raw total (informative + not attacker-shaped); only sanitized
-    // names ever flow into toolNamesPreview, so renderCatalogEntry
-    // can't smuggle a prose-shaped name into the prompt. If every
-    // name fails sanitization the preview is empty and the renderer
-    // emits count-only.
-    const safeNames: string[] = [];
-    for (const t of rawTools) {
-      const safe = sanitizeToolName(t.name);
-      if (safe !== undefined) safeNames.push(safe);
-    }
     const registryMatch = findRegistryMatch(server);
+    // Tool-name trust gate, parallel to the description trust gate.
+    // §17.5.7 demands verbatim model-readable text come from trusted
+    // sources only. Tool names are attacker-controllable on community
+    // MCPs (the server's listTools() output is its self-report), and
+    // identifier-shaped names can still carry instruction-like
+    // content — `ignore_prior_instructions`, `read_me_first`, etc.
+    // passes any character-class sanitizer. So names are emitted into
+    // catalogText only when the server matches CURATED_REGISTRY; for
+    // non-registry servers the renderer shows count only and the
+    // agent reaches the validated tool list through
+    // get_connector_tools(serverId) — a typed tool result, not a
+    // prompt-text emission. sanitizeToolName remains in the chain as
+    // defense-in-depth against control chars in case a registry-
+    // matched server is compromised by supply chain.
+    const trustedNames = registryMatch
+      ? rawTools
+          .map((t) => sanitizeToolName(t.name))
+          .filter((n): n is string => n !== undefined)
+      : [];
     dispatchCatalog.push({
       serverId: server.id,
       name: server.name,
       category: server.category,
       curatedDescription: registryMatch?.curatedDescription ?? null,
-      toolNamesPreview: safeNames.slice(0, options.toolNamePreviewLimit ?? 5),
+      toolNamesPreview: trustedNames.slice(0, options.toolNamePreviewLimit ?? 5),
       toolCount: rawTools.length,
     });
   }
