@@ -830,7 +830,6 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   notifications.setApprovalResolver(async (orgId, approvalId, status) => {
     await approvalsImpl.resolveApproval({ organizationId: orgId, approvalId, status });
   });
-  notifications.startPolling();
   approvalsImpl.setOnApprovalRequested((input) => {
     void notifications.notifyApproval({
       organizationId: input.organizationId,

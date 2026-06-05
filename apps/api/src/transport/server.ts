@@ -96,6 +96,7 @@ export interface TransportOptions {
       onboarding: OnboardingService;
       scheduler?: SchedulerService;
       notifications: {
+        startPolling(): void;
         stopPolling(): void;
       };
       settings: SettingsService;
@@ -379,6 +380,7 @@ export function createTransport(opts: TransportOptions): Transport {
           auth: services.auth,
         });
         scheduler?.start();
+        services.notifications.startPolling();
       }
     },
     {prefix: "/api"}
