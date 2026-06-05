@@ -5,14 +5,29 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { openDatabase } from './db';
 
+interface LegacySqliteDatabase {
+  exec(sql: string): void;
+  prepare(sql: string): { run(...params: unknown[]): unknown };
+  close(): void;
+}
+
+type LegacySqliteCtor = new (path: string) => LegacySqliteDatabase;
+
 const requireSqlite = createRequire(__filename);
-const DatabaseSync = (requireSqlite('node:sqlite') as {
-  DatabaseSync: new (path: string) => {
-    exec(sql: string): void;
-    prepare(sql: string): { run(...params: unknown[]): unknown };
-    close(): void;
-  };
-}).DatabaseSync;
+
+function resolveLegacyTestDatabase(): LegacySqliteCtor {
+  const isBun = typeof process !== 'undefined' && Boolean(process.versions?.bun);
+  if (isBun) {
+    return (requireSqlite('bun:sqlite') as { Database: LegacySqliteCtor }).Database;
+  }
+  try {
+    return (requireSqlite('node:sqlite') as { DatabaseSync: LegacySqliteCtor }).DatabaseSync;
+  } catch {
+    return requireSqlite('better-sqlite3') as LegacySqliteCtor;
+  }
+}
+
+const LegacyDatabase = resolveLegacyTestDatabase();
 
 describe('database migrations', () => {
   const tempDirs: string[] = [];
@@ -26,7 +41,7 @@ describe('database migrations', () => {
     tempDirs.push(dir);
     const dbPath = join(dir, 'legacy.sqlite');
 
-    const legacy = new DatabaseSync(dbPath);
+    const legacy = new LegacyDatabase(dbPath);
     legacy.exec(`
       CREATE TABLE schema_migrations (
         id TEXT PRIMARY KEY,
@@ -296,7 +311,7 @@ describe('database migrations', () => {
     db.close();
 
     // Now delete the migration record for 027 to simulate upgrading from 026 to 027
-    const rawDb = new DatabaseSync(dbPath);
+    const rawDb = new LegacyDatabase(dbPath);
     rawDb.prepare('DELETE FROM schema_migrations WHERE id = ?').run('033_migrate_self_notes_to_memories');
     // Clear out memory_entries table to make sure migration re-populates it
     rawDb.prepare('DELETE FROM memory_entries').run();

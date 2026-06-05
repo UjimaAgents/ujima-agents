@@ -8,7 +8,13 @@ import { Modal } from "@/components/ui/modal";
 interface NotificationChannel {
   id: string;
   provider: "telegram" | "whatsapp" | "webhook";
-  configJson: string;
+  config: {
+    chatId?: string;
+    phone?: string;
+    webhookUrl?: string;
+    botTokenConfigured?: boolean;
+    apiKeyConfigured?: boolean;
+  };
   enabled: boolean;
   notifyMessages: boolean;
   notifyApprovals: boolean;
@@ -110,10 +116,6 @@ export function NotificationsTab() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Update failed");
     }
-  };
-
-  const parseConfig = (raw: string) => {
-    try { return JSON.parse(raw) as Record<string, string>; } catch { return {}; }
   };
 
   if (loading) return (
@@ -228,7 +230,7 @@ export function NotificationsTab() {
       ) : (
         <div className="space-y-2">
           {channels.map((ch) => {
-            const config = parseConfig(ch.configJson);
+            const config = ch.config;
             return (
               <div key={ch.id} className="flex items-start gap-4 rounded-2xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
                 <div className="flex-1 min-w-0 space-y-1.5">

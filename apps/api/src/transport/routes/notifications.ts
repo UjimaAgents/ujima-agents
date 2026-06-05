@@ -52,17 +52,44 @@ function maskWebhookUrl(url: string): string {
   }
 }
 
-function redactNotificationChannelForClient(channel: NotificationChannelRow): NotificationChannelRow {
-  const config = parseNotificationConfig(channel.configJson);
-  const publicConfig: Record<string, string> = {};
-  if (config.chatId) publicConfig.chatId = config.chatId;
-  if (config.phone) publicConfig.phone = config.phone;
-  if (config.webhookUrl) publicConfig.webhookUrl = maskWebhookUrl(config.webhookUrl);
-  if (config.botToken) publicConfig.botTokenConfigured = 'true';
-  if (config.apiKey) publicConfig.apiKeyConfigured = 'true';
+interface NotificationChannelPublicConfig {
+  chatId?: string;
+  phone?: string;
+  webhookUrl?: string;
+  botTokenConfigured?: boolean;
+  apiKeyConfigured?: boolean;
+}
+
+interface NotificationChannelPublic {
+  id: string;
+  organizationId: string;
+  provider: NotificationChannelRow['provider'];
+  config: NotificationChannelPublicConfig;
+  enabled: boolean;
+  notifyMessages: boolean;
+  notifyApprovals: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+function toNotificationChannelPublic(channel: NotificationChannelRow): NotificationChannelPublic {
+  const stored = parseNotificationConfig(channel.configJson);
+  const config: NotificationChannelPublicConfig = {};
+  if (stored.chatId) config.chatId = stored.chatId;
+  if (stored.phone) config.phone = stored.phone;
+  if (stored.webhookUrl) config.webhookUrl = maskWebhookUrl(stored.webhookUrl);
+  if (stored.botToken) config.botTokenConfigured = true;
+  if (stored.apiKey) config.apiKeyConfigured = true;
   return {
-    ...channel,
-    configJson: JSON.stringify(publicConfig),
+    id: channel.id,
+    organizationId: channel.organizationId,
+    provider: channel.provider,
+    config,
+    enabled: channel.enabled,
+    notifyMessages: channel.notifyMessages,
+    notifyApprovals: channel.notifyApprovals,
+    createdAt: channel.createdAt,
+    updatedAt: channel.updatedAt,
   };
 }
 
@@ -163,7 +190,7 @@ export function registerNotificationRoutes(api: FastifyInstance, deps: Notificat
     if (!authState.authenticated || !authState.user) return reply.status(401).send({ code: 'ERR_UNAUTHORIZED', message: 'Unauthorized' });
     const channels = deps.repo
       .listNotificationChannels(authState.user.organizationId)
-      .map(redactNotificationChannelForClient);
+      .map(toNotificationChannelPublic);
     return reply.status(200).send({ channels });
   });
 
