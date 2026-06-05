@@ -75,7 +75,8 @@ export function ShellApprovalOrgModeSelect({
     size === "sm" ? "px-2.5 py-1.5 text-xs" : "px-4 py-2.5 text-sm";
 
   useEffect(() => {
-    setMounted(true);
+    const raf = requestAnimationFrame(() => setMounted(true));
+    return () => cancelAnimationFrame(raf);
   }, []);
 
   useEffect(() => {
