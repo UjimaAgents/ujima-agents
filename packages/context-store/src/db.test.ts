@@ -1,10 +1,13 @@
 import { mkdtemp, rm } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { openDatabase } from './db';
 
-const DatabaseSync = (require('node:sqlite') as {
+const requireSqlite = createRequire(fileURLToPath(import.meta.url));
+const DatabaseSync = (requireSqlite('node:sqlite') as {
   DatabaseSync: new (path: string) => {
     exec(sql: string): void;
     prepare(sql: string): { run(...params: unknown[]): unknown };

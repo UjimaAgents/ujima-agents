@@ -16,16 +16,16 @@ export interface DbHandle {
 }
 
 type SqliteDatabaseCtor = new (path: string) => DbHandle;
-type NodeSqliteStatement = {
+interface NodeSqliteStatement {
   all(...params: unknown[]): unknown[];
   get(...params: unknown[]): unknown;
   run(...params: unknown[]): {changes?: number} | undefined;
-};
-type NodeSqliteDatabase = {
+}
+interface NodeSqliteDatabase {
   prepare(sql: string): NodeSqliteStatement;
   exec(sql: string): void;
   close(): void;
-};
+}
 type NodeSqliteDatabaseCtor = new (path: string) => NodeSqliteDatabase;
 
 // Resolve the SQLite driver lazily so the import surface stays clean for
