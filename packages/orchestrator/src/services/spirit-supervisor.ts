@@ -1,12 +1,9 @@
-import { randomUUID } from 'node:crypto';
 import {
-  MessageSchema,
   SocketEventNames,
   channelRoom,
   memberRoom,
   orgRoom,
   type Message,
-  AGENT_KIND,
 } from '@ujima/shared';
 import { MESSAGE_TOOL_USAGE_GUIDANCE } from '@ujima/framework';
 import type {
@@ -14,6 +11,7 @@ import type {
   SpiritAlertInput,
   SpiritSupervisorReplyOutcome,
 } from './spirit-types.js';
+import { buildAgentMessage } from './message-factory.js';
 import { goalModeEnabledFromMessage } from './goal-mode-prompt.js';
 import { SpiritServiceAgentRun } from './spirit-agent-run.js';
 
@@ -224,17 +222,13 @@ export class SpiritServiceSupervisor extends SpiritServiceAgentRun {
         body,
       });
     }
-    const message = MessageSchema.parse({
-      id: randomUUID(),
+    const message = buildAgentMessage({
       organizationId: input.organizationId,
       threadId: sourceMessage?.threadId ?? input.threadId,
       channelId,
       parentMessageId: sourceMessage?.id,
       senderId: input.memberId,
-      senderKind: AGENT_KIND,
-      kind: AGENT_KIND,
       content: body,
-      createdAt: new Date().toISOString(),
     });
     this.conversations.publishMessage(message, []);
     this.realtime.emit(

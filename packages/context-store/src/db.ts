@@ -1424,6 +1424,13 @@ const MIGRATIONS: {id: string; up: string}[] = [
     id: '046_goal_tasks_last_nudged_at',
     up: `ALTER TABLE goal_tasks ADD COLUMN last_nudged_at TEXT;`,
   },
+  {
+    id: '047_message_token_counts',
+    up: `
+      ALTER TABLE messages ADD COLUMN input_tokens INTEGER;
+      ALTER TABLE messages ADD COLUMN output_tokens INTEGER;
+    `,
+  },
 ];
 
 export interface DbOptions {
@@ -1498,6 +1505,14 @@ function runMigrations(db: DbHandle): void {
     if (
       m.id === "019_message_reasoning_content" &&
       hasColumn(db, "messages", "reasoning_content")
+    ) {
+      insert.run(m.id, Date.now());
+      continue;
+    }
+    if (
+      m.id === "047_message_token_counts" &&
+      hasColumn(db, "messages", "input_tokens") &&
+      hasColumn(db, "messages", "output_tokens")
     ) {
       insert.run(m.id, Date.now());
       continue;

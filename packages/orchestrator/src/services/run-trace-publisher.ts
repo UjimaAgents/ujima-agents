@@ -1,15 +1,18 @@
 import { randomUUID } from 'node:crypto';
-import { AGENT_KIND, MessageSchema, type MessageToolCall, type RunState } from '@ujima/shared';
+import { type MessageToolCall, type RunState } from '@ujima/shared';
 import type { AiService } from '../ai-service.js';
 import { extractReasoningChunk } from '../utils/extract-reasoning.js';
 import type { ConversationService } from './conversation.js';
 import { appendArtifactFileToolCall, buildArtifactFileMessage } from './artifact-file-card.js';
+import { buildAgentMessage } from './message-factory.js';
 import type { ApiRepository } from './repository-reader.js';
 import {
   findTerminatingTool,
   findTerminatingToolFromRunSteps,
   runUsedThreadPublishingTool,
 } from './run-reply-guard.js';
+import { isToolCardError } from './spirit-run-detail.js';
+import { hasTokenUsage, normalizeTokenUsage } from './token-usage.js';
 
 export type RunReplyResult = Awaited<ReturnType<AiService['generateRunReply']>>;
 export interface StreamedRunTrace {
@@ -18,6 +21,16 @@ export interface StreamedRunTrace {
 }
 export type StreamedTraceOutcome = 'failed' | 'stopped';
 type ArtifactFileToolCallLike = Parameters<typeof appendArtifactFileToolCall>[0][number];
+interface RunStepToolCall {
+  toolCallId?: string;
+  toolName?: string;
+  input?: unknown;
+}
+
+interface RunStepToolResult {
+  toolCallId?: string;
+  output?: unknown;
+}
 
 export function collectToolStatuses(result: Pick<RunReplyResult, 'toolResults' | 'steps'>): string[] {
   return [
@@ -60,11 +73,32 @@ export async function appendArtifactFileFromRunSteps(
   );
 }
 
+export function normalizeRunStepToolCalls(
+  stepToolCalls: readonly RunStepToolCall[],
+  stepToolResults: readonly RunStepToolResult[],
+): MessageToolCall[] {
+  const resultsById = new Map<string, unknown>();
+  for (const result of stepToolResults) {
+    if (typeof result.toolCallId === 'string') resultsById.set(result.toolCallId, result.output);
+  }
+  return stepToolCalls.map((call) => {
+    const toolCallId = call.toolCallId ?? randomUUID();
+    const result = resultsById.get(toolCallId);
+    return {
+      toolCallId,
+      toolName: call.toolName ?? 'unknown',
+      args: call.input && typeof call.input === 'object' ? (call.input as Record<string, unknown>) : {},
+      ...(result !== undefined ? { result } : {}),
+      isError: isToolCardError(result),
+    };
+  });
+}
+
 export async function publishRunReplyTrace(input: {
   repo: ApiRepository;
   conversations?: ConversationService;
   run: RunState;
-  result: Pick<RunReplyResult, 'steps' | 'toolResults'>;
+  result: Pick<RunReplyResult, 'steps' | 'toolResults' | 'usage'>;
   reply: string;
   reasoningContent?: string;
   teamRoot: string;
@@ -84,13 +118,14 @@ export async function publishRunReplyTrace(input: {
   const metadata = input.failureTrace
     ? { runId: input.run.id, failedTrace: true }
     : { runId: input.run.id };
+  const usage = normalizeTokenUsage(input.result.usage);
   let publishedArtifactFile = input.publishedArtifactFile ?? false;
   const publishedContent = input.publishedContent ?? new Set<string>();
   let publishedAnyText = input.publishedAnyText ?? false;
 
   for (const [index, step] of input.result.steps.entries()) {
     const stepText = typeof step.text === 'string' ? step.text.trim() : '';
-    const stepToolCalls = Array.isArray(step.toolCalls) ? (step.toolCalls as MessageToolCall[]) : [];
+    const stepToolCalls = Array.isArray(step.toolCalls) ? (step.toolCalls as RunStepToolCall[]) : [];
     const stepToolResults = Array.isArray(step.toolResults) ? step.toolResults : [];
     if (!stepText && stepToolCalls.length === 0) continue;
 
@@ -114,25 +149,26 @@ export async function publishRunReplyTrace(input: {
     }
 
     const content = stepText || (stepArtifactFileToolCall ? 'Artifact updated.' : 'Tool actions recorded.');
-    const toolCalls = [...stepToolCalls, ...(stepArtifactFileToolCall ? [stepArtifactFileToolCall] : [])];
+    const toolCalls = [
+      ...normalizeRunStepToolCalls(stepToolCalls, stepToolResults),
+      ...(stepArtifactFileToolCall ? [stepArtifactFileToolCall] : []),
+    ];
     const stepReasoning =
       extractReasoningChunk(step) ??
       (index === input.result.steps.length - 1 ? input.reasoningContent : undefined);
+    const attachTokens = index === input.result.steps.length - 1 && hasTokenUsage(usage);
 
     input.conversations?.publishMessage(
-      MessageSchema.parse({
-        id: randomUUID(),
+      buildAgentMessage({
         organizationId: input.run.organizationId,
         threadId,
-        ...(channelId ? { channelId } : {}),
+        channelId,
         senderId: input.run.agentId,
-        senderKind: AGENT_KIND,
-        kind: AGENT_KIND,
         content,
         metadata,
         ...(toolCalls.length > 0 ? { toolCalls } : {}),
         ...(stepReasoning ? { reasoningContent: stepReasoning } : {}),
-        createdAt: new Date().toISOString(),
+        ...(attachTokens ? { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens } : {}),
       }),
       undefined,
       undefined,
@@ -154,18 +190,15 @@ export async function publishRunReplyTrace(input: {
     !publishedContent.has(input.reply)
   ) {
     input.conversations?.publishMessage(
-      MessageSchema.parse({
-        id: randomUUID(),
+      buildAgentMessage({
         organizationId: input.run.organizationId,
         threadId,
-        ...(channelId ? { channelId } : {}),
+        channelId,
         senderId: input.run.agentId,
-        senderKind: AGENT_KIND,
-        kind: AGENT_KIND,
         content: input.reply,
         metadata,
         ...(input.reasoningContent ? { reasoningContent: input.reasoningContent } : {}),
-        createdAt: new Date().toISOString(),
+        ...(hasTokenUsage(usage) ? { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens } : {}),
       }),
       undefined,
       undefined,
@@ -181,8 +214,6 @@ export async function publishRunReplyTrace(input: {
         threadId,
         channelId,
         senderId: input.run.agentId,
-        senderKind: AGENT_KIND,
-        kind: AGENT_KIND,
         runId: input.run.id,
         content: input.reply,
       }),
@@ -207,14 +238,11 @@ export function publishStreamedTrace(input: {
   if (!threadId) return;
   const channelId = input.repo.getThread(input.run.organizationId, threadId)?.channelId;
   input.conversations?.publishMessage(
-    MessageSchema.parse({
-      id: randomUUID(),
+    buildAgentMessage({
       organizationId: input.run.organizationId,
       threadId,
-      ...(channelId ? { channelId } : {}),
+      channelId,
       senderId: input.run.agentId,
-      senderKind: AGENT_KIND,
-      kind: AGENT_KIND,
       content:
         reply ||
         (input.outcome === 'failed'
@@ -225,7 +253,6 @@ export function publishStreamedTrace(input: {
           ? { runId: input.run.id, failedTrace: true }
           : { runId: input.run.id, stoppedTrace: true },
       ...(reasoningContent ? { reasoningContent } : {}),
-      createdAt: new Date().toISOString(),
     }),
     undefined,
     undefined,

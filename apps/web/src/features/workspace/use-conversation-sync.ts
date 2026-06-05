@@ -774,6 +774,8 @@ function messageToChatMessage(message: Message, members: Member[]): ChatMessageD
     })) ?? [],
     toolCalls: message.toolCalls,
     pending: false,
+    inputTokens: message.inputTokens,
+    outputTokens: message.outputTokens,
     ...(message.metadata?.runId ? { streamRunId: message.metadata.runId } : {}),
   };
 }

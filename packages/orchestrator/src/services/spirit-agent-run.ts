@@ -13,7 +13,6 @@ import {
   type McpServerSummary,
 } from './spirit-mcp-helpers.js';
 import {
-  MessageSchema,
   SocketEventNames,
   SpiritSchema,
   channelRoom,
@@ -26,7 +25,6 @@ import {
   type Spirit,
   type SpiritRole,
   type WakeReason,
-  AGENT_KIND,
 } from '@ujima/shared';
 import { buildAgentSystemPrompt, type AgentTeamHandle } from '@ujima/framework';
 import {
@@ -48,6 +46,8 @@ import { extractReasoningChunk } from '../utils/extract-reasoning.js';
 import { errorMessage } from '../utils/error-message.js';
 import { buildRunTranscript } from '../utils/run-transcript.js';
 import { appendArtifactFileToolCall } from './artifact-file-card.js';
+import { buildAgentMessage } from './message-factory.js';
+import { normalizeTokenUsage } from './token-usage.js';
 import { pendingApprovalRunSummary } from './approval-summary.js';
 import {
   findTerminatingTool,
@@ -400,6 +400,12 @@ ${activeMemories
       );
       const { steps, usage } = result;
 
+      // Compute token counts early so they're available when persisting
+      // the last step's message below.
+      const tokenUsage = normalizeTokenUsage(usage);
+      const finalText = result.text.trim();
+      const detectedTerminatingTool = findTerminatingTool(result);
+
       // Each step in `steps` is one model turn. We persist one
       // `kind='agent'` message per step that produced text or tool
       // calls, with tool-call cards inlined. This keeps the channel
@@ -430,6 +436,8 @@ ${activeMemories
         if (!stepText && !artifactFileToolCall) {
           continue;
         }
+        const isLastStep = index === steps.length - 1;
+        const attachTokens = isLastStep && (!finalText || finalText === stepText.trim() || detectedTerminatingTool);
         lastMessageId = this.saveAndEmitAgentMessage({
           organizationId: input.organizationId,
           channelId: session.channelId,
@@ -438,23 +446,22 @@ ${activeMemories
           toolCalls: messageToolCalls,
           metadata: { runId: spirit.runId ?? spirit.id },
           reasoningContent,
+          ...(attachTokens ? { inputTokens: tokenUsage.inputTokens, outputTokens: tokenUsage.outputTokens } : {}),
         });
         lastText = stepText || lastText;
       }
 
-      const persistedRunSteps = spirit.runId
-        ? this.repo.listRunSteps?.(input.organizationId, spirit.runId) ?? []
-        : [];
-      const detectedTerminatingTool =
-        findTerminatingTool(result) ?? findTerminatingToolFromRunSteps(persistedRunSteps);
-      const finalText = result.text.trim();
-      if (finalText && finalText !== lastText && !detectedTerminatingTool) {
+      const persistedRunSteps = spirit.runId ? this.repo.listRunSteps?.(input.organizationId, spirit.runId) ?? [] : [];
+      const terminatingTool = detectedTerminatingTool ?? findTerminatingToolFromRunSteps(persistedRunSteps);
+      if (finalText && finalText !== lastText && !terminatingTool) {
         lastMessageId = this.saveAndEmitAgentMessage({
           organizationId: input.organizationId,
           channelId: session.channelId,
           senderId: member.id,
           content: finalText,
           metadata: { runId },
+          inputTokens: tokenUsage.inputTokens,
+          outputTokens: tokenUsage.outputTokens,
         });
         lastText = finalText;
       }
@@ -469,15 +476,7 @@ ${activeMemories
       // omits `totalTokens`. Coercing through `Number()` defends
       // against accidental non-numeric leaks reaching SpiritSchema's
       // `z.number().int().min(0)` validator.
-      const usageInput = Number(usage?.inputTokens ?? 0) || 0;
-      const usageOutput = Number(usage?.outputTokens ?? 0) || 0;
-      const usageTotal = Number(usage?.totalTokens ?? 0);
-      totalTokens = Number.isFinite(usageTotal) && usageTotal > 0
-        ? usageTotal
-        : usageInput + usageOutput;
-      if (!Number.isFinite(totalTokens) || totalTokens < 0) {
-        totalTokens = 0;
-      }
+      totalTokens = tokenUsage.totalTokens;
       const completed: Spirit = SpiritSchema.parse({
         ...running,
         iteration: running.iteration + totalTurns,
@@ -505,7 +504,7 @@ ${activeMemories
       const persistedTerminator = persistedRun?.terminatingTool;
       const persistedIsSilent =
         persistedTerminator === 'channel.ack' || persistedTerminator === 'channel.pass';
-      const terminatingTool = persistedIsSilent
+      const finalTerminatingTool = persistedIsSilent
         ? persistedTerminator
         : detectedTerminatingTool;
       if (persistedRun) {
@@ -515,7 +514,7 @@ ${activeMemories
           step: 'completed',
           summary: lastText || persistedRun.summary,
           endedAt: new Date().toISOString(),
-          terminatingTool,
+          terminatingTool: finalTerminatingTool,
         });
       }
       this.emit(SocketEventNames.spiritCompleted, completed);
@@ -531,7 +530,7 @@ ${activeMemories
         iterations: totalTurns,
         toolCalls: totalToolCalls,
         tokensUsed: totalTokens,
-        terminatingTool,
+        terminatingTool: finalTerminatingTool,
       };
     } catch (err) {
       const latestRun = this.repo.getRun(input.organizationId, runId);
@@ -749,20 +748,20 @@ ${activeMemories
     metadata: Record<string, unknown>;
     toolCalls?: MessageToolCall[];
     reasoningContent?: string;
+    inputTokens?: number;
+    outputTokens?: number;
   }): string {
-    const message = MessageSchema.parse({
-      id: randomUUID(),
+    const message = buildAgentMessage({
       organizationId: input.organizationId,
       threadId: input.channelId,
       channelId: input.channelId,
       senderId: input.senderId,
-      senderKind: AGENT_KIND,
-      kind: AGENT_KIND,
       content: input.content,
       metadata: input.metadata,
       ...(input.toolCalls && input.toolCalls.length > 0 ? { toolCalls: input.toolCalls } : {}),
       ...(input.reasoningContent ? { reasoningContent: input.reasoningContent } : {}),
-      createdAt: new Date().toISOString(),
+      ...(input.inputTokens !== undefined ? { inputTokens: input.inputTokens } : {}),
+      ...(input.outputTokens !== undefined ? { outputTokens: input.outputTokens } : {}),
     });
     this.repo.saveMessage(message);
     this.realtime.emit(

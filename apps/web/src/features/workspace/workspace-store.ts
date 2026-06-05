@@ -586,7 +586,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
           );
       if (withoutTemp.some((item) => item.id === nextMessage.id)) {
         return {
-          messages: ensureReplyPreviews(pruneStreamingMessage(withoutTemp, nextMessage)),
+          messages: ensureReplyPreviews(mergeChatMessages(pruneStreamingMessage(withoutTemp, nextMessage), [nextMessage])),
           ...appendSequencedEvents(state, [toActivity(message)]),
         };
       }

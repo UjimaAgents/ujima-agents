@@ -2,7 +2,6 @@ import { randomUUID } from 'node:crypto';
 import {
   AGENT_KIND,
   ChannelSchema,
-  MessageSchema,
   TaskSessionSchema,
   type MessageCard,
   type Spirit,
@@ -13,6 +12,7 @@ import {
 import type { ConversationService } from './conversation.js';
 import type { ApiRepository, PaginatedTaskSessions } from './repository-reader.js';
 import type { SpiritService } from './spirit.js';
+import { buildSystemMessage } from './message-factory.js';
 import { requireOrganization } from '../utils/require-organization.js';
 
 // -----------------------------------------------------------------------
@@ -429,19 +429,11 @@ export class TaskSessionService {
     content: string;
     card: MessageCard;
   }): void {
-    const message = MessageSchema.parse({
-      id: randomUUID(),
+    const message = buildSystemMessage({
       organizationId: input.organizationId,
       threadId: input.threadId,
       channelId: input.channelId,
-      senderId: 'system',
-      senderKind: 'human',
-      kind: 'system',
       content: input.content,
-      mentions: [],
-      // The card payload rides on the immutable `tool_calls` JSON column.
-      // Reusing this column keeps Phase 1 schema-additive — once tool-call
-      // cards land in Phase 2/3 they share this exact shape.
       toolCalls: [
         {
           toolCallId: input.card.cardId,
@@ -450,7 +442,6 @@ export class TaskSessionService {
           isError: false,
         },
       ],
-      createdAt: new Date().toISOString(),
     });
     this.conversations.publishMessage(message, []);
   }

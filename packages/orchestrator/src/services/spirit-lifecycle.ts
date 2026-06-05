@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto';
 import {
-  MessageSchema,
   RunStateSchema,
   SocketEventNames,
   SpiritSchema,
@@ -20,6 +19,7 @@ import {
 } from './spirit-run-detail.js';
 import type { SpawnSpiritInput } from './spirit-types.js';
 import { SpiritServiceBase } from './spirit-service-base.js';
+import { buildSystemMessage } from './message-factory.js';
 
 export class SpiritServiceLifecycle extends SpiritServiceBase {
   spawn(input: SpawnSpiritInput): Spirit {
@@ -303,16 +303,11 @@ export class SpiritServiceLifecycle extends SpiritServiceBase {
     content: string;
     card: MessageCard;
   }): void {
-    const message = MessageSchema.parse({
-      id: randomUUID(),
+    const message = buildSystemMessage({
       organizationId: input.organizationId,
       threadId: input.threadId,
       channelId: input.channelId,
-      senderId: 'system',
-      senderKind: 'human',
-      kind: 'system',
       content: input.content,
-      mentions: [],
       toolCalls: [
         {
           toolCallId: input.card.cardId,
@@ -321,7 +316,6 @@ export class SpiritServiceLifecycle extends SpiritServiceBase {
           isError: false,
         },
       ],
-      createdAt: new Date().toISOString(),
     });
 
     if (this.conversations) {

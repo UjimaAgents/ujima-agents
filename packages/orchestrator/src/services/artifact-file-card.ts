@@ -2,8 +2,9 @@ import path from 'node:path';
 import { existsSync, realpathSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
-import { MessageSchema, type GoalStatus, type Message, type MessageCard, type MessageToolCall } from '@ujima/shared';
+import { type GoalStatus, type Message, type MessageCard, type MessageToolCall } from '@ujima/shared';
 import { assertWorkspaceBoundary } from '@ujima/shared/workspace';
+import { buildArtifactMessage } from './message-factory.js';
 
 interface ToolCallLike {
   toolCallId?: string;
@@ -82,23 +83,17 @@ export function buildArtifactFileMessage(input: {
   threadId: string;
   channelId?: string | null;
   senderId: string;
-  senderKind: Message['senderKind'];
-  kind: Message['kind'];
   runId?: string;
   content?: string;
 }): Message {
-  return MessageSchema.parse({
-    id: randomUUID(),
+  return buildArtifactMessage({
+    artifactFileToolCall: input.artifactFileToolCall,
     organizationId: input.organizationId,
     threadId: input.threadId,
-    channelId: input.channelId ?? undefined,
+    channelId: input.channelId,
     senderId: input.senderId,
-    senderKind: input.senderKind,
-    kind: input.kind,
     content: input.content ?? 'Artifact updated.',
-    metadata: input.runId ? { runId: input.runId } : {},
-    toolCalls: [input.artifactFileToolCall],
-    createdAt: new Date().toISOString(),
+    runId: input.runId,
   });
 }
 
