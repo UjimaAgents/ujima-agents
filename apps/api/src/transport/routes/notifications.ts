@@ -13,6 +13,7 @@ const CreateChannelSchema = z.object({
     chatId: z.string().optional(),
     phone: z.string().optional(),
     apiKey: z.string().optional(),
+    callbackDelivery: z.enum(['polling', 'webhook']).optional(),
   }),
   notifyMessages: z.boolean().default(true),
   notifyApprovals: z.boolean().default(true),
@@ -56,6 +57,7 @@ interface NotificationChannelPublicConfig {
   chatId?: string;
   phone?: string;
   webhookUrl?: string;
+  callbackDelivery?: 'polling' | 'webhook';
   botTokenConfigured?: boolean;
   apiKeyConfigured?: boolean;
 }
@@ -78,6 +80,9 @@ function toNotificationChannelPublic(channel: NotificationChannelRow): Notificat
   if (stored.chatId) config.chatId = stored.chatId;
   if (stored.phone) config.phone = stored.phone;
   if (stored.webhookUrl) config.webhookUrl = maskWebhookUrl(stored.webhookUrl);
+  if (stored.callbackDelivery === 'polling' || stored.callbackDelivery === 'webhook') {
+    config.callbackDelivery = stored.callbackDelivery;
+  }
   if (stored.botToken) config.botTokenConfigured = true;
   if (stored.apiKey) config.apiKeyConfigured = true;
   return {
@@ -100,6 +105,7 @@ const UpdateChannelSchema = z.object({
     chatId: z.string().optional(),
     phone: z.string().optional(),
     apiKey: z.string().optional(),
+    callbackDelivery: z.enum(['polling', 'webhook']).optional(),
   }).optional(),
   notifyMessages: z.boolean().optional(),
   notifyApprovals: z.boolean().optional(),

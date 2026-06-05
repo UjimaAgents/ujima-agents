@@ -45,10 +45,20 @@ export class NotificationService {
 
   /**
    * Start polling Telegram for callback queries (inline button presses).
-   * Required when no webhook is set (local-first). Call once after setup.
+   * Only used for bots configured with callbackDelivery=polling (the default).
+   * Webhook-mode bots rely on POST /api/notifications/telegram-webhook instead.
    */
   startPolling(intervalMs = 2000): void {
     if (this.pollTimers.has('_global')) return;
+    if (!isTelegramPollingEnabled()) {
+      if (this.logErrors) console.error('[notify] telegram polling disabled (UJIMA_TELEGRAM_POLLING=0)');
+      return;
+    }
+    const tokens = listTelegramPollingBotTokens(this.repo);
+    if (tokens.size === 0) {
+      if (this.logErrors) console.error('[notify] telegram polling not started (no poll-mode bots configured)');
+      return;
+    }
     void this.runPollingTick();
     const timer = setInterval(() => {
       void this.runPollingTick();
@@ -75,17 +85,7 @@ export class NotificationService {
 
   private async pollOnce(): Promise<void> {
     if (!this.approvalResolver) return;
-    const telegramBotTokens = new Set<string>();
-    for (const org of this.repo.listOrganizations()) {
-      for (const ch of this.repo.listNotificationChannels(org.id)) {
-        if (ch.provider !== 'telegram' || !ch.enabled) continue;
-        const config = tryParseJson(ch.configJson);
-        const token = config?.botToken;
-        if (typeof token === 'string' && token) {
-          telegramBotTokens.add(token);
-        }
-      }
-    }
+    const telegramBotTokens = listTelegramPollingBotTokens(this.repo);
 
     for (const token of telegramBotTokens) {
       const offset = this.pollOffsets.get(token) ?? 0;
@@ -210,6 +210,29 @@ export class NotificationService {
 
 function configFromChannel(channel: NotificationChannel): Record<string, unknown> {
   return tryParseJson(channel.configJson) ?? {};
+}
+
+export function isTelegramPollingEnabled(): boolean {
+  return process.env.UJIMA_TELEGRAM_POLLING !== '0';
+}
+
+export function usesTelegramCallbackWebhook(config: Record<string, unknown>): boolean {
+  return config.callbackDelivery === 'webhook';
+}
+
+function listTelegramPollingBotTokens(repo: ApiRepository): Set<string> {
+  if (!isTelegramPollingEnabled()) return new Set();
+  const tokens = new Set<string>();
+  for (const org of repo.listOrganizations()) {
+    for (const ch of repo.listNotificationChannels(org.id)) {
+      if (ch.provider !== 'telegram' || !ch.enabled) continue;
+      const config = tryParseJson(ch.configJson);
+      if (!config || usesTelegramCallbackWebhook(config)) continue;
+      const token = config.botToken;
+      if (typeof token === 'string' && token) tokens.add(token);
+    }
+  }
+  return tokens;
 }
 
 function tryParseJson(raw: string): Record<string, unknown> | null {
