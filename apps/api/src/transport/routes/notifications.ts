@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { randomUUID } from 'node:crypto';
-import type { Repository } from '@ujima/runtime-core';
+import type { NotificationChannelRow, Repository } from '@ujima/runtime-core';
 import type { AuthService, ApprovalResolver } from '@ujima/orchestrator';
 import { resolveApprovalFromTelegram } from '@ujima/orchestrator';
 import { z } from 'zod';
@@ -41,6 +41,29 @@ function mergeNotificationConfig(
     if (value !== undefined) merged[key] = value;
   }
   return JSON.stringify(merged);
+}
+
+function maskWebhookUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    return `${parsed.origin}/…`;
+  } catch {
+    return '[configured]';
+  }
+}
+
+function redactNotificationChannelForClient(channel: NotificationChannelRow): NotificationChannelRow {
+  const config = parseNotificationConfig(channel.configJson);
+  const publicConfig: Record<string, string> = {};
+  if (config.chatId) publicConfig.chatId = config.chatId;
+  if (config.phone) publicConfig.phone = config.phone;
+  if (config.webhookUrl) publicConfig.webhookUrl = maskWebhookUrl(config.webhookUrl);
+  if (config.botToken) publicConfig.botTokenConfigured = 'true';
+  if (config.apiKey) publicConfig.apiKeyConfigured = 'true';
+  return {
+    ...channel,
+    configJson: JSON.stringify(publicConfig),
+  };
 }
 
 const UpdateChannelSchema = z.object({
@@ -138,7 +161,9 @@ export function registerNotificationRoutes(api: FastifyInstance, deps: Notificat
   }, async (req, reply) => {
     const authState = deps.auth.getAuthState(req.headers['x-ujima-session'] as string | undefined);
     if (!authState.authenticated || !authState.user) return reply.status(401).send({ code: 'ERR_UNAUTHORIZED', message: 'Unauthorized' });
-    const channels = deps.repo.listNotificationChannels(authState.user.organizationId);
+    const channels = deps.repo
+      .listNotificationChannels(authState.user.organizationId)
+      .map(redactNotificationChannelForClient);
     return reply.status(200).send({ channels });
   });
 
