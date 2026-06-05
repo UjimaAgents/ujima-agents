@@ -47,7 +47,7 @@ The supported way to run Ujima today is the **`@ujima/agents`** package on npm.
 npm install -g @ujima/agents
 # or: bun add -g @ujima/agents
 
-ujima init --name "Acme Engineering" --owner "Alex" --workspace "$(pwd)"
+ujima init --name "Acme Engineering" --owner "Alex" --owner-email "alex@example.com" --owner-password "securepass123" --workspace "$(pwd)"
 ujima start
 ```
 

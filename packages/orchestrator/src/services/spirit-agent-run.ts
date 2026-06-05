@@ -13,7 +13,6 @@ import {
   type McpServerSummary,
 } from './spirit-mcp-helpers.js';
 import {
-  MessageSchema,
   SocketEventNames,
   SpiritSchema,
   channelRoom,
@@ -21,12 +20,12 @@ import {
   orgRoom,
   runRoom,
   threadRoom,
+  type Message,
   type MessageCard,
   type MessageToolCall,
   type Spirit,
   type SpiritRole,
   type WakeReason,
-  AGENT_KIND,
 } from '@ujima/shared';
 import { buildAgentSystemPrompt, type AgentTeamHandle } from '@ujima/framework';
 import {
@@ -48,6 +47,9 @@ import { extractReasoningChunk } from '../utils/extract-reasoning.js';
 import { errorMessage } from '../utils/error-message.js';
 import { buildRunTranscript } from '../utils/run-transcript.js';
 import { appendArtifactFileToolCall } from './artifact-file-card.js';
+import { buildAgentMessage } from './message-factory.js';
+import { RunTurnPublisher } from './run-turn-publisher.js';
+import { hasTokenUsage, normalizeTokenUsage } from './token-usage.js';
 import { pendingApprovalRunSummary } from './approval-summary.js';
 import {
   findTerminatingTool,
@@ -270,6 +272,7 @@ ${activeMemories
     let streamedReasoning = '';
     let lastMessageId: string | undefined;
     let persistedStepCount = 0;
+    const turn = new RunTurnPublisher((message) => this.publishAgentMessage(message));
 
     // Wrap runAgentLoop in the shared retry helper so the wake-run
     // and direct-spirit paths share one recovery contract (defined
@@ -334,20 +337,26 @@ ${activeMemories
               );
               const messageToolCalls = artifactFileToolCall ? [...toolCalls, artifactFileToolCall] : toolCalls;
               const reasoningContent = extractReasoningChunk(s);
-              if (!stepText && !artifactFileToolCall) {
-                continue;
+              lastMessageId = turn
+                .publishMessage(
+                  buildAgentMessage({
+                    organizationId: input.organizationId,
+                    threadId: session.channelId,
+                    channelId: session.channelId,
+                    senderId: member.id,
+                    content: stepText || (artifactFileToolCall ? 'Artifact updated.' : ''),
+                    toolCalls: messageToolCalls,
+                    metadata: { runId },
+                    reasoningContent,
+                  }),
+                )
+                .id;
+              if (artifactFileToolCall) {
+                turn.markArtifactFilePublished();
               }
-              lastMessageId = this.saveAndEmitAgentMessage({
-                organizationId: input.organizationId,
-                channelId: session.channelId,
-                senderId: member.id,
-                content: stepText || 'Artifact updated.',
-                toolCalls: messageToolCalls,
-                metadata: { runId },
-                reasoningContent,
-              });
               lastText = stepText || lastText;
             }
+            this.emitRunTokens(input.organizationId, runId, session.channelId, member.id, currentSteps);
           },
           loadInterruptMessages: () => {
             const page = this.repo
@@ -400,6 +409,12 @@ ${activeMemories
       );
       const { steps, usage } = result;
 
+      // Compute token counts early so they're available when persisting
+      // the last step's message below.
+      const tokenUsage = normalizeTokenUsage(usage);
+      const finalText = result.text.trim();
+      const detectedTerminatingTool = findTerminatingTool(result);
+
       // Each step in `steps` is one model turn. We persist one
       // `kind='agent'` message per step that produced text or tool
       // calls, with tool-call cards inlined. This keeps the channel
@@ -427,36 +442,60 @@ ${activeMemories
         const reasoningContent =
           extractReasoningChunk(step) ??
           (index === steps.length - 1 ? streamedReasoning.trim() || undefined : undefined);
-        if (!stepText && !artifactFileToolCall) {
-          continue;
+        // Tokens are written silently below via backfillTokens; the
+        // live counter rides on `run:tokens`.
+        lastMessageId = turn
+          .publishMessage(
+            buildAgentMessage({
+              organizationId: input.organizationId,
+              threadId: session.channelId,
+              channelId: session.channelId,
+              senderId: member.id,
+              content: stepText || (artifactFileToolCall ? 'Artifact updated.' : ''),
+              toolCalls: messageToolCalls,
+              metadata: { runId: spirit.runId ?? spirit.id },
+              reasoningContent,
+            }),
+          )
+          .id;
+        if (artifactFileToolCall) {
+          turn.markArtifactFilePublished();
         }
-        lastMessageId = this.saveAndEmitAgentMessage({
-          organizationId: input.organizationId,
-          channelId: session.channelId,
-          senderId: member.id,
-          content: stepText || 'Artifact updated.',
-          toolCalls: messageToolCalls,
-          metadata: { runId: spirit.runId ?? spirit.id },
-          reasoningContent,
-        });
         lastText = stepText || lastText;
       }
 
-      const persistedRunSteps = spirit.runId
-        ? this.repo.listRunSteps?.(input.organizationId, spirit.runId) ?? []
-        : [];
-      const detectedTerminatingTool =
-        findTerminatingTool(result) ?? findTerminatingToolFromRunSteps(persistedRunSteps);
-      const finalText = result.text.trim();
-      if (finalText && finalText !== lastText && !detectedTerminatingTool) {
-        lastMessageId = this.saveAndEmitAgentMessage({
-          organizationId: input.organizationId,
-          channelId: session.channelId,
-          senderId: member.id,
-          content: finalText,
-          metadata: { runId },
-        });
+      const persistedRunSteps = spirit.runId ? this.repo.listRunSteps?.(input.organizationId, spirit.runId) ?? [] : [];
+      const terminatingTool = detectedTerminatingTool ?? findTerminatingToolFromRunSteps(persistedRunSteps);
+      const tokenFooter = turn.backfillTokens({
+        finalText,
+        lastText,
+        terminatingTool,
+        usage: tokenUsage,
+      });
+      if (tokenFooter) {
+        this.repo.updateMessage(tokenFooter);
+      }
+      if (finalText && finalText !== lastText && !terminatingTool) {
+        const finalMessage = turn.publishMessage(
+          buildAgentMessage({
+            organizationId: input.organizationId,
+            threadId: session.channelId,
+            channelId: session.channelId,
+            senderId: member.id,
+            content: finalText,
+            metadata: { runId },
+          }),
+        );
+        lastMessageId = finalMessage.id;
         lastText = finalText;
+        if (hasTokenUsage(tokenUsage)) {
+          this.repo.updateMessage({
+            ...finalMessage,
+            inputTokens: tokenUsage.inputTokens,
+            outputTokens: tokenUsage.outputTokens,
+            editedAt: new Date().toISOString(),
+          });
+        }
       }
 
       // Prefer the provider-supplied `totalTokens` over our own
@@ -469,15 +508,7 @@ ${activeMemories
       // omits `totalTokens`. Coercing through `Number()` defends
       // against accidental non-numeric leaks reaching SpiritSchema's
       // `z.number().int().min(0)` validator.
-      const usageInput = Number(usage?.inputTokens ?? 0) || 0;
-      const usageOutput = Number(usage?.outputTokens ?? 0) || 0;
-      const usageTotal = Number(usage?.totalTokens ?? 0);
-      totalTokens = Number.isFinite(usageTotal) && usageTotal > 0
-        ? usageTotal
-        : usageInput + usageOutput;
-      if (!Number.isFinite(totalTokens) || totalTokens < 0) {
-        totalTokens = 0;
-      }
+      totalTokens = tokenUsage.totalTokens;
       const completed: Spirit = SpiritSchema.parse({
         ...running,
         iteration: running.iteration + totalTurns,
@@ -505,7 +536,7 @@ ${activeMemories
       const persistedTerminator = persistedRun?.terminatingTool;
       const persistedIsSilent =
         persistedTerminator === 'channel.ack' || persistedTerminator === 'channel.pass';
-      const terminatingTool = persistedIsSilent
+      const finalTerminatingTool = persistedIsSilent
         ? persistedTerminator
         : detectedTerminatingTool;
       if (persistedRun) {
@@ -515,7 +546,7 @@ ${activeMemories
           step: 'completed',
           summary: lastText || persistedRun.summary,
           endedAt: new Date().toISOString(),
-          terminatingTool,
+          terminatingTool: finalTerminatingTool,
         });
       }
       this.emit(SocketEventNames.spiritCompleted, completed);
@@ -531,7 +562,7 @@ ${activeMemories
         iterations: totalTurns,
         toolCalls: totalToolCalls,
         tokensUsed: totalTokens,
-        terminatingTool,
+        terminatingTool: finalTerminatingTool,
       };
     } catch (err) {
       const latestRun = this.repo.getRun(input.organizationId, runId);
@@ -741,40 +772,25 @@ ${activeMemories
     });
   }
 
-  private saveAndEmitAgentMessage(input: {
-    organizationId: string;
-    channelId: string;
-    senderId: string;
-    content: string;
-    metadata: Record<string, unknown>;
-    toolCalls?: MessageToolCall[];
-    reasoningContent?: string;
-  }): string {
-    const message = MessageSchema.parse({
-      id: randomUUID(),
-      organizationId: input.organizationId,
-      threadId: input.channelId,
-      channelId: input.channelId,
-      senderId: input.senderId,
-      senderKind: AGENT_KIND,
-      kind: AGENT_KIND,
-      content: input.content,
-      metadata: input.metadata,
-      ...(input.toolCalls && input.toolCalls.length > 0 ? { toolCalls: input.toolCalls } : {}),
-      ...(input.reasoningContent ? { reasoningContent: input.reasoningContent } : {}),
-      createdAt: new Date().toISOString(),
-    });
-    this.repo.saveMessage(message);
+  private publishAgentMessage(message: Message): Message {
+    const existing = this.repo.getMessage(message.organizationId, message.id);
+    const saved = existing
+      ? this.repo.updateMessage({
+          ...message,
+          createdAt: existing.createdAt,
+          editedAt: new Date().toISOString(),
+        })
+      : this.repo.saveMessage(message);
     this.realtime.emit(
       SocketEventNames.channelMessage,
       {
-        organizationId: input.organizationId,
-        channelId: input.channelId,
-        message,
+        organizationId: saved.organizationId,
+        channelId: saved.channelId ?? '',
+        message: saved,
       },
-      [orgRoom(input.organizationId), channelRoom(input.channelId)],
+      [orgRoom(saved.organizationId), channelRoom(saved.channelId ?? '')],
     );
-    return message.id;
+    return saved;
   }
 
   async buildMcpToolDefinitions(ctx: {

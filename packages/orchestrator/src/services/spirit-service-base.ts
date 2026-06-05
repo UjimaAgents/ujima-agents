@@ -26,6 +26,7 @@ import type { ToolService } from './tool-service.js';
 import { goalModeEnabledFromMessage } from './goal-mode-prompt.js';
 import type { AiService } from '../ai-service.js';
 import type { AgentLoopChunk } from './agent-loop.js';
+import { accumulateStepUsage, hasTokenUsage } from './token-usage.js';
 import { materializeMcpDef } from './mcp-runtime.js';
 import type {
   SpiritMcpPool,
@@ -317,6 +318,37 @@ export class SpiritServiceBase {
         agentId: run.agentId,
         kind: chunk.kind,
         delta: chunk.delta,
+      },
+      rooms,
+    );
+  }
+
+  protected emitRunTokens(
+    organizationId: string,
+    runId: string,
+    threadId: string | undefined,
+    agentId: string,
+    steps: readonly { usage?: unknown }[],
+  ): void {
+    const usage = accumulateStepUsage(steps);
+    if (!hasTokenUsage(usage)) return;
+
+    const rooms = [orgRoom(organizationId), memberRoom(agentId), runRoom(runId)];
+    if (threadId) {
+      rooms.push(threadRoom(threadId));
+      const channelId = this.repo.getThread(organizationId, threadId)?.channelId;
+      if (channelId) rooms.push(channelRoom(channelId));
+    }
+
+    this.realtime.emit(
+      SocketEventNames.runTokens,
+      {
+        organizationId,
+        runId,
+        ...(threadId ? { threadId } : {}),
+        agentId,
+        inputTokens: usage.inputTokens,
+        outputTokens: usage.outputTokens,
       },
       rooms,
     );

@@ -56,6 +56,8 @@ function isDevMode(): boolean {
 interface InitOptions {
   organizationName: string;
   ownerName: string;
+  ownerEmail: string;
+  ownerPassword: string;
   workspaceRoot: string;
   configPath?: string;
   providerKeys: Record<string, string>;
@@ -81,6 +83,14 @@ function parseInitArgs(argv: string[]): InitOptions {
       case '-o':
         result.ownerName = next();
         break;
+      case '--owner-email':
+      case '-e':
+        result.ownerEmail = next();
+        break;
+      case '--owner-password':
+      case '-p':
+        result.ownerPassword = next();
+        break;
       case '--workspace':
       case '-w':
         result.workspaceRoot = resolve(next());
@@ -104,6 +114,8 @@ function parseInitArgs(argv: string[]): InitOptions {
   }
   if (!result.organizationName) throw new Error('ujima init: --name is required');
   if (!result.ownerName) throw new Error('ujima init: --owner is required');
+  if (!result.ownerEmail) throw new Error('ujima init: --owner-email is required');
+  if (!result.ownerPassword) throw new Error('ujima init: --owner-password is required');
   if (!result.workspaceRoot) throw new Error('ujima init: --workspace is required');
   return result as InitOptions;
 }
@@ -129,6 +141,8 @@ async function cmdInit(argv: string[]): Promise<void> {
   const body = {
     organizationName: opts.organizationName,
     ownerName: opts.ownerName,
+    ownerEmail: opts.ownerEmail,
+    ownerPassword: opts.ownerPassword,
     workspaceRoot: opts.workspaceRoot,
     providerKeys: opts.providerKeys,
     team: teamPayload,
@@ -321,6 +335,8 @@ function printCommandHelp(cmd: string): void {
       console.info(`   ${chalk.gray('↳')} ${chalk.white('Options:')}`);
       printInfoRow('--name, -n', 'Organization name (required)', { dim: true });
       printInfoRow('--owner, -o', 'Owner display name (required)', { dim: true });
+      printInfoRow('--owner-email, -e', 'Owner email address (required)', { dim: true });
+      printInfoRow('--owner-password, -p', 'Owner password (min 8 chars, required)', { dim: true });
       printInfoRow('--workspace, -w', 'Workspace root path (required)', { dim: true });
       printInfoRow('--config, -c', 'Path to ujima.config.ts', { dim: true });
       printInfoRow('--provider', 'name=key (repeatable)', { dim: true });

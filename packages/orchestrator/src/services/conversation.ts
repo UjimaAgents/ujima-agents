@@ -3,7 +3,6 @@ import {
   AGENT_KIND,
   ChannelSchema,
   MessageMentionSchema,
-  MessageSchema,
   SocketEventNames,
   channelRoom,
   encodeCursor,
@@ -23,6 +22,7 @@ import {
 } from '@ujima/shared';
 import type { RealtimeService } from './context.js';
 import { selfChannelId } from './member-channels.js';
+import { buildMessage, buildSystemMessage } from './message-factory.js';
 import {
   CONVERSATION_ARCHIVE_MARKER,
   CONVERSATION_COMPACTED_MARKER,
@@ -345,9 +345,11 @@ export class ConversationService {
       ? typedMentions ?? []
       : typedMentions ?? this.resolveMessageMentions(message.organizationId, message, channel);
     const existing = this.repo.getMessage(message.organizationId, message.id);
-    const finalMessage = MessageSchema.parse({
+    const finalMessage = buildMessage({
       ...message,
-      createdAt: existing?.createdAt ?? this.nextMessageCreatedAt(message.organizationId, message.threadId, message.createdAt),
+      createdAt:
+        existing?.createdAt ??
+        this.nextMessageCreatedAt(message.organizationId, message.threadId, message.createdAt),
       mentions: uniqueMentionIds(resolvedMentions),
       mentionNames: this.resolveMentionNames(message.organizationId, message.content, channel),
     });
@@ -384,7 +386,7 @@ export class ConversationService {
     }
     const emittedMessage =
       linkedAttachmentIds.length > 0
-        ? MessageSchema.parse({
+        ? buildMessage({
             ...finalMessage,
             attachments: this.repo.listMessageAttachments(finalMessage.id),
           })
@@ -872,8 +874,7 @@ export class ConversationService {
       }
     }
 
-    const message = MessageSchema.parse({
-      id: randomUUID(),
+    const message = buildMessage({
       organizationId: input.organizationId,
       threadId: input.threadId,
       channelId: input.channelId,
@@ -885,7 +886,6 @@ export class ConversationService {
       mentions: [...mentions],
       ...(input.metadata ? { metadata: input.metadata } : {}),
       ...(input.clientMessageId ? { clientMessageId: input.clientMessageId } : {}),
-      createdAt: new Date().toISOString(),
     });
 
     const published = this.publishMessage(message, undefined, input.attachmentIds);
@@ -1026,8 +1026,7 @@ export class ConversationService {
       createdAt: now,
     });
 
-    const message = MessageSchema.parse({
-      id: randomUUID(),
+    const message = buildMessage({
       organizationId: input.organizationId,
       threadId,
       channelId: replyChannelId,
@@ -1099,16 +1098,11 @@ export class ConversationService {
       createdAt: now,
     });
 
-    const message = MessageSchema.parse({
-      id: randomUUID(),
+    const message = buildSystemMessage({
       organizationId: input.organizationId,
       threadId: channel.id,
       channelId: channel.id,
-      senderId: 'system',
-      senderKind: 'human',
-      kind: 'system',
       content: input.content,
-      mentions: [],
       createdAt: now,
     });
 
@@ -1165,8 +1159,7 @@ export class ConversationService {
       }
     }
 
-    const message = MessageSchema.parse({
-      id: randomUUID(),
+    const message = buildMessage({
       organizationId: input.organizationId,
       threadId: channelId,
       channelId,
@@ -1175,7 +1168,6 @@ export class ConversationService {
       kind: member.kind,
       content: input.body,
       ...(input.clientMessageId ? { clientMessageId: input.clientMessageId } : {}),
-      createdAt: new Date().toISOString(),
     });
 
     const published = this.publishMessage(message, [], input.attachmentIds);
@@ -1519,16 +1511,11 @@ export class ConversationService {
       .find((candidate) => candidate.name === 'general' || candidate.id === 'general');
     if (!channel) return;
 
-    const systemMessage = MessageSchema.parse({
-      id: randomUUID(),
+    const systemMessage = buildSystemMessage({
       organizationId,
       threadId: channel.id,
       channelId: channel.id,
-      senderId: 'system',
-      senderKind: 'human',
-      kind: 'system',
       content: `member.alert_throttled: mention delivery for "${memberId}" by "${byMemberId}" exceeded ${this.mentionFanoutCap} alerts in ${Math.floor(this.mentionWindowMs / 1000)}s`,
-      createdAt: new Date().toISOString(),
     });
     this.publishMessage(systemMessage, []);
   }
@@ -1728,10 +1715,11 @@ export class ConversationService {
       resolvedChannel?.kind === 'self'
         ? formatTimestampedContent(message.content, message.createdAt)
         : message.content;
-    return MessageSchema.parse({
+    return buildMessage({
       ...message,
       content,
-      mentionNames: message.mentionNames ?? this.resolveMentionNames(organizationId, message.content, resolvedChannel),
+      mentionNames:
+        message.mentionNames ?? this.resolveMentionNames(organizationId, message.content, resolvedChannel),
     });
   }
 
@@ -1857,14 +1845,10 @@ export class ConversationService {
     const sourcesToCompact = [...summarySources];
 
     const now = new Date().toISOString();
-    const summaryMessage = MessageSchema.parse({
-      id: randomUUID(),
+    const summaryMessage = buildSystemMessage({
       organizationId: input.organizationId,
       threadId: input.threadId,
       channelId: this.repo.getThread(input.organizationId, input.threadId)?.channelId ?? undefined,
-      senderId: 'system',
-      senderKind: AGENT_KIND,
-      kind: 'system',
       content: input.buildSummary(summarySources),
       createdAt: now,
     });

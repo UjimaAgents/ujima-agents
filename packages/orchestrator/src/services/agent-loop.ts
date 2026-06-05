@@ -136,6 +136,7 @@ export interface AgentLoopStep {
   text?: string;
   toolCalls?: { toolCallId?: string; toolName?: string; input?: unknown }[];
   toolResults?: { toolCallId?: string; output?: unknown }[];
+  usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number };
   [key: string]: unknown;
 }
 

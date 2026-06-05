@@ -50,13 +50,15 @@ export function saveMessage(db: DbHandle, message: Message): Message {
         kind,
         content,
         reasoning_content,
+        input_tokens,
+        output_tokens,
         mentions,
         tool_calls,
         metadata,
         created_at,
         edited_at,
         deleted_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       payload.id,
       payload.organizationId,
@@ -68,6 +70,8 @@ export function saveMessage(db: DbHandle, message: Message): Message {
       payload.kind,
       payload.content,
       payload.reasoningContent ?? null,
+      payload.inputTokens ?? null,
+      payload.outputTokens ?? null,
       JSON.stringify(payload.mentions),
       JSON.stringify(payload.toolCalls ?? []),
       JSON.stringify(metadataBlob),
@@ -136,6 +140,8 @@ export function updateMessage(db: DbHandle, message: Message): Message {
             kind = ?,
             content = ?,
             reasoning_content = ?,
+            input_tokens = ?,
+            output_tokens = ?,
             mentions = ?,
             tool_calls = ?,
             metadata = ?,
@@ -151,6 +157,8 @@ export function updateMessage(db: DbHandle, message: Message): Message {
     payload.kind,
     payload.content,
     payload.reasoningContent ?? null,
+    payload.inputTokens ?? null,
+    payload.outputTokens ?? null,
     JSON.stringify(payload.mentions),
     JSON.stringify(payload.toolCalls ?? []),
     JSON.stringify(metadataBlob),
@@ -434,6 +442,8 @@ function rowToMessage(row: Row, attachments: Attachment[] = []): Message {
   const kind = rowString(row, 'kind');
   const content = rowString(row, 'content');
   const { metadata, clientMessageId } = parseRowMetadata(row.metadata);
+  const inputTokens = rowInteger(row, 'input_tokens');
+  const outputTokens = rowInteger(row, 'output_tokens');
   return MessageSchema.parse({
     id: rowString(row, 'id'),
     organizationId: rowString(row, 'organization_id'),
@@ -445,6 +455,8 @@ function rowToMessage(row: Row, attachments: Attachment[] = []): Message {
     kind,
     content,
     reasoningContent: optionalRowString(row, 'reasoning_content'),
+    ...(inputTokens !== undefined ? { inputTokens } : {}),
+    ...(outputTokens !== undefined ? { outputTokens } : {}),
     mentions: parseJsonArray(row.mentions),
     toolCalls: parseJsonArrayRaw(row.tool_calls),
     attachments,
@@ -492,6 +504,18 @@ function parseRowMetadata(raw: unknown): {
   } catch {
     return { metadata: undefined };
   }
+}
+
+function rowInteger(row: Row, key: string): number | undefined {
+  const value = row[key];
+  if (typeof value === 'number' && Number.isInteger(value) && value >= 0) {
+    return value;
+  }
+  if (typeof value === 'string' && value.length > 0) {
+    const parsed = Number.parseInt(value, 10);
+    return Number.isInteger(parsed) && parsed >= 0 ? parsed : undefined;
+  }
+  return undefined;
 }
 
 function normalizeSearchTerms(queryText: string): string[] {

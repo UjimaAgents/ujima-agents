@@ -10,7 +10,6 @@ import {
   type Spirit,
   type WakeReason,
   AGENT_KIND,
-  MessageSchema,
 } from '@ujima/shared';
 import { applyDashboardTeamOverrides } from './dashboard-team-overrides.js';
 import { isLiveRunStatus, isLiveSpiritStatus } from './live-status.js';
@@ -29,6 +28,8 @@ import { aggregateToolUsage } from './spirit-run-detail.js';
 import type { RunSpiritOutcome } from './spirit-types.js';
 import { SpiritServiceSupervisor } from './spirit-supervisor.js';
 import { appendArtifactFileToolCall } from './artifact-file-card.js';
+import { buildAgentMessage } from './message-factory.js';
+import { RunTurnPublisher } from './run-turn-publisher.js';
 import {
   appendArtifactFileFromRunSteps,
   collectRunStepToolCalls,
@@ -36,8 +37,10 @@ import {
   collectToolStatuses,
   publishRunReplyTrace,
   publishStreamedTrace,
+  normalizeRunStepToolCalls,
   type StreamedRunTrace,
 } from './run-trace-publisher.js';
+import { normalizeTokenUsage } from './token-usage.js';
 
 function isDelegateRun(run: RunState, repo: { getMessage(organizationId: string, messageId: string): { metadata?: unknown } | null }): boolean {
   if (!run.sourceMessageId) return false;
@@ -465,9 +468,10 @@ export class SpiritServiceDirectRun extends SpiritServiceSupervisor {
     this.runAbortControllers.set(abortKey, abortController);
     const streamedTrace: StreamedRunTrace = { text: '', reasoning: '' };
     let persistedStepCount = 0;
-    let publishedArtifactFile = false;
-    let publishedAnyText = false;
-    const publishedContent = new Set<string>();
+    const turn = new RunTurnPublisher((message) => {
+      this.conversations?.publishMessage(message);
+      return message;
+    });
 
     try {
       const systemPromptSuffix = this.resolveSystemPromptSuffix({
@@ -499,7 +503,7 @@ export class SpiritServiceDirectRun extends SpiritServiceSupervisor {
             chunk,
           );
         },
-        onStepFinish: async (step, currentSteps) => {
+        onStepFinish: async (_step, currentSteps) => {
           const unpersisted = currentSteps.slice(persistedStepCount);
           for (const s of unpersisted) {
             persistedStepCount++;
@@ -518,45 +522,45 @@ export class SpiritServiceDirectRun extends SpiritServiceSupervisor {
                     stepToolCalls.at(-1)?.toolCallId,
                   ))
                 : undefined;
-            if (stepArtifactFileToolCall) publishedArtifactFile = true;
+            if (stepArtifactFileToolCall) turn.markArtifactFilePublished();
 
             if (runUsedThreadPublishingTool({ steps: [s] }) && !stepArtifactFileToolCall) continue;
-            if (!stepText && !stepArtifactFileToolCall) continue;
 
-            if (stepText) {
-              publishedAnyText = true;
-            }
-
-            const content = stepText || (stepArtifactFileToolCall ? 'Artifact updated.' : 'Tool actions recorded.');
-            const toolCalls = [...stepToolCalls, ...(stepArtifactFileToolCall ? [stepArtifactFileToolCall] : [])];
+            const content = stepText || (stepArtifactFileToolCall ? 'Artifact updated.' : '');
+            const toolCalls = [
+              ...normalizeRunStepToolCalls(stepToolCalls, stepToolResults),
+              ...(stepArtifactFileToolCall ? [stepArtifactFileToolCall] : []),
+            ];
             const stepReasoning = extractReasoningChunk(s);
 
             const finalThreadId = running.threadId;
             if (!finalThreadId) continue;
-            const channelId = this.repo.getThread(running.organizationId, finalThreadId)
-              ?.channelId;
+            const channelId = this.repo.getThread(running.organizationId, finalThreadId)?.channelId;
 
-            this.conversations?.publishMessage(
-              MessageSchema.parse({
-                id: randomUUID(),
+            turn.publishMessage(
+              buildAgentMessage({
                 organizationId: running.organizationId,
                 threadId: finalThreadId,
                 channelId: channelId ?? undefined,
                 senderId: running.agentId,
-                senderKind: AGENT_KIND,
-                kind: AGENT_KIND,
                 content,
                 metadata: { runId: running.id },
                 ...(toolCalls.length > 0 ? { toolCalls } : {}),
                 ...(stepReasoning ? { reasoningContent: stepReasoning } : {}),
-                createdAt: new Date().toISOString(),
               }),
             );
-            publishedContent.add(content);
           }
+          this.emitRunTokens(
+            running.organizationId,
+            running.id,
+            running.threadId,
+            running.agentId,
+            currentSteps,
+          );
         },
       });
 
+      const usage = normalizeTokenUsage(result.usage);
       const latestRun = this.repo.getRun(run.organizationId, run.id);
       if (latestRun && latestRun.status !== 'running') {
         if (latestRun.status === 'cancelled') {
@@ -597,6 +601,7 @@ export class SpiritServiceDirectRun extends SpiritServiceSupervisor {
       const artifactFileToolCall =
         (await appendArtifactFileToolCall(goalToolCalls, team.workspace.root, goalToolResults)) ??
         (await appendArtifactFileFromRunSteps(this.repo, run, team.workspace.root));
+      const turnSnapshot = turn.snapshot();
       if (statuses.includes('blocked')) {
         await publishRunReplyTrace({
           repo: this.repo,
@@ -610,9 +615,7 @@ export class SpiritServiceDirectRun extends SpiritServiceSupervisor {
           reasoningContent,
           teamRoot: team.workspace.root,
           artifactFileToolCall,
-          publishedArtifactFile,
-          publishedContent,
-          publishedAnyText,
+          ...turnSnapshot,
 
           suppressDmAlerts: true,
           failureTrace: true,
@@ -648,6 +651,15 @@ export class SpiritServiceDirectRun extends SpiritServiceSupervisor {
       const terminatingTool: string | null = persistedIsSilent
         ? persistedTerminator
         : detectedTerminatingTool;
+      const tokenFooter = turn.backfillTokens({
+        finalText: text,
+        lastText: turn.lastContentValue,
+        terminatingTool,
+        usage,
+      });
+      if (tokenFooter) {
+        this.repo.updateMessage(tokenFooter);
+      }
       const usedPass = runUsedChannelPass(result) || terminatingTool === 'channel.pass';
       const finalThreadId = run.threadId;
       const channelId = finalThreadId
@@ -734,9 +746,7 @@ export class SpiritServiceDirectRun extends SpiritServiceSupervisor {
         reasoningContent,
         teamRoot: team.workspace.root,
         artifactFileToolCall,
-        publishedArtifactFile,
-        publishedContent,
-        publishedAnyText,
+        ...turnSnapshot,
         suppressDmAlerts: isDelegateRun(running, this.repo),
       });
 

@@ -278,6 +278,9 @@ export const MessageSchema = z.object({
    * tuple so retried POSTs are no-ops.
    */
   clientMessageId: IdSchema.optional(),
+  /** Token counts from the LLM provider for this message (agent messages only). */
+  inputTokens: z.number().int().min(0).optional(),
+  outputTokens: z.number().int().min(0).optional(),
   createdAt: TimestampSchema,
   editedAt: TimestampSchema.optional(),
   deletedAt: TimestampSchema.optional(),
