@@ -227,6 +227,7 @@ export function ChatInput({
   skillCommands = [],
   onSkillCommand,
   reasoningProvider,
+  reasoningModelValue,
 }: {
   placeholder?: string;
   organizationId?: string;
@@ -244,6 +245,7 @@ export function ChatInput({
   skillCommands?: SlashSkillCommand[];
   onSkillCommand?: (skillId: string, rawContent?: string, metadata?: { goalMode?: boolean; reasoningEffort?: ReasoningEffort }) => Promise<void> | void;
   reasoningProvider?: string;
+  reasoningModelValue?: string;
 }) {
   const goalMode = goalModeProp ?? false;
   const [content, setContent] = useState("");
@@ -268,13 +270,18 @@ export function ChatInput({
   const composerPlaceholder = readOnly ? `Observer Mode · ${placeholder}` : placeholder;
   const reasoningOptions = useMemo(
     () =>
-      getReasoningEffortsForProvider(reasoningProvider ?? "").map((value) => ({
+      getReasoningEffortsForProvider(reasoningProvider ?? "", reasoningModelValue).map((value) => ({
         value,
         label: reasoningLabel(value),
       })),
-    [reasoningProvider],
+    [reasoningModelValue, reasoningProvider],
   );
-  const selectedReasoningEffort = clampReasoningEffortForProvider(reasoningProvider ?? "", reasoningEffort);
+  const selectedReasoningEffort = clampReasoningEffortForProvider(
+    reasoningProvider ?? "",
+    reasoningEffort,
+    reasoningModelValue,
+  );
+  const reasoningDisabled = readOnly || reasoningOptions.length <= 1;
 
   function revokePreviewUrl(attachment: UploadedAttachment) {
     if (attachment.previewUrl?.startsWith("blob:")) {
@@ -1057,7 +1064,7 @@ export function ChatInput({
                 menuPlacement="up"
                 className="w-[8.5rem] sm:w-[10.5rem]"
                 menuClassName="min-w-full w-max max-w-[calc(100vw-1.5rem)]"
-                disabled={readOnly}
+                disabled={reasoningDisabled}
               />
               {canStopRun && !showStopInsteadOfSend && (
                 <button

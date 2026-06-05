@@ -141,11 +141,12 @@ export function ChannelView({
     () => (bootstrap.auth.member ? memberById.get(bootstrap.auth.member.id) ?? bootstrap.auth.member : undefined),
     [bootstrap.auth.member, memberById],
   );
-  const reasoningProvider = useMemo(() => {
-    if (!currentMember) return undefined;
-    const selectedModel = resolveMemberModelSelection(currentMember, bootstrap.providers);
-    return parseConfiguredProviderModelValue(selectedModel)?.provider;
-  }, [bootstrap.providers, currentMember]);
+  const reasoningMember = conversation.type === "agent" ? feed.selectedMember ?? undefined : currentMember;
+  const reasoningModelSelection = useMemo(() => {
+    if (!reasoningMember) return undefined;
+    const selectedModel = resolveMemberModelSelection(reasoningMember, bootstrap.providers);
+    return parseConfiguredProviderModelValue(selectedModel) ?? undefined;
+  }, [bootstrap.providers, reasoningMember]);
   const currentThreadId = useMemo(() => {
     const senderId = bootstrap.auth.member?.id;
     if (!senderId) return undefined;
@@ -998,12 +999,13 @@ export function ChannelView({
           </div>
         ) : (
           <div className="shrink-0 px-3 pt-1.5 pb-3">
-              <ChatInput
+                <ChatInput
                 organizationId={organizationId}
                 goalMode={goalMode}
                 onGoalModeChange={onGoalModeChange}
                 readOnly={isReadOnly}
-                reasoningProvider={reasoningProvider}
+                reasoningProvider={reasoningModelSelection?.provider}
+                reasoningModelValue={reasoningModelSelection?.model}
                 skillCommands={skillCommands}
                 onSkillCommand={async (skillId, content, metadata) => {
                 if (!organizationId) throw new Error("Missing organization context.");

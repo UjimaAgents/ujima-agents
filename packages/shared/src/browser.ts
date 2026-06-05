@@ -24,6 +24,7 @@ export type {ProviderModelOption} from "./model-catalog.js";
 export {
   clampReasoningEffortForProvider,
   getReasoningEffortsForProvider,
+  resolveReasoningProviderForModel,
 } from "./reasoning-catalog.js";
 export * from "./socket-events.js";
 export * from "./cursor.js";
