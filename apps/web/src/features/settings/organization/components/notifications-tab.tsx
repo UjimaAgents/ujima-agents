@@ -30,6 +30,14 @@ export function NotificationsTab() {
   const [formWebhookUrl, setFormWebhookUrl] = useState("");
 
   const fetched = useRef(false);
+  const resetNotificationForm = () => {
+    setShowForm(false);
+    setFormBotToken("");
+    setFormChatId("");
+    setFormPhone("");
+    setFormApiKey("");
+    setFormWebhookUrl("");
+  };
   const fetchChannels = useCallback(async () => {
     setLoading(true); setError(null);
     try {
@@ -70,8 +78,7 @@ export function NotificationsTab() {
         body: JSON.stringify({ provider: formProvider, config }),
       });
       if (!res.ok) throw new Error((await res.json().catch(() => null))?.message || "Failed to create");
-      setShowForm(false);
-      setFormBotToken(""); setFormChatId(""); setFormPhone(""); setFormApiKey(""); setFormWebhookUrl("");
+      resetNotificationForm();
       await fetchChannels();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Create failed");
@@ -205,7 +212,7 @@ export function NotificationsTab() {
             <button type="button" onClick={() => void createChannel()} disabled={saving} className="rounded-xl bg-violet-600 px-4 py-2 text-xs font-semibold text-white shadow-lg shadow-violet-500/20 transition hover:bg-violet-700 disabled:opacity-50">
               {saving ? "Adding..." : "Add"}
             </button>
-            <button type="button" onClick={() => { setShowForm(false); setFormBotToken(""); setFormChatId(""); setFormWebhookUrl(""); }} className="rounded-xl px-4 py-2 text-xs font-semibold text-zinc-600 transition hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800">
+            <button type="button" onClick={resetNotificationForm} className="rounded-xl px-4 py-2 text-xs font-semibold text-zinc-600 transition hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800">
               Cancel
             </button>
           </div>

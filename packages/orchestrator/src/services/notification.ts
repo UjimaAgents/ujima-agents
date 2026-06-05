@@ -118,9 +118,10 @@ export class NotificationService {
             continue;
           }
 
-          let ackOk = false;
+          this.pollOffsets.set(token, newOffset);
+
           try {
-            const ackRes = await fetch(`https://api.telegram.org/bot${token}/answerCallbackQuery`, {
+            await fetch(`https://api.telegram.org/bot${token}/answerCallbackQuery`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
@@ -129,13 +130,8 @@ export class NotificationService {
                 show_alert: !!err,
               }),
             });
-            ackOk = ackRes.ok;
           } catch (e) {
             if (this.logErrors) console.error('[notify] answer callback failed:', e);
-          }
-
-          if (ackOk) {
-            this.pollOffsets.set(token, newOffset);
           }
         }
       } catch (e) {
