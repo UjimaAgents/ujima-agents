@@ -232,7 +232,11 @@ function configFromChannel(channel: NotificationChannel): Record<string, unknown
 }
 
 export function isTelegramPollingEnabled(): boolean {
-  return process.env.UJIMA_TELEGRAM_POLLING !== '0';
+  const flag = process.env.UJIMA_TELEGRAM_POLLING;
+  if (flag === '0' || flag === 'false') return false;
+  if (flag === '1' || flag === 'true') return true;
+  if (process.env.NODE_ENV === 'test' || process.env.CI === 'true') return false;
+  return true;
 }
 
 export function usesTelegramCallbackWebhook(config: Record<string, unknown>): boolean {

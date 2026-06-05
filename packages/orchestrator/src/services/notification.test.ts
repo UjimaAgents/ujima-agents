@@ -13,17 +13,38 @@ describe('telegram callback delivery', () => {
     else process.env.UJIMA_TELEGRAM_POLLING = prevPollingEnv;
   });
 
+  function enablePollingForTest(): void {
+    process.env.UJIMA_TELEGRAM_POLLING = '1';
+  }
+
   it('usesTelegramCallbackWebhook detects webhook mode', () => {
     expect(usesTelegramCallbackWebhook({ callbackDelivery: 'webhook' })).toBe(true);
     expect(usesTelegramCallbackWebhook({ callbackDelivery: 'polling' })).toBe(false);
     expect(usesTelegramCallbackWebhook({})).toBe(false);
   });
 
-  it('isTelegramPollingEnabled respects UJIMA_TELEGRAM_POLLING=0', () => {
+  it('isTelegramPollingEnabled respects explicit opt-in/out', () => {
+    enablePollingForTest();
+    expect(isTelegramPollingEnabled()).toBe(true);
     process.env.UJIMA_TELEGRAM_POLLING = '0';
     expect(isTelegramPollingEnabled()).toBe(false);
+  });
+
+  it('isTelegramPollingEnabled defaults off in test/CI', () => {
+    const prevNodeEnv = process.env.NODE_ENV;
+    const prevCI = process.env.CI;
     delete process.env.UJIMA_TELEGRAM_POLLING;
+    process.env.NODE_ENV = 'test';
+    delete process.env.CI;
+    expect(isTelegramPollingEnabled()).toBe(false);
+    process.env.CI = 'true';
+    expect(isTelegramPollingEnabled()).toBe(false);
+    process.env.UJIMA_TELEGRAM_POLLING = '1';
     expect(isTelegramPollingEnabled()).toBe(true);
+    if (prevNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = prevNodeEnv;
+    if (prevCI === undefined) delete process.env.CI;
+    else process.env.CI = prevCI;
   });
 
   it('startPolling does not install an interval when polling is disabled', () => {
@@ -50,6 +71,7 @@ describe('telegram callback delivery', () => {
   });
 
   it('startPolling keeps the loop running before telegram channels exist', () => {
+    enablePollingForTest();
     const setIntervalSpy = vi.spyOn(global, 'setInterval');
     const svc = new NotificationService({
       listOrganizations: () => [],
@@ -64,6 +86,7 @@ describe('telegram callback delivery', () => {
   });
 
   it('stopPolling aborts an in-flight long poll', async () => {
+    enablePollingForTest();
     const repo = {
       listOrganizations: () => [{ id: 'org-1' }],
       listNotificationChannels: () => [{

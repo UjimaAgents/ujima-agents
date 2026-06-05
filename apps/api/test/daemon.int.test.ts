@@ -32,6 +32,7 @@ async function startDaemon(extraEnv?: Record<string, string>): Promise<Ready> {
       UJIMA_HOME: home,
       UJIMA_LOG_LEVEL: 'info',
       UJIMA_PORT: String(port),
+      UJIMA_TELEGRAM_POLLING: '0',
       ...extraEnv,
     },
     stdio: ['ignore', 'ignore', 'pipe'],

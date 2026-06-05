@@ -23,6 +23,7 @@ import type {
   TaskSessionService,
   TeamStore,
   WorkspaceService,
+  isTelegramPollingEnabled,
 } from "@ujima/orchestrator";
 import type {UjimaEvent} from "@ujima/shared";
 import {
@@ -409,7 +410,9 @@ export function createTransport(opts: TransportOptions): Transport {
     },
     startBackgroundServices() {
       scheduler?.start();
-      notifications?.startPolling();
+      if (isTelegramPollingEnabled()) {
+        notifications?.startPolling();
+      }
     },
     async close() {
       scheduler?.stop();
