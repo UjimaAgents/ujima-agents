@@ -1,9 +1,16 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import Database from 'better-sqlite3';
 import { afterEach, describe, expect, it } from 'vitest';
 import { openDatabase } from './db';
+
+const DatabaseSync = (require('node:sqlite') as {
+  DatabaseSync: new (path: string) => {
+    exec(sql: string): void;
+    prepare(sql: string): { run(...params: unknown[]): unknown };
+    close(): void;
+  };
+}).DatabaseSync;
 
 describe('database migrations', () => {
   const tempDirs: string[] = [];
@@ -17,7 +24,7 @@ describe('database migrations', () => {
     tempDirs.push(dir);
     const dbPath = join(dir, 'legacy.sqlite');
 
-    const legacy = new Database(dbPath);
+    const legacy = new DatabaseSync(dbPath);
     legacy.exec(`
       CREATE TABLE schema_migrations (
         id TEXT PRIMARY KEY,
@@ -287,7 +294,7 @@ describe('database migrations', () => {
     db.close();
 
     // Now delete the migration record for 027 to simulate upgrading from 026 to 027
-    const rawDb = new Database(dbPath);
+    const rawDb = new DatabaseSync(dbPath);
     rawDb.prepare('DELETE FROM schema_migrations WHERE id = ?').run('033_migrate_self_notes_to_memories');
     // Clear out memory_entries table to make sure migration re-populates it
     rawDb.prepare('DELETE FROM memory_entries').run();

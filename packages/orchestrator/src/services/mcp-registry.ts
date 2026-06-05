@@ -16,13 +16,19 @@ import {
   type ToolPolicyState,
   type ToolRiskClass,
 } from '@ujima/shared';
-import { connectMCP, parseMCPConfigJSON, type MCPConnection } from '@ujima/mcp-client';
+import {
+  connectMCPWithCacheRecovery,
+  parseMCPConfigJSON,
+  type CacheRecovery,
+  type ConnectResult,
+  type MCPConnection,
+} from '@ujima/mcp-client';
 import type { MCPDef } from '@ujima/shared';
 import { materializeMcpDef } from './mcp-runtime.js';
 import type { ApiRepository } from './repository-reader.js';
 import { errorMessage } from '../utils/error-message.js';
 
-type McpConnector = (def: MCPDef) => Promise<MCPConnection>;
+type McpConnector = (def: MCPDef) => Promise<ConnectResult>;
 
 // ---------------------------------------------------------------------
 // McpRegistryService — Phase 3 of the MCP integration.
@@ -97,6 +103,10 @@ export interface TestMcpResult {
   tools: McpToolDescriptor[];
   error?: string;
   testedAt: string;
+  // Present only when the spawn self-healed via an isolated npm cache.
+  // UI surfaces this as a non-error chip so the operator knows their
+  // host npm cache is corrupted even though the Test succeeded.
+  recovery?: CacheRecovery;
 }
 
 export interface CatalogTool {
@@ -158,7 +168,7 @@ export interface CatalogResult {
 export class McpRegistryService {
   constructor(
     private readonly repo: ApiRepository,
-    private readonly connect: McpConnector = connectMCP,
+    private readonly connect: McpConnector = connectMCPWithCacheRecovery,
   ) {}
 
   // ----------------- CRUD -----------------------------------------------
@@ -382,8 +392,11 @@ export class McpRegistryService {
     // on first-ever test of a server. The split mirrors the wake-run
     // path in spirit-agent-run.ts.
     let descriptors: McpToolDescriptor[];
+    let recovery: CacheRecovery | undefined;
     try {
-      connection = await this.connect(def);
+      const result = await this.connect(def);
+      connection = result.connection;
+      recovery = result.recovery;
       const tools = await connection.listTools();
       descriptors = tools.map((tool) => {
         // Carry the server-declared destructive intent through so the
@@ -460,7 +473,7 @@ export class McpRegistryService {
         lastTestError: undefined,
         updatedAt: testedAt,
       });
-      return { ok: true, tools: descriptors, testedAt };
+      return { ok: true, tools: descriptors, testedAt, ...(recovery ? { recovery } : {}) };
     } catch (err) {
       const message = errorMessage(err);
       // Persistence write failed AFTER a successful live fetch. Surface

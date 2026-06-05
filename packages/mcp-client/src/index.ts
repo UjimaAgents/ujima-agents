@@ -12,6 +12,12 @@ export type { MCPPool, PoolGetOptions } from './pool';
 
 export { buildTransport } from './transport';
 
+export {
+  connectMCPWithCacheRecovery,
+  looksLikeNpmCacheCorruption,
+} from './cache-recovery';
+export type { CacheRecovery, ConnectResult } from './cache-recovery';
+
 export { parseMCPConfigJSON, parseMCPConfigObject } from './parse-config';
 export type { ParseConfigResult } from './parse-config';
 

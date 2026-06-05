@@ -37,16 +37,17 @@ if (portInUse) {
   process.exit(1);
 }
 
-const nextArgs = ['bunx', 'next', mode, '--port', port];
+const nextArgs = ['x', 'next', mode, '--port', port];
 if (process.env.WEB_USE_WEBPACK === '1') {
   nextArgs.push('--webpack');
 }
 nextArgs.push(...extra);
 
-const proc = spawn('bun', nextArgs, {
+const proc = spawn(process.execPath, nextArgs, {
   cwd: root,
   env: { ...process.env, WEB_PORT: port },
   stdio: ['inherit', 'inherit', 'inherit'],
 });
 
-process.exit(await new Promise<number | null>((resolve) => proc.on('exit', resolve)));
+const exitCode = await new Promise<number | null>((resolve) => proc.on('exit', resolve));
+process.exit(exitCode ?? 0);

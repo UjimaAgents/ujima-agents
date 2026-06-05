@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { randomUUID } from 'node:crypto';
 import type { Repository } from '@ujima/runtime-core';
 import type { AuthService, ApprovalResolver } from '@ujima/orchestrator';
-import { resolveApprovalFromTelegram, resolveTelegramCallbackToken } from '@ujima/orchestrator';
+import { resolveApprovalFromTelegram } from '@ujima/orchestrator';
 import { z } from 'zod';
 
 const CreateChannelSchema = z.object({
@@ -115,36 +115,42 @@ export function registerNotificationRoutes(api: FastifyInstance, deps: Notificat
       return reply.status(200).send({ ok: false, reason: 'no resolver configured' });
     }
 
-    // Validate the token and get the stored data
-    const parts = (callbackQuery.data as string).split(':');
-    const token = parts[1];
-    const tokenData = token ? resolveTelegramCallbackToken(token) : null;
-    if (!tokenData) {
-      return reply.status(200).send({ ok: false, reason: 'invalid or expired token' });
-    }
-
-    // Validate the approval still exists before resolving
-    const approval = deps.repo.getApproval(tokenData.organizationId, tokenData.approvalId);
-    if (!approval || approval.status !== 'pending') {
-      return reply.status(200).send({ ok: false, reason: 'approval not found or already resolved' });
-    }
-
-    // Resolve the approval
-    const err = await resolveApprovalFromTelegram(
-      callbackQuery.data as string,
-      deps.resolveApproval,
-      true,
-    );
-
-    // Look up bot token from the notification channel for answering callback
-    let botToken = '';
-    if (tokenData.channelId) {
-      const ch = deps.repo.getNotificationChannel(tokenData.organizationId, tokenData.channelId);
-      if (ch) {
-        try {
-          botToken = (JSON.parse(ch.configJson) as Record<string, string>).botToken ?? '';
-        } catch { /* ignore */ }
+    const callbackData = callbackQuery.data as string;
+    const lookupApproval = (approvalId: string) => {
+      for (const org of deps.repo.listOrganizations()) {
+        const approval = deps.repo.getApproval(org.id, approvalId);
+        if (approval) return approval;
       }
+      return null;
+    };
+
+    let botToken = '';
+    let err: string | null = 'telegram bot token not configured';
+    for (const org of deps.repo.listOrganizations()) {
+      for (const channel of deps.repo.listNotificationChannels(org.id)) {
+        if (channel.provider !== 'telegram' || !channel.enabled) continue;
+        let candidateToken = '';
+        try {
+          candidateToken = (JSON.parse(channel.configJson) as Record<string, string>).botToken ?? '';
+        } catch {
+          candidateToken = '';
+        }
+        if (!candidateToken) continue;
+
+        const candidateErr = await resolveApprovalFromTelegram(
+          callbackData,
+          candidateToken,
+          lookupApproval,
+          deps.resolveApproval,
+          true,
+        );
+        if (candidateErr !== 'Invalid callback data') {
+          botToken = candidateToken;
+          err = candidateErr;
+          break;
+        }
+      }
+      if (botToken) break;
     }
 
     // Answer callback to clear the loading state on the button

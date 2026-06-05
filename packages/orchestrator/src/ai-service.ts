@@ -1,14 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { type ToolSet } from 'ai';
 import { buildAgentSystemPrompt, normalizeProviderKey } from '@ujima/framework';
-import { DEFAULT_SPIRIT_TEMPERATURE, type Message, type SpiritRole, type WakeReason } from '@ujima/shared';
+import { DEFAULT_SPIRIT_TEMPERATURE, type Message, type ReasoningEffort, type SpiritRole, type WakeReason } from '@ujima/shared';
 import {
   runAgentLoop,
-  runAgentLoopWithRetry,
+  runAgentWithRetry,
   type AgentLoopChunk,
   type AgentLoopStep,
 } from './services/agent-loop.js';
-import { dropHeaviestAttachedMcp } from './services/spirit-mcp-helpers.js';
 import { safeFallbackModelForProvider } from '@ujima/shared';
 import { selectLanguageModel } from '@ujima/llm';
 import type { ApiRepository } from './services/repository-reader.js';
@@ -44,23 +43,7 @@ import {
   moveCursor,
   type MessageCursor,
 } from './utils/message-interrupts.js';
-
-function isDelegateMessage(message: Message | null | undefined): boolean {
-  return !!(message?.metadata as { delegate?: unknown } | undefined)?.delegate;
-}
-
-function filterDelegateTurnTools(toolIds: readonly string[]): string[] {
-  const postingTools = new Set([
-    'channel.post',
-    'channel.reply',
-    'channel.dm',
-    'channel.handoff',
-    'channel.pass',
-    'channel.ack',
-    'message',
-  ]);
-  return toolIds.filter((toolId) => !postingTools.has(toolId));
-}
+import { isDelegateMessage, filterDelegateTurnTools } from './services/run-reply-guard.js';
 
 // Resolver now delegates to the canonical `@ujima/llm` surface so every
 // AI-SDK-driven code path (this `/api/runs` service, the upcoming
@@ -276,6 +259,13 @@ export class AiService {
       throw new Error(`Role not found: ${agent.roleName}`);
     }
 
+    const runRow = this.repo.getRun?.(input.organizationId, input.runId);
+    const sourceMessageId = (runRow?.sourceMessageId ?? undefined) as string | undefined;
+    const sourceMessage = sourceMessageId
+      ? this.repo.getMessage(input.organizationId, sourceMessageId)
+      : null;
+    const reasoningEffort = sourceMessage?.metadata?.reasoningEffort as ReasoningEffort | undefined;
+
     const model = resolveSpiritModel({
       organizationId: input.organizationId,
       memberId: input.agentId,
@@ -284,6 +274,7 @@ export class AiService {
       team,
       getProviderCredential: (orgId, key) => this.repo.getProviderCredential(orgId, key),
       resolveProviderName: (m, r) => normalizeProviderKey(m.llm ?? r.provider ?? ''),
+      reasoningEffort,
       // `member.model` is provider-specific to the agent's preferred
       // provider. When `resolveSpiritModel` falls back to a different
       // provider (e.g. the preferred one has no key), that override
@@ -304,11 +295,6 @@ export class AiService {
     // `ALWAYS_AVAILABLE_AGENT_TOOLS`, so the model has a clear
     // path to comply with the "you must reply" contract regardless
     // of how the role config declares its `tools`.
-    const runRow = this.repo.getRun?.(input.organizationId, input.runId);
-    const sourceMessageId = (runRow?.sourceMessageId ?? undefined) as string | undefined;
-    const sourceMessage = sourceMessageId
-      ? this.repo.getMessage(input.organizationId, sourceMessageId)
-      : null;
     const isDelegateTurn = isDelegateMessage(sourceMessage);
     const wakeReasonForPalette = (runRow?.wakeReason ?? null) as WakeReason | null;
     const wakeReplyPolicy = resolveWakeReplyPolicy({
@@ -549,78 +535,47 @@ export class AiService {
     // routinely exceed the per-turn cap when pasted inline or written via
     // tools. 4096 tokens across all wakes gives the model enough headroom.
     const turnMaxOutputTokens = 4096;
-    // Wake-run path retry. Same recovery contract as the direct-spirit
-    // path (spirit-agent-run.ts) — bad model id swap and "too many
-    // states" palette reduction — but the model re-resolution is inline
-    // here because the wake path's model resolver is composed locally
-    // (uses `member.llm` / `member.model`) rather than going through
-    // SpiritService's modelResolver.
-    let currentModel = model;
-    let currentToolDefs = toolDefs;
     const providerName = normalizeProviderKey(member.llm ?? role.provider ?? '');
     const provider = team.getProvider(providerName);
-    return runAgentLoopWithRetry(
-      () => ({
-        model: currentModel,
-        system: systemPrompt,
-        messages,
-        tools: currentToolDefs,
-        stopWhen: () => false,
-        maxOutputTokens: turnMaxOutputTokens,
-        // Lower temperature for mandatory mention wakes: at 0.2 the
-        // model is more willing to commit to a structured posting tool.
-        temperature: wakeReplyPolicy.mandatoryReply ? 0.2 : DEFAULT_SPIRIT_TEMPERATURE,
-        // L1/L2: 'auto' lets the model choose whether to call a tool
-        // or respond directly.
-        toolChoice: 'auto',
-        abortSignal: input.abortSignal,
-        onChunk: input.onChunk,
-        onStepFinish: input.onStepFinish,
-        loadInterruptMessages: () => {
-          const interrupts = this.loadRunInterrupts(input, interruptCursor);
-          return toModelMessages(interrupts, input.agentId);
-        },
-      }),
-      (next) => {
-        currentModel = next;
+    return runAgentWithRetry({
+      model,
+      system: systemPrompt,
+      messages,
+      tools: toolDefs,
+      attachedMcpServers,
+      stopWhen: () => false,
+      maxOutputTokens: turnMaxOutputTokens,
+      temperature: wakeReplyPolicy.mandatoryReply ? 0.2 : DEFAULT_SPIRIT_TEMPERATURE,
+      toolChoice: 'auto',
+      abortSignal: input.abortSignal,
+      onChunk: input.onChunk,
+      onStepFinish: input.onStepFinish,
+      loadInterruptMessages: () => {
+        const interrupts = this.loadRunInterrupts(input, interruptCursor);
+        return toModelMessages(interrupts, input.agentId);
       },
-      (next) => {
-        currentToolDefs = next;
+      onModelNotFound: (error) => {
+        const kind = provider?.kind ?? error.providerKindHint ?? '';
+        const fallbackId = safeFallbackModelForProvider(kind);
+        const apiKey = providerName
+          ? this.repo.getProviderCredential(input.organizationId, providerName)
+          : null;
+        if (!fallbackId || !apiKey || !provider) return null;
+        console.warn(
+          `[ai-service] model "${error.modelId}" rejected by provider; ` +
+            `falling back to "${fallbackId}" for member="${input.agentId}"`,
+        );
+        return selectLanguageModel({
+          kind: provider.kind,
+          modelId: fallbackId,
+          apiKey,
+          baseUrl: provider.baseUrl,
+          reasoningEffort,
+        });
       },
-      {
-        onModelNotFound: (error) => {
-          // Hop directly to the provider's safe-default id. We can't
-          // re-call the local resolveSpiritModel here without
-          // duplicating the closure — and the recovery target is the
-          // same regardless (`safeFallbackModelForProvider(kind)`).
-          const kind = provider?.kind ?? error.providerKindHint ?? '';
-          const fallbackId = safeFallbackModelForProvider(kind);
-          const apiKey = providerName
-            ? this.repo.getProviderCredential(input.organizationId, providerName)
-            : null;
-          if (!fallbackId || !apiKey || !provider) return null;
-          console.warn(
-            `[ai-service] model "${error.modelId}" rejected by provider; ` +
-              `falling back to "${fallbackId}" for member="${input.agentId}"`,
-          );
-          return selectLanguageModel({
-            kind: provider.kind,
-            modelId: fallbackId,
-            apiKey,
-            baseUrl: provider.baseUrl,
-          });
-        },
-        onSchemaTooLarge: () => {
-          const dropped = dropHeaviestAttachedMcp(currentToolDefs, attachedMcpServers);
-          if (!dropped) return null;
-          console.warn(
-            `[ai-service] gemini "too many states" — dropped MCP "${dropped.serverName}" ` +
-              `(${dropped.toolNames.length} tools) and retrying for member="${input.agentId}"`,
-          );
-          return dropped.toolDefs;
-        },
-      },
-    );
+      logLabel: 'ai-service',
+      memberLabel: input.agentId,
+    });
   }
 
   private loadRunInterrupts(

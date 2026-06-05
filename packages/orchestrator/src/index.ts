@@ -94,7 +94,7 @@ export {
   summarizeTeam,
   validateProviderKeys,
 } from './services/index.js';
-export { NotificationService, resolveApprovalFromTelegram, resolveTelegramCallbackToken, type ApprovalResolver } from './services/notification.js';
+export { NotificationService, resolveApprovalFromTelegram, type ApprovalResolver } from './services/notification.js';
 export {
   ACTIVE_WORKSPACE_SETTING_KEY,
   TEAM_CONFIG_SETTING_KEY,

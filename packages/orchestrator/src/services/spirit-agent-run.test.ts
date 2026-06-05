@@ -54,7 +54,7 @@ const LIVE_TOOLS = [
   { name: 'tool_b', description: 'writes', inputSchema: { type: 'object' } },
 ];
 
-function makeService(repoOverrides: Partial<ApiRepository>) {
+function makeService(repoOverrides: Partial<ApiRepository>, realtimeOverrides?: { emit?: (...args: any[]) => void }) {
   const repo = makeMockRepo(repoOverrides);
   const pool = {
     async get() {
@@ -71,7 +71,7 @@ function makeService(repoOverrides: Partial<ApiRepository>) {
   return new SpiritService(
     {} as never,
     repo,
-    { emit: () => undefined } as never,
+    { emit: realtimeOverrides?.emit ?? (() => undefined) } as never,
     tools as never,
     {
       mcpPool: pool as never,
@@ -177,4 +177,5 @@ describe('SpiritServiceAgentRun.buildMcpToolDefinitions', () => {
 
     expect(result.servers[0]!.toolNames).toEqual(['cached_tool']);
   });
+
 });

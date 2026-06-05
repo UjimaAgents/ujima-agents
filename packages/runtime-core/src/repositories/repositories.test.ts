@@ -472,6 +472,75 @@ test('message reasoning content round-trips through save, list, get, and update'
   expect(repo.getMessage(orgId, messageId)?.reasoningContent).toBe('Updated reasoning');
 });
 
+test('message token counts round-trip through save, list, get, and update', () => {
+  const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
+  const orgId = randomUUID();
+  const now = new Date().toISOString();
+  const messageId = randomUUID();
+
+  repo.saveOrganization(
+    OrganizationSchema.parse({
+      id: orgId,
+      name: 'Token Org',
+      workspace: { root: '/tmp/token-org', roleScopes: {} },
+    }),
+  );
+  repo.saveChannel({
+    id: 'general',
+    organizationId: orgId,
+    name: 'general',
+    kind: 'general',
+    topic: '',
+    memberIds: [],
+  });
+  repo.ensureThread({
+    id: 'general',
+    organizationId: orgId,
+    channelId: 'general',
+    title: 'general',
+    memberIds: [],
+    createdAt: now,
+  });
+
+  const saved = repo.saveMessage(
+    MessageSchema.parse({
+      id: messageId,
+      organizationId: orgId,
+      threadId: 'general',
+      channelId: 'general',
+      senderId: 'agent',
+      senderKind: 'agent',
+      kind: 'agent',
+      content: 'Tokenized reply',
+      mentions: [],
+      inputTokens: 123,
+      outputTokens: 456,
+      createdAt: now,
+    }),
+  );
+  expect(saved.inputTokens).toBe(123);
+  expect(saved.outputTokens).toBe(456);
+
+  const listed = repo.listMessages(orgId, 'general', undefined, 10).data.find((m) => m.id === messageId);
+  expect(listed?.inputTokens).toBe(123);
+  expect(listed?.outputTokens).toBe(456);
+
+  const got = repo.getMessage(orgId, messageId);
+  expect(got?.inputTokens).toBe(123);
+  expect(got?.outputTokens).toBe(456);
+
+  repo.updateMessage(
+    MessageSchema.parse({
+      ...saved,
+      inputTokens: 222,
+      outputTokens: 333,
+      editedAt: new Date().toISOString(),
+    }),
+  );
+  expect(repo.getMessage(orgId, messageId)?.inputTokens).toBe(222);
+  expect(repo.getMessage(orgId, messageId)?.outputTokens).toBe(333);
+});
+
 test('getLatestHumanMessageInThread returns newest human by timestamp', () => {
   const repo = new Repository(openDatabase({ dbPath: ':memory:' }));
   const orgId = randomUUID();

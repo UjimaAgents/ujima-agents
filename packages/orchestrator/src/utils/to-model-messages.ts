@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import type { Message, SpiritRole } from "@ujima/shared";
+import type { Message, ReasoningEffort, SpiritRole } from "@ujima/shared";
 import { selectLanguageModel } from '@ujima/llm';
 import type { AgentTeamHandle } from '@ujima/framework';
 import { tool } from 'ai';
@@ -167,6 +167,7 @@ export function resolveSpiritModel(params: {
   team: AgentTeamHandle;
   getProviderCredential: (orgId: string, key: string) => string | null;
   resolveProviderName: (member: { llm?: string }, teamRole: { provider?: string }) => string;
+  reasoningEffort?: ReasoningEffort;
   resolveModelId: (
     teamRole: { model?: string },
     provider: { defaultModel?: string; supervisorModel?: string; supervisor_model?: string },
@@ -257,6 +258,7 @@ export function resolveSpiritModel(params: {
       modelId,
       apiKey,
       baseUrl: provider.baseUrl,
+      reasoningEffort: params.reasoningEffort,
     });
   }
 

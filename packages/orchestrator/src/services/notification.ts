@@ -1,3 +1,5 @@
+import { createHmac, timingSafeEqual } from 'node:crypto';
+import type { ApprovalRequest } from '@ujima/shared';
 import type { ApiRepository } from './repository-reader.js';
 
 interface NotificationChannel {
@@ -33,6 +35,7 @@ export class NotificationService {
   private approvalResolver?: ApprovalResolver;
   private pollTimers = new Map<string, ReturnType<typeof setInterval>>();
   private pollOffsets = new Map<string, number>();
+  private pollInFlight = false;
 
   constructor(private readonly repo: ApiRepository) {}
 
@@ -45,8 +48,11 @@ export class NotificationService {
    * Required when no webhook is set (local-first). Call once after setup.
    */
   startPolling(intervalMs = 2000): void {
-    this.pollOnce().catch(() => undefined);
-    const timer = setInterval(() => this.pollOnce().catch(() => undefined), intervalMs);
+    if (this.pollTimers.has('_global')) return;
+    void this.runPollingTick();
+    const timer = setInterval(() => {
+      void this.runPollingTick();
+    }, intervalMs);
     this.pollTimers.set('_global', timer);
     if (this.logErrors) console.error('[notify] telegram polling started every', intervalMs, 'ms');
   }
@@ -54,28 +60,35 @@ export class NotificationService {
   stopPolling(): void {
     for (const timer of this.pollTimers.values()) clearInterval(timer);
     this.pollTimers.clear();
+    this.pollInFlight = false;
+  }
+
+  private async runPollingTick(): Promise<void> {
+    if (this.pollInFlight) return;
+    this.pollInFlight = true;
+    try {
+      await this.pollOnce();
+    } finally {
+      this.pollInFlight = false;
+    }
   }
 
   private async pollOnce(): Promise<void> {
     if (!this.approvalResolver) return;
-    // List all notification channels across orgs to find Telegram bots
-    // We iterate known orgs — in practice there's usually 1 org.
-    // For a multi-org setup, the scheduler background task handles this.
-    const allChannels: NotificationChannel[] = [];
-    // Walk through all organizations to collect Telegram channels
+    const telegramBotTokens = new Set<string>();
     for (const org of this.repo.listOrganizations()) {
       for (const ch of this.repo.listNotificationChannels(org.id)) {
-        allChannels.push(ch);
+        if (ch.provider !== 'telegram' || !ch.enabled) continue;
+        const config = tryParseJson(ch.configJson);
+        const token = config?.botToken;
+        if (typeof token === 'string' && token) {
+          telegramBotTokens.add(token);
+        }
       }
     }
 
-    for (const channel of allChannels) {
-      if (channel.provider !== 'telegram' || !channel.enabled) continue;
-      const config = tryParseJson(channel.configJson);
-      const token = config?.botToken;
-      if (typeof token !== 'string') continue;
-
-      const offset = this.pollOffsets.get(channel.id) ?? 0;
+    for (const token of telegramBotTokens) {
+      const offset = this.pollOffsets.get(token) ?? 0;
       try {
         const url = `https://api.telegram.org/bot${token}/getUpdates?offset=${offset}&timeout=5&allowed_updates=["callback_query"]`;
         const res = await fetch(url);
@@ -87,10 +100,16 @@ export class NotificationService {
           const cb = update.callback_query;
           if (!cb?.data) continue;
           const newOffset = update.update_id + 1;
-          this.pollOffsets.set(channel.id, newOffset);
+          this.pollOffsets.set(token, newOffset);
 
           // Resolve the approval
-          const err = await resolveApprovalFromTelegram(cb.data, this.approvalResolver, this.logErrors).catch(e => e?.message ?? 'error');
+          const err = await resolveApprovalFromTelegram(
+            cb.data,
+            token,
+            (approvalId) => findApprovalById(this.repo, approvalId),
+            this.approvalResolver,
+            this.logErrors,
+          ).catch(e => e?.message ?? 'error');
 
           // Answer callback to clear loading state
           await fetch(`https://api.telegram.org/bot${token}/answerCallbackQuery`, {
@@ -141,7 +160,12 @@ export class NotificationService {
     for (const channel of active) {
       try {
         if (channel.provider === 'telegram') {
-          await sendTelegramWithInlineKeyboard(configFromChannel(channel), text, input.approvalId, input.organizationId, this.logErrors, channel.id);
+          await sendTelegramWithInlineKeyboard(
+            configFromChannel(channel),
+            text,
+            input.approvalId,
+            this.logErrors,
+          );
         } else {
           await this.send(channel, text);
         }
@@ -190,26 +214,8 @@ export type ApprovalResolver = (
   status: 'approved' | 'rejected',
 ) => Promise<void>;
 
-/** In-memory store for Telegram inline callback tokens → (approvalId, orgId, channelId). */
-const telegramCallbackTokens = new Map<string, { approvalId: string; organizationId: string; channelId?: string }>();
-
-const TOKEN_CHARS = 'abcdefghijklmnopqrstuvwxyz0123456789';
-function randomToken(): string {
-  let t = '';
-  for (let i = 0; i < 6; i++) t += TOKEN_CHARS[Math.floor(Math.random() * TOKEN_CHARS.length)];
-  return t;
-}
-
-/**
- * Parse a Telegram callback query from an inline keyboard button.
- * Looks up the short token in the in-memory store.
- */
-export function resolveTelegramCallbackToken(
-  token: string,
-): { approvalId: string; organizationId: string; channelId?: string } | null {
-  const data = telegramCallbackTokens.get(token);
-  return data ? { approvalId: data.approvalId, organizationId: data.organizationId, channelId: data.channelId } : null;
-}
+const TELEGRAM_CALLBACK_SIGNATURE_LENGTH = 12;
+type TelegramCallbackAction = 'a' | 'r';
 
 /**
  * Called by the API webhook route when a Telegram user clicks an inline
@@ -217,34 +223,35 @@ export function resolveTelegramCallbackToken(
  */
 export async function resolveApprovalFromTelegram(
   callbackData: string,
+  botToken: string,
+  lookupApproval: (approvalId: string) => ApprovalRequest | null,
   resolve: ApprovalResolver,
   log: boolean,
 ): Promise<string | null> {
-  const sep = callbackData.indexOf(':');
-  if (sep < 0) {
+  const parsed = parseTelegramApprovalCallback(callbackData);
+  if (!parsed) {
     if (log) console.error('[notify] invalid callback data:', callbackData);
     return 'Invalid callback data';
   }
-  const rawAction = callbackData.slice(0, sep);
-  const token = callbackData.slice(sep + 1);
-  if (rawAction !== 'approve' && rawAction !== 'reject') {
-    if (log) console.error('[notify] unknown action:', rawAction);
-    return 'Unknown action';
-  }
-  if (!token) {
-    if (log) console.error('[notify] missing token');
-    return 'Missing token';
+
+  const expectedSignature = signTelegramApprovalCallback(
+    parsed.action,
+    parsed.approvalId,
+    botToken,
+  );
+  if (!safeEqualTelegramSignature(parsed.signature, expectedSignature)) {
+    if (log) console.error('[notify] invalid callback signature for approval:', parsed.approvalId);
+    return 'Invalid callback data';
   }
 
-  const data = telegramCallbackTokens.get(token);
-  if (!data) {
-    if (log) console.error('[notify] token not found (expired?):', token);
-    return 'Token expired or invalid';
+  const approval = lookupApproval(parsed.approvalId);
+  if (!approval || approval.status !== 'pending') {
+    if (log) console.error('[notify] approval not found or already resolved:', parsed.approvalId);
+    return 'Approval not found or already resolved';
   }
-  telegramCallbackTokens.delete(token);
 
   try {
-    await resolve(data.organizationId, data.approvalId, rawAction === 'approve' ? 'approved' : 'rejected');
+    await resolve(approval.organizationId, approval.id, parsed.status);
     return null;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -257,9 +264,7 @@ async function sendTelegramWithInlineKeyboard(
   config: Record<string, unknown>,
   text: string,
   approvalId: string,
-  organizationId: string,
   log: boolean,
-  channelId?: string,
 ): Promise<void> {
   const token = config.botToken;
   const chatId = config.chatId;
@@ -268,13 +273,10 @@ async function sendTelegramWithInlineKeyboard(
     return;
   }
 
-  const cbToken = randomToken();
-  telegramCallbackTokens.set(cbToken, { approvalId, organizationId, channelId });
-
   const replyMarkup = {
     inline_keyboard: [[
-      { text: '✅ Approve', callback_data: `approve:${cbToken}` },
-      { text: '❌ Reject', callback_data: `reject:${cbToken}` },
+      { text: '✅ Approve', callback_data: buildTelegramApprovalCallback('a', approvalId, token) },
+      { text: '❌ Reject', callback_data: buildTelegramApprovalCallback('r', approvalId, token) },
     ]],
   };
 
@@ -282,7 +284,7 @@ async function sendTelegramWithInlineKeyboard(
   const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'HTML', reply_markup: replyMarkup }),
+    body: JSON.stringify({ chat_id: chatId, text, reply_markup: replyMarkup }),
   });
   const body = await res.text().catch(() => '');
   if (!res.ok) throw new Error(`Telegram ${res.status}: ${body}`);
@@ -302,13 +304,61 @@ async function sendTelegram(config: Record<string, unknown>, text: string, log: 
   const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'HTML' }),
+    body: JSON.stringify({ chat_id: chatId, text }),
   });
   const body = await res.text().catch(() => '');
   if (!res.ok) {
     throw new Error(`Telegram ${res.status}: ${body}`);
   }
   if (log) console.error('[notify] telegram response:', body.slice(0, 200));
+}
+
+function buildTelegramApprovalCallback(
+  action: TelegramCallbackAction,
+  approvalId: string,
+  botToken: string,
+): string {
+  const signature = signTelegramApprovalCallback(action, approvalId, botToken);
+  return `${action}:${approvalId}:${signature}`;
+}
+
+function signTelegramApprovalCallback(
+  action: TelegramCallbackAction,
+  approvalId: string,
+  botToken: string,
+): string {
+  return createHmac('sha256', botToken)
+    .update(`telegram-approval:${action}:${approvalId}`)
+    .digest('base64url')
+    .slice(0, TELEGRAM_CALLBACK_SIGNATURE_LENGTH);
+}
+
+function parseTelegramApprovalCallback(
+  callbackData: string,
+): { action: TelegramCallbackAction; approvalId: string; signature: string; status: 'approved' | 'rejected' } | null {
+  const parts = callbackData.split(':');
+  if (parts.length !== 3) return null;
+  const [action, approvalId, signature] = parts;
+  if ((action !== 'a' && action !== 'r') || !approvalId || !signature) return null;
+  return {
+    action,
+    approvalId,
+    signature,
+    status: action === 'a' ? 'approved' : 'rejected',
+  };
+}
+
+function safeEqualTelegramSignature(actual: string, expected: string): boolean {
+  if (actual.length !== expected.length) return false;
+  return timingSafeEqual(Buffer.from(actual), Buffer.from(expected));
+}
+
+function findApprovalById(repo: ApiRepository, approvalId: string): ApprovalRequest | null {
+  for (const org of repo.listOrganizations()) {
+    const approval = repo.getApproval(org.id, approvalId);
+    if (approval) return approval;
+  }
+  return null;
 }
 
 async function sendWhatsApp(config: Record<string, unknown>, text: string, log: boolean): Promise<void> {

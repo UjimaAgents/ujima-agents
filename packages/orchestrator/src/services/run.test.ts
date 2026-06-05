@@ -364,6 +364,104 @@ describe('SpiritService run path', () => {
     expect(aliasCard?.toolName).toBe('card.artifact.file');
   });
 
+  it('persists token counts to the final reply silently (no realtime re-broadcast)', async () => {
+    const organizationId = 'org-1';
+    const runId = 'run-1';
+    const agentId = 'Quinn Mason';
+    const threadId = 'thread-1';
+    const messages: any[] = [];
+    const updatedMessages: any[] = [];
+    let run: any = {
+      id: runId,
+      organizationId,
+      agentId,
+      threadId,
+      status: 'queued',
+      step: 'queued',
+      summary: 'Run queued',
+      startedAt: '2026-05-04T19:07:08.071Z',
+    };
+
+    const repo = {
+      getMember: () => ({
+        id: agentId,
+        organizationId,
+        name: agentId,
+        kind: AGENT_KIND,
+        roleName: 'backend-engineer',
+      }),
+      saveRun: (next: any) => {
+        run = next;
+        return next;
+      },
+      getRun: () => run,
+      getProviderCredential: () => null,
+      getWorkspaceSetting: () => null,
+      listMembers: () => [],
+      listPendingApprovals: () => [],
+      listRunSteps: () => [],
+      listMessages: () => ({ data: [], hasMore: false }),
+      getLatestHumanMessageInThread: () => null,
+      getSpiritByRunId: () => null,
+      getThread: () => ({ channelId: 'channel-1' }),
+      updateMessage: (message: any) => {
+        updatedMessages.push(message);
+        return message;
+      },
+    } as never;
+
+    const service = createSpiritRunService(
+      {
+        getTeam: () =>
+          loadAgentTeam({
+            name: 'Timetotest',
+            workspace: { root: '/tmp' },
+            roles: [
+              {
+                name: 'backend-engineer',
+                title: 'Backend Engineer',
+                instructions: 'Work on backend.',
+                tools: ['shell'],
+              },
+            ],
+            agents: [{ name: agentId, roleName: 'backend-engineer' }],
+          }),
+        setTeam: () => undefined,
+      } as never,
+      repo,
+      { emit: () => undefined } as never,
+      {
+        publishMessage: (message: any) => {
+          messages.push(message);
+          return message;
+        },
+      } as never,
+      {
+        generateRunReply: async () => ({
+          text: "Got it. Feature's done.",
+          usage: { inputTokens: 12, outputTokens: 34, totalTokens: 46 },
+          toolResults: [],
+          steps: [{ text: '' }],
+        }),
+      } as never,
+      { allowRun: () => undefined, invoke: async () => ({ ok: true }) } as never,
+    );
+
+    const result = await (service as any).advanceRun(run);
+
+    expect(result.status).toBe('completed');
+    expect(messages).toHaveLength(1);
+    expect(messages[0].content).toBe("Got it. Feature's done.");
+    // The realtime emit went out token-free — the live counter under
+    // the typing indicator owns that visualization. Tokens are
+    // persisted silently to the DB so they survive a reload.
+    expect(messages[0].inputTokens).toBeUndefined();
+    expect(messages[0].outputTokens).toBeUndefined();
+    expect(updatedMessages).toHaveLength(1);
+    expect(updatedMessages[0].inputTokens).toBe(12);
+    expect(updatedMessages[0].outputTokens).toBe(34);
+  });
+
   it('does not publish tool-turn placeholders for goal-file writes', async () => {
     const organizationId = 'org-1';
     const runId = 'run-1';
@@ -476,6 +574,202 @@ describe('SpiritService run path', () => {
     expect(messages.some((message) => message.content.includes('[tool turn —'))).toBe(false);
     expect(messages.some((message) => message.toolCalls?.some((toolCall: any) => toolCall.toolName === 'card.artifact.file'))).toBe(true);
     expect(messages.some((message) => message.content === 'Done.')).toBe(true);
+  });
+
+  it('skips tool-only assistant steps that have no chat-renderable content', async () => {
+    const organizationId = 'org-1';
+    const runId = 'run-1';
+    const agentId = 'Quinn Mason';
+    const threadId = 'thread-1';
+    const messages: any[] = [];
+    let run: any = {
+      id: runId,
+      organizationId,
+      agentId,
+      threadId,
+      status: 'queued',
+      step: 'queued',
+      summary: 'Run queued',
+      startedAt: '2026-05-04T19:07:08.071Z',
+    };
+
+    const repo = {
+      getMember: () => ({
+        id: agentId,
+        organizationId,
+        name: agentId,
+        kind: AGENT_KIND,
+        roleName: 'backend-engineer',
+      }),
+      saveRun: (next: any) => {
+        run = next;
+        return next;
+      },
+      getRun: () => run,
+      getProviderCredential: () => null,
+      getWorkspaceSetting: () => null,
+      listMembers: () => [],
+      listPendingApprovals: () => [],
+      listRunSteps: () => [],
+      listMessages: () => ({ data: [], hasMore: false }),
+      getLatestHumanMessageInThread: () => null,
+      getSpiritByRunId: () => null,
+      getThread: () => ({ channelId: 'channel-1' }),
+    } as never;
+
+    const service = createSpiritRunService(
+      {
+        getTeam: () =>
+          loadAgentTeam({
+            name: 'Timetotest',
+            workspace: { root: '/tmp' },
+            roles: [
+              {
+                name: 'backend-engineer',
+                title: 'Backend Engineer',
+                instructions: 'Work on backend.',
+                tools: ['shell'],
+              },
+            ],
+            agents: [{ name: agentId, roleName: 'backend-engineer' }],
+          }),
+        setTeam: () => undefined,
+      } as never,
+      repo,
+      { emit: () => undefined } as never,
+      { publishMessage: (message: any) => messages.push(message) } as never,
+      {
+        generateRunReply: async (input: {
+          onStepFinish?: (step: unknown, steps: unknown[]) => Promise<void> | void;
+        }) => {
+          const step = {
+            toolCalls: [
+              {
+                toolCallId: 'tool-call-1',
+                toolName: 'shell',
+                input: { command: 'echo hi' },
+              },
+            ],
+            toolResults: [{ toolCallId: 'tool-call-1', output: { status: 'ok' } }],
+          };
+          await input.onStepFinish?.(step, [step]);
+          return { text: '', toolResults: [], steps: [step] };
+        },
+      } as never,
+      { allowRun: () => undefined, invoke: async () => ({ ok: true }) } as never,
+    );
+
+    await (service as any).advanceRun(run);
+
+    // Tool-only steps with no artifact card and no model text must
+    // NOT publish — they'd render as empty bubbles in the chat. The
+    // tool execution data lives in `run_steps` for the trace panel.
+    const toolOnlyMessage = messages.find(
+      (message) =>
+        Array.isArray(message.toolCalls) &&
+        message.toolCalls.some((call: { toolCallId?: string }) => call.toolCallId === 'tool-call-1'),
+    );
+    expect(toolOnlyMessage).toBeUndefined();
+  });
+
+  it('persists token counts to the last visible bubble silently in a multi-step reply', async () => {
+    const organizationId = 'org-1';
+    const runId = 'run-1';
+    const agentId = 'Quinn Mason';
+    const threadId = 'thread-1';
+    const messages: any[] = [];
+    const updatedMessages: any[] = [];
+    let run: any = {
+      id: runId,
+      organizationId,
+      agentId,
+      threadId,
+      status: 'queued',
+      step: 'queued',
+      summary: 'Run queued',
+      startedAt: '2026-05-04T19:07:08.071Z',
+    };
+
+    const repo = {
+      getMember: () => ({
+        id: agentId,
+        organizationId,
+        name: agentId,
+        kind: AGENT_KIND,
+        roleName: 'backend-engineer',
+      }),
+      saveRun: (next: any) => {
+        run = next;
+        return next;
+      },
+      getRun: () => run,
+      getProviderCredential: () => null,
+      getWorkspaceSetting: () => null,
+      listMembers: () => [],
+      listPendingApprovals: () => [],
+      listRunSteps: () => [],
+      listMessages: () => ({ data: [], hasMore: false }),
+      getLatestHumanMessageInThread: () => null,
+      getSpiritByRunId: () => null,
+      getThread: () => ({ channelId: 'channel-1' }),
+      updateMessage: (message: any) => {
+        updatedMessages.push(message);
+        return message;
+      },
+    } as never;
+
+    const service = createSpiritRunService(
+      {
+        getTeam: () =>
+          loadAgentTeam({
+            name: 'Timetotest',
+            workspace: { root: '/tmp' },
+            roles: [
+              {
+                name: 'backend-engineer',
+                title: 'Backend Engineer',
+                instructions: 'Work on backend.',
+                tools: ['shell'],
+              },
+            ],
+            agents: [{ name: agentId, roleName: 'backend-engineer' }],
+          }),
+        setTeam: () => undefined,
+      } as never,
+      repo,
+      { emit: () => undefined } as never,
+      {
+        publishMessage: (message: any) => {
+          messages.push(message);
+          return message;
+        },
+      } as never,
+      {
+        generateRunReply: async (input: {
+          onStepFinish?: (step: unknown, steps: unknown[]) => Promise<void> | void;
+        }) => {
+          const first = { text: 'First pass' };
+          const second = { text: 'Second pass' };
+          await input.onStepFinish?.(first, [first]);
+          await input.onStepFinish?.(second, [first, second]);
+          return {
+            text: 'Second pass',
+            usage: { inputTokens: 12, outputTokens: 34, totalTokens: 46 },
+            toolResults: [],
+            steps: [first, second],
+          };
+        },
+      } as never,
+      { allowRun: () => undefined, invoke: async () => ({ ok: true }) } as never,
+    );
+
+    await (service as any).advanceRun(run);
+
+    expect(messages.at(-1).content).toBe('Second pass');
+    expect(messages.at(-1).inputTokens).toBeUndefined();
+    expect(messages.at(-1).outputTokens).toBeUndefined();
+    expect(updatedMessages.at(-1).inputTokens).toBe(12);
+    expect(updatedMessages.at(-1).outputTokens).toBe(34);
   });
 
   it('persists each non-reasoning assistant step as a chat message', async () => {
@@ -1868,6 +2162,19 @@ describe('SpiritService run path', () => {
       summary: 'Busy',
       startedAt: '2026-05-04T19:07:08.071Z',
     };
+    const questions: any[] = [
+      {
+        id: 'question-cancel-1',
+        organizationId,
+        channelId: 'channel-1',
+        runId,
+        questionText: 'Pick one',
+        options: ['Yes (Recommended)', 'No'],
+        status: 'pending',
+        createdAt: '2026-05-04T19:07:08.071Z',
+        updatedAt: '2026-05-04T19:07:08.071Z',
+      },
+    ];
     const repo = {
       getRun: () => run,
       saveRun: (next: any) => {
@@ -1875,6 +2182,12 @@ describe('SpiritService run path', () => {
         return next;
       },
       getThread: () => ({ channelId: 'channel-1' }),
+      listInteractiveQuestionsByRunId: () => questions,
+      saveInteractiveQuestion: (next: any) => {
+        const index = questions.findIndex((question) => question.id === next.id);
+        if (index >= 0) questions[index] = next;
+        return next;
+      },
     } as never;
     let completions = 0;
     const service = createSpiritRunService(
@@ -1898,8 +2211,152 @@ describe('SpiritService run path', () => {
     const result = service.cancelRun(organizationId, runId);
     expect(result.status).toBe('cancelled');
     expect(result.summary).toBe('Stopped by user');
+    expect(questions[0].status).toBe('superseded');
     expect(completions).toBe(1);
     expect(service.cancelRun(organizationId, runId).status).toBe('cancelled');
+  });
+
+  it('cancelRun also cancels the paired live spirit', () => {
+    const organizationId = 'org-1';
+    const runId = 'run-cancel-spirit-1';
+    let run: any = {
+      id: runId,
+      organizationId,
+      agentId: 'Quinn Mason',
+      threadId: 'thread-1',
+      status: 'waiting_for_input',
+      step: 'waiting_for_input',
+      summary: 'Waiting',
+      startedAt: '2026-05-04T19:07:08.071Z',
+    };
+    let spirit: any = {
+      id: 'spirit-1',
+      organizationId,
+      taskSessionId: 'session-1',
+      memberId: 'Quinn Mason',
+      role: 'worker',
+      runId,
+      status: 'waiting_for_input',
+      iteration: 0,
+      tokensUsed: 0,
+      createdAt: '2026-05-04T19:07:08.071Z',
+      updatedAt: '2026-05-04T19:07:08.071Z',
+    };
+    const repo = {
+      getRun: () => run,
+      saveRun: (next: any) => {
+        run = next;
+        return next;
+      },
+      getThread: () => ({ channelId: 'channel-1' }),
+      getSpiritByRunId: () => spirit,
+      saveSpirit: (next: any) => {
+        spirit = next;
+        return next;
+      },
+      getTaskSession: () => null,
+    } as never;
+    const service = createSpiritRunService(
+      {
+        getTeam: () =>
+          loadAgentTeam({
+            name: 'Timetotest',
+            workspace: { root: '/tmp' },
+            roles: [{ name: 'backend-engineer', title: 'BE', instructions: '.', tools: ['shell'] }],
+            agents: [{ name: 'Quinn Mason', roleName: 'backend-engineer' }],
+          }),
+        setTeam: () => undefined,
+      } as never,
+      repo,
+      { emit: () => undefined } as never,
+      {} as never,
+      { generateRunReply: async () => ({ text: '', toolResults: [], steps: [] }) } as never,
+      { allowRun: () => undefined, invoke: async () => ({ ok: true }) } as never,
+    );
+
+    service.cancelRun(organizationId, runId);
+
+    expect(run.status).toBe('cancelled');
+    expect(spirit.status).toBe('cancelled');
+    expect(spirit.lastError).toBe('Stopped by user');
+  });
+
+  it('keeps a run waiting when a question tool result leaks through normally', async () => {
+    const organizationId = 'org-1';
+    const runId = 'run-input-wait-1';
+    const agentId = 'Quinn Mason';
+    const threadId = 'thread-1';
+    const messages: any[] = [];
+    let run: any = {
+      id: runId,
+      organizationId,
+      agentId,
+      threadId,
+      status: 'queued',
+      step: 'queued',
+      summary: 'Run queued',
+      startedAt: '2026-05-04T19:07:08.071Z',
+    };
+    const repo = {
+      getMember: () => ({
+        id: agentId,
+        organizationId,
+        name: agentId,
+        kind: AGENT_KIND,
+        roleName: 'backend-engineer',
+      }),
+      getRun: () => run,
+      saveRun: (next: any) => {
+        run = next;
+        return next;
+      },
+      getProviderCredential: () => null,
+      getWorkspaceSetting: () => null,
+      listMembers: () => [],
+      listPendingApprovals: () => [],
+      listMessages: () => ({ data: [], hasMore: false }),
+      getLatestHumanMessageInThread: () => null,
+      getSpiritByRunId: () => null,
+      getThread: () => ({ channelId: 'channel-1' }),
+      listRunSteps: () => [
+        {
+          toolCallId: 'tool-call-1',
+          toolId: 'question.ask',
+          output: { status: 'waiting_for_input', questionId: 'question-1' },
+          status: 'ok',
+        },
+      ],
+      getInteractiveQuestion: () => ({ questionText: 'Pick one option' }),
+    } as never;
+    const service = createSpiritRunService(
+      {
+        getTeam: () =>
+          loadAgentTeam({
+            name: 'Timetotest',
+            workspace: { root: '/tmp' },
+            roles: [{ name: 'backend-engineer', title: 'BE', instructions: '.', tools: ['question.ask'] }],
+            agents: [{ name: agentId, roleName: 'backend-engineer' }],
+          }),
+        setTeam: () => undefined,
+      } as never,
+      repo,
+      { emit: () => undefined } as never,
+      { publishMessage: (message: any) => messages.push(message) } as never,
+      {
+        generateRunReply: async () => ({
+          text: 'I will wait for the answer.',
+          toolResults: [{ output: { status: 'waiting_for_input', questionId: 'question-1' } }],
+          steps: [],
+        }),
+      } as never,
+      { allowRun: () => undefined, invoke: async () => ({ ok: true }) } as never,
+    );
+
+    const result = await (service as any).advanceRun(run);
+
+    expect(result.status).toBe('waiting_for_input');
+    expect(result.summary).toBe('Pick one option');
+    expect(messages).toEqual([]);
   });
 
   it('persists streamed trace when a run is stopped', async () => {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { Bell, ExternalLink, Plus, Trash2, RefreshCw, AlertCircle, MessageSquare, ShieldCheck } from "lucide-react";
 import { TextInput } from "@/components/ui/form-fields";
 import { Modal } from "@/components/ui/modal";
@@ -271,7 +271,7 @@ export function NotificationsTab() {
 function GuideModal({ provider, onClose }: { provider: "telegram" | "whatsapp" | "webhook" | null; onClose: () => void }) {
   if (!provider) return null;
 
-  const guides: Record<string, { title: string; steps: React.ReactNode }> = {
+  const guides: Record<string, { title: string; steps: ReactNode }> = {
     telegram: {
       title: "Telegram setup",
       steps: (

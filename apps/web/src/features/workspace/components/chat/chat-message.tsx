@@ -7,6 +7,7 @@ import { Markdown, MarkdownInline } from "../markdown";
 import { AttachmentGrid } from "./attachment-grid";
 import { TerminalPane } from "./terminal-pane";
 import { FilesystemToolPane } from "./filesystem-tool-pane";
+import { TokenCount } from "./chat-token-count";
 import { Modal } from "@/components/ui/modal";
 import { UnifiedDiffView } from "./unified-diff-view";
 
@@ -51,6 +52,8 @@ export interface ChatMessageData {
   tag?: { label: string; variant: TagVariant };
   status?: "success" | "warning";
   pending?: boolean;
+  inputTokens?: number;
+  outputTokens?: number;
 }
 
 const DRAG_THRESHOLD = 30;
@@ -219,6 +222,16 @@ export const ChatMessage = memo(function ChatMessage({
                 attachments={message.attachments}
                 organizationId={organizationId ?? ""}
               />
+              {message.kind === "agent" && (message.inputTokens ?? 0) + (message.outputTokens ?? 0) > 0 && (
+                <p className="mt-1 flex items-center justify-end gap-1 text-[10px] tracking-tight text-zinc-400">
+                  <span className="text-zinc-500/80">⎆</span>
+                  <TokenCount value={message.inputTokens ?? 0} />
+                  <span>in</span>
+                  <span className="text-zinc-500/70">·</span>
+                  <TokenCount value={message.outputTokens ?? 0} />
+                  <span>out</span>
+                </p>
+              )}
               {message.detail && (
                 <p className="mt-0.5 text-sm leading-relaxed text-zinc-500 dark:text-zinc-400">
                   {message.detail}

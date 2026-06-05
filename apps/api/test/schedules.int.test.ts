@@ -13,7 +13,8 @@ function createRepo() {
       );
     },
     get(orgId: string, jobId: string) {
-      return db.prepare('SELECT * FROM scheduled_jobs WHERE id = ? AND organization_id = ?').get(jobId, orgId) as Record<string, unknown> | null;
+      const row = db.prepare('SELECT * FROM scheduled_jobs WHERE id = ? AND organization_id = ?').get(jobId, orgId);
+      return row == null ? null : (row as Record<string, unknown>);
     },
     list(orgId: string) {
       return db.prepare('SELECT * FROM scheduled_jobs WHERE organization_id = ? ORDER BY created_at ASC').all(orgId) as Record<string, unknown>[];

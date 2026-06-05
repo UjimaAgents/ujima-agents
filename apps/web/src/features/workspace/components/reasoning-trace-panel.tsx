@@ -22,6 +22,7 @@ interface TraceRowData {
   key: string;
   step: TraceStepData;
   isLast: boolean;
+  autoOpen: boolean;
 }
 
 function scrollContainerToBottom(container: HTMLElement) {
@@ -437,11 +438,19 @@ export function ReasoningTracePanel({
 
     const rawSteps = [...historySteps, ...uniqueLiveSteps];
     const grouped = groupTraceSteps(rawSteps);
+    let lastToolGroupIndex = -1;
+    for (let index = grouped.length - 1; index >= 0; index -= 1) {
+      if (grouped[index]?.aggregatedOperations?.length) {
+        lastToolGroupIndex = index;
+        break;
+      }
+    }
 
     return grouped.map((step, index) => ({
       key: step.id,
       step,
       isLast: index === grouped.length - 1,
+      autoOpen: index === lastToolGroupIndex,
     }));
   }, [
     conversationName,
@@ -511,6 +520,7 @@ export function ReasoningTracePanel({
               key={row.key}
               step={row.step}
               isLast={row.isLast && !elapsed}
+              autoOpen={row.autoOpen}
             />
           ))}
           {elapsed ? (
