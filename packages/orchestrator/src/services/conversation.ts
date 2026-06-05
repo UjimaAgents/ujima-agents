@@ -36,6 +36,7 @@ import {
   compactConversationIfNeeded,
   archiveConversation,
   shouldHideCompactedMessage,
+  type CompactionContext,
 } from './conversation-compact.js';
 import {
   MentionQuota,
@@ -398,7 +399,7 @@ export class ConversationService {
     return emittedMessage;
   }
 
-  private compactionContext(): import('./conversation-compact.js').CompactionContext {
+  private compactionContext(): CompactionContext {
     return {
       repo: this.repo,
       publishMessage: (message, mentions, attachmentIds, options) =>
@@ -1772,5 +1773,4 @@ function mergeRankedPaginatedMessages(
 function uniqueMentionIds(mentions: MessageMention[]): string[] {
   return [...new Set(mentions.map((mention) => mention.memberId))];
 }
-
 

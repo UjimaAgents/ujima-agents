@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline/promises';
+import { emitKeypressEvents } from 'node:readline';
 import { superviseChildren } from './start-supervisor.js';
 import { maybeLoadTeam } from '@ujima/runtime-core';
 import { DEFAULT_BIND_HOST, DEFAULT_BIND_PORT } from '@ujima/api-schema';
@@ -50,6 +51,63 @@ function baseUrl(): string {
   const host = process.env.UJIMA_BIND_HOST ?? DEFAULT_BIND_HOST;
   const port = process.env.UJIMA_PORT ?? String(DEFAULT_BIND_PORT);
   return `http://${host}:${port}`;
+}
+
+function promptHiddenInput(prompt: string): Promise<string> {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    throw new Error('ujima init: -p - requires an interactive terminal');
+  }
+
+  return new Promise((resolve) => {
+    process.stdout.write(prompt);
+    emitKeypressEvents(process.stdin);
+    process.stdin.setRawMode(true);
+    process.stdin.resume();
+
+    let password = '';
+    let done = false;
+    const cleanup = () => {
+      process.stdin.off('keypress', onKeypress);
+      process.stdin.setRawMode(false);
+      process.stdin.pause();
+    };
+    const finish = () => {
+      if (done) return;
+      done = true;
+      cleanup();
+      process.stdout.write('\n');
+      resolve(password);
+    };
+    const abort = () => {
+      if (done) return;
+      done = true;
+      cleanup();
+      process.exit(1);
+    };
+    const onKeypress = (str: string, key?: { name?: string; ctrl?: boolean; meta?: boolean }) => {
+      if (key?.ctrl && key.name === 'c') {
+        abort();
+        return;
+      }
+      if (key?.name === 'return' || key?.name === 'enter') {
+        finish();
+        return;
+      }
+      if (key?.name === 'backspace' || key?.name === 'delete') {
+        if (password.length > 0) {
+          password = password.slice(0, -1);
+          process.stdout.write('\b \b');
+        }
+        return;
+      }
+      if (!key?.ctrl && !key?.meta && str.length > 0) {
+        password += str;
+        process.stdout.write('*');
+      }
+    };
+
+    process.stdin.on('keypress', onKeypress);
+  });
 }
 
 function isDevMode(): boolean {
@@ -146,30 +204,7 @@ async function cmdInit(argv: string[]): Promise<void> {
 
   let ownerPassword = opts.ownerPassword;
   if (opts.promptPassword) {
-    const rl = createInterface({ input: process.stdin, output: process.stdout });
-    process.stdout.write('Owner password (min 8 chars): ');
-    try {
-      // Read password with hidden input (stdin raw mode)
-      process.stdin.setRawMode?.(true);
-      ownerPassword = '';
-      for await (const char of process.stdin) {
-        if (char === '\n' || char === '\r' || char === '\u0004') break;
-        if (char === '\u0003') process.exit(1); // Ctrl+C
-        if (char === '\b' || char === '\u007f') {
-          if (ownerPassword.length > 0) {
-            ownerPassword = ownerPassword.slice(0, -1);
-            process.stdout.write('\b \b');
-          }
-        } else {
-          ownerPassword += char;
-          process.stdout.write('*');
-        }
-      }
-      process.stdout.write('\n');
-    } finally {
-      process.stdin.setRawMode?.(false);
-      rl.close();
-    }
+    ownerPassword = await promptHiddenInput('Owner password (min 8 chars): ');
   }
 
   const team = await maybeLoadTeam(opts.configPath);
