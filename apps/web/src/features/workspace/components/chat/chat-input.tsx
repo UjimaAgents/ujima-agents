@@ -18,6 +18,12 @@ import {
 import { ConfirmDialog } from "@/features/settings/shared/confirm-dialog";
 import { AttachmentSchema, type AttachmentCategory } from "@ujima/shared/browser";
 import {
+  clampReasoningEffortForProvider,
+  getReasoningEffortsForProvider,
+  type ReasoningEffort,
+} from "@ujima/shared/browser";
+import { Select } from "@/components/ui/select";
+import {
   listItemIdle,
   listItemSelected,
   listItemSubtitleIdle,
@@ -109,6 +115,9 @@ const BUILTIN_SLASH_COMMANDS: Array<{
 
 const MAX_COMPOSER_ROWS = 3;
 const SLASH_MENU_PREVIEW_COUNT = 5;
+function reasoningLabel(value: ReasoningEffort): string {
+  return value === "extra_high" ? "Extra High" : value.charAt(0).toUpperCase() + value.slice(1);
+}
 
 function RunningFigureIndicator() {
   return (
@@ -217,11 +226,12 @@ export function ChatInput({
   readOnly = false,
   skillCommands = [],
   onSkillCommand,
+  reasoningProvider,
 }: {
   placeholder?: string;
   organizationId?: string;
-  onSend: (content: string, attachmentIds?: string[], metadata?: { goalMode?: boolean }) => Promise<void> | void;
-  onCommand: (command: ThreadCommand, rawContent?: string) => Promise<void> | void;
+  onSend: (content: string, attachmentIds?: string[], metadata?: { goalMode?: boolean; reasoningEffort?: ReasoningEffort }) => Promise<void> | void;
+  onCommand: (command: ThreadCommand, rawContent?: string, metadata?: { goalMode?: boolean; reasoningEffort?: ReasoningEffort }) => Promise<void> | void;
   inlineError?: string;
   mentionSuggestions?: MentionSuggestion[];
   replyTo?: ChatMessageData | null;
@@ -232,10 +242,12 @@ export function ChatInput({
   onStopRun?: (runId: string) => Promise<void> | void;
   readOnly?: boolean;
   skillCommands?: SlashSkillCommand[];
-  onSkillCommand?: (skillId: string, rawContent?: string) => Promise<void> | void;
+  onSkillCommand?: (skillId: string, rawContent?: string, metadata?: { goalMode?: boolean; reasoningEffort?: ReasoningEffort }) => Promise<void> | void;
+  reasoningProvider?: string;
 }) {
   const goalMode = goalModeProp ?? false;
   const [content, setContent] = useState("");
+  const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>("none");
   const [isSending, setIsSending] = useState(false);
   const [isStopping, setIsStopping] = useState(false);
   const [isCommanding, setIsCommanding] = useState(false);
@@ -254,6 +266,15 @@ export function ChatInput({
   const attachmentsRef = useRef<UploadedAttachment[]>([]);
   const uploadControllersRef = useRef(new Map<string, AbortController>());
   const composerPlaceholder = readOnly ? `Observer Mode · ${placeholder}` : placeholder;
+  const reasoningOptions = useMemo(
+    () =>
+      getReasoningEffortsForProvider(reasoningProvider ?? "").map((value) => ({
+        value,
+        label: reasoningLabel(value),
+      })),
+    [reasoningProvider],
+  );
+  const selectedReasoningEffort = clampReasoningEffortForProvider(reasoningProvider ?? "", reasoningEffort);
 
   function revokePreviewUrl(attachment: UploadedAttachment) {
     if (attachment.previewUrl?.startsWith("blob:")) {
@@ -547,7 +568,10 @@ export function ChatInput({
     setError(null);
     setIsSending(true);
     try {
-      await onSend(next, attachments.map((attachment) => attachment.id), goalMode ? { goalMode: true } : undefined);
+      await onSend(next, attachments.map((attachment) => attachment.id), {
+        ...(goalMode ? { goalMode: true } : {}),
+        reasoningEffort: selectedReasoningEffort,
+      });
       for (const attachment of attachments) {
         revokePreviewUrl(attachment);
       }
@@ -586,9 +610,15 @@ export function ChatInput({
     try {
       const currentContent = content;
       if (command.kind === "skill") {
-        await onSkillCommand?.(command.id, currentContent);
+        await onSkillCommand?.(command.id, currentContent, {
+          ...(goalMode ? { goalMode: true } : {}),
+          reasoningEffort: selectedReasoningEffort,
+        });
       } else {
-        await onCommand(command.command as ThreadCommand, currentContent);
+        await onCommand(command.command as ThreadCommand, currentContent, {
+          ...(goalMode ? { goalMode: true } : {}),
+          reasoningEffort: selectedReasoningEffort,
+        });
       }
       setContent("");
       setSelection({ start: 0, end: 0 });
@@ -603,7 +633,20 @@ export function ChatInput({
   };
 
   const confirmClear = async () => {
-    await runSlashCommand({ command: "clear", label: "/clear", description: "Archive the thread and empty the visible chat.", kind: "builtin" });
+    setIsCommanding(true);
+    try {
+      const currentContent = content;
+      await onCommand("clear", currentContent);
+      setContent("");
+      setSelection({ start: 0, end: 0 });
+      setAttachments([]);
+      setUploadProgress(0);
+      setClearConfirmation(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to run clear command.");
+    } finally {
+      setIsCommanding(false);
+    }
   };
 
   const submitComposer = async () => {
@@ -1004,6 +1047,18 @@ export function ChatInput({
                   Goal
                 </button>
               ) : null}
+              <Select
+                size="sm"
+                value={selectedReasoningEffort}
+                onChange={(event) => setReasoningEffort(event.target.value as ReasoningEffort)}
+                options={reasoningOptions}
+                placeholder="Reasoning"
+                ariaLabel="Reasoning effort"
+                menuPlacement="up"
+                className="w-[8.5rem] sm:w-[10.5rem]"
+                menuClassName="min-w-full w-max max-w-[calc(100vw-1.5rem)]"
+                disabled={readOnly}
+              />
               {canStopRun && !showStopInsteadOfSend && (
                 <button
                   type="button"

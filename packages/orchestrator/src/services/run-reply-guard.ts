@@ -23,6 +23,23 @@ export const RUN_TERMINATING_TOOL_NAMES = new Set([
 /** @deprecated Renamed to {@link RUN_TERMINATING_TOOL_NAMES}. */
 export const THREAD_PUBLISHING_TOOL_NAMES = RUN_TERMINATING_TOOL_NAMES;
 
+export function isDelegateMessage(message: { metadata?: unknown } | null | undefined): boolean {
+  return !!(message?.metadata as { delegate?: unknown } | undefined)?.delegate;
+}
+
+export function filterDelegateTurnTools(toolIds: readonly string[]): string[] {
+  const postingTools = new Set([
+    'channel.post',
+    'channel.reply',
+    'channel.dm',
+    'channel.handoff',
+    'channel.pass',
+    'channel.ack',
+    'message',
+  ]);
+  return toolIds.filter((toolId) => !postingTools.has(toolId));
+}
+
 function collectToolNamesFromList(list: unknown, out: Set<string>): void {
   if (!Array.isArray(list)) return;
   for (const item of list) {

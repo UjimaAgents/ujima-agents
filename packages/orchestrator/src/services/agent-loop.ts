@@ -6,6 +6,7 @@ import {
   ToolApprovalRequiredError,
   ToolInputRequiredError,
 } from './tool-loop-result.js';
+import { dropHeaviestAttachedMcp, type AttachedMcpServerSummary } from './spirit-mcp-helpers.js';
 
 // Both wake-run (ai-service.generateRunReply) and direct-spirit
 // (spirit-agent-run.runOnce) call runAgentLoop and both can hit the
@@ -64,6 +65,67 @@ export async function runAgentLoopWithRetry(
   }
 }
 
+export interface RunAgentExecutionConfig {
+  model: LanguageModel;
+  system: string;
+  messages: ModelMessage[];
+  tools: ToolSet;
+  attachedMcpServers: readonly AttachedMcpServerSummary[];
+  stopWhen: NonNullable<Parameters<typeof streamText>[0]['stopWhen']>;
+  maxOutputTokens?: number;
+  temperature?: number;
+  toolChoice?: Parameters<typeof streamText>[0]['toolChoice'];
+  abortSignal?: AbortSignal;
+  onChunk?: (chunk: AgentLoopChunk) => PromiseLike<void> | void;
+  onStepFinish?: (step: AgentLoopStep, steps: AgentLoopStep[]) => PromiseLike<void> | void;
+  loadInterruptMessages?: (step: AgentLoopStep) => Promise<ModelMessage[]> | ModelMessage[];
+  onModelNotFound: (error: ModelNotFoundError) => Promise<LanguageModel | null> | LanguageModel | null;
+  logLabel: string;
+  memberLabel: string;
+}
+
+export async function runAgentWithRetry(
+  config: RunAgentExecutionConfig,
+): Promise<AgentLoopResult> {
+  let currentModel = config.model;
+  let currentTools = config.tools;
+
+  return runAgentLoopWithRetry(
+    () => ({
+      model: currentModel,
+      system: config.system,
+      messages: config.messages,
+      tools: currentTools,
+      stopWhen: config.stopWhen,
+      maxOutputTokens: config.maxOutputTokens,
+      temperature: config.temperature,
+      toolChoice: config.toolChoice,
+      abortSignal: config.abortSignal,
+      onChunk: config.onChunk,
+      onStepFinish: config.onStepFinish,
+      loadInterruptMessages: config.loadInterruptMessages,
+    }),
+    (next) => {
+      currentModel = next;
+    },
+    (next) => {
+      currentTools = next;
+    },
+    {
+      onModelNotFound: config.onModelNotFound,
+      onSchemaTooLarge: () => {
+        const dropped = dropHeaviestAttachedMcp(currentTools, config.attachedMcpServers);
+        if (!dropped) return null;
+        console.warn(
+          `[${config.logLabel}] gemini "too many states" — dropped MCP "${dropped.serverName}" ` +
+            `(${dropped.toolNames.length} tools) and retrying for member="${config.memberLabel}"`,
+        );
+        return dropped.toolDefs;
+      },
+    },
+  );
+}
+
 // Typed errors so callers can mount targeted recovery without
 // pattern-matching error strings at every site. Both extend Error so
 // they propagate normally if the caller chooses not to handle them.
@@ -91,6 +153,18 @@ export class SchemaTooLargeError extends Error {
     super(message);
     this.name = 'SchemaTooLargeError';
   }
+}
+
+// Re-throws `error` if it matches any known, typed condition; throws
+// the classified error otherwise. Consolidates the triple-classify
+// pattern that must fire at every catch site in runAgentLoop.
+function rethrowClassified(error: unknown): never {
+  if (findToolApprovalRequiredError(error)) throw error;
+  if (findToolInputRequiredError(error)) throw error;
+  if (error instanceof ModelNotFoundError || error instanceof SchemaTooLargeError) throw error;
+  const classified = classifyApiError(error);
+  if (classified) throw classified;
+  throw error;
 }
 
 // Maps a raw `AI_APICallError` from the Vercel AI SDK to one of the
@@ -301,21 +375,11 @@ export async function runAgentLoop(input: {
     try {
       for await (const part of result.fullStream) {
         if (part.type === 'error') {
-          const approvalError = findToolApprovalRequiredError(part.error);
-          if (approvalError) throw approvalError;
-          const inputError = findToolInputRequiredError(part.error);
-          if (inputError) throw inputError;
-          const classified = classifyApiError(part.error);
-          if (classified) throw classified;
-          throw part.error;
+          rethrowClassified(part.error);
         }
       }
     } catch (streamError) {
-      if (findToolApprovalRequiredError(streamError)) throw streamError;
-      if (findToolInputRequiredError(streamError)) throw streamError;
-      const classified = classifyApiError(streamError);
-      if (classified) throw classified;
-      throw streamError;
+      rethrowClassified(streamError);
     }
 
     let text: string;
@@ -323,11 +387,7 @@ export async function runAgentLoop(input: {
     try {
       [text, usage] = await Promise.all([result.text, result.usage]);
     } catch (resolveError) {
-      if (findToolApprovalRequiredError(resolveError)) throw resolveError;
-      if (findToolInputRequiredError(resolveError)) throw resolveError;
-      const classified = classifyApiError(resolveError);
-      if (classified) throw classified;
-      throw resolveError;
+      rethrowClassified(resolveError);
     }
 
     const toolResults = steps.flatMap((step) => step.toolResults ?? []);
@@ -341,17 +401,7 @@ export async function runAgentLoop(input: {
   try {
     return await execute();
   } catch (error) {
-    // Outer-catch classifier. The inner catches around `for await`
-    // and `Promise.all` already convert AI_APICallError to our
-    // typed errors, but if an unusual streamText invocation throws
-    // synchronously before either of those runs, this is the last
-    // chance to surface the typed error so the retry wrapper in
-    // ai-service / spirit-agent-run can mount recovery.
-    if (!(error instanceof ModelNotFoundError) && !(error instanceof SchemaTooLargeError)) {
-      const classified = classifyApiError(error);
-      if (classified) throw classified;
-    }
-    throw error;
+    rethrowClassified(error);
   }
 }
 

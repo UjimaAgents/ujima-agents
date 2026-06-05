@@ -24,7 +24,13 @@ import {
 } from "./chat";
 import { ChannelMembersTab } from "./channel-members-tab";
 import { CultureTab } from "@/features/settings/shared/culture-tab";
-import { getDirectMessageThreadId, RunStateSchema, type RunState } from "@ujima/shared/browser";
+import {
+  getDirectMessageThreadId,
+  parseConfiguredProviderModelValue,
+  resolveMemberModelSelection,
+  RunStateSchema,
+  type RunState,
+} from "@ujima/shared/browser";
 import { settingsFetch } from "@/features/settings/shared/settings-api";
 import {
   isAgentOnlyThread,
@@ -47,6 +53,7 @@ import { runToActivity } from "../activity-events";
 import { pendingApprovalVisibleInChannelView, queueApprovals } from "../approval-thread-filter";
 import { ReasoningTracePanel } from "./reasoning-trace-panel";
 import { QuestionCard } from "./chat/question-card";
+import { ChannelChatHeaderControls } from "./chat/channel-chat-header-controls";
 import { buildTabCounts, collectConversationAttachments, isLiveRun } from "../feed-selectors";
 import { AgentChatHeaderControls } from "./chat/agent-chat-header-controls";
 import type { Member, ShellApprovalMode, InteractiveQuestion } from "@ujima/shared/browser";
@@ -60,7 +67,6 @@ const CHANNEL_TABS: ChatTab[] = [
   { id: "files", label: "Files" },
   { id: "activity", label: "Activity" },
 ];
-const MAX_LIVE_TRACE_ACTIVITY = 2_000;
 const MAX_ACTIVITY_ROWS = 100;
 const EMPTY_ACTIVITY_EVENTS = [] as ReturnType<typeof useConversationSync>["activity"];
 const EMPTY_RUNS = [] as RunState[];
@@ -82,6 +88,7 @@ interface ChannelViewProps {
   onGoalModeChange: (active: boolean) => void;
   onSelectConversation?: (conv: SelectedConversation) => void;
   onMemberUpdated?: (member: Member) => void;
+  onOrgShellApprovalModeChange?: (value: ShellApprovalMode) => Promise<void> | void;
 }
 
 export function ChannelView({
@@ -94,6 +101,7 @@ export function ChannelView({
   onGoalModeChange,
   onSelectConversation,
   onMemberUpdated,
+  onOrgShellApprovalModeChange,
 }: ChannelViewProps) {
   const [resolvingApprovals, setResolvingApprovals] = useState<Record<string, boolean>>({});
   const [approvalErrors, setApprovalErrors] = useState<Record<string, string>>({});
@@ -129,6 +137,15 @@ export function ChannelView({
     () => (conversation.type === "channel" ? channelById.get(conversation.id) : undefined),
     [channelById, conversation.id, conversation.type],
   );
+  const currentMember = useMemo(
+    () => (bootstrap.auth.member ? memberById.get(bootstrap.auth.member.id) ?? bootstrap.auth.member : undefined),
+    [bootstrap.auth.member, memberById],
+  );
+  const reasoningProvider = useMemo(() => {
+    if (!currentMember) return undefined;
+    const selectedModel = resolveMemberModelSelection(currentMember, bootstrap.providers);
+    return parseConfiguredProviderModelValue(selectedModel)?.provider;
+  }, [bootstrap.providers, currentMember]);
   const currentThreadId = useMemo(() => {
     const senderId = bootstrap.auth.member?.id;
     if (!senderId) return undefined;
@@ -238,7 +255,7 @@ export function ChannelView({
   );
   const reasoningTraceVisible = showDetails && detailsTab === "Thinking trace";
   const liveTraceActivity = useMemo(
-    () => (reasoningTraceVisible ? feed.activity.slice(-MAX_LIVE_TRACE_ACTIVITY) : []),
+    () => (reasoningTraceVisible ? feed.activity : []),
     [feed.activity, reasoningTraceVisible],
   );
   const liveTraceRuns = useMemo(
@@ -337,7 +354,7 @@ export function ChannelView({
     [pendingThreadApprovals],
   );
 
-  const { scrollToLatest, handleScroll } = useChatScrollToBottom({
+  const { scrollToLatest, handleScroll, newMessageCount } = useChatScrollToBottom({
     listRef,
     bottomRef,
     feed,
@@ -353,8 +370,13 @@ export function ChannelView({
       : feed.status;
   const liveThreadRuns = useMemo(() => {
     if (!currentThreadId) return EMPTY_RUNS;
-    return feed.runs.filter((run) => isLiveRun(run) && run.threadId === currentThreadId);
-  }, [currentThreadId, feed.runs]);
+    const byId = new Map<string, RunState>();
+    for (const run of [...feed.runs, ...globalActiveRuns]) {
+      if (!run.threadId || run.threadId !== currentThreadId || !isLiveRun(run)) continue;
+      byId.set(run.id, run);
+    }
+    return [...byId.values()];
+  }, [currentThreadId, feed.runs, globalActiveRuns]);
   const waitingInputRunIds = useMemo(
     () => liveThreadRuns.filter((run) => run.status === "waiting_for_input").map((run) => run.id),
     [liveThreadRuns],
@@ -667,6 +689,8 @@ export function ChannelView({
   const detailsCol = showDetails ? `${Math.max(detailsWidth, 33)}%` : "0px";
   const activeQuestion = pendingQuestions[activeQuestionIndex];
   const hasBlockingPrompts = pendingThreadApprovals.length > 0 || Boolean(activeQuestion);
+  const showNewMessages = activeTab === "conversation" && newMessageCount > 0;
+  const newMessagesLabel = newMessageCount === 1 ? "1 new message" : `${newMessageCount} new messages`;
 
   return (
     <div
@@ -704,6 +728,8 @@ export function ChannelView({
                   </button>
                 ) : null}
               </div>
+            ) : conversation.type === "channel" && onOrgShellApprovalModeChange ? (
+              <ChannelChatHeaderControls value={orgShellApprovalMode} onChange={onOrgShellApprovalModeChange} />
             ) : undefined
           }
           showDetails={showDetails}
@@ -917,6 +943,19 @@ export function ChannelView({
             )}
           </div>
         )}
+        {showNewMessages ? (
+          <div className="shrink-0 px-3 pb-2">
+            <div className="flex justify-center">
+              <button
+                type="button"
+                onClick={() => scrollToLatest("smooth")}
+                className="inline-flex items-center rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-[11px] font-semibold text-violet-700 shadow-sm transition hover:bg-violet-100 dark:border-violet-500/20 dark:bg-violet-500/10 dark:text-violet-200 dark:hover:bg-violet-500/15"
+              >
+                ({newMessagesLabel})
+              </button>
+            </div>
+          </div>
+        ) : null}
         {hasBlockingPrompts ? (
           <div className="shrink-0 px-3 pt-1.5 pb-3">
             <div className="space-y-2">
@@ -958,58 +997,61 @@ export function ChannelView({
             </div>
           </div>
         ) : (
-          <ChatInput
-            organizationId={organizationId}
-            goalMode={goalMode}
-            onGoalModeChange={onGoalModeChange}
-            readOnly={isReadOnly}
-            skillCommands={skillCommands}
-            onSkillCommand={async (skillId, content) => {
-              if (!organizationId) throw new Error("Missing organization context.");
-              const { content: skillContent } = await settingsFetch<SkillInvocationResponse>(
-                `/api/settings/skills/${encodeURIComponent(skillId)}?organizationId=${encodeURIComponent(organizationId)}&arguments=${encodeURIComponent(content ?? "")}`,
-                undefined,
-                "Unable to load skill.",
-              );
-              await feed.sendMessage(skillContent);
-              setReplyTo(null);
-              scrollToLatest("auto");
-            }}
-            onCommand={async (command, content) => {
-              if (command === "schedule") {
-                const prompt = content?.replace(/^\/schedule\s*/i, "").trim();
-                if (!prompt) {
-                  throw new Error("Usage: /schedule do this");
-                }
-                await feed.sendMessage(`Please use the schedule tool for this request: ${prompt}`);
+          <div className="shrink-0 px-3 pt-1.5 pb-3">
+              <ChatInput
+                organizationId={organizationId}
+                goalMode={goalMode}
+                onGoalModeChange={onGoalModeChange}
+                readOnly={isReadOnly}
+                reasoningProvider={reasoningProvider}
+                skillCommands={skillCommands}
+                onSkillCommand={async (skillId, content, metadata) => {
+                if (!organizationId) throw new Error("Missing organization context.");
+                const { content: skillContent } = await settingsFetch<SkillInvocationResponse>(
+                  `/api/settings/skills/${encodeURIComponent(skillId)}?organizationId=${encodeURIComponent(organizationId)}&arguments=${encodeURIComponent(content ?? "")}`,
+                  undefined,
+                  "Unable to load skill.",
+                );
+                await feed.sendMessage(skillContent, undefined, undefined, metadata);
                 setReplyTo(null);
                 scrollToLatest("auto");
-                return;
+              }}
+              onCommand={async (command, content, metadata) => {
+                if (command === "schedule") {
+                  const prompt = content?.replace(/^\/schedule\s*/i, "").trim();
+                  if (!prompt) {
+                    throw new Error("Usage: /schedule do this");
+                  }
+                  await feed.sendMessage(`Please use the schedule tool for this request: ${prompt}`, undefined, undefined, metadata);
+                  setReplyTo(null);
+                  scrollToLatest("auto");
+                  return;
+                }
+                await feed.archiveConversation(command);
+                setReplyTo(null);
+                scrollToLatest("auto");
+              }}
+              placeholder={
+                isAgent
+                  ? `Message @${conversation.name}...`
+                  : `Message #${conversation.name} or @agent...`
               }
-              await feed.archiveConversation(command);
-              setReplyTo(null);
-              scrollToLatest("auto");
-            }}
-            placeholder={
-              isAgent
-                ? `Message @${conversation.name}...`
-                : `Message #${conversation.name} or @agent...`
-            }
-            inlineError={feed.error}
-            mentionSuggestions={mentionSuggestions}
-            replyTo={replyTo}
-            onCancelReply={() => setReplyTo(null)}
-            stoppableRunIds={stoppableRunIds}
-            onStopRun={stopAgentRun}
-            onSend={(content, attachmentIds, metadata) => {
-              if (isAgent) {
-                openDetailsForAgentMessage();
-              }
-              const promise = feed.sendMessage(content, replyTo?.id, attachmentIds, metadata);
-              setReplyTo(null);
-              return promise;
-            }}
-          />
+              inlineError={feed.error}
+              mentionSuggestions={mentionSuggestions}
+              replyTo={replyTo}
+              onCancelReply={() => setReplyTo(null)}
+              stoppableRunIds={stoppableRunIds}
+              onStopRun={stopAgentRun}
+              onSend={(content, attachmentIds, metadata) => {
+                if (isAgent) {
+                  openDetailsForAgentMessage();
+                }
+                const promise = feed.sendMessage(content, replyTo?.id, attachmentIds, metadata);
+                setReplyTo(null);
+                return promise;
+              }}
+            />
+          </div>
         )}
       </div>
 

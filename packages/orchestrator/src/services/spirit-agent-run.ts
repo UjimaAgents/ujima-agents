@@ -6,7 +6,6 @@ import type { SpiritMcpResolution } from './spirit-types.js';
 import { mcpPermissionToolName } from './mcp-runtime.js';
 import {
   buildMcpNamespace,
-  dropHeaviestAttachedMcp,
   mcpToolInputSchema,
   sanitizeMcpToolName,
   uniqueMcpToolId,
@@ -34,7 +33,8 @@ import {
 } from '../utils/wake-reply-policy.js';
 import { recallMemoryEntries } from '../utils/memory.js';
 import { requireTeam } from '../utils/require-team.js';
-import { runAgentLoopWithRetry } from './agent-loop.js';
+import { runAgentWithRetry, type AgentLoopStep } from './agent-loop.js';
+import { isDelegateMessage, filterDelegateTurnTools } from './run-reply-guard.js';
 import { toModelMessages, buildToolDefinitions } from '../utils/to-model-messages.js';
 import {
   ALWAYS_AVAILABLE_AGENT_TOOLS,
@@ -49,7 +49,7 @@ import { buildRunTranscript } from '../utils/run-transcript.js';
 import { appendArtifactFileToolCall } from './artifact-file-card.js';
 import { buildAgentMessage } from './message-factory.js';
 import { RunTurnPublisher } from './run-turn-publisher.js';
-import { hasTokenUsage, normalizeTokenUsage } from './token-usage.js';
+import { normalizeTokenUsage, persistMessageTokens } from './token-usage.js';
 import { pendingApprovalRunSummary } from './approval-summary.js';
 import {
   findTerminatingTool,
@@ -60,28 +60,14 @@ import {
   isMessageAfterCursor,
   moveCursor,
 } from '../utils/message-interrupts.js';
-import type { RunSpiritInput, RunSpiritOutcome } from './spirit-types.js';
+import type {
+  RunSpiritInput,
+  RunSpiritOutcome,
+} from './spirit-types.js';
 import { isToolCardError } from './spirit-run-detail.js';
-import { SpiritServiceLifecycle } from './spirit-lifecycle.js';
+import { SpiritServiceBase } from './spirit-service-base.js';
 
-function isDelegateMessage(message: { metadata?: unknown } | null | undefined): boolean {
-  return !!(message?.metadata as { delegate?: unknown } | undefined)?.delegate;
-}
-
-function filterDelegateTurnTools(toolIds: readonly string[]): string[] {
-  const postingTools = new Set([
-    'channel.post',
-    'channel.reply',
-    'channel.dm',
-    'channel.handoff',
-    'channel.pass',
-    'channel.ack',
-    'message',
-  ]);
-  return toolIds.filter((toolId) => !postingTools.has(toolId));
-}
-
-export class SpiritServiceAgentRun extends SpiritServiceLifecycle {
+export class SpiritServiceAgentRun extends SpiritServiceBase {
   async run(input: RunSpiritInput): Promise<RunSpiritOutcome> {
     const role = input.role ?? 'worker';
     const session = this.repo.getTaskSession(input.organizationId, input.taskSessionId);
@@ -272,141 +258,95 @@ ${activeMemories
     let streamedReasoning = '';
     let lastMessageId: string | undefined;
     let persistedStepCount = 0;
-    const turn = new RunTurnPublisher((message) => this.publishAgentMessage(message));
+    const turn = new RunTurnPublisher(
+      (message) => this.publishAgentMessage(message),
+      (message) => {
+        this.repo.updateMessage(message);
+      },
+    );
 
-    // Wrap runAgentLoop in the shared retry helper so the wake-run
-    // and direct-spirit paths share one recovery contract (defined
-    // in agent-loop.ts). Local mutable refs feed the buildArgs
-    // closure so the retry can swap the model or trim the toolset
-    // on the fly without re-flowing all the loop context.
-    let currentModel = model;
-    let currentToolDefs = toolDefs;
     const runId = spirit.runId ?? spirit.id;
     const abortKey = this.runKey(input.organizationId, runId);
     const abortController = new AbortController();
     this.runAbortControllers.set(abortKey, abortController);
     try {
-      const result = await runAgentLoopWithRetry(
-        () => ({
-          model: currentModel,
-          system: systemPrompt,
-          messages,
-          tools: currentToolDefs,
-          stopWhen: stepCountIs(maxIterations),
-          ...(this.maxOutputTokens !== undefined ? { maxOutputTokens: this.maxOutputTokens } : {}),
-          temperature: this.temperature,
-          toolChoice: 'auto',
-          abortSignal: abortController.signal,
-          onChunk: (chunk) => {
-            if (chunk.kind === 'reasoning') streamedReasoning += chunk.delta;
-            this.emitRunChunk(
-              {
-                organizationId: input.organizationId,
-                runId,
-                threadId: session.channelId,
-                agentId: input.memberId,
-              },
-              chunk,
-            );
-          },
-          onStepFinish: async (_step, currentSteps) => {
-            // Incrementally persist each step as it completes (main's
-            // change) so cancellation/crash mid-loop still leaves the
-            // partial transcript on the channel. The retry wrapper
-            // re-invokes the same builder when recovery fires, but
-            // `persistedStepCount` is shared across attempts so we
-            // never re-persist the same step twice.
-            const unpersisted = currentSteps.slice(persistedStepCount);
-            for (const s of unpersisted) {
-              persistedStepCount++;
-              totalTurns += 1;
-              const stepText = typeof s.text === 'string' ? s.text : '';
-              const stepToolCalls = Array.isArray(s.toolCalls) ? s.toolCalls : [];
-              const stepToolResults = Array.isArray(s.toolResults) ? s.toolResults : [];
-              totalToolCalls += stepToolCalls.length;
-
-              if (!stepText && stepToolCalls.length === 0) {
-                continue;
-              }
-
-              const toolCalls = this.toMessageToolCalls(stepToolCalls, stepToolResults, spirit);
-              const artifactFileToolCall = await appendArtifactFileToolCall(
-                stepToolCalls,
-                team.workspace.root,
-                stepToolResults,
-              );
-              const messageToolCalls = artifactFileToolCall ? [...toolCalls, artifactFileToolCall] : toolCalls;
-              const reasoningContent = extractReasoningChunk(s);
-              lastMessageId = turn
-                .publishMessage(
-                  buildAgentMessage({
-                    organizationId: input.organizationId,
-                    threadId: session.channelId,
-                    channelId: session.channelId,
-                    senderId: member.id,
-                    content: stepText || (artifactFileToolCall ? 'Artifact updated.' : ''),
-                    toolCalls: messageToolCalls,
-                    metadata: { runId },
-                    reasoningContent,
-                  }),
-                )
-                .id;
-              if (artifactFileToolCall) {
-                turn.markArtifactFilePublished();
-              }
-              lastText = stepText || lastText;
-            }
-            this.emitRunTokens(input.organizationId, runId, session.channelId, member.id, currentSteps);
-          },
-          loadInterruptMessages: () => {
-            const page = this.repo
-              .listChannelMessages(input.organizationId, session.channelId, { limit: 100 })
-              .data;
-            const interrupts = page.filter(
-              (message) =>
-                (message.kind === 'human' || isDelegateMessage(message)) &&
-                message.senderId !== member.id &&
-                isMessageAfterCursor(message, interruptCursor),
-            );
-            const latest = page.at(-1);
-            if (latest) {
-              moveCursor(interruptCursor, latest);
-            }
-            return toModelMessages(interrupts, member.id);
-          },
-        }),
-        (next) => {
-          currentModel = next;
+      const result = await runAgentWithRetry({
+        model,
+        system: systemPrompt,
+        messages,
+        tools: toolDefs,
+        attachedMcpServers,
+        stopWhen: stepCountIs(maxIterations),
+        maxOutputTokens: this.maxOutputTokens,
+        temperature: this.temperature,
+        toolChoice: 'auto',
+        abortSignal: abortController.signal,
+        onChunk: (chunk) => {
+          if (chunk.kind === 'reasoning') streamedReasoning += chunk.delta;
+          this.emitRunChunk(
+            {
+              organizationId: input.organizationId,
+              runId,
+              threadId: session.channelId,
+              agentId: input.memberId,
+            },
+            chunk,
+          );
         },
-        (next) => {
-          currentToolDefs = next;
+        onStepFinish: async (_step, currentSteps) => {
+          const unpersisted = currentSteps.slice(persistedStepCount);
+          for (const s of unpersisted) {
+            persistedStepCount++;
+            totalTurns += 1;
+            const out = await this.publishStepBubble({
+              step: s,
+              spirit,
+              turn,
+              organizationId: input.organizationId,
+              channelId: session.channelId,
+              senderId: member.id,
+              teamRoot: team.workspace.root,
+              runId,
+            });
+            totalToolCalls += out.toolCallCount;
+            if (out.messageId) lastMessageId = out.messageId;
+            if (out.stepText) lastText = out.stepText;
+          }
+          this.emitRunTokens(input.organizationId, runId, session.channelId, member.id, currentSteps);
         },
-        {
-          onModelNotFound: async (error) => {
-            console.warn(
-              `[spirit-agent-run] model "${error.modelId}" rejected by provider; ` +
-                `falling back to safeFallbackModelForProvider for member="${input.memberId}"`,
-            );
-            return await Promise.resolve(
-              this.modelResolver({
-                organizationId: input.organizationId,
-                memberId: input.memberId,
-                role,
-                forceSafeFallback: true,
-              }),
-            );
-          },
-          onSchemaTooLarge: () => {
-            const dropped = dropHeaviestAttachedMcp(currentToolDefs, attachedMcpServers);
-            if (!dropped) return null;
-            console.warn(
-              `[spirit-agent-run] gemini "too many states" — dropped MCP "${dropped.serverName}" ` +
-                `(${dropped.toolNames.length} tools) and retrying for member="${input.memberId}"`,
-            );
-            return dropped.toolDefs;
-          },
+        loadInterruptMessages: () => {
+          const page = this.repo
+            .listChannelMessages(input.organizationId, session.channelId, { limit: 100 })
+            .data;
+          const interrupts = page.filter(
+            (message) =>
+              (message.kind === 'human' || isDelegateMessage(message)) &&
+              message.senderId !== member.id &&
+              isMessageAfterCursor(message, interruptCursor),
+          );
+          const latest = page.at(-1);
+          if (latest) {
+            moveCursor(interruptCursor, latest);
+          }
+          return toModelMessages(interrupts, member.id);
         },
-      );
+        onModelNotFound: async (error) => {
+          console.warn(
+            `[spirit-agent-run] model "${error.modelId}" rejected by provider; ` +
+              `falling back to safeFallbackModelForProvider for member="${input.memberId}"`,
+          );
+          return await Promise.resolve(
+            this.modelResolver({
+              organizationId: input.organizationId,
+              memberId: input.memberId,
+              role,
+              forceSafeFallback: true,
+            }),
+          );
+        },
+        logLabel: 'spirit-agent-run',
+        memberLabel: input.memberId,
+      });
       const { steps, usage } = result;
 
       // Compute token counts early so they're available when persisting
@@ -423,58 +363,26 @@ ${activeMemories
         const step = steps[index];
         if (!step) continue;
         totalTurns += 1;
-        const stepText = typeof step.text === 'string' ? step.text : '';
-        const stepToolCalls = Array.isArray(step.toolCalls) ? step.toolCalls : [];
-        const stepToolResults = Array.isArray(step.toolResults) ? step.toolResults : [];
-        totalToolCalls += stepToolCalls.length;
-
-        if (!stepText && stepToolCalls.length === 0) {
-          continue;
-        }
-
-        const toolCalls = this.toMessageToolCalls(stepToolCalls, stepToolResults, spirit);
-        const artifactFileToolCall = await appendArtifactFileToolCall(
-          stepToolCalls,
-          team.workspace.root,
-          stepToolResults,
-        );
-        const messageToolCalls = artifactFileToolCall ? [...toolCalls, artifactFileToolCall] : toolCalls;
-        const reasoningContent =
-          extractReasoningChunk(step) ??
-          (index === steps.length - 1 ? streamedReasoning.trim() || undefined : undefined);
-        // Tokens are written silently below via backfillTokens; the
-        // live counter rides on `run:tokens`.
-        lastMessageId = turn
-          .publishMessage(
-            buildAgentMessage({
-              organizationId: input.organizationId,
-              threadId: session.channelId,
-              channelId: session.channelId,
-              senderId: member.id,
-              content: stepText || (artifactFileToolCall ? 'Artifact updated.' : ''),
-              toolCalls: messageToolCalls,
-              metadata: { runId: spirit.runId ?? spirit.id },
-              reasoningContent,
-            }),
-          )
-          .id;
-        if (artifactFileToolCall) {
-          turn.markArtifactFilePublished();
-        }
-        lastText = stepText || lastText;
+        const out = await this.publishStepBubble({
+          step,
+          spirit,
+          turn,
+          organizationId: input.organizationId,
+          channelId: session.channelId,
+          senderId: member.id,
+          teamRoot: team.workspace.root,
+          runId: spirit.runId ?? spirit.id,
+          reasoningFallback:
+            index === steps.length - 1 ? streamedReasoning.trim() || undefined : undefined,
+        });
+        totalToolCalls += out.toolCallCount;
+        if (out.messageId) lastMessageId = out.messageId;
+        if (out.stepText) lastText = out.stepText;
       }
 
       const persistedRunSteps = spirit.runId ? this.repo.listRunSteps?.(input.organizationId, spirit.runId) ?? [] : [];
       const terminatingTool = detectedTerminatingTool ?? findTerminatingToolFromRunSteps(persistedRunSteps);
-      const tokenFooter = turn.backfillTokens({
-        finalText,
-        lastText,
-        terminatingTool,
-        usage: tokenUsage,
-      });
-      if (tokenFooter) {
-        this.repo.updateMessage(tokenFooter);
-      }
+      turn.backfillTokens({ finalText, lastText, terminatingTool, usage: tokenUsage });
       if (finalText && finalText !== lastText && !terminatingTool) {
         const finalMessage = turn.publishMessage(
           buildAgentMessage({
@@ -488,14 +396,7 @@ ${activeMemories
         );
         lastMessageId = finalMessage.id;
         lastText = finalText;
-        if (hasTokenUsage(tokenUsage)) {
-          this.repo.updateMessage({
-            ...finalMessage,
-            inputTokens: tokenUsage.inputTokens,
-            outputTokens: tokenUsage.outputTokens,
-            editedAt: new Date().toISOString(),
-          });
-        }
+        persistMessageTokens(this.repo, finalMessage, tokenUsage);
       }
 
       // Prefer the provider-supplied `totalTokens` over our own
@@ -770,6 +671,47 @@ ${activeMemories
         isError,
       };
     });
+  }
+
+  private async publishStepBubble(input: {
+    step: AgentLoopStep;
+    spirit: Spirit;
+    turn: RunTurnPublisher;
+    organizationId: string;
+    channelId: string;
+    senderId: string;
+    teamRoot: string;
+    runId: string;
+    reasoningFallback?: string;
+  }): Promise<{ messageId?: string; toolCallCount: number; stepText: string }> {
+    const { step } = input;
+    const stepText = typeof step.text === 'string' ? step.text : '';
+    const stepToolCalls = Array.isArray(step.toolCalls) ? step.toolCalls : [];
+    const stepToolResults = Array.isArray(step.toolResults) ? step.toolResults : [];
+    const artifact = await appendArtifactFileToolCall(stepToolCalls, input.teamRoot, stepToolResults);
+    // Skip tool-only steps with no artifact card — they'd render as
+    // empty bubbles. Tool execution data already lives in run_steps
+    // for the trace panel.
+    if (!stepText && !artifact) {
+      return { toolCallCount: stepToolCalls.length, stepText: '' };
+    }
+    const toolCalls = this.toMessageToolCalls(stepToolCalls, stepToolResults, input.spirit);
+    const messageToolCalls = artifact ? [...toolCalls, artifact] : toolCalls;
+    const reasoningContent = extractReasoningChunk(step) ?? input.reasoningFallback;
+    const message = input.turn.publishMessage(
+      buildAgentMessage({
+        organizationId: input.organizationId,
+        threadId: input.channelId,
+        channelId: input.channelId,
+        senderId: input.senderId,
+        content: stepText || 'Artifact updated.',
+        toolCalls: messageToolCalls,
+        metadata: { runId: input.runId },
+        reasoningContent,
+      }),
+    );
+    if (artifact) input.turn.markArtifactFilePublished();
+    return { messageId: message.id, toolCallCount: stepToolCalls.length, stepText };
   }
 
   private publishAgentMessage(message: Message): Message {

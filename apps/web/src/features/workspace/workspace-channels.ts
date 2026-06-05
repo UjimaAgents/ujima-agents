@@ -3,8 +3,8 @@ import type { SelectedConversation } from "./types";
 
 export type WorkspaceChannel = BootstrapResponse["channels"][number];
 
-export function isVisibleWorkspaceChannel(channel: Pick<WorkspaceChannel, "kind">): boolean {
-  return channel.kind !== "self" && channel.kind !== "dm";
+export function isVisibleWorkspaceChannel(channel: Pick<WorkspaceChannel, "kind" | "archivedAt">): boolean {
+  return channel.kind !== "self" && channel.kind !== "dm" && !channel.archivedAt;
 }
 
 export function visibleWorkspaceChannels(channels: WorkspaceChannel[]): WorkspaceChannel[] {

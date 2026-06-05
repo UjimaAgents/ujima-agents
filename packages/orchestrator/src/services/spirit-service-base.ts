@@ -1,6 +1,9 @@
+import { randomUUID } from 'node:crypto';
 import {
   DEFAULT_SPIRIT_TEMPERATURE,
+  RunStateSchema,
   SocketEventNames,
+  SpiritSchema,
   channelRoom,
   memberRoom,
   orgRoom,
@@ -18,16 +21,21 @@ import type { ActiveSpiritEntry } from './active-spirit-registry.js';
 import type { ToolInvocationInput } from './tool-service.js';
 import { createSpiritModelResolver } from '../utils/create-spirit-model-resolver.js';
 import { ActiveSpiritRegistry } from './active-spirit-registry.js';
+import { AsyncMutex } from '../utils/async-mutex.js';
 import type { ConversationService } from './conversation.js';
 import type { RealtimeService } from './context.js';
 import type { ApiRepository } from './repository-reader.js';
 import type { TeamStore } from './team-store.js';
 import type { ToolService } from './tool-service.js';
 import { goalModeEnabledFromMessage } from './goal-mode-prompt.js';
+import { isLiveSpiritStatus } from './live-status.js';
 import type { AiService } from '../ai-service.js';
 import type { AgentLoopChunk } from './agent-loop.js';
 import { accumulateStepUsage, hasTokenUsage } from './token-usage.js';
 import { materializeMcpDef } from './mcp-runtime.js';
+import { requireOrganization } from '../utils/require-organization.js';
+import type { SpawnSpiritInput } from './spirit-types.js';
+import { maybeFinalizeTaskSession as finalizeTaskSession } from './task-session-finalizer.js';
 import type {
   SpiritMcpPool,
   SpiritMcpResolver,
@@ -50,7 +58,7 @@ export class SpiritServiceBase {
   protected readonly mcpResolver?: SpiritMcpResolver;
   protected readonly supervisorDebounceMs: number;
   protected readonly supervisorTurnCapPerSession: number;
-  protected readonly supervisorMutexes = new Map<string, Promise<unknown>>();
+  protected readonly supervisorMutex = new AsyncMutex();
   protected readonly supervisorLastAlertAt = new Map<string, number>();
   protected readonly deferredApprovalResumes = new Set<string>();
   protected readonly runAbortControllers = new Map<string, AbortController>();
@@ -97,6 +105,154 @@ export class SpiritServiceBase {
 
   getActiveRegistry(): ActiveSpiritRegistry {
     return this.registry;
+  }
+
+  spawn(input: SpawnSpiritInput): Spirit {
+    return this.spawnTracked(input).spirit;
+  }
+
+  spawnTracked(input: SpawnSpiritInput): { spirit: Spirit; created: boolean } {
+    requireOrganization(this.repo, input.organizationId);
+    const role = input.role ?? 'worker';
+    const session = this.repo.getTaskSession(input.organizationId, input.taskSessionId);
+    if (!session) {
+      throw new Error(`Task session not found: ${input.taskSessionId}`);
+    }
+    const member = this.repo.getMember(input.organizationId, input.memberId);
+    if (!member) {
+      throw new Error(`Member not found: ${input.memberId}`);
+    }
+    if (member.kind !== AGENT_KIND) {
+      throw new Error(`Member "${input.memberId}" is not an agent`);
+    }
+    if (member.retiredAt) {
+      throw new Error(`Member "${input.memberId}" is retired`);
+    }
+
+    const existing = this.repo.getSpiritByTriple(
+      input.organizationId,
+      input.taskSessionId,
+      input.memberId,
+      role,
+    );
+    if (existing) {
+      return { spirit: existing, created: false };
+    }
+
+    const now = new Date().toISOString();
+    const run = RunStateSchema.parse({
+      id: randomUUID(),
+      organizationId: input.organizationId,
+      agentId: input.memberId,
+      threadId: session.channelId,
+      status: 'queued',
+      step: 'queued',
+      summary: `Spirit (${role}) for #${session.slug}`,
+      startedAt: now,
+    });
+    this.repo.saveRun(run);
+
+    const spirit = SpiritSchema.parse({
+      id: randomUUID(),
+      organizationId: input.organizationId,
+      taskSessionId: input.taskSessionId,
+      memberId: input.memberId,
+      role,
+      runId: run.id,
+      status: 'queued',
+      iteration: 0,
+      tokensUsed: 0,
+      createdAt: now,
+      updatedAt: now,
+    });
+    this.repo.saveSpirit(spirit);
+    this.registry.register(spirit);
+    this.emit(SocketEventNames.spiritStarted, spirit);
+    return { spirit, created: true };
+  }
+
+  /** @deprecated Use `spawn`. Retained for the Phase 2.A test surface. */
+  spawnWorker(input: SpawnSpiritInput): Spirit {
+    return this.spawn(input);
+  }
+
+  get(organizationId: string, spiritId: string): Spirit | null {
+    return this.repo.getSpirit(organizationId, spiritId);
+  }
+
+  list(organizationId: string, taskSessionId: string): Spirit[] {
+    return this.repo.listSpiritsForSession(organizationId, taskSessionId);
+  }
+
+  updateStatus(
+    organizationId: string,
+    spiritId: string,
+    status: Spirit['status'],
+    options: { error?: string } = {},
+  ): Spirit | null {
+    const existing = this.repo.getSpirit(organizationId, spiritId);
+    if (!existing) return null;
+    const now = new Date().toISOString();
+    const updated: Spirit = SpiritSchema.parse({
+      ...existing,
+      status,
+      lastError: options.error ?? existing.lastError,
+      updatedAt: now,
+      endedAt: isLiveSpiritStatus(status) ? existing.endedAt : (existing.endedAt ?? now),
+    });
+    this.repo.saveSpirit(updated);
+    if (isLiveSpiritStatus(status)) {
+      this.registry.register(updated);
+    } else {
+      this.registry.unregister(updated.organizationId, updated.memberId, updated.id);
+    }
+    this.emit(SocketEventNames.spiritUpdated, updated);
+    return updated;
+  }
+
+  retire(organizationId: string, spiritId: string, reason?: string): Spirit | null {
+    const existing = this.repo.getSpirit(organizationId, spiritId);
+    if (!existing) return null;
+    const now = new Date().toISOString();
+    const retired: Spirit = SpiritSchema.parse({
+      ...existing,
+      status: 'cancelled',
+      lastError: reason ?? existing.lastError,
+      updatedAt: now,
+      endedAt: existing.endedAt ?? now,
+    });
+    this.repo.saveSpirit(retired);
+    this.registry.unregister(retired.organizationId, retired.memberId, retired.id);
+    if (retired.runId) {
+      const run = this.repo.getRun(organizationId, retired.runId);
+      if (run) {
+        this.repo.saveRun({
+          ...run,
+          status: 'cancelled',
+          step: 'cancelled',
+          summary: reason ?? 'Spirit retired',
+          endedAt: run.endedAt ?? now,
+        });
+      }
+    }
+    this.emit(SocketEventNames.spiritRetired, retired);
+    this.maybeFinalizeTaskSession(retired.organizationId, retired.taskSessionId, reason);
+    return retired;
+  }
+
+  protected maybeFinalizeTaskSession(
+    organizationId: string,
+    taskSessionId: string,
+    preferredSummary?: string,
+  ): void {
+    finalizeTaskSession({
+      repo: this.repo,
+      realtime: this.realtime,
+      conversations: this.conversations,
+      organizationId,
+      taskSessionId,
+      preferredSummary,
+    });
   }
 
   protected findActiveSpiritByRunId(organizationId: string, runId: string): Spirit | null {

@@ -237,8 +237,12 @@ export const HandoffMetadataSchema = z.object({
 });
 export type HandoffMetadata = z.infer<typeof HandoffMetadataSchema>;
 
+export const ReasoningEffortSchema = z.enum(['none', 'low', 'medium', 'high', 'extra_high']);
+export type ReasoningEffort = z.infer<typeof ReasoningEffortSchema>;
+
 export const MessageMetadataSchema = z.object({
   goalMode: z.boolean().optional(),
+  reasoningEffort: ReasoningEffortSchema.optional(),
   delegate: z.object({
     parentRunId: IdSchema.optional(),
   }).optional(),
