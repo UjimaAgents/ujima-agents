@@ -1,5 +1,6 @@
 "use client";
 import { useState, useRef, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { ChevronDown, Check } from "lucide-react";
 import { listItemIdle, listItemSelected } from "@/lib/list-item-styles";
 
@@ -42,12 +43,23 @@ export function Select({
 }: SelectProps) {
   const [isOpen, setIsOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [menuStyle, setMenuStyle] = useState<{ top: number; left: number; width: number } | null>(
+    null,
+  );
 
   const selectedOption = options.find((opt) => opt.value === value);
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
-      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+      const target = event.target as Node;
+      if (
+        containerRef.current &&
+        !containerRef.current.contains(target) &&
+        menuRef.current &&
+        !menuRef.current.contains(target)
+      ) {
         setIsOpen(false);
       }
     }
@@ -55,11 +67,34 @@ export function Select({
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
+  useEffect(() => {
+    if (!isOpen) return;
+
+    function updateMenuPosition() {
+      const rect = triggerRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      setMenuStyle({
+        top: rect.bottom + 4,
+        left: rect.left,
+        width: rect.width,
+      });
+    }
+
+    updateMenuPosition();
+    window.addEventListener("resize", updateMenuPosition);
+    window.addEventListener("scroll", updateMenuPosition, true);
+    return () => {
+      window.removeEventListener("resize", updateMenuPosition);
+      window.removeEventListener("scroll", updateMenuPosition, true);
+    };
+  }, [isOpen]);
+
   return (
     <div ref={containerRef} className={`relative ${className}`}>
       <button
         type="button"
         id={id}
+        ref={triggerRef}
         disabled={disabled}
         aria-label={ariaLabel ?? placeholder}
         onClick={() => !disabled && setIsOpen(!isOpen)}
@@ -73,27 +108,38 @@ export function Select({
         />
       </button>
 
-      {isOpen && (
-        <div className="absolute z-50 mt-1 max-h-60 w-full overflow-auto rounded-lg border border-zinc-200 bg-white py-1 text-sm shadow-lg dark:border-zinc-800 dark:bg-zinc-950">
-          {options.map((option) => (
-            <button
-              key={option.value}
-              type="button"
-              disabled={option.disabled}
-              onClick={() => {
-                onChange({ target: { value: option.value } });
-                setIsOpen(false);
-              }}
-              className={`flex w-full items-center justify-between px-4 py-2 text-left font-medium transition ${
-                option.disabled ? "cursor-not-allowed opacity-50" : ""
-              } ${option.value === value ? listItemSelected : listItemIdle}`}
-            >
-              <span className="truncate">{option.label}</span>
-              {option.value === value && <Check className="ml-2 h-4 w-4 shrink-0" />}
-            </button>
-          ))}
-        </div>
-      )}
+      {isOpen &&
+        menuStyle &&
+        createPortal(
+          <div
+            ref={menuRef}
+            className="fixed z-[220] max-h-60 overflow-auto rounded-lg border border-zinc-200 bg-white py-1 text-sm shadow-lg dark:border-zinc-800 dark:bg-zinc-950"
+            style={{
+              top: menuStyle.top,
+              left: menuStyle.left,
+              width: menuStyle.width,
+            }}
+          >
+            {options.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                disabled={option.disabled}
+                onClick={() => {
+                  onChange({ target: { value: option.value } });
+                  setIsOpen(false);
+                }}
+                className={`flex w-full items-center justify-between px-4 py-2 text-left font-medium transition ${
+                  option.disabled ? "cursor-not-allowed opacity-50" : ""
+                } ${option.value === value ? listItemSelected : listItemIdle}`}
+              >
+                <span className="truncate">{option.label}</span>
+                {option.value === value && <Check className="ml-2 h-4 w-4 shrink-0" />}
+              </button>
+            ))}
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }

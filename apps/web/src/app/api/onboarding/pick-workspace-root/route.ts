@@ -52,10 +52,21 @@ function pickWorkspaceFolder(): Promise<PickOutcome> {
 function pickWindows(): Promise<PickOutcome> {
   const script = [
     "Add-Type -AssemblyName System.Windows.Forms",
+    "[System.Windows.Forms.Application]::EnableVisualStyles()",
+    "$owner = New-Object System.Windows.Forms.Form",
+    '$owner.Text = "Ujima Folder Picker"',
+    "$owner.TopMost = $true",
+    "$owner.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterScreen",
+    "$owner.ShowInTaskbar = $false",
+    "$owner.WindowState = [System.Windows.Forms.FormWindowState]::Minimized",
+    "$owner.Opacity = 0",
+    "$owner.Show()",
     "$dialog = New-Object System.Windows.Forms.FolderBrowserDialog",
     '$dialog.Description = "Select workspace root"',
     "$dialog.ShowNewFolderButton = $true",
-    "$result = $dialog.ShowDialog()",
+    "$result = $dialog.ShowDialog($owner)",
+    "$owner.Close()",
+    "$owner.Dispose()",
     "if ($result -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $dialog.SelectedPath }",
   ].join("; ");
 
@@ -112,6 +123,14 @@ function execFileOutcome(
           const code = (error as NodeJS.ErrnoException).code;
           if (code === "ENOENT") {
             reject(error);
+            return;
+          }
+          if (code === "ETIMEDOUT") {
+            reject(
+              new Error(
+                "Folder picker timed out before a selection was made. If no dialog appeared, it may be behind other windows.",
+              ),
+            );
             return;
           }
           if (!text) {

@@ -10,10 +10,10 @@ if (mode !== 'dev' && mode !== 'start') {
   process.exit(1);
 }
 
-const port = process.env.WEB_PORT ?? '3452';
+const port = process.env.LANDING_PORT ?? '3453';
 const portNum = Number(port);
 if (!Number.isInteger(portNum) || portNum < 0 || portNum > 65535) {
-  console.error(`Invalid WEB_PORT: ${port}`);
+  console.error(`Invalid LANDING_PORT: ${port}`);
   process.exit(1);
 }
 
@@ -31,21 +31,18 @@ const portInUse = await new Promise<boolean>((resolve) => {
 
 if (portInUse) {
   console.error(
-    `Port ${portNum} is already in use. Stop the other process or set WEB_PORT to a free port.`,
+    `Port ${portNum} is already in use. Stop the other process or set LANDING_PORT to a free port.`,
   );
   console.error(`  PowerShell: Get-NetTCPConnection -LocalPort ${portNum} | Select OwningProcess`);
   process.exit(1);
 }
 
 const nextArgs = ['x', 'next', mode, '--port', port];
-if (process.env.WEB_USE_WEBPACK === '1') {
-  nextArgs.push('--webpack');
-}
 nextArgs.push(...extra);
 
 const proc = spawn(process.execPath, nextArgs, {
   cwd: root,
-  env: { ...process.env, WEB_PORT: port },
+  env: { ...process.env, LANDING_PORT: port },
   stdio: ['inherit', 'inherit', 'inherit'],
 });
 
