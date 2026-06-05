@@ -27,6 +27,7 @@ import {
   resolveConversationTransport,
   type ConversationStreamEnvelope,
 } from "./conversation-transport";
+import type { ReasoningEffort } from "@ujima/shared/browser";
 import { activityStateToStatus, conversationActivityState, presenceToActivityState, type ActivityState } from "./activity-state";
 import { pendingApprovalVisibleInChannelView } from "./approval-thread-filter";
 import { approvalToCard } from "./approval-card-data";
@@ -71,7 +72,7 @@ export interface ConversationSyncResult {
     content: string,
     parentMessageId?: string,
     attachmentIds?: string[],
-    metadata?: { goalMode?: boolean },
+    metadata?: { goalMode?: boolean; reasoningEffort?: ReasoningEffort },
     /**
      * Retry/resend hook: when present, sendMessage reuses this
      * idempotency key (and the matching `temp:<id>` pending entry)

@@ -1,6 +1,6 @@
 import type { BootstrapResponse } from "@ujima/api-schema";
 import type { WsFrame } from "@ujima/api-schema";
-import type { SocketEventName } from "@ujima/shared/browser";
+import type { ReasoningEffort, SocketEventName } from "@ujima/shared/browser";
 import { getDirectMessageThreadId } from "@ujima/shared/browser";
 import type { SelectedConversation } from "./types";
 
@@ -44,7 +44,7 @@ export function buildConversationMessagePayload(
   content: string,
   parentMessageId?: string,
   attachmentIds?: string[],
-  metadata?: { goalMode?: boolean },
+  metadata?: { goalMode?: boolean; reasoningEffort?: ReasoningEffort },
   clientMessageId?: string,
 ):
   | {
@@ -54,7 +54,7 @@ export function buildConversationMessagePayload(
       content: string;
       attachmentIds?: string[];
       parentMessageId?: string;
-      metadata?: { goalMode?: boolean };
+      metadata?: { goalMode?: boolean; reasoningEffort?: ReasoningEffort };
       clientMessageId?: string;
     }
   | {
@@ -65,7 +65,7 @@ export function buildConversationMessagePayload(
       content: string;
       attachmentIds?: string[];
       parentMessageId?: string;
-      metadata?: { goalMode?: boolean };
+      metadata?: { goalMode?: boolean; reasoningEffort?: ReasoningEffort };
       clientMessageId?: string;
     } {
   if (transport.recipientId) {

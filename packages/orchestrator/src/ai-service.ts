@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { type ToolSet } from 'ai';
 import { buildAgentSystemPrompt, normalizeProviderKey } from '@ujima/framework';
-import { DEFAULT_SPIRIT_TEMPERATURE, type Message, type SpiritRole, type WakeReason } from '@ujima/shared';
+import { DEFAULT_SPIRIT_TEMPERATURE, type Message, type ReasoningEffort, type SpiritRole, type WakeReason } from '@ujima/shared';
 import {
   runAgentLoop,
   runAgentWithRetry,
@@ -259,6 +259,13 @@ export class AiService {
       throw new Error(`Role not found: ${agent.roleName}`);
     }
 
+    const runRow = this.repo.getRun?.(input.organizationId, input.runId);
+    const sourceMessageId = (runRow?.sourceMessageId ?? undefined) as string | undefined;
+    const sourceMessage = sourceMessageId
+      ? this.repo.getMessage(input.organizationId, sourceMessageId)
+      : null;
+    const reasoningEffort = sourceMessage?.metadata?.reasoningEffort as ReasoningEffort | undefined;
+
     const model = resolveSpiritModel({
       organizationId: input.organizationId,
       memberId: input.agentId,
@@ -267,6 +274,7 @@ export class AiService {
       team,
       getProviderCredential: (orgId, key) => this.repo.getProviderCredential(orgId, key),
       resolveProviderName: (m, r) => normalizeProviderKey(m.llm ?? r.provider ?? ''),
+      reasoningEffort,
       // `member.model` is provider-specific to the agent's preferred
       // provider. When `resolveSpiritModel` falls back to a different
       // provider (e.g. the preferred one has no key), that override
@@ -287,11 +295,6 @@ export class AiService {
     // `ALWAYS_AVAILABLE_AGENT_TOOLS`, so the model has a clear
     // path to comply with the "you must reply" contract regardless
     // of how the role config declares its `tools`.
-    const runRow = this.repo.getRun?.(input.organizationId, input.runId);
-    const sourceMessageId = (runRow?.sourceMessageId ?? undefined) as string | undefined;
-    const sourceMessage = sourceMessageId
-      ? this.repo.getMessage(input.organizationId, sourceMessageId)
-      : null;
     const isDelegateTurn = isDelegateMessage(sourceMessage);
     const wakeReasonForPalette = (runRow?.wakeReason ?? null) as WakeReason | null;
     const wakeReplyPolicy = resolveWakeReplyPolicy({
@@ -567,6 +570,7 @@ export class AiService {
           modelId: fallbackId,
           apiKey,
           baseUrl: provider.baseUrl,
+          reasoningEffort,
         });
       },
       logLabel: 'ai-service',

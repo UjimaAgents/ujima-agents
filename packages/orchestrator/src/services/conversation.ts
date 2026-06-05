@@ -13,6 +13,7 @@ import {
   type ChannelPassReason,
   type Message,
   type MessageMention,
+  type ReasoningEffort,
   buildMentionHandleRegistry,
   getDirectMessageThreadId,
   scanMentionsInContent,
@@ -46,6 +47,13 @@ import {
 
 const ATTACHMENT_FILE_LIMIT_BYTES = 25 * 1024 * 1024;
 const ATTACHMENT_MESSAGE_LIMIT_BYTES = 100 * 1024 * 1024;
+
+interface ConversationMessageMetadata {
+  runId?: string;
+  goalMode?: boolean;
+  reasoningEffort?: ReasoningEffort;
+  delegate?: { parentRunId?: string };
+}
 
 export interface ArchivedChannelMessageStore {
   listChannelMessages(input: {
@@ -782,7 +790,7 @@ export class ConversationService {
     mentions?: string[];
     parentMessageId?: string;
     attachmentIds?: string[];
-    metadata?: { runId?: string; goalMode?: boolean; delegate?: { parentRunId?: string } };
+    metadata?: ConversationMessageMetadata;
     /** L10 — client-supplied idempotency key. */
     clientMessageId?: string;
   }) {
@@ -884,7 +892,7 @@ export class ConversationService {
     body: string;
     replyTo?: string;
     mentions?: string[];
-    metadata?: { runId?: string; delegate?: { parentRunId?: string } };
+    metadata?: ConversationMessageMetadata;
   }) {
     const channel = this.requireActiveChannel(input.organizationId, input.channelId);
     let threadId = channel.id;
@@ -915,7 +923,7 @@ export class ConversationService {
     messageId: string;
     body: string;
     mentions?: string[];
-    metadata?: { runId?: string; delegate?: { parentRunId?: string } };
+    metadata?: ConversationMessageMetadata;
   }) {
     const parent = this.requireMessage(input.organizationId, input.messageId);
     return this.sendMessage({
@@ -939,7 +947,7 @@ export class ConversationService {
     parentMessageId?: string;
     ignore?: boolean;
     attachmentIds?: string[];
-    metadata?: { runId?: string; goalMode?: boolean; delegate?: { parentRunId?: string } };
+    metadata?: ConversationMessageMetadata;
     /** L10 — client-supplied idempotency key. */
     clientMessageId?: string;
   }) {
@@ -1773,4 +1781,3 @@ function mergeRankedPaginatedMessages(
 function uniqueMentionIds(mentions: MessageMention[]): string[] {
   return [...new Set(mentions.map((mention) => mention.memberId))];
 }
-
