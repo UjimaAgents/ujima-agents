@@ -61,7 +61,7 @@ function makeTools(...names: string[]): McpToolDescriptor[] {
 }
 
 function stubRepo(
-  attachments: Array<{ attachment: AgentMcpAttachment; server: McpServer }>,
+  attachments: { attachment: AgentMcpAttachment; server: McpServer }[],
   cacheByServerId: Record<string, McpToolDescriptor[]>,
 ): ConnectorCatalogRepo & {
   capturedRole: { value: 'worker' | 'supervisor' | null };
