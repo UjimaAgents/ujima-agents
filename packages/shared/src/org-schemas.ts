@@ -783,6 +783,20 @@ export type McpServerStatus = z.infer<typeof McpServerStatusSchema>;
 export const McpAttachmentScopeSchema = z.enum(['worker', 'supervisor', 'both']);
 export type McpAttachmentScope = z.infer<typeof McpAttachmentScopeSchema>;
 
+// Connector dispatch tier (mcp_connector_dispatch_plan.md §7.1, §17.5).
+// 'native'   — full typed schemas injected into the model's tool palette
+//              at spawn. Best ergonomics; what every existing attachment
+//              currently behaves like.
+// 'dispatch' — catalog entry only; reached at runtime through the
+//              invoke_connector_tool meta-tool. Zero per-tool palette
+//              cost. The lossless overflow valve.
+//
+// The flag UJIMA_MCP_DISPATCH gates whether the V2 spawn path reads
+// `tier` at all. Legacy spawn is tier-blind by design; default 'native'
+// means flag-off and tier='dispatch' rows still behave exactly as today.
+export const McpAttachmentTierSchema = z.enum(['native', 'dispatch']);
+export type McpAttachmentTier = z.infer<typeof McpAttachmentTierSchema>;
+
 /**
  * Canonical MCP server row. Secrets ride as `*_key_ref` only;
  * `envKeyRef` is the secret-store pointer to the JSON-encoded env-var
@@ -850,6 +864,7 @@ export const AgentMcpAttachmentSchema = z.object({
   memberId: IdSchema,
   mcpServerId: IdSchema,
   scope: McpAttachmentScopeSchema.default('worker'),
+  tier: McpAttachmentTierSchema.default('native'),
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,
 });

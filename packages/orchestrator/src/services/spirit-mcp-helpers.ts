@@ -107,3 +107,67 @@ export function mcpToolInputSchema(
   }
   return z.record(z.string(), z.unknown());
 }
+
+// -----------------------------------------------------------------------
+// Native palette token estimator
+// (mcp_connector_dispatch_plan.md §7.3)
+//
+// Conservative chars/token divisors per model family. The originating
+// 60-tool overflow bug was Gemini-specific, so the Gemini divisor sits
+// below the Anthropic/OpenAI one — tiktoken's chars/3.5 underestimates
+// Gemini's tokenizer by ~25% in our observation, and a budget meter
+// that under-reports on the model where over-budget is a hard failure
+// is worse than useless. When the vendor is unknown, we use the
+// smallest divisor (most conservative — predicts the most tokens for
+// the same chars) so the meter errs on the safe side.
+// -----------------------------------------------------------------------
+
+export type ModelVendor = 'anthropic' | 'openai' | 'gemini';
+
+const CHARS_PER_TOKEN: Record<ModelVendor, number> = {
+  anthropic: 3.5,
+  openai: 3.5,
+  gemini: 2.5,
+};
+
+const CONSERVATIVE_CHARS_PER_TOKEN = 2.5;
+
+export const DEFAULT_PALETTE_TOKEN_BUDGET = 8000;
+
+interface ToolDefForEstimate {
+  description?: string;
+  inputSchema?: unknown;
+  parameters?: unknown;
+}
+
+export function estimateToolPaletteTokens(
+  toolDefs: ToolSet,
+  modelVendor?: ModelVendor,
+): number {
+  let totalChars = 0;
+  for (const [name, raw] of Object.entries(toolDefs)) {
+    totalChars += name.length;
+    const def = raw as ToolDefForEstimate;
+    if (typeof def.description === 'string') {
+      totalChars += def.description.length;
+    }
+    // The AI SDK exposes the JSON Schema as either `inputSchema` (MCP-style
+    // descriptors we threaded through) or `parameters` (native tools). Both
+    // are read defensively — a non-serialisable schema falls through to
+    // 0 chars rather than throwing during a settings-page render.
+    const schema = def.inputSchema ?? def.parameters;
+    if (schema !== undefined && schema !== null) {
+      try {
+        totalChars += JSON.stringify(schema).length;
+      } catch {
+        // Skip — a non-serialisable schema contributes 0 to the estimate.
+        // Better than crashing the meter; the V2 spawn path's spill
+        // (§7.4 step 5) is the runtime safety net regardless.
+      }
+    }
+  }
+  const divisor = modelVendor
+    ? CHARS_PER_TOKEN[modelVendor]
+    : CONSERVATIVE_CHARS_PER_TOKEN;
+  return Math.ceil(totalChars / divisor);
+}

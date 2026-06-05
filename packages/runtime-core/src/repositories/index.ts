@@ -249,6 +249,7 @@ import {
   saveAgentMcpAttachment as writeAgentMcpAttachment,
   saveMcpServer as writeMcpServer,
   saveMcpToolCache as writeMcpToolCache,
+  updateAttachmentTier as mutateAttachmentTier,
 } from './mcp-servers.js';
 import {
   deleteMcpToolClassification as removeMcpToolClassification,
@@ -784,6 +785,14 @@ export class Repository {
   saveAgentMcpAttachment = (
     attachment: AgentMcpAttachment,
   ): AgentMcpAttachment => writeAgentMcpAttachment(this.db, attachment);
+  updateAttachmentTier = (
+    organizationId: string,
+    memberId: string,
+    mcpServerId: string,
+    tier: AgentMcpAttachment['tier'],
+    updatedAt: string,
+  ): AgentMcpAttachment | null =>
+    mutateAttachmentTier(this.db, organizationId, memberId, mcpServerId, tier, updatedAt);
   deleteAgentMcpAttachment = (
     organizationId: string,
     memberId: string,
