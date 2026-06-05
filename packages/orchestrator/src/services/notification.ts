@@ -48,16 +48,13 @@ export class NotificationService {
    * Start polling Telegram for callback queries (inline button presses).
    * Only used for bots configured with callbackDelivery=polling (the default).
    * Webhook-mode bots rely on POST /api/notifications/telegram-webhook instead.
+   * The loop stays active even when no poll-mode bots exist yet so channels
+   * added after daemon startup are picked up without a restart.
    */
   startPolling(intervalMs = 2000): void {
     if (this.pollTimers.has('_global')) return;
     if (!isTelegramPollingEnabled()) {
       if (this.logErrors) console.error('[notify] telegram polling disabled (UJIMA_TELEGRAM_POLLING=0)');
-      return;
-    }
-    const tokens = listTelegramPollingBotTokens(this.repo);
-    if (tokens.size === 0) {
-      if (this.logErrors) console.error('[notify] telegram polling not started (no poll-mode bots configured)');
       return;
     }
     this.pollAbort = new AbortController();
@@ -66,7 +63,15 @@ export class NotificationService {
       void this.runPollingTick();
     }, intervalMs);
     this.pollTimers.set('_global', timer);
-    if (this.logErrors) console.error('[notify] telegram polling started every', intervalMs, 'ms');
+    const tokenCount = listTelegramPollingBotTokens(this.repo).size;
+    if (this.logErrors) {
+      console.error(
+        '[notify] telegram polling started every',
+        intervalMs,
+        'ms',
+        tokenCount === 0 ? '(waiting for poll-mode bots)' : '',
+      );
+    }
   }
 
   stopPolling(): void {

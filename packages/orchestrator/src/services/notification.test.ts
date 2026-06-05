@@ -28,6 +28,7 @@ describe('telegram callback delivery', () => {
 
   it('startPolling does not install an interval when polling is disabled', () => {
     process.env.UJIMA_TELEGRAM_POLLING = '0';
+    const setIntervalSpy = vi.spyOn(global, 'setInterval');
     const svc = new NotificationService({
       listOrganizations: () => [{ id: 'org-1' }],
       listNotificationChannels: () => [{
@@ -43,7 +44,23 @@ describe('telegram callback delivery', () => {
     svc.logErrors = false;
     svc.setApprovalResolver(async () => undefined);
     svc.startPolling();
+    expect(setIntervalSpy).not.toHaveBeenCalled();
     svc.stopPolling();
+    setIntervalSpy.mockRestore();
+  });
+
+  it('startPolling keeps the loop running before telegram channels exist', () => {
+    const setIntervalSpy = vi.spyOn(global, 'setInterval');
+    const svc = new NotificationService({
+      listOrganizations: () => [],
+      listNotificationChannels: () => [],
+    } as never);
+    svc.logErrors = false;
+    svc.setApprovalResolver(async () => undefined);
+    svc.startPolling();
+    expect(setIntervalSpy).toHaveBeenCalledOnce();
+    svc.stopPolling();
+    setIntervalSpy.mockRestore();
   });
 
   it('stopPolling aborts an in-flight long poll', async () => {
