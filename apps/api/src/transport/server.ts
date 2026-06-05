@@ -115,6 +115,8 @@ export interface TransportOptions {
 export interface Transport {
   readonly url: string;
   listen(): Promise<void>;
+  /** Start scheduler + notification polling. Call only in long-running daemons. */
+  startBackgroundServices(): void;
   close(): Promise<void>;
 }
 
@@ -379,8 +381,6 @@ export function createTransport(opts: TransportOptions): Transport {
           repo: opts.apiServices.repo,
           auth: services.auth,
         });
-        scheduler?.start();
-        notifications?.startPolling();
       }
     },
     {prefix: "/api"}
@@ -406,6 +406,10 @@ export function createTransport(opts: TransportOptions): Transport {
       await fastify.ready();
       readyUrl = await fastify.listen({host: bindHost, port});
       logger.info("transport: listening", {url: readyUrl});
+    },
+    startBackgroundServices() {
+      scheduler?.start();
+      notifications?.startPolling();
     },
     async close() {
       scheduler?.stop();

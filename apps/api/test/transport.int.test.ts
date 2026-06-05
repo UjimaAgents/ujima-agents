@@ -301,6 +301,7 @@ describe('transport (in-process)', () => {
     });
 
     await schedTransport.listen();
+    schedTransport.startBackgroundServices();
     expect(scheduler.start).toHaveBeenCalledTimes(1);
     await schedTransport.close();
     expect(scheduler.stop).toHaveBeenCalledTimes(1);
