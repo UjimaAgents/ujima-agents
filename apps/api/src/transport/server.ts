@@ -145,7 +145,7 @@ export function createTransport(opts: TransportOptions): Transport {
 
   fastify.setValidatorCompiler(validatorCompiler);
   fastify.setSerializerCompiler(serializerCompiler);
-  let notifications: { stopPolling(): void } | undefined;
+  let notifications: { startPolling(): void; stopPolling(): void } | undefined;
 
   // Documentation (Public)
   fastify.register(swagger, {
@@ -380,7 +380,7 @@ export function createTransport(opts: TransportOptions): Transport {
           auth: services.auth,
         });
         scheduler?.start();
-        services.notifications.startPolling();
+        notifications?.startPolling();
       }
     },
     {prefix: "/api"}
