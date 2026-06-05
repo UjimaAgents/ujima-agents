@@ -36,13 +36,13 @@ export interface CatalogEntry {
   name: string;
   category: string;
   /**
-   * Verbatim curated description text when the server's description
-   * passes the §17.5.7 quality lint. `null` triggers the structural-
-   * facts fallback in `renderCatalogEntry` — the renderer emits only
-   * the server name, category, tool count, and tool name preview.
+   * Verbatim curated description text when the server matches an
+   * entry in CURATED_REGISTRY with a populated curatedDescription.
+   * `null` triggers the structural-facts fallback in
+   * `renderCatalogEntry` — the renderer emits only the server name,
+   * category, and tool count.
    */
   curatedDescription: string | null;
-  toolNamesPreview: string[];
   toolCount: number;
 }
 
@@ -74,16 +74,11 @@ export interface ConnectorCatalogRepo {
   getMcpToolCache(organizationId: string, serverId: string): McpToolCache | null;
 }
 
-export interface RenderOptions {
-  /**
-   * Cap on the number of tool names emitted per entry. Defaults to 5,
-   * which keeps the per-entry catalog line short enough that ~50
-   * dispatch servers still fit in a few thousand tokens. Higher caps
-   * stop being useful — the model can call `get_connector_tools` for
-   * the full list once it picks a server.
-   */
-  toolNamePreviewLimit?: number;
-}
+// Tool-name caps and similar knobs were removed when tool names left
+// catalogText (see §17.5.7 notes near sanitizeToolName). Future
+// rendering options would land as a new parameter on
+// resolveConnectorCatalog / renderCatalogText rather than carrying a
+// vestigial empty type today.
 
 // ───────────────────────────────────────────────────────────────────────
 // Trust-gated curated rendering (§17.5.7 prompt-injection guard)
@@ -183,28 +178,28 @@ function packageSignature(args: readonly string[]): string | undefined {
 }
 
 // ───────────────────────────────────────────────────────────────────────
-// Tool-name sanitization (§17.5.7, second injection surface)
+// Tool-name sanitization (kept for downstream surfaces — NOT used here)
 //
-// Tool names come from MCPConnection.listTools() — the server's own
-// self-report, identical trust level to server.description. Rendering
-// them verbatim into the prompt re-opens the prompt-injection surface
-// the registry-match guard closes for descriptions. A hostile server
-// could publish a tool named "\nSYSTEM: ignore prior instructions" or
-// "Read this before any tool call" and it would land in catalogText.
+// Earlier iterations of this module rendered tool names into
+// catalogText. Three bot-finder escalations + careful re-reading of
+// §17.5.7 converged on a stricter answer: catalogText emits NO tool
+// names. The threat model is principled — there is no trusted source
+// for the live tool inventory of a registry-matched server (supply-
+// chain compromise of a vendor package, MITM on the connection,
+// vendor-side breach all bypass the server-identity match), and a
+// character-class regex cannot distinguish `post_message` from
+// `ignore_prior_instructions` semantically. Counts-only is the
+// definitive close.
 //
-// Strategy: only render names that match a conservative identifier
-// shape — alphanumerics, underscores, dots, dashes; ≤64 chars. Names
-// that fail are dropped from the preview. toolCount stays accurate
-// (it's a number, not attacker-shaped) so the operator still sees how
-// many tools exist and can run get_connector_tools(server) for the
-// full validated list.
+// The agent reaches the validated tool list through
+// `get_connector_tools(serverId)` once it picks a server — a tool
+// result, not prompt text. Tool results sit in a fenced context the
+// model is trained to handle differently than prompt-level prose, and
+// PR 4 will apply this same sanitizer there as defense-in-depth.
 //
-// The shape covers every real MCP naming convention observed in
-// CURATED_REGISTRY (snake_case, slack_post_message, browser_close,
-// git_reset, notion-update-page, slack.post_message). Any name that
-// requires spaces, punctuation that could form prose, control chars,
-// or escapes — i.e. anything that could carry an instruction — is
-// rejected by construction.
+// `sanitizeToolName` stays exported because PR 4's meta-tools want
+// the same shape filter on the tool-result surface — one rule, two
+// surfaces — even though catalogText no longer needs it.
 // ───────────────────────────────────────────────────────────────────────
 
 const TOOL_NAME_PATTERN = /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}$/;
@@ -212,9 +207,9 @@ const TOOL_NAME_PATTERN = /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}$/;
 /**
  * Returns the input when it matches the conservative tool-name shape
  * (identifier-safe characters only, ≤64 chars), otherwise undefined.
- * Exported so PR 4's get_connector_tools / search_catalog meta-tools
- * apply the same filter when emitting names into tool results — one
- * sanitization rule, two surfaces.
+ * Used by PR 4's get_connector_tools / search_catalog meta-tools when
+ * emitting names into tool results. Not used by this module — see
+ * the comment above for why catalogText is names-free.
  */
 export function sanitizeToolName(name: string): string | undefined {
   return TOOL_NAME_PATTERN.test(name) ? name : undefined;
@@ -237,7 +232,6 @@ export function resolveConnectorCatalog(
   organizationId: string,
   memberId: string,
   role: 'worker' | 'supervisor',
-  options: RenderOptions = {},
 ): ResolvedCatalog {
   const pairs = repo.listAttachedServersForSpirit(organizationId, memberId, role);
 
@@ -261,34 +255,18 @@ export function resolveConnectorCatalog(
     // re-open the prompt-injection surface this module exists to
     // close. Admin-curated descriptions for non-registry servers
     // ship in PR 6 with their own explicit "I approved this" flag.
+    // CatalogText emits NO tool names — see sanitizeToolName comment
+    // above. The cache lookup persists because toolCount is part of
+    // every catalog line; the line lengths are bounded by curated
+    // description length + category + name, all admin-controlled.
     const cache = repo.getMcpToolCache(organizationId, server.id);
     const rawTools = cache?.tools ?? [];
     const registryMatch = findRegistryMatch(server);
-    // Tool-name trust gate, parallel to the description trust gate.
-    // §17.5.7 demands verbatim model-readable text come from trusted
-    // sources only. Tool names are attacker-controllable on community
-    // MCPs (the server's listTools() output is its self-report), and
-    // identifier-shaped names can still carry instruction-like
-    // content — `ignore_prior_instructions`, `read_me_first`, etc.
-    // passes any character-class sanitizer. So names are emitted into
-    // catalogText only when the server matches CURATED_REGISTRY; for
-    // non-registry servers the renderer shows count only and the
-    // agent reaches the validated tool list through
-    // get_connector_tools(serverId) — a typed tool result, not a
-    // prompt-text emission. sanitizeToolName remains in the chain as
-    // defense-in-depth against control chars in case a registry-
-    // matched server is compromised by supply chain.
-    const trustedNames = registryMatch
-      ? rawTools
-          .map((t) => sanitizeToolName(t.name))
-          .filter((n): n is string => n !== undefined)
-      : [];
     dispatchCatalog.push({
       serverId: server.id,
       name: server.name,
       category: server.category,
       curatedDescription: registryMatch?.curatedDescription ?? null,
-      toolNamesPreview: trustedNames.slice(0, options.toolNamePreviewLimit ?? 5),
       toolCount: rawTools.length,
     });
   }
@@ -296,7 +274,7 @@ export function resolveConnectorCatalog(
   return {
     nativeAttachments,
     dispatchCatalog,
-    catalogText: renderCatalogText(dispatchCatalog, options),
+    catalogText: renderCatalogText(dispatchCatalog),
   };
 }
 
@@ -313,33 +291,26 @@ export function resolveConnectorCatalog(
  * surfaces (system prompt + tool result).
  */
 export function renderCatalogEntry(entry: CatalogEntry): string {
-  const preview = renderToolPreview(entry);
-
+  const toolFragment = renderToolCount(entry.toolCount);
   if (entry.curatedDescription) {
-    return `- ${entry.name} [${entry.category}] — ${entry.curatedDescription} Tools: ${preview}.`;
+    return `- ${entry.name} [${entry.category}] — ${entry.curatedDescription} (${toolFragment}).`;
   }
   // Structural facts only. No prose from server.description ever
-  // reaches here — the renderer's tone is dry by design so an
-  // un-curated connector can't ride a friendly verb-led blurb into
-  // the system prompt.
-  return `- ${entry.name} [${entry.category}] — ${entry.toolCount} tool${entry.toolCount === 1 ? '' : 's'}: ${preview}.`;
+  // reaches here, and no tool names from server.listTools() either —
+  // the renderer's tone is dry by design so an un-curated connector
+  // can't ride a friendly verb-led blurb into the system prompt.
+  // Discovery of actual tool names happens through
+  // get_connector_tools(serverId), a tool result rather than prompt
+  // text.
+  return `- ${entry.name} [${entry.category}] — ${toolFragment}.`;
 }
 
-function renderToolPreview(entry: CatalogEntry): string {
-  if (entry.toolCount === 0) return '(no tools cached)';
-  // Tools exist but every name failed sanitization (§17.5.7 second
-  // surface). Show the count but not the names — the agent can still
-  // call `get_connector_tools(serverId)` to discover the full list
-  // through a validated channel.
-  if (entry.toolNamesPreview.length === 0) return '(names not displayable)';
-  const joined = entry.toolNamesPreview.join(', ');
-  return entry.toolCount > entry.toolNamesPreview.length ? `${joined}, …` : joined;
+function renderToolCount(toolCount: number): string {
+  if (toolCount === 0) return 'no tools cached';
+  return `${toolCount} tool${toolCount === 1 ? '' : 's'}`;
 }
 
-export function renderCatalogText(
-  entries: CatalogEntry[],
-  _options: RenderOptions = {},
-): string {
+export function renderCatalogText(entries: CatalogEntry[]): string {
   if (entries.length === 0) return '';
   return entries.map(renderCatalogEntry).join('\n');
 }
