@@ -39,6 +39,27 @@ function formatAttachedMcpServers(
 }
 
 /**
+ * Render the V2 spawn's pre-rendered dispatch catalog (PR 3) into the
+ * system prompt. Only the V2 spawn passes a value — the legacy spawn
+ * leaves this undefined and the block is omitted entirely. The text
+ * comes through pre-sanitized; this helper does not inspect it.
+ *
+ * The framing tells the model these connectors exist but require an
+ * extra step to use (get_connector_tools → invoke_connector_tool),
+ * so it doesn't conflate them with the always-on Attached MCP servers
+ * block above.
+ */
+function formatAvailableConnectors(catalogText: string | undefined): string {
+  if (!catalogText || catalogText.trim().length === 0) return '';
+  return [
+    'Discoverable connectors (you do NOT have these tools yet; ' +
+      'call get_connector_tools(server_id) to see what one provides, ' +
+      'then invoke_connector_tool(server_id, tool_name, args) to use it):',
+    catalogText,
+  ].join('\n');
+}
+
+/**
  * Emit an explicit "capabilities you do NOT have" line in the
  * system prompt. Models — especially smaller/faster ones — pattern-
  * match the surface form of capability claims; when the prompt only
@@ -254,6 +275,15 @@ export function buildAgentSystemPrompt(
    */
   attachedMcpServers?: readonly { name: string; toolNames: readonly string[] }[],
   conversationKind: ConversationKind = 'channel',
+  /**
+   * Pre-rendered dispatch catalog block produced by the V2 spawn
+   * (mcp_connector_dispatch_plan.md §7.4). Only the V2 spawn passes
+   * a value; the legacy spawn leaves it undefined and the block is
+   * omitted from the prompt entirely. Already sanitized by
+   * `resolveConnectorCatalog` — this signature accepts it as plain
+   * text and threads it through.
+   */
+  availableConnectors?: string,
 ): string {
   const accessibleChannels = role.channels.length
     ? channels.filter((channel) => role.channels.includes(channel.name))
@@ -298,6 +328,7 @@ export function buildAgentSystemPrompt(
     formatWorkspaceLayout(workspaceRoot),
     `Available tools: ${listToolsLine(availableToolIds ?? role.tools)}`,
     formatAttachedMcpServers(attachedMcpServers),
+    formatAvailableConnectors(availableConnectors),
     formatMissingCapabilities(availableToolIds),
     `Available channels: ${listChannels(role)}`,
   ]

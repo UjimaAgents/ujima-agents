@@ -338,13 +338,21 @@ export function listAttachedServersForSpirit(
     )
     .all(organizationId, memberId, ...allowedScopes, ...allowedScopes) as Row[];
 
-  return rows.map((row) => ({
+  return rows.map((row) => {
+    // `tier` is the PR 1 column. Missing here would default the Zod
+    // schema to 'native' on every row, which silently collapsed the
+    // dispatch tier in the V2 spawn path (PR 5 surfaced this). Mirror
+    // the optional-read shape `rowToAttachment` uses so older DBs that
+    // pre-date migration 048 still round-trip cleanly.
+    const tier = (row as Record<string, unknown>).tier;
+    return {
     attachment: AgentMcpAttachmentSchema.parse({
       id: rowString(row, 'id'),
       organizationId: rowString(row, 'organization_id'),
       memberId: rowString(row, 'member_id'),
       mcpServerId: rowString(row, 'mcp_server_id'),
       scope: rowString(row, 'scope'),
+      ...(typeof tier === 'string' ? { tier } : {}),
       createdAt: rowString(row, 'created_at'),
       updatedAt: rowString(row, 'updated_at'),
     }),
@@ -368,7 +376,8 @@ export function listAttachedServersForSpirit(
       createdAt: rowString(row, 's_created_at'),
       updatedAt: rowString(row, 's_updated_at'),
     }),
-  }));
+    };
+  });
 }
 
 // ---------------- Tool cache -----------------------------------------
