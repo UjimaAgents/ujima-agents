@@ -273,6 +273,36 @@ export function sanitizeCategoryToken(category: string): string {
   return cleaned.length > 0 ? cleaned : 'general';
 }
 
+/**
+ * Produce a name + category pair safe for prompt-text rendering.
+ *
+ *   * Registry-matched server → registry entry's canonical name +
+ *     category. Both fields are code-shipped and reviewed; verbatim
+ *     emission is acceptable.
+ *   * Non-matched server → opaque "Custom MCP (<id-prefix>)" name +
+ *     sanitised category. server.name is NOT consulted because even
+ *     after shape sanitisation it can still hold natural-language
+ *     prose that reads as instruction in the catalog. The id-prefix
+ *     gives the agent something to address (it picks a row and calls
+ *     get_connector_tools on the full serverId) without leaking
+ *     admin-controllable text.
+ *
+ * Exported for PR 4's search_catalog so one rule covers both
+ * surfaces (system prompt + tool result).
+ */
+export function safeServerLabel(
+  server: McpServer,
+  registryMatch: RegistryEntry | undefined,
+): { name: string; category: string } {
+  if (registryMatch) {
+    return { name: registryMatch.name, category: registryMatch.category };
+  }
+  return {
+    name: `Custom MCP (${server.id.slice(0, 12)})`,
+    category: sanitizeCategoryToken(server.category),
+  };
+}
+
 // ───────────────────────────────────────────────────────────────────────
 // Resolver
 // ───────────────────────────────────────────────────────────────────────
@@ -313,18 +343,25 @@ export function resolveConnectorCatalog(
     // re-open the prompt-injection surface this module exists to
     // close. Admin-curated descriptions for non-registry servers
     // ship in PR 6 with their own explicit "I approved this" flag.
-    // CatalogText emits NO tool names — see sanitizeToolName comment
-    // above. Server name + category go through display-shape
-    // sanitizers so attacker-shaped admin-imported strings can't
-    // inject format breaks or fake bullet points through the rendered
-    // line's `- ${name} [${category}] —` slots.
+    // CatalogText emits NO tool names — see sanitizeToolName comment.
+    // Server name + category come from `safeServerLabel`: registry-
+    // matched servers use the registry entry's canonical labels
+    // (code-shipped, reviewed); non-matched servers get an opaque
+    // "Custom MCP (<id-prefix>)" label with the sanitised category.
+    // server.name is NEVER trusted — even after shape sanitisation it
+    // can still hold natural-language prose ("Ignore previous
+    // instructions ...") that reads as a model-directed instruction
+    // inside the catalog. The opaque label fully closes that surface;
+    // the agent still addresses the server through serverId in
+    // `get_connector_tools` / `invoke_connector_tool`.
     const cache = repo.getMcpToolCache(organizationId, server.id);
     const rawTools = cache?.tools ?? [];
     const registryMatch = findRegistryMatch(server);
+    const safe = safeServerLabel(server, registryMatch);
     dispatchCatalog.push({
       serverId: server.id,
-      name: sanitizeDisplayName(server.name),
-      category: sanitizeCategoryToken(server.category),
+      name: safe.name,
+      category: safe.category,
       curatedDescription: registryMatch?.curatedDescription ?? null,
       toolCount: rawTools.length,
     });
