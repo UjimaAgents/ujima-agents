@@ -33,7 +33,7 @@
 //      catalog-rendering logic leaks into the spawn path.
 
 import { tool, type ToolSet } from 'ai';
-import type { SpiritRole } from '@ujima/shared';
+import { classifyTool, type SpiritRole } from '@ujima/shared';
 import type { ApiRepository } from './repository-reader.js';
 import { materializeMcpDef, mcpPermissionToolName } from './mcp-runtime.js';
 import {
@@ -116,20 +116,30 @@ export async function buildMcpToolDefinitionsV2(
     // Best-effort live refresh — mirrors the legacy spawn path's
     // listTools call so a settings-UI Test isn't required after every
     // server change. Failures fall back to the cached inventory so an
-    // unreachable MCP doesn't strand the agent.
+    // unreachable MCP doesn't strand the agent. Preserve the
+    // server-declared `destructive` annotation so the post-fetch
+    // classifyTool() call honours the MCP's own intent before falling
+    // back to verb heuristics.
     try {
       const connection = await services.mcpPool.get(def, {
         agentId: ctx.memberId,
       });
       const liveTools = await connection.listTools();
-      toolList = liveTools.map((t) => ({
-        name: t.name,
-        description: t.description ?? '',
-        inputSchema:
-          t.inputSchema && typeof t.inputSchema === 'object' && !Array.isArray(t.inputSchema)
-            ? (t.inputSchema as Record<string, unknown>)
-            : undefined,
-      }));
+      toolList = liveTools.map((t) => {
+        const declared =
+          typeof (t as { destructive?: boolean }).destructive === 'boolean'
+            ? (t as { destructive?: boolean }).destructive
+            : undefined;
+        return {
+          name: t.name,
+          description: t.description ?? '',
+          inputSchema:
+            t.inputSchema && typeof t.inputSchema === 'object' && !Array.isArray(t.inputSchema)
+              ? (t.inputSchema as Record<string, unknown>)
+              : undefined,
+          ...(declared !== undefined ? { destructive: declared } : {}),
+        };
+      });
       try {
         services.repo.saveMcpToolCache({
           mcpServerId: server.id,
@@ -145,12 +155,66 @@ export async function buildMcpToolDefinitionsV2(
           err,
         );
       }
+      // Seed inferred risk classifications so newly-discovered tools
+      // pick up org policy (e.g. risk_defaults.destructive =
+      // require_approval) immediately, not only after a manual Test
+      // from the settings UI. INSERT OR IGNORE in the underlying
+      // repo preserves manual overrides. Without this seed the
+      // permission middleware sees no classification, evaluatePolicy
+      // returns 'inherit', and write/destructive tools silently
+      // bypass risk_defaults — exactly the regression the bot caught.
+      try {
+        const seedEntries = toolList.map((d) => {
+          const inf = classifyTool({
+            name: d.name,
+            description: d.description,
+            category: server.category,
+            declaredDestructive: d.destructive,
+          });
+          return {
+            toolName: d.name,
+            risk: inf.risk,
+            needsReview: inf.needsReview,
+            reason: inf.reason,
+          };
+        });
+        services.repo.seedInferredClassifications(
+          ctx.organizationId,
+          server.id,
+          seedEntries,
+        );
+      } catch (err) {
+        console.warn(
+          `[connector-spawn-v2] classification seed failed for "${server.id}":`,
+          err,
+        );
+      }
     } catch {
       // Live refresh failed → cache fallback above. Same shape as the
       // legacy path's behaviour.
     }
 
     if (toolList.length === 0) continue;
+
+    // Per-tool grant filter (role-scoped). When the agent has at least
+    // one row in agent_tool_attachments for this server matching the
+    // current spirit role, narrow the palette to those tools. Zero
+    // matching rows = "all tools" mode (back-compat). Same shape as
+    // the legacy filter at spirit-agent-run.ts:892-903; without it
+    // V2 would expose every listTools() result regardless of grants.
+    const grants = services.repo.listAgentToolAttachments(
+      ctx.organizationId,
+      ctx.memberId,
+      server.id,
+    );
+    const applicableGrants = grants.filter(
+      (g) => g.scope === ctx.role || g.scope === 'both',
+    );
+    if (applicableGrants.length > 0) {
+      const allowedNames = new Set(applicableGrants.map((g) => g.toolName));
+      toolList = toolList.filter((t) => allowedNames.has(t.name));
+      if (toolList.length === 0) continue;
+    }
 
     const nsSlug = buildMcpNamespace(server.name, server.id);
     servers.push({
