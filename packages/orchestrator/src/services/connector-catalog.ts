@@ -259,10 +259,13 @@ export function sanitizeDisplayName(name: string): string {
 }
 
 /**
- * Normalise a category token for prompt-facing rendering: identifier-
- * safe characters (alphanum, dash, underscore, dot, space) only,
- * collapse whitespace, cap at 32 chars. Empty results fall back to
- * "general" so the bracketed format slot is always populated.
+ * Identifier-shape filter for category tokens. NOT used by this
+ * module's catalog path (see safeServerLabel comment for why non-
+ * registry categories are forced to the fixed "custom" label).
+ * Kept exported for PR 6's settings UI to surface an attach-time
+ * amber chip when an admin types a category that wouldn't survive
+ * this filter; that's a quality cue for human review, not a
+ * security gate.
  */
 export function sanitizeCategoryToken(category: string): string {
   const cleaned = category
@@ -280,12 +283,14 @@ export function sanitizeCategoryToken(category: string): string {
  *     category. Both fields are code-shipped and reviewed; verbatim
  *     emission is acceptable.
  *   * Non-matched server → opaque "Custom MCP (<id-prefix>)" name +
- *     sanitised category. server.name is NOT consulted because even
- *     after shape sanitisation it can still hold natural-language
- *     prose that reads as instruction in the catalog. The id-prefix
- *     gives the agent something to address (it picks a row and calls
- *     get_connector_tools on the full serverId) without leaking
- *     admin-controllable text.
+ *     the fixed string "custom" for category. Neither server.name
+ *     nor server.category is consulted: both fields are unrestricted
+ *     strings in MCPDef and even after shape sanitisation can hold
+ *     natural-language prose ("delete everything", "ignore prior
+ *     instructions") that reads as instruction in the catalog. Fixed
+ *     opaque labels are the only way to close that surface for non-
+ *     registry servers; the id-prefix still lets the agent address
+ *     the row (it calls get_connector_tools on the full serverId).
  *
  * Exported for PR 4's search_catalog so one rule covers both
  * surfaces (system prompt + tool result).
@@ -299,7 +304,7 @@ export function safeServerLabel(
   }
   return {
     name: `Custom MCP (${server.id.slice(0, 12)})`,
-    category: sanitizeCategoryToken(server.category),
+    category: 'custom',
   };
 }
 
