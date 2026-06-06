@@ -472,6 +472,7 @@ export class AiService {
       sourceMessageId,
       threadId: input.threadId,
       members: this.repo.listMembers(input.organizationId),
+      wakeReason: wakeReasonForPalette,
     });
     if (threadStateBlock) {
       messages.push({

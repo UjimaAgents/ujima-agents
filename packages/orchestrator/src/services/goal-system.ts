@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { Goal, GoalTask, GoalTaskStatus, InteractiveQuestion } from '@ujima/shared';
 import type { ApiRepository } from './repository-reader.js';
 import type { ConversationService } from './conversation.js';
+import { evictStaleTimestamps } from '../utils/ttl-map.js';
 
 export const QUESTION_RECOMMENDED_SUFFIX = '(Recommended)';
 export const IMPLEMENT_QUESTION_TEXT = 'Do you want me to implement?';
@@ -206,6 +207,7 @@ export class GoalSystemService {
       });
     }
     if (input.status !== undefined) {
+      this.lastNudgedAt.delete(input.taskId);
       const task = this.repo.updateGoalTaskStatus(input.organizationId, input.taskId, input.status, {
         handoverSummary: input.handoverSummary,
       });
@@ -263,6 +265,7 @@ export class GoalSystemService {
   sweepAllPendingTasks(): void {
     if (!this.conversations) return;
     const now = Date.now();
+    evictStaleTimestamps(this.lastNudgedAt, now, NUDGE_DEDUP_WINDOW_MS);
     for (const org of this.repo.listOrganizations()) {
       const activeRuns = this.repo.listActiveRuns?.(org.id) ?? [];
       const activeAssignees = new Set<string>();

@@ -30,6 +30,7 @@ import type {
   PaginatedMessages,
 } from './repository-reader.js';
 import { requireOrganization } from '../utils/require-organization.js';
+import { evictStaleTimestamps } from '../utils/ttl-map.js';
 import { isVacuousAck, shouldSuppressForMirror } from './mirror-guard.js';
 import { isAcknowledgementOnly } from './run-reply-guard.js';
 import {
@@ -129,6 +130,9 @@ export class ConversationService {
       ? Math.max(requestedMs, previousMs + 1)
       : previousMs + 1;
     this.lastMessageCreatedAtByThread.set(key, nextMs);
+    if (this.lastMessageCreatedAtByThread.size > 1024) {
+      evictStaleTimestamps(this.lastMessageCreatedAtByThread, Date.now(), 10 * 60 * 1000);
+    }
     return new Date(nextMs).toISOString();
   }
 
@@ -1298,11 +1302,13 @@ export class ConversationService {
       // of being forced into another mandatory reply. Emit an
       // observability event so the UI can show "X and Y are
       // looping — wakes demoted".
-      const countInWindow = this.pairMentionTracker.record(
-        `${message.organizationId}|${message.threadId}|${message.senderId}|${member.id}`,
-      );
-      const wakeReason: WakeReason =
-        countInWindow > 3 ? 'channel-read' : 'mention';
+      const countInWindow =
+        message.senderKind === AGENT_KIND
+          ? this.pairMentionTracker.record(
+              `${message.organizationId}|${message.threadId}|${message.senderId}|${member.id}`,
+            )
+          : 0;
+      const wakeReason: WakeReason = countInWindow > 3 ? 'channel-read' : 'mention';
       if (wakeReason === 'channel-read') {
         this.emitEchoSuppressed({
           organizationId: message.organizationId,
@@ -1391,14 +1397,14 @@ export class ConversationService {
         );
         if (memberMode === 'muted' || memberMode === 'temp_disable') return;
         const recipient = this.repo.getMember(message.organizationId, recipientId);
-        const pairCap =
-          sender?.kind === 'agent' && recipient?.kind === 'agent' ? 1 : 3;
         try {
-          const countInWindow = this.pairMentionTracker.record(
-            `${message.organizationId}|${message.threadId}|${message.senderId}|${recipientId}`,
-          );
-          const wakeReason: WakeReason =
-            countInWindow > pairCap ? 'channel-read' : 'dm';
+          const isAgentPair = sender?.kind === AGENT_KIND && recipient?.kind === AGENT_KIND;
+          const countInWindow = isAgentPair
+            ? this.pairMentionTracker.record(
+                `${message.organizationId}|${message.threadId}|${message.senderId}|${recipientId}`,
+              )
+            : 0;
+          const wakeReason: WakeReason = countInWindow > 1 ? 'channel-read' : 'dm';
 
           if (wakeReason === 'channel-read') {
             this.emitEchoSuppressed({

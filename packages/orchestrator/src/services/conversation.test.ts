@@ -499,6 +499,43 @@ describe('ConversationService @all mentions', () => {
     ]);
   });
 
+  it('does not demote repeated human DM requests', async () => {
+    const { alertWakeReasons, service } = createConversationFixture();
+
+    for (let index = 0; index < 4; index++) {
+      await service.sendDirectMessage({
+        organizationId: 'org-1',
+        senderId: 'human-1',
+        recipientId: 'agent-1',
+        content: `Human request ${index}`,
+      });
+    }
+
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(alertWakeReasons).toEqual(
+      Array.from({ length: 4 }, () => ({ memberId: 'agent-1', wakeReason: 'dm' })),
+    );
+  });
+
+  it('does not demote repeated human mentions', async () => {
+    const { alertWakeReasons, service } = createConversationFixture();
+
+    for (let index = 0; index < 4; index++) {
+      service.postToChannel({
+        organizationId: 'org-1',
+        senderId: 'human-1',
+        channelId: 'general',
+        body: `@Mia human request ${index}`,
+        mentions: ['agent-1'],
+      });
+    }
+
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(alertWakeReasons.filter(({ memberId }) => memberId === 'agent-1')).toEqual(
+      Array.from({ length: 4 }, () => ({ memberId: 'agent-1', wakeReason: 'mention' })),
+    );
+  });
+
   it('resolves multi-word mentions in message content', async () => {
     const { alerts, repo, service, thread } = createConversationFixture();
     
