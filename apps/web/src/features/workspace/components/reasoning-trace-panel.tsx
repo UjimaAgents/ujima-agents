@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type SetStateAction } from "react";
 import { ArrowDown, Loader2 } from "lucide-react";
 import { RunTraceListResponseSchema, type RunTraceEntry } from "@ujima/api-schema";
 import { buildHistoricalTraceSteps } from "../reasoning-trace";
@@ -169,10 +169,14 @@ function groupTraceSteps(steps: TraceStepData[]): TraceStepData[] {
 
   for (const step of steps) {
     if (isToolStep(step)) {
+      const agentName = getAgentName(step.title);
+      if (currentGroup && getAgentName(currentGroup.title) !== agentName) {
+        currentGroup = null;
+      }
       if (!currentGroup) {
         currentGroup = {
           id: `aggregated-run-${step.id}`,
-          title: `${getAgentName(step.title)} · running`,
+          title: `${agentName} · running`,
           detail: "",
           time: step.time,
           duration: step.duration,
@@ -410,6 +414,7 @@ export function ReasoningTracePanel({
   }, [history, liveSteps]);
 
   useEffect(() => {
+    let nextNewTraceCount: SetStateAction<number> | undefined;
     const nextCount = liveSteps.length;
     const last = liveSteps.at(-1);
     const nextSignal = nextCount ? `${last?.id ?? ""}:${last?.status ?? ""}:${last?.title ?? ""}:${last?.detail ?? ""}` : "";
@@ -420,22 +425,20 @@ export function ReasoningTracePanel({
     prevLiveSignalRef.current = nextSignal;
 
     if (nextCount === 0) {
-      setNewTraceCount(0);
-      return;
-    }
-
-    if (nextSignal === prevSignal && nextCount === prevCount) return;
-
-    if (isAtBottomRef.current && autoScroll) {
+      nextNewTraceCount = 0;
+    } else if (nextSignal === prevSignal && nextCount === prevCount) {
+      nextNewTraceCount = undefined;
+    } else if (isAtBottomRef.current && autoScroll) {
       shouldScrollToBottomRef.current = true;
-      setNewTraceCount(0);
-      return;
+      nextNewTraceCount = 0;
+    } else if (nextCount > prevCount) {
+      shouldScrollToBottomRef.current = false;
+      nextNewTraceCount = (count) => count + (nextCount - prevCount);
     }
 
-    if (nextCount > prevCount) {
-      shouldScrollToBottomRef.current = false;
-      setNewTraceCount((count) => count + (nextCount - prevCount));
-    }
+    if (nextNewTraceCount === undefined) return;
+    const frame = requestAnimationFrame(() => setNewTraceCount(nextNewTraceCount));
+    return () => cancelAnimationFrame(frame);
   }, [autoScroll, liveSteps]);
 
   const traceRows = useMemo<TraceRowData[]>(() => {

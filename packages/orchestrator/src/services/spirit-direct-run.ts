@@ -468,6 +468,7 @@ export class SpiritService extends SpiritServiceSupervisor {
     this.runAbortControllers.set(abortKey, abortController);
     const streamedTrace: StreamedRunTrace = { text: '', reasoning: '' };
     let persistedStepCount = 0;
+    let sawTerminatingTool = false;
     const turn = new RunTurnPublisher(
       (message) => {
         this.conversations?.publishMessage(message);
@@ -528,7 +529,16 @@ export class SpiritService extends SpiritServiceSupervisor {
                 : undefined;
             if (stepArtifactFileToolCall) turn.markArtifactFilePublished();
 
-            if (runUsedThreadPublishingTool({ steps: [s] }) && !stepArtifactFileToolCall) continue;
+            const persistedTerminator = findTerminatingToolFromRunSteps(
+              this.repo.listRunSteps?.(running.organizationId, running.id) ?? [],
+            );
+            const stepTerminatedRun =
+              runUsedThreadPublishingTool({ steps: [s] }) || persistedTerminator !== null;
+            if (sawTerminatingTool || (stepTerminatedRun && !stepArtifactFileToolCall)) {
+              if (stepTerminatedRun) sawTerminatingTool = true;
+              continue;
+            }
+            if (stepTerminatedRun) sawTerminatingTool = true;
             // Skip tool-only steps with no artifact card — they'd
             // render as empty agent bubbles. Tool execution data
             // already lives in run_steps for the trace panel.
@@ -689,10 +699,12 @@ export class SpiritService extends SpiritServiceSupervisor {
       }
 
       if (terminatingTool === 'channel.pass') {
+        this.persistSilentTrace(running, reasoningContent);
         return this.completeSilentRun(running, 'passed', 'channel.pass', wakeReason);
       }
 
       if (terminatingTool === 'channel.ack') {
+        this.persistSilentTrace(running, reasoningContent);
         return this.completeSilentRun(running, 'acked', 'channel.ack', wakeReason);
       }
 
@@ -832,6 +844,22 @@ export class SpiritService extends SpiritServiceSupervisor {
       this.getRooms(run),
     );
     return this.completeRun(run, summary, terminatingTool);
+  }
+
+  private persistSilentTrace(run: RunState, reasoningContent?: string): void {
+    if (!run.threadId || !reasoningContent) return;
+    const channelId = this.repo.getThread(run.organizationId, run.threadId)?.channelId;
+    this.repo.saveMessage(
+      buildAgentMessage({
+        organizationId: run.organizationId,
+        threadId: run.threadId,
+        channelId,
+        senderId: run.agentId,
+        content: '',
+        reasoningContent,
+        metadata: { runId: run.id, traceOnly: true },
+      }),
+    );
   }
 
   protected waitForApproval(run: RunState, summary: string): RunState {

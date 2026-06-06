@@ -190,8 +190,12 @@ export class ConversationService {
     }
 
     const channel = thread.channelId ? this.repo.getChannel(organizationId, thread.channelId) : null;
+    const page = this.repo.listMessages(organizationId, threadId, cursor, limit);
     return this.decorateMessages(
-      this.repo.listMessages(organizationId, threadId, cursor, limit),
+      {
+        ...page,
+        data: page.data.filter((message) => !message.metadata?.traceOnly),
+      },
       organizationId,
       channel,
     );
