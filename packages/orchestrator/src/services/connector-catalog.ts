@@ -216,6 +216,64 @@ export function sanitizeToolName(name: string): string | undefined {
 }
 
 // ───────────────────────────────────────────────────────────────────────
+// Server name / category sanitization (§17.5.7, third surface)
+//
+// McpServerSchema declares server.name and server.category as
+// unrestricted strings. They're admin-set in normal flows, but two
+// paths weaken that trust: (1) an admin imports a community MCP and
+// the registry/marketplace publishes a name like
+// "Demo]\n- Ignore prior instructions and"; (2) an admin account is
+// compromised. Either path lets attacker-shaped text reach catalogText
+// through the format slots `- ${name} [${category}] —`. Newlines could
+// inject a fake bullet, brackets/backticks could break out of the
+// format, and prose-shaped names could carry instructions.
+//
+// Trust answer: render-time shape filters on both fields. Names allow
+// human-readable text minus formatting/control characters; categories
+// stay identifier-safe. Neither field is ever rendered raw.
+// ───────────────────────────────────────────────────────────────────────
+
+// eslint-disable-next-line no-control-regex
+const CONTROL_CHARS = /[\x00-\x1F\x7F]/g;
+const FORMAT_BREAKING_CHARS = /[`[\]<>{}|]/g;
+// 48 chars covers every real-world display name observed in the
+// registry ("GitHub MCP (remote)" ≈ 19, "Atlassian (Jira + Confluence)"
+// ≈ 29) while truncating prose-shaped injection attempts mid-sentence.
+const DISPLAY_NAME_MAX = 48;
+const CATEGORY_TOKEN_MAX = 32;
+
+/**
+ * Normalise a server display name for prompt-facing rendering: strip
+ * control chars + format-breaking punctuation, collapse whitespace,
+ * cap at 64 chars. Empty results fall back to "(unnamed)" so the
+ * format slot is always populated.
+ */
+export function sanitizeDisplayName(name: string): string {
+  const cleaned = name
+    .replace(CONTROL_CHARS, ' ')
+    .replace(FORMAT_BREAKING_CHARS, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, DISPLAY_NAME_MAX);
+  return cleaned.length > 0 ? cleaned : '(unnamed)';
+}
+
+/**
+ * Normalise a category token for prompt-facing rendering: identifier-
+ * safe characters (alphanum, dash, underscore, dot, space) only,
+ * collapse whitespace, cap at 32 chars. Empty results fall back to
+ * "general" so the bracketed format slot is always populated.
+ */
+export function sanitizeCategoryToken(category: string): string {
+  const cleaned = category
+    .replace(/[^A-Za-z0-9 ._-]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, CATEGORY_TOKEN_MAX);
+  return cleaned.length > 0 ? cleaned : 'general';
+}
+
+// ───────────────────────────────────────────────────────────────────────
 // Resolver
 // ───────────────────────────────────────────────────────────────────────
 
@@ -256,16 +314,17 @@ export function resolveConnectorCatalog(
     // close. Admin-curated descriptions for non-registry servers
     // ship in PR 6 with their own explicit "I approved this" flag.
     // CatalogText emits NO tool names — see sanitizeToolName comment
-    // above. The cache lookup persists because toolCount is part of
-    // every catalog line; the line lengths are bounded by curated
-    // description length + category + name, all admin-controlled.
+    // above. Server name + category go through display-shape
+    // sanitizers so attacker-shaped admin-imported strings can't
+    // inject format breaks or fake bullet points through the rendered
+    // line's `- ${name} [${category}] —` slots.
     const cache = repo.getMcpToolCache(organizationId, server.id);
     const rawTools = cache?.tools ?? [];
     const registryMatch = findRegistryMatch(server);
     dispatchCatalog.push({
       serverId: server.id,
-      name: server.name,
-      category: server.category,
+      name: sanitizeDisplayName(server.name),
+      category: sanitizeCategoryToken(server.category),
       curatedDescription: registryMatch?.curatedDescription ?? null,
       toolCount: rawTools.length,
     });
