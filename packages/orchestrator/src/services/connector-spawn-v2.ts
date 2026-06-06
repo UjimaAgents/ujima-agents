@@ -33,7 +33,12 @@
 //      catalog-rendering logic leaks into the spawn path.
 
 import { tool, type ToolSet } from 'ai';
-import { classifyTool, type SpiritRole } from '@ujima/shared';
+import {
+  classifyTool,
+  type McpServer,
+  type McpToolDescriptor,
+  type SpiritRole,
+} from '@ujima/shared';
 import type { ApiRepository } from './repository-reader.js';
 import { materializeMcpDef, mcpPermissionToolName } from './mcp-runtime.js';
 import {
@@ -79,6 +84,57 @@ export interface ConnectorSpawnV2Result {
   dispatchCatalog: CatalogEntry[];
 }
 
+/**
+ * Insert inferred risk classifications for every tool in `toolList`.
+ * Runs regardless of where toolList came from (live refresh OR cache
+ * fallback) so a transient MCP outage can't leave a server with no
+ * classification rows — that would silently make
+ * risk_defaults.destructive=require_approval stop firing.
+ *
+ * INSERT OR IGNORE in the underlying repo preserves manual overrides.
+ * Server-declared `destructive` hints are honoured first; classifyTool's
+ * verb heuristic kicks in only when the MCP didn't set the bit.
+ *
+ * Used by BOTH the native-tier loop and the dispatch-tier seed loop in
+ * buildMcpToolDefinitionsV2, so a dispatch-only attachment isn't
+ * silently skipped (the regression the bot flagged on the dispatch
+ * path).
+ */
+function seedClassificationsFor(
+  services: ConnectorSpawnV2Services,
+  organizationId: string,
+  server: McpServer,
+  toolList: readonly McpToolDescriptor[],
+): void {
+  if (toolList.length === 0) return;
+  try {
+    const seedEntries = toolList.map((d) => {
+      const inf = classifyTool({
+        name: d.name,
+        description: d.description,
+        category: server.category,
+        declaredDestructive: d.destructive,
+      });
+      return {
+        toolName: d.name,
+        risk: inf.risk,
+        needsReview: inf.needsReview,
+        reason: inf.reason,
+      };
+    });
+    services.repo.seedInferredClassifications(
+      organizationId,
+      server.id,
+      seedEntries,
+    );
+  } catch (err) {
+    console.warn(
+      `[connector-spawn-v2] classification seed failed for "${server.id}":`,
+      err,
+    );
+  }
+}
+
 export async function buildMcpToolDefinitionsV2(
   services: ConnectorSpawnV2Services,
   ctx: ConnectorSpawnV2Ctx,
@@ -120,6 +176,13 @@ export async function buildMcpToolDefinitionsV2(
     // server-declared `destructive` annotation so the post-fetch
     // classifyTool() call honours the MCP's own intent before falling
     // back to verb heuristics.
+    //
+    // Cache write + classification seed run AFTER the refresh
+    // try/catch using whatever toolList is available. Putting them
+    // inside the refresh try would skip seeding on transient MCP
+    // failures — exactly the regression the bot caught. Legacy runs
+    // both regardless (spirit-agent-run.ts:824-879).
+    let refreshed = false;
     try {
       const connection = await services.mcpPool.get(def, {
         agentId: ctx.memberId,
@@ -140,6 +203,15 @@ export async function buildMcpToolDefinitionsV2(
           ...(declared !== undefined ? { destructive: declared } : {}),
         };
       });
+      refreshed = true;
+    } catch {
+      // Live refresh failed → cache fallback above. Same shape as the
+      // legacy path's behaviour.
+    }
+
+    if (toolList.length === 0) continue;
+
+    if (refreshed) {
       try {
         services.repo.saveMcpToolCache({
           mcpServerId: server.id,
@@ -148,53 +220,17 @@ export async function buildMcpToolDefinitionsV2(
           fetchedAt: new Date().toISOString(),
         });
       } catch (err) {
-        // Non-fatal: a stale cache write doesn't justify dropping
-        // tools the model is about to use.
         console.warn(
           `[connector-spawn-v2] cache write failed for "${server.id}":`,
           err,
         );
       }
-      // Seed inferred risk classifications so newly-discovered tools
-      // pick up org policy (e.g. risk_defaults.destructive =
-      // require_approval) immediately, not only after a manual Test
-      // from the settings UI. INSERT OR IGNORE in the underlying
-      // repo preserves manual overrides. Without this seed the
-      // permission middleware sees no classification, evaluatePolicy
-      // returns 'inherit', and write/destructive tools silently
-      // bypass risk_defaults — exactly the regression the bot caught.
-      try {
-        const seedEntries = toolList.map((d) => {
-          const inf = classifyTool({
-            name: d.name,
-            description: d.description,
-            category: server.category,
-            declaredDestructive: d.destructive,
-          });
-          return {
-            toolName: d.name,
-            risk: inf.risk,
-            needsReview: inf.needsReview,
-            reason: inf.reason,
-          };
-        });
-        services.repo.seedInferredClassifications(
-          ctx.organizationId,
-          server.id,
-          seedEntries,
-        );
-      } catch (err) {
-        console.warn(
-          `[connector-spawn-v2] classification seed failed for "${server.id}":`,
-          err,
-        );
-      }
-    } catch {
-      // Live refresh failed → cache fallback above. Same shape as the
-      // legacy path's behaviour.
     }
 
-    if (toolList.length === 0) continue;
+    // Always seed — refresh success OR cache fallback. Without this
+    // a cached-only path leaves the classification row absent, and
+    // evaluatePolicy returns 'inherit' so risk_defaults stops firing.
+    seedClassificationsFor(services, ctx.organizationId, server, toolList);
 
     // Per-tool grant filter (role-scoped). When the agent has at least
     // one row in agent_tool_attachments for this server matching the
@@ -291,6 +327,35 @@ export async function buildMcpToolDefinitionsV2(
       }),
     ]),
   );
+
+  // Dispatch tier — seed classifications from cache so the §9.1
+  // decision matrix (risk_defaults / auto-grant rules) applies the
+  // first time invoke_connector_tool dispatches against this server.
+  // Without this a fresh dispatch-only attachment would have no
+  // classification row, evaluatePolicy would return 'inherit', and
+  // risk_defaults.write/destructive would silently bypass. We do
+  // NOT live-refresh dispatch servers here — the dispatch tier is
+  // explicitly the "don't fan out network calls per spawn" path. The
+  // cache is populated by the settings-UI Test path and by
+  // get_connector_tools's read flow; a missing cache is honest
+  // ("server never tested") and surfaces through the catalog text.
+  for (const entry of resolved.dispatchCatalog) {
+    const dispatchServer = services.repo.getMcpServer(
+      ctx.organizationId,
+      entry.serverId,
+    );
+    if (!dispatchServer) continue;
+    const dispatchCache = services.repo.getMcpToolCache(
+      ctx.organizationId,
+      entry.serverId,
+    );
+    seedClassificationsFor(
+      services,
+      ctx.organizationId,
+      dispatchServer,
+      dispatchCache?.tools ?? [],
+    );
+  }
 
   // Meta-tools always register, even with an empty dispatch tier. See
   // invariant 1 in the file header.

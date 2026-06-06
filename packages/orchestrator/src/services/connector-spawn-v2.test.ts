@@ -240,19 +240,19 @@ describe('buildMcpToolDefinitionsV2 — tier partition + meta-tools', () => {
     expect(v2.servers[0]?.toolNames).toEqual(['post_message']);
   });
 
-  it('native tier seeds mcp_tool_classifications so risk-based approval policies still fire', async () => {
+  it('native tier seeds mcp_tool_classifications even when live refresh fails (cache-fallback path)', async () => {
+    // stubPool() throws → V2 falls back to cached tools. The seed
+    // block was previously inside the refresh try, so the seed
+    // silently skipped on every transient MCP outage. After the
+    // restructure both cache fallback and refresh success seed.
     const f = setup();
     attachServer(f, {
-      id: 'srv_seed',
-      name: 'SeedServer',
+      id: 'srv_seed_native',
+      name: 'SeedNative',
       tier: 'native',
       tools: [
-        // The cache seed below will not include the destructive hint;
-        // V2 uses the live-refresh (which fails via stubPool) to land
-        // here; with a working live refresh, declared destructive
-        // would propagate. We exercise the cache-fallback seed path
-        // by pre-populating the cache.
-        { name: 'do_thing', description: 'Does it' },
+        { name: 'read_thing', description: 'Reads' },
+        { name: 'write_thing', description: 'Writes' },
       ],
     });
 
@@ -268,17 +268,49 @@ describe('buildMcpToolDefinitionsV2 — tier partition + meta-tools', () => {
       },
     );
 
-    // The cache-fallback path doesn't seed classifications (the seed
-    // is part of the live-refresh post-fetch block). For the seed
-    // assertion to be meaningful we need a live-refresh path, which
-    // the test harness's stub pool doesn't provide. So we just
-    // verify the existing cache survives unchanged — a regression
-    // would manifest as a dropped tool, not a seeded row absence.
-    // The seed-on-refresh path is exercised by the integration suite
-    // when an mcpPool actually serves listTools().
-    expect(
-      f.repo.getMcpToolCache(f.orgId, 'srv_seed')?.tools.map((t) => t.name),
-    ).toEqual(['do_thing']);
+    const classifications = f.repo
+      .listMcpToolClassifications(f.orgId)
+      .filter((c) => c.mcpServerId === 'srv_seed_native');
+    expect(classifications.map((c) => c.toolName).sort()).toEqual(
+      ['read_thing', 'write_thing'].sort(),
+    );
+  });
+
+  it('dispatch tier also seeds mcp_tool_classifications so risk_defaults fires on first invoke', async () => {
+    // The bot caught this: V2 used to seed only inside the
+    // nativeAttachments loop. A dispatch-only attachment would have
+    // no classification row, so evaluatePolicy returned 'inherit'
+    // and risk_defaults.destructive=require_approval silently
+    // stopped applying for the entire dispatch path.
+    const f = setup();
+    attachServer(f, {
+      id: 'srv_seed_dispatch',
+      name: 'SeedDispatch',
+      tier: 'dispatch',
+      tools: [
+        { name: 'post_message', description: 'Posts' },
+        { name: 'delete_message', description: 'Deletes' },
+      ],
+    });
+
+    await buildMcpToolDefinitionsV2(
+      { mcpPool: f.pool, repo: f.repo, tools: f.tools },
+      {
+        organizationId: f.orgId,
+        memberId: f.memberId,
+        runId: 'run_test',
+        threadId: 'thread_test',
+        taskSessionId: 'task_test',
+        role: 'worker',
+      },
+    );
+
+    const classifications = f.repo
+      .listMcpToolClassifications(f.orgId)
+      .filter((c) => c.mcpServerId === 'srv_seed_dispatch');
+    expect(classifications.map((c) => c.toolName).sort()).toEqual(
+      ['delete_message', 'post_message'],
+    );
   });
 
   it('native tool execute routes through ToolService.invoke with the synthetic mcp:<id>:<name> shape', async () => {
