@@ -12,13 +12,14 @@ import type { OrchestratorTool } from '../tools/types.js';
 import type { RepositoryReader } from '../services/repository-reader.js';
 import { ORCHESTRATOR_TOOLS } from '../tools/index.js';
 import { mcpTool } from '../tools/mcp.js';
+import { filterVisibleMessages } from './message-visibility.js';
 import { toModelToolName } from '../tools/names.js';
 import { toModelToolErrorOutput, toModelToolOutput } from '../services/tool-loop-result.js';
 import { isCompactionSummarySystemMessage } from '../services/conversation-summary.js';
 import { formatReadableToolOutput } from './tool-output.js';
 
 export function toModelMessages(messages: Message[], selfId?: string): ModelMessage[] {
-  return messages
+  return filterVisibleMessages(messages)
     .filter(
       (message) =>
         message.kind !== 'system' || isCompactionSummarySystemMessage(message),

@@ -37,6 +37,7 @@ import {
   filterToolsForWakeReplyPolicy,
   resolveWakeReplyPolicy,
 } from './utils/wake-reply-policy.js';
+import { filterVisibleMessages } from './utils/message-visibility.js';
 import {
   createMessageCursor,
   isMessageAfterCursor,
@@ -198,12 +199,12 @@ export class AiService {
       availableToolIds: Object.keys(toolDefs),
     });
 
-    const recentThreadMessages = this.repo.listMessages(
+    const recentThreadMessages = filterVisibleMessages(this.repo.listMessages(
       input.organizationId,
       input.threadId,
       undefined,
       input.contextSize ?? 10,
-    ).data;
+    ).data);
     const messages = toModelMessages(recentThreadMessages, input.memberId);
     const channelId = this.repo.getThread(input.organizationId, input.threadId)?.channelId;
     const workspaceStateBlock = buildWorkspaceStateBlock({
@@ -440,7 +441,9 @@ export class AiService {
       availableToolIds,
     });
 
-    const initialThreadMessages = this.repo.listMessages(input.organizationId, input.threadId, undefined, 20).data;
+    const initialThreadMessages = filterVisibleMessages(
+      this.repo.listMessages(input.organizationId, input.threadId, undefined, 20).data,
+    );
     const messages = toModelMessages(initialThreadMessages, input.agentId);
     const interruptCursor = createMessageCursor(initialThreadMessages);
     if (input.summary) {
@@ -583,7 +586,9 @@ export class AiService {
     input: Pick<GenerateRunReplyInput, 'organizationId' | 'agentId' | 'threadId'>,
     cursor: MessageCursor,
   ): Message[] {
-    const page = this.repo.listMessages(input.organizationId, input.threadId, undefined, 100).data;
+    const page = filterVisibleMessages(
+      this.repo.listMessages(input.organizationId, input.threadId, undefined, 100).data,
+    );
     const interrupts = page.filter(
       (message) =>
         (message.kind === 'human' || isDelegateMessage(message)) &&

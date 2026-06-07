@@ -609,6 +609,37 @@ describe('ConversationService @all mentions', () => {
     ).rejects.toThrow('Channel not found: self:agent-1');
   });
 
+  it('hides trace-only rows from channel reads', async () => {
+    const { repo, service } = createConversationFixture();
+    repo.saveMessage(
+      MessageSchema.parse({
+        id: 'trace-1',
+        organizationId: 'org-1',
+        threadId: 'general',
+        channelId: 'general',
+        senderId: 'agent-1',
+        senderKind: 'agent',
+        kind: 'agent',
+        content: '',
+        reasoningContent: 'private trace',
+        metadata: { traceOnly: true, runId: 'run-1' },
+        mentions: [],
+        toolCalls: [],
+        attachments: [],
+        createdAt: '2026-05-03T10:00:01.000Z',
+      }),
+    );
+
+    const visible = await service.readChannel({
+      organizationId: 'org-1',
+      memberId: 'agent-1',
+      channelId: 'general',
+      limit: 20,
+    });
+
+    expect(visible.data).toHaveLength(0);
+  });
+
   it('compacts old self notes after threshold overflow', async () => {
     const { repo, service } = createConversationFixture();
     for (let i = 1; i <= 501; i += 1) {

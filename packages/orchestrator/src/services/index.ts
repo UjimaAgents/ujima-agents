@@ -38,6 +38,7 @@ import { WorkspaceService, type WorkspaceCatalog } from './workspace.js';
 import { SpiritService, type ModelResolver, type SpiritMcpPool } from './spirit.js';
 import { SchedulerService } from './scheduler.js';
 import { TaskSessionService } from './task-session.js';
+import { filterVisibleMessages } from '../utils/message-visibility.js';
 import type { TeamStore } from './team-store.js';
 import {
   createPermissionGatedToolService,
@@ -281,7 +282,7 @@ function latestDelegateReply(
   agentId: string,
   after: { createdAt: string; id: string },
 ) {
-  const messages = repo.listMessages(organizationId, threadId, undefined, 100).data;
+  const messages = filterVisibleMessages(repo.listMessages(organizationId, threadId, undefined, 100).data);
   const anchorIndex = messages.findIndex((message) => message.id === after.id);
   const candidates = anchorIndex >= 0
     ? messages.slice(anchorIndex + 1)

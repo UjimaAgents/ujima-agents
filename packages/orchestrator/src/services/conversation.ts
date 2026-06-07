@@ -45,6 +45,7 @@ import {
   ChannelReadQuota,
   PairMentionTracker,
 } from './conversation-quota.js';
+import { filterVisibleMessages } from '../utils/message-visibility.js';
 
 const ATTACHMENT_FILE_LIMIT_BYTES = 25 * 1024 * 1024;
 const ATTACHMENT_MESSAGE_LIMIT_BYTES = 100 * 1024 * 1024;
@@ -194,7 +195,7 @@ export class ConversationService {
     return this.decorateMessages(
       {
         ...page,
-        data: page.data.filter((message) => !message.metadata?.traceOnly),
+        data: filterVisibleMessages(page.data),
       },
       organizationId,
       channel,
@@ -296,11 +297,7 @@ export class ConversationService {
       const merged = input.ranked
         ? mergeRankedPaginatedMessages(live, archived, input.limit ?? 50)
         : mergePaginatedMessages(live, archived, input.limit ?? 50);
-      return this.decorateMessages(
-        merged,
-        input.organizationId,
-        channel,
-      );
+      return this.decorateMessages(merged, input.organizationId, channel);
     }
 
     const live = this.repo.listChannelMessages(input.organizationId, channel.id, {
@@ -317,11 +314,7 @@ export class ConversationService {
           limit: input.limit,
         })
       : { data: [], hasMore: false, nextCursor: undefined };
-    return this.decorateMessages(
-      mergePaginatedMessages(live, archived, input.limit ?? 50),
-      input.organizationId,
-      channel,
-    );
+    return this.decorateMessages(mergePaginatedMessages(live, archived, input.limit ?? 50), input.organizationId, channel);
   }
 
   publishMessage(
@@ -1599,8 +1592,9 @@ export class ConversationService {
     organizationId: string,
     channel: Channel | null,
   ): PaginatedMessages {
-    const visible = paginated.data
-      .filter((message) => !shouldHideCompactedMessage(message, channel))
+    const visible = filterVisibleMessages(paginated.data).filter(
+      (message) => !shouldHideCompactedMessage(message, channel),
+    );
     return {
       ...paginated,
       data: visible.map((message) => this.decorateMessage(message, organizationId, channel)),

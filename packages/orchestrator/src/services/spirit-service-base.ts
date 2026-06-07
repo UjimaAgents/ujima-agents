@@ -22,6 +22,7 @@ import type { ToolInvocationInput } from './tool-service.js';
 import { createSpiritModelResolver } from '../utils/create-spirit-model-resolver.js';
 import { ActiveSpiritRegistry } from './active-spirit-registry.js';
 import { AsyncMutex } from '../utils/async-mutex.js';
+import { filterVisibleMessages } from '../utils/message-visibility.js';
 import type { ConversationService } from './conversation.js';
 import type { RealtimeService } from './context.js';
 import type { ApiRepository } from './repository-reader.js';
@@ -515,7 +516,7 @@ export class SpiritServiceBase {
     let cursor: string | undefined = undefined;
     do {
       const page = this.repo.listMessages(organizationId, threadId, cursor, 100);
-      messages.push(...page.data);
+      messages.push(...filterVisibleMessages(page.data));
       cursor = page.nextCursor;
     } while (cursor);
     return messages;
@@ -526,7 +527,7 @@ export class SpiritServiceBase {
     let cursor: string | undefined = undefined;
     do {
       const page = this.repo.listChannelMessages(organizationId, channelId, { cursor, limit: 100 });
-      messages.push(...page.data);
+      messages.push(...filterVisibleMessages(page.data));
       cursor = page.nextCursor;
     } while (cursor);
     return messages;
