@@ -35,7 +35,12 @@
 import { randomUUID } from 'node:crypto';
 import { tool, type Tool } from 'ai';
 import { z } from 'zod';
-import type { McpServer, McpToolCache, SpiritRole } from '@ujima/shared';
+import type {
+  AgentMcpAttachment,
+  McpServer,
+  McpToolCache,
+  SpiritRole,
+} from '@ujima/shared';
 import { sanitizeToolName } from '../services/connector-catalog.js';
 import { mcpPermissionToolName } from '../services/mcp-runtime.js';
 import {
@@ -59,6 +64,20 @@ export interface ConnectorMetaToolRepo {
     organizationId: string,
     serverId: string,
   ): McpToolCache | null;
+  /**
+   * Role-scoped attachment lookup. Used as the FIRST check in both
+   * meta-tools: the model can only see / invoke server_ids in this
+   * set. Without this scoping a leaked or guessed serverId for
+   * another connector in the same org could be listed or invoked,
+   * because `getMcpServer` is org-scoped, not attachment-scoped.
+   * Mirrors the same query the legacy spawn-time resolver uses to
+   * pick which servers an agent gets to see in its palette.
+   */
+  listAttachedServersForSpirit(
+    organizationId: string,
+    memberId: string,
+    role: 'worker' | 'supervisor',
+  ): { attachment: AgentMcpAttachment; server: McpServer }[];
 }
 
 export interface ConnectorMetaToolDeps {
@@ -151,6 +170,30 @@ function collectStringLeaves(value: unknown, acc: string[] = []): string[] {
 }
 
 /**
+ * Returns true when the requested server_id is in the agent's
+ * role-scoped attached set. getMcpServer is org-scoped, so without
+ * this narrowing a model that guessed or was fed an arbitrary
+ * serverId from another connector in the same org could list or
+ * invoke it. The legacy spawn-time resolver narrows servers by
+ * attachment + role; the meta-tools must do the same before either
+ * tool reads or dispatches.
+ */
+function isServerAttachedToSpirit(
+  repo: ConnectorMetaToolRepo,
+  organizationId: string,
+  memberId: string,
+  serverId: string,
+  role: SpiritRole,
+): boolean {
+  const attached = repo.listAttachedServersForSpirit(
+    organizationId,
+    memberId,
+    role,
+  );
+  return attached.some((row) => row.server.id === serverId);
+}
+
+/**
  * Conservative egress classifier (mcp_connector_dispatch_plan.md §7.6).
  *
  * Returns true if any string leaf in `args` looks like it could carry
@@ -189,20 +232,50 @@ export function buildConnectorMetaTools(
       'one and call invoke_connector_tool.',
     inputSchema: GetConnectorToolsSchema,
     execute: async ({ server_id }) => {
-      const server = deps.repo.getMcpServer(deps.organizationId, server_id);
-      if (!server) {
+      // Attachment-scope check FIRST. Without it a leaked or guessed
+      // serverId for another connector in the same org could be read
+      // — getMcpServer is org-scoped, not attachment-scoped. Returns
+      // the same "not attached" error shape for both "no such server
+      // in the org" and "server exists but isn't attached to this
+      // agent" so the model can't probe org membership through
+      // differential error messages.
+      if (
+        !isServerAttachedToSpirit(
+          deps.repo,
+          deps.organizationId,
+          deps.memberId,
+          server_id,
+          deps.spiritRole,
+        )
+      ) {
         return toModelToolErrorOutput(
           new Error(
-            `Unknown connector server: "${server_id}". Pick a server_id ` +
-              'from the catalog in your system prompt.',
+            `Connector "${server_id}" is not attached to this agent. ` +
+              'Pick a server_id from the catalog in your system prompt.',
+          ),
+        );
+      }
+      const server = deps.repo.getMcpServer(deps.organizationId, server_id);
+      if (!server) {
+        // Defensive: listAttachedServersForSpirit already filtered to
+        // existing rows, but the repo could race. Same error shape as
+        // the attachment miss above to avoid leaking row state.
+        return toModelToolErrorOutput(
+          new Error(
+            `Connector "${server_id}" is not attached to this agent. ` +
+              'Pick a server_id from the catalog in your system prompt.',
           ),
         );
       }
       if (server.status !== 'active') {
+        // server.name is admin-controllable — use the stable opaque
+        // server_id in the error instead of interpolating the raw
+        // name back into model-facing text. Same trust model PR 3
+        // applies in catalog text.
         return toModelToolErrorOutput(
           new Error(
-            `Connector server is disabled. Ask the operator to re-enable ` +
-              'it before retrying.',
+            `Connector "${server_id}" is disabled. Ask the operator to ` +
+              're-enable it before retrying.',
           ),
         );
       }
@@ -253,15 +326,34 @@ export function buildConnectorMetaTools(
       'available tools via get_connector_tools.',
     inputSchema: InvokeConnectorToolSchema,
     execute: async ({ server_id, tool_name, args }, { toolCallId }) => {
+      // Attachment-scope check first (same gap as get_connector_tools).
+      if (
+        !isServerAttachedToSpirit(
+          deps.repo,
+          deps.organizationId,
+          deps.memberId,
+          server_id,
+          deps.spiritRole,
+        )
+      ) {
+        return toModelToolErrorOutput(
+          new Error(
+            `Connector "${server_id}" is not attached to this agent.`,
+          ),
+        );
+      }
       const server = deps.repo.getMcpServer(deps.organizationId, server_id);
       if (!server) {
         return toModelToolErrorOutput(
-          new Error(`Unknown connector server: "${server_id}".`),
+          new Error(
+            `Connector "${server_id}" is not attached to this agent.`,
+          ),
         );
       }
       if (server.status !== 'active') {
+        // Opaque server_id rather than server.name (admin-controllable).
         return toModelToolErrorOutput(
-          new Error(`Connector server "${server.name}" is disabled.`),
+          new Error(`Connector "${server_id}" is disabled.`),
         );
       }
       // Cache lookup is the typed gate. A phantom toolName cannot be
@@ -284,9 +376,12 @@ export function buildConnectorMetaTools(
       );
       const cachedTool = cache?.tools.find((t) => t.name === safeName);
       if (!cachedTool) {
+        // Opaque server_id + sanitized safeName — neither carries
+        // attacker-shaped prose. server.name is intentionally not
+        // interpolated here per the catalog-text trust model.
         return toModelToolErrorOutput(
           new Error(
-            `Tool "${safeName}" not found on connector "${server.name}". ` +
+            `Tool "${safeName}" not found on connector "${server_id}". ` +
               'Call get_connector_tools(server_id) to see the live ' +
               'inventory.',
           ),
