@@ -11,7 +11,7 @@ export interface PendingMemberAlert {
   wakeReason: WakeReason;
 }
 
-const pendingByThread = new Map<string, PendingMemberAlert[]>();
+const pendingByThread = new Map<string, PendingMemberAlert>();
 
 function pendingKey(organizationId: string, memberId: string, threadId: string): string {
   return `${organizationId}:${memberId}:${threadId}`;
@@ -19,12 +19,9 @@ function pendingKey(organizationId: string, memberId: string, threadId: string):
 
 export function enqueuePendingMemberAlert(alert: PendingMemberAlert): void {
   const key = pendingKey(alert.organizationId, alert.memberId, alert.threadId);
-  const queue = pendingByThread.get(key);
-  if (queue) {
-    queue.push(alert);
-  } else {
-    pendingByThread.set(key, [alert]);
-  }
+  // A successor run reads current thread state, so replaying every wake adds
+  // no context. Keep only the newest signal and bound memory per active key.
+  pendingByThread.set(key, alert);
 }
 
 export function takePendingMemberAlert(
@@ -33,15 +30,8 @@ export function takePendingMemberAlert(
   threadId: string,
 ): PendingMemberAlert | undefined {
   const key = pendingKey(organizationId, memberId, threadId);
-  const queue = pendingByThread.get(key);
-  if (!queue || queue.length === 0) {
-    pendingByThread.delete(key);
-    return undefined;
-  }
-  const pending = queue.shift();
-  if (queue.length === 0) {
-    pendingByThread.delete(key);
-  }
+  const pending = pendingByThread.get(key);
+  pendingByThread.delete(key);
   return pending;
 }
 
@@ -52,10 +42,18 @@ export async function drainPendingMemberAlertAfterRun(
   wake: (input: PendingMemberAlert) => Promise<void>,
 ): Promise<void> {
   if (!TERMINAL_RUN_STATUSES.has(run.status) || !run.threadId) return;
-  let pending: PendingMemberAlert | undefined;
-  while ((pending = takePendingMemberAlert(run.organizationId, run.agentId, run.threadId))) {
-    await wake(pending);
-  }
+  const pending = takePendingMemberAlert(run.organizationId, run.agentId, run.threadId);
+  if (!pending) return;
+  // Detach the successor from the completed run's promise chain. Otherwise
+  // every autonomous follow-up retains its predecessor until the chain ends.
+  queueMicrotask(() => {
+    void wake(pending).catch((error) => {
+      console.error(
+        'pending-member-alert successor failed',
+        error instanceof Error ? error.stack ?? error.message : String(error),
+      );
+    });
+  });
 }
 
 export function hasPendingMemberAlert(
@@ -65,9 +63,7 @@ export function hasPendingMemberAlert(
   messageId: string,
 ): boolean {
   const key = pendingKey(organizationId, memberId, threadId);
-  const queue = pendingByThread.get(key);
-  if (!queue) return false;
-  return queue.some((alert) => alert.messageId === messageId);
+  return pendingByThread.get(key)?.messageId === messageId;
 }
 
 export function clearPendingMemberAlertsForTests(): void {

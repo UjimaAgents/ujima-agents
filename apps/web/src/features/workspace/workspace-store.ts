@@ -28,6 +28,7 @@ export type WorkspaceTab =
   | "members"
   | "culture";
 export type WorkspaceDetailsTab = "Thinking trace" | "Changes" | "Metadata";
+export type ChatFontSize = "normal" | "large" | "xlarge" | "xxlarge" | "3xlarge" | "6xlarge";
 
 export interface ActiveJob {
   runId: string;
@@ -65,7 +66,10 @@ export interface WorkspaceState {
   activity: ActivityEvent[];
   loading: boolean;
   conversationKey?: string;
+  chatFontSize: ChatFontSize;
+  hydrateClientPersisted(): void;
   setSidebarWidth(width: number): void;
+  setChatFontSize(size: ChatFontSize): void;
   setActiveTab(tab: WorkspaceTab): void;
   setShowDetails(show: boolean, options?: { userIntent?: boolean }): void;
   openDetailsForAgentMessage(): void;
@@ -102,12 +106,16 @@ export interface WorkspaceState {
 }
 
 const DETAILS_AUTO_OPEN_DISMISSED_KEY = "ujima.workspace.detailsAutoOpenDismissed";
+const CHAT_FONT_SIZE_KEY = "ujima.workspace.chatFontSize";
+const CHAT_FONT_SIZE_DEFAULT: ChatFontSize = "normal";
 
+// SSR-safe defaults. Persisted values from localStorage are applied post-mount
+// via hydrateClientPersisted() to avoid a Next.js hydration mismatch.
 const EMPTY_ACTIVITY = {
   sidebarWidth: 18,
   activeTab: "conversation" as WorkspaceTab,
   showDetails: false,
-  detailsAutoOpenDismissed: readDetailsAutoOpenDismissed(),
+  detailsAutoOpenDismissed: false,
   detailsWidth: 33,
   detailsTab: "Thinking trace" as WorkspaceDetailsTab,
   selectedConversation: undefined,
@@ -125,6 +133,7 @@ const EMPTY_ACTIVITY = {
   activity: [],
   loading: true,
   conversationKey: undefined,
+  chatFontSize: CHAT_FONT_SIZE_DEFAULT,
 };
 
 function sameRecord(left: unknown, right: unknown): boolean {
@@ -402,8 +411,25 @@ export function selectActiveTerminals(state: WorkspaceState): ActiveJob[] {
 
 export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   ...EMPTY_ACTIVITY,
+  hydrateClientPersisted: () =>
+    set((state) => {
+      const chatFontSize = readChatFontSize();
+      const detailsAutoOpenDismissed = readDetailsAutoOpenDismissed();
+      if (
+        state.chatFontSize === chatFontSize &&
+        state.detailsAutoOpenDismissed === detailsAutoOpenDismissed
+      ) {
+        return state;
+      }
+      return { chatFontSize, detailsAutoOpenDismissed };
+    }),
   setSidebarWidth: (sidebarWidth) =>
     set((state) => (state.sidebarWidth === sidebarWidth ? state : { sidebarWidth })),
+  setChatFontSize: (chatFontSize) =>
+    set((state) => {
+      writeChatFontSize(chatFontSize);
+      return state.chatFontSize === chatFontSize ? state : { chatFontSize };
+    }),
   setActiveTab: (activeTab) =>
     set((state) => (state.activeTab === activeTab ? state : { activeTab })),
   setShowDetails: (showDetails, options) =>
@@ -684,6 +710,18 @@ function writeDetailsAutoOpenDismissed(dismissed: boolean): void {
   } else {
     window.localStorage.removeItem(DETAILS_AUTO_OPEN_DISMISSED_KEY);
   }
+}
+
+function readChatFontSize(): ChatFontSize {
+  if (typeof window === "undefined") return CHAT_FONT_SIZE_DEFAULT;
+  const stored = window.localStorage.getItem(CHAT_FONT_SIZE_KEY);
+  if (stored === "normal" || stored === "large" || stored === "xlarge" || stored === "xxlarge" || stored === "3xlarge" || stored === "6xlarge") return stored;
+  return CHAT_FONT_SIZE_DEFAULT;
+}
+
+function writeChatFontSize(size: ChatFontSize): void {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(CHAT_FONT_SIZE_KEY, size);
 }
 
 export function resolveMemberActivity(

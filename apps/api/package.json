@@ -8,6 +8,7 @@
   },
   "files": ["dist"],
   "scripts": {
+    "predev": "bun ../../scripts/free-port.ts ${UJIMA_PORT:-7511}",
     "build": "tsc -p tsconfig.json",
     "dev": "bun --watch src/main.ts",
     "start": "node dist/main.js",

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type SetStateAction } from "react";
 import { ArrowDown, Loader2 } from "lucide-react";
 import { RunTraceListResponseSchema, type RunTraceEntry } from "@ujima/api-schema";
 import { buildHistoricalTraceSteps } from "../reasoning-trace";
@@ -169,10 +169,14 @@ function groupTraceSteps(steps: TraceStepData[]): TraceStepData[] {
 
   for (const step of steps) {
     if (isToolStep(step)) {
+      const agentName = getAgentName(step.title);
+      if (currentGroup && getAgentName(currentGroup.title) !== agentName) {
+        currentGroup = null;
+      }
       if (!currentGroup) {
         currentGroup = {
           id: `aggregated-run-${step.id}`,
-          title: `${getAgentName(step.title)} · running`,
+          title: `${agentName} · running`,
           detail: "",
           time: step.time,
           duration: step.duration,
@@ -242,6 +246,9 @@ export function ReasoningTracePanel({
   const rootRef = useRef<HTMLDivElement>(null);
   const pendingPrependRef = useRef<{ scrollHeight: number; scrollTop: number } | null>(null);
   const shouldScrollToBottomRef = useRef(false);
+  const isAtBottomRef = useRef(true);
+  const prevLiveStepsCountRef = useRef(0);
+  const prevLiveSignalRef = useRef("");
   const autoFillRef = useRef(false);
   const [history, setHistory] = useState<RunTraceEntry[]>([]);
   const [cursor, setCursor] = useState<string | undefined>();
@@ -250,6 +257,7 @@ export function ReasoningTracePanel({
   const [error, setError] = useState<string | undefined>();
   const [filter, setFilter] = useState<"all" | "errors" | "files" | "shell" | "search">("all");
   const [showScrollBottom, setShowScrollBottom] = useState(false);
+  const [newTraceCount, setNewTraceCount] = useState(0);
 
   const [now, setNow] = useState(() => Date.now());
   const startedAtMs = useMemo(() => {
@@ -266,12 +274,6 @@ export function ReasoningTracePanel({
   }, [startedAtMs]);
 
   const historyEnabled = !!organizationId && !!threadId;
-
-  useEffect(() => {
-    if (liveSteps.length > 0 && autoScroll) {
-      shouldScrollToBottomRef.current = true;
-    }
-  }, [autoScroll, liveSteps.length]);
 
   useEffect(() => {
     if (!historyEnabled) return;
@@ -309,14 +311,13 @@ export function ReasoningTracePanel({
     const onScroll = () => {
       const { scrollTop, scrollHeight, clientHeight } = container;
       const distFromBottom = scrollHeight - scrollTop - clientHeight;
+      const atBottom = distFromBottom < 96;
       const shouldShow = distFromBottom > 150;
-      
+
+      isAtBottomRef.current = atBottom;
       setShowScrollBottom((prev) => (prev !== shouldShow ? shouldShow : prev));
-      if (shouldShow) {
-        shouldScrollToBottomRef.current = false;
-      } else {
-        shouldScrollToBottomRef.current = true;
-      }
+      shouldScrollToBottomRef.current = atBottom;
+      if (atBottom) setNewTraceCount(0);
 
       if (!historyEnabled || loadingMore || !hasMore || !cursor) return;
       if (container.scrollTop > TOP_LOAD_THRESHOLD) return;
@@ -403,9 +404,6 @@ export function ReasoningTracePanel({
     }
 
     if (shouldScrollToBottomRef.current) {
-      // Do not auto-scroll if the user has manually scrolled up to look at history
-      if (showScrollBottom) return;
-
       const frame = requestAnimationFrame(() => {
         const container = getTraceScrollContainer(rootRef.current);
         if (!container) return;
@@ -413,7 +411,35 @@ export function ReasoningTracePanel({
       });
       return () => cancelAnimationFrame(frame);
     }
-  }, [history, liveSteps, showScrollBottom]);
+  }, [history, liveSteps]);
+
+  useEffect(() => {
+    let nextNewTraceCount: SetStateAction<number> | undefined;
+    const nextCount = liveSteps.length;
+    const last = liveSteps.at(-1);
+    const nextSignal = nextCount ? `${last?.id ?? ""}:${last?.status ?? ""}:${last?.title ?? ""}:${last?.detail ?? ""}` : "";
+    const prevCount = prevLiveStepsCountRef.current;
+    const prevSignal = prevLiveSignalRef.current;
+
+    prevLiveStepsCountRef.current = nextCount;
+    prevLiveSignalRef.current = nextSignal;
+
+    if (nextCount === 0) {
+      nextNewTraceCount = 0;
+    } else if (nextSignal === prevSignal && nextCount === prevCount) {
+      nextNewTraceCount = undefined;
+    } else if (isAtBottomRef.current && autoScroll) {
+      shouldScrollToBottomRef.current = true;
+      nextNewTraceCount = 0;
+    } else if (nextCount > prevCount) {
+      shouldScrollToBottomRef.current = false;
+      nextNewTraceCount = (count) => count + (nextCount - prevCount);
+    }
+
+    if (nextNewTraceCount === undefined) return;
+    const frame = requestAnimationFrame(() => setNewTraceCount(nextNewTraceCount));
+    return () => cancelAnimationFrame(frame);
+  }, [autoScroll, liveSteps]);
 
   const traceRows = useMemo<TraceRowData[]>(() => {
     const historySteps = historyEnabled
@@ -488,11 +514,33 @@ export function ReasoningTracePanel({
 
   const scrollBottomButton = useMemo(
     () =>
-      showScrollBottom ? (
+      newTraceCount > 0 ? (
         <div className="sticky bottom-6 z-20 flex justify-center pointer-events-none">
           <button
             onClick={() => {
               shouldScrollToBottomRef.current = true;
+              isAtBottomRef.current = true;
+              setNewTraceCount(0);
+              const container = getTraceScrollContainer(rootRef.current);
+              if (container) {
+                container.scrollTo({
+                  top: Math.max(0, container.scrollHeight - container.clientHeight),
+                  behavior: "smooth",
+                });
+              }
+            }}
+            className="pointer-events-auto flex items-center gap-1.5 rounded-full bg-violet-600 px-4 py-2 text-[10px] font-bold text-white shadow-xl shadow-violet-500/30 transition hover:scale-105 active:scale-95 animate-in fade-in slide-in-from-bottom-4 duration-300"
+          >
+            <ArrowDown className="h-3.5 w-3.5" />
+            {newTraceCount === 1 ? "1 new message" : `${newTraceCount} new messages`}
+          </button>
+        </div>
+      ) : showScrollBottom ? (
+        <div className="sticky bottom-6 z-20 flex justify-center pointer-events-none">
+          <button
+            onClick={() => {
+              shouldScrollToBottomRef.current = true;
+              isAtBottomRef.current = true;
               const container = getTraceScrollContainer(rootRef.current);
               if (container) {
                 container.scrollTo({
@@ -508,7 +556,7 @@ export function ReasoningTracePanel({
           </button>
         </div>
       ) : null,
-    [showScrollBottom],
+    [newTraceCount, showScrollBottom],
   );
   const traceEmptyLabel = traceRows.length === 0 ? "No trace steps." : null;
   const traceList = (

@@ -11,13 +11,15 @@ import type { ToolService } from '../services/tool-service.js';
 import type { OrchestratorTool } from '../tools/types.js';
 import type { RepositoryReader } from '../services/repository-reader.js';
 import { ORCHESTRATOR_TOOLS } from '../tools/index.js';
+import { mcpTool } from '../tools/mcp.js';
+import { filterVisibleMessages } from './message-visibility.js';
 import { toModelToolName } from '../tools/names.js';
 import { toModelToolErrorOutput, toModelToolOutput } from '../services/tool-loop-result.js';
 import { isCompactionSummarySystemMessage } from '../services/conversation-summary.js';
 import { formatReadableToolOutput } from './tool-output.js';
 
 export function toModelMessages(messages: Message[], selfId?: string): ModelMessage[] {
-  return messages
+  return filterVisibleMessages(messages)
     .filter(
       (message) =>
         message.kind !== 'system' || isCompactionSummarySystemMessage(message),
@@ -363,25 +365,27 @@ export function buildToolDefinition(
   tools: ToolService,
   ctx: BuildToolDefContext,
 ) {
-  if (def) {
+  const toolDef = toolId === 'mcp' ? mcpTool : def;
+
+  if (toolDef) {
     // If the tool exposes a per-invocation schema factory, use it
     // — this is how `channel.handoff` constrains `to:` to the actual
     // org roster at decode time. Falls back to the static schema
     // when no factory or when no repo handle was plumbed through.
     const inputSchema =
-      def.buildSchema && ctx.repo
-        ? def.buildSchema({
+      toolDef.buildSchema && ctx.repo
+        ? toolDef.buildSchema({
             organizationId: ctx.organizationId,
             memberId: ctx.memberId,
             repo: ctx.repo,
           })
-        : def.schema;
+        : toolDef.schema;
     return tool({
       description: team.tools[toolId]?.description ?? `${toolId} tool`,
       inputSchema,
       execute: async (rawArgs, { toolCallId }) => {
         try {
-          const invocationData = def.toInvocation(rawArgs);
+          const invocationData = toolDef.toInvocation(rawArgs);
           const result = await tools.invoke({
             organizationId: ctx.organizationId,
             runId: ctx.runId,

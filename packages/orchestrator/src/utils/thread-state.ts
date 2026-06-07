@@ -1,4 +1,4 @@
-import type { Member, Message } from '@ujima/shared';
+import type { Member, Message, WakeReason } from '@ujima/shared';
 import { AGENT_KIND, isDirectMessageThread } from '@ujima/shared';
 
 /**
@@ -26,6 +26,8 @@ export interface BuildThreadStateInput {
   threadId?: string;
   /** How many recent messages to surface in the block. Default 6. */
   recentLimit?: number;
+  /** Why the run was woken. */
+  wakeReason?: WakeReason | string | null;
 }
 
 const DEFAULT_RECENT = 6;
@@ -90,6 +92,8 @@ export function buildThreadStateBlock(input: BuildThreadStateInput): string | nu
 
   const selfName = input.currentMember.name ?? input.currentMember.id;
   const isDmThread = isDirectMessageThread(input.threadId);
+  const isChannelReadWake = input.wakeReason === 'channel-read';
+
   const selfAddressedExplicit = sourceMessage
     ? (sourceMessage.mentions ?? []).includes(input.currentMember.id)
     : false;
@@ -142,6 +146,9 @@ export function buildThreadStateBlock(input: BuildThreadStateInput): string | nu
     );
     lines.push(
       `    <you-implicitly-addressed>${selfAddressedImplicit ? 'true' : 'false'}</you-implicitly-addressed>`,
+    );
+    lines.push(
+      `    <reply-obligation>${isChannelReadWake ? 'optional-backpressure' : 'normal'}</reply-obligation>`,
     );
     lines.push('  </addressing>');
   }

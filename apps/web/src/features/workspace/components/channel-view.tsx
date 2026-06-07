@@ -54,6 +54,7 @@ import { pendingApprovalVisibleInChannelView, queueApprovals } from "../approval
 import { ReasoningTracePanel } from "./reasoning-trace-panel";
 import { QuestionCard } from "./chat/question-card";
 import { ChannelChatHeaderControls } from "./chat/channel-chat-header-controls";
+import { FontSizeControl } from "./chat/font-size-control";
 import { buildTabCounts, collectConversationAttachments, isLiveRun } from "../feed-selectors";
 import { AgentChatHeaderControls } from "./chat/agent-chat-header-controls";
 import type { Member, ShellApprovalMode, InteractiveQuestion } from "@ujima/shared/browser";
@@ -123,6 +124,8 @@ export function ChannelView({
   const openDetailsForAgentMessage = useWorkspaceStore((state) => state.openDetailsForAgentMessage);
   const setDetailsWidth = useWorkspaceStore((state) => state.setDetailsWidth);
   const setDetailsTab = useWorkspaceStore((state) => state.setDetailsTab);
+  const chatFontSize = useWorkspaceStore((state) => state.chatFontSize);
+  const setChatFontSize = useWorkspaceStore((state) => state.setChatFontSize);
   const upsertRun = useWorkspaceStore((state) => state.upsertRun);
   const memberById = useMemo(() => new Map(members.map((member) => [member.id, member])), [members]);
   const memberIndexById = useMemo(
@@ -695,6 +698,7 @@ export function ChannelView({
 
   return (
     <div
+      data-chat-font-size={chatFontSize}
       className={`grid flex-1 min-h-0 overflow-hidden bg-white dark:bg-[#09090b] ${WORKSPACE_MAIN_GRID_TRANSITION}`}
       style={{ gridTemplateColumns: `minmax(0, 1fr) minmax(0, ${detailsCol})` }}
     >
@@ -708,30 +712,33 @@ export function ChannelView({
           statusLabel={selectedStatus.label}
           subtitle={headerSubtitle}
           actions={
-            isAgent && agentMember && onMemberUpdated ? (
-              <div className="flex items-center gap-2">
-                <AgentChatHeaderControls
-                  orgId={bootstrap.organization?.id ?? ""}
-                  member={agentMember}
-                  providers={bootstrap.providers}
-                  orgShellApprovalMode={orgShellApprovalMode}
-                  goalMode={goalMode}
-                  onMemberUpdated={onMemberUpdated}
-                />
-                {onOpenAgentEditor ? (
-                  <button
-                    type="button"
-                    onClick={onOpenAgentEditor}
-                    className="inline-flex items-center gap-1.5 rounded-md border border-zinc-200 bg-zinc-50 px-2 py-1 text-[11px] font-semibold text-zinc-700 transition hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
-                  >
-                    <SquarePen className="h-3.5 w-3.5" />
-                    Edit
-                  </button>
-                ) : null}
-              </div>
-            ) : conversation.type === "channel" && onOrgShellApprovalModeChange ? (
-              <ChannelChatHeaderControls value={orgShellApprovalMode} onChange={onOrgShellApprovalModeChange} />
-            ) : undefined
+            <div className="flex items-center gap-2">
+              <FontSizeControl value={chatFontSize} onChange={setChatFontSize} />
+              {isAgent && agentMember && onMemberUpdated ? (
+                <>
+                  <AgentChatHeaderControls
+                    orgId={bootstrap.organization?.id ?? ""}
+                    member={agentMember}
+                    providers={bootstrap.providers}
+                    orgShellApprovalMode={orgShellApprovalMode}
+                    goalMode={goalMode}
+                    onMemberUpdated={onMemberUpdated}
+                  />
+                  {onOpenAgentEditor ? (
+                    <button
+                      type="button"
+                      onClick={onOpenAgentEditor}
+                      className="inline-flex items-center gap-1.5 rounded-md border border-zinc-200 bg-zinc-50 px-2 py-1 text-[11px] font-semibold text-zinc-700 transition hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                    >
+                      <SquarePen className="h-3.5 w-3.5" />
+                      Edit
+                    </button>
+                  ) : null}
+                </>
+              ) : conversation.type === "channel" && onOrgShellApprovalModeChange ? (
+                <ChannelChatHeaderControls value={orgShellApprovalMode} onChange={onOrgShellApprovalModeChange} />
+              ) : undefined}
+            </div>
           }
           showDetails={showDetails}
           onToggleDetails={() => setShowDetails(!showDetails, { userIntent: true })}

@@ -89,8 +89,15 @@ export function WorkspaceShell(props: {
   const incrementConversationUnreadCount = useWorkspaceStore((state) => state.incrementConversationUnreadCount);
   const setMemberActivity = useWorkspaceStore((state) => state.setMemberActivity);
   const upsertGlobalActiveRun = useWorkspaceStore((state) => state.upsertGlobalActiveRun);
+  const hydrateClientPersisted = useWorkspaceStore((state) => state.hydrateClientPersisted);
   const seenApprovalNotifications = useRef(new Set<string>());
   const goalModeSyncing = useRef(false);
+
+  // Pull localStorage-backed prefs (chat font size, details auto-open dismissal)
+  // into the store after mount so the first render matches the SSR snapshot.
+  useEffect(() => {
+    hydrateClientPersisted();
+  }, [hydrateClientPersisted]);
 
   const defaultConversation = useMemo(
     () => initialConversation ?? resolveDefaultConversation(channels),

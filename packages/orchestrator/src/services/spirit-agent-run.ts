@@ -48,6 +48,7 @@ import { errorMessage } from '../utils/error-message.js';
 import { buildRunTranscript } from '../utils/run-transcript.js';
 import { appendArtifactFileToolCall } from './artifact-file-card.js';
 import { buildAgentMessage } from './message-factory.js';
+import { filterVisibleMessages } from '../utils/message-visibility.js';
 import { RunTurnPublisher } from './run-turn-publisher.js';
 import { normalizeTokenUsage, persistMessageTokens } from './token-usage.js';
 import { pendingApprovalRunSummary } from './approval-summary.js';
@@ -100,9 +101,9 @@ export class SpiritServiceAgentRun extends SpiritServiceBase {
       }),
     );
 
-    const recent = this.repo
-      .listChannelMessages(input.organizationId, session.channelId, { limit: 20 })
-      .data;
+    const recent = filterVisibleMessages(
+      this.repo.listChannelMessages(input.organizationId, session.channelId, { limit: 20 }).data,
+    );
     const messages = toModelMessages(recent, member.id);
     const interruptCursor = createMessageCursor(recent);
     if (input.extraPrompt) {
@@ -315,9 +316,9 @@ ${activeMemories
           this.emitRunTokens(input.organizationId, runId, session.channelId, member.id, currentSteps);
         },
         loadInterruptMessages: () => {
-          const page = this.repo
-            .listChannelMessages(input.organizationId, session.channelId, { limit: 100 })
-            .data;
+          const page = filterVisibleMessages(
+            this.repo.listChannelMessages(input.organizationId, session.channelId, { limit: 100 }).data,
+          );
           const interrupts = page.filter(
             (message) =>
               (message.kind === 'human' || isDelegateMessage(message)) &&

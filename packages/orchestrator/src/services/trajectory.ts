@@ -2,6 +2,7 @@ import { mkdir, appendFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { RunState } from '@ujima/shared';
 import type { ApiRepository } from './repository-reader.js';
+import { filterVisibleMessages } from '../utils/message-visibility.js';
 
 /**
  * Bet 5 — trajectory JSONL log.
@@ -95,7 +96,9 @@ export class TrajectoryService {
   }): Promise<TrajectoryEntry | null> {
     const { run, repo } = input;
     const messages = run.threadId
-      ? repo.listMessages(run.organizationId, run.threadId, undefined, this.maxMessages).data
+      ? filterVisibleMessages(
+          repo.listMessages(run.organizationId, run.threadId, undefined, this.maxMessages).data,
+        )
       : [];
     const conversations = messages.slice(-this.maxMessages).map((m) => ({
       role: m.senderKind === 'human' ? 'user' : m.senderId === run.agentId ? 'assistant' : 'agent',

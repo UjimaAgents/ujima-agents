@@ -1,5 +1,6 @@
 import type { Message } from '@ujima/shared';
 import { buildSystemMessage } from './message-factory.js';
+import { filterVisibleMessages } from '../utils/message-visibility.js';
 import {
   CONVERSATION_ARCHIVE_MARKER,
   CONVERSATION_COMPACTED_MARKER,
@@ -228,7 +229,7 @@ function listAllChannelMessages(
   let cursor: string | undefined;
   do {
     const page = repo.listChannelMessages(organizationId, channelId, { cursor, limit: 200 });
-    all.push(...page.data);
+    all.push(...filterVisibleMessages(page.data));
     cursor = page.nextCursor;
     if (!page.hasMore) break;
   } while (cursor);
@@ -247,7 +248,7 @@ function listAllThreadMessages(
   let cursor: string | undefined;
   do {
     const page = repo.listMessages(organizationId, threadId, cursor, 200);
-    all.push(...page.data);
+    all.push(...filterVisibleMessages(page.data));
     cursor = page.nextCursor;
     if (!page.hasMore) break;
   } while (cursor);

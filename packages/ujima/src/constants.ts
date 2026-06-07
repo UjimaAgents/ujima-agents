@@ -205,7 +205,7 @@ export const DEFAULT_TOOL_CATALOG: Record<string, ToolCapability> = {
   mcp: {
     id: 'mcp',
     name: 'MCP',
-    description: 'Call approved MCP servers and tool adapters.',
+    description: 'Call an approved MCP server by mcpServerId and toolName. Pass tool arguments in args.',
     actions: ['mcp'],
     pathScopes: [],
     requiresApproval: true,

@@ -1,3 +1,31 @@
+function pruneWindows(windows: Map<string, number[]>, cutoff: number): void {
+  if (windows.size <= 1024) return;
+  for (const [k, timestamps] of windows) {
+    const kept = timestamps.filter((t) => t > cutoff);
+    if (kept.length === 0) windows.delete(k);
+    else windows.set(k, kept);
+  }
+}
+
+function recordInWindow(
+  windows: Map<string, number[]>,
+  key: string,
+  cap: number,
+  windowMs: number,
+): boolean {
+  const now = Date.now();
+  const cutoff = now - windowMs;
+  pruneWindows(windows, cutoff);
+  const recent = (windows.get(key) ?? []).filter((sample) => sample > cutoff);
+  if (recent.length >= cap) {
+    windows.set(key, recent);
+    return false;
+  }
+  recent.push(now);
+  windows.set(key, recent);
+  return true;
+}
+
 export class MentionQuota {
   private readonly windows = new Map<string, number[]>();
 
@@ -7,16 +35,7 @@ export class MentionQuota {
   ) {}
 
   consume(key: string): boolean {
-    const now = Date.now();
-    const cutoff = now - this.windowMs;
-    const recent = (this.windows.get(key) ?? []).filter((sample) => sample > cutoff);
-    if (recent.length >= this.cap) {
-      this.windows.set(key, recent);
-      return false;
-    }
-    recent.push(now);
-    this.windows.set(key, recent);
-    return true;
+    return recordInWindow(this.windows, key, this.cap, this.windowMs);
   }
 }
 
@@ -29,16 +48,7 @@ export class ChannelReadQuota {
   ) {}
 
   consume(key: string): boolean {
-    const now = Date.now();
-    const cutoff = now - this.windowMs;
-    const recent = (this.windows.get(key) ?? []).filter((sample) => sample > cutoff);
-    if (recent.length >= this.cap) {
-      this.windows.set(key, recent);
-      return false;
-    }
-    recent.push(now);
-    this.windows.set(key, recent);
-    return true;
+    return recordInWindow(this.windows, key, this.cap, this.windowMs);
   }
 }
 
@@ -60,9 +70,7 @@ export class PairMentionTracker {
     if (this.windows.size > 1024) {
       for (const [k, timestamps] of this.windows) {
         const last = timestamps[timestamps.length - 1];
-        if (last === undefined || last < windowStart) {
-          this.windows.delete(k);
-        }
+        if (last === undefined || last < windowStart) this.windows.delete(k);
       }
     }
     return kept.length;

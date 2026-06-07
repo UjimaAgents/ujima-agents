@@ -44,11 +44,22 @@ function collectToolNamesFromList(list: unknown, out: Set<string>): void {
   if (!Array.isArray(list)) return;
   for (const item of list) {
     if (!item || typeof item !== 'object') continue;
-    const name = readToolName(item);
+    const name = readTerminatingToolName(item);
     if (typeof name === 'string' && name.length > 0) {
       out.add(name);
     }
   }
+}
+
+function readTerminatingToolName(value: unknown): string | undefined {
+  const name = readToolName(value);
+  if (name) return name;
+  if (!value || typeof value !== 'object') return undefined;
+  const output = (value as { output?: unknown }).output;
+  const status = output && typeof output === 'object' ? (output as { status?: unknown }).status : undefined;
+  if (status === 'passed') return 'channel.pass';
+  if (status === 'acknowledged') return 'channel.ack';
+  return undefined;
 }
 
 function readToolName(value: unknown): string | undefined {
@@ -76,6 +87,11 @@ export function collectFiredToolNames(result: unknown): Set<string> {
       const s = step as Record<string, unknown>;
       collectToolNamesFromList(s.toolResults, names);
       collectToolNamesFromList(s.toolCalls, names);
+      collectToolNamesFromList(s.staticToolResults, names);
+      collectToolNamesFromList(s.staticToolCalls, names);
+      collectToolNamesFromList(s.dynamicToolResults, names);
+      collectToolNamesFromList(s.dynamicToolCalls, names);
+      collectToolNamesFromList(s.content, names);
     }
   }
   return names;

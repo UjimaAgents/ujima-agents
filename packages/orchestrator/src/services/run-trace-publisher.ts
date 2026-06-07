@@ -122,6 +122,8 @@ export async function publishRunReplyTrace(input: {
   let publishedArtifactFile = input.publishedArtifactFile ?? false;
   const publishedContent = input.publishedContent ?? new Set<string>();
   let publishedAnyText = input.publishedAnyText ?? false;
+  const runSteps = input.repo.listRunSteps?.(input.run.organizationId, input.run.id) ?? [];
+  let sawTerminatingTool = findTerminatingToolFromRunSteps(runSteps) !== null;
 
   for (const [index, step] of input.result.steps.entries()) {
     const stepText = typeof step.text === 'string' ? step.text.trim() : '';
@@ -141,7 +143,12 @@ export async function publishRunReplyTrace(input: {
         : undefined;
     if (stepArtifactFileToolCall) publishedArtifactFile = true;
 
-    if (runUsedThreadPublishingTool({ steps: [step] }) && !stepArtifactFileToolCall) continue;
+    const stepTerminatedRun = runUsedThreadPublishingTool({ steps: [step] });
+    if (sawTerminatingTool || (stepTerminatedRun && !stepArtifactFileToolCall)) {
+      if (stepTerminatedRun) sawTerminatingTool = true;
+      continue;
+    }
+    if (stepTerminatedRun) sawTerminatingTool = true;
     if (!stepText && !stepArtifactFileToolCall && !input.failureTrace) continue;
 
     if (stepText) {
@@ -180,7 +187,6 @@ export async function publishRunReplyTrace(input: {
     publishedContent.add(content);
   }
 
-  const runSteps = input.repo.listRunSteps?.(input.run.organizationId, input.run.id) ?? [];
   const terminatingTool = findTerminatingTool(input.result) ?? findTerminatingToolFromRunSteps(runSteps);
   const usedTerminator = terminatingTool !== null;
   const finalArtifactMessageNeeded = !!input.artifactFileToolCall && !publishedArtifactFile;

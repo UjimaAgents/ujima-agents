@@ -210,6 +210,11 @@ export interface AgentLoopStep {
   text?: string;
   toolCalls?: { toolCallId?: string; toolName?: string; input?: unknown }[];
   toolResults?: { toolCallId?: string; output?: unknown }[];
+  staticToolCalls?: { toolName?: string }[];
+  dynamicToolCalls?: { toolName?: string }[];
+  staticToolResults?: { toolName?: string; output?: unknown }[];
+  dynamicToolResults?: { toolName?: string; output?: unknown }[];
+  content?: { type?: string; toolName?: string; output?: unknown }[];
   usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number };
   [key: string]: unknown;
 }
@@ -253,6 +258,25 @@ function inputWaitFromSteps(steps: readonly AgentLoopStep[]): string | null {
   return null;
 }
 
+export function stepTerminatesRun(step: AgentLoopStep): boolean {
+  const items = [
+    ...(step.toolCalls ?? []),
+    ...(step.toolResults ?? []),
+    ...(step.staticToolCalls ?? []),
+    ...(step.dynamicToolCalls ?? []),
+    ...(step.staticToolResults ?? []),
+    ...(step.dynamicToolResults ?? []),
+    ...(step.content ?? []),
+  ];
+  for (const item of items) {
+    const record = item as { toolName?: string; output?: unknown };
+    if (RUN_TERMINATING_TOOL_NAMES.has(record.toolName ?? '')) return true;
+    const output = record.output as { status?: unknown } | undefined;
+    if (output?.status === 'passed' || output?.status === 'acknowledged') return true;
+  }
+  return false;
+}
+
 /**
  * `toolChoice` strategy. The default for ad-hoc / programmatic runs
  * is `auto`, leaving the model free to mix tool calls and free text.
@@ -292,16 +316,11 @@ export async function runAgentLoop(input: {
   const onChunk = input.onChunk;
 
   const stopWhen: NonNullable<Parameters<typeof streamText>[0]['stopWhen']> = (info) => {
-    if (approvalWaitFromSteps(steps)) return true;
-    if (inputWaitFromSteps(steps)) return true;
-    for (const step of steps) {
-      const calls = Array.isArray(step.toolCalls) ? step.toolCalls : [];
-      for (const call of calls) {
-        const name = typeof call?.toolName === 'string' ? call.toolName : '';
-        if (RUN_TERMINATING_TOOL_NAMES.has(name)) {
-          return true;
-        }
-      }
+    const completedSteps = [...steps, ...(info.steps as AgentLoopStep[])];
+    if (approvalWaitFromSteps(completedSteps)) return true;
+    if (inputWaitFromSteps(completedSteps)) return true;
+    for (const step of completedSteps) {
+      if (stepTerminatesRun(step)) return true;
     }
     if (typeof userStopWhen === 'function') {
       try {
