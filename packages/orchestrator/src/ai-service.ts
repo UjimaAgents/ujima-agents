@@ -25,6 +25,7 @@ import {
 } from './utils/to-model-messages.js';
 import { requireTeam } from './utils/require-team.js';
 import { buildRunTranscript } from './utils/run-transcript.js';
+import { filterVisiblePromptChannels } from './utils/visible-prompt-channels.js';
 import {
   buildCacheableSystem,
   buildWakeContextMessages,
@@ -40,8 +41,7 @@ import {
 import { filterVisibleMessages } from './utils/message-visibility.js';
 import {
   createMessageCursor,
-  isMessageAfterCursor,
-  moveCursor,
+  collectInterruptMessages,
   type MessageCursor,
 } from './utils/message-interrupts.js';
 import { isDelegateMessage, filterDelegateTurnTools } from './services/run-reply-guard.js';
@@ -179,7 +179,7 @@ export class AiService {
         .listMembers(input.organizationId)
         .filter((current) => current.id !== member.id),
       team.agents,
-      team.channels,
+      filterVisiblePromptChannels(team.channels, this.repo, input.organizationId),
       organization.organizationChart,
       availableSkills,
       Object.keys(toolDefs),
@@ -391,7 +391,7 @@ export class AiService {
         .listMembers(input.organizationId)
         .filter((current) => current.id !== member.id),
       team.agents,
-      team.channels,
+      filterVisiblePromptChannels(team.channels, this.repo, input.organizationId),
       organization.organizationChart,
       availableSkills,
       availableToolIds,
@@ -555,8 +555,7 @@ export class AiService {
       onChunk: input.onChunk,
       onStepFinish: input.onStepFinish,
       loadInterruptMessages: () => {
-        const interrupts = this.loadRunInterrupts(input, interruptCursor);
-        return toModelMessages(interrupts, input.agentId);
+        return toModelMessages(this.loadRunInterrupts(input, interruptCursor), input.agentId);
       },
       onModelNotFound: (error) => {
         const kind = provider?.kind ?? error.providerKindHint ?? '';
@@ -589,16 +588,6 @@ export class AiService {
     const page = filterVisibleMessages(
       this.repo.listMessages(input.organizationId, input.threadId, undefined, 100).data,
     );
-    const interrupts = page.filter(
-      (message) =>
-        (message.kind === 'human' || isDelegateMessage(message)) &&
-        message.senderId !== input.agentId &&
-        isMessageAfterCursor(message, cursor),
-    );
-    const latest = page.at(-1);
-    if (latest) {
-      moveCursor(cursor, latest);
-    }
-    return interrupts;
+    return collectInterruptMessages(page, cursor, input.agentId);
   }
 }

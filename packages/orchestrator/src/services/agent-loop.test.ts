@@ -13,4 +13,15 @@ describe('stepTerminatesRun', () => {
   it('does not stop for ordinary tool results', () => {
     expect(stepTerminatesRun({ toolResults: [{ output: { status: 'ok' } }] })).toBe(false);
   });
+
+  // Fix: tool-name sanitization (underscore → dot normalization).
+  // `toModelToolName` converts dots to underscores, so the model
+  // may return `channel_reply` / `channel_pass` / etc.
+  it('stops for underscored channel_pass in dynamicToolCalls', () => {
+    expect(stepTerminatesRun({ dynamicToolCalls: [{ toolName: 'channel_pass' }] })).toBe(true);
+  });
+
+  it('stops for acked tool results', () => {
+    expect(stepTerminatesRun({ toolResults: [{ output: { status: 'acked' } }] })).toBe(true);
+  });
 });

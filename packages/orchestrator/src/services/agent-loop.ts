@@ -1,5 +1,5 @@
 import { streamText, type LanguageModel, type ModelMessage, type ToolSet } from 'ai';
-import { RUN_TERMINATING_TOOL_NAMES } from './run-reply-guard.js';
+import { RUN_TERMINATING_TOOL_NAMES, normalizeToDottedToolName } from './run-reply-guard.js';
 import {
   findToolApprovalRequiredError,
   findToolInputRequiredError,
@@ -270,9 +270,16 @@ export function stepTerminatesRun(step: AgentLoopStep): boolean {
   ];
   for (const item of items) {
     const record = item as { toolName?: string; output?: unknown };
-    if (RUN_TERMINATING_TOOL_NAMES.has(record.toolName ?? '')) return true;
+    if (RUN_TERMINATING_TOOL_NAMES.has(normalizeToDottedToolName(record.toolName ?? ''))) return true;
     const output = record.output as { status?: unknown } | undefined;
-    if (output?.status === 'passed' || output?.status === 'acknowledged') return true;
+    if (
+      output?.status === 'passed' ||
+      output?.status === 'acked' ||
+      output?.status === 'acknowledged' ||
+      output?.status === 'handoff_sent'
+    ) {
+      return true;
+    }
   }
   return false;
 }

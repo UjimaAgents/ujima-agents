@@ -10,12 +10,23 @@ export function createMessageCursor(messages: Message[]): MessageCursor {
   return latest ? { createdAt: latest.createdAt, id: latest.id } : { createdAt: '', id: '' };
 }
 
-export function isMessageAfterCursor(message: Message, cursor: MessageCursor): boolean {
+function isMessageAfterCursor(message: Message, cursor: MessageCursor): boolean {
   if (message.createdAt > cursor.createdAt) return true;
   return message.createdAt === cursor.createdAt && message.id > cursor.id;
 }
 
-export function moveCursor(cursor: MessageCursor, message: Message): void {
+export function collectInterruptMessages(messages: Message[], cursor: MessageCursor, selfId: string): Message[] {
+  const interrupts = messages.filter(
+    (message) => message.senderId !== selfId && isMessageAfterCursor(message, cursor),
+  );
+  const latest = messages.at(-1);
+  if (latest) {
+    moveCursor(cursor, latest);
+  }
+  return interrupts;
+}
+
+function moveCursor(cursor: MessageCursor, message: Message): void {
   if (isMessageAfterCursor(message, cursor)) {
     cursor.createdAt = message.createdAt;
     cursor.id = message.id;

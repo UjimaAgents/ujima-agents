@@ -452,6 +452,19 @@ export class SpiritServiceBase {
     return rooms;
   }
 
+  protected saveRunAndEmit(
+    event: typeof SocketEventNames.runStarted | typeof SocketEventNames.runUpdated | typeof SocketEventNames.runCompleted,
+    run: RunState,
+  ): RunState {
+    const saved = this.repo.saveRun(run);
+    this.realtime.emit(
+      event,
+      { organizationId: saved.organizationId, run: saved },
+      this.getRooms(saved),
+    );
+    return saved;
+  }
+
   protected emitRunChunk(
     run: { organizationId: string; runId: string; threadId?: string; agentId: string },
     chunk: AgentLoopChunk,

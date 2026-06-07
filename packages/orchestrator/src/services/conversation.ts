@@ -32,7 +32,6 @@ import type {
 import { requireOrganization } from '../utils/require-organization.js';
 import { evictStaleTimestamps } from '../utils/ttl-map.js';
 import { isVacuousAck, shouldSuppressForMirror } from './mirror-guard.js';
-import { isAcknowledgementOnly } from './run-reply-guard.js';
 import {
   compactSelfNotesIfNeeded,
   compactConversationIfNeeded,
@@ -398,11 +397,6 @@ export class ConversationService {
       if (!options?.suppressDmAlerts && !this.shouldSuppressDmWake(emittedMessage, channel)) {
         this.fanout('alertDirectMessageParticipants', this.alertDirectMessageParticipants(emittedMessage, channel));
       }
-      // Phase 2 — broad-read fanout for public channels. Every agent
-      // in the channel (or every org agent for empty-roster channels)
-      // wakes on human-authored, non-system messages. Mentioned
-      // agents are already alerted above with reason='mention';
-      // we skip them here to avoid double-fire.
       this.fanout('alertChannelReaders', this.alertChannelReaders(emittedMessage, channel, resolvedMentions));
     }
     return emittedMessage;
@@ -428,45 +422,20 @@ export class ConversationService {
     });
   }
 
-  /**
-   * Channel-read broadcast fanout (Phase 2). Wakes every agent in
-   * the channel with `wakeReason='channel-read'` so they can each
-   * decide whether to `channel.pass` or post a reply.
-   *
-   * Bypass rules (L5 + decisions):
-   *   - Only when sender is a human, non-system message
-   *   - Only public channels (`general` / `group`; not self/dm/task-run)
-   *   - Empty-roster channels expand to all org agents
-   *   - Sender, mentioned agents (covered by mention fanout),
-   *     retired agents, and non-agents are skipped
-   */
   private async alertChannelReaders(
     message: Message,
     channel: Channel | null,
     mentions: MessageMention[],
   ): Promise<void> {
-    if (!channel) return;
-    if (channel.kind !== 'general' && channel.kind !== 'group') return;
-    // L5 — system messages must never broad-wake. The throttle
-    // notification itself is published with senderKind='human' but
-    // senderId='system' / kind='system'. Without these guards a
-    // throttle event would broad-wake the channel and re-throttle
-    // itself in an unbounded loop.
-    if (message.senderKind !== 'human') return;
-    if (message.kind === 'system') return;
-    if (message.senderId === 'system') return;
+    if (!channel || (channel.kind !== 'general' && channel.kind !== 'group')) return;
+    if (message.senderKind !== 'human' || message.kind === 'system' || message.senderId === 'system') return;
 
-    const alreadyMentioned = new Set(mentions.map((m) => m.memberId));
-
-    // Empty roster = "everyone reads" (resolved decision). Walk
-    // every org agent. Non-empty roster = walk only enrolled
-    // members.
-    const candidates =
-      channel.memberIds.length === 0
-        ? this.repo.listMembers(message.organizationId)
-        : channel.memberIds
-            .map((memberId) => this.repo.getMember(message.organizationId, memberId))
-            .filter((member): member is NonNullable<typeof member> => member !== null);
+    const alreadyMentioned = new Set(mentions.map((mention) => mention.memberId));
+    const candidates = channel.memberIds.length === 0
+      ? this.repo.listMembers(message.organizationId)
+      : channel.memberIds
+          .map((memberId) => this.repo.getMember(message.organizationId, memberId))
+          .filter((member): member is NonNullable<typeof member> => member !== null);
 
     const fanout: Promise<void>[] = [];
     for (const member of candidates) {
@@ -482,29 +451,17 @@ export class ConversationService {
         this.emitWakeSuppressed(message, channel, member.id, 'sender-self');
         continue;
       }
-      if (alreadyMentioned.has(member.id)) {
-        // Already covered by alertMentionedMembers with reason='mention'.
-        continue;
-      }
-      // Per-`(member, channelId)` channel-read quota bucket
-      // (L11). Separate from the mention bucket so ordinary
-      // channel chatter doesn't starve the mention-fanout quota.
+      if (alreadyMentioned.has(member.id)) continue;
       if (!this.channelReadQuota.consume(`${message.organizationId}:${member.id}:${channel.id}`)) {
         this.emitWakeSuppressed(message, channel, member.id, 'quota');
         continue;
       }
-      // Channel member mode check (active / passive / muted / temp_disable)
-      const memberMode = this.repo.getChannelMemberMode(
-        message.organizationId,
-        channel.id,
-        member.id,
-      );
+      const memberMode = this.repo.getChannelMemberMode(message.organizationId, channel.id, member.id);
       if (memberMode === 'muted' || memberMode === 'temp_disable') {
         this.emitWakeSuppressed(message, channel, member.id, 'mode-blocked');
         continue;
       }
       if (memberMode === 'passive') {
-        // Passive agents read context but don't auto-reply on broadcasts.
         this.emitWakeSuppressed(message, channel, member.id, 'mode-passive');
         continue;
       }
@@ -1431,7 +1388,7 @@ export class ConversationService {
     if (!channel || channel.kind !== 'dm') return false;
     if (message.kind !== AGENT_KIND) return false;
     const handoff = (message.metadata as { handoff?: { complete?: boolean } } | undefined)?.handoff;
-    return handoff?.complete === true || isAcknowledgementOnly(message.content);
+    return handoff?.complete === true || isVacuousAck(message.content);
   }
 
   private publishMentionThrottledSystemMessage(

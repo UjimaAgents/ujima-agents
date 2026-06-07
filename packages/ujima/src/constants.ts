@@ -5,7 +5,8 @@ export const DEFAULT_TOOL_CATALOG: Record<string, ToolCapability> = {
   view: {
     id: 'view',
     name: 'View',
-    description: 'Read a workspace file in a numbered window. Accepts file_path, offset, and limit.',
+    description:
+      'Read a workspace file in a numbered window. Accepts file_path plus lines ("1-100", "120-", "42"), or offset+limit. Default reads only the first 200 lines — use lines or limit to widen, and prefer the smallest window that answers your question. Reading the same file twice in one run replays it on every step, so re-target instead of re-reading.',
     actions: ['read'],
     pathScopes: ['.'],
     requiresApproval: false,

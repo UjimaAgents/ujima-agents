@@ -266,4 +266,149 @@ describe("reasoning-trace ordering", () => {
       ["Agent · text", "Final answer."],
     ]);
   });
+
+  it("threads actorId and actorName onto every step kind so the panel can group by stable identity", () => {
+    const organizationId = "org-1";
+    const threadId = "thread-1";
+    const actorId = "carter-jordan";
+    const actorName = "Carter Jordan";
+    const run: RunState = {
+      id: "run-1",
+      organizationId,
+      agentId: actorId,
+      threadId,
+      status: "running",
+      step: "running",
+      summary: "running",
+      startedAt: "2026-05-04T19:07:00.000Z",
+    };
+    const activity: ActivityEvent[] = [
+      {
+        event_id: "run:run-1:running:running:0",
+        type: "run_running",
+        publisher: actorId,
+        timestamp: run.startedAt,
+        order: 0,
+        payload: run,
+      },
+      {
+        event_id: "run_chunk:run-1:1:reasoning",
+        type: "run_chunk",
+        publisher: actorId,
+        timestamp: "2026-05-04T19:07:01.000Z",
+        order: 1,
+        payload: { runId: run.id, threadId, agentId: actorId, kind: "reasoning", delta: "Thinking…" },
+      },
+      {
+        event_id: "tool:called:run-1:tc-1",
+        type: "tool_called",
+        publisher: actorId,
+        timestamp: "2026-05-04T19:07:02.000Z",
+        order: 2,
+        payload: {
+          runId: run.id,
+          threadId,
+          agentId: actorId,
+          toolCall: { toolCallId: "tc-1", toolName: "shell", args: { cwd: "/workspace", cmd: "ls" } },
+        },
+      },
+      {
+        event_id: "tool:result:run-1:tc-1",
+        type: "tool_result",
+        publisher: actorId,
+        timestamp: "2026-05-04T19:07:03.000Z",
+        order: 3,
+        payload: {
+          runId: run.id,
+          threadId,
+          agentId: actorId,
+          toolResult: { toolCallId: "tc-1", result: "ok", isError: false },
+        },
+      },
+      {
+        event_id: "msg:msg-1",
+        type: "channel_message",
+        publisher: actorId,
+        timestamp: "2026-05-04T19:07:04.000Z",
+        order: 4,
+        payload: { messageId: "msg-1", threadId, content: "Done." },
+      },
+    ];
+
+    const steps = buildReasoningTraceSteps({
+      threadId,
+      conversationName: "general",
+      conversationType: "channel",
+      members: [{ id: actorId, name: actorName, kind: "agent" }],
+      activity,
+      runs: [run],
+      organizationId,
+    });
+
+    expect(steps.length).toBeGreaterThan(0);
+    for (const step of steps) {
+      expect(step.actorId).toBe(actorId);
+      expect(step.actorName).toBe(actorName);
+    }
+    // Run-bound steps (chunks, tool calls, tool results) carry the
+    // owning runId so the grouper can split same-actor activity from
+    // different runs. Channel messages without an attached task_id
+    // legitimately have no runId.
+    const runBoundSteps = steps.filter(
+      (s) => s.id.startsWith("run:") || s.id.startsWith("run_chunk:") || s.id.startsWith("tool:"),
+    );
+    expect(runBoundSteps.length).toBeGreaterThan(0);
+    for (const step of runBoundSteps) {
+      expect(step.runId).toBe(run.id);
+    }
+  });
+
+  it("threads actorId and actorName onto historical (persisted) steps as well", () => {
+    const organizationId = "org-1";
+    const threadId = "thread-1";
+    const actorId = "carter-jordan";
+    const actorName = "Carter Jordan";
+    const run: RunState = {
+      id: "run-1",
+      organizationId,
+      agentId: actorId,
+      threadId,
+      status: "completed",
+      step: "completed",
+      summary: "done",
+      startedAt: "2026-05-04T19:07:00.000Z",
+      endedAt: "2026-05-04T19:07:02.000Z",
+    };
+    const message: Message = {
+      id: "msg-1",
+      organizationId,
+      threadId,
+      senderId: actorId,
+      senderKind: "agent",
+      kind: "agent",
+      content: "Final answer.",
+      reasoningContent: "Private reasoning.",
+      mentions: [],
+      toolCalls: [],
+      attachments: [],
+      metadata: { runId: run.id },
+      createdAt: "2026-05-04T19:07:02.000Z",
+    };
+
+    const steps = buildHistoricalTraceSteps({
+      conversationName: actorName,
+      conversationType: "agent",
+      members: [{ id: actorId, name: actorName, kind: "agent" }],
+      run,
+      steps: [],
+      message,
+      organizationId,
+    });
+
+    expect(steps.length).toBeGreaterThan(0);
+    for (const step of steps) {
+      expect(step.actorId).toBe(actorId);
+      expect(step.actorName).toBe(actorName);
+    }
+  });
 });

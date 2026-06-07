@@ -65,7 +65,16 @@ function indexWorkspaceWrite(
   }
 }
 
-const VIEW_DEFAULT_LIMIT = 1000;
+// Hard cap for any single view (used as the schema's `limit.max`).
+// Read windows MUST stay bounded so cached prefixes don't balloon —
+// `messages` replays every prior tool result on every step, so a
+// careless full-file read multiplies its cost across the run.
+const VIEW_MAX_LIMIT = 1000;
+// Default window when neither `lines` nor `limit` is provided.
+// Tuned to a single screenful of code (≈ one focus area). Agents
+// that need more should ask explicitly via `lines: "1-400"` or
+// page through with `offset`/`limit`.
+const VIEW_DEFAULT_LIMIT = 200;
 const VIEW_MAX_BYTES = 200 * 1024;
 const TREE_LIMIT = 1000;
 const GLOB_LIMIT = 100;
@@ -163,11 +172,32 @@ const MultiEditSchema = z.object({
 
 const ViewSchema = z.object({
   ...FilePathFields,
+  lines: z
+    .string()
+    .optional()
+    .describe(
+      'Line range to read, 1-based and inclusive. Examples: "1-100", "120-200", "300-" (from 300 to default cap), "42" (just line 42). When set, overrides offset/limit.',
+    ),
   offset: z.number().int().min(1).default(1),
-  limit: z.number().int().min(1).max(VIEW_DEFAULT_LIMIT).default(VIEW_DEFAULT_LIMIT),
+  limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(VIEW_MAX_LIMIT)
+    .default(VIEW_DEFAULT_LIMIT)
+    .describe(
+      `Max lines to return. Defaults to ${VIEW_DEFAULT_LIMIT}. Cap is ${VIEW_MAX_LIMIT}. Prefer the smallest window that answers your question.`,
+    ),
 }).superRefine((value, ctx) => {
   if (!filePathFrom(value).trim()) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['file_path'], message: 'file_path is required' });
+  }
+  if (value.lines !== undefined && parseLinesRange(value.lines) === null) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['lines'],
+      message: 'lines must be a 1-based range like "1-100", "120-", or "42"',
+    });
   }
 });
 
@@ -211,6 +241,7 @@ export const viewTool: OrchestratorTool<typeof ViewSchema> = {
     resourceType: 'file',
     resourcePath: filePathFrom(args),
     input: {
+      lines: args.lines,
       offset: args.offset,
       limit: args.limit,
     },
@@ -229,8 +260,17 @@ export const viewTool: OrchestratorTool<typeof ViewSchema> = {
       throw new Error(`File is too large (${resource.size} bytes). Maximum size is ${VIEW_MAX_BYTES} bytes`);
     }
 
-    const offset = readWindowValue(invocation.input?.offset, 1);
-    const limit = readWindowValue(invocation.input?.limit, VIEW_DEFAULT_LIMIT);
+    const linesRaw = invocation.input?.lines;
+    const linesRange = typeof linesRaw === 'string' ? parseLinesRange(linesRaw) : null;
+    const offset = linesRange
+      ? linesRange.offset
+      : readWindowValue(invocation.input?.offset, 1);
+    const limit = Math.min(
+      linesRange
+        ? linesRange.limit
+        : readWindowValue(invocation.input?.limit, VIEW_DEFAULT_LIMIT),
+      VIEW_MAX_LIMIT,
+    );
     const content = await readFile(resolved, 'utf8');
 
     return {
@@ -518,6 +558,25 @@ async function readExistingText(path: string): Promise<string> {
     if (code === 'ENOENT') return '';
     throw error;
   }
+}
+
+// Parses the `lines` shorthand on `view` ("1-100", "120-", "42").
+// Returns null on any malformed input so the schema can surface a
+// validation error instead of silently falling back to the default
+// window — silent fallback would let an agent type "100-200ish" and
+// re-read the whole file without noticing.
+function parseLinesRange(input: string): { offset: number; limit: number } | null {
+  const trimmed = input.trim();
+  const match = /^(\d+)(?:-(\d*))?$/.exec(trimmed);
+  if (!match) return null;
+  const start = Number(match[1]);
+  if (!Number.isInteger(start) || start < 1) return null;
+  const endRaw = match[2];
+  if (endRaw === undefined) return { offset: start, limit: 1 };
+  if (endRaw === '') return { offset: start, limit: VIEW_DEFAULT_LIMIT };
+  const end = Number(endRaw);
+  if (!Number.isInteger(end) || end < start) return null;
+  return { offset: start, limit: end - start + 1 };
 }
 
 function numberedWindow(content: string, offset: number, limit: number): string {

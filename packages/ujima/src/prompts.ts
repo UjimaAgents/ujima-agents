@@ -132,8 +132,14 @@ function formatWorkspaceLayout(workspaceRoot: string): string {
 }
 
 function formatChannelTargets(channels: Channel[]): string {
-  return channels.length
-    ? channels.map((channel) => `- ${channel.name} [${channel.id}] (${channel.kind})`).join('\n')
+  // Defensive: archived channels must never reach the system prompt
+  // — `channel.read` will throw "Channel not found" on them and the
+  // agent has no way to know the id is dead, so it retries forever.
+  // Callers should already pre-filter, but this is the last line of
+  // defense.
+  const visible = channels.filter((channel) => !channel.archivedAt);
+  return visible.length
+    ? visible.map((channel) => `- ${channel.name} [${channel.id}] (${channel.kind})`).join('\n')
     : '- none';
 }
 

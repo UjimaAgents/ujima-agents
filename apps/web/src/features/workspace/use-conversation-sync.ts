@@ -40,6 +40,7 @@ import {
   presenceToActivity,
   runChunkToActivity,
   runToActivity,
+  socketEventToActivity,
   toolToActivity,
   type MemberAlertFailedPayload,
   type MemberAlertedPayload,
@@ -668,6 +669,20 @@ function handleStreamEvent(
     case "tool:called":
     case "tool:result": {
       actions.appendActivity(toolToActivity(envelope.event, envelope.payload));
+      return;
+    }
+    case "agent:passed":
+    case "agent:passed_with_text":
+    case "agent:ack":
+    case "agent:handoff":
+    case "decision:verification_result":
+    case "wake:suppressed":
+    case "run:silent_completion":
+    case "run:empty_completion":
+    case "agent:mirror_suppressed":
+    case "agent:echo_suppressed":
+    case "supervisor:replied": {
+      actions.appendActivity(socketEventToActivity(envelope.event, envelope.payload));
       return;
     }
     default:
