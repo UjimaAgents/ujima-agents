@@ -512,7 +512,7 @@ export const TraceStep = memo(function TraceStep({
       <div className="min-w-0">
         <div className="flex min-h-5 items-baseline justify-between gap-3">
           <div className="min-w-0 flex flex-1 flex-wrap items-baseline gap-x-2 gap-y-0">
-            <p className="min-w-0 text-xs leading-snug text-foreground">
+            <p className="min-w-0 text-xs leading-snug text-foreground trace-step-title">
               <span className="font-semibold">{subject}</span>
               {remainder ? (
                 <span className="font-normal">{remainder}</span>

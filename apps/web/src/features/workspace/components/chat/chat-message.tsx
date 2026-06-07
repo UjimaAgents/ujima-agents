@@ -175,7 +175,7 @@ export const ChatMessage = memo(function ChatMessage({
                   body={approvalFsTerminal.body}
                 />
               ) : systemBodyMarkdown !== null ? (
-                <div className={artifactFile ? "mt-3" : "mt-1"}>
+                <div className={`${artifactFile ? "mt-3" : "mt-1"} chat-message-content`}>
                   <Markdown
                     content={systemBodyMarkdown}
                     mentionNames={message.mentionNames}
@@ -210,7 +210,7 @@ export const ChatMessage = memo(function ChatMessage({
                 </div>
               )}
               {artifactFile ? <ArtifactFilePreview artifact={artifactFile} /> : null}
-              <div className={artifactFile ? "mt-3" : "mt-1"}>
+              <div className={`${artifactFile ? "mt-3" : "mt-1"} chat-message-content`}>
                 {showBody ? (
                   <Markdown
                     content={message.content}

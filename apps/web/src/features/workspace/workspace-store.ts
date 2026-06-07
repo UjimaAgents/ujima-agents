@@ -28,6 +28,7 @@ export type WorkspaceTab =
   | "members"
   | "culture";
 export type WorkspaceDetailsTab = "Thinking trace" | "Changes" | "Metadata";
+export type ChatFontSize = "normal" | "large" | "xlarge" | "xxlarge" | "3xlarge" | "6xlarge";
 
 export interface ActiveJob {
   runId: string;
@@ -65,7 +66,9 @@ export interface WorkspaceState {
   activity: ActivityEvent[];
   loading: boolean;
   conversationKey?: string;
+  chatFontSize: ChatFontSize;
   setSidebarWidth(width: number): void;
+  setChatFontSize(size: ChatFontSize): void;
   setActiveTab(tab: WorkspaceTab): void;
   setShowDetails(show: boolean, options?: { userIntent?: boolean }): void;
   openDetailsForAgentMessage(): void;
@@ -102,6 +105,8 @@ export interface WorkspaceState {
 }
 
 const DETAILS_AUTO_OPEN_DISMISSED_KEY = "ujima.workspace.detailsAutoOpenDismissed";
+const CHAT_FONT_SIZE_KEY = "ujima.workspace.chatFontSize";
+const CHAT_FONT_SIZE_DEFAULT: ChatFontSize = "normal";
 
 const EMPTY_ACTIVITY = {
   sidebarWidth: 18,
@@ -125,6 +130,7 @@ const EMPTY_ACTIVITY = {
   activity: [],
   loading: true,
   conversationKey: undefined,
+  chatFontSize: readChatFontSize(),
 };
 
 function sameRecord(left: unknown, right: unknown): boolean {
@@ -404,6 +410,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   ...EMPTY_ACTIVITY,
   setSidebarWidth: (sidebarWidth) =>
     set((state) => (state.sidebarWidth === sidebarWidth ? state : { sidebarWidth })),
+  setChatFontSize: (chatFontSize) =>
+    set((state) => {
+      writeChatFontSize(chatFontSize);
+      return state.chatFontSize === chatFontSize ? state : { chatFontSize };
+    }),
   setActiveTab: (activeTab) =>
     set((state) => (state.activeTab === activeTab ? state : { activeTab })),
   setShowDetails: (showDetails, options) =>
@@ -684,6 +695,18 @@ function writeDetailsAutoOpenDismissed(dismissed: boolean): void {
   } else {
     window.localStorage.removeItem(DETAILS_AUTO_OPEN_DISMISSED_KEY);
   }
+}
+
+function readChatFontSize(): ChatFontSize {
+  if (typeof window === "undefined") return CHAT_FONT_SIZE_DEFAULT;
+  const stored = window.localStorage.getItem(CHAT_FONT_SIZE_KEY);
+  if (stored === "normal" || stored === "large" || stored === "xlarge" || stored === "xxlarge" || stored === "3xlarge" || stored === "6xlarge") return stored;
+  return CHAT_FONT_SIZE_DEFAULT;
+}
+
+function writeChatFontSize(size: ChatFontSize): void {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(CHAT_FONT_SIZE_KEY, size);
 }
 
 export function resolveMemberActivity(

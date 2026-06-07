@@ -20,3 +20,5 @@ export type { ApprovalCardData } from "./approval-card";
 
 export { DetailsSidebar, TraceStep, RunSummary, BoundaryCard } from "./details-sidebar";
 export type { DetailsSidebarProps, TraceStepData, RunSummaryData } from "./details-sidebar";
+
+export { FontSizeControl } from "./font-size-control";
