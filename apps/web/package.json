@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "predev": "bun ../../scripts/free-port.ts ${WEB_PORT:-3452}",
     "dev": "next dev --port ${WEB_PORT:-3452}",
     "build": "next build",
     "start": "next start --port ${WEB_PORT:-3452}",

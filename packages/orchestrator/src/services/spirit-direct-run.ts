@@ -620,27 +620,6 @@ export class SpiritService extends SpiritServiceSupervisor {
         (await appendArtifactFileToolCall(goalToolCalls, team.workspace.root, goalToolResults)) ??
         (await appendArtifactFileFromRunSteps(this.repo, run, team.workspace.root));
       const turnSnapshot = turn.snapshot();
-      if (statuses.includes('blocked')) {
-        await publishRunReplyTrace({
-          repo: this.repo,
-          conversations: this.conversations,
-          run: running,
-          result: {
-            ...result,
-            steps: result.steps.slice(persistedStepCount),
-          },
-          reply: text || (artifactFileToolCall ? 'Artifact updated.' : ''),
-          reasoningContent,
-          teamRoot: team.workspace.root,
-          artifactFileToolCall,
-          ...turnSnapshot,
-
-          suppressDmAlerts: true,
-          failureTrace: true,
-        });
-        return this.failRun(running, 'Tool action blocked');
-      }
-
       if (statuses.includes('waiting_for_approval')) {
         return this.waitForApproval(running, pendingApprovalRunSummary(this.repo, running.organizationId, running.id));
       }
