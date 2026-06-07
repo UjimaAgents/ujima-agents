@@ -67,6 +67,7 @@ export interface WorkspaceState {
   loading: boolean;
   conversationKey?: string;
   chatFontSize: ChatFontSize;
+  hydrateClientPersisted(): void;
   setSidebarWidth(width: number): void;
   setChatFontSize(size: ChatFontSize): void;
   setActiveTab(tab: WorkspaceTab): void;
@@ -108,11 +109,13 @@ const DETAILS_AUTO_OPEN_DISMISSED_KEY = "ujima.workspace.detailsAutoOpenDismisse
 const CHAT_FONT_SIZE_KEY = "ujima.workspace.chatFontSize";
 const CHAT_FONT_SIZE_DEFAULT: ChatFontSize = "normal";
 
+// SSR-safe defaults. Persisted values from localStorage are applied post-mount
+// via hydrateClientPersisted() to avoid a Next.js hydration mismatch.
 const EMPTY_ACTIVITY = {
   sidebarWidth: 18,
   activeTab: "conversation" as WorkspaceTab,
   showDetails: false,
-  detailsAutoOpenDismissed: readDetailsAutoOpenDismissed(),
+  detailsAutoOpenDismissed: false,
   detailsWidth: 33,
   detailsTab: "Thinking trace" as WorkspaceDetailsTab,
   selectedConversation: undefined,
@@ -130,7 +133,7 @@ const EMPTY_ACTIVITY = {
   activity: [],
   loading: true,
   conversationKey: undefined,
-  chatFontSize: readChatFontSize(),
+  chatFontSize: CHAT_FONT_SIZE_DEFAULT,
 };
 
 function sameRecord(left: unknown, right: unknown): boolean {
@@ -408,6 +411,18 @@ export function selectActiveTerminals(state: WorkspaceState): ActiveJob[] {
 
 export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   ...EMPTY_ACTIVITY,
+  hydrateClientPersisted: () =>
+    set((state) => {
+      const chatFontSize = readChatFontSize();
+      const detailsAutoOpenDismissed = readDetailsAutoOpenDismissed();
+      if (
+        state.chatFontSize === chatFontSize &&
+        state.detailsAutoOpenDismissed === detailsAutoOpenDismissed
+      ) {
+        return state;
+      }
+      return { chatFontSize, detailsAutoOpenDismissed };
+    }),
   setSidebarWidth: (sidebarWidth) =>
     set((state) => (state.sidebarWidth === sidebarWidth ? state : { sidebarWidth })),
   setChatFontSize: (chatFontSize) =>
