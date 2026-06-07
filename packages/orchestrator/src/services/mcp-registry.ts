@@ -826,6 +826,10 @@ export class McpRegistryService {
           memberId: input.memberId,
           mcpServerId: input.mcpServerId,
           scope,
+          // Legacy attachment-creation path. 'native' preserves the pre-V2
+          // behavior exactly (full schemas in palette at spawn). Dispatch-tier
+          // attachments arrive via the V2 paths landing in later PRs.
+          tier: 'native',
           createdAt: now,
           updatedAt: now,
         });
@@ -973,6 +977,8 @@ export class McpRegistryService {
       memberId: input.memberId,
       mcpServerId: input.mcpServerId,
       scope: input.scope ?? 'worker',
+      // Legacy attachment-creation path; see grantToolToAgent comment above.
+      tier: 'native',
       createdAt: now,
       updatedAt: now,
     });
