@@ -24,6 +24,22 @@ export interface ApprovalCardData {
     args?: string[];
   };
   filesystemScope?: ParsedFilesystemScope;
+  /**
+   * Connector action request (mcp_connector_dispatch_plan.md §5.2). When
+   * set, the card renders the §5.2 box (server + tool + args inline)
+   * and relabels the `allow_family` button to "Allow for this run" so
+   * the connector-tier semantics — task-session-wide grant for the same
+   * (agent, server, tool) — read naturally.
+   *
+   * Mutually exclusive with shellScope / filesystemScope (a single
+   * approval has exactly one display shape).
+   */
+  connectorScope?: {
+    serverId: string;
+    serverDisplayName: string;
+    toolName: string;
+    argsPreview: string;
+  };
   status: "pending" | "approved" | "rejected";
   /** Display name for the requesting agent */
   requestedBy: string;
@@ -59,6 +75,64 @@ const APPROVAL_OPTIONS: Record<"reject" | "allow_once" | "allow_always" | "allow
     icon: Check,
   },
 };
+
+// Connector action_request semantics differ from the default
+// shell/filesystem allow_family: "Allow for this run" caches the grant
+// in the permission store for the current task session (same
+// agent + server + tool, same arg shape), not a command family in the
+// shell sense. Relabelled at the call site so the card reads correctly
+// to operators who aren't aware of the §17.5 vocabulary.
+const APPROVAL_OPTIONS_CONNECTOR: typeof APPROVAL_OPTIONS = {
+  ...APPROVAL_OPTIONS,
+  allow_family: {
+    label: "Allow for this run",
+    description: "Skip the gate for the same tool + arguments while this task runs.",
+    icon: Check,
+  },
+};
+
+/**
+ * Renders the §5.2 action-request box: server label, tool label, and a
+ * monospace args preview. Args are pre-redacted upstream (the un-redacted
+ * value lives only in the audit row's `args_json` column, gated by the
+ * org's redaction policy) so this component never sees raw secrets even
+ * if the policy fails open — it just shows whatever string the caller
+ * handed it.
+ */
+function ConnectorActionPane({
+  className,
+  scope,
+}: {
+  className?: string;
+  scope: NonNullable<ApprovalCardData["connectorScope"]>;
+}) {
+  return (
+    <div
+      className={`rounded-md border border-violet-500/[0.06] bg-white/60 px-3 py-2 dark:border-white/10 dark:bg-white/5 ${className ?? ""}`}
+    >
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[11px] leading-relaxed text-foreground/85">
+        <span>
+          <span className="text-foreground/55">Server:</span>{" "}
+          <span className="text-foreground">{scope.serverDisplayName}</span>
+        </span>
+        <span className="text-foreground/35">·</span>
+        <span>
+          <span className="text-foreground/55">Tool:</span>{" "}
+          <span className="text-foreground">{scope.toolName}</span>
+        </span>
+      </div>
+      {scope.argsPreview.length > 0 ? (
+        <pre className="mt-2 whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-foreground/80">
+          {scope.argsPreview}
+        </pre>
+      ) : (
+        <p className="mt-2 font-mono text-[11px] leading-relaxed text-foreground/55">
+          (no arguments)
+        </p>
+      )}
+    </div>
+  );
+}
 
 export const ApprovalCard = memo(function ApprovalCard({
   data,
@@ -146,6 +220,8 @@ export const ApprovalCard = memo(function ApprovalCard({
                 : undefined
             }
           />
+        ) : data.connectorScope ? (
+          <ConnectorActionPane className="mt-1" scope={data.connectorScope} />
         ) : data.commandPreview ? (
           <div className="mt-1">
             <ExpandableOutput>
@@ -165,7 +241,7 @@ export const ApprovalCard = memo(function ApprovalCard({
         {isPending ? (
           <div className="space-y-1.5">
             {(["reject", "allow_once", "allow_always", "allow_family"] as const).map((resolution) => {
-              const option = APPROVAL_OPTIONS[resolution];
+              const option = (data.connectorScope ? APPROVAL_OPTIONS_CONNECTOR : APPROVAL_OPTIONS)[resolution];
               const Icon = option.icon;
               return (
                 <button

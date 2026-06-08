@@ -15,6 +15,26 @@ export interface ParsedFilesystemScope {
   content?: string;
 }
 
+/**
+ * Connector action request scope (mcp_connector_dispatch_plan.md §5.2).
+ *
+ * Encoded in the approval row's `reason` field as
+ * `scope=connector:{json}` (the inner `{json}` is JSON-stringified and
+ * the whole `scope=` value is URI-encoded, so `;` / `,` in args don't
+ * collide with the reason-string field delimiters).
+ *
+ * `serverDisplayName` is the human label rendered on the card; `serverId`
+ * is the stable identifier the audit row indexes by. `argsPreview` is a
+ * pre-redacted, display-only string (the un-redacted args live in the
+ * audit row's `args_json` column, gated by the org's redaction policy).
+ */
+export interface ParsedConnectorScope {
+  serverId: string;
+  serverDisplayName: string;
+  toolName: string;
+  argsPreview: string;
+}
+
 function stringField(record: Record<string, unknown>, ...keys: string[]): string | undefined {
   for (const key of keys) {
     const value = record[key];
@@ -239,18 +259,76 @@ export function shellInvocationDisplayLine(parsed: ParsedShellScope): string {
 }
 
 /**
- * Reads `scope=` from the approval reason and returns at most one of shell or filesystem.
- * Prefer this over repeating `parseApprovalReasonValue` + `parseShellScope` + `parseFilesystemScope`.
+ * Reads `scope=` from the approval reason and returns at most one of shell,
+ * filesystem, or connector. Prefer this over repeating individual parsers.
+ *
+ * Adding connector here (vs a separate top-level helper) keeps a single
+ * mutually-exclusive enum at the call site — every approval has exactly
+ * one of these three display shapes (or none), so the renderer can
+ * branch cleanly.
  */
 export function parseApprovalDisplayScopesFromReason(reason: string | null | undefined): {
   shell: ParsedShellScope | null;
   filesystem: ParsedFilesystemScope | null;
+  connector: ParsedConnectorScope | null;
 } {
   const scopeEncoded = parseApprovalReasonValue(reason, 'scope');
-  if (!scopeEncoded) return { shell: null, filesystem: null };
+  if (!scopeEncoded) return { shell: null, filesystem: null, connector: null };
   const shell = parseShellScope(scopeEncoded);
-  if (shell) return { shell, filesystem: null };
-  return { shell: null, filesystem: parseFilesystemScope(scopeEncoded) ?? parseWorkspaceWriteScope(scopeEncoded) };
+  if (shell) return { shell, filesystem: null, connector: null };
+  const connector = parseConnectorScope(scopeEncoded);
+  if (connector) return { shell: null, filesystem: null, connector };
+  return {
+    shell: null,
+    filesystem: parseFilesystemScope(scopeEncoded) ?? parseWorkspaceWriteScope(scopeEncoded),
+    connector: null,
+  };
+}
+
+/**
+ * Parses a `connector:{json}` approval scope payload.
+ *
+ * Returns null on any structural failure (wrong prefix, malformed JSON,
+ * missing required fields) so callers can fall through to the generic
+ * approval-card render path without throwing.
+ */
+export function parseConnectorScope(scope: string): ParsedConnectorScope | null {
+  if (!scope.startsWith('connector:')) return null;
+  const payload = scope.slice('connector:'.length);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(payload);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== 'object') return null;
+  const record = parsed as Record<string, unknown>;
+  const serverId = stringField(record, 'serverId', 'server_id');
+  const serverDisplayName = stringField(record, 'serverDisplayName', 'server_display_name', 'server');
+  const toolName = stringField(record, 'toolName', 'tool_name', 'tool');
+  const argsPreview = stringField(record, 'argsPreview', 'args_preview', 'args');
+  if (!serverId || !serverDisplayName || !toolName) return null;
+  return {
+    serverId,
+    serverDisplayName,
+    toolName,
+    argsPreview: argsPreview ?? '',
+  };
+}
+
+/**
+ * Builds the `scope=connector:{json}` payload to embed in an approval
+ * reason at row-creation time. Caller is responsible for the surrounding
+ * `scope=` key + URI-encoding (the existing approval-reason convention
+ * URI-encodes whole values via `parseApprovalReasonValue`'s decode).
+ */
+export function buildConnectorScope(input: ParsedConnectorScope): string {
+  return `connector:${JSON.stringify({
+    serverId: input.serverId,
+    serverDisplayName: input.serverDisplayName,
+    toolName: input.toolName,
+    argsPreview: input.argsPreview,
+  })}`;
 }
 
 export function canonicalizeApprovalGrantScope(scope: string): string {
@@ -580,14 +658,29 @@ export function formatApprovalRelayMarkdown(approval: {
   resourcePath: string;
   reason: string;
 }): string {
-  const { shell, filesystem } = parseApprovalDisplayScopesFromReason(approval.reason);
+  const { shell, filesystem, connector } = parseApprovalDisplayScopesFromReason(approval.reason);
   if (shell) {
     return relayShellPlain(shell);
   }
   if (filesystem) {
     return relayFilesystemPlain(filesystem);
   }
+  if (connector) {
+    return relayConnectorPlain(connector);
+  }
   return `\`${approval.action}\` · \`${approval.resourcePath}\``;
+}
+
+function relayConnectorPlain(connector: ParsedConnectorScope): string {
+  const lines = [
+    `[Approval needed] Connector action`,
+    `Server: ${connector.serverDisplayName}`,
+    `Tool: ${connector.toolName}`,
+  ];
+  if (connector.argsPreview.length > 0) {
+    lines.push(`Arguments:\n${connector.argsPreview}`);
+  }
+  return lines.join('\n');
 }
 
 function parseLegacyArgs(value: string | undefined): string[] | undefined {
