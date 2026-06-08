@@ -25,7 +25,7 @@ import {
 } from './utils/to-model-messages.js';
 import { requireTeam } from './utils/require-team.js';
 import { buildRunTranscript } from './utils/run-transcript.js';
-import { filterVisiblePromptChannels } from './utils/visible-prompt-channels.js';
+import { resolveVisiblePromptChannels } from './utils/visible-prompt-channels.js';
 import {
   buildCacheableSystem,
   buildWakeContextMessages,
@@ -179,7 +179,7 @@ export class AiService {
         .listMembers(input.organizationId)
         .filter((current) => current.id !== member.id),
       team.agents,
-      filterVisiblePromptChannels(team.channels, this.repo, input.organizationId),
+      resolveVisiblePromptChannels(team.channels, this.repo, input.organizationId),
       organization.organizationChart,
       availableSkills,
       Object.keys(toolDefs),
@@ -391,7 +391,7 @@ export class AiService {
         .listMembers(input.organizationId)
         .filter((current) => current.id !== member.id),
       team.agents,
-      filterVisiblePromptChannels(team.channels, this.repo, input.organizationId),
+      resolveVisiblePromptChannels(team.channels, this.repo, input.organizationId),
       organization.organizationChart,
       availableSkills,
       availableToolIds,

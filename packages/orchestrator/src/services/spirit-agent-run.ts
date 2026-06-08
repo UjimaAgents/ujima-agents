@@ -30,7 +30,7 @@ import {
 } from '../utils/wake-reply-policy.js';
 import { recallMemoryEntries } from '../utils/memory.js';
 import { requireTeam } from '../utils/require-team.js';
-import { filterVisiblePromptChannels } from '../utils/visible-prompt-channels.js';
+import { resolveVisiblePromptChannels } from '../utils/visible-prompt-channels.js';
 import { runAgentWithRetry, type AgentLoopStep } from './agent-loop.js';
 import { isDelegateMessage, filterDelegateTurnTools } from './run-reply-guard.js';
 import { toModelMessages, buildToolDefinitions } from '../utils/to-model-messages.js';
@@ -215,7 +215,7 @@ ${activeMemories
 
     const availableToolIds = Object.keys(toolDefs);
     const availableSkills = this.repo.listOrganizationSkillInstalls?.(input.organizationId) ?? [];
-    const visibleChannels = filterVisiblePromptChannels(
+    const visibleChannels = resolveVisiblePromptChannels(
       team.channels,
       this.repo,
       input.organizationId,
