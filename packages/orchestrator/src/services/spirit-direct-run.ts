@@ -2,10 +2,6 @@ import { randomUUID } from 'node:crypto';
 import {
   RunStateSchema,
   SocketEventNames,
-  memberRoom,
-  orgRoom,
-  runRoom,
-  threadRoom,
   type RunState,
   type Spirit,
   type WakeReason,
@@ -210,19 +206,9 @@ export class SpiritService extends SpiritServiceSupervisor {
     });
 
     this.repo.saveRun(run);
-    this.realtime.emit(
-      SocketEventNames.runStarted,
-      { organizationId: input.organizationId, run },
-      [
-        orgRoom(input.organizationId),
-        threadRoom(input.threadId),
-        memberRoom(input.agentId),
-        runRoom(run.id),
-      ],
-    );
 
     try {
-      return await this.advanceRun(run);
+      return await this.advanceRun(run, SocketEventNames.runStarted);
     } catch (error) {
       const latest = this.repo.getRun(run.organizationId, run.id);
       if (latest?.status === 'cancelled') {
@@ -402,7 +388,10 @@ export class SpiritService extends SpiritServiceSupervisor {
     } satisfies RunDetail;
   }
 
-  protected async advanceRun(run: RunState): Promise<RunState> {
+  protected async advanceRun(
+    run: RunState,
+    eventName: typeof SocketEventNames.runStarted | typeof SocketEventNames.runUpdated = SocketEventNames.runUpdated,
+  ): Promise<RunState> {
     const currentRun = this.repo.getRun(run.organizationId, run.id);
     if (currentRun && ['completed', 'failed', 'cancelled'].includes(currentRun.status)) {
       return currentRun;
@@ -445,7 +434,7 @@ export class SpiritService extends SpiritServiceSupervisor {
       return preCancel;
     }
 
-    const running = this.repo.saveRun({
+    const running = this.saveRunAndEmit(eventName, {
       ...run,
       status: 'running',
       step: 'running',
@@ -456,12 +445,6 @@ export class SpiritService extends SpiritServiceSupervisor {
     if (postCancel?.status === 'cancelled') {
       return postCancel;
     }
-
-    this.realtime.emit(
-      SocketEventNames.runUpdated,
-      { organizationId: run.organizationId, run: running },
-      this.getRooms(running),
-    );
 
     const abortKey = this.runKey(run.organizationId, run.id);
     const abortController = new AbortController();
@@ -785,7 +768,7 @@ export class SpiritService extends SpiritServiceSupervisor {
   }
 
   protected completeRun(run: RunState, summary: string, terminatingTool: string | null = null): RunState {
-    const completed = this.repo.saveRun({
+    const completed = this.saveRunAndEmit(SocketEventNames.runCompleted, {
       ...run,
       status: 'completed',
       step: 'completed',
@@ -793,12 +776,6 @@ export class SpiritService extends SpiritServiceSupervisor {
       terminatingTool,
       endedAt: new Date().toISOString(),
     });
-
-    this.realtime.emit(
-      SocketEventNames.runCompleted,
-      { organizationId: run.organizationId, run: completed },
-      this.getRooms(run),
-    );
 
     this.invokeRunTerminalHook(completed);
 
@@ -842,53 +819,31 @@ export class SpiritService extends SpiritServiceSupervisor {
   }
 
   protected waitForApproval(run: RunState, summary: string): RunState {
-    const waiting = this.repo.saveRun({
+    return this.saveRunAndEmit(SocketEventNames.runUpdated, {
       ...run,
       status: 'waiting_for_approval',
       step: 'waiting_for_approval',
       summary,
     });
-
-    this.realtime.emit(
-      SocketEventNames.runUpdated,
-      { organizationId: run.organizationId, run: waiting },
-      this.getRooms(run),
-    );
-
-    return waiting;
   }
 
   protected waitForInput(run: RunState, summary: string): RunState {
-    const waiting = this.repo.saveRun({
+    return this.saveRunAndEmit(SocketEventNames.runUpdated, {
       ...run,
       status: 'waiting_for_input',
       step: 'waiting_for_input',
       summary,
     });
-
-    this.realtime.emit(
-      SocketEventNames.runUpdated,
-      { organizationId: run.organizationId, run: waiting },
-      this.getRooms(run),
-    );
-
-    return waiting;
   }
 
   protected failRun(run: RunState, summary: string): RunState {
-    const failed = this.repo.saveRun({
+    const failed = this.saveRunAndEmit(SocketEventNames.runCompleted, {
       ...run,
       status: 'failed',
       step: 'failed',
       summary,
       endedAt: new Date().toISOString(),
     });
-
-    this.realtime.emit(
-      SocketEventNames.runCompleted,
-      { organizationId: run.organizationId, run: failed },
-      this.getRooms(run),
-    );
 
     this.invokeRunTerminalHook(failed);
 

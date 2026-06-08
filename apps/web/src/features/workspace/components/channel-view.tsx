@@ -197,6 +197,7 @@ export function ChannelView({
   const activeTerminals = useWorkspaceStore(selectActiveTerminals);
   const setActiveTerminals = useWorkspaceStore((state) => state.setActiveTerminals);
   const [isTerminalDrawerOpen, setIsTerminalDrawerOpen] = useState(false);
+  const [stopError, setStopError] = useState<string | undefined>(undefined);
 
   useEffect(() => {
     const organizationId = bootstrap.organization?.id;
@@ -584,12 +585,17 @@ export function ChannelView({
     },
     [organizationId, upsertRun],
   );
-  const stopFirstRun = useCallback(async () => {
-    const runId = stoppableRunIds[0];
-    if (!runId) return;
-    setStoppingRunId(runId);
+  const stopRuns = useCallback(async () => {
+    const runIds = [...stoppableRunIds];
+    if (runIds.length === 0) return;
+    setStoppingRunId(runIds[0]);
+    setStopError(undefined);
     try {
-      await stopAgentRun(runId);
+      const results = await Promise.allSettled(runIds.map((runId) => stopAgentRun(runId)));
+      const failure = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
+      if (failure) {
+        setStopError(failure.reason instanceof Error ? failure.reason.message : "Unable to stop the run.");
+      }
     } finally {
       setStoppingRunId(undefined);
     }
@@ -971,14 +977,17 @@ export function ChannelView({
                 <div className="flex justify-end">
                   <button
                     type="button"
-                    onClick={() => void stopFirstRun()}
+                    onClick={() => void stopRuns()}
                     disabled={!!stoppingRunId}
                     className="inline-flex h-7 items-center gap-1.5 rounded-md bg-red-600 px-2.5 text-[11px] font-semibold text-white shadow-lg shadow-red-500/20 transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     <Square className="h-3 w-3 fill-current" />
-                    {stoppingRunId ? "Stopping" : "Stop run"}
+                    {stoppingRunId ? "Stopping" : stoppableRunIds.length > 1 ? "Stop runs" : "Stop run"}
                   </button>
                 </div>
+              ) : null}
+              {stopError ? (
+                <p className="text-[11px] text-red-500">{stopError}</p>
               ) : null}
               {pendingThreadApprovals.map((approval) => (
                 <ApprovalCard

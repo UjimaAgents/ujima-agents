@@ -15,10 +15,7 @@ import {
   SocketEventNames,
   SpiritSchema,
   channelRoom,
-  memberRoom,
   orgRoom,
-  runRoom,
-  threadRoom,
   type Message,
   type MessageCard,
   type MessageToolCall,
@@ -33,6 +30,7 @@ import {
 } from '../utils/wake-reply-policy.js';
 import { recallMemoryEntries } from '../utils/memory.js';
 import { requireTeam } from '../utils/require-team.js';
+import { resolveVisiblePromptChannels } from '../utils/visible-prompt-channels.js';
 import { runAgentWithRetry, type AgentLoopStep } from './agent-loop.js';
 import { isDelegateMessage, filterDelegateTurnTools } from './run-reply-guard.js';
 import { toModelMessages, buildToolDefinitions } from '../utils/to-model-messages.js';
@@ -55,11 +53,11 @@ import { pendingApprovalRunSummary } from './approval-summary.js';
 import {
   findTerminatingTool,
   findTerminatingToolFromRunSteps,
+  normalizeToDottedToolName,
 } from './run-reply-guard.js';
 import {
   createMessageCursor,
-  isMessageAfterCursor,
-  moveCursor,
+  collectInterruptMessages,
 } from '../utils/message-interrupts.js';
 import type {
   RunSpiritInput,
@@ -167,7 +165,12 @@ ${activeMemories
     if (spirit.runId) {
       const run = this.repo.getRun(input.organizationId, spirit.runId);
       if (run) {
-        this.repo.saveRun({ ...run, status: 'running', step: 'running', summary: 'Spirit turn' });
+        this.saveRunAndEmit(SocketEventNames.runUpdated, {
+          ...run,
+          status: 'running',
+          step: 'running',
+          summary: 'Spirit turn',
+        });
       }
     }
     this.emit(SocketEventNames.spiritUpdated, running);
@@ -212,6 +215,11 @@ ${activeMemories
 
     const availableToolIds = Object.keys(toolDefs);
     const availableSkills = this.repo.listOrganizationSkillInstalls?.(input.organizationId) ?? [];
+    const visibleChannels = resolveVisiblePromptChannels(
+      team.channels,
+      this.repo,
+      input.organizationId,
+    );
     const system = buildAgentSystemPrompt(
       team.workspace.root,
       organization.name,
@@ -224,7 +232,7 @@ ${activeMemories
         .listMembers(input.organizationId)
         .filter((current) => current.id !== member.id),
       team.agents,
-      team.channels,
+      visibleChannels,
       organization.organizationChart,
       availableSkills,
       availableToolIds,
@@ -319,17 +327,7 @@ ${activeMemories
           const page = filterVisibleMessages(
             this.repo.listChannelMessages(input.organizationId, session.channelId, { limit: 100 }).data,
           );
-          const interrupts = page.filter(
-            (message) =>
-              (message.kind === 'human' || isDelegateMessage(message)) &&
-              message.senderId !== member.id &&
-              isMessageAfterCursor(message, interruptCursor),
-          );
-          const latest = page.at(-1);
-          if (latest) {
-            moveCursor(interruptCursor, latest);
-          }
-          return toModelMessages(interrupts, member.id);
+          return toModelMessages(collectInterruptMessages(page, interruptCursor, member.id), member.id);
         },
         onModelNotFound: async (error) => {
           console.warn(
@@ -442,7 +440,7 @@ ${activeMemories
         ? persistedTerminator
         : detectedTerminatingTool;
       if (persistedRun) {
-        this.repo.saveRun({
+        this.saveRunAndEmit(SocketEventNames.runCompleted, {
           ...persistedRun,
           status: 'completed',
           step: 'completed',
@@ -478,6 +476,11 @@ ${activeMemories
         });
         this.repo.saveSpirit(cancelled);
         this.registry.unregister(cancelled.organizationId, cancelled.memberId, cancelled.id);
+        this.realtime.emit(
+          SocketEventNames.runCompleted,
+          { organizationId: input.organizationId, run: latestRun },
+          this.getRooms(latestRun),
+        );
         this.emit(SocketEventNames.spiritCompleted, cancelled);
         this.maybeFinalizeTaskSession(cancelled.organizationId, cancelled.taskSessionId, latestRun.summary);
         return {
@@ -502,23 +505,12 @@ ${activeMemories
           const run = this.repo.getRun(input.organizationId, spirit.runId);
           if (run) {
             const question = this.repo.getInteractiveQuestion(input.organizationId, inputRequiredError.questionId);
-            const waitingRun = this.repo.saveRun({
+            this.saveRunAndEmit(SocketEventNames.runUpdated, {
               ...run,
               status: 'waiting_for_input',
               step: 'waiting_for_input',
               summary: question?.questionText ?? run.summary ?? 'Waiting for user input',
             });
-            this.realtime.emit(
-              SocketEventNames.runUpdated,
-              { organizationId: input.organizationId, run: waitingRun },
-              [
-                orgRoom(input.organizationId),
-                runRoom(waitingRun.id),
-                memberRoom(input.memberId),
-                ...(waitingRun.threadId ? [threadRoom(waitingRun.threadId)] : []),
-                channelRoom(session.channelId),
-              ],
-            );
           }
         }
         this.emit(SocketEventNames.spiritUpdated, waiting);
@@ -548,7 +540,7 @@ ${activeMemories
         if (spirit.runId) {
           const run = this.repo.getRun(input.organizationId, spirit.runId);
           if (run) {
-            this.repo.saveRun({
+            this.saveRunAndEmit(SocketEventNames.runUpdated, {
               ...run,
               status: 'waiting_for_approval',
               step: 'waiting_for_approval',
@@ -588,7 +580,7 @@ ${activeMemories
       if (spirit.runId) {
         const run = this.repo.getRun(input.organizationId, spirit.runId);
         if (run) {
-          this.repo.saveRun({
+          this.saveRunAndEmit(SocketEventNames.runCompleted, {
             ...run,
             status: 'failed',
             step: 'failed',
@@ -696,6 +688,13 @@ ${activeMemories
     if (!stepText && !artifact) {
       return { toolCallCount: stepToolCalls.length, stepText: '' };
     }
+    // Suppress text publication for steps containing silent terminating
+    // tools (channel.pass, channel.ack). These tools are explicit "stand
+    // down" decisions — any model-generated text in the same step is a
+    // mirror/ack loop artifact and must not appear as a channel message.
+    if (this.stepContainsSilentTerminator(step)) {
+      return { toolCallCount: stepToolCalls.length, stepText: '' };
+    }
     const toolCalls = this.toMessageToolCalls(stepToolCalls, stepToolResults, input.spirit);
     const messageToolCalls = artifact ? [...toolCalls, artifact] : toolCalls;
     const reasoningContent = extractReasoningChunk(step) ?? input.reasoningFallback;
@@ -713,6 +712,31 @@ ${activeMemories
     );
     if (artifact) input.turn.markArtifactFilePublished();
     return { messageId: message.id, toolCallCount: stepToolCalls.length, stepText };
+  }
+
+  /**
+   * Returns true when the step contains a silent terminating tool
+   * (channel.pass or channel.ack). Steps with these tools should not
+   * publish text — the tool itself is the agent's "stand down" signal.
+   * Any model-generated text in the same step is a mirror/ack artifact.
+   */
+  private stepContainsSilentTerminator(step: AgentLoopStep): boolean {
+    const SILENT_TERMINATORS = new Set(['channel.pass', 'channel.ack']);
+    const items = [
+      ...(step.toolCalls ?? []),
+      ...(step.toolResults ?? []),
+      ...(step.staticToolCalls ?? []),
+      ...(step.dynamicToolCalls ?? []),
+      ...(step.staticToolResults ?? []),
+      ...(step.dynamicToolResults ?? []),
+      ...(step.content ?? []),
+    ];
+    return items.some((item) => {
+      if (!item || typeof item !== 'object') return false;
+      const record = item as { toolName?: string };
+      const name = typeof record.toolName === 'string' ? record.toolName : '';
+      return SILENT_TERMINATORS.has(normalizeToDottedToolName(name));
+    });
   }
 
   private publishAgentMessage(message: Message): Message {

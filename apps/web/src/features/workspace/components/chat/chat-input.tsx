@@ -350,6 +350,7 @@ export function ChatInput({
 
   const working = isSending || isCommanding || uploading;
   const canStopRun = Boolean(stoppableRunIds?.length && onStopRun);
+  const stopRunLabel = stoppableRunIds?.length && stoppableRunIds.length > 1 ? "Stop runs" : "Stop run";
   const showStopInsteadOfSend =
     canStopRun &&
     !hasDraft &&
@@ -672,19 +673,15 @@ export function ChatInput({
     if (!stoppableRunIds?.length || !onStopRun || isStopping) return;
     setError(null);
     setIsStopping(true);
-    let failure: string | null = null;
     try {
-      for (const runId of stoppableRunIds) {
-        try {
-          await onStopRun(runId);
-        } catch (err) {
-          failure ??= err instanceof Error ? err.message : "Unable to stop the run.";
-        }
+      const results = await Promise.allSettled(stoppableRunIds.map((runId) => onStopRun(runId)));
+      const failure = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
+      if (failure) {
+        setError(failure.reason instanceof Error ? failure.reason.message : "Unable to stop the run.");
       }
     } finally {
       setIsStopping(false);
     }
-    if (failure) setError(failure);
   };
 
   return (
@@ -1069,8 +1066,8 @@ export function ChatInput({
               {canStopRun && !showStopInsteadOfSend && (
                 <button
                   type="button"
-                  aria-label="Stop agent run"
-                  title="Stop agent run"
+                  aria-label={stopRunLabel}
+                  title={stopRunLabel}
                   onClick={() => void stopRun()}
                   disabled={isStopping}
                   className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-red-600 text-white shadow-lg shadow-red-500/20 transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
@@ -1085,8 +1082,8 @@ export function ChatInput({
               {showStopInsteadOfSend ? (
                 <button
                   type="button"
-                  aria-label="Stop agent run"
-                  title="Stop agent run"
+                  aria-label={stopRunLabel}
+                  title={stopRunLabel}
                   onClick={() => void stopRun()}
                   disabled={isStopping}
                   className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-red-600 text-white shadow-lg shadow-red-500/20 transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"

@@ -42,6 +42,12 @@ export interface TraceStepData {
   duration: string;
   status: "success" | "running" | "failed";
   subtext?: string;
+  /** Stable id of whoever produced this step (agent, or user for user-authored messages). */
+  actorId: string;
+  /** Display name of the actor, resolved against the workspace member list. */
+  actorName: string;
+  /** Owning run id when this step was emitted inside an agent run. Absent on user messages and other non-run events. */
+  runId?: string;
   aggregatedOperations?: AggregatedOperation[];
   /** Integrated terminal (cwd + command + scrollable output). */
   terminal?: {
