@@ -2,11 +2,15 @@ import { describe, expect, it } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { OrganizationSchema, McpServerSchema, type McpToolDescriptor } from '@ujima/shared';
 import { openDatabase } from '@ujima/context-store';
-import { Repository } from '@ujima/runtime-core';
-import type { ToolService, ToolInvocationInput, ToolInvocationResult } from './tool-service.js';
-import type { SpiritMcpPool } from './spirit-types.js';
-import type { McpRuntimeConnection } from './mcp-runtime.js';
-import { buildMcpToolDefinitionsV2 } from './connector-spawn-v2.js';
+import {
+  buildMcpToolDefinitionsV2,
+  type McpRuntimeConnection,
+  type SpiritMcpPool,
+  type ToolInvocationInput,
+  type ToolInvocationResult,
+  type ToolService,
+} from '@ujima/orchestrator';
+import { Repository } from './repositories/index.js';
 
 // Three load-bearing invariants for the V2 spawn:
 //   1. Native attachments produce typed-palette tool entries with the
@@ -337,10 +341,11 @@ describe('buildMcpToolDefinitionsV2 — tier partition + meta-tools', () => {
     const nativeKey = Object.keys(v2.toolSet).find((k) => k.startsWith('mcp__'))!;
     const nativeTool = v2.toolSet[nativeKey];
     expect(nativeTool).toBeDefined();
+    const execute = nativeTool!.execute!;
     // Execute the native tool's wrapper and confirm the routing shape.
-    await nativeTool!.execute!(
+    await execute(
       { some_arg: 'value' },
-      { toolCallId: 'call_1' } as Parameters<NonNullable<typeof nativeTool.execute>>[1],
+      { toolCallId: 'call_1' } as Parameters<typeof execute>[1],
     );
     expect(f.tools.invocations).toHaveLength(1);
     const inv = f.tools.invocations[0]!;
