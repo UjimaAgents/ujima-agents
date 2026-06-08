@@ -95,7 +95,7 @@ jobs:
           fail_on_unmatched_files: true
 
   firebase-hosting:
-    needs: validate
+    needs: release
     runs-on: ubuntu-latest
     if: ${{ vars.FIREBASE_PROJECT_ID != '' }}
     steps:
