@@ -1051,8 +1051,8 @@ export function ChannelView({
               }}
               placeholder={
                 isAgent
-                  ? `Message @${conversation.name}...`
-                  : `Message #${conversation.name} or @agent...`
+                  ? `Message @${conversation.name} or type / for commands`
+                  : `Message #${conversation.name} or @agent · type / for commands`
               }
               inlineError={feed.error}
               mentionSuggestions={mentionSuggestions}

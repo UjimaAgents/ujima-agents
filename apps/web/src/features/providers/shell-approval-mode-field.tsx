@@ -13,6 +13,7 @@ import { createPortal } from "react-dom";
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import type { MemberShellApprovalMode, ShellApprovalMode } from "@ujima/shared/browser";
 import { FieldShell } from "@/components/ui/form-fields";
+import { listItemSelectedNeutral } from "@/lib/list-item-styles";
 
 const SHELL_APPROVAL_HINT =
   "Auto review uses each agent's model to approve safe shell commands; risky commands still need your approval.";
@@ -195,19 +196,29 @@ function RichApprovalSelect<TValue extends string>({
                     }}
                     className={`flex w-full cursor-pointer items-center gap-3 rounded-lg px-3 py-3 text-left transition ${
                       selected
-                        ? "bg-zinc-100 text-zinc-900 dark:bg-white/[0.06] dark:text-zinc-50"
-                        : "text-zinc-700 hover:bg-zinc-50 hover:text-zinc-900 dark:text-zinc-200 dark:hover:bg-white/[0.04] dark:hover:text-zinc-50"
+                        ? listItemSelectedNeutral
+                        : "text-zinc-700 hover:bg-zinc-50 hover:text-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800 dark:hover:text-zinc-50"
                     }`}
                   >
-                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-zinc-100 text-zinc-600 transition dark:bg-white/[0.04] dark:text-zinc-100">
+                    <span
+                      className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full transition ${
+                        selected
+                          ? "bg-white text-zinc-700 dark:bg-zinc-700 dark:text-zinc-100"
+                          : "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-100"
+                      }`}
+                    >
                       <Icon className="h-4 w-4" />
                     </span>
                     <span className="min-w-0 flex-1">
                       <span className="flex items-center gap-2">
                         <span className="text-sm font-medium">{option.label}</span>
-                        {selected ? <Check className="h-4 w-4 text-zinc-700 dark:text-zinc-100" /> : null}
+                        {selected ? <Check className="h-4 w-4 shrink-0 opacity-80" /> : null}
                       </span>
-                      <span className="mt-0.5 block text-sm leading-5 text-zinc-500 dark:text-zinc-400">
+                      <span
+                        className={`mt-0.5 block text-sm leading-5 ${
+                          selected ? "text-zinc-600 dark:text-zinc-300" : "text-zinc-500 dark:text-zinc-400"
+                        }`}
+                      >
                         {option.description}
                       </span>
                     </span>
