@@ -211,7 +211,7 @@ function findMentionTrigger(value: string, caret: number): MentionTrigger | null
 }
 
 export function ChatInput({
-  placeholder = "Type a message...",
+  placeholder = "Message here or type / for commands",
   onSend,
   onCommand,
   inlineError,
@@ -281,7 +281,8 @@ export function ChatInput({
     reasoningEffort,
     reasoningModelValue,
   );
-  const reasoningDisabled = readOnly || reasoningOptions.length <= 1;
+  const showReasoningSelect = reasoningOptions.length > 1;
+  const reasoningDisabled = readOnly;
 
   function revokePreviewUrl(attachment: UploadedAttachment) {
     if (attachment.previewUrl?.startsWith("blob:")) {
@@ -1051,18 +1052,20 @@ export function ChatInput({
                   Goal
                 </button>
               ) : null}
-              <Select
-                size="sm"
-                value={selectedReasoningEffort}
-                onChange={(event) => setReasoningEffort(event.target.value as ReasoningEffort)}
-                options={reasoningOptions}
-                placeholder="Reasoning"
-                ariaLabel="Reasoning effort"
-                menuPlacement="up"
-                className="w-[8.5rem] sm:w-[10.5rem]"
-                menuClassName="min-w-full w-max max-w-[calc(100vw-1.5rem)]"
-                disabled={reasoningDisabled}
-              />
+              {showReasoningSelect ? (
+                <Select
+                  size="sm"
+                  value={selectedReasoningEffort}
+                  onChange={(event) => setReasoningEffort(event.target.value as ReasoningEffort)}
+                  options={reasoningOptions}
+                  placeholder="Reasoning"
+                  ariaLabel="Reasoning effort"
+                  menuPlacement="up"
+                  className="w-[8.5rem] sm:w-[10.5rem]"
+                  menuClassName="min-w-full w-max max-w-[calc(100vw-1.5rem)]"
+                  disabled={reasoningDisabled}
+                />
+              ) : null}
               {canStopRun && !showStopInsteadOfSend && (
                 <button
                   type="button"

@@ -92,7 +92,7 @@ export type Contributor = {
 export const contributors: Contributor[] = [
   {
     name: "Vincent Precious",
-    role: "Creator",
+    role: "Contributor",
     contactLabel: "@vincent_presh",
     contactHref: "https://x.com/vincent_presh",
   },
