@@ -819,13 +819,17 @@ ${activeMemories
     threadId: string;
     taskSessionId: string;
     role: SpiritRole;
-  }): Promise<{ toolSet: ToolSet; servers: McpServerSummary[] }> {
+  }): Promise<{ toolSet: ToolSet; servers: McpServerSummary[]; catalogText?: string }> {
     if (isMcpDispatchEnabled(ctx.organizationId) && this.mcpPool) {
       const v2 = await buildMcpToolDefinitionsV2(
         { mcpPool: this.mcpPool, repo: this.repo, tools: this.tools },
         ctx,
       );
-      return { toolSet: v2.toolSet, servers: v2.servers };
+      return {
+        toolSet: v2.toolSet,
+        servers: v2.servers,
+        catalogText: v2.catalogText.length > 0 ? v2.catalogText : undefined,
+      };
     }
     return this.buildMcpToolDefinitions(ctx);
   }
