@@ -75,6 +75,41 @@ describe('resolveVisiblePromptChannels', () => {
     expect(out[0]?.id).toBe('chan-2');
   });
 
+  it('resolves a synthetic name handle to the live replacement when the archived row shares the synthetic id (regression: archived-id reject was masking the live name match)', () => {
+    // The case the prior ordering missed: config-sync once wrote the
+    // channel with `id = name = "general"`, then the row was archived,
+    // then a replacement was created with a real DB id under the same
+    // name. The handle still uses the synthetic `id = "general"`, so
+    // an "archived id" check would fire before the name lookup and
+    // silently hide the live channel.
+    const archived = buildChannel({
+      id: 'general',
+      name: 'general',
+      archivedAt: '2026-01-01T00:00:00.000Z',
+    });
+    const live = buildChannel({ id: 'chan-2', name: 'general' });
+    const handles = [buildChannel({ id: 'general', name: 'general' })];
+    const out = resolveVisiblePromptChannels(handles, repoOf([archived, live]), 'org-1');
+    expect(out).toHaveLength(1);
+    expect(out[0]?.id).toBe('chan-2');
+  });
+
+  it('also rebinds when an id-handle points at an archived row but a live channel under the same name still exists', () => {
+    // The general form: handle.id == real-but-stale id (now archived),
+    // handle.name still resolves to a single live channel. Should bind
+    // to the live one rather than dropping the handle.
+    const archived = buildChannel({
+      id: 'chan-old',
+      name: 'general',
+      archivedAt: '2026-01-01T00:00:00.000Z',
+    });
+    const live = buildChannel({ id: 'chan-new', name: 'general' });
+    const handles = [buildChannel({ id: 'chan-old', name: 'general' })];
+    const out = resolveVisiblePromptChannels(handles, repoOf([archived, live]), 'org-1');
+    expect(out).toHaveLength(1);
+    expect(out[0]?.id).toBe('chan-new');
+  });
+
   it('drops a name handle when multiple live channels share that name (ambiguous)', () => {
     // Schema does not enforce name uniqueness. If two live channels
     // share a name, binding the handle to either one is a 50/50

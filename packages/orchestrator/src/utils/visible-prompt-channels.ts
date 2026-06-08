@@ -24,11 +24,15 @@ interface ChannelArchiveSource {
  *
  *   1. Handle.id matches a live runtime channel.id → emit that
  *      live channel (real id, current topic, current memberIds).
- *   2. Handle.id matches an archived id → drop (dead reference).
- *   3. Handle.name matches exactly one live channel → emit that
- *      live channel (the name handle is unambiguous).
- *   4. Handle.name matches multiple live channels → drop. Genuinely
+ *   2. Handle.name matches exactly one live channel → emit that
+ *      live channel (the name handle is unambiguous). This runs
+ *      before the archived-id reject so a synthetic `id = name`
+ *      handle still binds to its live replacement when the old
+ *      archived row also used `id = name`.
+ *   3. Handle.name matches multiple live channels → drop. Genuinely
  *      ambiguous; binding to the wrong one is worse than omitting.
+ *   4. Handle.id matches an archived id → drop (dead reference,
+ *      and no live name match exists per rules 2-3).
  *   5. Handle.name (or handle.id) matches an archived-only name
  *      (archived rows with that name, no live row) → drop.
  *   6. No runtime presence at all → pass the handle through. This
@@ -74,15 +78,21 @@ export function resolveVisiblePromptChannels(
       continue;
     }
 
-    if (archivedIds.has(handle.id)) continue;
-
+    // Resolve unambiguous live name match BEFORE rejecting on archived
+    // id. The archived row may share its id with the handle's synthetic
+    // id (config-sync wrote `id = name` previously, then the row was
+    // archived, then a replacement was created with a real DB id and
+    // the same name). Rejecting on archived id first would hide the
+    // live replacement that the handle is meant to bind to.
     const namedMatches = liveByName.get(handle.name);
-    if (namedMatches && namedMatches.length === 1) {
-      push(namedMatches[0]!);
+    if (namedMatches && namedMatches.length > 1) continue;
+    const soleNameMatch = namedMatches?.[0];
+    if (soleNameMatch) {
+      push(soleNameMatch);
       continue;
     }
-    if (namedMatches && namedMatches.length > 1) continue;
 
+    if (archivedIds.has(handle.id)) continue;
     if (archivedNames.has(handle.id) || archivedNames.has(handle.name)) continue;
 
     push(handle);
