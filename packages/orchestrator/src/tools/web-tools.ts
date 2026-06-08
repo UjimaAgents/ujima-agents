@@ -56,7 +56,7 @@ export const fetchTool: OrchestratorTool<typeof FetchSchema> = {
       format,
       status,
       contentType,
-      content: body,
+      content: body.toString('utf8'),
     };
   },
 };
@@ -90,12 +90,12 @@ export const downloadTool: OrchestratorTool<typeof DownloadSchema> = {
     }
 
     await mkdir(dirname(resolved), { recursive: true });
-    await writeFile(resolved, body, 'utf8');
+    await writeFile(resolved, body);
 
     return {
       success: true,
       path: resolved,
-      bytesWritten: body.length,
+      bytesWritten: body.byteLength,
       contentType,
     };
   },
@@ -107,7 +107,7 @@ interface CurlResult {
   status: number;
   contentType: string;
   stderr: string;
-  body: string;
+  body: Buffer;
 }
 
 async function curlFetch(url: URL, timeoutSeconds: number, maxBytes: number): Promise<CurlResult> {
@@ -135,22 +135,32 @@ async function curlFetch(url: URL, timeoutSeconds: number, maxBytes: number): Pr
     url.toString(),
   ];
 
-  const result = await new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
-    execFile(bin, args, { maxBuffer: maxBytes + 65536 }, (err, stdout, stderr) => {
-      if (err) {
-        // curl exits non-zero on server errors, timeouts, etc.
-        // The stderr usually has the error message; we still want stdout for the body if we got one
-        resolve({ stdout: stdout ?? '', stderr: stderr ?? '' });
-        return;
-      }
-      resolve({ stdout, stderr });
-    });
+  const result = await new Promise<{ stdout: Buffer; stderr: string }>((resolve, reject) => {
+    execFile(
+      bin,
+      args,
+      { maxBuffer: maxBytes + 65536, encoding: 'buffer' },
+      (err, stdout, stderr) => {
+        const out = Buffer.isBuffer(stdout) ? stdout : Buffer.from(stdout ?? '');
+        const errText = typeof stderr === 'string' ? stderr : stderr?.toString('utf8') ?? '';
+        if (err) {
+          // curl exits non-zero on server errors, timeouts, etc.
+          // The stderr usually has the error message; we still want stdout for the body if we got one
+          resolve({ stdout: out, stderr: errText });
+          return;
+        }
+        resolve({ stdout: out, stderr: errText });
+      },
+    );
   });
 
   // Split headers from body — curl -i outputs headers first, then \r\n\r\n, then body
-  const separator = result.stdout.indexOf('\r\n\r\n');
-  const headerBlock = separator === -1 ? '' : result.stdout.slice(0, separator);
-  const body = separator === -1 ? result.stdout : result.stdout.slice(separator + 4);
+  const headerSeparator = Buffer.from('\r\n\r\n');
+  const separator = result.stdout.indexOf(headerSeparator);
+  const headerBlock =
+    separator === -1 ? '' : result.stdout.subarray(0, separator).toString('utf8');
+  const body =
+    separator === -1 ? result.stdout : result.stdout.subarray(separator + headerSeparator.length);
 
   // Parse status code from "HTTP/1.1 200 OK" or "HTTP/2 200"
   const statusLine = headerBlock.match(/HTTP\/\S+\s+(\d+)/);
@@ -160,8 +170,8 @@ async function curlFetch(url: URL, timeoutSeconds: number, maxBytes: number): Pr
   const ctMatch = headerBlock.match(/content-type:\s*(\S+)/i);
   const contentType = ctMatch ? ctMatch[1]!.replace(/;.*$/, '').trim() : '';
 
-  if (body.length > maxBytes) {
-    throw new Error(`Response is too large (${body.length} bytes). Maximum size is ${maxBytes} bytes`);
+  if (body.byteLength > maxBytes) {
+    throw new Error(`Response is too large (${body.byteLength} bytes). Maximum size is ${maxBytes} bytes`);
   }
 
   return {

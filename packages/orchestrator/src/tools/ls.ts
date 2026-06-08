@@ -1,14 +1,13 @@
-import { basename, relative } from 'node:path';
+import { basename, join, relative, sep } from 'node:path';
+import { readdir, stat } from 'node:fs/promises';
 import { z } from 'zod';
 import { assertWorkspaceBoundary } from '@ujima/shared/workspace';
 import { isSensitiveWorkspacePath } from '@ujima/shared/workspace-file-filters';
-import { resolveBinaryPath, type BinaryDescriptor } from './binary-resolver.js';
-import { runCli } from './cli-runner.js';
 import type { OrchestratorTool } from './types.js';
-
-const FD: BinaryDescriptor = { name: 'fd', dir: 'fd', filename: 'fd' };
+import { readWindowValue } from './window-utils.js';
 
 const TREE_LIMIT = 1000;
+const IGNORED_DIRECTORIES = new Set(['.git', '.next', 'build', 'coverage', 'dist', 'node_modules']);
 
 const LsSchema = z.object({
   path: z.string().min(1).default('.'),
@@ -17,22 +16,12 @@ const LsSchema = z.object({
   limit: z.number().int().min(1).max(TREE_LIMIT).default(TREE_LIMIT),
 });
 
-// ── Types ──────────────────────────────────────────────────────────
-
 interface TreeEntry {
   path: string;
   name: string;
   isDir: boolean;
   depth: number;
 }
-
-interface FdJsonEntry {
-  type: 'file' | 'directory' | 'symlink';
-  name: string;
-  path: string;
-}
-
-// ── Tool ───────────────────────────────────────────────────────────
 
 export const lsTool: OrchestratorTool<typeof LsSchema> = {
   id: 'ls',
@@ -50,95 +39,32 @@ export const lsTool: OrchestratorTool<typeof LsSchema> = {
   execute: async ({ invocation, team }) => {
     const resourcePath = typeof invocation.resourcePath === 'string' ? invocation.resourcePath : '.';
     const resolved = assertWorkspaceBoundary(team.workspace.root, resourcePath);
-    const limit = typeof invocation.input?.limit === 'number' ? invocation.input.limit : TREE_LIMIT;
-    const depth = typeof invocation.input?.depth === 'number' ? invocation.input.depth : 0;
+    const resource = await stat(resolved);
+    const limit = readWindowValue(invocation.input?.limit, TREE_LIMIT);
+    const depth = readWindowValue(invocation.input?.depth, 0);
     const ignore = Array.isArray(invocation.input?.ignore)
-      ? invocation.input.ignore.map((entry: unknown) => String(entry))
+      ? invocation.input.ignore.map((entry) => String(entry))
       : [];
-
-    // Single file path (not a directory) — return just that entry
-    try {
-      const stat = await import('node:fs/promises').then((m) => m.stat(resolved));
-      if (!stat.isDirectory()) {
-        return {
-          path: resolved,
-          content: relative(team.workspace.root, resolved) || basename(resolved),
-          count: 1,
-          truncated: false,
-        };
-      }
-    } catch {
-      // Fall through — let fd handle non-existent paths
-    }
-
-    // Use fd --json to get structured file/directory listing
-    const bin = resolveBinaryPath(FD, 'FD_BIN_PATH');
-    const fdArgs: string[] = [
-      '--hidden',
-      '--no-ignore',
-      '--type', 'file',
-      '--type', 'directory',
-      '--type', 'symlink',
-      '--exclude', '.git',
-      ...(depth > 0 ? ['--max-depth', String(depth)] : []),
-      '--max-results', String(limit),
-      '--json',
-      '--',
-      '.',
-      resolved,
-    ];
-
-    if (ignore.length > 0) {
-      for (const pattern of ignore) {
-        fdArgs.push('--exclude', pattern);
-      }
-    }
-
-    const { stdout, exitCode } = await runCli({
-      bin: fdArgs[0]!,
-      args: fdArgs.slice(1),
-      cwd: team.workspace.root,
-      timeout: 5_000,
-      maxStdoutBytes: 128_000,
-      filterSensitivePaths: true,
-    });
-
-    if (exitCode !== 0 && exitCode !== null && exitCode !== 1) {
-      throw new Error(`fd (exit ${exitCode})`);
-    }
-
-    const rawEntries: FdJsonEntry[] = stdout
-      .split('\n')
-      .filter(Boolean)
-      .map((line) => {
-        try { return JSON.parse(line) as FdJsonEntry; } catch { return null; }
-      })
-      .filter((e): e is FdJsonEntry => e !== null);
-
-    // Build tree entries from fd JSON output
     const entries: TreeEntry[] = [];
-    for (const raw of rawEntries) {
-      const absPath = assertWorkspaceBoundary(team.workspace.root, raw.path);
-      if (isSensitiveWorkspacePath(absPath)) continue;
-      const rel = relative(resolved, absPath);
-      // Skip entries that are at depth 0 (the root itself)
-      if (!rel) continue;
-      const depthLevel = rel.split('/').length - (raw.type === 'directory' ? 0 : 0);
-      // fd includes file depth = 0 for root-level files, handle correctly
-      const actualDepth = rel.split('/').length - 1;
+
+    if (resource.isDirectory()) {
+      await collectTreeEntries({
+        root: resolved,
+        current: resolved,
+        currentDepth: 0,
+        maxDepth: depth,
+        ignore,
+        entries,
+        limit,
+      });
+    } else {
       entries.push({
-        path: absPath,
-        name: raw.name,
-        isDir: raw.type === 'directory',
-        depth: actualDepth,
+        path: resolved,
+        name: basename(resolved),
+        isDir: false,
+        depth: 0,
       });
     }
-
-    // Sort: dirs first, then alphabetical
-    entries.sort((a, b) => {
-      if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
-      return a.name.localeCompare(b.name);
-    });
 
     const content = formatTreeOutput(resourcePath, entries, limit);
     return {
@@ -150,12 +76,53 @@ export const lsTool: OrchestratorTool<typeof LsSchema> = {
   },
 };
 
-// ── Helpers ────────────────────────────────────────────────────────
+async function collectTreeEntries(input: {
+  root: string;
+  current: string;
+  currentDepth: number;
+  maxDepth: number;
+  ignore: string[];
+  entries: TreeEntry[];
+  limit: number;
+}): Promise<void> {
+  if (input.entries.length >= input.limit) return;
+
+  const dirents = await readdir(input.current, { withFileTypes: true });
+  dirents.sort((a, b) => a.name.localeCompare(b.name));
+
+  for (const dirent of dirents) {
+    if (input.entries.length >= input.limit) return;
+    if (dirent.name.startsWith('.')) continue;
+    if (dirent.isDirectory() && IGNORED_DIRECTORIES.has(dirent.name)) continue;
+
+    const fullPath = join(input.current, dirent.name);
+    if (isSensitiveWorkspacePath(fullPath)) continue;
+
+    const rel = normalizePath(relative(input.root, fullPath) || dirent.name);
+    if (input.ignore.some((pattern) => matchGlob(pattern, rel) || matchGlob(pattern, basename(rel)))) {
+      continue;
+    }
+
+    const isDir = dirent.isDirectory();
+    input.entries.push({
+      path: fullPath,
+      name: dirent.name,
+      isDir,
+      depth: input.currentDepth,
+    });
+
+    if (isDir && (input.maxDepth === 0 || input.currentDepth + 1 < input.maxDepth)) {
+      await collectTreeEntries({
+        ...input,
+        current: fullPath,
+        currentDepth: input.currentDepth + 1,
+      });
+    }
+  }
+}
 
 function formatTreeOutput(rootLabel: string, entries: TreeEntry[], limit: number): string {
-  const lines: string[] = [];
-  // Normalize the root label (use forward slashes)
-  lines.push(rootLabel.split(/[/\\]/).join('/') || '.');
+  const lines = [normalizePath(rootLabel || '.')];
   for (const entry of entries) {
     const prefix = '  '.repeat(entry.depth);
     lines.push(`${prefix}${entry.name}${entry.isDir ? '/' : ''}`);
@@ -165,4 +132,49 @@ function formatTreeOutput(rootLabel: string, entries: TreeEntry[], limit: number
     lines.push(`(Truncated after ${limit} entries)`);
   }
   return lines.join('\n');
+}
+
+function matchGlob(pattern: string, candidate: string): boolean {
+  const normalizedPattern = normalizePath(pattern.trim());
+  const normalizedCandidate = normalizePath(candidate.trim());
+  if (!normalizedPattern) return false;
+  return globToRegExp(normalizedPattern).test(normalizedCandidate);
+}
+
+function globToRegExp(pattern: string): RegExp {
+  let source = '^';
+  for (let i = 0; i < pattern.length; i += 1) {
+    const char = pattern[i] ?? '';
+    if (char === '*') {
+      const next = pattern[i + 1];
+      if (next === '*') {
+        const after = pattern[i + 2];
+        if (after === '/') {
+          source += '(?:.*/)?';
+          i += 2;
+          continue;
+        }
+        source += '.*';
+        i += 1;
+        continue;
+      }
+      source += '[^/]*';
+      continue;
+    }
+    if (char === '?') {
+      source += '[^/]';
+      continue;
+    }
+    source += escapeRegExp(char);
+  }
+  source += '$';
+  return new RegExp(source);
+}
+
+function escapeRegExp(char: string): string {
+  return /[\\^$.*+?()[\]{}|]/.test(char) ? `\\${char}` : char;
+}
+
+function normalizePath(path: string): string {
+  return path.split(sep).join('/');
 }

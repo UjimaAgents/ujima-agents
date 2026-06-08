@@ -47,6 +47,9 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      - name: Vendor CLI binaries
+        run: bash scripts/vendor-binaries.sh linux x86_64
+
       - name: Lint
         run: bun run lint
 

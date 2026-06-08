@@ -4,6 +4,7 @@ import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, relative } from 'node:path';
 import { execFile } from 'node:child_process';
 import { WorkspaceFileSchema } from '@ujima/shared';
+import { resolveBinaryPath, SED_BINARY } from './binary-resolver.js';
 import { assertWorkspaceBoundary } from '@ujima/shared/workspace';
 import { isSensitiveWorkspacePath } from '@ujima/shared/workspace-file-filters';
 import type { ApiRepository } from '../services/repository-reader.js';
@@ -246,22 +247,14 @@ export const viewTool: OrchestratorTool<typeof ViewSchema> = {
         : readWindowValue(invocation.input?.limit, VIEW_DEFAULT_LIMIT),
       VIEW_MAX_LIMIT,
     );
-    // Use sed for line extraction (avoids reading entire file into Node memory)
-    const endLine = offset + limit - 1;
-    const sedArgs = ['-n', `${offset},${endLine}p`, resolved];
-    const sedResult = await new Promise<string>((resolve, reject) => {
-      execFile('/usr/bin/sed', sedArgs, { maxBuffer: VIEW_MAX_BYTES }, (err, stdout) => {
-        if (err) return reject(err);
-        resolve(stdout);
-      });
-    });
+    const windowText = await readFileLineWindow(resolved, offset, limit);
 
     return {
       type: 'file' as const,
       path: resolved,
       offset,
       limit,
-      content: numberedWindow(sedResult, offset, limit, resource.size),
+      content: numberedWindow(windowText, offset, limit, resource.size),
     };
   },
 };
@@ -449,6 +442,24 @@ async function readExistingText(path: string): Promise<string> {
 // validation error instead of silently falling back to the default
 // window — silent fallback would let an agent type "100-200ish" and
 // re-read the whole file without noticing.
+async function readFileLineWindow(filePath: string, offset: number, limit: number): Promise<string> {
+  const endLine = offset + limit - 1;
+  try {
+    const bin = resolveBinaryPath(SED_BINARY, 'SED_BIN_PATH');
+    return await new Promise<string>((resolve, reject) => {
+      execFile(bin, ['-n', `${offset},${endLine}p`, filePath], { maxBuffer: VIEW_MAX_BYTES }, (err, stdout) => {
+        if (err) return reject(err);
+        resolve(stdout);
+      });
+    });
+  } catch {
+    const content = await readFile(filePath, 'utf8');
+    const lines = content.split(/\r?\n/);
+    const start = Math.max(offset - 1, 0);
+    return lines.slice(start, start + limit).join('\n');
+  }
+}
+
 function parseLinesRange(input: string): { offset: number; limit: number } | null {
   const trimmed = input.trim();
   const match = /^(\d+)(?:-(\d*))?$/.exec(trimmed);

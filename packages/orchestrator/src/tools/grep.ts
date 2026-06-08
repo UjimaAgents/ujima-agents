@@ -1,12 +1,11 @@
+import { isAbsolute, join } from 'node:path';
 import { z } from 'zod';
 import { assertWorkspaceBoundary } from '@ujima/shared/workspace';
 import { isSensitiveWorkspacePath } from '@ujima/shared/workspace-file-filters';
 import type { OrchestratorTool } from './types.js';
 import { readWindowValue } from './window-utils.js';
-import { resolveBinaryPath, type BinaryDescriptor } from './binary-resolver.js';
+import { resolveBinaryPath, RG_BINARY } from './binary-resolver.js';
 import { runCli } from './cli-runner.js';
-
-const RG: BinaryDescriptor = { name: 'ripgrep', dir: 'rg', filename: 'rg' };
 
 const DEFAULT_LIMIT = 50;
 const DEFAULT_CONTEXT_LINES = 2;
@@ -67,7 +66,7 @@ export const grepTool: OrchestratorTool<typeof GrepSchema> = {
     );
     const resolved = assertWorkspaceBoundary(team.workspace.root, resourcePath);
 
-    const bin = resolveBinaryPath(RG, 'RG_BIN_PATH');
+    const bin = resolveBinaryPath(RG_BINARY, 'RG_BIN_PATH');
     const args = [
       '--json',
       '-n',
@@ -77,7 +76,7 @@ export const grepTool: OrchestratorTool<typeof GrepSchema> = {
       '--', query, resolved,
     ];
 
-    const { stdout, exitCode } = await runCli({
+    const { stdout, exitCode, stderr } = await runCli({
       bin,
       args,
       cwd: team.workspace.root,
@@ -87,7 +86,6 @@ export const grepTool: OrchestratorTool<typeof GrepSchema> = {
     });
 
     if (exitCode !== null && exitCode > 1) {
-      const { stderr } = await runCli({ bin, args, cwd: team.workspace.root, timeout: 5_000, maxStdoutBytes: 64_000 });
       throw new Error(`ripgrep (exit ${exitCode}): ${stderr.slice(0, 500)}`);
     }
 
@@ -210,6 +208,5 @@ export const grepTool: OrchestratorTool<typeof GrepSchema> = {
 };
 
 function joinPaths(root: string, rel: string): string {
-  if (rel.startsWith('/')) return rel;
-  return root + '/' + rel;
+  return isAbsolute(rel) ? rel : join(root, rel);
 }

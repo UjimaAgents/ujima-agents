@@ -1,12 +1,12 @@
+import { basename, relative } from 'node:path';
+import { stat } from 'node:fs/promises';
 import { z } from 'zod';
-import { relative } from 'node:path';
 import { assertWorkspaceBoundary } from '@ujima/shared/workspace';
 import { isSensitiveWorkspacePath } from '@ujima/shared/workspace-file-filters';
-import { resolveBinaryPath, type BinaryDescriptor } from './binary-resolver.js';
+import { resolveBinaryPath, FD_BINARY } from './binary-resolver.js';
 import { runCli } from './cli-runner.js';
 import type { OrchestratorTool } from './types.js';
-
-const FD: BinaryDescriptor = { name: 'fd', dir: 'fd', filename: 'fd' };
+import { readWindowValue } from './window-utils.js';
 
 const GLOB_LIMIT = 100;
 
@@ -33,58 +33,104 @@ export const globTool: OrchestratorTool<typeof GlobSchema> = {
       team.workspace.root,
       typeof invocation.resourcePath === 'string' ? invocation.resourcePath : '.',
     );
+    const resource = await stat(searchRoot);
     const pattern = String(invocation.input?.pattern ?? '').trim();
-    const limit = typeof invocation.input?.limit === 'number' ? invocation.input.limit : GLOB_LIMIT;
+    const limit = readWindowValue(invocation.input?.limit, GLOB_LIMIT);
 
-    const bin = resolveBinaryPath(FD, 'FD_BIN_PATH');
-    const args = [
-      '--glob',
-      '--type', 'file',
-      '--max-results', String(limit),
-      '--',
-      pattern,
-      searchRoot,
-    ];
-    const { stdout, exitCode } = await runCli({
-      bin,
-      args,
-      cwd: team.workspace.root,
-      timeout: 5_000,
-      maxStdoutBytes: 64_000,
-      filterSensitivePaths: true,
-    });
-
-    if (exitCode !== 0 && exitCode !== null) {
-      // fd exits 1 when no results — that's not an error
-      if (exitCode !== 1) {
-        throw new Error(`fd (exit ${exitCode})`);
-      }
+    if (!resource.isDirectory()) {
+      const rel = relative(team.workspace.root, searchRoot) || basename(searchRoot);
+      const matches = matchGlobPattern(pattern, rel) ? [searchRoot] : [];
+      return formatGlobResult(searchRoot, pattern, matches, team.workspace.root, limit);
     }
 
-    const relPaths = stdout
-      .split('\n')
-      .map((l) => l.trim())
-      .filter(Boolean);
+    const bin = resolveBinaryPath(FD_BINARY, 'FD_BIN_PATH');
+    const fdArgs = [
+      '--glob',
+      pattern,
+      '--type',
+      'f',
+      '--max-results',
+      String(limit),
+      '-a',
+      searchRoot,
+    ];
+
+    const { stdout, exitCode, stderr } = await runCli({
+      bin,
+      args: fdArgs,
+      cwd: team.workspace.root,
+      timeout: 5_000,
+      maxStdoutBytes: 256_000,
+    });
+
+    if (exitCode !== 0 && exitCode !== null && exitCode !== 1) {
+      throw new Error(`fd (exit ${exitCode}): ${stderr.slice(0, 300)}`);
+    }
 
     const matches: string[] = [];
-    for (const relPath of relPaths) {
-      const fullPath = relative(team.workspace.root, relPath)
-        ? assertWorkspaceBoundary(team.workspace.root, relPath)
-        : team.workspace.root;
-      if (isSensitiveWorkspacePath(fullPath)) continue;
-      matches.push(fullPath);
+    for (const line of stdout.split('\n').map((entry) => entry.trim()).filter(Boolean)) {
+      const absPath = assertWorkspaceBoundary(team.workspace.root, line);
+      if (isSensitiveWorkspacePath(absPath)) continue;
+      matches.push(absPath);
       if (matches.length >= limit) break;
     }
 
-    return {
-      path: searchRoot,
-      pattern,
-      matches,
-      count: matches.length,
-      truncated: matches.length >= limit,
-      content: matches
-        .map((entry) => relative(team.workspace.root, entry) || entry)
-        .join('\n'),
-    };
+    return formatGlobResult(searchRoot, pattern, matches, team.workspace.root, limit);
   },
 };
+
+function formatGlobResult(
+  searchRoot: string,
+  pattern: string,
+  matches: string[],
+  workspaceRoot: string,
+  limit: number,
+) {
+  return {
+    path: searchRoot,
+    pattern,
+    matches,
+    count: matches.length,
+    truncated: matches.length >= limit,
+    content: matches
+      .map((entry) => relative(workspaceRoot, entry).split(/[/\\]/).join('/') || entry)
+      .join('\n'),
+  };
+}
+
+function matchGlobPattern(pattern: string, candidate: string): boolean {
+  const normalizedPattern = pattern.trim().split(/[/\\]/).join('/');
+  const normalizedCandidate = candidate.trim().split(/[/\\]/).join('/');
+  if (!normalizedPattern) return false;
+  return globToRegExp(normalizedPattern).test(normalizedCandidate);
+}
+
+function globToRegExp(globPattern: string): RegExp {
+  let source = '^';
+  for (let i = 0; i < globPattern.length; i += 1) {
+    const char = globPattern[i] ?? '';
+    if (char === '*') {
+      const next = globPattern[i + 1];
+      if (next === '*') {
+        const after = globPattern[i + 2];
+        if (after === '/') {
+          source += '(?:.*/)?';
+          i += 2;
+          continue;
+        }
+        source += '.*';
+        i += 1;
+        continue;
+      }
+      source += '[^/]*';
+      continue;
+    }
+    if (char === '?') {
+      source += '[^/]';
+      continue;
+    }
+    source += /[\\^$.*+?()[\]{}|]/.test(char) ? `\\${char}` : char;
+  }
+  source += '$';
+  return new RegExp(source);
+}

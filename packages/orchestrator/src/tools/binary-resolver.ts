@@ -12,8 +12,8 @@ export interface BinaryDescriptor {
   dir: string;
   /** Filename on disk (platform-dependent extension handled automatically) */
   filename: string;
-  /** Optional system path fallback (e.g. '/usr/bin/curl'). Used when vendored binary not found. */
-  systemPath?: string;
+  /** Optional system path fallbacks when vendored binary not found. */
+  systemPaths?: string[];
 }
 
 const CURRENT_PLATFORM = process.platform as Platform;
@@ -64,7 +64,10 @@ export function resolveBinaryPath(
   const binName =
     CURRENT_PLATFORM === 'win32' ? `${descriptor.filename}.exe` : descriptor.filename;
 
+  // dist/tools or src/tools → packages/orchestrator
+  const packageRoot = join(__dirname, '..', '..');
   const candidates = [
+    join(packageRoot, 'bin', descriptor.dir, triple, binName),
     join(process.cwd(), 'packages/orchestrator/bin', descriptor.dir, triple, binName),
     join(process.cwd(), 'bin', descriptor.dir, triple, binName),
     join(process.cwd(), 'node_modules/.bin', binName),
@@ -76,9 +79,11 @@ export function resolveBinaryPath(
     }
   }
 
-  // 3. System path fallback (for curl, sed, etc.)
-  if (descriptor.systemPath && existsSync(descriptor.systemPath)) {
-    return descriptor.systemPath;
+  // 3. System path fallbacks (for curl, sed, etc.)
+  for (const candidate of descriptor.systemPaths ?? []) {
+    if (existsSync(candidate)) {
+      return candidate;
+    }
   }
 
   throw new Error(
@@ -107,8 +112,10 @@ export const CURL_BINARY: BinaryDescriptor = {
   name: 'curl',
   dir: 'curl',
   filename: 'curl',
-  // macOS ships curl at /usr/bin/curl; Linux containers typically have it on PATH
-  systemPath: process.platform === 'darwin' ? '/usr/bin/curl' : undefined,
+  systemPaths:
+    process.platform === 'win32'
+      ? []
+      : ['/usr/bin/curl', '/bin/curl'],
 };
 
 /** sed is used for file window extraction by the view tool */
@@ -116,7 +123,10 @@ export const SED_BINARY: BinaryDescriptor = {
   name: 'sed',
   dir: 'sed',
   filename: 'sed',
-  systemPath: '/usr/bin/sed',
+  systemPaths:
+    process.platform === 'win32'
+      ? []
+      : ['/usr/bin/sed', '/bin/sed'],
 };
 
 export const EZA_BINARY: BinaryDescriptor = {

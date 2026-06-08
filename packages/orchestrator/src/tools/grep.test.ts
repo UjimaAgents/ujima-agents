@@ -2,9 +2,19 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { resolveBinaryPath, RG_BINARY } from './binary-resolver.js';
 import { grepTool, GrepSchema } from './grep.js';
 
-describe('grep (ripgrep)', () => {
+function rgAvailable(): boolean {
+  try {
+    resolveBinaryPath(RG_BINARY, 'RG_BIN_PATH');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+describe.skipIf(!rgAvailable())('grep (ripgrep)', () => {
   let root = '';
 
   afterEach(async () => {
