@@ -1,7 +1,7 @@
 "use client";
 
 import { Check, ChevronDown, ChevronRight, X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import type {
   CatalogAgentView,
   McpCatalogServer,
@@ -30,9 +30,16 @@ const RISK_DOT: Record<ToolRiskClass, string> = {
  * ("Always on" / "On demand") so admins don't need to know the
  * underlying §17.5 vocabulary to set it correctly.
  *
- * Rendered as a sibling of the row's expand button (not nested), so
- * a click on the toggle doesn't propagate to the expand handler and
- * the markup is valid HTML (no <button> inside another <button>).
+ * Built on native <input type="radio"> rather than a custom
+ * role="radiogroup" so the browser provides the ARIA radio
+ * keyboard pattern (arrow-key navigation, single tab stop, screen
+ * reader semantics) for free. An earlier custom-button version
+ * disabled the currently-selected option, which removed the only
+ * focusable control in the group and left keyboard users unable to
+ * change tiers.
+ *
+ * Rendered as a sibling of the row's expand button (not nested) so
+ * the markup stays valid HTML (no <button> inside another <button>).
  */
 function TierToggle({
   tier,
@@ -43,37 +50,44 @@ function TierToggle({
   disabled: boolean;
   onChange: (next: McpAttachmentTier) => void;
 }) {
+  // Unique `name` per instance so multiple toggles on the same page
+  // don't share a radio group (which would let one row's selection
+  // deselect another's).
+  const groupName = useId();
   const options: { value: McpAttachmentTier; label: string }[] = [
     { value: "native", label: "Always on" },
     { value: "dispatch", label: "On demand" },
   ];
   return (
-    <div
-      role="radiogroup"
+    <fieldset
       aria-label="Attachment tier"
-      className="inline-flex overflow-hidden rounded-full border border-zinc-200 text-[11px] dark:border-zinc-800"
+      disabled={disabled}
+      className="m-0 inline-flex overflow-hidden rounded-full border border-zinc-200 p-0 text-[11px] dark:border-zinc-800"
     >
       {options.map((opt) => {
         const selected = opt.value === tier;
         return (
-          <button
+          <label
             key={opt.value}
-            type="button"
-            role="radio"
-            aria-checked={selected}
-            disabled={disabled || selected}
-            onClick={() => onChange(opt.value)}
-            className={`px-2 py-0.5 transition ${
+            className={`cursor-pointer px-2 py-0.5 transition focus-within:ring-2 focus-within:ring-zinc-400 focus-within:ring-offset-0 ${
               selected
                 ? "bg-zinc-800 text-white dark:bg-zinc-200 dark:text-zinc-900"
-                : "text-zinc-600 hover:bg-zinc-100 disabled:opacity-50 dark:text-zinc-300 dark:hover:bg-zinc-900"
-            }`}
+                : "text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-900"
+            } ${disabled ? "cursor-not-allowed opacity-60" : ""}`}
           >
+            <input
+              type="radio"
+              name={groupName}
+              value={opt.value}
+              checked={selected}
+              onChange={() => onChange(opt.value)}
+              className="sr-only"
+            />
             {opt.label}
-          </button>
+          </label>
         );
       })}
-    </div>
+    </fieldset>
   );
 }
 
