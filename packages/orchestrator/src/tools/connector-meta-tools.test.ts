@@ -5,6 +5,11 @@ import type {
   McpToolDescriptor,
 } from '@ujima/shared';
 import type { ToolService, ToolInvocationInput, ToolInvocationResult } from '../services/tool-service.js';
+import type {
+  ConnectorAuditWriter,
+  ConnectorInvocationCompletedInput,
+  ConnectorInvocationInput,
+} from '../services/connector-audit.js';
 import {
   buildConnectorMetaTools,
   hasEgressSignals,
@@ -126,9 +131,33 @@ function stubToolService(
   return stub;
 }
 
+interface CapturingAuditWriter extends ConnectorAuditWriter {
+  requested: ConnectorInvocationInput[];
+  completed: ConnectorInvocationCompletedInput[];
+}
+
+function capturingAudit(): CapturingAuditWriter {
+  const requested: ConnectorInvocationInput[] = [];
+  const completed: ConnectorInvocationCompletedInput[] = [];
+  return {
+    requested,
+    completed,
+    toolsListed: () => {},
+    invocationRequested: (input) => {
+      requested.push(input);
+    },
+    invocationResolved: () => {},
+    invocationCompleted: (input) => {
+      completed.push(input);
+    },
+    tierChanged: () => {},
+  };
+}
+
 function makeDeps(overrides: {
   repo: ConnectorMetaToolRepo;
   tools?: ToolService;
+  audit?: ConnectorAuditWriter;
 }) {
   return {
     organizationId: 'org_test',
@@ -138,6 +167,7 @@ function makeDeps(overrides: {
     spiritRole: 'worker' as const,
     tools: overrides.tools ?? stubToolService(),
     repo: overrides.repo,
+    audit: overrides.audit,
   };
 }
 
@@ -210,6 +240,102 @@ describe('invoke_connector_tool — gate routing + cache-gated dispatch', () => 
       { toolCallId: 'c2' } as Parameters<NonNullable<typeof b.invoke_connector_tool.execute>>[1],
     );
     expect(toolServiceB.lastInvocation).toBeNull();
+  });
+});
+
+describe('invoke_connector_tool — §12 completion audit semantics', () => {
+  // Three regressions from the first PR 8 cut:
+  //   1. completed{success:true} was emitted BEFORE toModelToolOutput
+  //      ran, so an approval-waiting result (which throws inside that
+  //      helper) caused a SECOND completed{success:false} from the
+  //      catch block. One invocation -> two completion rows.
+  //   2. A blocked result (ok=false with output={status:'blocked',...})
+  //      doesn't throw — toModelToolOutput just returns the output —
+  //      so the emit-then-call order recorded blocked calls as
+  //      success=true. Wrong PR 9 curation signal.
+  //   3. Same shape applied to waiting_for_input results.
+  // These tests lock in the correct shape: completion fires exactly
+  // once for ok / blocked, and not at all while a call is paused
+  // waiting on a human (approval or input).
+
+  function setup(result: ToolInvocationResult) {
+    const server = makeServer();
+    const repo = stubRepo({ server, tools: makeTools('post_message') });
+    const tools = stubToolService(result);
+    const audit = capturingAudit();
+    const { invoke_connector_tool } = buildConnectorMetaTools(
+      makeDeps({ repo, tools, audit }),
+    );
+    return { invoke_connector_tool, audit };
+  }
+
+  async function callExecute(
+    tool: ReturnType<typeof buildConnectorMetaTools>['invoke_connector_tool'],
+  ) {
+    return tool.execute!(
+      { server_id: 'srv_x', tool_name: 'post_message', args: { channel: '#team' } },
+      { toolCallId: 'call_x' } as Parameters<NonNullable<typeof tool.execute>>[1],
+    );
+  }
+
+  it('emits exactly one success completion for a successful invocation', async () => {
+    const { invoke_connector_tool, audit } = setup({ ok: true, output: { ok: true } });
+    await callExecute(invoke_connector_tool);
+    expect(audit.requested).toHaveLength(1);
+    expect(audit.completed).toHaveLength(1);
+    expect(audit.completed[0]!.success).toBe(true);
+  });
+
+  it('emits exactly one success=false completion for a blocked invocation (not a silent success)', async () => {
+    // ToolService returns ok=false with a renderable blocked output;
+    // toModelToolOutput RETURNS that output without throwing. The
+    // emitter must branch on result.ok, not on whether the helper
+    // threw, otherwise blocked calls are recorded as successes.
+    const { invoke_connector_tool, audit } = setup({
+      ok: false,
+      output: { status: 'blocked', error: 'denied_by_policy' },
+      error: 'denied_by_policy',
+      code: 'policy_deny',
+    });
+    await callExecute(invoke_connector_tool);
+    expect(audit.completed).toHaveLength(1);
+    expect(audit.completed[0]!.success).toBe(false);
+    expect(audit.completed[0]!.errorMessage).toBe('denied_by_policy');
+  });
+
+  it('emits ZERO completion events while a call is waiting on human approval', async () => {
+    // requiresApprovalId means the gate is holding the call open
+    // pending operator decision. The matching `_resolved` event fires
+    // from the approval-resolution path; if the run re-invokes after
+    // approval, a fresh `_requested` + `_completed` follow. Emitting
+    // a completion here would double-count and distort the PR 9
+    // curation signal.
+    const { invoke_connector_tool, audit } = setup({
+      ok: false,
+      requiresApprovalId: 'app_42',
+    });
+    try {
+      await callExecute(invoke_connector_tool);
+    } catch {
+      // toModelToolOutput throws ToolApprovalRequiredError — the AI
+      // SDK loop catches this. Test catches it so the assertion runs.
+    }
+    expect(audit.requested).toHaveLength(1);
+    expect(audit.completed).toHaveLength(0);
+  });
+
+  it('emits ZERO completion events while a call is waiting on interactive user input', async () => {
+    const { invoke_connector_tool, audit } = setup({
+      ok: true,
+      output: { status: 'waiting_for_input', questionId: 'q_1' },
+    });
+    try {
+      await callExecute(invoke_connector_tool);
+    } catch {
+      // toModelToolOutput throws ToolInputRequiredError.
+    }
+    expect(audit.requested).toHaveLength(1);
+    expect(audit.completed).toHaveLength(0);
   });
 });
 

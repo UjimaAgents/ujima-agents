@@ -293,6 +293,23 @@ export function hasEgressSignals(args: unknown): boolean {
   return false;
 }
 
+/**
+ * Pull a human-readable error message out of a non-ok ToolInvocationResult
+ * for the §12 audit row's errorMessage field. Prefers the structured
+ * `error` field; falls back to a `blocked` status string from the output;
+ * defaults to a generic invocation-failed message.
+ */
+function extractInvocationError(result: { error?: string; output?: unknown }): string {
+  if (result.error) return result.error;
+  const output = result.output;
+  if (output && typeof output === 'object') {
+    const record = output as Record<string, unknown>;
+    if (typeof record.error === 'string') return record.error;
+    if (typeof record.status === 'string') return `tool_status:${record.status}`;
+  }
+  return 'tool invocation failed';
+}
+
 // ───────────────────────────────────────────────────────────────────────
 // Builder
 // ───────────────────────────────────────────────────────────────────────
@@ -503,7 +520,8 @@ export function buildConnectorMetaTools(
       }
       // §12.2 audit emit — `_requested` fires BEFORE the gate so we
       // record the intent even if the gate denies. The matching
-      // `_completed` event fires after ToolService.invoke returns.
+      // `_completed` event fires below, after ToolService.invoke
+      // returns and we can inspect the actual outcome.
       deps.audit?.invocationRequested({
         organizationId: deps.organizationId,
         actorMemberId: deps.memberId,
@@ -516,8 +534,9 @@ export function buildConnectorMetaTools(
       // + the synthetic permissionToolName from mcpPermissionToolName
       // match the shape the legacy MCP-tool path already uses, so
       // existing governance policies and audit rows apply unchanged.
+      let result: Awaited<ReturnType<typeof deps.tools.invoke>>;
       try {
-        const result = await deps.tools.invoke({
+        result = await deps.tools.invoke({
           organizationId: deps.organizationId,
           runId: deps.runId,
           memberId: deps.memberId,
@@ -538,16 +557,10 @@ export function buildConnectorMetaTools(
             args,
           },
         });
-        deps.audit?.invocationCompleted({
-          organizationId: deps.organizationId,
-          actorMemberId: deps.memberId,
-          runId: deps.runId,
-          serverId: server.id,
-          toolName: tool_name,
-          success: true,
-        });
-        return toModelToolOutput(result);
       } catch (err) {
+        // Unexpected exception from the invoke layer itself (DB
+        // failure, etc.). Record one completion row with the error
+        // and re-throw through the model-error path.
         deps.audit?.invocationCompleted({
           organizationId: deps.organizationId,
           actorMemberId: deps.memberId,
@@ -557,6 +570,45 @@ export function buildConnectorMetaTools(
           success: false,
           errorMessage: err instanceof Error ? err.message : String(err),
         });
+        return toModelToolErrorOutput(err);
+      }
+      // Approval-waiting and input-waiting calls are NOT completions
+      // — the gate is holding the call open. Emitting `_completed`
+      // here would double-count (the row fires again when the run
+      // resumes and the model re-invokes) and would also distort the
+      // PR 9 curation signal (an approval-stalled call would look
+      // like a successful invocation). The matching `_resolved`
+      // event already fires from the approval-resolution path.
+      const isWaitingForApproval = typeof result.requiresApprovalId === 'string';
+      const output = result.output;
+      const isWaitingForInput =
+        result.ok &&
+        !!output &&
+        typeof output === 'object' &&
+        (output as Record<string, unknown>).status === 'waiting_for_input';
+      if (!isWaitingForApproval && !isWaitingForInput) {
+        // Blocked invocations come back as ok=false with output={status:'blocked',...}
+        // — toModelToolOutput returns that object without throwing,
+        // so we MUST branch on result.ok here (not on whether
+        // toModelToolOutput threw) to record blocked calls as
+        // success=false rather than silently as successes.
+        deps.audit?.invocationCompleted({
+          organizationId: deps.organizationId,
+          actorMemberId: deps.memberId,
+          runId: deps.runId,
+          serverId: server.id,
+          toolName: tool_name,
+          success: result.ok,
+          errorMessage: result.ok ? undefined : extractInvocationError(result),
+        });
+      }
+      try {
+        return toModelToolOutput(result);
+      } catch (err) {
+        // toModelToolOutput throws for approval/input waits — those
+        // were detected above and intentionally skipped from the
+        // completion emit, so just bubble the error to the model
+        // path without writing a second row.
         return toModelToolErrorOutput(err);
       }
     },
