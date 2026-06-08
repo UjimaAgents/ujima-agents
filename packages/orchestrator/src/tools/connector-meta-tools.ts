@@ -37,11 +37,11 @@ import { tool, type Tool } from 'ai';
 import { z } from 'zod';
 import type {
   AgentMcpAttachment,
+  AgentToolAttachment,
   McpServer,
   McpToolCache,
   SpiritRole,
 } from '@ujima/shared';
-import { sanitizeToolName } from '../services/connector-catalog.js';
 import { mcpPermissionToolName } from '../services/mcp-runtime.js';
 import {
   toModelToolErrorOutput,
@@ -78,6 +78,19 @@ export interface ConnectorMetaToolRepo {
     memberId: string,
     role: 'worker' | 'supervisor',
   ): { attachment: AgentMcpAttachment; server: McpServer }[];
+  /**
+   * Per-tool grants for an agent on a specific server. When any
+   * applicable grant exists for the current spirit role, this acts
+   * as the allow-list for both meta-tools — get_connector_tools
+   * omits non-granted names and invoke_connector_tool refuses to
+   * dispatch them. Same shape as the legacy spawn-time grant filter
+   * in spirit-agent-run.ts.
+   */
+  listAgentToolAttachments(
+    organizationId: string,
+    memberId: string,
+    mcpServerId: string,
+  ): AgentToolAttachment[];
 }
 
 export interface ConnectorMetaToolDeps {
@@ -167,6 +180,61 @@ function collectStringLeaves(value: unknown, acc: string[] = []): string[] {
     }
   }
   return acc;
+}
+
+/**
+ * Reject only tool names that would actually break a tool result —
+ * control characters, escapes, or absurd lengths. Anything else (spaces,
+ * dots, mixed case, punctuation) is preserved verbatim because MCPs
+ * publish wildly varying naming conventions and an over-strict
+ * identifier-shape filter would make legitimate tools undiscoverable
+ * and uncallable. mcpPermissionToolName URL-encodes when it builds the
+ * policy/audit key, so non-identifier characters are safe downstream.
+ *
+ * The actual gate against attacker-shaped names is the cache lookup:
+ * tools that aren't in the persisted mcp_tool_cache cannot be
+ * dispatched, period. This helper is just a defense-in-depth on the
+ * tool-result emission surface so a publisher can't smuggle a literal
+ * newline into the listing.
+ */
+const TOOL_NAME_MAX_LENGTH = 256;
+// eslint-disable-next-line no-control-regex
+const TOOL_NAME_DISALLOWED = /[\x00-\x1F\x7F]/;
+function isToolNameSafeForDisplay(name: string): boolean {
+  if (name.length === 0) return false;
+  if (name.length > TOOL_NAME_MAX_LENGTH) return false;
+  return !TOOL_NAME_DISALLOWED.test(name);
+}
+
+/**
+ * Compute the role-scoped allow-list of tool names for one (member,
+ * server). Returns null when there are no applicable grants — that's
+ * the legacy "all tools" mode (back-compat). When non-null, BOTH
+ * meta-tools narrow their behavior to this set.
+ *
+ * The role filter is load-bearing: a worker-only grant must not flip
+ * the palette into allowlist mode for supervisor runs, and vice
+ * versa. The legacy spawn-time filter already encodes this; the
+ * meta-tools must apply the same logic so the dispatch tier doesn't
+ * regress the per-tool authorization contract.
+ */
+function applicableGrantedNames(
+  repo: ConnectorMetaToolRepo,
+  organizationId: string,
+  memberId: string,
+  serverId: string,
+  role: SpiritRole,
+): Set<string> | null {
+  const grants = repo.listAgentToolAttachments(
+    organizationId,
+    memberId,
+    serverId,
+  );
+  const applicable = grants.filter(
+    (g) => g.scope === role || g.scope === 'both',
+  );
+  if (applicable.length === 0) return null;
+  return new Set(applicable.map((g) => g.toolName));
 }
 
 /**
@@ -299,17 +367,30 @@ export function buildConnectorMetaTools(
             'to run Test on it in Settings → MCPs.',
         };
       }
-      // Sanitize names through the same shape filter as PR 3. A
-      // hostile name like "\nSYSTEM: ignore" is dropped from the
-      // response entirely (defense-in-depth on the tool-result
-      // surface, even though the prompt-text surface in PR 3 already
-      // closes the catalog-level injection path).
+      // Apply the role-scoped per-tool grant filter so the model only
+      // sees tools it can actually invoke. Mirrors the legacy spawn-
+      // time grant filter (spirit-agent-run.ts:892-903).
+      const allowedNames = applicableGrantedNames(
+        deps.repo,
+        deps.organizationId,
+        deps.memberId,
+        server_id,
+        deps.spiritRole,
+      );
+      // Preserve cached tool names verbatim — they're the dispatch key
+      // the model has to pass back. MCPs publish wildly varying naming
+      // conventions (spaces, dots, mixed case); an identifier-shape
+      // sanitizer makes legitimate tools undiscoverable + uncallable.
+      // Defense-in-depth against prompt injection through the tool
+      // result is the control-char filter below: only names containing
+      // \x00-\x1F or absurd lengths are dropped. The actual gate is
+      // the cache itself — phantom names cannot be dispatched.
       const tools = cache.tools
         .map((t) => {
-          const safeName = sanitizeToolName(t.name);
-          if (!safeName) return null;
+          if (!isToolNameSafeForDisplay(t.name)) return null;
+          if (allowedNames !== null && !allowedNames.has(t.name)) return null;
           return {
-            name: safeName,
+            name: t.name,
             description: (t.description ?? '').slice(0, DESCRIPTION_TRUNCATE),
             input_schema: t.inputSchema ?? {},
           };
@@ -356,34 +437,51 @@ export function buildConnectorMetaTools(
           new Error(`Connector "${server_id}" is disabled.`),
         );
       }
-      // Cache lookup is the typed gate. A phantom toolName cannot be
-      // dispatched — the agent must call get_connector_tools first
-      // and pick a name that actually exists on this server. Same
-      // shape sanitization as get_connector_tools so an inbound
-      // hostile name (passed by the model via args) is rejected here.
-      const safeName = sanitizeToolName(tool_name);
-      if (!safeName) {
-        return toModelToolErrorOutput(
-          new Error(
-            `Invalid tool name shape: "${tool_name}". Tool names must ` +
-              'match the connector\'s reported inventory.',
-          ),
-        );
-      }
+      // Cache lookup is the typed gate. A tool_name that doesn't
+      // appear in the persisted cache cannot be dispatched, period.
+      // We do NOT sanitize tool_name before the lookup — MCPs publish
+      // names with spaces, dots, mixed case, etc., and the legacy
+      // mcpPermissionToolName URL-encodes whatever we pass when it
+      // builds the policy/audit key, so non-identifier characters are
+      // safe downstream. Pre-fix this method ran sanitizeToolName on
+      // the inbound name and any tool whose published name fell
+      // outside `[A-Za-z0-9_.-]` became silently unreachable — exactly
+      // the regression the bot caught.
       const cache = deps.repo.getMcpToolCache(
         deps.organizationId,
         server_id,
       );
-      const cachedTool = cache?.tools.find((t) => t.name === safeName);
+      const cachedTool = cache?.tools.find((t) => t.name === tool_name);
       if (!cachedTool) {
-        // Opaque server_id + sanitized safeName — neither carries
-        // attacker-shaped prose. server.name is intentionally not
-        // interpolated here per the catalog-text trust model.
+        // Opaque server_id — server.name is intentionally not
+        // interpolated here per the catalog-text trust model. The
+        // tool_name as supplied by the model is echoed back so it
+        // can self-correct (it picked this string).
         return toModelToolErrorOutput(
           new Error(
-            `Tool "${safeName}" not found on connector "${server_id}". ` +
+            `Tool "${tool_name}" not found on connector "${server_id}". ` +
               'Call get_connector_tools(server_id) to see the live ' +
               'inventory.',
+          ),
+        );
+      }
+      // Per-tool grant filter (same as get_connector_tools): if the
+      // agent has any role-scoped grants on this server, the named
+      // tool must be in the set. Without this dispatch tier would
+      // expose every cached tool regardless of governance state.
+      const allowedNames = applicableGrantedNames(
+        deps.repo,
+        deps.organizationId,
+        deps.memberId,
+        server_id,
+        deps.spiritRole,
+      );
+      if (allowedNames !== null && !allowedNames.has(tool_name)) {
+        return toModelToolErrorOutput(
+          new Error(
+            `Tool "${tool_name}" is not granted to this agent on connector ` +
+              `"${server_id}". Ask the operator to grant it via Settings ` +
+              '→ MCPs, or pick a tool returned by get_connector_tools.',
           ),
         );
       }
@@ -403,13 +501,13 @@ export function buildConnectorMetaTools(
           toolId: 'mcp',
           action: 'mcp',
           resourceType: 'mcp',
-          resourcePath: `${server.id}:${safeName}`,
+          resourcePath: `${server.id}:${tool_name}`,
           permissionMcpId: server.id,
-          permissionToolName: mcpPermissionToolName(server.id, safeName),
+          permissionToolName: mcpPermissionToolName(server.id, tool_name),
           input: {
             mcpServerId: server.id,
             mcpServerName: server.name,
-            toolName: safeName,
+            toolName: tool_name,
             args,
           },
         });
