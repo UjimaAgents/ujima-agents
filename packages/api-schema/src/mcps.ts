@@ -283,3 +283,5 @@ export type McpServerResponse = z.infer<typeof McpServerResponseSchema>;
 export type McpToolsResponse = z.infer<typeof McpToolsResponseSchema>;
 export type AgentMcpAttachInput = z.infer<typeof AgentMcpAttachInputSchema>;
 export type AgentMcpAttachmentsResponse = z.infer<typeof AgentMcpAttachmentsResponseSchema>;
+export type AgentMcpAttachmentResponse = z.infer<typeof AgentMcpAttachmentResponseSchema>;
+export type UpdateAttachmentTierRequest = z.infer<typeof UpdateAttachmentTierRequestSchema>;
