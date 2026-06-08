@@ -310,23 +310,39 @@ function emitConnectorResolvedIfApplicable(
   // `scope=connector:{json}`. parseConnectorScope returns null for
   // shell/filesystem/generic approvals so we never emit a connector
   // event for non-connector resolutions.
+  //
+  // Best-effort: a DB lock, schema drift, or transient failure inside
+  // saveAuditEvent must NOT block the approval-resolution path.
+  // resolveApproval has already mutated the approval row's status by
+  // this point; throwing here would leave the run paused (or worse,
+  // half-resumed) for a telemetry write. Log the failure on the
+  // structured logger if one is registered and move on — the §12
+  // audit trail is allowed to drop one event before we sacrifice
+  // run-correctness for it.
   const rawScope = resolved.reason
     ? parseApprovalReasonValue(resolved.reason, 'scope') ?? undefined
     : undefined;
   if (!rawScope) return;
   const connector = parseConnectorScope(rawScope);
   if (!connector) return;
-  const writer = createConnectorAuditWriter({ repo });
-  writer.invocationResolved({
-    organizationId: resolved.organizationId,
-    resolverMemberId: input.resolverMemberId,
-    approvalId: resolved.id,
-    runId: resolved.runId,
-    serverId: connector.serverId,
-    toolName: connector.toolName,
-    resolution: input.resolution ?? (input.status === 'rejected' ? 'reject' : 'allow_once'),
-    scope: rawScope,
-  });
+  try {
+    const writer = createConnectorAuditWriter({ repo });
+    writer.invocationResolved({
+      organizationId: resolved.organizationId,
+      resolverMemberId: input.resolverMemberId,
+      approvalId: resolved.id,
+      runId: resolved.runId,
+      serverId: connector.serverId,
+      toolName: connector.toolName,
+      resolution: input.resolution ?? (input.status === 'rejected' ? 'reject' : 'allow_once'),
+      scope: rawScope,
+    });
+  } catch (err) {
+    console.warn(
+      '[approval] connector_invocation_resolved audit write failed; proceeding with resolution',
+      { approvalId: resolved.id, error: err instanceof Error ? err.message : String(err) },
+    );
+  }
 }
 
 function fallbackApprovalScope(approval: ApprovalRequest | null | undefined): string | undefined {

@@ -139,18 +139,20 @@ interface CapturingAuditWriter extends ConnectorAuditWriter {
 function capturingAudit(): CapturingAuditWriter {
   const requested: ConnectorInvocationInput[] = [];
   const completed: ConnectorInvocationCompletedInput[] = [];
+  // Empty stubs use `void 0` rather than `{}` so eslint's
+  // no-empty-function rule doesn't trip on the not-exercised emitters.
   return {
     requested,
     completed,
-    toolsListed: () => {},
+    toolsListed: () => void 0,
     invocationRequested: (input) => {
       requested.push(input);
     },
-    invocationResolved: () => {},
+    invocationResolved: () => void 0,
     invocationCompleted: (input) => {
       completed.push(input);
     },
-    tierChanged: () => {},
+    tierChanged: () => void 0,
   };
 }
 
@@ -336,6 +338,37 @@ describe('invoke_connector_tool — §12 completion audit semantics', () => {
     }
     expect(audit.requested).toHaveLength(1);
     expect(audit.completed).toHaveLength(0);
+  });
+
+  it('records phantom tool denials as (requested, completed{success:false}) so operators can audit failed attempts', async () => {
+    // Pre-fix: the gates (cache miss, ungranted tool, unattached
+    // server) returned early WITHOUT emitting `_requested`. An
+    // operator running "every denied dispatch attempt in 24h" would
+    // see nothing — exactly the events most worth investigating.
+    // Locked in: requested fires before any gate, and each denial
+    // path pairs it with a completed{success:false} so the
+    // (requested, completed) shape stays consistent across allowed
+    // and denied invocations.
+    const server = makeServer();
+    const repo = stubRepo({ server, tools: makeTools('post_message') });
+    const tools = stubToolService();
+    const audit = capturingAudit();
+    const { invoke_connector_tool } = buildConnectorMetaTools(
+      makeDeps({ repo, tools, audit }),
+    );
+
+    await invoke_connector_tool.execute!(
+      { server_id: 'srv_x', tool_name: 'definitely_not_a_tool', args: {} },
+      { toolCallId: 'call_phantom' } as Parameters<NonNullable<typeof invoke_connector_tool.execute>>[1],
+    );
+
+    // ToolService.invoke must NOT be touched on the denial path.
+    expect(tools.lastInvocation).toBeNull();
+    // But the audit row pair must exist.
+    expect(audit.requested).toHaveLength(1);
+    expect(audit.completed).toHaveLength(1);
+    expect(audit.completed[0]!.success).toBe(false);
+    expect(audit.completed[0]!.errorMessage).toMatch(/not found/);
   });
 });
 

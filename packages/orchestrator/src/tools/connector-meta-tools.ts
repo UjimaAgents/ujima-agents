@@ -440,6 +440,38 @@ export function buildConnectorMetaTools(
       'available tools via get_connector_tools.',
     inputSchema: InvokeConnectorToolSchema,
     execute: async ({ server_id, tool_name, args }, { toolCallId }) => {
+      // §12.2 audit emit — `_requested` fires BEFORE any gate so denied
+      // attempts (phantom tool, ungranted tool, unattached server,
+      // disabled server) are visible to operators auditing the
+      // dispatch tier. Each early-return gate below is paired with a
+      // matching `_completed{success:false}` so the per-attempt
+      // (requested, completed) shape stays consistent across allowed
+      // and denied paths.
+      deps.audit?.invocationRequested({
+        organizationId: deps.organizationId,
+        actorMemberId: deps.memberId,
+        runId: deps.runId,
+        serverId: server_id,
+        toolName: tool_name,
+        args,
+      });
+
+      // Closure-local helper for the four pre-invoke denial paths.
+      // Keeping the args + member context captured in scope avoids
+      // re-threading them through every early-return site.
+      const denyWithAudit = (error: Error): ReturnType<typeof toModelToolErrorOutput> => {
+        deps.audit?.invocationCompleted({
+          organizationId: deps.organizationId,
+          actorMemberId: deps.memberId,
+          runId: deps.runId,
+          serverId: server_id,
+          toolName: tool_name,
+          success: false,
+          errorMessage: error.message,
+        });
+        return toModelToolErrorOutput(error);
+      };
+
       // Attachment-scope check first (same gap as get_connector_tools).
       if (
         !isServerAttachedToSpirit(
@@ -450,7 +482,7 @@ export function buildConnectorMetaTools(
           deps.spiritRole,
         )
       ) {
-        return toModelToolErrorOutput(
+        return denyWithAudit(
           new Error(
             `Connector "${server_id}" is not attached to this agent.`,
           ),
@@ -458,7 +490,7 @@ export function buildConnectorMetaTools(
       }
       const server = deps.repo.getMcpServer(deps.organizationId, server_id);
       if (!server) {
-        return toModelToolErrorOutput(
+        return denyWithAudit(
           new Error(
             `Connector "${server_id}" is not attached to this agent.`,
           ),
@@ -466,9 +498,7 @@ export function buildConnectorMetaTools(
       }
       if (server.status !== 'active') {
         // Opaque server_id rather than server.name (admin-controllable).
-        return toModelToolErrorOutput(
-          new Error(`Connector "${server_id}" is disabled.`),
-        );
+        return denyWithAudit(new Error(`Connector "${server_id}" is disabled.`));
       }
       // Cache lookup is the typed gate. A tool_name that doesn't
       // appear in the persisted cache cannot be dispatched, period.
@@ -490,7 +520,7 @@ export function buildConnectorMetaTools(
         // interpolated here per the catalog-text trust model. The
         // tool_name as supplied by the model is echoed back so it
         // can self-correct (it picked this string).
-        return toModelToolErrorOutput(
+        return denyWithAudit(
           new Error(
             `Tool "${tool_name}" not found on connector "${server_id}". ` +
               'Call get_connector_tools(server_id) to see the live ' +
@@ -510,7 +540,7 @@ export function buildConnectorMetaTools(
         deps.spiritRole,
       );
       if (allowedNames !== null && !allowedNames.has(tool_name)) {
-        return toModelToolErrorOutput(
+        return denyWithAudit(
           new Error(
             `Tool "${tool_name}" is not granted to this agent on connector ` +
               `"${server_id}". Ask the operator to grant it via Settings ` +
@@ -518,18 +548,6 @@ export function buildConnectorMetaTools(
           ),
         );
       }
-      // §12.2 audit emit — `_requested` fires BEFORE the gate so we
-      // record the intent even if the gate denies. The matching
-      // `_completed` event fires below, after ToolService.invoke
-      // returns and we can inspect the actual outcome.
-      deps.audit?.invocationRequested({
-        organizationId: deps.organizationId,
-        actorMemberId: deps.memberId,
-        runId: deps.runId,
-        serverId: server.id,
-        toolName: tool_name,
-        args,
-      });
       // Dispatch through the standard ToolService gate. permissionMcpId
       // + the synthetic permissionToolName from mcpPermissionToolName
       // match the shape the legacy MCP-tool path already uses, so
