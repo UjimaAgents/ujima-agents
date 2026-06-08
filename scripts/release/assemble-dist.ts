@@ -166,17 +166,13 @@ function copyBannerForPublish(): void {
   }
   const assetsDir = join(DIST_PKG_DIR, "assets");
   mkdirSync(assetsDir, {recursive: true});
-  cpSync(BANNER_PATH, join(assetsDir, "banner.png"));
-  log(`Copied banner.png for npm + jsDelivr (${bannerCdnUrl("latest")}).`);
+  cpSync(BANNER_PATH, join(assetsDir, "banner.webp"));
+  log(`Copied banner.webp for npm (README references ${bannerCdnUrl()}).`);
 }
 
 /** npm displays README.md from packages/distribution — not the monorepo root. */
 function copyReadmeForPublish(): void {
-  const pkg = JSON.parse(readFileSync(DISTRIBUTION_PKG_JSON, "utf8")) as {
-    version: string;
-    repository?: { url?: string };
-  };
-  const bannerUrl = bannerCdnUrl(pkg.version);
+  const bannerUrl = bannerCdnUrl();
 
   let readme = readFileSync(README_PATH, "utf8");
   // Public CDN only — private GitHub raw/blob URLs do not render on npm.
