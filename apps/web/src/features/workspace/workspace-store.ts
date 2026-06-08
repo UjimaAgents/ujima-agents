@@ -13,6 +13,7 @@ import {
 import type { SelectedConversation } from "./types";
 import { resolveDefaultConversation } from "./workspace-channels";
 import { isLiveRun } from "./feed-selectors";
+import { mergeRunChunkActivity, runChunkActivityKey } from "./run-chunk-activity";
 import type { ChatMessageData, ApprovalCardData } from "./components/chat";
 import type { ActivityState } from "./activity-state";
 import { presenceToActivityState } from "./activity-state";
@@ -95,7 +96,8 @@ export interface WorkspaceState {
   hydrateMessages(messages: Message[], toMessage: (message: Message) => ChatMessageData, toActivity: (message: Message) => ActivityEvent): void;
   addPendingMessage(message: ChatMessageData): void;
   receiveMessage(tempId: string | undefined, message: Message, toMessage: (message: Message) => ChatMessageData, toActivity: (message: Message) => ActivityEvent): void;
-  appendRunChunk(message: ChatMessageData | undefined, activity: ActivityEvent): void;
+  appendRunChunk(message: ChatMessageData | undefined, activity?: ActivityEvent): void;
+  appendRunChunkBatch(items: { message?: ChatMessageData; activity?: ActivityEvent }[]): void;
   removeMessage(id: string): void;
   upsertApproval(approval: ApprovalRequest, toCard: (approval: ApprovalRequest, state: Pick<WorkspaceState, "members">) => ApprovalCardData, toActivity: (approval: ApprovalRequest) => ActivityEvent): void;
   upsertRun(run: RunState, toActivity: (run: RunState) => ActivityEvent): void;
@@ -234,6 +236,61 @@ function appendSequencedEvents(
     activitySequence: state.activitySequence + stamped.length,
     activity: [...state.activity, ...stamped],
   };
+}
+
+function upsertRunChunkActivity(
+  state: Pick<WorkspaceState, "activitySequence" | "activity">,
+  event: ActivityEvent,
+): Pick<WorkspaceState, "activitySequence" | "activity"> {
+  const key = runChunkActivityKey(event);
+  if (!key) {
+    return appendSequencedEvents(state, [event]);
+  }
+
+  const last = state.activity[state.activity.length - 1];
+  if (last && runChunkActivityKey(last) === key) {
+    return {
+      activitySequence: state.activitySequence,
+      activity: [...state.activity.slice(0, -1), mergeRunChunkActivity(last, event)],
+    };
+  }
+
+  return appendSequencedEvents(state, [event]);
+}
+
+function applyRunChunkItems(
+  state: WorkspaceState,
+  items: { message?: ChatMessageData; activity?: ActivityEvent }[],
+): Partial<WorkspaceState> {
+  if (items.length === 0) return {};
+
+  let messages = state.messages;
+  let activitySequence = state.activitySequence;
+  let activity = state.activity;
+
+  for (const item of items) {
+    const message = item.message;
+    if (message) {
+      const run = message.streamRunId ? state.runs.find((entry) => entry.id === message.streamRunId) : undefined;
+      const liveMessage = run && !isLiveRun(run) ? undefined : message;
+      if (liveMessage) {
+        messages = mergeRunChunkMessages(messages, [{ message: liveMessage }]);
+      }
+    }
+    if (item.activity) {
+      const next = upsertRunChunkActivity({ activitySequence, activity }, item.activity);
+      activitySequence = next.activitySequence;
+      activity = next.activity;
+    }
+  }
+
+  const patch: Partial<WorkspaceState> = {};
+  if (messages !== state.messages) patch.messages = messages;
+  if (activity !== state.activity || activitySequence !== state.activitySequence) {
+    patch.activity = activity;
+    patch.activitySequence = activitySequence;
+  }
+  return patch;
 }
 
 function mergeRunChunkMessages(
@@ -631,13 +688,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
     }),
   appendRunChunk: (message, activity) =>
     set((state) => {
-      const run = message?.streamRunId ? state.runs.find((item) => item.id === message.streamRunId) : undefined;
-      const liveMessage = run && !isLiveRun(run) ? undefined : message;
-      const messages = mergeRunChunkMessages(state.messages, liveMessage ? [{ message: liveMessage }] : []);
-      return {
-        ...(messages === state.messages ? {} : { messages }),
-        ...appendSequencedEvents(state, [activity]),
-      };
+      const patch = applyRunChunkItems(state, [{ message, activity }]);
+      return Object.keys(patch).length > 0 ? patch : state;
+    }),
+  appendRunChunkBatch: (items) =>
+    set((state) => {
+      const patch = applyRunChunkItems(state, items);
+      return Object.keys(patch).length > 0 ? patch : state;
     }),
   removeMessage: (id) =>
     set((state) => ({ messages: state.messages.filter((message) => message.id !== id) })),

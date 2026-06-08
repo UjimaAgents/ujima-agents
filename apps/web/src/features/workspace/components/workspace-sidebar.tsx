@@ -19,6 +19,7 @@ import { slugifyMemberId } from "@ujima/shared";
 import type { CreateAgentHandler, UpdateAgentHandler } from "@/features/team/agent-mutations";
 import type { SelectedConversation, WorkspaceRoleInput } from "../types";
 import { useState, useMemo, useEffect, useRef, memo, useCallback } from "react";
+import { APP_VERSION } from "@/lib/app-version";
 import { useRouter } from "next/navigation";
 import { TextInput } from "@/components/ui/form-fields";
 import type { RolePresetTemplate } from "../../onboarding/types";
@@ -630,6 +631,13 @@ export function WorkspaceSidebar({
           </div>
           <Settings className="ml-auto h-4 w-4 text-zinc-400" />
         </Link>
+      </div>
+
+      {/* Version label */}
+      <div className="px-4 pb-2">
+        <p className="text-[10px] text-zinc-400/60 dark:text-zinc-600/60 text-center select-none">
+          v{APP_VERSION}
+        </p>
       </div>
 
       <CreateChannelModal

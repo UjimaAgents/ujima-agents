@@ -21,6 +21,7 @@
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
     "test": "bun run build && vitest run --minWorkers=1 --maxWorkers=4",
+    "test:ci": "vitest run --minWorkers=1 --maxWorkers=4",
     "test:watch": "vitest",
     "test:e2e": "playwright test --pass-with-no-tests",
     "verify": "bun run lint && bun run typecheck && bun run test",

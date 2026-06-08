@@ -55,7 +55,13 @@ import { ReasoningTracePanel } from "./reasoning-trace-panel";
 import { QuestionCard } from "./chat/question-card";
 import { ChannelChatHeaderControls } from "./chat/channel-chat-header-controls";
 import { FontSizeControl } from "./chat/font-size-control";
-import { buildTabCounts, collectConversationAttachments, isLiveRun } from "../feed-selectors";
+import {
+  buildTabCounts,
+  collectConversationAttachments,
+  countMessageAttachments,
+  countSemanticActivityEvents,
+  isLiveRun,
+} from "../feed-selectors";
 import { AgentChatHeaderControls } from "./chat/agent-chat-header-controls";
 import type { Member, ShellApprovalMode, InteractiveQuestion } from "@ujima/shared/browser";
 
@@ -645,15 +651,84 @@ export function ChannelView({
     [setActiveTab],
   );
 
+  const feedRef = useRef(feed);
+  feedRef.current = feed;
+  const replyToRef = useRef(replyTo);
+  replyToRef.current = replyTo;
+
+  const handleCancelReply = useCallback(() => {
+    setReplyTo(null);
+  }, []);
+
+  const handleSkillCommand = useCallback(
+    async (skillId: string, content: string | undefined, metadata: Record<string, unknown> | undefined) => {
+      if (!organizationId) throw new Error("Missing organization context.");
+      const { content: skillContent } = await settingsFetch<SkillInvocationResponse>(
+        `/api/settings/skills/${encodeURIComponent(skillId)}?organizationId=${encodeURIComponent(organizationId)}&arguments=${encodeURIComponent(content ?? "")}`,
+        undefined,
+        "Unable to load skill.",
+      );
+      await feedRef.current.sendMessage(skillContent, undefined, undefined, metadata);
+      setReplyTo(null);
+      scrollToLatest("auto");
+    },
+    [organizationId, scrollToLatest],
+  );
+
+  const handleComposerCommand = useCallback(
+    async (command: string, content: string | undefined, metadata: Record<string, unknown> | undefined) => {
+      if (command === "schedule") {
+        const prompt = content?.replace(/^\/schedule\s*/i, "").trim();
+        if (!prompt) {
+          throw new Error("Usage: /schedule do this");
+        }
+        await feedRef.current.sendMessage(
+          `Please use the schedule tool for this request: ${prompt}`,
+          undefined,
+          undefined,
+          metadata,
+        );
+        setReplyTo(null);
+        scrollToLatest("auto");
+        return;
+      }
+      await feedRef.current.archiveConversation(command);
+      setReplyTo(null);
+      scrollToLatest("auto");
+    },
+    [scrollToLatest],
+  );
+
+  const handleSend = useCallback(
+    (content: string, attachmentIds?: string[], metadata?: Record<string, unknown>) => {
+      if (isAgent) {
+        openDetailsForAgentMessage();
+      }
+      const promise = feedRef.current.sendMessage(content, replyToRef.current?.id, attachmentIds, metadata);
+      setReplyTo(null);
+      return promise;
+    },
+    [isAgent, openDetailsForAgentMessage],
+  );
+
+  const semanticActivityCount = useMemo(
+    () => countSemanticActivityEvents(feed.activity),
+    [feed.activity],
+  );
+  const attachmentCount = useMemo(
+    () => countMessageAttachments(feed.messages),
+    [feed.messages],
+  );
+
   const tabCounts = useMemo(
     () =>
       buildTabCounts({
-        activity: feed.activity,
+        activityCount: semanticActivityCount,
         approvals: feed.approvals,
-        messages: feed.messages,
+        attachmentCount,
         runs: feed.runs,
       }),
-    [feed.activity, feed.approvals, feed.messages, feed.runs],
+    [attachmentCount, feed.approvals, feed.runs, semanticActivityCount],
   );
   const tabsWithCounts = useMemo(
     () =>
@@ -1023,32 +1098,8 @@ export function ChannelView({
                 reasoningProvider={reasoningModelSelection?.provider}
                 reasoningModelValue={reasoningModelSelection?.model}
                 skillCommands={skillCommands}
-                onSkillCommand={async (skillId, content, metadata) => {
-                if (!organizationId) throw new Error("Missing organization context.");
-                const { content: skillContent } = await settingsFetch<SkillInvocationResponse>(
-                  `/api/settings/skills/${encodeURIComponent(skillId)}?organizationId=${encodeURIComponent(organizationId)}&arguments=${encodeURIComponent(content ?? "")}`,
-                  undefined,
-                  "Unable to load skill.",
-                );
-                await feed.sendMessage(skillContent, undefined, undefined, metadata);
-                setReplyTo(null);
-                scrollToLatest("auto");
-              }}
-              onCommand={async (command, content, metadata) => {
-                if (command === "schedule") {
-                  const prompt = content?.replace(/^\/schedule\s*/i, "").trim();
-                  if (!prompt) {
-                    throw new Error("Usage: /schedule do this");
-                  }
-                  await feed.sendMessage(`Please use the schedule tool for this request: ${prompt}`, undefined, undefined, metadata);
-                  setReplyTo(null);
-                  scrollToLatest("auto");
-                  return;
-                }
-                await feed.archiveConversation(command);
-                setReplyTo(null);
-                scrollToLatest("auto");
-              }}
+                onSkillCommand={handleSkillCommand}
+                onCommand={handleComposerCommand}
               placeholder={
                 isAgent
                   ? `Message @${conversation.name} or type / for commands`
@@ -1057,17 +1108,10 @@ export function ChannelView({
               inlineError={feed.error}
               mentionSuggestions={mentionSuggestions}
               replyTo={replyTo}
-              onCancelReply={() => setReplyTo(null)}
+              onCancelReply={handleCancelReply}
               stoppableRunIds={stoppableRunIds}
               onStopRun={stopAgentRun}
-              onSend={(content, attachmentIds, metadata) => {
-                if (isAgent) {
-                  openDetailsForAgentMessage();
-                }
-                const promise = feed.sendMessage(content, replyTo?.id, attachmentIds, metadata);
-                setReplyTo(null);
-                return promise;
-              }}
+              onSend={handleSend}
             />
           </div>
         )}

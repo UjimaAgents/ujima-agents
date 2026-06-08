@@ -1,8 +1,146 @@
 import { describe, expect, it } from "vitest";
 import type { ActivityEvent, Message, RunState } from "@ujima/shared/browser";
-import { buildHistoricalTraceSteps, buildReasoningTraceSteps } from "./reasoning-trace";
+import {
+  buildHistoricalTraceSteps,
+  buildReasoningTraceSteps,
+} from "./reasoning-trace";
+import { collapseRunChunkActivities } from "./run-chunk-activity";
 
 describe("reasoning-trace ordering", () => {
+  it("collapses consecutive run_chunk events before trace derivation", () => {
+    const collapsed = collapseRunChunkActivities([
+      {
+        event_id: "chunk-1",
+        type: "run_chunk",
+        publisher: "ava",
+        timestamp: "2026-01-01T00:00:00.000Z",
+        payload: {
+          runId: "run-1",
+          threadId: "thread-1",
+          agentId: "ava",
+          kind: "reasoning",
+          delta: "A",
+        },
+      },
+      {
+        event_id: "chunk-2",
+        type: "run_chunk",
+        publisher: "ava",
+        timestamp: "2026-01-01T00:00:01.000Z",
+        payload: {
+          runId: "run-1",
+          threadId: "thread-1",
+          agentId: "ava",
+          kind: "reasoning",
+          delta: "B",
+        },
+      },
+      {
+        event_id: "tool-1",
+        type: "tool_called",
+        publisher: "ava",
+        timestamp: "2026-01-01T00:00:02.000Z",
+        payload: {
+          runId: "run-1",
+          threadId: "thread-1",
+          agentId: "ava",
+          toolCall: { toolCallId: "tc-1", toolName: "shell", args: {} },
+        },
+      },
+      {
+        event_id: "chunk-3",
+        type: "run_chunk",
+        publisher: "ava",
+        timestamp: "2026-01-01T00:00:03.000Z",
+        payload: {
+          runId: "run-1",
+          threadId: "thread-1",
+          agentId: "ava",
+          kind: "text",
+          delta: "C",
+        },
+      },
+    ]);
+
+    expect(collapsed).toHaveLength(3);
+    expect((collapsed[0]?.payload as { delta?: string }).delta).toBe("AB");
+    expect(collapsed[1]?.type).toBe("tool_called");
+    expect((collapsed[2]?.payload as { delta?: string }).delta).toBe("C");
+  });
+
+  it("keeps a merged reasoning segment at the first chunk position", () => {
+    const organizationId = "org-1";
+    const threadId = "thread-1";
+    const agentId = "Quinn Mason";
+    const run: RunState = {
+      id: "run-1",
+      organizationId,
+      agentId,
+      threadId,
+      status: "running",
+      step: "running",
+      summary: "running",
+      startedAt: "2026-05-04T19:07:00.000Z",
+    };
+    const steps = buildReasoningTraceSteps({
+      threadId,
+      agentIdFilter: agentId,
+      conversationName: "Quinn Mason",
+      conversationType: "agent",
+      members: [{ id: agentId, name: "Quinn Mason", kind: "agent" }],
+      runs: [run],
+      organizationId,
+      activity: [
+        {
+          event_id: "run:run-1:running:running:0",
+          type: "run_running",
+          publisher: agentId,
+          timestamp: "2026-05-04T19:07:00.000Z",
+          order: 0,
+          payload: run,
+        },
+        {
+          event_id: "run_chunk:run-1:1:reasoning",
+          type: "run_chunk",
+          publisher: agentId,
+          timestamp: "2026-05-04T19:07:01.000Z",
+          order: 1,
+          payload: { runId: run.id, threadId, agentId, kind: "reasoning", delta: "Thinking." },
+        },
+        {
+          event_id: "run_chunk:run-1:3:reasoning",
+          type: "run_chunk",
+          publisher: agentId,
+          timestamp: "2026-05-04T19:07:03.000Z",
+          order: 3,
+          payload: { runId: run.id, threadId, agentId, kind: "reasoning", delta: " Still thinking." },
+        },
+        {
+          event_id: "tool:called:run-1:tc-1",
+          type: "tool_called",
+          publisher: agentId,
+          timestamp: "2026-05-04T19:07:02.000Z",
+          order: 2,
+          payload: {
+            runId: run.id,
+            threadId,
+            agentId,
+            toolCall: { toolCallId: "tc-1", toolName: "shell", args: {} },
+          },
+        },
+      ],
+    });
+
+    expect(steps.map((step) => step.title)).toEqual([
+      "Run · Running",
+      "Quinn Mason · reasoning",
+      "Quinn Mason · shell",
+    ]);
+    expect(steps.find((step) => step.title === "Quinn Mason · reasoning")?.detail).toBe(
+      "Thinking. Still thinking.",
+    );
+  });
+
   it("keeps reasoning chunks, tool calls, tool results, and text in arrival order", () => {
     const organizationId = "org-1";
     const threadId = "thread-1";
@@ -151,8 +289,8 @@ describe("reasoning-trace ordering", () => {
     expect(steps.map((step) => step.title)).toEqual([
       "Run · Running",
       "Quinn Mason · reasoning",
-      "Quinn Mason · shell",
       "Quinn Mason · reasoning",
+      "Quinn Mason · shell",
       "Quinn Mason · text",
     ]);
     const reasoningSteps = steps.filter((step) => step.title === "Quinn Mason · reasoning");

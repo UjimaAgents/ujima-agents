@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import {
   File as FileIcon,
   FileArchive,
@@ -210,7 +210,7 @@ function findMentionTrigger(value: string, caret: number): MentionTrigger | null
   return { start, end: caret, query };
 }
 
-export function ChatInput({
+function ChatInputComponent({
   placeholder = "Message here or type / for commands",
   onSend,
   onCommand,
@@ -1126,3 +1126,5 @@ export function ChatInput({
     </div>
   );
 }
+
+export const ChatInput = memo(ChatInputComponent);

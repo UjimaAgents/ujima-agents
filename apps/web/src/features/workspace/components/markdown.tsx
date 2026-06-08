@@ -216,7 +216,10 @@ export function Markdown({
   mentionNames?: string[];
   className?: string;
 }) {
-  const html = renderStreamingMarkdown(content, mentionNames);
+  const html = useMemo(
+    () => renderStreamingMarkdown(content, mentionNames),
+    [content, mentionNames],
+  );
 
   return (
     <div
