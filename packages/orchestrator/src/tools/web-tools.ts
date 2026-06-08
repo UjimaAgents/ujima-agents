@@ -117,20 +117,17 @@ async function curlFetch(url: URL, timeoutSeconds: number, maxBytes: number): Pr
   const bin = resolveBinaryPath(CURL_BINARY, 'CURL_BIN_PATH');
   const timeoutMs = Math.max(1, Math.min(timeoutSeconds, 600));
 
-  // Use curl with --max-filesize in MB (curl's unit)
-  const maxMb = Math.ceil(maxBytes / (1024 * 1024)) + 1;
-
   // -sS: silent but show errors on stderr
   // -L: follow redirects (default max 50)
   // -i: include response headers in stdout
   // --max-time: timeout in seconds
-  // --max-filesize: max bytes curl will download (in MB)
+  // --max-filesize: max bytes curl will download
   const args = [
     '-sS',
     '-L',
     '-i',
     '--max-time', String(timeoutMs),
-    '--max-filesize', String(maxMb),
+    '--max-filesize', String(maxBytes),
     '--',
     url.toString(),
   ];

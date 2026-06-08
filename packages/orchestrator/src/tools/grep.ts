@@ -136,8 +136,8 @@ export const grepTool: OrchestratorTool<typeof GrepSchema> = {
       const matchLine = matchEv.lineNumber ?? 0;
 
       // Find adjacent matches for clipping
-      const prevMatch = findPrevMatch(events, i);
-      const nextMatch = findNextMatch(events, i);
+      const prevMatch = findPrevMatch(events, i, relPath);
+      const nextMatch = findNextMatch(events, i, relPath);
 
       // Before-context: walk backwards within radius, stop at prev match
       const before: GrepContextLine[] = [];
@@ -178,18 +178,18 @@ export const grepTool: OrchestratorTool<typeof GrepSchema> = {
       });
     }
 
-    function findPrevMatch(events: RgEvent[], currentIndex: number): number {
+    function findPrevMatch(events: RgEvent[], currentIndex: number, path: string): number {
       for (let j = currentIndex - 1; j >= 0; j--) {
         const ev = events[j] as RgEvent | undefined;
-        if (ev?.type === 'match') return j;
+        if (ev?.type === 'match' && ev.path === path) return j;
       }
       return -1;
     }
 
-    function findNextMatch(events: RgEvent[], currentIndex: number): number {
+    function findNextMatch(events: RgEvent[], currentIndex: number, path: string): number {
       for (let j = currentIndex + 1; j < events.length; j++) {
         const ev = events[j] as RgEvent | undefined;
-        if (ev?.type === 'match') return j;
+        if (ev?.type === 'match' && ev.path === path) return j;
       }
       return -1;
     }

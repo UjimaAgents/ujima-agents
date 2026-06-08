@@ -289,8 +289,8 @@ describe("reasoning-trace ordering", () => {
     expect(steps.map((step) => step.title)).toEqual([
       "Run · Running",
       "Quinn Mason · reasoning",
-      "Quinn Mason · reasoning",
       "Quinn Mason · shell",
+      "Quinn Mason · reasoning",
       "Quinn Mason · text",
     ]);
     const reasoningSteps = steps.filter((step) => step.title === "Quinn Mason · reasoning");
@@ -298,6 +298,152 @@ describe("reasoning-trace ordering", () => {
       "Thinking first. Still thinking. More thinking.",
       " Thinking after tool call.",
     ]);
+  });
+
+  it("sorts a merged tool row at the tool call position, not the result position", () => {
+    const organizationId = "org-1";
+    const threadId = "thread-1";
+    const agentId = "agent-1";
+    const activity: ActivityEvent[] = [
+      {
+        event_id: "tool:called:run-1:tc-1",
+        type: "tool_called",
+        publisher: agentId,
+        timestamp: "2026-05-04T19:07:01.000Z",
+        order: 1,
+        payload: {
+          runId: "run-1",
+          threadId,
+          agentId,
+          toolCall: { toolCallId: "tc-1", toolName: "shell", args: {} },
+        },
+      },
+      {
+        event_id: "run_chunk:run-1:2:text",
+        type: "run_chunk",
+        publisher: agentId,
+        timestamp: "2026-05-04T19:07:02.000Z",
+        order: 2,
+        payload: {
+          runId: "run-1",
+          threadId,
+          agentId,
+          kind: "text",
+          delta: "Text after call.",
+        },
+      },
+      {
+        event_id: "tool:result:run-1:tc-1",
+        type: "tool_result",
+        publisher: agentId,
+        timestamp: "2026-05-04T19:07:03.000Z",
+        order: 3,
+        payload: {
+          runId: "run-1",
+          threadId,
+          agentId,
+          toolResult: {
+            toolCallId: "tc-1",
+            result: { status: "ok" },
+            isError: false,
+          },
+        },
+      },
+    ];
+
+    const steps = buildReasoningTraceSteps({
+      threadId,
+      agentIdFilter: agentId,
+      conversationName: "Agent",
+      conversationType: "agent",
+      members: [{ id: agentId, name: "Agent", kind: "agent" }],
+      activity,
+      runs: [],
+      organizationId,
+    });
+
+    expect(steps.map((step) => step.title)).toEqual([
+      "Agent · shell",
+      "Agent · text",
+    ]);
+  });
+
+  it("merges three sorted-consecutive chunks even when raw activity had separators", () => {
+    const organizationId = "org-1";
+    const threadId = "thread-1";
+    const agentId = "agent-1";
+    const activity: ActivityEvent[] = [
+      {
+        event_id: "run_chunk:run-1:1:reasoning",
+        type: "run_chunk",
+        publisher: agentId,
+        timestamp: "2026-05-04T19:07:01.000Z",
+        order: 1,
+        payload: {
+          runId: "run-1",
+          threadId,
+          agentId,
+          kind: "reasoning",
+          delta: "A",
+        },
+      },
+      {
+        event_id: "tool:called:run-1:tc-1",
+        type: "tool_called",
+        publisher: agentId,
+        timestamp: "2026-05-04T19:07:10.000Z",
+        order: 10,
+        payload: {
+          runId: "run-1",
+          threadId,
+          agentId,
+          toolCall: { toolCallId: "tc-1", toolName: "shell", args: {} },
+        },
+      },
+      {
+        event_id: "run_chunk:run-1:2:reasoning",
+        type: "run_chunk",
+        publisher: agentId,
+        timestamp: "2026-05-04T19:07:02.000Z",
+        order: 2,
+        payload: {
+          runId: "run-1",
+          threadId,
+          agentId,
+          kind: "reasoning",
+          delta: "B",
+        },
+      },
+      {
+        event_id: "run_chunk:run-1:3:reasoning",
+        type: "run_chunk",
+        publisher: agentId,
+        timestamp: "2026-05-04T19:07:03.000Z",
+        order: 3,
+        payload: {
+          runId: "run-1",
+          threadId,
+          agentId,
+          kind: "reasoning",
+          delta: "C",
+        },
+      },
+    ];
+
+    const steps = buildReasoningTraceSteps({
+      threadId,
+      agentIdFilter: agentId,
+      conversationName: "Agent",
+      conversationType: "agent",
+      members: [{ id: agentId, name: "Agent", kind: "agent" }],
+      activity,
+      runs: [],
+      organizationId,
+    });
+
+    const reasoningSteps = steps.filter((step) => step.title === "Agent · reasoning");
+    expect(reasoningSteps).toHaveLength(1);
+    expect(reasoningSteps[0]?.detail).toBe("ABC");
   });
 
   it("shows buffered output for running background jobs", () => {

@@ -269,4 +269,42 @@ describe.skipIf(!rgAvailable())('grep (ripgrep)', () => {
     expect(result.matches[1].after).toHaveLength(1);
     expect(result.matches[1].after[0].line).toBe('gamma');
   });
+
+  it('clips context only against matches in the same file', async () => {
+    root = await mkdtemp(join(tmpdir(), 'ujima-grep-'));
+    await writeFile(
+      join(root, 'a.ts'),
+      'a1\na2\ntarget-a\na4\na5\n',
+      'utf8',
+    );
+    await writeFile(
+      join(root, 'b.ts'),
+      'b1\nb2\ntarget-b\nb4\nb5\n',
+      'utf8',
+    );
+
+    const result = await grepTool.execute({
+      invocation: {
+        organizationId: 'org-1',
+        runId: 'run-10',
+        memberId: 'agent-1',
+        toolCallId: 'call-10',
+        toolId: 'grep',
+        action: 'read',
+        resourceType: 'folder',
+        resourcePath: '.',
+        input: { query: 'target', contextLines: 2 },
+      },
+      team: {
+        workspace: { root },
+        members: [{ id: 'agent-1', name: 'Agent', roles: [] }],
+      },
+    });
+
+    expect(result.count).toBe(2);
+    const aMatch = result.matches.find((match) => match.path.endsWith('a.ts'));
+    const bMatch = result.matches.find((match) => match.path.endsWith('b.ts'));
+    expect(aMatch?.after.map((line) => line.line)).toEqual(['a4', 'a5']);
+    expect(bMatch?.before.map((line) => line.line)).toEqual(['b1', 'b2']);
+  });
 });

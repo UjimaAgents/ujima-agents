@@ -1523,7 +1523,7 @@ export function buildReasoningTraceSteps(input: ReasoningTraceInput): TraceStepD
     }
     if (event.type === "tool_result") {
       const id = toolCallIdFromPayload(event, "tool_result");
-      toolSortIndex.set(id, index);
+      if (!toolSortIndex.has(id)) toolSortIndex.set(id, index);
       const slot = toolMerge.get(id) ?? {};
       slot.result = event;
       toolMerge.set(id, slot);
@@ -1541,6 +1541,7 @@ export function buildReasoningTraceSteps(input: ReasoningTraceInput): TraceStepD
       const previous = ordered[ordered.length - 1];
       if (chunkKey && previous?.chunkKey === chunkKey && previous.sortIndex === index - 1) {
         previous.step = mergeRunChunkStep(previous.step, event);
+        previous.sortIndex = index;
         return;
       }
       ordered.push({
