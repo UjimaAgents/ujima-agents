@@ -1049,8 +1049,13 @@ export class McpRegistryService {
       new Date().toISOString(),
     );
     if (!updated) {
+      // Message starts with "Attachment not found" so mapMcpRouteError
+      // classifies it as 404 ERR_NOT_FOUND, not the catch-all 500.
+      // Without this prefix the missing-attachment branch leaked
+      // through to the route's `ERR_INTERNAL` fallback and broke
+      // the UI's error handling.
       throw new Error(
-        `No attachment for member "${input.memberId}" on server "${server.name}". ` +
+        `Attachment not found for member "${input.memberId}" on server "${server.name}". ` +
           'Attach it first via POST /settings/agents/:agentId/mcps.',
       );
     }

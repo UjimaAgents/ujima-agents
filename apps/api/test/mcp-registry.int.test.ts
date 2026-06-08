@@ -479,7 +479,7 @@ describe('McpRegistryService — Phase 3 MCP integration', () => {
     expect(roleAgnostic.servers[0]?.agentTier).toBeUndefined();
   });
 
-  it('updateAttachmentTier rejects unknown attachment and retired/non-agent members', async () => {
+  it('updateAttachmentTier rejects unknown attachment with a 404-mapped error (not 500)', async () => {
     const fixture = await createFixture();
     tempDirs.push(fixture.archiveRoot);
 
@@ -491,15 +491,23 @@ describe('McpRegistryService — Phase 3 MCP integration', () => {
       command: 'tier-cli',
     });
 
-    // No attachment yet → throws clean error rather than silent no-op.
-    expect(() =>
+    // Error message must start with "Attachment not found" so the
+    // route's mapMcpRouteError returns 404 ERR_NOT_FOUND. Without the
+    // prefix the bot caught a real regression: the missing-attachment
+    // path silently surfaced as ERR_INTERNAL/500.
+    let caught: Error | null = null;
+    try {
       fixture.registry.updateAttachmentTier({
         organizationId: fixture.organizationId,
         memberId: 'agent-x',
         mcpServerId: server.id,
         tier: 'dispatch',
-      }),
-    ).toThrow(/No attachment/);
+      });
+    } catch (err) {
+      caught = err as Error;
+    }
+    expect(caught?.message).toMatch(/^Attachment not found/);
+    expect(mapMcpRouteError(caught).status).toBe(404);
   });
 
   it('attach with scope=both surfaces the MCP to both spirit roles', async () => {
