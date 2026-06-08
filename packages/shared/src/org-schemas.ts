@@ -347,6 +347,15 @@ export const AuditEventSchema = z.object({
   status: AuditStatusSchema.default('ok'),
   createdAt: TimestampSchema,
   metadata: z.record(z.string(), z.unknown()).default({}),
+  // Connector-action unwrap (mcp_connector_dispatch_plan.md §12). These map
+  // 1:1 to the indexed columns added in migration 049 and persist the
+  // (server, tool, args) tuple as first-class columns so operator queries
+  // like "every slack.post_message in 24h" hit the index instead of
+  // JSON-parsing every metadata blob. Optional so legacy non-connector
+  // events round-trip unchanged.
+  serverId: z.string().min(1).optional(),
+  toolName: z.string().min(1).optional(),
+  argsJson: z.string().optional(),
 });
 export type AuditEvent = z.infer<typeof AuditEventSchema>;
 

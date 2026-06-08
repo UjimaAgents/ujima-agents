@@ -3,6 +3,7 @@ import {
   approvalPersistedGrantMatches,
   approvalScopeMatches,
   approvalScopeMatchesPersisted,
+  buildConnectorScope,
   canonicalizeApprovalFamilyScope,
   canonicalizeApprovalGrantScope,
   enrichApprovalScopeForDisplay,
@@ -11,6 +12,7 @@ import {
   formatApprovalRelayMarkdown,
   parseApprovalDisplayScopesFromReason,
   parseApprovalReasonValue,
+  parseConnectorScope,
   parseFilesystemScope,
   shellInvocationDisplayLine,
   stripApprovalScopeDisplayFields,
@@ -179,6 +181,7 @@ describe('parseApprovalDisplayScopesFromReason', () => {
     expect(parseApprovalDisplayScopesFromReason(reason)).toEqual({
       shell: { cwd: '/w', command: 'ls' },
       filesystem: null,
+      connector: null,
     });
   });
 
@@ -188,13 +191,35 @@ describe('parseApprovalDisplayScopesFromReason', () => {
     expect(parseApprovalDisplayScopesFromReason(reason)).toEqual({
       shell: null,
       filesystem: { action: 'read', resourcePath: '/tmp/a.txt' },
+      connector: null,
     });
   });
 
-  it('returns both null when scope missing', () => {
+  it('returns connector only for a connector scope built via buildConnectorScope', () => {
+    const scope = buildConnectorScope({
+      serverId: 'slack',
+      serverDisplayName: 'Slack',
+      toolName: 'post_message',
+      argsPreview: 'channel: "#team"\ntext:    "Migration PR opened"',
+    });
+    const reason = `Tool action requires approval;scope=${encodeURIComponent(scope)}`;
+    expect(parseApprovalDisplayScopesFromReason(reason)).toEqual({
+      shell: null,
+      filesystem: null,
+      connector: {
+        serverId: 'slack',
+        serverDisplayName: 'Slack',
+        toolName: 'post_message',
+        argsPreview: 'channel: "#team"\ntext:    "Migration PR opened"',
+      },
+    });
+  });
+
+  it('returns all null when scope missing', () => {
     expect(parseApprovalDisplayScopesFromReason('no scope here')).toEqual({
       shell: null,
       filesystem: null,
+      connector: null,
     });
   });
 
@@ -202,8 +227,50 @@ describe('parseApprovalDisplayScopesFromReason', () => {
     expect(parseApprovalDisplayScopesFromReason(undefined)).toEqual({
       shell: null,
       filesystem: null,
+      connector: null,
     });
     expect(parseApprovalReasonValue(undefined, 'scope')).toBeNull();
+  });
+});
+
+describe('parseConnectorScope / buildConnectorScope', () => {
+  it('round-trips a connector scope', () => {
+    const original = {
+      serverId: 'slack',
+      serverDisplayName: 'Slack',
+      toolName: 'post_message',
+      argsPreview: 'channel: "#team"',
+    };
+    const built = buildConnectorScope(original);
+    expect(built.startsWith('connector:')).toBe(true);
+    expect(parseConnectorScope(built)).toEqual(original);
+  });
+
+  it('returns null for non-connector prefixes', () => {
+    expect(parseConnectorScope('shell:{"cwd":"/w","command":"ls"}')).toBeNull();
+    expect(parseConnectorScope('filesystem:read:/tmp/a.txt')).toBeNull();
+  });
+
+  it('returns null for malformed JSON', () => {
+    expect(parseConnectorScope('connector:{not json}')).toBeNull();
+  });
+
+  it('returns null when required fields are missing', () => {
+    expect(parseConnectorScope('connector:{"serverId":"slack","toolName":"x"}')).toBeNull();
+  });
+
+  it('argsPreview defaults to empty string when absent', () => {
+    const payload = JSON.stringify({
+      serverId: 'slack',
+      serverDisplayName: 'Slack',
+      toolName: 'post_message',
+    });
+    expect(parseConnectorScope(`connector:${payload}`)).toEqual({
+      serverId: 'slack',
+      serverDisplayName: 'Slack',
+      toolName: 'post_message',
+      argsPreview: '',
+    });
   });
 });
 
