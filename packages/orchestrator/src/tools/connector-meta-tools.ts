@@ -48,6 +48,7 @@ import {
   toModelToolOutput,
 } from '../services/tool-loop-result.js';
 import type { ToolService } from '../services/tool-service.js';
+import type { ConnectorAuditWriter } from '../services/connector-audit.js';
 
 // ───────────────────────────────────────────────────────────────────────
 // Public surface
@@ -102,6 +103,12 @@ export interface ConnectorMetaToolDeps {
   spiritRole: SpiritRole;
   tools: ToolService;
   repo: ConnectorMetaToolRepo;
+  /**
+   * §12 connector audit writer. Optional so tests + legacy callers
+   * don't have to construct one — when absent the meta-tools run
+   * exactly as before, just without writing the new event types.
+   */
+  audit?: ConnectorAuditWriter;
 }
 
 export interface ConnectorMetaToolSet {
@@ -396,6 +403,15 @@ export function buildConnectorMetaTools(
           };
         })
         .filter((t): t is NonNullable<typeof t> => t !== null);
+      // §12.2 audit emit — emit after grant filtering so fetchedToolCount
+      // matches what the model actually saw, not the raw cache size.
+      deps.audit?.toolsListed({
+        organizationId: deps.organizationId,
+        actorMemberId: deps.memberId,
+        runId: deps.runId,
+        serverId: server_id,
+        fetchedToolCount: tools.length,
+      });
       return { server_id, tools };
     },
   });
@@ -485,6 +501,17 @@ export function buildConnectorMetaTools(
           ),
         );
       }
+      // §12.2 audit emit — `_requested` fires BEFORE the gate so we
+      // record the intent even if the gate denies. The matching
+      // `_completed` event fires after ToolService.invoke returns.
+      deps.audit?.invocationRequested({
+        organizationId: deps.organizationId,
+        actorMemberId: deps.memberId,
+        runId: deps.runId,
+        serverId: server.id,
+        toolName: tool_name,
+        args,
+      });
       // Dispatch through the standard ToolService gate. permissionMcpId
       // + the synthetic permissionToolName from mcpPermissionToolName
       // match the shape the legacy MCP-tool path already uses, so
@@ -511,8 +538,25 @@ export function buildConnectorMetaTools(
             args,
           },
         });
+        deps.audit?.invocationCompleted({
+          organizationId: deps.organizationId,
+          actorMemberId: deps.memberId,
+          runId: deps.runId,
+          serverId: server.id,
+          toolName: tool_name,
+          success: true,
+        });
         return toModelToolOutput(result);
       } catch (err) {
+        deps.audit?.invocationCompleted({
+          organizationId: deps.organizationId,
+          actorMemberId: deps.memberId,
+          runId: deps.runId,
+          serverId: server.id,
+          toolName: tool_name,
+          success: false,
+          errorMessage: err instanceof Error ? err.message : String(err),
+        });
         return toModelToolErrorOutput(err);
       }
     },

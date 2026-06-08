@@ -59,6 +59,7 @@ import {
 import type { SpiritMcpPool } from './spirit-types.js';
 import { buildConnectorMetaTools } from '../tools/connector-meta-tools.js';
 import type { ToolService } from './tool-service.js';
+import { createConnectorAuditWriter } from './connector-audit.js';
 
 export interface ConnectorSpawnV2Services {
   mcpPool: SpiritMcpPool;
@@ -368,6 +369,7 @@ export async function buildMcpToolDefinitionsV2(
     spiritRole: ctx.role,
     tools: services.tools,
     repo: services.repo,
+    audit: createConnectorAuditWriter({ repo: services.repo }),
   });
 
   const toolSet: ToolSet = {

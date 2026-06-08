@@ -9,6 +9,7 @@ import {
   formatPersistedApprovalGrantReason,
   orgRoom,
   parseApprovalReasonValue,
+  parseConnectorScope,
   runRoom,
   stripApprovalScopeDisplayFields,
   threadRoom,
@@ -19,6 +20,7 @@ import {
 import type { RealtimeService } from './context.js';
 import type { ApiRepository } from './repository-reader.js';
 import { isLiveStatus } from './live-status.js';
+import { createConnectorAuditWriter } from './connector-audit.js';
 
 export interface ApprovalRequestInput {
   organizationId: string;
@@ -38,6 +40,13 @@ export interface ApprovalResolveInput {
   status: 'approved' | 'rejected';
   resolution?: 'allow_once' | 'allow_always' | 'allow_family' | 'reject';
   reason?: string;
+  /**
+   * Member id of the human resolver. Optional so callers without an
+   * authenticated member context can still resolve (system resolvers,
+   * background jobs, etc.). When set the §12.2
+   * connector_invocation_resolved audit row carries it as actor_id.
+   */
+  resolverMemberId?: string;
 }
 
 export type ResumeRun = (
@@ -206,6 +215,11 @@ export class ApprovalService {
         { organizationId: input.organizationId, threadId: run?.threadId, approval: resolved },
         rooms,
       );
+      // §12.2 audit emit — fires only when the approval was a connector
+      // action (scope=connector:{json} in the reason). Non-connector
+      // approvals (shell, filesystem, generic) keep their existing
+      // approval-row + realtime event as the only record.
+      emitConnectorResolvedIfApplicable(this.repo, resolved, input);
     }
 
     if (approval.status === 'rejected' && approval.runId) {
@@ -285,6 +299,34 @@ function pendingApprovalMatchesResolution(input: {
     persistedScope,
     resolution === 'allow_family' ? 'family' : 'grant',
   );
+}
+
+function emitConnectorResolvedIfApplicable(
+  repo: ApiRepository,
+  resolved: ApprovalRequest,
+  input: ApprovalResolveInput,
+): void {
+  // The connector tuple rides in the approval row's reason field as
+  // `scope=connector:{json}`. parseConnectorScope returns null for
+  // shell/filesystem/generic approvals so we never emit a connector
+  // event for non-connector resolutions.
+  const rawScope = resolved.reason
+    ? parseApprovalReasonValue(resolved.reason, 'scope') ?? undefined
+    : undefined;
+  if (!rawScope) return;
+  const connector = parseConnectorScope(rawScope);
+  if (!connector) return;
+  const writer = createConnectorAuditWriter({ repo });
+  writer.invocationResolved({
+    organizationId: resolved.organizationId,
+    resolverMemberId: input.resolverMemberId,
+    approvalId: resolved.id,
+    runId: resolved.runId,
+    serverId: connector.serverId,
+    toolName: connector.toolName,
+    resolution: input.resolution ?? (input.status === 'rejected' ? 'reject' : 'allow_once'),
+    scope: rawScope,
+  });
 }
 
 function fallbackApprovalScope(approval: ApprovalRequest | null | undefined): string | undefined {

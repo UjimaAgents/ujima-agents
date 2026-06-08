@@ -1471,6 +1471,39 @@ const MIGRATIONS: {id: string; up: string}[] = [
         ON audit_events(server_id, tool_name);
     `,
   },
+  {
+    // Bidirectional tier-curation suggestions store
+    // (mcp_connector_dispatch_plan.md §9.4 / PR 9).
+    //
+    // PR 8 scaffolds the table + writer surface but does no analysis;
+    // the table stays empty in production until PR 9 ships the audit-
+    // driven demote/promote candidate logic. Having the schema land
+    // ahead of the analysis means the settings panel ("Show usage")
+    // can render a zero-state without a placeholder migration, and
+    // PR 9 doesn't bundle a schema change with the analytics rollout.
+    //
+    // No CHECK constraint on `direction` — SQLite ALTER TABLE doesn't
+    // support adding one cleanly and the Zod layer
+    // (TierCurationSuggestionSchema) enforces the enum on every write.
+    id: '050_tier_curation_suggestions',
+    up: `
+      CREATE TABLE IF NOT EXISTS tier_curation_suggestions (
+        id                TEXT PRIMARY KEY,
+        organization_id   TEXT NOT NULL,
+        member_id         TEXT NOT NULL,
+        mcp_server_id     TEXT NOT NULL,
+        direction         TEXT NOT NULL,
+        rationale         TEXT NOT NULL DEFAULT '',
+        signal_metadata   TEXT NOT NULL DEFAULT '{}',
+        status            TEXT NOT NULL DEFAULT 'pending',
+        created_at        TEXT NOT NULL,
+        resolved_at       TEXT,
+        UNIQUE (organization_id, member_id, mcp_server_id, direction, status)
+      );
+      CREATE INDEX IF NOT EXISTS idx_tier_curation_org
+        ON tier_curation_suggestions(organization_id, status, created_at);
+    `,
+  },
 ];
 
 export interface DbOptions {

@@ -220,7 +220,7 @@ ${activeMemories
     let mcpToolDefs: ToolSet;
     let attachedMcpServers: McpServerSummary[];
     let availableConnectors: string | undefined;
-    if (isMcpDispatchEnabled() && this.mcpPool) {
+    if (isMcpDispatchEnabled(mcpCtx.organizationId) && this.mcpPool) {
       const v2 = await buildMcpToolDefinitionsV2(
         { mcpPool: this.mcpPool, repo: this.repo, tools: this.tools },
         mcpCtx,

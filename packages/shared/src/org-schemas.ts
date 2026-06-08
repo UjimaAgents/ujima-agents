@@ -747,6 +747,33 @@ export const ScheduledJobSchema = z.object({
 });
 export type ScheduledJob = z.infer<typeof ScheduledJobSchema>;
 
+// Tier curation suggestion (mcp_connector_dispatch_plan.md §9.4 / PR 9).
+//
+// A row exists when the curation job has flagged a (member, server)
+// attachment as a demote or promote candidate. PR 8 ships the
+// schema + persistence; PR 9 fills the analysis. `signalMetadata`
+// is a per-direction shape: demote candidates carry idle-run counts,
+// promote candidates carry invocation-volume and error-rate stats.
+export const TierCurationDirectionSchema = z.enum(['demote', 'promote']);
+export type TierCurationDirection = z.infer<typeof TierCurationDirectionSchema>;
+
+export const TierCurationStatusSchema = z.enum(['pending', 'applied', 'dismissed']);
+export type TierCurationStatus = z.infer<typeof TierCurationStatusSchema>;
+
+export const TierCurationSuggestionSchema = z.object({
+  id: IdSchema,
+  organizationId: IdSchema,
+  memberId: IdSchema,
+  mcpServerId: IdSchema,
+  direction: TierCurationDirectionSchema,
+  rationale: z.string().default(''),
+  signalMetadata: z.record(z.string(), z.unknown()).default({}),
+  status: TierCurationStatusSchema.default('pending'),
+  createdAt: TimestampSchema,
+  resolvedAt: TimestampSchema.optional(),
+});
+export type TierCurationSuggestion = z.infer<typeof TierCurationSuggestionSchema>;
+
 export const CreateScheduledJobInputSchema = z.object({
   name: z.string().min(1),
   cronExpression: CronExpressionSchema,
