@@ -5,6 +5,7 @@ import {
   classifyTool,
   evaluatePolicy,
   resolveClassification,
+  type AgentMcpAttachment,
   type AgentToolAttachment,
   type McpAttachmentScope,
   type McpServer,
@@ -546,20 +547,25 @@ export class McpRegistryService {
     // The catalog must mirror that — without the all-scope set, a
     // worker attachment + supervisor-only grant looked unreachable in
     // the supervisor view even though the runtime exposes it.
-    const agentMcpAttachmentsAnyScope = agentId
-      ? new Set(
-          this.repo
-            .listAgentMcpAttachments(organizationId, agentId)
-            .map((a) => a.mcpServerId),
-        )
+    const agentAttachmentRows = agentId
+      ? this.repo.listAgentMcpAttachments(organizationId, agentId)
       : null;
-    const agentMcpAttachments = agentId
+    const agentMcpAttachmentsAnyScope = agentAttachmentRows
+      ? new Set(agentAttachmentRows.map((a) => a.mcpServerId))
+      : null;
+    const agentMcpAttachments = agentAttachmentRows
       ? new Set(
-          this.repo
-            .listAgentMcpAttachments(organizationId, agentId)
+          agentAttachmentRows
             .filter((a) => matchesRole(a.scope))
             .map((a) => a.mcpServerId),
         )
+      : null;
+    // PR 6 — tier lookup for the active agent. Surfaced verbatim per
+    // server on the catalog response so the Agents tab can render the
+    // toggle without a second round trip. Map only populated when
+    // agentId is set; absent for the role-agnostic planning view.
+    const agentTierByServer = agentAttachmentRows
+      ? new Map(agentAttachmentRows.map((a) => [a.mcpServerId, a.tier]))
       : null;
     // For each server: tool-grant set + whether the agent is in "allowlist
     // mode" (has any per-tool rows for that server with a matching scope).
@@ -730,6 +736,7 @@ export class McpRegistryService {
         };
       });
 
+      const agentTier = agentTierByServer?.get(server.id);
       out.push({
         id: server.id,
         name: server.name,
@@ -738,6 +745,7 @@ export class McpRegistryService {
         toolCount: tools.length,
         allowlistAgents: [...allowlistAgents],
         tools,
+        ...(agentTier ? { agentTier } : {}),
       });
     }
     return {
@@ -996,6 +1004,57 @@ export class McpRegistryService {
       memberId,
       mcpServerId,
     );
+  }
+
+  /**
+   * Flip the tier of an existing (member, server) attachment row.
+   * Mirrors the §13.3 rollback contract: tier='dispatch' rows are
+   * harmless metadata when the V2 spawn flag is off (the legacy path
+   * is tier-blind). Wraps PR 1's `repo.updateAttachmentTier`.
+   *
+   * Validates org + server + member up front so a missing row, a
+   * disabled server, or a retired agent throws cleanly instead of
+   * silently no-op'ing through the repo's UPDATE.
+   */
+  updateAttachmentTier(input: {
+    organizationId: string;
+    memberId: string;
+    mcpServerId: string;
+    tier: AgentMcpAttachment['tier'];
+  }): AgentMcpAttachment {
+    this.requireOrganization(input.organizationId);
+    const server = this.requireServer(input.organizationId, input.mcpServerId);
+    if (server.status === 'disabled') {
+      throw new Error(`MCP server "${server.name}" is disabled`);
+    }
+    const member = this.repo.getMember(input.organizationId, input.memberId);
+    if (!member) {
+      throw new Error(`Member not found: ${input.memberId}`);
+    }
+    if (member.kind !== 'agent') {
+      throw new Error(
+        `Cannot update tier on non-agent member "${input.memberId}"`,
+      );
+    }
+    if (member.retiredAt) {
+      throw new Error(
+        `Cannot update tier on retired member "${input.memberId}"`,
+      );
+    }
+    const updated = this.repo.updateAttachmentTier(
+      input.organizationId,
+      input.memberId,
+      input.mcpServerId,
+      input.tier,
+      new Date().toISOString(),
+    );
+    if (!updated) {
+      throw new Error(
+        `No attachment for member "${input.memberId}" on server "${server.name}". ` +
+          'Attach it first via POST /settings/agents/:agentId/mcps.',
+      );
+    }
+    return updated;
   }
 
   listAttachments(organizationId: string, memberId: string) {

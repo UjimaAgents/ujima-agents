@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
+  AgentMcpAttachmentResponse,
   AgentToolGrantsResponse,
   CatalogAgentView,
   GovernancePolicyResponse,
@@ -10,7 +11,7 @@ import type {
   McpCatalogServer,
   ToolClassificationResponse,
 } from "@ujima/api-schema";
-import type { RiskDefaults, ToolRiskClass } from "@ujima/shared";
+import type { McpAttachmentTier, RiskDefaults, ToolRiskClass } from "@ujima/shared";
 import { emptyRiskDefaults } from "@ujima/shared";
 import { settingsFetch, settingsFetchVoid } from "@/features/settings/shared/settings-api";
 import { buildCatalogUrl } from "./build-catalog-url";
@@ -45,6 +46,17 @@ export interface UseMcpCatalog {
     agentId: string,
     serverId: string,
     toolName: string,
+  ) => Promise<void>;
+  /**
+   * PR 6 — flip the agent's attachment tier on a server. Updates the
+   * (member, server) attachment row to 'native' (typed-palette path)
+   * or 'dispatch' (meta-tool dispatch path). Harmless metadata when
+   * the V2 spawn flag is off — the legacy path is tier-blind.
+   */
+  updateAttachmentTier: (
+    agentId: string,
+    serverId: string,
+    tier: McpAttachmentTier,
   ) => Promise<void>;
 }
 
@@ -195,6 +207,22 @@ export function useMcpCatalog(orgId: string): UseMcpCatalog {
     [orgId, refresh],
   );
 
+  const updateAttachmentTier = useCallback(
+    async (agentId: string, serverId: string, tier: McpAttachmentTier) => {
+      await settingsFetch<AgentMcpAttachmentResponse>(
+        `/api/settings/agents/${encodeURIComponent(agentId)}/mcps/${encodeURIComponent(serverId)}/tier`,
+        {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ organizationId: orgId, tier }),
+        },
+        "Failed to update connector tier.",
+      );
+      await refresh(viewIdRef.current, viewRoleRef.current);
+    },
+    [orgId, refresh],
+  );
+
   // Convenience: load per-agent grants list directly. Used by Agents tab
   // when admins want a flat list without going through the full catalog.
   return {
@@ -210,6 +238,7 @@ export function useMcpCatalog(orgId: string): UseMcpCatalog {
     setToolClassification,
     grantToolToAgent,
     revokeToolFromAgent,
+    updateAttachmentTier,
   };
 }
 

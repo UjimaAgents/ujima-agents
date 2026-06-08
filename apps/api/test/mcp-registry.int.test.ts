@@ -432,6 +432,76 @@ describe('McpRegistryService — Phase 3 MCP integration', () => {
     ).toHaveLength(0);
   });
 
+  it('updateAttachmentTier flips tier between native and dispatch; getCatalog surfaces it per-agent', async () => {
+    const fixture = await createFixture();
+    tempDirs.push(fixture.archiveRoot);
+
+    const server = fixture.registry.create({
+      organizationId: fixture.organizationId,
+      createdBy: fixture.ownerId,
+      name: 'tier-server',
+      transport: 'stdio',
+      command: 'tier-cli',
+    });
+    fixture.registry.attach({
+      organizationId: fixture.organizationId,
+      memberId: 'agent-x',
+      mcpServerId: server.id,
+    });
+
+    // Default tier on a freshly attached row is 'native' (matches the
+    // legacy spawn-time behavior). getCatalog with an agentId echoes
+    // it back per-server so the Agents tab can render the toggle.
+    const beforeCatalog = fixture.registry.getCatalog(
+      fixture.organizationId,
+      'agent-x',
+    );
+    expect(beforeCatalog.servers[0]?.agentTier).toBe('native');
+
+    // Flip to dispatch.
+    const flipped = fixture.registry.updateAttachmentTier({
+      organizationId: fixture.organizationId,
+      memberId: 'agent-x',
+      mcpServerId: server.id,
+      tier: 'dispatch',
+    });
+    expect(flipped.tier).toBe('dispatch');
+
+    const afterCatalog = fixture.registry.getCatalog(
+      fixture.organizationId,
+      'agent-x',
+    );
+    expect(afterCatalog.servers[0]?.agentTier).toBe('dispatch');
+
+    // Role-agnostic catalog (no agentId) omits agentTier — it's a per-
+    // agent perspective field, not a server-row field.
+    const roleAgnostic = fixture.registry.getCatalog(fixture.organizationId);
+    expect(roleAgnostic.servers[0]?.agentTier).toBeUndefined();
+  });
+
+  it('updateAttachmentTier rejects unknown attachment and retired/non-agent members', async () => {
+    const fixture = await createFixture();
+    tempDirs.push(fixture.archiveRoot);
+
+    const server = fixture.registry.create({
+      organizationId: fixture.organizationId,
+      createdBy: fixture.ownerId,
+      name: 'tier-server-2',
+      transport: 'stdio',
+      command: 'tier-cli',
+    });
+
+    // No attachment yet → throws clean error rather than silent no-op.
+    expect(() =>
+      fixture.registry.updateAttachmentTier({
+        organizationId: fixture.organizationId,
+        memberId: 'agent-x',
+        mcpServerId: server.id,
+        tier: 'dispatch',
+      }),
+    ).toThrow(/No attachment/);
+  });
+
   it('attach with scope=both surfaces the MCP to both spirit roles', async () => {
     const fixture = await createFixture();
     tempDirs.push(fixture.archiveRoot);

@@ -7,7 +7,7 @@ import type {
   McpCatalogServer,
   McpCatalogTool,
 } from "@ujima/api-schema";
-import type { Member, ToolRiskClass } from "@ujima/shared";
+import type { McpAttachmentTier, Member, ToolRiskClass } from "@ujima/shared";
 import type { CatalogRole, UseMcpCatalog } from "./use-mcp-catalog";
 import { McpEffectiveChip } from "./mcp-effective-chip";
 
@@ -22,6 +22,60 @@ const RISK_DOT: Record<ToolRiskClass, string> = {
   write: "bg-amber-500",
   destructive: "bg-rose-500",
 };
+
+/**
+ * Per-server attachment tier toggle. Shows only when the active agent
+ * actually has the server attached (catalog populates `agentTier` only
+ * for the agent perspective). The label uses non-MCP-jargon copy
+ * ("Always on" / "On demand") so admins don't need to know the
+ * underlying §17.5 vocabulary to set it correctly.
+ *
+ * Wrapped with `e.stopPropagation()` so clicking the toggle doesn't
+ * trigger the surrounding row's expand/collapse handler.
+ */
+function TierToggle({
+  tier,
+  disabled,
+  onChange,
+}: {
+  tier: McpAttachmentTier;
+  disabled: boolean;
+  onChange: (next: McpAttachmentTier) => void;
+}) {
+  const options: { value: McpAttachmentTier; label: string }[] = [
+    { value: "native", label: "Always on" },
+    { value: "dispatch", label: "On demand" },
+  ];
+  return (
+    <div
+      role="radiogroup"
+      aria-label="Attachment tier"
+      className="inline-flex overflow-hidden rounded-full border border-zinc-200 text-[11px] dark:border-zinc-800"
+      onClick={(e) => e.stopPropagation()}
+    >
+      {options.map((opt) => {
+        const selected = opt.value === tier;
+        return (
+          <button
+            key={opt.value}
+            type="button"
+            role="radio"
+            aria-checked={selected}
+            disabled={disabled || selected}
+            onClick={() => onChange(opt.value)}
+            className={`px-2 py-0.5 transition ${
+              selected
+                ? "bg-zinc-800 text-white dark:bg-zinc-200 dark:text-zinc-900"
+                : "text-zinc-600 hover:bg-zinc-100 disabled:opacity-50 dark:text-zinc-300 dark:hover:bg-zinc-900"
+            }`}
+          >
+            {opt.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 export function AgentsSubtab({ agents, catalog }: Props) {
   const [activeAgentId, setActiveAgentId] = useState<string>(agents[0]?.id ?? "");
@@ -97,6 +151,21 @@ export function AgentsSubtab({ agents, catalog }: Props) {
     setBusy(`${serverId}:${toolName}`);
     try {
       await catalog.revokeToolFromAgent(activeAgentId, serverId, toolName);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const handleTierChange = async (
+    serverId: string,
+    nextTier: McpAttachmentTier,
+  ) => {
+    setError(null);
+    setBusy(`tier:${serverId}`);
+    try {
+      await catalog.updateAttachmentTier(activeAgentId, serverId, nextTier);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -209,6 +278,15 @@ export function AgentsSubtab({ agents, catalog }: Props) {
                     </span>
                   </div>
                   <div className="flex items-center gap-2 text-[11px]">
+                    {server.agentTier ? (
+                      <TierToggle
+                        tier={server.agentTier}
+                        disabled={busy === `tier:${server.id}`}
+                        onChange={(next) =>
+                          void handleTierChange(server.id, next)
+                        }
+                      />
+                    ) : null}
                     {inAllowlistMode ? (
                       <span className="rounded-full bg-violet-50 px-1.5 py-0.5 text-violet-700 dark:bg-violet-950/40 dark:text-violet-300">
                         {granted} granted
