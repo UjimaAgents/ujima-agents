@@ -183,7 +183,7 @@ export function enrichToolApprovalScopeForRequest(
  * field is missing — the approval card then renders the legacy
  * variant rather than crashing on a partial payload.
  */
-function buildConnectorActionScope(input: ToolInvocationInput): string {
+export function buildConnectorActionScope(input: ToolInvocationInput): string {
   const data = (input.input ?? {}) as Record<string, unknown>;
   const serverId =
     input.permissionMcpId ??

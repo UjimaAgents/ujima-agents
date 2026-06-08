@@ -32,6 +32,7 @@ import type { AgentDelegateResult } from "../tools/types.js";
 import {
   approvalWaitResult,
   buildToolApprovalScope,
+  buildConnectorActionScope,
   enrichToolApprovalScopeForRequest,
   type ToolInvocationInput,
   type ToolInvocationResult,
@@ -740,7 +741,17 @@ export class ToolServiceImpl implements ToolService {
     preparedInvocation: ToolInvocationInput,
     approvalScope: string,
   ): ToolInvocationResult {
-    const displayScope = enrichToolApprovalScopeForRequest(approvalScope, preparedInvocation);
+    // Mirror the outer gate's PR 7 connector_action variant — when the
+    // gated call is an MCP tool, encode the (server, tool, args) tuple
+    // via buildConnectorActionScope so approval-card-data parses the
+    // connector branch and renders the §5.2 box. The inner gate fires
+    // when resolveMcpPolicy returns require_approval from the blob
+    // policy; the outer gate handles the row-table path. Both need to
+    // produce the same approval-row shape.
+    const displayScope =
+      preparedInvocation.toolId === 'mcp'
+        ? buildConnectorActionScope(preparedInvocation)
+        : enrichToolApprovalScopeForRequest(approvalScope, preparedInvocation);
     const approval = this.approvals.requestApproval({
       organizationId: preparedInvocation.organizationId,
       runId: preparedInvocation.runId,
