@@ -217,6 +217,11 @@ ${activeMemories
     // legacy spawn path and the V2 spawn path. Tier is read inside
     // V2 only — the caller stays tier-blind. Flag off → legacy method
     // runs byte-for-byte unchanged.
+    //
+    // The wake-run path uses buildMcpToolDefinitionsRouted (via the
+    // AiService resolver); the run-loop entry inlines the V2 call
+    // here so it can surface `catalogText` to the system prompt
+    // (the resolver interface only forwards toolSet + servers).
     let mcpToolDefs: ToolSet;
     let attachedMcpServers: McpServerSummary[];
     let availableConnectors: string | undefined;
@@ -782,6 +787,47 @@ ${activeMemories
       [orgRoom(saved.organizationId), channelRoom(saved.channelId ?? '')],
     );
     return saved;
+  }
+
+  /**
+   * Flag-routed MCP tool palette resolver. Wraps both legacy
+   * `buildMcpToolDefinitions` and V2 `buildMcpToolDefinitionsV2` so the
+   * AiService wake-run resolver (`setMcpToolResolver` in services/
+   * index.ts) routes through the same gate as the run-loop entry at
+   * line 223 above.
+   *
+   * Without this wrapper the wake-run path (DM → AiService →
+   * generateRunReply → mcpToolResolver) hit legacy
+   * `buildMcpToolDefinitions` unconditionally — so a DM to an agent
+   * with dispatch-tier attachments saw zero `connector_*` audit rows,
+   * never registered the meta-tools in the palette, and silently
+   * routed the dispatch tier through the legacy path. §3.5 rule 3
+   * requires the flag check to gate every spawn surface, not just
+   * the spirit-run entry.
+   *
+   * Returns only `{ toolSet, servers }` to match McpToolResolver's
+   * signature. The V2 catalogText still threads through the run-loop
+   * entry (line 230) into the system prompt; the wake-run path
+   * doesn't currently surface it, so an agent on a fresh wake-run can
+   * still call `get_connector_tools(serverId)` to discover dispatch
+   * tools even without the catalog block in its prompt.
+   */
+  async buildMcpToolDefinitionsRouted(ctx: {
+    organizationId: string;
+    memberId: string;
+    runId: string;
+    threadId: string;
+    taskSessionId: string;
+    role: SpiritRole;
+  }): Promise<{ toolSet: ToolSet; servers: McpServerSummary[] }> {
+    if (isMcpDispatchEnabled(ctx.organizationId) && this.mcpPool) {
+      const v2 = await buildMcpToolDefinitionsV2(
+        { mcpPool: this.mcpPool, repo: this.repo, tools: this.tools },
+        ctx,
+      );
+      return { toolSet: v2.toolSet, servers: v2.servers };
+    }
+    return this.buildMcpToolDefinitions(ctx);
   }
 
   async buildMcpToolDefinitions(ctx: {

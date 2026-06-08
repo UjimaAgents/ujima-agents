@@ -762,7 +762,12 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   // a Playwright MCP attached wakes via @mention and answers "I don't
   // have a Playwright tool" because the AI-SDK palette and the system
   // prompt only ever saw the baseline channel tools.
-  ai.setMcpToolResolver((ctx) => spirits.buildMcpToolDefinitions(ctx));
+  // Routes through the §3.5 rule 3 flag gate: dispatch-enabled orgs
+  // get the V2 spawn (catalog + meta-tools + §12 audit emitters);
+  // others get byte-for-byte legacy. Without this the wake-run path
+  // bypassed the flag and DM → agent calls produced zero connector_*
+  // events even when V2 was on.
+  ai.setMcpToolResolver((ctx) => spirits.buildMcpToolDefinitionsRouted(ctx));
   const runs = spirits;
   resumeRun = async (orgId, runId, allowRun = true, approvalScope) =>
     spirits.resumeAfterApproval(orgId, runId, allowRun, approvalScope);
