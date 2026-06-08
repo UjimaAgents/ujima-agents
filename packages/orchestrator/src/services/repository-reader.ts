@@ -350,6 +350,16 @@ export interface ApiRepository extends ConversationRepository {
   listMcpServers(organizationId: string): McpServer[];
   deleteMcpServer(organizationId: string, serverId: string): void;
   saveAgentMcpAttachment(attachment: AgentMcpAttachment): AgentMcpAttachment;
+  // PR 1 substrate; surfaced on the interface in PR 6 so the API
+  // service layer (McpRegistryService.updateAttachmentTier) can call
+  // it via the abstract repo type rather than the concrete Repository.
+  updateAttachmentTier(
+    organizationId: string,
+    memberId: string,
+    mcpServerId: string,
+    tier: AgentMcpAttachment['tier'],
+    updatedAt: string,
+  ): AgentMcpAttachment | null;
   deleteAgentMcpAttachment(
     organizationId: string,
     memberId: string,

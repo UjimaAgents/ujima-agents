@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import {
   AgentMcpAttachInputSchema,
+  AgentMcpAttachmentResponseSchema,
   AgentMcpAttachmentsResponseSchema,
   AgentToolGrantsResponseSchema,
   ApiErrorSchema,
@@ -18,6 +19,7 @@ import {
   McpToolsResponseSchema,
   TestMcpResponseSchema,
   ToolClassificationResponseSchema,
+  UpdateAttachmentTierRequestSchema,
   UpdateMcpServerRequestSchema,
   UpdateToolClassificationRequestSchema,
 } from '@ujima/api-schema';
@@ -316,6 +318,33 @@ export function registerMcpRoutes(
     },
   });
 
+  // PR 6 — tier toggle.
+  registerOrgSettingsRoute(app, 'patch', '/settings/agents/:agentId/mcps/:mcpServerId/tier', auth, {
+    tags: ['MCP'],
+    description:
+      "Update an agent's attachment tier on an MCP server. " +
+      "'native' = the typed-palette path (legacy behavior, default for new attachments). " +
+      "'dispatch' = the meta-tool dispatch path (catalog text + get_connector_tools / invoke_connector_tool). " +
+      "Harmless metadata when the V2 spawn flag is off — the legacy spawn path is tier-blind.",
+    params: AgentMcpParamsSchema,
+    body: UpdateAttachmentTierRequestSchema,
+    response: { 200: AgentMcpAttachmentResponseSchema, ...mcpWriteErrors },
+    organizationId: (req) => (req.body as { organizationId: string }).organizationId,
+    onError: mcpHandle,
+    handler: async (req, organizationId) => {
+      const params = req.params as { agentId: string; mcpServerId: string };
+      const body = req.body as z.infer<typeof UpdateAttachmentTierRequestSchema>;
+      return {
+        attachment: mcpRegistry.updateAttachmentTier({
+          organizationId,
+          memberId: params.agentId,
+          mcpServerId: params.mcpServerId,
+          tier: body.tier,
+        }),
+      };
+    },
+  });
+
   // ---------------- Per-tool grants ----------------------------------
 
   registerOrgSettingsRoute(app, 'get', '/settings/agents/:agentId/tools', auth, {
@@ -410,7 +439,8 @@ export function mapMcpRouteError(err: unknown): {
     message.startsWith('Organization not found') ||
     message.startsWith('MCP server not found') ||
     message.startsWith('Member not found') ||
-    message.startsWith('Tool not found')
+    message.startsWith('Tool not found') ||
+    message.startsWith('Attachment not found')
   ) {
     return { status: 404, code: 'ERR_NOT_FOUND', message };
   }

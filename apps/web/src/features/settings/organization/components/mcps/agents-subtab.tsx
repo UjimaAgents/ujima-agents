@@ -1,13 +1,13 @@
 "use client";
 
 import { Check, ChevronDown, ChevronRight, X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import type {
   CatalogAgentView,
   McpCatalogServer,
   McpCatalogTool,
 } from "@ujima/api-schema";
-import type { Member, ToolRiskClass } from "@ujima/shared";
+import type { McpAttachmentTier, Member, ToolRiskClass } from "@ujima/shared";
 import type { CatalogRole, UseMcpCatalog } from "./use-mcp-catalog";
 import { McpEffectiveChip } from "./mcp-effective-chip";
 
@@ -22,6 +22,74 @@ const RISK_DOT: Record<ToolRiskClass, string> = {
   write: "bg-amber-500",
   destructive: "bg-rose-500",
 };
+
+/**
+ * Per-server attachment tier toggle. Shows only when the active agent
+ * actually has the server attached (catalog populates `agentTier` only
+ * for the agent perspective). The label uses non-MCP-jargon copy
+ * ("Always on" / "On demand") so admins don't need to know the
+ * underlying §17.5 vocabulary to set it correctly.
+ *
+ * Built on native <input type="radio"> rather than a custom
+ * role="radiogroup" so the browser provides the ARIA radio
+ * keyboard pattern (arrow-key navigation, single tab stop, screen
+ * reader semantics) for free. An earlier custom-button version
+ * disabled the currently-selected option, which removed the only
+ * focusable control in the group and left keyboard users unable to
+ * change tiers.
+ *
+ * Rendered as a sibling of the row's expand button (not nested) so
+ * the markup stays valid HTML (no <button> inside another <button>).
+ */
+function TierToggle({
+  tier,
+  disabled,
+  onChange,
+}: {
+  tier: McpAttachmentTier;
+  disabled: boolean;
+  onChange: (next: McpAttachmentTier) => void;
+}) {
+  // Unique `name` per instance so multiple toggles on the same page
+  // don't share a radio group (which would let one row's selection
+  // deselect another's).
+  const groupName = useId();
+  const options: { value: McpAttachmentTier; label: string }[] = [
+    { value: "native", label: "Always on" },
+    { value: "dispatch", label: "On demand" },
+  ];
+  return (
+    <fieldset
+      aria-label="Attachment tier"
+      disabled={disabled}
+      className="m-0 inline-flex overflow-hidden rounded-full border border-zinc-200 p-0 text-[11px] dark:border-zinc-800"
+    >
+      {options.map((opt) => {
+        const selected = opt.value === tier;
+        return (
+          <label
+            key={opt.value}
+            className={`cursor-pointer px-2 py-0.5 transition focus-within:ring-2 focus-within:ring-zinc-400 focus-within:ring-offset-0 ${
+              selected
+                ? "bg-zinc-800 text-white dark:bg-zinc-200 dark:text-zinc-900"
+                : "text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-900"
+            } ${disabled ? "cursor-not-allowed opacity-60" : ""}`}
+          >
+            <input
+              type="radio"
+              name={groupName}
+              value={opt.value}
+              checked={selected}
+              onChange={() => onChange(opt.value)}
+              className="sr-only"
+            />
+            {opt.label}
+          </label>
+        );
+      })}
+    </fieldset>
+  );
+}
 
 export function AgentsSubtab({ agents, catalog }: Props) {
   const [activeAgentId, setActiveAgentId] = useState<string>(agents[0]?.id ?? "");
@@ -97,6 +165,21 @@ export function AgentsSubtab({ agents, catalog }: Props) {
     setBusy(`${serverId}:${toolName}`);
     try {
       await catalog.revokeToolFromAgent(activeAgentId, serverId, toolName);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const handleTierChange = async (
+    serverId: string,
+    nextTier: McpAttachmentTier,
+  ) => {
+    setError(null);
+    setBusy(`tier:${serverId}`);
+    try {
+      await catalog.updateAttachmentTier(activeAgentId, serverId, nextTier);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -188,14 +271,19 @@ export function AgentsSubtab({ agents, catalog }: Props) {
                 key={server.id}
                 className="overflow-hidden rounded-lg border border-zinc-200 dark:border-zinc-800"
               >
-                <button
-                  type="button"
-                  onClick={() =>
-                    setExpanded((p) => ({ ...p, [server.id]: !isOpen }))
-                  }
-                  className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm transition hover:bg-zinc-50 dark:hover:bg-zinc-950"
-                >
-                  <div className="flex items-center gap-2">
+                {/* Split into siblings — the expand button cannot contain
+                    other interactive elements (nested <button> is
+                    invalid HTML and breaks keyboard / AT users). */}
+                <div className="flex w-full items-center gap-2 px-3 py-2 text-sm">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setExpanded((p) => ({ ...p, [server.id]: !isOpen }))
+                    }
+                    aria-expanded={isOpen}
+                    aria-controls={`server-tools-${server.id}`}
+                    className="flex flex-1 items-center gap-2 text-left transition hover:opacity-80"
+                  >
                     {isOpen ? (
                       <ChevronDown className="h-3.5 w-3.5 text-zinc-400" />
                     ) : (
@@ -207,8 +295,17 @@ export function AgentsSubtab({ agents, catalog }: Props) {
                     <span className="text-[11px] text-zinc-500 dark:text-zinc-400">
                       {server.tools.length} tools
                     </span>
-                  </div>
-                  <div className="flex items-center gap-2 text-[11px]">
+                  </button>
+                  <div className="flex shrink-0 items-center gap-2 text-[11px]">
+                    {server.agentTier ? (
+                      <TierToggle
+                        tier={server.agentTier}
+                        disabled={busy === `tier:${server.id}`}
+                        onChange={(next) =>
+                          void handleTierChange(server.id, next)
+                        }
+                      />
+                    ) : null}
                     {inAllowlistMode ? (
                       <span className="rounded-full bg-violet-50 px-1.5 py-0.5 text-violet-700 dark:bg-violet-950/40 dark:text-violet-300">
                         {granted} granted
@@ -223,13 +320,16 @@ export function AgentsSubtab({ agents, catalog }: Props) {
                       </span>
                     )}
                   </div>
-                </button>
+                </div>
 
                 {isOpen ? (
                   // overflow-x-auto so the action column (Grant/Revoke/Pin)
                   // never gets clipped by the rounded-card overflow-hidden
                   // when descriptions are long.
-                  <div className="overflow-x-auto border-t border-zinc-100 dark:border-zinc-900">
+                  <div
+                    id={`server-tools-${server.id}`}
+                    className="overflow-x-auto border-t border-zinc-100 dark:border-zinc-900"
+                  >
                     <table className="w-full min-w-[640px] text-left text-xs">
                       <thead className="bg-zinc-50 text-[10px] uppercase tracking-wide text-zinc-500 dark:bg-zinc-950 dark:text-zinc-400">
                         <tr>

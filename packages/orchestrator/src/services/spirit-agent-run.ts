@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { stepCountIs, tool, type ToolSet } from 'ai';
+import { isMcpDispatchEnabled } from './feature-flags.js';
+import { buildMcpToolDefinitionsV2 } from './connector-spawn-v2.js';
 import { classifyTool, type McpToolDescriptor } from '@ujima/shared';
 import { toModelToolErrorOutput, toModelToolOutput } from './tool-loop-result.js';
 import type { SpiritMcpResolution } from './spirit-types.js';
@@ -203,14 +205,34 @@ ${activeMemories
       team,
       repo: this.repo,
     });
-    const { toolSet: mcpToolDefs, servers: attachedMcpServers } = await this.buildMcpToolDefinitions({
+    const mcpCtx = {
       organizationId: input.organizationId,
       memberId: input.memberId,
       runId: spirit.runId ?? spirit.id,
       threadId: session.channelId,
       taskSessionId: input.taskSessionId,
       role,
-    });
+    };
+    // §3.5 rule 3: the flag is the only routing switch between the
+    // legacy spawn path and the V2 spawn path. Tier is read inside
+    // V2 only — the caller stays tier-blind. Flag off → legacy method
+    // runs byte-for-byte unchanged.
+    let mcpToolDefs: ToolSet;
+    let attachedMcpServers: McpServerSummary[];
+    let availableConnectors: string | undefined;
+    if (isMcpDispatchEnabled() && this.mcpPool) {
+      const v2 = await buildMcpToolDefinitionsV2(
+        { mcpPool: this.mcpPool, repo: this.repo, tools: this.tools },
+        mcpCtx,
+      );
+      mcpToolDefs = v2.toolSet;
+      attachedMcpServers = v2.servers;
+      availableConnectors = v2.catalogText.length > 0 ? v2.catalogText : undefined;
+    } else {
+      const legacy = await this.buildMcpToolDefinitions(mcpCtx);
+      mcpToolDefs = legacy.toolSet;
+      attachedMcpServers = legacy.servers;
+    }
     const toolDefs: ToolSet = { ...builtInToolDefs, ...mcpToolDefs };
 
     const availableToolIds = Object.keys(toolDefs);
@@ -238,6 +260,7 @@ ${activeMemories
       availableToolIds,
       attachedMcpServers.map((s) => ({ name: s.serverName, toolNames: s.toolNames })),
       supervisorWakePolicy.conversationKind,
+      availableConnectors,
     );
     const systemPromptSuffix = this.resolveSystemPromptSuffix({
       organizationId: input.organizationId,
