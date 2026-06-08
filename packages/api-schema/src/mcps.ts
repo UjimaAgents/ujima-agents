@@ -4,6 +4,7 @@ import {
   GovernancePolicy,
   IdSchema,
   McpAttachmentScopeSchema,
+  McpAttachmentTierSchema,
   McpIsolationSchema,
   McpServerPublicSchema,
   McpToolDescriptorSchema,
@@ -110,6 +111,21 @@ export const AgentMcpAttachmentsResponseSchema = z.object({
   attachments: z.array(AgentMcpAttachmentSchema),
 });
 
+// PR 6 — tier toggle wiring. PATCH body for changing the tier on an
+// existing (member, server) attachment row. Routed to
+// `McpRegistryService.updateAttachmentTier`, which wraps PR 1's
+// `repo.updateAttachmentTier`. Note that `tier='dispatch'` is harmless
+// metadata when the V2 spawn flag is off — the legacy spawn path is
+// tier-blind and treats every attachment as native (§13.3 rollback).
+export const UpdateAttachmentTierRequestSchema = z.object({
+  organizationId: IdSchema,
+  tier: McpAttachmentTierSchema,
+});
+
+export const AgentMcpAttachmentResponseSchema = z.object({
+  attachment: AgentMcpAttachmentSchema,
+});
+
 export const McpScopedQuerySchema = z.object({
   organizationId: IdSchema,
 });
@@ -150,6 +166,12 @@ export const McpCatalogServerSchema = z.object({
   // UI to decide "exposed" per (agent, server) — see CatalogAgentView.
   allowlistAgents: z.array(z.string()),
   tools: z.array(McpCatalogToolSchema),
+  // PR 6 — per-active-agent attachment tier. Populated only when the
+  // catalog is fetched with `?agentId=...`; absent otherwise. Lets the
+  // Agents tab render the tier toggle without a second round trip.
+  // Native tier means the runtime's typed-palette path; dispatch tier
+  // means the meta-tool dispatch path. Harmless when V2 flag is off.
+  agentTier: McpAttachmentTierSchema.optional(),
 });
 export type McpCatalogServer = z.infer<typeof McpCatalogServerSchema>;
 
@@ -261,3 +283,5 @@ export type McpServerResponse = z.infer<typeof McpServerResponseSchema>;
 export type McpToolsResponse = z.infer<typeof McpToolsResponseSchema>;
 export type AgentMcpAttachInput = z.infer<typeof AgentMcpAttachInputSchema>;
 export type AgentMcpAttachmentsResponse = z.infer<typeof AgentMcpAttachmentsResponseSchema>;
+export type AgentMcpAttachmentResponse = z.infer<typeof AgentMcpAttachmentResponseSchema>;
+export type UpdateAttachmentTierRequest = z.infer<typeof UpdateAttachmentTierRequestSchema>;
