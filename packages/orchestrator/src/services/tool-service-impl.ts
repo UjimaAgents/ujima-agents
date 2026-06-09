@@ -232,8 +232,20 @@ export class ToolServiceImpl implements ToolService {
       goalModeActive,
     });
 
-    const policy = isSubOperation
-      ? { allowed: true, requiresApproval: false, shellAutoReview: false, reason: "sub-operation" }
+    // `bypassPermission` is set by the resume path
+    // (replayApprovedToolSteps) when re-invoking a previously-approved
+    // tool call. The OUTER tool-service wrapper already short-circuits
+    // its permissions.check() on this flag; the INNER policy check
+    // here must do the same, or else a dispatch-tier MCP call that hit
+    // approval would have its replay rejected by resolveMcpPolicy and
+    // re-pause indefinitely. Without this both layers must agree.
+    //
+    // The unconditional short-circuit is safe because bypassPermission
+    // is only ever set by trusted server-side code paths
+    // (spirit-service-base.replayApprovedToolSteps), never propagated
+    // from a model-controlled input.
+    const policy = isSubOperation || preparedInvocation.bypassPermission
+      ? { allowed: true, requiresApproval: false, shellAutoReview: false, reason: isSubOperation ? "sub-operation" : "approved-replay" }
       : preparedInvocation.toolId === "mcp"
         ? this.resolveMcpPolicy(preparedInvocation)
       : checkToolPolicy(
