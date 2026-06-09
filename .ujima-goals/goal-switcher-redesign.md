@@ -140,9 +140,10 @@ If the selected goal has zero tasks, show a centered empty state:
 1. **GoalSwitcherDropdown** — native `<select>` styled to match UI, sorted by recency, shows `title (completed/total)`, "Implement" button appears next to dropdown when a planning goal is selected
 2. **Derived goal selection** (`activeGoalId`) — fallback chain: user's explicit pick → localStorage → most recently updated goal. No setState-in-effect violations.
 3. **"All Goals" dropdown option** — shows all tasks across every goal when selected; user intent tracked with ref to prevent localStorage fallback overriding the choice
-3. **Task filtering** — kanban only shows tasks for the active goal
-4. **Question filtering** — goal-scoped questions only show when that goal is active; channel-level questions always show
-5. **localStorage persistence** — survives refresh, per-channel key
+4. **Task filtering** — kanban only shows tasks for the active goal
+5. **Question filtering** — goal-scoped questions only show when that goal is active; channel-level questions always show
+6. **localStorage persistence** — survives refresh, per-channel key
+7. **Board drag notifies assignee agent** — when a task is moved to a different column, the assignee gets an @mention in the goal channel with the column direction (e.g., `[To Do] → [In Progress]`). Only fires if the mover isn't the assignee. Posts via `supervisorId` sender for reliable channel membership.
 6. **Empty states** — "No goals yet" (goals.length === 0) and "No tasks" with Implement button (goal with 0 tasks)
 7. **Status indicator** — colored dot + status label + task count below the dropdown
 

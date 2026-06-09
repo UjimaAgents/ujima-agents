@@ -26,6 +26,7 @@ import { SpiritServiceSupervisor } from './spirit-supervisor.js';
 import { appendArtifactFileToolCall } from './artifact-file-card.js';
 import { buildAgentMessage } from './message-factory.js';
 import { RunTurnPublisher } from './run-turn-publisher.js';
+import { composedStepToolCalls, prepareAgentStepPublication } from './agent-step-publish.js';
 import {
   appendArtifactFileFromRunSteps,
   collectRunStepToolCalls,
@@ -33,7 +34,6 @@ import {
   collectToolStatuses,
   publishRunReplyTrace,
   publishStreamedTrace,
-  normalizeRunStepToolCalls,
   type StreamedRunTrace,
 } from './run-trace-publisher.js';
 import { normalizeTokenUsage } from './token-usage.js';
@@ -495,45 +495,27 @@ export class SpiritService extends SpiritServiceSupervisor {
         },
         onStepFinish: async (_step, currentSteps) => {
           const unpersisted = currentSteps.slice(persistedStepCount);
+          const terminatorState = { sawTerminatingTool };
           for (const s of unpersisted) {
             persistedStepCount++;
-            const stepText = typeof s.text === 'string' ? s.text.trim() : '';
-            const stepToolCalls = Array.isArray(s.toolCalls) ? s.toolCalls : [];
-            const stepToolResults = Array.isArray(s.toolResults) ? s.toolResults : [];
-
-            const stepArtifactFileToolCall =
-              stepToolCalls.length > 0
-                ? (await appendArtifactFileToolCall(stepToolCalls, team.workspace.root, stepToolResults)) ??
-                  (await appendArtifactFileFromRunSteps(
-                    this.repo,
-                    running,
-                    team.workspace.root,
-                    stepToolCalls.at(-1)?.toolCallId,
-                  ))
-                : undefined;
-            if (stepArtifactFileToolCall) turn.markArtifactFilePublished();
-
-            const persistedTerminator = findTerminatingToolFromRunSteps(
-              this.repo.listRunSteps?.(running.organizationId, running.id) ?? [],
-            );
-            const stepTerminatedRun =
-              runUsedThreadPublishingTool({ steps: [s] }) || persistedTerminator !== null;
-            if (sawTerminatingTool || (stepTerminatedRun && !stepArtifactFileToolCall)) {
-              if (stepTerminatedRun) sawTerminatingTool = true;
-              continue;
-            }
-            if (stepTerminatedRun) sawTerminatingTool = true;
-            // Skip tool-only steps with no artifact card — they'd
-            // render as empty agent bubbles. Tool execution data
-            // already lives in run_steps for the trace panel.
-            if (!stepText && !stepArtifactFileToolCall) continue;
-
-            const content = stepText || 'Artifact updated.';
-            const toolCalls = [
-              ...normalizeRunStepToolCalls(stepToolCalls, stepToolResults),
-              ...(stepArtifactFileToolCall ? [stepArtifactFileToolCall] : []),
-            ];
-            const stepReasoning = extractReasoningChunk(s);
+            const prepared = await prepareAgentStepPublication({
+              step: s,
+              teamRoot: team.workspace.root,
+              terminatorState,
+              resolveRunStepArtifact: (toolCallId) =>
+                appendArtifactFileFromRunSteps(this.repo, running, team.workspace.root, toolCallId),
+              isStepTerminated: (step) => {
+                const persistedTerminator = findTerminatingToolFromRunSteps(
+                  this.repo.listRunSteps?.(running.organizationId, running.id) ?? [],
+                );
+                return (
+                  runUsedThreadPublishingTool({ steps: [step] }) || persistedTerminator !== null
+                );
+              },
+            });
+            sawTerminatingTool = terminatorState.sawTerminatingTool;
+            if (!prepared) continue;
+            if (prepared.artifactPublished) turn.markArtifactFilePublished();
 
             const finalThreadId = running.threadId;
             if (!finalThreadId) continue;
@@ -545,10 +527,12 @@ export class SpiritService extends SpiritServiceSupervisor {
                 threadId: finalThreadId,
                 channelId: channelId ?? undefined,
                 senderId: running.agentId,
-                content,
+                content: prepared.content,
                 metadata: { runId: running.id },
-                ...(toolCalls.length > 0 ? { toolCalls } : {}),
-                ...(stepReasoning ? { reasoningContent: stepReasoning } : {}),
+                ...(composedStepToolCalls(prepared).length > 0
+                  ? { toolCalls: composedStepToolCalls(prepared) }
+                  : {}),
+                ...(prepared.reasoningContent ? { reasoningContent: prepared.reasoningContent } : {}),
               }),
             );
           }

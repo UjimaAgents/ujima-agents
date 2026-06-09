@@ -294,6 +294,27 @@ function throwHumanPause(pause: HumanPause): never {
   throw new ToolInputRequiredError(pause.id);
 }
 
+/**
+ * Merge user interrupt messages into the live step transcript.
+ *
+ * The AI SDK may pass back the same `messages` array we returned from a prior
+ * `prepareStep`. Spreading that array into itself duplicates every item —
+ * including OpenAI Responses reasoning blocks (`rs_*`) — and triggers 400s.
+ */
+export function mergeInterruptMessages(
+  messages: ModelMessage[],
+  nextMessages: ModelMessage[],
+  interrupts: ModelMessage[],
+): ModelMessage[] {
+  if (!interrupts.length) return messages;
+  if (nextMessages === messages) {
+    messages.push(...interrupts);
+    return messages;
+  }
+  messages.splice(0, messages.length, ...nextMessages, ...interrupts);
+  return messages;
+}
+
 export function stepTerminatesRun(step: AgentLoopStep): boolean {
   const items = [
     ...(step.toolCalls ?? []),
@@ -415,7 +436,7 @@ export async function runAgentLoop(input: {
         if (!interrupts?.length) {
           return undefined;
         }
-        messages.splice(0, messages.length, ...nextMessages, ...interrupts);
+        mergeInterruptMessages(messages, nextMessages, interrupts);
         return { messages };
       },
       onStepFinish: async (step) => {

@@ -1,19 +1,15 @@
-import { randomUUID } from 'node:crypto';
 import { type MessageToolCall, type RunState } from '@ujima/shared';
 import type { AiService } from '../ai-service.js';
-import { extractReasoningChunk } from '../utils/extract-reasoning.js';
 import type { ConversationService } from './conversation.js';
 import { appendArtifactFileToolCall, buildArtifactFileMessage } from './artifact-file-card.js';
 import { buildAgentMessage } from './message-factory.js';
 import type { ApiRepository } from './repository-reader.js';
-import {
-  findTerminatingTool,
-  findTerminatingToolFromRunSteps,
-  runUsedThreadPublishingTool,
-} from './run-reply-guard.js';
+import { findTerminatingTool, findTerminatingToolFromRunSteps } from './run-reply-guard.js';
 import { stepPausesRun } from './agent-loop.js';
-import { isToolCardError } from './spirit-run-detail.js';
 import { normalizeTokenUsage, persistMessageTokens } from './token-usage.js';
+import { composedStepToolCalls, prepareAgentStepPublication } from './agent-step-publish.js';
+
+export { normalizeRunStepToolCalls } from '../utils/step-tool-calls.js';
 
 export type RunReplyResult = Awaited<ReturnType<AiService['generateRunReply']>>;
 export interface StreamedRunTrace {
@@ -22,16 +18,6 @@ export interface StreamedRunTrace {
 }
 export type StreamedTraceOutcome = 'failed' | 'stopped';
 type ArtifactFileToolCallLike = Parameters<typeof appendArtifactFileToolCall>[0][number];
-interface RunStepToolCall {
-  toolCallId?: string;
-  toolName?: string;
-  input?: unknown;
-}
-
-interface RunStepToolResult {
-  toolCallId?: string;
-  output?: unknown;
-}
 
 export function collectToolStatuses(result: Pick<RunReplyResult, 'toolResults' | 'steps'>): string[] {
   return [
@@ -74,27 +60,6 @@ export async function appendArtifactFileFromRunSteps(
   );
 }
 
-export function normalizeRunStepToolCalls(
-  stepToolCalls: readonly RunStepToolCall[],
-  stepToolResults: readonly RunStepToolResult[],
-): MessageToolCall[] {
-  const resultsById = new Map<string, unknown>();
-  for (const result of stepToolResults) {
-    if (typeof result.toolCallId === 'string') resultsById.set(result.toolCallId, result.output);
-  }
-  return stepToolCalls.map((call) => {
-    const toolCallId = call.toolCallId ?? randomUUID();
-    const result = resultsById.get(toolCallId);
-    return {
-      toolCallId,
-      toolName: call.toolName ?? 'unknown',
-      args: call.input && typeof call.input === 'object' ? (call.input as Record<string, unknown>) : {},
-      ...(result !== undefined ? { result } : {}),
-      isError: isToolCardError(result),
-    };
-  });
-}
-
 export async function publishRunReplyTrace(input: {
   repo: ApiRepository;
   conversations?: ConversationService;
@@ -126,59 +91,39 @@ export async function publishRunReplyTrace(input: {
   const runSteps = input.repo.listRunSteps?.(input.run.organizationId, input.run.id) ?? [];
   let sawTerminatingTool = findTerminatingToolFromRunSteps(runSteps) !== null;
 
+  const terminatorState = { sawTerminatingTool };
   for (const [index, step] of input.result.steps.entries()) {
     if (stepPausesRun(step)) continue;
 
-    const stepText = typeof step.text === 'string' ? step.text.trim() : '';
-    const stepToolCalls = Array.isArray(step.toolCalls) ? (step.toolCalls as RunStepToolCall[]) : [];
-    const stepToolResults = Array.isArray(step.toolResults) ? step.toolResults : [];
-    if (!stepText && stepToolCalls.length === 0) continue;
+    const prepared = await prepareAgentStepPublication({
+      step,
+      teamRoot: input.teamRoot,
+      allowEmptyWithoutArtifact: input.failureTrace,
+      terminatorState,
+      reasoningFallback:
+        index === input.result.steps.length - 1 ? input.reasoningContent : undefined,
+      resolveRunStepArtifact: (toolCallId) =>
+        appendArtifactFileFromRunSteps(input.repo, input.run, input.teamRoot, toolCallId),
+    });
+    sawTerminatingTool = terminatorState.sawTerminatingTool;
+    if (!prepared) continue;
 
-    const stepArtifactFileToolCall =
-      stepToolCalls.length > 0
-        ? (await appendArtifactFileToolCall(stepToolCalls, input.teamRoot, stepToolResults)) ??
-          (await appendArtifactFileFromRunSteps(
-            input.repo,
-            input.run,
-            input.teamRoot,
-            stepToolCalls.at(-1)?.toolCallId,
-          ))
-        : undefined;
-    if (stepArtifactFileToolCall) publishedArtifactFile = true;
+    if (prepared.artifactPublished) publishedArtifactFile = true;
+    if (prepared.stepText) publishedAnyText = true;
 
-    const stepTerminatedRun = runUsedThreadPublishingTool({ steps: [step] });
-    if (sawTerminatingTool || (stepTerminatedRun && !stepArtifactFileToolCall)) {
-      if (stepTerminatedRun) sawTerminatingTool = true;
-      continue;
-    }
-    if (stepTerminatedRun) sawTerminatingTool = true;
-    if (!stepText && !stepArtifactFileToolCall && !input.failureTrace) continue;
-
-    if (stepText) {
-      publishedAnyText = true;
-    }
-
-    // Tool-only steps publish with an empty body; the tool cards render from `toolCalls`.
-    const content = stepText || (stepArtifactFileToolCall ? 'Artifact updated.' : '');
-    const toolCalls = [
-      ...normalizeRunStepToolCalls(stepToolCalls, stepToolResults),
-      ...(stepArtifactFileToolCall ? [stepArtifactFileToolCall] : []),
-    ];
-    const stepReasoning =
-      extractReasoningChunk(step) ??
-      (index === input.result.steps.length - 1 ? input.reasoningContent : undefined);
     const isLastStep = index === input.result.steps.length - 1;
-
     const published = input.conversations?.publishMessage(
       buildAgentMessage({
         organizationId: input.run.organizationId,
         threadId,
         channelId,
         senderId: input.run.agentId,
-        content,
+        content: prepared.content,
         metadata,
-        ...(toolCalls.length > 0 ? { toolCalls } : {}),
-        ...(stepReasoning ? { reasoningContent: stepReasoning } : {}),
+        ...(composedStepToolCalls(prepared).length > 0
+          ? { toolCalls: composedStepToolCalls(prepared) }
+          : {}),
+        ...(prepared.reasoningContent ? { reasoningContent: prepared.reasoningContent } : {}),
       }),
       undefined,
       undefined,
@@ -187,7 +132,7 @@ export async function publishRunReplyTrace(input: {
     if (isLastStep && published) {
       persistMessageTokens(input.repo, published, usage);
     }
-    publishedContent.add(content);
+    publishedContent.add(prepared.content);
   }
 
   const terminatingTool = findTerminatingTool(input.result) ?? findTerminatingToolFromRunSteps(runSteps);

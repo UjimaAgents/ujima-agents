@@ -203,3 +203,28 @@ export function findTerminatingToolFromRunSteps(steps: unknown): string | null {
 export function runUsedChannelPass(result: unknown): boolean {
   return collectFiredToolNames(result).has('channel.pass');
 }
+
+const SILENT_TERMINATING_TOOLS = new Set(['channel.pass', 'channel.ack']);
+
+/**
+ * Steps containing silent terminators (`channel.pass`, `channel.ack`)
+ * must not publish assistant text — the tool is the stand-down signal.
+ */
+export function stepContainsSilentTerminator(step: unknown): boolean {
+  if (!step || typeof step !== 'object') return false;
+  const record = step as Record<string, unknown>;
+  const items = [
+    ...(Array.isArray(record.toolCalls) ? record.toolCalls : []),
+    ...(Array.isArray(record.toolResults) ? record.toolResults : []),
+    ...(Array.isArray(record.staticToolCalls) ? record.staticToolCalls : []),
+    ...(Array.isArray(record.dynamicToolCalls) ? record.dynamicToolCalls : []),
+    ...(Array.isArray(record.staticToolResults) ? record.staticToolResults : []),
+    ...(Array.isArray(record.dynamicToolResults) ? record.dynamicToolResults : []),
+    ...(Array.isArray(record.content) ? record.content : []),
+  ];
+  return items.some((item) => {
+    if (!item || typeof item !== 'object') return false;
+    const name = (item as { toolName?: string }).toolName;
+    return typeof name === 'string' && SILENT_TERMINATING_TOOLS.has(normalizeToDottedToolName(name));
+  });
+}

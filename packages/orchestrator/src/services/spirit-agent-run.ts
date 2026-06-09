@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import { stepCountIs, tool, type ToolSet } from 'ai';
 import { isMcpDispatchEnabled } from './feature-flags.js';
 import { buildMcpToolDefinitionsV2 } from './connector-spawn-v2.js';
@@ -19,8 +18,6 @@ import {
   channelRoom,
   orgRoom,
   type Message,
-  type MessageCard,
-  type MessageToolCall,
   type Spirit,
   type SpiritRole,
   type WakeReason,
@@ -43,29 +40,26 @@ import {
 } from '../tools/index.js';
 import type { ApiRepository } from './repository-reader.js';
 import { findToolApprovalRequiredError, findToolInputRequiredError } from './tool-loop-result.js';
-import { extractReasoningChunk } from '../utils/extract-reasoning.js';
 import { errorMessage } from '../utils/error-message.js';
-import { buildRunTranscript } from '../utils/run-transcript.js';
-import { appendArtifactFileToolCall } from './artifact-file-card.js';
+import { appendMissingRunStepMessages } from '../utils/run-transcript.js';
+import { DELEGATE_TURN_USER_MESSAGE } from '../utils/delegate-turn.js';
+import {
+  createMessageCursor,
+  loadChannelInterruptModelMessages,
+} from '../utils/interrupt-loader.js';
+import { createSpiritModelNotFoundHandler } from '../utils/model-fallback.js';
+import { wrapToolCallsAsCards } from '../utils/step-tool-calls.js';
 import { buildAgentMessage } from './message-factory.js';
 import { filterVisibleMessages } from '../utils/message-visibility.js';
 import { RunTurnPublisher } from './run-turn-publisher.js';
 import { normalizeTokenUsage, persistMessageTokens } from './token-usage.js';
 import { pendingApprovalRunSummary } from './approval-summary.js';
-import {
-  findTerminatingTool,
-  findTerminatingToolFromRunSteps,
-  normalizeToDottedToolName,
-} from './run-reply-guard.js';
-import {
-  createMessageCursor,
-  collectInterruptMessages,
-} from '../utils/message-interrupts.js';
+import { findTerminatingTool, findTerminatingToolFromRunSteps } from './run-reply-guard.js';
+import { prepareAgentStepPublication } from './agent-step-publish.js';
 import type {
   RunSpiritInput,
   RunSpiritOutcome,
 } from './spirit-types.js';
-import { isToolCardError } from './spirit-run-detail.js';
 import { SpiritServiceBase } from './spirit-service-base.js';
 
 export class SpiritServiceAgentRun extends SpiritServiceBase {
@@ -121,12 +115,11 @@ export class SpiritServiceAgentRun extends SpiritServiceBase {
       memberId: input.memberId,
       role,
     });
-    const runTranscript = buildRunTranscript(
+    appendMissingRunStepMessages(
+      messages,
+      recent,
       this.repo.listRunSteps(input.organizationId, spirit.runId ?? spirit.id),
     );
-    if (runTranscript) {
-      messages.push({ role: 'user', content: runTranscript });
-    }
 
     try {
       const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
@@ -270,15 +263,7 @@ ${activeMemories
       messageContent: input.promptMessageContent,
       goalMode: input.promptGoalMode,
     });
-    const delegateSuffix = isDelegateTurn
-      ? [
-          '<delegate_turn>',
-          'You are handling one agent.delegate task. Use tools as needed, then finish with final assistant text only.',
-          'Do not call channel.post, channel.reply, channel.dm, message, channel.pass, channel.ack, or channel.handoff.',
-          'Your final text is returned to the delegating agent as the tool result and ends this delegated turn.',
-          '</delegate_turn>',
-        ].join('\n')
-      : '';
+    const delegateSuffix = isDelegateTurn ? DELEGATE_TURN_USER_MESSAGE : '';
     const suffixes = [systemPromptSuffix, delegateSuffix].filter(Boolean);
     const systemPrompt = suffixes.length ? `${system}\n\n${suffixes.join('\n\n')}` : system;
 
@@ -347,26 +332,25 @@ ${activeMemories
           }
           this.emitRunTokens(input.organizationId, runId, session.channelId, member.id, currentSteps);
         },
-        loadInterruptMessages: () => {
-          const page = filterVisibleMessages(
-            this.repo.listChannelMessages(input.organizationId, session.channelId, { limit: 100 }).data,
-          );
-          return toModelMessages(collectInterruptMessages(page, interruptCursor, member.id), member.id);
-        },
-        onModelNotFound: async (error) => {
-          console.warn(
-            `[spirit-agent-run] model "${error.modelId}" rejected by provider; ` +
-              `falling back to safeFallbackModelForProvider for member="${input.memberId}"`,
-          );
-          return await Promise.resolve(
+        loadInterruptMessages: () =>
+          loadChannelInterruptModelMessages({
+            repo: this.repo,
+            organizationId: input.organizationId,
+            channelId: session.channelId,
+            agentId: member.id,
+            cursor: interruptCursor,
+          }),
+        onModelNotFound: createSpiritModelNotFoundHandler({
+          logLabel: 'spirit-agent-run',
+          memberLabel: input.memberId,
+          resolve: () =>
             this.modelResolver({
               organizationId: input.organizationId,
               memberId: input.memberId,
               role,
               forceSafeFallback: true,
             }),
-          );
-        },
+        }),
         logLabel: 'spirit-agent-run',
         memberLabel: input.memberId,
       });
@@ -652,44 +636,6 @@ ${activeMemories
     return buildToolDefinitions(toolIds, ctx.team, this.tools, ctx);
   }
 
-  protected toMessageToolCalls(
-    stepToolCalls: readonly { toolCallId?: string; toolName?: string; input?: unknown }[],
-    stepToolResults: readonly { toolCallId?: string; output?: unknown }[],
-    spirit: Spirit,
-  ): MessageToolCall[] {
-    const resultsById = new Map<string, unknown>();
-    for (const r of stepToolResults) {
-      if (typeof r.toolCallId === 'string') {
-        resultsById.set(r.toolCallId, r.output);
-      }
-    }
-    return stepToolCalls.map((call) => {
-      const toolCallId = call.toolCallId ?? randomUUID();
-      const toolName = call.toolName ?? 'unknown';
-      const args = (call.input as Record<string, unknown> | undefined) ?? {};
-      const result = resultsById.get(toolCallId);
-      const isError = isToolCardError(result);
-      const card: MessageCard = {
-        kind: 'tool.call',
-        cardId: randomUUID(),
-        taskSessionId: spirit.taskSessionId,
-        runId: spirit.runId,
-        toolCallId,
-        toolName,
-        args,
-        result,
-        isError,
-      };
-      return {
-        toolCallId,
-        toolName,
-        args,
-        result: card,
-        isError,
-      };
-    });
-  }
-
   private async publishStepBubble(input: {
     step: AgentLoopStep;
     spirit: Spirit;
@@ -701,66 +647,40 @@ ${activeMemories
     runId: string;
     reasoningFallback?: string;
   }): Promise<{ messageId?: string; toolCallCount: number; stepText: string }> {
-    const { step } = input;
-    const stepText = typeof step.text === 'string' ? step.text : '';
-    const stepToolCalls = Array.isArray(step.toolCalls) ? step.toolCalls : [];
-    const stepToolResults = Array.isArray(step.toolResults) ? step.toolResults : [];
-    const artifact = await appendArtifactFileToolCall(stepToolCalls, input.teamRoot, stepToolResults);
-    // Skip tool-only steps with no artifact card — they'd render as
-    // empty bubbles. Tool execution data already lives in run_steps
-    // for the trace panel.
-    if (!stepText && !artifact) {
+    const prepared = await prepareAgentStepPublication({
+      step: input.step,
+      teamRoot: input.teamRoot,
+      reasoningFallback: input.reasoningFallback,
+      suppressSilentTerminatorText: true,
+    });
+    if (!prepared) {
+      const stepToolCalls = Array.isArray(input.step.toolCalls) ? input.step.toolCalls : [];
       return { toolCallCount: stepToolCalls.length, stepText: '' };
     }
-    // Suppress text publication for steps containing silent terminating
-    // tools (channel.pass, channel.ack). These tools are explicit "stand
-    // down" decisions — any model-generated text in the same step is a
-    // mirror/ack loop artifact and must not appear as a channel message.
-    if (this.stepContainsSilentTerminator(step)) {
-      return { toolCallCount: stepToolCalls.length, stepText: '' };
-    }
-    const toolCalls = this.toMessageToolCalls(stepToolCalls, stepToolResults, input.spirit);
-    const messageToolCalls = artifact ? [...toolCalls, artifact] : toolCalls;
-    const reasoningContent = extractReasoningChunk(step) ?? input.reasoningFallback;
+
+    const wrapped = wrapToolCallsAsCards(prepared.stepToolCalls, {
+      taskSessionId: input.spirit.taskSessionId,
+      runId: input.spirit.runId,
+    });
+    const messageToolCalls = prepared.artifact ? [...wrapped, prepared.artifact] : wrapped;
     const message = input.turn.publishMessage(
       buildAgentMessage({
         organizationId: input.organizationId,
         threadId: input.channelId,
         channelId: input.channelId,
         senderId: input.senderId,
-        content: stepText || 'Artifact updated.',
+        content: prepared.content,
         toolCalls: messageToolCalls,
         metadata: { runId: input.runId },
-        reasoningContent,
+        reasoningContent: prepared.reasoningContent,
       }),
     );
-    if (artifact) input.turn.markArtifactFilePublished();
-    return { messageId: message.id, toolCallCount: stepToolCalls.length, stepText };
-  }
-
-  /**
-   * Returns true when the step contains a silent terminating tool
-   * (channel.pass or channel.ack). Steps with these tools should not
-   * publish text — the tool itself is the agent's "stand down" signal.
-   * Any model-generated text in the same step is a mirror/ack artifact.
-   */
-  private stepContainsSilentTerminator(step: AgentLoopStep): boolean {
-    const SILENT_TERMINATORS = new Set(['channel.pass', 'channel.ack']);
-    const items = [
-      ...(step.toolCalls ?? []),
-      ...(step.toolResults ?? []),
-      ...(step.staticToolCalls ?? []),
-      ...(step.dynamicToolCalls ?? []),
-      ...(step.staticToolResults ?? []),
-      ...(step.dynamicToolResults ?? []),
-      ...(step.content ?? []),
-    ];
-    return items.some((item) => {
-      if (!item || typeof item !== 'object') return false;
-      const record = item as { toolName?: string };
-      const name = typeof record.toolName === 'string' ? record.toolName : '';
-      return SILENT_TERMINATORS.has(normalizeToDottedToolName(name));
-    });
+    if (prepared.artifactPublished) input.turn.markArtifactFilePublished();
+    return {
+      messageId: message.id,
+      toolCallCount: prepared.toolCallCount,
+      stepText: prepared.stepText,
+    };
   }
 
   private publishAgentMessage(message: Message): Message {

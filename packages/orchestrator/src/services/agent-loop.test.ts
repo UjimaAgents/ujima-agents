@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { approvalWaitFromSteps, inputWaitFromSteps, stepPausesRun, stepTerminatesRun } from './agent-loop.js';
+import type { ModelMessage } from 'ai';
+import {
+  approvalWaitFromSteps,
+  inputWaitFromSteps,
+  mergeInterruptMessages,
+  stepPausesRun,
+  stepTerminatesRun,
+} from './agent-loop.js';
 
 describe('stepTerminatesRun', () => {
   it('stops when the SDK exposes channel.pass as a dynamic call', () => {
@@ -23,6 +30,49 @@ describe('stepTerminatesRun', () => {
 
   it('stops for acked tool results', () => {
     expect(stepTerminatesRun({ toolResults: [{ output: { status: 'acked' } }] })).toBe(true);
+  });
+});
+
+describe('mergeInterruptMessages', () => {
+  it('appends interrupts without duplicating when the SDK reuses the same array', () => {
+    const messages: ModelMessage[] = [
+      { role: 'user', content: 'hello' },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'reasoning', text: 'thinking' },
+          { type: 'text', text: 'reply' },
+        ],
+      },
+    ];
+    const interrupts: ModelMessage[] = [{ role: 'user', content: 'wait, also do this' }];
+
+    mergeInterruptMessages(messages, messages, interrupts);
+
+    expect(messages).toEqual([
+      { role: 'user', content: 'hello' },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'reasoning', text: 'thinking' },
+          { type: 'text', text: 'reply' },
+        ],
+      },
+      { role: 'user', content: 'wait, also do this' },
+    ]);
+  });
+
+  it('replaces transcript when the SDK passes a fresh array', () => {
+    const messages: ModelMessage[] = [{ role: 'user', content: 'stale' }];
+    const nextMessages: ModelMessage[] = [{ role: 'user', content: 'fresh' }];
+    const interrupts: ModelMessage[] = [{ role: 'user', content: 'interrupt' }];
+
+    mergeInterruptMessages(messages, nextMessages, interrupts);
+
+    expect(messages).toEqual([
+      { role: 'user', content: 'fresh' },
+      { role: 'user', content: 'interrupt' },
+    ]);
   });
 });
 
