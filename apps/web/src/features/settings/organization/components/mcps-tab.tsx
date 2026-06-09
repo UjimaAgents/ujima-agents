@@ -1,7 +1,7 @@
 "use client";
 
 import { ChevronDown, ChevronRight, Plug, Plus, Trash2, Upload } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, memo } from "react";
 import type {
   AgentMcpAttachmentsResponse,
   McpServerListResponse,
@@ -41,7 +41,13 @@ const SUBTABS: { key: Subtab; label: string }[] = [
   { key: "defaults", label: "Defaults" },
 ];
 
-export function McpsTab({
+function statusVariant(status: string) {
+  if (status === "active") return "success" as const;
+  if (status === "error") return "warning" as const;
+  return "default" as const;
+}
+
+export const McpsTab = memo(function McpsTab({
   orgId,
   createdBy,
   members,
@@ -55,8 +61,9 @@ export function McpsTab({
     () => members.filter((m) => m.kind === "agent" && !m.retiredAt),
     [members],
   );
-  const catalog = useMcpCatalog(orgId);
-
+  const catalog = useMcpCatalog(orgId); // Wait, let's verify if useMcpCatalog or useMcpMcpCatalog is used. Ah! The original has useMcpCatalog(orgId) at line 58. Let's make sure it is useMcpCatalog(orgId).
+  // Yes: const catalog = useMcpCatalog(orgId);
+  // Let's keep it as catalog = useMcpCatalog(orgId);
   const [subtab, setSubtab] = useState<Subtab>("tools");
   const [error, setError] = useState<string | null>(null);
 
@@ -148,7 +155,7 @@ export function McpsTab({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [servers]);
 
-  const deleteServer = async (serverId: string) => {
+  const deleteServer = useCallback(async (serverId: string) => {
     setError(null);
     setBusy(`delete:${serverId}`);
     try {
@@ -165,9 +172,9 @@ export function McpsTab({
     } finally {
       setBusy(null);
     }
-  };
+  }, [orgId, servers, setMcpServers, activeAgentId, loadAttachments, catalog]);
 
-  const testServer = async (serverId: string) => {
+  const testServer = useCallback(async (serverId: string) => {
     setError(null);
     setBusy(`test:${serverId}`);
     try {
@@ -192,9 +199,9 @@ export function McpsTab({
     } finally {
       setBusy(null);
     }
-  };
+  }, [orgId, refreshServers, catalog]);
 
-  const detachServer = async (mcpServerId: string) => {
+  const detachServer = useCallback(async (mcpServerId: string) => {
     if (!activeAgentId) return;
     setBusy(`detach:${mcpServerId}`);
     try {
@@ -210,13 +217,7 @@ export function McpsTab({
     } finally {
       setBusy(null);
     }
-  };
-
-  const statusVariant = (status: string) => {
-    if (status === "active") return "success" as const;
-    if (status === "error") return "warning" as const;
-    return "default" as const;
-  };
+  }, [activeAgentId, orgId, loadAttachments, catalog]);
 
   return (
     <>
@@ -489,4 +490,4 @@ export function McpsTab({
       ) : null}
     </>
   );
-}
+});

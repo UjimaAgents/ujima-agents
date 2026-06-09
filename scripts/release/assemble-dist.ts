@@ -16,7 +16,8 @@ import {join, dirname} from "node:path";
 import {createRequire} from "node:module";
 import {$} from "bun";
 import {bannerCdnUrl} from "./lib/banner-cdn.ts";
-import {materializeWebStandaloneDependencies} from "./lib/materialize-web-deps.ts";
+import {copyApiBinariesToRuntime} from "./lib/copy-api-binaries.ts";
+import {prepareTracedStandaloneNodeModules} from "./lib/materialize-web-deps.ts";
 import {
   API_RUNTIME_DIR,
   DIST_OUT_DIR,
@@ -87,6 +88,8 @@ async function bundleApi(): Promise<void> {
     external: ["better-sqlite3"],
   });
   copySwaggerUiStatic();
+  log("Vendoring rg/fd for all platforms and copying into API runtime…");
+  await copyApiBinariesToRuntime(API_RUNTIME_DIR);
 }
 
 async function copyWebStandalone(): Promise<void> {
@@ -126,13 +129,13 @@ async function copyWebStandalone(): Promise<void> {
     }
   }
 
-  await materializeWebStandaloneDeps();
+  await prepareWebStandaloneDeps();
 }
 
-async function materializeWebStandaloneDeps(): Promise<void> {
-  log("Materializing web runtime node_modules (npm install)…");
+async function prepareWebStandaloneDeps(): Promise<void> {
+  log("Preparing traced web runtime node_modules…");
   try {
-    await materializeWebStandaloneDependencies(WEB_RUNTIME_DIR);
+    await prepareTracedStandaloneNodeModules(WEB_RUNTIME_DIR);
   } catch (err) {
     console.error(err instanceof Error ? err.message : err);
     process.exit(1);

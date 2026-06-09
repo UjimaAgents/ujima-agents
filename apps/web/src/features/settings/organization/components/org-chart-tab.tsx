@@ -1,13 +1,13 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useCallback, memo } from "react";
 import type { OrganizationSettingsResponse } from "@ujima/api-schema";
 import { OrgChartFields } from "@/features/team/org-chart-fields";
 import { SettingsPrimaryButton } from "@/features/settings/shared/settings-buttons";
 
 type Member = NonNullable<OrganizationSettingsResponse["members"]>[number];
 
-export function OrgChartTab({
+export const OrgChartTab = memo(function OrgChartTab({
   orgId,
   members,
   organizationChart,
@@ -16,9 +16,18 @@ export function OrgChartTab({
   members: Member[];
   organizationChart: { reportsTo: Record<string, string> };
 }) {
-  const agentMembers = members.filter((m) => m.kind === "agent" && !m.retiredAt);
-  const humanMembers = members.filter((m) => m.kind === "human" && !m.retiredAt);
-  const owner = humanMembers.find((m) => m.roleName === "owner");
+  const agentMembers = useMemo(
+    () => members.filter((m) => m.kind === "agent" && !m.retiredAt),
+    [members],
+  );
+  const humanMembers = useMemo(
+    () => members.filter((m) => m.kind === "human" && !m.retiredAt),
+    [members],
+  );
+  const owner = useMemo(
+    () => humanMembers.find((m) => m.roleName === "owner"),
+    [humanMembers],
+  );
 
   const [reportsTo, setReportsTo] = useState<Record<string, string>>(() => {
     const map: Record<string, string> = {};
@@ -50,7 +59,7 @@ export function OrgChartTab({
     [agentMembers, baseManagerOptions, reportsTo],
   );
 
-  const handleSave = async () => {
+  const handleSave = useCallback(async () => {
     if (!orgId) return;
     setError(null);
     setSuccess(false);
@@ -73,16 +82,18 @@ export function OrgChartTab({
     } finally {
       setSaving(false);
     }
-  };
+  }, [orgId, reportsTo]);
+
+  const handleManagerChange = useCallback((key: string, managerValue: string) => {
+    setReportsTo((prev) => ({ ...prev, [key]: managerValue }));
+  }, []);
 
   return (
     <>
       <OrgChartFields
         description="Order the reporting structure from agent on the left to their manager on the right."
         rows={rows}
-        onManagerChange={(key, managerValue) =>
-          setReportsTo((prev) => ({ ...prev, [key]: managerValue }))
-        }
+        onManagerChange={handleManagerChange}
       />
 
       <div className="mt-4 flex items-center gap-3 border-t border-zinc-200 pt-4 dark:border-zinc-800">
@@ -98,4 +109,4 @@ export function OrgChartTab({
       </div>
     </>
   );
-}
+});

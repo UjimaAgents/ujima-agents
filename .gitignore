@@ -16,6 +16,7 @@ coverage
 *.js.map
 *.d.ts.map
 *.tsbuildinfo
+*.tgz
 
 # caches
 .turbo
@@ -49,6 +50,9 @@ logs
 .DS_Store
 .idea
 .vscode
+
+# Vendored CLI binaries (rg, fd) — built by scripts/vendor-binaries.sh / release:dist
+packages/orchestrator/bin/
 
 # VS Code extension build artifacts (rebuild with package script; do not commit binaries)
 *.vsix

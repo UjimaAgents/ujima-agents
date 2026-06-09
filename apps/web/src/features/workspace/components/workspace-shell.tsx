@@ -28,6 +28,8 @@ import {
   writeGoalModePreference,
 } from "../goal-mode";
 
+import { useShallow } from "zustand/react/shallow";
+
 export const WORKSPACE_MAIN_GRID_TRANSITION =
   "transition-[grid-template-columns] duration-300 ease-out motion-reduce:transition-none motion-reduce:duration-0";
 
@@ -80,18 +82,34 @@ export function WorkspaceShell(props: {
   const members = useWorkspaceStore((state) => state.members);
   const memberActivity = useWorkspaceStore((state) => state.memberActivity);
   const conversationUnreadCounts = useWorkspaceStore((state) => state.conversationUnreadCounts);
-  const setSidebarWidth = useWorkspaceStore((state) => state.setSidebarWidth);
-  const syncWorkspace = useWorkspaceStore((state) => state.syncWorkspace);
-  const setSelectedConversation = useWorkspaceStore((state) => state.setSelectedConversation);
-  const appendChannel = useWorkspaceStore((state) => state.appendChannel);
-  const appendMember = useWorkspaceStore((state) => state.appendMember);
-  const clearConversationUnreadCount = useWorkspaceStore((state) => state.clearConversationUnreadCount);
-  const incrementConversationUnreadCount = useWorkspaceStore((state) => state.incrementConversationUnreadCount);
-  const setMemberActivity = useWorkspaceStore((state) => state.setMemberActivity);
-  const upsertGlobalActiveRun = useWorkspaceStore((state) => state.upsertGlobalActiveRun);
-  const hydrateClientPersisted = useWorkspaceStore((state) => state.hydrateClientPersisted);
+  const {
+    setSidebarWidth,
+    syncWorkspace,
+    setSelectedConversation,
+    appendChannel,
+    appendMember,
+    clearConversationUnreadCount,
+    incrementConversationUnreadCount,
+    setMemberActivity,
+    upsertGlobalActiveRun,
+    hydrateClientPersisted,
+  } = useWorkspaceStore(
+    useShallow((state) => ({
+      setSidebarWidth: state.setSidebarWidth,
+      syncWorkspace: state.syncWorkspace,
+      setSelectedConversation: state.setSelectedConversation,
+      appendChannel: state.appendChannel,
+      appendMember: state.appendMember,
+      clearConversationUnreadCount: state.clearConversationUnreadCount,
+      incrementConversationUnreadCount: state.incrementConversationUnreadCount,
+      setMemberActivity: state.setMemberActivity,
+      upsertGlobalActiveRun: state.upsertGlobalActiveRun,
+      hydrateClientPersisted: state.hydrateClientPersisted,
+    }))
+  );
   const seenApprovalNotifications = useRef(new Set<string>());
   const goalModeSyncing = useRef(false);
+  const activeConversationRef = useRef<SelectedConversation | undefined>(undefined);
 
   // Pull localStorage-backed prefs (chat font size, details auto-open dismissal)
   // into the store after mount so the first render matches the SSR snapshot.
@@ -112,6 +130,9 @@ export function WorkspaceShell(props: {
 
   const resolvedSelected = urlConversation ?? selected ?? defaultConversation;
   const activeConversation = workspaceTasksActive ? undefined : resolvedSelected;
+  useEffect(() => {
+    activeConversationRef.current = activeConversation;
+  }, [activeConversation]);
   const goalModeKey = useMemo(
     () =>
       activeConversation
@@ -369,12 +390,14 @@ export function WorkspaceShell(props: {
       );
       if (!conversationId) return;
 
+      // Read from ref to avoid re-creating the EventSource when the user switches conversations.
+      const currentConversation = activeConversationRef.current;
       if (
-        activeConversation &&
-        ((activeConversation.type === "channel" &&
+        currentConversation &&
+        ((currentConversation.type === "channel" &&
           envelope.event !== SocketEventNames.dmMessage &&
-          activeConversation.id === conversationId) ||
-          (activeConversation.type === "agent" && activeConversation.id === conversationId))
+          currentConversation.id === conversationId) ||
+          (currentConversation.type === "agent" && currentConversation.id === conversationId))
       ) {
         return;
       }
@@ -399,7 +422,6 @@ export function WorkspaceShell(props: {
     bootstrap.organization?.id,
     incrementConversationUnreadCount,
     organizationId,
-    activeConversation,
     setMemberActivity,
     upsertGlobalActiveRun,
   ]);
@@ -523,6 +545,18 @@ export function DragHandle({
   onResize: (pct: number) => void;
 }) {
   const dragging = useRef(false);
+  const onMoveRef = useRef<((e: PointerEvent) => void) | null>(null);
+  const onUpRef = useRef<(() => void) | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (onMoveRef.current) window.removeEventListener("pointermove", onMoveRef.current);
+      if (onUpRef.current) {
+        window.removeEventListener("pointerup", onUpRef.current);
+        window.removeEventListener("pointercancel", onUpRef.current);
+      }
+    };
+  }, []);
 
   const onPointerDown = useCallback(
     (event: React.PointerEvent) => {
@@ -559,7 +593,12 @@ export function DragHandle({
         window.removeEventListener("pointermove", onMove);
         window.removeEventListener("pointerup", onUp);
         window.removeEventListener("pointercancel", onUp);
+        onMoveRef.current = null;
+        onUpRef.current = null;
       };
+
+      onMoveRef.current = onMove;
+      onUpRef.current = onUp;
 
       window.addEventListener("pointermove", onMove);
       window.addEventListener("pointerup", onUp);

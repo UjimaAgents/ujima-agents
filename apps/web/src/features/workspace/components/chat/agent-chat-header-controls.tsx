@@ -31,7 +31,6 @@ export function AgentChatHeaderControls({
   onMemberUpdated: (member: Member) => void;
 }) {
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   const modelOptions = useMemo(
     () =>
@@ -50,7 +49,6 @@ export function AgentChatHeaderControls({
     model?: string;
   }) => {
     setSaving(true);
-    setError(null);
     try {
       const response = await fetch(
         `/api/orgs/${encodeURIComponent(orgId)}/members/${encodeURIComponent(member.id)}/preferences`,
@@ -67,7 +65,7 @@ export function AgentChatHeaderControls({
       const updated = (await response.json()) as Member;
       onMemberUpdated(updated);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Update failed.");
+      console.error(err);
     } finally {
       setSaving(false);
     }
@@ -105,16 +103,10 @@ export function AgentChatHeaderControls({
             }}
             options={modelOptions}
             placeholder="Select model"
-            className="w-[10.5rem] sm:w-52"
+            className="w-[8.8rem] sm:w-40"
           />
         ) : null}
       </div>
-
-      {error ? (
-        <span className="text-[10px] text-red-600 dark:text-red-400" role="alert">
-          {error}
-        </span>
-      ) : null}
     </div>
   );
 }

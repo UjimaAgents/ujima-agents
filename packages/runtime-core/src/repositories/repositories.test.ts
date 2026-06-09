@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { expect, test } from 'vitest';
 import {
   MessageSchema,
+  MemberSchema,
   OrganizationSchema,
   RunStateSchema,
   ApprovalRequestSchema,
@@ -1135,6 +1136,54 @@ test('listChannels excludes hidden kinds at the SQL layer (no pagination drift)'
   // Sanity: nothing across both pages is a self/dm channel.
   const allReturned = [...page1.data, ...page2.data];
   expect(allReturned.every((c) => c.kind !== 'self' && c.kind !== 'dm')).toBe(true);
+});
+
+test('bootstrap snapshot drops retired members from channel memberIds', async () => {
+  const { getBootstrapSnapshot } = await import('./bootstrap.js');
+  const db = openDatabase({ dbPath: ':memory:' });
+  const repo = new Repository(db);
+  const orgId = randomUUID();
+
+  repo.saveOrganization(
+    OrganizationSchema.parse({
+      id: orgId,
+      name: 'Membership Snapshot Org',
+      workspace: { root: '/tmp/membership-snapshot-org', roleScopes: {} },
+    }),
+  );
+  repo.saveMember(
+    MemberSchema.parse({
+      id: 'active-agent',
+      organizationId: orgId,
+      name: 'Active Agent',
+      kind: 'agent',
+      roleName: 'engineer',
+    }),
+  );
+  repo.saveMember(
+    MemberSchema.parse({
+      id: 'retired-agent',
+      organizationId: orgId,
+      name: 'Retired Agent',
+      kind: 'agent',
+      roleName: 'engineer',
+      retiredAt: new Date().toISOString(),
+    }),
+  );
+  repo.saveChannel({
+    id: 'general',
+    organizationId: orgId,
+    name: 'general',
+    kind: 'general',
+    topic: '',
+    memberIds: [],
+  });
+  repo.setChannelMembers(orgId, 'general', ['active-agent', 'retired-agent', 'missing-agent']);
+
+  const snapshot = getBootstrapSnapshot(db);
+  const general = snapshot.channels.find((channel) => channel.id === 'general');
+  expect(general?.memberIds).toEqual(['active-agent']);
+  expect(repo.getChannel(orgId, 'general')?.memberIds).toEqual(['active-agent']);
 });
 
 test('bootstrap snapshot drops self and dm channels', async () => {

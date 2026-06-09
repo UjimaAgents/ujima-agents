@@ -13,6 +13,7 @@ import {
 } from "@ujima/shared/browser";
 import type { TraceStepData } from "./components/chat/details-sidebar";
 import { formatTimestamp } from "./lib/format-timestamp";
+import { collapseRunChunkActivities, runChunkActivityKey } from "./run-chunk-activity";
 
 const TRACE_ACTIVITY_TYPES = new Set([
   "tool_called",
@@ -859,11 +860,7 @@ function runChunkEventToStep(input: ReasoningTraceInput, event: ActivityEvent): 
   };
 }
 
-function runChunkKey(event: ActivityEvent): string | undefined {
-  const body = event.payload as RunChunkEvent | undefined;
-  if (!body?.runId || !body.agentId || !body.kind) return undefined;
-  return `${body.runId}:${body.agentId}:${body.kind}`;
-}
+const runChunkKey = runChunkActivityKey;
 
 function mergeRunChunkStep(step: TraceStepData, event: ActivityEvent): TraceStepData {
   const body = event.payload as RunChunkEvent | undefined;
@@ -1468,8 +1465,12 @@ function toolCallIdFromPayload(
 }
 
 export function buildReasoningTraceSteps(input: ReasoningTraceInput): TraceStepData[] {
-  const runIdsForThread = collectRunIdsForThread(input);
-  const { threadId, agentIdFilter, activity } = input;
+  const runIdsForThread = collectRunIdsForThread({
+    ...input,
+    activity: collapseRunChunkActivities(input.activity),
+  });
+  const { threadId, agentIdFilter } = input;
+  const activity = collapseRunChunkActivities(input.activity);
 
   const filtered = activity.filter((event) => {
     if (!TRACE_ACTIVITY_TYPES.has(event.type)) return false;
@@ -1508,13 +1509,13 @@ export function buildReasoningTraceSteps(input: ReasoningTraceInput): TraceStepD
   const sorted = filtered.slice().sort(compareActivityEvents);
 
   const toolMerge = new Map<string, { call?: ActivityEvent; result?: ActivityEvent }>();
-  const toolFirstIndex = new Map<string, number>();
+  const toolSortIndex = new Map<string, number>();
   const ordered: OrderedStep[] = [];
 
   sorted.forEach((event, index) => {
     if (event.type === "tool_called") {
       const id = toolCallIdFromPayload(event, "tool_called");
-      if (!toolFirstIndex.has(id)) toolFirstIndex.set(id, index);
+      if (!toolSortIndex.has(id)) toolSortIndex.set(id, index);
       const slot = toolMerge.get(id) ?? {};
       slot.call = event;
       toolMerge.set(id, slot);
@@ -1522,7 +1523,7 @@ export function buildReasoningTraceSteps(input: ReasoningTraceInput): TraceStepD
     }
     if (event.type === "tool_result") {
       const id = toolCallIdFromPayload(event, "tool_result");
-      if (!toolFirstIndex.has(id)) toolFirstIndex.set(id, index);
+      if (!toolSortIndex.has(id)) toolSortIndex.set(id, index);
       const slot = toolMerge.get(id) ?? {};
       slot.result = event;
       toolMerge.set(id, slot);
@@ -1562,7 +1563,7 @@ export function buildReasoningTraceSteps(input: ReasoningTraceInput): TraceStepD
   const maxIndex = sorted.length;
   for (const [toolCallId, pair] of toolMerge) {
     ordered.push({
-      sortIndex: toolFirstIndex.get(toolCallId) ?? maxIndex,
+      sortIndex: toolSortIndex.get(toolCallId) ?? maxIndex,
       step: buildToolStep(input, toolCallId, pair.call, pair.result),
     });
   }

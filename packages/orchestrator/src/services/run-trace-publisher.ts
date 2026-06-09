@@ -11,6 +11,7 @@ import {
   findTerminatingToolFromRunSteps,
   runUsedThreadPublishingTool,
 } from './run-reply-guard.js';
+import { stepPausesRun } from './agent-loop.js';
 import { isToolCardError } from './spirit-run-detail.js';
 import { normalizeTokenUsage, persistMessageTokens } from './token-usage.js';
 
@@ -126,6 +127,8 @@ export async function publishRunReplyTrace(input: {
   let sawTerminatingTool = findTerminatingToolFromRunSteps(runSteps) !== null;
 
   for (const [index, step] of input.result.steps.entries()) {
+    if (stepPausesRun(step)) continue;
+
     const stepText = typeof step.text === 'string' ? step.text.trim() : '';
     const stepToolCalls = Array.isArray(step.toolCalls) ? (step.toolCalls as RunStepToolCall[]) : [];
     const stepToolResults = Array.isArray(step.toolResults) ? step.toolResults : [];

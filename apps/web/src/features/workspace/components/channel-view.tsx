@@ -3,8 +3,8 @@
 import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useChatScrollToBottom } from "../hooks/use-chat-scroll-to-bottom";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { buildReasoningTraceSteps } from "../reasoning-trace";
 import { File, FileArchive, FileAudio, FileImage, FileText, FileVideo, Square, SquarePen, Terminal } from "lucide-react";
+import { useShallow } from "zustand/react/shallow";
 import type { BootstrapResponse, SkillInvocationResponse } from "@ujima/api-schema";
 import type { SelectedConversation } from "../types";
 import { useConversationSync } from "../use-conversation-sync";
@@ -30,6 +30,7 @@ import {
   resolveMemberModelSelection,
   RunStateSchema,
   type RunState,
+  type ActivityEvent,
 } from "@ujima/shared/browser";
 import { settingsFetch } from "@/features/settings/shared/settings-api";
 import {
@@ -55,7 +56,13 @@ import { ReasoningTracePanel } from "./reasoning-trace-panel";
 import { QuestionCard } from "./chat/question-card";
 import { ChannelChatHeaderControls } from "./chat/channel-chat-header-controls";
 import { FontSizeControl } from "./chat/font-size-control";
-import { buildTabCounts, collectConversationAttachments, isLiveRun } from "../feed-selectors";
+import {
+  buildTabCounts,
+  collectConversationAttachments,
+  countMessageAttachments,
+  countSemanticActivityEvents,
+  isLiveRun,
+} from "../feed-selectors";
 import { AgentChatHeaderControls } from "./chat/agent-chat-header-controls";
 import type { Member, ShellApprovalMode, InteractiveQuestion } from "@ujima/shared/browser";
 
@@ -78,6 +85,162 @@ const AGENT_TABS: ChatTab[] = [
   { id: "tasks", label: "Tasks" },
   { id: "activity", label: "Activity" },
 ];
+
+function useTerminalPolling(
+  globalActiveRuns: RunState[],
+  organizationId: string | undefined,
+  setActiveTerminals: (jobs: ActiveJob[]) => void,
+) {
+  useEffect(() => {
+    if (!organizationId || globalActiveRuns.length === 0) {
+      setActiveTerminals([]);
+      return;
+    }
+
+    let cancelled = false;
+    let interval: NodeJS.Timeout | null = null;
+
+    const pollJobs = async () => {
+      if (document.visibilityState !== "visible") return;
+      try {
+        const jobsPromises = globalActiveRuns.map(async (run) => {
+          const res = await fetch(
+            `/api/runs/${encodeURIComponent(run.id)}/jobs?organizationId=${encodeURIComponent(organizationId)}`
+          );
+          if (!res.ok) return [];
+          const data = await res.json().catch(() => []);
+          if (!Array.isArray(data)) return [];
+          return data.flatMap((job: unknown) => {
+            if (!job || typeof job !== "object") return [];
+            const record = job as Record<string, unknown>;
+            if (typeof record.id !== "string") return [];
+            return [
+              {
+                runId: run.id,
+                jobId: record.id,
+                commandLine: typeof record.commandLine === "string" ? record.commandLine : "",
+                cwd: typeof record.cwd === "string" ? record.cwd : "",
+                status: typeof record.status === "string" ? record.status : "running",
+              } satisfies ActiveJob,
+            ];
+          });
+        });
+
+        const allJobsLists = await Promise.all(jobsPromises);
+        if (cancelled) return;
+
+        const runningJobs = allJobsLists.flat().filter((job) => job.status === "running");
+        setActiveTerminals(runningJobs);
+      } catch (e) {
+        console.error("Failed to fetch running background jobs:", e);
+      }
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        void pollJobs();
+        if (!interval) {
+          interval = setInterval(pollJobs, 3000);
+        }
+      } else {
+        if (interval) {
+          clearInterval(interval);
+          interval = null;
+        }
+      }
+    };
+
+    if (document.visibilityState === "visible") {
+      void pollJobs();
+      interval = setInterval(pollJobs, 3000);
+    }
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      cancelled = true;
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      if (interval) {
+        clearInterval(interval);
+      }
+    };
+  }, [globalActiveRuns, organizationId, setActiveTerminals]);
+}
+
+interface ReasoningTraceParams {
+  currentThreadId?: string;
+  reasoningTraceVisible: boolean;
+  conversation: SelectedConversation;
+  traceMembers: { id: string; name: string; kind: string }[];
+  activity: ActivityEvent[];
+  runs: RunState[];
+  organizationId?: string;
+}
+
+function useReasoningTrace({
+  currentThreadId,
+  reasoningTraceVisible,
+  conversation,
+  traceMembers,
+  activity,
+  runs,
+  organizationId,
+}: ReasoningTraceParams) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [buildFn, setBuildFn] = useState<any>(null);
+
+  useEffect(() => {
+    if (reasoningTraceVisible && !buildFn) {
+      import("../reasoning-trace").then((mod) => {
+        setBuildFn(() => mod.buildReasoningTraceSteps);
+      });
+    }
+  }, [reasoningTraceVisible, buildFn]);
+
+  const liveTraceActivity = useMemo(
+    () => (reasoningTraceVisible ? activity : []),
+    [activity, reasoningTraceVisible],
+  );
+  const liveTraceRuns = useMemo(
+    () => (reasoningTraceVisible ? runs : []),
+    [runs, reasoningTraceVisible],
+  );
+  const deferredTraceActivity = useDeferredValue(liveTraceActivity);
+  const deferredTraceRuns = useDeferredValue(liveTraceRuns);
+
+  const reasoningTraceState = useMemo(
+    () => (reasoningTraceVisible ? { activity: deferredTraceActivity, runs: deferredTraceRuns } : null),
+    [deferredTraceActivity, deferredTraceRuns, reasoningTraceVisible],
+  );
+
+  const steps = useMemo(() => {
+    if (!currentThreadId || !reasoningTraceVisible || !buildFn || !reasoningTraceState) {
+      return [];
+    }
+    return buildFn({
+      threadId: currentThreadId,
+      agentIdFilter: conversation.type === "agent" ? conversation.id : undefined,
+      conversationName: conversation.name,
+      conversationType: conversation.type,
+      members: traceMembers,
+      activity: reasoningTraceState.activity,
+      runs: reasoningTraceState.runs,
+      organizationId,
+    });
+  }, [
+    currentThreadId,
+    reasoningTraceVisible,
+    buildFn,
+    conversation.id,
+    conversation.name,
+    conversation.type,
+    traceMembers,
+    reasoningTraceState,
+    organizationId,
+  ]);
+
+  return steps;
+}
 
 interface ChannelViewProps {
   bootstrap: BootstrapResponse;
@@ -119,14 +282,30 @@ export function ChannelView({
   const showDetails = useWorkspaceStore((state) => state.showDetails);
   const detailsWidth = useWorkspaceStore((state) => state.detailsWidth);
   const detailsTab = useWorkspaceStore((state) => state.detailsTab);
-  const setActiveTab = useWorkspaceStore((state) => state.setActiveTab);
-  const setShowDetails = useWorkspaceStore((state) => state.setShowDetails);
-  const openDetailsForAgentMessage = useWorkspaceStore((state) => state.openDetailsForAgentMessage);
-  const setDetailsWidth = useWorkspaceStore((state) => state.setDetailsWidth);
-  const setDetailsTab = useWorkspaceStore((state) => state.setDetailsTab);
   const chatFontSize = useWorkspaceStore((state) => state.chatFontSize);
-  const setChatFontSize = useWorkspaceStore((state) => state.setChatFontSize);
-  const upsertRun = useWorkspaceStore((state) => state.upsertRun);
+
+  const {
+    setActiveTab,
+    setShowDetails,
+    openDetailsForAgentMessage,
+    setDetailsWidth,
+    setDetailsTab,
+    setChatFontSize,
+    upsertRun,
+    setActiveTerminals,
+  } = useWorkspaceStore(
+    useShallow((state) => ({
+      setActiveTab: state.setActiveTab,
+      setShowDetails: state.setShowDetails,
+      openDetailsForAgentMessage: state.openDetailsForAgentMessage,
+      setDetailsWidth: state.setDetailsWidth,
+      setDetailsTab: state.setDetailsTab,
+      setChatFontSize: state.setChatFontSize,
+      upsertRun: state.upsertRun,
+      setActiveTerminals: state.setActiveTerminals,
+    }))
+  );
+
   const memberById = useMemo(() => new Map(members.map((member) => [member.id, member])), [members]);
   const memberIndexById = useMemo(
     () => new Map(members.map((member, index) => [member.id, index])),
@@ -195,59 +374,10 @@ export function ChannelView({
     [bootstrap.channels, currentThreadId, globalActiveRuns, members],
   );
   const activeTerminals = useWorkspaceStore(selectActiveTerminals);
-  const setActiveTerminals = useWorkspaceStore((state) => state.setActiveTerminals);
   const [isTerminalDrawerOpen, setIsTerminalDrawerOpen] = useState(false);
   const [stopError, setStopError] = useState<string | undefined>(undefined);
 
-  useEffect(() => {
-    const organizationId = bootstrap.organization?.id;
-    if (!organizationId || globalActiveRuns.length === 0) {
-      setActiveTerminals([]);
-      return;
-    }
-
-    let cancelled = false;
-    const pollJobs = async () => {
-      try {
-        const jobsPromises = globalActiveRuns.map(async (run) => {
-          const res = await fetch(`/api/runs/${encodeURIComponent(run.id)}/jobs?organizationId=${encodeURIComponent(organizationId)}`);
-          if (!res.ok) return [];
-          const data = await res.json().catch(() => []);
-          if (!Array.isArray(data)) return [];
-          return data.flatMap((job: unknown) => {
-            if (!job || typeof job !== "object") return [];
-            const record = job as Record<string, unknown>;
-            if (typeof record.id !== "string") return [];
-            return [
-              {
-                runId: run.id,
-                jobId: record.id,
-                commandLine: typeof record.commandLine === "string" ? record.commandLine : "",
-                cwd: typeof record.cwd === "string" ? record.cwd : "",
-                status: typeof record.status === "string" ? record.status : "running",
-              } satisfies ActiveJob,
-            ];
-          });
-        });
-
-        const allJobsLists = await Promise.all(jobsPromises);
-        if (cancelled) return;
-
-        const runningJobs = allJobsLists.flat().filter((job) => job.status === "running");
-        setActiveTerminals(runningJobs);
-      } catch (e) {
-        console.error("Failed to fetch running background jobs:", e);
-      }
-    };
-
-    void pollJobs();
-    const interval = setInterval(pollJobs, 3000);
-
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
-  }, [globalActiveRuns, bootstrap.organization?.id, setActiveTerminals]);
+  useTerminalPolling(globalActiveRuns, bootstrap.organization?.id, setActiveTerminals);
 
   const traceMembers = useMemo(
     () =>
@@ -259,42 +389,15 @@ export function ChannelView({
     [members],
   );
   const reasoningTraceVisible = showDetails && detailsTab === "Thinking trace";
-  const liveTraceActivity = useMemo(
-    () => (reasoningTraceVisible ? feed.activity : []),
-    [feed.activity, reasoningTraceVisible],
-  );
-  const liveTraceRuns = useMemo(
-    () => (reasoningTraceVisible ? feed.runs : []),
-    [feed.runs, reasoningTraceVisible],
-  );
-  const deferredTraceActivity = useDeferredValue(liveTraceActivity);
-  const deferredTraceRuns = useDeferredValue(liveTraceRuns);
-  const reasoningTraceState = useMemo(
-    () => (reasoningTraceVisible ? { activity: deferredTraceActivity, runs: deferredTraceRuns } : null),
-    [deferredTraceActivity, deferredTraceRuns, reasoningTraceVisible],
-  );
-  const reasoningTraceSteps = useMemo(() => {
-    if (!currentThreadId || !reasoningTraceVisible || !reasoningTraceState) return [];
-    return buildReasoningTraceSteps({
-      threadId: currentThreadId,
-      agentIdFilter: conversation.type === "agent" ? conversation.id : undefined,
-      conversationName: conversation.name,
-      conversationType: conversation.type,
-      members: traceMembers,
-      activity: reasoningTraceState.activity,
-      runs: reasoningTraceState.runs,
-      organizationId: bootstrap.organization?.id,
-    });
-  }, [
-    bootstrap.organization?.id,
-    conversation.id,
-    conversation.name,
-    conversation.type,
+  const reasoningTraceSteps = useReasoningTrace({
     currentThreadId,
     reasoningTraceVisible,
-    reasoningTraceState,
+    conversation,
     traceMembers,
-  ]);
+    activity: feed.activity,
+    runs: feed.runs,
+    organizationId: bootstrap.organization?.id,
+  });
 
   const approvalsSource = activeTab === "conversation" || activeTab === "approvals" ? feed.approvals : null;
   const visibleApprovals = useMemo(
@@ -519,8 +622,6 @@ export function ChannelView({
     };
   }, [currentThreadId, organizationId, questionRefreshSignal, waitingInputRunIds]);
 
-  const headerSubtitle =
-    typingLabel ?? (feed.loading ? "Syncing live history from the backend…" : undefined);
   const resolveApproval = useCallback(
     async (
       approvalId: string,
@@ -645,15 +746,89 @@ export function ChannelView({
     [setActiveTab],
   );
 
+  const feedRef = useRef(feed);
+  feedRef.current = feed;
+  const replyToRef = useRef(replyTo);
+  replyToRef.current = replyTo;
+
+  const handleCancelReply = useCallback(() => {
+    setReplyTo(null);
+  }, []);
+
+  const handleSkillCommand = useCallback(
+    async (skillId: string, content: string | undefined, metadata: Record<string, unknown> | undefined) => {
+      if (!organizationId) throw new Error("Missing organization context.");
+      const { content: skillContent } = await settingsFetch<SkillInvocationResponse>(
+        `/api/settings/skills/${encodeURIComponent(skillId)}?organizationId=${encodeURIComponent(organizationId)}&arguments=${encodeURIComponent(content ?? "")}`,
+        undefined,
+        "Unable to load skill.",
+      );
+      await feedRef.current.sendMessage(skillContent, undefined, undefined, metadata);
+      setReplyTo(null);
+      scrollToLatest("auto");
+    },
+    [organizationId, scrollToLatest],
+  );
+
+  const handleComposerCommand = useCallback(
+    async (command: string, content: string | undefined, metadata: Record<string, unknown> | undefined) => {
+      if (command === "schedule") {
+        const prompt = content?.replace(/^\/schedule\s*/i, "").trim();
+        if (!prompt) {
+          throw new Error("Usage: /schedule do this");
+        }
+        await feedRef.current.sendMessage(
+          `Please use the schedule tool for this request: ${prompt}`,
+          undefined,
+          undefined,
+          metadata,
+        );
+        setReplyTo(null);
+        scrollToLatest("auto");
+        return;
+      }
+      await feedRef.current.archiveConversation(command as "summarize" | "clear");
+      setReplyTo(null);
+      scrollToLatest("auto");
+    },
+    [scrollToLatest],
+  );
+
+  const handleSend = useCallback(
+    (content: string, attachmentIds?: string[], metadata?: Record<string, unknown>) => {
+      if (isAgent) {
+        openDetailsForAgentMessage();
+      }
+      const promise = feedRef.current.sendMessage(content, replyToRef.current?.id, attachmentIds, metadata);
+      setReplyTo(null);
+      return promise;
+    },
+    [isAgent, openDetailsForAgentMessage],
+  );
+
+  const semanticActivityCount = useMemo(
+    () => countSemanticActivityEvents(feed.activity),
+    [feed.activity],
+  );
+  const attachmentCount = useMemo(
+    () => countMessageAttachments(feed.messages),
+    [feed.messages],
+  );
+
+  const resolvedChannelMemberCount = useMemo(() => {
+    const activeMemberIds = new Set(members.map((member) => member.id));
+    return channelMemberIds.filter((memberId) => activeMemberIds.has(memberId)).length;
+  }, [channelMemberIds, members]);
+
   const tabCounts = useMemo(
     () =>
       buildTabCounts({
-        activity: feed.activity,
+        activityCount: semanticActivityCount,
         approvals: feed.approvals,
-        messages: feed.messages,
+        attachmentCount,
         runs: feed.runs,
       }),
-    [feed.activity, feed.approvals, feed.messages, feed.runs],
+    [attachmentCount, feed.approvals, feed.runs, semanticActivityCount],
   );
   const tabsWithCounts = useMemo(
     () =>
@@ -667,14 +842,21 @@ export function ChannelView({
               : tab.id === "activity"
                 ? tabCounts.activity
                 : tab.id === "members"
-                  ? channelMemberIds.length
+                  ? resolvedChannelMemberCount
                   : tab.id === "tasks"
                     ? tabCounts.tasks
                     : undefined,
         countVariant:
           tab.id === "approvals" && tabCounts.approvals > 0 ? ("warning" as const) : ("default" as const),
       })),
-    [channelMemberIds.length, tabCounts.activity, tabCounts.approvals, tabCounts.files, tabCounts.tasks, tabs],
+    [
+      resolvedChannelMemberCount,
+      tabCounts.activity,
+      tabCounts.approvals,
+      tabCounts.files,
+      tabCounts.tasks,
+      tabs,
+    ],
   );
   const conversationAttachmentsSource = activeTab === "files" ? feed.messages : null;
   const conversationAttachments = useMemo(
@@ -716,7 +898,6 @@ export function ChannelView({
           avatarColorIndex={conversationColorIndex}
           status={selectedStatus.variant}
           statusLabel={selectedStatus.label}
-          subtitle={headerSubtitle}
           actions={
             <div className="flex items-center gap-2">
               <FontSizeControl value={chatFontSize} onChange={setChatFontSize} />
@@ -831,7 +1012,7 @@ export function ChannelView({
                     key={approval.id}
                     data={{ ...approval, error: approvalErrors[approval.id] }}
                     resolving={!!resolvingApprovals[approval.id]}
-                    onResolve={(resolution) => resolveApproval(approval.id, resolution)}
+                    onResolve={resolveApproval}
                   />
                 ))}
               </div>
@@ -994,7 +1175,7 @@ export function ChannelView({
                   key={approval.id}
                   data={{ ...approval, error: approvalErrors[approval.id] }}
                   resolving={!!resolvingApprovals[approval.id]}
-                  onResolve={(resolution) => resolveApproval(approval.id, resolution)}
+                  onResolve={resolveApproval}
                 />
               ))}
               {activeQuestion ? (
@@ -1006,9 +1187,7 @@ export function ChannelView({
                   activeQuestionIndex={activeQuestionIndex}
                   totalQuestions={pendingQuestions.length}
                   onIndexChange={setActiveQuestionIndex}
-                  onAnswer={(option) => {
-                    void answerQuestion(activeQuestion.id, option);
-                  }}
+                  onAnswer={answerQuestion}
                 />
               ) : null}
             </div>
@@ -1023,32 +1202,8 @@ export function ChannelView({
                 reasoningProvider={reasoningModelSelection?.provider}
                 reasoningModelValue={reasoningModelSelection?.model}
                 skillCommands={skillCommands}
-                onSkillCommand={async (skillId, content, metadata) => {
-                if (!organizationId) throw new Error("Missing organization context.");
-                const { content: skillContent } = await settingsFetch<SkillInvocationResponse>(
-                  `/api/settings/skills/${encodeURIComponent(skillId)}?organizationId=${encodeURIComponent(organizationId)}&arguments=${encodeURIComponent(content ?? "")}`,
-                  undefined,
-                  "Unable to load skill.",
-                );
-                await feed.sendMessage(skillContent, undefined, undefined, metadata);
-                setReplyTo(null);
-                scrollToLatest("auto");
-              }}
-              onCommand={async (command, content, metadata) => {
-                if (command === "schedule") {
-                  const prompt = content?.replace(/^\/schedule\s*/i, "").trim();
-                  if (!prompt) {
-                    throw new Error("Usage: /schedule do this");
-                  }
-                  await feed.sendMessage(`Please use the schedule tool for this request: ${prompt}`, undefined, undefined, metadata);
-                  setReplyTo(null);
-                  scrollToLatest("auto");
-                  return;
-                }
-                await feed.archiveConversation(command);
-                setReplyTo(null);
-                scrollToLatest("auto");
-              }}
+                onSkillCommand={handleSkillCommand}
+                onCommand={handleComposerCommand}
               placeholder={
                 isAgent
                   ? `Message @${conversation.name} or type / for commands`
@@ -1057,17 +1212,10 @@ export function ChannelView({
               inlineError={feed.error}
               mentionSuggestions={mentionSuggestions}
               replyTo={replyTo}
-              onCancelReply={() => setReplyTo(null)}
+              onCancelReply={handleCancelReply}
               stoppableRunIds={stoppableRunIds}
               onStopRun={stopAgentRun}
-              onSend={(content, attachmentIds, metadata) => {
-                if (isAgent) {
-                  openDetailsForAgentMessage();
-                }
-                const promise = feed.sendMessage(content, replyTo?.id, attachmentIds, metadata);
-                setReplyTo(null);
-                return promise;
-              }}
+              onSend={handleSend}
             />
           </div>
         )}

@@ -11,8 +11,10 @@ import {
   channelSetMemberModeTool,
 } from './channel.js';
 import { channelRecallTool } from './channel-recall.js';
+import { globTool } from './glob.js';
 import { grepTool } from './grep.js';
 import { goalStartTool, goalTaskUpdateTool, questionAskTool } from './goal.js';
+import { lsTool } from './ls.js';
 import { jobKillTool, jobOutputTool } from './job-tools.js';
 import { downloadTool, fetchTool } from './web-tools.js';
 import { shellTool } from './shell.js';
@@ -30,8 +32,6 @@ import {
 import { procedureListTool, procedureViewTool } from './procedure-read.js';
 import {
   editTool,
-  globTool,
-  lsTool,
   multieditTool,
   viewTool,
   writeTool,

@@ -8,7 +8,8 @@ import type {
 } from '@ujima/shared';
 import { getLatestOrganization, getOrganization, listProviderCredentials } from './organization.js';
 import { listMembers } from './members.js';
-import { listChannels } from './channels.js';
+import { listChannels, setChannelMembers } from './channels.js';
+import { resolveChannelMemberIds } from '@ujima/shared';
 import { listPendingApprovals } from './approvals.js';
 import { listActiveRuns } from './runs.js';
 
@@ -45,15 +46,29 @@ export function getBootstrapSnapshot(db: DbHandle, organizationId?: string): Boo
     channelsCursor = page.nextCursor;
   } while (channelsCursor);
 
+  const members = listMembers(db, organization.id).filter((member) => !member.retiredAt);
+  const activeMemberIds = new Set(members.map((member) => member.id));
+  const channels = allChannels.map((channel) => {
+    const memberIds = resolveChannelMemberIds(channel.memberIds, activeMemberIds);
+    if (
+      memberIds.length === channel.memberIds.length &&
+      memberIds.every((memberId, index) => memberId === channel.memberIds[index])
+    ) {
+      return channel;
+    }
+    setChannelMembers(db, organization.id, channel.id, memberIds);
+    return { ...channel, memberIds };
+  });
+
   return {
     organization,
-    members: listMembers(db, organization.id).filter((member) => !member.retiredAt),
+    members,
     // Bootstrap snapshot is consumed by clients that don't have a member
     // identity yet (it's the very first response on connect). Hide private
     // channel kinds — `self` (agent scratchpads) and `dm` (private 2-member
     // conversations) — at the SQL level so they never enter the snapshot.
     // Member-scoped DM access goes through `listVisibleChannels` instead.
-    channels: allChannels,
+    channels,
     pendingApprovals: listPendingApprovals(db, organization.id).filter(
       (approval) => !!approval.runId && activeRunIds.has(approval.runId),
     ),

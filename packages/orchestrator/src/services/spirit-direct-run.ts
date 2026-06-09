@@ -479,6 +479,7 @@ export class SpiritService extends SpiritServiceSupervisor {
         summary: run.summary,
         systemPromptSuffix,
         abortSignal: abortController.signal,
+        detectExternalPause: () => this.detectRunPauseForHuman(run.organizationId, run.id),
         onChunk: (chunk) => {
           if (chunk.kind === 'text') streamedTrace.text += chunk.delta;
           if (chunk.kind === 'reasoning') streamedTrace.reasoning += chunk.delta;

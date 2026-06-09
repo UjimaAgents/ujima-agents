@@ -1,7 +1,7 @@
 "use client";
 
 import { Hash, PencilLine, Plus, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { useState, useCallback, useMemo, memo } from "react";
 import type { OrganizationSettingsResponse } from "@ujima/api-schema";
 import { settingsFetch, settingsFetchVoid } from "@/features/settings/shared/settings-api";
 import { ConfirmDialog } from "@/features/settings/shared/confirm-dialog";
@@ -18,7 +18,7 @@ import { ChannelFormModal } from "./channels/channel-form-modal";
 
 type Channel = NonNullable<OrganizationSettingsResponse["channels"]>[number];
 
-export function ChannelsTab({
+export const ChannelsTab = memo(function ChannelsTab({
   orgId,
   channels: initialChannels,
   onChannelsChange,
@@ -34,14 +34,17 @@ export function ChannelsTab({
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const groupChannels = channels.filter((c) => c.kind === "group" || c.kind === "general");
+  const groupChannels = useMemo(
+    () => channels.filter((c) => c.kind === "group" || c.kind === "general"),
+    [channels],
+  );
 
-  const updateChannels = (next: Channel[]) => {
+  const updateChannels = useCallback((next: Channel[]) => {
     setChannels(next);
     onChannelsChange(next);
-  };
+  }, [onChannelsChange]);
 
-  const createChannel = async (name: string, topic: string) => {
+  const createChannel = useCallback(async (name: string, topic: string) => {
     if (!orgId) return;
     const created = await settingsFetch<Channel>(
       `/api/orgs/${encodeURIComponent(orgId)}/channels`,
@@ -53,9 +56,9 @@ export function ChannelsTab({
       "Failed to create channel.",
     );
     updateChannels([...channels, created]);
-  };
+  }, [orgId, channels, updateChannels]);
 
-  const saveEdit = async (name: string, topic: string) => {
+  const saveEdit = useCallback(async (name: string, topic: string) => {
     if (!editingChannel || !orgId) return;
     await settingsFetch(
       `/api/orgs/${encodeURIComponent(orgId)}/channels/${encodeURIComponent(editingChannel.id)}`,
@@ -71,9 +74,9 @@ export function ChannelsTab({
         c.id === editingChannel.id ? { ...c, name, topic } : c,
       ),
     );
-  };
+  }, [editingChannel, orgId, channels, updateChannels]);
 
-  const deleteChannel = async () => {
+  const deleteChannel = useCallback(async () => {
     if (!deleteTarget || !orgId) return;
     setDeleting(true);
     setError(null);
@@ -90,7 +93,7 @@ export function ChannelsTab({
     } finally {
       setDeleting(false);
     }
-  };
+  }, [deleteTarget, orgId, channels, updateChannels]);
 
   return (
     <>
@@ -179,4 +182,4 @@ export function ChannelsTab({
       />
     </>
   );
-}
+});

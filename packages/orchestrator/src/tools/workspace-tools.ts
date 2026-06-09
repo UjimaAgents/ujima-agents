@@ -1,8 +1,10 @@
 import { createTwoFilesPatch } from 'diff';
 import { z } from 'zod';
-import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises';
-import { basename, dirname, join, relative, sep } from 'node:path';
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { dirname } from 'node:path';
+import { execFile } from 'node:child_process';
 import { WorkspaceFileSchema } from '@ujima/shared';
+import { resolveBinaryPath, SED_BINARY } from './binary-resolver.js';
 import { assertWorkspaceBoundary } from '@ujima/shared/workspace';
 import { isSensitiveWorkspacePath } from '@ujima/shared/workspace-file-filters';
 import type { ApiRepository } from '../services/repository-reader.js';
@@ -76,9 +78,6 @@ const VIEW_MAX_LIMIT = 1000;
 // page through with `offset`/`limit`.
 const VIEW_DEFAULT_LIMIT = 200;
 const VIEW_MAX_BYTES = 200 * 1024;
-const TREE_LIMIT = 1000;
-const GLOB_LIMIT = 100;
-const IGNORED_DIRECTORIES = new Set(['.git', '.next', 'build', 'coverage', 'dist', 'node_modules']);
 
 // Only `file_path` is exposed in the model-facing JSON schema.
 // Models don't see `resourcePath` because exposing the alias let
@@ -210,29 +209,6 @@ const WriteSchema = z.object({
   }
 });
 
-// Same rationale as FilePathFields above: the model-facing schema uses
-// `path` (the convention `grep` already follows), never `resourcePath`,
-// so Gemini doesn't pattern-match `resourcePath` onto unrelated tools
-// (channel.post / channel.dm) and trip additionalProperties:false. The
-// runtime reads from either alias for back-compat with older
-// serialized calls.
-const LsSchema = z.object({
-  path: z.string().min(1).default('.'),
-  ignore: z.array(z.string().min(1)).default([]),
-  depth: z.number().int().min(0).max(20).default(0),
-  limit: z.number().int().min(1).max(TREE_LIMIT).default(TREE_LIMIT),
-});
-
-const GlobSchema = z.object({
-  path: z.string().min(1).default('.'),
-  pattern: z.string().min(1),
-  limit: z.number().int().min(1).max(TREE_LIMIT).default(GLOB_LIMIT),
-});
-
-function lsGlobPathFrom(args: { path?: string }): string {
-  return args.path ?? '.';
-}
-
 export const viewTool: OrchestratorTool<typeof ViewSchema> = {
   id: 'view',
   schema: ViewSchema,
@@ -271,17 +247,19 @@ export const viewTool: OrchestratorTool<typeof ViewSchema> = {
         : readWindowValue(invocation.input?.limit, VIEW_DEFAULT_LIMIT),
       VIEW_MAX_LIMIT,
     );
-    const content = await readFile(resolved, 'utf8');
+    const windowText = await readFileLineWindow(resolved, offset, limit);
 
     return {
       type: 'file' as const,
       path: resolved,
       offset,
       limit,
-      content: numberedWindow(content, offset, limit),
+      content: numberedWindow(windowText, offset, limit),
     };
   },
 };
+
+// ── Write Tool ────────────────────────────────────────────────────
 
 export const writeTool: OrchestratorTool<typeof WriteSchema> = {
   id: 'write',
@@ -437,107 +415,6 @@ export const multieditTool: OrchestratorTool<typeof MultiEditSchema> = {
   },
 };
 
-export const lsTool: OrchestratorTool<typeof LsSchema> = {
-  id: 'ls',
-  schema: LsSchema,
-  toInvocation: (args) => ({
-    action: 'read',
-    resourceType: 'folder',
-    resourcePath: lsGlobPathFrom(args),
-    input: {
-      ignore: args.ignore,
-      depth: args.depth,
-      limit: args.limit,
-    },
-  }),
-  execute: async ({ invocation, team }) => {
-    const resourcePath = typeof invocation.resourcePath === 'string' ? invocation.resourcePath : '.';
-    const resolved = resolveWorkspacePath(team.workspace.root, resourcePath);
-    const resource = await stat(resolved);
-    const limit = readWindowValue(invocation.input?.limit, TREE_LIMIT);
-    const depth = readWindowValue(invocation.input?.depth, 0);
-    const ignore = Array.isArray(invocation.input?.ignore)
-      ? invocation.input.ignore.map((entry) => String(entry))
-      : [];
-    const entries: TreeEntry[] = [];
-
-    if (resource.isDirectory()) {
-      await collectTreeEntries({
-        root: resolved,
-        current: resolved,
-        currentDepth: 0,
-        maxDepth: depth,
-        ignore,
-        entries,
-        limit,
-      });
-    } else {
-      entries.push({
-        path: resolved,
-        name: basename(resolved),
-        isDir: false,
-        depth: 0,
-      });
-    }
-
-    const content = formatTreeOutput(resourcePath, entries, limit);
-    return {
-      path: resolved,
-      content,
-      count: entries.length,
-      truncated: entries.length >= limit,
-    };
-  },
-};
-
-export const globTool: OrchestratorTool<typeof GlobSchema> = {
-  id: 'glob',
-  schema: GlobSchema,
-  toInvocation: (args) => ({
-    action: 'read',
-    resourceType: 'folder',
-    resourcePath: lsGlobPathFrom(args),
-    input: {
-      pattern: args.pattern,
-      limit: args.limit,
-    },
-  }),
-  execute: async ({ invocation, team }) => {
-    const searchRoot = resolveWorkspacePath(
-      team.workspace.root,
-      typeof invocation.resourcePath === 'string' ? invocation.resourcePath : '.',
-    );
-    const resource = await stat(searchRoot);
-    const pattern = String(invocation.input?.pattern ?? '').trim();
-    const limit = readWindowValue(invocation.input?.limit, GLOB_LIMIT);
-    const matches: string[] = [];
-
-    if (resource.isDirectory()) {
-      await collectGlobMatches({
-        root: searchRoot,
-        current: searchRoot,
-        pattern,
-        limit,
-        matches,
-      });
-    } else {
-      const rel = relative(team.workspace.root, searchRoot) || basename(searchRoot);
-      if (matchGlob(pattern, normalizePath(rel))) {
-        matches.push(searchRoot);
-      }
-    }
-
-    return {
-      path: searchRoot,
-      pattern,
-      matches,
-      count: matches.length,
-      truncated: matches.length >= limit,
-      content: matches.map((entry) => normalizePath(relative(team.workspace.root, entry) || entry)).join('\n'),
-    };
-  },
-};
-
 function resolveWorkspacePath(workspaceRoot: string, resourcePath: string): string {
   return assertWorkspaceBoundary(workspaceRoot, resourcePath);
 }
@@ -565,6 +442,24 @@ async function readExistingText(path: string): Promise<string> {
 // validation error instead of silently falling back to the default
 // window — silent fallback would let an agent type "100-200ish" and
 // re-read the whole file without noticing.
+async function readFileLineWindow(filePath: string, offset: number, limit: number): Promise<string> {
+  const endLine = offset + limit - 1;
+  try {
+    const bin = resolveBinaryPath(SED_BINARY, 'SED_BIN_PATH');
+    return await new Promise<string>((resolve, reject) => {
+      execFile(bin, ['-n', `${offset},${endLine}p`, filePath], { maxBuffer: VIEW_MAX_BYTES }, (err, stdout) => {
+        if (err) return reject(err);
+        resolve(stdout);
+      });
+    });
+  } catch {
+    const content = await readFile(filePath, 'utf8');
+    const lines = content.split(/\r?\n/);
+    const start = Math.max(offset - 1, 0);
+    return lines.slice(start, start + limit).join('\n');
+  }
+}
+
 function parseLinesRange(input: string): { offset: number; limit: number } | null {
   const trimmed = input.trim();
   const match = /^(\d+)(?:-(\d*))?$/.exec(trimmed);
@@ -579,14 +474,15 @@ function parseLinesRange(input: string): { offset: number; limit: number } | nul
   return { offset: start, limit: end - start + 1 };
 }
 
-function numberedWindow(content: string, offset: number, limit: number): string {
-  const lines = content.split(/\r?\n/);
-  const start = Math.max(offset - 1, 0);
-  const visible = lines.slice(start, start + limit);
-  const endLine = start + visible.length;
+function numberedWindow(windowContent: string, offset: number, limit: number): string {
+  let lines = windowContent.split(/\r?\n/);
+  if (lines.length > 0 && lines[lines.length - 1] === '' && windowContent.includes('\n')) {
+    lines = lines.slice(0, -1);
+  }
+  const endLine = lines.length > 0 ? offset + lines.length - 1 : offset;
   const width = String(Math.max(endLine, offset)).length;
-  const numbered = visible.map((line, index) => `${String(offset + index).padStart(width, ' ')} | ${line}`);
-  if (start + limit < lines.length) {
+  const numbered = lines.map((line, index) => `${String(offset + index).padStart(width, ' ')} | ${line}`);
+  if (lines.length >= limit) {
     numbered.push('');
     numbered.push(`(File has more lines. Use offset to read beyond line ${endLine})`);
   }
@@ -711,148 +607,4 @@ function countOccurrences(haystack: string, needle: string): number {
 function createPatch(filePath: string, before: string, after: string): string {
   return createTwoFilesPatch(filePath, filePath, before, after, '', '', { context: 3 });
 }
-
-interface TreeEntry {
-  path: string;
-  name: string;
-  isDir: boolean;
-  depth: number;
-}
-
-async function collectTreeEntries(input: {
-  root: string;
-  current: string;
-  currentDepth: number;
-  maxDepth: number;
-  ignore: string[];
-  entries: TreeEntry[];
-  limit: number;
-}): Promise<void> {
-  if (input.entries.length >= input.limit) return;
-
-  const dirents = await readdir(input.current, { withFileTypes: true });
-  dirents.sort((a, b) => a.name.localeCompare(b.name));
-
-  for (const dirent of dirents) {
-    if (input.entries.length >= input.limit) return;
-    if (dirent.name.startsWith('.')) continue;
-    if (dirent.isDirectory() && IGNORED_DIRECTORIES.has(dirent.name)) continue;
-
-    const fullPath = join(input.current, dirent.name);
-    if (isSensitiveWorkspacePath(fullPath)) continue;
-
-    const rel = normalizePath(relative(input.root, fullPath) || dirent.name);
-    if (input.ignore.some((pattern) => matchGlob(pattern, rel) || matchGlob(pattern, basename(rel)))) {
-      continue;
-    }
-
-    const isDir = dirent.isDirectory();
-    input.entries.push({
-      path: fullPath,
-      name: dirent.name,
-      isDir,
-      depth: input.currentDepth,
-    });
-
-    if (isDir && (input.maxDepth === 0 || input.currentDepth + 1 < input.maxDepth)) {
-      await collectTreeEntries({
-        ...input,
-        current: fullPath,
-        currentDepth: input.currentDepth + 1,
-      });
-    }
-  }
-}
-
-function formatTreeOutput(rootLabel: string, entries: TreeEntry[], limit: number): string {
-  const lines = [normalizePath(rootLabel || '.')];
-  for (const entry of entries) {
-    const prefix = '  '.repeat(entry.depth);
-    lines.push(`${prefix}${entry.name}${entry.isDir ? '/' : ''}`);
-  }
-  if (entries.length >= limit) {
-    lines.push('');
-    lines.push(`(Truncated after ${limit} entries)`);
-  }
-  return lines.join('\n');
-}
-
-async function collectGlobMatches(input: {
-  root: string;
-  current: string;
-  pattern: string;
-  limit: number;
-  matches: string[];
-}): Promise<void> {
-  if (input.matches.length >= input.limit) return;
-
-  const dirents = await readdir(input.current, { withFileTypes: true });
-  dirents.sort((a, b) => a.name.localeCompare(b.name));
-
-  for (const dirent of dirents) {
-    if (input.matches.length >= input.limit) return;
-    if (dirent.name.startsWith('.')) continue;
-    if (dirent.isDirectory() && IGNORED_DIRECTORIES.has(dirent.name)) continue;
-
-    const fullPath = join(input.current, dirent.name);
-    if (isSensitiveWorkspacePath(fullPath)) continue;
-
-    if (dirent.isDirectory()) {
-      await collectGlobMatches({
-        ...input,
-        current: fullPath,
-      });
-      continue;
-    }
-
-    const rel = normalizePath(relative(input.root, fullPath) || dirent.name);
-    if (!matchGlob(input.pattern, rel) && !matchGlob(input.pattern, basename(rel))) continue;
-    input.matches.push(fullPath);
-  }
-}
-
-function matchGlob(pattern: string, candidate: string): boolean {
-  const normalizedPattern = normalizePath(pattern.trim());
-  const normalizedCandidate = normalizePath(candidate.trim());
-  if (!normalizedPattern) return false;
-  const regex = globToRegExp(normalizedPattern);
-  return regex.test(normalizedCandidate);
-}
-
-function globToRegExp(pattern: string): RegExp {
-  let source = '^';
-  for (let i = 0; i < pattern.length; i += 1) {
-    const char = pattern[i] ?? '';
-    if (char === '*') {
-      const next = pattern[i + 1];
-      if (next === '*') {
-        const after = pattern[i + 2];
-        if (after === '/') {
-          source += '(?:.*/)?';
-          i += 2;
-          continue;
-        }
-        source += '.*';
-        i += 1;
-        continue;
-      }
-      source += '[^/]*';
-      continue;
-    }
-    if (char === '?') {
-      source += '[^/]';
-      continue;
-    }
-    source += escapeRegExp(char);
-  }
-  source += '$';
-  return new RegExp(source);
-}
-
-function escapeRegExp(char: string): string {
-  return /[\\^$.*+?()[\]{}|]/.test(char) ? `\\${char}` : char;
-}
-
-function normalizePath(path: string): string {
-  return path.split(sep).join('/');
-}
+// EOF

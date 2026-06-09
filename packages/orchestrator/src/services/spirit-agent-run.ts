@@ -313,6 +313,7 @@ ${activeMemories
         temperature: this.temperature,
         toolChoice: 'auto',
         abortSignal: abortController.signal,
+        detectExternalPause: () => this.detectRunPauseForHuman(input.organizationId, runId),
         onChunk: (chunk) => {
           if (chunk.kind === 'reasoning') streamedReasoning += chunk.delta;
           this.emitRunChunk(

@@ -109,16 +109,16 @@ describe("workspace-store helpers", () => {
     expect(useWorkspaceStore.getState().members.map((member) => member.id)).toEqual(["ava", "bo", "human"]);
   });
 
-  it("keeps enough live activity for long streaming traces", () => {
+  it("merges consecutive reasoning run chunks into one activity row", () => {
     const store = useWorkspaceStore.getState();
     store.resetConversationFeed("org:thread");
 
     for (let index = 0; index < 1_200; index += 1) {
-      useWorkspaceStore.getState().appendActivity({
+      useWorkspaceStore.getState().appendRunChunk(undefined, {
         event_id: `chunk-${index}`,
         type: "run_chunk",
         publisher: "ava",
-        timestamp: new Date(0).toISOString(),
+        timestamp: new Date(index).toISOString(),
         payload: {
           runId: "run-1",
           threadId: "thread",
@@ -130,8 +130,51 @@ describe("workspace-store helpers", () => {
     }
 
     const activity = useWorkspaceStore.getState().activity;
-    expect(activity).toHaveLength(1_200);
-    expect(activity[0]?.event_id).toBe("chunk-0");
+    expect(activity).toHaveLength(1);
+    expect((activity[0]?.payload as { delta?: string }).delta).toHaveLength(1_200);
+  });
+
+  it("applies batched run chunks in a single store update", () => {
+    useWorkspaceStore.getState().resetConversationFeed("org:thread");
+    let notifications = 0;
+    const unsubscribe = useWorkspaceStore.subscribe(() => {
+      notifications += 1;
+    });
+
+    useWorkspaceStore.getState().appendRunChunkBatch([
+      {
+        message: {
+          id: "stream:run-1:ava",
+          senderId: "ava",
+          role: "assistant",
+          name: "Ava",
+          time: "12:00",
+          content: "Hel",
+          kind: "agent",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          streamRunId: "run-1",
+          pending: true,
+        },
+      },
+      {
+        message: {
+          id: "stream:run-1:ava",
+          senderId: "ava",
+          role: "assistant",
+          name: "Ava",
+          time: "12:01",
+          content: "lo",
+          kind: "agent",
+          createdAt: "2026-01-01T00:00:01.000Z",
+          streamRunId: "run-1",
+          pending: true,
+        },
+      },
+    ]);
+
+    unsubscribe();
+    expect(useWorkspaceStore.getState().messages[0]?.content).toBe("Hello");
+    expect(notifications).toBe(1);
   });
 
   it("detects agent-only channels and DMs", () => {

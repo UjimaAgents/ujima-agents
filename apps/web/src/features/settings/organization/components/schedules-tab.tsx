@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, memo } from "react";
 import { Clock, Play, Pause, Trash2, RefreshCw } from "lucide-react";
 import { ConfirmDialog } from "@/features/settings/shared/confirm-dialog";
 import { SettingsErrorAlert, SettingsLoading } from "@/features/settings/shared/settings-alert";
@@ -28,7 +28,19 @@ interface Schedule {
   updatedAt: string;
 }
 
-export function SchedulesTab() {
+function formatDate(iso?: string) {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleString();
+}
+
+function statusVariant(status: Schedule["status"]) {
+  if (status === "active") return "success" as const;
+  if (status === "paused") return "warning" as const;
+  if (status === "failed") return "warning" as const;
+  return "default" as const;
+}
+
+export const SchedulesTab = memo(function SchedulesTab() {
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -60,7 +72,7 @@ export function SchedulesTab() {
     void fetchSchedules();
   }, [fetchSchedules]);
 
-  const toggleStatus = async (schedule: Schedule) => {
+  const toggleStatus = useCallback(async (schedule: Schedule) => {
     const nextStatus = schedule.status === "active" ? "paused" : "active";
     try {
       const res = await fetch(`/api/schedules/${schedule.id}`, {
@@ -78,9 +90,9 @@ export function SchedulesTab() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Update failed");
     }
-  };
+  }, []);
 
-  const deleteSchedule = async () => {
+  const deleteSchedule = useCallback(async () => {
     if (!deleteTarget) return;
     setDeleting(true);
     try {
@@ -96,19 +108,7 @@ export function SchedulesTab() {
     } finally {
       setDeleting(false);
     }
-  };
-
-  const formatDate = (iso?: string) => {
-    if (!iso) return "—";
-    return new Date(iso).toLocaleString();
-  };
-
-  const statusVariant = (status: Schedule["status"]) => {
-    if (status === "active") return "success" as const;
-    if (status === "paused") return "warning" as const;
-    if (status === "failed") return "warning" as const;
-    return "default" as const;
-  };
+  }, [deleteTarget]);
 
   if (loading) return <SettingsLoading label="Loading schedules…" />;
 
@@ -188,4 +188,4 @@ export function SchedulesTab() {
       />
     </>
   );
-}
+});

@@ -147,6 +147,29 @@ button {
     box-shadow 180ms ease;
 }
 
+/* Global clickable cursor styles */
+a,
+button,
+select,
+summary,
+label,
+[role="button"],
+[type="button"],
+[type="submit"],
+[type="reset"],
+input[type="checkbox"],
+input[type="radio"] {
+  cursor: pointer;
+}
+
+button:disabled,
+[role="button"]:disabled,
+select:disabled,
+input:disabled,
+label:disabled {
+  cursor: not-allowed;
+}
+
 .tech-grid {
   position: relative;
 }

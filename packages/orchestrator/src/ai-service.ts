@@ -7,6 +7,7 @@ import {
   runAgentWithRetry,
   type AgentLoopChunk,
   type AgentLoopStep,
+  type HumanPause,
 } from './services/agent-loop.js';
 import { safeFallbackModelForProvider } from '@ujima/shared';
 import { selectLanguageModel } from '@ujima/llm';
@@ -61,6 +62,7 @@ export interface GenerateRunReplyInput {
   abortSignal?: AbortSignal;
   onChunk?: (chunk: AgentLoopChunk) => PromiseLike<void> | void;
   onStepFinish?: (step: AgentLoopStep, steps: AgentLoopStep[]) => PromiseLike<void> | void;
+  detectExternalPause?: () => HumanPause | null;
 }
 
 export interface GenerateMemoryReviewInput {
@@ -552,6 +554,7 @@ export class AiService {
       temperature: wakeReplyPolicy.mandatoryReply ? 0.2 : DEFAULT_SPIRIT_TEMPERATURE,
       toolChoice: 'auto',
       abortSignal: input.abortSignal,
+      detectExternalPause: input.detectExternalPause,
       onChunk: input.onChunk,
       onStepFinish: input.onStepFinish,
       loadInterruptMessages: () => {

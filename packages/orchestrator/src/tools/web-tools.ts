@@ -2,13 +2,14 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 import { dirname } from 'node:path';
+import { execFile } from 'node:child_process';
 import { z } from 'zod';
 import { assertWorkspaceBoundary } from '@ujima/shared/workspace';
+import { resolveBinaryPath, CURL_BINARY } from './binary-resolver.js';
 import type { OrchestratorTool } from './types.js';
 
 const FETCH_MAX_BYTES = 5 * 1024 * 1024;
 const DOWNLOAD_MAX_BYTES = 100 * 1024 * 1024;
-const MAX_REDIRECTS = 5;
 
 const FetchSchema = z.object({
   url: z.string().min(1),
@@ -32,6 +33,8 @@ function downloadPathFrom(args: { file_path?: string }): string {
   return typeof args.file_path === 'string' ? args.file_path : '';
 }
 
+// ── Fetch Tool ────────────────────────────────────────────────────
+
 export const fetchTool: OrchestratorTool<typeof FetchSchema> = {
   id: 'fetch',
   schema: FetchSchema,
@@ -44,22 +47,21 @@ export const fetchTool: OrchestratorTool<typeof FetchSchema> = {
     const url = parseHttpUrl(String(invocation.input?.url ?? ''));
     const format = (invocation.input?.format as 'text' | 'markdown' | 'html' | undefined) ?? 'text';
     const timeoutSeconds = typeof invocation.input?.timeout === 'number' ? invocation.input.timeout : 30;
-    const response = await fetchWithTimeout(url, timeoutSeconds);
-    const contentType = response.headers.get('content-type') ?? '';
-    if (!response.ok) {
-      throw new Error(`Request failed with status code ${response.status}`);
+    const { status, contentType, stderr, body } = await curlFetch(url, timeoutSeconds, FETCH_MAX_BYTES);
+    if (status >= 400) {
+      throw new Error(`Request failed with status code ${status}${stderr ? ': ' + stderr.slice(0, 200) : ''}`);
     }
-
-    const body = await readResponseText(response, FETCH_MAX_BYTES);
     return {
       url: url.toString(),
       format,
-      status: response.status,
+      status,
       contentType,
-      content: body,
+      content: body.toString('utf8'),
     };
   },
 };
+
+// ── Download Tool ─────────────────────────────────────────────────
 
 export const downloadTool: OrchestratorTool<typeof DownloadSchema> = {
   id: 'download',
@@ -81,25 +83,103 @@ export const downloadTool: OrchestratorTool<typeof DownloadSchema> = {
     const url = parseHttpUrl(String(invocation.input?.url ?? ''));
     const timeoutSeconds = typeof invocation.input?.timeout === 'number' ? invocation.input.timeout : 30;
     const resolved = assertWorkspaceBoundary(team.workspace.root, invocation.resourcePath);
-    const response = await fetchWithTimeout(url, timeoutSeconds);
-    const contentType = response.headers.get('content-type') ?? '';
 
-    if (!response.ok) {
-      throw new Error(`Request failed with status code ${response.status}`);
+    const { status, contentType, stderr, body } = await curlFetch(url, timeoutSeconds, DOWNLOAD_MAX_BYTES);
+    if (status >= 400) {
+      throw new Error(`Request failed with status code ${status}${stderr ? ': ' + stderr.slice(0, 200) : ''}`);
     }
 
-    const bytes = await readResponseBytes(response, DOWNLOAD_MAX_BYTES);
     await mkdir(dirname(resolved), { recursive: true });
-    await writeFile(resolved, bytes);
+    await writeFile(resolved, body);
 
     return {
       success: true,
       path: resolved,
-      bytesWritten: bytes.length,
+      bytesWritten: body.byteLength,
       contentType,
     };
   },
 };
+
+// ── Curl HTTP Helper ──────────────────────────────────────────────
+
+interface CurlResult {
+  status: number;
+  contentType: string;
+  stderr: string;
+  body: Buffer;
+}
+
+async function curlFetch(url: URL, timeoutSeconds: number, maxBytes: number): Promise<CurlResult> {
+  // SSRF check (security boundary — keep in Node, not curl)
+  await assertPublicEgressUrl(url);
+
+  const bin = resolveBinaryPath(CURL_BINARY, 'CURL_BIN_PATH');
+  const timeoutMs = Math.max(1, Math.min(timeoutSeconds, 600));
+
+  // -sS: silent but show errors on stderr
+  // -L: follow redirects (default max 50)
+  // -i: include response headers in stdout
+  // --max-time: timeout in seconds
+  // --max-filesize: max bytes curl will download
+  const args = [
+    '-sS',
+    '-L',
+    '-i',
+    '--max-time', String(timeoutMs),
+    '--max-filesize', String(maxBytes),
+    '--',
+    url.toString(),
+  ];
+
+  const result = await new Promise<{ stdout: Buffer; stderr: string }>((resolve, _reject) => {
+    execFile(
+      bin,
+      args,
+      { maxBuffer: maxBytes + 65536, encoding: 'buffer' },
+      (err, stdout, stderr) => {
+        const out = Buffer.isBuffer(stdout) ? stdout : Buffer.from(stdout ?? '');
+        const errText = typeof stderr === 'string' ? stderr : stderr?.toString('utf8') ?? '';
+        if (err) {
+          // curl exits non-zero on server errors, timeouts, etc.
+          // The stderr usually has the error message; we still want stdout for the body if we got one
+          resolve({ stdout: out, stderr: errText });
+          return;
+        }
+        resolve({ stdout: out, stderr: errText });
+      },
+    );
+  });
+
+  // Split headers from body — curl -i outputs headers first, then \r\n\r\n, then body
+  const headerSeparator = Buffer.from('\r\n\r\n');
+  const separator = result.stdout.indexOf(headerSeparator);
+  const headerBlock =
+    separator === -1 ? '' : result.stdout.subarray(0, separator).toString('utf8');
+  const body =
+    separator === -1 ? result.stdout : result.stdout.subarray(separator + headerSeparator.length);
+
+  // Parse status code from "HTTP/1.1 200 OK" or "HTTP/2 200"
+  const statusLine = headerBlock.match(/HTTP\/\S+\s+(\d+)/);
+  const status = statusLine ? Number(statusLine[1]) : 0;
+
+  // Parse content-type
+  const ctMatch = headerBlock.match(/content-type:\s*(\S+)/i);
+  const contentType = ctMatch ? (ctMatch[1] ?? '').replace(/;.*$/, '').trim() : '';
+
+  if (body.byteLength > maxBytes) {
+    throw new Error(`Response is too large (${body.byteLength} bytes). Maximum size is ${maxBytes} bytes`);
+  }
+
+  return {
+    status,
+    contentType,
+    stderr: result.stderr,
+    body,
+  };
+}
+
+// ── URL / SSRF helpers (unchanged from Node implementation) ───────
 
 function parseHttpUrl(value: string): URL {
   const url = new URL(value);
@@ -107,26 +187,6 @@ function parseHttpUrl(value: string): URL {
     throw new Error('URL must start with http:// or https://');
   }
   return url;
-}
-
-async function fetchWithTimeout(url: URL, timeoutSeconds: number): Promise<Response> {
-  let current = url;
-  for (let redirects = 0; redirects <= MAX_REDIRECTS; redirects += 1) {
-    await assertPublicEgressUrl(current);
-    const controller = new AbortController();
-    const timeoutMs = Math.max(1, Math.min(timeoutSeconds, 600)) * 1000;
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-      const response = await fetch(current, { signal: controller.signal, redirect: 'manual' });
-      if (!isRedirect(response.status)) return response;
-      const location = response.headers.get('location');
-      if (!location) return response;
-      current = parseHttpUrl(new URL(location, current).toString());
-    } finally {
-      clearTimeout(timer);
-    }
-  }
-  throw new Error('Too many redirects');
 }
 
 async function assertPublicEgressUrl(url: URL): Promise<void> {
@@ -141,15 +201,11 @@ async function assertPublicEgressUrl(url: URL): Promise<void> {
 
   const directIp = isIP(host);
   const addresses = directIp
-    ? [{ address: host }]
+    ? [{ address: host } as { address: string }]
     : await lookup(host, { all: true, verbatim: true });
   if (addresses.length === 0 || addresses.some(({ address }) => isPrivateAddress(address))) {
     throw new Error('URL resolves to a private or link-local address');
   }
-}
-
-function isRedirect(status: number): boolean {
-  return status >= 300 && status < 400;
 }
 
 function isBlockedHostname(host: string): boolean {
@@ -191,17 +247,4 @@ function isPrivateV4(address: string): boolean {
     (a === 192 && b === 168) ||
     a >= 224
   );
-}
-
-async function readResponseText(response: Response, maxBytes: number): Promise<string> {
-  const bytes = await readResponseBytes(response, maxBytes);
-  return new TextDecoder().decode(bytes);
-}
-
-async function readResponseBytes(response: Response, maxBytes: number): Promise<Uint8Array> {
-  const bytes = new Uint8Array(await response.arrayBuffer());
-  if (bytes.byteLength > maxBytes) {
-    throw new Error(`Response is too large (${bytes.byteLength} bytes). Maximum size is ${maxBytes} bytes`);
-  }
-  return bytes;
 }

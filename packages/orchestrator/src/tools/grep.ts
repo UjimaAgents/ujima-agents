@@ -1,15 +1,14 @@
-import { execFileSync } from 'node:child_process';
-import { readFile, readdir, stat } from 'node:fs/promises';
-import { join, relative } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { z } from 'zod';
 import { assertWorkspaceBoundary } from '@ujima/shared/workspace';
 import { isSensitiveWorkspacePath } from '@ujima/shared/workspace-file-filters';
 import type { OrchestratorTool } from './types.js';
 import { readWindowValue } from './window-utils.js';
+import { resolveBinaryPath, RG_BINARY } from './binary-resolver.js';
+import { runCli } from './cli-runner.js';
 
 const DEFAULT_LIMIT = 50;
 const DEFAULT_CONTEXT_LINES = 2;
-const IGNORED_DIRECTORIES = new Set(['.git', '.next', 'build', 'coverage', 'dist', 'node_modules']);
 
 export const GrepSchema = z.object({
   query: z.string().min(1),
@@ -33,6 +32,20 @@ export interface GrepMatch {
   after: GrepContextLine[];
 }
 
+interface RgJsonLine {
+  type: 'begin' | 'end' | 'match' | 'context' | 'summary';
+  data: {
+    path?: { text: string };
+    lines?: { text: string };
+    line_number?: number;
+    submatches?: { match: { text: string }; start: number; end: number }[];
+  };
+}
+
+function stripTrailingNewline(s: string): string {
+  return s.replace(/\n$/, '').replace(/\r$/, '');
+}
+
 export const grepTool: OrchestratorTool<typeof GrepSchema> = {
   id: 'grep',
   schema: GrepSchema,
@@ -47,19 +60,138 @@ export const grepTool: OrchestratorTool<typeof GrepSchema> = {
     const resourcePath = invocation.resourcePath ?? String(invocation.input.path ?? '.');
     const ignoreCase = invocation.input.ignoreCase === true;
     const limit = readWindowValue(invocation.input.limit, DEFAULT_LIMIT);
-    const contextLines = readWindowValue(invocation.input.context_lines ?? invocation.input.contextLines, DEFAULT_CONTEXT_LINES);
+    const contextLines = readWindowValue(
+      invocation.input.context_lines ?? invocation.input.contextLines,
+      DEFAULT_CONTEXT_LINES,
+    );
     const resolved = assertWorkspaceBoundary(team.workspace.root, resourcePath);
-    const matches: GrepMatch[] = [];
-    const needle = ignoreCase ? query.toLowerCase() : query;
-    const resourceInfo = await stat(resolved);
 
-    if (resourceInfo.isDirectory()) {
-      for (const filePath of await collectSearchableFiles(team.workspace.root, resolved)) {
-        await searchFile(filePath);
-        if (matches.length >= limit) break;
+    const bin = resolveBinaryPath(RG_BINARY, 'RG_BIN_PATH');
+    const args = [
+      '--json',
+      '-n',
+      ...(contextLines > 0 ? ['-C', String(contextLines)] : []),
+      ...(ignoreCase ? ['-i'] : []),
+      '--max-count', String(limit),
+      '--', query, resolved,
+    ];
+
+    const { stdout, exitCode, stderr } = await runCli({
+      bin,
+      args,
+      cwd: team.workspace.root,
+      timeout: 15_000,
+      maxStdoutBytes: 10 * 1024 * 1024,
+      filterSensitivePaths: false,
+    });
+
+    if (exitCode !== null && exitCode > 1) {
+      throw new Error(`ripgrep (exit ${exitCode}): ${stderr.slice(0, 500)}`);
+    }
+
+    // Parse rg --json stream into a flat list of events
+    interface RgEvent {
+      type: 'begin' | 'end' | 'match' | 'context' | 'summary';
+      path: string;
+      lineNumber?: number;
+      text: string;
+    }
+
+    const events: RgEvent[] = [];
+    let currentFilePath: string | null = null;
+
+    for (const raw of stdout.split('\n').filter(Boolean)) {
+      let obj: RgJsonLine;
+      try { obj = JSON.parse(raw); } catch { continue; }
+
+      const eventPath = obj.data.path?.text ?? currentFilePath ?? '';
+      if (obj.type === 'begin' || obj.type === 'end') {
+        currentFilePath = obj.data.path?.text ?? currentFilePath;
       }
-    } else if (await isSearchableFile(team.workspace.root, resolved)) {
-      await searchFile(resolved);
+
+      events.push({
+        type: obj.type,
+        path: eventPath,
+        lineNumber: obj.data.line_number,
+        text: stripTrailingNewline(obj.data.lines?.text ?? ''),
+      });
+    }
+
+    // Build matches from events. For each match event, gather context
+    // within the radius, split into before/after, and clip against
+    // adjacent matches so context doesn't overlap.
+    const contextRadius = contextLines;
+    const matches: GrepMatch[] = [];
+
+    for (let i = 0; i < events.length && matches.length < limit; i++) {
+      const ev = events[i];
+      const matchEv = ev as RgEvent;
+      if (matchEv.type !== 'match') continue;
+
+      const relPath = matchEv.path;
+      if (!relPath) continue;
+      const fullPath = joinPaths(team.workspace.root, relPath);
+      if (isSensitiveWorkspacePath(fullPath)) continue;
+
+      const matchLine = matchEv.lineNumber ?? 0;
+
+      // Find adjacent matches for clipping
+      const prevMatch = findPrevMatch(events, i, relPath);
+      const nextMatch = findNextMatch(events, i, relPath);
+
+      // Before-context: walk backwards within radius, stop at prev match
+      const before: GrepContextLine[] = [];
+      const beforeMinLine = prevMatch !== -1
+        ? Math.max(((events[prevMatch] as RgEvent).lineNumber ?? 0) + 1, matchLine - contextRadius)
+        : matchLine - contextRadius;
+
+      for (let j = i - 1; j >= 0; j--) {
+        const ctxEv = events[j] as RgEvent;
+        if (ctxEv.type !== 'context') continue;
+        if (ctxEv.path !== relPath) continue;
+        const ln = ctxEv.lineNumber ?? 0;
+        if (ln < beforeMinLine || ln >= matchLine) continue;
+        before.unshift({ lineNumber: ln, line: ctxEv.text });
+      }
+
+      // After-context: walk forward within radius, stop at next match
+      const after: GrepContextLine[] = [];
+      const afterMaxLine = nextMatch !== -1
+        ? Math.min(((events[nextMatch] as RgEvent).lineNumber ?? 0) - 1, matchLine + contextRadius)
+        : matchLine + contextRadius;
+
+      for (let j = i + 1; j < events.length; j++) {
+        const ctxEv = events[j] as RgEvent;
+        if (ctxEv.type !== 'context') continue;
+        if (ctxEv.path !== relPath) continue;
+        const ln = ctxEv.lineNumber ?? 0;
+        if (ln > afterMaxLine || ln <= matchLine) continue;
+        after.push({ lineNumber: ln, line: ctxEv.text });
+      }
+
+      matches.push({
+        path: fullPath,
+        lineNumber: matchLine,
+        line: matchEv.text,
+        before,
+        after,
+      });
+    }
+
+    function findPrevMatch(events: RgEvent[], currentIndex: number, path: string): number {
+      for (let j = currentIndex - 1; j >= 0; j--) {
+        const ev = events[j] as RgEvent | undefined;
+        if (ev?.type === 'match' && ev.path === path) return j;
+      }
+      return -1;
+    }
+
+    function findNextMatch(events: RgEvent[], currentIndex: number, path: string): number {
+      for (let j = currentIndex + 1; j < events.length; j++) {
+        const ev = events[j] as RgEvent | undefined;
+        if (ev?.type === 'match' && ev.path === path) return j;
+      }
+      return -1;
     }
 
     return {
@@ -72,99 +204,9 @@ export const grepTool: OrchestratorTool<typeof GrepSchema> = {
       count: matches.length,
       matches,
     };
-
-    async function searchFile(path: string): Promise<void> {
-      if (matches.length >= limit) return;
-      const text = await readFile(path, 'utf8').catch(() => null);
-      if (typeof text !== 'string') return;
-      const haystack = ignoreCase ? needle : query;
-      const lines = text.split(/\r?\n/);
-      for (let index = 0; index < lines.length; index++) {
-        if (matches.length >= limit) return;
-        const line = lines[index] ?? '';
-        const candidate = ignoreCase ? line.toLowerCase() : line;
-        if (!candidate.includes(haystack)) continue;
-        matches.push({
-          path,
-          lineNumber: index + 1,
-          line,
-          before: contextFor(lines, Math.max(0, index - contextLines), index),
-          after: contextFor(lines, index + 1, Math.min(lines.length, index + 1 + contextLines)),
-        });
-      }
-    }
   },
 };
 
-function contextFor(lines: string[], start: number, end: number): GrepContextLine[] {
-  return lines.slice(start, end).map((line, index) => ({
-    lineNumber: start + index + 1,
-    line,
-  }));
-}
-
-async function collectSearchableFiles(workspaceRoot: string, resolvedPath: string): Promise<string[]> {
-  const gitFiles = listGitFiles(workspaceRoot, resolvedPath);
-  if (gitFiles) {
-    return gitFiles.filter((filePath) => !isSensitiveWorkspacePath(filePath));
-  }
-
-  const files: string[] = [];
-  await walkPath(resolvedPath);
-  return files;
-
-  async function walkPath(path: string): Promise<void> {
-    const info = await stat(path);
-    if (info.isDirectory()) {
-      const entries = await readdir(path, { withFileTypes: true });
-      entries.sort((a, b) => a.name.localeCompare(b.name));
-      for (const entry of entries) {
-        if (entry.isDirectory() && IGNORED_DIRECTORIES.has(entry.name)) continue;
-        if (entry.isDirectory() && entry.name.startsWith('.')) continue;
-        const entryPath = join(path, entry.name);
-        if (isSensitiveWorkspacePath(entryPath)) continue;
-        await walkPath(entryPath);
-      }
-      return;
-    }
-
-    if (isSensitiveWorkspacePath(path)) return;
-    files.push(path);
-  }
-}
-
-async function isSearchableFile(workspaceRoot: string, filePath: string): Promise<boolean> {
-  if (isSensitiveWorkspacePath(filePath)) return false;
-  const gitIgnored = checkGitIgnored(workspaceRoot, filePath);
-  if (gitIgnored !== null) return !gitIgnored;
-  return true;
-}
-
-function listGitFiles(workspaceRoot: string, resolvedPath: string): string[] | null {
-  try {
-    const relativePath = relative(workspaceRoot, resolvedPath) || '.';
-    const output = execFileSync(
-      'git',
-      ['-C', workspaceRoot, 'ls-files', '-z', '--cached', '--others', '--exclude-standard', '--full-name', '--', relativePath],
-      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
-    );
-    return output
-      .split('\0')
-      .filter(Boolean)
-      .map((path) => join(workspaceRoot, path));
-  } catch {
-    return null;
-  }
-}
-
-function checkGitIgnored(workspaceRoot: string, filePath: string): boolean | null {
-  try {
-    const relativePath = relative(workspaceRoot, filePath) || '.';
-    execFileSync('git', ['-C', workspaceRoot, 'check-ignore', '--quiet', '--', relativePath], {
-      stdio: ['ignore', 'ignore', 'ignore'],
-    });
-    return true;
-  } catch {
-    return null;
-  }
+function joinPaths(root: string, rel: string): string {
+  return isAbsolute(rel) ? rel : join(root, rel);
 }

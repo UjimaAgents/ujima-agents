@@ -1,3 +1,4 @@
+import { Terminal } from "lucide-react";
 import {
   TERMINAL_COMMAND_ROW,
   TERMINAL_CWD,
@@ -33,13 +34,16 @@ export function TerminalPane({
   return (
     <div className={`${TERMINAL_PANEL} ${className}`}>
       <div className={TERMINAL_SECTION}>
-        <div className={TERMINAL_CWD}>{cwd}</div>
+        <div className={`${TERMINAL_CWD} flex items-center gap-1.5`}>
+          <Terminal className="h-3.5 w-3.5 shrink-0 text-foreground/45" />
+          <span>{cwd}</span>
+        </div>
         <button
           type="button"
           onClick={() => {
             navigator.clipboard.writeText(commandLine);
           }}
-          className={`${TERMINAL_COMMAND_ROW} group/cmd flex items-center gap-1.5 text-left transition-colors hover:text-violet-600 dark:hover:text-violet-400`}
+          className={`${TERMINAL_COMMAND_ROW} group/cmd flex items-start gap-1.5 text-left transition-colors hover:text-violet-600 dark:hover:text-violet-400`}
           title="Click to copy command"
         >
           <span className={TERMINAL_PROMPT}>$ </span>
