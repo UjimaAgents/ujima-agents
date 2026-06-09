@@ -91,41 +91,41 @@ export function CurationSuggestionsPanel({
   const handleApply = useCallback(
     async (suggestion: TierCurationSuggestion) => {
       setBusyId(suggestion.id);
+      // Two mutations need to both succeed before we remove the row
+      // from local state — otherwise the panel can show a successful
+      // Apply while the persisted state still has the suggestion
+      // pending, and a refresh resurfaces it. The bot caught this on
+      // the first cut. The atomic shape: surface ANY failure to the
+      // operator, keep the row visible so they know the work is not
+      // done. Retry-by-clicking-Apply-again is safe — the tier flip
+      // is idempotent (the audit emit only fires on actual change
+      // per PR 8's no-op guard) so a retry just runs the PATCH.
       try {
         // 1. Apply the tier flip via PR 6's tier-toggle endpoint.
-        //    This is what actually changes the attachment row + emits
-        //    the §12 connector_tier_changed audit event.
+        //    This changes the attachment row + emits the §12
+        //    connector_tier_changed audit event.
         await onApply(suggestion);
         // 2. Persist the operator's decision so a refresh doesn't
-        //    resurface the row. Without this the optimistic-removal
-        //    below is the only signal, and a page reload would
-        //    bring back a suggestion the operator has already acted
-        //    on. Best-effort: if the PATCH fails the tier flip
-        //    already succeeded, so the panel still drops the row
-        //    locally and a manual refresh + analyzer re-run will
-        //    reconcile correctly (the new tier means the suggestion
-        //    no longer qualifies).
-        try {
-          await settingsFetch(
-            `/api/settings/mcps/tier-curation-suggestions/${encodeURIComponent(suggestion.id)}`,
-            {
-              method: "PATCH",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify({
-                organizationId: orgId,
-                status: "applied",
-              }),
-            },
-            "Unable to update suggestion status.",
-          );
-        } catch (statusErr) {
-          console.warn(
-            "[curation-panel] PATCH status=applied failed; tier flip already succeeded",
-            statusErr,
-          );
-        }
-        // 3. Optimistic: drop the row from local state. The next
-        //    manual refresh / cron pass will reconcile.
+        //    resurface the row. Any failure here surfaces as the
+        //    panel-level error AND keeps the row visible — so the
+        //    operator sees the inconsistency and can retry. Without
+        //    this, a swallowed PATCH failure would silently lose the
+        //    operator decision on the next refresh.
+        await settingsFetch(
+          `/api/settings/mcps/tier-curation-suggestions/${encodeURIComponent(suggestion.id)}`,
+          {
+            method: "PATCH",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              organizationId: orgId,
+              status: "applied",
+            }),
+          },
+          "Tier change saved but suggestion could not be marked applied. " +
+            "Retry to re-run the persistence step.",
+        );
+        // 3. Both mutations succeeded — drop the row from local state.
+        //    The next manual refresh / cron pass will reconcile.
         setData((current) =>
           current
             ? {
@@ -147,6 +147,10 @@ export function CurationSuggestionsPanel({
             : current,
         );
       } catch (err) {
+        // Either the tier flip OR the status PATCH failed. Surface
+        // the error and intentionally LEAVE the row in local state so
+        // the panel matches what a refresh would show — the operator
+        // can see exactly what's still pending and retry.
         setError(err instanceof Error ? err.message : String(err));
       } finally {
         setBusyId(null);
