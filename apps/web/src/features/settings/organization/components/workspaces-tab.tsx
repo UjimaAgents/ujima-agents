@@ -123,9 +123,7 @@ export const WorkspacesTab = memo(function WorkspacesTab({
     }
   }, []);
 
-  const handleDelete = useCallback(async () => {
-    if (!deleteTarget) return;
-    const workspaceId = deleteTarget.id;
+  const handleDelete = useCallback(async (workspaceId: string) => {
     setDeletingId(workspaceId);
     setError(null);
     try {
@@ -143,7 +141,7 @@ export const WorkspacesTab = memo(function WorkspacesTab({
     } finally {
       setDeletingId(null);
     }
-  }, [deleteTarget]);
+  }, []);
 
   const sortedWorkspaces = useMemo(() => {
     return [...workspaces].sort((a, b) => {
@@ -256,7 +254,10 @@ export const WorkspacesTab = memo(function WorkspacesTab({
         message={`Delete "${deleteTarget?.label ?? deleteTarget?.id}"?`}
         confirmLabel="Delete"
         busy={Boolean(deletingId)}
-        onConfirm={handleDelete}
+        onConfirm={() => {
+          if (!deleteTarget) return;
+          void handleDelete(deleteTarget.id);
+        }}
       />
     </>
   );

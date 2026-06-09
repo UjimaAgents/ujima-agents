@@ -622,8 +622,6 @@ export function ChannelView({
     };
   }, [currentThreadId, organizationId, questionRefreshSignal, waitingInputRunIds]);
 
-  const headerSubtitle =
-    typingLabel ?? (feed.loading ? "Syncing live history from the backend…" : undefined);
   const resolveApproval = useCallback(
     async (
       approvalId: string,
@@ -817,6 +815,11 @@ export function ChannelView({
     [feed.messages],
   );
 
+  const resolvedChannelMemberCount = useMemo(() => {
+    const activeMemberIds = new Set(members.map((member) => member.id));
+    return channelMemberIds.filter((memberId) => activeMemberIds.has(memberId)).length;
+  }, [channelMemberIds, members]);
+
   const tabCounts = useMemo(
     () =>
       buildTabCounts({
@@ -839,14 +842,21 @@ export function ChannelView({
               : tab.id === "activity"
                 ? tabCounts.activity
                 : tab.id === "members"
-                  ? channelMemberIds.length
+                  ? resolvedChannelMemberCount
                   : tab.id === "tasks"
                     ? tabCounts.tasks
                     : undefined,
         countVariant:
           tab.id === "approvals" && tabCounts.approvals > 0 ? ("warning" as const) : ("default" as const),
       })),
-    [channelMemberIds.length, tabCounts.activity, tabCounts.approvals, tabCounts.files, tabCounts.tasks, tabs],
+    [
+      resolvedChannelMemberCount,
+      tabCounts.activity,
+      tabCounts.approvals,
+      tabCounts.files,
+      tabCounts.tasks,
+      tabs,
+    ],
   );
   const conversationAttachmentsSource = activeTab === "files" ? feed.messages : null;
   const conversationAttachments = useMemo(
@@ -888,7 +898,6 @@ export function ChannelView({
           avatarColorIndex={conversationColorIndex}
           status={selectedStatus.variant}
           statusLabel={selectedStatus.label}
-          subtitle={headerSubtitle}
           actions={
             <div className="flex items-center gap-2">
               <FontSizeControl value={chatFontSize} onChange={setChatFontSize} />

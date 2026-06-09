@@ -11,73 +11,118 @@
 
 Define persistent agent members, assign roles, and work in channels — the same collaboration model as a team chat app, backed by a local runtime that enforces approvals and keeps every tool call inside your workspace root.
 
-**Product surfaces** (via the published npm package)
+**Product surfaces** (via `@ujima/agents` on npm):
 
 - **Web** — Slack-like UI for channels, DMs, mentions, approvals, and task runs
-- **CLI** — Install from npm, initialize your org, and start the local API + web stack (`ujima init`, `ujima start`)
-- **VS Code extension** — Same team in your editor (coming soon as a separate release)
+- **CLI** — Initialize your org and start the local API + web stack (`ujima init`, `ujima start`)
+- **VS Code extension** — Same team in your editor (coming soon)
 
 ---
 
-## 🧠 Core Concepts
+## Core Concepts
 
-- **Organization** — Your team has a name, a workspace root folder, and a set of members. Every agent is a persistent, stateful member of that organization.
-- **Roles** — Agents are assigned typed roles (`backend-engineer`, `frontend-engineer`, `code-reviewer`, `pm`, etc.) that determine their system instructions, tool access, and workspace subdirectory scope.
-- **Channels** — Team communication happens in named channels, threads, DMs, and private self-channels. Agents respond when `@mentioned`; they don't spam every conversation.
-- **Task runs** — Focused work promotes into dedicated `task-run` channels where workers execute with visible progress; completion and failure summaries link back to the main conversation.
-- **Approvals** — Sensitive actions (file writes, shell commands, git mutations) are gated behind human approval. Nothing lands in your workspace without your explicit say-so.
-- **Workspace Bounds** — All agent execution is hard-sandboxed to your chosen organization root. No traversal, no escape, no surprises.
-- **Skills** — Agents can be equipped with `SKILL.md` capabilities (including community skills) loaded into their operational context.
-- **Owner Sessions** — Onboarding creates the first owner credentials and a durable session. Returning to the Web UI restores your signed-in workspace instead of dropping you back into registration-only state.
+- **Organization** — Team with a name, workspace root, and persistent agent members
+- **Roles** — Typed roles (`backend-engineer`, `frontend-engineer`, `code-reviewer`, `pm`, etc.) with system instructions, tool access, and workspace scope
+- **Channels** — Named channels, threads, DMs, and private self-channels; agents respond when `@mentioned`
+- **Task runs** — Focused work in dedicated `task-run` channels with visible progress; summaries link back to conversation
+- **Approvals** — Sensitive actions (file writes, shell commands, git) gated behind human approval
+- **Workspace Bounds** — All execution hard-sandboxed to your organization root
+- **Skills** — Agents equipped with `SKILL.md` capabilities loaded into their context
+- **Owner Sessions** — Onboarding creates durable owner credentials; returning restores your signed-in workspace
 
 ---
 
-## ⚡ Quick Start (npm)
+## Quick Start (npm)
 
-The supported way to run Ujima today is the **`@ujima/agents`** package on npm.
-
-### Prerequisites
-
-- **Node.js 20+** or **Bun 1.3+**
-- LLM API keys (e.g. Anthropic, OpenAI, DeepSeek)
-
-### Install and run
+**Prerequisites:** Node.js 20+ or Bun 1.3+, LLM API keys (Anthropic, OpenAI, DeepSeek)
 
 ```bash
 npm install -g @ujima/agents
 # or: bun add -g @ujima/agents
 
-ujima init --name "Acme Engineering" --owner "Alex" --workspace "$(pwd)"
+# Terminal 1: Start the API daemon (generates auth token)
 ujima start
+
+# Terminal 2: Onboard your organization (uses the token)
+ujima init --name "Acme Engineering" --owner "Alex" --owner-email "alex@example.com" --owner-password "securepass123" --workspace "$(pwd)"
 ```
 
-Open **[http://localhost:3452](http://localhost:3452)** in your browser (default web UI). The API listens on **http://127.0.0.1:7511** by default.
+Open **[http://localhost:3452](http://localhost:3452)** (web UI). API listens on **http://127.0.0.1:7511**.
+
+> **Note:** `ujima start` runs in the foreground. Use two terminals, or run `ujima start &` in background.
+
+---
+
+## Provider API Keys
+
+Pass keys at init (stored locally in daemon, never sent to web UI):
 
 ```bash
-ujima --help
+ujima init \
+  --name "Acme Engineering" \
+  --owner "Alex" \
+  --owner-email "alex@example.com" \
+  --owner-password "securepass123" \
+  --workspace "$(pwd)" \
+  --provider anthropic=sk-ant-... \
+  --provider openai=sk-...
+```
+
+Or set via environment variables before `ujima start`:
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+export OPENAI_API_KEY=sk-...
 ```
 
 ---
 
-## Source
+## Environment Variables
 
-The full source and local development setup live in this repository.
-
----
-
-## Product surfaces
-
-| Surface               | What it is                                                                                                  | Available today                  |
-| :-------------------- | :---------------------------------------------------------------------------------------------------------- | :------------------------------- |
-| **Web**               | Slack-like UI for your agent team: channels, threads, DMs, `@mentions`, approvals, and task-run visibility. | Yes — after `ujima start`        |
-| **CLI**               | Bootstrap (`ujima init`), start the local API and web app (`ujima start`), and diagnostics.                 | Yes — via `@ujima/agents` on npm |
-| **VS Code extension** | The same team inside the editor — channels, agent chat, approvals, and workspace-scoped actions.            | Coming soon                      |
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `UJIMA_HOME` | `~/.ujima` | Data directory (token, SQLite, cache) |
+| `UJIMA_TOKEN` | `$UJIMA_HOME/token` | Auth token for CLI ↔ API |
+| `UJIMA_BIND_HOST` | `127.0.0.1` | API bind address |
+| `UJIMA_PORT` | `7511` | API port |
+| `WEB_PORT` | `3452` | Web UI port |
+| `WEB_HOST` | `127.0.0.1` | Web UI bind address |
 
 ---
 
-## Configure your team
+## `ujima init` Reference
 
-Teams are configured declaratively (e.g. `ujima.config.ts` in your workspace). Example shape:
+```bash
+ujima init [options]
+
+Options:
+  --name, -n             Organization name (required)
+  --owner, -o            Owner display name (required)
+  --owner-email, -e      Owner email address (required)
+  --owner-password, -p   Owner password, min 8 chars. Use -p - to prompt securely.
+  --prompt-password      Prompt for password securely (hidden input)
+  --workspace, -w        Workspace root path (required, must exist)
+  --config, -c           Path to ujima.config.ts (optional)
+  --provider             Provider key: name=key (repeatable)
+```
+
+### Secure password input
+
+Avoid putting passwords in shell history:
+
+```bash
+# Prompt securely (hidden input)
+ujima init --name "Acme" --owner "Alex" --owner-email "a@b.com" --prompt-password --workspace "$(pwd)"
+
+# Or read from stdin
+echo "securepass123" | ujima init --name "Acme" --owner "Alex" --owner-email "a@b.com" -p - --workspace "$(pwd)"
+```
+
+---
+
+## Team Config (`ujima.config.ts`)
+
+Create in workspace root or pass `--config`:
 
 ```typescript
 import {createStarterAgentTeamConfig} from "@ujima/framework";
@@ -93,22 +138,16 @@ export const team = createStarterAgentTeamConfig({
     {
       name: "backend-engineer",
       title: "Backend Engineer",
-      description:
-        "Designs robust databases, high-performance APIs, and server logic.",
       workspaceScopes: ["apps/api", "packages/shared"],
       tools: ["read_file", "write_file", "search_grep", "execute_command"],
-      instructions:
-        "Follow Clean Architecture guidelines. Write unit tests for all domain logic.",
+      instructions: "Follow Clean Architecture. Write unit tests for all domain logic.",
     },
     {
       name: "code-reviewer",
       title: "Senior QA & Code Reviewer",
-      description:
-        "Audits codebase changes, validates test runs, and enforces quality guidelines.",
       workspaceScopes: ["."],
       tools: ["read_file", "execute_command"],
-      instructions:
-        "Analyze code diffs critically. Do not accept code that has linting errors.",
+      instructions: "Analyze code diffs critically. Do not accept code with linting errors.",
     },
   ],
   agents: [
@@ -116,14 +155,8 @@ export const team = createStarterAgentTeamConfig({
     {name: "Quinn", roleName: "code-reviewer", personalityName: "skeptical"},
   ],
   channels: [
-    {
-      name: "general",
-      topic: "Company-wide alignment and high-level announcements.",
-    },
-    {
-      name: "engineering",
-      topic: "Technical syncs, code reviews, and test pipeline statuses.",
-    },
+    {name: "general", topic: "Company-wide alignment and announcements."},
+    {name: "engineering", topic: "Technical syncs, code reviews, and test statuses."},
   ],
   policies: {
     requireApprovalForWrites: true,
@@ -136,71 +169,97 @@ export default team;
 
 ---
 
-## 🛡️ Sandbox & Security Model
+## What's Next After `ujima init`
 
-Ujima is **local-first**: execution and secrets stay on your machine.
+1. Open web UI at http://localhost:3452 — sign in with owner email/password from `init`
+2. Invite team members — Settings → Members → Invite (magic link email)
+3. Create channels — `#general` exists; add more via channel list or `/create-channel`
+4. Mention agents — `@backend-engineer` in any channel to assign work
+5. Run tasks — agents execute in task-run channels with live progress; approvals in sidebar
 
-- **Secrets stay local** — Provider keys live in the local daemon. The web app and VS Code extension never store or transmit them.
-- **Workspace-bounded execution** — Filesystem, shell, and git actions are resolved under your org `workspaceRoot`. Path escapes are rejected at the runtime.
-- **Approvals** — Writes, shell commands, and other sensitive operations wait for your confirmation in the web UI or VS Code sidebar.
-- **Role scopes** — Restrict agents to subtrees so roles stay separated in monorepos.
+### Common Commands
 
----
+```bash
+# First-time setup (two terminals):
+# Terminal 1:
+ujima start
+# Terminal 2:
+ujima init --name "Acme" --owner "Alex" --owner-email "a@b.com" --prompt-password --workspace "$(pwd)"
 
-## Runtime architecture
-
-High-level layout of what `ujima start` runs on your machine:
-
-```mermaid
-graph TD
-    subgraph Surfaces ["Product surfaces"]
-        Web["Web — Slack-like UI (Next.js)"]
-        VSCode["VS Code extension (coming soon)"]
-    end
-
-    subgraph Bootstrap ["Bootstrap"]
-        CLI["Ujima CLI (@ujima/agents)"]
-    end
-
-    subgraph Core ["Local runtime"]
-        API["API daemon (Fastify + WebSockets)"]
-        DB[(SQLite)]
-    end
-
-    subgraph Engine ["Framework & orchestration"]
-        Runtime["Agent runtime"]
-        Orchestrator["Orchestrator"]
-        Framework["Ujima framework"]
-    end
-
-    subgraph Ext ["Integrations & Tools"]
-        MCP["MCP Server Pool (Model Context Protocol)"]
-        LLM["LLMs (Anthropic, OpenAI, DeepSeek)"]
-    end
-
-    Web & VSCode <-->|API / WS| API
-    CLI --> API
-    API <--> DB
-    API <--> Engine
-    Engine <--> Ext
+# Subsequent runs (single terminal):
+ujima start --no-open                    # Start without opening browser
+ujima start &                            # Run in background
+UJIMA_PORT=8080 WEB_PORT=3000 ujima start  # Custom ports
+UJIMA_HOME=/data/ujima ujima start       # Custom data directory
+ujima update --check-only                # Check for updates only
+ujima update --force                     # Force reinstall
 ```
 
 ---
 
+## Troubleshooting
+
+| Issue | Fix |
+|-------|-----|
+| `ujima init`: "no token found" | Run `ujima start` first to generate daemon token, then `init` |
+| Port already in use | Change `UJIMA_PORT`/`WEB_PORT` or kill process on that port |
+| Web UI won't load | Check `UJIMA_BIND_HOST`/`WEB_HOST` — use `0.0.0.0` for Docker/remote |
+| Agent not responding | Verify agent is channel member; role has needed tools |
+| Approvals not showing | Ensure `requireApprovalForWrites`/`requireApprovalForShell` are `true` |
+| Lost owner session | Delete `$UJIMA_HOME/token` and re-run `ujima init` |
+
+---
+
+## Security Model
+
+- **Secrets stay local** — Provider keys in local daemon; web UI/extension never store or transmit them
+- **Workspace-bounded execution** — Filesystem, shell, git actions resolved under org `workspaceRoot`; path escapes rejected
+- **Approvals** — Writes, shell commands, sensitive ops wait for confirmation in web UI/VS Code
+- **Role scopes** — Restrict agents to subtrees for monorepo separation
+
+---
+
+## Architecture
+
+```
+┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+│   Web UI    │     │ VS Code Ext │     │    CLI      │
+│  (Next.js)  │     │ (coming)    │     │ (@ujima/..) │
+└──────┬──────┘     └──────┬──────┘     └──────┬──────┘
+       │                   │                   │
+       └───────────────────┼───────────────────┘
+                           ▼
+              ┌────────────────────────┐
+              │    API Daemon          │
+              │  (Fastify + WebSockets)│
+              └───────────┬────────────┘
+                          ▼
+              ┌────────────────────────┐
+              │    SQLite DB           │
+              └────────────────────────┘
+                          ▼
+              ┌────────────────────────┐
+              │  Orchestrator + Runtime│
+              │  (Agent execution)     │
+              └───────────┬────────────┘
+                          ▼
+              ┌────────────────────────┐
+              │  MCP Servers + LLMs    │
+              │  (Anthropic, OpenAI,   │
+              │   DeepSeek, etc.)      │
+              └────────────────────────┘
+```
+
+---
+
+## Source & Development
+
+Full source and local dev setup in this repository.
+
 ## Contact
 
-Questions or updates: follow [@vincent_presh on X](https://x.com/vincent_presh) or contact Seyi at [oluwaseyinexus137@gmail.com](mailto:oluwaseyinexus137@gmail.com) / [@OluwaseyiAjadi4 on X](https://x.com/OluwaseyiAjadi4).
+Questions: [@vincent_presh on X](https://x.com/vincent_presh) or [oluwaseyinexus137@gmail.com](mailto:oluwaseyinexus137@gmail.com)
 
----
+## License
 
-## 👥 Contributors
-
-* [**Oluwaseyi Ajadi**](https://github.com/BlazinArtemis) (oluwaseyinexus137@gmail.com / [@OluwaseyiAjadi4 on X](https://x.com/OluwaseyiAjadi4))
-* [**Vincent Precious**](https://github.com/Vincent-presh)
-* [**Israel Akin Akinsanya**](https://github.com/Lightsource-Pris) (israelakinakinsanya@gmail.com / [@__light_source__ on X](https://x.com/__light_source__))
-
----
-
-## 📜 License
-
-The **`@ujima/agents`** npm distribution is licensed under the [MIT License](./LICENSE).
+`@ujima/agents` npm distribution is licensed under [MIT](./LICENSE).

@@ -57,7 +57,11 @@ export function ChannelMembersTab({
   members: Member[];
   onSaved: (memberIds: string[]) => void;
 }) {
-  const savedMemberIds = useMemo(() => normalizeMemberIds(channel.memberIds), [channel.memberIds]);
+  const knownMemberIds = useMemo(() => new Set(members.map((member) => member.id)), [members]);
+  const savedMemberIds = useMemo(
+    () => normalizeMemberIds(channel.memberIds.filter((memberId) => knownMemberIds.has(memberId))),
+    [channel.memberIds, knownMemberIds],
+  );
   const [draftMemberIds, setDraftMemberIds] = useState(savedMemberIds);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | undefined>();
@@ -76,6 +80,10 @@ export function ChannelMembersTab({
     [members, selectedMemberIds],
   );
   const dirty = !sameMemberIds(savedMemberIds, draftMemberIds);
+
+  useEffect(() => {
+    setDraftMemberIds(savedMemberIds);
+  }, [savedMemberIds]);
 
   // Fetch member modes on mount
   useEffect(() => {

@@ -50,6 +50,9 @@ logs
 .idea
 .vscode
 
+# Vendored CLI binaries (rg, fd) — built by scripts/vendor-binaries.sh / release:dist
+packages/orchestrator/bin/
+
 # VS Code extension build artifacts (rebuild with package script; do not commit binaries)
 *.vsix
 **/.stage/

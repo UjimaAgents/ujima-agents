@@ -64,9 +64,12 @@ export function resolveBinaryPath(
   const binName =
     CURRENT_PLATFORM === 'win32' ? `${descriptor.filename}.exe` : descriptor.filename;
 
-  // dist/tools or src/tools → packages/orchestrator
+  // Packaged API: dist/runtime/api/main.js with colocated dist/runtime/api/bin/
+  const apiRuntimeBin = join(__dirname, 'bin', descriptor.dir, triple, binName);
+  // Monorepo orchestrator package: dist/tools → packages/orchestrator
   const packageRoot = join(__dirname, '..', '..');
   const candidates = [
+    apiRuntimeBin,
     join(packageRoot, 'bin', descriptor.dir, triple, binName),
     join(process.cwd(), 'packages/orchestrator/bin', descriptor.dir, triple, binName),
     join(process.cwd(), 'bin', descriptor.dir, triple, binName),
@@ -96,16 +99,29 @@ export function resolveBinaryPath(
 
 // ── Well-known binary descriptors ─────────────────────────────────
 
+const UNIX_TOOL_PATHS = (names: string[]): string[] =>
+  process.platform === 'win32'
+    ? []
+    : [
+        ...names.flatMap((name) => [
+          `/opt/homebrew/bin/${name}`,
+          `/usr/local/bin/${name}`,
+          `/usr/bin/${name}`,
+        ]),
+      ];
+
 export const RG_BINARY: BinaryDescriptor = {
   name: 'ripgrep',
   dir: 'rg',
   filename: 'rg',
+  systemPaths: UNIX_TOOL_PATHS(['rg']),
 };
 
 export const FD_BINARY: BinaryDescriptor = {
   name: 'fd',
   dir: 'fd',
   filename: 'fd',
+  systemPaths: UNIX_TOOL_PATHS(['fd']),
 };
 
 export const CURL_BINARY: BinaryDescriptor = {

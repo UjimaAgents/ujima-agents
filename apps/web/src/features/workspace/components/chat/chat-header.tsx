@@ -13,8 +13,6 @@ export interface ChatHeaderProps {
   /** Online status */
   status?: StatusVariant;
   statusLabel?: string;
-  /** Secondary line under the title, such as live typing or sync state */
-  subtitle?: string;
   /** Optional right-side context label (e.g. workspace name) */
   contextLabel?: string;
   contextValue?: string;
