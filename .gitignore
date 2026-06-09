@@ -16,6 +16,7 @@ coverage
 *.js.map
 *.d.ts.map
 *.tsbuildinfo
+*.tgz
 
 # caches
 .turbo
