@@ -77,8 +77,8 @@ function makeRun(id: string): RunState {
     status: 'completed',
     step: 'completed',
     summary: '',
-    createdAt: '2026-06-08T00:00:00.000Z',
-    updatedAt: '2026-06-08T00:00:00.000Z',
+    startedAt: '2026-06-08T00:00:00.000Z',
+    endedAt: '2026-06-08T00:00:00.000Z',
   };
 }
 
