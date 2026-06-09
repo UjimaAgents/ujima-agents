@@ -155,6 +155,19 @@ export const RefreshTierCurationResponseSchema = z.object({
   runsConsidered: z.number().int().min(0),
 });
 
+// PR 9 — operator decision on a suggestion. `applied` after the
+// operator clicks Apply (and the tier flip succeeds); `dismissed`
+// if a future UI exposes a hide action. The body's organizationId
+// scopes the mutation; the path param identifies the suggestion.
+export const UpdateTierCurationSuggestionStatusRequestSchema = z.object({
+  organizationId: IdSchema,
+  status: z.enum(['pending', 'applied', 'dismissed']),
+});
+
+export const TierCurationSuggestionResponseSchema = z.object({
+  suggestion: TierCurationSuggestionSchema,
+});
+
 export const McpScopedQuerySchema = z.object({
   organizationId: IdSchema,
 });
@@ -317,3 +330,7 @@ export type UpdateAttachmentTierRequest = z.infer<typeof UpdateAttachmentTierReq
 export type TierCurationSuggestionsResponse = z.infer<typeof TierCurationSuggestionsResponseSchema>;
 export type RefreshTierCurationRequest = z.infer<typeof RefreshTierCurationRequestSchema>;
 export type RefreshTierCurationResponse = z.infer<typeof RefreshTierCurationResponseSchema>;
+export type UpdateTierCurationSuggestionStatusRequest = z.infer<
+  typeof UpdateTierCurationSuggestionStatusRequestSchema
+>;
+export type TierCurationSuggestionResponse = z.infer<typeof TierCurationSuggestionResponseSchema>;

@@ -87,7 +87,7 @@ function makeCompletion(args: {
   memberId?: string;
   serverId?: string;
   toolName?: string;
-  status?: 'ok' | 'error';
+  status?: 'ok' | 'error' | 'blocked';
 }): AuditEvent {
   return {
     id: `aud_${args.runId}_${args.toolName ?? 'tool'}_${Math.random()}`,
@@ -166,6 +166,37 @@ describe('tier-curation analyzer', () => {
     const m = repo.saved[0]!.signalMetadata as { volumePerRun: number; errorRate: number };
     expect(m.volumePerRun).toBeCloseTo(7, 1);
     expect(m.errorRate).toBeGreaterThan(0.1);
+  });
+
+  it('does NOT count blocked rows as completions (policy denials must not inflate volume into a false promote)', async () => {
+    // Bot finding: every blocked invocation must be excluded BEFORE
+    // counting, otherwise a dispatch tool that keeps tripping
+    // require_approval but never actually runs would clear the
+    // volumePerRunThreshold purely from operator rejections, never
+    // adding to errors (blocked != error), so the analyzer would
+    // recommend promoting a tool the org has actively chosen to gate.
+    // 200 blocked completions across 30 runs is 6.67 volume_per_run
+    // — above the default 5 threshold — but should still produce
+    // zero suggestions because each row is a denial, not an outcome.
+    const runs = Array.from({ length: 30 }, (_, i) => makeRun(`run_${i}`));
+    const audit: AuditEvent[] = [];
+    for (let i = 0; i < 30; i += 1) {
+      for (let j = 0; j < 7; j += 1) {
+        audit.push(makeCompletion({ runId: `run_${i}`, status: 'blocked' }));
+      }
+    }
+    const repo = makeRepo({
+      members: [makeMember()],
+      attachmentsByMember: {
+        mem_agent: [makeAttachment({ tier: 'dispatch' })],
+      },
+      audit,
+      runs,
+    });
+    const service = createTierCurationService({ repo });
+    const result = await service.analyzeOrganization({ organizationId: 'org_test' });
+    expect(result.suggestionsWritten).toBe(0);
+    expect(repo.saved).toHaveLength(0);
   });
 
   it('does NOT promote a dispatch tool that is high-volume but low-error (the model is handling the indirection fine)', async () => {

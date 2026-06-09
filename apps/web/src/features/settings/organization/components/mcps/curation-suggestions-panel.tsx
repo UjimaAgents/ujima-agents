@@ -92,9 +92,40 @@ export function CurationSuggestionsPanel({
     async (suggestion: TierCurationSuggestion) => {
       setBusyId(suggestion.id);
       try {
+        // 1. Apply the tier flip via PR 6's tier-toggle endpoint.
+        //    This is what actually changes the attachment row + emits
+        //    the §12 connector_tier_changed audit event.
         await onApply(suggestion);
-        // Optimistic: drop the row from local state. The next manual
-        // refresh / cron pass will reconcile.
+        // 2. Persist the operator's decision so a refresh doesn't
+        //    resurface the row. Without this the optimistic-removal
+        //    below is the only signal, and a page reload would
+        //    bring back a suggestion the operator has already acted
+        //    on. Best-effort: if the PATCH fails the tier flip
+        //    already succeeded, so the panel still drops the row
+        //    locally and a manual refresh + analyzer re-run will
+        //    reconcile correctly (the new tier means the suggestion
+        //    no longer qualifies).
+        try {
+          await settingsFetch(
+            `/api/settings/mcps/tier-curation-suggestions/${encodeURIComponent(suggestion.id)}`,
+            {
+              method: "PATCH",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({
+                organizationId: orgId,
+                status: "applied",
+              }),
+            },
+            "Unable to update suggestion status.",
+          );
+        } catch (statusErr) {
+          console.warn(
+            "[curation-panel] PATCH status=applied failed; tier flip already succeeded",
+            statusErr,
+          );
+        }
+        // 3. Optimistic: drop the row from local state. The next
+        //    manual refresh / cron pass will reconcile.
         setData((current) =>
           current
             ? {
@@ -121,7 +152,7 @@ export function CurationSuggestionsPanel({
         setBusyId(null);
       }
     },
-    [onApply],
+    [onApply, orgId],
   );
 
   const handleRefresh = useCallback(async () => {

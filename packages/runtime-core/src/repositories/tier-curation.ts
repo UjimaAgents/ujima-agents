@@ -80,3 +80,40 @@ export function listTierCurationSuggestions(
     .all(organizationId) as Row[];
   return rows.map(rowToSuggestion);
 }
+
+/**
+ * PR 9 — persist the operator's decision on a suggestion.
+ *
+ * The panel calls this from Apply / Dismiss so a refresh or page
+ * reload doesn't resurface a candidate the operator has already
+ * acted on. Idempotent on (organization_id, id) — RUN affects at most
+ * one row; missing rows are silently skipped because a stale UI
+ * Apply on a deleted org/suggestion shouldn't surface as a 500.
+ *
+ * Pairs with the UNIQUE constraint in migration 050: flipping a
+ * `pending` row to `applied` frees the (org, member, server,
+ * direction) slot so the next analyzer pass CAN write a fresh
+ * `pending` row if the operator's apply was reverted (e.g. the tier
+ * got flipped back manually). The audit trail still differentiates
+ * the two via createdAt + resolvedAt.
+ */
+export function updateTierCurationSuggestionStatus(
+  db: DbHandle,
+  organizationId: string,
+  suggestionId: string,
+  nextStatus: 'pending' | 'applied' | 'dismissed',
+  resolvedAt: string,
+): TierCurationSuggestion | null {
+  db.prepare(
+    `UPDATE tier_curation_suggestions
+       SET status = ?, resolved_at = ?
+       WHERE organization_id = ? AND id = ?`,
+  ).run(nextStatus, resolvedAt, organizationId, suggestionId);
+  const row = db
+    .prepare(
+      `SELECT * FROM tier_curation_suggestions
+       WHERE organization_id = ? AND id = ?`,
+    )
+    .get(organizationId, suggestionId) as Row | undefined;
+  return row ? rowToSuggestion(row) : null;
+}

@@ -20,7 +20,9 @@ import {
   RefreshTierCurationRequestSchema,
   RefreshTierCurationResponseSchema,
   TestMcpResponseSchema,
+  TierCurationSuggestionResponseSchema,
   TierCurationSuggestionsResponseSchema,
+  UpdateTierCurationSuggestionStatusRequestSchema,
   ToolClassificationResponseSchema,
   UpdateAttachmentTierRequestSchema,
   UpdateMcpServerRequestSchema,
@@ -513,6 +515,51 @@ export function registerMcpRoutes(
       },
     },
   );
+
+  // Persist the operator's Apply/Dismiss decision. Without this the
+  // panel can only optimistically drop the row from local state — a
+  // refresh resurfaces the suggestion even though the underlying tier
+  // flip has already been committed. The PATCH writes the
+  // status + resolved_at columns so the next analyzer pass leaves the
+  // applied row alone (UNIQUE on (org,member,server,direction,status)
+  // means a fresh `pending` slot is available if the operator later
+  // reverts).
+  registerOrgSettingsRoute(
+    app,
+    'patch',
+    '/settings/mcps/tier-curation-suggestions/:suggestionId',
+    auth,
+    {
+      tags: ['MCP'],
+      description:
+        "Update the operator-decision status on a tier-curation " +
+        "suggestion. 'applied' fires after a successful tier flip; " +
+        "'dismissed' lets the operator hide a row without acting on " +
+        "it. 'pending' is the analyzer default and shouldn't normally " +
+        "be set by hand.",
+      params: z.object({ suggestionId: z.string().min(1) }),
+      body: UpdateTierCurationSuggestionStatusRequestSchema,
+      response: { 200: TierCurationSuggestionResponseSchema, ...mcpWriteErrors },
+      organizationId: (req) => (req.body as { organizationId: string }).organizationId,
+      onError: mcpHandle,
+      handler: async (req, organizationId) => {
+        const body = req.body as z.infer<typeof UpdateTierCurationSuggestionStatusRequestSchema>;
+        const params = req.params as { suggestionId: string };
+        const updated = repo.updateTierCurationSuggestionStatus(
+          organizationId,
+          params.suggestionId,
+          body.status,
+          new Date().toISOString(),
+        );
+        if (!updated) {
+          // Message starts with "Suggestion not found" so
+          // mapMcpRouteError classifies it as 404 ERR_NOT_FOUND.
+          throw new Error(`Suggestion not found: ${params.suggestionId}`);
+        }
+        return { suggestion: updated };
+      },
+    },
+  );
 }
 
 export function mapMcpRouteError(err: unknown): {
@@ -526,7 +573,8 @@ export function mapMcpRouteError(err: unknown): {
     message.startsWith('MCP server not found') ||
     message.startsWith('Member not found') ||
     message.startsWith('Tool not found') ||
-    message.startsWith('Attachment not found')
+    message.startsWith('Attachment not found') ||
+    message.startsWith('Suggestion not found')
   ) {
     return { status: 404, code: 'ERR_NOT_FOUND', message };
   }

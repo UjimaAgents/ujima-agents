@@ -131,6 +131,14 @@ export function createTierCurationService(
         const runId = readRunId(event);
         if (!runId || !runIdSet.has(runId)) continue;
         if (!event.actorId || !event.serverId) continue;
+        // Skip policy denials BEFORE incrementing. Otherwise a
+        // dispatch tool that keeps tripping require_approval would
+        // inflate the volume counter (and never the error counter,
+        // since blocked != error), which can push a tool over the
+        // promote-volume threshold based purely on operator
+        // rejections — exactly the misclassification the §9.4
+        // comment guards against.
+        if (event.status === 'blocked') continue;
         const key = statsKey(event.actorId, event.serverId);
         const entry = stats.get(key) ?? { completions: 0, errors: 0 };
         entry.completions += 1;
