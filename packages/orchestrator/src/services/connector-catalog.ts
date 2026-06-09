@@ -22,6 +22,7 @@
 
 import type {
   AgentMcpAttachment,
+  ChannelMcpAttachment,
   McpServer,
   McpToolCache,
 } from '@ujima/shared';
@@ -30,6 +31,22 @@ import { CURATED_REGISTRY, type RegistryEntry } from '@ujima/mcp-client';
 // ───────────────────────────────────────────────────────────────────────
 // Types
 // ───────────────────────────────────────────────────────────────────────
+
+/**
+ * PR 10 — provenance for a resolved attachment, threaded through the
+ * trajectory and the settings UI so operators see *why* an agent has
+ * access. Channel-sourced attachments carry the originating channelId
+ * so the trajectory row can render "from #investigations" rather than
+ * a flat list.
+ *
+ * When the §17.5.3 dedup picks one channel out of many (channel-vs-
+ * channel conflict on the same MCP), `channelId` is the first channel
+ * the iteration encountered. Operators can drill down via the
+ * channels-subtab if they want to see every channel that contributes.
+ */
+export type AttachmentSource =
+  | { kind: 'agent' }
+  | { kind: 'channel'; channelId: string };
 
 export interface CatalogEntry {
   serverId: string;
@@ -44,11 +61,20 @@ export interface CatalogEntry {
    */
   curatedDescription: string | null;
   toolCount: number;
+  /** §17.5.3 provenance — see AttachmentSource. */
+  source: AttachmentSource;
 }
 
 export interface NativeAttachment {
-  attachment: AgentMcpAttachment;
+  /**
+   * The underlying attachment row. Agent rows come from
+   * agent_mcp_attachments; channel rows from channel_mcp_attachments.
+   * Discriminate via `source.kind` rather than runtime instanceof.
+   */
+  attachment: AgentMcpAttachment | ChannelMcpAttachment;
   server: McpServer;
+  /** §17.5.3 provenance — see AttachmentSource. */
+  source: AttachmentSource;
 }
 
 export interface ResolvedCatalog {
@@ -71,6 +97,15 @@ export interface ConnectorCatalogRepo {
     memberId: string,
     role: 'worker' | 'supervisor',
   ): { attachment: AgentMcpAttachment; server: McpServer }[];
+  // PR 10 — channel side of the §17.5.3 union. Returns every channel
+  // attachment for every channel the spawning member is in. Server
+  // objects are looked up separately so the resolver can preserve
+  // identity-equality semantics with the per-agent path.
+  listChannelMcpAttachmentsForMember(
+    organizationId: string,
+    memberId: string,
+  ): ChannelMcpAttachment[];
+  getMcpServer(organizationId: string, serverId: string): McpServer | null;
   getMcpToolCache(organizationId: string, serverId: string): McpToolCache | null;
 }
 
@@ -319,6 +354,27 @@ export function safeServerLabel(
  * The role filter is delegated to `listAttachedServersForSpirit` so
  * scope ('worker' | 'supervisor' | 'both') interacts with role
  * exactly as it does in the legacy spawn path.
+ *
+ * PR 10 — the §17.5.3 union/dedup:
+ *
+ *   Per-agent attachments are walked first. They WIN ENTIRELY on
+ *   conflict — including tier choice — because they encode an
+ *   operator's deliberate per-agent decision ("Snoop is on dispatch
+ *   for Slack to save tokens") that channel fan-out must not silently
+ *   reverse. Tracked via the `lockedByAgent` flag on the seen map.
+ *
+ *   Channel attachments are role-scoped (same scope filter the agent
+ *   side gets via listAttachedServersForSpirit) and folded in second.
+ *   When two channels claim the same MCP at different tiers, the
+ *   resolved tier is `dispatch`. Dispatch is lossless — capability is
+ *   fully reachable through invoke_connector_tool — so resolving
+ *   conflicts down to dispatch prevents native ballooning from
+ *   cross-channel attachment fan-out, which is the exact failure mode
+ *   §17.5.3 exists to prevent.
+ *
+ *   `source` is set per-entry so the trajectory / settings UI can
+ *   show "Snoop-only" vs "from #investigations" without re-deriving
+ *   provenance.
  */
 export function resolveConnectorCatalog(
   repo: ConnectorCatalogRepo,
@@ -326,14 +382,104 @@ export function resolveConnectorCatalog(
   memberId: string,
   role: 'worker' | 'supervisor',
 ): ResolvedCatalog {
-  const pairs = repo.listAttachedServersForSpirit(organizationId, memberId, role);
+  // Intermediate per-serverId state. `lockedByAgent` means a per-agent
+  // attachment already claimed this serverId; subsequent channel rows
+  // for the same server are skipped wholesale. `tier` mutates only
+  // for channel-vs-channel conflicts (rule 2); per-agent's tier stays
+  // immutable (rule 1).
+  interface Resolved {
+    serverId: string;
+    attachment: AgentMcpAttachment | ChannelMcpAttachment;
+    server: McpServer;
+    tier: 'native' | 'dispatch';
+    source: AttachmentSource;
+    lockedByAgent: boolean;
+  }
+  const seen = new Map<string, Resolved>();
+
+  // Phase 1: per-agent attachments. listAttachedServersForSpirit
+  // already applies the (scope=role | scope='both') filter, so we
+  // don't repeat it here.
+  for (const { attachment, server } of repo.listAttachedServersForSpirit(
+    organizationId,
+    memberId,
+    role,
+  )) {
+    seen.set(server.id, {
+      serverId: server.id,
+      attachment,
+      server,
+      tier: attachment.tier,
+      source: { kind: 'agent' },
+      lockedByAgent: true,
+    });
+  }
+
+  // Phase 2: channel attachments inherited via channel membership.
+  // Scope filter is applied here because the underlying
+  // listChannelMcpAttachmentsForMember returns the raw rows without
+  // a role projection (channels themselves are role-agnostic; the
+  // scope lives on the attachment row).
+  const channelRows = repo
+    .listChannelMcpAttachmentsForMember(organizationId, memberId)
+    .filter((a) => a.scope === role || a.scope === 'both');
+
+  for (const att of channelRows) {
+    const existing = seen.get(att.mcpServerId);
+    // Rule 1 — per-agent wins entirely, tier included. Skip wholesale.
+    if (existing?.lockedByAgent) continue;
+
+    // Need the server object for both native and dispatch downstream
+    // (materializeMcpDef on native, safeServerLabel on dispatch).
+    // Missing server = attachment lingers after delete; skip silently
+    // rather than letting the spawn crash on a null deref.
+    const server = repo.getMcpServer(organizationId, att.mcpServerId);
+    if (!server) continue;
+
+    if (!existing) {
+      seen.set(att.mcpServerId, {
+        serverId: att.mcpServerId,
+        attachment: att,
+        server,
+        tier: att.tier,
+        source: { kind: 'channel', channelId: att.channelId },
+        lockedByAgent: false,
+      });
+      continue;
+    }
+
+    // Rule 2 — channel-vs-channel conflict on the same MCP. If
+    // either tier is `dispatch`, the result is dispatch. Keep the
+    // FIRST channel as the source — operators wanting the full list
+    // can drill into channels-subtab. The attachment row stays as
+    // the first one so callers don't see a downgrade artifact
+    // (`tier` on the row would disagree with `tier` on the resolved
+    // entry); the resolved.tier is the source of truth downstream.
+    if (existing.tier === 'native' && att.tier === 'dispatch') {
+      existing.tier = 'dispatch';
+    }
+    // (native + native, dispatch + dispatch, dispatch + native are
+    // no-ops at the tier level. Source stays as first claimer.)
+  }
 
   const nativeAttachments: NativeAttachment[] = [];
   const dispatchCatalog: CatalogEntry[] = [];
 
-  for (const { attachment, server } of pairs) {
-    if (attachment.tier === 'native') {
-      nativeAttachments.push({ attachment, server });
+  // Partition by the resolved tier. Sort by serverId so the catalog
+  // text is deterministic across re-renders — without sorting,
+  // Map iteration order varies between insertion paths and would
+  // change the catalog string the system prompt sees.
+  const resolved = [...seen.values()].sort((a, b) =>
+    a.serverId.localeCompare(b.serverId),
+  );
+
+  for (const item of resolved) {
+    if (item.tier === 'native') {
+      nativeAttachments.push({
+        attachment: item.attachment,
+        server: item.server,
+        source: item.source,
+      });
       continue;
     }
     // Dispatch tier — build a CatalogEntry. Tool inventory comes from
@@ -359,16 +505,17 @@ export function resolveConnectorCatalog(
     // inside the catalog. The opaque label fully closes that surface;
     // the agent still addresses the server through serverId in
     // `get_connector_tools` / `invoke_connector_tool`.
-    const cache = repo.getMcpToolCache(organizationId, server.id);
+    const cache = repo.getMcpToolCache(organizationId, item.server.id);
     const rawTools = cache?.tools ?? [];
-    const registryMatch = findRegistryMatch(server);
-    const safe = safeServerLabel(server, registryMatch);
+    const registryMatch = findRegistryMatch(item.server);
+    const safe = safeServerLabel(item.server, registryMatch);
     dispatchCatalog.push({
-      serverId: server.id,
+      serverId: item.server.id,
       name: safe.name,
       category: safe.category,
       curatedDescription: registryMatch?.curatedDescription ?? null,
       toolCount: rawTools.length,
+      source: item.source,
     });
   }
 
@@ -393,8 +540,18 @@ export function resolveConnectorCatalog(
  */
 export function renderCatalogEntry(entry: CatalogEntry): string {
   const toolFragment = renderToolCount(entry.toolCount);
+  // PR 10 — source marker so the agent (and operators reading the
+  // system prompt via trajectory) see why an attachment is in the
+  // effective set. We render only the source kind — not channel
+  // names — for two reasons: (1) the system prompt should expose as
+  // little operator-curated free-text as possible (the channels-subtab
+  // is where operators look up the specific channel anyway), and (2)
+  // it keeps renderCatalogEntry pure — no channel-id-to-name lookup
+  // coupling here.
+  const sourceMarker =
+    entry.source.kind === 'channel' ? ' (via channel)' : '';
   if (entry.curatedDescription) {
-    return `- ${entry.name} [${entry.category}] — ${entry.curatedDescription} (${toolFragment}).`;
+    return `- ${entry.name} [${entry.category}] — ${entry.curatedDescription} (${toolFragment})${sourceMarker}.`;
   }
   // Structural facts only. No prose from server.description ever
   // reaches here, and no tool names from server.listTools() either —
@@ -403,7 +560,7 @@ export function renderCatalogEntry(entry: CatalogEntry): string {
   // Discovery of actual tool names happens through
   // get_connector_tools(serverId), a tool result rather than prompt
   // text.
-  return `- ${entry.name} [${entry.category}] — ${toolFragment}.`;
+  return `- ${entry.name} [${entry.category}] — ${toolFragment}${sourceMarker}.`;
 }
 
 function renderToolCount(toolCount: number): string {

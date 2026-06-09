@@ -24,7 +24,11 @@ import {
   TierCurationSuggestionsResponseSchema,
   UpdateTierCurationSuggestionStatusRequestSchema,
   ToolClassificationResponseSchema,
+  ChannelMcpAttachInputSchema,
+  ChannelMcpAttachmentResponseSchema,
+  ChannelMcpAttachmentsResponseSchema,
   UpdateAttachmentTierRequestSchema,
+  UpdateChannelAttachmentTierRequestSchema,
   UpdateMcpServerRequestSchema,
   UpdateToolClassificationRequestSchema,
 } from '@ujima/api-schema';
@@ -63,6 +67,11 @@ const AgentToolParamsSchema = z.object({
   toolName: z.string().min(1),
 });
 const AgentParamsSchema = z.object({ agentId: z.string().min(1) });
+const ChannelParamsSchema = z.object({ channelId: z.string().min(1) });
+const ChannelMcpParamsSchema = z.object({
+  channelId: z.string().min(1),
+  mcpServerId: z.string().min(1),
+});
 
 const mcpErrors = settingsServerErrors;
 const mcpWriteErrors = { ...mcpErrors, 400: ApiErrorSchema, 409: ApiErrorSchema };
@@ -357,6 +366,108 @@ export function registerMcpRoutes(
     },
   });
 
+  // ---------------- PR 10 — Channel attachments -----------------------
+
+  registerOrgSettingsRoute(app, 'get', '/settings/channels/:channelId/mcps', auth, {
+    tags: ['MCP'],
+    description:
+      'List MCP servers attached to a channel. Every agent in the channel ' +
+      'inherits these attachments via the §17.5.3 union step in V2 spawn — ' +
+      'per-agent attachments still win on conflict.',
+    params: ChannelParamsSchema,
+    querystring: McpScopedQuerySchema,
+    response: { 200: ChannelMcpAttachmentsResponseSchema, ...mcpErrors },
+    organizationId: (req) => (req.query as { organizationId: string }).organizationId,
+    onError: mcpHandle,
+    handler: async (req, organizationId) => ({
+      attachments: mcpRegistry.listChannelAttachments(
+        organizationId,
+        (req.params as { channelId: string }).channelId,
+      ),
+    }),
+  });
+
+  registerOrgSettingsRoute(app, 'post', '/settings/channels/:channelId/mcps', auth, {
+    tags: ['MCP'],
+    description:
+      'Attach an MCP server to a channel. New channel attachments default ' +
+      "to 'dispatch' tier — channels often bulk-attach 10+ MCPs and " +
+      'dispatch keeps the §17.5.3 native palette small. Promote to native ' +
+      'via the PATCH .../tier endpoint when usage data justifies it.',
+    params: ChannelParamsSchema,
+    body: ChannelMcpAttachInputSchema,
+    response: { 204: z.null(), ...mcpWriteErrors },
+    organizationId: (req) => (req.body as { organizationId: string }).organizationId,
+    onError: mcpHandle,
+    successStatus: 204,
+    handler: async (req, organizationId) => {
+      const body = req.body as z.infer<typeof ChannelMcpAttachInputSchema>;
+      mcpRegistry.attachServerToChannel({
+        organizationId,
+        channelId: (req.params as { channelId: string }).channelId,
+        mcpServerId: body.mcpServerId,
+        scope: body.scope,
+      });
+    },
+  });
+
+  registerOrgSettingsRoute(
+    app,
+    'delete',
+    '/settings/channels/:channelId/mcps/:mcpServerId',
+    auth,
+    {
+      tags: ['MCP'],
+      description: 'Detach an MCP server from a channel',
+      params: ChannelMcpParamsSchema,
+      querystring: McpScopedQuerySchema,
+      response: { 204: z.null(), ...mcpErrors },
+      organizationId: (req) => (req.query as { organizationId: string }).organizationId,
+      onError: mcpHandle,
+      successStatus: 204,
+      handler: async (req, organizationId) => {
+        const params = req.params as { channelId: string; mcpServerId: string };
+        mcpRegistry.detachServerFromChannel(
+          organizationId,
+          params.channelId,
+          params.mcpServerId,
+        );
+      },
+    },
+  );
+
+  registerOrgSettingsRoute(
+    app,
+    'patch',
+    '/settings/channels/:channelId/mcps/:mcpServerId/tier',
+    auth,
+    {
+      tags: ['MCP'],
+      description:
+        "Update a channel's attachment tier on an MCP server. Resolves " +
+        'via §17.5.3 during V2 spawn — per-agent attachments still win on ' +
+        'conflict, and channel-vs-channel conflicts resolve to dispatch ' +
+        '(lossless overflow). Harmless metadata when the dispatch flag is off.',
+      params: ChannelMcpParamsSchema,
+      body: UpdateChannelAttachmentTierRequestSchema,
+      response: { 200: ChannelMcpAttachmentResponseSchema, ...mcpWriteErrors },
+      organizationId: (req) => (req.body as { organizationId: string }).organizationId,
+      onError: mcpHandle,
+      handler: async (req, organizationId) => {
+        const params = req.params as { channelId: string; mcpServerId: string };
+        const body = req.body as z.infer<typeof UpdateChannelAttachmentTierRequestSchema>;
+        return {
+          attachment: mcpRegistry.updateChannelAttachmentTier({
+            organizationId,
+            channelId: params.channelId,
+            mcpServerId: params.mcpServerId,
+            tier: body.tier,
+          }),
+        };
+      },
+    },
+  );
+
   // ---------------- Per-tool grants ----------------------------------
 
   registerOrgSettingsRoute(app, 'get', '/settings/agents/:agentId/tools', auth, {
@@ -574,7 +685,8 @@ export function mapMcpRouteError(err: unknown): {
     message.startsWith('Member not found') ||
     message.startsWith('Tool not found') ||
     message.startsWith('Attachment not found') ||
-    message.startsWith('Suggestion not found')
+    message.startsWith('Suggestion not found') ||
+    message.startsWith('Channel not found')
   ) {
     return { status: 404, code: 'ERR_NOT_FOUND', message };
   }

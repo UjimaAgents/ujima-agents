@@ -1,5 +1,6 @@
 import type {
   AgentMcpAttachment,
+  ChannelMcpAttachment,
   AgentToolAttachment,
   ApprovalRequest,
   AuthSession,
@@ -388,6 +389,31 @@ export interface ApiRepository extends ConversationRepository {
     organizationId: string,
     mcpServerId: string,
   ): AgentMcpAttachment[];
+  // PR 10 — channel attachments. The V2 spawn's §17.5.3 union step
+  // pulls every channel attachment for every channel the spawning
+  // agent is a member of via listChannelMcpAttachmentsForMember; the
+  // settings panel uses the per-channel list/save/delete surface.
+  saveChannelMcpAttachment(attachment: ChannelMcpAttachment): ChannelMcpAttachment;
+  updateChannelAttachmentTier(
+    organizationId: string,
+    channelId: string,
+    mcpServerId: string,
+    tier: ChannelMcpAttachment['tier'],
+    updatedAt: string,
+  ): ChannelMcpAttachment | null;
+  deleteChannelMcpAttachment(
+    organizationId: string,
+    channelId: string,
+    mcpServerId: string,
+  ): void;
+  listChannelMcpAttachments(
+    organizationId: string,
+    channelId: string,
+  ): ChannelMcpAttachment[];
+  listChannelMcpAttachmentsForMember(
+    organizationId: string,
+    memberId: string,
+  ): ChannelMcpAttachment[];
   listAttachedServersForSpirit(
     organizationId: string,
     memberId: string,
