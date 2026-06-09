@@ -5,6 +5,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
 import type {
   Channel,
   ChannelMcpAttachment,
+  McpAttachmentScope,
   McpAttachmentTier,
 } from "@ujima/shared";
 import type {
@@ -82,6 +83,58 @@ function ChannelTierToggle({
   );
 }
 
+/**
+ * Three-way scope selector for new channel attachments. Same ARIA
+ * radio shape as ChannelTierToggle but with three options (worker /
+ * supervisor / both). Kept inline rather than extracting because
+ * the visual + interaction match is the only thing it shares with
+ * the tier toggle — both are role-narrowing 2-3 way radios.
+ */
+function ScopeSelector({
+  value,
+  onChange,
+}: {
+  value: McpAttachmentScope;
+  onChange: (next: McpAttachmentScope) => void;
+}) {
+  const groupName = useId();
+  const options: { value: McpAttachmentScope; label: string }[] = [
+    { value: "worker", label: "Workers" },
+    { value: "supervisor", label: "Supervisors" },
+    { value: "both", label: "Both" },
+  ];
+  return (
+    <fieldset
+      aria-label="Attachment scope"
+      className="m-0 inline-flex overflow-hidden rounded-full border border-zinc-200 p-0 text-[11px] dark:border-zinc-800"
+    >
+      {options.map((opt) => {
+        const selected = opt.value === value;
+        return (
+          <label
+            key={opt.value}
+            className={`cursor-pointer px-2 py-0.5 transition focus-within:ring-2 focus-within:ring-zinc-400 focus-within:ring-offset-0 ${
+              selected
+                ? "bg-zinc-800 text-white dark:bg-zinc-200 dark:text-zinc-900"
+                : "text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-900"
+            }`}
+          >
+            <input
+              type="radio"
+              name={groupName}
+              value={opt.value}
+              checked={selected}
+              onChange={() => onChange(opt.value)}
+              className="sr-only"
+            />
+            {opt.label}
+          </label>
+        );
+      })}
+    </fieldset>
+  );
+}
+
 export function ChannelsSubtab({ orgId, catalog }: Props) {
   const [channels, setChannels] = useState<Channel[]>([]);
   const [channelsLoading, setChannelsLoading] = useState(true);
@@ -94,6 +147,15 @@ export function ChannelsSubtab({ orgId, catalog }: Props) {
   const [attachmentsError, setAttachmentsError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [showAttach, setShowAttach] = useState(false);
+  // Default scope='both' for new channel attachments — channel
+  // attachments are inherited by every member of the channel
+  // regardless of role, so the role gate would silently exclude
+  // supervisor agents from a "channel-wide" attach if we defaulted
+  // to 'worker' (the per-agent default). Operators can narrow to a
+  // single role via the scope selector below before clicking
+  // Attach. Matches the §17.5.3 mental model: channel attachments
+  // are bulk reach, scope is the operator-deliberate narrowing.
+  const [attachScope, setAttachScope] = useState<McpAttachmentScope>("both");
   // Implicit loading state — `attachments === null` is "not yet
   // fetched". This avoids the React 19 react-hooks/set-state-in-effect
   // warning that fires when an effect dispatches setLoading(true)
@@ -102,6 +164,13 @@ export function ChannelsSubtab({ orgId, catalog }: Props) {
   // De-dupe the per-channel fetch so effect re-runs (caused by
   // unrelated parent state) don't re-fire the network call.
   const lastFetchedChannelId = useRef<string | null>(null);
+  // Monotonic request token — every call to loadAttachments bumps it.
+  // Responses commit only when their token still matches the current
+  // value; older in-flight responses are discarded. Without this, a
+  // slow A → fast B sequence would land B then A, and the panel
+  // would silently show channel A's data while B is selected. Race
+  // is real because settingsFetch doesn't expose AbortSignal.
+  const requestTokenRef = useRef(0);
 
   // Fetch channels once on mount. Channels rarely churn during a
   // settings session and re-fetching them on every subtab re-render
@@ -135,15 +204,21 @@ export function ChannelsSubtab({ orgId, catalog }: Props) {
   const loadAttachments = useCallback(
     async (channelId: string) => {
       if (!orgId || !channelId) return;
+      // Capture the token at request-start; only commit the response
+      // if it's still the latest request. A stale response with
+      // token !== requestTokenRef.current is dropped silently.
+      const token = ++requestTokenRef.current;
       try {
         const res = await settingsFetch<ChannelMcpAttachmentsResponse>(
           `/api/settings/channels/${encodeURIComponent(channelId)}/mcps?organizationId=${encodeURIComponent(orgId)}`,
           { method: "GET" },
           "Failed to load channel attachments.",
         );
+        if (token !== requestTokenRef.current) return;
         setAttachments(res.attachments);
         setAttachmentsError(null);
       } catch (err) {
+        if (token !== requestTokenRef.current) return;
         setAttachmentsError(err instanceof Error ? err.message : String(err));
       }
     },
@@ -245,7 +320,7 @@ export function ChannelsSubtab({ orgId, catalog }: Props) {
         const body: ChannelMcpAttachInput = {
           organizationId: orgId,
           mcpServerId,
-          scope: "worker",
+          scope: attachScope,
         };
         await settingsFetchVoid(
           `/api/settings/channels/${encodeURIComponent(activeChannelId)}/mcps`,
@@ -264,7 +339,7 @@ export function ChannelsSubtab({ orgId, catalog }: Props) {
         setBusy(null);
       }
     },
-    [activeChannelId, orgId, loadAttachments],
+    [activeChannelId, orgId, loadAttachments, attachScope],
   );
 
   if (channelsLoading) {
@@ -345,7 +420,19 @@ export function ChannelsSubtab({ orgId, catalog }: Props) {
         ) : null}
 
         {showAttach ? (
-          <div className="rounded-md border border-zinc-200 bg-zinc-50 p-2 dark:border-zinc-800 dark:bg-zinc-900/50">
+          <div className="space-y-2 rounded-md border border-zinc-200 bg-zinc-50 p-2 dark:border-zinc-800 dark:bg-zinc-900/50">
+            {/*
+              Scope selector — controls which spirit role inherits
+              the new attachment. Defaults to 'both' because channel
+              attachments are conceptually "everyone in the channel"
+              gets it; the per-role narrow options exist for the
+              rare case where only worker or supervisor agents in
+              the channel should see the MCP.
+            */}
+            <div className="flex items-center gap-2 px-1 text-[11px] text-zinc-600 dark:text-zinc-400">
+              <span>Visible to:</span>
+              <ScopeSelector value={attachScope} onChange={setAttachScope} />
+            </div>
             {availableServers.length === 0 ? (
               <p className="px-1 py-2 text-[11px] text-zinc-500 dark:text-zinc-400">
                 Every org MCP is already attached to this channel.
