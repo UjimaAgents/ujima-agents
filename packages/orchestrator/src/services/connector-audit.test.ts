@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { AuditEvent } from '@ujima/shared';
 import { createConnectorAuditWriter, redactArgs } from './connector-audit.js';
 
@@ -85,6 +85,62 @@ describe('createConnectorAuditWriter', () => {
     });
     expect(events[0]!.status).toBe('blocked');
     expect(events[1]!.status).toBe('ok');
+  });
+
+  it('swallows + logs saveAuditEvent failures so connector hot paths stay alive', () => {
+    // §12 telemetry is best-effort by construction. A transient DB
+    // failure (lock contention, schema drift, disk-full bun:sqlite
+    // hiccup) must NOT propagate out of the writer and abort the
+    // connector call, the tier-toggle PATCH, the approval-resolution
+    // path, or the replay-completion path. Centralising the swallow
+    // in createConnectorAuditWriter is what makes every caller
+    // best-effort without per-site try/catch.
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const writer = createConnectorAuditWriter({
+      repo: {
+        saveAuditEvent: () => {
+          throw new Error('simulated DB lock');
+        },
+      },
+      generateId: () => 'aud_test',
+      now: () => '2026-06-09T00:00:00.000Z',
+    });
+
+    // Each method must return normally, never throw.
+    expect(() =>
+      writer.invocationRequested({
+        organizationId: 'org_1',
+        actorMemberId: 'mem_agent',
+        runId: 'run_1',
+        serverId: 'slack',
+        toolName: 'post_message',
+        args: { channel: '#team' },
+      }),
+    ).not.toThrow();
+    expect(() =>
+      writer.invocationCompleted({
+        organizationId: 'org_1',
+        actorMemberId: 'mem_agent',
+        runId: 'run_1',
+        serverId: 'slack',
+        toolName: 'post_message',
+        success: true,
+      }),
+    ).not.toThrow();
+    expect(() =>
+      writer.tierChanged({
+        organizationId: 'org_1',
+        memberId: 'mem_agent',
+        serverId: 'slack',
+        fromTier: 'native',
+        toTier: 'dispatch',
+      }),
+    ).not.toThrow();
+
+    // The failures are logged so operators can see telemetry drops.
+    expect(warnSpy).toHaveBeenCalledTimes(3);
+    expect(warnSpy.mock.calls[0]![0]).toMatch(/saveAuditEvent failed/);
+    warnSpy.mockRestore();
   });
 });
 

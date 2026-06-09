@@ -163,15 +163,41 @@ export function createConnectorAuditWriter(deps: WriterDeps): ConnectorAuditWrit
   const newNow = deps.now ?? (() => new Date().toISOString());
   const redactKeys = deps.redactKeys;
 
+  // §12 telemetry is BEST-EFFORT by design. The connector hot paths
+  // (invoke_connector_tool, get_connector_tools, native V2 wrapper,
+  // tier-toggle PATCH, approval-resolution emit, replay-completion
+  // emit) all call these emitters inline. If `saveAuditEvent` throws
+  // — DB lock, schema drift, disk-full, transient bun:sqlite hiccup
+  // — that exception must NOT escape and abort the connector call or
+  // turn an already-committed mutation into a 500.
+  //
+  // Centralising the swallow here is the only way to keep every call
+  // site safe without a parallel try/catch at each emit. Per-emit
+  // wrappers are easy to miss when new emit sites are added; future
+  // PRs would re-introduce the same regression. The trade-off is one
+  // dropped audit row on the failure path, which the operator notices
+  // via the warn log + the existing structured logging spine.
   function write(partial: Omit<AuditEvent, 'id' | 'createdAt' | 'status'> & Partial<Pick<AuditEvent, 'status'>>): void {
-    deps.repo.saveAuditEvent(
-      AuditEventSchema.parse({
-        id: newId(),
-        createdAt: newNow(),
-        status: partial.status ?? 'ok',
-        ...partial,
-      }),
-    );
+    try {
+      deps.repo.saveAuditEvent(
+        AuditEventSchema.parse({
+          id: newId(),
+          createdAt: newNow(),
+          status: partial.status ?? 'ok',
+          ...partial,
+        }),
+      );
+    } catch (err) {
+      console.warn(
+        '[connector-audit] saveAuditEvent failed; dropping one event to keep tool path alive',
+        {
+          action: partial.action,
+          serverId: partial.serverId,
+          toolName: partial.toolName,
+          error: err instanceof Error ? err.message : String(err),
+        },
+      );
+    }
   }
 
   return {
