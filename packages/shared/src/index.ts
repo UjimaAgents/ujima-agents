@@ -17,6 +17,23 @@ export * from "./governance-policy.js";
 export * from "./classify-tool.js";
 export * from "./effective-classification.js";
 export * from "./org-schemas.js";
+// Explicit re-exports for the PR 9 tier-curation surface. The
+// `export *` above already pulls these through (verified at runtime
+// via `__exportStar` in the compiled dist), but a downstream static-
+// analyzer reported them as missing when it walked only explicit
+// named re-exports. Naming them here removes that false positive
+// without changing semantics — belt-and-suspenders, value + type
+// sides both listed.
+export {
+  TierCurationDirectionSchema,
+  TierCurationStatusSchema,
+  TierCurationSuggestionSchema,
+} from "./org-schemas.js";
+export type {
+  TierCurationDirection,
+  TierCurationStatus,
+  TierCurationSuggestion,
+} from "./org-schemas.js";
 export {
   MODEL_OPTIONS_BY_PROVIDER,
   defaultModelForProvider,

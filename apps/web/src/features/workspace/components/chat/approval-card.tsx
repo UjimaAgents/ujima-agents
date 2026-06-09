@@ -80,8 +80,14 @@ const APPROVAL_OPTIONS: Record<"reject" | "allow_once" | "allow_always" | "allow
 const APPROVAL_OPTIONS_CONNECTOR: typeof APPROVAL_OPTIONS = {
   ...APPROVAL_OPTIONS,
   allow_family: {
+    // "Allow for this run" — relabelled connector_action_request
+    // variant of allow_family. The gate caches the grant in the
+    // permission store for the current task session, not a shell-
+    // sense command family. Renders the same icon as the other
+    // approve actions; the difference is only the label so
+    // operators not aware of the §17.5 vocabulary read it
+    // correctly.
     label: "Allow for this run",
-    description: "Skip the gate for the same tool + arguments while this task runs.",
     icon: Check,
   },
 };

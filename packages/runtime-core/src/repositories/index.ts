@@ -66,6 +66,7 @@ import { listAuditEvents as readAuditEvents, saveAuditEvent as writeAuditEvent }
 import {
   listTierCurationSuggestions as readTierCurationSuggestions,
   saveTierCurationSuggestion as writeTierCurationSuggestion,
+  updateTierCurationSuggestionStatus as mutateTierCurationSuggestionStatus,
 } from './tier-curation.js';
 import {
   getBootstrapSnapshot as readBootstrapSnapshot,
@@ -608,6 +609,19 @@ export class Repository {
     writeTierCurationSuggestion(this.db, suggestion);
   listTierCurationSuggestions = (organizationId: string): TierCurationSuggestion[] =>
     readTierCurationSuggestions(this.db, organizationId);
+  updateTierCurationSuggestionStatus = (
+    organizationId: string,
+    suggestionId: string,
+    nextStatus: 'pending' | 'applied' | 'dismissed',
+    resolvedAt: string,
+  ): TierCurationSuggestion | null =>
+    mutateTierCurationSuggestionStatus(
+      this.db,
+      organizationId,
+      suggestionId,
+      nextStatus,
+      resolvedAt,
+    );
 
   /**
    * Execute `fn` inside a synchronous DB transaction. Commits on

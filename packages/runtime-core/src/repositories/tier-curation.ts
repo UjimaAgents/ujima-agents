@@ -80,3 +80,92 @@ export function listTierCurationSuggestions(
     .all(organizationId) as Row[];
   return rows.map(rowToSuggestion);
 }
+
+/**
+ * PR 9 — persist the operator's decision on a suggestion.
+ *
+ * The panel calls this from Apply / Dismiss so a refresh or page
+ * reload doesn't resurface a candidate the operator has already
+ * acted on.
+ *
+ * The UNIQUE constraint on (org, member, server, direction, status)
+ * from migration 050 means we have to be careful with terminal
+ * statuses: the apply-revert-reapply flow can race itself otherwise.
+ *
+ *   1. Analyzer writes pending row A → (org, m, s, demote, pending)
+ *   2. Apply A → flips to (org, m, s, demote, applied)
+ *   3. Operator manually reverts the tier
+ *   4. Analyzer writes pending row B → (org, m, s, demote, pending)
+ *   5. Apply B → tries to flip to (org, m, s, demote, applied)
+ *      → conflicts with row A → UNIQUE violation, the Apply 500s
+ *
+ * So before flipping a row to a terminal status, delete any existing
+ * terminal row for the same (org, member, server, direction). The
+ * operator's most recent decision wins — older terminal rows are not
+ * load-bearing (they have no UI surface; the audit trail
+ * connector_tier_changed is the durable record). The two operations
+ * run in a single transaction so a partial failure can't leave the
+ * table in a "no terminal row" intermediate state.
+ *
+ * Returns the updated row, or null if no such row exists (missing
+ * rows are silently skipped because a stale UI Apply on a deleted
+ * org/suggestion shouldn't surface as a 500).
+ */
+export function updateTierCurationSuggestionStatus(
+  db: DbHandle,
+  organizationId: string,
+  suggestionId: string,
+  nextStatus: 'pending' | 'applied' | 'dismissed',
+  resolvedAt: string,
+): TierCurationSuggestion | null {
+  const target = db
+    .prepare(
+      `SELECT * FROM tier_curation_suggestions
+       WHERE organization_id = ? AND id = ?`,
+    )
+    .get(organizationId, suggestionId) as Row | undefined;
+  if (!target) return null;
+
+  const isTerminal = nextStatus === 'applied' || nextStatus === 'dismissed';
+  const memberId = rowString(target, 'member_id');
+  const mcpServerId = rowString(target, 'mcp_server_id');
+  const direction = rowString(target, 'direction');
+
+  // Single transaction so a crash between DELETE and UPDATE can't
+  // leave the (org, member, server, direction) slot with neither a
+  // terminal nor a pending row. Matches the BEGIN/COMMIT/ROLLBACK
+  // pattern Repository.transaction uses — bun:sqlite + better-sqlite3
+  // both queue per-statement, so awaiting inside the transaction
+  // would either deadlock or silently commit out of order.
+  db.exec('BEGIN');
+  try {
+    if (isTerminal) {
+      db.prepare(
+        `DELETE FROM tier_curation_suggestions
+           WHERE organization_id = ?
+             AND member_id = ?
+             AND mcp_server_id = ?
+             AND direction = ?
+             AND id != ?
+             AND (status = 'applied' OR status = 'dismissed')`,
+      ).run(organizationId, memberId, mcpServerId, direction, suggestionId);
+    }
+    db.prepare(
+      `UPDATE tier_curation_suggestions
+         SET status = ?, resolved_at = ?
+         WHERE organization_id = ? AND id = ?`,
+    ).run(nextStatus, resolvedAt, organizationId, suggestionId);
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+
+  const row = db
+    .prepare(
+      `SELECT * FROM tier_curation_suggestions
+       WHERE organization_id = ? AND id = ?`,
+    )
+    .get(organizationId, suggestionId) as Row | undefined;
+  return row ? rowToSuggestion(row) : null;
+}

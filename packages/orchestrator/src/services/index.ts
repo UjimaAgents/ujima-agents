@@ -23,6 +23,7 @@ import { GoalSystemService } from './goal-system.js';
 import { MemoryReviewService } from './memory-review.js';
 import { TrajectoryService } from './trajectory.js';
 import { McpRegistryService } from './mcp-registry.js';
+import { createTierCurationService, type TierCurationService } from './tier-curation.js';
 import { GovernanceService } from './governance-service.js';
 import { PluginRegistryService } from './plugin-registry.js';
 import { OnboardingService } from './onboarding.js';
@@ -163,6 +164,7 @@ export type {
   SpiritServiceOptions,
 } from './spirit.js';
 export { McpRegistryService } from './mcp-registry.js';
+export { createTierCurationService, type TierCurationService } from './tier-curation.js';
 export type {
   AttachMcpInput,
   CreateMcpServerInput,
@@ -250,6 +252,7 @@ export interface ApiServices {
   spirits: SpiritService;
   activeSpirits: ActiveSpiritRegistry;
   mcpRegistry: McpRegistryService;
+  tierCuration: TierCurationService;
   governance: GovernanceService;
   pluginRegistry: PluginRegistryService;
 }
@@ -810,6 +813,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   );
   const taskSessions = new TaskSessionService(context.repo, conversations, spirits);
   const mcpRegistry = new McpRegistryService(context.repo);
+  const tierCuration = createTierCurationService({ repo: context.repo });
   const governance = new GovernanceService(context.repo);
   const pluginRegistry = new PluginRegistryService(
     context.repo,
@@ -886,6 +890,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     scheduler,
     activeSpirits,
     mcpRegistry,
+    tierCuration,
     governance,
     pluginRegistry,
   };

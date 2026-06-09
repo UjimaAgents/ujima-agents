@@ -63,6 +63,18 @@ export function ChannelMembersTab({
     [channel.memberIds, knownMemberIds],
   );
   const [draftMemberIds, setDraftMemberIds] = useState(savedMemberIds);
+  // Track the savedMemberIds we initialized draft from, so we can
+  // detect prop changes and resync. React 19's official "Adjusting
+  // state when a prop changes" pattern — done during render, not in
+  // an effect — so react-hooks/set-state-in-effect doesn't fire and
+  // the resync lands BEFORE the next paint instead of one frame
+  // later. savedMemberIds is reference-stable via the useMemo above,
+  // so the cheap `!==` check is correct.
+  const [lastSyncedSavedIds, setLastSyncedSavedIds] = useState(savedMemberIds);
+  if (savedMemberIds !== lastSyncedSavedIds) {
+    setLastSyncedSavedIds(savedMemberIds);
+    setDraftMemberIds(savedMemberIds);
+  }
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [memberModes, setMemberModes] = useState<Map<string, ChannelMemberMode>>(new Map());
@@ -80,10 +92,6 @@ export function ChannelMembersTab({
     [members, selectedMemberIds],
   );
   const dirty = !sameMemberIds(savedMemberIds, draftMemberIds);
-
-  useEffect(() => {
-    setDraftMemberIds(savedMemberIds);
-  }, [savedMemberIds]);
 
   // Fetch member modes on mount
   useEffect(() => {

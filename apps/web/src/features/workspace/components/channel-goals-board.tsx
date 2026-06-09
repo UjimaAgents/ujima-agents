@@ -205,7 +205,14 @@ export const ChannelGoalsBoard = memo(function ChannelGoalsBoard({
 
   const dragTaskId = useRef<string | null>(null);
   const [dragOverColumn, setDragOverColumn] = useState<ColumnId | null>(null);
-  const hasUserSelected = useRef(false);
+  // State, not ref, so it can be read deterministically inside the
+  // activeGoalId useMemo. Refs aren't allowed during render under
+  // React 19's strict rules — the ref value could change mid-render
+  // and produce different memo results across renders for the same
+  // input deps. With state, the only writer is the onSelect handlers
+  // below; the dispatch is batched with the setSelectedGoalId call
+  // in the same event so this adds zero extra re-renders.
+  const [hasUserSelected, setHasUserSelected] = useState(false);
 
   const memberById = useMemo(
     () => new Map(members.map((m) => [m.id, m])),
@@ -223,7 +230,7 @@ export const ChannelGoalsBoard = memo(function ChannelGoalsBoard({
     if (goals.length === 0) return null;
 
     // 1. User's explicit choice — trust it even if null ("All Goals")
-    if (hasUserSelected.current) return selectedGoalId;
+    if (hasUserSelected) return selectedGoalId;
 
     // 2. Stored preference in localStorage
     const stored =
@@ -236,7 +243,7 @@ export const ChannelGoalsBoard = memo(function ChannelGoalsBoard({
     return [...goals].sort(
       (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
     )[0]?.id ?? null;
-  }, [selectedGoalId, goals, storageKey]);
+  }, [selectedGoalId, goals, storageKey, hasUserSelected]);
 
   // Persist selection to localStorage (allowed: synchronizing external system)
   useEffect(() => {
@@ -531,7 +538,7 @@ export const ChannelGoalsBoard = memo(function ChannelGoalsBoard({
             goals={sortedGoals}
             selectedGoalId={selectedGoalId}
             goalTaskCounts={goalTaskCounts}
-            onSelect={(id) => { hasUserSelected.current = true; setSelectedGoalId(id); }}
+            onSelect={(id) => { setHasUserSelected(true); setSelectedGoalId(id); }}
             onImplement={handleImplement}
             actionLoading={actionLoading}
           />
@@ -574,7 +581,7 @@ export const ChannelGoalsBoard = memo(function ChannelGoalsBoard({
         goals={sortedGoals}
         selectedGoalId={selectedGoalId}
         goalTaskCounts={goalTaskCounts}
-        onSelect={(id) => { hasUserSelected.current = true; setSelectedGoalId(id); }}
+        onSelect={(id) => { setHasUserSelected(true); setSelectedGoalId(id); }}
         onImplement={handleImplement}
         actionLoading={actionLoading}
       />

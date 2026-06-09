@@ -17,13 +17,23 @@ import {
   McpServerListResponseSchema,
   McpServerResponseSchema,
   McpToolsResponseSchema,
+  RefreshTierCurationRequestSchema,
+  RefreshTierCurationResponseSchema,
   TestMcpResponseSchema,
+  TierCurationSuggestionResponseSchema,
+  TierCurationSuggestionsResponseSchema,
+  UpdateTierCurationSuggestionStatusRequestSchema,
   ToolClassificationResponseSchema,
   UpdateAttachmentTierRequestSchema,
   UpdateMcpServerRequestSchema,
   UpdateToolClassificationRequestSchema,
 } from '@ujima/api-schema';
-import type { AuthService, McpRegistryService } from '@ujima/orchestrator';
+import type {
+  ApiRepository,
+  AuthService,
+  McpRegistryService,
+  TierCurationService,
+} from '@ujima/orchestrator';
 import { apiError } from './route-errors.js';
 import {
   registerOrgSettingsRoute,
@@ -34,6 +44,8 @@ import {
 export interface McpRoutesOptions {
   auth: AuthService;
   mcpRegistry: McpRegistryService;
+  tierCuration: TierCurationService;
+  repo: ApiRepository;
 }
 
 const ServerIdParamsSchema = z.object({ id: z.string().min(1) });
@@ -65,7 +77,7 @@ export function registerMcpRoutes(
   fastify: FastifyInstance,
   options: McpRoutesOptions,
 ): void {
-  const { auth, mcpRegistry } = options;
+  const { auth, mcpRegistry, tierCuration, repo } = options;
   const app = withTypeProvider(fastify);
 
   registerOrgSettingsRoute(app, 'get', '/settings/mcps', auth, {
@@ -427,6 +439,127 @@ export function registerMcpRoutes(
       },
     },
   );
+
+  // ---------------- PR 9 — tier curation suggestions -----------------
+
+  // List pending demote/promote suggestions for the org. Empty array +
+  // zero counters is the legitimate zero-state (no analyzer pass yet,
+  // or the org has no idle/hot dispatch attachments). The panel
+  // distinguishes that from a fetch error so operators don't see a
+  // spinner forever.
+  registerOrgSettingsRoute(
+    app,
+    'get',
+    '/settings/mcps/tier-curation-suggestions',
+    auth,
+    {
+      tags: ['MCP'],
+      description:
+        "List pending tier-curation suggestions for this org. " +
+        "Each row is the analyzer's proposal — demote a never-called " +
+        "native tool to dispatch (reclaim palette budget), or promote " +
+        "a high-volume + high-error-rate dispatch tool to native " +
+        "(typed schema reduces model-fumbling). Operators apply via " +
+        "the existing PATCH /settings/agents/:agentId/mcps/:serverId/" +
+        "tier endpoint. The §17.5 orthogonality invariant stays " +
+        "intact: nothing here ever auto-applies.",
+      querystring: McpScopedQuerySchema,
+      response: { 200: TierCurationSuggestionsResponseSchema, ...mcpErrors },
+      organizationId: (req) => (req.query as { organizationId: string }).organizationId,
+      onError: mcpHandle,
+      handler: async (_req, organizationId) => {
+        const suggestions = repo.listTierCurationSuggestions(organizationId);
+        const pending = suggestions.filter((s) => s.status === 'pending');
+        return {
+          suggestions: pending,
+          summary: {
+            pending: pending.length,
+            demoteCount: pending.filter((s) => s.direction === 'demote').length,
+            promoteCount: pending.filter((s) => s.direction === 'promote').length,
+          },
+        };
+      },
+    },
+  );
+
+  // Manual analyzer trigger. The §9.4 design has the job running on a
+  // schedule, but exposing this lets operators force a refresh from
+  // the panel (after they apply a tier flip, after a noisy run,
+  // before a curation review meeting). Tunable thresholds let the
+  // dogfood org probe the signal before we lock in defaults.
+  registerOrgSettingsRoute(
+    app,
+    'post',
+    '/settings/mcps/tier-curation-suggestions/refresh',
+    auth,
+    {
+      tags: ['MCP'],
+      description:
+        'Run the §9.4 audit-driven analyzer right now and persist any ' +
+        'demote/promote candidates it finds. Idempotent: the underlying ' +
+        'UPSERT on (org, member, server, direction, status) preserves ' +
+        'the original `created_at` so the panel can show "first ' +
+        'surfaced N days ago" across repeated triggers.',
+      body: RefreshTierCurationRequestSchema,
+      response: { 200: RefreshTierCurationResponseSchema, ...mcpWriteErrors },
+      organizationId: (req) => (req.body as { organizationId: string }).organizationId,
+      onError: mcpHandle,
+      handler: async (req, organizationId) => {
+        const body = req.body as z.infer<typeof RefreshTierCurationRequestSchema>;
+        return tierCuration.analyzeOrganization({
+          organizationId,
+          windowRuns: body.windowRuns,
+          volumePerRunThreshold: body.volumePerRunThreshold,
+          errorRateThreshold: body.errorRateThreshold,
+        });
+      },
+    },
+  );
+
+  // Persist the operator's Apply/Dismiss decision. Without this the
+  // panel can only optimistically drop the row from local state — a
+  // refresh resurfaces the suggestion even though the underlying tier
+  // flip has already been committed. The PATCH writes the
+  // status + resolved_at columns so the next analyzer pass leaves the
+  // applied row alone (UNIQUE on (org,member,server,direction,status)
+  // means a fresh `pending` slot is available if the operator later
+  // reverts).
+  registerOrgSettingsRoute(
+    app,
+    'patch',
+    '/settings/mcps/tier-curation-suggestions/:suggestionId',
+    auth,
+    {
+      tags: ['MCP'],
+      description:
+        "Update the operator-decision status on a tier-curation " +
+        "suggestion. 'applied' fires after a successful tier flip; " +
+        "'dismissed' lets the operator hide a row without acting on " +
+        "it. 'pending' is the analyzer default and shouldn't normally " +
+        "be set by hand.",
+      params: z.object({ suggestionId: z.string().min(1) }),
+      body: UpdateTierCurationSuggestionStatusRequestSchema,
+      response: { 200: TierCurationSuggestionResponseSchema, ...mcpWriteErrors },
+      organizationId: (req) => (req.body as { organizationId: string }).organizationId,
+      onError: mcpHandle,
+      handler: async (req, organizationId) => {
+        const body = req.body as z.infer<typeof UpdateTierCurationSuggestionStatusRequestSchema>;
+        const params = req.params as { suggestionId: string };
+        const updated = repo.updateTierCurationSuggestionStatus(
+          organizationId,
+          params.suggestionId,
+          body.status,
+          new Date().toISOString(),
+        );
+        if (!updated) {
+          // Message starts with "Suggestion not found" so
+          // mapMcpRouteError classifies it as 404 ERR_NOT_FOUND.
+          throw new Error(`Suggestion not found: ${params.suggestionId}`);
+        }
+        return { suggestion: updated };
+      },
+    },
+  );
 }
 
 export function mapMcpRouteError(err: unknown): {
@@ -440,7 +573,8 @@ export function mapMcpRouteError(err: unknown): {
     message.startsWith('MCP server not found') ||
     message.startsWith('Member not found') ||
     message.startsWith('Tool not found') ||
-    message.startsWith('Attachment not found')
+    message.startsWith('Attachment not found') ||
+    message.startsWith('Suggestion not found')
   ) {
     return { status: 404, code: 'ERR_NOT_FOUND', message };
   }

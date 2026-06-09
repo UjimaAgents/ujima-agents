@@ -326,6 +326,15 @@ export interface ApiRepository extends ConversationRepository {
   // panel "Show usage" sublink the primary reader.
   saveTierCurationSuggestion(suggestion: TierCurationSuggestion): TierCurationSuggestion;
   listTierCurationSuggestions(organizationId: string): TierCurationSuggestion[];
+  // PR 9 — persists the operator's Apply/Dismiss decision so a
+  // refresh doesn't resurface a row they've already acted on.
+  // Returns the updated row, or null if no such row exists.
+  updateTierCurationSuggestionStatus(
+    organizationId: string,
+    suggestionId: string,
+    nextStatus: 'pending' | 'applied' | 'dismissed',
+    resolvedAt: string,
+  ): TierCurationSuggestion | null;
   /**
    * Run a synchronous DB transaction. The callback must complete
    * synchronously — async work belongs after the commit. See
