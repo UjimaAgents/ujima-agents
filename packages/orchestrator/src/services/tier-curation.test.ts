@@ -13,9 +13,9 @@ import { createTierCurationService, type TierCurationDeps } from './tier-curatio
 // belongs in the QA suite — these are the contracts the settings
 // panel + rollout cadence rest on.
 
-interface FixtureRepo extends TierCurationDeps['repo'] {
+type FixtureRepo = TierCurationDeps['repo'] & {
   saved: TierCurationSuggestion[];
-}
+};
 
 function makeRepo(args: {
   members: Member[];
