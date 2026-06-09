@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useMemo, memo } from "react";
 import { FolderKanban, Loader2, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { switchToWorkspace } from "@/features/workspace/switch-workspace";
 import { SettingsErrorAlert, SettingsLoading } from "@/features/settings/shared/settings-alert";
@@ -46,7 +46,7 @@ function isCurrentWorkspace(
   return normalizePath(rootPath) === normalizePath(currentWorkspaceRoot);
 }
 
-export function WorkspacesTab({
+export const WorkspacesTab = memo(function WorkspacesTab({
   currentWorkspaceRoot,
   configuredProviders = [],
 }: WorkspacesTabProps) {
@@ -84,13 +84,13 @@ export function WorkspacesTab({
     void fetchWorkspaces();
   }, [fetchWorkspaces]);
 
-  const handleRefresh = async () => {
+  const handleRefresh = useCallback(async () => {
     setRefreshing(true);
     await fetchWorkspaces().catch(() => undefined);
     setRefreshing(false);
-  };
+  }, [fetchWorkspaces]);
 
-  const createWorkspace = async (input: WorkspaceCreateSubmitInput) => {
+  const createWorkspace = useCallback(async (input: WorkspaceCreateSubmitInput) => {
     const res = await fetch("/api/workspaces", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -110,9 +110,9 @@ export function WorkspacesTab({
       return [...prev, created];
     });
     await fetchWorkspaces();
-  };
+  }, [fetchWorkspaces]);
 
-  const handleSwitch = async (workspaceId: string) => {
+  const handleSwitch = useCallback(async (workspaceId: string) => {
     setSwitchingId(workspaceId);
     setError(null);
     try {
@@ -121,9 +121,9 @@ export function WorkspacesTab({
       setError(err instanceof Error ? err.message : "Unable to switch workspace");
       setSwitchingId(null);
     }
-  };
+  }, []);
 
-  const handleDelete = async () => {
+  const handleDelete = useCallback(async () => {
     if (!deleteTarget) return;
     const workspaceId = deleteTarget.id;
     setDeletingId(workspaceId);
@@ -143,14 +143,16 @@ export function WorkspacesTab({
     } finally {
       setDeletingId(null);
     }
-  };
+  }, [deleteTarget]);
 
-  const sortedWorkspaces = [...workspaces].sort((a, b) => {
-    const aCurrent = isCurrentWorkspace(a.root_path, currentWorkspaceRoot, a.is_current);
-    const bCurrent = isCurrentWorkspace(b.root_path, currentWorkspaceRoot, b.is_current);
-    if (aCurrent === bCurrent) return 0;
-    return aCurrent ? -1 : 1;
-  });
+  const sortedWorkspaces = useMemo(() => {
+    return [...workspaces].sort((a, b) => {
+      const aCurrent = isCurrentWorkspace(a.root_path, currentWorkspaceRoot, a.is_current);
+      const bCurrent = isCurrentWorkspace(b.root_path, currentWorkspaceRoot, b.is_current);
+      if (aCurrent === bCurrent) return 0;
+      return aCurrent ? -1 : 1;
+    });
+  }, [workspaces, currentWorkspaceRoot]);
 
   if (loading) {
     return <SettingsLoading label="Loading workspaces…" />;
@@ -258,4 +260,4 @@ export function WorkspacesTab({
       />
     </>
   );
-}
+});

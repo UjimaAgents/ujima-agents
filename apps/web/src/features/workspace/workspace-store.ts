@@ -138,8 +138,23 @@ const EMPTY_ACTIVITY = {
   chatFontSize: CHAT_FONT_SIZE_DEFAULT,
 };
 
+function shallowEqual(left: unknown, right: unknown): boolean {
+  if (left === right) return true;
+  if (!left || !right || typeof left !== "object" || typeof right !== "object") return false;
+  const leftObj = left as Record<string, unknown>;
+  const rightObj = right as Record<string, unknown>;
+  const leftKeys = Object.keys(leftObj);
+  const rightKeys = Object.keys(rightObj);
+  if (leftKeys.length !== rightKeys.length) return false;
+  for (const key of leftKeys) {
+    if (leftObj[key] !== rightObj[key]) return false;
+  }
+  return true;
+}
+
+/** @deprecated alias kept for call-sites – delegates to shallowEqual */
 function sameRecord(left: unknown, right: unknown): boolean {
-  return JSON.stringify(left) === JSON.stringify(right);
+  return shallowEqual(left, right);
 }
 
 function omitKey<T>(record: Record<string, T>, key: string): Record<string, T> {
@@ -166,10 +181,25 @@ function mergeChannels(current: WorkspaceChannel[], incoming: WorkspaceChannel[]
 }
 
 function mergeChatMessages(current: ChatMessageData[], incoming: ChatMessageData[]): ChatMessageData[] {
-  const map = new Map<string, ChatMessageData>();
-  for (const message of [...current, ...incoming]) {
-    map.set(message.id, message);
+  // Fast path: if all incoming IDs are new and chronologically after the last
+  // current message, we can just append without a full sort.
+  const lastCurrentTime = current.length > 0 ? Date.parse(current[current.length - 1].createdAt ?? "") : -Infinity;
+  const currentIds = current.length <= 200 ? new Set(current.map((m) => m.id)) : null;
+  if (currentIds && incoming.length > 0) {
+    let allNewAndOrdered = true;
+    let prevTime = lastCurrentTime;
+    for (const msg of incoming) {
+      if (currentIds.has(msg.id)) { allNewAndOrdered = false; break; }
+      const t = Date.parse(msg.createdAt ?? "");
+      if (t < prevTime) { allNewAndOrdered = false; break; }
+      prevTime = t;
+    }
+    if (allNewAndOrdered) return [...current, ...incoming];
   }
+
+  const map = new Map<string, ChatMessageData>();
+  for (const message of current) map.set(message.id, message);
+  for (const message of incoming) map.set(message.id, message);
   return [...map.values()].sort((a, b) => Date.parse(a.createdAt ?? "") - Date.parse(b.createdAt ?? ""));
 }
 
@@ -221,20 +251,38 @@ function mergeRuns(current: RunState[], incoming: RunState[]): RunState[] {
   return next;
 }
 
+// Module-level incremental set tracking seen activity event IDs.
+// Avoids rebuilding a Set from the entire activity array on every append.
+let _activityEventIds: Set<string> | null = null;
+let _activityForIds: ActivityEvent[] | null = null;
+
+function getActivityEventIds(activity: ActivityEvent[]): Set<string> {
+  // If the activity array reference changed (e.g. conversation reset), rebuild.
+  if (_activityForIds !== activity) {
+    _activityEventIds = new Set(activity.map((event) => event.event_id));
+    _activityForIds = activity;
+  }
+  return _activityEventIds!;
+}
+
 function appendSequencedEvents(
   state: Pick<WorkspaceState, "activitySequence" | "activity">,
   events: ActivityEvent[],
 ): Pick<WorkspaceState, "activitySequence" | "activity"> {
   if (events.length === 0) return state;
-  const seen = new Set(state.activity.map((event) => event.event_id));
+  const seen = getActivityEventIds(state.activity);
   const stamped = events.map((event, index) => ({
     ...event,
     order: state.activitySequence + index,
   })).filter((event) => !seen.has(event.event_id));
   if (stamped.length === 0) return state;
+  // Incrementally update the tracking set.
+  const nextActivity = [...state.activity, ...stamped];
+  for (const event of stamped) seen.add(event.event_id);
+  _activityForIds = nextActivity;
   return {
     activitySequence: state.activitySequence + stamped.length,
-    activity: [...state.activity, ...stamped],
+    activity: nextActivity,
   };
 }
 
@@ -623,19 +671,21 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
       };
     }),
   resetConversationFeed: (conversationKey) =>
-    set((state) =>
-      state.conversationKey === conversationKey && state.loading
-        ? state
-        : {
-            messages: [],
-            approvals: [],
-            runs: [],
-            activitySequence: 0,
-            activity: [],
-            loading: true,
-            conversationKey,
-          },
-    ),
+    set((state) => {
+      if (state.conversationKey === conversationKey && state.loading) return state;
+      // Clear the incremental activity event ID cache on feed reset.
+      _activityEventIds = null;
+      _activityForIds = null;
+      return {
+        messages: [],
+        approvals: [],
+        runs: [],
+        activitySequence: 0,
+        activity: [],
+        loading: true,
+        conversationKey,
+      };
+    }),
   setLoading: (loading) =>
     set((state) => (state.loading === loading ? state : { loading })),
   hydrateMessages: (messages, toMessage, toActivity) =>

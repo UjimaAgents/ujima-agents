@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Loader2, Square } from "lucide-react";
+import { Loader2, Square, Terminal } from "lucide-react";
 import type { ShellJobDetail } from "@ujima/api-schema";
 import {
   TERMINAL_COMMAND_ROW,
@@ -155,6 +155,13 @@ export function BackgroundShellJobPane({
   const showRunning = snapshot?.status === "running";
   const tone =
     snapshot?.status === "error" || loadError ? "error" : "default";
+  const hasOutputContent = Boolean(
+    loadError ||
+    combined.trim().length > 0 ||
+    showRunning ||
+    snapshot?.status === "exited" ||
+    snapshot?.error
+  );
 
   return (
     <div className={`${TERMINAL_PANEL} ${className}`}>
@@ -162,10 +169,13 @@ export function BackgroundShellJobPane({
         className={`${TERMINAL_SECTION} flex items-start justify-between gap-2 border-b border-violet-500/[0.06] px-2 py-1 dark:border-white/10`}
       >
         <div className="min-w-0 flex-1">
-          <div className={TERMINAL_CWD}>{cwd}</div>
-          <div className={TERMINAL_COMMAND_ROW}>
+          <div className={`${TERMINAL_CWD} flex items-center gap-1.5`}>
+            <Terminal className="h-3.5 w-3.5 shrink-0 text-foreground/45" />
+            <span>{cwd}</span>
+          </div>
+          <div className={`${TERMINAL_COMMAND_ROW} flex items-start gap-1.5`}>
             <span className={TERMINAL_PROMPT}>$ </span>
-            <span>{commandLine}</span>
+            <span className="break-all">{commandLine}</span>
           </div>
         </div>
         {showRunning ? (
@@ -184,35 +194,37 @@ export function BackgroundShellJobPane({
           </button>
         ) : null}
       </div>
-      <ExpandableOutput>
-        <div
-          className={`px-3 py-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-words ${
-            tone === "error"
-              ? "text-red-700 dark:text-red-300/90"
-              : "text-foreground/85"
-          }`}
-        >
-          {loadError ? (
-            <span className="text-red-700 dark:text-red-300/90">{loadError}</span>
-          ) : combined ? (
-            combined
-          ) : showRunning ? (
-            <span className="text-foreground/45">Waiting for output…</span>
-          ) : snapshot?.status === "exited" ? (
-            <span className="text-foreground/45">
-              {snapshot.exitCode != null
-                ? `Finished (exit ${snapshot.exitCode})`
-                : "Finished"}
-            </span>
-          ) : null}
-          {snapshot?.error ? (
-            <div className="mt-2 border-t border-foreground/10 pt-2 text-red-700 dark:text-red-300/90">
-              {snapshot.error}
-            </div>
-          ) : null}
-          <div ref={bottomRef} className="h-px w-full shrink-0" aria-hidden />
-        </div>
-      </ExpandableOutput>
+      {hasOutputContent ? (
+        <ExpandableOutput>
+          <div
+            className={`px-3 py-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-words ${
+              tone === "error"
+                ? "text-red-700 dark:text-red-300/90"
+                : "text-foreground/85"
+            }`}
+          >
+            {loadError ? (
+              <span className="text-red-700 dark:text-red-300/90">{loadError}</span>
+            ) : combined ? (
+              combined
+            ) : showRunning ? (
+              <span className="text-foreground/45">Waiting for output…</span>
+            ) : snapshot?.status === "exited" ? (
+              <span className="text-foreground/45">
+                {snapshot.exitCode != null
+                  ? `Finished (exit ${snapshot.exitCode})`
+                  : "Finished"}
+              </span>
+            ) : null}
+            {snapshot?.error ? (
+              <div className="mt-2 border-t border-foreground/10 pt-2 text-red-700 dark:text-red-300/90">
+                {snapshot.error}
+              </div>
+            ) : null}
+            <div ref={bottomRef} className="h-px w-full shrink-0" aria-hidden />
+          </div>
+        </ExpandableOutput>
+      ) : null}
     </div>
   );
 }

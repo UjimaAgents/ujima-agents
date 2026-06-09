@@ -23,6 +23,7 @@ import {
   type ReasoningEffort,
 } from "@ujima/shared/browser";
 import { Select } from "@/components/ui/select";
+import { RunningFigureIndicator } from "./primitives";
 import {
   listItemIdle,
   listItemSelected,
@@ -117,58 +118,6 @@ const MAX_COMPOSER_ROWS = 3;
 const SLASH_MENU_PREVIEW_COUNT = 5;
 function reasoningLabel(value: ReasoningEffort): string {
   return value === "extra_high" ? "Extra High" : value.charAt(0).toUpperCase() + value.slice(1);
-}
-
-function RunningFigureIndicator() {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      aria-hidden="true"
-      className="h-3.5 w-3.5 shrink-0 text-violet-700 dark:text-violet-300"
-      fill="none"
-      stroke="currentColor"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      strokeWidth="1.8"
-    >
-      <circle cx="14" cy="4" r="1.4" fill="currentColor" stroke="none" />
-      <line x1="13.5" y1="5.5" x2="11" y2="12">
-        <animate attributeName="y2" values="12;11.5;12;11.5;12" dur="0.6s" repeatCount="indefinite" />
-      </line>
-      <path strokeOpacity="0.4" d="M13 7 L10 9.5">
-        <animate
-          attributeName="d"
-          values="M13 7 L10 9.5;M13 7 L15.5 9;M13 7 L16 10.5;M13 7 L15.5 9;M13 7 L10 9.5"
-          dur="0.6s"
-          repeatCount="indefinite"
-        />
-      </path>
-      <path d="M13 7 L16 10.5">
-        <animate
-          attributeName="d"
-          values="M13 7 L16 10.5;M13 7 L11.5 10;M13 7 L10 9.5;M13 7 L11.5 10;M13 7 L16 10.5"
-          dur="0.6s"
-          repeatCount="indefinite"
-        />
-      </path>
-      <path strokeOpacity="0.4" d="M11 12 L8 15 L6.5 16">
-        <animate
-          attributeName="d"
-          values="M11 12 L8 15 L6.5 16;M11 12 L12 16 L14 19;M11 12 L14.5 15.5 L16.5 18;M11 12 L12 16 L14 19;M11 12 L8 15 L6.5 16"
-          dur="0.6s"
-          repeatCount="indefinite"
-        />
-      </path>
-      <path d="M11 12 L14.5 15.5 L16.5 18">
-        <animate
-          attributeName="d"
-          values="M11 12 L14.5 15.5 L16.5 18;M11 12 L8 15 L6.5 16;M11 12 L12 16 L14 19;M11 12 L8 15 L6.5 16;M11 12 L14.5 15.5 L16.5 18"
-          dur="0.6s"
-          repeatCount="indefinite"
-        />
-      </path>
-    </svg>
-  );
 }
 
 export function getExactSlashCommand(value: string): ComposerCommand | null {

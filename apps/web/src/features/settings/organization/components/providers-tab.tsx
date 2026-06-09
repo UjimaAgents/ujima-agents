@@ -1,7 +1,7 @@
 "use client";
 
 import { Plus, Server, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { useState, useCallback, useMemo, memo } from "react";
 import type { ProviderSecretsUpsertResponse, ProviderStatus } from "@ujima/api-schema";
 import { settingsFetch } from "@/features/settings/shared/settings-api";
 import { ConfirmDialog } from "@/features/settings/shared/confirm-dialog";
@@ -20,7 +20,7 @@ import { isOAuthProvider } from "@/features/providers/constants";
 import { credentialStatusLabel } from "@/features/providers/provider-status-copy";
 import { ProviderFormModal } from "./providers/provider-form-modal";
 
-export function ProvidersTab({
+export const ProvidersTab = memo(function ProvidersTab({
   orgId,
   providers,
   onProvidersChange,
@@ -37,10 +37,13 @@ export function ProvidersTab({
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const configured = providers.filter((p) => p.hasKey);
-  const usedNames = new Set(configured.map((p) => normalizeProviderKey(p.name)));
+  const configured = useMemo(() => providers.filter((p) => p.hasKey), [providers]);
+  const usedNames = useMemo(
+    () => new Set(configured.map((p) => normalizeProviderKey(p.name))),
+    [configured],
+  );
 
-  const saveProvider = async (name: string, apiKey: string) => {
+  const saveProvider = useCallback(async (name: string, apiKey: string) => {
     if (!orgId) return;
     const normalizedName = normalizeProviderKey(name);
     const data = await settingsFetch<ProviderSecretsUpsertResponse>(
@@ -56,9 +59,9 @@ export function ProvidersTab({
       "Failed to save provider.",
     );
     onProvidersChange(data.providers);
-  };
+  }, [orgId, onProvidersChange]);
 
-  const deleteProvider = async () => {
+  const deleteProvider = useCallback(async () => {
     if (!deleteTarget || !orgId) return;
     setDeleting(true);
     try {
@@ -74,9 +77,9 @@ export function ProvidersTab({
     } finally {
       setDeleting(false);
     }
-  };
+  }, [deleteTarget, orgId, onProvidersChange]);
 
-  const testProvider = async (name: string) => {
+  const testProvider = useCallback(async (name: string) => {
     if (!orgId) return;
     setTestingName(name);
     setTestResult(null);
@@ -92,7 +95,7 @@ export function ProvidersTab({
     } finally {
       setTestingName(null);
     }
-  };
+  }, [orgId]);
 
   return (
     <>
@@ -187,4 +190,4 @@ export function ProvidersTab({
       />
     </>
   );
-}
+});

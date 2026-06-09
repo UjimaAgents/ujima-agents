@@ -18,7 +18,7 @@ export function mergeRunChunkActivity(existing: ActivityEvent, incoming: Activit
   return {
     ...existing,
     payload: {
-      ...existing.payload,
+      ...(existing.payload as Record<string, unknown>),
       delta: `${existingPayload?.delta ?? ""}${incomingPayload?.delta ?? ""}`,
     },
   };

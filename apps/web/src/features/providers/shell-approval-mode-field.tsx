@@ -350,7 +350,7 @@ export function ShellApprovalMemberModeField({
       onChange={onChange}
       disabled={disabled}
       size="sm"
-      className="w-[10.5rem] sm:w-52"
+      className="w-[8.8rem] sm:w-40"
       menuPlacement="down"
     />
   );

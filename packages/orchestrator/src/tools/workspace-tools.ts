@@ -254,7 +254,7 @@ export const viewTool: OrchestratorTool<typeof ViewSchema> = {
       path: resolved,
       offset,
       limit,
-      content: numberedWindow(windowText, offset, limit, resource.size),
+      content: numberedWindow(windowText, offset, limit),
     };
   },
 };
@@ -474,16 +474,15 @@ function parseLinesRange(input: string): { offset: number; limit: number } | nul
   return { offset: start, limit: end - start + 1 };
 }
 
-function numberedWindow(content: string, offset: number, limit: number, fileSizeBytes?: number): string {
-  const lines = content.split(/\r?\n/);
-  const start = Math.max(offset - 1, 0);
-  const visible = lines.slice(start, start + limit);
-  const endLine = start + visible.length;
+function numberedWindow(windowContent: string, offset: number, limit: number): string {
+  let lines = windowContent.split(/\r?\n/);
+  if (lines.length > 0 && lines[lines.length - 1] === '' && windowContent.includes('\n')) {
+    lines = lines.slice(0, -1);
+  }
+  const endLine = lines.length > 0 ? offset + lines.length - 1 : offset;
   const width = String(Math.max(endLine, offset)).length;
-  const numbered = visible.map((line, index) => `${String(offset + index).padStart(width, ' ')} | ${line}`);
-  // When using sed, content represents only the extracted window.
-  // If we got exactly `limit` lines there are likely more in the file.
-  if (visible.length >= limit || (fileSizeBytes && endLine >= offset + limit)) {
+  const numbered = lines.map((line, index) => `${String(offset + index).padStart(width, ' ')} | ${line}`);
+  if (lines.length >= limit) {
     numbered.push('');
     numbered.push(`(File has more lines. Use offset to read beyond line ${endLine})`);
   }

@@ -1,6 +1,6 @@
 "use client";
 
-import {useEffect, useState, useMemo, useCallback, useRef} from "react";
+import {useEffect, useState, useMemo, useCallback, useRef, memo} from "react";
 import {
   AlertCircle,
   AlertTriangle,
@@ -133,7 +133,7 @@ async function fetchGoalBoard(channelId?: string): Promise<GoalBoardData> {
   };
 }
 
-export function ChannelGoalsBoard({
+export const ChannelGoalsBoard = memo(function ChannelGoalsBoard({
   channelId,
   members,
 }: ChannelGoalsBoardProps) {
@@ -211,7 +211,7 @@ export function ChannelGoalsBoard({
   const {goals, tasks, questions} = board;
   const pendingQuestions = questions.filter((q) => q.status === "pending");
 
-  const handleImplement = (goal: Goal) =>
+  const handleImplement = useCallback((goal: Goal) =>
     runAction(
       `implement:${goal.id}`,
       () =>
@@ -220,7 +220,7 @@ export function ChannelGoalsBoard({
           headers: {"Content-Type": "application/json"},
         }),
       "Failed to implement plan."
-    );
+    ), [runAction]);
 
   const handleUpdateStatus = useCallback(
     (task: GoalTask, newStatus: GoalTaskStatus) => {
@@ -294,7 +294,7 @@ export function ChannelGoalsBoard({
     [tasks, handleUpdateStatus]
   );
 
-  const handleAnswerQuestion = async (questionId: string, option: string) => {
+  const handleAnswerQuestion = useCallback(async (questionId: string, option: string) => {
     setActionLoading(questionId);
     setBoard((prev) => ({
       ...prev,
@@ -326,7 +326,7 @@ export function ChannelGoalsBoard({
     } finally {
       setActionLoading(null);
     }
-  };
+  }, [refresh]);
 
   const columnTasks = useMemo(() => {
     const groups: Record<ColumnId, GoalTask[]> = {
@@ -442,7 +442,7 @@ export function ChannelGoalsBoard({
           key={q.id}
           question={q}
           resolving={actionLoading === q.id}
-          onAnswer={(option) => handleAnswerQuestion(q.id, option)}
+          onAnswer={handleAnswerQuestion}
         />
       ))}
 
@@ -534,4 +534,4 @@ export function ChannelGoalsBoard({
       </div>
     </div>
   );
-}
+});

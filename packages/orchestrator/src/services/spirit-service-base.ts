@@ -37,6 +37,7 @@ import { materializeMcpDef } from './mcp-runtime.js';
 import { requireOrganization } from '../utils/require-organization.js';
 import type { SpawnSpiritInput } from './spirit-types.js';
 import { maybeFinalizeTaskSession as finalizeTaskSession } from './task-session-finalizer.js';
+import type { HumanPause } from './agent-loop.js';
 import type {
   SpiritMcpPool,
   SpiritMcpResolver,
@@ -360,6 +361,23 @@ export class SpiritServiceBase {
         // ToolService persists failures; continue replay.
       }
     }
+  }
+
+  protected detectRunPauseForHuman(organizationId: string, runId: string): HumanPause | null {
+    const pendingApproval = this.repo
+      .listPendingApprovals(organizationId)
+      .find((approval) => approval.runId === runId);
+    if (pendingApproval) {
+      return { kind: 'approval', id: pendingApproval.id };
+    }
+
+    const pendingQuestion = this.repo
+      .listInteractiveQuestionsByRunId?.(organizationId, runId)
+      .find((question) => question.status === 'pending');
+    if (pendingQuestion) {
+      return { kind: 'input', id: pendingQuestion.id };
+    }
+    return null;
   }
 
   protected isBroadOrgChannelSurface(

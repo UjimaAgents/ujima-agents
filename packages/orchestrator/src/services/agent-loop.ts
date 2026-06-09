@@ -79,6 +79,7 @@ export interface RunAgentExecutionConfig {
   onChunk?: (chunk: AgentLoopChunk) => PromiseLike<void> | void;
   onStepFinish?: (step: AgentLoopStep, steps: AgentLoopStep[]) => PromiseLike<void> | void;
   loadInterruptMessages?: (step: AgentLoopStep) => Promise<ModelMessage[]> | ModelMessage[];
+  detectExternalPause?: () => HumanPause | null;
   onModelNotFound: (error: ModelNotFoundError) => Promise<LanguageModel | null> | LanguageModel | null;
   logLabel: string;
   memberLabel: string;
@@ -104,6 +105,7 @@ export async function runAgentWithRetry(
       onChunk: config.onChunk,
       onStepFinish: config.onStepFinish,
       loadInterruptMessages: config.loadInterruptMessages,
+      detectExternalPause: config.detectExternalPause,
     }),
     (next) => {
       currentModel = next;
@@ -209,12 +211,12 @@ function classifyApiError(error: unknown): Error | null {
 export interface AgentLoopStep {
   text?: string;
   toolCalls?: { toolCallId?: string; toolName?: string; input?: unknown }[];
-  toolResults?: { toolCallId?: string; output?: unknown }[];
+  toolResults?: { toolCallId?: string; output?: unknown; result?: unknown }[];
   staticToolCalls?: { toolName?: string }[];
   dynamicToolCalls?: { toolName?: string }[];
-  staticToolResults?: { toolName?: string; output?: unknown }[];
-  dynamicToolResults?: { toolName?: string; output?: unknown }[];
-  content?: { type?: string; toolName?: string; output?: unknown }[];
+  staticToolResults?: { toolName?: string; output?: unknown; result?: unknown }[];
+  dynamicToolResults?: { toolName?: string; output?: unknown; result?: unknown }[];
+  content?: { type?: string; toolName?: string; output?: unknown; result?: unknown }[];
   usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number };
   [key: string]: unknown;
 }
@@ -232,11 +234,27 @@ export interface AgentLoopResult {
   [key: string]: unknown;
 }
 
-function approvalWaitFromSteps(steps: readonly AgentLoopStep[]): string | null {
+export type HumanPause =
+  | { kind: 'approval'; id: string }
+  | { kind: 'input'; id: string };
+
+function stepToolResultItems(step: AgentLoopStep): { output?: unknown; result?: unknown }[] {
+  return [
+    ...(step.toolResults ?? []),
+    ...(step.staticToolResults ?? []),
+    ...(step.dynamicToolResults ?? []),
+    ...(step.content ?? []),
+  ];
+}
+
+function toolResultPayload(result: { output?: unknown; result?: unknown }): unknown {
+  return result.output ?? result.result;
+}
+
+export function approvalWaitFromSteps(steps: readonly AgentLoopStep[]): string | null {
   for (const step of steps) {
-    const results = Array.isArray(step.toolResults) ? step.toolResults : [];
-    for (const result of results) {
-      const output = result?.output as { status?: unknown; approvalId?: unknown } | undefined;
+    for (const result of stepToolResultItems(step)) {
+      const output = toolResultPayload(result) as { status?: unknown; approvalId?: unknown } | undefined;
       if (output?.status === 'waiting_for_approval' && typeof output.approvalId === 'string') {
         return output.approvalId;
       }
@@ -245,17 +263,35 @@ function approvalWaitFromSteps(steps: readonly AgentLoopStep[]): string | null {
   return null;
 }
 
-function inputWaitFromSteps(steps: readonly AgentLoopStep[]): string | null {
+export function inputWaitFromSteps(steps: readonly AgentLoopStep[]): string | null {
   for (const step of steps) {
-    const results = Array.isArray(step.toolResults) ? step.toolResults : [];
-    for (const result of results) {
-      const output = result?.output as { status?: unknown; questionId?: unknown } | undefined;
+    for (const result of stepToolResultItems(step)) {
+      const output = toolResultPayload(result) as { status?: unknown; questionId?: unknown } | undefined;
       if (output?.status === 'waiting_for_input' && typeof output.questionId === 'string') {
         return output.questionId;
       }
     }
   }
   return null;
+}
+
+export function humanPauseFromSteps(steps: readonly AgentLoopStep[]): HumanPause | null {
+  const approvalId = approvalWaitFromSteps(steps);
+  if (approvalId) return { kind: 'approval', id: approvalId };
+  const questionId = inputWaitFromSteps(steps);
+  if (questionId) return { kind: 'input', id: questionId };
+  return null;
+}
+
+export function stepPausesRun(step: AgentLoopStep): boolean {
+  return humanPauseFromSteps([step]) !== null;
+}
+
+function throwHumanPause(pause: HumanPause): never {
+  if (pause.kind === 'approval') {
+    throw new ToolApprovalRequiredError(pause.id);
+  }
+  throw new ToolInputRequiredError(pause.id);
 }
 
 export function stepTerminatesRun(step: AgentLoopStep): boolean {
@@ -271,7 +307,7 @@ export function stepTerminatesRun(step: AgentLoopStep): boolean {
   for (const item of items) {
     const record = item as { toolName?: string; output?: unknown };
     if (RUN_TERMINATING_TOOL_NAMES.has(normalizeToDottedToolName(record.toolName ?? ''))) return true;
-    const output = record.output as { status?: unknown } | undefined;
+    const output = toolResultPayload(record) as { status?: unknown } | undefined;
     if (
       output?.status === 'passed' ||
       output?.status === 'acked' ||
@@ -316,6 +352,7 @@ export async function runAgentLoop(input: {
   loadInterruptMessages?: (step: AgentLoopStep) => Promise<ModelMessage[]> | ModelMessage[];
   onChunk?: (chunk: AgentLoopChunk) => PromiseLike<void> | void;
   onStepFinish?: (step: AgentLoopStep, steps: AgentLoopStep[]) => PromiseLike<void> | void;
+  detectExternalPause?: () => HumanPause | null;
 }): Promise<AgentLoopResult> {
   const steps: AgentLoopStep[] = [];
   const messages = [...input.messages];
@@ -324,8 +361,8 @@ export async function runAgentLoop(input: {
 
   const stopWhen: NonNullable<Parameters<typeof streamText>[0]['stopWhen']> = (info) => {
     const completedSteps = [...steps, ...(info.steps as AgentLoopStep[])];
-    if (approvalWaitFromSteps(completedSteps)) return true;
-    if (inputWaitFromSteps(completedSteps)) return true;
+    if (humanPauseFromSteps(completedSteps)) return true;
+    if (input.detectExternalPause?.()) return true;
     for (const step of completedSteps) {
       if (stepTerminatesRun(step)) return true;
     }
@@ -368,6 +405,8 @@ export async function runAgentLoop(input: {
         if (stepNumber === 0) {
           return undefined;
         }
+        const pause = input.detectExternalPause?.();
+        if (pause) throwHumanPause(pause);
         const previousStep = steps.at(-1);
         if (!previousStep) {
           return undefined;
@@ -382,6 +421,8 @@ export async function runAgentLoop(input: {
       onStepFinish: async (step) => {
         const loopStep = step as unknown as AgentLoopStep;
         steps.push(loopStep);
+        const pause = humanPauseFromSteps([loopStep]) ?? input.detectExternalPause?.();
+        if (pause) throwHumanPause(pause);
         if (input.onStepFinish) {
           await input.onStepFinish(loopStep, steps);
         }
@@ -417,10 +458,8 @@ export async function runAgentLoop(input: {
     }
 
     const toolResults = steps.flatMap((step) => step.toolResults ?? []);
-    const approvalId = approvalWaitFromSteps(steps);
-    if (approvalId) throw new ToolApprovalRequiredError(approvalId);
-    const questionId = inputWaitFromSteps(steps);
-    if (questionId) throw new ToolInputRequiredError(questionId);
+    const pause = humanPauseFromSteps(steps) ?? input.detectExternalPause?.();
+    if (pause) throwHumanPause(pause);
     return { text, steps, toolResults, usage } as unknown as AgentLoopResult;
   };
 

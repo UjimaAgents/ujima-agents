@@ -7,7 +7,7 @@ export interface QuestionCardProps {
   question: InteractiveQuestion;
   resolving?: boolean;
   error?: string;
-  onAnswer?: (option: string) => void;
+  onAnswer?: (questionId: string, option: string) => void;
   // Pagination
   activeQuestionIndex?: number;
   totalQuestions?: number;
@@ -39,7 +39,7 @@ export const QuestionCard = memo(function QuestionCard({
               type="button"
               disabled={activeQuestionIndex === 0 || resolving}
               onClick={() => onIndexChange(activeQuestionIndex - 1)}
-              className="flex h-5 w-5 items-center justify-center rounded border border-violet-500/[0.08] text-foreground/55 transition hover:bg-foreground/[0.04] hover:text-foreground disabled:opacity-30 dark:border-white/10"
+              className="flex h-5 w-5 cursor-pointer items-center justify-center rounded border border-violet-500/[0.08] text-foreground/55 transition hover:bg-zinc-50 hover:text-zinc-900 disabled:cursor-not-allowed disabled:opacity-30 dark:border-white/10 dark:hover:bg-zinc-800 dark:hover:text-zinc-50"
               aria-label="Previous question"
             >
               <ChevronLeft className="h-3.5 w-3.5" />
@@ -51,7 +51,7 @@ export const QuestionCard = memo(function QuestionCard({
               type="button"
               disabled={activeQuestionIndex === totalQuestions - 1 || resolving}
               onClick={() => onIndexChange(activeQuestionIndex + 1)}
-              className="flex h-5 w-5 items-center justify-center rounded border border-violet-500/[0.08] text-foreground/55 transition hover:bg-foreground/[0.04] hover:text-foreground disabled:opacity-30 dark:border-white/10"
+              className="flex h-5 w-5 cursor-pointer items-center justify-center rounded border border-violet-500/[0.08] text-foreground/55 transition hover:bg-zinc-50 hover:text-zinc-900 disabled:cursor-not-allowed disabled:opacity-30 dark:border-white/10 dark:hover:bg-zinc-800 dark:hover:text-zinc-50"
               aria-label="Next question"
             >
               <ChevronRight className="h-3.5 w-3.5" />
@@ -73,9 +73,9 @@ export const QuestionCard = memo(function QuestionCard({
                 disabled={resolving}
                 onClick={() => {
                   setPendingOption(opt);
-                  onAnswer?.(opt);
+                  onAnswer?.(question.id, opt);
                 }}
-                className="group flex w-full items-start gap-2 rounded-md border border-violet-500/[0.06] px-2.5 py-2 text-left font-mono text-[11px] leading-relaxed text-foreground/80 transition hover:border-violet-500/20 hover:bg-foreground/[0.035] hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50 dark:border-white/10 dark:hover:bg-white/[0.04]"
+                className="group flex w-full cursor-pointer items-start gap-2 rounded-md border border-violet-500/[0.06] px-2.5 py-2 text-left font-mono text-[11px] leading-relaxed text-foreground/80 transition hover:bg-zinc-50 hover:text-zinc-900 disabled:cursor-not-allowed disabled:opacity-50 dark:border-white/10 dark:hover:bg-zinc-800 dark:hover:text-zinc-50"
               >
                 <span className="shrink-0 select-none text-foreground/40">
                   {isPending ? (

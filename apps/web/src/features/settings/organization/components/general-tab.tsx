@@ -1,14 +1,14 @@
 "use client";
 
 import { CircleUserRound, Mail, ShieldCheck } from "lucide-react";
-import { useState } from "react";
+import { useState, useCallback, memo } from "react";
 import { FieldShell, TextInput } from "@/components/ui/form-fields";
 import type { BootstrapResponse } from "@ujima/api-schema";
 import { settingsFetchVoid } from "@/features/settings/shared/settings-api";
 import { SettingsPrimaryButton } from "@/features/settings/shared/settings-buttons";
 import { SettingsSection } from "@/features/settings/shared/settings-section";
 
-export function GeneralTab({
+export const GeneralTab = memo(function GeneralTab({
   orgId,
   auth,
   organizationName,
@@ -31,7 +31,7 @@ export function GeneralTab({
 
   const isDirty = name.trim() !== organizationName || root.trim() !== workspaceRoot;
 
-  const pickWorkspaceRoot = async () => {
+  const pickWorkspaceRoot = useCallback(async () => {
     setRootPickError(null);
     setIsPickingRoot(true);
     try {
@@ -53,9 +53,9 @@ export function GeneralTab({
     } finally {
       setIsPickingRoot(false);
     }
-  };
+  }, []);
 
-  const handleSave = async () => {
+  const handleSave = useCallback(async () => {
     if (!name.trim() || !root.trim() || !orgId || !isDirty) return;
     setError(null);
     setSuccess(false);
@@ -81,7 +81,7 @@ export function GeneralTab({
     } finally {
       setSaving(false);
     }
-  };
+  }, [name, root, orgId, isDirty, onUpdate]);
 
   return (
     <div className="space-y-8">
@@ -154,7 +154,7 @@ export function GeneralTab({
       </SettingsSection>
     </div>
   );
-}
+});
 
 function InfoBox({
   icon: Icon,
