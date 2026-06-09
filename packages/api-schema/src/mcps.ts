@@ -10,6 +10,7 @@ import {
   McpToolDescriptorSchema,
   McpTransportSchema,
   RiskDefaultsSchema,
+  TierCurationSuggestionSchema,
   ToolPolicyState,
   ToolRiskClass,
 } from '@ujima/shared';
@@ -124,6 +125,34 @@ export const UpdateAttachmentTierRequestSchema = z.object({
 
 export const AgentMcpAttachmentResponseSchema = z.object({
   attachment: AgentMcpAttachmentSchema,
+});
+
+// PR 9 — tier curation suggestion responses.
+// `summary` lets the panel render the "0 demote / 0 promote" zero-state
+// + headline counters without paging the full list.
+export const TierCurationSuggestionsResponseSchema = z.object({
+  suggestions: z.array(TierCurationSuggestionSchema),
+  summary: z.object({
+    pending: z.number().int().min(0),
+    demoteCount: z.number().int().min(0),
+    promoteCount: z.number().int().min(0),
+  }),
+});
+
+// POST body for the admin refresh trigger. All fields optional so a
+// no-body POST runs with the §9.4 defaults.
+export const RefreshTierCurationRequestSchema = z.object({
+  organizationId: IdSchema,
+  windowRuns: z.number().int().min(1).max(1000).optional(),
+  volumePerRunThreshold: z.number().min(0).optional(),
+  errorRateThreshold: z.number().min(0).max(1).optional(),
+});
+
+export const RefreshTierCurationResponseSchema = z.object({
+  suggestionsWritten: z.number().int().min(0),
+  demoteCount: z.number().int().min(0),
+  promoteCount: z.number().int().min(0),
+  runsConsidered: z.number().int().min(0),
 });
 
 export const McpScopedQuerySchema = z.object({
@@ -285,3 +314,6 @@ export type AgentMcpAttachInput = z.infer<typeof AgentMcpAttachInputSchema>;
 export type AgentMcpAttachmentsResponse = z.infer<typeof AgentMcpAttachmentsResponseSchema>;
 export type AgentMcpAttachmentResponse = z.infer<typeof AgentMcpAttachmentResponseSchema>;
 export type UpdateAttachmentTierRequest = z.infer<typeof UpdateAttachmentTierRequestSchema>;
+export type TierCurationSuggestionsResponse = z.infer<typeof TierCurationSuggestionsResponseSchema>;
+export type RefreshTierCurationRequest = z.infer<typeof RefreshTierCurationRequestSchema>;
+export type RefreshTierCurationResponse = z.infer<typeof RefreshTierCurationResponseSchema>;

@@ -9,6 +9,7 @@ import type {
 } from "@ujima/api-schema";
 import type { McpAttachmentTier, Member, ToolRiskClass } from "@ujima/shared";
 import type { CatalogRole, UseMcpCatalog } from "./use-mcp-catalog";
+import { CurationSuggestionsPanel } from "./curation-suggestions-panel";
 import { McpEffectiveChip } from "./mcp-effective-chip";
 
 interface Props {
@@ -91,7 +92,7 @@ function TierToggle({
   );
 }
 
-export function AgentsSubtab({ agents, catalog }: Props) {
+export function AgentsSubtab({ orgId, agents, catalog }: Props) {
   const [activeAgentId, setActiveAgentId] = useState<string>(agents[0]?.id ?? "");
   // Role drives the catalog's exposure decisions: worker-only grants
   // and supervisor-only attachments are scoped at the runtime
@@ -257,6 +258,25 @@ export function AgentsSubtab({ agents, catalog }: Props) {
           <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-[11px] text-rose-700 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-200">
             {error}
           </div>
+        ) : null}
+
+        {activeAgentId ? (
+          <CurationSuggestionsPanel
+            orgId={orgId}
+            agentId={activeAgentId}
+            serverNameById={Object.fromEntries(
+              servers.map((s) => [s.id, s.name] as const),
+            )}
+            onApply={async (suggestion) => {
+              const nextTier =
+                suggestion.direction === "demote" ? "dispatch" : "native";
+              await catalog.updateAttachmentTier(
+                activeAgentId,
+                suggestion.mcpServerId,
+                nextTier,
+              );
+            }}
+          />
         ) : null}
 
         {summaries.length === 0 ? (
