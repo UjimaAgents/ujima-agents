@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { resolveBinaryPath, RG_BINARY } from './binary-resolver.js';
-import { grepTool, GrepSchema } from './grep.js';
+import { grepTool } from './grep.js';
 
 function rgAvailable(): boolean {
   try {

@@ -1,7 +1,7 @@
 import { createTwoFilesPatch } from 'diff';
 import { z } from 'zod';
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
-import { basename, dirname, relative } from 'node:path';
+import { dirname } from 'node:path';
 import { execFile } from 'node:child_process';
 import { WorkspaceFileSchema } from '@ujima/shared';
 import { resolveBinaryPath, SED_BINARY } from './binary-resolver.js';

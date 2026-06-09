@@ -53,8 +53,6 @@ export function runCli(options: CliRunOptions): Promise<CliRunResult> {
     cwd,
     timeout = DEFAULT_TIMEOUT_MS,
     maxStdoutBytes = DEFAULT_MAX_STDOUT_BYTES,
-    filterSensitivePaths = false,
-    mapLine,
   } = options;
 
   return new Promise<CliRunResult>((resolve, reject) => {

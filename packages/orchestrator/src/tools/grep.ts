@@ -38,7 +38,7 @@ interface RgJsonLine {
     path?: { text: string };
     lines?: { text: string };
     line_number?: number;
-    submatches?: Array<{ match: { text: string }; start: number; end: number }>;
+    submatches?: { match: { text: string }; start: number; end: number }[];
   };
 }
 
@@ -142,7 +142,7 @@ export const grepTool: OrchestratorTool<typeof GrepSchema> = {
       // Before-context: walk backwards within radius, stop at prev match
       const before: GrepContextLine[] = [];
       const beforeMinLine = prevMatch !== -1
-        ? Math.max((events[prevMatch] as RgEvent).lineNumber! + 1, matchLine - contextRadius)
+        ? Math.max(((events[prevMatch] as RgEvent).lineNumber ?? 0) + 1, matchLine - contextRadius)
         : matchLine - contextRadius;
 
       for (let j = i - 1; j >= 0; j--) {
@@ -157,7 +157,7 @@ export const grepTool: OrchestratorTool<typeof GrepSchema> = {
       // After-context: walk forward within radius, stop at next match
       const after: GrepContextLine[] = [];
       const afterMaxLine = nextMatch !== -1
-        ? Math.min((events[nextMatch] as RgEvent).lineNumber! - 1, matchLine + contextRadius)
+        ? Math.min(((events[nextMatch] as RgEvent).lineNumber ?? 0) - 1, matchLine + contextRadius)
         : matchLine + contextRadius;
 
       for (let j = i + 1; j < events.length; j++) {

@@ -132,7 +132,7 @@ async function curlFetch(url: URL, timeoutSeconds: number, maxBytes: number): Pr
     url.toString(),
   ];
 
-  const result = await new Promise<{ stdout: Buffer; stderr: string }>((resolve, reject) => {
+  const result = await new Promise<{ stdout: Buffer; stderr: string }>((resolve, _reject) => {
     execFile(
       bin,
       args,
@@ -165,7 +165,7 @@ async function curlFetch(url: URL, timeoutSeconds: number, maxBytes: number): Pr
 
   // Parse content-type
   const ctMatch = headerBlock.match(/content-type:\s*(\S+)/i);
-  const contentType = ctMatch ? ctMatch[1]!.replace(/;.*$/, '').trim() : '';
+  const contentType = ctMatch ? (ctMatch[1] ?? '').replace(/;.*$/, '').trim() : '';
 
   if (body.byteLength > maxBytes) {
     throw new Error(`Response is too large (${body.byteLength} bytes). Maximum size is ${maxBytes} bytes`);
