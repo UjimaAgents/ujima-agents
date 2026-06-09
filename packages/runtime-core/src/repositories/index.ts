@@ -33,6 +33,7 @@ import type {
   SpiritRole,
   TaskSession,
   TaskSessionStatus,
+  TierCurationSuggestion,
   Goal,
   GoalTask,
   GoalTaskStatus,
@@ -62,6 +63,10 @@ import {
   saveApproval as writeApproval,
 } from './approvals.js';
 import { listAuditEvents as readAuditEvents, saveAuditEvent as writeAuditEvent } from './audit.js';
+import {
+  listTierCurationSuggestions as readTierCurationSuggestions,
+  saveTierCurationSuggestion as writeTierCurationSuggestion,
+} from './tier-curation.js';
 import {
   getBootstrapSnapshot as readBootstrapSnapshot,
   type BootstrapSnapshot,
@@ -595,6 +600,14 @@ export class Repository {
 
   saveAuditEvent = (event: AuditEvent): AuditEvent => writeAuditEvent(this.db, event);
   listAuditEvents = (organizationId: string): AuditEvent[] => readAuditEvents(this.db, organizationId);
+
+  // §9.4 / PR 9 — table exists from migration 050, callers are the
+  // suggestion writer scaffolded in PR 8 (no-op analysis) and the
+  // settings panel's "Show usage" sublink (renders zero-state today).
+  saveTierCurationSuggestion = (suggestion: TierCurationSuggestion): TierCurationSuggestion =>
+    writeTierCurationSuggestion(this.db, suggestion);
+  listTierCurationSuggestions = (organizationId: string): TierCurationSuggestion[] =>
+    readTierCurationSuggestions(this.db, organizationId);
 
   /**
    * Execute `fn` inside a synchronous DB transaction. Commits on

@@ -27,6 +27,7 @@ import {
 import type { MCPDef } from '@ujima/shared';
 import { materializeMcpDef } from './mcp-runtime.js';
 import type { ApiRepository } from './repository-reader.js';
+import { createConnectorAuditWriter } from './connector-audit.js';
 import { errorMessage } from '../utils/error-message.js';
 
 type McpConnector = (def: MCPDef) => Promise<ConnectResult>;
@@ -1041,6 +1042,15 @@ export class McpRegistryService {
         `Cannot update tier on retired member "${input.memberId}"`,
       );
     }
+    // Capture the prior tier before the UPDATE so the §12 audit row
+    // carries fromTier accurately. Reading the row twice is cheap; the
+    // alternative (returning fromTier from the repo UPDATE) would
+    // ripple through the ApiRepository surface for one telemetry field.
+    const priorAttachments = this.repo.listAgentMcpAttachments(
+      input.organizationId,
+      input.memberId,
+    );
+    const prior = priorAttachments.find((row) => row.mcpServerId === input.mcpServerId);
     const updated = this.repo.updateAttachmentTier(
       input.organizationId,
       input.memberId,
@@ -1058,6 +1068,19 @@ export class McpRegistryService {
         `Attachment not found for member "${input.memberId}" on server "${server.name}". ` +
           'Attach it first via POST /settings/agents/:agentId/mcps.',
       );
+    }
+    // §12.2 audit emit. Only fire on an actual tier change — a no-op
+    // PATCH (same tier) shouldn't produce a spurious row that distorts
+    // the curation job's idle-server signal in PR 9.
+    if (prior && prior.tier !== updated.tier) {
+      const writer = createConnectorAuditWriter({ repo: this.repo });
+      writer.tierChanged({
+        organizationId: input.organizationId,
+        memberId: input.memberId,
+        serverId: input.mcpServerId,
+        fromTier: prior.tier,
+        toTier: updated.tier,
+      });
     }
     return updated;
   }

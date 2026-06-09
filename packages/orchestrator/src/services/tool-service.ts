@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import {
+  buildConnectorScope,
   enrichApprovalScopeForDisplay,
   enrichEditScopeFields,
   readEditRecord,
@@ -8,6 +9,7 @@ import {
   type SpiritRole,
   type WakeReason,
 } from '@ujima/shared';
+import { redactArgs } from './connector-audit.js';
 import type {
   PermissionMiddleware,
   PermissionCheckInput,
@@ -169,6 +171,45 @@ export function enrichToolApprovalScopeForRequest(
   return enrichApprovalScopeForDisplay(scope, readApprovalScopeFileContent(input.resourcePath));
 }
 
+/**
+ * Build the PR 7 `connector:{json}` display scope for an MCP tool
+ * invocation that hit the approval gate. Reads server name + tool
+ * name + args from the standard MCP invocation `input` shape (the
+ * same fields the V2 spawn + legacy MCP wrap both populate). Args
+ * are redacted via the §12 secret-key list so the rendered card
+ * never displays a token / api_key even if the model handed one in.
+ *
+ * Falls back to the generic enrichment shape when any required
+ * field is missing — the approval card then renders the legacy
+ * variant rather than crashing on a partial payload.
+ */
+export function buildConnectorActionScope(input: ToolInvocationInput): string {
+  const data = (input.input ?? {}) as Record<string, unknown>;
+  const serverId =
+    input.permissionMcpId ??
+    (typeof data.mcpServerId === 'string' ? data.mcpServerId : undefined);
+  const toolName =
+    typeof data.toolName === 'string' ? data.toolName : undefined;
+  const serverName =
+    typeof data.mcpServerName === 'string' ? data.mcpServerName : serverId;
+  if (!serverId || !toolName || !serverName) {
+    return buildToolApprovalScope(input);
+  }
+  const redacted = redactArgs(data.args);
+  let argsPreview = '';
+  try {
+    argsPreview = JSON.stringify(redacted, null, 2);
+  } catch {
+    argsPreview = '';
+  }
+  return buildConnectorScope({
+    serverId,
+    serverDisplayName: serverName,
+    toolName,
+    argsPreview,
+  });
+}
+
 export function saveBlockedToolRunStep(
   repo: Pick<ApiRepository, 'saveRunStep'>,
   invocation: ToolInvocationInput,
@@ -225,7 +266,18 @@ export function createPermissionGatedToolService(
       const decision = await permissions.check(context);
 
       if (!decision.allowed && decision.gate === 'approval' && requestApproval) {
-        const displayScope = enrichToolApprovalScopeForRequest(approvalScope, input);
+        // PR 7 connector_action variant — when the gated call is an MCP
+        // tool invocation, encode the (server, tool, args) tuple via
+        // buildConnectorScope so approval-card-data parses it through
+        // parseApprovalDisplayScopesFromReason's connector branch and
+        // renders the §5.2 box (Server / Tool / args inline + relabeled
+        // "Allow for this run" button) instead of the generic
+        // "Approve action" card. Non-MCP calls fall through to the
+        // legacy displayScope unchanged.
+        const displayScope =
+          input.toolId === 'mcp'
+            ? buildConnectorActionScope(input)
+            : enrichToolApprovalScopeForRequest(approvalScope, input);
         const approval = requestApproval({
           organizationId: input.organizationId,
           runId: input.runId,

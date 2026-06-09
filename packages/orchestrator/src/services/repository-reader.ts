@@ -34,6 +34,7 @@ import type {
   SkillInstall,
   TaskSession,
   TaskSessionStatus,
+  TierCurationSuggestion,
   Goal,
   GoalTask,
   GoalTaskStatus,
@@ -320,6 +321,11 @@ export interface ApiRepository extends ConversationRepository {
   }): boolean;
   saveAuditEvent(event: AuditEvent): AuditEvent;
   listAuditEvents(organizationId: string): AuditEvent[];
+  // §9.4 / PR 9 — curation suggestions store. PR 8 ships the surface;
+  // the analysis job in PR 9 will be the primary writer, and a settings
+  // panel "Show usage" sublink the primary reader.
+  saveTierCurationSuggestion(suggestion: TierCurationSuggestion): TierCurationSuggestion;
+  listTierCurationSuggestions(organizationId: string): TierCurationSuggestion[];
   /**
    * Run a synchronous DB transaction. The callback must complete
    * synchronously — async work belongs after the commit. See
