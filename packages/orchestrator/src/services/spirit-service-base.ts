@@ -18,7 +18,8 @@ import {
 } from '@ujima/shared';
 import { composeSystemPromptSuffix, runWakeReason } from './spirit-run-detail.js';
 import type { ActiveSpiritEntry } from './active-spirit-registry.js';
-import type { ToolInvocationInput } from './tool-service.js';
+import type { ToolInvocationInput, ToolInvocationResult } from './tool-service.js';
+import { createConnectorAuditWriter } from './connector-audit.js';
 import { createSpiritModelResolver } from '../utils/create-spirit-model-resolver.js';
 import { ActiveSpiritRegistry } from './active-spirit-registry.js';
 import { AsyncMutex } from '../utils/async-mutex.js';
@@ -340,6 +341,10 @@ export class SpiritServiceBase {
     runId: string,
     context: Pick<ToolInvocationInput, 'taskSessionId' | 'spiritRole' | 'wakeReason'>,
   ): Promise<void> {
+    // §12 audit emitter shared across replays in this loop. Built once
+    // per replay batch rather than per-call so the writer can pool any
+    // future per-org state (redaction policy lookup, etc.).
+    const audit = createConnectorAuditWriter({ repo: this.repo });
     for (const step of this.listStepsAwaitingApprovedReplay(organizationId, runId)) {
       const invocation: ToolInvocationInput = {
         organizationId: step.organizationId,
@@ -355,10 +360,49 @@ export class SpiritServiceBase {
         input: step.input,
         bypassPermission: true,
       };
+      let result: ToolInvocationResult | undefined;
+      let replayError: unknown;
       try {
-        await this.tools.invoke(invocation);
-      } catch {
-        // ToolService persists failures; continue replay.
+        result = await this.tools.invoke(invocation);
+      } catch (err) {
+        replayError = err;
+        // ToolService persists failures; continue replay so a single
+        // bad step doesn't strand sibling approvals on the same run.
+      }
+      // §12 connector_invocation_completed for the replayed MCP call.
+      // The original meta-tool / native-wrap path emitted `_requested`
+      // when the model first called the tool; it then SKIPPED
+      // `_completed` because the result was waiting_for_approval.
+      // When the user approves and we replay here, no upstream wrapper
+      // runs — only the inner ToolServiceImpl — so without this emit
+      // the §12 audit chain shows requested-without-completed
+      // indefinitely, and PR 9's curation analysis sees the connector
+      // as "always pending" rather than as a successful invocation.
+      if (invocation.toolId === 'mcp') {
+        const inputRecord = (invocation.input ?? {}) as Record<string, unknown>;
+        const serverId =
+          invocation.permissionMcpId ??
+          (typeof inputRecord.mcpServerId === 'string' ? inputRecord.mcpServerId : undefined);
+        const toolName =
+          typeof inputRecord.toolName === 'string' ? inputRecord.toolName : undefined;
+        if (serverId && toolName) {
+          const success = !!result && result.ok === true;
+          audit.invocationCompleted({
+            organizationId: invocation.organizationId,
+            actorMemberId: invocation.memberId,
+            runId: invocation.runId,
+            serverId,
+            toolName,
+            success,
+            errorMessage: success
+              ? undefined
+              : replayError instanceof Error
+                ? replayError.message
+                : typeof result?.error === 'string'
+                  ? result.error
+                  : 'replay invocation failed',
+          });
+        }
       }
     }
   }
