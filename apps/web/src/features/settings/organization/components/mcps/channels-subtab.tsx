@@ -3,7 +3,6 @@
 import { Check, Hash, Plug, Plus, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import type {
-  Channel,
   ChannelMcpAttachment,
   McpAttachmentScope,
   McpAttachmentTier,
@@ -15,6 +14,7 @@ import type {
   McpCatalogServer,
 } from "@ujima/api-schema";
 import { settingsFetch, settingsFetchVoid } from "@/features/settings/shared/settings-api";
+import { useSettingsPage } from "@/features/settings/shared/settings-workspace-context";
 import type { UseMcpCatalog } from "./use-mcp-catalog";
 
 interface Props {
@@ -136,9 +136,14 @@ function ScopeSelector({
 }
 
 export function ChannelsSubtab({ orgId, catalog }: Props) {
-  const [channels, setChannels] = useState<Channel[]>([]);
-  const [channelsLoading, setChannelsLoading] = useState(true);
-  const [channelsError, setChannelsError] = useState<string | null>(null);
+  // Pull channels from the org-settings page context — the parent
+  // page already fetched them at mount, so a redundant per-subtab
+  // fetch would (a) cost an extra round trip on every tab switch
+  // and (b) require its own GET-channels Next.js proxy
+  // (only POST exists today). The context updates when channels are
+  // created/renamed elsewhere on the settings page, so the subtab
+  // stays consistent without polling.
+  const { channels } = useSettingsPage();
   const [activeChannelId, setActiveChannelId] = useState<string>("");
 
   const [attachments, setAttachments] = useState<ChannelMcpAttachment[] | null>(
@@ -172,34 +177,20 @@ export function ChannelsSubtab({ orgId, catalog }: Props) {
   // is real because settingsFetch doesn't expose AbortSignal.
   const requestTokenRef = useRef(0);
 
-  // Fetch channels once on mount. Channels rarely churn during a
-  // settings session and re-fetching them on every subtab re-render
-  // would flash the empty state.
-  useEffect(() => {
-    if (!orgId) return;
-    let cancelled = false;
-    void (async () => {
-      try {
-        const list = await settingsFetch<Channel[]>(
-          `/api/orgs/${encodeURIComponent(orgId)}/channels`,
-          { method: "GET" },
-          "Failed to load channels.",
-        );
-        if (cancelled) return;
-        setChannels(list);
-        if (list.length > 0) setActiveChannelId((current) => current || list[0]!.id);
-      } catch (err) {
-        if (!cancelled) {
-          setChannelsError(err instanceof Error ? err.message : String(err));
-        }
-      } finally {
-        if (!cancelled) setChannelsLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [orgId]);
+  // Seed the active selection from the context channel list. Uses
+  // the React 19 "Adjusting state during render" pattern so the
+  // first paint already has a selection — no spinner-then-flash.
+  const [lastSeenChannelCount, setLastSeenChannelCount] = useState(channels.length);
+  if (channels.length !== lastSeenChannelCount) {
+    setLastSeenChannelCount(channels.length);
+    if (!activeChannelId && channels.length > 0) {
+      setActiveChannelId(channels[0]!.id);
+    }
+  }
+  if (!activeChannelId && channels.length > 0) {
+    // Initial render when context loaded synchronously.
+    setActiveChannelId(channels[0]!.id);
+  }
 
   const loadAttachments = useCallback(
     async (channelId: string) => {
@@ -342,22 +333,8 @@ export function ChannelsSubtab({ orgId, catalog }: Props) {
     [activeChannelId, orgId, loadAttachments, attachScope],
   );
 
-  if (channelsLoading) {
-    return (
-      <p className="text-sm text-zinc-500 dark:text-zinc-400">
-        Loading channels&hellip;
-      </p>
-    );
-  }
-
-  if (channelsError) {
-    return (
-      <p className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-200">
-        {channelsError}
-      </p>
-    );
-  }
-
+  // No channels-loading branch — the context is populated by the
+  // parent settings page before this subtab can be mounted.
   if (channels.length === 0) {
     return (
       <div className="rounded-lg border border-dashed border-zinc-200 p-8 text-center text-sm text-zinc-500 dark:border-zinc-800 dark:text-zinc-400">
