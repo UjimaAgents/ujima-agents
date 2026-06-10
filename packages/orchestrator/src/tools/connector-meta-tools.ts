@@ -80,6 +80,18 @@ export interface ConnectorMetaToolRepo {
     role: 'worker' | 'supervisor',
   ): { attachment: AgentMcpAttachment; server: McpServer }[];
   /**
+   * PR 10/11 union — channel attachments the agent inherits via
+   * channel membership. The meta-tools must include these in the
+   * "attached?" check; without them, the model sees a server in
+   * search_catalog (which DOES consult the §17.5.3 union) but the
+   * meta-tools reject the call as "not attached to this agent".
+   * Same scope filter applies (role | both).
+   */
+  listChannelMcpAttachmentsForMember(
+    organizationId: string,
+    memberId: string,
+  ): { mcpServerId: string; scope: 'worker' | 'supervisor' | 'both' }[];
+  /**
    * Per-tool grants for an agent on a specific server. When any
    * applicable grant exists for the current spirit role, this acts
    * as the allow-list for both meta-tools — get_connector_tools
@@ -265,7 +277,22 @@ function isServerAttachedToSpirit(
     memberId,
     role,
   );
-  return attached.some((row) => row.server.id === serverId);
+  if (attached.some((row) => row.server.id === serverId)) return true;
+  // PR 10/11 union — channel attachments the agent inherits via
+  // channel membership. Without this branch the meta-tools rejected
+  // channel-attached MCPs as "not attached to this agent" even
+  // though §17.5.3 and search_catalog correctly fold them into the
+  // effective set. Scope filter mirrors discovery-tools'
+  // resolveEffectiveSet.
+  const channelAttached = repo.listChannelMcpAttachmentsForMember(
+    organizationId,
+    memberId,
+  );
+  return channelAttached.some(
+    (att) =>
+      att.mcpServerId === serverId &&
+      (att.scope === role || att.scope === 'both'),
+  );
 }
 
 /**
