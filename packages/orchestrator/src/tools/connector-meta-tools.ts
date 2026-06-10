@@ -80,6 +80,18 @@ export interface ConnectorMetaToolRepo {
     role: 'worker' | 'supervisor',
   ): { attachment: AgentMcpAttachment; server: McpServer }[];
   /**
+   * PR 10/11 union — channel attachments the agent inherits via
+   * channel membership. The meta-tools must include these in the
+   * "attached?" check; without them, the model sees a server in
+   * search_catalog (which DOES consult the §17.5.3 union) but the
+   * meta-tools reject the call as "not attached to this agent".
+   * Same scope filter applies (role | both).
+   */
+  listChannelMcpAttachmentsForMember(
+    organizationId: string,
+    memberId: string,
+  ): { mcpServerId: string; scope: 'worker' | 'supervisor' | 'both' }[];
+  /**
    * Per-tool grants for an agent on a specific server. When any
    * applicable grant exists for the current spirit role, this acts
    * as the allow-list for both meta-tools — get_connector_tools
@@ -265,7 +277,22 @@ function isServerAttachedToSpirit(
     memberId,
     role,
   );
-  return attached.some((row) => row.server.id === serverId);
+  if (attached.some((row) => row.server.id === serverId)) return true;
+  // PR 10/11 union — channel attachments the agent inherits via
+  // channel membership. Without this branch the meta-tools rejected
+  // channel-attached MCPs as "not attached to this agent" even
+  // though §17.5.3 and search_catalog correctly fold them into the
+  // effective set. Scope filter mirrors discovery-tools'
+  // resolveEffectiveSet.
+  const channelAttached = repo.listChannelMcpAttachmentsForMember(
+    organizationId,
+    memberId,
+  );
+  return channelAttached.some(
+    (att) =>
+      att.mcpServerId === serverId &&
+      (att.scope === role || att.scope === 'both'),
+  );
 }
 
 /**
@@ -375,9 +402,15 @@ export function buildConnectorMetaTools(
         deps.organizationId,
         server_id,
       );
-      // No cache row means the server has never been tested by the
-      // settings UI nor seeded by a prior spawn. Surface this honestly
-      // so the operator knows to run Test on the server row.
+      // No cache row means one of three things; the model uses the
+      // message below to pick the right escalation. Most commonly hit
+      // when an agent just called request_attachment for a curated
+      // registry entry that needs credentials or template args — the
+      // auto-test fired by the approval resolver couldn't reach the
+      // server, so the cache stayed empty. The prior wording ("run
+      // Test in Settings") was too narrow and steered the model
+      // toward asking the operator for a no-op Test click instead
+      // of the actual fix (credentials or argument values).
       if (!cache) {
         // get_connector_tools is NOT routed through ToolService.invoke,
         // so we return the model-facing payload directly. The AI SDK
@@ -387,8 +420,17 @@ export function buildConnectorMetaTools(
           server_id,
           tools: [],
           note:
-            "No cached tool inventory for this server. Ask the operator " +
-            'to run Test on it in Settings → MCPs.',
+            "No cached tool inventory for this server. Common causes:\n" +
+            "(1) The connector requires credentials (PAT, env vars, OAuth) " +
+            "that haven't been set yet — ask the operator to provide them via " +
+            "Settings → MCPs → <connector> → Edit.\n" +
+            "(2) The connector requires config args (file paths, dataset ids, " +
+            "etc.) that need real values — ask the operator to fill them in via " +
+            "Settings → MCPs → <connector> → Edit.\n" +
+            "(3) The connector is reachable but hasn't been tested yet — ask " +
+            "the operator to click Test in Settings → MCPs.\n" +
+            "Pick the most likely cause based on the connector name and " +
+            "tell the operator specifically what they need to do.",
         };
       }
       // Apply the role-scoped per-tool grant filter so the model only

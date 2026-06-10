@@ -65,8 +65,28 @@ export type ApprovalRequestedCallback = (input: {
   approvalId: string;
 }) => void | Promise<void>;
 
+/**
+ * PR 11 — handler invoked when an attachment-request approval is
+ * resolved. Wired by the orchestrator's services bootstrap to the
+ * McpRegistryService attach methods (channel or per-agent).
+ */
+export type AttachmentApprovalResolver = (input: {
+  organizationId: string;
+  approvalId: string;
+  runId?: string;
+  resolverMemberId?: string;
+  payload: {
+    serverId: string;
+    target: 'agent' | 'channel';
+    targetId: string;
+    agentReason: string;
+  };
+  approved: boolean;
+}) => void;
+
 export class ApprovalService {
   private onApprovalRequested?: ApprovalRequestedCallback;
+  private attachmentApprovalResolver?: AttachmentApprovalResolver;
 
   constructor(
     private readonly repo: ApiRepository,
@@ -76,6 +96,73 @@ export class ApprovalService {
 
   setOnApprovalRequested(callback: ApprovalRequestedCallback | undefined): void {
     this.onApprovalRequested = callback;
+  }
+
+  /**
+   * PR 11 — wire the §17.5.6 attachment-write handler. The orchestrator's
+   * services bootstrap passes a closure that calls into McpRegistryService
+   * so the attachment row lands on the same transaction surface as
+   * settings-UI attaches.
+   */
+  setAttachmentApprovalResolver(resolver: AttachmentApprovalResolver | undefined): void {
+    this.attachmentApprovalResolver = resolver;
+  }
+
+  /**
+   * PR 11 — §17.5.6 attachment request approval. Bypasses the
+   * standard ToolService policy gate because attachment is ALWAYS
+   * an operator decision; calling requestApproval directly keeps
+   * the wiring narrow.
+   *
+   * The payload is encoded into the approval `reason` field with a
+   * fixed `attachment_request_scope=` prefix so the frontend's
+   * approval-card-data parser detects the variant and renders the
+   * §17.5.6 card. On resolution, the resolver (resolveApproval below)
+   * detects the same prefix and calls the attachment-write handler.
+   */
+  requestAttachmentApproval(input: {
+    organizationId: string;
+    runId: string;
+    toolCallId: string;
+    requestedBy: string;
+    serverId: string;
+    serverDisplayName: string;
+    target: 'agent' | 'channel';
+    targetId: string;
+    reason: string;
+    approvalId: string;
+  }): ApprovalRequest {
+    const payload = JSON.stringify({
+      serverId: input.serverId,
+      // PR 11 (bot fix) — human-readable label resolved at request
+      // time. Persisted in the payload so the approval card can
+      // render "Fetch" instead of "registry:fetch". Without this the
+      // frontend parser falls back to the raw id.
+      serverDisplayName: input.serverDisplayName,
+      target: input.target,
+      targetId: input.targetId,
+      agentReason: input.reason,
+      approvalId: input.approvalId,
+    });
+    return this.requestApproval({
+      organizationId: input.organizationId,
+      runId: input.runId,
+      toolCallId: input.toolCallId,
+      requestedBy: input.requestedBy,
+      // resourceType/action reuse the MCP values — the attachment-
+      // vs-invocation differentiation lives in the reason prefix
+      // (`attachment_request_scope=`). Adding a new ToolAction +
+      // ResourceType enum value would ripple through every
+      // classifier, audit query, and governance rule for one tool.
+      // The reject-fanout discriminator in resolveApproval inspects
+      // the reason prefix instead so attachment_request rows don't
+      // get swept up with unrelated MCP invocation approvals on the
+      // same run.
+      resourceType: 'mcp',
+      action: 'mcp',
+      resourcePath: `attachment_request:${input.serverId}:${input.target}:${input.targetId}`,
+      reason: `attachment_request_scope=${encodeURIComponent(payload)}`,
+    });
   }
 
   requestApproval(input: ApprovalRequestInput): ApprovalRequest {
@@ -176,11 +263,37 @@ export class ApprovalService {
               input.reason ?? '',
             )
           : input.reason;
+    // PR 11 (bot fix) — attachment_request rows must NEVER be swept
+    // up by the run-level reject fanout, in EITHER direction:
+    //
+    // (a) Rejecting an attachment_request must not cascade to
+    //     unrelated MCP invocation approvals on the same run.
+    //     Handled by the outer `!existingIsAttachmentRequest`
+    //     guard: if the row being rejected is itself an
+    //     attachment_request, no fanout at all.
+    //
+    // (b) Rejecting a normal MCP approval must not cascade INTO
+    //     pending attachment_request approvals on the same run.
+    //     This was the bot's follow-up finding: even with the (a)
+    //     guard, a normal MCP rejection still grabbed every
+    //     pending approval by runId, including attachment_requests.
+    //     Now the fanout filter excludes attachment_request rows
+    //     so they only resolve via their own decision.
+    //
+    // Attachment decisions are independent of invocation decisions
+    // — they need their own consent step regardless of what
+    // happens to sibling invocations on the same run.
+    const existingIsAttachmentRequest =
+      !!existing && existing.reason.startsWith('attachment_request_scope=');
     const matchingPendingApprovals =
-      existing?.runId && input.status === 'rejected'
+      existing?.runId && input.status === 'rejected' && !existingIsAttachmentRequest
         ? this.repo
             .listPendingApprovals(input.organizationId)
-            .filter((approval) => approval.runId === existing.runId)
+            .filter(
+              (approval) =>
+                approval.runId === existing.runId &&
+                !approval.reason.startsWith('attachment_request_scope='),
+            )
         : existing
           ? this.repo
               .listPendingApprovals(input.organizationId)
@@ -248,6 +361,36 @@ export class ApprovalService {
       // approvals (shell, filesystem, generic) keep their existing
       // approval-row + realtime event as the only record.
       emitConnectorResolvedIfApplicable(this.repo, resolved, input);
+      // PR 11 — §17.5.6 attachment_request resolution. The resolved
+      // row's `reason` has been overwritten with `effectiveReason`
+      // (reject prefix / grant prefix / operator note) by the time
+      // we get here, so parsing from `resolved.reason` would miss
+      // the original `attachment_request_scope=` prefix that
+      // requestAttachmentApproval wrote.
+      //
+      // Source the payload from `existing.reason` instead — the
+      // pre-overwrite captured copy of the original pending row.
+      // For the multi-row matching case the loop iterates additional
+      // pending approvals, but attachment_request rows are unique
+      // per (run, toolCallId, serverId, target, targetId) so there's
+      // no fan-out match here — only `existing` ever carries the
+      // attachment_request_scope. Resolved siblings without the
+      // prefix are skipped silently. Without this the resolver
+      // never runs and approved attachment requests don't actually
+      // attach anything (the bug the bot caught).
+      const attachmentPayload = parseAttachmentRequestReason(
+        existing?.reason ?? resolved.reason,
+      );
+      if (attachmentPayload && this.attachmentApprovalResolver) {
+        this.attachmentApprovalResolver({
+          organizationId: input.organizationId,
+          approvalId: resolved.id,
+          runId: resolved.runId ?? undefined,
+          resolverMemberId: input.resolverMemberId,
+          payload: attachmentPayload,
+          approved: input.status === 'approved',
+        });
+      }
     }
 
     if (approval.status === 'rejected' && approval.runId) {
@@ -294,6 +437,35 @@ export class ApprovalService {
         const run = approval.runId ? this.repo.getRun(organizationId, approval.runId) : null;
         return !!run && isLiveStatus(run.status);
       });
+  }
+}
+
+/**
+ * PR 11 — parses the §17.5.6 attachment-request payload out of an
+ * approval row's `reason`. Returns null when the row isn't an
+ * attachment_request (every other approval kind), so callers can
+ * test once and branch cleanly.
+ */
+function parseAttachmentRequestReason(reason: string): {
+  serverId: string;
+  target: 'agent' | 'channel';
+  targetId: string;
+  agentReason: string;
+} | null {
+  const value = parseApprovalReasonValue(reason, 'attachment_request_scope');
+  if (!value) return null;
+  try {
+    const decoded = JSON.parse(value) as Record<string, unknown>;
+    const target = decoded.target;
+    if (target !== 'agent' && target !== 'channel') return null;
+    return {
+      serverId: String(decoded.serverId ?? ''),
+      target,
+      targetId: String(decoded.targetId ?? ''),
+      agentReason: String(decoded.agentReason ?? ''),
+    };
+  } catch {
+    return null;
   }
 }
 

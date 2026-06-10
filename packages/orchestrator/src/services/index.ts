@@ -24,6 +24,9 @@ import { GoalSystemService } from './goal-system.js';
 import { MemoryReviewService } from './memory-review.js';
 import { TrajectoryService } from './trajectory.js';
 import { McpRegistryService } from './mcp-registry.js';
+import { createConnectorAuditWriter } from './connector-audit.js';
+import { findRegistryEntry } from '@ujima/mcp-client';
+import { findRegistryMatch } from './connector-catalog.js';
 import { createTierCurationService, type TierCurationService } from './tier-curation.js';
 import { GovernanceService } from './governance-service.js';
 import { PluginRegistryService } from './plugin-registry.js';
@@ -763,6 +766,11 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
       modelResolver: spiritModelResolver,
       registry: activeSpirits,
       mcpPool: context.mcpPool,
+      // PR 11 — wire the §17.5.6 attachment-request surface so
+      // request_attachment (registered in V2 spawn) can fire an
+      // approval card via the active ApprovalService.
+      attachmentApprovalRequester: (input) =>
+        approvalsImpl.requestAttachmentApproval(input),
     },
   );
   createDelegateRun = (run) => spirits.createRun(run);
@@ -862,6 +870,170 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   );
   const taskSessions = new TaskSessionService(context.repo, conversations, spirits);
   const mcpRegistry = new McpRegistryService(context.repo);
+
+  // PR 11 — wire the §17.5.6 attachment-request resolution handler.
+  // On approve, write the attachment row (channel or per-agent) via
+  // the same McpRegistryService surface the settings UI uses, so the
+  // audit + UNIQUE-constraint shape stays identical. On reject, emit
+  // the attachment_request_resolved audit row only.
+  const attachmentAuditWriter = createConnectorAuditWriter({ repo: context.repo });
+  approvalsImpl.setAttachmentApprovalResolver((input) => {
+    // PR 11 (bot fix) — search_catalog returns `registry:<entryId>`
+    // synthetic ids for marketplace entries the org has never
+    // instantiated. Those ids can't be passed to
+    // mcpRegistry.attach{,ServerToChannel} because requireServer
+    // would reject them — the attach surface needs a real
+    // mcp_servers row. Materialise the registry entry into a real
+    // org MCP first, then use the returned serverId for the
+    // attachment.
+    //
+    // The instantiation is scope-discipline-conscious: we do it
+    // ONLY when the attachment is being approved (input.approved
+    // === true). A rejection should never spawn a server row, and
+    // a previously-instantiated entry stays untouched.
+    //
+    // Failure paths: if the registry entry is missing (unknown id)
+    // OR `create()` rejects (name clash, validation), the outer
+    // try/catch logs a warning and the approval stays resolved
+    // without an attachment row. The operator sees the resolved
+    // approval in the activity feed without the connector — they
+    // can retry the attach manually via the settings UI.
+    // PR 11 (bot fix) — split attach vs audit handling. Earlier this
+    // wrapped both in one try/catch and silently swallowed attach
+    // failures (registry instantiation rejection, name clash,
+    // duplicate row, transient repo error). The approval was already
+    // resolved by then, so the run resumed but the operator had no
+    // surfaced error and the attachment_request_resolved audit row
+    // never landed. Now: attach runs in its own try; whether it
+    // succeeded or threw, the audit row ALWAYS lands with a
+    // resolution value that distinguishes the outcomes.
+    let serverIdForAttach = input.payload.serverId;
+    let attachOk = false;
+    let attachError: Error | undefined;
+    if (input.approved) {
+      try {
+        if (serverIdForAttach.startsWith('registry:')) {
+          const registryId = serverIdForAttach.slice('registry:'.length);
+          const entry = findRegistryEntry(registryId);
+          if (!entry) {
+            throw new Error(`Registry entry not found: ${registryId}`);
+          }
+          // Re-check by URL/command in case another path already
+          // instantiated this entry between search_catalog and
+          // resolve-approval. buildSearchCorpus dedupes at search
+          // time but a parallel attach via the settings UI could
+          // race in between.
+          const existing = context.repo
+            .listMcpServers(input.organizationId)
+            .find((s) => findRegistryMatch(s)?.id === entry.id);
+          if (existing) {
+            serverIdForAttach = existing.id;
+          } else {
+            const created = mcpRegistry.create({
+              organizationId: input.organizationId,
+              name: entry.name,
+              description: entry.description,
+              category: entry.category,
+              transport: entry.defaults.transport,
+              command: entry.defaults.command,
+              args: entry.defaults.args,
+              url: entry.defaults.url,
+              isolation: entry.defaults.isolation,
+              createdBy: input.resolverMemberId ?? 'system:attachment_request',
+            });
+            serverIdForAttach = created.id;
+            // Auto-test the freshly instantiated MCP so the tool cache
+            // populates without forcing the operator into Settings →
+            // MCPs → Test. For credential-less connectors (fetch,
+            // memory, sequential-thinking, etc.) this just works — the
+            // listTools call returns the inventory and saveMcpToolCache
+            // writes it. For connectors that need secrets (GitHub PAT,
+            // Slack OAuth, etc.) the listTools call will fail; we log
+            // a warn and the operator still gets the attachment row
+            // PLUS a settings-UI affordance to fill in creds. Without
+            // this, the model attached the connector but immediately
+            // told the operator to "run Test in Settings" — exactly
+            // the failure mode the live test caught.
+            //
+            // Fire-and-forget: mcpRegistry.test is async but the
+            // resolver callback is sync. .catch swallows the rejection
+            // (already logged inside test()) so an unhandled rejection
+            // doesn't blow up the resolver. The test result lands in
+            // the cache before the agent's NEXT spawn that hits this
+            // server, which is when get_connector_tools would consult
+            // the cache.
+            void mcpRegistry
+              .test(input.organizationId, created.id)
+              .catch((err) => {
+                console.warn(
+                  `[attachment-approval] auto-test failed for instantiated MCP "${entry.name}" — operator must complete setup via Settings → MCPs`,
+                  err,
+                );
+              });
+          }
+        }
+        if (input.payload.target === 'channel') {
+          mcpRegistry.attachServerToChannel({
+            organizationId: input.organizationId,
+            channelId: input.payload.targetId,
+            mcpServerId: serverIdForAttach,
+          });
+        } else {
+          mcpRegistry.attach({
+            organizationId: input.organizationId,
+            memberId: input.payload.targetId,
+            mcpServerId: serverIdForAttach,
+          });
+        }
+        attachOk = true;
+      } catch (err) {
+        attachError = err instanceof Error ? err : new Error(String(err));
+        console.warn(
+          '[attachment-approval] attach failed; approval already resolved, audit will fire with resolution=attach_failed',
+          attachError,
+        );
+      }
+    }
+
+    // Audit emit ALWAYS runs, in its own try. The connector-audit
+    // writer is itself best-effort (PR 8) so the inner saveAuditEvent
+    // can drop without throwing, but we still wrap defensively here
+    // so a future writer-level throw can't take down the closure.
+    try {
+      attachmentAuditWriter.attachmentRequestResolved({
+        organizationId: input.organizationId,
+        resolverMemberId: input.resolverMemberId,
+        approvalId: input.approvalId,
+        ...(input.runId ? { runId: input.runId } : {}),
+        // Audit carries the RESOLVED serverId (post-instantiation
+        // for registry entries) so operators can grep their audit
+        // log without translating registry:<id> synthetic ids
+        // separately. On attach failure, this is the
+        // partially-resolved id (the registry instantiation may
+        // have succeeded before the actual attach threw).
+        serverId: serverIdForAttach,
+        target: input.payload.target,
+        targetId: input.payload.targetId,
+        resolution: !input.approved
+          ? 'rejected'
+          : attachOk
+            // PR 11 ships single-grant approval — the action grant
+            // defaults to "Allow once" and re-prompts at the
+            // standard §5.2 card on the next invoke. PR 11.5 will
+            // add the two-grant card variant; until then the audit
+            // value is always `attached_allow_action` for
+            // successful approvals.
+            ? 'attached_allow_action'
+            : 'attach_failed',
+      });
+    } catch (auditErr) {
+      console.warn(
+        '[attachment-approval] audit row emit failed; attach state preserved in attachment row',
+        auditErr,
+      );
+    }
+  });
+
   const tierCuration = createTierCurationService({ repo: context.repo });
   const governance = new GovernanceService(context.repo);
   const pluginRegistry = new PluginRegistryService(

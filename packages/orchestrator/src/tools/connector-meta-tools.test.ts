@@ -67,6 +67,16 @@ function stubRepo(opts: {
    * scoped names to exercise the role-scoped grant filter.
    */
   grants?: { toolName: string; scope: 'worker' | 'supervisor' | 'both' }[];
+  /**
+   * PR 11 (live-test fix) — channel attachments the agent inherits
+   * via channel membership. Meta-tools now consult these as part of
+   * the §17.5.3 union; tests that exercise channel-side attachments
+   * pass them through this list. Default empty.
+   */
+  channelAttachments?: {
+    mcpServerId: string;
+    scope: 'worker' | 'supervisor' | 'both';
+  }[];
 }): ConnectorMetaToolRepo {
   const now = '2026-06-05T00:00:00.000Z';
   const isAttached = opts.attached ?? Boolean(opts.server);
@@ -108,6 +118,15 @@ function stubRepo(opts: {
         scope: g.scope,
         createdAt: now,
         updatedAt: now,
+      })),
+    // PR 11 (live-test fix) — meta-tools now also check channel
+    // attachments. Default to an empty list; per-test overrides go
+    // through opts.channelAttachments when a test exercises the
+    // §17.5.3 union path.
+    listChannelMcpAttachmentsForMember: () =>
+      (opts.channelAttachments ?? []).map((c) => ({
+        mcpServerId: c.mcpServerId,
+        scope: c.scope,
       })),
   };
 }

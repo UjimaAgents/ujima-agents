@@ -95,6 +95,12 @@ export interface ConnectorAuditWriter {
   invocationResolved(input: ConnectorInvocationResolvedInput): void;
   invocationCompleted(input: ConnectorInvocationCompletedInput): void;
   tierChanged(input: ConnectorTierChangedInput): void;
+  /** PR 11 — discovery. Emit one row per search_catalog call. */
+  catalogSearch(input: CatalogSearchInput): void;
+  /** PR 11 — discovery. Emit when request_attachment surfaces an approval card. */
+  attachmentRequestCreated(input: AttachmentRequestCreatedInput): void;
+  /** PR 11 — discovery. Emit when an operator resolves an attachment_request. */
+  attachmentRequestResolved(input: AttachmentRequestResolvedInput): void;
 }
 
 export interface ConnectorToolsListedInput {
@@ -151,6 +157,64 @@ export interface ConnectorTierChangedInput {
   fromTier: 'native' | 'dispatch';
   toTier: 'native' | 'dispatch';
   reason?: string;
+}
+
+// PR 11 — discovery telemetry. Three events tracking the
+// search → request → resolve lifecycle for the discovery escalation
+// path (§17.5.5). All carry runId so operators can correlate the
+// chain across the agent's trajectory.
+
+export interface CatalogSearchInput {
+  organizationId: string;
+  actorMemberId: string;
+  runId: string;
+  /** The raw query string the agent passed. Trimmed but not censored. */
+  query: string;
+  /** Result count actually returned to the model (after top-K truncation). */
+  matchCount: number;
+}
+
+export interface AttachmentRequestCreatedInput {
+  organizationId: string;
+  actorMemberId: string;
+  runId: string;
+  /** Server the agent is asking to attach. */
+  serverId: string;
+  /** Where the agent wants the attachment to land. */
+  target: 'agent' | 'channel';
+  targetId: string;
+  /** The agent's own reasoning text — surfaced to the operator. */
+  reason: string;
+  /** Approval row id; ties to the matching `_resolved` event. */
+  approvalId: string;
+}
+
+export interface AttachmentRequestResolvedInput {
+  organizationId: string;
+  /** Member id of the human resolver, when known. */
+  resolverMemberId?: string;
+  approvalId: string;
+  runId?: string;
+  serverId: string;
+  target: 'agent' | 'channel';
+  targetId: string;
+  /**
+   * Outcome of the two-grant decision (§17.5.6):
+   *   `attached_allow_action` — grant 1 + grant 2 both yes
+   *   `attached_action_rejected` — grant 1 yes, grant 2 no (rare)
+   *   `rejected` — grant 1 no (attachment denied)
+   *   `attach_failed` — operator approved but the attachment write
+   *     threw post-resolution (registry instantiation failed, name
+   *     clash, duplicate row, transient repo error). Operators see
+   *     this in the audit log + can retry via settings UI. The
+   *     approval row stays resolved; the attachment just didn't
+   *     land. Without this distinct outcome the failure was silent.
+   */
+  resolution:
+    | 'attached_allow_action'
+    | 'attached_action_rejected'
+    | 'rejected'
+    | 'attach_failed';
 }
 
 /**
@@ -279,6 +343,66 @@ export function createConnectorAuditWriter(deps: WriterDeps): ConnectorAuditWrit
           fromTier: input.fromTier,
           toTier: input.toTier,
           ...(input.reason ? { reason: input.reason } : {}),
+        },
+        serverId: input.serverId,
+      });
+    },
+
+    catalogSearch(input) {
+      write({
+        organizationId: input.organizationId,
+        actorId: input.actorMemberId,
+        action: 'catalog_search',
+        targetType: 'discovery',
+        targetId: 'search_catalog',
+        metadata: {
+          runId: input.runId,
+          // Store the query verbatim — discovery search is operator-
+          // visible context, not a tool-arg that needs the secret
+          // redaction policy. Trimmed length keeps the audit row
+          // bounded (the search tool itself caps query length).
+          query: input.query,
+          matchCount: input.matchCount,
+        },
+      });
+    },
+
+    attachmentRequestCreated(input) {
+      write({
+        organizationId: input.organizationId,
+        actorId: input.actorMemberId,
+        action: 'attachment_request_created',
+        targetType: 'mcp_server',
+        targetId: input.serverId,
+        metadata: {
+          runId: input.runId,
+          approvalId: input.approvalId,
+          target: input.target,
+          targetId: input.targetId,
+          // The agent's reason is part of the consent chain (§17.5.6)
+          // and gets surfaced verbatim to the operator on the
+          // approval card. Persisting it in the audit row gives
+          // operators a queryable trail of "why did Snoop ask for
+          // Censys?" without re-rendering the card.
+          reason: input.reason,
+        },
+        serverId: input.serverId,
+      });
+    },
+
+    attachmentRequestResolved(input) {
+      write({
+        organizationId: input.organizationId,
+        actorId: input.resolverMemberId,
+        action: 'attachment_request_resolved',
+        targetType: 'mcp_server',
+        targetId: input.serverId,
+        metadata: {
+          approvalId: input.approvalId,
+          ...(input.runId ? { runId: input.runId } : {}),
+          target: input.target,
+          targetId: input.targetId,
+          resolution: input.resolution,
         },
         serverId: input.serverId,
       });

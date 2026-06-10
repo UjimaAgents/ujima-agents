@@ -28,12 +28,73 @@ export function approvalToCard(
   let shellScope: ApprovalCardData["shellScope"];
   let filesystemScope: ApprovalCardData["filesystemScope"];
   let connectorScope: ApprovalCardData["connectorScope"];
+  let attachmentRequestScope: ApprovalCardData["attachmentRequestScope"];
+
+  // PR 11 — §17.5.6 attachment_request detection. The reason carries
+  // `attachment_request_scope=<urlencoded JSON>` when the approval was
+  // fired by request_attachment. Parsed BEFORE shell/connector/fs so
+  // the variant takes priority; an attachment-request row can't carry
+  // any other scope by construction.
+  const attachmentRaw = parseApprovalReasonValue(
+    approval.reason,
+    "attachment_request_scope",
+  );
+  if (attachmentRaw) {
+    try {
+      const decoded = JSON.parse(attachmentRaw) as {
+        serverId?: string;
+        // PR 11 (bot fix) — daemon resolves this at request_attachment
+        // time via safeServerLabel (for org MCPs) or the curated
+        // registry entry name (for registry:<id> synthetic ids).
+        // Carried through the approval payload so the card shows
+        // "Fetch" rather than "registry:fetch".
+        serverDisplayName?: string;
+        target?: "agent" | "channel";
+        targetId?: string;
+        agentReason?: string;
+      };
+      if (
+        decoded.serverId &&
+        (decoded.target === "agent" || decoded.target === "channel") &&
+        decoded.targetId
+      ) {
+        const targetMember =
+          decoded.target === "agent"
+            ? state.members.find((m) => m.id === decoded.targetId)
+            : undefined;
+        attachmentRequestScope = {
+          serverId: decoded.serverId,
+          // Prefer the daemon-resolved display name. Falls back to
+          // serverId for back-compat with approval rows written
+          // before this fix landed (rare — only between the bot
+          // review and the deploy window).
+          serverDisplayName: decoded.serverDisplayName ?? decoded.serverId,
+          target: decoded.target,
+          targetId: decoded.targetId,
+          targetDisplayName:
+            decoded.target === "channel"
+              ? `#${decoded.targetId}`
+              : (targetMember?.name ?? decoded.targetId),
+          agentReason: decoded.agentReason ?? "",
+        };
+      }
+    } catch {
+      // Malformed payload — fall through to default rendering. The
+      // approval row still resolves; the operator just won't see the
+      // attachment-specific pane.
+    }
+  }
 
   // Mutually exclusive — a single approval row encodes exactly one of
-  // shell / filesystem / connector under `scope=` in `reason`. Match the
-  // order of the parser so the discriminator is consistent across the
-  // codebase.
-  if (shellParsed) {
+  // shell / filesystem / connector / attachment_request under `scope=`
+  // (or `attachment_request_scope=`) in `reason`. Match the order of
+  // the parser so the discriminator is consistent across the codebase.
+  if (attachmentRequestScope) {
+    title =
+      approval.status === "pending"
+        ? `Attach ${attachmentRequestScope.serverDisplayName} to ${attachmentRequestScope.targetDisplayName}`
+        : `Attach ${approval.status}`;
+  } else if (shellParsed) {
     title = approval.status === "pending" ? "Approve command" : `Command ${approval.status}`;
     shellScope = shellParsed;
   } else if (connectorParsed) {
@@ -65,6 +126,7 @@ export function approvalToCard(
     shellScope,
     filesystemScope,
     connectorScope,
+    attachmentRequestScope,
     status: approval.status,
     requestedBy,
     createdAt: approval.createdAt,
