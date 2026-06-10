@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { getDirectMessageThreadId } from '@ujima/shared';
 import type { Goal, GoalTask, GoalTaskStatus, InteractiveQuestion } from '@ujima/shared';
 import type { ApiRepository } from './repository-reader.js';
 import type { ConversationService } from './conversation.js';
@@ -168,12 +169,12 @@ export class GoalSystemService {
       input.title !== undefined ||
       input.description !== undefined ||
       input.assigneeId !== undefined;
-    // Wrap the plan-save + status-update + handover-save in one
-    // transaction so a rejected status transition (e.g. dependency
-    // not completed) rolls back any plan edits applied earlier in
-    // the same call. Pre-fix the plan-save committed first and a
-    // later status throw left the task renamed/reassigned anyway.
     return this.repo.transaction((): GoalTask => {
+      // Fetch existing task once — needed by plan-edit auth,
+      // status-change notifications, and the handover-only path.
+      const existing = this.repo.getGoalTask(input.organizationId, input.taskId);
+      if (!existing) throw new Error(`Goal task not found: ${input.taskId}`);
+      const oldStatus = existing.status;
     if (editsPlan) {
       // Authorization is MANDATORY for plan edits — supervisor only.
       // Pre-fix this was opt-in: missing callerMemberId short-circuited
@@ -184,8 +185,6 @@ export class GoalSystemService {
           'callerMemberId is required when editing task title / description / assignee.',
         );
       }
-      const existing = this.repo.getGoalTask(input.organizationId, input.taskId);
-      if (!existing) throw new Error(`Goal task not found: ${input.taskId}`);
       const goal = this.repo.getGoal(input.organizationId, existing.goalId);
       if (!goal) throw new Error(`Goal not found for task: ${input.taskId}`);
       if (input.callerMemberId !== goal.supervisorId) {
@@ -213,6 +212,15 @@ export class GoalSystemService {
       });
       if (!task) throw new Error(`Goal task not found: ${input.taskId}`);
       this.syncGoalStatus(input.organizationId, task.goalId);
+      // Notify assignee if someone else moved their task on the board
+      if (
+        task.assigneeId &&
+        input.callerMemberId &&
+        input.callerMemberId !== task.assigneeId &&
+        oldStatus !== input.status
+      ) {
+        this.notifyTaskMoved(input.organizationId, task, oldStatus, input.callerMemberId);
+      }
       if (input.status === 'completed') {
         this.notifyDependentsUnblocked(input.organizationId, task);
       }
@@ -224,8 +232,6 @@ export class GoalSystemService {
     // above; when status is set we route through
     // updateGoalTaskStatus which carries it natively.)
     if (input.handoverSummary !== undefined && !editsPlan) {
-      const existing = this.repo.getGoalTask(input.organizationId, input.taskId);
-      if (!existing) throw new Error(`Goal task not found: ${input.taskId}`);
       this.repo.saveGoalTask({
         ...existing,
         handoverSummary: input.handoverSummary,
@@ -251,6 +257,49 @@ export class GoalSystemService {
       if (t.status !== 'pending') continue;
       if (t.dependsOnTaskId !== completedTask.id) continue;
       this.nudgeAssignee(organizationId, t, 'unblocked', completedTask);
+    }
+  }
+
+  // Board-move notification: when someone (human or agent) drags a
+  // task to a different column, wake the assignee with a short
+  // message describing the change. Deduped separately from nudges
+  // so a move + nudge inside the window don't cancel each other.
+  private notifyTaskMoved(
+    organizationId: string,
+    task: GoalTask,
+    oldStatus: GoalTaskStatus,
+    moverMemberId: string,
+  ): void {
+    if (!this.conversations) return;
+    const dedupKey = `moved:${task.id}`;
+    const now = Date.now();
+    const last = this.lastNudgedAt.get(dedupKey);
+    if (last && now - last < NUDGE_DEDUP_WINDOW_MS) return;
+    const goal = this.repo.getGoal(organizationId, task.goalId);
+    if (!goal) return;
+    const columnLabels: Record<string, string> = {
+      pending: 'To Do',
+      blocked: 'Blocked',
+      in_progress: 'In Progress',
+      completed: 'Done',
+      blocked_by_failure: 'Blocked',
+      failed: 'Blocked',
+      cancelled: 'Blocked',
+    };
+    const fromLabel = columnLabels[oldStatus] || oldStatus;
+    const toLabel = columnLabels[task.status] || task.status;
+    // Include mover identity so the assignee knows who made the change
+    try {
+      this.postNotificationToAssignee({
+        organizationId,
+        goal,
+        task,
+        body: `@${task.assigneeId} task "${task.title}" was moved from [${fromLabel}] → [${toLabel}]. (task_id: ${task.id})`,
+      });
+      this.lastNudgedAt.set(dedupKey, now);
+    } catch {
+      // best-effort: a missing channel / unavailable sender must
+      // not break the status update.
     }
   }
 
@@ -304,6 +353,53 @@ export class GoalSystemService {
     }
   }
 
+  // Post a task notification to the assignee. Wake is ALWAYS delivered
+  // via DM — the DM participant fanout is the most reliable wake path
+  // (no channel membership checks, no mention parsing, works for every
+  // channel type). Separately, if the assignee is in the goal channel
+  // we also post a visibility copy there WITHOUT @mention so the DM
+  // handles the wake and the channel shows the event to everyone.
+  private postNotificationToAssignee(input: {
+    organizationId: string;
+    goal: Goal;
+    task: GoalTask;
+    body: string;
+  }): void {
+    if (!this.conversations) return;
+    const { organizationId, goal, task, body } = input;
+
+    // Always wake the assignee via DM. The DM participant fanout
+    // already excludes the sender (alertDirectMessageParticipants
+    // filters memberIds.filter(id => id !== message.senderId)), so
+    // the goal supervisor is not woken by their own notification.
+    // This guarantees the assignee receives the wake regardless of
+    // goal channel type (DM, shared, or otherwise).
+    this.conversations.sendDirectMessage({
+      organizationId,
+      senderId: goal.supervisorId,
+      recipientId: task.assigneeId,
+      content: body,
+      mentions: [task.assigneeId],
+      metadata: {},
+    });
+
+    // Also post to the goal channel for shared visibility, but ONLY
+    // if the assignee is a member (otherwise the message would refer
+    // to an agent the channel readers can't even see). No @mention
+    // here — the DM already handles the wake.
+    const channel = this.repo.getChannel(organizationId, goal.channelId);
+    if (channel && channel.memberIds.includes(task.assigneeId)) {
+      this.conversations.postToChannel({
+        organizationId,
+        senderId: goal.supervisorId,
+        channelId: goal.channelId,
+        body,
+        mentions: [],
+        metadata: {},
+      });
+    }
+  }
+
   private nudgeAssignee(
     organizationId: string,
     task: GoalTask,
@@ -340,13 +436,11 @@ export class GoalSystemService {
           ? `@${task.assigneeId} task "${task.title}" has been in progress with no update for a while. Status check — please post progress or flip status if blocked. (task_id: ${task.id})`
           : `@${task.assigneeId} task "${task.title}" is still pending and unblocked. Please proceed when ready. (task_id: ${task.id})`;
     try {
-      this.conversations.postToChannel({
+      this.postNotificationToAssignee({
         organizationId,
-        senderId: sender,
-        channelId: goal.channelId,
+        goal,
+        task,
         body,
-        mentions: [task.assigneeId],
-        metadata: {},
       });
       this.lastNudgedAt.set(task.id, now);
       // Persist so the UI countdown survives a daemon restart and

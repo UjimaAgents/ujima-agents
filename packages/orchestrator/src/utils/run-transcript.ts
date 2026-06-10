@@ -1,50 +1,79 @@
-import { formatReadableToolOutput } from "./tool-output.js";
+import type { Message, MessageToolCall, RunStep } from '@ujima/shared';
+import type { ModelMessage } from 'ai';
+import { toModelToolName } from '../tools/names.js';
+import { sortByCreatedAt } from './message-sort.js';
+import {
+  buildAssistantToolRoundMessages,
+  resolveToolCallPayload,
+  toToolResultOutput,
+  type ToolRoundCall,
+} from './model-tool-round.js';
 
-export function buildRunTranscript(
-  steps: {
-    createdAt: string;
-    toolId: string;
-    action: string;
-    resourcePath: string;
-    input: Record<string, unknown>;
-    output?: unknown;
-    status: string;
-  }[],
-): string {
-  if (!steps.length) return '';
-  const lines = steps.slice(-20).map((step) => {
-    const input = truncate(JSON.stringify(step.input));
-    const output = formatStepOutput(step.output);
-    return [
-      `- ${step.createdAt}`,
-      `Tool: ${step.toolId}.${step.action}`,
-      step.resourcePath ? `Resource: ${step.resourcePath}` : '',
-      input ? `Input: ${input}` : '',
-      `Status: ${step.status}`,
-      output ? `Output:\n${output}` : '',
-    ].filter(Boolean).join('\n');
+export { resolveToolCallPayload, toToolResultOutput } from './model-tool-round.js';
+
+/**
+ * Append structured assistant/tool pairs for in-flight run steps that are
+ * not already represented in persisted thread messages (e.g. tool-only
+ * steps that never published a channel bubble).
+ */
+export function appendMissingRunStepMessages(
+  messages: ModelMessage[],
+  threadMessages: readonly Message[],
+  steps: readonly RunStep[],
+): void {
+  if (!steps.length) return;
+  const knownIds = extractToolCallIdsFromMessages(threadMessages);
+  const missing = sortByCreatedAt(
+    steps.filter((step) => !knownIds.has(step.toolCallId)),
+  );
+  if (!missing.length) return;
+  messages.push(...runStepsToModelMessages(missing));
+}
+
+export function extractToolCallIdsFromMessages(messages: readonly Message[]): Set<string> {
+  const ids = new Set<string>();
+  for (const message of messages) {
+    for (const call of message.toolCalls) {
+      if (call.toolCallId) ids.add(call.toolCallId);
+    }
+  }
+  return ids;
+}
+
+export function runStepsToModelMessages(steps: readonly RunStep[]): ModelMessage[] {
+  return steps.flatMap((step) => {
+    const call: ToolRoundCall = {
+      toolCallId: step.toolCallId,
+      toolName: toModelToolName(step.toolId),
+      args: step.input,
+      result: step.output,
+      isError: step.status !== 'ok',
+    };
+    return buildAssistantToolRoundMessages({
+      toolCalls: [call],
+      splitPerCall: true,
+    });
   });
-  return [
-    'Current run transcript from before the approval/input pause:',
-    'Continue from this state. Do not repeat tool calls that already have useful output.',
-    lines.join('\n\n'),
-  ].join('\n\n');
 }
 
-function formatStepOutput(value: unknown): string {
-  const formatted = formatReadableToolOutput(value);
-  if (formatted) return truncate(formatted);
-
-  if (!value || typeof value !== 'object') return String(value ?? '');
-  const output = value as { stdout?: unknown; stderr?: unknown };
-  const stdout = typeof output.stdout === 'string' ? output.stdout.trim() : '';
-  const stderr = typeof output.stderr === 'string' ? output.stderr.trim() : '';
-  const text = [stdout ? `stdout:\n${stdout}` : '', stderr ? `stderr:\n${stderr}` : '']
-    .filter(Boolean)
-    .join('\n');
-  return text || truncate(JSON.stringify(value));
-}
-
-function truncate(value: string): string {
-  return value.length > 4000 ? `${value.slice(0, 4000)}\n[truncated]` : value;
+export function messageToolCallsToModelMessages(
+  text: string | undefined,
+  reasoning: string | undefined,
+  toolCalls: readonly MessageToolCall[],
+): ModelMessage[] {
+  const resolved = toolCalls.map((call) => {
+    const payload = resolveToolCallPayload(call);
+    return {
+      toolCallId: call.toolCallId,
+      toolName: call.toolName,
+      args: payload.args,
+      result: payload.result,
+      isError: payload.isError,
+    };
+  });
+  return buildAssistantToolRoundMessages({
+    text,
+    reasoning,
+    toolCalls: resolved,
+  });
 }

@@ -110,7 +110,6 @@ function formatAvailableSkills(skills: readonly SkillInstall[] | undefined, lega
   const visible = (skills ?? []).filter((skill) => !skill.disableModelInvocation);
   if (visible.length > 0) {
     return [
-      'If a skill is relevant, inspect its SKILL.md before acting.',
       '<available_skills>',
       ...visible.map((skill) =>
         [
@@ -131,7 +130,6 @@ function formatAvailableSkills(skills: readonly SkillInstall[] | undefined, lega
   return [
     'Available skills:',
     legacySkills.map((skill) => `- ${skill}`).join('\n'),
-    'If a skill is relevant, inspect its SKILL.md before acting.',
   ].join('\n');
 }
 
@@ -322,6 +320,8 @@ export function buildAgentSystemPrompt(
     buildCollaborationProtocol(conversationKind),
     '',
     formatAvailableSkills(availableSkills, role.skills),
+    'If a skill is relevant, inspect its SKILL.md before acting.',
+    'Match your task to the appropriate skill proactively: before implementing code, use incremental-implementation or test-driven-development; before merging, use code-review-and-quality; when debugging, use debugging-and-error-recovery; when planning, use planning-and-task-breakdown or spec-driven-development. When in doubt about task scope, check the skill descriptions to find the best fit.',
     '',
     `Workspace root: ${workspaceRoot}`,
     `Allowed scopes: ${listScopes(role)}`,

@@ -9,8 +9,6 @@ import {
   type AgentLoopStep,
   type HumanPause,
 } from './services/agent-loop.js';
-import { safeFallbackModelForProvider } from '@ujima/shared';
-import { selectLanguageModel } from '@ujima/llm';
 import type { ApiRepository } from './services/repository-reader.js';
 import type { TeamStore } from './services/team-store.js';
 import type { ToolService } from './services/tool-service.js';
@@ -25,7 +23,7 @@ import {
   buildToolDefinitions,
 } from './utils/to-model-messages.js';
 import { requireTeam } from './utils/require-team.js';
-import { buildRunTranscript } from './utils/run-transcript.js';
+import { appendMissingRunStepMessages } from './utils/run-transcript.js';
 import { resolveVisiblePromptChannels } from './utils/visible-prompt-channels.js';
 import {
   buildCacheableSystem,
@@ -40,11 +38,9 @@ import {
   resolveWakeReplyPolicy,
 } from './utils/wake-reply-policy.js';
 import { filterVisibleMessages } from './utils/message-visibility.js';
-import {
-  createMessageCursor,
-  collectInterruptMessages,
-  type MessageCursor,
-} from './utils/message-interrupts.js';
+import { createMessageCursor, loadInterruptModelMessages } from './utils/interrupt-loader.js';
+import { DELEGATE_TURN_USER_MESSAGE } from './utils/delegate-turn.js';
+import { createProviderSafeFallbackHandler } from './utils/model-fallback.js';
 import { isDelegateMessage, filterDelegateTurnTools } from './services/run-reply-guard.js';
 
 // Resolver now delegates to the canonical `@ujima/llm` surface so every
@@ -466,19 +462,19 @@ export class AiService {
     );
     const messages = toModelMessages(initialThreadMessages, input.agentId);
     const interruptCursor = createMessageCursor(initialThreadMessages);
-    if (input.summary) {
-      messages.push({
-        role: 'user',
-        content: input.summary,
-      });
-    }
-    const runTranscript = buildRunTranscript(
+    appendMissingRunStepMessages(
+      messages,
+      initialThreadMessages,
       this.repo.listRunSteps?.(input.organizationId, input.runId) ?? [],
     );
-    if (runTranscript) {
-      messages.push({
+
+    // Per-wake suffix blocks — appended after stable thread history so
+    // provider prompt caches on the shared prefix stay warm.
+    const wakeSuffix: typeof messages = [];
+    if (input.summary) {
+      wakeSuffix.push({
         role: 'user',
-        content: runTranscript,
+        content: input.summary,
       });
     }
 
@@ -498,7 +494,7 @@ export class AiService {
       wakeReason: wakeReasonForPalette,
     });
     if (threadStateBlock) {
-      messages.push({
+      wakeSuffix.push({
         role: 'user',
         content: threadStateBlock,
       });
@@ -517,7 +513,7 @@ export class AiService {
       repo: this.repo,
     });
     if (workspaceStateBlock) {
-      messages.push({
+      wakeSuffix.push({
         role: 'user',
         content: workspaceStateBlock,
       });
@@ -539,20 +535,15 @@ export class AiService {
       isMirrorFragile: isMirrorFragileModel(modelIdString),
     });
     for (const wakeMessage of wakeContextMessages) {
-      messages.push(wakeMessage);
+      wakeSuffix.push(wakeMessage);
     }
     if (isDelegateTurn) {
-      messages.push({
+      wakeSuffix.push({
         role: 'user',
-        content: [
-          '<delegate_turn>',
-          'You are handling one agent.delegate task. Use tools as needed, then finish with final assistant text only.',
-          'Do not call channel.post, channel.reply, channel.dm, message, channel.pass, channel.ack, or channel.handoff.',
-          'Your final text is returned to the delegating agent as the tool result and ends this delegated turn.',
-          '</delegate_turn>',
-        ].join('\n'),
+        content: DELEGATE_TURN_USER_MESSAGE,
       });
     }
+    messages.push(...wakeSuffix);
     const systemPrompt = system;
 
     // Multi-section deliverables (task lists, BRDs, PRDs, or file writing)
@@ -575,40 +566,26 @@ export class AiService {
       detectExternalPause: input.detectExternalPause,
       onChunk: input.onChunk,
       onStepFinish: input.onStepFinish,
-      loadInterruptMessages: () => {
-        return toModelMessages(this.loadRunInterrupts(input, interruptCursor), input.agentId);
-      },
-      onModelNotFound: (error) => {
-        const kind = provider?.kind ?? error.providerKindHint ?? '';
-        const fallbackId = safeFallbackModelForProvider(kind);
-        const apiKey = providerName
-          ? this.repo.getProviderCredential(input.organizationId, providerName)
-          : null;
-        if (!fallbackId || !apiKey || !provider) return null;
-        console.warn(
-          `[ai-service] model "${error.modelId}" rejected by provider; ` +
-            `falling back to "${fallbackId}" for member="${input.agentId}"`,
-        );
-        return selectLanguageModel({
-          kind: provider.kind,
-          modelId: fallbackId,
-          apiKey,
-          baseUrl: provider.baseUrl,
-          reasoningEffort,
-        });
-      },
+      loadInterruptMessages: () =>
+        loadInterruptModelMessages({
+          repo: this.repo,
+          organizationId: input.organizationId,
+          threadId: input.threadId,
+          agentId: input.agentId,
+          cursor: interruptCursor,
+        }),
+      onModelNotFound: createProviderSafeFallbackHandler({
+        logLabel: 'ai-service',
+        memberLabel: input.agentId,
+        providerKind: provider?.kind ?? '',
+        providerName,
+        getApiKey: (name) => this.repo.getProviderCredential(input.organizationId, name),
+        baseUrl: provider?.baseUrl,
+        reasoningEffort,
+      }),
       logLabel: 'ai-service',
       memberLabel: input.agentId,
     });
   }
 
-  private loadRunInterrupts(
-    input: Pick<GenerateRunReplyInput, 'organizationId' | 'agentId' | 'threadId'>,
-    cursor: MessageCursor,
-  ): Message[] {
-    const page = filterVisibleMessages(
-      this.repo.listMessages(input.organizationId, input.threadId, undefined, 100).data,
-    );
-    return collectInterruptMessages(page, cursor, input.agentId);
-  }
 }

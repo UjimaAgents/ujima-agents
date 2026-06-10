@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { canonicalizeApprovalGrantScope } from '@ujima/shared';
 import type { ApprovalRequest } from '@ujima/shared';
 import { ApprovalService } from './approval.js';
 
@@ -482,6 +483,65 @@ describe('ApprovalService', () => {
     expect(capturedReason).toBe(
       `grant:always_allow:scope=${encodeURIComponent(shellScope)};note=Always allow this exact command.`,
     );
+  });
+
+  it('resumes an allow_always approval with the persisted scope', async () => {
+    const shellScope = 'shell:{"cwd":"/workspace","command":"pwd"}';
+    const approval = {
+      id: 'ap-1',
+      organizationId: 'org-1',
+      runId: 'run-1',
+      toolCallId: 'tool-1',
+      requestedBy: 'agent-1',
+      resourceType: 'shell',
+      resourcePath: '/workspace',
+      action: 'execute',
+      status: 'pending',
+      reason: `Tool action requires approval;scope=${encodeURIComponent(shellScope)}`,
+      createdAt: '2026-05-04T00:00:00.000Z',
+      resolvedAt: undefined,
+    };
+    let capturedReason = '';
+    let resumedScope: string | undefined;
+    const repo = {
+      listPendingApprovals: () => [approval],
+      saveApproval: () => approval,
+      listMembers: () => [],
+      getRun: () => ({ threadId: 'thread-1' }),
+      getApproval: () => approval,
+      resolveApproval: (_orgId: string, _approvalId: string, status: 'approved' | 'rejected', reason?: string) => {
+        capturedReason = reason ?? '';
+        return {
+          ...approval,
+          status,
+          reason: reason ?? '',
+          resolvedAt: '2026-05-04T00:01:00.000Z',
+        };
+      },
+    } as never;
+
+    const service = new ApprovalService(
+      repo,
+      { emit: () => undefined } as never,
+      async (_organizationId: string, _runId: string, _allowRun?: boolean, approvalScope?: string) => {
+        resumedScope = approvalScope;
+        return undefined;
+      },
+    );
+
+    const result = await service.resolveApproval({
+      organizationId: 'org-1',
+      approvalId: 'ap-1',
+      status: 'approved',
+      resolution: 'allow_always',
+      reason: 'Always allow this exact command.',
+    });
+
+    expect(result.status).toBe('approved');
+    expect(capturedReason).toBe(
+      `grant:always_allow:scope=${encodeURIComponent(shellScope)};note=Always allow this exact command.`,
+    );
+    expect(resumedScope).toBe(shellScope);
   });
 
   it('persists an allow_family grant without args', async () => {

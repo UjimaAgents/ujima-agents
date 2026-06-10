@@ -16,7 +16,6 @@ const REMOVABLE_DIR_NAMES = new Set([
 /** Exact relative paths (under node_modules) to remove when present. */
 const REMOVABLE_RELATIVE_PATHS = [
   'next/dist/docs',
-  'next/dist/build',
   'next/dist/esm',
   'next/dist/bundle-analyzer',
   'next/dist/next-devtools',

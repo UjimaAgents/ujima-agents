@@ -138,6 +138,10 @@ export class ApprovalService {
     const canPersistGrant =
       (input.resolution === 'allow_always' || input.resolution === 'allow_family') &&
       !!persistedScope;
+    const resumeApprovalScope =
+      input.resolution === 'allow_once'
+        ? persistedScope ?? (rawScope ? stripApprovalScopeDisplayFields(rawScope) : undefined)
+        : persistedScope;
     const effectiveReason =
       input.status === 'rejected' && rawScope
         ? `reject:scope=${encodeURIComponent(rawScope)};note=${input.reason ?? ''}`
@@ -252,9 +256,7 @@ export class ApprovalService {
         approval.organizationId,
         approval.runId,
         true,
-        input.resolution === 'allow_once' && rawScope
-          ? stripApprovalScopeDisplayFields(rawScope)
-          : undefined,
+        resumeApprovalScope,
       );
     }
 
