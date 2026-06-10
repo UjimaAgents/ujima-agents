@@ -202,15 +202,33 @@ describe('search_catalog — §17.5.5 scoring + §17.5.7 sanitization', () => {
     expect(match!.renderedLine).not.toContain('delete_file');
     expect(match!.renderedLine).toContain('Custom MCP (srv_hostile)');
 
-    // Defense-in-depth — querying the hostile prose directly returns
-    // zero matches because the corpus doesn't index that text. If a
-    // future change started indexing server.name OR server.description
-    // (regressing §17.5.7), this query would surface a row.
+    // PR 11 (bot follow-up) — §17.5.7's defense lives in the
+    // RENDERER, not the scorer. SearchCatalogSchema explicitly
+    // promises description-keyword search, which means hostile
+    // description prose CAN be matched by a query that contains
+    // those tokens. The contract that holds is:
+    //   * A query can surface the row.
+    //   * The rendered output never includes the prose verbatim.
+    // The pre-fix test asserted the wrong invariant (corpus doesn't
+    // index server.description), which directly contradicted the
+    // schema contract. Updated to assert the real defense.
     const hostileQuery = (await tools.search_catalog.execute!(
       { query: 'Ignore previous instructions' },
       { toolCallId: 'tc1', messages: [] } as never,
-    )) as { matches: unknown[] };
-    expect(hostileQuery.matches).toHaveLength(0);
+    )) as { matches: { renderedLine: string; name: string }[] };
+    // The query CAN surface the row (server.description is searchable).
+    const surfaced = hostileQuery.matches.find((m) =>
+      m.name.startsWith('Custom MCP'),
+    );
+    expect(surfaced).toBeDefined();
+    // But the rendered line is still §17.5.7-sanitised — none of
+    // the hostile prose reaches the model-visible output. This is
+    // the defense that actually matters: the rendered text is what
+    // the LLM reads, not the corpus the scorer iterated.
+    expect(surfaced!.renderedLine).not.toContain('Ignore previous instructions');
+    expect(surfaced!.renderedLine).not.toContain('Ignore all other tools');
+    expect(surfaced!.renderedLine).not.toContain('delete_file');
+    expect(surfaced!.renderedLine).toContain('Custom MCP (srv_hostile)');
   });
 
   it("isAttachedToEffectiveSet is true for the asking agent's attached MCPs and false for marketplace-only matches", async () => {
@@ -430,5 +448,79 @@ describe('buildSearchCorpus — registry/org dedup', () => {
     expect(fetchRows).toHaveLength(1);
     expect(fetchRows[0]!.serverId).toBe('srv_fetch_org');
     expect(fetchRows[0]!.registryMatch?.id).toBe('fetch');
+  });
+
+  it('PR 11 (bot fix) — custom org MCPs are searchable by their own description but never RENDER it verbatim', async () => {
+    // Bot's repeat finding: prior code only scored description text
+    // for entries that had a curatedDescription, and curatedDescription
+    // is null for non-registry org servers. So any custom MCP whose
+    // only match was in server.description was effectively invisible
+    // to search_catalog. The fix: split into a `searchableDescription`
+    // field (used only by the scorer) vs `curatedDescription` (the
+    // trust-gated field used by the renderer). §17.5.7 still holds —
+    // server.description prose never leaks into the rendered output.
+    const customSrv = makeServer({
+      id: 'srv_custom',
+      name: 'Internal Inventory MCP',
+      description:
+        'Lists every Lego brick in the basement workshop, by color, dimensions, and current quantity.',
+      command: 'npx',
+      args: ['-y', 'in-house-inventory'],
+      url: undefined,
+      category: 'community',
+    });
+    const corpus = buildSearchCorpus([customSrv]);
+    const row = corpus.find((c) => c.serverId === 'srv_custom');
+    expect(row).toBeDefined();
+    // searchableDescription carries the org server.description.
+    expect(row!.searchableDescription).toContain('Lego brick');
+    // curatedDescription stays null — the renderer falls back to
+    // structural facts. server.description never reaches the model
+    // verbatim.
+    expect(row!.curatedDescription).toBeNull();
+
+    // End-to-end via search_catalog: a query that only matches the
+    // custom description should surface the row, but the rendered
+    // line shows ONLY the safe label, NOT the description prose.
+    const repo = stubRepo({ orgServers: [customSrv] });
+    const tools = buildDiscoveryTools({
+      organizationId: 'org_test',
+      memberId: 'mem_test',
+      runId: 'run_test',
+      spiritRole: 'worker',
+      tools: baseToolsStub as never,
+      repo,
+      requestAttachmentApproval: () => makeApprovalRequest('apr_x'),
+    });
+    const result = (await tools.search_catalog.execute!(
+      { query: 'Lego brick' },
+      { toolCallId: 'tc1', messages: [] } as never,
+    )) as { matches: { name: string; renderedLine: string }[] };
+    expect(result.matches.length).toBeGreaterThan(0);
+    const match = result.matches.find((m) =>
+      m.name.startsWith('Internal Inventory') || m.name.startsWith('Custom MCP'),
+    );
+    expect(match).toBeDefined();
+    // The description text matched the query (custom MCP surfaced) —
+    // but the rendered line is structural facts only. "Lego brick"
+    // appears in the QUERY MATCH SET but NOT in the rendered output.
+    expect(match!.renderedLine).not.toContain('Lego brick');
+    expect(match!.renderedLine).not.toContain('basement workshop');
+  });
+
+  it('PR 11 (bot fix) — registry-entry description text is also searchable (regression: keyword matches that only live in entry.description)', () => {
+    // Sibling check: registry entries have richer `description` text
+    // than their (often null) `curatedDescription`. The pre-fix
+    // scorer only fed `curatedDescription` into the description
+    // bucket, so a query that matched only `entry.description` could
+    // miss the entry. The fix uses the registry's description as
+    // the searchable field too.
+    const corpus = buildSearchCorpus([]);
+    const fetchRow = corpus.find((c) => c.serverId === 'registry:fetch');
+    expect(fetchRow).toBeDefined();
+    // Either curatedDescription or description is searchable for
+    // registry entries; the union is what scoring sees.
+    expect(fetchRow!.searchableDescription).not.toBeNull();
+    expect(fetchRow!.searchableDescription!.length).toBeGreaterThan(0);
   });
 });

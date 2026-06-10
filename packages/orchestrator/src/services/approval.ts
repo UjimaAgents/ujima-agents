@@ -263,21 +263,37 @@ export class ApprovalService {
               input.reason ?? '',
             )
           : input.reason;
-    // PR 11 (bot fix) — when `existing` is an attachment_request row
-    // (detected via reason prefix), suppress the reject-by-runId
-    // fanout. Otherwise rejecting an attachment_request approval
-    // sweeps up every unrelated MCP invocation approval on the same
-    // run (the reject path normally fans out so a single rejection
-    // tears down sibling approvals together). attachment_request
-    // rows are independent decisions and never share consent state
-    // with invocations.
+    // PR 11 (bot fix) — attachment_request rows must NEVER be swept
+    // up by the run-level reject fanout, in EITHER direction:
+    //
+    // (a) Rejecting an attachment_request must not cascade to
+    //     unrelated MCP invocation approvals on the same run.
+    //     Handled by the outer `!existingIsAttachmentRequest`
+    //     guard: if the row being rejected is itself an
+    //     attachment_request, no fanout at all.
+    //
+    // (b) Rejecting a normal MCP approval must not cascade INTO
+    //     pending attachment_request approvals on the same run.
+    //     This was the bot's follow-up finding: even with the (a)
+    //     guard, a normal MCP rejection still grabbed every
+    //     pending approval by runId, including attachment_requests.
+    //     Now the fanout filter excludes attachment_request rows
+    //     so they only resolve via their own decision.
+    //
+    // Attachment decisions are independent of invocation decisions
+    // — they need their own consent step regardless of what
+    // happens to sibling invocations on the same run.
     const existingIsAttachmentRequest =
       !!existing && existing.reason.startsWith('attachment_request_scope=');
     const matchingPendingApprovals =
       existing?.runId && input.status === 'rejected' && !existingIsAttachmentRequest
         ? this.repo
             .listPendingApprovals(input.organizationId)
-            .filter((approval) => approval.runId === existing.runId)
+            .filter(
+              (approval) =>
+                approval.runId === existing.runId &&
+                !approval.reason.startsWith('attachment_request_scope='),
+            )
         : existing
           ? this.repo
               .listPendingApprovals(input.organizationId)

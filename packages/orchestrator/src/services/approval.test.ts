@@ -963,4 +963,87 @@ describe('ApprovalService', () => {
     // runId fanout would have swept the sibling in too.
     expect(deleted).toEqual(new Set(['ap-attach']));
   });
+
+  it('PR 11 (bot follow-up) — rejecting a normal MCP approval does NOT sweep attachment_request rows on the same run', async () => {
+    // Bot's repeat finding: the previous guard only protected the
+    // case where the rejected row was ITSELF an attachment_request.
+    // The mirror case — rejecting a normal MCP approval — still
+    // grabbed every pending approval on the same run by runId,
+    // including attachment_request rows. Attachment decisions and
+    // invocation decisions are orthogonal; one's rejection must
+    // never cascade into the other.
+    const attachmentPayload = {
+      serverId: 'srv_censys',
+      serverDisplayName: 'Censys',
+      target: 'agent' as const,
+      targetId: 'mem_snoop',
+      agentReason: 'why',
+      approvalId: 'ap-attach-2',
+    };
+    const attachmentReason = `attachment_request_scope=${encodeURIComponent(
+      JSON.stringify(attachmentPayload),
+    )}`;
+    const attachmentRow: ApprovalRequest = {
+      id: 'ap-attach-2',
+      organizationId: 'org-1',
+      runId: 'run-shared-2',
+      toolCallId: 'tc-attach-2',
+      requestedBy: 'mem_snoop',
+      resourceType: 'mcp',
+      resourcePath: 'attachment_request:srv_censys:agent:mem_snoop',
+      action: 'mcp',
+      status: 'pending',
+      reason: attachmentReason,
+      createdAt: '2026-06-11T00:00:00.000Z',
+      resolvedAt: undefined,
+    };
+    const normalInvocation: ApprovalRequest = {
+      id: 'ap-invoke-2',
+      organizationId: 'org-1',
+      runId: 'run-shared-2',
+      toolCallId: 'tc-invoke-2',
+      requestedBy: 'mem_snoop',
+      resourceType: 'mcp',
+      resourcePath: 'srv_ddg:search',
+      action: 'mcp',
+      status: 'pending',
+      reason: `Tool action requires approval;scope=${encodeURIComponent(
+        'connector:{"serverId":"srv_ddg","toolName":"search","args":{}}',
+      )}`,
+      createdAt: '2026-06-11T00:00:00.000Z',
+      resolvedAt: undefined,
+    };
+    const deleted = new Set<string>();
+    const repo = {
+      listPendingApprovals: () => [attachmentRow, normalInvocation],
+      saveApproval: () => normalInvocation,
+      getRun: () => ({ id: 'run-shared-2', threadId: 'thread-1' }),
+      getApproval: (_org: string, id: string) =>
+        id === 'ap-attach-2' ? attachmentRow : normalInvocation,
+      resolveApproval: () => normalInvocation,
+      deleteApproval: (_org: string, id: string) => {
+        deleted.add(id);
+      },
+    } as never;
+    const service = new ApprovalService(
+      repo,
+      { emit: () => undefined } as never,
+      () => undefined,
+    );
+
+    // Reject the NORMAL MCP invocation approval. The attachment_request
+    // sibling on the same run must stay pending — it gets its own
+    // operator decision via the approval card.
+    await service.resolveApproval({
+      organizationId: 'org-1',
+      approvalId: 'ap-invoke-2',
+      status: 'rejected',
+      reason: 'wrong query',
+    });
+
+    // ONLY the normal MCP invocation row is deleted. Pre-fix this
+    // set would also contain 'ap-attach-2' because the run-level
+    // reject fanout filtered by runId only.
+    expect(deleted).toEqual(new Set(['ap-invoke-2']));
+  });
 });

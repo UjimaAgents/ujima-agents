@@ -295,7 +295,31 @@ export function buildSearchCorpus(
   name: string;
   tags: string[];
   category: string;
+  /**
+   * Trust-gated description used by the RENDERER (renderCatalogEntry).
+   * Non-null only when the entry has a vetted source — either a
+   * CURATED_REGISTRY match's `curatedDescription`, or in PR 11
+   * scope, never for plain org MCPs. The renderer falls back to
+   * structural facts when this is null, per §17.5.7.
+   */
   curatedDescription: string | null;
+  /**
+   * PR 11 (bot fix) — description text used by SCORING only. Never
+   * rendered to the model. Sourced from:
+   *   - the registry entry's `description` when one matches
+   *   - the org server's own `server.description` when no registry
+   *     match (the case the bot flagged: custom org MCPs were
+   *     undiscoverable by their own description text)
+   *   - `null` only when neither source has anything to score against
+   *
+   * The split is the load-bearing invariant: server.description is
+   * admin-controllable (may include prompt-injection prose), so it
+   * never reaches the model verbatim through the renderer — but
+   * keyword-matching it for scoring doesn't leak the prose since
+   * the model only sees the rendered output, not the raw text the
+   * scoring touched.
+   */
+  searchableDescription: string | null;
   registryMatch: RegistryEntry | undefined;
   // The concrete server object — present for org MCPs, absent for
   // registry-only entries we haven't instantiated yet.
@@ -307,6 +331,7 @@ export function buildSearchCorpus(
     tags: string[];
     category: string;
     curatedDescription: string | null;
+    searchableDescription: string | null;
     registryMatch: RegistryEntry | undefined;
     server: McpServer | undefined;
   }[] = [];
@@ -315,12 +340,25 @@ export function buildSearchCorpus(
     const registryMatch = findRegistryMatch(server);
     if (registryMatch) matchedRegistryIds.add(registryMatch.id);
     const safe = safeServerLabel(server, registryMatch);
+    // Scoring corpus: prefer the registry description (richer,
+    // canonical) when there's a match; fall back to the org server's
+    // own description for custom MCPs so they remain discoverable
+    // by their own text. Empty strings collapse to null so the
+    // scorer skips the description check entirely (matches prior
+    // behaviour for "no description anywhere").
+    const orgServerDescription =
+      typeof server.description === 'string' && server.description.trim().length > 0
+        ? server.description
+        : null;
+    const searchableDescription =
+      registryMatch?.description ?? registryMatch?.curatedDescription ?? orgServerDescription;
     out.push({
       serverId: server.id,
       name: safe.name,
       tags: registryMatch?.tags ?? [],
       category: safe.category,
       curatedDescription: registryMatch?.curatedDescription ?? null,
+      searchableDescription,
       registryMatch,
       server,
     });
@@ -333,6 +371,8 @@ export function buildSearchCorpus(
       tags: entry.tags,
       category: entry.category,
       curatedDescription: entry.curatedDescription ?? null,
+      // Registry entries always have a non-empty description.
+      searchableDescription: entry.description ?? entry.curatedDescription ?? null,
       registryMatch: entry,
       server: undefined,
     });
@@ -387,12 +427,18 @@ export function buildDiscoveryTools(deps: DiscoveryToolDeps): DiscoveryToolSet {
           const effective = resolveEffectiveSet(deps);
           const scored: ScoredMatch[] = [];
           for (const candidate of corpus) {
+            // Score against `searchableDescription` (PR 11 bot fix):
+            // includes the registry/org-server description text for
+            // keyword matches. The rendered output below still uses
+            // curatedDescription (null for un-vetted entries), so
+            // §17.5.7 prompt-injection prose stays out of the
+            // model-visible payload.
             const score = scoreEntry(
               args.query,
               candidate.name,
               candidate.tags,
               candidate.category,
-              candidate.curatedDescription,
+              candidate.searchableDescription,
             );
             if (score <= 0) continue;
             // Tool-count from cache. Registry-only entries with no
