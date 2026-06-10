@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type {
   AgentMcpAttachment,
+  ChannelMcpAttachment,
   McpServer,
   McpToolCache,
   McpToolDescriptor,
@@ -61,18 +62,51 @@ function makeTools(...names: string[]): McpToolDescriptor[] {
   return names.map((name) => ({ name, description: '' }));
 }
 
+function makeChannelAttachment(
+  overrides: Partial<ChannelMcpAttachment> = {},
+): ChannelMcpAttachment {
+  return {
+    id: overrides.id ?? `chatt_${Math.random()}`,
+    organizationId: 'org_test',
+    channelId: overrides.channelId ?? 'ch_test',
+    mcpServerId: overrides.mcpServerId ?? 'srv_test',
+    scope: 'worker',
+    tier: 'dispatch',
+    createdAt: '2026-06-05T00:00:00.000Z',
+    updatedAt: '2026-06-05T00:00:00.000Z',
+    ...overrides,
+  };
+}
+
 function stubRepo(
   attachments: { attachment: AgentMcpAttachment; server: McpServer }[],
   cacheByServerId: Record<string, McpToolDescriptor[]>,
+  channelAttachments: ChannelMcpAttachment[] = [],
+  channelServersById: Record<string, McpServer> = {},
 ): ConnectorCatalogRepo & {
   capturedRole: { value: 'worker' | 'supervisor' | null };
 } {
   const capturedRole: { value: 'worker' | 'supervisor' | null } = { value: null };
+  // Server lookup index — the per-agent path already returns server
+  // objects with the attachments, but the channel path needs an
+  // independent lookup (channel attachments only carry mcpServerId).
+  // Build a combined map so tests can declare channel-only servers
+  // separately from agent-attached servers without duplication.
+  const serverIndex: Record<string, McpServer> = {
+    ...Object.fromEntries(attachments.map((p) => [p.server.id, p.server] as const)),
+    ...channelServersById,
+  };
   return {
     capturedRole,
     listAttachedServersForSpirit(_org, _mem, role) {
       capturedRole.value = role;
       return attachments;
+    },
+    listChannelMcpAttachmentsForMember() {
+      return channelAttachments;
+    },
+    getMcpServer(_org, serverId) {
+      return serverIndex[serverId] ?? null;
     },
     getMcpToolCache(_org, serverId): McpToolCache | null {
       const tools = cacheByServerId[serverId];
@@ -312,6 +346,221 @@ describe('connector-catalog — dispatch substrate invariants', () => {
   });
 });
 
+// ─────────────────────────────────────────────────────────────────────
+// PR 10 — §17.5.3 effective-set union / dedup
+//
+// The bulk-attachment fix. Per-agent attachments stay byte-for-byte
+// unchanged; channel attachments are folded into the resolved set by
+// resolveConnectorCatalog. These tests pin the rules from §17.5.3:
+//
+//   Rule 1 (per-agent wins entirely): if a per-agent attachment
+//     exists for a serverId, channel attachments for that same
+//     serverId are skipped. The per-agent operator's deliberate tier
+//     choice ("Snoop is on dispatch for Slack to save tokens") is
+//     preserved against channel fan-out.
+//
+//   Rule 2 (channel-vs-channel → dispatch): when two channels claim
+//     the same MCP at different tiers (one native, one dispatch),
+//     the resolved tier is dispatch. Dispatch is lossless (capability
+//     fully reachable through invoke_connector_tool); resolving to
+//     dispatch prevents native ballooning from cross-channel
+//     attachment fan-out, which is the failure mode §17.5.3 exists
+//     to prevent.
+//
+//   Scope filter: channel attachments are role-scoped exactly like
+//     per-agent ones — scope='worker' is invisible from a supervisor
+//     spawn, and vice versa.
+// ─────────────────────────────────────────────────────────────────────
+
+describe('connector-catalog — §17.5.3 channel union / dedup', () => {
+  it('folds channel attachments into the effective set when no per-agent attachment claims the same server', () => {
+    // No agent rows; one channel attachment. Expected: the channel
+    // entry shows up in the resolved set with source.kind='channel'.
+    const channelServer = makeServer({ id: 'srv_linear', name: 'Linear' });
+    const repo = stubRepo(
+      [],
+      { srv_linear: makeTools('list_issues') },
+      [makeChannelAttachment({ mcpServerId: 'srv_linear', channelId: 'ch_investigations' })],
+      { srv_linear: channelServer },
+    );
+    const resolved = resolveConnectorCatalog(repo, 'org_test', 'mem_test', 'worker');
+    expect(resolved.dispatchCatalog).toHaveLength(1);
+    expect(resolved.dispatchCatalog[0]!.serverId).toBe('srv_linear');
+    expect(resolved.dispatchCatalog[0]!.source).toEqual({
+      kind: 'channel',
+      channelId: 'ch_investigations',
+    });
+    // Renderer surfaces the source marker so operators see it in
+    // the system prompt (and trajectory).
+    expect(resolved.catalogText).toContain('(via channel)');
+  });
+
+  it('per-agent attachment wins entirely when both layers claim the same MCP — tier choice preserved', () => {
+    // Rule 1 — operator explicitly put Snoop on `dispatch` for Slack;
+    // the team channel #investigations also attaches Slack on
+    // `native`. The per-agent decision must win, both for source
+    // (so trajectory says "Snoop-only") and for tier (so the model
+    // sees Slack on the dispatch path, not native).
+    const slack = makeServer({ id: 'srv_slack', name: 'Slack' });
+    const agentAtt = makeAttachment({
+      mcpServerId: 'srv_slack',
+      tier: 'dispatch',
+    });
+    const repo = stubRepo(
+      [{ attachment: agentAtt, server: slack }],
+      { srv_slack: makeTools('post_message') },
+      [
+        makeChannelAttachment({
+          mcpServerId: 'srv_slack',
+          channelId: 'ch_investigations',
+          tier: 'native',
+        }),
+      ],
+    );
+    const resolved = resolveConnectorCatalog(repo, 'org_test', 'mem_test', 'worker');
+
+    // Exactly one resolved entry — no duplication from the channel side.
+    expect(resolved.nativeAttachments).toHaveLength(0);
+    expect(resolved.dispatchCatalog).toHaveLength(1);
+    expect(resolved.dispatchCatalog[0]!.serverId).toBe('srv_slack');
+    // Tier from the per-agent row wins (dispatch).
+    // Source attribution stays 'agent'.
+    expect(resolved.dispatchCatalog[0]!.source).toEqual({ kind: 'agent' });
+    // No (via channel) marker — agent-sourced attachments don't get it.
+    expect(resolved.catalogText).not.toContain('(via channel)');
+  });
+
+  it('channel-vs-channel conflict at different tiers resolves to dispatch (Rule 2)', () => {
+    // Two channels both attach the same MCP. #investigations claims
+    // it on `native`; #ops on `dispatch`. The resolved tier must be
+    // `dispatch` — dispatch is the lossless overflow valve and
+    // resolving conflicts down prevents the native palette from
+    // ballooning via cross-channel fan-out.
+    const linear = makeServer({ id: 'srv_linear', name: 'Linear' });
+    const repo = stubRepo(
+      [],
+      { srv_linear: makeTools('list_issues', 'create_issue') },
+      [
+        makeChannelAttachment({
+          mcpServerId: 'srv_linear',
+          channelId: 'ch_investigations',
+          tier: 'native',
+        }),
+        makeChannelAttachment({
+          mcpServerId: 'srv_linear',
+          channelId: 'ch_ops',
+          tier: 'dispatch',
+        }),
+      ],
+      { srv_linear: linear },
+    );
+    const resolved = resolveConnectorCatalog(repo, 'org_test', 'mem_test', 'worker');
+    expect(resolved.nativeAttachments).toHaveLength(0);
+    expect(resolved.dispatchCatalog).toHaveLength(1);
+    expect(resolved.dispatchCatalog[0]!.serverId).toBe('srv_linear');
+    // Source stays with the first channel iterated — operators can
+    // see the rest through the channels-subtab.
+    expect(resolved.dispatchCatalog[0]!.source).toEqual({
+      kind: 'channel',
+      channelId: 'ch_investigations',
+    });
+  });
+
+  it('scope filter excludes channel attachments that do not match the spawn role', () => {
+    // A supervisor-only channel attachment should not surface for a
+    // worker spawn (and vice versa). Mirrors the role-scoping that
+    // listAttachedServersForSpirit applies to the per-agent side, so
+    // the V2 spawn's role view is consistent across both
+    // attachment sources.
+    const linear = makeServer({ id: 'srv_linear', name: 'Linear' });
+    const sentry = makeServer({ id: 'srv_sentry', name: 'Sentry' });
+    const repo = stubRepo(
+      [],
+      { srv_linear: makeTools('t'), srv_sentry: makeTools('t') },
+      [
+        makeChannelAttachment({
+          mcpServerId: 'srv_linear',
+          channelId: 'ch_investigations',
+          scope: 'supervisor',
+        }),
+        makeChannelAttachment({
+          mcpServerId: 'srv_sentry',
+          channelId: 'ch_investigations',
+          scope: 'worker',
+        }),
+      ],
+      { srv_linear: linear, srv_sentry: sentry },
+    );
+    const resolvedWorker = resolveConnectorCatalog(
+      repo,
+      'org_test',
+      'mem_test',
+      'worker',
+    );
+    expect(resolvedWorker.dispatchCatalog.map((e) => e.serverId)).toEqual([
+      'srv_sentry',
+    ]);
+
+    const resolvedSupervisor = resolveConnectorCatalog(
+      repo,
+      'org_test',
+      'mem_test',
+      'supervisor',
+    );
+    expect(resolvedSupervisor.dispatchCatalog.map((e) => e.serverId)).toEqual([
+      'srv_linear',
+    ]);
+  });
+
+  it("channel attachments with scope='both' are visible to either role", () => {
+    // Symmetric check on the 'both' literal — without it the scope
+    // filter would have to be a Set membership check, and a typo
+    // (=== 'both' vs in [..., 'both']) would silently exclude the
+    // shared row.
+    const linear = makeServer({ id: 'srv_linear', name: 'Linear' });
+    const repo = stubRepo(
+      [],
+      { srv_linear: makeTools('t') },
+      [
+        makeChannelAttachment({
+          mcpServerId: 'srv_linear',
+          channelId: 'ch_investigations',
+          scope: 'both',
+        }),
+      ],
+      { srv_linear: linear },
+    );
+    expect(
+      resolveConnectorCatalog(repo, 'org_test', 'mem_test', 'worker').dispatchCatalog,
+    ).toHaveLength(1);
+    expect(
+      resolveConnectorCatalog(repo, 'org_test', 'mem_test', 'supervisor')
+        .dispatchCatalog,
+    ).toHaveLength(1);
+  });
+
+  it('skips channel attachments whose server has been deleted (defensive)', () => {
+    // The attachment row can linger if the MCP server is deleted but
+    // the channel detach didn't fire (or vice versa, race window).
+    // Spawning should not crash — the resolved set just omits the
+    // ghosted attachment.
+    const repo = stubRepo(
+      [],
+      {},
+      [
+        makeChannelAttachment({
+          mcpServerId: 'srv_deleted',
+          channelId: 'ch_investigations',
+        }),
+      ],
+      {}, // <- no server in the index for srv_deleted
+    );
+    const resolved = resolveConnectorCatalog(repo, 'org_test', 'mem_test', 'worker');
+    expect(resolved.nativeAttachments).toHaveLength(0);
+    expect(resolved.dispatchCatalog).toHaveLength(0);
+  });
+});
+
 describe('connector-catalog — renderer + quality lint contracts', () => {
   it('isQualityDescription enforces length + verb requirement', () => {
     // Quality wins
@@ -334,6 +583,7 @@ describe('connector-catalog — renderer + quality lint contracts', () => {
       category: 'vcs',
       curatedDescription: 'Read and write PRs, issues, repos via the GitHub API.',
       toolCount: 24,
+      source: { kind: 'agent' },
     });
     expect(curated).toContain('GitHub');
     expect(curated).toContain('Read and write PRs');
@@ -346,6 +596,7 @@ describe('connector-catalog — renderer + quality lint contracts', () => {
       category: 'community',
       curatedDescription: null,
       toolCount: 1,
+      source: { kind: 'agent' },
     });
     expect(structural).toContain('Mystery');
     expect(structural).toContain('1 tool');
@@ -358,7 +609,26 @@ describe('connector-catalog — renderer + quality lint contracts', () => {
       category: 'community',
       curatedDescription: null,
       toolCount: 0,
+      source: { kind: 'agent' },
     });
     expect(empty).toContain('no tools cached');
+
+    // PR 10 — channel-sourced entries get a "(via channel)" marker so
+    // operators reading the system prompt see why an attachment is in
+    // the effective set without having to cross-reference the
+    // channels-subtab.
+    const fromChannel = renderCatalogEntry({
+      serverId: 's4',
+      name: 'Linear',
+      category: 'pm',
+      curatedDescription: null,
+      toolCount: 3,
+      source: { kind: 'channel', channelId: 'ch_investigations' },
+    });
+    expect(fromChannel).toContain('Linear');
+    expect(fromChannel).toContain('(via channel)');
+    // Agent-sourced entries don't get the marker — the absence is the
+    // default and operators only need to see the exception.
+    expect(structural).not.toContain('(via channel)');
   });
 });

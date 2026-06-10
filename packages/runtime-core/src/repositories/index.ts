@@ -9,6 +9,7 @@ import type {
   Attachment,
   Channel,
   ChannelKind,
+  ChannelMcpAttachment,
   ChannelMemberMode,
   ChannelMemberSettings,
   ConfigFieldOwnership,
@@ -33,6 +34,7 @@ import type {
   SpiritRole,
   TaskSession,
   TaskSessionStatus,
+  TierCurationSuggestion,
   Goal,
   GoalTask,
   GoalTaskStatus,
@@ -62,6 +64,11 @@ import {
   saveApproval as writeApproval,
 } from './approvals.js';
 import { listAuditEvents as readAuditEvents, saveAuditEvent as writeAuditEvent } from './audit.js';
+import {
+  listTierCurationSuggestions as readTierCurationSuggestions,
+  saveTierCurationSuggestion as writeTierCurationSuggestion,
+  updateTierCurationSuggestionStatus as mutateTierCurationSuggestionStatus,
+} from './tier-curation.js';
 import {
   getBootstrapSnapshot as readBootstrapSnapshot,
   type BootstrapSnapshot,
@@ -251,6 +258,13 @@ import {
   saveMcpToolCache as writeMcpToolCache,
   updateAttachmentTier as mutateAttachmentTier,
 } from './mcp-servers.js';
+import {
+  deleteChannelMcpAttachment as removeChannelMcpAttachment,
+  listChannelMcpAttachments as readChannelMcpAttachments,
+  listChannelMcpAttachmentsForMember as readChannelMcpAttachmentsForMember,
+  saveChannelMcpAttachment as writeChannelMcpAttachment,
+  updateChannelAttachmentTier as mutateChannelAttachmentTier,
+} from './channel-mcp-attachments.js';
 import {
   deleteMcpToolClassification as removeMcpToolClassification,
   getMcpToolClassification as readMcpToolClassification,
@@ -596,6 +610,27 @@ export class Repository {
   saveAuditEvent = (event: AuditEvent): AuditEvent => writeAuditEvent(this.db, event);
   listAuditEvents = (organizationId: string): AuditEvent[] => readAuditEvents(this.db, organizationId);
 
+  // §9.4 / PR 9 — table exists from migration 050, callers are the
+  // suggestion writer scaffolded in PR 8 (no-op analysis) and the
+  // settings panel's "Show usage" sublink (renders zero-state today).
+  saveTierCurationSuggestion = (suggestion: TierCurationSuggestion): TierCurationSuggestion =>
+    writeTierCurationSuggestion(this.db, suggestion);
+  listTierCurationSuggestions = (organizationId: string): TierCurationSuggestion[] =>
+    readTierCurationSuggestions(this.db, organizationId);
+  updateTierCurationSuggestionStatus = (
+    organizationId: string,
+    suggestionId: string,
+    nextStatus: 'pending' | 'applied' | 'dismissed',
+    resolvedAt: string,
+  ): TierCurationSuggestion | null =>
+    mutateTierCurationSuggestionStatus(
+      this.db,
+      organizationId,
+      suggestionId,
+      nextStatus,
+      resolvedAt,
+    );
+
   /**
    * Execute `fn` inside a synchronous DB transaction. Commits on
    * normal return, rolls back on throw. The callback must run
@@ -802,6 +837,45 @@ export class Repository {
     organizationId: string,
     memberId: string,
   ): AgentMcpAttachment[] => readAgentMcpAttachments(this.db, organizationId, memberId);
+
+  // PR 10 — channel attachments. Parallel surface to the agent
+  // attachment methods above. The V2 spawn's §17.5.3 union step calls
+  // listChannelMcpAttachmentsForMember to fold the channel side into
+  // the agent's effective set.
+  saveChannelMcpAttachment = (
+    attachment: ChannelMcpAttachment,
+  ): ChannelMcpAttachment => writeChannelMcpAttachment(this.db, attachment);
+  updateChannelAttachmentTier = (
+    organizationId: string,
+    channelId: string,
+    mcpServerId: string,
+    tier: ChannelMcpAttachment['tier'],
+    updatedAt: string,
+  ): ChannelMcpAttachment | null =>
+    mutateChannelAttachmentTier(
+      this.db,
+      organizationId,
+      channelId,
+      mcpServerId,
+      tier,
+      updatedAt,
+    );
+  deleteChannelMcpAttachment = (
+    organizationId: string,
+    channelId: string,
+    mcpServerId: string,
+  ): void => removeChannelMcpAttachment(this.db, organizationId, channelId, mcpServerId);
+  listChannelMcpAttachments = (
+    organizationId: string,
+    channelId: string,
+  ): ChannelMcpAttachment[] =>
+    readChannelMcpAttachments(this.db, organizationId, channelId);
+  listChannelMcpAttachmentsForMember = (
+    organizationId: string,
+    memberId: string,
+  ): ChannelMcpAttachment[] =>
+    readChannelMcpAttachmentsForMember(this.db, organizationId, memberId);
+
   listMcpServerAttachments = (
     organizationId: string,
     mcpServerId: string,

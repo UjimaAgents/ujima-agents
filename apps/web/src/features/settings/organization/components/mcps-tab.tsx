@@ -30,14 +30,16 @@ import { McpServerFormModal } from "./mcps/mcp-server-form-modal";
 import { GovernanceDefaultsPanel } from "./mcps/governance-defaults-panel";
 import { ToolsSubtab } from "./mcps/tools-subtab";
 import { AgentsSubtab } from "./mcps/agents-subtab";
+import { ChannelsSubtab } from "./mcps/channels-subtab";
 import { useMcpCatalog } from "./mcps/use-mcp-catalog";
 
-type Subtab = "tools" | "servers" | "agents" | "defaults";
+type Subtab = "tools" | "servers" | "agents" | "channels" | "defaults";
 
 const SUBTABS: { key: Subtab; label: string }[] = [
   { key: "tools", label: "Tools" },
   { key: "servers", label: "Servers" },
   { key: "agents", label: "Agents" },
+  { key: "channels", label: "Channels" },
   { key: "defaults", label: "Defaults" },
 ];
 
@@ -279,6 +281,15 @@ export const McpsTab = memo(function McpsTab({
           description="What tools each agent can actually call. Grant individual tools to keep the prompt palette small."
         >
           <AgentsSubtab orgId={orgId} agents={agents} catalog={catalog} />
+        </SettingsSection>
+      ) : null}
+
+      {subtab === "channels" ? (
+        <SettingsSection
+          title="Channels"
+          description="MCPs attached at the channel level. Every agent in the channel inherits these via the §17.5.3 union step at spawn time. Per-agent attachments still win on conflict."
+        >
+          <ChannelsSubtab orgId={orgId} catalog={catalog} />
         </SettingsSection>
       ) : null}
 

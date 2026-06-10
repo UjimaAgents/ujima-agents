@@ -17,13 +17,27 @@ import {
   McpServerListResponseSchema,
   McpServerResponseSchema,
   McpToolsResponseSchema,
+  RefreshTierCurationRequestSchema,
+  RefreshTierCurationResponseSchema,
   TestMcpResponseSchema,
+  TierCurationSuggestionResponseSchema,
+  TierCurationSuggestionsResponseSchema,
+  UpdateTierCurationSuggestionStatusRequestSchema,
   ToolClassificationResponseSchema,
+  ChannelMcpAttachInputSchema,
+  ChannelMcpAttachmentResponseSchema,
+  ChannelMcpAttachmentsResponseSchema,
   UpdateAttachmentTierRequestSchema,
+  UpdateChannelAttachmentTierRequestSchema,
   UpdateMcpServerRequestSchema,
   UpdateToolClassificationRequestSchema,
 } from '@ujima/api-schema';
-import type { AuthService, McpRegistryService } from '@ujima/orchestrator';
+import type {
+  ApiRepository,
+  AuthService,
+  McpRegistryService,
+  TierCurationService,
+} from '@ujima/orchestrator';
 import { apiError } from './route-errors.js';
 import {
   registerOrgSettingsRoute,
@@ -34,6 +48,8 @@ import {
 export interface McpRoutesOptions {
   auth: AuthService;
   mcpRegistry: McpRegistryService;
+  tierCuration: TierCurationService;
+  repo: ApiRepository;
 }
 
 const ServerIdParamsSchema = z.object({ id: z.string().min(1) });
@@ -51,6 +67,11 @@ const AgentToolParamsSchema = z.object({
   toolName: z.string().min(1),
 });
 const AgentParamsSchema = z.object({ agentId: z.string().min(1) });
+const ChannelParamsSchema = z.object({ channelId: z.string().min(1) });
+const ChannelMcpParamsSchema = z.object({
+  channelId: z.string().min(1),
+  mcpServerId: z.string().min(1),
+});
 
 const mcpErrors = settingsServerErrors;
 const mcpWriteErrors = { ...mcpErrors, 400: ApiErrorSchema, 409: ApiErrorSchema };
@@ -65,7 +86,7 @@ export function registerMcpRoutes(
   fastify: FastifyInstance,
   options: McpRoutesOptions,
 ): void {
-  const { auth, mcpRegistry } = options;
+  const { auth, mcpRegistry, tierCuration, repo } = options;
   const app = withTypeProvider(fastify);
 
   registerOrgSettingsRoute(app, 'get', '/settings/mcps', auth, {
@@ -345,6 +366,108 @@ export function registerMcpRoutes(
     },
   });
 
+  // ---------------- PR 10 — Channel attachments -----------------------
+
+  registerOrgSettingsRoute(app, 'get', '/settings/channels/:channelId/mcps', auth, {
+    tags: ['MCP'],
+    description:
+      'List MCP servers attached to a channel. Every agent in the channel ' +
+      'inherits these attachments via the §17.5.3 union step in V2 spawn — ' +
+      'per-agent attachments still win on conflict.',
+    params: ChannelParamsSchema,
+    querystring: McpScopedQuerySchema,
+    response: { 200: ChannelMcpAttachmentsResponseSchema, ...mcpErrors },
+    organizationId: (req) => (req.query as { organizationId: string }).organizationId,
+    onError: mcpHandle,
+    handler: async (req, organizationId) => ({
+      attachments: mcpRegistry.listChannelAttachments(
+        organizationId,
+        (req.params as { channelId: string }).channelId,
+      ),
+    }),
+  });
+
+  registerOrgSettingsRoute(app, 'post', '/settings/channels/:channelId/mcps', auth, {
+    tags: ['MCP'],
+    description:
+      'Attach an MCP server to a channel. New channel attachments default ' +
+      "to 'dispatch' tier — channels often bulk-attach 10+ MCPs and " +
+      'dispatch keeps the §17.5.3 native palette small. Promote to native ' +
+      'via the PATCH .../tier endpoint when usage data justifies it.',
+    params: ChannelParamsSchema,
+    body: ChannelMcpAttachInputSchema,
+    response: { 204: z.null(), ...mcpWriteErrors },
+    organizationId: (req) => (req.body as { organizationId: string }).organizationId,
+    onError: mcpHandle,
+    successStatus: 204,
+    handler: async (req, organizationId) => {
+      const body = req.body as z.infer<typeof ChannelMcpAttachInputSchema>;
+      mcpRegistry.attachServerToChannel({
+        organizationId,
+        channelId: (req.params as { channelId: string }).channelId,
+        mcpServerId: body.mcpServerId,
+        scope: body.scope,
+      });
+    },
+  });
+
+  registerOrgSettingsRoute(
+    app,
+    'delete',
+    '/settings/channels/:channelId/mcps/:mcpServerId',
+    auth,
+    {
+      tags: ['MCP'],
+      description: 'Detach an MCP server from a channel',
+      params: ChannelMcpParamsSchema,
+      querystring: McpScopedQuerySchema,
+      response: { 204: z.null(), ...mcpErrors },
+      organizationId: (req) => (req.query as { organizationId: string }).organizationId,
+      onError: mcpHandle,
+      successStatus: 204,
+      handler: async (req, organizationId) => {
+        const params = req.params as { channelId: string; mcpServerId: string };
+        mcpRegistry.detachServerFromChannel(
+          organizationId,
+          params.channelId,
+          params.mcpServerId,
+        );
+      },
+    },
+  );
+
+  registerOrgSettingsRoute(
+    app,
+    'patch',
+    '/settings/channels/:channelId/mcps/:mcpServerId/tier',
+    auth,
+    {
+      tags: ['MCP'],
+      description:
+        "Update a channel's attachment tier on an MCP server. Resolves " +
+        'via §17.5.3 during V2 spawn — per-agent attachments still win on ' +
+        'conflict, and channel-vs-channel conflicts resolve to dispatch ' +
+        '(lossless overflow). Harmless metadata when the dispatch flag is off.',
+      params: ChannelMcpParamsSchema,
+      body: UpdateChannelAttachmentTierRequestSchema,
+      response: { 200: ChannelMcpAttachmentResponseSchema, ...mcpWriteErrors },
+      organizationId: (req) => (req.body as { organizationId: string }).organizationId,
+      onError: mcpHandle,
+      handler: async (req, organizationId) => {
+        const params = req.params as { channelId: string; mcpServerId: string };
+        const body = req.body as z.infer<typeof UpdateChannelAttachmentTierRequestSchema>;
+        return {
+          attachment: mcpRegistry.updateChannelAttachmentTier({
+            organizationId,
+            channelId: params.channelId,
+            mcpServerId: params.mcpServerId,
+            tier: body.tier,
+          }),
+        };
+      },
+    },
+  );
+
   // ---------------- Per-tool grants ----------------------------------
 
   registerOrgSettingsRoute(app, 'get', '/settings/agents/:agentId/tools', auth, {
@@ -427,6 +550,127 @@ export function registerMcpRoutes(
       },
     },
   );
+
+  // ---------------- PR 9 — tier curation suggestions -----------------
+
+  // List pending demote/promote suggestions for the org. Empty array +
+  // zero counters is the legitimate zero-state (no analyzer pass yet,
+  // or the org has no idle/hot dispatch attachments). The panel
+  // distinguishes that from a fetch error so operators don't see a
+  // spinner forever.
+  registerOrgSettingsRoute(
+    app,
+    'get',
+    '/settings/mcps/tier-curation-suggestions',
+    auth,
+    {
+      tags: ['MCP'],
+      description:
+        "List pending tier-curation suggestions for this org. " +
+        "Each row is the analyzer's proposal — demote a never-called " +
+        "native tool to dispatch (reclaim palette budget), or promote " +
+        "a high-volume + high-error-rate dispatch tool to native " +
+        "(typed schema reduces model-fumbling). Operators apply via " +
+        "the existing PATCH /settings/agents/:agentId/mcps/:serverId/" +
+        "tier endpoint. The §17.5 orthogonality invariant stays " +
+        "intact: nothing here ever auto-applies.",
+      querystring: McpScopedQuerySchema,
+      response: { 200: TierCurationSuggestionsResponseSchema, ...mcpErrors },
+      organizationId: (req) => (req.query as { organizationId: string }).organizationId,
+      onError: mcpHandle,
+      handler: async (_req, organizationId) => {
+        const suggestions = repo.listTierCurationSuggestions(organizationId);
+        const pending = suggestions.filter((s) => s.status === 'pending');
+        return {
+          suggestions: pending,
+          summary: {
+            pending: pending.length,
+            demoteCount: pending.filter((s) => s.direction === 'demote').length,
+            promoteCount: pending.filter((s) => s.direction === 'promote').length,
+          },
+        };
+      },
+    },
+  );
+
+  // Manual analyzer trigger. The §9.4 design has the job running on a
+  // schedule, but exposing this lets operators force a refresh from
+  // the panel (after they apply a tier flip, after a noisy run,
+  // before a curation review meeting). Tunable thresholds let the
+  // dogfood org probe the signal before we lock in defaults.
+  registerOrgSettingsRoute(
+    app,
+    'post',
+    '/settings/mcps/tier-curation-suggestions/refresh',
+    auth,
+    {
+      tags: ['MCP'],
+      description:
+        'Run the §9.4 audit-driven analyzer right now and persist any ' +
+        'demote/promote candidates it finds. Idempotent: the underlying ' +
+        'UPSERT on (org, member, server, direction, status) preserves ' +
+        'the original `created_at` so the panel can show "first ' +
+        'surfaced N days ago" across repeated triggers.',
+      body: RefreshTierCurationRequestSchema,
+      response: { 200: RefreshTierCurationResponseSchema, ...mcpWriteErrors },
+      organizationId: (req) => (req.body as { organizationId: string }).organizationId,
+      onError: mcpHandle,
+      handler: async (req, organizationId) => {
+        const body = req.body as z.infer<typeof RefreshTierCurationRequestSchema>;
+        return tierCuration.analyzeOrganization({
+          organizationId,
+          windowRuns: body.windowRuns,
+          volumePerRunThreshold: body.volumePerRunThreshold,
+          errorRateThreshold: body.errorRateThreshold,
+        });
+      },
+    },
+  );
+
+  // Persist the operator's Apply/Dismiss decision. Without this the
+  // panel can only optimistically drop the row from local state — a
+  // refresh resurfaces the suggestion even though the underlying tier
+  // flip has already been committed. The PATCH writes the
+  // status + resolved_at columns so the next analyzer pass leaves the
+  // applied row alone (UNIQUE on (org,member,server,direction,status)
+  // means a fresh `pending` slot is available if the operator later
+  // reverts).
+  registerOrgSettingsRoute(
+    app,
+    'patch',
+    '/settings/mcps/tier-curation-suggestions/:suggestionId',
+    auth,
+    {
+      tags: ['MCP'],
+      description:
+        "Update the operator-decision status on a tier-curation " +
+        "suggestion. 'applied' fires after a successful tier flip; " +
+        "'dismissed' lets the operator hide a row without acting on " +
+        "it. 'pending' is the analyzer default and shouldn't normally " +
+        "be set by hand.",
+      params: z.object({ suggestionId: z.string().min(1) }),
+      body: UpdateTierCurationSuggestionStatusRequestSchema,
+      response: { 200: TierCurationSuggestionResponseSchema, ...mcpWriteErrors },
+      organizationId: (req) => (req.body as { organizationId: string }).organizationId,
+      onError: mcpHandle,
+      handler: async (req, organizationId) => {
+        const body = req.body as z.infer<typeof UpdateTierCurationSuggestionStatusRequestSchema>;
+        const params = req.params as { suggestionId: string };
+        const updated = repo.updateTierCurationSuggestionStatus(
+          organizationId,
+          params.suggestionId,
+          body.status,
+          new Date().toISOString(),
+        );
+        if (!updated) {
+          // Message starts with "Suggestion not found" so
+          // mapMcpRouteError classifies it as 404 ERR_NOT_FOUND.
+          throw new Error(`Suggestion not found: ${params.suggestionId}`);
+        }
+        return { suggestion: updated };
+      },
+    },
+  );
 }
 
 export function mapMcpRouteError(err: unknown): {
@@ -440,7 +684,9 @@ export function mapMcpRouteError(err: unknown): {
     message.startsWith('MCP server not found') ||
     message.startsWith('Member not found') ||
     message.startsWith('Tool not found') ||
-    message.startsWith('Attachment not found')
+    message.startsWith('Attachment not found') ||
+    message.startsWith('Suggestion not found') ||
+    message.startsWith('Channel not found')
   ) {
     return { status: 404, code: 'ERR_NOT_FOUND', message };
   }

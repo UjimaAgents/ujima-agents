@@ -70,6 +70,8 @@ export {
   deleteDashboardTeamOverride,
   upsertDashboardTeamOverride,
   McpRegistryService,
+  createTierCurationService,
+  type TierCurationService,
   GovernanceService,
   PluginRegistryService,
   SpiritService,

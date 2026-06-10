@@ -40,6 +40,17 @@ interface ApprovalRequestedMsg {
   domain: string;
   proposedBy: string;
   summary?: string;
+  /**
+   * Connector action request (mcp_connector_dispatch_plan.md §5.2). When
+   * set, the webview renders the §5.2 server + tool + args box instead
+   * of the generic artifactKey label. argsPreview is pre-redacted
+   * upstream; the un-redacted args live only on the audit row.
+   */
+  actionRequest?: {
+    serverDisplayName: string;
+    toolName: string;
+    argsPreview: string;
+  };
 }
 
 interface ApprovalDecidedMsg {
@@ -139,6 +150,11 @@ export class AgentChatPanel implements vscode.Disposable {
     domain: string;
     proposedBy: string;
     summary?: string;
+    actionRequest?: {
+      serverDisplayName: string;
+      toolName: string;
+      argsPreview: string;
+    };
   }): void {
     this.send({
       type: 'approval.requested',
@@ -148,6 +164,7 @@ export class AgentChatPanel implements vscode.Disposable {
       domain: input.domain,
       proposedBy: input.proposedBy,
       summary: input.summary,
+      actionRequest: input.actionRequest,
     });
   }
 
@@ -313,6 +330,9 @@ function renderHtml(): string {
   .approval-card .approval-head { font-weight: 600; margin-bottom: .35rem; display: flex; align-items: center; gap: .4rem; }
   .approval-card .approval-head::before { content: '⏳'; }
   .approval-card .approval-detail { opacity: .8; margin-bottom: .5rem; line-height: 1.4; }
+  .approval-card .approval-action-row { font-family: var(--vscode-editor-font-family), monospace; font-size: .78rem; margin-bottom: .5rem; }
+  .approval-card .approval-action-meta { opacity: .75; }
+  .approval-card .approval-action-args { white-space: pre-wrap; word-break: break-word; margin-top: .3rem; padding: .35rem .5rem; background: var(--vscode-textCodeBlock-background); border-radius: 4px; }
   .approval-card .approval-actions { display: flex; gap: .5rem; }
   .approval-card .approval-actions button { padding: .3rem .7rem; font-size: .78rem; font-weight: 600; border: none; border-radius: 4px; cursor: pointer; }
   .approval-card .btn-approve { background: var(--vscode-charts-green, #3fb950); color: #fff; }
@@ -915,10 +935,34 @@ function renderHtml(): string {
     card.dataset.approvalId = msg.approvalId;
     const head = document.createElement('div');
     head.className = 'approval-head';
-    head.textContent = 'Approval required';
+    head.textContent = msg.actionRequest ? 'Connector action' : 'Approval required';
     const detail = document.createElement('div');
     detail.className = 'approval-detail';
-    detail.innerHTML = '<strong>' + escapeHtml(msg.domain) + '</strong> · ' + escapeHtml(msg.artifactKey) + (msg.summary ? '<br>' + escapeHtml(msg.summary) : '') + '<br><span style="opacity:.65">proposed by ' + escapeHtml(msg.proposedBy) + '</span>';
+    if (msg.actionRequest) {
+      // §5.2 connector action variant: "Server: X · Tool: y" + monospace
+      // args. Keep the proposed-by line so the operator knows the agent
+      // identity; everything else is replaced by the action shape.
+      const ar = msg.actionRequest;
+      const row = document.createElement('div');
+      row.className = 'approval-action-row';
+      const meta = document.createElement('div');
+      meta.className = 'approval-action-meta';
+      meta.innerHTML = '<strong>Server:</strong> ' + escapeHtml(ar.serverDisplayName) + ' · <strong>Tool:</strong> ' + escapeHtml(ar.toolName);
+      row.appendChild(meta);
+      if (ar.argsPreview && ar.argsPreview.length > 0) {
+        const args = document.createElement('pre');
+        args.className = 'approval-action-args';
+        args.textContent = ar.argsPreview;
+        row.appendChild(args);
+      }
+      detail.appendChild(row);
+      const proposed = document.createElement('div');
+      proposed.style.opacity = '.65';
+      proposed.textContent = 'proposed by ' + msg.proposedBy;
+      detail.appendChild(proposed);
+    } else {
+      detail.innerHTML = '<strong>' + escapeHtml(msg.domain) + '</strong> · ' + escapeHtml(msg.artifactKey) + (msg.summary ? '<br>' + escapeHtml(msg.summary) : '') + '<br><span style="opacity:.65">proposed by ' + escapeHtml(msg.proposedBy) + '</span>';
+    }
     const actions = document.createElement('div');
     actions.className = 'approval-actions';
     const approveBtn = document.createElement('button');

@@ -23,6 +23,7 @@ import { GoalSystemService } from './goal-system.js';
 import { MemoryReviewService } from './memory-review.js';
 import { TrajectoryService } from './trajectory.js';
 import { McpRegistryService } from './mcp-registry.js';
+import { createTierCurationService, type TierCurationService } from './tier-curation.js';
 import { GovernanceService } from './governance-service.js';
 import { PluginRegistryService } from './plugin-registry.js';
 import { OnboardingService } from './onboarding.js';
@@ -163,6 +164,7 @@ export type {
   SpiritServiceOptions,
 } from './spirit.js';
 export { McpRegistryService } from './mcp-registry.js';
+export { createTierCurationService, type TierCurationService } from './tier-curation.js';
 export type {
   AttachMcpInput,
   CreateMcpServerInput,
@@ -250,6 +252,7 @@ export interface ApiServices {
   spirits: SpiritService;
   activeSpirits: ActiveSpiritRegistry;
   mcpRegistry: McpRegistryService;
+  tierCuration: TierCurationService;
   governance: GovernanceService;
   pluginRegistry: PluginRegistryService;
 }
@@ -762,7 +765,12 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   // a Playwright MCP attached wakes via @mention and answers "I don't
   // have a Playwright tool" because the AI-SDK palette and the system
   // prompt only ever saw the baseline channel tools.
-  ai.setMcpToolResolver((ctx) => spirits.buildMcpToolDefinitions(ctx));
+  // Routes through the §3.5 rule 3 flag gate: dispatch-enabled orgs
+  // get the V2 spawn (catalog + meta-tools + §12 audit emitters);
+  // others get byte-for-byte legacy. Without this the wake-run path
+  // bypassed the flag and DM → agent calls produced zero connector_*
+  // events even when V2 was on.
+  ai.setMcpToolResolver((ctx) => spirits.buildMcpToolDefinitionsRouted(ctx));
   const runs = spirits;
   resumeRun = async (orgId, runId, allowRun = true, approvalScope) =>
     spirits.resumeAfterApproval(orgId, runId, allowRun, approvalScope);
@@ -805,6 +813,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   );
   const taskSessions = new TaskSessionService(context.repo, conversations, spirits);
   const mcpRegistry = new McpRegistryService(context.repo);
+  const tierCuration = createTierCurationService({ repo: context.repo });
   const governance = new GovernanceService(context.repo);
   const pluginRegistry = new PluginRegistryService(
     context.repo,
@@ -881,6 +890,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     scheduler,
     activeSpirits,
     mcpRegistry,
+    tierCuration,
     governance,
     pluginRegistry,
   };

@@ -59,6 +59,7 @@ import {
 import type { SpiritMcpPool } from './spirit-types.js';
 import { buildConnectorMetaTools } from '../tools/connector-meta-tools.js';
 import type { ToolService } from './tool-service.js';
+import { createConnectorAuditWriter } from './connector-audit.js';
 
 export interface ConnectorSpawnV2Services {
   mcpPool: SpiritMcpPool;
@@ -145,6 +146,14 @@ export async function buildMcpToolDefinitionsV2(
     ctx.memberId,
     ctx.role,
   );
+
+  // §12 audit writer — one instance per spawn, threaded into both the
+  // native-tier execute closures (below) and the dispatch-tier
+  // meta-tools (further down). Operator queries against
+  // audit_events.tool_name need parity across both tiers, otherwise
+  // half the V2 invocations are invisible to the curation analysis
+  // and the operator's "every X across all agents" query.
+  const audit = createConnectorAuditWriter({ repo: services.repo });
 
   const servers: McpServerSummary[] = [];
   // Entry shape mirrors legacy buildMcpToolDefinitions — we collect
@@ -294,8 +303,25 @@ export async function buildMcpToolDefinitionsV2(
         inputSchema: mcpToolInputSchema(entry.inputSchema),
         execute: async (rawArgs, { toolCallId }) => {
           const args = (rawArgs ?? {}) as Record<string, unknown>;
+          // §12 mirror of the dispatch-tier emission shape in
+          // connector-meta-tools.ts. Native tools route through the
+          // same ToolService.invoke gate so the result branches
+          // (ok / blocked / approval-waiting / input-waiting) are
+          // identical; without this block, a V2 spawn with native
+          // attachments would emit zero connector_* rows for half
+          // the agent's tool surface — operator queries against
+          // audit_events would show only the dispatch tier.
+          audit.invocationRequested({
+            organizationId: ctx.organizationId,
+            actorMemberId: ctx.memberId,
+            runId: ctx.runId,
+            serverId: entry.serverId,
+            toolName: entry.toolName,
+            args,
+          });
+          let result: Awaited<ReturnType<typeof services.tools.invoke>>;
           try {
-            const result = await services.tools.invoke({
+            result = await services.tools.invoke({
               organizationId: ctx.organizationId,
               runId: ctx.runId,
               memberId: ctx.memberId,
@@ -319,6 +345,42 @@ export async function buildMcpToolDefinitionsV2(
                 args,
               },
             });
+          } catch (error) {
+            audit.invocationCompleted({
+              organizationId: ctx.organizationId,
+              actorMemberId: ctx.memberId,
+              runId: ctx.runId,
+              serverId: entry.serverId,
+              toolName: entry.toolName,
+              success: false,
+              errorMessage: error instanceof Error ? error.message : String(error),
+            });
+            return toModelToolErrorOutput(error);
+          }
+          // Same approval-/input-waiting detection as the dispatch
+          // path — those are not completions and emitting here
+          // would double-count when the run resumes.
+          const isWaitingForApproval = typeof result.requiresApprovalId === 'string';
+          const out = result.output;
+          const isWaitingForInput =
+            result.ok &&
+            !!out &&
+            typeof out === 'object' &&
+            (out as Record<string, unknown>).status === 'waiting_for_input';
+          if (!isWaitingForApproval && !isWaitingForInput) {
+            audit.invocationCompleted({
+              organizationId: ctx.organizationId,
+              actorMemberId: ctx.memberId,
+              runId: ctx.runId,
+              serverId: entry.serverId,
+              toolName: entry.toolName,
+              success: result.ok,
+              errorMessage: result.ok
+                ? undefined
+                : result.error ?? 'tool invocation failed',
+            });
+          }
+          try {
             return toModelToolOutput(result);
           } catch (error) {
             return toModelToolErrorOutput(error);
@@ -368,6 +430,7 @@ export async function buildMcpToolDefinitionsV2(
     spiritRole: ctx.role,
     tools: services.tools,
     repo: services.repo,
+    audit,
   });
 
   const toolSet: ToolSet = {

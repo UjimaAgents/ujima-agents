@@ -48,6 +48,7 @@ import {
   toModelToolOutput,
 } from '../services/tool-loop-result.js';
 import type { ToolService } from '../services/tool-service.js';
+import type { ConnectorAuditWriter } from '../services/connector-audit.js';
 
 // ───────────────────────────────────────────────────────────────────────
 // Public surface
@@ -102,6 +103,12 @@ export interface ConnectorMetaToolDeps {
   spiritRole: SpiritRole;
   tools: ToolService;
   repo: ConnectorMetaToolRepo;
+  /**
+   * §12 connector audit writer. Optional so tests + legacy callers
+   * don't have to construct one — when absent the meta-tools run
+   * exactly as before, just without writing the new event types.
+   */
+  audit?: ConnectorAuditWriter;
 }
 
 export interface ConnectorMetaToolSet {
@@ -286,6 +293,23 @@ export function hasEgressSignals(args: unknown): boolean {
   return false;
 }
 
+/**
+ * Pull a human-readable error message out of a non-ok ToolInvocationResult
+ * for the §12 audit row's errorMessage field. Prefers the structured
+ * `error` field; falls back to a `blocked` status string from the output;
+ * defaults to a generic invocation-failed message.
+ */
+function extractInvocationError(result: { error?: string; output?: unknown }): string {
+  if (result.error) return result.error;
+  const output = result.output;
+  if (output && typeof output === 'object') {
+    const record = output as Record<string, unknown>;
+    if (typeof record.error === 'string') return record.error;
+    if (typeof record.status === 'string') return `tool_status:${record.status}`;
+  }
+  return 'tool invocation failed';
+}
+
 // ───────────────────────────────────────────────────────────────────────
 // Builder
 // ───────────────────────────────────────────────────────────────────────
@@ -396,6 +420,15 @@ export function buildConnectorMetaTools(
           };
         })
         .filter((t): t is NonNullable<typeof t> => t !== null);
+      // §12.2 audit emit — emit after grant filtering so fetchedToolCount
+      // matches what the model actually saw, not the raw cache size.
+      deps.audit?.toolsListed({
+        organizationId: deps.organizationId,
+        actorMemberId: deps.memberId,
+        runId: deps.runId,
+        serverId: server_id,
+        fetchedToolCount: tools.length,
+      });
       return { server_id, tools };
     },
   });
@@ -407,6 +440,38 @@ export function buildConnectorMetaTools(
       'available tools via get_connector_tools.',
     inputSchema: InvokeConnectorToolSchema,
     execute: async ({ server_id, tool_name, args }, { toolCallId }) => {
+      // §12.2 audit emit — `_requested` fires BEFORE any gate so denied
+      // attempts (phantom tool, ungranted tool, unattached server,
+      // disabled server) are visible to operators auditing the
+      // dispatch tier. Each early-return gate below is paired with a
+      // matching `_completed{success:false}` so the per-attempt
+      // (requested, completed) shape stays consistent across allowed
+      // and denied paths.
+      deps.audit?.invocationRequested({
+        organizationId: deps.organizationId,
+        actorMemberId: deps.memberId,
+        runId: deps.runId,
+        serverId: server_id,
+        toolName: tool_name,
+        args,
+      });
+
+      // Closure-local helper for the four pre-invoke denial paths.
+      // Keeping the args + member context captured in scope avoids
+      // re-threading them through every early-return site.
+      const denyWithAudit = (error: Error): ReturnType<typeof toModelToolErrorOutput> => {
+        deps.audit?.invocationCompleted({
+          organizationId: deps.organizationId,
+          actorMemberId: deps.memberId,
+          runId: deps.runId,
+          serverId: server_id,
+          toolName: tool_name,
+          success: false,
+          errorMessage: error.message,
+        });
+        return toModelToolErrorOutput(error);
+      };
+
       // Attachment-scope check first (same gap as get_connector_tools).
       if (
         !isServerAttachedToSpirit(
@@ -417,7 +482,7 @@ export function buildConnectorMetaTools(
           deps.spiritRole,
         )
       ) {
-        return toModelToolErrorOutput(
+        return denyWithAudit(
           new Error(
             `Connector "${server_id}" is not attached to this agent.`,
           ),
@@ -425,7 +490,7 @@ export function buildConnectorMetaTools(
       }
       const server = deps.repo.getMcpServer(deps.organizationId, server_id);
       if (!server) {
-        return toModelToolErrorOutput(
+        return denyWithAudit(
           new Error(
             `Connector "${server_id}" is not attached to this agent.`,
           ),
@@ -433,9 +498,7 @@ export function buildConnectorMetaTools(
       }
       if (server.status !== 'active') {
         // Opaque server_id rather than server.name (admin-controllable).
-        return toModelToolErrorOutput(
-          new Error(`Connector "${server_id}" is disabled.`),
-        );
+        return denyWithAudit(new Error(`Connector "${server_id}" is disabled.`));
       }
       // Cache lookup is the typed gate. A tool_name that doesn't
       // appear in the persisted cache cannot be dispatched, period.
@@ -457,7 +520,7 @@ export function buildConnectorMetaTools(
         // interpolated here per the catalog-text trust model. The
         // tool_name as supplied by the model is echoed back so it
         // can self-correct (it picked this string).
-        return toModelToolErrorOutput(
+        return denyWithAudit(
           new Error(
             `Tool "${tool_name}" not found on connector "${server_id}". ` +
               'Call get_connector_tools(server_id) to see the live ' +
@@ -477,7 +540,7 @@ export function buildConnectorMetaTools(
         deps.spiritRole,
       );
       if (allowedNames !== null && !allowedNames.has(tool_name)) {
-        return toModelToolErrorOutput(
+        return denyWithAudit(
           new Error(
             `Tool "${tool_name}" is not granted to this agent on connector ` +
               `"${server_id}". Ask the operator to grant it via Settings ` +
@@ -489,8 +552,9 @@ export function buildConnectorMetaTools(
       // + the synthetic permissionToolName from mcpPermissionToolName
       // match the shape the legacy MCP-tool path already uses, so
       // existing governance policies and audit rows apply unchanged.
+      let result: Awaited<ReturnType<typeof deps.tools.invoke>>;
       try {
-        const result = await deps.tools.invoke({
+        result = await deps.tools.invoke({
           organizationId: deps.organizationId,
           runId: deps.runId,
           memberId: deps.memberId,
@@ -511,8 +575,58 @@ export function buildConnectorMetaTools(
             args,
           },
         });
+      } catch (err) {
+        // Unexpected exception from the invoke layer itself (DB
+        // failure, etc.). Record one completion row with the error
+        // and re-throw through the model-error path.
+        deps.audit?.invocationCompleted({
+          organizationId: deps.organizationId,
+          actorMemberId: deps.memberId,
+          runId: deps.runId,
+          serverId: server.id,
+          toolName: tool_name,
+          success: false,
+          errorMessage: err instanceof Error ? err.message : String(err),
+        });
+        return toModelToolErrorOutput(err);
+      }
+      // Approval-waiting and input-waiting calls are NOT completions
+      // — the gate is holding the call open. Emitting `_completed`
+      // here would double-count (the row fires again when the run
+      // resumes and the model re-invokes) and would also distort the
+      // PR 9 curation signal (an approval-stalled call would look
+      // like a successful invocation). The matching `_resolved`
+      // event already fires from the approval-resolution path.
+      const isWaitingForApproval = typeof result.requiresApprovalId === 'string';
+      const output = result.output;
+      const isWaitingForInput =
+        result.ok &&
+        !!output &&
+        typeof output === 'object' &&
+        (output as Record<string, unknown>).status === 'waiting_for_input';
+      if (!isWaitingForApproval && !isWaitingForInput) {
+        // Blocked invocations come back as ok=false with output={status:'blocked',...}
+        // — toModelToolOutput returns that object without throwing,
+        // so we MUST branch on result.ok here (not on whether
+        // toModelToolOutput threw) to record blocked calls as
+        // success=false rather than silently as successes.
+        deps.audit?.invocationCompleted({
+          organizationId: deps.organizationId,
+          actorMemberId: deps.memberId,
+          runId: deps.runId,
+          serverId: server.id,
+          toolName: tool_name,
+          success: result.ok,
+          errorMessage: result.ok ? undefined : extractInvocationError(result),
+        });
+      }
+      try {
         return toModelToolOutput(result);
       } catch (err) {
+        // toModelToolOutput throws for approval/input waits — those
+        // were detected above and intentionally skipped from the
+        // completion emit, so just bubble the error to the model
+        // path without writing a second row.
         return toModelToolErrorOutput(err);
       }
     },

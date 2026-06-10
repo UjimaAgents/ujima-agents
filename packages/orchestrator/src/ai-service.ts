@@ -91,7 +91,23 @@ export type McpToolResolver = (ctx: {
   threadId: string;
   taskSessionId: string;
   role: SpiritRole;
-}) => Promise<{ toolSet: ToolSet; servers: ResolvedMcpServerSummary[] }>;
+}) => Promise<{
+  toolSet: ToolSet;
+  servers: ResolvedMcpServerSummary[];
+  /**
+   * Pre-rendered V2 dispatch catalog block for the system prompt
+   * (mcp_connector_dispatch_plan.md §5.3 / §7.4). Empty / undefined
+   * on the legacy spawn so the prompt stays byte-for-byte unchanged
+   * for tier-blind orgs.
+   *
+   * Without this the wake-run path knew about `invoke_connector_tool`
+   * but had no way to learn which serverIds were dispatch-attached
+   * — agents had to be told the UUID by hand. Threading the catalog
+   * here lets the system prompt list them inline (same shape the
+   * run-loop entry already does at spirit-agent-run.ts:230).
+   */
+  catalogText?: string;
+}>;
 
 export class AiService {
   private mcpToolResolver?: McpToolResolver;
@@ -363,6 +379,7 @@ export class AiService {
       : { toolSet: {} as ToolSet, servers: [] };
     const mcpToolDefs = mcpResolution.toolSet;
     const attachedMcpServers = mcpResolution.servers;
+    const availableConnectors = mcpResolution.catalogText;
     const toolDefs: ToolSet = { ...builtInToolDefs, ...mcpToolDefs };
 
     // The "Available tools:" line in the system prompt is what some
@@ -395,6 +412,7 @@ export class AiService {
       availableToolIds,
       attachedMcpServers.map((s) => ({ name: s.serverName, toolNames: s.toolNames })),
       wakeReplyPolicy.conversationKind,
+      availableConnectors,
     );
 
     // Bet 1 + Bet 7 — cache-stable system prompt assembly.
