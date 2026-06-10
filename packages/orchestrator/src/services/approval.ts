@@ -322,13 +322,26 @@ export class ApprovalService {
       // approvals (shell, filesystem, generic) keep their existing
       // approval-row + realtime event as the only record.
       emitConnectorResolvedIfApplicable(this.repo, resolved, input);
-      // PR 11 — §17.5.6 attachment_request resolution. Detect the
-      // attachment-scope reason prefix and dispatch to the wired
-      // handler. On approve, the handler writes the attachment row
-      // and emits attachment_request_resolved audit; on reject, the
-      // handler emits the audit only. Skipped silently when no
-      // resolver is wired so tests + legacy callers stay valid.
-      const attachmentPayload = parseAttachmentRequestReason(resolved.reason);
+      // PR 11 — §17.5.6 attachment_request resolution. The resolved
+      // row's `reason` has been overwritten with `effectiveReason`
+      // (reject prefix / grant prefix / operator note) by the time
+      // we get here, so parsing from `resolved.reason` would miss
+      // the original `attachment_request_scope=` prefix that
+      // requestAttachmentApproval wrote.
+      //
+      // Source the payload from `existing.reason` instead — the
+      // pre-overwrite captured copy of the original pending row.
+      // For the multi-row matching case the loop iterates additional
+      // pending approvals, but attachment_request rows are unique
+      // per (run, toolCallId, serverId, target, targetId) so there's
+      // no fan-out match here — only `existing` ever carries the
+      // attachment_request_scope. Resolved siblings without the
+      // prefix are skipped silently. Without this the resolver
+      // never runs and approved attachment requests don't actually
+      // attach anything (the bug the bot caught).
+      const attachmentPayload = parseAttachmentRequestReason(
+        existing?.reason ?? resolved.reason,
+      );
       if (attachmentPayload && this.attachmentApprovalResolver) {
         this.attachmentApprovalResolver({
           organizationId: input.organizationId,

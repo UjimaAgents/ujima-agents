@@ -25,6 +25,8 @@ import { MemoryReviewService } from './memory-review.js';
 import { TrajectoryService } from './trajectory.js';
 import { McpRegistryService } from './mcp-registry.js';
 import { createConnectorAuditWriter } from './connector-audit.js';
+import { findRegistryEntry } from '@ujima/mcp-client';
+import { findRegistryMatch } from './connector-catalog.js';
 import { createTierCurationService, type TierCurationService } from './tier-curation.js';
 import { GovernanceService } from './governance-service.js';
 import { PluginRegistryService } from './plugin-registry.js';
@@ -876,19 +878,72 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   // the attachment_request_resolved audit row only.
   const attachmentAuditWriter = createConnectorAuditWriter({ repo: context.repo });
   approvalsImpl.setAttachmentApprovalResolver((input) => {
+    // PR 11 (bot fix) — search_catalog returns `registry:<entryId>`
+    // synthetic ids for marketplace entries the org has never
+    // instantiated. Those ids can't be passed to
+    // mcpRegistry.attach{,ServerToChannel} because requireServer
+    // would reject them — the attach surface needs a real
+    // mcp_servers row. Materialise the registry entry into a real
+    // org MCP first, then use the returned serverId for the
+    // attachment.
+    //
+    // The instantiation is scope-discipline-conscious: we do it
+    // ONLY when the attachment is being approved (input.approved
+    // === true). A rejection should never spawn a server row, and
+    // a previously-instantiated entry stays untouched.
+    //
+    // Failure paths: if the registry entry is missing (unknown id)
+    // OR `create()` rejects (name clash, validation), the outer
+    // try/catch logs a warning and the approval stays resolved
+    // without an attachment row. The operator sees the resolved
+    // approval in the activity feed without the connector — they
+    // can retry the attach manually via the settings UI.
+    let serverIdForAttach = input.payload.serverId;
     try {
+      if (input.approved && serverIdForAttach.startsWith('registry:')) {
+        const registryId = serverIdForAttach.slice('registry:'.length);
+        const entry = findRegistryEntry(registryId);
+        if (!entry) {
+          throw new Error(`Registry entry not found: ${registryId}`);
+        }
+        // Re-check by URL/command in case another path already
+        // instantiated this entry between search_catalog and
+        // resolve-approval. buildSearchCorpus dedupes at search
+        // time but a parallel attach via the settings UI could
+        // race in between.
+        const existing = context.repo
+          .listMcpServers(input.organizationId)
+          .find((s) => findRegistryMatch(s)?.id === entry.id);
+        if (existing) {
+          serverIdForAttach = existing.id;
+        } else {
+          const created = mcpRegistry.create({
+            organizationId: input.organizationId,
+            name: entry.name,
+            description: entry.description,
+            category: entry.category,
+            transport: entry.defaults.transport,
+            command: entry.defaults.command,
+            args: entry.defaults.args,
+            url: entry.defaults.url,
+            isolation: entry.defaults.isolation,
+            createdBy: input.resolverMemberId ?? 'system:attachment_request',
+          });
+          serverIdForAttach = created.id;
+        }
+      }
       if (input.approved) {
         if (input.payload.target === 'channel') {
           mcpRegistry.attachServerToChannel({
             organizationId: input.organizationId,
             channelId: input.payload.targetId,
-            mcpServerId: input.payload.serverId,
+            mcpServerId: serverIdForAttach,
           });
         } else {
           mcpRegistry.attach({
             organizationId: input.organizationId,
             memberId: input.payload.targetId,
-            mcpServerId: input.payload.serverId,
+            mcpServerId: serverIdForAttach,
           });
         }
       }
@@ -897,7 +952,11 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
         resolverMemberId: input.resolverMemberId,
         approvalId: input.approvalId,
         ...(input.runId ? { runId: input.runId } : {}),
-        serverId: input.payload.serverId,
+        // Audit carries the RESOLVED serverId (post-instantiation
+        // for registry entries) so operators can grep their audit
+        // log without translating registry:<id> synthetic ids
+        // separately.
+        serverId: serverIdForAttach,
         target: input.payload.target,
         targetId: input.payload.targetId,
         resolution: input.approved

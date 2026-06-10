@@ -723,4 +723,151 @@ describe('ApprovalService', () => {
 
     expect(resolvedIds).toEqual(['ap-1', 'ap-2']);
   });
+
+  it('PR 11 — attachment_request payload survives reason overwrite and reaches the resolver', async () => {
+    // Bot finding: requestAttachmentApproval encodes the §17.5.6
+    // payload as `attachment_request_scope=<json>` in the reason,
+    // but resolveApproval overwrites `reason` with the operator's
+    // note (or a `grant:...`/`reject:...` prefix) BEFORE handing
+    // the row to the attachment resolver. Reading `resolved.reason`
+    // would always come up null, so the wired resolver would never
+    // run and approved attach-requests would silently drop the row.
+    //
+    // The fix sources the payload from `existing.reason` instead.
+    // This test pins both halves: the resolver is called exactly
+    // once per resolveApproval, and the payload matches what
+    // requestAttachmentApproval wrote.
+    const payload = {
+      serverId: 'srv_censys',
+      target: 'agent' as const,
+      targetId: 'mem_snoop',
+      agentReason: 'Need SSL cert history for example.com',
+      approvalId: 'ap-attach-1',
+    };
+    const encoded = encodeURIComponent(JSON.stringify(payload));
+    const original = {
+      id: 'ap-attach-1',
+      organizationId: 'org-1',
+      runId: 'run-1',
+      toolCallId: 'tool-1',
+      threadId: 'thread-1',
+      requestedBy: 'mem_snoop',
+      resourceType: 'mcp',
+      resourcePath: 'attachment_request:srv_censys:agent:mem_snoop',
+      action: 'mcp',
+      status: 'pending',
+      reason: `attachment_request_scope=${encoded}`,
+      createdAt: '2026-06-10T00:00:00.000Z',
+      resolvedAt: undefined,
+    } satisfies ApprovalRequest;
+
+    const resolvedRow = { ...original, status: 'approved' as const };
+    const repo = {
+      listPendingApprovals: () => [original],
+      saveApproval: () => original,
+      getRun: () => ({ id: 'run-1', threadId: 'thread-1' }),
+      getApproval: () => original,
+      resolveApproval: () => resolvedRow,
+      deleteApproval: () => undefined,
+    } as never;
+
+    const resolverCalls: {
+      approvalId: string;
+      approved: boolean;
+      payload: { serverId: string; target: string; targetId: string };
+    }[] = [];
+    const service = new ApprovalService(
+      repo,
+      { emit: () => undefined } as never,
+      () => undefined,
+    );
+    service.setAttachmentApprovalResolver((input) => {
+      resolverCalls.push({
+        approvalId: input.approvalId,
+        approved: input.approved,
+        payload: {
+          serverId: input.payload.serverId,
+          target: input.payload.target,
+          targetId: input.payload.targetId,
+        },
+      });
+    });
+
+    await service.resolveApproval({
+      organizationId: 'org-1',
+      approvalId: 'ap-attach-1',
+      status: 'approved',
+      resolution: 'allow_once',
+      reason: 'Looks fine — go ahead',
+    });
+
+    // The resolver must fire exactly once with the payload sourced
+    // from the ORIGINAL pending row's reason (not the rewritten
+    // resolved row).
+    expect(resolverCalls).toHaveLength(1);
+    expect(resolverCalls[0]).toMatchObject({
+      approvalId: 'ap-attach-1',
+      approved: true,
+      payload: {
+        serverId: 'srv_censys',
+        target: 'agent',
+        targetId: 'mem_snoop',
+      },
+    });
+  });
+
+  it('PR 11 — attachment_request resolver also fires on rejection', async () => {
+    // The attachment_request_resolved audit row should land on BOTH
+    // approve and reject paths so operators can grep the full
+    // discovery lifecycle. The resolver gets the same payload shape;
+    // the `approved` flag tells it whether to write the attachment
+    // row or just emit the audit.
+    const payload = {
+      serverId: 'srv_censys',
+      target: 'channel' as const,
+      targetId: 'ch_investigations',
+      agentReason: 'why not',
+      approvalId: 'ap-attach-r',
+    };
+    const encoded = encodeURIComponent(JSON.stringify(payload));
+    const original = {
+      id: 'ap-attach-r',
+      organizationId: 'org-1',
+      runId: 'run-1',
+      toolCallId: 'tool-1',
+      requestedBy: 'mem_snoop',
+      resourceType: 'mcp',
+      resourcePath: 'attachment_request:srv_censys:channel:ch_investigations',
+      action: 'mcp',
+      status: 'pending',
+      reason: `attachment_request_scope=${encoded}`,
+      createdAt: '2026-06-10T00:00:00.000Z',
+      resolvedAt: undefined,
+    } satisfies ApprovalRequest;
+    const resolvedRow = { ...original, status: 'rejected' as const };
+    const repo = {
+      listPendingApprovals: () => [original],
+      saveApproval: () => original,
+      getRun: () => null,
+      getApproval: () => original,
+      resolveApproval: () => resolvedRow,
+      deleteApproval: () => undefined,
+    } as never;
+    const calls: { approved: boolean; target: string }[] = [];
+    const service = new ApprovalService(
+      repo,
+      { emit: () => undefined } as never,
+      () => undefined,
+    );
+    service.setAttachmentApprovalResolver((input) => {
+      calls.push({ approved: input.approved, target: input.payload.target });
+    });
+    await service.resolveApproval({
+      organizationId: 'org-1',
+      approvalId: 'ap-attach-r',
+      status: 'rejected',
+      reason: 'not now',
+    });
+    expect(calls).toEqual([{ approved: false, target: 'channel' }]);
+  });
 });
