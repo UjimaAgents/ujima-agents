@@ -942,6 +942,34 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
               createdBy: input.resolverMemberId ?? 'system:attachment_request',
             });
             serverIdForAttach = created.id;
+            // Auto-test the freshly instantiated MCP so the tool cache
+            // populates without forcing the operator into Settings →
+            // MCPs → Test. For credential-less connectors (fetch,
+            // memory, sequential-thinking, etc.) this just works — the
+            // listTools call returns the inventory and saveMcpToolCache
+            // writes it. For connectors that need secrets (GitHub PAT,
+            // Slack OAuth, etc.) the listTools call will fail; we log
+            // a warn and the operator still gets the attachment row
+            // PLUS a settings-UI affordance to fill in creds. Without
+            // this, the model attached the connector but immediately
+            // told the operator to "run Test in Settings" — exactly
+            // the failure mode the live test caught.
+            //
+            // Fire-and-forget: mcpRegistry.test is async but the
+            // resolver callback is sync. .catch swallows the rejection
+            // (already logged inside test()) so an unhandled rejection
+            // doesn't blow up the resolver. The test result lands in
+            // the cache before the agent's NEXT spawn that hits this
+            // server, which is when get_connector_tools would consult
+            // the cache.
+            void mcpRegistry
+              .test(input.organizationId, created.id)
+              .catch((err) => {
+                console.warn(
+                  `[attachment-approval] auto-test failed for instantiated MCP "${entry.name}" — operator must complete setup via Settings → MCPs`,
+                  err,
+                );
+              });
           }
         }
         if (input.payload.target === 'channel') {
