@@ -898,41 +898,52 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     // without an attachment row. The operator sees the resolved
     // approval in the activity feed without the connector — they
     // can retry the attach manually via the settings UI.
+    // PR 11 (bot fix) — split attach vs audit handling. Earlier this
+    // wrapped both in one try/catch and silently swallowed attach
+    // failures (registry instantiation rejection, name clash,
+    // duplicate row, transient repo error). The approval was already
+    // resolved by then, so the run resumed but the operator had no
+    // surfaced error and the attachment_request_resolved audit row
+    // never landed. Now: attach runs in its own try; whether it
+    // succeeded or threw, the audit row ALWAYS lands with a
+    // resolution value that distinguishes the outcomes.
     let serverIdForAttach = input.payload.serverId;
-    try {
-      if (input.approved && serverIdForAttach.startsWith('registry:')) {
-        const registryId = serverIdForAttach.slice('registry:'.length);
-        const entry = findRegistryEntry(registryId);
-        if (!entry) {
-          throw new Error(`Registry entry not found: ${registryId}`);
+    let attachOk = false;
+    let attachError: Error | undefined;
+    if (input.approved) {
+      try {
+        if (serverIdForAttach.startsWith('registry:')) {
+          const registryId = serverIdForAttach.slice('registry:'.length);
+          const entry = findRegistryEntry(registryId);
+          if (!entry) {
+            throw new Error(`Registry entry not found: ${registryId}`);
+          }
+          // Re-check by URL/command in case another path already
+          // instantiated this entry between search_catalog and
+          // resolve-approval. buildSearchCorpus dedupes at search
+          // time but a parallel attach via the settings UI could
+          // race in between.
+          const existing = context.repo
+            .listMcpServers(input.organizationId)
+            .find((s) => findRegistryMatch(s)?.id === entry.id);
+          if (existing) {
+            serverIdForAttach = existing.id;
+          } else {
+            const created = mcpRegistry.create({
+              organizationId: input.organizationId,
+              name: entry.name,
+              description: entry.description,
+              category: entry.category,
+              transport: entry.defaults.transport,
+              command: entry.defaults.command,
+              args: entry.defaults.args,
+              url: entry.defaults.url,
+              isolation: entry.defaults.isolation,
+              createdBy: input.resolverMemberId ?? 'system:attachment_request',
+            });
+            serverIdForAttach = created.id;
+          }
         }
-        // Re-check by URL/command in case another path already
-        // instantiated this entry between search_catalog and
-        // resolve-approval. buildSearchCorpus dedupes at search
-        // time but a parallel attach via the settings UI could
-        // race in between.
-        const existing = context.repo
-          .listMcpServers(input.organizationId)
-          .find((s) => findRegistryMatch(s)?.id === entry.id);
-        if (existing) {
-          serverIdForAttach = existing.id;
-        } else {
-          const created = mcpRegistry.create({
-            organizationId: input.organizationId,
-            name: entry.name,
-            description: entry.description,
-            category: entry.category,
-            transport: entry.defaults.transport,
-            command: entry.defaults.command,
-            args: entry.defaults.args,
-            url: entry.defaults.url,
-            isolation: entry.defaults.isolation,
-            createdBy: input.resolverMemberId ?? 'system:attachment_request',
-          });
-          serverIdForAttach = created.id;
-        }
-      }
-      if (input.approved) {
         if (input.payload.target === 'channel') {
           mcpRegistry.attachServerToChannel({
             organizationId: input.organizationId,
@@ -946,7 +957,21 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
             mcpServerId: serverIdForAttach,
           });
         }
+        attachOk = true;
+      } catch (err) {
+        attachError = err instanceof Error ? err : new Error(String(err));
+        console.warn(
+          '[attachment-approval] attach failed; approval already resolved, audit will fire with resolution=attach_failed',
+          attachError,
+        );
       }
+    }
+
+    // Audit emit ALWAYS runs, in its own try. The connector-audit
+    // writer is itself best-effort (PR 8) so the inner saveAuditEvent
+    // can drop without throwing, but we still wrap defensively here
+    // so a future writer-level throw can't take down the closure.
+    try {
       attachmentAuditWriter.attachmentRequestResolved({
         organizationId: input.organizationId,
         resolverMemberId: input.resolverMemberId,
@@ -955,23 +980,28 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
         // Audit carries the RESOLVED serverId (post-instantiation
         // for registry entries) so operators can grep their audit
         // log without translating registry:<id> synthetic ids
-        // separately.
+        // separately. On attach failure, this is the
+        // partially-resolved id (the registry instantiation may
+        // have succeeded before the actual attach threw).
         serverId: serverIdForAttach,
         target: input.payload.target,
         targetId: input.payload.targetId,
-        resolution: input.approved
-          // PR 11 ships single-grant approval — the action grant
-          // defaults to "Allow once" and re-prompts at the standard
-          // §5.2 card on the next invoke. PR 11.5 will add the
-          // two-grant card variant; until then the audit value is
-          // always `attached_allow_action` for approvals.
-          ? 'attached_allow_action'
-          : 'rejected',
+        resolution: !input.approved
+          ? 'rejected'
+          : attachOk
+            // PR 11 ships single-grant approval — the action grant
+            // defaults to "Allow once" and re-prompts at the
+            // standard §5.2 card on the next invoke. PR 11.5 will
+            // add the two-grant card variant; until then the audit
+            // value is always `attached_allow_action` for
+            // successful approvals.
+            ? 'attached_allow_action'
+            : 'attach_failed',
       });
-    } catch (err) {
+    } catch (auditErr) {
       console.warn(
-        '[attachment-approval] failed to write attachment row; approval row already resolved',
-        err,
+        '[attachment-approval] audit row emit failed; attach state preserved in attachment row',
+        auditErr,
       );
     }
   });

@@ -322,6 +322,74 @@ describe('request_attachment — §17.5.6 approval card', () => {
     expect(repo.saved.channel).toHaveLength(0);
   });
 
+  it('PR 11 (bot fix) — resolves a human-readable serverDisplayName from registry:<id> synthetic ids', async () => {
+    // Bot Round 2 finding: the approval payload was missing a
+    // server-display-name field, so the frontend approval card
+    // fell back to opaque ids like "registry:fetch" instead of
+    // "Fetch". request_attachment now resolves the label at request
+    // time and passes it through. For registry:<id>, the lookup hits
+    // CURATED_REGISTRY directly.
+    const repo = stubRepo({});
+    const requestAttachmentApproval = vi.fn(() => makeApprovalRequest('apr_99'));
+    const tools = buildDiscoveryTools({
+      organizationId: 'org_test',
+      memberId: 'mem_test',
+      runId: 'run_test',
+      spiritRole: 'worker',
+      tools: baseToolsStub as never,
+      repo,
+      requestAttachmentApproval,
+    });
+    await expect(
+      tools.request_attachment.execute!(
+        { server_id: 'registry:fetch', reason: 'need to read a web page' },
+        { toolCallId: 'tc', messages: [] } as never,
+      ),
+    ).rejects.toMatchObject({ approvalId: 'apr_99' });
+    expect(requestAttachmentApproval.mock.calls[0]![0]).toMatchObject({
+      serverId: 'registry:fetch',
+      // "Fetch" is the curated registry entry's canonical name —
+      // the operator sees this in the approval card instead of
+      // the opaque "registry:fetch" id.
+      serverDisplayName: 'Fetch',
+    });
+  });
+
+  it('PR 11 (bot fix) — resolves serverDisplayName via safeServerLabel for org-attached servers', async () => {
+    // For an org MCP that matches a registry entry by URL / package
+    // signature, safeServerLabel returns the curated registry name.
+    // For an un-matched (custom) server, the opaque
+    // "Custom MCP (<id-prefix>)" label survives.
+    const fetchOrg = makeServer({
+      id: 'srv_fetch_org',
+      name: 'Fetch',
+      command: 'uvx',
+      args: ['mcp-server-fetch'],
+      url: undefined,
+    });
+    const repo = stubRepo({ orgServers: [fetchOrg] });
+    const requestAttachmentApproval = vi.fn(() => makeApprovalRequest('apr_xy'));
+    const tools = buildDiscoveryTools({
+      organizationId: 'org_test',
+      memberId: 'mem_test',
+      runId: 'run_test',
+      spiritRole: 'worker',
+      tools: baseToolsStub as never,
+      repo,
+      requestAttachmentApproval,
+    });
+    await expect(
+      tools.request_attachment.execute!(
+        { server_id: 'srv_fetch_org', reason: 'web read' },
+        { toolCallId: 'tc', messages: [] } as never,
+      ),
+    ).rejects.toMatchObject({ approvalId: 'apr_xy' });
+    expect(requestAttachmentApproval.mock.calls[0]![0]).toMatchObject({
+      serverId: 'srv_fetch_org',
+      serverDisplayName: 'Fetch',
+    });
+  });
+
   it("returns a clean error when no approval callback is wired (legacy V2 callsites)", async () => {
     // PR 11 keeps requestAttachmentApproval optional so existing tests
     // + the wake-run path that pre-dates PR 11 don't break. When it's

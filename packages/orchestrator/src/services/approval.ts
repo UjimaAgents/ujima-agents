@@ -126,6 +126,7 @@ export class ApprovalService {
     toolCallId: string;
     requestedBy: string;
     serverId: string;
+    serverDisplayName: string;
     target: 'agent' | 'channel';
     targetId: string;
     reason: string;
@@ -133,6 +134,11 @@ export class ApprovalService {
   }): ApprovalRequest {
     const payload = JSON.stringify({
       serverId: input.serverId,
+      // PR 11 (bot fix) — human-readable label resolved at request
+      // time. Persisted in the payload so the approval card can
+      // render "Fetch" instead of "registry:fetch". Without this the
+      // frontend parser falls back to the raw id.
+      serverDisplayName: input.serverDisplayName,
       target: input.target,
       targetId: input.targetId,
       agentReason: input.reason,
@@ -144,7 +150,14 @@ export class ApprovalService {
       toolCallId: input.toolCallId,
       requestedBy: input.requestedBy,
       // resourceType/action reuse the MCP values — the attachment-
-      // vs-invocation differentiation lives in the reason prefix.
+      // vs-invocation differentiation lives in the reason prefix
+      // (`attachment_request_scope=`). Adding a new ToolAction +
+      // ResourceType enum value would ripple through every
+      // classifier, audit query, and governance rule for one tool.
+      // The reject-fanout discriminator in resolveApproval inspects
+      // the reason prefix instead so attachment_request rows don't
+      // get swept up with unrelated MCP invocation approvals on the
+      // same run.
       resourceType: 'mcp',
       action: 'mcp',
       resourcePath: `attachment_request:${input.serverId}:${input.target}:${input.targetId}`,
@@ -250,8 +263,18 @@ export class ApprovalService {
               input.reason ?? '',
             )
           : input.reason;
+    // PR 11 (bot fix) — when `existing` is an attachment_request row
+    // (detected via reason prefix), suppress the reject-by-runId
+    // fanout. Otherwise rejecting an attachment_request approval
+    // sweeps up every unrelated MCP invocation approval on the same
+    // run (the reject path normally fans out so a single rejection
+    // tears down sibling approvals together). attachment_request
+    // rows are independent decisions and never share consent state
+    // with invocations.
+    const existingIsAttachmentRequest =
+      !!existing && existing.reason.startsWith('attachment_request_scope=');
     const matchingPendingApprovals =
-      existing?.runId && input.status === 'rejected'
+      existing?.runId && input.status === 'rejected' && !existingIsAttachmentRequest
         ? this.repo
             .listPendingApprovals(input.organizationId)
             .filter((approval) => approval.runId === existing.runId)

@@ -870,4 +870,97 @@ describe('ApprovalService', () => {
     });
     expect(calls).toEqual([{ approved: false, target: 'channel' }]);
   });
+
+  it('PR 11 (bot fix) — rejecting an attachment_request does NOT fan out to unrelated MCP approvals on the same run', async () => {
+    // Bot Round 2 finding: requestAttachmentApproval reuses
+    // resourceType='mcp' / action='mcp', which puts attachment_request
+    // rows in the same shape as normal connector invocation approvals.
+    // The standard reject path fans out by runId — rejecting one MCP
+    // approval cascades to every other pending MCP approval on the
+    // run. Without a discriminator, rejecting an attachment_request
+    // would also reject any pending invoke_connector_tool approvals
+    // on the same run, which is wrong: attachment decisions are
+    // independent.
+    //
+    // The fix narrows the fanout: when `existing.reason` starts with
+    // the attachment_request_scope prefix, the reject fanout is
+    // suppressed and only the attachment_request row is resolved.
+    // Sibling MCP invocation approvals stay pending.
+    const attachmentPayload = {
+      serverId: 'srv_censys',
+      serverDisplayName: 'Censys',
+      target: 'agent' as const,
+      targetId: 'mem_snoop',
+      agentReason: 'why',
+      approvalId: 'ap-attach',
+    };
+    const attachmentReason = `attachment_request_scope=${encodeURIComponent(
+      JSON.stringify(attachmentPayload),
+    )}`;
+    const attachmentRow: ApprovalRequest = {
+      id: 'ap-attach',
+      organizationId: 'org-1',
+      runId: 'run-shared',
+      toolCallId: 'tc-attach',
+      requestedBy: 'mem_snoop',
+      resourceType: 'mcp',
+      resourcePath: 'attachment_request:srv_censys:agent:mem_snoop',
+      action: 'mcp',
+      status: 'pending',
+      reason: attachmentReason,
+      createdAt: '2026-06-10T00:00:00.000Z',
+      resolvedAt: undefined,
+    };
+    const siblingInvocation: ApprovalRequest = {
+      id: 'ap-invoke',
+      organizationId: 'org-1',
+      runId: 'run-shared',
+      toolCallId: 'tc-invoke',
+      requestedBy: 'mem_snoop',
+      resourceType: 'mcp',
+      resourcePath: 'srv_ddg:search',
+      action: 'mcp',
+      status: 'pending',
+      reason: `Tool action requires approval;scope=${encodeURIComponent(
+        'connector:{"serverId":"srv_ddg","toolName":"search","args":{}}',
+      )}`,
+      createdAt: '2026-06-10T00:00:00.000Z',
+      resolvedAt: undefined,
+    };
+    // On rejection the path goes through deleteApproval (the
+    // resolved row is built locally via ApprovalRequestSchema.parse,
+    // so resolveApproval isn't invoked). We track deleteApproval
+    // calls instead — those are the rows the fanout actually
+    // tears down.
+    const deleted = new Set<string>();
+    const repo = {
+      listPendingApprovals: () => [attachmentRow, siblingInvocation],
+      saveApproval: () => attachmentRow,
+      getRun: () => ({ id: 'run-shared', threadId: 'thread-1' }),
+      getApproval: (_org: string, id: string) =>
+        id === 'ap-attach' ? attachmentRow : siblingInvocation,
+      resolveApproval: () => attachmentRow,
+      deleteApproval: (_org: string, id: string) => {
+        deleted.add(id);
+      },
+    } as never;
+    const service = new ApprovalService(
+      repo,
+      { emit: () => undefined } as never,
+      () => undefined,
+    );
+
+    await service.resolveApproval({
+      organizationId: 'org-1',
+      approvalId: 'ap-attach',
+      status: 'rejected',
+      reason: 'not now',
+    });
+
+    // ONLY the attachment_request row is torn down. The sibling
+    // MCP invocation approval on the same run stays pending —
+    // pre-fix this set would have contained both ids because the
+    // runId fanout would have swept the sibling in too.
+    expect(deleted).toEqual(new Set(['ap-attach']));
+  });
 });

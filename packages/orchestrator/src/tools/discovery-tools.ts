@@ -115,6 +115,14 @@ export interface AttachmentApprovalRequest {
   toolCallId: string;
   requestedBy: string;
   serverId: string;
+  /**
+   * PR 11 (bot fix) — human-readable label for the server. Resolved
+   * at request_attachment time from either the org's existing MCP
+   * row (safeServerLabel) or the curated registry entry (entry.name).
+   * Persisted in the approval payload so the frontend approval card
+   * shows "Fetch" instead of opaque ids like "registry:fetch".
+   */
+  serverDisplayName: string;
   target: 'agent' | 'channel';
   targetId: string;
   reason: string;
@@ -176,6 +184,36 @@ const RequestAttachmentSchema = z.object({
         "is reading this to decide whether to grant.",
     ),
 });
+
+/**
+ * PR 11 (bot fix) — resolves a §17.5.7-safe human-readable label
+ * for any serverId the agent might pass to request_attachment.
+ *
+ * Real org serverId → safeServerLabel(server, registryMatch). If
+ *   the server matches a CURATED_REGISTRY entry, the entry's
+ *   canonical name; otherwise the opaque "Custom MCP (id-prefix)".
+ * registry:<id>      → entry.name from CURATED_REGISTRY lookup.
+ * Unknown id         → the raw id as the last-ditch fallback. This
+ *   path means the agent passed a serverId that doesn't exist
+ *   anywhere; the approval card will surface that visibly and the
+ *   operator can reject.
+ *
+ * Encoded into the approval payload so the frontend card renders
+ * the label instead of opaque ids like "registry:fetch".
+ */
+function resolveServerDisplayName(
+  deps: DiscoveryToolDeps,
+  serverId: string,
+): string {
+  if (serverId.startsWith('registry:')) {
+    const id = serverId.slice('registry:'.length);
+    const entry = CURATED_REGISTRY.find((e) => e.id === id);
+    return entry?.name ?? serverId;
+  }
+  const server = deps.repo.getMcpServer(deps.organizationId, serverId);
+  if (!server) return serverId;
+  return safeServerLabel(server, findRegistryMatch(server)).name;
+}
 
 // ───────────────────────────────────────────────────────────────────────
 // search_catalog — scoring
@@ -471,6 +509,18 @@ export function buildDiscoveryTools(deps: DiscoveryToolDeps): DiscoveryToolSet {
               ),
             );
           }
+          // Resolve a human-readable label for the approval card.
+          // For real org serverIds, use safeServerLabel against the
+          // server row (§17.5.7 sanitized). For registry:<id>
+          // synthetic ids (marketplace-only entries), use the
+          // curated registry entry's name. Both branches stay inside
+          // §17.5.7 — server.name / server.description are never
+          // exposed to the operator without going through the safe
+          // label or curated-registry gate first.
+          const serverDisplayName = resolveServerDisplayName(
+            deps,
+            args.server_id,
+          );
           const approvalId = `apr_${randomUUID()}`;
           const approval = deps.requestAttachmentApproval({
             organizationId: deps.organizationId,
@@ -478,6 +528,7 @@ export function buildDiscoveryTools(deps: DiscoveryToolDeps): DiscoveryToolSet {
             toolCallId,
             requestedBy: deps.memberId,
             serverId: args.server_id,
+            serverDisplayName,
             target,
             targetId,
             reason: args.reason,

@@ -43,6 +43,12 @@ export function approvalToCard(
     try {
       const decoded = JSON.parse(attachmentRaw) as {
         serverId?: string;
+        // PR 11 (bot fix) — daemon resolves this at request_attachment
+        // time via safeServerLabel (for org MCPs) or the curated
+        // registry entry name (for registry:<id> synthetic ids).
+        // Carried through the approval payload so the card shows
+        // "Fetch" rather than "registry:fetch".
+        serverDisplayName?: string;
         target?: "agent" | "channel";
         targetId?: string;
         agentReason?: string;
@@ -58,12 +64,11 @@ export function approvalToCard(
             : undefined;
         attachmentRequestScope = {
           serverId: decoded.serverId,
-          // The server display name comes from the registry/safeLabel
-          // pipeline in the daemon; the frontend doesn't have the
-          // McpServer object handy here, so fall back to the serverId
-          // when no display name was passed. Operators can still see
-          // the full id which is what gets sent to attachment-write.
-          serverDisplayName: decoded.serverId,
+          // Prefer the daemon-resolved display name. Falls back to
+          // serverId for back-compat with approval rows written
+          // before this fix landed (rare — only between the bot
+          // review and the deploy window).
+          serverDisplayName: decoded.serverDisplayName ?? decoded.serverId,
           target: decoded.target,
           targetId: decoded.targetId,
           targetDisplayName:

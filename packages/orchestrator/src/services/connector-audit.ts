@@ -203,8 +203,18 @@ export interface AttachmentRequestResolvedInput {
    *   `attached_allow_action` — grant 1 + grant 2 both yes
    *   `attached_action_rejected` — grant 1 yes, grant 2 no (rare)
    *   `rejected` — grant 1 no (attachment denied)
+   *   `attach_failed` — operator approved but the attachment write
+   *     threw post-resolution (registry instantiation failed, name
+   *     clash, duplicate row, transient repo error). Operators see
+   *     this in the audit log + can retry via settings UI. The
+   *     approval row stays resolved; the attachment just didn't
+   *     land. Without this distinct outcome the failure was silent.
    */
-  resolution: 'attached_allow_action' | 'attached_action_rejected' | 'rejected';
+  resolution:
+    | 'attached_allow_action'
+    | 'attached_action_rejected'
+    | 'rejected'
+    | 'attach_failed';
 }
 
 /**
