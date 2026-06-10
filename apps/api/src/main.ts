@@ -247,6 +247,7 @@ async function main(): Promise<void> {
     },
   });
   await transport.listen();
+  transport.startBackgroundServices();
 
   console.info(chalk.cyan(STARTUP_SPLASH));
   console.info(`   ${chalk.green('✓')} ${chalk.bold('System Ready')}`);

@@ -25,6 +25,7 @@ import type {
   TeamStore,
   WorkspaceService,
 } from "@ujima/orchestrator";
+import { isTelegramPollingEnabled } from "@ujima/orchestrator";
 import type {UjimaEvent} from "@ujima/shared";
 import {
   ApiErrorSchema,
@@ -63,6 +64,10 @@ import {registerAgentRoutes} from "./routes/agents.js";
 import {registerChannelMemberModeRoutes} from "./routes/channel-member-modes.js";
 import {registerOauthRoutes} from "./routes/oauth.js";
 import {registerScheduleRoutes} from "./routes/schedules.js";
+import {
+  registerNotificationRoutes,
+  registerTelegramWebhookRoute,
+} from "./routes/notifications.js";
 import {registerGoalRoutes} from "./routes/goals.js";
 
 const WS_QUEUE_CAP = 256;
@@ -92,6 +97,10 @@ export interface TransportOptions {
       teamStore: TeamStore;
       onboarding: OnboardingService;
       scheduler?: SchedulerService;
+      notifications: {
+        startPolling(): void;
+        stopPolling(): void;
+      };
       settings: SettingsService;
       workspaces: WorkspaceService;
       taskSessions: TaskSessionService;
@@ -109,6 +118,8 @@ export interface TransportOptions {
 export interface Transport {
   readonly url: string;
   listen(): Promise<void>;
+  /** Start scheduler + notification polling. Call only in long-running daemons. */
+  startBackgroundServices(): void;
   close(): Promise<void>;
 }
 
@@ -139,6 +150,7 @@ export function createTransport(opts: TransportOptions): Transport {
 
   fastify.setValidatorCompiler(validatorCompiler);
   fastify.setSerializerCompiler(serializerCompiler);
+  let notifications: { startPolling(): void; stopPolling(): void } | undefined;
 
   // Documentation (Public)
   fastify.register(swagger, {
@@ -242,10 +254,32 @@ export function createTransport(opts: TransportOptions): Transport {
 
   io.on("connection", (socket) => onSocketConnection(socket, host));
 
+  let services:
+    | ReturnType<NonNullable<TransportOptions["apiServices"]>["buildServices"]>
+    | undefined;
+  if (opts.apiServices) {
+    const realtime = new RealtimeService(io, opts.apiServices.repo);
+    services = opts.apiServices.buildServices(realtime);
+    scheduler = services.scheduler;
+    notifications = services.notifications;
+  }
+
   // Public APIs (No Auth Required)
   fastify.register(
     async (api) => {
       registerOauthRoutes(api);
+      if (opts.apiServices && services) {
+        registerTelegramWebhookRoute(api, {
+          repo: opts.apiServices.repo,
+          resolveApproval: async (orgId, approvalId, status) => {
+            await services.approvals.resolveApproval({
+              organizationId: orgId,
+              approvalId,
+              status,
+            });
+          },
+        });
+      }
     },
     {prefix: "/api"}
   );
@@ -269,10 +303,7 @@ export function createTransport(opts: TransportOptions): Transport {
       registerAgentRoutes(api, host);
       registerRoleRoutes(api);
 
-      if (opts.apiServices) {
-        const realtime = new RealtimeService(io, opts.apiServices.repo);
-        const services = opts.apiServices.buildServices(realtime);
-
+      if (opts.apiServices && services) {
         registerWorkspaceRoutes(api, {
           host,
           auth: services.auth,
@@ -341,6 +372,10 @@ export function createTransport(opts: TransportOptions): Transport {
           repo: opts.apiServices.repo,
           auth: services.auth,
         });
+        registerNotificationRoutes(api, {
+          repo: opts.apiServices.repo,
+          auth: services.auth,
+        });
         registerGoalRoutes(api, {
           repo: opts.apiServices.repo,
           auth: services.auth,
@@ -351,8 +386,6 @@ export function createTransport(opts: TransportOptions): Transport {
           repo: opts.apiServices.repo,
           auth: services.auth,
         });
-        scheduler = services.scheduler;
-        scheduler?.start();
       }
     },
     {prefix: "/api"}
@@ -379,8 +412,15 @@ export function createTransport(opts: TransportOptions): Transport {
       readyUrl = await fastify.listen({host: bindHost, port});
       logger.info("transport: listening", {url: readyUrl});
     },
+    startBackgroundServices() {
+      scheduler?.start();
+      if (isTelegramPollingEnabled()) {
+        notifications?.startPolling();
+      }
+    },
     async close() {
       scheduler?.stop();
+      notifications?.stopPolling();
       io.disconnectSockets(true);
       io.close();
       await fastify.close();

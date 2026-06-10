@@ -375,6 +375,31 @@ export class ToolServiceImpl implements ToolService {
     }
   }
 
+  private shouldRequireApproval(
+    team: AgentTeamHandle,
+    invocation: ToolInvocationInput,
+    policyRequiresApproval: boolean,
+  ): boolean {
+    if (!policyRequiresApproval) return false;
+
+    const policies = team.config.policies ?? {};
+    const writesApprovalEnabled = policies.requireApprovalForWrites !== false;
+    const shellApprovalEnabled = policies.requireApprovalForShell !== false;
+
+    if (
+      invocation.toolId === "shell" ||
+      (invocation.resourceType === "shell" && invocation.action === "execute")
+    ) {
+      return shellApprovalEnabled;
+    }
+
+    if (invocation.action === "write") {
+      return writesApprovalEnabled;
+    }
+
+    return policyRequiresApproval;
+  }
+
   private finishPathEscapeFailure(
     invocation: ToolInvocationInput,
     rooms: string[],
@@ -742,7 +767,9 @@ export class ToolServiceImpl implements ToolService {
       ...invocation,
       resourcePath:
         resolvePathOperands
-          ? resolvedArgs?.find((arg) => typeof arg === "string" && !arg.startsWith("-")) ??
+          ? resolvedArgs?.find(
+              (arg: unknown) => typeof arg === "string" && !arg.startsWith("-"),
+            ) ??
             resolvedCwd
           : resolvedCwd,
       input: nextInput,

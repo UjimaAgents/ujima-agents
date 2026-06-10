@@ -79,7 +79,8 @@ export function GovernanceDefaultsPanel({ value, onSave }: Props) {
                   // If the user reverted back to the persisted value,
                   // drop the edit so dirty flips back to false.
                   if (next === value[cls]) {
-                    const { [cls]: _, ...rest } = prev;
+                    const rest = { ...prev };
+                    delete rest[cls];
                     return rest;
                   }
                   return { ...prev, [cls]: next };

@@ -96,11 +96,13 @@ export interface ConversationServiceOptions {
   onMemberAlerted?: (input: MemberAlertInput) => Promise<void> | void;
   mentionFanoutCap?: number;
   mentionWindowMs?: number;
+  onMessagePublished?: (message: Message) => void | Promise<void>;
 }
 
 export class ConversationService {
   private readonly archiveStore?: ArchivedChannelMessageStore;
   private readonly onMemberAlerted?: (input: MemberAlertInput) => Promise<void> | void;
+  private readonly onMessagePublished?: (message: Message) => void | Promise<void>;
   private readonly mentionFanoutCap: number;
   private readonly mentionWindowMs: number;
   private readonly mentionQuota: MentionQuota;
@@ -115,6 +117,7 @@ export class ConversationService {
   ) {
     this.archiveStore = options.archiveStore;
     this.onMemberAlerted = options.onMemberAlerted;
+    this.onMessagePublished = options.onMessagePublished;
     this.mentionFanoutCap = options.mentionFanoutCap ?? 10;
     this.mentionWindowMs = options.mentionWindowMs ?? 60_000;
     this.mentionQuota = new MentionQuota(this.mentionFanoutCap, this.mentionWindowMs);
@@ -398,6 +401,10 @@ export class ConversationService {
         this.fanout('alertDirectMessageParticipants', this.alertDirectMessageParticipants(emittedMessage, channel));
       }
       this.fanout('alertChannelReaders', this.alertChannelReaders(emittedMessage, channel, resolvedMentions));
+
+      if (this.onMessagePublished) {
+        this.fanout('onMessagePublished', Promise.resolve(this.onMessagePublished(emittedMessage)));
+      }
     }
     return emittedMessage;
   }

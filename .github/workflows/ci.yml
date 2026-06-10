@@ -28,6 +28,9 @@ jobs:
 
   ci:
     runs-on: ubuntu-latest
+    env:
+      UJIMA_TELEGRAM_POLLING: '0'
+
     steps:
       - uses: actions/checkout@v4
 

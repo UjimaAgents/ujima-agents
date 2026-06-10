@@ -57,6 +57,19 @@ export interface GovernanceRuleRow {
   updatedBy: string | null;
 }
 
+/** Matches `@ujima/runtime-core` notification channel rows (kept here to avoid a circular import). */
+export interface NotificationChannelRow {
+  id: string;
+  organizationId: string;
+  provider: 'telegram' | 'whatsapp' | 'webhook';
+  configJson: string;
+  enabled: boolean;
+  notifyMessages: boolean;
+  notifyApprovals: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface PaginatedTaskSessions {
   data: TaskSession[];
   nextCursor?: string;
@@ -271,6 +284,10 @@ export interface ApiRepository extends ConversationRepository {
   listScheduledJobs(organizationId: string): ScheduledJob[];
   deleteScheduledJob(organizationId: string, jobId: string): void;
   listDueJobsGlobally(): ScheduledJob[];
+  listNotificationChannels(organizationId: string): NotificationChannelRow[];
+  getNotificationChannel(organizationId: string, channelId: string): NotificationChannelRow | null;
+  saveNotificationChannel(channel: NotificationChannelRow): void;
+  deleteNotificationChannel(organizationId: string, channelId: string): void;
   saveRun(run: RunState): RunState;
   saveRunStep(step: RunStep): RunStep;
   listRunSteps(organizationId: string, runId: string): RunStep[];

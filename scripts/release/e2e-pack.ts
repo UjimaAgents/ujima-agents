@@ -84,6 +84,7 @@ async function main(): Promise<void> {
       WEB_HOST: '127.0.0.1',
       PATH: `${join(installRoot, 'bin')}:${process.env.PATH ?? ''}`,
       UJIMA_DEV: '1',
+      UJIMA_TELEGRAM_POLLING: '0',
     },
     stdout: 'pipe',
     stderr: 'pipe',

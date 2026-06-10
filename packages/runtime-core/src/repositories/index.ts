@@ -244,6 +244,13 @@ import {
   saveMemory as writeMemory,
 } from './memory.js';
 import {
+  deleteNotificationChannel as removeNotificationChannel,
+  getNotificationChannel as readNotificationChannel,
+  listNotificationChannels as readNotificationChannels,
+  saveNotificationChannel as writeNotificationChannel,
+  type NotificationChannelRow,
+} from './notification-channels.js';
+import {
   deleteAgentMcpAttachment as removeAgentMcpAttachment,
   deleteMcpServer as removeMcpServer,
   getMcpServer as readMcpServer,
@@ -970,9 +977,17 @@ export class Repository {
   getBootstrapSnapshot = (organizationId?: string): BootstrapSnapshot =>
     readBootstrapSnapshot(this.db, organizationId);
 
+  listNotificationChannels = (organizationId: string): NotificationChannelRow[] =>
+    readNotificationChannels(this.db, organizationId);
+  getNotificationChannel = (organizationId: string, channelId: string): NotificationChannelRow | null =>
+    readNotificationChannel(this.db, organizationId, channelId);
+  saveNotificationChannel = (channel: NotificationChannelRow): void =>
+    writeNotificationChannel(this.db, channel);
+  deleteNotificationChannel = (organizationId: string, channelId: string): void =>
+    removeNotificationChannel(this.db, organizationId, channelId);
+
   listGovernanceRules = (organizationId: string, state?: string): GovernanceRuleRow[] =>
     readGovernanceRules(this.db, organizationId, state);
-
   deleteGovernanceRule = (
     organizationId: string,
     agentId: string,
@@ -980,7 +995,6 @@ export class Repository {
     toolName: string,
   ): GovernanceRuleRow | null =>
     removeGovernanceRule(this.db, organizationId, agentId, mcpId, toolName);
-
   saveGovernanceRule = (rule: {
     id: string;
     organizationId: string;
@@ -999,6 +1013,7 @@ export interface Repository extends PluginRepository {}
 
 export type {
   BootstrapSnapshot,
+  NotificationChannelRow,
   PaginatedChannels,
   PaginatedMessages,
   PaginatedRuns,

@@ -56,12 +56,27 @@ export type ResumeRun = (
   approvalScope?: string,
 ) => Promise<unknown> | unknown;
 
+export type ApprovalRequestedCallback = (input: {
+  organizationId: string;
+  requestedBy: string;
+  resourceType: string;
+  resourcePath: string;
+  action: string;
+  approvalId: string;
+}) => void | Promise<void>;
+
 export class ApprovalService {
+  private onApprovalRequested?: ApprovalRequestedCallback;
+
   constructor(
     private readonly repo: ApiRepository,
     private readonly realtime: RealtimeService,
     private readonly resumeRun: ResumeRun,
   ) {}
+
+  setOnApprovalRequested(callback: ApprovalRequestedCallback | undefined): void {
+    this.onApprovalRequested = callback;
+  }
 
   requestApproval(input: ApprovalRequestInput): ApprovalRequest {
     const runForApproval = this.repo.getRun(input.organizationId, input.runId);
@@ -120,6 +135,15 @@ export class ApprovalService {
       { organizationId: input.organizationId, threadId: threadForRooms, approval },
       rooms,
     );
+
+    this.onApprovalRequested?.({
+      organizationId: input.organizationId,
+      requestedBy: input.requestedBy,
+      resourceType: input.resourceType,
+      resourcePath: input.resourcePath,
+      action: input.action,
+      approvalId: approval.id,
+    });
 
     return approval;
   }

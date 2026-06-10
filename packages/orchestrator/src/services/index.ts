@@ -8,6 +8,7 @@ import {
   orgRoom,
   threadRoom,
   type MemberAlertFailureStage,
+  type Message,
   type WakeReason,
 } from '@ujima/shared';
 import { AsyncMutex } from '../utils/async-mutex.js';
@@ -38,6 +39,7 @@ import { SettingsService } from './settings.js';
 import { WorkspaceService, type WorkspaceCatalog } from './workspace.js';
 import { SpiritService, type ModelResolver, type SpiritMcpPool } from './spirit.js';
 import { SchedulerService } from './scheduler.js';
+import { NotificationService } from './notification.js';
 import { TaskSessionService } from './task-session.js';
 import { filterVisibleMessages } from '../utils/message-visibility.js';
 import type { TeamStore } from './team-store.js';
@@ -247,6 +249,7 @@ export interface ApiServices {
   settings: SettingsService;
   workspaces: WorkspaceService;
   scheduler: SchedulerService;
+  notifications: NotificationService;
   taskSessions: TaskSessionService;
   goals: GoalSystemService;
   spirits: SpiritService;
@@ -640,9 +643,12 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     throw new Error('createDelegateRun not wired');
   };
 
+  // eslint-disable-next-line prefer-const
+  let handleMessagePublished: ((msg: Message) => void) | undefined;
   const conversations = new ConversationService(context.repo, context.realtime, {
     archiveStore: retention,
     onMemberAlerted: (input) => wakeMember(input),
+    onMessagePublished: (msg) => handleMessagePublished?.(msg),
   });
 
   const delegateAgentTurn = async (input: {
@@ -804,7 +810,48 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   const scheduler = new SchedulerService(context.repo, conversations, context.realtime, {
     onTick: () => goals.sweepAllPendingTasks(),
   });
-  const settings = new SettingsService(context.repo, context.teamStore);
+  const notifications = new NotificationService(context.repo);
+  handleMessagePublished = (msg) => {
+    if (msg.senderId !== '__ujima_scheduler__') {
+      const id = msg.channelId ?? msg.threadId;
+      if (!id) return;
+      let channelName = id;
+      if (id.startsWith('self:')) {
+        const m = context.repo.getMember(msg.organizationId, id.slice(5));
+        channelName = m ? `${m.name} (self)` : 'Self';
+      } else if (id.startsWith('dm:')) {
+        const parts = id.split(':');
+        const other = parts[2] || parts[1] || '';
+        const m = other ? context.repo.getMember(msg.organizationId, other) : null;
+        channelName = m ? `DM with @${m.name}` : 'DM';
+      } else {
+        const ch = context.repo.getChannel(msg.organizationId, id);
+        if (ch?.name) channelName = ch.name;
+      }
+      void notifications.notifyMessage({
+        organizationId: msg.organizationId,
+        channelName,
+        senderName: context.repo.getMember(msg.organizationId, msg.senderId)?.name ?? msg.senderId,
+        content: msg.content ?? '',
+      });
+    }
+  };
+  notifications.setApprovalResolver(async (orgId, approvalId, status) => {
+    await approvalsImpl.resolveApproval({ organizationId: orgId, approvalId, status });
+  });
+  approvalsImpl.setOnApprovalRequested((input) => {
+    void notifications.notifyApproval({
+      organizationId: input.organizationId,
+      requesterName:
+        context.repo.getMember(input.organizationId, input.requestedBy)?.name ??
+        input.requestedBy,
+      resourceType: input.resourceType,
+      action: input.action,
+      resourcePath: input.resourcePath,
+      approvalId: input.approvalId,
+    });
+  });
+  const settings = new SettingsService(context.repo, context.teamStore, approvalsImpl);
   const workspaces = new WorkspaceService(
     context.repo,
     context.teamStore,
@@ -888,6 +935,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     goals,
     spirits,
     scheduler,
+    notifications,
     activeSpirits,
     mcpRegistry,
     tierCuration,

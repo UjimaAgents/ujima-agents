@@ -59,4 +59,5 @@ export type {
   PaginatedChannels,
   PaginatedMessages,
   PaginatedRuns,
+  NotificationChannelRow,
 } from './repositories/index';

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { mkdtempSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, normalize } from 'node:path';
 import {
   aggregateProcedures,
   isAgentRestrictedProcedurePath,
@@ -68,9 +68,9 @@ describe('isValidProcedureName', () => {
 describe('proceduresDirFor', () => {
   it('maps every scope to the right directory', () => {
     const root = '/tmp/workspace';
-    expect(proceduresDirFor(root, 'org', '')).toBe('/tmp/workspace/ai/memory-bank/org/procedures');
-    expect(proceduresDirFor(root, 'channel', 'eng')).toBe('/tmp/workspace/ai/memory-bank/channels/eng/procedures');
-    expect(proceduresDirFor(root, 'agent', 'layla')).toBe('/tmp/workspace/ai/memory-bank/agents/layla/procedures');
+    expect(proceduresDirFor(root, 'org', '')).toBe(normalize('/tmp/workspace/ai/memory-bank/org/procedures'));
+    expect(proceduresDirFor(root, 'channel', 'eng')).toBe(normalize('/tmp/workspace/ai/memory-bank/channels/eng/procedures'));
+    expect(proceduresDirFor(root, 'agent', 'layla')).toBe(normalize('/tmp/workspace/ai/memory-bank/agents/layla/procedures'));
   });
   it('sanitises unsafe segments', () => {
     const root = '/tmp/workspace';

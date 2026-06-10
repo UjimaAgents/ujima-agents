@@ -100,6 +100,13 @@ export {
   validateProviderKeys,
 } from './services/index.js';
 export {
+  NotificationService,
+  resolveApprovalFromTelegram,
+  isTelegramPollingEnabled,
+  usesTelegramCallbackWebhook,
+  type ApprovalResolver,
+} from './services/notification.js';
+export {
   ACTIVE_WORKSPACE_SETTING_KEY,
   TEAM_CONFIG_SETTING_KEY,
   persistTeamConfig,

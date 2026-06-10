@@ -65,7 +65,7 @@ export function saveScheduledJob(db: DbHandle, job: ScheduledJob): ScheduledJob 
 export function getScheduledJob(db: DbHandle, organizationId: string, jobId: string): ScheduledJob | null {
   const row = db
     .prepare('SELECT * FROM scheduled_jobs WHERE id = ? AND organization_id = ?')
-    .get(jobId, organizationId) as Row | null;
+    .get(jobId, organizationId) as Row | undefined;
   return row ? rowToScheduledJob(row) : null;
 }
 

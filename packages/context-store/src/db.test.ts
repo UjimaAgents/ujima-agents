@@ -1,9 +1,33 @@
 import { mkdtemp, rm } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import Database from 'better-sqlite3';
 import { afterEach, describe, expect, it } from 'vitest';
 import { openDatabase } from './db';
+
+interface LegacySqliteDatabase {
+  exec(sql: string): void;
+  prepare(sql: string): { run(...params: unknown[]): unknown };
+  close(): void;
+}
+
+type LegacySqliteCtor = new (path: string) => LegacySqliteDatabase;
+
+const requireSqlite = createRequire(__filename);
+
+function resolveLegacyTestDatabase(): LegacySqliteCtor {
+  const isBun = typeof process !== 'undefined' && Boolean(process.versions?.bun);
+  if (isBun) {
+    return (requireSqlite('bun:sqlite') as { Database: LegacySqliteCtor }).Database;
+  }
+  try {
+    return (requireSqlite('node:sqlite') as { DatabaseSync: LegacySqliteCtor }).DatabaseSync;
+  } catch {
+    return requireSqlite('better-sqlite3') as LegacySqliteCtor;
+  }
+}
+
+const LegacyDatabase = resolveLegacyTestDatabase();
 
 describe('database migrations', () => {
   const tempDirs: string[] = [];
@@ -17,7 +41,7 @@ describe('database migrations', () => {
     tempDirs.push(dir);
     const dbPath = join(dir, 'legacy.sqlite');
 
-    const legacy = new Database(dbPath);
+    const legacy = new LegacyDatabase(dbPath);
     legacy.exec(`
       CREATE TABLE schema_migrations (
         id TEXT PRIMARY KEY,
@@ -213,6 +237,31 @@ describe('database migrations', () => {
     upgraded.close();
   });
 
+  it('opens a fresh database with notification channels and message token counts (047 + 048)', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'ujima-db-fresh-047-048-'));
+    tempDirs.push(dir);
+    const dbPath = join(dir, 'fresh.sqlite');
+
+    const db = openDatabase({ dbPath });
+    const migrations = (
+      db.prepare('SELECT id FROM schema_migrations ORDER BY id ASC').all() as { id: string }[]
+    ).map((row) => row.id);
+    expect(migrations).toContain('047_notification_channels');
+    expect(migrations).toContain('048_message_token_counts');
+
+    const notificationTables = (
+      db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='notification_channels'").all() as { name: string }[]
+    ).map((row) => row.name);
+    expect(notificationTables).toEqual(['notification_channels']);
+
+    const messageColumns = (
+      db.prepare('PRAGMA table_info(messages)').all() as { name: string }[]
+    ).map((row) => row.name);
+    expect(messageColumns).toContain('input_tokens');
+    expect(messageColumns).toContain('output_tokens');
+    db.close();
+  });
+
   it('opens a fresh database without re-adding interactive_questions.run_id (037 + 038)', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'ujima-db-fresh-'));
     tempDirs.push(dir);
@@ -287,7 +336,7 @@ describe('database migrations', () => {
     db.close();
 
     // Now delete the migration record for 027 to simulate upgrading from 026 to 027
-    const rawDb = new Database(dbPath);
+    const rawDb = new LegacyDatabase(dbPath);
     rawDb.prepare('DELETE FROM schema_migrations WHERE id = ?').run('033_migrate_self_notes_to_memories');
     // Clear out memory_entries table to make sure migration re-populates it
     rawDb.prepare('DELETE FROM memory_entries').run();

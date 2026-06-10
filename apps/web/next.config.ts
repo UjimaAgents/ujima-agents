@@ -1,9 +1,12 @@
 import type { NextConfig } from "next";
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 /** Monorepo root — keeps standalone output from pulling absolute host paths into the npm tarball. */
-const monorepoRoot = join(import.meta.dirname, "../..");
+const appRoot = dirname(fileURLToPath(import.meta.url));
+const monorepoRoot = join(appRoot, "../..");
+const isReleaseBuild = process.env.RELEASE === "1";
 
 function readUjimaVersion(): string {
   try {
@@ -17,14 +20,16 @@ function readUjimaVersion(): string {
 }
 
 const nextConfig: NextConfig = {
-  output: process.env.RELEASE === "1" ? "standalone" : undefined,
+  output: isReleaseBuild ? "standalone" : undefined,
   productionBrowserSourceMaps: false,
   outputFileTracingRoot: monorepoRoot,
   env: {
     NEXT_PUBLIC_UJIMA_VERSION: readUjimaVersion(),
   },
+  // In dev, scope Turbopack to apps/web so the first browser load does not scan the
+  // entire monorepo (which can peg CPU/RAM on Windows). Release builds keep the repo root.
   turbopack: {
-    root: monorepoRoot,
+    root: isReleaseBuild ? monorepoRoot : appRoot,
   },
 };
 

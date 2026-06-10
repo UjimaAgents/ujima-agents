@@ -16,6 +16,17 @@ export interface DbHandle {
 }
 
 type SqliteDatabaseCtor = new (path: string) => DbHandle;
+interface NodeSqliteStatement {
+  all(...params: unknown[]): unknown[];
+  get(...params: unknown[]): unknown;
+  run(...params: unknown[]): {changes?: number} | undefined;
+}
+interface NodeSqliteDatabase {
+  prepare(sql: string): NodeSqliteStatement;
+  exec(sql: string): void;
+  close(): void;
+}
+type NodeSqliteDatabaseCtor = new (path: string) => NodeSqliteDatabase;
 
 // Resolve the SQLite driver lazily so the import surface stays clean for
 // both runtimes:
@@ -32,10 +43,51 @@ function resolveDatabaseConstructor(): SqliteDatabaseCtor {
   if (cachedConstructor) return cachedConstructor;
   const isBun =
     typeof process !== "undefined" && Boolean(process.versions?.bun);
-  cachedConstructor = isBun
-    ? (requireSqlite("bun:sqlite") as {Database: SqliteDatabaseCtor}).Database
-    : (requireSqlite("better-sqlite3") as SqliteDatabaseCtor);
-  return cachedConstructor;
+  if (isBun) {
+    cachedConstructor = (requireSqlite("bun:sqlite") as {Database: SqliteDatabaseCtor}).Database;
+    return cachedConstructor;
+  }
+
+  try {
+    const DatabaseSync = (requireSqlite("node:sqlite") as {
+      DatabaseSync: NodeSqliteDatabaseCtor;
+    }).DatabaseSync;
+    cachedConstructor = class NodeSqliteHandle implements DbHandle {
+      private readonly db: NodeSqliteDatabase;
+
+      constructor(path: string) {
+        this.db = new DatabaseSync(path);
+      }
+
+      prepare(sql: string): StatementHandle {
+        const stmt = this.db.prepare(sql);
+        return {
+          all: (...params: unknown[]) => stmt.all(...params),
+          get: (...params: unknown[]) => stmt.get(...params),
+          run: (...params: unknown[]) => {
+            const result = stmt.run(...params) as {changes?: number} | undefined;
+            return {changes: result?.changes ?? 0};
+          },
+        };
+      }
+
+      exec(sql: string): void {
+        this.db.exec(sql);
+      }
+
+      pragma(sql: string): unknown {
+        return this.db.exec(`PRAGMA ${sql}`);
+      }
+
+      close(): void {
+        this.db.close();
+      }
+    };
+    return cachedConstructor;
+  } catch {
+    cachedConstructor = requireSqlite("better-sqlite3") as SqliteDatabaseCtor;
+    return cachedConstructor;
+  }
 }
 
 const MIGRATIONS: {id: string; up: string}[] = [
@@ -1150,17 +1202,7 @@ const MIGRATIONS: {id: string; up: string}[] = [
   },
   {
     // Backfill UNIQUE constraints on plugin_installs and
-    // organization_skill_installs. Migration 029 declared them as
-    // table-level UNIQUE clauses, but DBs that had previously applied
-    // the original 026_plugin_registry (before the renumber) created
-    // these tables without the constraint, and `CREATE TABLE IF NOT
-    // EXISTS` is a no-op for existing tables. Without them, the
-    // repository's `INSERT ... ON CONFLICT(...)` statements fail at
-    // SQL parse time with "ON CONFLICT clause does not match any
-    // PRIMARY KEY or UNIQUE constraint", blocking plugin installs.
-    // Dedupe defensively before creating the unique indexes — keeping
-    // the earliest row by rowid — so the migration is safe even on
-    // dogfood DBs that accidentally accumulated duplicates.
+    // organization_skill_installs.
     id: "036_plugin_registry_unique_indexes",
     up: `
       DELETE FROM organization_skill_installs
@@ -1187,11 +1229,6 @@ const MIGRATIONS: {id: string; up: string}[] = [
     `,
   },
   {
-    // Goals, goal_tasks, and interactive_questions back the
-    // GoalSystemService — a single backend service that replaced the
-    // old todo/task promotion stack. The `interactive_questions.run_id` column is in this
-    // migration's table definition; migration 038 below handles older
-    // DBs that applied an early variant of 037 without that column.
     id: "037_goal_task_questions",
     up: `
       CREATE TABLE IF NOT EXISTS goals (
@@ -1249,11 +1286,6 @@ const MIGRATIONS: {id: string; up: string}[] = [
     `,
   },
   {
-    // Backfill `run_id` on `interactive_questions` for DBs that ran an
-    // early variant of 037 before the column was added. The runMigrations
-    // guard skips this on DBs where the column already exists or the
-    // table itself is missing (fresh DBs hit 037 first), so the migration
-    // is a true no-op in the common case.
     id: "038_interactive_questions_run_id",
     up: `ALTER TABLE interactive_questions ADD COLUMN run_id TEXT;`,
   },
@@ -1266,8 +1298,6 @@ const MIGRATIONS: {id: string; up: string}[] = [
     `,
   },
   {
-    // Backfill for DBs that passed 001_initial before channel_member_modes
-    // was added there. No-op on fresh installs.
     id: "040_channel_member_modes_backfill",
     up: `
       CREATE TABLE IF NOT EXISTS channel_member_modes (
@@ -1290,7 +1320,6 @@ const MIGRATIONS: {id: string; up: string}[] = [
   {
     id: "042_member_channel_composite_pkeys",
     up: `
-      -- 1. Migrate members table to composite primary key
       ALTER TABLE members RENAME TO members_old;
       CREATE TABLE members (
         id               TEXT NOT NULL,
@@ -1313,7 +1342,6 @@ const MIGRATIONS: {id: string; up: string}[] = [
       DROP TABLE members_old;
       CREATE INDEX IF NOT EXISTS idx_members_org ON members(organization_id);
 
-      -- 2. Migrate channels table to composite primary key
       ALTER TABLE channels RENAME TO channels_old;
       CREATE TABLE channels (
         id               TEXT NOT NULL,
@@ -1337,14 +1365,6 @@ const MIGRATIONS: {id: string; up: string}[] = [
   {
     id: "043_channel_join_tables_org_scope",
     up: `
-      -- Migration 042 made (organization_id, id) the composite primary key on
-      -- channels and members, which means a bare channel_id/member_id is no
-      -- longer globally unique. The link tables still keyed off the bare ids,
-      -- so deleting or rewriting membership for one tenant's "general" channel
-      -- could wipe or leak rows belonging to another tenant's same-named
-      -- channel. Rebuild the join tables with organization_id baked into the
-      -- primary key and backfill from the parent rows.
-
       ALTER TABLE channel_members RENAME TO channel_members_old;
       CREATE TABLE channel_members (
         organization_id TEXT NOT NULL,
@@ -1425,7 +1445,25 @@ const MIGRATIONS: {id: string; up: string}[] = [
     up: `ALTER TABLE goal_tasks ADD COLUMN last_nudged_at TEXT;`,
   },
   {
-    id: '047_message_token_counts',
+    id: '047_notification_channels',
+    up: `
+      CREATE TABLE IF NOT EXISTS notification_channels (
+        id              TEXT PRIMARY KEY,
+        organization_id TEXT NOT NULL,
+        provider        TEXT NOT NULL CHECK(provider IN ('telegram', 'whatsapp', 'webhook')),
+        config_json     TEXT NOT NULL DEFAULT '{}',
+        enabled         INTEGER NOT NULL DEFAULT 1,
+        notify_messages INTEGER NOT NULL DEFAULT 1,
+        notify_approvals INTEGER NOT NULL DEFAULT 1,
+        created_at      TEXT NOT NULL,
+        updated_at      TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_notification_channels_org
+        ON notification_channels(organization_id);
+    `,
+  },
+  {
+    id: '048_message_token_counts',
     up: `
       ALTER TABLE messages ADD COLUMN input_tokens INTEGER;
       ALTER TABLE messages ADD COLUMN output_tokens INTEGER;
@@ -1625,7 +1663,7 @@ function runMigrations(db: DbHandle): void {
       continue;
     }
     if (
-      m.id === "047_message_token_counts" &&
+      m.id === "048_message_token_counts" &&
       hasColumn(db, "messages", "input_tokens") &&
       hasColumn(db, "messages", "output_tokens")
     ) {
