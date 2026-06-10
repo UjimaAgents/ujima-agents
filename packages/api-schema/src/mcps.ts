@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import {
   AgentMcpAttachmentSchema,
+  ChannelMcpAttachmentSchema,
   GovernancePolicy,
   IdSchema,
   McpAttachmentScopeSchema,
@@ -125,6 +126,29 @@ export const UpdateAttachmentTierRequestSchema = z.object({
 
 export const AgentMcpAttachmentResponseSchema = z.object({
   attachment: AgentMcpAttachmentSchema,
+});
+
+// PR 10 — channel attachments. Parallel shape to the agent-side
+// schemas above. The settings UI uses these on the channels-subtab;
+// the V2 spawn reads channel attachments via the §17.5.3 union step
+// and never goes through the REST surface.
+export const ChannelMcpAttachInputSchema = z.object({
+  organizationId: IdSchema,
+  mcpServerId: IdSchema,
+  scope: McpAttachmentScopeSchema.optional(),
+});
+
+export const ChannelMcpAttachmentsResponseSchema = z.object({
+  attachments: z.array(ChannelMcpAttachmentSchema),
+});
+
+export const ChannelMcpAttachmentResponseSchema = z.object({
+  attachment: ChannelMcpAttachmentSchema,
+});
+
+export const UpdateChannelAttachmentTierRequestSchema = z.object({
+  organizationId: IdSchema,
+  tier: McpAttachmentTierSchema,
 });
 
 // PR 9 — tier curation suggestion responses.
@@ -326,6 +350,12 @@ export type McpToolsResponse = z.infer<typeof McpToolsResponseSchema>;
 export type AgentMcpAttachInput = z.infer<typeof AgentMcpAttachInputSchema>;
 export type AgentMcpAttachmentsResponse = z.infer<typeof AgentMcpAttachmentsResponseSchema>;
 export type AgentMcpAttachmentResponse = z.infer<typeof AgentMcpAttachmentResponseSchema>;
+export type ChannelMcpAttachInput = z.infer<typeof ChannelMcpAttachInputSchema>;
+export type ChannelMcpAttachmentsResponse = z.infer<typeof ChannelMcpAttachmentsResponseSchema>;
+export type ChannelMcpAttachmentResponse = z.infer<typeof ChannelMcpAttachmentResponseSchema>;
+export type UpdateChannelAttachmentTierRequest = z.infer<
+  typeof UpdateChannelAttachmentTierRequestSchema
+>;
 export type UpdateAttachmentTierRequest = z.infer<typeof UpdateAttachmentTierRequestSchema>;
 export type TierCurationSuggestionsResponse = z.infer<typeof TierCurationSuggestionsResponseSchema>;
 export type RefreshTierCurationRequest = z.infer<typeof RefreshTierCurationRequestSchema>;

@@ -34,6 +34,12 @@ export type {
   TierCurationStatus,
   TierCurationSuggestion,
 } from "./org-schemas.js";
+// PR 10 — channel-attached MCPs. Same belt-and-suspenders rationale
+// as the PR 9 block above: the wildcard barrel pulls these through
+// at runtime, but listing them explicitly disarms the downstream
+// static analyzer that walks only named re-exports.
+export { ChannelMcpAttachmentSchema } from "./org-schemas.js";
+export type { ChannelMcpAttachment } from "./org-schemas.js";
 export {
   MODEL_OPTIONS_BY_PROVIDER,
   defaultModelForProvider,

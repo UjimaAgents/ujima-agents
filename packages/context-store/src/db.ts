@@ -1504,6 +1504,48 @@ const MIGRATIONS: {id: string; up: string}[] = [
         ON tier_curation_suggestions(organization_id, status, created_at);
     `,
   },
+  {
+    // Channel-attached MCPs (mcp_connector_dispatch_plan.md §17.5.2 / PR 10).
+    //
+    // The bulk-attachment fix. Per-agent attachments (agent_mcp_attachments)
+    // stay byte-for-byte unchanged — channel attachment is purely additive,
+    // and the V2 spawn's §17.5.3 union/dedup step is what actually folds
+    // these rows into the agent's effective set. With the dispatch flag
+    // off, this table exists but contributes nothing because the legacy
+    // buildMcpToolDefinitions is tier-blind and per-agent-only.
+    //
+    // The `tier` column defaults to 'dispatch' on this table (NOT
+    // 'native' like agent_mcp_attachments). Rationale: channels often
+    // attach to many MCPs at once (10+ on a busy team channel) and
+    // native ballooning is the exact problem §17.5.3 is designed to
+    // prevent. Channel-vs-channel conflicts already resolve to dispatch
+    // in code; making it the default closes the door on accidental
+    // native promotion via the UI too. Promoting to native is a
+    // deliberate operator action via the existing PR 6 tier toggle
+    // (the new channel toggle lands in this PR).
+    //
+    // No CHECK constraint on `tier` or `scope`: SQLite ALTER TABLE
+    // doesn't add them cleanly and the Zod layer
+    // (ChannelMcpAttachmentSchema) enforces both enums on every write.
+    id: '051_channel_mcp_attachments',
+    up: `
+      CREATE TABLE IF NOT EXISTS channel_mcp_attachments (
+        id              TEXT PRIMARY KEY,
+        organization_id TEXT NOT NULL,
+        channel_id      TEXT NOT NULL,
+        mcp_server_id   TEXT NOT NULL,
+        scope           TEXT NOT NULL DEFAULT 'worker',
+        tier            TEXT NOT NULL DEFAULT 'dispatch',
+        created_at      TEXT NOT NULL,
+        updated_at      TEXT NOT NULL,
+        UNIQUE (organization_id, channel_id, mcp_server_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_channel_mcp_attachments_channel
+        ON channel_mcp_attachments(organization_id, channel_id);
+      CREATE INDEX IF NOT EXISTS idx_channel_mcp_attachments_server
+        ON channel_mcp_attachments(organization_id, mcp_server_id);
+    `,
+  },
 ];
 
 export interface DbOptions {
