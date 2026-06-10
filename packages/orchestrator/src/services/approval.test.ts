@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { canonicalizeApprovalGrantScope } from '@ujima/shared';
 import type { ApprovalRequest } from '@ujima/shared';
 import { ApprovalService } from './approval.js';
 

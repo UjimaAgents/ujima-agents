@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { type ToolSet } from 'ai';
 import { buildAgentSystemPrompt, normalizeProviderKey } from '@ujima/framework';
-import { DEFAULT_SPIRIT_TEMPERATURE, type Message, type ReasoningEffort, type SpiritRole, type WakeReason } from '@ujima/shared';
+import { DEFAULT_SPIRIT_TEMPERATURE, type ReasoningEffort, type SpiritRole, type WakeReason } from '@ujima/shared';
 import {
   runAgentLoop,
   runAgentWithRetry,

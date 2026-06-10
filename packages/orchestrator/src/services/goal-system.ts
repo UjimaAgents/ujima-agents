@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import { getDirectMessageThreadId } from '@ujima/shared';
 import type { Goal, GoalTask, GoalTaskStatus, InteractiveQuestion } from '@ujima/shared';
 import type { ApiRepository } from './repository-reader.js';
 import type { ConversationService } from './conversation.js';
@@ -268,7 +267,7 @@ export class GoalSystemService {
     organizationId: string,
     task: GoalTask,
     oldStatus: GoalTaskStatus,
-    moverMemberId: string,
+    _moverMemberId: string,
   ): void {
     if (!this.conversations) return;
     const dedupKey = `moved:${task.id}`;

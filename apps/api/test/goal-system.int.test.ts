@@ -473,23 +473,23 @@ describe('GoalSystemService.updateTask', () => {
 
   // Replaces the deleted commitment-sweeper hand-off behaviour.
   // When Task A completes, every PENDING task whose
-  // depends_on_task_id was A must get a single nudge posted to the
-  // goal's channel @-mentioning its assignee.
+  // depends_on_task_id was A must get a single DM nudge @-mentioning
+  // its assignee.
   it('nudges the dependent task assignee when a blocking task completes', () => {
     const { repo, orgId } = bootstrap();
-    const posts: { channelId: string; senderId: string; body: string; mentions?: string[] }[] = [];
+    const posts: { recipientId: string; senderId: string; content: string; mentions?: string[] }[] = [];
     const conversations = {
-      postToChannel: (args: {
+      sendDirectMessage: (args: {
         organizationId: string;
         senderId: string;
-        channelId: string;
-        body: string;
+        recipientId: string;
+        content: string;
         mentions?: string[];
       }) => {
         posts.push({
-          channelId: args.channelId,
+          recipientId: args.recipientId,
           senderId: args.senderId,
-          body: args.body,
+          content: args.content,
           mentions: args.mentions,
         });
         return undefined as never;
@@ -516,11 +516,11 @@ describe('GoalSystemService.updateTask', () => {
     });
 
     expect(posts).toHaveLength(1);
-    expect(posts[0]?.channelId).toBe('channel-handoff');
+    expect(posts[0]?.recipientId).toBe('agent-b');
     expect(posts[0]?.senderId).toBe('supervisor-1');
     expect(posts[0]?.mentions).toEqual(['agent-b']);
-    expect(posts[0]?.body).toContain('Step 2');
-    expect(posts[0]?.body).toContain('unblocked');
+    expect(posts[0]?.content).toContain('Step 2');
+    expect(posts[0]?.content).toContain('unblocked');
   });
 
   // sweepAllPendingTasks must also poke in-progress tasks that
@@ -529,10 +529,10 @@ describe('GoalSystemService.updateTask', () => {
   // we'd interrupt agents mid-tool-call.
   it('sweep nudges stalled in-progress tasks but skips when assignee has an active run', () => {
     const { repo, orgId } = bootstrap();
-    const posts: { body: string }[] = [];
+    const posts: { content: string }[] = [];
     const conversations = {
-      postToChannel: (args: { body: string }) => {
-        posts.push({ body: args.body });
+      sendDirectMessage: (args: { content: string }) => {
+        posts.push({ content: args.content });
         return undefined as never;
       },
     };
@@ -557,7 +557,7 @@ describe('GoalSystemService.updateTask', () => {
     // First sweep: no active run → must nudge.
     goals.sweepAllPendingTasks();
     expect(posts).toHaveLength(1);
-    expect(posts[0]?.body).toContain('in progress with no update');
+    expect(posts[0]?.content).toContain('in progress with no update');
 
     // Reset dedup so the next sweep can fire, then add an active
     // run for the assignee — must NOT nudge.
@@ -584,7 +584,7 @@ describe('GoalSystemService.updateTask', () => {
     const { repo, orgId } = bootstrap();
     const posts: unknown[] = [];
     const conversations = {
-      postToChannel: () => {
+      sendDirectMessage: () => {
         posts.push(true);
         return undefined as never;
       },

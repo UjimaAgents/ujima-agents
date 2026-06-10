@@ -5,7 +5,6 @@ import { sortByCreatedAt } from './message-sort.js';
 import {
   buildAssistantToolRoundMessages,
   resolveToolCallPayload,
-  toToolResultOutput,
   type ToolRoundCall,
 } from './model-tool-round.js';
 

@@ -6,7 +6,6 @@ import { selectLanguageModel } from '@ujima/llm';
 import type { AgentTeamHandle } from '@ujima/framework';
 import { tool } from 'ai';
 import type {
-  AssistantContent,
   FilePart,
   ImagePart,
   LanguageModel,
