@@ -24,6 +24,7 @@ import { GoalSystemService } from './goal-system.js';
 import { MemoryReviewService } from './memory-review.js';
 import { TrajectoryService } from './trajectory.js';
 import { McpRegistryService } from './mcp-registry.js';
+import { createConnectorAuditWriter } from './connector-audit.js';
 import { createTierCurationService, type TierCurationService } from './tier-curation.js';
 import { GovernanceService } from './governance-service.js';
 import { PluginRegistryService } from './plugin-registry.js';
@@ -763,6 +764,11 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
       modelResolver: spiritModelResolver,
       registry: activeSpirits,
       mcpPool: context.mcpPool,
+      // PR 11 — wire the §17.5.6 attachment-request surface so
+      // request_attachment (registered in V2 spawn) can fire an
+      // approval card via the active ApprovalService.
+      attachmentApprovalRequester: (input) =>
+        approvalsImpl.requestAttachmentApproval(input),
     },
   );
   createDelegateRun = (run) => spirits.createRun(run);
@@ -862,6 +868,55 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   );
   const taskSessions = new TaskSessionService(context.repo, conversations, spirits);
   const mcpRegistry = new McpRegistryService(context.repo);
+
+  // PR 11 — wire the §17.5.6 attachment-request resolution handler.
+  // On approve, write the attachment row (channel or per-agent) via
+  // the same McpRegistryService surface the settings UI uses, so the
+  // audit + UNIQUE-constraint shape stays identical. On reject, emit
+  // the attachment_request_resolved audit row only.
+  const attachmentAuditWriter = createConnectorAuditWriter({ repo: context.repo });
+  approvalsImpl.setAttachmentApprovalResolver((input) => {
+    try {
+      if (input.approved) {
+        if (input.payload.target === 'channel') {
+          mcpRegistry.attachServerToChannel({
+            organizationId: input.organizationId,
+            channelId: input.payload.targetId,
+            mcpServerId: input.payload.serverId,
+          });
+        } else {
+          mcpRegistry.attach({
+            organizationId: input.organizationId,
+            memberId: input.payload.targetId,
+            mcpServerId: input.payload.serverId,
+          });
+        }
+      }
+      attachmentAuditWriter.attachmentRequestResolved({
+        organizationId: input.organizationId,
+        resolverMemberId: input.resolverMemberId,
+        approvalId: input.approvalId,
+        ...(input.runId ? { runId: input.runId } : {}),
+        serverId: input.payload.serverId,
+        target: input.payload.target,
+        targetId: input.payload.targetId,
+        resolution: input.approved
+          // PR 11 ships single-grant approval — the action grant
+          // defaults to "Allow once" and re-prompts at the standard
+          // §5.2 card on the next invoke. PR 11.5 will add the
+          // two-grant card variant; until then the audit value is
+          // always `attached_allow_action` for approvals.
+          ? 'attached_allow_action'
+          : 'rejected',
+      });
+    } catch (err) {
+      console.warn(
+        '[attachment-approval] failed to write attachment row; approval row already resolved',
+        err,
+      );
+    }
+  });
+
   const tierCuration = createTierCurationService({ repo: context.repo });
   const governance = new GovernanceService(context.repo);
   const pluginRegistry = new PluginRegistryService(

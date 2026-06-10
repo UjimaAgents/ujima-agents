@@ -58,6 +58,11 @@ import {
 } from './tool-loop-result.js';
 import type { SpiritMcpPool } from './spirit-types.js';
 import { buildConnectorMetaTools } from '../tools/connector-meta-tools.js';
+import {
+  buildDiscoveryTools,
+  type AttachmentApprovalRequest,
+} from '../tools/discovery-tools.js';
+import type { ApprovalRequest } from '@ujima/shared';
 import type { ToolService } from './tool-service.js';
 import { createConnectorAuditWriter } from './connector-audit.js';
 
@@ -65,6 +70,18 @@ export interface ConnectorSpawnV2Services {
   mcpPool: SpiritMcpPool;
   repo: ApiRepository;
   tools: ToolService;
+  /**
+   * PR 11 — discovery escalation. `request_attachment` calls this
+   * to surface the §17.5.6 approval card. Optional so existing V2
+   * callsites (PR 8/9/10 tests) keep typechecking; without it the
+   * tool returns a clean "not wired" error to the model rather
+   * than throwing.
+   */
+  approvals?: {
+    requestAttachmentApproval: (
+      input: AttachmentApprovalRequest,
+    ) => ApprovalRequest;
+  };
 }
 
 export interface ConnectorSpawnV2Ctx {
@@ -433,10 +450,31 @@ export async function buildMcpToolDefinitionsV2(
     audit,
   });
 
+  // PR 11 — discovery tools also always register. The asking agent
+  // needs `search_catalog` even when its current dispatch tier is
+  // empty: that's literally the bootstrap case ("I have no
+  // connectors attached, what's available?"). Same audit writer
+  // instance so the catalog_search + attachment_request_* events
+  // share the run's audit identity.
+  const discovery = buildDiscoveryTools({
+    organizationId: ctx.organizationId,
+    memberId: ctx.memberId,
+    runId: ctx.runId,
+    threadId: ctx.threadId,
+    taskSessionId: ctx.taskSessionId,
+    spiritRole: ctx.role,
+    tools: services.tools,
+    repo: services.repo,
+    audit,
+    requestAttachmentApproval: services.approvals?.requestAttachmentApproval,
+  });
+
   const toolSet: ToolSet = {
     ...nativeTools,
     get_connector_tools: meta.get_connector_tools,
     invoke_connector_tool: meta.invoke_connector_tool,
+    search_catalog: discovery.search_catalog,
+    request_attachment: discovery.request_attachment,
   } as ToolSet;
 
   return {

@@ -66,6 +66,7 @@ export class SpiritServiceBase {
   protected readonly deferredApprovalResumes = new Set<string>();
   protected readonly runAbortControllers = new Map<string, AbortController>();
   protected runCompletedHook?: (run: RunState) => Promise<void> | void;
+  protected readonly attachmentApprovalRequester?: SpiritServiceOptions['attachmentApprovalRequester'];
 
   constructor(
     protected readonly teamStore: TeamStore,
@@ -86,6 +87,7 @@ export class SpiritServiceBase {
     this.supervisorDebounceMs = options.supervisorDebounceMs ?? DEFAULT_SUPERVISOR_DEBOUNCE_MS;
     this.supervisorTurnCapPerSession =
       options.supervisorTurnCapPerSession ?? DEFAULT_SUPERVISOR_TURN_CAP_PER_SESSION;
+    this.attachmentApprovalRequester = options.attachmentApprovalRequester;
   }
 
   /** Hydrate registry from DB; register oldest→newest so `registeredAt` matches runtime order. */

@@ -220,7 +220,14 @@ ${activeMemories
     let availableConnectors: string | undefined;
     if (isMcpDispatchEnabled(mcpCtx.organizationId) && this.mcpPool) {
       const v2 = await buildMcpToolDefinitionsV2(
-        { mcpPool: this.mcpPool, repo: this.repo, tools: this.tools },
+        {
+          mcpPool: this.mcpPool,
+          repo: this.repo,
+          tools: this.tools,
+          approvals: this.attachmentApprovalRequester
+            ? { requestAttachmentApproval: this.attachmentApprovalRequester }
+            : undefined,
+        },
         mcpCtx,
       );
       mcpToolDefs = v2.toolSet;

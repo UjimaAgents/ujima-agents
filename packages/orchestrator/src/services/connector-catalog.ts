@@ -531,14 +531,35 @@ export function resolveConnectorCatalog(
 // ───────────────────────────────────────────────────────────────────────
 
 /**
+ * PR 11 — render mode for `renderCatalogEntry`. §17.5.7 says the
+ * structural-facts rule applies to BOTH the system-prompt catalog
+ * block (the default 'prompt' mode) AND `search_catalog` tool
+ * results. Both surfaces are model-readable text and the same
+ * curated-vs-structural gate must guard both. The mode only affects
+ * the marker hints — the trust gate (curatedDescription is null →
+ * structural-facts fallback) is identical in both modes.
+ */
+export type RenderMode = 'prompt' | 'search-result';
+
+/**
  * Render one CatalogEntry as a single line. Curated entries get the
  * description verbatim; un-curated entries get structural facts only
- * (name + category + tool count + tool name preview). This is the
- * §17.5.7 sanitization point — the same helper is meant to be reused
- * by `search_catalog` results in PR 4 so one rule covers both
- * surfaces (system prompt + tool result).
+ * (name + category + tool count). This is the §17.5.7 sanitization
+ * point — used by both the system-prompt renderer (default) and
+ * `search_catalog` results so one rule covers both surfaces.
+ *
+ * `search-result` mode additionally surfaces the
+ * `isAttachedToEffectiveSet` hint inline so the asking agent's
+ * `search_catalog` results clearly distinguish "already attached
+ * (just call invoke_connector_tool)" from "not attached (call
+ * request_attachment)". The marker is a compact suffix rather than
+ * a separate field so the same one-line shape works in both modes.
  */
-export function renderCatalogEntry(entry: CatalogEntry): string {
+export function renderCatalogEntry(
+  entry: CatalogEntry,
+  mode: RenderMode = 'prompt',
+  options?: { isAttachedToEffectiveSet?: boolean },
+): string {
   const toolFragment = renderToolCount(entry.toolCount);
   // PR 10 — source marker so the agent (and operators reading the
   // system prompt via trajectory) see why an attachment is in the
@@ -550,8 +571,18 @@ export function renderCatalogEntry(entry: CatalogEntry): string {
   // coupling here.
   const sourceMarker =
     entry.source.kind === 'channel' ? ' (via channel)' : '';
+  // PR 11 — search-result mode adds an "attached" hint so the agent
+  // can tell at a glance whether the match needs request_attachment
+  // first. Suppressed in 'prompt' mode because the prompt-side
+  // catalog by construction only lists attached entries.
+  const attachmentMarker =
+    mode === 'search-result'
+      ? options?.isAttachedToEffectiveSet
+        ? ' [attached]'
+        : ' [not attached]'
+      : '';
   if (entry.curatedDescription) {
-    return `- ${entry.name} [${entry.category}] — ${entry.curatedDescription} (${toolFragment})${sourceMarker}.`;
+    return `- ${entry.name} [${entry.category}] — ${entry.curatedDescription} (${toolFragment})${sourceMarker}${attachmentMarker}.`;
   }
   // Structural facts only. No prose from server.description ever
   // reaches here, and no tool names from server.listTools() either —
@@ -560,7 +591,7 @@ export function renderCatalogEntry(entry: CatalogEntry): string {
   // Discovery of actual tool names happens through
   // get_connector_tools(serverId), a tool result rather than prompt
   // text.
-  return `- ${entry.name} [${entry.category}] — ${toolFragment}${sourceMarker}.`;
+  return `- ${entry.name} [${entry.category}] — ${toolFragment}${sourceMarker}${attachmentMarker}.`;
 }
 
 function renderToolCount(toolCount: number): string {
@@ -570,5 +601,7 @@ function renderToolCount(toolCount: number): string {
 
 export function renderCatalogText(entries: CatalogEntry[]): string {
   if (entries.length === 0) return '';
-  return entries.map(renderCatalogEntry).join('\n');
+  // Arrow wrapper so the array index `.map` passes as second arg
+  // doesn't bind to renderCatalogEntry's `mode` parameter.
+  return entries.map((e) => renderCatalogEntry(e)).join('\n');
 }

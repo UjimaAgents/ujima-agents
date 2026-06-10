@@ -1,5 +1,6 @@
 import type { LanguageModel } from 'ai';
 import type {
+  ApprovalRequest,
   MCPDef,
   Message,
   RunState,
@@ -13,6 +14,7 @@ import type { ConversationService } from './conversation.js';
 import type { AiService } from '../ai-service.js';
 import type { McpRuntimePool } from './mcp-runtime.js';
 import type { ApiRepository } from './repository-reader.js';
+import type { AttachmentApprovalRequest } from '../tools/discovery-tools.js';
 
 export interface ModelResolverInput {
   organizationId: string;
@@ -40,6 +42,16 @@ export interface SpiritServiceOptions {
   mcpResolver?: SpiritMcpResolver;
   supervisorDebounceMs?: number;
   supervisorTurnCapPerSession?: number;
+  /**
+   * PR 11 — direct approval-request callback used by the V2 spawn's
+   * discovery tools (`request_attachment`). Wired from the active
+   * ApprovalService. Optional so tests + legacy callers don't need
+   * to provide one; the discovery tools detect its absence and
+   * disable `request_attachment` rather than throwing.
+   */
+  attachmentApprovalRequester?: (
+    input: AttachmentApprovalRequest,
+  ) => ApprovalRequest;
 }
 
 export type SpiritMcpPool = McpRuntimePool;

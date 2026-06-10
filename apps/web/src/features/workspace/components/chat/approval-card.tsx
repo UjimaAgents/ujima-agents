@@ -40,6 +40,30 @@ export interface ApprovalCardData {
     toolName: string;
     argsPreview: string;
   };
+  /**
+   * PR 11 — §17.5.6 attachment_request. When set, the card renders
+   * the discovery-escalation variant: server info + agent's reason +
+   * target (per-agent | channel). The action grant ("first call") is
+   * deferred to the standard §5.2 card on the next invoke — PR 11
+   * ships single-grant approve/reject only. The two-grant card
+   * variant (attachment + first action together) lands in a
+   * follow-up so PR 11's scope stays inside the ~250-line plan.
+   * Mutually exclusive with connectorScope / shellScope /
+   * filesystemScope.
+   */
+  attachmentRequestScope?: {
+    serverId: string;
+    /** Vendor display name (registry match) or opaque "Custom MCP (id)" label. */
+    serverDisplayName: string;
+    /** 'agent' = attach to the asking agent; 'channel' = attach to a channel. */
+    target: "agent" | "channel";
+    /** Member id (agent target) or channel id (channel target). */
+    targetId: string;
+    /** Human-readable label for the target — agent name or channel name. */
+    targetDisplayName: string;
+    /** The agent's own reasoning text, shown verbatim to the operator. */
+    agentReason: string;
+  };
   status: "pending" | "approved" | "rejected";
   /** Display name for the requesting agent */
   requestedBy: string;
@@ -135,6 +159,53 @@ function ConnectorActionPane({
   );
 }
 
+/**
+ * PR 11 — §17.5.6 attachment_request pane. Shows the operator who's
+ * asking, what server, where it'll land (per-agent or channel), and
+ * the agent's own reason. Visual cousin of ConnectorActionPane but
+ * without the args preview — attachment doesn't carry call arguments,
+ * just consent to add the connector to the effective set.
+ *
+ * The action grant ("Allow first call") is deferred to the standard
+ * §5.2 card on the next invoke. PR 11 ships single-grant approve/
+ * reject; PR 11.5 will fold the two-grant layout in.
+ */
+function AttachmentRequestPane({
+  className,
+  scope,
+}: {
+  className?: string;
+  scope: NonNullable<ApprovalCardData["attachmentRequestScope"]>;
+}) {
+  return (
+    <div
+      className={`rounded-md border border-violet-500/[0.06] bg-white/60 px-3 py-2 dark:border-white/10 dark:bg-white/5 ${className ?? ""}`}
+    >
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[11px] leading-relaxed text-foreground/85">
+        <span>
+          <span className="text-foreground/55">Attach:</span>{" "}
+          <span className="text-foreground">{scope.serverDisplayName}</span>
+        </span>
+        <span className="text-foreground/35">·</span>
+        <span>
+          <span className="text-foreground/55">
+            To {scope.target === "channel" ? "channel" : "agent"}:
+          </span>{" "}
+          <span className="text-foreground">{scope.targetDisplayName}</span>
+        </span>
+      </div>
+      <div className="mt-2 rounded-md bg-white/40 p-2 dark:bg-white/5">
+        <p className="text-[10px] uppercase tracking-wide text-foreground/55">
+          Reason (from agent)
+        </p>
+        <p className="mt-1 text-[12px] leading-snug text-foreground/90">
+          {scope.agentReason}
+        </p>
+      </div>
+    </div>
+  );
+}
+
 export const ApprovalCard = memo(function ApprovalCard({
   data,
   resolving,
@@ -218,6 +289,11 @@ export const ApprovalCard = memo(function ApprovalCard({
           />
         ) : data.connectorScope ? (
           <ConnectorActionPane className="mt-1" scope={data.connectorScope} />
+        ) : data.attachmentRequestScope ? (
+          <AttachmentRequestPane
+            className="mt-1"
+            scope={data.attachmentRequestScope}
+          />
         ) : data.commandPreview ? (
           <div className="mt-1">
             <ExpandableOutput>
