@@ -1,14 +1,17 @@
 import { z } from 'zod';
 import {
   AgentMcpAttachmentSchema,
+  ChannelMcpAttachmentSchema,
   GovernancePolicy,
   IdSchema,
   McpAttachmentScopeSchema,
+  McpAttachmentTierSchema,
   McpIsolationSchema,
   McpServerPublicSchema,
   McpToolDescriptorSchema,
   McpTransportSchema,
   RiskDefaultsSchema,
+  TierCurationSuggestionSchema,
   ToolPolicyState,
   ToolRiskClass,
 } from '@ujima/shared';
@@ -110,6 +113,85 @@ export const AgentMcpAttachmentsResponseSchema = z.object({
   attachments: z.array(AgentMcpAttachmentSchema),
 });
 
+// PR 6 — tier toggle wiring. PATCH body for changing the tier on an
+// existing (member, server) attachment row. Routed to
+// `McpRegistryService.updateAttachmentTier`, which wraps PR 1's
+// `repo.updateAttachmentTier`. Note that `tier='dispatch'` is harmless
+// metadata when the V2 spawn flag is off — the legacy spawn path is
+// tier-blind and treats every attachment as native (§13.3 rollback).
+export const UpdateAttachmentTierRequestSchema = z.object({
+  organizationId: IdSchema,
+  tier: McpAttachmentTierSchema,
+});
+
+export const AgentMcpAttachmentResponseSchema = z.object({
+  attachment: AgentMcpAttachmentSchema,
+});
+
+// PR 10 — channel attachments. Parallel shape to the agent-side
+// schemas above. The settings UI uses these on the channels-subtab;
+// the V2 spawn reads channel attachments via the §17.5.3 union step
+// and never goes through the REST surface.
+export const ChannelMcpAttachInputSchema = z.object({
+  organizationId: IdSchema,
+  mcpServerId: IdSchema,
+  scope: McpAttachmentScopeSchema.optional(),
+});
+
+export const ChannelMcpAttachmentsResponseSchema = z.object({
+  attachments: z.array(ChannelMcpAttachmentSchema),
+});
+
+export const ChannelMcpAttachmentResponseSchema = z.object({
+  attachment: ChannelMcpAttachmentSchema,
+});
+
+export const UpdateChannelAttachmentTierRequestSchema = z.object({
+  organizationId: IdSchema,
+  tier: McpAttachmentTierSchema,
+});
+
+// PR 9 — tier curation suggestion responses.
+// `summary` lets the panel render the "0 demote / 0 promote" zero-state
+// + headline counters without paging the full list.
+export const TierCurationSuggestionsResponseSchema = z.object({
+  suggestions: z.array(TierCurationSuggestionSchema),
+  summary: z.object({
+    pending: z.number().int().min(0),
+    demoteCount: z.number().int().min(0),
+    promoteCount: z.number().int().min(0),
+  }),
+});
+
+// POST body for the admin refresh trigger. All fields optional so a
+// no-body POST runs with the §9.4 defaults.
+export const RefreshTierCurationRequestSchema = z.object({
+  organizationId: IdSchema,
+  windowRuns: z.number().int().min(1).max(1000).optional(),
+  volumePerRunThreshold: z.number().min(0).optional(),
+  errorRateThreshold: z.number().min(0).max(1).optional(),
+});
+
+export const RefreshTierCurationResponseSchema = z.object({
+  suggestionsWritten: z.number().int().min(0),
+  demoteCount: z.number().int().min(0),
+  promoteCount: z.number().int().min(0),
+  runsConsidered: z.number().int().min(0),
+});
+
+// PR 9 — operator decision on a suggestion. `applied` after the
+// operator clicks Apply (and the tier flip succeeds); `dismissed`
+// if a future UI exposes a hide action. The body's organizationId
+// scopes the mutation; the path param identifies the suggestion.
+export const UpdateTierCurationSuggestionStatusRequestSchema = z.object({
+  organizationId: IdSchema,
+  status: z.enum(['pending', 'applied', 'dismissed']),
+});
+
+export const TierCurationSuggestionResponseSchema = z.object({
+  suggestion: TierCurationSuggestionSchema,
+});
+
 export const McpScopedQuerySchema = z.object({
   organizationId: IdSchema,
 });
@@ -150,6 +232,12 @@ export const McpCatalogServerSchema = z.object({
   // UI to decide "exposed" per (agent, server) — see CatalogAgentView.
   allowlistAgents: z.array(z.string()),
   tools: z.array(McpCatalogToolSchema),
+  // PR 6 — per-active-agent attachment tier. Populated only when the
+  // catalog is fetched with `?agentId=...`; absent otherwise. Lets the
+  // Agents tab render the tier toggle without a second round trip.
+  // Native tier means the runtime's typed-palette path; dispatch tier
+  // means the meta-tool dispatch path. Harmless when V2 flag is off.
+  agentTier: McpAttachmentTierSchema.optional(),
 });
 export type McpCatalogServer = z.infer<typeof McpCatalogServerSchema>;
 
@@ -261,3 +349,18 @@ export type McpServerResponse = z.infer<typeof McpServerResponseSchema>;
 export type McpToolsResponse = z.infer<typeof McpToolsResponseSchema>;
 export type AgentMcpAttachInput = z.infer<typeof AgentMcpAttachInputSchema>;
 export type AgentMcpAttachmentsResponse = z.infer<typeof AgentMcpAttachmentsResponseSchema>;
+export type AgentMcpAttachmentResponse = z.infer<typeof AgentMcpAttachmentResponseSchema>;
+export type ChannelMcpAttachInput = z.infer<typeof ChannelMcpAttachInputSchema>;
+export type ChannelMcpAttachmentsResponse = z.infer<typeof ChannelMcpAttachmentsResponseSchema>;
+export type ChannelMcpAttachmentResponse = z.infer<typeof ChannelMcpAttachmentResponseSchema>;
+export type UpdateChannelAttachmentTierRequest = z.infer<
+  typeof UpdateChannelAttachmentTierRequestSchema
+>;
+export type UpdateAttachmentTierRequest = z.infer<typeof UpdateAttachmentTierRequestSchema>;
+export type TierCurationSuggestionsResponse = z.infer<typeof TierCurationSuggestionsResponseSchema>;
+export type RefreshTierCurationRequest = z.infer<typeof RefreshTierCurationRequestSchema>;
+export type RefreshTierCurationResponse = z.infer<typeof RefreshTierCurationResponseSchema>;
+export type UpdateTierCurationSuggestionStatusRequest = z.infer<
+  typeof UpdateTierCurationSuggestionStatusRequestSchema
+>;
+export type TierCurationSuggestionResponse = z.infer<typeof TierCurationSuggestionResponseSchema>;

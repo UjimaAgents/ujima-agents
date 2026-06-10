@@ -21,6 +21,9 @@ export {
 
 export { AiService } from './ai-service.js';
 export type { GenerateRunReplyInput } from './ai-service.js';
+export { buildMcpToolDefinitionsV2 } from './services/connector-spawn-v2.js';
+export type { SpiritMcpPool } from './services/spirit-types.js';
+export type { McpRuntimeConnection } from './services/mcp-runtime.js';
 export {
   aggregateProcedures,
   isAgentRestrictedProcedurePath,
@@ -67,6 +70,8 @@ export {
   deleteDashboardTeamOverride,
   upsertDashboardTeamOverride,
   McpRegistryService,
+  createTierCurationService,
+  type TierCurationService,
   GovernanceService,
   PluginRegistryService,
   SpiritService,

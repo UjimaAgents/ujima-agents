@@ -39,6 +39,14 @@ export function resolveDmPeerMemberId(threadId: string, currentMemberId: string)
   return undefined;
 }
 
+/** Keep only member ids that still exist in the active org roster. */
+export function resolveChannelMemberIds(
+  memberIds: readonly string[],
+  activeMemberIds: ReadonlySet<string>,
+): string[] {
+  return [...new Set(memberIds)].filter((memberId) => activeMemberIds.has(memberId)).sort();
+}
+
 export function normalizeDmChannelRef(channelRef: string, currentMemberId: string): string {
   const trimmed = channelRef.trim();
   if (parseDmThreadId(trimmed)) {

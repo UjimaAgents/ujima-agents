@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "predev": "bun ../../scripts/free-port.ts ${LANDING_PORT:-3453}",
     "dev": "bun scripts/run-next.ts dev",
     "build": "next build",
     "start": "bun scripts/run-next.ts start",

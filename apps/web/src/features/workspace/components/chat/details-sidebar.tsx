@@ -42,6 +42,12 @@ export interface TraceStepData {
   duration: string;
   status: "success" | "running" | "failed";
   subtext?: string;
+  /** Stable id of whoever produced this step (agent, or user for user-authored messages). */
+  actorId: string;
+  /** Display name of the actor, resolved against the workspace member list. */
+  actorName: string;
+  /** Owning run id when this step was emitted inside an agent run. Absent on user messages and other non-run events. */
+  runId?: string;
   aggregatedOperations?: AggregatedOperation[];
   /** Integrated terminal (cwd + command + scrollable output). */
   terminal?: {
@@ -214,7 +220,9 @@ function AggregatedRunPanel({
         className="flex w-full items-center justify-between gap-2 rounded-lg border border-foreground/10 bg-foreground/[0.02] px-3 py-2 text-left text-xs font-medium text-foreground/75 shadow-sm transition-all hover:bg-foreground/[0.04] active:bg-foreground/[0.06]"
       >
         <span className="flex min-w-0 flex-1 items-center gap-1.5">
-          <Icon className="h-3.5 w-3.5 shrink-0 self-center translate-y-px text-foreground/50" />
+          {Icon !== Terminal ? (
+            <Icon className="h-3.5 w-3.5 shrink-0 self-center translate-y-px text-foreground/50" />
+          ) : null}
           <span className="min-w-0 flex-1 whitespace-normal break-words leading-5">
             {summaryText || "Executed tool actions"}
           </span>
@@ -275,21 +283,19 @@ function AggregatedRunPanel({
                   onToggle={toggle(op.id)}
                   header={
                     <span className="break-all whitespace-pre-wrap">
-                      Ran <span className="font-mono text-[11px] text-foreground/80 font-medium">{op.command}</span>
+                      Used Terminal
                     </span>
                   }
-                  trailing={<Terminal className="h-3.5 w-3.5 shrink-0 text-foreground/45" />}
                 >
                   {op.terminal ? (
-                    <div className="mt-1.5">
-                      <TerminalPane
-                        cwd={op.terminal.cwd}
-                        commandLine={op.terminal.commandLine}
-                        output={op.terminal.output}
-                        outputPlaceholder={op.terminal.outputPlaceholder}
-                        outputTone={op.terminal.outputTone}
-                      />
-                    </div>
+                    <TerminalPane
+                      className="mt-1.5"
+                      cwd={op.terminal.cwd}
+                      commandLine={op.terminal.commandLine}
+                      output={op.terminal.output}
+                      outputPlaceholder={op.terminal.outputPlaceholder}
+                      outputTone={op.terminal.outputTone}
+                    />
                   ) : null}
                 </ExpandableRow>
               );
@@ -512,7 +518,7 @@ export const TraceStep = memo(function TraceStep({
       <div className="min-w-0">
         <div className="flex min-h-5 items-baseline justify-between gap-3">
           <div className="min-w-0 flex flex-1 flex-wrap items-baseline gap-x-2 gap-y-0">
-            <p className="min-w-0 text-xs leading-snug text-foreground">
+            <p className="min-w-0 text-xs leading-snug text-foreground trace-step-title">
               <span className="font-semibold">{subject}</span>
               {remainder ? (
                 <span className="font-normal">{remainder}</span>

@@ -1469,6 +1469,121 @@ const MIGRATIONS: {id: string; up: string}[] = [
       ALTER TABLE messages ADD COLUMN output_tokens INTEGER;
     `,
   },
+  {
+    // Substrate for the connector dispatch design
+    // (mcp_connector_dispatch_plan.md §7.1). Default 'native' so existing
+    // rows preserve current spawn behavior exactly — the V2 spawn path is
+    // tier-aware, the legacy spawn path is tier-blind. No backfill needed:
+    // every existing attachment is treated as native, which matches what
+    // the legacy buildMcpToolDefinitions does today.
+    //
+    // CHECK constraint is enforced at the Zod layer via
+    // McpAttachmentTierSchema; SQLite ALTER TABLE doesn't support CHECK
+    // additions cleanly and the existing 'scope' column follows the same
+    // schema-only enforcement pattern.
+    id: '048_agent_mcp_attachments_tier',
+    up: `ALTER TABLE agent_mcp_attachments ADD COLUMN tier TEXT NOT NULL DEFAULT 'native';`,
+  },
+  {
+    // Audit-write unwrap substrate (mcp_connector_dispatch_plan.md §12).
+    // The current audit_events table carries action/target_type/target_id
+    // + a metadata JSON blob, but no first-class columns for the unwrapped
+    // tool tuple. The dispatch plan demands "every slack.post_message in
+    // 24h across all agents" run against an indexed column rather than a
+    // full-table scan with JSON parsing, so we promote the three pieces
+    // of the tuple — server_id, tool_name, args_json — out of metadata
+    // into their own columns and add the matching indexes.
+    //
+    // Existing rows have NULL on all three. No backfill: the §12 audit-
+    // write layer that populates them is added in PR 7. Until then both
+    // the V2 and legacy paths leave them NULL and queries gracefully
+    // return empty sets.
+    id: '049_audit_events_tool_unwrap_columns',
+    up: `
+      ALTER TABLE audit_events ADD COLUMN server_id TEXT;
+      ALTER TABLE audit_events ADD COLUMN tool_name TEXT;
+      ALTER TABLE audit_events ADD COLUMN args_json TEXT;
+      CREATE INDEX IF NOT EXISTS idx_audit_tool
+        ON audit_events(tool_name);
+      CREATE INDEX IF NOT EXISTS idx_audit_server_tool
+        ON audit_events(server_id, tool_name);
+    `,
+  },
+  {
+    // Bidirectional tier-curation suggestions store
+    // (mcp_connector_dispatch_plan.md §9.4 / PR 9).
+    //
+    // PR 8 scaffolds the table + writer surface but does no analysis;
+    // the table stays empty in production until PR 9 ships the audit-
+    // driven demote/promote candidate logic. Having the schema land
+    // ahead of the analysis means the settings panel ("Show usage")
+    // can render a zero-state without a placeholder migration, and
+    // PR 9 doesn't bundle a schema change with the analytics rollout.
+    //
+    // No CHECK constraint on `direction` — SQLite ALTER TABLE doesn't
+    // support adding one cleanly and the Zod layer
+    // (TierCurationSuggestionSchema) enforces the enum on every write.
+    id: '050_tier_curation_suggestions',
+    up: `
+      CREATE TABLE IF NOT EXISTS tier_curation_suggestions (
+        id                TEXT PRIMARY KEY,
+        organization_id   TEXT NOT NULL,
+        member_id         TEXT NOT NULL,
+        mcp_server_id     TEXT NOT NULL,
+        direction         TEXT NOT NULL,
+        rationale         TEXT NOT NULL DEFAULT '',
+        signal_metadata   TEXT NOT NULL DEFAULT '{}',
+        status            TEXT NOT NULL DEFAULT 'pending',
+        created_at        TEXT NOT NULL,
+        resolved_at       TEXT,
+        UNIQUE (organization_id, member_id, mcp_server_id, direction, status)
+      );
+      CREATE INDEX IF NOT EXISTS idx_tier_curation_org
+        ON tier_curation_suggestions(organization_id, status, created_at);
+    `,
+  },
+  {
+    // Channel-attached MCPs (mcp_connector_dispatch_plan.md §17.5.2 / PR 10).
+    //
+    // The bulk-attachment fix. Per-agent attachments (agent_mcp_attachments)
+    // stay byte-for-byte unchanged — channel attachment is purely additive,
+    // and the V2 spawn's §17.5.3 union/dedup step is what actually folds
+    // these rows into the agent's effective set. With the dispatch flag
+    // off, this table exists but contributes nothing because the legacy
+    // buildMcpToolDefinitions is tier-blind and per-agent-only.
+    //
+    // The `tier` column defaults to 'dispatch' on this table (NOT
+    // 'native' like agent_mcp_attachments). Rationale: channels often
+    // attach to many MCPs at once (10+ on a busy team channel) and
+    // native ballooning is the exact problem §17.5.3 is designed to
+    // prevent. Channel-vs-channel conflicts already resolve to dispatch
+    // in code; making it the default closes the door on accidental
+    // native promotion via the UI too. Promoting to native is a
+    // deliberate operator action via the existing PR 6 tier toggle
+    // (the new channel toggle lands in this PR).
+    //
+    // No CHECK constraint on `tier` or `scope`: SQLite ALTER TABLE
+    // doesn't add them cleanly and the Zod layer
+    // (ChannelMcpAttachmentSchema) enforces both enums on every write.
+    id: '051_channel_mcp_attachments',
+    up: `
+      CREATE TABLE IF NOT EXISTS channel_mcp_attachments (
+        id              TEXT PRIMARY KEY,
+        organization_id TEXT NOT NULL,
+        channel_id      TEXT NOT NULL,
+        mcp_server_id   TEXT NOT NULL,
+        scope           TEXT NOT NULL DEFAULT 'worker',
+        tier            TEXT NOT NULL DEFAULT 'dispatch',
+        created_at      TEXT NOT NULL,
+        updated_at      TEXT NOT NULL,
+        UNIQUE (organization_id, channel_id, mcp_server_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_channel_mcp_attachments_channel
+        ON channel_mcp_attachments(organization_id, channel_id);
+      CREATE INDEX IF NOT EXISTS idx_channel_mcp_attachments_server
+        ON channel_mcp_attachments(organization_id, mcp_server_id);
+    `,
+  },
 ];
 
 export interface DbOptions {
@@ -1552,6 +1667,25 @@ function runMigrations(db: DbHandle): void {
       hasColumn(db, "messages", "input_tokens") &&
       hasColumn(db, "messages", "output_tokens")
     ) {
+      insert.run(m.id, Date.now());
+      continue;
+    }
+    if (
+      m.id === "048_agent_mcp_attachments_tier" &&
+      hasColumn(db, "agent_mcp_attachments", "tier")
+    ) {
+      insert.run(m.id, Date.now());
+      continue;
+    }
+    if (
+      m.id === "049_audit_events_tool_unwrap_columns" &&
+      (!hasTable(db, "audit_events") ||
+        hasColumn(db, "audit_events", "server_id"))
+    ) {
+      // Two skip conditions: (a) audit_events absent — synthetic legacy
+      // test fixtures simulate a pre-003 state that never materialised
+      // the table; record applied and move on (no production DB hits
+      // this branch). (b) column already present — idempotent re-run.
       insert.run(m.id, Date.now());
       continue;
     }

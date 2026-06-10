@@ -236,6 +236,7 @@ export function registerGoalRoutes(api: FastifyInstance, deps: GoalRouteDeps): v
         taskId: req.params.id,
         status: req.body.status,
         handoverSummary: req.body.handoverSummary,
+        callerMemberId: auth.member.id,
       });
       if (!task) return reply.status(404).send({ code: 'ERR_NOT_FOUND', message: 'Task not found' });
       return reply.status(200).send({ task });

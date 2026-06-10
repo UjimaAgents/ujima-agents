@@ -5,10 +5,6 @@
  * (`message`, `channel.post`, `channel.reply`, `channel.dm`,
  * `channel.handoff`) or the agent explicitly chose silence
  * (`channel.pass`).
- *
- * Renamed from THREAD_PUBLISHING_TOOL_NAMES because `channel.pass`
- * is a terminator that publishes nothing — the old name no longer
- * describes the membership accurately.
  */
 export const RUN_TERMINATING_TOOL_NAMES = new Set([
   'message',
@@ -20,8 +16,21 @@ export const RUN_TERMINATING_TOOL_NAMES = new Set([
   'channel.pass',
 ]);
 
-/** @deprecated Renamed to {@link RUN_TERMINATING_TOOL_NAMES}. */
-export const THREAD_PUBLISHING_TOOL_NAMES = RUN_TERMINATING_TOOL_NAMES;
+/**
+ * Normalize a tool name to its canonical dotted form.
+ *
+ * `toModelToolName` replaces dots with underscores so the model sees
+ * `channel_reply` instead of `channel.reply`. When we read tool names
+ * back from model output (toolCalls, toolResults, run steps), we must
+ * normalize them back to dotted form before comparing against
+ * {@link RUN_TERMINATING_TOOL_NAMES} and {@link TERMINATOR_PRECEDENCE}.
+ *
+ * This is intentionally simple — `_` → `.` — because all terminating
+ * tools use dots and none use native underscores.
+ */
+export function normalizeToDottedToolName(name: string): string {
+  return name.replace(/_/g, '.');
+}
 
 export function isDelegateMessage(message: { metadata?: unknown } | null | undefined): boolean {
   return !!(message?.metadata as { delegate?: unknown } | undefined)?.delegate;
@@ -37,18 +46,31 @@ export function filterDelegateTurnTools(toolIds: readonly string[]): string[] {
     'channel.ack',
     'message',
   ]);
-  return toolIds.filter((toolId) => !postingTools.has(toolId));
+  return toolIds.filter((toolId) => !postingTools.has(toolId) && !postingTools.has(normalizeToDottedToolName(toolId)));
 }
 
 function collectToolNamesFromList(list: unknown, out: Set<string>): void {
   if (!Array.isArray(list)) return;
   for (const item of list) {
     if (!item || typeof item !== 'object') continue;
-    const name = readToolName(item);
+    const name = readTerminatingToolName(item);
     if (typeof name === 'string' && name.length > 0) {
       out.add(name);
     }
   }
+}
+
+function readTerminatingToolName(value: unknown): string | undefined {
+  const name = readToolName(value);
+  if (name) return name;
+  if (!value || typeof value !== 'object') return undefined;
+  const output = (value as { output?: unknown }).output;
+  const status = output && typeof output === 'object' ? (output as { status?: unknown }).status : undefined;
+  if (status === 'passed') return 'channel.pass';
+  if (status === 'acked') return 'channel.ack';
+  if (status === 'acknowledged') return 'channel.ack';
+  if (status === 'handoff_sent') return 'channel.handoff';
+  return undefined;
 }
 
 function readToolName(value: unknown): string | undefined {
@@ -56,7 +78,7 @@ function readToolName(value: unknown): string | undefined {
   const record = value as Record<string, unknown>;
   for (const key of ['toolName', 'toolId', 'tool_id']) {
     const name = record[key];
-    if (typeof name === 'string' && name.length > 0) return name;
+    if (typeof name === 'string' && name.length > 0) return normalizeToDottedToolName(name);
   }
   return undefined;
 }
@@ -76,6 +98,11 @@ export function collectFiredToolNames(result: unknown): Set<string> {
       const s = step as Record<string, unknown>;
       collectToolNamesFromList(s.toolResults, names);
       collectToolNamesFromList(s.toolCalls, names);
+      collectToolNamesFromList(s.staticToolResults, names);
+      collectToolNamesFromList(s.staticToolCalls, names);
+      collectToolNamesFromList(s.dynamicToolResults, names);
+      collectToolNamesFromList(s.dynamicToolCalls, names);
+      collectToolNamesFromList(s.content, names);
     }
   }
   return names;
@@ -160,14 +187,10 @@ export function findTerminatingToolFromRunSteps(steps: unknown): string | null {
     if (!step || typeof step !== 'object') continue;
     const record = step as Record<string, unknown>;
     if (record.status !== undefined && record.status !== 'ok') continue;
-    const name = readToolName(record);
+    const name = readTerminatingToolName(record);
     if (name) names.add(name);
   }
   return pickTerminatingTool(names);
-}
-
-export function isAcknowledgementOnly(text: string): boolean {
-  return /^acknowledged\.?$/i.test(text.trim());
 }
 
 /**
@@ -179,4 +202,29 @@ export function isAcknowledgementOnly(text: string): boolean {
  */
 export function runUsedChannelPass(result: unknown): boolean {
   return collectFiredToolNames(result).has('channel.pass');
+}
+
+const SILENT_TERMINATING_TOOLS = new Set(['channel.pass', 'channel.ack']);
+
+/**
+ * Steps containing silent terminators (`channel.pass`, `channel.ack`)
+ * must not publish assistant text — the tool is the stand-down signal.
+ */
+export function stepContainsSilentTerminator(step: unknown): boolean {
+  if (!step || typeof step !== 'object') return false;
+  const record = step as Record<string, unknown>;
+  const items = [
+    ...(Array.isArray(record.toolCalls) ? record.toolCalls : []),
+    ...(Array.isArray(record.toolResults) ? record.toolResults : []),
+    ...(Array.isArray(record.staticToolCalls) ? record.staticToolCalls : []),
+    ...(Array.isArray(record.dynamicToolCalls) ? record.dynamicToolCalls : []),
+    ...(Array.isArray(record.staticToolResults) ? record.staticToolResults : []),
+    ...(Array.isArray(record.dynamicToolResults) ? record.dynamicToolResults : []),
+    ...(Array.isArray(record.content) ? record.content : []),
+  ];
+  return items.some((item) => {
+    if (!item || typeof item !== 'object') return false;
+    const name = (item as { toolName?: string }).toolName;
+    return typeof name === 'string' && SILENT_TERMINATING_TOOLS.has(normalizeToDottedToolName(name));
+  });
 }

@@ -1,55 +1,47 @@
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { $ } from 'bun';
+import {
+  hydrateTracedBunStorePackages,
+  materializeTopLevelNodeModules,
+} from './repair-standalone-node-modules.ts';
+import { REPO_ROOT } from './paths.ts';
+import { formatPruneStats, pruneWebRuntimeNodeModules } from './prune-web-runtime.ts';
 
 /**
- * Replace Bun-traced `.bun/` trees (broken symlinks + stubs after npm pack) with a real
- * npm `node_modules` install for Next standalone runtime dependencies.
+ * Prepare Next.js standalone's traced Bun `.bun/` store for npm publish:
+ * hydrate package.json-only stubs, materialize top-level node_modules, prune.
  */
+export async function prepareTracedStandaloneNodeModules(
+  webRuntimeDir: string,
+  monorepoRoot = REPO_ROOT,
+): Promise<void> {
+  const nodeModulesDir = join(webRuntimeDir, 'node_modules');
+  const bunStore = join(nodeModulesDir, '.bun');
+
+  if (!existsSync(bunStore)) {
+    throw new Error(
+      `Missing ${bunStore}. Build apps/web with RELEASE=1 and output: "standalone".`,
+    );
+  }
+
+  const hydrated = hydrateTracedBunStorePackages(nodeModulesDir, monorepoRoot);
+  if (hydrated > 0) {
+    console.log(`[release:dist] Hydrated ${hydrated} incomplete traced package(s) from monorepo.`);
+  }
+
+  const pruned = pruneWebRuntimeNodeModules(nodeModulesDir);
+  console.log(`[release:dist] Pruned traced web runtime: ${formatPruneStats(pruned)}.`);
+
+  // Materialize after prune so top-level copies come from the intact .bun store.
+  const materialized = materializeTopLevelNodeModules(nodeModulesDir);
+  if (materialized > 0) {
+    console.log(`[release:dist] Materialized ${materialized} top-level node_modules package(s).`);
+  }
+}
+
+/** @deprecated Use prepareTracedStandaloneNodeModules — full npm install bloats the tarball. */
 export async function materializeWebStandaloneDependencies(
   webRuntimeDir: string,
 ): Promise<void> {
-  const appPkgPath = join(webRuntimeDir, 'apps/web/package.json');
-  if (!existsSync(appPkgPath)) {
-    throw new Error(`Missing ${appPkgPath}`);
-  }
-
-  const appPkg = JSON.parse(readFileSync(appPkgPath, 'utf8')) as {
-    dependencies?: Record<string, string>;
-  };
-
-  const dependencies: Record<string, string> = {};
-  for (const [name, version] of Object.entries(appPkg.dependencies ?? {})) {
-    if (name.startsWith('@ujima/')) continue;
-    dependencies[name] = version;
-  }
-
-  const nodeModulesDir = join(webRuntimeDir, 'node_modules');
-  if (existsSync(nodeModulesDir)) {
-    rmSync(nodeModulesDir, { recursive: true, force: true });
-  }
-
-  const runtimePkg = {
-    name: 'ujima-web-runtime',
-    private: true,
-    dependencies,
-  };
-  writeFileSync(
-    join(webRuntimeDir, 'package.json'),
-    `${JSON.stringify(runtimePkg, null, 2)}\n`,
-    'utf8',
-  );
-
-  const install = await $`npm install --omit=dev --ignore-scripts --no-package-lock`
-    .cwd(webRuntimeDir)
-    .nothrow();
-  if (install.exitCode !== 0) {
-    console.error(install.stderr.toString());
-    throw new Error('npm install failed for web standalone runtime');
-  }
-
-  const nextPkg = join(nodeModulesDir, 'next', 'package.json');
-  if (!existsSync(nextPkg)) {
-    throw new Error(`Missing ${nextPkg} after materializing web dependencies`);
-  }
+  await prepareTracedStandaloneNodeModules(webRuntimeDir);
 }

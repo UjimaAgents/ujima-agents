@@ -282,6 +282,41 @@ button {
   }
 }
 
+/* Hero headline — continuous channel pulse (matches apps/web). */
+@keyframes hero-channel-pulse-light {
+  0%,
+  8%,
+  42%,
+  100% {
+    color: rgb(9 9 11);
+    text-shadow: 0 0 0 transparent;
+    transform: translate3d(0, 0, 0);
+  }
+  20%,
+  32% {
+    color: rgb(109 40 217);
+    text-shadow: 0 0 20px rgba(139, 92, 246, 0.22);
+    transform: translate3d(0, -4px, 0);
+  }
+}
+
+@keyframes hero-channel-pulse-dark {
+  0%,
+  8%,
+  42%,
+  100% {
+    color: #ffffff;
+    text-shadow: 0 0 0 transparent;
+    transform: translate3d(0, 0, 0);
+  }
+  20%,
+  32% {
+    color: rgb(196 181 253);
+    text-shadow: 0 0 24px rgba(139, 92, 246, 0.5);
+    transform: translate3d(0, -4px, 0);
+  }
+}
+
 @keyframes landing-hero-reveal {
   from {
     opacity: 0;
@@ -328,24 +363,41 @@ button {
   animation-delay: 0.36s;
 }
 
-.hero-headline .hero-word {
-  animation: landing-hero-word 0.7s cubic-bezier(0.16, 1, 0.3, 1) both;
+.landing .hero-headline {
+  display: block;
+  color: var(--foreground);
+  transition: color 180ms ease;
 }
 
-.hero-headline .hero-word:nth-child(1) {
-  animation-delay: 0.08s;
+.landing .hero-headline .hero-word {
+  display: inline-block;
+  animation: hero-channel-pulse-light 3.6s cubic-bezier(0.22, 1, 0.36, 1) infinite;
 }
 
-.hero-headline .hero-word:nth-child(2) {
-  animation-delay: 0.16s;
+.dark .landing .hero-headline .hero-word {
+  animation-name: hero-channel-pulse-dark;
 }
 
-.hero-headline .hero-word:nth-child(3) {
-  animation-delay: 0.24s;
+.landing .hero-headline .hero-word:nth-child(1) {
+  animation-delay: 0s;
 }
-
-.hero-headline .hero-word:nth-child(4) {
-  animation-delay: 0.32s;
+.landing .hero-headline .hero-word:nth-child(2) {
+  animation-delay: 0.45s;
+}
+.landing .hero-headline .hero-word:nth-child(3) {
+  animation-delay: 0.9s;
+}
+.landing .hero-headline .hero-word:nth-child(4) {
+  animation-delay: 1.35s;
+}
+.landing .hero-headline .hero-word:nth-child(5) {
+  animation-delay: 1.8s;
+}
+.landing .hero-headline .hero-word:nth-child(6) {
+  animation-delay: 2.25s;
+}
+.landing .hero-headline .hero-word:nth-child(7) {
+  animation-delay: 2.7s;
 }
 
 .landing-reveal {

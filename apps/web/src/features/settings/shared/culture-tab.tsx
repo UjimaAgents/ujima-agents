@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, memo } from "react";
 import { ShieldCheck, Trash2 } from "lucide-react";
 import { SettingsPrimaryButton } from "@/features/settings/shared/settings-buttons";
 import { ConfirmDialog } from "@/features/settings/shared/confirm-dialog";
@@ -56,7 +56,7 @@ async function errorMessage(
   return body?.message ?? `${fallback} (${response.status}).`;
 }
 
-export function CultureTab({ organizationId, channelId }: CultureTabProps) {
+export const CultureTab = memo(function CultureTab({ organizationId, channelId }: CultureTabProps) {
   const [items, setItems] = useState<ProcedureSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -109,7 +109,7 @@ export function CultureTab({ organizationId, channelId }: CultureTabProps) {
     };
   }, [refresh]);
 
-  const beginAdd = () => {
+  const beginAdd = useCallback(() => {
     setEditing({
       name: "",
       body: "",
@@ -117,9 +117,9 @@ export function CultureTab({ organizationId, channelId }: CultureTabProps) {
       enforced: false,
       existing: false,
     });
-  };
+  }, []);
 
-  const beginEdit = async (name: string) => {
+  const beginEdit = useCallback(async (name: string) => {
     setError(null);
     try {
       const res = await fetch(
@@ -142,11 +142,11 @@ export function CultureTab({ organizationId, channelId }: CultureTabProps) {
         err instanceof Error ? err.message : "Failed to load procedure.",
       );
     }
-  };
+  }, [base, organizationId]);
 
-  const cancelEdit = () => setEditing(null);
+  const cancelEdit = useCallback(() => setEditing(null), []);
 
-  const submit = async () => {
+  const submit = useCallback(async () => {
     if (!editing) return;
     if (!NAME_PATTERN.test(editing.name)) {
       setError("Name must be lowercase letters, digits, hyphens (2-64 chars).");
@@ -185,9 +185,9 @@ export function CultureTab({ organizationId, channelId }: CultureTabProps) {
     } finally {
       setBusy(false);
     }
-  };
+  }, [editing, base, organizationId, isOrg, refresh]);
 
-  const remove = async () => {
+  const remove = useCallback(async () => {
     if (!pendingRemove) return;
     const name = pendingRemove;
     setBusy(true);
@@ -208,7 +208,7 @@ export function CultureTab({ organizationId, channelId }: CultureTabProps) {
     } finally {
       setBusy(false);
     }
-  };
+  }, [pendingRemove, base, organizationId, refresh]);
 
   const sortedItems = useMemo(
     () => [...items].sort((a, b) => a.name.localeCompare(b.name)),
@@ -383,4 +383,4 @@ export function CultureTab({ organizationId, channelId }: CultureTabProps) {
       />
     </div>
   );
-}
+});

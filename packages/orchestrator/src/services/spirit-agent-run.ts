@@ -1,5 +1,6 @@
-import { randomUUID } from 'node:crypto';
 import { stepCountIs, tool, type ToolSet } from 'ai';
+import { isMcpDispatchEnabled } from './feature-flags.js';
+import { buildMcpToolDefinitionsV2 } from './connector-spawn-v2.js';
 import { classifyTool, type McpToolDescriptor } from '@ujima/shared';
 import { toModelToolErrorOutput, toModelToolOutput } from './tool-loop-result.js';
 import type { SpiritMcpResolution } from './spirit-types.js';
@@ -15,13 +16,8 @@ import {
   SocketEventNames,
   SpiritSchema,
   channelRoom,
-  memberRoom,
   orgRoom,
-  runRoom,
-  threadRoom,
   type Message,
-  type MessageCard,
-  type MessageToolCall,
   type Spirit,
   type SpiritRole,
   type WakeReason,
@@ -33,6 +29,7 @@ import {
 } from '../utils/wake-reply-policy.js';
 import { recallMemoryEntries } from '../utils/memory.js';
 import { requireTeam } from '../utils/require-team.js';
+import { resolveVisiblePromptChannels } from '../utils/visible-prompt-channels.js';
 import { runAgentWithRetry, type AgentLoopStep } from './agent-loop.js';
 import { isDelegateMessage, filterDelegateTurnTools } from './run-reply-guard.js';
 import { toModelMessages, buildToolDefinitions } from '../utils/to-model-messages.js';
@@ -43,28 +40,26 @@ import {
 } from '../tools/index.js';
 import type { ApiRepository } from './repository-reader.js';
 import { findToolApprovalRequiredError, findToolInputRequiredError } from './tool-loop-result.js';
-import { extractReasoningChunk } from '../utils/extract-reasoning.js';
 import { errorMessage } from '../utils/error-message.js';
-import { buildRunTranscript } from '../utils/run-transcript.js';
-import { appendArtifactFileToolCall } from './artifact-file-card.js';
+import { appendMissingRunStepMessages } from '../utils/run-transcript.js';
+import { DELEGATE_TURN_USER_MESSAGE } from '../utils/delegate-turn.js';
+import {
+  createMessageCursor,
+  loadChannelInterruptModelMessages,
+} from '../utils/interrupt-loader.js';
+import { createSpiritModelNotFoundHandler } from '../utils/model-fallback.js';
+import { wrapToolCallsAsCards } from '../utils/step-tool-calls.js';
 import { buildAgentMessage } from './message-factory.js';
+import { filterVisibleMessages } from '../utils/message-visibility.js';
 import { RunTurnPublisher } from './run-turn-publisher.js';
 import { normalizeTokenUsage, persistMessageTokens } from './token-usage.js';
 import { pendingApprovalRunSummary } from './approval-summary.js';
-import {
-  findTerminatingTool,
-  findTerminatingToolFromRunSteps,
-} from './run-reply-guard.js';
-import {
-  createMessageCursor,
-  isMessageAfterCursor,
-  moveCursor,
-} from '../utils/message-interrupts.js';
+import { findTerminatingTool, findTerminatingToolFromRunSteps } from './run-reply-guard.js';
+import { prepareAgentStepPublication } from './agent-step-publish.js';
 import type {
   RunSpiritInput,
   RunSpiritOutcome,
 } from './spirit-types.js';
-import { isToolCardError } from './spirit-run-detail.js';
 import { SpiritServiceBase } from './spirit-service-base.js';
 
 export class SpiritServiceAgentRun extends SpiritServiceBase {
@@ -100,9 +95,9 @@ export class SpiritServiceAgentRun extends SpiritServiceBase {
       }),
     );
 
-    const recent = this.repo
-      .listChannelMessages(input.organizationId, session.channelId, { limit: 20 })
-      .data;
+    const recent = filterVisibleMessages(
+      this.repo.listChannelMessages(input.organizationId, session.channelId, { limit: 20 }).data,
+    );
     const messages = toModelMessages(recent, member.id);
     const interruptCursor = createMessageCursor(recent);
     if (input.extraPrompt) {
@@ -120,12 +115,11 @@ export class SpiritServiceAgentRun extends SpiritServiceBase {
       memberId: input.memberId,
       role,
     });
-    const runTranscript = buildRunTranscript(
+    appendMissingRunStepMessages(
+      messages,
+      recent,
       this.repo.listRunSteps(input.organizationId, spirit.runId ?? spirit.id),
     );
-    if (runTranscript) {
-      messages.push({ role: 'user', content: runTranscript });
-    }
 
     try {
       const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
@@ -166,7 +160,12 @@ ${activeMemories
     if (spirit.runId) {
       const run = this.repo.getRun(input.organizationId, spirit.runId);
       if (run) {
-        this.repo.saveRun({ ...run, status: 'running', step: 'running', summary: 'Spirit turn' });
+        this.saveRunAndEmit(SocketEventNames.runUpdated, {
+          ...run,
+          status: 'running',
+          step: 'running',
+          summary: 'Spirit turn',
+        });
       }
     }
     this.emit(SocketEventNames.spiritUpdated, running);
@@ -199,18 +198,48 @@ ${activeMemories
       team,
       repo: this.repo,
     });
-    const { toolSet: mcpToolDefs, servers: attachedMcpServers } = await this.buildMcpToolDefinitions({
+    const mcpCtx = {
       organizationId: input.organizationId,
       memberId: input.memberId,
       runId: spirit.runId ?? spirit.id,
       threadId: session.channelId,
       taskSessionId: input.taskSessionId,
       role,
-    });
+    };
+    // §3.5 rule 3: the flag is the only routing switch between the
+    // legacy spawn path and the V2 spawn path. Tier is read inside
+    // V2 only — the caller stays tier-blind. Flag off → legacy method
+    // runs byte-for-byte unchanged.
+    //
+    // The wake-run path uses buildMcpToolDefinitionsRouted (via the
+    // AiService resolver); the run-loop entry inlines the V2 call
+    // here so it can surface `catalogText` to the system prompt
+    // (the resolver interface only forwards toolSet + servers).
+    let mcpToolDefs: ToolSet;
+    let attachedMcpServers: McpServerSummary[];
+    let availableConnectors: string | undefined;
+    if (isMcpDispatchEnabled(mcpCtx.organizationId) && this.mcpPool) {
+      const v2 = await buildMcpToolDefinitionsV2(
+        { mcpPool: this.mcpPool, repo: this.repo, tools: this.tools },
+        mcpCtx,
+      );
+      mcpToolDefs = v2.toolSet;
+      attachedMcpServers = v2.servers;
+      availableConnectors = v2.catalogText.length > 0 ? v2.catalogText : undefined;
+    } else {
+      const legacy = await this.buildMcpToolDefinitions(mcpCtx);
+      mcpToolDefs = legacy.toolSet;
+      attachedMcpServers = legacy.servers;
+    }
     const toolDefs: ToolSet = { ...builtInToolDefs, ...mcpToolDefs };
 
     const availableToolIds = Object.keys(toolDefs);
     const availableSkills = this.repo.listOrganizationSkillInstalls?.(input.organizationId) ?? [];
+    const visibleChannels = resolveVisiblePromptChannels(
+      team.channels,
+      this.repo,
+      input.organizationId,
+    );
     const system = buildAgentSystemPrompt(
       team.workspace.root,
       organization.name,
@@ -223,12 +252,13 @@ ${activeMemories
         .listMembers(input.organizationId)
         .filter((current) => current.id !== member.id),
       team.agents,
-      team.channels,
+      visibleChannels,
       organization.organizationChart,
       availableSkills,
       availableToolIds,
       attachedMcpServers.map((s) => ({ name: s.serverName, toolNames: s.toolNames })),
       supervisorWakePolicy.conversationKind,
+      availableConnectors,
     );
     const systemPromptSuffix = this.resolveSystemPromptSuffix({
       organizationId: input.organizationId,
@@ -238,15 +268,7 @@ ${activeMemories
       messageContent: input.promptMessageContent,
       goalMode: input.promptGoalMode,
     });
-    const delegateSuffix = isDelegateTurn
-      ? [
-          '<delegate_turn>',
-          'You are handling one agent.delegate task. Use tools as needed, then finish with final assistant text only.',
-          'Do not call channel.post, channel.reply, channel.dm, message, channel.pass, channel.ack, or channel.handoff.',
-          'Your final text is returned to the delegating agent as the tool result and ends this delegated turn.',
-          '</delegate_turn>',
-        ].join('\n')
-      : '';
+    const delegateSuffix = isDelegateTurn ? DELEGATE_TURN_USER_MESSAGE : '';
     const suffixes = [systemPromptSuffix, delegateSuffix].filter(Boolean);
     const systemPrompt = suffixes.length ? `${system}\n\n${suffixes.join('\n\n')}` : system;
 
@@ -281,6 +303,7 @@ ${activeMemories
         temperature: this.temperature,
         toolChoice: 'auto',
         abortSignal: abortController.signal,
+        detectExternalPause: () => this.detectRunPauseForHuman(input.organizationId, runId),
         onChunk: (chunk) => {
           if (chunk.kind === 'reasoning') streamedReasoning += chunk.delta;
           this.emitRunChunk(
@@ -314,36 +337,25 @@ ${activeMemories
           }
           this.emitRunTokens(input.organizationId, runId, session.channelId, member.id, currentSteps);
         },
-        loadInterruptMessages: () => {
-          const page = this.repo
-            .listChannelMessages(input.organizationId, session.channelId, { limit: 100 })
-            .data;
-          const interrupts = page.filter(
-            (message) =>
-              (message.kind === 'human' || isDelegateMessage(message)) &&
-              message.senderId !== member.id &&
-              isMessageAfterCursor(message, interruptCursor),
-          );
-          const latest = page.at(-1);
-          if (latest) {
-            moveCursor(interruptCursor, latest);
-          }
-          return toModelMessages(interrupts, member.id);
-        },
-        onModelNotFound: async (error) => {
-          console.warn(
-            `[spirit-agent-run] model "${error.modelId}" rejected by provider; ` +
-              `falling back to safeFallbackModelForProvider for member="${input.memberId}"`,
-          );
-          return await Promise.resolve(
+        loadInterruptMessages: () =>
+          loadChannelInterruptModelMessages({
+            repo: this.repo,
+            organizationId: input.organizationId,
+            channelId: session.channelId,
+            agentId: member.id,
+            cursor: interruptCursor,
+          }),
+        onModelNotFound: createSpiritModelNotFoundHandler({
+          logLabel: 'spirit-agent-run',
+          memberLabel: input.memberId,
+          resolve: () =>
             this.modelResolver({
               organizationId: input.organizationId,
               memberId: input.memberId,
               role,
               forceSafeFallback: true,
             }),
-          );
-        },
+        }),
         logLabel: 'spirit-agent-run',
         memberLabel: input.memberId,
       });
@@ -441,7 +453,7 @@ ${activeMemories
         ? persistedTerminator
         : detectedTerminatingTool;
       if (persistedRun) {
-        this.repo.saveRun({
+        this.saveRunAndEmit(SocketEventNames.runCompleted, {
           ...persistedRun,
           status: 'completed',
           step: 'completed',
@@ -477,6 +489,11 @@ ${activeMemories
         });
         this.repo.saveSpirit(cancelled);
         this.registry.unregister(cancelled.organizationId, cancelled.memberId, cancelled.id);
+        this.realtime.emit(
+          SocketEventNames.runCompleted,
+          { organizationId: input.organizationId, run: latestRun },
+          this.getRooms(latestRun),
+        );
         this.emit(SocketEventNames.spiritCompleted, cancelled);
         this.maybeFinalizeTaskSession(cancelled.organizationId, cancelled.taskSessionId, latestRun.summary);
         return {
@@ -501,23 +518,12 @@ ${activeMemories
           const run = this.repo.getRun(input.organizationId, spirit.runId);
           if (run) {
             const question = this.repo.getInteractiveQuestion(input.organizationId, inputRequiredError.questionId);
-            const waitingRun = this.repo.saveRun({
+            this.saveRunAndEmit(SocketEventNames.runUpdated, {
               ...run,
               status: 'waiting_for_input',
               step: 'waiting_for_input',
               summary: question?.questionText ?? run.summary ?? 'Waiting for user input',
             });
-            this.realtime.emit(
-              SocketEventNames.runUpdated,
-              { organizationId: input.organizationId, run: waitingRun },
-              [
-                orgRoom(input.organizationId),
-                runRoom(waitingRun.id),
-                memberRoom(input.memberId),
-                ...(waitingRun.threadId ? [threadRoom(waitingRun.threadId)] : []),
-                channelRoom(session.channelId),
-              ],
-            );
           }
         }
         this.emit(SocketEventNames.spiritUpdated, waiting);
@@ -547,7 +553,7 @@ ${activeMemories
         if (spirit.runId) {
           const run = this.repo.getRun(input.organizationId, spirit.runId);
           if (run) {
-            this.repo.saveRun({
+            this.saveRunAndEmit(SocketEventNames.runUpdated, {
               ...run,
               status: 'waiting_for_approval',
               step: 'waiting_for_approval',
@@ -587,7 +593,7 @@ ${activeMemories
       if (spirit.runId) {
         const run = this.repo.getRun(input.organizationId, spirit.runId);
         if (run) {
-          this.repo.saveRun({
+          this.saveRunAndEmit(SocketEventNames.runCompleted, {
             ...run,
             status: 'failed',
             step: 'failed',
@@ -635,44 +641,6 @@ ${activeMemories
     return buildToolDefinitions(toolIds, ctx.team, this.tools, ctx);
   }
 
-  protected toMessageToolCalls(
-    stepToolCalls: readonly { toolCallId?: string; toolName?: string; input?: unknown }[],
-    stepToolResults: readonly { toolCallId?: string; output?: unknown }[],
-    spirit: Spirit,
-  ): MessageToolCall[] {
-    const resultsById = new Map<string, unknown>();
-    for (const r of stepToolResults) {
-      if (typeof r.toolCallId === 'string') {
-        resultsById.set(r.toolCallId, r.output);
-      }
-    }
-    return stepToolCalls.map((call) => {
-      const toolCallId = call.toolCallId ?? randomUUID();
-      const toolName = call.toolName ?? 'unknown';
-      const args = (call.input as Record<string, unknown> | undefined) ?? {};
-      const result = resultsById.get(toolCallId);
-      const isError = isToolCardError(result);
-      const card: MessageCard = {
-        kind: 'tool.call',
-        cardId: randomUUID(),
-        taskSessionId: spirit.taskSessionId,
-        runId: spirit.runId,
-        toolCallId,
-        toolName,
-        args,
-        result,
-        isError,
-      };
-      return {
-        toolCallId,
-        toolName,
-        args,
-        result: card,
-        isError,
-      };
-    });
-  }
-
   private async publishStepBubble(input: {
     step: AgentLoopStep;
     spirit: Spirit;
@@ -684,34 +652,40 @@ ${activeMemories
     runId: string;
     reasoningFallback?: string;
   }): Promise<{ messageId?: string; toolCallCount: number; stepText: string }> {
-    const { step } = input;
-    const stepText = typeof step.text === 'string' ? step.text : '';
-    const stepToolCalls = Array.isArray(step.toolCalls) ? step.toolCalls : [];
-    const stepToolResults = Array.isArray(step.toolResults) ? step.toolResults : [];
-    const artifact = await appendArtifactFileToolCall(stepToolCalls, input.teamRoot, stepToolResults);
-    // Skip tool-only steps with no artifact card — they'd render as
-    // empty bubbles. Tool execution data already lives in run_steps
-    // for the trace panel.
-    if (!stepText && !artifact) {
+    const prepared = await prepareAgentStepPublication({
+      step: input.step,
+      teamRoot: input.teamRoot,
+      reasoningFallback: input.reasoningFallback,
+      suppressSilentTerminatorText: true,
+    });
+    if (!prepared) {
+      const stepToolCalls = Array.isArray(input.step.toolCalls) ? input.step.toolCalls : [];
       return { toolCallCount: stepToolCalls.length, stepText: '' };
     }
-    const toolCalls = this.toMessageToolCalls(stepToolCalls, stepToolResults, input.spirit);
-    const messageToolCalls = artifact ? [...toolCalls, artifact] : toolCalls;
-    const reasoningContent = extractReasoningChunk(step) ?? input.reasoningFallback;
+
+    const wrapped = wrapToolCallsAsCards(prepared.stepToolCalls, {
+      taskSessionId: input.spirit.taskSessionId,
+      runId: input.spirit.runId,
+    });
+    const messageToolCalls = prepared.artifact ? [...wrapped, prepared.artifact] : wrapped;
     const message = input.turn.publishMessage(
       buildAgentMessage({
         organizationId: input.organizationId,
         threadId: input.channelId,
         channelId: input.channelId,
         senderId: input.senderId,
-        content: stepText || 'Artifact updated.',
+        content: prepared.content,
         toolCalls: messageToolCalls,
         metadata: { runId: input.runId },
-        reasoningContent,
+        reasoningContent: prepared.reasoningContent,
       }),
     );
-    if (artifact) input.turn.markArtifactFilePublished();
-    return { messageId: message.id, toolCallCount: stepToolCalls.length, stepText };
+    if (prepared.artifactPublished) input.turn.markArtifactFilePublished();
+    return {
+      messageId: message.id,
+      toolCallCount: prepared.toolCallCount,
+      stepText: prepared.stepText,
+    };
   }
 
   private publishAgentMessage(message: Message): Message {
@@ -733,6 +707,51 @@ ${activeMemories
       [orgRoom(saved.organizationId), channelRoom(saved.channelId ?? '')],
     );
     return saved;
+  }
+
+  /**
+   * Flag-routed MCP tool palette resolver. Wraps both legacy
+   * `buildMcpToolDefinitions` and V2 `buildMcpToolDefinitionsV2` so the
+   * AiService wake-run resolver (`setMcpToolResolver` in services/
+   * index.ts) routes through the same gate as the run-loop entry at
+   * line 223 above.
+   *
+   * Without this wrapper the wake-run path (DM → AiService →
+   * generateRunReply → mcpToolResolver) hit legacy
+   * `buildMcpToolDefinitions` unconditionally — so a DM to an agent
+   * with dispatch-tier attachments saw zero `connector_*` audit rows,
+   * never registered the meta-tools in the palette, and silently
+   * routed the dispatch tier through the legacy path. §3.5 rule 3
+   * requires the flag check to gate every spawn surface, not just
+   * the spirit-run entry.
+   *
+   * Returns only `{ toolSet, servers }` to match McpToolResolver's
+   * signature. The V2 catalogText still threads through the run-loop
+   * entry (line 230) into the system prompt; the wake-run path
+   * doesn't currently surface it, so an agent on a fresh wake-run can
+   * still call `get_connector_tools(serverId)` to discover dispatch
+   * tools even without the catalog block in its prompt.
+   */
+  async buildMcpToolDefinitionsRouted(ctx: {
+    organizationId: string;
+    memberId: string;
+    runId: string;
+    threadId: string;
+    taskSessionId: string;
+    role: SpiritRole;
+  }): Promise<{ toolSet: ToolSet; servers: McpServerSummary[]; catalogText?: string }> {
+    if (isMcpDispatchEnabled(ctx.organizationId) && this.mcpPool) {
+      const v2 = await buildMcpToolDefinitionsV2(
+        { mcpPool: this.mcpPool, repo: this.repo, tools: this.tools },
+        ctx,
+      );
+      return {
+        toolSet: v2.toolSet,
+        servers: v2.servers,
+        catalogText: v2.catalogText.length > 0 ? v2.catalogText : undefined,
+      };
+    }
+    return this.buildMcpToolDefinitions(ctx);
   }
 
   async buildMcpToolDefinitions(ctx: {

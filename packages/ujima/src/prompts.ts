@@ -39,6 +39,27 @@ function formatAttachedMcpServers(
 }
 
 /**
+ * Render the V2 spawn's pre-rendered dispatch catalog (PR 3) into the
+ * system prompt. Only the V2 spawn passes a value — the legacy spawn
+ * leaves this undefined and the block is omitted entirely. The text
+ * comes through pre-sanitized; this helper does not inspect it.
+ *
+ * The framing tells the model these connectors exist but require an
+ * extra step to use (get_connector_tools → invoke_connector_tool),
+ * so it doesn't conflate them with the always-on Attached MCP servers
+ * block above.
+ */
+function formatAvailableConnectors(catalogText: string | undefined): string {
+  if (!catalogText || catalogText.trim().length === 0) return '';
+  return [
+    'Discoverable connectors (you do NOT have these tools yet; ' +
+      'call get_connector_tools(server_id) to see what one provides, ' +
+      'then invoke_connector_tool(server_id, tool_name, args) to use it):',
+    catalogText,
+  ].join('\n');
+}
+
+/**
  * Emit an explicit "capabilities you do NOT have" line in the
  * system prompt. Models — especially smaller/faster ones — pattern-
  * match the surface form of capability claims; when the prompt only
@@ -89,7 +110,6 @@ function formatAvailableSkills(skills: readonly SkillInstall[] | undefined, lega
   const visible = (skills ?? []).filter((skill) => !skill.disableModelInvocation);
   if (visible.length > 0) {
     return [
-      'If a skill is relevant, inspect its SKILL.md before acting.',
       '<available_skills>',
       ...visible.map((skill) =>
         [
@@ -110,7 +130,6 @@ function formatAvailableSkills(skills: readonly SkillInstall[] | undefined, lega
   return [
     'Available skills:',
     legacySkills.map((skill) => `- ${skill}`).join('\n'),
-    'If a skill is relevant, inspect its SKILL.md before acting.',
   ].join('\n');
 }
 
@@ -132,8 +151,14 @@ function formatWorkspaceLayout(workspaceRoot: string): string {
 }
 
 function formatChannelTargets(channels: Channel[]): string {
-  return channels.length
-    ? channels.map((channel) => `- ${channel.name} [${channel.id}] (${channel.kind})`).join('\n')
+  // Defensive: archived channels must never reach the system prompt
+  // — `channel.read` will throw "Channel not found" on them and the
+  // agent has no way to know the id is dead, so it retries forever.
+  // Callers should already pre-filter, but this is the last line of
+  // defense.
+  const visible = channels.filter((channel) => !channel.archivedAt);
+  return visible.length
+    ? visible.map((channel) => `- ${channel.name} [${channel.id}] (${channel.kind})`).join('\n')
     : '- none';
 }
 
@@ -248,6 +273,15 @@ export function buildAgentSystemPrompt(
    */
   attachedMcpServers?: readonly { name: string; toolNames: readonly string[] }[],
   conversationKind: ConversationKind = 'channel',
+  /**
+   * Pre-rendered dispatch catalog block produced by the V2 spawn
+   * (mcp_connector_dispatch_plan.md §7.4). Only the V2 spawn passes
+   * a value; the legacy spawn leaves it undefined and the block is
+   * omitted from the prompt entirely. Already sanitized by
+   * `resolveConnectorCatalog` — this signature accepts it as plain
+   * text and threads it through.
+   */
+  availableConnectors?: string,
 ): string {
   const accessibleChannels = role.channels.length
     ? channels.filter((channel) => role.channels.includes(channel.name))
@@ -286,12 +320,15 @@ export function buildAgentSystemPrompt(
     buildCollaborationProtocol(conversationKind),
     '',
     formatAvailableSkills(availableSkills, role.skills),
+    'If a skill is relevant, inspect its SKILL.md before acting.',
+    'Match your task to the appropriate skill proactively: before implementing code, use incremental-implementation or test-driven-development; before merging, use code-review-and-quality; when debugging, use debugging-and-error-recovery; when planning, use planning-and-task-breakdown or spec-driven-development. When in doubt about task scope, check the skill descriptions to find the best fit.',
     '',
     `Workspace root: ${workspaceRoot}`,
     `Allowed scopes: ${listScopes(role)}`,
     formatWorkspaceLayout(workspaceRoot),
     `Available tools: ${listToolsLine(availableToolIds ?? role.tools)}`,
     formatAttachedMcpServers(attachedMcpServers),
+    formatAvailableConnectors(availableConnectors),
     formatMissingCapabilities(availableToolIds),
     `Available channels: ${listChannels(role)}`,
   ]

@@ -1,18 +1,15 @@
 import { NextResponse } from "next/server";
-import { io } from "socket.io-client";
 import {
   parseDmThreadId,
   SocketEventNames,
-  SocketEventSchemas,
   type SocketEventName,
 } from "@ujima/shared";
 import {
-  daemonBaseUrl,
   daemonFetch,
   getSessionTokenFromCookie,
-  readDaemonBearerToken,
   getServerAuthState,
 } from "@/server/ujima-daemon";
+import { createSocketEventStream } from "@/server/socket-event-stream";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -88,81 +85,16 @@ export async function GET(request: Request) {
     ? verifiedMemberIds
     : resolveTrustedMemberIds(threadId, authenticatedMemberId);
 
-  const encoder = new TextEncoder();
-  let socket: ReturnType<typeof io> | null = null;
-
-  const stream = new ReadableStream<Uint8Array>({
-    start(controller) {
-      let closed = false;
-      const send = (envelope: unknown) => {
-        if (closed) return;
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify(envelope)}\n\n`));
-      };
-      const close = () => {
-        if (closed) return;
-        closed = true;
-        controller.close();
-      };
-
-      socket = io(daemonBaseUrl(), {
-        path: "/events",
-        transports: ["websocket"],
-        auth: { token: readDaemonBearerToken() },
-        reconnection: true,
-        reconnectionAttempts: Infinity,
-        reconnectionDelay: 1000,
-        reconnectionDelayMax: 5000,
-      });
-
-      socket.on("connect", () => {
-        socket?.emit("subscribe", {
-          organizationId,
-          channelIds,
-          threadIds: [threadId],
-          memberIds,
-          runIds: [],
-        });
-        send({ type: "ready" });
-      });
-
-      for (const eventName of Object.values(SocketEventNames) as SocketEventName[]) {
-        socket.on(eventName, (payload: unknown) => {
-          const schema = SocketEventSchemas[eventName];
-          const parsed = schema.safeParse(payload);
-          if (!parsed.success) return;
-          if (!shouldForwardEvent(eventName, parsed.data, { threadId, channelIds, memberIds })) {
-            return;
-          }
-          send({ type: "socket", event: eventName, payload: parsed.data });
-        });
-      }
-
-      socket.on("connect_error", (error) => {
-        send({ type: "error", message: error instanceof Error ? error.message : String(error) });
-      });
-
-      socket.on("disconnect", () => {
-        // Keep the SSE bridge open so the socket can reconnect without the
-        // browser losing the conversation stream.
-      });
-
-      request.signal.addEventListener("abort", () => {
-        socket?.disconnect();
-        close();
-      });
+  return createSocketEventStream(request, {
+    subscription: {
+      organizationId,
+      channelIds,
+      threadIds: [threadId],
+      memberIds,
+      runIds: [],
     },
-    cancel() {
-      socket?.disconnect();
-    },
-  });
-
-  return new Response(stream, {
-    status: 200,
-    headers: {
-      "content-type": "text/event-stream; charset=utf-8",
-      "cache-control": "no-cache, no-transform",
-      connection: "keep-alive",
-    },
+    shouldForward: (eventName, payload) =>
+      shouldForwardEvent(eventName, payload, { threadId, channelIds, memberIds }),
   });
 }
 
@@ -175,68 +107,64 @@ function shouldForwardEvent(
     memberIds: string[];
   },
 ): boolean {
-  const threadIds = new Set([input.threadId]);
-
   switch (eventName) {
-    case SocketEventNames.channelMessage: {
-      const body = payload as { channelId?: string };
-      return typeof body.channelId === "string" && input.channelIds.includes(body.channelId);
-    }
+    case SocketEventNames.channelMessage:
     case SocketEventNames.channelPresence: {
       const body = payload as { channelId?: string };
       return typeof body.channelId === "string" && input.channelIds.includes(body.channelId);
     }
     case SocketEventNames.threadMessage: {
       const body = payload as { threadId?: string };
-      return typeof body.threadId === "string" && threadIds.has(body.threadId);
+      return body.threadId === input.threadId;
     }
     case SocketEventNames.dmMessage: {
       const body = payload as { message?: { threadId?: string } };
-      return typeof body.message?.threadId === "string" && threadIds.has(body.message.threadId);
+      return body.message?.threadId === input.threadId;
     }
     case SocketEventNames.approvalRequested:
-    case SocketEventNames.approvalResolved: {
+    case SocketEventNames.approvalResolved:
+    case SocketEventNames.runChunk:
+    case SocketEventNames.runTokens:
+    case SocketEventNames.toolCalled:
+    case SocketEventNames.toolResult:
+    case SocketEventNames.memberAlerted:
+    case SocketEventNames.memberAlertFailed:
+    case SocketEventNames.memberMustReplyFailed: {
       const body = payload as { threadId?: string };
-      return typeof body.threadId === "string" && threadIds.has(body.threadId);
+      return body.threadId === input.threadId;
     }
     case SocketEventNames.runStarted:
     case SocketEventNames.runUpdated:
     case SocketEventNames.runCompleted: {
       const body = payload as { run?: { threadId?: string } };
-      return typeof body.run?.threadId === "string" && threadIds.has(body.run.threadId);
+      return body.run?.threadId === input.threadId;
     }
-    case SocketEventNames.runChunk: {
-      const body = payload as { threadId?: string };
-      return typeof body.threadId === "string" && threadIds.has(body.threadId);
-    }
-    case SocketEventNames.runTokens: {
-      const body = payload as { threadId?: string };
-      return typeof body.threadId === "string" && threadIds.has(body.threadId);
-    }
-    case SocketEventNames.toolCalled:
-    case SocketEventNames.toolResult: {
-      const body = payload as { threadId?: string };
-      return typeof body.threadId === "string" && threadIds.has(body.threadId);
-    }
-    case SocketEventNames.memberAlerted: {
-      const body = payload as { threadId?: string };
-      return typeof body.threadId === "string" && threadIds.has(body.threadId);
-    }
-    case SocketEventNames.memberAlertFailed: {
-      const body = payload as { threadId?: string };
-      return typeof body.threadId === "string" && threadIds.has(body.threadId);
-    }
-    case SocketEventNames.memberMustReplyFailed: {
-      const body = payload as { threadId?: string };
-      return typeof body.threadId === "string" && threadIds.has(body.threadId);
+    case SocketEventNames.agentPassed:
+    case SocketEventNames.agentPassedWithText:
+    case SocketEventNames.agentAck:
+    case SocketEventNames.agentHandoff:
+    case SocketEventNames.decisionVerification:
+    case SocketEventNames.wakeSuppressed:
+    case SocketEventNames.runSilentCompletion:
+    case SocketEventNames.runEmptyCompletion:
+    case SocketEventNames.mirrorSuppressed:
+    case SocketEventNames.echoSuppressed:
+    case SocketEventNames.supervisorReplied: {
+      const body = payload as {
+        threadId?: string;
+        channelId?: string;
+        message?: { threadId?: string; channelId?: string };
+      };
+      const threadId = body.threadId ?? body.message?.threadId;
+      const channelId = body.channelId ?? body.message?.channelId;
+      return (
+        threadId === input.threadId ||
+        (typeof channelId === "string" && input.channelIds.includes(channelId))
+      );
     }
     case SocketEventNames.memberUpdated: {
       const body = payload as { member?: { id?: string } };
       return typeof body.member?.id === "string" && input.memberIds.includes(body.member.id);
-    }
-    case SocketEventNames.supervisorReplied: {
-      const body = payload as { message?: { threadId?: string } };
-      return typeof body.message?.threadId === "string" && threadIds.has(body.message.threadId);
     }
     default:
       return false;

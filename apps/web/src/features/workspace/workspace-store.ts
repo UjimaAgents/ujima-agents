@@ -13,6 +13,7 @@ import {
 import type { SelectedConversation } from "./types";
 import { resolveDefaultConversation } from "./workspace-channels";
 import { isLiveRun } from "./feed-selectors";
+import { mergeRunChunkActivity, runChunkActivityKey } from "./run-chunk-activity";
 import type { ChatMessageData, ApprovalCardData } from "./components/chat";
 import type { ActivityState } from "./activity-state";
 import { presenceToActivityState } from "./activity-state";
@@ -28,6 +29,7 @@ export type WorkspaceTab =
   | "members"
   | "culture";
 export type WorkspaceDetailsTab = "Thinking trace" | "Changes" | "Metadata";
+export type ChatFontSize = "normal" | "large" | "xlarge" | "xxlarge" | "3xlarge" | "6xlarge";
 
 export interface ActiveJob {
   runId: string;
@@ -65,7 +67,10 @@ export interface WorkspaceState {
   activity: ActivityEvent[];
   loading: boolean;
   conversationKey?: string;
+  chatFontSize: ChatFontSize;
+  hydrateClientPersisted(): void;
   setSidebarWidth(width: number): void;
+  setChatFontSize(size: ChatFontSize): void;
   setActiveTab(tab: WorkspaceTab): void;
   setShowDetails(show: boolean, options?: { userIntent?: boolean }): void;
   openDetailsForAgentMessage(): void;
@@ -91,7 +96,8 @@ export interface WorkspaceState {
   hydrateMessages(messages: Message[], toMessage: (message: Message) => ChatMessageData, toActivity: (message: Message) => ActivityEvent): void;
   addPendingMessage(message: ChatMessageData): void;
   receiveMessage(tempId: string | undefined, message: Message, toMessage: (message: Message) => ChatMessageData, toActivity: (message: Message) => ActivityEvent): void;
-  appendRunChunk(message: ChatMessageData | undefined, activity: ActivityEvent): void;
+  appendRunChunk(message: ChatMessageData | undefined, activity?: ActivityEvent): void;
+  appendRunChunkBatch(items: { message?: ChatMessageData; activity?: ActivityEvent }[]): void;
   removeMessage(id: string): void;
   upsertApproval(approval: ApprovalRequest, toCard: (approval: ApprovalRequest, state: Pick<WorkspaceState, "members">) => ApprovalCardData, toActivity: (approval: ApprovalRequest) => ActivityEvent): void;
   upsertRun(run: RunState, toActivity: (run: RunState) => ActivityEvent): void;
@@ -102,12 +108,16 @@ export interface WorkspaceState {
 }
 
 const DETAILS_AUTO_OPEN_DISMISSED_KEY = "ujima.workspace.detailsAutoOpenDismissed";
+const CHAT_FONT_SIZE_KEY = "ujima.workspace.chatFontSize";
+const CHAT_FONT_SIZE_DEFAULT: ChatFontSize = "normal";
 
+// SSR-safe defaults. Persisted values from localStorage are applied post-mount
+// via hydrateClientPersisted() to avoid a Next.js hydration mismatch.
 const EMPTY_ACTIVITY = {
   sidebarWidth: 18,
   activeTab: "conversation" as WorkspaceTab,
   showDetails: false,
-  detailsAutoOpenDismissed: readDetailsAutoOpenDismissed(),
+  detailsAutoOpenDismissed: false,
   detailsWidth: 33,
   detailsTab: "Thinking trace" as WorkspaceDetailsTab,
   selectedConversation: undefined,
@@ -125,10 +135,26 @@ const EMPTY_ACTIVITY = {
   activity: [],
   loading: true,
   conversationKey: undefined,
+  chatFontSize: CHAT_FONT_SIZE_DEFAULT,
 };
 
+function shallowEqual(left: unknown, right: unknown): boolean {
+  if (left === right) return true;
+  if (!left || !right || typeof left !== "object" || typeof right !== "object") return false;
+  const leftObj = left as Record<string, unknown>;
+  const rightObj = right as Record<string, unknown>;
+  const leftKeys = Object.keys(leftObj);
+  const rightKeys = Object.keys(rightObj);
+  if (leftKeys.length !== rightKeys.length) return false;
+  for (const key of leftKeys) {
+    if (leftObj[key] !== rightObj[key]) return false;
+  }
+  return true;
+}
+
+/** @deprecated alias kept for call-sites – delegates to shallowEqual */
 function sameRecord(left: unknown, right: unknown): boolean {
-  return JSON.stringify(left) === JSON.stringify(right);
+  return shallowEqual(left, right);
 }
 
 function omitKey<T>(record: Record<string, T>, key: string): Record<string, T> {
@@ -155,10 +181,25 @@ function mergeChannels(current: WorkspaceChannel[], incoming: WorkspaceChannel[]
 }
 
 function mergeChatMessages(current: ChatMessageData[], incoming: ChatMessageData[]): ChatMessageData[] {
-  const map = new Map<string, ChatMessageData>();
-  for (const message of [...current, ...incoming]) {
-    map.set(message.id, message);
+  // Fast path: if all incoming IDs are new and chronologically after the last
+  // current message, we can just append without a full sort.
+  const lastCurrentTime = current.length > 0 ? Date.parse(current[current.length - 1].createdAt ?? "") : -Infinity;
+  const currentIds = current.length <= 200 ? new Set(current.map((m) => m.id)) : null;
+  if (currentIds && incoming.length > 0) {
+    let allNewAndOrdered = true;
+    let prevTime = lastCurrentTime;
+    for (const msg of incoming) {
+      if (currentIds.has(msg.id)) { allNewAndOrdered = false; break; }
+      const t = Date.parse(msg.createdAt ?? "");
+      if (t < prevTime) { allNewAndOrdered = false; break; }
+      prevTime = t;
+    }
+    if (allNewAndOrdered) return [...current, ...incoming];
   }
+
+  const map = new Map<string, ChatMessageData>();
+  for (const message of current) map.set(message.id, message);
+  for (const message of incoming) map.set(message.id, message);
   return [...map.values()].sort((a, b) => Date.parse(a.createdAt ?? "") - Date.parse(b.createdAt ?? ""));
 }
 
@@ -210,21 +251,94 @@ function mergeRuns(current: RunState[], incoming: RunState[]): RunState[] {
   return next;
 }
 
+// Module-level incremental set tracking seen activity event IDs.
+// Avoids rebuilding a Set from the entire activity array on every append.
+let _activityEventIds: Set<string> | null = null;
+let _activityForIds: ActivityEvent[] | null = null;
+
+function getActivityEventIds(activity: ActivityEvent[]): Set<string> {
+  // If the activity array reference changed (e.g. conversation reset), rebuild.
+  if (_activityForIds !== activity) {
+    _activityEventIds = new Set(activity.map((event) => event.event_id));
+    _activityForIds = activity;
+  }
+  return _activityEventIds!;
+}
+
 function appendSequencedEvents(
   state: Pick<WorkspaceState, "activitySequence" | "activity">,
   events: ActivityEvent[],
 ): Pick<WorkspaceState, "activitySequence" | "activity"> {
   if (events.length === 0) return state;
-  const seen = new Set(state.activity.map((event) => event.event_id));
+  const seen = getActivityEventIds(state.activity);
   const stamped = events.map((event, index) => ({
     ...event,
     order: state.activitySequence + index,
   })).filter((event) => !seen.has(event.event_id));
   if (stamped.length === 0) return state;
+  // Incrementally update the tracking set.
+  const nextActivity = [...state.activity, ...stamped];
+  for (const event of stamped) seen.add(event.event_id);
+  _activityForIds = nextActivity;
   return {
     activitySequence: state.activitySequence + stamped.length,
-    activity: [...state.activity, ...stamped],
+    activity: nextActivity,
   };
+}
+
+function upsertRunChunkActivity(
+  state: Pick<WorkspaceState, "activitySequence" | "activity">,
+  event: ActivityEvent,
+): Pick<WorkspaceState, "activitySequence" | "activity"> {
+  const key = runChunkActivityKey(event);
+  if (!key) {
+    return appendSequencedEvents(state, [event]);
+  }
+
+  const last = state.activity[state.activity.length - 1];
+  if (last && runChunkActivityKey(last) === key) {
+    return {
+      activitySequence: state.activitySequence,
+      activity: [...state.activity.slice(0, -1), mergeRunChunkActivity(last, event)],
+    };
+  }
+
+  return appendSequencedEvents(state, [event]);
+}
+
+function applyRunChunkItems(
+  state: WorkspaceState,
+  items: { message?: ChatMessageData; activity?: ActivityEvent }[],
+): Partial<WorkspaceState> {
+  if (items.length === 0) return {};
+
+  let messages = state.messages;
+  let activitySequence = state.activitySequence;
+  let activity = state.activity;
+
+  for (const item of items) {
+    const message = item.message;
+    if (message) {
+      const run = message.streamRunId ? state.runs.find((entry) => entry.id === message.streamRunId) : undefined;
+      const liveMessage = run && !isLiveRun(run) ? undefined : message;
+      if (liveMessage) {
+        messages = mergeRunChunkMessages(messages, [{ message: liveMessage }]);
+      }
+    }
+    if (item.activity) {
+      const next = upsertRunChunkActivity({ activitySequence, activity }, item.activity);
+      activitySequence = next.activitySequence;
+      activity = next.activity;
+    }
+  }
+
+  const patch: Partial<WorkspaceState> = {};
+  if (messages !== state.messages) patch.messages = messages;
+  if (activity !== state.activity || activitySequence !== state.activitySequence) {
+    patch.activity = activity;
+    patch.activitySequence = activitySequence;
+  }
+  return patch;
 }
 
 function mergeRunChunkMessages(
@@ -402,8 +516,25 @@ export function selectActiveTerminals(state: WorkspaceState): ActiveJob[] {
 
 export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   ...EMPTY_ACTIVITY,
+  hydrateClientPersisted: () =>
+    set((state) => {
+      const chatFontSize = readChatFontSize();
+      const detailsAutoOpenDismissed = readDetailsAutoOpenDismissed();
+      if (
+        state.chatFontSize === chatFontSize &&
+        state.detailsAutoOpenDismissed === detailsAutoOpenDismissed
+      ) {
+        return state;
+      }
+      return { chatFontSize, detailsAutoOpenDismissed };
+    }),
   setSidebarWidth: (sidebarWidth) =>
     set((state) => (state.sidebarWidth === sidebarWidth ? state : { sidebarWidth })),
+  setChatFontSize: (chatFontSize) =>
+    set((state) => {
+      writeChatFontSize(chatFontSize);
+      return state.chatFontSize === chatFontSize ? state : { chatFontSize };
+    }),
   setActiveTab: (activeTab) =>
     set((state) => (state.activeTab === activeTab ? state : { activeTab })),
   setShowDetails: (showDetails, options) =>
@@ -540,19 +671,21 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
       };
     }),
   resetConversationFeed: (conversationKey) =>
-    set((state) =>
-      state.conversationKey === conversationKey && state.loading
-        ? state
-        : {
-            messages: [],
-            approvals: [],
-            runs: [],
-            activitySequence: 0,
-            activity: [],
-            loading: true,
-            conversationKey,
-          },
-    ),
+    set((state) => {
+      if (state.conversationKey === conversationKey && state.loading) return state;
+      // Clear the incremental activity event ID cache on feed reset.
+      _activityEventIds = null;
+      _activityForIds = null;
+      return {
+        messages: [],
+        approvals: [],
+        runs: [],
+        activitySequence: 0,
+        activity: [],
+        loading: true,
+        conversationKey,
+      };
+    }),
   setLoading: (loading) =>
     set((state) => (state.loading === loading ? state : { loading })),
   hydrateMessages: (messages, toMessage, toActivity) =>
@@ -605,13 +738,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
     }),
   appendRunChunk: (message, activity) =>
     set((state) => {
-      const run = message?.streamRunId ? state.runs.find((item) => item.id === message.streamRunId) : undefined;
-      const liveMessage = run && !isLiveRun(run) ? undefined : message;
-      const messages = mergeRunChunkMessages(state.messages, liveMessage ? [{ message: liveMessage }] : []);
-      return {
-        ...(messages === state.messages ? {} : { messages }),
-        ...appendSequencedEvents(state, [activity]),
-      };
+      const patch = applyRunChunkItems(state, [{ message, activity }]);
+      return Object.keys(patch).length > 0 ? patch : state;
+    }),
+  appendRunChunkBatch: (items) =>
+    set((state) => {
+      const patch = applyRunChunkItems(state, items);
+      return Object.keys(patch).length > 0 ? patch : state;
     }),
   removeMessage: (id) =>
     set((state) => ({ messages: state.messages.filter((message) => message.id !== id) })),
@@ -684,6 +817,18 @@ function writeDetailsAutoOpenDismissed(dismissed: boolean): void {
   } else {
     window.localStorage.removeItem(DETAILS_AUTO_OPEN_DISMISSED_KEY);
   }
+}
+
+function readChatFontSize(): ChatFontSize {
+  if (typeof window === "undefined") return CHAT_FONT_SIZE_DEFAULT;
+  const stored = window.localStorage.getItem(CHAT_FONT_SIZE_KEY);
+  if (stored === "normal" || stored === "large" || stored === "xlarge" || stored === "xxlarge" || stored === "3xlarge" || stored === "6xlarge") return stored;
+  return CHAT_FONT_SIZE_DEFAULT;
+}
+
+function writeChatFontSize(size: ChatFontSize): void {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(CHAT_FONT_SIZE_KEY, size);
 }
 
 export function resolveMemberActivity(

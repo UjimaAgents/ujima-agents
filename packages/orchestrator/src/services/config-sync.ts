@@ -20,6 +20,7 @@ import {
   type ConfigFieldOwnership,
   type Member,
   type Organization,
+  resolveChannelMemberIds,
 } from '@ujima/shared';
 import { isPathInsideRoot } from '@ujima/shared/workspace';
 import type { ApiRepository } from './repository-reader.js';
@@ -363,8 +364,19 @@ export class ConfigSyncService {
       }
     }
 
+    const activeMemberIds = new Set(
+      this.repo
+        .listMembers(organizationId)
+        .filter((member) => !member.retiredAt)
+        .map((member) => member.id),
+    );
+
     for (const [id, memberIds] of channelMemberships) {
-      this.repo.setChannelMembers(organizationId, id, [...memberIds].sort());
+      this.repo.setChannelMembers(
+        organizationId,
+        id,
+        resolveChannelMemberIds([...memberIds], activeMemberIds),
+      );
     }
 
     for (const channel of existingChannels) {

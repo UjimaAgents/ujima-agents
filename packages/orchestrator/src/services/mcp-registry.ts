@@ -5,6 +5,8 @@ import {
   classifyTool,
   evaluatePolicy,
   resolveClassification,
+  type AgentMcpAttachment,
+  type ChannelMcpAttachment,
   type AgentToolAttachment,
   type McpAttachmentScope,
   type McpServer,
@@ -26,6 +28,7 @@ import {
 import type { MCPDef } from '@ujima/shared';
 import { materializeMcpDef } from './mcp-runtime.js';
 import type { ApiRepository } from './repository-reader.js';
+import { createConnectorAuditWriter } from './connector-audit.js';
 import { errorMessage } from '../utils/error-message.js';
 
 type McpConnector = (def: MCPDef) => Promise<ConnectResult>;
@@ -546,20 +549,25 @@ export class McpRegistryService {
     // The catalog must mirror that — without the all-scope set, a
     // worker attachment + supervisor-only grant looked unreachable in
     // the supervisor view even though the runtime exposes it.
-    const agentMcpAttachmentsAnyScope = agentId
-      ? new Set(
-          this.repo
-            .listAgentMcpAttachments(organizationId, agentId)
-            .map((a) => a.mcpServerId),
-        )
+    const agentAttachmentRows = agentId
+      ? this.repo.listAgentMcpAttachments(organizationId, agentId)
       : null;
-    const agentMcpAttachments = agentId
+    const agentMcpAttachmentsAnyScope = agentAttachmentRows
+      ? new Set(agentAttachmentRows.map((a) => a.mcpServerId))
+      : null;
+    const agentMcpAttachments = agentAttachmentRows
       ? new Set(
-          this.repo
-            .listAgentMcpAttachments(organizationId, agentId)
+          agentAttachmentRows
             .filter((a) => matchesRole(a.scope))
             .map((a) => a.mcpServerId),
         )
+      : null;
+    // PR 6 — tier lookup for the active agent. Surfaced verbatim per
+    // server on the catalog response so the Agents tab can render the
+    // toggle without a second round trip. Map only populated when
+    // agentId is set; absent for the role-agnostic planning view.
+    const agentTierByServer = agentAttachmentRows
+      ? new Map(agentAttachmentRows.map((a) => [a.mcpServerId, a.tier]))
       : null;
     // For each server: tool-grant set + whether the agent is in "allowlist
     // mode" (has any per-tool rows for that server with a matching scope).
@@ -730,6 +738,7 @@ export class McpRegistryService {
         };
       });
 
+      const agentTier = agentTierByServer?.get(server.id);
       out.push({
         id: server.id,
         name: server.name,
@@ -738,6 +747,7 @@ export class McpRegistryService {
         toolCount: tools.length,
         allowlistAgents: [...allowlistAgents],
         tools,
+        ...(agentTier ? { agentTier } : {}),
       });
     }
     return {
@@ -826,6 +836,10 @@ export class McpRegistryService {
           memberId: input.memberId,
           mcpServerId: input.mcpServerId,
           scope,
+          // Legacy attachment-creation path. 'native' preserves the pre-V2
+          // behavior exactly (full schemas in palette at spawn). Dispatch-tier
+          // attachments arrive via the V2 paths landing in later PRs.
+          tier: 'native',
           createdAt: now,
           updatedAt: now,
         });
@@ -973,6 +987,8 @@ export class McpRegistryService {
       memberId: input.memberId,
       mcpServerId: input.mcpServerId,
       scope: input.scope ?? 'worker',
+      // Legacy attachment-creation path; see grantToolToAgent comment above.
+      tier: 'native',
       createdAt: now,
       updatedAt: now,
     });
@@ -992,9 +1008,193 @@ export class McpRegistryService {
     );
   }
 
+  /**
+   * Flip the tier of an existing (member, server) attachment row.
+   * Mirrors the §13.3 rollback contract: tier='dispatch' rows are
+   * harmless metadata when the V2 spawn flag is off (the legacy path
+   * is tier-blind). Wraps PR 1's `repo.updateAttachmentTier`.
+   *
+   * Validates org + server + member up front so a missing row, a
+   * disabled server, or a retired agent throws cleanly instead of
+   * silently no-op'ing through the repo's UPDATE.
+   */
+  updateAttachmentTier(input: {
+    organizationId: string;
+    memberId: string;
+    mcpServerId: string;
+    tier: AgentMcpAttachment['tier'];
+  }): AgentMcpAttachment {
+    this.requireOrganization(input.organizationId);
+    const server = this.requireServer(input.organizationId, input.mcpServerId);
+    if (server.status === 'disabled') {
+      throw new Error(`MCP server "${server.name}" is disabled`);
+    }
+    const member = this.repo.getMember(input.organizationId, input.memberId);
+    if (!member) {
+      throw new Error(`Member not found: ${input.memberId}`);
+    }
+    if (member.kind !== 'agent') {
+      throw new Error(
+        `Cannot update tier on non-agent member "${input.memberId}"`,
+      );
+    }
+    if (member.retiredAt) {
+      throw new Error(
+        `Cannot update tier on retired member "${input.memberId}"`,
+      );
+    }
+    // Capture the prior tier before the UPDATE so the §12 audit row
+    // carries fromTier accurately. Reading the row twice is cheap; the
+    // alternative (returning fromTier from the repo UPDATE) would
+    // ripple through the ApiRepository surface for one telemetry field.
+    const priorAttachments = this.repo.listAgentMcpAttachments(
+      input.organizationId,
+      input.memberId,
+    );
+    const prior = priorAttachments.find((row) => row.mcpServerId === input.mcpServerId);
+    const updated = this.repo.updateAttachmentTier(
+      input.organizationId,
+      input.memberId,
+      input.mcpServerId,
+      input.tier,
+      new Date().toISOString(),
+    );
+    if (!updated) {
+      // Message starts with "Attachment not found" so mapMcpRouteError
+      // classifies it as 404 ERR_NOT_FOUND, not the catch-all 500.
+      // Without this prefix the missing-attachment branch leaked
+      // through to the route's `ERR_INTERNAL` fallback and broke
+      // the UI's error handling.
+      throw new Error(
+        `Attachment not found for member "${input.memberId}" on server "${server.name}". ` +
+          'Attach it first via POST /settings/agents/:agentId/mcps.',
+      );
+    }
+    // §12.2 audit emit. Only fire on an actual tier change — a no-op
+    // PATCH (same tier) shouldn't produce a spurious row that distorts
+    // the curation job's idle-server signal in PR 9.
+    if (prior && prior.tier !== updated.tier) {
+      const writer = createConnectorAuditWriter({ repo: this.repo });
+      writer.tierChanged({
+        organizationId: input.organizationId,
+        memberId: input.memberId,
+        serverId: input.mcpServerId,
+        fromTier: prior.tier,
+        toTier: updated.tier,
+      });
+    }
+    return updated;
+  }
+
   listAttachments(organizationId: string, memberId: string) {
     this.requireOrganization(organizationId);
     return this.repo.listAgentMcpAttachments(organizationId, memberId);
+  }
+
+  // ----------------- Channel attachments (PR 10) -----------------------
+
+  /**
+   * Attach an MCP server to a channel. Every agent in the channel
+   * inherits this attachment via the §17.5.3 union step in V2 spawn.
+   *
+   * Default tier is 'dispatch' when the dispatch flag is on for this
+   * org (per the schema default). Operators can promote to native via
+   * `updateChannelAttachmentTier`. With the flag off the new row is
+   * still safely written — legacy spawn never reads channel
+   * attachments, and the row stays harmless metadata.
+   */
+  attachServerToChannel(input: {
+    organizationId: string;
+    channelId: string;
+    mcpServerId: string;
+    scope?: 'worker' | 'supervisor' | 'both';
+  }): ChannelMcpAttachment {
+    this.requireOrganization(input.organizationId);
+    const server = this.requireServer(input.organizationId, input.mcpServerId);
+    if (server.status === 'disabled') {
+      throw new Error(`MCP server "${server.name}" is disabled`);
+    }
+    // Validate the channel — without this, an UPSERT against a
+    // non-existent channelId would succeed and produce attachment
+    // rows that no agent ever inherits (channel_members joins to
+    // nothing). The error message starts with a known prefix so
+    // mapMcpRouteError can classify it as 404.
+    const channel = this.repo.getChannel(input.organizationId, input.channelId);
+    if (!channel) {
+      throw new Error(`Channel not found: ${input.channelId}`);
+    }
+    const now = new Date().toISOString();
+    return this.repo.saveChannelMcpAttachment({
+      id: randomUUID(),
+      organizationId: input.organizationId,
+      channelId: input.channelId,
+      mcpServerId: input.mcpServerId,
+      scope: input.scope ?? 'worker',
+      // Defaults to 'dispatch' per the Zod schema default — channel
+      // attachments lean dispatch to keep the §17.5.3 native-balloon
+      // surface narrow.
+      tier: 'dispatch',
+      createdAt: now,
+      updatedAt: now,
+    });
+  }
+
+  detachServerFromChannel(
+    organizationId: string,
+    channelId: string,
+    mcpServerId: string,
+  ): void {
+    this.requireOrganization(organizationId);
+    this.repo.deleteChannelMcpAttachment(organizationId, channelId, mcpServerId);
+  }
+
+  /**
+   * Flip the tier of an existing channel attachment row. Mirrors the
+   * shape of agent-side `updateAttachmentTier` so the channel
+   * settings UI can reuse the same surface contract.
+   *
+   * Does NOT emit a §12 audit event — connector_tier_changed audits
+   * are scoped to per-agent tier flips today, because the audit
+   * actor is the member whose effective set changes. A channel flip
+   * affects every member of the channel, which would either need a
+   * multi-emit (one audit row per member) or a new event type
+   * (connector_channel_tier_changed). Deferred to a later PR per
+   * §17.5 scope discipline.
+   */
+  updateChannelAttachmentTier(input: {
+    organizationId: string;
+    channelId: string;
+    mcpServerId: string;
+    tier: ChannelMcpAttachment['tier'];
+  }): ChannelMcpAttachment {
+    this.requireOrganization(input.organizationId);
+    const server = this.requireServer(input.organizationId, input.mcpServerId);
+    if (server.status === 'disabled') {
+      throw new Error(`MCP server "${server.name}" is disabled`);
+    }
+    const channel = this.repo.getChannel(input.organizationId, input.channelId);
+    if (!channel) {
+      throw new Error(`Channel not found: ${input.channelId}`);
+    }
+    const updated = this.repo.updateChannelAttachmentTier(
+      input.organizationId,
+      input.channelId,
+      input.mcpServerId,
+      input.tier,
+      new Date().toISOString(),
+    );
+    if (!updated) {
+      throw new Error(
+        `Attachment not found for channel "${input.channelId}" on server "${server.name}". ` +
+          'Attach it first via POST /settings/channels/:channelId/mcps.',
+      );
+    }
+    return updated;
+  }
+
+  listChannelAttachments(organizationId: string, channelId: string) {
+    this.requireOrganization(organizationId);
+    return this.repo.listChannelMcpAttachments(organizationId, channelId);
   }
 
   // ----------------- Internal helpers ----------------------------------

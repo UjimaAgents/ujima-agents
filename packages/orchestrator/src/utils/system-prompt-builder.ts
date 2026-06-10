@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { ModelMessage } from 'ai';
 import type { WakeReason } from '@ujima/shared';
-import { ANTI_MIRROR_SCAFFOLD_LINE } from './wake-reply-policy.js';
+import { ANTI_MIRROR_SCAFFOLD_LINE, BASE_WAKE_SCAFFOLD_LINES } from './wake-reply-policy.js';
 import { loadProceduresForSystemPrompt as loadProceduresIndex } from '../tools/self-procedure.js';
 import { aggregateProcedures, type AggregatorOutput } from './procedures.js';
 
@@ -83,20 +83,13 @@ export const PROCEDURES_GUIDANCE: readonly string[] = Object.freeze([
   '- The procedure file is YOUR playbook. It is not the user\'s style guide and not the team\'s process doc.',
 ]);
 
-export const BASE_WAKE_SCAFFOLD: readonly string[] = Object.freeze([
-  'Before you pick a tool, read the <thread-state> block in the most recent user message.',
-  'Treat its <agents-not-yet-responded> and <you-explicitly-addressed> / <you-implicitly-addressed> fields as ground truth — they are computed from the actual channel state, not from your reading.',
-  // Decision-tree terminator: name each tool by its function, not by
-  // quoting model-emittable strings. Quoting "noted" or "I'll await"
-  // inline causes Claude/GPT to pattern-match the example as a
-  // canonical exemplar and emit it through channel.ack even when
-  // richer replies were warranted.
-  'channel.ack = you were addressed but have no new information, question, or status to add. channel.pass = you were not addressed at all. channel.reply = you have substantive content (an answer, an artifact, a question, a status that changes the picture).',
-  'If <you-explicitly-addressed>true</you-explicitly-addressed>, you must terminate via a tool. Use channel.reply ONLY when you have substantive content per the definition above; otherwise use channel.ack with an empty body. Acknowledging via channel.reply with paraphrased filler is treated as a missed reply.',
-  'If <you-explicitly-addressed>false</you-explicitly-addressed> AND <you-implicitly-addressed>false</you-implicitly-addressed>, call channel.pass and stop. Do not post any message. The audit log already records that you considered the thread.',
-  'When you call channel.pass, the note field must reference a specific fact from <thread-state>. Empty notes and generic phrasing are rejected.',
-  'An auto-re-mention closing a hand-off does NOT count as being addressed. If the previous message is a plain acknowledgement of YOUR work and contains no new question, treat the chain as complete — call channel.handoff with complete:true (if you initiated the chain) or channel.ack (if you are receiving the acknowledgement).',
-]);
+/**
+ * Re-exported from `wake-reply-policy.ts` (the canonical owner of
+ * scaffold prose). The cache-stability test imports this name; the
+ * underlying lines are now sourced from `SCAFFOLD_RULES` so a single
+ * rule edit lands in every consumer (base + channel + DM).
+ */
+export const BASE_WAKE_SCAFFOLD: readonly string[] = BASE_WAKE_SCAFFOLD_LINES;
 
 export interface CacheableSystemInput {
   /** Output of `buildAgentSystemPrompt` — stable per (agent, thread). */

@@ -13,6 +13,7 @@ import {
 } from './lib/package.ts';
 import {
   assertDistributionReadme,
+  assertPackagedApiBinaries,
   assertPackagedWebNext,
   assertPackManifestIncludesReadme,
 } from './lib/pack-verify.ts';
@@ -91,11 +92,13 @@ async function main(): Promise<void> {
   }
 
   try {
+    assertPackagedApiBinaries(packageDir);
     assertPackagedWebNext(packageDir);
   } catch (error) {
     console.error('[release:smoke]', error);
     process.exit(1);
   }
+  console.log('[release:smoke] Packaged API has rg/fd binaries');
   console.log('[release:smoke] Web runtime resolves next OK');
 
   const apiProc = Bun.spawn([process.execPath, apiEntry], {

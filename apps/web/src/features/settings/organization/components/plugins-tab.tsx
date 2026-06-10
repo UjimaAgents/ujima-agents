@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useCallback, memo } from "react";
 import { ChevronLeft, ChevronRight, Package, Plus, Search, Trash2 } from "lucide-react";
 import type { BootstrapResponse } from "@ujima/api-schema";
 import { ConfirmDialog } from "@/features/settings/shared/confirm-dialog";
@@ -37,7 +37,7 @@ function matchesSkillSearch(
   return haystack.includes(normalized);
 }
 
-export function PluginsTab({ bootstrap, createdBy }: { bootstrap: BootstrapResponse; createdBy: string }) {
+export const PluginsTab = memo(function PluginsTab({ bootstrap, createdBy }: { bootstrap: BootstrapResponse; createdBy: string }) {
   const orgId = bootstrap.organization?.id ?? "";
   const [removedSkillIds, setRemovedSkillIds] = useState<string[]>([]);
   const installedSkills = useMemo(
@@ -73,12 +73,24 @@ export function PluginsTab({ bootstrap, createdBy }: { bootstrap: BootstrapRespo
   const rangeEnd = Math.min((safePage + 1) * SKILLS_PAGE_SIZE, filteredSkills.length);
 
   // Selection state helpers
-  const isAllPageSelected = visibleSkills.length > 0 && visibleSkills.every((skill) => selectedSkillIds.includes(skill.id));
-  const isSomePageSelected = visibleSkills.length > 0 && visibleSkills.some((skill) => selectedSkillIds.includes(skill.id)) && !isAllPageSelected;
-  const hasMoreMatchingSkills = filteredSkills.length > visibleSkills.length;
-  const isGlobalSelectAllActive = selectedSkillIds.length === filteredSkills.length && filteredSkills.length > 0;
+  const isAllPageSelected = useMemo(
+    () => visibleSkills.length > 0 && visibleSkills.every((skill) => selectedSkillIds.includes(skill.id)),
+    [visibleSkills, selectedSkillIds],
+  );
+  const isSomePageSelected = useMemo(
+    () => visibleSkills.length > 0 && visibleSkills.some((skill) => selectedSkillIds.includes(skill.id)) && !isAllPageSelected,
+    [visibleSkills, selectedSkillIds, isAllPageSelected],
+  );
+  const hasMoreMatchingSkills = useMemo(
+    () => filteredSkills.length > visibleSkills.length,
+    [filteredSkills.length, visibleSkills.length],
+  );
+  const isGlobalSelectAllActive = useMemo(
+    () => selectedSkillIds.length === filteredSkills.length && filteredSkills.length > 0,
+    [selectedSkillIds.length, filteredSkills.length],
+  );
 
-  const handleToggleSelectPage = () => {
+  const handleToggleSelectPage = useCallback(() => {
     if (isAllPageSelected) {
       const visibleIds = visibleSkills.map((s) => s.id);
       setSelectedSkillIds((prev) => prev.filter((id) => !visibleIds.includes(id)));
@@ -91,9 +103,9 @@ export function PluginsTab({ bootstrap, createdBy }: { bootstrap: BootstrapRespo
       }
       setSelectedSkillIds(newSelections);
     }
-  };
+  }, [isAllPageSelected, visibleSkills, selectedSkillIds]);
 
-  const install = async (nextSourceUrl = sourceUrl) => {
+  const install = useCallback(async (nextSourceUrl = sourceUrl) => {
     if (!nextSourceUrl.trim()) return;
     if (!orgId) {
       setError("Organization not loaded. Refresh the page and try again.");
@@ -122,9 +134,9 @@ export function PluginsTab({ bootstrap, createdBy }: { bootstrap: BootstrapRespo
     } finally {
       setInstalling(false);
     }
-  };
+  }, [orgId, createdBy, sourceUrl]);
 
-  const deleteSkill = async (skillId: string) => {
+  const deleteSkill = useCallback(async (skillId: string) => {
     setError(null);
     setBusy(`delete:${skillId}`);
     try {
@@ -141,21 +153,19 @@ export function PluginsTab({ bootstrap, createdBy }: { bootstrap: BootstrapRespo
     } finally {
       setBusy(null);
     }
-  };
+  }, [orgId]);
 
-  const deleteMultipleSkills = async (ids: string[]) => {
+  const deleteMultipleSkills = useCallback(async (ids: string[]) => {
     setError(null);
     setBusy("bulk-delete");
     try {
-      await Promise.all(
-        ids.map((id) =>
-          settingsFetchVoid(
-            `/api/settings/skills/${encodeURIComponent(id)}?organizationId=${encodeURIComponent(orgId)}`,
-            { method: "DELETE" },
-            "Failed to delete skill.",
-          )
-        )
-      );
+      for (const id of ids) {
+        await settingsFetchVoid(
+          `/api/settings/skills/${encodeURIComponent(id)}?organizationId=${encodeURIComponent(orgId)}`,
+          { method: "DELETE" },
+          "Failed to delete skill.",
+        );
+      }
       setRemovedSkillIds((current) => [...current, ...ids]);
       setSelectedSkillIds([]);
       setPendingBulkDelete(false);
@@ -164,7 +174,7 @@ export function PluginsTab({ bootstrap, createdBy }: { bootstrap: BootstrapRespo
     } finally {
       setBusy(null);
     }
-  };
+  }, [orgId]);
 
   const sectionTitle =
     installedSkills.length > 0 ? `Installed skills (${installedSkills.length})` : "Installed skills";
@@ -371,4 +381,4 @@ export function PluginsTab({ bootstrap, createdBy }: { bootstrap: BootstrapRespo
       />
     </>
   );
-}
+});

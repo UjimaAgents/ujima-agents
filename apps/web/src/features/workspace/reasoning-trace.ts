@@ -13,6 +13,7 @@ import {
 } from "@ujima/shared/browser";
 import type { TraceStepData } from "./components/chat/details-sidebar";
 import { formatTimestamp } from "./lib/format-timestamp";
+import { collapseRunChunkActivities, runChunkActivityKey } from "./run-chunk-activity";
 
 const TRACE_ACTIVITY_TYPES = new Set([
   "tool_called",
@@ -97,6 +98,7 @@ interface MessageActivityPayload {
   channelId?: string;
   content?: string;
   reasoning?: string;
+  runId?: string;
 }
 
 function collectRunIdsForThread(input: ReasoningTraceInput): Set<string> {
@@ -815,6 +817,7 @@ function deriveToolLine(
 }
 
 function runEventToStep(
+  input: ReasoningTraceInput,
   event: ActivityEvent,
   run: RunState,
 ): TraceStepData {
@@ -825,6 +828,7 @@ function runEventToStep(
       : run.status === "completed"
         ? "success"
         : "running";
+  const actor = resolveMember(input, run.agentId);
   return {
     id: event.event_id,
     title: `Run · ${label}`,
@@ -832,12 +836,16 @@ function runEventToStep(
     time: formatTimestamp(event.timestamp),
     duration: "—",
     status,
+    actorId: run.agentId,
+    actorName: actor.name,
+    runId: run.id,
   };
 }
 
 function runChunkEventToStep(input: ReasoningTraceInput, event: ActivityEvent): TraceStepData {
   const body = event.payload as RunChunkEvent | undefined;
-  const actor = resolveMember(input, body?.agentId ?? event.publisher);
+  const actorId = body?.agentId ?? event.publisher;
+  const actor = resolveMember(input, actorId);
   const label = body?.kind === "reasoning" ? "reasoning" : "text";
   return {
     id: event.event_id,
@@ -846,14 +854,13 @@ function runChunkEventToStep(input: ReasoningTraceInput, event: ActivityEvent): 
     time: formatTimestamp(event.timestamp),
     duration: "—",
     status: "running",
+    actorId,
+    actorName: actor.name,
+    ...(body?.runId ? { runId: body.runId } : {}),
   };
 }
 
-function runChunkKey(event: ActivityEvent): string | undefined {
-  const body = event.payload as RunChunkEvent | undefined;
-  if (!body?.runId || !body.agentId || !body.kind) return undefined;
-  return `${body.runId}:${body.agentId}:${body.kind}`;
-}
+const runChunkKey = runChunkActivityKey;
 
 function mergeRunChunkStep(step: TraceStepData, event: ActivityEvent): TraceStepData {
   const body = event.payload as RunChunkEvent | undefined;
@@ -1363,6 +1370,13 @@ function buildToolStep(
 
   const hasRich = !!(terminal || filesystem || grep || webSearch);
 
+  const actorId = mergedPayload?.agentId ?? call?.publisher ?? result?.publisher;
+  if (!actorId) {
+    throw new Error(`buildToolStep: tool ${toolCallId} has no actor (missing call/result publisher and payload.agentId)`);
+  }
+  const actor = resolveMember(input, actorId);
+  const runId = mergedPayload?.runId;
+
   return {
     id: `tool:${toolCallId}:${call?.event_id ?? ""}:${result?.event_id ?? ""}`,
     title: line.title,
@@ -1381,6 +1395,9 @@ function buildToolStep(
     filesystem,
     grep,
     webSearch,
+    actorId,
+    actorName: actor.name,
+    ...(runId ? { runId } : {}),
   };
 }
 
@@ -1406,6 +1423,7 @@ function messageEventToStep(input: ReasoningTraceInput, event: ActivityEvent): T
   const body = (event.payload ?? {}) as MessageActivityPayload;
   const content = body.content ?? "";
   const reasoning = body.reasoning ?? "";
+  const runId = body.runId ?? event.task_id;
   const mentioned = findMentionedMember(body.content, input.members, event.publisher);
   const mentionedLabel = mentioned?.name;
   const target =
@@ -1423,6 +1441,9 @@ function messageEventToStep(input: ReasoningTraceInput, event: ActivityEvent): T
     time: formatTimestamp(event.timestamp),
     duration: "—",
     status: "success",
+    actorId: event.publisher,
+    actorName: actor.name,
+    ...(runId ? { runId } : {}),
   };
 }
 
@@ -1444,8 +1465,12 @@ function toolCallIdFromPayload(
 }
 
 export function buildReasoningTraceSteps(input: ReasoningTraceInput): TraceStepData[] {
-  const runIdsForThread = collectRunIdsForThread(input);
-  const { threadId, agentIdFilter, activity } = input;
+  const runIdsForThread = collectRunIdsForThread({
+    ...input,
+    activity: collapseRunChunkActivities(input.activity),
+  });
+  const { threadId, agentIdFilter } = input;
+  const activity = collapseRunChunkActivities(input.activity);
 
   const filtered = activity.filter((event) => {
     if (!TRACE_ACTIVITY_TYPES.has(event.type)) return false;
@@ -1484,13 +1509,13 @@ export function buildReasoningTraceSteps(input: ReasoningTraceInput): TraceStepD
   const sorted = filtered.slice().sort(compareActivityEvents);
 
   const toolMerge = new Map<string, { call?: ActivityEvent; result?: ActivityEvent }>();
-  const toolFirstIndex = new Map<string, number>();
+  const toolSortIndex = new Map<string, number>();
   const ordered: OrderedStep[] = [];
 
   sorted.forEach((event, index) => {
     if (event.type === "tool_called") {
       const id = toolCallIdFromPayload(event, "tool_called");
-      if (!toolFirstIndex.has(id)) toolFirstIndex.set(id, index);
+      if (!toolSortIndex.has(id)) toolSortIndex.set(id, index);
       const slot = toolMerge.get(id) ?? {};
       slot.call = event;
       toolMerge.set(id, slot);
@@ -1498,7 +1523,7 @@ export function buildReasoningTraceSteps(input: ReasoningTraceInput): TraceStepD
     }
     if (event.type === "tool_result") {
       const id = toolCallIdFromPayload(event, "tool_result");
-      if (!toolFirstIndex.has(id)) toolFirstIndex.set(id, index);
+      if (!toolSortIndex.has(id)) toolSortIndex.set(id, index);
       const slot = toolMerge.get(id) ?? {};
       slot.result = event;
       toolMerge.set(id, slot);
@@ -1507,7 +1532,7 @@ export function buildReasoningTraceSteps(input: ReasoningTraceInput): TraceStepD
     if (RUN_ACTIVITY_TYPES.has(event.type)) {
       ordered.push({
         sortIndex: index,
-        step: runEventToStep(event, event.payload as RunState),
+        step: runEventToStep(input, event, event.payload as RunState),
       });
       return;
     }
@@ -1538,7 +1563,7 @@ export function buildReasoningTraceSteps(input: ReasoningTraceInput): TraceStepD
   const maxIndex = sorted.length;
   for (const [toolCallId, pair] of toolMerge) {
     ordered.push({
-      sortIndex: toolFirstIndex.get(toolCallId) ?? maxIndex,
+      sortIndex: toolSortIndex.get(toolCallId) ?? maxIndex,
       step: buildToolStep(input, toolCallId, pair.call, pair.result),
     });
   }
@@ -1564,6 +1589,7 @@ export function buildHistoricalTraceSteps(input: HistoricalTraceInput): TraceSte
 
   const steps: TraceStepData[] = [
     runEventToStep(
+      context,
       {
         event_id: `run:${input.run.id}`,
         type: `run_${input.run.status}`,

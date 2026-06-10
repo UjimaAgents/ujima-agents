@@ -147,6 +147,29 @@ button {
     box-shadow 180ms ease;
 }
 
+/* Global clickable cursor styles */
+a,
+button,
+select,
+summary,
+label,
+[role="button"],
+[type="button"],
+[type="submit"],
+[type="reset"],
+input[type="checkbox"],
+input[type="radio"] {
+  cursor: pointer;
+}
+
+button:disabled,
+[role="button"]:disabled,
+select:disabled,
+input:disabled,
+label:disabled {
+  cursor: not-allowed;
+}
+
 .tech-grid {
   position: relative;
 }
@@ -331,6 +354,84 @@ button {
 .landing-hero-bg > * {
   position: relative;
   z-index: 1;
+}
+
+/* Font size accessibility — applied via data-chat-font-size on chat container */
+[data-chat-font-size="normal"] {
+  --chat-font-scale: 1;
+}
+
+[data-chat-font-size="large"] {
+  --chat-font-scale: 1.15;
+}
+
+[data-chat-font-size="xlarge"] {
+  --chat-font-scale: 1.35;
+}
+
+[data-chat-font-size="xxlarge"] {
+  --chat-font-scale: 1.6;
+}
+
+[data-chat-font-size="3xlarge"] {
+  --chat-font-scale: 2;
+}
+
+[data-chat-font-size="6xlarge"] {
+  --chat-font-scale: 3;
+}
+
+/* Scoped font scaling for chat messages and trace panels */
+[data-chat-font-size] .chat-text,
+[data-chat-font-size] [data-chat-text] {
+  font-size: calc(1em * var(--chat-font-scale, 1));
+}
+
+[data-chat-font-size] .chat-text-sm {
+  font-size: calc(0.875rem * var(--chat-font-scale, 1));
+}
+
+[data-chat-font-size] .chat-text-xs {
+  font-size: calc(0.75rem * var(--chat-font-scale, 1));
+}
+
+[data-chat-font-size] .chat-text-base {
+  font-size: calc(1rem * var(--chat-font-scale, 1));
+}
+
+/* Markdown content inside chat */
+[data-chat-font-size] .chat-message-content p,
+[data-chat-font-size] .chat-message-content li,
+[data-chat-font-size] .chat-message-content blockquote {
+  font-size: calc(0.875rem * var(--chat-font-scale, 1));
+  line-height: calc(1.6 * var(--chat-font-scale, 1));
+}
+
+[data-chat-font-size] .chat-message-content code {
+  font-size: calc(0.8125rem * var(--chat-font-scale, 1));
+}
+
+[data-chat-font-size] .chat-message-content pre code {
+  font-size: calc(0.75rem * var(--chat-font-scale, 1));
+}
+
+/* Reasoning/trace panel font scaling */
+[data-chat-font-size] .trace-step-text {
+  font-size: calc(0.8125rem * var(--chat-font-scale, 1));
+}
+
+[data-chat-font-size] .trace-step-text-sm {
+  font-size: calc(0.6875rem * var(--chat-font-scale, 1));
+}
+
+/* Trace step title text */
+[data-chat-font-size] .trace-step-title {
+  font-size: calc(0.8125rem * var(--chat-font-scale, 1));
+}
+
+/* Header controls area should not scale */
+[data-chat-font-size] .font-size-controls {
+  font-size: 0.8125rem;
 }
 
 .landing-reveal {

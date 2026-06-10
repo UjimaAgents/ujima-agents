@@ -26,6 +26,68 @@ function createSpiritRunService(
 }
 
 describe('SpiritService run path', () => {
+  it('emits one running start event for a new run', async () => {
+    const organizationId = 'org-1';
+    const agentId = 'Quinn Mason';
+    const threadId = 'thread-1';
+    let run: RunState | null = null;
+    const emitted: { event: string; payload: { run?: RunState } }[] = [];
+    const team = loadAgentTeam({
+      name: 'Timetotest',
+      workspace: { root: '/workspace' },
+      roles: [{
+        name: 'backend-engineer',
+        title: 'Backend Engineer',
+        instructions: 'Work on backend.',
+        tools: [],
+      }],
+      agents: [{ name: agentId, roleName: 'backend-engineer' }],
+    });
+    const repo = {
+      getMember: () => ({
+        id: agentId,
+        organizationId,
+        name: agentId,
+        kind: AGENT_KIND,
+        roleName: 'backend-engineer',
+      }),
+      saveRun: (next: RunState) => {
+        run = next;
+        return next;
+      },
+      getRun: () => run,
+      getProviderCredential: () => null,
+      getWorkspaceSetting: () => null,
+      listMembers: () => [],
+      listPendingApprovals: () => [],
+      listMessages: () => ({ data: [], hasMore: false }),
+      getLatestHumanMessageInThread: () => null,
+      getSpiritByRunId: () => null,
+      getThread: () => ({ channelId: 'channel-1' }),
+    } as never;
+    const service = createSpiritRunService(
+      { getTeam: () => team, setTeam: () => undefined } as never,
+      repo,
+      { emit: (event: string, payload: { run?: RunState }) => emitted.push({ event, payload }) } as never,
+      { publishMessage: () => undefined } as never,
+      {
+        generateRunReply: async () => ({
+          text: 'Done.',
+          toolResults: [],
+          steps: [],
+        }),
+      } as never,
+      { invoke: async () => ({ ok: true }) } as never,
+    );
+
+    await service.createRun({ organizationId, agentId, threadId });
+
+    const starts = emitted.filter((entry) => entry.event === SocketEventNames.runStarted);
+    expect(starts).toHaveLength(1);
+    expect(starts[0]?.payload.run?.status).toBe('running');
+    expect(emitted.filter((entry) => entry.event === SocketEventNames.runUpdated)).toHaveLength(0);
+  });
+
   it('resumes after approval even when approval resolves before the run enters waiting state', async () => {
     const organizationId = 'org-1';
     const runId = 'run-1';
@@ -1469,7 +1531,7 @@ describe('SpiritService run path', () => {
     expect(generateCalls).toBe(1);
   });
 
-  it('persists blocked-run trace before failing', async () => {
+  it('persists blocked-run trace without failing the run', async () => {
     const organizationId = 'org-1';
     const runId = 'run-blocked-1';
     const agentId = 'Quinn Mason';
@@ -1542,13 +1604,13 @@ describe('SpiritService run path', () => {
 
     const result = await (service as any).advanceRun(run);
 
-    expect(result.status).toBe('failed');
-    expect(result.summary).toBe('Tool action blocked');
+    expect(result.status).toBe('completed');
+    expect(result.summary).toBe('I checked the file before the block.');
     expect(messages).toHaveLength(1);
     expect(messages[0].content).toBe('I checked the file before the block.');
     expect(messages[0].reasoningContent).toBe('Need the file context before editing.');
     expect(messages[0].toolCalls[0].toolName).toBe('view');
-    expect(messages[0].metadata).toEqual({ runId, failedTrace: true });
+    expect(messages[0].metadata).toEqual({ runId });
   });
 
   it('persists blocked traces even when goal artifact extraction cannot read the file', async () => {
@@ -1624,11 +1686,11 @@ describe('SpiritService run path', () => {
 
     const result = await (service as any).advanceRun(run);
 
-    expect(result.status).toBe('failed');
-    expect(result.summary).toBe('Tool action blocked');
+    expect(result.status).toBe('completed');
+    expect(result.summary).toBe('I tried to write the goal.');
     expect(messages).toHaveLength(1);
     expect(messages[0].content).toBe('I tried to write the goal.');
-    expect(messages[0].metadata).toEqual({ runId, failedTrace: true });
+    expect(messages[0].metadata).toEqual({ runId });
   });
 
   it('persists streamed trace when run generation throws', async () => {
@@ -1930,6 +1992,24 @@ describe('SpiritService run path', () => {
       listMembers: () => [],
       listPendingApprovals: () => [],
       listMessages: () => ({ data: [], hasMore: false }),
+      listRunSteps: () => [
+        {
+          id: 'step-pass-1',
+          organizationId,
+          runId,
+          threadId,
+          agentId,
+          toolCallId: 'tool-call-pass-1',
+          toolId: 'channel.pass',
+          action: 'message',
+          resourceType: 'message',
+          resourcePath: '',
+          input: { reason: 'not_addressed_to_me' },
+          output: { status: 'passed', reason: 'not_addressed_to_me' },
+          status: 'ok',
+          createdAt: '2026-05-04T19:07:09.071Z',
+        },
+      ],
       getLatestHumanMessageInThread: () => null,
       getSpiritByRunId: () => null,
       getThread: () => ({ channelId: 'channel-1' }),
@@ -1956,14 +2036,16 @@ describe('SpiritService run path', () => {
       { emit: (event: string, payload: any) => emitted.push({ event, payload }) } as never,
       { publishMessage: (message: any) => messages.push(message.content) } as never,
       {
-        generateRunReply: async () => ({
-          // Sycophantic: prose AND channel.pass.
-          text: 'I think I should help here actually.',
-          toolResults: [{ toolName: 'channel.pass', output: { status: 'passed', reason: 'not_addressed_to_me' } }],
-          steps: [
-            { toolCalls: [{ toolName: 'channel.pass', input: { reason: 'not_addressed_to_me' } }] },
-          ],
-        }),
+        generateRunReply: async (input: any) => {
+          const textAfterPassStep = { text: 'channel.pass accepted — I was not addressed.' };
+          await input.onStepFinish?.(textAfterPassStep, [textAfterPassStep]);
+          return {
+            // Sycophantic: prose after a persisted channel.pass.
+            text: textAfterPassStep.text,
+            toolResults: [],
+            steps: [textAfterPassStep],
+          };
+        },
       } as never,
       {
         allowRun: () => undefined,
@@ -1980,7 +2062,7 @@ describe('SpiritService run path', () => {
     // Audit event fired with the dropped text preserved.
     const audit = emitted.find((e) => e.event === 'agent:passed_with_text');
     expect(audit).toBeDefined();
-    expect(audit?.payload.droppedText).toBe('I think I should help here actually.');
+    expect(audit?.payload.droppedText).toBe('channel.pass accepted — I was not addressed.');
     // Silent-completion event also fired.
     expect(emitted.some((e) => e.event === 'run:silent_completion')).toBe(true);
   });

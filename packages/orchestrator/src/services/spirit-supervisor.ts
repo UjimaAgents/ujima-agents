@@ -15,6 +15,7 @@ import { buildAgentMessage } from './message-factory.js';
 import { publishStoredMessage } from './message-publisher.js';
 import { goalModeEnabledFromMessage } from './goal-mode-prompt.js';
 import { SpiritServiceAgentRun } from './spirit-agent-run.js';
+import { evictStaleTimestamps } from '../utils/ttl-map.js';
 
 export class SpiritServiceSupervisor extends SpiritServiceAgentRun {
   async handleAlert(input: SpiritAlertInput): Promise<SpiritAlertDispatchResult> {
@@ -274,10 +275,11 @@ export class SpiritServiceSupervisor extends SpiritServiceAgentRun {
     taskSessionId: string,
     messageId?: string,
   ): boolean {
+    const now = Date.now();
+    evictStaleTimestamps(this.supervisorLastAlertAt, now, this.supervisorDebounceMs);
     const last = this.supervisorLastAlertAt.get(
       this.supervisorDebounceKey(organizationId, memberId, taskSessionId, messageId),
     );
-    if (last === undefined) return false;
-    return Date.now() - last < this.supervisorDebounceMs;
+    return last !== undefined && now - last < this.supervisorDebounceMs;
   }
 }

@@ -175,7 +175,7 @@ export const ChatMessage = memo(function ChatMessage({
                   body={approvalFsTerminal.body}
                 />
               ) : systemBodyMarkdown !== null ? (
-                <div className={artifactFile ? "mt-3" : "mt-1"}>
+                <div className={`${artifactFile ? "mt-3" : "mt-1"} chat-message-content`}>
                   <Markdown
                     content={systemBodyMarkdown}
                     mentionNames={message.mentionNames}
@@ -210,7 +210,7 @@ export const ChatMessage = memo(function ChatMessage({
                 </div>
               )}
               {artifactFile ? <ArtifactFilePreview artifact={artifactFile} /> : null}
-              <div className={artifactFile ? "mt-3" : "mt-1"}>
+              <div className={`${artifactFile ? "mt-3" : "mt-1"} chat-message-content`}>
                 {showBody ? (
                   <Markdown
                     content={message.content}
@@ -429,12 +429,7 @@ function ArtifactFilePreview({ artifact }: { artifact: ArtifactFileView }) {
   const isHtml = artifact.artifactFormat === "html";
 
   const diff = artifact.diff;
-  const [viewMode, setViewMode] = useState<ArtifactViewMode>(diff ? "markdown" : "preview");
-  const [lastDiff, setLastDiff] = useState(diff);
-  if (lastDiff !== diff) {
-    setLastDiff(diff);
-    setViewMode(diff ? "markdown" : "preview");
-  }
+  const [viewMode, setViewMode] = useState<ArtifactViewMode>("preview");
 
   const measureIframeHeight = useCallback(() => {
     const iframe = iframeRef.current;
@@ -515,7 +510,7 @@ function ArtifactFilePreview({ artifact }: { artifact: ArtifactFileView }) {
         <div className="relative">
           {viewMode === "markdown" && diff ? (
             <div className={isExpanded ? "" : "max-h-[540px] overflow-hidden"}>
-              <div className="px-4 py-3 bg-zinc-950 text-zinc-50 dark:bg-zinc-950/80 animate-in fade-in-50 duration-200">
+              <div className="px-4 py-3 bg-white dark:bg-zinc-950/80 animate-in fade-in-50 duration-200">
                 <UnifiedDiffView text={diff} />
               </div>
             </div>
@@ -588,7 +583,7 @@ function ArtifactFilePreview({ artifact }: { artifact: ArtifactFileView }) {
           </div>
           <div className="overflow-hidden rounded-xl ring-1 ring-zinc-200/60 dark:ring-zinc-800/70">
             {viewMode === "markdown" && diff ? (
-              <div className="max-h-[calc(100vh-12rem)] overflow-auto px-4 py-3 bg-zinc-950 text-zinc-50 dark:bg-zinc-950/80">
+              <div className="max-h-[calc(100vh-12rem)] overflow-auto px-4 py-3 bg-white dark:bg-zinc-950/80">
                 <UnifiedDiffView text={diff} />
               </div>
             ) : isHtml ? (

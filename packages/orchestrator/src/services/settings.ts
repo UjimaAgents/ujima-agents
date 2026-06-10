@@ -12,6 +12,7 @@ import {
   type MemberShellApprovalMode,
   type ShellApprovalMode,
   type ToolPolicyState,
+  resolveChannelMemberIds,
 } from '@ujima/shared';
 import { AgentTeam, createAgent, defineRole, loadAgentTeam, normalizeProviderKey, type RoleConfig } from '@ujima/framework';
 import type { ApiRepository } from './repository-reader.js';
@@ -626,10 +627,16 @@ export class SettingsService {
       }),
     );
     if (input.memberIds !== undefined) {
+      const activeMemberIds = new Set(
+        this.repo
+          .listMembers(input.organizationId)
+          .filter((member) => !member.retiredAt)
+          .map((member) => member.id),
+      );
       this.repo.setChannelMembers(
         input.organizationId,
         existing.id,
-        [...new Set(input.memberIds)].sort(),
+        resolveChannelMemberIds(input.memberIds, activeMemberIds),
       );
     }
 

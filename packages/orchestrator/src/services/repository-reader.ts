@@ -1,5 +1,6 @@
 import type {
   AgentMcpAttachment,
+  ChannelMcpAttachment,
   AgentToolAttachment,
   ApprovalRequest,
   AuthSession,
@@ -34,6 +35,7 @@ import type {
   SkillInstall,
   TaskSession,
   TaskSessionStatus,
+  TierCurationSuggestion,
   Goal,
   GoalTask,
   GoalTaskStatus,
@@ -337,6 +339,20 @@ export interface ApiRepository extends ConversationRepository {
   }): boolean;
   saveAuditEvent(event: AuditEvent): AuditEvent;
   listAuditEvents(organizationId: string): AuditEvent[];
+  // §9.4 / PR 9 — curation suggestions store. PR 8 ships the surface;
+  // the analysis job in PR 9 will be the primary writer, and a settings
+  // panel "Show usage" sublink the primary reader.
+  saveTierCurationSuggestion(suggestion: TierCurationSuggestion): TierCurationSuggestion;
+  listTierCurationSuggestions(organizationId: string): TierCurationSuggestion[];
+  // PR 9 — persists the operator's Apply/Dismiss decision so a
+  // refresh doesn't resurface a row they've already acted on.
+  // Returns the updated row, or null if no such row exists.
+  updateTierCurationSuggestionStatus(
+    organizationId: string,
+    suggestionId: string,
+    nextStatus: 'pending' | 'applied' | 'dismissed',
+    resolvedAt: string,
+  ): TierCurationSuggestion | null;
   /**
    * Run a synchronous DB transaction. The callback must complete
    * synchronously — async work belongs after the commit. See
@@ -367,6 +383,16 @@ export interface ApiRepository extends ConversationRepository {
   listMcpServers(organizationId: string): McpServer[];
   deleteMcpServer(organizationId: string, serverId: string): void;
   saveAgentMcpAttachment(attachment: AgentMcpAttachment): AgentMcpAttachment;
+  // PR 1 substrate; surfaced on the interface in PR 6 so the API
+  // service layer (McpRegistryService.updateAttachmentTier) can call
+  // it via the abstract repo type rather than the concrete Repository.
+  updateAttachmentTier(
+    organizationId: string,
+    memberId: string,
+    mcpServerId: string,
+    tier: AgentMcpAttachment['tier'],
+    updatedAt: string,
+  ): AgentMcpAttachment | null;
   deleteAgentMcpAttachment(
     organizationId: string,
     memberId: string,
@@ -380,6 +406,31 @@ export interface ApiRepository extends ConversationRepository {
     organizationId: string,
     mcpServerId: string,
   ): AgentMcpAttachment[];
+  // PR 10 — channel attachments. The V2 spawn's §17.5.3 union step
+  // pulls every channel attachment for every channel the spawning
+  // agent is a member of via listChannelMcpAttachmentsForMember; the
+  // settings panel uses the per-channel list/save/delete surface.
+  saveChannelMcpAttachment(attachment: ChannelMcpAttachment): ChannelMcpAttachment;
+  updateChannelAttachmentTier(
+    organizationId: string,
+    channelId: string,
+    mcpServerId: string,
+    tier: ChannelMcpAttachment['tier'],
+    updatedAt: string,
+  ): ChannelMcpAttachment | null;
+  deleteChannelMcpAttachment(
+    organizationId: string,
+    channelId: string,
+    mcpServerId: string,
+  ): void;
+  listChannelMcpAttachments(
+    organizationId: string,
+    channelId: string,
+  ): ChannelMcpAttachment[];
+  listChannelMcpAttachmentsForMember(
+    organizationId: string,
+    memberId: string,
+  ): ChannelMcpAttachment[];
   listAttachedServersForSpirit(
     organizationId: string,
     memberId: string,

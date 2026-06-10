@@ -14,6 +14,7 @@ import type {
   ConversationService,
   GoalSystemService,
   McpRegistryService,
+  TierCurationService,
   GovernanceService,
   PluginRegistryService,
   OnboardingService,
@@ -107,6 +108,7 @@ export interface TransportOptions {
       spirits: SpiritService;
       activeSpirits: ActiveSpiritRegistry;
       mcpRegistry: McpRegistryService;
+      tierCuration: TierCurationService;
       governance: GovernanceService;
       pluginRegistry: PluginRegistryService;
     };
@@ -351,6 +353,8 @@ export function createTransport(opts: TransportOptions): Transport {
         registerMcpRoutes(api, {
           auth: services.auth,
           mcpRegistry: services.mcpRegistry,
+          tierCuration: services.tierCuration,
+          repo: opts.apiServices.repo,
         });
         registerGovernanceRoutes(api, {
           auth: services.auth,

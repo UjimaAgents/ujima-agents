@@ -5,6 +5,7 @@ import type {
   Message,
   RunChunkEvent,
   RunState,
+  SocketEventName,
 } from "@ujima/shared/browser";
 
 export interface MemberAlertFailedPayload {
@@ -101,6 +102,49 @@ export function toolToActivity(event: "tool:called" | "tool:result", payload: un
   };
 }
 
+export function socketEventToActivity(event: SocketEventName, payload: unknown): ActivityEvent {
+  const body = toRecord(payload);
+  const message = toRecord(body.message);
+  const timestamp =
+    stringField(body, "occurredAt") ??
+    stringField(message, "createdAt") ??
+    new Date().toISOString();
+  const publisher =
+    stringField(body, "memberId") ??
+    stringField(body, "agentId") ??
+    stringField(body, "fromMemberId") ??
+    stringField(body, "byMemberId") ??
+    stringField(body, "toMemberId") ??
+    stringField(message, "senderId") ??
+    "system";
+  const taskId = stringField(body, "runId") ?? stringField(body, "taskSessionId");
+  const key =
+    [
+      stringField(body, "runId"),
+      stringField(body, "messageId"),
+      stringField(body, "taskSessionId"),
+      stringField(body, "threadId"),
+      stringField(body, "channelId"),
+      stringField(body, "memberId"),
+      stringField(body, "agentId"),
+      stringField(body, "fromMemberId"),
+      stringField(body, "byMemberId"),
+      stringField(body, "toMemberId"),
+      stringField(message, "id"),
+      timestamp,
+    ]
+      .filter(Boolean)
+      .join(":") || "unknown";
+  return {
+    event_id: `${event}:${key}`,
+    type: event.replaceAll(":", "_"),
+    publisher,
+    timestamp,
+    ...(taskId ? { task_id: taskId } : {}),
+    payload,
+  };
+}
+
 export function presenceToActivity(payload: unknown): ActivityEvent {
   const body = payload as { memberId?: string; state?: string };
   return {
@@ -191,4 +235,9 @@ function compactDetail(...parts: unknown[]): string {
 
 function toRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" ? value as Record<string, unknown> : {};
+}
+
+function stringField(record: Record<string, unknown>, key: string): string | undefined {
+  const value = record[key];
+  return typeof value === "string" && value.length > 0 ? value : undefined;
 }

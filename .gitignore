@@ -16,6 +16,7 @@ coverage
 *.js.map
 *.d.ts.map
 *.tsbuildinfo
+*.tgz
 
 # caches
 .turbo
@@ -50,6 +51,9 @@ logs
 .idea
 .vscode
 
+# Vendored CLI binaries (rg, fd) — built by scripts/vendor-binaries.sh / release:dist
+packages/orchestrator/bin/
+
 # VS Code extension build artifacts (rebuild with package script; do not commit binaries)
 *.vsix
 **/.stage/
@@ -77,3 +81,10 @@ mcp_governance_plan.md
 apps/api/dorq_app_snapshot.md
 apps/api/dorq_homepage_snapshot.md
 apps/api/dorq-app-homepage-snapshot.yml
+
+# Design plan docs — local-only working material. The dispatch plan is
+# the authoritative spec for PRs 2–12; the discovery plan is preserved
+# as design history. Neither belongs in git history (they bloat PR size
+# budgets and rot relative to the code).
+mcp_connector_dispatch_plan.md
+mcp_connector_discovery_plan.md

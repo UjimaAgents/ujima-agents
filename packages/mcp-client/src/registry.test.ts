@@ -122,4 +122,40 @@ describe('curated registry', () => {
       expect.arrayContaining(['slack_post_message']),
     );
   });
+
+  // PR 2 — connector dispatch substrate expansion. Two load-bearing
+  // invariants only; per-entry shape assertions are not worth the
+  // upkeep (typecheck already enforces the RegistryEntry contract).
+
+  it('OAuth-only entries throw on instantiate (clear error, not silent half-config)', () => {
+    // OAuth entries are listed for discovery but cannot instantiate
+    // until the OAuth flow lands. Throwing here means the admin sees
+    // "OAuth not yet supported" instead of an opaque connection
+    // failure at runtime. Cover one of each OAuth entry to catch
+    // accidental authMode flips.
+    for (const id of ['linear-mcp', 'vercel-mcp', 'atlassian-mcp', 'notion-remote']) {
+      expect(() => instantiateFromRegistry(id)).toThrow(/OAuth/i);
+    }
+  });
+
+  it('a PAT-auth remote entry instantiates to an http-streamable MCPDef and substitutes header tokens from envOverrides', () => {
+    // Two invariants in one assertion chain:
+    //   1. No envOverrides → headers retain the literal placeholder
+    //      (same semantics as args substitution; caller is responsible
+    //      for supplying values).
+    //   2. envOverrides supplied → the token is interpolated into the
+    //      Authorization header before the MCPDef leaves this function.
+    // Without (2) buildTransport would forward `Bearer ${GITHUB_TOKEN}`
+    // as the literal Authorization header and every PAT-auth Track A
+    // entry would fail auth in production with no useful error.
+    const unbound = instantiateFromRegistry('github-mcp');
+    expect(unbound.transport).toBe('http-streamable');
+    expect(unbound.url).toBe('https://api.githubcopilot.com/mcp/');
+    expect(unbound.headers).toEqual({ Authorization: 'Bearer ${GITHUB_TOKEN}' });
+
+    const bound = instantiateFromRegistry('github-mcp', {
+      envOverrides: { GITHUB_TOKEN: 'ghp_test_token' },
+    });
+    expect(bound.headers).toEqual({ Authorization: 'Bearer ghp_test_token' });
+  });
 });

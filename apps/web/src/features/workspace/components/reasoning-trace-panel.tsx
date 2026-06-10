@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type SetStateAction } from "react";
 import { ArrowDown, Loader2 } from "lucide-react";
 import { RunTraceListResponseSchema, type RunTraceEntry } from "@ujima/api-schema";
 import { buildHistoricalTraceSteps } from "../reasoning-trace";
+import { groupTraceSteps } from "../trace-grouping";
 import { TraceStep, type TraceStepData } from "./chat/details-sidebar";
 
 const TRACE_PAGE_SIZE = 15;
@@ -54,171 +55,6 @@ function TraceEmpty({ label, detail, loading }: { label: string; detail?: string
   );
 }
 
-function getDiffStats(body?: string): { additions: number; deletions: number } {
-  if (!body) return { additions: 0, deletions: 0 };
-  let additions = 0;
-  let deletions = 0;
-  for (const line of body.split("\n")) {
-    if (line.startsWith("+") && !line.startsWith("+++")) additions++;
-    else if (line.startsWith("-") && !line.startsWith("---")) deletions++;
-  }
-  return { additions, deletions };
-}
-
-const AGENT_NAME_SEPARATORS = [
-  " sent a message ",
-  " responded to ",
-  " called tool ",
-  " used ",
-  " updated ",
-  " posted ",
-  " created ",
-  " ran ",
-  " finished ",
-  " · ",
-];
-
-function getAgentName(title: string): string {
-  const trimmed = title.trim();
-  if (!trimmed) return "Agent";
-  for (const sep of AGENT_NAME_SEPARATORS) {
-    const idx = trimmed.indexOf(sep);
-    if (idx > 0) return trimmed.slice(0, idx);
-  }
-  const space = trimmed.indexOf(" ");
-  return space > 0 ? trimmed.slice(0, space) : trimmed;
-}
-
-type AggregatedOperation = NonNullable<TraceStepData["aggregatedOperations"]>[number];
-
-function parseLineRange(meta: string): string | undefined {
-  const range = meta.match(/startLine=(\d+),\s*endLine=(\d+)/i);
-  if (range) return `${range[1]}-${range[2]}`;
-  const offset = meta.match(/offset=(\d+),\s*limit=(\d+)/i);
-  if (offset) {
-    const start = Number.parseInt(offset[1], 10);
-    const limit = Number.parseInt(offset[2], 10);
-    return `${start}-${start + limit - 1}`;
-  }
-  return undefined;
-}
-
-function toolStepToOperation(step: TraceStepData): AggregatedOperation {
-  const base = { id: step.id, additions: 0, deletions: 0, status: step.status };
-
-  if (step.filesystem) {
-    const isWrite = step.filesystem.action === "write";
-    const isDelete = step.title.toLowerCase().includes("deleted");
-    const body = step.filesystem.body || "";
-    return {
-      ...base,
-      type: isDelete ? "delete" : isWrite ? "edit" : "read",
-      file: step.filesystem.resourcePath,
-      body,
-      lines: step.filesystem.meta ? parseLineRange(step.filesystem.meta) : undefined,
-      ...(isWrite || isDelete ? getDiffStats(body) : {}),
-    };
-  }
-  if (step.grep) {
-    return { ...base, type: "search", query: step.grep.query, file: step.grep.path };
-  }
-  if (step.webSearch) {
-    return { ...base, type: "search", query: step.webSearch.query };
-  }
-  if (step.terminal) {
-    return {
-      ...base,
-      type: "shell",
-      command: step.terminal.commandLine,
-      file: step.terminal.cwd,
-      terminal: step.terminal,
-    };
-  }
-
-  const calledIdx = step.title.indexOf(" called tool ");
-  const toolName = calledIdx >= 0 ? step.title.slice(calledIdx + " called tool ".length).trim() : "tool";
-  if (toolName.startsWith("memory.")) {
-    return { ...base, type: "memory", toolName, detail: step.detail || "" };
-  }
-  if (toolName.startsWith("goal.")) {
-    return { ...base, type: "goal", toolName, detail: step.detail || "" };
-  }
-  if (toolName.startsWith("question.")) {
-    return { ...base, type: "question", toolName, detail: step.detail || "" };
-  }
-  if (toolName.startsWith("self.procedure.")) {
-    return { ...base, type: "procedure", toolName, detail: step.detail || "" };
-  }
-  return { ...base, type: "tool", toolName, detail: step.detail || "" };
-}
-
-function isToolStep(step: TraceStepData): boolean {
-  return !!(
-    step.filesystem ||
-    step.grep ||
-    step.webSearch ||
-    step.terminal ||
-    step.id.startsWith("tool:") ||
-    step.title.includes(" called tool ")
-  );
-}
-
-function groupTraceSteps(steps: TraceStepData[]): TraceStepData[] {
-  const grouped: TraceStepData[] = [];
-  let currentGroup: (TraceStepData & { aggregatedOperations: AggregatedOperation[] }) | null = null;
-
-  for (const step of steps) {
-    if (isToolStep(step)) {
-      if (!currentGroup) {
-        currentGroup = {
-          id: `aggregated-run-${step.id}`,
-          title: `${getAgentName(step.title)} · running`,
-          detail: "",
-          time: step.time,
-          duration: step.duration,
-          status: step.status,
-          aggregatedOperations: [],
-        };
-        grouped.push(currentGroup);
-      }
-      currentGroup.aggregatedOperations.push(toolStepToOperation(step));
-      currentGroup.status = currentGroup.aggregatedOperations.some((op) => op.status === "failed")
-        ? "failed"
-        : step.status === "running"
-          ? "running"
-          : "success";
-      currentGroup.title = `${getAgentName(currentGroup.title)} · ${
-        currentGroup.status === "failed"
-          ? "failed"
-          : currentGroup.status === "running"
-            ? "running"
-            : "completed"
-      }`;
-      currentGroup.duration = step.duration;
-      continue;
-    }
-
-    if (step.title.startsWith("Run ·")) {
-      currentGroup = {
-        id: `aggregated-run-${step.id}`,
-        title: `${getAgentName(step.title)} · ${step.status}`,
-        detail: "",
-        time: step.time,
-        duration: step.duration,
-        status: step.status,
-        aggregatedOperations: [],
-      };
-      grouped.push(currentGroup);
-      continue;
-    }
-
-    currentGroup = null;
-    grouped.push(step);
-  }
-
-  return grouped;
-}
-
 export function ReasoningTracePanel({
   organizationId,
   threadId,
@@ -242,6 +78,9 @@ export function ReasoningTracePanel({
   const rootRef = useRef<HTMLDivElement>(null);
   const pendingPrependRef = useRef<{ scrollHeight: number; scrollTop: number } | null>(null);
   const shouldScrollToBottomRef = useRef(false);
+  const isAtBottomRef = useRef(true);
+  const prevLiveStepsCountRef = useRef(0);
+  const prevLiveSignalRef = useRef("");
   const autoFillRef = useRef(false);
   const [history, setHistory] = useState<RunTraceEntry[]>([]);
   const [cursor, setCursor] = useState<string | undefined>();
@@ -250,6 +89,7 @@ export function ReasoningTracePanel({
   const [error, setError] = useState<string | undefined>();
   const [filter, setFilter] = useState<"all" | "errors" | "files" | "shell" | "search">("all");
   const [showScrollBottom, setShowScrollBottom] = useState(false);
+  const [newTraceCount, setNewTraceCount] = useState(0);
 
   const [now, setNow] = useState(() => Date.now());
   const startedAtMs = useMemo(() => {
@@ -266,12 +106,6 @@ export function ReasoningTracePanel({
   }, [startedAtMs]);
 
   const historyEnabled = !!organizationId && !!threadId;
-
-  useEffect(() => {
-    if (liveSteps.length > 0 && autoScroll) {
-      shouldScrollToBottomRef.current = true;
-    }
-  }, [autoScroll, liveSteps.length]);
 
   useEffect(() => {
     if (!historyEnabled) return;
@@ -309,14 +143,13 @@ export function ReasoningTracePanel({
     const onScroll = () => {
       const { scrollTop, scrollHeight, clientHeight } = container;
       const distFromBottom = scrollHeight - scrollTop - clientHeight;
+      const atBottom = distFromBottom < 96;
       const shouldShow = distFromBottom > 150;
-      
+
+      isAtBottomRef.current = atBottom;
       setShowScrollBottom((prev) => (prev !== shouldShow ? shouldShow : prev));
-      if (shouldShow) {
-        shouldScrollToBottomRef.current = false;
-      } else {
-        shouldScrollToBottomRef.current = true;
-      }
+      shouldScrollToBottomRef.current = atBottom;
+      if (atBottom) setNewTraceCount(0);
 
       if (!historyEnabled || loadingMore || !hasMore || !cursor) return;
       if (container.scrollTop > TOP_LOAD_THRESHOLD) return;
@@ -403,9 +236,6 @@ export function ReasoningTracePanel({
     }
 
     if (shouldScrollToBottomRef.current) {
-      // Do not auto-scroll if the user has manually scrolled up to look at history
-      if (showScrollBottom) return;
-
       const frame = requestAnimationFrame(() => {
         const container = getTraceScrollContainer(rootRef.current);
         if (!container) return;
@@ -413,7 +243,35 @@ export function ReasoningTracePanel({
       });
       return () => cancelAnimationFrame(frame);
     }
-  }, [history, liveSteps, showScrollBottom]);
+  }, [history, liveSteps]);
+
+  useEffect(() => {
+    let nextNewTraceCount: SetStateAction<number> | undefined;
+    const nextCount = liveSteps.length;
+    const last = liveSteps.at(-1);
+    const nextSignal = nextCount ? `${last?.id ?? ""}:${last?.status ?? ""}:${last?.title ?? ""}:${last?.detail ?? ""}` : "";
+    const prevCount = prevLiveStepsCountRef.current;
+    const prevSignal = prevLiveSignalRef.current;
+
+    prevLiveStepsCountRef.current = nextCount;
+    prevLiveSignalRef.current = nextSignal;
+
+    if (nextCount === 0) {
+      nextNewTraceCount = 0;
+    } else if (nextSignal === prevSignal && nextCount === prevCount) {
+      nextNewTraceCount = undefined;
+    } else if (isAtBottomRef.current && autoScroll) {
+      shouldScrollToBottomRef.current = true;
+      nextNewTraceCount = 0;
+    } else if (nextCount > prevCount) {
+      shouldScrollToBottomRef.current = false;
+      nextNewTraceCount = (count) => count + (nextCount - prevCount);
+    }
+
+    if (nextNewTraceCount === undefined) return;
+    const frame = requestAnimationFrame(() => setNewTraceCount(nextNewTraceCount));
+    return () => cancelAnimationFrame(frame);
+  }, [autoScroll, liveSteps]);
 
   const traceRows = useMemo<TraceRowData[]>(() => {
     const historySteps = historyEnabled
@@ -488,11 +346,33 @@ export function ReasoningTracePanel({
 
   const scrollBottomButton = useMemo(
     () =>
-      showScrollBottom ? (
+      newTraceCount > 0 ? (
         <div className="sticky bottom-6 z-20 flex justify-center pointer-events-none">
           <button
             onClick={() => {
               shouldScrollToBottomRef.current = true;
+              isAtBottomRef.current = true;
+              setNewTraceCount(0);
+              const container = getTraceScrollContainer(rootRef.current);
+              if (container) {
+                container.scrollTo({
+                  top: Math.max(0, container.scrollHeight - container.clientHeight),
+                  behavior: "smooth",
+                });
+              }
+            }}
+            className="pointer-events-auto flex items-center gap-1.5 rounded-full bg-violet-600 px-4 py-2 text-[10px] font-bold text-white shadow-xl shadow-violet-500/30 transition hover:scale-105 active:scale-95 animate-in fade-in slide-in-from-bottom-4 duration-300"
+          >
+            <ArrowDown className="h-3.5 w-3.5" />
+            {newTraceCount === 1 ? "1 new message" : `${newTraceCount} new messages`}
+          </button>
+        </div>
+      ) : showScrollBottom ? (
+        <div className="sticky bottom-6 z-20 flex justify-center pointer-events-none">
+          <button
+            onClick={() => {
+              shouldScrollToBottomRef.current = true;
+              isAtBottomRef.current = true;
               const container = getTraceScrollContainer(rootRef.current);
               if (container) {
                 container.scrollTo({
@@ -508,7 +388,7 @@ export function ReasoningTracePanel({
           </button>
         </div>
       ) : null,
-    [showScrollBottom],
+    [newTraceCount, showScrollBottom],
   );
   const traceEmptyLabel = traceRows.length === 0 ? "No trace steps." : null;
   const traceList = (

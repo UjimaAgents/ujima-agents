@@ -18,5 +18,19 @@ export { toSlashSkillCommands } from "./chat-input";
 export { ApprovalCard } from "./approval-card";
 export type { ApprovalCardData } from "./approval-card";
 
+export { ConnectorCatalogRow } from "./connector-catalog-row";
+export type {
+  ConnectorCatalogRowData,
+  ConnectorCatalogDispatchEntry,
+} from "./connector-catalog-row";
+
+export { ConnectorActionRow } from "./connector-action-row";
+export type {
+  ConnectorActionRowData,
+  ConnectorActionStatus,
+} from "./connector-action-row";
+
 export { DetailsSidebar, TraceStep, RunSummary, BoundaryCard } from "./details-sidebar";
 export type { DetailsSidebarProps, TraceStepData, RunSummaryData } from "./details-sidebar";
+
+export { FontSizeControl } from "./font-size-control";

@@ -10,28 +10,44 @@ export function isLiveRun(run: RunState): boolean {
   );
 }
 
+export function countSemanticActivityEvents(activity: ActivityEvent[]): number {
+  let count = 0;
+  for (const event of activity) {
+    if (event.type !== "run_chunk") count += 1;
+  }
+  return count;
+}
+
+export function countMessageAttachments(messages: ChatMessageData[]): number {
+  let count = 0;
+  for (const message of messages) {
+    count += message.attachments?.length ?? 0;
+  }
+  return count;
+}
+
 export function buildTabCounts(input: {
-  activity: ActivityEvent[];
+  activityCount?: number;
   approvals: { status: string }[];
-  messages: ChatMessageData[];
+  attachmentCount?: number;
+  messages?: ChatMessageData[];
   runs: RunState[];
 }) {
   let approvals = 0;
   let tasks = 0;
-  let files = 0;
   for (const approval of input.approvals) {
     if (approval.status === "pending") approvals += 1;
   }
   for (const run of input.runs) {
     if (isLiveRun(run)) tasks += 1;
   }
-  for (const message of input.messages) {
-    files += message.attachments?.length ?? 0;
-  }
+  const files =
+    input.attachmentCount ??
+    (input.messages ? countMessageAttachments(input.messages) : 0);
   return {
     approvals,
     tasks,
-    activity: input.activity.length,
+    activity: input.activityCount ?? 0,
     files,
   };
 }

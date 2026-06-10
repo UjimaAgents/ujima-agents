@@ -16,7 +16,8 @@ import {join, dirname} from "node:path";
 import {createRequire} from "node:module";
 import {$} from "bun";
 import {bannerCdnUrl} from "./lib/banner-cdn.ts";
-import {materializeWebStandaloneDependencies} from "./lib/materialize-web-deps.ts";
+import {copyApiBinariesToRuntime} from "./lib/copy-api-binaries.ts";
+import {prepareTracedStandaloneNodeModules} from "./lib/materialize-web-deps.ts";
 import {
   API_RUNTIME_DIR,
   DIST_OUT_DIR,
@@ -87,6 +88,8 @@ async function bundleApi(): Promise<void> {
     external: ["better-sqlite3"],
   });
   copySwaggerUiStatic();
+  log("Vendoring rg/fd for all platforms and copying into API runtime…");
+  await copyApiBinariesToRuntime(API_RUNTIME_DIR);
 }
 
 async function copyWebStandalone(): Promise<void> {
@@ -126,13 +129,13 @@ async function copyWebStandalone(): Promise<void> {
     }
   }
 
-  await materializeWebStandaloneDeps();
+  await prepareWebStandaloneDeps();
 }
 
-async function materializeWebStandaloneDeps(): Promise<void> {
-  log("Materializing web runtime node_modules (npm install)…");
+async function prepareWebStandaloneDeps(): Promise<void> {
+  log("Preparing traced web runtime node_modules…");
   try {
-    await materializeWebStandaloneDependencies(WEB_RUNTIME_DIR);
+    await prepareTracedStandaloneNodeModules(WEB_RUNTIME_DIR);
   } catch (err) {
     console.error(err instanceof Error ? err.message : err);
     process.exit(1);
@@ -166,17 +169,13 @@ function copyBannerForPublish(): void {
   }
   const assetsDir = join(DIST_PKG_DIR, "assets");
   mkdirSync(assetsDir, {recursive: true});
-  cpSync(BANNER_PATH, join(assetsDir, "banner.png"));
-  log(`Copied banner.png for npm + jsDelivr (${bannerCdnUrl("latest")}).`);
+  cpSync(BANNER_PATH, join(assetsDir, "banner.webp"));
+  log(`Copied banner.webp for npm (README references ${bannerCdnUrl()}).`);
 }
 
 /** npm displays README.md from packages/distribution — not the monorepo root. */
 function copyReadmeForPublish(): void {
-  const pkg = JSON.parse(readFileSync(DISTRIBUTION_PKG_JSON, "utf8")) as {
-    version: string;
-    repository?: { url?: string };
-  };
-  const bannerUrl = bannerCdnUrl(pkg.version);
+  const bannerUrl = bannerCdnUrl();
 
   let readme = readFileSync(README_PATH, "utf8");
   // Public CDN only — private GitHub raw/blob URLs do not render on npm.

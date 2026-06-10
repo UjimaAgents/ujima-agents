@@ -143,12 +143,18 @@ export function deleteMcpServer(db: DbHandle, organizationId: string, serverId: 
 // ---------------- Attachments ----------------------------------------
 
 function rowToAttachment(row: Row): AgentMcpAttachment {
+  // `tier` is missing from rows on databases that pre-date migration 048
+  // until the migration runs. The schema's `.default('native')` handles
+  // that — reading a NULL/absent column yields undefined, which Zod
+  // replaces with the default. Same backwards-compat shape as `scope`.
+  const tier = (row as Record<string, unknown>).tier;
   return AgentMcpAttachmentSchema.parse({
     id: rowString(row, 'id'),
     organizationId: rowString(row, 'organization_id'),
     memberId: rowString(row, 'member_id'),
     mcpServerId: rowString(row, 'mcp_server_id'),
     scope: rowString(row, 'scope'),
+    ...(typeof tier === 'string' ? { tier } : {}),
     createdAt: rowString(row, 'created_at'),
     updatedAt: rowString(row, 'updated_at'),
   });
@@ -161,11 +167,12 @@ export function saveAgentMcpAttachment(
   const payload = AgentMcpAttachmentSchema.parse(attachment);
   db.prepare(
     `INSERT INTO agent_mcp_attachments (
-       id, organization_id, member_id, mcp_server_id, scope, created_at, updated_at
+       id, organization_id, member_id, mcp_server_id, scope, tier, created_at, updated_at
      )
-     VALUES (?, ?, ?, ?, ?, ?, ?)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(organization_id, member_id, mcp_server_id) DO UPDATE SET
        scope = excluded.scope,
+       tier = excluded.tier,
        updated_at = excluded.updated_at`,
   ).run(
     payload.id,
@@ -173,10 +180,43 @@ export function saveAgentMcpAttachment(
     payload.memberId,
     payload.mcpServerId,
     payload.scope,
+    payload.tier,
     payload.createdAt,
     payload.updatedAt,
   );
   return payload;
+}
+
+// Tier-only update so the V2 spawn path and the settings tier-toggle UI
+// can promote/demote without rewriting scope or createdAt. Returns the
+// resulting row (or null if no matching attachment exists) so callers
+// can audit-log the transition without an extra read.
+export function updateAttachmentTier(
+  db: DbHandle,
+  organizationId: string,
+  memberId: string,
+  mcpServerId: string,
+  tier: AgentMcpAttachment['tier'],
+  updatedAt: string,
+): AgentMcpAttachment | null {
+  // Validate the tier value through Zod up-front; defence-in-depth
+  // against callers passing arbitrary strings from API payloads.
+  AgentMcpAttachmentSchema.shape.tier.parse(tier);
+  const result = db
+    .prepare(
+      `UPDATE agent_mcp_attachments
+         SET tier = ?, updated_at = ?
+         WHERE organization_id = ? AND member_id = ? AND mcp_server_id = ?`,
+    )
+    .run(tier, updatedAt, organizationId, memberId, mcpServerId);
+  if (result.changes === 0) return null;
+  const row = db
+    .prepare(
+      `SELECT * FROM agent_mcp_attachments
+         WHERE organization_id = ? AND member_id = ? AND mcp_server_id = ?`,
+    )
+    .get(organizationId, memberId, mcpServerId) as Row | undefined;
+  return row ? rowToAttachment(row) : null;
 }
 
 export function deleteAgentMcpAttachment(
@@ -298,13 +338,21 @@ export function listAttachedServersForSpirit(
     )
     .all(organizationId, memberId, ...allowedScopes, ...allowedScopes) as Row[];
 
-  return rows.map((row) => ({
+  return rows.map((row) => {
+    // `tier` is the PR 1 column. Missing here would default the Zod
+    // schema to 'native' on every row, which silently collapsed the
+    // dispatch tier in the V2 spawn path (PR 5 surfaced this). Mirror
+    // the optional-read shape `rowToAttachment` uses so older DBs that
+    // pre-date migration 048 still round-trip cleanly.
+    const tier = (row as Record<string, unknown>).tier;
+    return {
     attachment: AgentMcpAttachmentSchema.parse({
       id: rowString(row, 'id'),
       organizationId: rowString(row, 'organization_id'),
       memberId: rowString(row, 'member_id'),
       mcpServerId: rowString(row, 'mcp_server_id'),
       scope: rowString(row, 'scope'),
+      ...(typeof tier === 'string' ? { tier } : {}),
       createdAt: rowString(row, 'created_at'),
       updatedAt: rowString(row, 'updated_at'),
     }),
@@ -328,7 +376,8 @@ export function listAttachedServersForSpirit(
       createdAt: rowString(row, 's_created_at'),
       updatedAt: rowString(row, 's_updated_at'),
     }),
-  }));
+    };
+  });
 }
 
 // ---------------- Tool cache -----------------------------------------

@@ -23,6 +23,16 @@ export function assertPackManifestIncludesReadme(packLog: string): void {
   }
 }
 
+export function assertPackagedApiBinaries(packageDir: string): void {
+  const apiBinRoot = join(packageDir, 'dist', 'runtime', 'api', 'bin');
+  for (const tool of ['rg', 'fd'] as const) {
+    const toolRoot = join(apiBinRoot, tool);
+    if (!existsSync(toolRoot)) {
+      throw new Error(`Packaged API binaries missing: ${toolRoot}`);
+    }
+  }
+}
+
 export function assertPackagedWebNext(packageDir: string): void {
   const webRuntimeDir = join(packageDir, 'dist', 'runtime', 'web');
   const webEntry =
@@ -31,11 +41,6 @@ export function assertPackagedWebNext(packageDir: string): void {
     ) ?? null;
   if (!webEntry) {
     throw new Error(`Web server entry not found under ${webRuntimeDir}`);
-  }
-
-  const nextPkg = join(webRuntimeDir, 'node_modules', 'next', 'package.json');
-  if (!existsSync(nextPkg)) {
-    throw new Error(`node_modules/next missing after install: ${nextPkg}`);
   }
 
   const webCwd = webEntry.includes(`${join('apps', 'web')}`)

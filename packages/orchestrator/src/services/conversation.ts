@@ -30,8 +30,8 @@ import type {
   PaginatedMessages,
 } from './repository-reader.js';
 import { requireOrganization } from '../utils/require-organization.js';
+import { evictStaleTimestamps } from '../utils/ttl-map.js';
 import { isVacuousAck, shouldSuppressForMirror } from './mirror-guard.js';
-import { isAcknowledgementOnly } from './run-reply-guard.js';
 import {
   compactSelfNotesIfNeeded,
   compactConversationIfNeeded,
@@ -44,6 +44,7 @@ import {
   ChannelReadQuota,
   PairMentionTracker,
 } from './conversation-quota.js';
+import { filterVisibleMessages } from '../utils/message-visibility.js';
 
 const ATTACHMENT_FILE_LIMIT_BYTES = 25 * 1024 * 1024;
 const ATTACHMENT_MESSAGE_LIMIT_BYTES = 100 * 1024 * 1024;
@@ -132,6 +133,9 @@ export class ConversationService {
       ? Math.max(requestedMs, previousMs + 1)
       : previousMs + 1;
     this.lastMessageCreatedAtByThread.set(key, nextMs);
+    if (this.lastMessageCreatedAtByThread.size > 1024) {
+      evictStaleTimestamps(this.lastMessageCreatedAtByThread, Date.now(), 10 * 60 * 1000);
+    }
     return new Date(nextMs).toISOString();
   }
 
@@ -189,8 +193,12 @@ export class ConversationService {
     }
 
     const channel = thread.channelId ? this.repo.getChannel(organizationId, thread.channelId) : null;
+    const page = this.repo.listMessages(organizationId, threadId, cursor, limit);
     return this.decorateMessages(
-      this.repo.listMessages(organizationId, threadId, cursor, limit),
+      {
+        ...page,
+        data: filterVisibleMessages(page.data),
+      },
       organizationId,
       channel,
     );
@@ -291,11 +299,7 @@ export class ConversationService {
       const merged = input.ranked
         ? mergeRankedPaginatedMessages(live, archived, input.limit ?? 50)
         : mergePaginatedMessages(live, archived, input.limit ?? 50);
-      return this.decorateMessages(
-        merged,
-        input.organizationId,
-        channel,
-      );
+      return this.decorateMessages(merged, input.organizationId, channel);
     }
 
     const live = this.repo.listChannelMessages(input.organizationId, channel.id, {
@@ -312,11 +316,7 @@ export class ConversationService {
           limit: input.limit,
         })
       : { data: [], hasMore: false, nextCursor: undefined };
-    return this.decorateMessages(
-      mergePaginatedMessages(live, archived, input.limit ?? 50),
-      input.organizationId,
-      channel,
-    );
+    return this.decorateMessages(mergePaginatedMessages(live, archived, input.limit ?? 50), input.organizationId, channel);
   }
 
   publishMessage(
@@ -400,11 +400,6 @@ export class ConversationService {
       if (!options?.suppressDmAlerts && !this.shouldSuppressDmWake(emittedMessage, channel)) {
         this.fanout('alertDirectMessageParticipants', this.alertDirectMessageParticipants(emittedMessage, channel));
       }
-      // Phase 2 — broad-read fanout for public channels. Every agent
-      // in the channel (or every org agent for empty-roster channels)
-      // wakes on human-authored, non-system messages. Mentioned
-      // agents are already alerted above with reason='mention';
-      // we skip them here to avoid double-fire.
       this.fanout('alertChannelReaders', this.alertChannelReaders(emittedMessage, channel, resolvedMentions));
 
       if (this.onMessagePublished) {
@@ -434,45 +429,20 @@ export class ConversationService {
     });
   }
 
-  /**
-   * Channel-read broadcast fanout (Phase 2). Wakes every agent in
-   * the channel with `wakeReason='channel-read'` so they can each
-   * decide whether to `channel.pass` or post a reply.
-   *
-   * Bypass rules (L5 + decisions):
-   *   - Only when sender is a human, non-system message
-   *   - Only public channels (`general` / `group`; not self/dm/task-run)
-   *   - Empty-roster channels expand to all org agents
-   *   - Sender, mentioned agents (covered by mention fanout),
-   *     retired agents, and non-agents are skipped
-   */
   private async alertChannelReaders(
     message: Message,
     channel: Channel | null,
     mentions: MessageMention[],
   ): Promise<void> {
-    if (!channel) return;
-    if (channel.kind !== 'general' && channel.kind !== 'group') return;
-    // L5 — system messages must never broad-wake. The throttle
-    // notification itself is published with senderKind='human' but
-    // senderId='system' / kind='system'. Without these guards a
-    // throttle event would broad-wake the channel and re-throttle
-    // itself in an unbounded loop.
-    if (message.senderKind !== 'human') return;
-    if (message.kind === 'system') return;
-    if (message.senderId === 'system') return;
+    if (!channel || (channel.kind !== 'general' && channel.kind !== 'group')) return;
+    if (message.senderKind !== 'human' || message.kind === 'system' || message.senderId === 'system') return;
 
-    const alreadyMentioned = new Set(mentions.map((m) => m.memberId));
-
-    // Empty roster = "everyone reads" (resolved decision). Walk
-    // every org agent. Non-empty roster = walk only enrolled
-    // members.
-    const candidates =
-      channel.memberIds.length === 0
-        ? this.repo.listMembers(message.organizationId)
-        : channel.memberIds
-            .map((memberId) => this.repo.getMember(message.organizationId, memberId))
-            .filter((member): member is NonNullable<typeof member> => member !== null);
+    const alreadyMentioned = new Set(mentions.map((mention) => mention.memberId));
+    const candidates = channel.memberIds.length === 0
+      ? this.repo.listMembers(message.organizationId)
+      : channel.memberIds
+          .map((memberId) => this.repo.getMember(message.organizationId, memberId))
+          .filter((member): member is NonNullable<typeof member> => member !== null);
 
     const fanout: Promise<void>[] = [];
     for (const member of candidates) {
@@ -488,29 +458,17 @@ export class ConversationService {
         this.emitWakeSuppressed(message, channel, member.id, 'sender-self');
         continue;
       }
-      if (alreadyMentioned.has(member.id)) {
-        // Already covered by alertMentionedMembers with reason='mention'.
-        continue;
-      }
-      // Per-`(member, channelId)` channel-read quota bucket
-      // (L11). Separate from the mention bucket so ordinary
-      // channel chatter doesn't starve the mention-fanout quota.
+      if (alreadyMentioned.has(member.id)) continue;
       if (!this.channelReadQuota.consume(`${message.organizationId}:${member.id}:${channel.id}`)) {
         this.emitWakeSuppressed(message, channel, member.id, 'quota');
         continue;
       }
-      // Channel member mode check (active / passive / muted / temp_disable)
-      const memberMode = this.repo.getChannelMemberMode(
-        message.organizationId,
-        channel.id,
-        member.id,
-      );
+      const memberMode = this.repo.getChannelMemberMode(message.organizationId, channel.id, member.id);
       if (memberMode === 'muted' || memberMode === 'temp_disable') {
         this.emitWakeSuppressed(message, channel, member.id, 'mode-blocked');
         continue;
       }
       if (memberMode === 'passive') {
-        // Passive agents read context but don't auto-reply on broadcasts.
         this.emitWakeSuppressed(message, channel, member.id, 'mode-passive');
         continue;
       }
@@ -1305,11 +1263,13 @@ export class ConversationService {
       // of being forced into another mandatory reply. Emit an
       // observability event so the UI can show "X and Y are
       // looping — wakes demoted".
-      const countInWindow = this.pairMentionTracker.record(
-        `${message.organizationId}|${message.threadId}|${message.senderId}|${member.id}`,
-      );
-      const wakeReason: WakeReason =
-        countInWindow > 3 ? 'channel-read' : 'mention';
+      const countInWindow =
+        message.senderKind === AGENT_KIND
+          ? this.pairMentionTracker.record(
+              `${message.organizationId}|${message.threadId}|${message.senderId}|${member.id}`,
+            )
+          : 0;
+      const wakeReason: WakeReason = countInWindow > 3 ? 'channel-read' : 'mention';
       if (wakeReason === 'channel-read') {
         this.emitEchoSuppressed({
           organizationId: message.organizationId,
@@ -1398,14 +1358,14 @@ export class ConversationService {
         );
         if (memberMode === 'muted' || memberMode === 'temp_disable') return;
         const recipient = this.repo.getMember(message.organizationId, recipientId);
-        const pairCap =
-          sender?.kind === 'agent' && recipient?.kind === 'agent' ? 1 : 3;
         try {
-          const countInWindow = this.pairMentionTracker.record(
-            `${message.organizationId}|${message.threadId}|${message.senderId}|${recipientId}`,
-          );
-          const wakeReason: WakeReason =
-            countInWindow > pairCap ? 'channel-read' : 'dm';
+          const isAgentPair = sender?.kind === AGENT_KIND && recipient?.kind === AGENT_KIND;
+          const countInWindow = isAgentPair
+            ? this.pairMentionTracker.record(
+                `${message.organizationId}|${message.threadId}|${message.senderId}|${recipientId}`,
+              )
+            : 0;
+          const wakeReason: WakeReason = countInWindow > 1 ? 'channel-read' : 'dm';
 
           if (wakeReason === 'channel-read') {
             this.emitEchoSuppressed({
@@ -1435,7 +1395,7 @@ export class ConversationService {
     if (!channel || channel.kind !== 'dm') return false;
     if (message.kind !== AGENT_KIND) return false;
     const handoff = (message.metadata as { handoff?: { complete?: boolean } } | undefined)?.handoff;
-    return handoff?.complete === true || isAcknowledgementOnly(message.content);
+    return handoff?.complete === true || isVacuousAck(message.content);
   }
 
   private publishMentionThrottledSystemMessage(
@@ -1596,8 +1556,9 @@ export class ConversationService {
     organizationId: string,
     channel: Channel | null,
   ): PaginatedMessages {
-    const visible = paginated.data
-      .filter((message) => !shouldHideCompactedMessage(message, channel))
+    const visible = filterVisibleMessages(paginated.data).filter(
+      (message) => !shouldHideCompactedMessage(message, channel),
+    );
     return {
       ...paginated,
       data: visible.map((message) => this.decorateMessage(message, organizationId, channel)),

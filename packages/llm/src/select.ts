@@ -12,8 +12,12 @@ const DEFAULT_OLLAMA_BASE_URL = 'http://127.0.0.1:11434/v1';
 const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
 const DEEPSEEK_BASE_URL = 'https://api.deepseek.com/v1';
 
-function reasoningSettings(kind: ProviderKind, reasoningEffort?: ReasoningEffort) {
-  const effort = clampReasoningEffortForProvider(kind, reasoningEffort);
+function reasoningSettings(
+  kind: ProviderKind,
+  reasoningEffort?: ReasoningEffort,
+  modelId?: string,
+) {
+  const effort = clampReasoningEffortForProvider(kind, reasoningEffort, modelId);
   if (effort === 'none') return null;
   if (kind === 'google') {
     return defaultSettingsMiddleware({
@@ -61,8 +65,13 @@ function reasoningSettings(kind: ProviderKind, reasoningEffort?: ReasoningEffort
  * follow-up turn. Our chat history is rebuilt from persisted {@link Message} rows, so we
  * only enable this where we also persist reasoning (see orchestrator `reasoningContent`).
  */
-function withReasoning(model: LanguageModel, kind: ProviderKind, reasoningEffort?: ReasoningEffort): LanguageModel {
-  const middleware = reasoningSettings(kind, reasoningEffort);
+function withReasoning(
+  model: LanguageModel,
+  kind: ProviderKind,
+  reasoningEffort?: ReasoningEffort,
+  modelId?: string,
+): LanguageModel {
+  const middleware = reasoningSettings(kind, reasoningEffort, modelId);
   if (!middleware) return model;
   return wrapLanguageModel({
     model: model as LanguageModelV3,
@@ -101,17 +110,32 @@ export function selectLanguageModel(input: SelectLanguageModelInput): LanguageMo
 
   if (input.kind === 'anthropic') {
     if (!input.apiKey) throw new LLMError('not_configured', 'anthropic provider requires apiKey');
-    return withReasoning(createAnthropic({ apiKey: input.apiKey }).messages(input.modelId), input.kind, input.reasoningEffort);
+    return withReasoning(
+      createAnthropic({ apiKey: input.apiKey }).messages(input.modelId),
+      input.kind,
+      input.reasoningEffort,
+      input.modelId,
+    );
   }
 
   if (input.kind === 'openai') {
     if (!input.apiKey) throw new LLMError('not_configured', 'openai provider requires apiKey');
-    return withReasoning(createOpenAI({ apiKey: input.apiKey }).responses(input.modelId), input.kind, input.reasoningEffort);
+    return withReasoning(
+      createOpenAI({ apiKey: input.apiKey }).responses(input.modelId),
+      input.kind,
+      input.reasoningEffort,
+      input.modelId,
+    );
   }
 
   if (input.kind === 'google') {
     if (!input.apiKey) throw new LLMError('not_configured', 'google provider requires apiKey');
-    return withReasoning(createGoogleGenerativeAI({ apiKey: input.apiKey }).languageModel(input.modelId), input.kind, input.reasoningEffort);
+    return withReasoning(
+      createGoogleGenerativeAI({ apiKey: input.apiKey }).languageModel(input.modelId),
+      input.kind,
+      input.reasoningEffort,
+      input.modelId,
+    );
   }
 
   if (input.kind === 'openrouter') {
@@ -174,10 +198,15 @@ export function selectLanguageModel(input: SelectLanguageModelInput): LanguageMo
   if (input.kind === 'openai-codex') {
     // Uses OpenAI Codex OAuth subscription token as API key
     if (!input.apiKey) throw new LLMError('not_configured', 'openai-codex provider requires apiKey (OAuth token)');
-    return withReasoning(createOpenAI({
-      apiKey: input.apiKey,
-      baseURL: input.baseUrl ?? 'https://api.openai.com/v1',
-    }).chat(input.modelId), input.kind, input.reasoningEffort);
+    return withReasoning(
+      createOpenAI({
+        apiKey: input.apiKey,
+        baseURL: input.baseUrl ?? 'https://api.openai.com/v1',
+      }).chat(input.modelId),
+      input.kind,
+      input.reasoningEffort,
+      input.modelId,
+    );
   }
 
   const exhaustive: never = input.kind;

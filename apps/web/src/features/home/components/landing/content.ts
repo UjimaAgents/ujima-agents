@@ -5,6 +5,7 @@ export const headerLinks = [
   {label: "Install", href: "#install"},
   {label: "Surfaces", href: "#surfaces"},
   {label: "Start", href: "#quick-start"},
+  {label: "Contact", href: "#contact"},
 ];
 
 export const install = {
@@ -80,4 +81,32 @@ export const securityLines = [
   "Filesystem and shell resolve under workspaceRoot.",
   "Sensitive operations require explicit approval.",
   "Role scopes can limit agents to subtrees.",
+];
+
+export type Contributor = {
+  name: string;
+  role: string;
+  contactLabel: string;
+  contactHref: string;
+};
+
+export const contributors: Contributor[] = [
+  {
+    name: "Vincent Precious",
+    role: "Contributor",
+    contactLabel: "@vincent_presh",
+    contactHref: "https://x.com/vincent_presh",
+  },
+  {
+    name: "Oluwaseyi Ajadi",
+    role: "Contributor",
+    contactLabel: "oluwaseyinexus137@gmail.com",
+    contactHref: "mailto:oluwaseyinexus137@gmail.com",
+  },
+  {
+    name: "Israel Akin-Akinsanya",
+    role: "Contributor",
+    contactLabel: "israelakinakinsanya@gmail.com",
+    contactHref: "mailto:israelakinakinsanya@gmail.com",
+  },
 ];

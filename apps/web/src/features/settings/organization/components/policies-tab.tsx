@@ -1,7 +1,7 @@
 "use client";
 
 import { AlertTriangle, ShieldCheck, Trash2 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, memo } from "react";
 import type { ShellApprovalMode } from "@ujima/shared/browser";
 import { normalizeOrgShellApprovalMode } from "@ujima/shared/browser";
 import type { PolicyAllowRule } from "@ujima/api-schema";
@@ -13,7 +13,7 @@ import { SettingsEmptyState } from "@/features/settings/shared/settings-empty-st
 import { SettingsPrimaryButton, SettingsSecondaryButton } from "@/features/settings/shared/settings-buttons";
 import { SettingsSection } from "@/features/settings/shared/settings-section";
 
-export function PoliciesTab({
+export const PoliciesTab = memo(function PoliciesTab({
   orgId,
   policies,
 }: {
@@ -49,7 +49,7 @@ export function PoliciesTab({
     [requireApprovalForWrites, shellApprovalMode, policies.requireApprovalForWrites, initialShellMode],
   );
 
-  const handleSave = async () => {
+  const handleSave = useCallback(async () => {
     if (!orgId) return;
     setError(null);
     setSuccess(false);
@@ -74,7 +74,7 @@ export function PoliciesTab({
     } finally {
       setSaving(false);
     }
-  };
+  }, [orgId, requireApprovalForWrites, shellApprovalMode]);
 
   // --- Fetch allow rules ---
   const fetchRules = useCallback(async () => {
@@ -125,8 +125,7 @@ export function PoliciesTab({
     };
   }, [orgId]);
 
-  // --- Revoke an allow rule ---
-  const handleRevoke = async () => {
+  const handleRevoke = useCallback(async () => {
     if (!orgId || !revokeTarget) return;
     setRevoking(true);
     setRulesError(null);
@@ -163,7 +162,7 @@ export function PoliciesTab({
     } finally {
       setRevoking(false);
     }
-  };
+  }, [orgId, revokeTarget]);
 
   return (
     <>
@@ -306,4 +305,4 @@ export function PoliciesTab({
       />
     </>
   );
-}
+});

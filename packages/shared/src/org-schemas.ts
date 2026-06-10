@@ -256,6 +256,7 @@ export const MessageMetadataSchema = z.object({
   runId: IdSchema.optional(),
   failedTrace: z.boolean().optional(),
   stoppedTrace: z.boolean().optional(),
+  traceOnly: z.boolean().optional(),
 }).optional();
 export type MessageMetadata = z.infer<typeof MessageMetadataSchema>;
 
@@ -346,6 +347,15 @@ export const AuditEventSchema = z.object({
   status: AuditStatusSchema.default('ok'),
   createdAt: TimestampSchema,
   metadata: z.record(z.string(), z.unknown()).default({}),
+  // Connector-action unwrap (mcp_connector_dispatch_plan.md §12). These map
+  // 1:1 to the indexed columns added in migration 049 and persist the
+  // (server, tool, args) tuple as first-class columns so operator queries
+  // like "every slack.post_message in 24h" hit the index instead of
+  // JSON-parsing every metadata blob. Optional so legacy non-connector
+  // events round-trip unchanged.
+  serverId: z.string().min(1).optional(),
+  toolName: z.string().min(1).optional(),
+  argsJson: z.string().optional(),
 });
 export type AuditEvent = z.infer<typeof AuditEventSchema>;
 
@@ -737,6 +747,33 @@ export const ScheduledJobSchema = z.object({
 });
 export type ScheduledJob = z.infer<typeof ScheduledJobSchema>;
 
+// Tier curation suggestion (mcp_connector_dispatch_plan.md §9.4 / PR 9).
+//
+// A row exists when the curation job has flagged a (member, server)
+// attachment as a demote or promote candidate. PR 8 ships the
+// schema + persistence; PR 9 fills the analysis. `signalMetadata`
+// is a per-direction shape: demote candidates carry idle-run counts,
+// promote candidates carry invocation-volume and error-rate stats.
+export const TierCurationDirectionSchema = z.enum(['demote', 'promote']);
+export type TierCurationDirection = z.infer<typeof TierCurationDirectionSchema>;
+
+export const TierCurationStatusSchema = z.enum(['pending', 'applied', 'dismissed']);
+export type TierCurationStatus = z.infer<typeof TierCurationStatusSchema>;
+
+export const TierCurationSuggestionSchema = z.object({
+  id: IdSchema,
+  organizationId: IdSchema,
+  memberId: IdSchema,
+  mcpServerId: IdSchema,
+  direction: TierCurationDirectionSchema,
+  rationale: z.string().default(''),
+  signalMetadata: z.record(z.string(), z.unknown()).default({}),
+  status: TierCurationStatusSchema.default('pending'),
+  createdAt: TimestampSchema,
+  resolvedAt: TimestampSchema.optional(),
+});
+export type TierCurationSuggestion = z.infer<typeof TierCurationSuggestionSchema>;
+
 export const CreateScheduledJobInputSchema = z.object({
   name: z.string().min(1),
   cronExpression: CronExpressionSchema,
@@ -782,6 +819,20 @@ export type McpServerStatus = z.infer<typeof McpServerStatusSchema>;
 
 export const McpAttachmentScopeSchema = z.enum(['worker', 'supervisor', 'both']);
 export type McpAttachmentScope = z.infer<typeof McpAttachmentScopeSchema>;
+
+// Connector dispatch tier (mcp_connector_dispatch_plan.md §7.1, §17.5).
+// 'native'   — full typed schemas injected into the model's tool palette
+//              at spawn. Best ergonomics; what every existing attachment
+//              currently behaves like.
+// 'dispatch' — catalog entry only; reached at runtime through the
+//              invoke_connector_tool meta-tool. Zero per-tool palette
+//              cost. The lossless overflow valve.
+//
+// The flag UJIMA_MCP_DISPATCH gates whether the V2 spawn path reads
+// `tier` at all. Legacy spawn is tier-blind by design; default 'native'
+// means flag-off and tier='dispatch' rows still behave exactly as today.
+export const McpAttachmentTierSchema = z.enum(['native', 'dispatch']);
+export type McpAttachmentTier = z.infer<typeof McpAttachmentTierSchema>;
 
 /**
  * Canonical MCP server row. Secrets ride as `*_key_ref` only;
@@ -850,10 +901,39 @@ export const AgentMcpAttachmentSchema = z.object({
   memberId: IdSchema,
   mcpServerId: IdSchema,
   scope: McpAttachmentScopeSchema.default('worker'),
+  tier: McpAttachmentTierSchema.default('native'),
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,
 });
 export type AgentMcpAttachment = z.infer<typeof AgentMcpAttachmentSchema>;
+
+// Channel-scoped MCP attachment (mcp_connector_dispatch_plan.md §17.5 /
+// PR 10). Mirrors AgentMcpAttachmentSchema shape but keyed on
+// (organizationId, channelId, mcpServerId) — every agent who is a
+// member of the channel inherits this attachment as part of their
+// effective set via the §17.5.3 union step inside V2.
+//
+// Default tier is 'dispatch' (NOT 'native' like the agent schema).
+// Channels often bulk-attach MCPs (10+ on a busy team channel) and
+// native ballooning is the exact problem §17.5.3 is designed to
+// prevent. Dispatch is the lossless overflow valve; promoting to
+// native is a deliberate operator action via the channel tier toggle
+// (the PR 9 analyzer surfaces those candidates).
+//
+// The per-agent attachment still wins on conflict (§17.5.3 rule 1):
+// the operator's deliberate per-agent tier choice is preserved
+// against channel fan-out that would otherwise reverse it.
+export const ChannelMcpAttachmentSchema = z.object({
+  id: IdSchema,
+  organizationId: IdSchema,
+  channelId: IdSchema,
+  mcpServerId: IdSchema,
+  scope: McpAttachmentScopeSchema.default('worker'),
+  tier: McpAttachmentTierSchema.default('dispatch'),
+  createdAt: TimestampSchema,
+  updatedAt: TimestampSchema,
+});
+export type ChannelMcpAttachment = z.infer<typeof ChannelMcpAttachmentSchema>;
 
 // Per-tool grant. When an agent has any grants on a server, the runtime
 // only exposes those specific tools — shrinking the model's tool palette.

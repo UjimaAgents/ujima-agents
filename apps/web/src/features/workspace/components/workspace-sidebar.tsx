@@ -13,12 +13,13 @@ import {
   Trash2,
 } from "lucide-react";
 import Link from "next/link";
-import { Avatar } from "./chat/primitives";
+import { Avatar, RunningFigureIndicator } from "./chat/primitives";
 import type { BootstrapResponse } from "@ujima/api-schema";
 import { slugifyMemberId } from "@ujima/shared";
 import type { CreateAgentHandler, UpdateAgentHandler } from "@/features/team/agent-mutations";
 import type { SelectedConversation, WorkspaceRoleInput } from "../types";
 import { useState, useMemo, useEffect, useRef, memo, useCallback } from "react";
+import { APP_VERSION } from "@/lib/app-version";
 import { useRouter } from "next/navigation";
 import { TextInput } from "@/components/ui/form-fields";
 import type { RolePresetTemplate } from "../../onboarding/types";
@@ -218,7 +219,7 @@ function scheduleStatusToActivity(status: WorkspaceSchedule["status"]): Activity
   return "offline";
 }
 
-export function WorkspaceSidebar({
+export const WorkspaceSidebar = memo(function WorkspaceSidebar({
   bootstrap,
   rolePresets,
   teamSettings,
@@ -636,6 +637,13 @@ export function WorkspaceSidebar({
         </Link>
       </div>
 
+      {/* Version label */}
+      <div className="px-4 pb-2">
+        <p className="text-[10px] text-zinc-400/60 dark:text-zinc-600/60 text-center select-none">
+          v{APP_VERSION}
+        </p>
+      </div>
+
       <CreateChannelModal
         isOpen={isChannelModalOpen}
         onClose={() => setIsChannelModalOpen(false)}
@@ -689,7 +697,7 @@ export function WorkspaceSidebar({
       ) : null}
     </aside>
   );
-}
+});
 
 export const SidebarItem = memo(function SidebarItem({
   icon,
@@ -766,61 +774,6 @@ export const SidebarItem = memo(function SidebarItem({
     </div>
   );
 });
-
-function RunningFigureIndicator() {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      aria-hidden="true"
-      className="h-4 w-4 shrink-0 text-violet-600 dark:text-violet-400"
-      fill="none"
-      stroke="currentColor"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      strokeWidth="1.8"
-    >
-      <circle cx="14" cy="4" r="1.4" fill="currentColor" stroke="none" />
-      <line x1="13.5" y1="5.5" x2="11" y2="12">
-        <animate attributeName="y2" values="12;11.5;12;11.5;12" dur="0.6s" repeatCount="indefinite" />
-      </line>
-
-      <path strokeOpacity="0.4" d="M13 7 L10 9.5">
-        <animate attributeName="d"
-          values="M13 7 L10 9.5;M13 7 L15.5 9;M13 7 L16 10.5;M13 7 L15.5 9;M13 7 L10 9.5"
-          dur="0.6s" repeatCount="indefinite" />
-      </path>
-
-      <path d="M13 7 L16 10.5">
-        <animate attributeName="d"
-          values="M13 7 L16 10.5;M13 7 L11.5 10;M13 7 L10 9.5;M13 7 L11.5 10;M13 7 L16 10.5"
-          dur="0.6s" repeatCount="indefinite" />
-      </path>
-
-      <path strokeOpacity="0.4" d="M11 12 L8 15 L6.5 16">
-        <animate attributeName="d"
-          values="M11 12 L8 15 L6.5 16;M11 12 L12 16 L14 19;M11 12 L14.5 15.5 L16.5 18;M11 12 L12 16 L14 19;M11 12 L8 15 L6.5 16"
-          dur="0.6s" repeatCount="indefinite" />
-      </path>
-
-      <path d="M11 12 L14.5 15.5 L16.5 18">
-        <animate attributeName="d"
-          values="M11 12 L14.5 15.5 L16.5 18;M11 12 L12 16 L10 19;M11 12 L8 15 L6.5 16;M11 12 L12 16 L10 19;M11 12 L14.5 15.5 L16.5 18"
-          dur="0.6s" repeatCount="indefinite" />
-      </path>
-
-      <g strokeOpacity="0.25" strokeWidth="1.2">
-        <line x1="6" y1="7" x2="3" y2="7.5">
-          <animate attributeName="x1" values="6;4;6" dur="0.3s" repeatCount="indefinite" />
-          <animate attributeName="x2" values="3;1;3" dur="0.3s" repeatCount="indefinite" />
-        </line>
-        <line x1="5" y1="10" x2="2.5" y2="10.5">
-          <animate attributeName="x1" values="5;3;5" dur="0.3s" repeatCount="indefinite" />
-          <animate attributeName="x2" values="2.5;0.5;2.5" dur="0.3s" repeatCount="indefinite" />
-        </line>
-      </g>
-    </svg>
-  );
-}
 
 export const SidebarSectionHeader = memo(function SidebarSectionHeader({
   title,

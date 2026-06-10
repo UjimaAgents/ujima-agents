@@ -15,6 +15,44 @@ export function sanitizeUrl(href: unknown): string {
   return "";
 }
 
+const EMPTY_MENTION_NAMES: string[] = [];
+const MAX_CACHE_SIZE = 50;
+
+function getFromCache<K, V>(cache: Map<K, V>, key: K): V | undefined {
+  const val = cache.get(key);
+  if (val !== undefined) {
+    cache.delete(key);
+    cache.set(key, val);
+  }
+  return val;
+}
+
+function setToCache<K, V>(cache: Map<K, V>, key: K, value: V) {
+  if (cache.has(key)) {
+    cache.delete(key);
+  } else if (cache.size >= MAX_CACHE_SIZE) {
+    const oldestKey = cache.keys().next().value;
+    if (oldestKey !== undefined) {
+      cache.delete(oldestKey);
+    }
+  }
+  cache.set(key, value);
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const rendererCaches = new Map<string, any>();
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function getRenderer(mentionNames: string[]): any {
+  const key = mentionNames.join("\u0000");
+  let renderer = getFromCache(rendererCaches, key);
+  if (!renderer) {
+    renderer = createRenderer(mentionNames);
+    setToCache(rendererCaches, key, renderer);
+  }
+  return renderer;
+}
+
 function createRenderer(mentionNames: string[]) {
   const renderer = new marked.Renderer();
 
@@ -94,7 +132,7 @@ export function renderMarkdown(content: string, mentionNames: string[]): string 
   return marked.parse(stripScriptTags(content), {
     gfm: true,
     breaks: true,
-    renderer: createRenderer(mentionNames),
+    renderer: getRenderer(mentionNames),
   }) as string;
 }
 
@@ -158,13 +196,14 @@ export function renderStreamingMarkdown(
   mentionNames: string[],
 ): string {
   const mentionKey = mentionNames.join("\u0000");
-  const cache = streamingMarkdownCaches.get(mentionKey) ?? {
-    content: "",
-    prefix: "",
-    prefixHtml: "",
-  };
-  if (!streamingMarkdownCaches.has(mentionKey)) {
-    streamingMarkdownCaches.set(mentionKey, cache);
+  let cache = getFromCache(streamingMarkdownCaches, mentionKey);
+  if (!cache) {
+    cache = {
+      content: "",
+      prefix: "",
+      prefixHtml: "",
+    };
+    setToCache(streamingMarkdownCaches, mentionKey, cache);
   }
 
   if (!content.startsWith(cache.content)) {
@@ -192,7 +231,7 @@ export function renderStreamingMarkdown(
 
   const prefixHtml = renderMarkdown(prefix, mentionNames);
   const trailHtml = trail ? renderMarkdown(trail, mentionNames) : "";
-  streamingMarkdownCaches.set(mentionKey, {
+  setToCache(streamingMarkdownCaches, mentionKey, {
     content,
     prefix,
     prefixHtml,
@@ -209,14 +248,17 @@ function renderInlineMarkdown(text: string, mentionNames: string[]): string {
 
 export function Markdown({
   content,
-  mentionNames = [],
+  mentionNames = EMPTY_MENTION_NAMES,
   className = "",
 }: {
   content: string;
   mentionNames?: string[];
   className?: string;
 }) {
-  const html = renderStreamingMarkdown(content, mentionNames);
+  const html = useMemo(
+    () => renderStreamingMarkdown(content, mentionNames),
+    [content, mentionNames],
+  );
 
   return (
     <div
@@ -248,7 +290,7 @@ export function Markdown({
 
 export function MarkdownInline({
   content,
-  mentionNames = [],
+  mentionNames = EMPTY_MENTION_NAMES,
   className = "",
 }: {
   content: string;
@@ -258,7 +300,7 @@ export function MarkdownInline({
   const html = useMemo(() => {
     return marked.parseInline(stripScriptTags(content), {
       gfm: true,
-      renderer: createRenderer(mentionNames),
+      renderer: getRenderer(mentionNames),
     }) as string;
   }, [content, mentionNames]);
 

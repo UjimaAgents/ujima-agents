@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import {
   File as FileIcon,
   FileArchive,
@@ -23,6 +23,7 @@ import {
   type ReasoningEffort,
 } from "@ujima/shared/browser";
 import { Select } from "@/components/ui/select";
+import { RunningFigureIndicator } from "./primitives";
 import {
   listItemIdle,
   listItemSelected,
@@ -119,58 +120,6 @@ function reasoningLabel(value: ReasoningEffort): string {
   return value === "extra_high" ? "Extra High" : value.charAt(0).toUpperCase() + value.slice(1);
 }
 
-function RunningFigureIndicator() {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      aria-hidden="true"
-      className="h-3.5 w-3.5 shrink-0 text-violet-700 dark:text-violet-300"
-      fill="none"
-      stroke="currentColor"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      strokeWidth="1.8"
-    >
-      <circle cx="14" cy="4" r="1.4" fill="currentColor" stroke="none" />
-      <line x1="13.5" y1="5.5" x2="11" y2="12">
-        <animate attributeName="y2" values="12;11.5;12;11.5;12" dur="0.6s" repeatCount="indefinite" />
-      </line>
-      <path strokeOpacity="0.4" d="M13 7 L10 9.5">
-        <animate
-          attributeName="d"
-          values="M13 7 L10 9.5;M13 7 L15.5 9;M13 7 L16 10.5;M13 7 L15.5 9;M13 7 L10 9.5"
-          dur="0.6s"
-          repeatCount="indefinite"
-        />
-      </path>
-      <path d="M13 7 L16 10.5">
-        <animate
-          attributeName="d"
-          values="M13 7 L16 10.5;M13 7 L11.5 10;M13 7 L10 9.5;M13 7 L11.5 10;M13 7 L16 10.5"
-          dur="0.6s"
-          repeatCount="indefinite"
-        />
-      </path>
-      <path strokeOpacity="0.4" d="M11 12 L8 15 L6.5 16">
-        <animate
-          attributeName="d"
-          values="M11 12 L8 15 L6.5 16;M11 12 L12 16 L14 19;M11 12 L14.5 15.5 L16.5 18;M11 12 L12 16 L14 19;M11 12 L8 15 L6.5 16"
-          dur="0.6s"
-          repeatCount="indefinite"
-        />
-      </path>
-      <path d="M11 12 L14.5 15.5 L16.5 18">
-        <animate
-          attributeName="d"
-          values="M11 12 L14.5 15.5 L16.5 18;M11 12 L8 15 L6.5 16;M11 12 L12 16 L14 19;M11 12 L8 15 L6.5 16;M11 12 L14.5 15.5 L16.5 18"
-          dur="0.6s"
-          repeatCount="indefinite"
-        />
-      </path>
-    </svg>
-  );
-}
-
 export function getExactSlashCommand(value: string): ComposerCommand | null {
   const trimmed = value.trim();
   if (trimmed === "/summarize") return "summarize";
@@ -210,8 +159,8 @@ function findMentionTrigger(value: string, caret: number): MentionTrigger | null
   return { start, end: caret, query };
 }
 
-export function ChatInput({
-  placeholder = "Type a message...",
+function ChatInputComponent({
+  placeholder = "Message here or type / for commands",
   onSend,
   onCommand,
   inlineError,
@@ -227,6 +176,7 @@ export function ChatInput({
   skillCommands = [],
   onSkillCommand,
   reasoningProvider,
+  reasoningModelValue,
 }: {
   placeholder?: string;
   organizationId?: string;
@@ -244,6 +194,7 @@ export function ChatInput({
   skillCommands?: SlashSkillCommand[];
   onSkillCommand?: (skillId: string, rawContent?: string, metadata?: { goalMode?: boolean; reasoningEffort?: ReasoningEffort }) => Promise<void> | void;
   reasoningProvider?: string;
+  reasoningModelValue?: string;
 }) {
   const goalMode = goalModeProp ?? false;
   const [content, setContent] = useState("");
@@ -268,13 +219,19 @@ export function ChatInput({
   const composerPlaceholder = readOnly ? `Observer Mode · ${placeholder}` : placeholder;
   const reasoningOptions = useMemo(
     () =>
-      getReasoningEffortsForProvider(reasoningProvider ?? "").map((value) => ({
+      getReasoningEffortsForProvider(reasoningProvider ?? "", reasoningModelValue).map((value) => ({
         value,
         label: reasoningLabel(value),
       })),
-    [reasoningProvider],
+    [reasoningModelValue, reasoningProvider],
   );
-  const selectedReasoningEffort = clampReasoningEffortForProvider(reasoningProvider ?? "", reasoningEffort);
+  const selectedReasoningEffort = clampReasoningEffortForProvider(
+    reasoningProvider ?? "",
+    reasoningEffort,
+    reasoningModelValue,
+  );
+  const showReasoningSelect = reasoningOptions.length > 1;
+  const reasoningDisabled = readOnly;
 
   function revokePreviewUrl(attachment: UploadedAttachment) {
     if (attachment.previewUrl?.startsWith("blob:")) {
@@ -343,6 +300,7 @@ export function ChatInput({
 
   const working = isSending || isCommanding || uploading;
   const canStopRun = Boolean(stoppableRunIds?.length && onStopRun);
+  const stopRunLabel = stoppableRunIds?.length && stoppableRunIds.length > 1 ? "Stop runs" : "Stop run";
   const showStopInsteadOfSend =
     canStopRun &&
     !hasDraft &&
@@ -665,19 +623,15 @@ export function ChatInput({
     if (!stoppableRunIds?.length || !onStopRun || isStopping) return;
     setError(null);
     setIsStopping(true);
-    let failure: string | null = null;
     try {
-      for (const runId of stoppableRunIds) {
-        try {
-          await onStopRun(runId);
-        } catch (err) {
-          failure ??= err instanceof Error ? err.message : "Unable to stop the run.";
-        }
+      const results = await Promise.allSettled(stoppableRunIds.map((runId) => onStopRun(runId)));
+      const failure = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
+      if (failure) {
+        setError(failure.reason instanceof Error ? failure.reason.message : "Unable to stop the run.");
       }
     } finally {
       setIsStopping(false);
     }
-    if (failure) setError(failure);
   };
 
   return (
@@ -1047,23 +1001,25 @@ export function ChatInput({
                   Goal
                 </button>
               ) : null}
-              <Select
-                size="sm"
-                value={selectedReasoningEffort}
-                onChange={(event) => setReasoningEffort(event.target.value as ReasoningEffort)}
-                options={reasoningOptions}
-                placeholder="Reasoning"
-                ariaLabel="Reasoning effort"
-                menuPlacement="up"
-                className="w-[8.5rem] sm:w-[10.5rem]"
-                menuClassName="min-w-full w-max max-w-[calc(100vw-1.5rem)]"
-                disabled={readOnly}
-              />
+              {showReasoningSelect ? (
+                <Select
+                  size="sm"
+                  value={selectedReasoningEffort}
+                  onChange={(event) => setReasoningEffort(event.target.value as ReasoningEffort)}
+                  options={reasoningOptions}
+                  placeholder="Reasoning"
+                  ariaLabel="Reasoning effort"
+                  menuPlacement="up"
+                  className="w-[8.5rem] sm:w-[10.5rem]"
+                  menuClassName="min-w-full w-max max-w-[calc(100vw-1.5rem)]"
+                  disabled={reasoningDisabled}
+                />
+              ) : null}
               {canStopRun && !showStopInsteadOfSend && (
                 <button
                   type="button"
-                  aria-label="Stop agent run"
-                  title="Stop agent run"
+                  aria-label={stopRunLabel}
+                  title={stopRunLabel}
                   onClick={() => void stopRun()}
                   disabled={isStopping}
                   className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-red-600 text-white shadow-lg shadow-red-500/20 transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
@@ -1078,8 +1034,8 @@ export function ChatInput({
               {showStopInsteadOfSend ? (
                 <button
                   type="button"
-                  aria-label="Stop agent run"
-                  title="Stop agent run"
+                  aria-label={stopRunLabel}
+                  title={stopRunLabel}
                   onClick={() => void stopRun()}
                   disabled={isStopping}
                   className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-red-600 text-white shadow-lg shadow-red-500/20 transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
@@ -1119,3 +1075,5 @@ export function ChatInput({
     </div>
   );
 }
+
+export const ChatInput = memo(ChatInputComponent);

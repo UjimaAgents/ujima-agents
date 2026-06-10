@@ -57,8 +57,24 @@ export function ChannelMembersTab({
   members: Member[];
   onSaved: (memberIds: string[]) => void;
 }) {
-  const savedMemberIds = useMemo(() => normalizeMemberIds(channel.memberIds), [channel.memberIds]);
+  const knownMemberIds = useMemo(() => new Set(members.map((member) => member.id)), [members]);
+  const savedMemberIds = useMemo(
+    () => normalizeMemberIds(channel.memberIds.filter((memberId) => knownMemberIds.has(memberId))),
+    [channel.memberIds, knownMemberIds],
+  );
   const [draftMemberIds, setDraftMemberIds] = useState(savedMemberIds);
+  // Track the savedMemberIds we initialized draft from, so we can
+  // detect prop changes and resync. React 19's official "Adjusting
+  // state when a prop changes" pattern — done during render, not in
+  // an effect — so react-hooks/set-state-in-effect doesn't fire and
+  // the resync lands BEFORE the next paint instead of one frame
+  // later. savedMemberIds is reference-stable via the useMemo above,
+  // so the cheap `!==` check is correct.
+  const [lastSyncedSavedIds, setLastSyncedSavedIds] = useState(savedMemberIds);
+  if (savedMemberIds !== lastSyncedSavedIds) {
+    setLastSyncedSavedIds(savedMemberIds);
+    setDraftMemberIds(savedMemberIds);
+  }
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [memberModes, setMemberModes] = useState<Map<string, ChannelMemberMode>>(new Map());

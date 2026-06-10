@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "predev": "bun ../../scripts/free-port.ts ${WEB_PORT:-3452}",
     "dev": "bun scripts/run-next.ts dev",
     "build": "next build",
     "start": "bun scripts/run-next.ts start",
@@ -21,7 +22,6 @@
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "react-resizable-panels": "^4.10.0",
-    "shadcn-ui": "^0.9.5",
     "socket.io-client": "^4.8.3",
     "zod": "^3.23.8",
     "zustand": "^5.0.12"

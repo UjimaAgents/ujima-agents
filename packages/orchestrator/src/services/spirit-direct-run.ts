@@ -2,10 +2,6 @@ import { randomUUID } from 'node:crypto';
 import {
   RunStateSchema,
   SocketEventNames,
-  memberRoom,
-  orgRoom,
-  runRoom,
-  threadRoom,
   type RunState,
   type Spirit,
   type WakeReason,
@@ -30,6 +26,7 @@ import { SpiritServiceSupervisor } from './spirit-supervisor.js';
 import { appendArtifactFileToolCall } from './artifact-file-card.js';
 import { buildAgentMessage } from './message-factory.js';
 import { RunTurnPublisher } from './run-turn-publisher.js';
+import { composedStepToolCalls, prepareAgentStepPublication } from './agent-step-publish.js';
 import {
   appendArtifactFileFromRunSteps,
   collectRunStepToolCalls,
@@ -37,7 +34,6 @@ import {
   collectToolStatuses,
   publishRunReplyTrace,
   publishStreamedTrace,
-  normalizeRunStepToolCalls,
   type StreamedRunTrace,
 } from './run-trace-publisher.js';
 import { normalizeTokenUsage } from './token-usage.js';
@@ -210,19 +206,9 @@ export class SpiritService extends SpiritServiceSupervisor {
     });
 
     this.repo.saveRun(run);
-    this.realtime.emit(
-      SocketEventNames.runStarted,
-      { organizationId: input.organizationId, run },
-      [
-        orgRoom(input.organizationId),
-        threadRoom(input.threadId),
-        memberRoom(input.agentId),
-        runRoom(run.id),
-      ],
-    );
 
     try {
-      return await this.advanceRun(run);
+      return await this.advanceRun(run, SocketEventNames.runStarted);
     } catch (error) {
       const latest = this.repo.getRun(run.organizationId, run.id);
       if (latest?.status === 'cancelled') {
@@ -402,7 +388,10 @@ export class SpiritService extends SpiritServiceSupervisor {
     } satisfies RunDetail;
   }
 
-  protected async advanceRun(run: RunState): Promise<RunState> {
+  protected async advanceRun(
+    run: RunState,
+    eventName: typeof SocketEventNames.runStarted | typeof SocketEventNames.runUpdated = SocketEventNames.runUpdated,
+  ): Promise<RunState> {
     const currentRun = this.repo.getRun(run.organizationId, run.id);
     if (currentRun && ['completed', 'failed', 'cancelled'].includes(currentRun.status)) {
       return currentRun;
@@ -445,7 +434,7 @@ export class SpiritService extends SpiritServiceSupervisor {
       return preCancel;
     }
 
-    const running = this.repo.saveRun({
+    const running = this.saveRunAndEmit(eventName, {
       ...run,
       status: 'running',
       step: 'running',
@@ -457,17 +446,12 @@ export class SpiritService extends SpiritServiceSupervisor {
       return postCancel;
     }
 
-    this.realtime.emit(
-      SocketEventNames.runUpdated,
-      { organizationId: run.organizationId, run: running },
-      this.getRooms(running),
-    );
-
     const abortKey = this.runKey(run.organizationId, run.id);
     const abortController = new AbortController();
     this.runAbortControllers.set(abortKey, abortController);
     const streamedTrace: StreamedRunTrace = { text: '', reasoning: '' };
     let persistedStepCount = 0;
+    let sawTerminatingTool = false;
     const turn = new RunTurnPublisher(
       (message) => {
         this.conversations?.publishMessage(message);
@@ -495,6 +479,7 @@ export class SpiritService extends SpiritServiceSupervisor {
         summary: run.summary,
         systemPromptSuffix,
         abortSignal: abortController.signal,
+        detectExternalPause: () => this.detectRunPauseForHuman(run.organizationId, run.id),
         onChunk: (chunk) => {
           if (chunk.kind === 'text') streamedTrace.text += chunk.delta;
           if (chunk.kind === 'reasoning') streamedTrace.reasoning += chunk.delta;
@@ -510,36 +495,27 @@ export class SpiritService extends SpiritServiceSupervisor {
         },
         onStepFinish: async (_step, currentSteps) => {
           const unpersisted = currentSteps.slice(persistedStepCount);
+          const terminatorState = { sawTerminatingTool };
           for (const s of unpersisted) {
             persistedStepCount++;
-            const stepText = typeof s.text === 'string' ? s.text.trim() : '';
-            const stepToolCalls = Array.isArray(s.toolCalls) ? s.toolCalls : [];
-            const stepToolResults = Array.isArray(s.toolResults) ? s.toolResults : [];
-
-            const stepArtifactFileToolCall =
-              stepToolCalls.length > 0
-                ? (await appendArtifactFileToolCall(stepToolCalls, team.workspace.root, stepToolResults)) ??
-                  (await appendArtifactFileFromRunSteps(
-                    this.repo,
-                    running,
-                    team.workspace.root,
-                    stepToolCalls.at(-1)?.toolCallId,
-                  ))
-                : undefined;
-            if (stepArtifactFileToolCall) turn.markArtifactFilePublished();
-
-            if (runUsedThreadPublishingTool({ steps: [s] }) && !stepArtifactFileToolCall) continue;
-            // Skip tool-only steps with no artifact card — they'd
-            // render as empty agent bubbles. Tool execution data
-            // already lives in run_steps for the trace panel.
-            if (!stepText && !stepArtifactFileToolCall) continue;
-
-            const content = stepText || 'Artifact updated.';
-            const toolCalls = [
-              ...normalizeRunStepToolCalls(stepToolCalls, stepToolResults),
-              ...(stepArtifactFileToolCall ? [stepArtifactFileToolCall] : []),
-            ];
-            const stepReasoning = extractReasoningChunk(s);
+            const prepared = await prepareAgentStepPublication({
+              step: s,
+              teamRoot: team.workspace.root,
+              terminatorState,
+              resolveRunStepArtifact: (toolCallId) =>
+                appendArtifactFileFromRunSteps(this.repo, running, team.workspace.root, toolCallId),
+              isStepTerminated: (step) => {
+                const persistedTerminator = findTerminatingToolFromRunSteps(
+                  this.repo.listRunSteps?.(running.organizationId, running.id) ?? [],
+                );
+                return (
+                  runUsedThreadPublishingTool({ steps: [step] }) || persistedTerminator !== null
+                );
+              },
+            });
+            sawTerminatingTool = terminatorState.sawTerminatingTool;
+            if (!prepared) continue;
+            if (prepared.artifactPublished) turn.markArtifactFilePublished();
 
             const finalThreadId = running.threadId;
             if (!finalThreadId) continue;
@@ -551,10 +527,12 @@ export class SpiritService extends SpiritServiceSupervisor {
                 threadId: finalThreadId,
                 channelId: channelId ?? undefined,
                 senderId: running.agentId,
-                content,
+                content: prepared.content,
                 metadata: { runId: running.id },
-                ...(toolCalls.length > 0 ? { toolCalls } : {}),
-                ...(stepReasoning ? { reasoningContent: stepReasoning } : {}),
+                ...(composedStepToolCalls(prepared).length > 0
+                  ? { toolCalls: composedStepToolCalls(prepared) }
+                  : {}),
+                ...(prepared.reasoningContent ? { reasoningContent: prepared.reasoningContent } : {}),
               }),
             );
           }
@@ -610,27 +588,6 @@ export class SpiritService extends SpiritServiceSupervisor {
         (await appendArtifactFileToolCall(goalToolCalls, team.workspace.root, goalToolResults)) ??
         (await appendArtifactFileFromRunSteps(this.repo, run, team.workspace.root));
       const turnSnapshot = turn.snapshot();
-      if (statuses.includes('blocked')) {
-        await publishRunReplyTrace({
-          repo: this.repo,
-          conversations: this.conversations,
-          run: running,
-          result: {
-            ...result,
-            steps: result.steps.slice(persistedStepCount),
-          },
-          reply: text || (artifactFileToolCall ? 'Artifact updated.' : ''),
-          reasoningContent,
-          teamRoot: team.workspace.root,
-          artifactFileToolCall,
-          ...turnSnapshot,
-
-          suppressDmAlerts: true,
-          failureTrace: true,
-        });
-        return this.failRun(running, 'Tool action blocked');
-      }
-
       if (statuses.includes('waiting_for_approval')) {
         return this.waitForApproval(running, pendingApprovalRunSummary(this.repo, running.organizationId, running.id));
       }
@@ -689,10 +646,12 @@ export class SpiritService extends SpiritServiceSupervisor {
       }
 
       if (terminatingTool === 'channel.pass') {
+        this.persistSilentTrace(running, reasoningContent);
         return this.completeSilentRun(running, 'passed', 'channel.pass', wakeReason);
       }
 
       if (terminatingTool === 'channel.ack') {
+        this.persistSilentTrace(running, reasoningContent);
         return this.completeSilentRun(running, 'acked', 'channel.ack', wakeReason);
       }
 
@@ -794,7 +753,7 @@ export class SpiritService extends SpiritServiceSupervisor {
   }
 
   protected completeRun(run: RunState, summary: string, terminatingTool: string | null = null): RunState {
-    const completed = this.repo.saveRun({
+    const completed = this.saveRunAndEmit(SocketEventNames.runCompleted, {
       ...run,
       status: 'completed',
       step: 'completed',
@@ -802,12 +761,6 @@ export class SpiritService extends SpiritServiceSupervisor {
       terminatingTool,
       endedAt: new Date().toISOString(),
     });
-
-    this.realtime.emit(
-      SocketEventNames.runCompleted,
-      { organizationId: run.organizationId, run: completed },
-      this.getRooms(run),
-    );
 
     this.invokeRunTerminalHook(completed);
 
@@ -834,54 +787,48 @@ export class SpiritService extends SpiritServiceSupervisor {
     return this.completeRun(run, summary, terminatingTool);
   }
 
+  private persistSilentTrace(run: RunState, reasoningContent?: string): void {
+    if (!run.threadId || !reasoningContent) return;
+    const channelId = this.repo.getThread(run.organizationId, run.threadId)?.channelId;
+    this.repo.saveMessage(
+      buildAgentMessage({
+        organizationId: run.organizationId,
+        threadId: run.threadId,
+        channelId,
+        senderId: run.agentId,
+        content: '',
+        reasoningContent,
+        metadata: { runId: run.id, traceOnly: true },
+      }),
+    );
+  }
+
   protected waitForApproval(run: RunState, summary: string): RunState {
-    const waiting = this.repo.saveRun({
+    return this.saveRunAndEmit(SocketEventNames.runUpdated, {
       ...run,
       status: 'waiting_for_approval',
       step: 'waiting_for_approval',
       summary,
     });
-
-    this.realtime.emit(
-      SocketEventNames.runUpdated,
-      { organizationId: run.organizationId, run: waiting },
-      this.getRooms(run),
-    );
-
-    return waiting;
   }
 
   protected waitForInput(run: RunState, summary: string): RunState {
-    const waiting = this.repo.saveRun({
+    return this.saveRunAndEmit(SocketEventNames.runUpdated, {
       ...run,
       status: 'waiting_for_input',
       step: 'waiting_for_input',
       summary,
     });
-
-    this.realtime.emit(
-      SocketEventNames.runUpdated,
-      { organizationId: run.organizationId, run: waiting },
-      this.getRooms(run),
-    );
-
-    return waiting;
   }
 
   protected failRun(run: RunState, summary: string): RunState {
-    const failed = this.repo.saveRun({
+    const failed = this.saveRunAndEmit(SocketEventNames.runCompleted, {
       ...run,
       status: 'failed',
       step: 'failed',
       summary,
       endedAt: new Date().toISOString(),
     });
-
-    this.realtime.emit(
-      SocketEventNames.runCompleted,
-      { organizationId: run.organizationId, run: failed },
-      this.getRooms(run),
-    );
 
     this.invokeRunTerminalHook(failed);
 

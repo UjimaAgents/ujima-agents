@@ -7,8 +7,10 @@ import {
   takePendingMemberAlert,
 } from './pending-member-alerts.js';
 
+const flushMicrotasks = () => new Promise<void>((resolve) => queueMicrotask(() => resolve()));
+
 describe('pending-member-alerts', () => {
-  it('queues alerts FIFO per org/member/thread', () => {
+  it('coalesces alerts to the latest state per org/member/thread', () => {
     clearPendingMemberAlertsForTests();
     enqueuePendingMemberAlert({
       organizationId: 'org-1',
@@ -28,7 +30,6 @@ describe('pending-member-alerts', () => {
       reason: 'dm',
       wakeReason: 'dm',
     });
-    expect(takePendingMemberAlert('org-1', 'agent-1', 'thread-1')?.messageId).toBe('msg-1');
     expect(takePendingMemberAlert('org-1', 'agent-1', 'thread-1')?.messageId).toBe('msg-2');
     expect(takePendingMemberAlert('org-1', 'agent-1', 'thread-1')).toBeUndefined();
   });
@@ -58,6 +59,7 @@ describe('pending-member-alerts', () => {
     } as RunState;
 
     await drainPendingMemberAlertAfterRun(run, wake);
+    await flushMicrotasks();
 
     expect(wake).toHaveBeenCalledTimes(1);
     expect(wake).toHaveBeenCalledWith(
@@ -93,6 +95,7 @@ describe('pending-member-alerts', () => {
       } as RunState;
 
       await drainPendingMemberAlertAfterRun(run, wake);
+      await flushMicrotasks();
 
       expect(wake).toHaveBeenCalledTimes(1);
       expect(takePendingMemberAlert('org-1', 'agent-1', 'thread-1')).toBeUndefined();

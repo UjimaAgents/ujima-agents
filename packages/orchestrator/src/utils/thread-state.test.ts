@@ -165,4 +165,24 @@ describe('buildThreadStateBlock', () => {
     expect(block).toContain('<explicit-mentions>none</explicit-mentions>');
     expect(block).toContain('<implicit-name-references>none</implicit-name-references>');
   });
+
+  it('keeps addressing factual while making a channel-read reply optional', () => {
+    const source = buildMessage({
+      id: 'msg-1',
+      content: 'Hey Ada, please review',
+      mentions: ['agent-ada'],
+      createdAt: '2026-05-19T10:00:00.000Z',
+    });
+    const block = buildThreadStateBlock({
+      messages: [source],
+      currentMember: { id: 'agent-ada', name: 'Ada' },
+      sourceMessageId: 'msg-1',
+      members,
+      wakeReason: 'channel-read',
+    });
+    expect(block).toContain('<explicit-mentions>Ada</explicit-mentions>');
+    expect(block).toContain('<you-explicitly-addressed>true</you-explicitly-addressed>');
+    expect(block).toContain('<you-implicitly-addressed>true</you-implicitly-addressed>');
+    expect(block).toContain('<reply-obligation>optional-backpressure</reply-obligation>');
+  });
 });

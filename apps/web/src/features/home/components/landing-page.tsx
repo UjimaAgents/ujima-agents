@@ -1,5 +1,6 @@
 import { landingFont } from "@/lib/landing-font";
 import { CapabilitiesSection } from "./landing/capabilities-section";
+import { ContactSection } from "./landing/contact-section";
 import { HeroSection } from "./landing/hero-section";
 import { InstallSection } from "./landing/install-section";
 import { LandingFooter } from "./landing/landing-footer";
@@ -20,6 +21,7 @@ export function LandingPage() {
       <WorkflowSection />
       <PersonasSection />
       <SecuritySection />
+      <ContactSection />
       <LandingFooter />
     </main>
   );

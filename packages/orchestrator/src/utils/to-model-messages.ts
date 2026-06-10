@@ -5,56 +5,79 @@ import type { Message, ReasoningEffort, SpiritRole } from "@ujima/shared";
 import { selectLanguageModel } from '@ujima/llm';
 import type { AgentTeamHandle } from '@ujima/framework';
 import { tool } from 'ai';
-import type { FilePart, ImagePart, LanguageModel, ModelMessage, TextPart, ToolSet, UserContent } from "ai";
+import type {
+  FilePart,
+  ImagePart,
+  LanguageModel,
+  ModelMessage,
+  TextPart,
+  ToolSet,
+  UserContent,
+} from "ai";
 import { z } from 'zod';
 import type { ToolService } from '../services/tool-service.js';
 import type { OrchestratorTool } from '../tools/types.js';
 import type { RepositoryReader } from '../services/repository-reader.js';
 import { ORCHESTRATOR_TOOLS } from '../tools/index.js';
+import { mcpTool } from '../tools/mcp.js';
+import { filterVisibleMessages } from './message-visibility.js';
 import { toModelToolName } from '../tools/names.js';
 import { toModelToolErrorOutput, toModelToolOutput } from '../services/tool-loop-result.js';
 import { isCompactionSummarySystemMessage } from '../services/conversation-summary.js';
-import { formatReadableToolOutput } from './tool-output.js';
+import { messageToolCallsToModelMessages } from './run-transcript.js';
 
 export function toModelMessages(messages: Message[], selfId?: string): ModelMessage[] {
-  return messages
+  return filterVisibleMessages(messages)
     .filter(
       (message) =>
         message.kind !== 'system' || isCompactionSummarySystemMessage(message),
     )
-    .map((message) => {
-      if (message.kind === 'system') {
-        return {
-          role: 'user' as const,
-          content: buildCompactionMemoryContext(message.content),
-        } as ModelMessage;
-      }
+    .flatMap((message) => messageToModelMessages(message, selfId));
+}
 
-      const role = selfId
-        ? message.senderId === selfId
-          ? ("assistant" as const)
-          : ("user" as const)
-        : message.senderKind === "agent"
-          ? ("assistant" as const)
-          : ("user" as const);
+function messageToModelMessages(message: Message, selfId?: string): ModelMessage[] {
+  if (message.kind === 'system') {
+    return [
+      {
+        role: 'user' as const,
+        content: buildCompactionMemoryContext(message.content),
+      },
+    ];
+  }
 
-      const content = withToolCalls(message);
-      const reasoning = message.reasoningContent?.trim();
-      if (role === "assistant" && reasoning) {
-        return {
-          role: "assistant",
-          content: [
-            { type: "reasoning" as const, text: reasoning },
-            { type: "text" as const, text: content },
-          ],
-        } as ModelMessage;
-      }
+  const role = selfId
+    ? message.senderId === selfId
+      ? ('assistant' as const)
+      : ('user' as const)
+    : message.senderKind === 'agent'
+      ? ('assistant' as const)
+      : ('user' as const);
 
-      return {
-        role,
-        content: buildUserContent({ ...message, content }),
-      } as ModelMessage;
-    });
+  if (role === 'assistant' && message.toolCalls.length > 0) {
+    return messageToolCallsToModelMessages(
+      message.content,
+      message.reasoningContent,
+      message.toolCalls,
+    );
+  }
+
+  const reasoning = message.reasoningContent?.trim();
+  if (role === 'assistant' && reasoning) {
+    return [
+      {
+        role: 'assistant',
+        content: [
+          { type: 'reasoning' as const, text: reasoning },
+          { type: 'text' as const, text: message.content },
+        ],
+      },
+    ];
+  }
+
+  if (role === 'assistant') {
+    return [{ role: 'assistant', content: message.content }];
+  }
+  return [{ role: 'user', content: buildUserContent(message) }];
 }
 
 function buildCompactionMemoryContext(content: string): string {
@@ -64,28 +87,6 @@ function buildCompactionMemoryContext(content: string): string {
     content,
     '</conversation-memory>',
   ].join('\n');
-}
-
-function withToolCalls(message: Message): string {
-  if (!message.toolCalls.length) return message.content;
-  const lines = message.toolCalls.slice(-8).map((call) => {
-    const target = toolTarget(call.args);
-    const output = truncate(formatReadableToolOutput(call.result) ?? '');
-    return [
-      `- ${call.toolName}${target ? ` (${target})` : ''}: ${call.isError ? 'error' : 'ok'}`,
-      output,
-    ].filter(Boolean).join('\n');
-  });
-  return [message.content.trimEnd(), 'Tool results:', lines.join('\n')].filter(Boolean).join('\n\n');
-}
-
-function toolTarget(args: Record<string, unknown>): string {
-  const value = args.resourcePath ?? args.path ?? args.filePath ?? args.cwd ?? args.command;
-  return typeof value === 'string' ? value : '';
-}
-
-function truncate(value: string): string {
-  return value.length > 1600 ? `${value.slice(0, 1600)}\n[truncated]` : value;
 }
 
 function buildUserContent(message: Message): UserContent {
@@ -363,25 +364,27 @@ export function buildToolDefinition(
   tools: ToolService,
   ctx: BuildToolDefContext,
 ) {
-  if (def) {
+  const toolDef = toolId === 'mcp' ? mcpTool : def;
+
+  if (toolDef) {
     // If the tool exposes a per-invocation schema factory, use it
     // — this is how `channel.handoff` constrains `to:` to the actual
     // org roster at decode time. Falls back to the static schema
     // when no factory or when no repo handle was plumbed through.
     const inputSchema =
-      def.buildSchema && ctx.repo
-        ? def.buildSchema({
+      toolDef.buildSchema && ctx.repo
+        ? toolDef.buildSchema({
             organizationId: ctx.organizationId,
             memberId: ctx.memberId,
             repo: ctx.repo,
           })
-        : def.schema;
+        : toolDef.schema;
     return tool({
       description: team.tools[toolId]?.description ?? `${toolId} tool`,
       inputSchema,
       execute: async (rawArgs, { toolCallId }) => {
         try {
-          const invocationData = def.toInvocation(rawArgs);
+          const invocationData = toolDef.toInvocation(rawArgs);
           const result = await tools.invoke({
             organizationId: ctx.organizationId,
             runId: ctx.runId,

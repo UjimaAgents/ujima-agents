@@ -13,8 +13,6 @@ export interface ChatHeaderProps {
   /** Online status */
   status?: StatusVariant;
   statusLabel?: string;
-  /** Secondary line under the title, such as live typing or sync state */
-  subtitle?: string;
   /** Optional right-side context label (e.g. workspace name) */
   contextLabel?: string;
   contextValue?: string;
@@ -32,7 +30,6 @@ export function ChatHeader({
   avatarColorIndex = 0,
   status = "active",
   statusLabel = "Active",
-  subtitle,
   contextLabel,
   contextValue,
   actions,
@@ -75,11 +72,6 @@ export function ChatHeader({
                 />
               )}
             </div>
-            {subtitle && (
-              <p className="mt-0.5 truncate text-[10px] text-zinc-500 dark:text-zinc-400">
-                {subtitle}
-              </p>
-            )}
           </div>
         </div>
       </div>
