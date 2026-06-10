@@ -478,9 +478,6 @@ export class SpiritServiceBase {
       return null;
     }
 
-    if (this.isBroadOrgChannelSurface(organizationId, threadId, channelId)) {
-      return active[0] ?? null;
-    }
     return null;
   }
 

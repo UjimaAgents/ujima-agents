@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState, useCallback, memo } from "react";
-import { ChevronLeft, ChevronRight, Package, Plus, Search, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, Lightbulb, Package, Plus, Search, Trash2, Upload } from "lucide-react";
 import type { BootstrapResponse } from "@ujima/api-schema";
 import { ConfirmDialog } from "@/features/settings/shared/confirm-dialog";
 import { settingsFetch, settingsFetchVoid } from "@/features/settings/shared/settings-api";
@@ -16,6 +16,7 @@ import { SettingsEmptyState } from "@/features/settings/shared/settings-empty-st
 import { SettingsList, SettingsListRow, SettingsRowIcon } from "@/features/settings/shared/settings-list-row";
 import { SettingsSection } from "@/features/settings/shared/settings-section";
 import { SettingsTabActions } from "@/features/settings/shared/settings-layout";
+import { useWorkspaceSuggestions } from "../hooks/useWorkspaceSuggestions";
 
 const SKILLS_PAGE_SIZE = 20;
 
@@ -175,6 +176,59 @@ export const PluginsTab = memo(function PluginsTab({ bootstrap, createdBy }: { b
       setBusy(null);
     }
   }, [orgId]);
+
+  const { workspaces: suggestionWorkspaces, fetching: fetchingSuggestions, refresh: refreshSuggestions } = useWorkspaceSuggestions(orgId);
+
+  const installedPluginIds = useMemo(
+    () => new Set(installedSkills.map((s) => s.pluginId)),
+    [installedSkills],
+  );
+  const installedSkillKeys = useMemo(
+    () => new Set(installedSkills.map((s) => `${s.pluginId}::${s.skillName}`)),
+    [installedSkills],
+  );
+
+  const suggestedPluginWorkspaces = useMemo(
+    () => suggestionWorkspaces
+      .map((ws) => ({
+        ...ws,
+        pluginInstalls: ws.pluginInstalls.filter((p) => !installedPluginIds.has(p.pluginId)),
+        skillInstalls: ws.skillInstalls.filter((s) => !installedSkillKeys.has(`${s.pluginId}::${s.skillName}`)),
+      }))
+      .filter((ws) => ws.pluginInstalls.length > 0 || ws.skillInstalls.length > 0),
+    [suggestionWorkspaces, installedPluginIds, installedSkillKeys],
+  );
+
+  const [suggestionsOpen, setSuggestionsOpen] = useState(false);
+  const [expandedPluginWorkspace, setExpandedPluginWorkspace] = useState<string | null>(null);
+  const [suggestionInstalling, setSuggestionInstalling] = useState<string | null>(null);
+
+  const installFromSuggestion = useCallback(async (sourceUrl: string) => {
+    if (!orgId) return;
+    setSuggestionInstalling(sourceUrl);
+    setError(null);
+    try {
+      await settingsFetch(
+        "/api/settings/plugins/install",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            organizationId: orgId,
+            createdBy,
+            sourceUrl: sourceUrl.trim(),
+          }),
+        },
+        "Failed to install skill.",
+      );
+      await refreshSuggestions();
+      window.location.reload();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to install skill.");
+    } finally {
+      setSuggestionInstalling(null);
+    }
+  }, [orgId, createdBy, refreshSuggestions]);
 
   const sectionTitle =
     installedSkills.length > 0 ? `Installed skills (${installedSkills.length})` : "Installed skills";
@@ -353,6 +407,117 @@ export const PluginsTab = memo(function PluginsTab({ bootstrap, createdBy }: { b
           </>
         )}
       </SettingsSection>
+
+      {!fetchingSuggestions && suggestedPluginWorkspaces.length > 0 ? (
+        <SettingsSection
+          title="Suggestions from other workspaces"
+          description="Plugins and skills found in other workspaces that haven't been installed here."
+          className="border-t border-zinc-200 pt-8 dark:border-zinc-800"
+        >
+          <button
+            type="button"
+            onClick={() => setSuggestionsOpen((v) => !v)}
+            className="mb-3 flex items-center gap-2 text-sm font-medium text-zinc-700 hover:text-zinc-900 dark:text-zinc-300 dark:hover:text-zinc-100"
+          >
+            <Lightbulb className="h-4 w-4 text-amber-500" />
+            {suggestionsOpen ? "Hide suggestions" : `Show ${suggestedPluginWorkspaces.reduce((sum, ws) => sum + ws.pluginInstalls.length + ws.skillInstalls.length, 0)} suggestions`}
+            {suggestionsOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+          </button>
+          {suggestionsOpen ? (
+            <div className="space-y-4">
+              {suggestedPluginWorkspaces.map((ws) => (
+                <div key={ws.id} className="rounded-xl border border-zinc-200 p-3 dark:border-zinc-800">
+                  <div className="mb-2 flex items-center justify-between">
+                    <span className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">
+                      {ws.name}
+                    </span>
+                    <SettingsSecondaryButton
+                      onClick={async () => {
+                        for (const p of ws.pluginInstalls) {
+                          await installFromSuggestion(p.sourceUrl);
+                        }
+                      }}
+                      disabled={suggestionInstalling !== null}
+                    >
+                      <Upload className="h-3.5 w-3.5" />
+                      Sync all
+                    </SettingsSecondaryButton>
+                  </div>
+                  {ws.pluginInstalls.map((plugin) => {
+                    const isExpanded = expandedPluginWorkspace === `${ws.id}::${plugin.id}`;
+                    const wsSkills = ws.skillInstalls.filter((s) => s.pluginId === plugin.pluginId);
+                    return (
+                      <div key={plugin.id} className="mb-2 last:mb-0">
+                        <SettingsListRow
+                          leading={<SettingsRowIcon icon={Package} />}
+                          primary={plugin.pluginName}
+                          secondary={
+                            <span className="text-xs text-zinc-400">{plugin.sourceUrl}</span>
+                          }
+                          actions={
+                            <div className="flex items-center gap-2">
+                              {wsSkills.length > 0 ? (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setExpandedPluginWorkspace(isExpanded ? null : `${ws.id}::${plugin.id}`)
+                                  }
+                                  className="rounded-lg p-2 text-zinc-400 transition hover:bg-zinc-100 dark:hover:bg-zinc-900"
+                                >
+                                  {isExpanded ? (
+                                    <ChevronDown className="h-4 w-4" />
+                                  ) : (
+                                    <ChevronRight className="h-4 w-4" />
+                                  )}
+                                </button>
+                              ) : null}
+                              <SettingsSecondaryButton
+                                disabled={suggestionInstalling === plugin.sourceUrl}
+                                onClick={() => void installFromSuggestion(plugin.sourceUrl)}
+                              >
+                                {suggestionInstalling === plugin.sourceUrl ? "…" : "Install"}
+                              </SettingsSecondaryButton>
+                            </div>
+                          }
+                        />
+                        {isExpanded && wsSkills.length > 0 ? (
+                          <div className="ml-6 mt-1 space-y-1 border-l border-zinc-200 pl-4 dark:border-zinc-700">
+                            {wsSkills.map((skill) => (
+                              <div
+                                key={skill.id}
+                                className="flex items-center justify-between rounded-lg px-3 py-1.5 text-sm"
+                              >
+                                <div className="flex items-center gap-2">
+                                  <span className="font-medium text-zinc-800 dark:text-zinc-200">
+                                    /{skill.commandName}
+                                  </span>
+                                  <span className="text-xs text-zinc-500 dark:text-zinc-400">
+                                    {skill.description}
+                                  </span>
+                                </div>
+                                {skill.userInvocable ? (
+                                  <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300">
+                                    User
+                                  </span>
+                                ) : null}
+                              </div>
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                  {ws.skillInstalls.filter((s) => !ws.pluginInstalls.some((p) => p.pluginId === s.pluginId)).length > 0 ? (
+                    <p className="mt-2 text-xs text-zinc-400 dark:text-zinc-500">
+                      {ws.skillInstalls.filter((s) => !ws.pluginInstalls.some((p) => p.pluginId === s.pluginId)).length} orphan skill(s) without a parent plugin in this workspace
+                    </p>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </SettingsSection>
+      ) : null}
 
       <ConfirmDialog
         isOpen={pendingDelete !== null}

@@ -13,14 +13,16 @@ export function McpImportModal({
   orgId,
   createdBy,
   onImported,
+  prefillJson,
 }: {
   isOpen: boolean;
   onClose: () => void;
   orgId: string;
   createdBy: string;
   onImported: (message: string) => void;
+  prefillJson?: string;
 }) {
-  const [importJson, setImportJson] = useState("");
+  const [importJson, setImportJson] = useState(prefillJson ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 

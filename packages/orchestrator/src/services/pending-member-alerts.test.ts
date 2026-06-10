@@ -10,7 +10,7 @@ import {
 const flushMicrotasks = () => new Promise<void>((resolve) => queueMicrotask(() => resolve()));
 
 describe('pending-member-alerts', () => {
-  it('coalesces alerts to the latest state per org/member/thread', () => {
+  it('queues distinct alerts per org/member/thread', () => {
     clearPendingMemberAlertsForTests();
     enqueuePendingMemberAlert({
       organizationId: 'org-1',
@@ -30,11 +30,12 @@ describe('pending-member-alerts', () => {
       reason: 'dm',
       wakeReason: 'dm',
     });
+    expect(takePendingMemberAlert('org-1', 'agent-1', 'thread-1')?.messageId).toBe('msg-1');
     expect(takePendingMemberAlert('org-1', 'agent-1', 'thread-1')?.messageId).toBe('msg-2');
     expect(takePendingMemberAlert('org-1', 'agent-1', 'thread-1')).toBeUndefined();
   });
 
-  it('drains the latest pending alert after a terminal run completes', async () => {
+  it('drains a pending alert after a terminal run completes', async () => {
     clearPendingMemberAlertsForTests();
     const wake = vi.fn(async () => undefined);
     enqueuePendingMemberAlert({
@@ -69,7 +70,7 @@ describe('pending-member-alerts', () => {
   });
 
   it.each(['failed', 'cancelled'] as const)(
-    'drains the latest pending alert after a terminal run with status %s',
+    'drains a pending alert after a terminal run with status %s',
     async (status) => {
       clearPendingMemberAlertsForTests();
       const wake = vi.fn(async () => undefined);

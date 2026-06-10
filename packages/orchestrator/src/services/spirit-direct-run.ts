@@ -521,20 +521,26 @@ export class SpiritService extends SpiritServiceSupervisor {
             if (!finalThreadId) continue;
             const channelId = this.repo.getThread(running.organizationId, finalThreadId)?.channelId;
 
-            turn.publishMessage(
-              buildAgentMessage({
-                organizationId: running.organizationId,
-                threadId: finalThreadId,
-                channelId: channelId ?? undefined,
-                senderId: running.agentId,
-                content: prepared.content,
-                metadata: { runId: running.id },
-                ...(composedStepToolCalls(prepared).length > 0
-                  ? { toolCalls: composedStepToolCalls(prepared) }
-                  : {}),
-                ...(prepared.reasoningContent ? { reasoningContent: prepared.reasoningContent } : {}),
-              }),
-            );
+            const stepMessage = buildAgentMessage({
+              organizationId: running.organizationId,
+              threadId: finalThreadId,
+              channelId: channelId ?? undefined,
+              senderId: running.agentId,
+              content: prepared.content,
+              metadata: { runId: running.id },
+              ...(composedStepToolCalls(prepared).length > 0
+                ? { toolCalls: composedStepToolCalls(prepared) }
+                : {}),
+              ...(prepared.reasoningContent ? { reasoningContent: prepared.reasoningContent } : {}),
+            });
+            if (isDelegateRun(running, this.repo)) {
+              this.conversations?.publishMessage(stepMessage, [], undefined, {
+                suppressDmAlerts: true,
+                skipMentionResolution: true,
+              });
+            } else {
+              turn.publishMessage(stepMessage);
+            }
           }
           this.emitRunTokens(
             running.organizationId,
@@ -804,21 +810,25 @@ export class SpiritService extends SpiritServiceSupervisor {
   }
 
   protected waitForApproval(run: RunState, summary: string): RunState {
-    return this.saveRunAndEmit(SocketEventNames.runUpdated, {
+    const waiting = this.saveRunAndEmit(SocketEventNames.runUpdated, {
       ...run,
       status: 'waiting_for_approval',
       step: 'waiting_for_approval',
       summary,
     });
+    this.invokeRunTerminalHook(waiting);
+    return waiting;
   }
 
   protected waitForInput(run: RunState, summary: string): RunState {
-    return this.saveRunAndEmit(SocketEventNames.runUpdated, {
+    const waiting = this.saveRunAndEmit(SocketEventNames.runUpdated, {
       ...run,
       status: 'waiting_for_input',
       step: 'waiting_for_input',
       summary,
     });
+    this.invokeRunTerminalHook(waiting);
+    return waiting;
   }
 
   protected failRun(run: RunState, summary: string): RunState {

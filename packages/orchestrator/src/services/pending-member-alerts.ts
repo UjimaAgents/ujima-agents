@@ -11,7 +11,7 @@ export interface PendingMemberAlert {
   wakeReason: WakeReason;
 }
 
-const pendingByThread = new Map<string, PendingMemberAlert>();
+const pendingByThread = new Map<string, PendingMemberAlert[]>();
 
 function pendingKey(organizationId: string, memberId: string, threadId: string): string {
   return `${organizationId}:${memberId}:${threadId}`;
@@ -19,9 +19,10 @@ function pendingKey(organizationId: string, memberId: string, threadId: string):
 
 export function enqueuePendingMemberAlert(alert: PendingMemberAlert): void {
   const key = pendingKey(alert.organizationId, alert.memberId, alert.threadId);
-  // A successor run reads current thread state, so replaying every wake adds
-  // no context. Keep only the newest signal and bound memory per active key.
-  pendingByThread.set(key, alert);
+  const queue = pendingByThread.get(key) ?? [];
+  if (queue.some((pending) => pending.messageId === alert.messageId)) return;
+  queue.push(alert);
+  pendingByThread.set(key, queue);
 }
 
 export function takePendingMemberAlert(
@@ -30,21 +31,35 @@ export function takePendingMemberAlert(
   threadId: string,
 ): PendingMemberAlert | undefined {
   const key = pendingKey(organizationId, memberId, threadId);
-  const pending = pendingByThread.get(key);
-  pendingByThread.delete(key);
+  const queue = pendingByThread.get(key);
+  if (!queue?.length) return undefined;
+  const mentionIndex = queue.findIndex((pending) => pending.wakeReason === 'mention');
+  const index = mentionIndex >= 0 ? mentionIndex : 0;
+  const [pending] = queue.splice(index, 1);
+  if (queue.length === 0) {
+    pendingByThread.delete(key);
+  } else {
+    pendingByThread.set(key, queue);
+  }
   return pending;
 }
 
-const TERMINAL_RUN_STATUSES = new Set<RunState['status']>(['completed', 'failed', 'cancelled']);
+const DRAINABLE_RUN_STATUSES = new Set<RunState['status']>([
+  'completed',
+  'failed',
+  'cancelled',
+  'waiting_for_approval',
+  'waiting_for_input',
+]);
 
 export async function drainPendingMemberAlertAfterRun(
   run: RunState,
   wake: (input: PendingMemberAlert) => Promise<void>,
 ): Promise<void> {
-  if (!TERMINAL_RUN_STATUSES.has(run.status) || !run.threadId) return;
+  if (!DRAINABLE_RUN_STATUSES.has(run.status) || !run.threadId) return;
   const pending = takePendingMemberAlert(run.organizationId, run.agentId, run.threadId);
   if (!pending) return;
-  // Detach the successor from the completed run's promise chain. Otherwise
+  // Detach the successor from the current run's promise chain. Otherwise
   // every autonomous follow-up retains its predecessor until the chain ends.
   queueMicrotask(() => {
     void wake(pending).catch((error) => {
@@ -63,7 +78,7 @@ export function hasPendingMemberAlert(
   messageId: string,
 ): boolean {
   const key = pendingKey(organizationId, memberId, threadId);
-  return pendingByThread.get(key)?.messageId === messageId;
+  return pendingByThread.get(key)?.some((pending) => pending.messageId === messageId) ?? false;
 }
 
 export function clearPendingMemberAlertsForTests(): void {

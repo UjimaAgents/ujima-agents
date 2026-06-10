@@ -185,12 +185,13 @@ describe('agent delegation', () => {
       recipientId: caller.id,
       ignore: true,
     }));
-    expect(wakeMember).not.toHaveBeenCalled();
-    expect(createRun).toHaveBeenCalledWith(expect.objectContaining({
-      agentId: caller.id,
+    expect(wakeMember).toHaveBeenCalledWith(expect.objectContaining({
+      memberId: caller.id,
       threadId: 'dm:agent-1:agent-1',
-      sourceMessageId: 'delegate-1',
+      messageId: 'delegate-1',
+      wakeReason: 'dm',
     }));
+    expect(createRun).not.toHaveBeenCalled();
     expect(result).toMatchObject({
       status: 'no_reply',
       agent_id: caller.id,
@@ -233,7 +234,7 @@ describe('agent delegation', () => {
     expect(result.status).toBe('no_reply');
   });
 
-  it('starts a duplicate run for self-delegation even when the caller already has an active run', async () => {
+  it('routes self-delegation through wake serialization when the caller already has an active run', async () => {
     const activeRun = {
       id: 'run-1',
       organizationId: orgId,
@@ -262,10 +263,11 @@ describe('agent delegation', () => {
       hasMore: false,
     });
 
+    const wakeMember = vi.fn();
     await runAgentDelegateTurn({
       repo: repo as unknown as ApiRepository,
       conversations: conversations as unknown as ConversationService,
-      wakeMember: vi.fn(),
+      wakeMember,
       createRun,
       organizationId: orgId,
       fromMemberId: caller.id,
@@ -274,11 +276,12 @@ describe('agent delegation', () => {
       runId: 'run-1',
     });
 
-    expect(createRun).toHaveBeenCalledWith(expect.objectContaining({
-      agentId: caller.id,
+    expect(wakeMember).toHaveBeenCalledWith(expect.objectContaining({
+      memberId: caller.id,
       threadId: 'dm:agent-1:agent-1',
-      sourceMessageId: 'delegate-1',
+      messageId: 'delegate-1',
     }));
+    expect(createRun).not.toHaveBeenCalled();
   });
 
   it('returns delegate_failed when the delegated run fails', async () => {

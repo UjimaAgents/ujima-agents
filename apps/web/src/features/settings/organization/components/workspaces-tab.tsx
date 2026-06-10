@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, useMemo, memo } from "react";
-import { FolderKanban, Loader2, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { Copy, FolderKanban, Loader2, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { switchToWorkspace } from "@/features/workspace/switch-workspace";
 import { SettingsErrorAlert, SettingsLoading } from "@/features/settings/shared/settings-alert";
 import {
@@ -16,6 +16,7 @@ import {
   WorkspaceCreateModal,
   type WorkspaceCreateSubmitInput,
 } from "./workspaces/workspace-create-modal";
+import { createWorkspaceApi } from "@/features/workspace/workspace-api";
 import type { ProviderStatus } from "@ujima/api-schema";
 
 interface Workspace {
@@ -58,6 +59,7 @@ export const WorkspacesTab = memo(function WorkspacesTab({
   const [refreshing, setRefreshing] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Workspace | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [duplicateTarget, setDuplicateTarget] = useState<Workspace | null>(null);
 
   const fetchWorkspaces = useCallback(async () => {
     setLoading(true);
@@ -91,24 +93,12 @@ export const WorkspacesTab = memo(function WorkspacesTab({
   }, [fetchWorkspaces]);
 
   const createWorkspace = useCallback(async (input: WorkspaceCreateSubmitInput) => {
-    const res = await fetch("/api/workspaces", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        root_path: input.rootPath,
-        label: input.name,
-        copy_providers: input.copyProviders,
-      }),
-    });
-    if (!res.ok) {
-      const body = await res.json().catch(() => null);
-      throw new Error(body?.message || "Failed to create workspace");
-    }
-    const created = (await res.json()) as Workspace;
+    const created = await createWorkspaceApi(input);
     setWorkspaces((prev) => {
       if (prev.some((ws) => ws.id === created.id)) return prev;
       return [...prev, created];
     });
+    setDuplicateTarget(null);
     await fetchWorkspaces();
   }, [fetchWorkspaces]);
 
@@ -207,8 +197,8 @@ export const WorkspacesTab = memo(function WorkspacesTab({
                   ) : null
                 }
                 actions={
-                  current ? null : (
-                    <div className="flex gap-2">
+                  <div className="flex gap-2">
+                    {!current ? (
                       <SettingsSecondaryButton
                         disabled={Boolean(switchingId) || Boolean(deletingId)}
                         onClick={() => void handleSwitch(ws.id)}
@@ -218,6 +208,17 @@ export const WorkspacesTab = memo(function WorkspacesTab({
                         ) : null}
                         Switch
                       </SettingsSecondaryButton>
+                    ) : null}
+                    <button
+                      type="button"
+                      disabled={Boolean(switchingId) || Boolean(deletingId)}
+                      onClick={() => setDuplicateTarget(ws)}
+                      className="flex items-center gap-1.5 rounded-xl border border-zinc-200 px-3 py-2.5 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-900"
+                    >
+                      <Copy className="h-3.5 w-3.5" />
+                      Duplicate
+                    </button>
+                    {!current ? (
                       <button
                         type="button"
                         disabled={Boolean(switchingId) || Boolean(deletingId)}
@@ -231,8 +232,8 @@ export const WorkspacesTab = memo(function WorkspacesTab({
                         )}
                         Delete
                       </button>
-                    </div>
-                  )
+                    ) : null}
+                  </div>
                 }
               />
             );
@@ -241,9 +242,14 @@ export const WorkspacesTab = memo(function WorkspacesTab({
       )}
 
       <WorkspaceCreateModal
-        isOpen={createOpen}
-        onClose={() => setCreateOpen(false)}
+        isOpen={createOpen || !!duplicateTarget}
+        onClose={() => {
+          setCreateOpen(false);
+          setDuplicateTarget(null);
+        }}
         configuredProviders={configuredProviders}
+        sourceWorkspace={duplicateTarget}
+        workspaces={sortedWorkspaces}
         onSubmit={createWorkspace}
       />
 

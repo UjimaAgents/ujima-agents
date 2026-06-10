@@ -210,6 +210,8 @@ function compactThreadMessages(
     ctx.repo.updateMessage({
       ...source,
       content: `${input.compactedMarker} compactedInto=${summaryMessage.id}`,
+      toolCalls: [],
+      reasoningContent: undefined,
       editedAt: now,
     });
   }

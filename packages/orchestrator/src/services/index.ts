@@ -268,7 +268,7 @@ interface WakeMemberDeps {
   spirits: Pick<SpiritService, 'handleAlert'>;
   runs: Pick<SpiritService, 'createRun'>;
   realtime: Pick<ApiServiceContext['realtime'], 'emit'>;
-  repo: Pick<ApiRepository, 'findActiveRunForMemberThread'>;
+  repo: Pick<ApiRepository, 'findActiveRunForMemberThread' | 'saveRun'>;
 }
 
 const createRunMutex = new AsyncMutex();
@@ -384,6 +384,11 @@ export async function wakeMemberWithFailureEvents(
     [orgRoom(input.organizationId), memberRoom(input.memberId)],
   );
 
+  if (dispatch.kind === 'debounced') {
+    enqueuePendingMemberAlert(input);
+    return;
+  }
+
   if (dispatch.kind !== 'no-active-spirit') {
     return;
   }
@@ -399,7 +404,17 @@ export async function wakeMemberWithFailureEvents(
       input.threadId,
     );
     if (activeRun) {
-      enqueuePendingMemberAlert(input);
+      if (input.wakeReason === 'mention' && activeRun.wakeReason !== 'mention') {
+        deps.repo.saveRun({
+          ...activeRun,
+          wakeReason: 'mention',
+          sourceMessageId: input.messageId,
+          byMemberId: input.byMemberId,
+          summary: `Wake (mention) by ${input.byMemberId} on message ${input.messageId}`,
+        });
+      } else {
+        enqueuePendingMemberAlert(input);
+      }
       return;
     }
 
@@ -586,29 +601,16 @@ export async function runAgentDelegateTurn(input: {
     metadata: { runId: input.runId, delegate: { parentRunId: input.runId } },
   });
 
-  const isSelfDelegation = input.fromMemberId === target.id;
-  if (isSelfDelegation) {
-    await input.createRun({
-      organizationId: input.organizationId,
-      agentId: target.id,
-      threadId,
-      summary: `Delegate task by ${input.fromMemberId} on message ${delegateMessage.id}`,
-      wakeReason: 'dm',
-      sourceMessageId: delegateMessage.id,
-      byMemberId: input.fromMemberId,
-    });
-  } else {
-    await input.wakeMember({
-      organizationId: input.organizationId,
-      memberId: target.id,
-      threadId,
-      channelId: threadId,
-      messageId: delegateMessage.id,
-      byMemberId: input.fromMemberId,
-      reason: 'dm',
-      wakeReason: 'dm',
-    });
-  }
+  await input.wakeMember({
+    organizationId: input.organizationId,
+    memberId: target.id,
+    threadId,
+    channelId: threadId,
+    messageId: delegateMessage.id,
+    byMemberId: input.fromMemberId,
+    reason: 'dm',
+    wakeReason: 'dm',
+  });
 
   return waitForAgentDelegateReply({
     repo: input.repo,

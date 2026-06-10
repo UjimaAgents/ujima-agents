@@ -19,7 +19,7 @@ import type {
 import {Avatar} from "./chat/primitives";
 import {QuestionCard} from "./chat/question-card";
 import type {BootstrapResponse} from "@ujima/api-schema";
-import { Select, type SelectOption } from "@/components/ui/select";
+import { Select } from "@/components/ui/select";
 
 interface ChannelGoalsBoardProps {
   channelId?: string;

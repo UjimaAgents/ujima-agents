@@ -1,5 +1,6 @@
 import { streamText, type LanguageModel, type ModelMessage, type ToolSet } from 'ai';
 import { RUN_TERMINATING_TOOL_NAMES, normalizeToDottedToolName } from './run-reply-guard.js';
+import { sanitizeModelMessages } from '../utils/run-transcript.js';
 import {
   findToolApprovalRequiredError,
   findToolInputRequiredError,
@@ -376,7 +377,7 @@ export async function runAgentLoop(input: {
   detectExternalPause?: () => HumanPause | null;
 }): Promise<AgentLoopResult> {
   const steps: AgentLoopStep[] = [];
-  const messages = [...input.messages];
+  const messages = sanitizeModelMessages(input.messages);
   const userStopWhen = input.stopWhen;
   const onChunk = input.onChunk;
 
@@ -436,7 +437,8 @@ export async function runAgentLoop(input: {
         if (!interrupts?.length) {
           return undefined;
         }
-        mergeInterruptMessages(messages, nextMessages, interrupts);
+        mergeInterruptMessages(messages, nextMessages, sanitizeModelMessages(interrupts));
+        messages.splice(0, messages.length, ...sanitizeModelMessages(messages));
         return { messages };
       },
       onStepFinish: async (step) => {

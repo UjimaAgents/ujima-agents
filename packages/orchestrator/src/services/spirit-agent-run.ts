@@ -100,14 +100,6 @@ export class SpiritServiceAgentRun extends SpiritServiceBase {
     );
     const messages = toModelMessages(recent, member.id);
     const interruptCursor = createMessageCursor(recent);
-    if (input.extraPrompt) {
-      messages.push({ role: 'user', content: input.extraPrompt });
-    } else {
-      messages.push({
-        role: 'user',
-        content: session.prompt || 'Continue the task.',
-      });
-    }
 
     const spirit = this.spawn({
       organizationId: input.organizationId,
@@ -120,6 +112,14 @@ export class SpiritServiceAgentRun extends SpiritServiceBase {
       recent,
       this.repo.listRunSteps(input.organizationId, spirit.runId ?? spirit.id),
     );
+    if (input.extraPrompt) {
+      messages.push({ role: 'user', content: input.extraPrompt });
+    } else {
+      messages.push({
+        role: 'user',
+        content: session.prompt || 'Continue the task.',
+      });
+    }
 
     try {
       const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();

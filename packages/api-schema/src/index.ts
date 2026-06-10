@@ -1,5 +1,10 @@
 import { z } from 'zod';
 import { TaskFileSchema } from './task-files.js';
+import {
+  McpServerPublicSchema,
+  PluginInstallSchema,
+  SkillInstallSchema,
+} from '@ujima/shared';
 
 export * from './conversations.js';
 export * from './auth.js';
@@ -63,6 +68,23 @@ export const CreateWorkspaceRequestSchema = z.object({
 });
 export type CreateWorkspaceRequest = z.infer<typeof CreateWorkspaceRequestSchema>;
 
+export const DuplicateWorkspaceRequestSchema = z.object({
+  source_workspace_id: z.string().min(1),
+  root_path: z.string().min(1),
+  label: z.string().min(1),
+  copy_options: z.object({
+    provider_keys: z.array(z.string().min(1)).default([]),
+    provider_configs: z.boolean().default(false),
+    agents: z.boolean().default(true),
+    roles: z.boolean().default(true),
+    channels: z.boolean().default(false),
+    tools: z.boolean().default(false),
+    policies: z.boolean().default(false),
+    org_chart: z.boolean().default(false),
+  }),
+});
+export type DuplicateWorkspaceRequest = z.infer<typeof DuplicateWorkspaceRequestSchema>;
+
 export const UpdateWorkspaceRequestSchema = z.object({
   root_path: z.string().nullable().optional(),
   label: z.string().nullable().optional(),
@@ -79,6 +101,20 @@ export const ListWorkspacesResponseSchema = z.object({
   current_workspace_id: z.string().nullable().optional(),
 });
 export type ListWorkspacesResponse = z.infer<typeof ListWorkspacesResponseSchema>;
+
+export const WorkspaceSuggestionWorkspaceSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  mcps: z.array(McpServerPublicSchema),
+  pluginInstalls: z.array(PluginInstallSchema),
+  skillInstalls: z.array(SkillInstallSchema),
+});
+export type WorkspaceSuggestionWorkspace = z.infer<typeof WorkspaceSuggestionWorkspaceSchema>;
+
+export const WorkspaceSuggestionsResponseSchema = z.object({
+  workspaces: z.array(WorkspaceSuggestionWorkspaceSchema),
+});
+export type WorkspaceSuggestionsResponse = z.infer<typeof WorkspaceSuggestionsResponseSchema>;
 
 export const ActivateWorkspaceResponseSchema = z.object({
   workspace: WorkspaceSchema,

@@ -308,6 +308,8 @@ export function createTransport(opts: TransportOptions): Transport {
           host,
           auth: services.auth,
           workspaces: services.workspaces,
+          mcpRegistry: services.mcpRegistry,
+          repo: opts.apiServices.repo,
         });
 
         api.register(multipart, {

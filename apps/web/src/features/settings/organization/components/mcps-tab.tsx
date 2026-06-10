@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronDown, ChevronRight, Plug, Plus, Trash2, Upload } from "lucide-react";
+import { ChevronDown, ChevronRight, Lightbulb, Plug, Plus, Trash2, Upload } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState, memo } from "react";
 import type {
   AgentMcpAttachmentsResponse,
@@ -32,6 +32,7 @@ import { ToolsSubtab } from "./mcps/tools-subtab";
 import { AgentsSubtab } from "./mcps/agents-subtab";
 import { ChannelsSubtab } from "./mcps/channels-subtab";
 import { useMcpCatalog } from "./mcps/use-mcp-catalog";
+import { useWorkspaceSuggestions } from "../hooks/useWorkspaceSuggestions";
 
 type Subtab = "tools" | "servers" | "agents" | "channels" | "defaults";
 
@@ -63,9 +64,7 @@ export const McpsTab = memo(function McpsTab({
     () => members.filter((m) => m.kind === "agent" && !m.retiredAt),
     [members],
   );
-  const catalog = useMcpCatalog(orgId); // Wait, let's verify if useMcpCatalog or useMcpMcpCatalog is used. Ah! The original has useMcpCatalog(orgId) at line 58. Let's make sure it is useMcpCatalog(orgId).
-  // Yes: const catalog = useMcpCatalog(orgId);
-  // Let's keep it as catalog = useMcpCatalog(orgId);
+  const catalog = useMcpCatalog(orgId);
   const [subtab, setSubtab] = useState<Subtab>("tools");
   const [error, setError] = useState<string | null>(null);
 
@@ -83,6 +82,51 @@ export const McpsTab = memo(function McpsTab({
   const activeAgentId = attachAgentId || agents[0]?.id || "";
   const [attachments, setAttachments] = useState<AgentMcpAttachment[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
+
+  const { workspaces: suggestionWorkspaces, fetching: fetchingSuggestions } = useWorkspaceSuggestions(orgId);
+
+  const currentServerNames = useMemo(() => new Set(servers.map((s) => s.name)), [servers]);
+
+  const suggestedMcpWorkspaces = useMemo(
+    () => suggestionWorkspaces
+      .map((ws) => ({
+        ...ws,
+        mcps: ws.mcps.filter((mcp) => !currentServerNames.has(mcp.name)),
+      }))
+      .filter((ws) => ws.mcps.length > 0),
+    [suggestionWorkspaces, currentServerNames],
+  );
+
+  const [suggestionImportJson, setSuggestionImportJson] = useState<string | null>(null);
+  const [suggestionsOpen, setSuggestionsOpen] = useState(false);
+
+  function buildImportJson(server: { name: string; command?: string | null; args?: string[]; url?: string | null }): string {
+    const config: Record<string, unknown> = {};
+    if (server.command) {
+      config.command = server.command;
+      config.args = server.args ?? [];
+    }
+    if (server.url) {
+      config.url = server.url;
+    }
+    return JSON.stringify({ mcpServers: { [server.name]: config } }, null, 2);
+  }
+
+  function buildBulkImportJson(servers: { name: string; command?: string | null; args?: string[]; url?: string | null }[]): string {
+    const configs: Record<string, unknown> = {};
+    for (const server of servers) {
+      const config: Record<string, unknown> = {};
+      if (server.command) {
+        config.command = server.command;
+        config.args = server.args ?? [];
+      }
+      if (server.url) {
+        config.url = server.url;
+      }
+      configs[server.name] = config;
+    }
+    return JSON.stringify({ mcpServers: configs }, null, 2);
+  }
 
   const loadToolCount = useCallback(
     async (serverId: string) => {
@@ -453,6 +497,69 @@ export const McpsTab = memo(function McpsTab({
               </>
             )}
           </SettingsSection>
+
+          {!fetchingSuggestions && suggestedMcpWorkspaces.length > 0 ? (
+            <SettingsSection
+              title="Suggestions from other workspaces"
+              description="MCP servers found in other workspaces that haven't been added here."
+              className="border-t border-zinc-200 pt-8 dark:border-zinc-800"
+            >
+              <button
+                type="button"
+                onClick={() => setSuggestionsOpen((v) => !v)}
+                className="mb-3 flex items-center gap-2 text-sm font-medium text-zinc-700 hover:text-zinc-900 dark:text-zinc-300 dark:hover:text-zinc-100"
+              >
+                <Lightbulb className="h-4 w-4 text-amber-500" />
+                {suggestionsOpen ? "Hide suggestions" : `Show ${suggestedMcpWorkspaces.reduce((sum, ws) => sum + ws.mcps.length, 0)} suggestions`}
+                {suggestionsOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+              </button>
+              {suggestionsOpen ? (
+                <div className="space-y-4">
+                  {suggestedMcpWorkspaces.map((ws) => (
+                    <div key={ws.id} className="rounded-xl border border-zinc-200 p-3 dark:border-zinc-800">
+                      <div className="mb-2 flex items-center justify-between">
+                        <span className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">
+                          {ws.name}
+                        </span>
+                        <SettingsSecondaryButton
+                          onClick={() => {
+                            setSuggestionImportJson(buildBulkImportJson(ws.mcps));
+                          }}
+                        >
+                          <Upload className="h-3.5 w-3.5" />
+                          Sync all
+                        </SettingsSecondaryButton>
+                      </div>
+                      <SettingsList>
+                        {ws.mcps.map((mcp) => (
+                          <SettingsListRow
+                            key={mcp.id}
+                            leading={<SettingsRowIcon icon={Plug} />}
+                            primary={mcp.name}
+                            secondary={
+                              <span className="flex flex-wrap items-center gap-1.5">
+                                <SettingsBadge>{mcp.transport}</SettingsBadge>
+                                {mcp.category ? <SettingsBadge>{mcp.category}</SettingsBadge> : null}
+                              </span>
+                            }
+                            actions={
+                              <SettingsSecondaryButton
+                                onClick={() => {
+                                  setSuggestionImportJson(buildImportJson(mcp));
+                                }}
+                              >
+                                Import
+                              </SettingsSecondaryButton>
+                            }
+                          />
+                        ))}
+                      </SettingsList>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </SettingsSection>
+          ) : null}
         </>
       ) : null}
 
@@ -473,12 +580,30 @@ export const McpsTab = memo(function McpsTab({
       />
 
       <McpImportModal
+        key={showImport ? "import-open" : "import-closed"}
         isOpen={showImport}
         onClose={() => setShowImport(false)}
         orgId={orgId}
         createdBy={createdBy}
         onImported={(msg) => {
           setImportResult(msg);
+          void refreshServers().catch((err) =>
+            setError(err instanceof Error ? err.message : "Refresh failed."),
+          );
+          void catalog.refresh();
+        }}
+      />
+
+      <McpImportModal
+        key={suggestionImportJson ?? "suggestion-closed"}
+        isOpen={suggestionImportJson !== null}
+        onClose={() => setSuggestionImportJson(null)}
+        orgId={orgId}
+        createdBy={createdBy}
+        prefillJson={suggestionImportJson ?? undefined}
+        onImported={(msg) => {
+          setImportResult(msg);
+          setSuggestionImportJson(null);
           void refreshServers().catch((err) =>
             setError(err instanceof Error ? err.message : "Refresh failed."),
           );

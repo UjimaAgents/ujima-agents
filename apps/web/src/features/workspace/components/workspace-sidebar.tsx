@@ -39,6 +39,7 @@ import {
   WorkspaceCreateModal,
   type WorkspaceCreateSubmitInput,
 } from "../../settings/organization/components/workspaces/workspace-create-modal";
+import { createWorkspaceApi } from "../workspace-api";
 import { ConfirmDialog } from "@/features/settings/shared/confirm-dialog";
 
 interface WorkspaceSchedule {
@@ -247,6 +248,7 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
   const [pendingDelete, setPendingDelete] = useState<{ workspaceId: string; name: string } | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deletingWorkspace, setDeletingWorkspace] = useState(false);
+  const [workspaces, setWorkspaces] = useState<{ id: string; root_path: string | null; label: string | null }[]>([]);
   const [schedules, setSchedules] = useState<WorkspaceSchedule[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [visibleCounts, setVisibleCounts] = useState({
@@ -300,6 +302,26 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
   useEffect(() => {
     let cancelled = false;
 
+    void (async () => {
+      try {
+        const response = await fetch("/api/workspaces");
+        if (!response.ok) return;
+        const body = (await response.json().catch(() => null)) as { workspaces?: { id: string; root_path: string | null; label: string | null }[] } | null;
+        if (cancelled) return;
+        setWorkspaces(body?.workspaces ?? []);
+      } catch {
+        if (!cancelled) setWorkspaces([]);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
     if (!orgId) return;
 
     void (async () => {
@@ -340,20 +362,7 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
   }, [router]);
 
   const handleCreateWorkspace = useCallback(async (input: WorkspaceCreateSubmitInput) => {
-    const res = await fetch("/api/workspaces", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        root_path: input.rootPath,
-        label: input.name,
-        copy_providers: input.copyProviders,
-      }),
-    });
-    if (!res.ok) {
-      const body = await res.json().catch(() => null);
-      throw new Error(body?.message || "Failed to create workspace");
-    }
-    const created = await res.json();
+    const created = await createWorkspaceApi(input);
     await switchToWorkspace(created.id, "/workspace");
   }, []);
 
@@ -655,6 +664,7 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
         isOpen={isCreateWorkspaceOpen}
         onClose={() => setIsCreateWorkspaceOpen(false)}
         configuredProviders={bootstrap.providers}
+        workspaces={workspaces}
         onSubmit={handleCreateWorkspace}
       />
 

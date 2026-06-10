@@ -397,7 +397,17 @@ export class ConversationService {
       );
 
       this.fanout('alertMentionedMembers', this.alertMentionedMembers(emittedMessage, resolvedMentions, channel));
-      if (!options?.suppressDmAlerts && !this.shouldSuppressDmWake(emittedMessage, channel)) {
+      const dmMentionedRecipients = new Set(resolvedMentions.map((mention) => mention.memberId));
+      const dmAlreadyWakesMentionedRecipient =
+        channel?.kind === 'dm' &&
+        channel.memberIds.some(
+          (memberId) => memberId !== emittedMessage.senderId && dmMentionedRecipients.has(memberId),
+        );
+      if (
+        !options?.suppressDmAlerts &&
+        !dmAlreadyWakesMentionedRecipient &&
+        !this.shouldSuppressDmWake(emittedMessage, channel)
+      ) {
         this.fanout('alertDirectMessageParticipants', this.alertDirectMessageParticipants(emittedMessage, channel));
       }
       this.fanout('alertChannelReaders', this.alertChannelReaders(emittedMessage, channel, resolvedMentions));
