@@ -402,9 +402,15 @@ export function buildConnectorMetaTools(
         deps.organizationId,
         server_id,
       );
-      // No cache row means the server has never been tested by the
-      // settings UI nor seeded by a prior spawn. Surface this honestly
-      // so the operator knows to run Test on the server row.
+      // No cache row means one of three things; the model uses the
+      // message below to pick the right escalation. Most commonly hit
+      // when an agent just called request_attachment for a curated
+      // registry entry that needs credentials or template args — the
+      // auto-test fired by the approval resolver couldn't reach the
+      // server, so the cache stayed empty. The prior wording ("run
+      // Test in Settings") was too narrow and steered the model
+      // toward asking the operator for a no-op Test click instead
+      // of the actual fix (credentials or argument values).
       if (!cache) {
         // get_connector_tools is NOT routed through ToolService.invoke,
         // so we return the model-facing payload directly. The AI SDK
@@ -414,8 +420,17 @@ export function buildConnectorMetaTools(
           server_id,
           tools: [],
           note:
-            "No cached tool inventory for this server. Ask the operator " +
-            'to run Test on it in Settings → MCPs.',
+            "No cached tool inventory for this server. Common causes:\n" +
+            "(1) The connector requires credentials (PAT, env vars, OAuth) " +
+            "that haven't been set yet — ask the operator to provide them via " +
+            "Settings → MCPs → <connector> → Edit.\n" +
+            "(2) The connector requires config args (file paths, dataset ids, " +
+            "etc.) that need real values — ask the operator to fill them in via " +
+            "Settings → MCPs → <connector> → Edit.\n" +
+            "(3) The connector is reachable but hasn't been tested yet — ask " +
+            "the operator to click Test in Settings → MCPs.\n" +
+            "Pick the most likely cause based on the connector name and " +
+            "tell the operator specifically what they need to do.",
         };
       }
       // Apply the role-scoped per-tool grant filter so the model only
