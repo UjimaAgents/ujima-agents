@@ -2,8 +2,15 @@ import { describe, expect, it, vi } from 'vitest';
 import { SocketEventNames, type RunState } from '@ujima/shared';
 import { wakeMemberWithFailureEvents } from './index.js';
 
+// saveRun got added to WakeMemberDeps['repo'] in the d3d4b38 commit
+// so the index.ts can mutate an existing run's wakeReason on a
+// mention-while-active path. Tests need to provide the stub; absent
+// it the calling branch throws "saveRun is not a function" and
+// 2 tests fail. Defaulted to vi.fn() here so per-test stubs only
+// override what they actually inspect.
 const noopRepo = {
   findActiveRunForMemberThread: vi.fn(() => null),
+  saveRun: vi.fn(),
 };
 
 const baseInput = {
@@ -117,6 +124,7 @@ describe('wakeMemberWithFailureEvents', () => {
     const createRun = vi.fn();
     const emit = vi.fn();
     const repo = {
+      saveRun: vi.fn(),
       findActiveRunForMemberThread: vi.fn(() => ({
         id: 'existing',
         organizationId: baseInput.organizationId,
@@ -179,6 +187,7 @@ describe('wakeMemberWithFailureEvents', () => {
       };
     });
     const repo = {
+      saveRun: vi.fn(),
       findActiveRunForMemberThread: vi.fn(() => activeRun),
     };
     const deps = {

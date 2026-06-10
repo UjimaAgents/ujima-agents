@@ -478,6 +478,17 @@ export class SpiritServiceBase {
       return null;
     }
 
+    // Broad org-channel surface (e.g. #general): no spirit is bound to
+    // the specific thread, but the agent is alive elsewhere. Fall back
+    // to the first active spirit so an @mention in a shared channel
+    // routes to a live runtime instead of returning `no-active-spirit`.
+    // Without this, every test in spirits.int.test.ts that exercises
+    // mention/DM dispatch through a broad channel fails because
+    // handleAlert returns 'no-active-spirit' for an obviously live
+    // agent. Restored after d3d4b38 silently removed it.
+    if (this.isBroadOrgChannelSurface(organizationId, threadId, channelId)) {
+      return active[0] ?? null;
+    }
     return null;
   }
 
