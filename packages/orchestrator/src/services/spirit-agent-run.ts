@@ -749,7 +749,19 @@ ${activeMemories
   }): Promise<{ toolSet: ToolSet; servers: McpServerSummary[]; catalogText?: string }> {
     if (isMcpDispatchEnabled(ctx.organizationId) && this.mcpPool) {
       const v2 = await buildMcpToolDefinitionsV2(
-        { mcpPool: this.mcpPool, repo: this.repo, tools: this.tools },
+        {
+          mcpPool: this.mcpPool,
+          repo: this.repo,
+          tools: this.tools,
+          // PR 11 (bot fix) — wake-run path was missing the approvals
+          // wiring. @mention spawns go through this code path, not the
+          // run-loop entry above, so request_attachment was returning
+          // "approval surface isn't wired" whenever an agent was woken
+          // by an @mention. Same closure as the run-loop path.
+          approvals: this.attachmentApprovalRequester
+            ? { requestAttachmentApproval: this.attachmentApprovalRequester }
+            : undefined,
+        },
         ctx,
       );
       return {
