@@ -118,7 +118,7 @@ const EMPTY_ACTIVITY = {
   activeTab: "conversation" as WorkspaceTab,
   showDetails: false,
   detailsAutoOpenDismissed: false,
-  detailsWidth: 33,
+  detailsWidth: 40,
   detailsTab: "Thinking trace" as WorkspaceDetailsTab,
   selectedConversation: undefined,
   channels: [],

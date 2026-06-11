@@ -1,6 +1,5 @@
 import type { RunState, WakeReason } from '@ujima/shared';
 import { clearRunInterruptCursor, getRunInterruptCursor } from '../utils/interrupt-run-state.js';
-import { isMessageAfterCursor } from '../utils/message-interrupts.js';
 
 export interface PendingMemberAlert {
   organizationId: string;
@@ -68,14 +67,13 @@ export async function drainPendingMemberAlertAfterRun(
     while (true) {
       const pending = takePendingMemberAlert(run.organizationId, run.agentId, run.threadId);
       if (!pending) return;
-      if (
-        cursor &&
-        pending.messageCreatedAt &&
-        !isMessageAfterCursor(
-          { createdAt: pending.messageCreatedAt, id: pending.messageId },
-          cursor,
-        )
-      ) {
+      if (cursor && pending.messageCreatedAt) {
+        const isAfterCursor =
+          pending.messageCreatedAt > cursor.createdAt ||
+          (pending.messageCreatedAt === cursor.createdAt && pending.messageId > cursor.id);
+        if (!isAfterCursor) continue;
+      }
+      if (cursor && !pending.messageCreatedAt) {
         continue;
       }
       // Detach the successor from the current run's promise chain. Otherwise

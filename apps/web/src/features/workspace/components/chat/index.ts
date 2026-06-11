@@ -30,7 +30,8 @@ export type {
   ConnectorActionStatus,
 } from "./connector-action-row";
 
-export { DetailsSidebar, TraceStep, RunSummary, BoundaryCard } from "./details-sidebar";
+export { ChangesTab, DetailsSidebar, TraceStep, RunSummary, BoundaryCard } from "./details-sidebar";
 export type { DetailsSidebarProps, TraceStepData, RunSummaryData } from "./details-sidebar";
 
+export { CollapsibleHeaderActions } from "./collapsible-header-actions";
 export { FontSizeControl } from "./font-size-control";
