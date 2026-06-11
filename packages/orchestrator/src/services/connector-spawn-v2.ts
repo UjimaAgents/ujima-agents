@@ -445,7 +445,22 @@ export async function buildMcpToolDefinitionsV2(
                     ? { ...(existing as Record<string, unknown>) }
                     : { value: existing };
                 wrapped.attachment_refs = capture.attachmentRefs;
+                // Top-level prose hint so the model sees a directive,
+                // not just a refs array it has to interpret. Live test
+                // showed the schema-level description wasn't enough.
+                wrapped._attachment_capture_note =
+                  `${capture.attachmentRefs.length} attachment(s) from this tool result ` +
+                  `have been captured and are ready to attach to a chat message. ` +
+                  `Use the refs in \`attachment_refs\` with channel.reply / channel.post / ` +
+                  `channel.dm via { refType: "tool_call", value: "<ref>" }. ` +
+                  `Do NOT save these bytes to disk first.`;
                 result = { ...result, output: wrapped };
+                // Operator-visible signal so live-test issues are
+                // visible in the dev log without DB inspection.
+                console.warn(
+                  `[connector-spawn-v2] captured ${capture.attachmentRefs.length} attachment(s) ` +
+                    `from ${entry.serverId}:${entry.toolName} (toolCall=${toolCallId})`,
+                );
               }
             } catch (err) {
               console.warn(

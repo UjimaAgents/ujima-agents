@@ -98,11 +98,16 @@ export function sniffMimeAndCategory(
 /**
  * Pick out base64-encoded blobs from a tool result. MCPs vary in how
  * they encode images:
- *   * Anthropic-style content arrays with `{ type: 'image', source: {
- *       type: 'base64', data, mediaType } }`
+ *   * Anthropic API content-array: `{ type: 'image', source: { type:
+ *       'base64', data, mediaType } }`
+ *   * MCP-standard content-array: `{ type: 'image', data,
+ *       mimeType }` — the spec-compliant shape Playwright MCP and
+ *       most others use. THIS is what tripped up the live test —
+ *       the previous detector required either the source wrapper
+ *       OR an image/* mimeType already present, and Playwright
+ *       doesn't always send mimeType explicitly.
  *   * Tagged objects: `{ data: '...', mimeType: 'image/png' }`
- *   * Raw base64 strings under common keys like `image`, `screenshot`,
- *     `bytes`.
+ *   * Raw base64 strings.
  * Recursive walk + base64 sniff. Conservative: only payloads at
  * least 200 bytes get considered (avoids matching random hex/uuid
  * strings).
@@ -132,7 +137,7 @@ function extractCandidateBlobs(
   }
   if (value && typeof value === 'object') {
     const obj = value as Record<string, unknown>;
-    // Anthropic content-array image shape
+    // Anthropic API content-array image shape (with `source` wrapper).
     if (
       obj.type === 'image' &&
       obj.source &&
@@ -152,7 +157,25 @@ function extractCandidateBlobs(
         return acc;
       }
     }
-    // Generic { data, mimeType } shape
+    // MCP-standard content-array image shape (no `source` wrapper).
+    // The spec is `{ type: 'image', data: '<base64>', mimeType?: '...' }`.
+    // Playwright MCP and most spec-compliant servers use this shape.
+    // We do NOT require mimeType — when absent, the byte-sniffer
+    // recovers the mime from magic bytes.
+    if (obj.type === 'image' && typeof obj.data === 'string') {
+      try {
+        acc.push({
+          bytes: Buffer.from(obj.data, 'base64'),
+          declaredMime:
+            typeof obj.mimeType === 'string' ? obj.mimeType : undefined,
+        });
+      } catch {
+        // ignore
+      }
+      return acc;
+    }
+    // Generic { data, mimeType: image/* } shape (already requires the
+    // image/* mimeType; left in for non-`type:image` wrappers).
     if (
       typeof obj.data === 'string' &&
       typeof obj.mimeType === 'string' &&
@@ -244,6 +267,8 @@ export interface AttachmentCaptureResult {
     category: AttachmentCategory;
     filename: string;
     byteSize: number;
+    /** Per-ref usage hint — see live-test note in pushSite. */
+    usage_hint?: string;
   }[];
 }
 
@@ -377,6 +402,17 @@ export function captureToolResultAttachments(
         category: decision.category,
         filename,
         byteSize: decision.bytes.length,
+        // Live-test gap: even with the channel.* tool schema
+        // describing tool_call refs, models tried to save bytes to
+        // workspace files before attaching. A usage_hint per ref
+        // closes that — it lives in the tool result the model
+        // reads right now, not in a schema description from many
+        // turns ago.
+        usage_hint:
+          `Already captured. To send this in a chat message, call ` +
+          `channel.reply (or channel.post / channel.dm) with attachments: ` +
+          `[{ refType: "tool_call", value: "tc_${input.toolCallId}:${index}" }]. ` +
+          `Do NOT save these bytes to a workspace file first.`,
       });
     } catch (err) {
       console.warn(
