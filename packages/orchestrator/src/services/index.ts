@@ -271,7 +271,8 @@ interface WakeMemberDeps {
   spirits: Pick<SpiritService, 'handleAlert'>;
   runs: Pick<SpiritService, 'createRun'>;
   realtime: Pick<ApiServiceContext['realtime'], 'emit'>;
-  repo: Pick<ApiRepository, 'findActiveRunForMemberThread' | 'saveRun'>;
+  repo: Pick<ApiRepository, 'findActiveRunForMemberThread' | 'saveRun'> &
+    Partial<Pick<ApiRepository, 'getMessage'>>;
 }
 
 const createRunMutex = new AsyncMutex();
@@ -282,6 +283,18 @@ function createRunMutexKey(input: WakeMemberInput): string {
 
 function errMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function pendingMemberAlertWithCreatedAt(
+  input: WakeMemberInput,
+  repo: WakeMemberDeps['repo'],
+): WakeMemberInput {
+  return {
+    ...input,
+    messageCreatedAt:
+      repo.getMessage?.(input.organizationId, input.messageId)?.createdAt ??
+      new Date().toISOString(),
+  };
 }
 
 function latestDelegateReply(
@@ -388,7 +401,7 @@ export async function wakeMemberWithFailureEvents(
   );
 
   if (dispatch.kind === 'debounced') {
-    enqueuePendingMemberAlert(input);
+    enqueuePendingMemberAlert(pendingMemberAlertWithCreatedAt(input, deps.repo));
     return;
   }
 
@@ -416,7 +429,7 @@ export async function wakeMemberWithFailureEvents(
           summary: `Wake (mention) by ${input.byMemberId} on message ${input.messageId}`,
         });
       } else {
-        enqueuePendingMemberAlert(input);
+        enqueuePendingMemberAlert(pendingMemberAlertWithCreatedAt(input, deps.repo));
       }
       return;
     }

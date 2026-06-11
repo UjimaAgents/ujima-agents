@@ -1,4 +1,6 @@
 import type { RunState, WakeReason } from '@ujima/shared';
+import { clearRunInterruptCursor, getRunInterruptCursor } from '../utils/interrupt-run-state.js';
+import { isMessageAfterCursor } from '../utils/message-interrupts.js';
 
 export interface PendingMemberAlert {
   organizationId: string;
@@ -6,6 +8,7 @@ export interface PendingMemberAlert {
   threadId: string;
   channelId?: string;
   messageId: string;
+  messageCreatedAt?: string;
   byMemberId: string;
   reason: string;
   wakeReason: WakeReason;
@@ -56,19 +59,40 @@ export async function drainPendingMemberAlertAfterRun(
   run: RunState,
   wake: (input: PendingMemberAlert) => Promise<void>,
 ): Promise<void> {
-  if (!DRAINABLE_RUN_STATUSES.has(run.status) || !run.threadId) return;
-  const pending = takePendingMemberAlert(run.organizationId, run.agentId, run.threadId);
-  if (!pending) return;
-  // Detach the successor from the current run's promise chain. Otherwise
-  // every autonomous follow-up retains its predecessor until the chain ends.
-  queueMicrotask(() => {
-    void wake(pending).catch((error) => {
-      console.error(
-        'pending-member-alert successor failed',
-        error instanceof Error ? error.stack ?? error.message : String(error),
-      );
-    });
-  });
+  if (!DRAINABLE_RUN_STATUSES.has(run.status) || !run.threadId) {
+    clearRunInterruptCursor(run.id);
+    return;
+  }
+  const cursor = getRunInterruptCursor(run.id);
+  try {
+    while (true) {
+      const pending = takePendingMemberAlert(run.organizationId, run.agentId, run.threadId);
+      if (!pending) return;
+      if (
+        cursor &&
+        pending.messageCreatedAt &&
+        !isMessageAfterCursor(
+          { createdAt: pending.messageCreatedAt, id: pending.messageId },
+          cursor,
+        )
+      ) {
+        continue;
+      }
+      // Detach the successor from the current run's promise chain. Otherwise
+      // every autonomous follow-up retains its predecessor until the chain ends.
+      queueMicrotask(() => {
+        void wake(pending).catch((error) => {
+          console.error(
+            'pending-member-alert successor failed',
+            error instanceof Error ? error.stack ?? error.message : String(error),
+          );
+        });
+      });
+      return;
+    }
+  } finally {
+    clearRunInterruptCursor(run.id);
+  }
 }
 
 export function hasPendingMemberAlert(

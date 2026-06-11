@@ -573,6 +573,7 @@ export class AiService {
           threadId: input.threadId,
           agentId: input.agentId,
           cursor: interruptCursor,
+          runId: input.runId,
         }),
       onModelNotFound: createProviderSafeFallbackHandler({
         logLabel: 'ai-service',
