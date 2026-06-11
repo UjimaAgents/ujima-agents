@@ -29,14 +29,49 @@ import { createConnectorAuditWriter } from '../services/connector-audit.js';
  * (agent_attachments_plan.md §3.3). Optional. Each entry references
  * an artifact the daemon resolves into a materialised attachment
  * row before the message lands.
+ *
+ * IMPORTANT for the model: when an MCP tool you just called (like
+ * Playwright's screenshot) returned an `attachment_refs` array in
+ * its result, USE THOSE REFS HERE with `refType: "tool_call"` and
+ * `value` set to the ref string (e.g. `tc_<callId>:0`). Do not
+ * re-encode the bytes as base64 — that wastes context and almost
+ * always exceeds the cap.
  */
 const AttachmentRefSchema = z.object({
-  refType: z.enum(['tool_call', 'base64', 'workspace_path', 'workspace_glob']),
-  value: z.string().min(1),
+  refType: z
+    .enum(['tool_call', 'base64', 'workspace_path', 'workspace_glob'])
+    .describe(
+      'Where the attachment bytes come from. Use "tool_call" with the ' +
+        '`ref` returned by a previous MCP tool result — this is the right ' +
+        'choice for Playwright screenshots and most generated images. ' +
+        'Use "workspace_path" for a single file already in the workspace, ' +
+        '"workspace_glob" for a pattern (max 10 files), and "base64" only ' +
+        'for tiny programmatic blobs (1MB cap).',
+    ),
+  value: z
+    .string()
+    .min(1)
+    .describe(
+      'For refType=tool_call: the `ref` string from a tool result ' +
+        '`attachment_refs` array, e.g. `tc_<toolCallId>:0`. ' +
+        'For workspace_path: a path relative to the workspace root ' +
+        '(`screenshots/login.png`, NO `..` segments, NO absolute paths). ' +
+        'For workspace_glob: a glob pattern (`screenshots/*.png`). ' +
+        'For base64: the raw bytes as a base64 string.',
+    ),
   filename: z.string().min(1).optional(),
   mimeType: z.string().min(1).optional(),
 });
-const ChannelAttachmentsSchema = z.array(AttachmentRefSchema).max(10).optional();
+const ChannelAttachmentsSchema = z
+  .array(AttachmentRefSchema)
+  .max(10)
+  .optional()
+  .describe(
+    'Optional files to attach to this message. When an MCP tool result ' +
+      'contained `attachment_refs`, PREFER refType="tool_call" referencing ' +
+      'those refs — that path avoids round-tripping bytes through your ' +
+      'context. Max 10 attachments per message.',
+  );
 
 const ChannelPostSchema = z.object({
   channel_id: z.string().min(1),

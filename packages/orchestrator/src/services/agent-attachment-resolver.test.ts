@@ -153,11 +153,14 @@ describe('resolveAttachmentRefs — workspace_path', () => {
       if (!result.ok) return;
       expect(result.materializations).toHaveLength(1);
       expect(repo.agentAttachments).toHaveLength(1);
-      // Storage path lives inside the agent root, NOT the workspace
-      // root. Workspace can be rewritten freely without changing
-      // what the message shows.
-      expect(repo.agentAttachments[0]!.storagePath.startsWith('org_test/'))
-        .toBe(true);
+      // Storage path lives inside the agent-generated tree, NOT the
+      // workspace. Workspace can be rewritten freely without changing
+      // what the message shows. The `agent-generated/` prefix is
+      // required so the web API resolves the file (it prepends
+      // `<home>/attachments/` and serves from there).
+      expect(
+        repo.agentAttachments[0]!.storagePath.startsWith('agent-generated/'),
+      ).toBe(true);
     } finally {
       rmSync(agentRoot, { recursive: true, force: true });
       rmSync(workspaceRoot, { recursive: true, force: true });

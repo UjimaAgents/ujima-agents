@@ -402,12 +402,24 @@ function commitBytes(
   toolCallSource: { callId: string; serverId: string; toolName: string } | null,
 ): SingleResult {
   const id = newAgentId();
+  // storageRelative MUST include the `agent-generated/` prefix so
+  // the web API's resolveAttachmentPath (which prepends
+  // `<home>/attachments/`) finds the file. See
+  // agent-attachment-capture.ts for the matching invariant; both
+  // sites must agree on the column shape.
+  const fileName = `${id}${extensionForMime(mimeType)}`;
   const storageRelative = join(
+    'agent-generated',
     deps.organizationId,
     deps.runId,
-    `${id}${extensionForMime(mimeType)}`,
+    fileName,
   );
-  const absolutePath = join(deps.agentAttachmentRoot, storageRelative);
+  const absolutePath = join(
+    deps.agentAttachmentRoot,
+    deps.organizationId,
+    deps.runId,
+    fileName,
+  );
   try {
     mkdirSync(absolutePath.split('/').slice(0, -1).join('/'), { recursive: true });
     writeFileSync(absolutePath, bytes);

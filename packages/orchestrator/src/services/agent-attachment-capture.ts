@@ -304,12 +304,27 @@ export function captureToolResultAttachments(
     }
     const id = newId();
     const extension = extensionForMime(decision.mimeType);
+    // storageRelative MUST be relative to `<home>/attachments/`, not
+    // to agentAttachmentRoot. The web API resolves the column
+    // against `<home>/attachments/<storagePath>` and would 404 on a
+    // bare `<orgId>/<runId>/<id>.<ext>`. Include the
+    // `agent-generated/` prefix so the same column works for both
+    // writer (here) and reader (apps/api/.../attachments.ts).
     const storageRelative = join(
+      'agent-generated',
       input.organizationId,
       input.runId,
       `${id}${extension}`,
     );
-    const absolutePath = join(deps.agentAttachmentRoot, storageRelative);
+    // agentAttachmentRoot already points at `<home>/attachments/
+    // agent-generated/`, so the on-disk path skips the prefix when
+    // joined against the root.
+    const absolutePath = join(
+      deps.agentAttachmentRoot,
+      input.organizationId,
+      input.runId,
+      `${id}${extension}`,
+    );
     try {
       mkdirSync(dirname(absolutePath), { recursive: true });
       writeFileSync(absolutePath, decision.bytes);
