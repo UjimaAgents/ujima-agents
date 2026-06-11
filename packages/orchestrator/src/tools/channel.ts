@@ -262,17 +262,26 @@ function buildDmSchemaForOrg(ctx: BuildSchemaContext) {
  * Returns the attachmentId list ready to forward to sendMessage, or
  * a structured error result the channel tool returns instead.
  *
- * Failure cases (cap exceeded, path escape, missing tool-call row,
- * workspace_root unconfigured, agentAttachmentRoot missing) surface
- * back to the agent as a tool-result error rather than crashing
- * the run.
+ * The failure shape is deliberately loud (`message_sent: false`,
+ * explicit `recovery` block) — the first PR 12 live test showed
+ * the model received `{ok:false, error}` and could not tell the
+ * message hadn't been posted. It just retried the same call. The
+ * verbose shape gives it the unmistakable signal "stop, fix the
+ * arguments, the body did NOT reach the channel."
  */
 async function resolveAndPinAttachments(
   ctx: ToolExecutionContext,
   attachments: AttachmentRefInput[] | undefined,
+  body: string,
 ): Promise<
   | { ok: true; attachmentIds: string[]; materializations: ResolvedAttachmentMaterialization[] }
-  | { ok: false; status: string; error: string }
+  | {
+      ok: false;
+      status: string;
+      message_sent: false;
+      error: string;
+      recovery: { instruction: string; body_you_tried_to_send: string };
+    }
 > {
   if (!attachments || attachments.length === 0) {
     return { ok: true, attachmentIds: [], materializations: [] };
@@ -281,7 +290,15 @@ async function resolveAndPinAttachments(
     return {
       ok: false,
       status: 'attachments_unavailable',
+      message_sent: false,
       error: 'agent-attachments subsystem is not wired in this runtime',
+      recovery: {
+        instruction:
+          'MESSAGE NOT SENT. The agent-attachments subsystem is unavailable in this runtime. ' +
+          'Retry channel.reply / channel.post / channel.dm WITHOUT the `attachments` param ' +
+          '— just the body — and tell the user the runtime cannot deliver file attachments.',
+        body_you_tried_to_send: body,
+      },
     };
   }
   const organization = ctx.repo.getOrganization(ctx.invocation.organizationId);
@@ -308,7 +325,29 @@ async function resolveAndPinAttachments(
     attachments,
   );
   if (!result.ok) {
-    return { ok: false, status: 'attachments_rejected', error: result.error };
+    // Surface to the dev log so operators see the cap fire even if
+    // they're not staring at the chat. Best-effort — log failures
+    // never block the tool result.
+    console.warn(
+      `[channel-tool] attachments rejected for member=${ctx.invocation.memberId} run=${ctx.invocation.runId}: ${result.error}`,
+    );
+    return {
+      ok: false,
+      status: 'attachments_rejected',
+      message_sent: false,
+      error: result.error,
+      recovery: {
+        instruction:
+          'MESSAGE NOT SENT. Your channel.reply / channel.post / channel.dm call did NOT post to the channel because the attachments param failed validation. ' +
+          'Do NOT retry with the same arguments — that will fail the same way. ' +
+          'Recovery options: ' +
+          '(1) narrow a workspace_glob to match fewer files (max 10), ' +
+          '(2) replace the glob with several specific workspace_path refs, one per file, ' +
+          '(3) drop the `attachments` param entirely and send the body as a text-only message, then mention the file delivery failure to the user. ' +
+          'After choosing one of (1)-(3), issue a NEW channel.reply / channel.post / channel.dm call.',
+        body_you_tried_to_send: body,
+      },
+    };
   }
   return {
     ok: true,
@@ -391,6 +430,7 @@ export const channelPostTool: OrchestratorTool<typeof ChannelPostSchema> = {
     const resolveResult = await resolveAndPinAttachments(
       ctx,
       invocation.input.attachments as AttachmentRefInput[] | undefined,
+      body,
     );
     if (!resolveResult.ok) {
       return resolveResult;
@@ -452,6 +492,7 @@ export const channelReplyTool: OrchestratorTool<typeof ChannelReplySchema> = {
     const resolveResult = await resolveAndPinAttachments(
       ctx,
       invocation.input.attachments as AttachmentRefInput[] | undefined,
+      body,
     );
     if (!resolveResult.ok) {
       return resolveResult;
@@ -513,6 +554,7 @@ export const channelDmTool: OrchestratorTool<typeof ChannelDmSchema> = {
     const resolveResult = await resolveAndPinAttachments(
       ctx,
       invocation.input.attachments as AttachmentRefInput[] | undefined,
+      body,
     );
     if (!resolveResult.ok) {
       return resolveResult;
