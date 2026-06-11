@@ -345,13 +345,14 @@ ${activeMemories
           this.emitRunTokens(input.organizationId, runId, session.channelId, member.id, currentSteps);
         },
         loadInterruptMessages: () =>
-          loadChannelInterruptModelMessages({
-            repo: this.repo,
-            organizationId: input.organizationId,
-            channelId: session.channelId,
-            agentId: member.id,
-            cursor: interruptCursor,
-          }),
+        loadChannelInterruptModelMessages({
+          repo: this.repo,
+          organizationId: input.organizationId,
+          channelId: session.channelId,
+          agentId: member.id,
+          cursor: interruptCursor,
+          runId: spirit.runId ?? spirit.id,
+        }),
         onModelNotFound: createSpiritModelNotFoundHandler({
           logLabel: 'spirit-agent-run',
           memberLabel: input.memberId,
