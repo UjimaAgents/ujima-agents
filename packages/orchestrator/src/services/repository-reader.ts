@@ -1,4 +1,5 @@
 import type {
+  AgentAttachment,
   AgentMcpAttachment,
   ChannelMcpAttachment,
   AgentToolAttachment,
@@ -431,6 +432,29 @@ export interface ApiRepository extends ConversationRepository {
     organizationId: string,
     memberId: string,
   ): ChannelMcpAttachment[];
+  // Agent-generated attachments (agent_attachments_plan.md).
+  saveAgentAttachment(attachment: AgentAttachment): AgentAttachment;
+  getAgentAttachment(organizationId: string, id: string): AgentAttachment | null;
+  findAgentAttachmentByToolCall(
+    organizationId: string,
+    toolCallId: string,
+    index: number,
+  ): AgentAttachment | null;
+  pinAgentAttachmentToMessage(
+    organizationId: string,
+    id: string,
+    messageId: string,
+  ): AgentAttachment | null;
+  listAgentAttachmentsForRun(
+    organizationId: string,
+    runId: string,
+  ): AgentAttachment[];
+  listExpiredUnpinnedAgentAttachments(
+    organizationId: string,
+    createdBefore: string,
+  ): AgentAttachment[];
+  deleteAgentAttachment(organizationId: string, id: string): void;
+  sumAgentAttachmentBytes(organizationId: string): number;
   listAttachedServersForSpirit(
     organizationId: string,
     memberId: string,

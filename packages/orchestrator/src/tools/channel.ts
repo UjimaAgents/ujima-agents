@@ -16,18 +16,40 @@ import type { BuildSchemaContext } from './types.js';
 import type { AgentTeamHandle } from '@ujima/framework';
 import type { ApiRepository } from '../services/repository-reader.js';
 import { verifyChannelPass } from '../utils/decision-verifier.js';
-import type { OrchestratorTool } from './types.js';
+import type { OrchestratorTool, ToolExecutionContext } from './types.js';
+import {
+  resolveAttachmentRefs,
+  type AttachmentRefInput,
+  type ResolvedAttachmentMaterialization,
+} from '../services/agent-attachment-resolver.js';
+import { createConnectorAuditWriter } from '../services/connector-audit.js';
+
+/**
+ * Agent-attachments param shared across channel.* tools
+ * (agent_attachments_plan.md §3.3). Optional. Each entry references
+ * an artifact the daemon resolves into a materialised attachment
+ * row before the message lands.
+ */
+const AttachmentRefSchema = z.object({
+  refType: z.enum(['tool_call', 'base64', 'workspace_path', 'workspace_glob']),
+  value: z.string().min(1),
+  filename: z.string().min(1).optional(),
+  mimeType: z.string().min(1).optional(),
+});
+const ChannelAttachmentsSchema = z.array(AttachmentRefSchema).max(10).optional();
 
 const ChannelPostSchema = z.object({
   channel_id: z.string().min(1),
   body: z.string().min(1),
   mentions: z.array(z.string().min(1)).default([]),
+  attachments: ChannelAttachmentsSchema,
 });
 
 const ChannelReplySchema = z.object({
   message_id: z.string().min(1),
   body: z.string().min(1),
   mentions: z.array(z.string().min(1)).default([]),
+  attachments: ChannelAttachmentsSchema,
 });
 
 const ChannelDmSchema = z.object({
@@ -35,6 +57,7 @@ const ChannelDmSchema = z.object({
   body: z.string().min(1),
   mentions: z.array(z.string().min(1)).default([]),
   ignore: z.boolean().optional(),
+  attachments: ChannelAttachmentsSchema,
 });
 
 const ChannelListSchema = z.object({
@@ -198,6 +221,97 @@ function buildDmSchemaForOrg(ctx: BuildSchemaContext) {
   });
 }
 
+/**
+ * Resolve the agent-attachments param into materialised rows + pin
+ * the parent agent_attachments rows to the just-created message id.
+ * Returns the attachmentId list ready to forward to sendMessage, or
+ * a structured error result the channel tool returns instead.
+ *
+ * Failure cases (cap exceeded, path escape, missing tool-call row,
+ * workspace_root unconfigured, agentAttachmentRoot missing) surface
+ * back to the agent as a tool-result error rather than crashing
+ * the run.
+ */
+async function resolveAndPinAttachments(
+  ctx: ToolExecutionContext,
+  attachments: AttachmentRefInput[] | undefined,
+): Promise<
+  | { ok: true; attachmentIds: string[]; materializations: ResolvedAttachmentMaterialization[] }
+  | { ok: false; status: string; error: string }
+> {
+  if (!attachments || attachments.length === 0) {
+    return { ok: true, attachmentIds: [], materializations: [] };
+  }
+  if (!ctx.agentAttachmentRoot) {
+    return {
+      ok: false,
+      status: 'attachments_unavailable',
+      error: 'agent-attachments subsystem is not wired in this runtime',
+    };
+  }
+  const organization = ctx.repo.getOrganization(ctx.invocation.organizationId);
+  const workspaceRoot =
+    organization?.workspace?.root && typeof organization.workspace.root === 'string'
+      ? organization.workspace.root
+      : null;
+  // Audit emitter is opportunistically constructed here from the
+  // repo handle in scope — the ApprovalService elsewhere shares a
+  // single writer, but channel-tool calls land per-message and we
+  // don't need cross-call state. The writer's per-call cost is a
+  // single `new` + sqlite insert.
+  const audit = createConnectorAuditWriter({ repo: ctx.repo });
+  const result = await resolveAttachmentRefs(
+    {
+      repo: ctx.repo,
+      agentAttachmentRoot: ctx.agentAttachmentRoot,
+      workspaceRoot,
+      organizationId: ctx.invocation.organizationId,
+      runId: ctx.invocation.runId,
+      memberId: ctx.invocation.memberId,
+      audit,
+    },
+    attachments,
+  );
+  if (!result.ok) {
+    return { ok: false, status: 'attachments_rejected', error: result.error };
+  }
+  return {
+    ok: true,
+    attachmentIds: result.materializations.map((m) => m.attachmentId),
+    materializations: result.materializations,
+  };
+}
+
+/**
+ * After sendMessage / postToChannel / sendDirectMessage has returned
+ * a message id, pin the agent_attachments rows to that id so the
+ * LRU cleanup job leaves them alone. Best-effort: a pin failure
+ * doesn't undo the message — the row just becomes eligible for
+ * cleanup if unpinned, which costs a re-attach the next time. Logs
+ * a warning.
+ */
+function pinResolvedAttachments(
+  ctx: ToolExecutionContext,
+  materializations: ResolvedAttachmentMaterialization[],
+  messageId: string,
+): void {
+  for (const m of materializations) {
+    try {
+      ctx.repo.pinAgentAttachmentToMessage(
+        ctx.invocation.organizationId,
+        m.agentAttachmentId,
+        messageId,
+      );
+    } catch (err) {
+      console.warn(
+        '[channel-tool] failed to pin agent_attachment',
+        m.agentAttachmentId,
+        err,
+      );
+    }
+  }
+}
+
 export const channelPostTool: OrchestratorTool<typeof ChannelPostSchema> = {
   id: 'channel.post',
   schema: ChannelPostSchema,
@@ -217,41 +331,55 @@ export const channelPostTool: OrchestratorTool<typeof ChannelPostSchema> = {
     permissionMcpId: 'channels',
     input: args,
   }),
-  execute: ({ invocation, team, repo, conversations }) =>
-    (() => {
-      const body = String(invocation.input.body);
-      const channelId = resolveChannelId(
-        team,
-        repo,
-        invocation.organizationId,
-        invocation.memberId,
-        String(invocation.input.channel_id),
-      );
-      // The channel's main thread shares its id by convention; for a
-      // posting tool that's the thread to scan for mirror chains.
-      const threadId = invocation.threadId ?? channelId;
-      const suppressed = conversations.tryMirrorSuppress?.({
-        organizationId: invocation.organizationId,
-        runId: invocation.runId,
-        senderId: invocation.memberId,
-        threadId,
-        channelId,
-        body,
-      });
-      if (suppressed) {
-        return { status: 'mirror_suppressed', terminator: 'channel.ack' };
-      }
-      return conversations.postToChannel({
-        organizationId: invocation.organizationId,
-        senderId: invocation.memberId,
-        channelId,
-        body,
-        mentions: Array.isArray(invocation.input.mentions)
-          ? invocation.input.mentions.filter((value): value is string => typeof value === 'string')
-          : [],
-        metadata: { runId: invocation.runId },
-      });
-    })(),
+  execute: async (ctx) => {
+    const { invocation, team, repo, conversations } = ctx;
+    const body = String(invocation.input.body);
+    const channelId = resolveChannelId(
+      team,
+      repo,
+      invocation.organizationId,
+      invocation.memberId,
+      String(invocation.input.channel_id),
+    );
+    const threadId = invocation.threadId ?? channelId;
+    const suppressed = conversations.tryMirrorSuppress?.({
+      organizationId: invocation.organizationId,
+      runId: invocation.runId,
+      senderId: invocation.memberId,
+      threadId,
+      channelId,
+      body,
+    });
+    if (suppressed) {
+      return { status: 'mirror_suppressed', terminator: 'channel.ack' };
+    }
+    const resolveResult = await resolveAndPinAttachments(
+      ctx,
+      invocation.input.attachments as AttachmentRefInput[] | undefined,
+    );
+    if (!resolveResult.ok) {
+      return resolveResult;
+    }
+    const message = conversations.postToChannel({
+      organizationId: invocation.organizationId,
+      senderId: invocation.memberId,
+      channelId,
+      body,
+      mentions: Array.isArray(invocation.input.mentions)
+        ? invocation.input.mentions.filter((value): value is string => typeof value === 'string')
+        : [],
+      attachmentIds: resolveResult.attachmentIds,
+      metadata: { runId: invocation.runId },
+    });
+    const messageId =
+      message && typeof message === 'object' && 'id' in message
+        ? String((message as { id: unknown }).id)
+        : null;
+    if (messageId) {
+      pinResolvedAttachments(ctx, resolveResult.materializations, messageId);
+    }
+    return message;
+  },
 };
 
 export const channelReplyTool: OrchestratorTool<typeof ChannelReplySchema> = {
@@ -265,7 +393,8 @@ export const channelReplyTool: OrchestratorTool<typeof ChannelReplySchema> = {
     permissionMcpId: 'channels',
     input: args,
   }),
-  execute: ({ invocation, repo, conversations }) => {
+  execute: async (ctx) => {
+    const { invocation, repo, conversations } = ctx;
     const body = String(invocation.input.body);
     const parent = repo.getMessage(
       invocation.organizationId,
@@ -285,7 +414,14 @@ export const channelReplyTool: OrchestratorTool<typeof ChannelReplySchema> = {
         return { status: 'mirror_suppressed', terminator: 'channel.ack' };
       }
     }
-    return conversations.replyToMessage({
+    const resolveResult = await resolveAndPinAttachments(
+      ctx,
+      invocation.input.attachments as AttachmentRefInput[] | undefined,
+    );
+    if (!resolveResult.ok) {
+      return resolveResult;
+    }
+    const message = conversations.replyToMessage({
       organizationId: invocation.organizationId,
       senderId: invocation.memberId,
       messageId: String(invocation.input.message_id),
@@ -293,8 +429,17 @@ export const channelReplyTool: OrchestratorTool<typeof ChannelReplySchema> = {
       mentions: Array.isArray(invocation.input.mentions)
         ? invocation.input.mentions.filter((value): value is string => typeof value === 'string')
         : [],
+      attachmentIds: resolveResult.attachmentIds,
       metadata: { runId: invocation.runId },
     });
+    const messageId =
+      message && typeof message === 'object' && 'id' in message
+        ? String((message as { id: unknown }).id)
+        : null;
+    if (messageId) {
+      pinResolvedAttachments(ctx, resolveResult.materializations, messageId);
+    }
+    return message;
   },
 };
 
@@ -309,7 +454,8 @@ export const channelDmTool: OrchestratorTool<typeof ChannelDmSchema> = {
     permissionMcpId: 'channels',
     input: args,
   }),
-  execute: ({ invocation, repo, conversations }) => {
+  execute: async (ctx) => {
+    const { invocation, repo, conversations } = ctx;
     const body = String(invocation.input.body);
     const recipientRef = String(invocation.input.member_id);
     const recipientId =
@@ -329,7 +475,14 @@ export const channelDmTool: OrchestratorTool<typeof ChannelDmSchema> = {
     if (suppressed) {
       return { status: 'mirror_suppressed', terminator: 'channel.ack' };
     }
-    return conversations.sendDirectMessage({
+    const resolveResult = await resolveAndPinAttachments(
+      ctx,
+      invocation.input.attachments as AttachmentRefInput[] | undefined,
+    );
+    if (!resolveResult.ok) {
+      return resolveResult;
+    }
+    const message = conversations.sendDirectMessage({
       organizationId: invocation.organizationId,
       senderId: invocation.memberId,
       recipientId,
@@ -338,8 +491,17 @@ export const channelDmTool: OrchestratorTool<typeof ChannelDmSchema> = {
       mentions: Array.isArray(invocation.input.mentions)
         ? invocation.input.mentions.filter((value): value is string => typeof value === 'string')
         : [],
+      attachmentIds: resolveResult.attachmentIds,
       metadata: { runId: invocation.runId },
     });
+    const messageId =
+      message && typeof message === 'object' && 'id' in message
+        ? String((message as { id: unknown }).id)
+        : null;
+    if (messageId) {
+      pinResolvedAttachments(ctx, resolveResult.materializations, messageId);
+    }
+    return message;
   },
 };
 

@@ -227,6 +227,7 @@ ${activeMemories
           approvals: this.attachmentApprovalRequester
             ? { requestAttachmentApproval: this.attachmentApprovalRequester }
             : undefined,
+          attachmentCapture: this.attachmentCapture,
         },
         mcpCtx,
       );
@@ -761,6 +762,7 @@ ${activeMemories
           approvals: this.attachmentApprovalRequester
             ? { requestAttachmentApproval: this.attachmentApprovalRequester }
             : undefined,
+          attachmentCapture: this.attachmentCapture,
         },
         ctx,
       );

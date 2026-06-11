@@ -867,6 +867,11 @@ export class ConversationService {
     body: string;
     replyTo?: string;
     mentions?: string[];
+    // Agent-attachments — same plumbing as
+    // sendMessage / sendDirectMessage. channel.post (the agent tool)
+    // resolves attachment refs against the agent_attachments store
+    // and forwards the materialised ids here.
+    attachmentIds?: string[];
     metadata?: ConversationMessageMetadata;
   }) {
     const channel = this.requireActiveChannel(input.organizationId, input.channelId);
@@ -888,6 +893,7 @@ export class ConversationService {
       content: input.body,
       mentions: input.mentions,
       parentMessageId: input.replyTo,
+      attachmentIds: input.attachmentIds,
       metadata: input.metadata,
     });
   }
@@ -898,6 +904,11 @@ export class ConversationService {
     messageId: string;
     body: string;
     mentions?: string[];
+    // Agent-attachments — previously dropped silently, so
+    // channel.reply couldn't carry attachments even though sendMessage
+    // / sendDirectMessage already accept attachmentIds. Wired through
+    // so agent-attachment refs survive the reply path.
+    attachmentIds?: string[];
     metadata?: ConversationMessageMetadata;
   }) {
     const parent = this.requireMessage(input.organizationId, input.messageId);
@@ -909,6 +920,7 @@ export class ConversationService {
       content: input.body,
       mentions: input.mentions,
       parentMessageId: parent.id,
+      attachmentIds: input.attachmentIds,
       metadata: input.metadata,
     });
   }

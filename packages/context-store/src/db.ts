@@ -1584,6 +1584,53 @@ const MIGRATIONS: {id: string; up: string}[] = [
         ON channel_mcp_attachments(organization_id, mcp_server_id);
     `,
   },
+  {
+    // Agent-generated attachments (agent_attachments_plan.md).
+    //
+    // Distinct from message_attachments — staging area for files that
+    // the daemon captures from tool results (Playwright screenshots,
+    // charting MCP output) OR from workspace files the agent points
+    // at via channel.reply's attachments param. Rows live unpinned
+    // until the agent calls channel.reply / .post / .dm referencing
+    // them; once referenced, `pinned_to_message_id` is set and the
+    // row survives for the message's lifetime.
+    //
+    // LRU cleanup (PR 9 SchedulerService) deletes unpinned rows
+    // older than the configured TTL (default 4 hours) so disk usage
+    // stays bounded even when agents generate artifacts they never
+    // post. Pinned rows are never auto-deleted.
+    //
+    // Storage path: `${UJIMA_HOME}/attachments/agent-generated/
+    // <orgId>/<runId>/<uuid>.<ext>`. Resolved at write time; the
+    // column stores only the path relative to the agent-generated
+    // root so disk-tree reorganisation doesn't require a migration.
+    id: '052_agent_attachments',
+    up: `
+      CREATE TABLE IF NOT EXISTS agent_attachments (
+        id                      TEXT PRIMARY KEY,
+        organization_id         TEXT NOT NULL,
+        run_id                  TEXT NOT NULL,
+        member_id               TEXT NOT NULL,
+        source_tool_call_id     TEXT,
+        source_server_id        TEXT,
+        source_tool_name        TEXT,
+        category                TEXT NOT NULL,
+        mime_type               TEXT NOT NULL,
+        filename                TEXT NOT NULL,
+        storage_path            TEXT NOT NULL,
+        byte_size               INTEGER NOT NULL,
+        created_at              TEXT NOT NULL,
+        pinned_to_message_id    TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_agent_attachments_run
+        ON agent_attachments(organization_id, run_id);
+      CREATE INDEX IF NOT EXISTS idx_agent_attachments_unpinned
+        ON agent_attachments(organization_id, created_at)
+        WHERE pinned_to_message_id IS NULL;
+      CREATE INDEX IF NOT EXISTS idx_agent_attachments_tool_call
+        ON agent_attachments(source_tool_call_id);
+    `,
+  },
 ];
 
 export interface DbOptions {

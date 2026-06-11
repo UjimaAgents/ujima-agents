@@ -26,7 +26,10 @@ import { TrajectoryService } from './trajectory.js';
 import { McpRegistryService } from './mcp-registry.js';
 import { createConnectorAuditWriter } from './connector-audit.js';
 import { findRegistryEntry } from '@ujima/mcp-client';
+import { join } from 'node:path';
 import { findRegistryMatch } from './connector-catalog.js';
+import { captureToolResultAttachments, cleanupExpiredAgentAttachments } from './agent-attachment-capture.js';
+import type { buildMcpToolDefinitionsV2 } from './connector-spawn-v2.js';
 import { createTierCurationService, type TierCurationService } from './tier-curation.js';
 import { GovernanceService } from './governance-service.js';
 import { PluginRegistryService } from './plugin-registry.js';
@@ -710,6 +713,16 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     conversations,
   );
 
+  // Agent-attachments root resolved once so both the
+  // attachment-capture closure below AND the channel-tool resolver
+  // (via ToolExecutionContext.agentAttachmentRoot) point at the
+  // same directory.
+  const agentAttachmentRoot = join(
+    context.archiveRoot ?? process.env.UJIMA_HOME ?? process.cwd(),
+    'attachments',
+    'agent-generated',
+  );
+
   const innerTools = new ToolServiceImpl(
     context.teamStore,
     context.repo,
@@ -720,6 +733,8 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     delegateAgentTurn,
     context.mcpPool,
     spiritModelResolver,
+    undefined,
+    agentAttachmentRoot,
   );
 
   const tools = createPermissionGatedToolService(
@@ -755,6 +770,42 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   // (spawn/retire/complete) and reads on every alert.
   const activeSpirits = new ActiveSpiritRegistry();
 
+  // Shared audit writer for agent-attachment events + the existing
+  // attachment-request flow. Declared early so the capture closure
+  // below can pass it in.
+  const attachmentAuditWriter = createConnectorAuditWriter({ repo: context.repo });
+
+  // Agent-attachments capture closure (agent_attachments_plan.md
+  // §3.2). One instance per services bootstrap; the V2 spawn calls
+  // it after every successful native MCP invoke. Looks up the
+  // server's registry hint via findRegistryMatch so Playwright
+  // captures aggressively and fetch is skipped. Uses the same
+  // `agentAttachmentRoot` constant the channel-tool resolver does
+  // (computed above for the ToolServiceImpl wire-in).
+  const attachmentCaptureClosure: NonNullable<
+    Parameters<typeof buildMcpToolDefinitionsV2>[0]['attachmentCapture']
+  > = (input) => {
+    const server = context.repo.getMcpServer(input.organizationId, input.serverId);
+    const registryHint = server ? findRegistryMatch(server)?.capturesAttachments : undefined;
+    return captureToolResultAttachments(
+      {
+        repo: context.repo,
+        agentAttachmentRoot,
+        audit: attachmentAuditWriter,
+      },
+      {
+        organizationId: input.organizationId,
+        runId: input.runId,
+        memberId: input.memberId,
+        serverId: input.serverId,
+        toolName: input.toolName,
+        toolCallId: input.toolCallId,
+        toolResult: input.toolResult,
+        registryHint,
+      },
+    );
+  };
+
   const spirits = new SpiritService(
     context.teamStore,
     context.repo,
@@ -771,6 +822,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
       // approval card via the active ApprovalService.
       attachmentApprovalRequester: (input) =>
         approvalsImpl.requestAttachmentApproval(input),
+      attachmentCapture: attachmentCaptureClosure,
     },
   );
   createDelegateRun = (run) => spirits.createRun(run);
@@ -818,7 +870,20 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   const bootstrap = new BootstrapService(context.repo, context.teamStore, auth);
   const onboarding = new OnboardingService(context.repo, context.teamStore);
   const scheduler = new SchedulerService(context.repo, conversations, context.realtime, {
-    onTick: () => goals.sweepAllPendingTasks(),
+    onTick: async () => {
+      await goals.sweepAllPendingTasks();
+      // Agent-attachments LRU pass. Best-effort — wrapped so a
+      // sweep failure doesn't kill the scheduler tick (which is
+      // mission-critical for goal scheduling).
+      try {
+        cleanupExpiredAgentAttachments({
+          repo: context.repo,
+          agentAttachmentRoot,
+        });
+      } catch (err) {
+        console.warn('[agent-attachment-cleanup] sweep threw', err);
+      }
+    },
   });
   const notifications = new NotificationService(context.repo);
   handleMessagePublished = (msg) => {
@@ -876,7 +941,6 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   // the same McpRegistryService surface the settings UI uses, so the
   // audit + UNIQUE-constraint shape stays identical. On reject, emit
   // the attachment_request_resolved audit row only.
-  const attachmentAuditWriter = createConnectorAuditWriter({ repo: context.repo });
   approvalsImpl.setAttachmentApprovalResolver((input) => {
     // PR 11 (bot fix) — search_catalog returns `registry:<entryId>`
     // synthetic ids for marketplace entries the org has never

@@ -98,6 +98,12 @@ export class ToolServiceImpl implements ToolService {
     private readonly mcpPool?: McpRuntimePool,
     private readonly modelResolver?: ModelResolver,
     private readonly shellAutoReview = new ShellAutoReviewService(),
+    /**
+     * Filesystem root where agent-generated attachments live.
+     * Optional — without it the channel-tool `attachments` param
+     * surface degrades to a structured error rather than a crash.
+     */
+    private readonly agentAttachmentRoot?: string,
   ) {}
 
   allowRun(organizationId: string, runId: string, approvalScope?: string): void {
@@ -444,6 +450,7 @@ export class ToolServiceImpl implements ToolService {
         goals: this.goals,
         delegateAgentTurn: this.delegateAgentTurn,
         reportProgress: (output) => this.emitToolProgress(invocation, output),
+        agentAttachmentRoot: this.agentAttachmentRoot,
       });
     }
 

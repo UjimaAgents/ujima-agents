@@ -82,6 +82,25 @@ export interface ConnectorSpawnV2Services {
       input: AttachmentApprovalRequest,
     ) => ApprovalRequest;
   };
+  /**
+   * Optional attachment-capture hook (agent_attachments_plan.md).
+   * When wired, runs after every successful native MCP invoke and
+   * surfaces `attachment_refs` on the tool result so the agent can
+   * forward images/documents into channel.reply without
+   * round-tripping bytes through its tool input. Absent → identity
+   * no-op; the original tool result reaches the agent verbatim.
+   */
+  attachmentCapture?: (input: {
+    organizationId: string;
+    runId: string;
+    memberId: string;
+    serverId: string;
+    toolName: string;
+    toolCallId: string;
+    toolResult: unknown;
+  }) => {
+    attachmentRefs: { ref: string; category: string; filename: string; byteSize: number }[];
+  };
 }
 
 export interface ConnectorSpawnV2Ctx {
@@ -396,6 +415,44 @@ export async function buildMcpToolDefinitionsV2(
                 ? undefined
                 : result.error ?? 'tool invocation failed',
             });
+          }
+          // Agent-attachments capture (agent_attachments_plan.md).
+          // Runs only when the call completed successfully and the
+          // capture hook is wired. Sniffs bytes out of the tool
+          // result, writes to the agent_attachments store, and
+          // injects `attachment_refs` into the structured output so
+          // the agent can reference them in channel.reply.
+          if (
+            result.ok &&
+            !isWaitingForApproval &&
+            !isWaitingForInput &&
+            services.attachmentCapture
+          ) {
+            try {
+              const capture = services.attachmentCapture({
+                organizationId: ctx.organizationId,
+                runId: ctx.runId,
+                memberId: ctx.memberId,
+                serverId: entry.serverId,
+                toolName: entry.toolName,
+                toolCallId,
+                toolResult: result.output,
+              });
+              if (capture.attachmentRefs.length > 0) {
+                const existing = result.output;
+                const wrapped: Record<string, unknown> =
+                  existing && typeof existing === 'object' && !Array.isArray(existing)
+                    ? { ...(existing as Record<string, unknown>) }
+                    : { value: existing };
+                wrapped.attachment_refs = capture.attachmentRefs;
+                result = { ...result, output: wrapped };
+              }
+            } catch (err) {
+              console.warn(
+                '[connector-spawn-v2] attachment capture threw; falling back to no-capture output',
+                err,
+              );
+            }
           }
           try {
             return toModelToolOutput(result);

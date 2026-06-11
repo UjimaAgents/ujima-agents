@@ -1,5 +1,6 @@
 import type { SqliteDbHandle as DbHandle } from '@ujima/context-store';
 import type {
+  AgentAttachment,
   AgentMcpAttachment,
   AgentToolAttachment,
   ApprovalRequest,
@@ -272,6 +273,16 @@ import {
   saveChannelMcpAttachment as writeChannelMcpAttachment,
   updateChannelAttachmentTier as mutateChannelAttachmentTier,
 } from './channel-mcp-attachments.js';
+import {
+  saveAgentAttachment as writeAgentAttachment,
+  getAgentAttachment as readAgentAttachment,
+  findAgentAttachmentByToolCall as readAgentAttachmentByToolCall,
+  pinAgentAttachmentToMessage as mutatePinAgentAttachmentToMessage,
+  listAgentAttachmentsForRun as readAgentAttachmentsForRun,
+  listExpiredUnpinnedAgentAttachments as readExpiredUnpinnedAgentAttachments,
+  deleteAgentAttachment as removeAgentAttachment,
+  sumAgentAttachmentBytes as readSumAgentAttachmentBytes,
+} from './agent-attachments.js';
 import {
   deleteMcpToolClassification as removeMcpToolClassification,
   getMcpToolClassification as readMcpToolClassification,
@@ -882,6 +893,43 @@ export class Repository {
     memberId: string,
   ): ChannelMcpAttachment[] =>
     readChannelMcpAttachmentsForMember(this.db, organizationId, memberId);
+
+  // Agent-generated attachments (agent_attachments_plan.md). Captured
+  // tool-result bytes + workspace-file copies. Pinned rows survive
+  // for their message's lifetime; unpinned rows age out via the LRU
+  // cleanup job.
+  saveAgentAttachment = (attachment: AgentAttachment): AgentAttachment =>
+    writeAgentAttachment(this.db, attachment);
+  getAgentAttachment = (
+    organizationId: string,
+    id: string,
+  ): AgentAttachment | null => readAgentAttachment(this.db, organizationId, id);
+  findAgentAttachmentByToolCall = (
+    organizationId: string,
+    toolCallId: string,
+    index: number,
+  ): AgentAttachment | null =>
+    readAgentAttachmentByToolCall(this.db, organizationId, toolCallId, index);
+  pinAgentAttachmentToMessage = (
+    organizationId: string,
+    id: string,
+    messageId: string,
+  ): AgentAttachment | null =>
+    mutatePinAgentAttachmentToMessage(this.db, organizationId, id, messageId);
+  listAgentAttachmentsForRun = (
+    organizationId: string,
+    runId: string,
+  ): AgentAttachment[] =>
+    readAgentAttachmentsForRun(this.db, organizationId, runId);
+  listExpiredUnpinnedAgentAttachments = (
+    organizationId: string,
+    createdBefore: string,
+  ): AgentAttachment[] =>
+    readExpiredUnpinnedAgentAttachments(this.db, organizationId, createdBefore);
+  deleteAgentAttachment = (organizationId: string, id: string): void =>
+    removeAgentAttachment(this.db, organizationId, id);
+  sumAgentAttachmentBytes = (organizationId: string): number =>
+    readSumAgentAttachmentBytes(this.db, organizationId);
 
   listMcpServerAttachments = (
     organizationId: string,

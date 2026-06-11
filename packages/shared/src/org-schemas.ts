@@ -222,6 +222,29 @@ export const AttachmentSchema = z.object({
 });
 export type Attachment = z.infer<typeof AttachmentSchema>;
 
+// Agent-generated attachment (agent_attachments_plan.md). Staging
+// area for tool-result captures and workspace-file copies. When the
+// row's `pinnedToMessageId` is null it's eligible for LRU cleanup;
+// once an agent posts a message referencing it, the column is set
+// and the row survives for the message's lifetime.
+export const AgentAttachmentSchema = z.object({
+  id: IdSchema,
+  organizationId: IdSchema,
+  runId: IdSchema,
+  memberId: IdSchema,
+  sourceToolCallId: z.string().nullable(),
+  sourceServerId: z.string().nullable(),
+  sourceToolName: z.string().nullable(),
+  category: AttachmentCategorySchema,
+  mimeType: z.string().min(1),
+  filename: z.string().min(1),
+  storagePath: z.string().min(1),
+  byteSize: z.number().int().nonnegative(),
+  createdAt: TimestampSchema,
+  pinnedToMessageId: z.string().nullable(),
+});
+export type AgentAttachment = z.infer<typeof AgentAttachmentSchema>;
+
 export const MessageAttachmentSchema = z.object({
   messageId: IdSchema,
   attachmentId: IdSchema,

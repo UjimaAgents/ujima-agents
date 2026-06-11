@@ -52,6 +52,24 @@ export interface SpiritServiceOptions {
   attachmentApprovalRequester?: (
     input: AttachmentApprovalRequest,
   ) => ApprovalRequest;
+  /**
+   * Agent-attachments capture hook
+   * (agent_attachments_plan.md). Runs after each successful native
+   * MCP invoke. Returns refs the V2 spawn injects into the tool
+   * result so the agent can pass them to channel.reply. Optional —
+   * absent → tool results pass through unchanged.
+   */
+  attachmentCapture?: (input: {
+    organizationId: string;
+    runId: string;
+    memberId: string;
+    serverId: string;
+    toolName: string;
+    toolCallId: string;
+    toolResult: unknown;
+  }) => {
+    attachmentRefs: { ref: string; category: string; filename: string; byteSize: number }[];
+  };
 }
 
 export type SpiritMcpPool = McpRuntimePool;
