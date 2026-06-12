@@ -532,6 +532,66 @@ describe('resolveAttachmentRefs — atomic commitBytes (bot Round 2 high)', () =
   });
 });
 
+describe('resolveAttachmentRefs — workspace_glob inner-loop rollback (bot Round 2 follow-up)', () => {
+  it('byte-cap firing midway through a glob expansion cleans up earlier materializations', async () => {
+    const { agentRoot, workspaceRoot } = tempPair();
+    try {
+      // Drop 5 files each ~5MB so the combined-byte cap (20MB)
+      // fires after the 5th iteration pushes the total to 25MB.
+      // Pre-fix the function returned {ok:false} but the 4
+      // earlier-completed materializations remained on disk +
+      // in the DB without any outer-loop handle to roll them
+      // back.
+      const dir = join(workspaceRoot, 'big');
+      mkdirSync(dir, { recursive: true });
+      const pad = Buffer.alloc(5 * 1024 * 1024 - SMALL_PNG.length, 0xa1);
+      const heavy = Buffer.concat([SMALL_PNG, pad]);
+      for (const name of ['a.png', 'b.png', 'c.png', 'd.png', 'e.png']) {
+        writeFileSync(join(dir, name), heavy);
+      }
+
+      const repo = fakeRepo();
+      const result = await resolveAttachmentRefs(
+        {
+          repo: {
+            ...repo,
+            deleteAgentAttachment: (_org: string, id: string) => {
+              const idx = repo.agentAttachments.findIndex((a) => a.id === id);
+              if (idx >= 0) repo.agentAttachments.splice(idx, 1);
+            },
+            deleteAttachment: (_org: string, id: string): number => {
+              const idx = repo.attachments.findIndex((a) => a.id === id);
+              if (idx >= 0) {
+                repo.attachments.splice(idx, 1);
+                return 1;
+              }
+              return 0;
+            },
+          } as never,
+          agentAttachmentRoot: agentRoot,
+          workspaceRoot,
+          organizationId: 'org_test',
+          runId: 'run_test',
+          memberId: 'mem_test',
+        },
+        [{ refType: 'workspace_glob', value: 'big/*.png' }],
+      );
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error).toContain('combined size');
+      // EVERY iteration that ran (including the one that pushed
+      // us over the cap) got rolled back. Nothing remains in the
+      // DB and the on-disk files for those iterations were
+      // unlinked.
+      expect(repo.agentAttachments).toHaveLength(0);
+      expect(repo.attachments).toHaveLength(0);
+    } finally {
+      rmSync(agentRoot, { recursive: true, force: true });
+      rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('resolveAttachmentRefs — partial-failure rollback (bot Round 1 medium)', () => {
   it('a failing 3rd ref rolls back the 1st and 2nd refs', async () => {
     const { agentRoot, workspaceRoot } = tempPair();

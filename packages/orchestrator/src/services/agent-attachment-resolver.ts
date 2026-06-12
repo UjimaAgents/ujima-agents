@@ -441,6 +441,56 @@ async function resolveWorkspaceGlobRef(
   let cumulativeBytes = 0;
   const materializations: ResolvedAttachmentMaterialization[] = [];
   const absolutePaths: (string | undefined)[] = [];
+  // Inner-loop rollback (bot Round 2 follow-up high). Each
+  // resolveWorkspacePathRef call below writes a file + agent_attachments
+  // row + attachments row before returning. If a LATER iteration
+  // fails (cap exceeded, individual file rejected for size, etc.)
+  // the outer resolveAttachmentRefs loop only sees this function's
+  // single `{ok:false}` return — it has no entries on its
+  // materializations list to roll back. Without the local rollback
+  // here, every successful earlier iteration in this glob leaks
+  // its file + rows. Track each completed iteration and walk in
+  // reverse on any failure.
+  const rollbackEarlier = (): void => {
+    for (let i = materializations.length - 1; i >= 0; i -= 1) {
+      const m = materializations[i];
+      const path = absolutePaths[i];
+      if (!m) continue;
+      if (path) {
+        try {
+          rmSync(path, { force: true });
+        } catch (e) {
+          console.warn(
+            '[agent-attachment-resolver] glob rollback file delete failed',
+            path,
+            e,
+          );
+        }
+      }
+      if (m.agentAttachmentId && deps.repo.deleteAgentAttachment) {
+        try {
+          deps.repo.deleteAgentAttachment(deps.organizationId, m.agentAttachmentId);
+        } catch (e) {
+          console.warn(
+            '[agent-attachment-resolver] glob rollback agent_attachments delete failed',
+            m.agentAttachmentId,
+            e,
+          );
+        }
+      }
+      if (deps.repo.deleteAttachment) {
+        try {
+          deps.repo.deleteAttachment(deps.organizationId, m.attachmentId);
+        } catch (e) {
+          console.warn(
+            '[agent-attachment-resolver] glob rollback attachments delete failed',
+            m.attachmentId,
+            e,
+          );
+        }
+      }
+    }
+  };
   for (const rel of matches) {
     const result = resolveWorkspacePathRef(
       deps,
@@ -449,9 +499,37 @@ async function resolveWorkspaceGlobRef(
       newAttId,
       newNow,
     );
-    if (!result.ok) return result;
+    if (!result.ok) {
+      rollbackEarlier();
+      return result;
+    }
     cumulativeBytes += result.materialization.byteSize;
     if (cumulativeBytes > WORKSPACE_GLOB_BYTES_CAP) {
+      // Roll back the iteration that just succeeded (this one is
+      // already in `result`) AND every earlier one.
+      try {
+        if (result.absolutePath) rmSync(result.absolutePath, { force: true });
+      } catch {
+        // already logged via rollbackEarlier semantics
+      }
+      if (deps.repo.deleteAgentAttachment) {
+        try {
+          deps.repo.deleteAgentAttachment(
+            deps.organizationId,
+            result.materialization.agentAttachmentId,
+          );
+        } catch {
+          // silent — best-effort cleanup
+        }
+      }
+      if (deps.repo.deleteAttachment) {
+        try {
+          deps.repo.deleteAttachment(deps.organizationId, result.materialization.attachmentId);
+        } catch {
+          // silent
+        }
+      }
+      rollbackEarlier();
       return {
         ok: false,
         error: `workspace_glob combined size exceeds ${WORKSPACE_GLOB_BYTES_CAP} bytes (cap reached at ${cumulativeBytes}); narrow the pattern`,
