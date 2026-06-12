@@ -713,15 +713,26 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     conversations,
   );
 
-  // Agent-attachments root resolved once so both the
-  // attachment-capture closure below AND the channel-tool resolver
-  // (via ToolExecutionContext.agentAttachmentRoot) point at the
-  // same directory.
-  const agentAttachmentRoot = join(
-    context.archiveRoot ?? process.env.UJIMA_HOME ?? process.cwd(),
-    'attachments',
-    'agent-generated',
-  );
+  // Agent-attachments roots — TWO related paths, kept separate to
+  // match the storage-path contract the web API + LRU cleanup
+  // depend on.
+  //
+  //   attachmentStoreRoot   = <home>/attachments/
+  //                           (the same root the web API resolves
+  //                            against; storagePath columns are
+  //                            relative to this)
+  //   agentAttachmentRoot   = <home>/attachments/agent-generated/
+  //                           (the subroot writers append to when
+  //                            building on-disk paths)
+  //
+  // storagePath is canonical = `agent-generated/<orgId>/<runId>/<id>.<ext>`,
+  // so it works for both the web API reader (joins against the
+  // store root) and the LRU sweeper (same root). Writers join
+  // bare `<orgId>/<runId>/<id>.<ext>` against the agent-generated
+  // subroot to produce the same absolute path.
+  const ujimaHome = context.archiveRoot ?? process.env.UJIMA_HOME ?? process.cwd();
+  const attachmentStoreRoot = join(ujimaHome, 'attachments');
+  const agentAttachmentRoot = join(attachmentStoreRoot, 'agent-generated');
 
   const innerTools = new ToolServiceImpl(
     context.teamStore,
@@ -878,7 +889,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
       try {
         cleanupExpiredAgentAttachments({
           repo: context.repo,
-          agentAttachmentRoot,
+          attachmentStoreRoot,
         });
       } catch (err) {
         console.warn('[agent-attachment-cleanup] sweep threw', err);

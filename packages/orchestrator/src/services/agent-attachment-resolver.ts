@@ -26,7 +26,16 @@
 
 import { randomUUID } from 'node:crypto';
 import { isAbsolute, join, resolve as resolvePath } from 'node:path';
-import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import {
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import type { AgentAttachment, Attachment, AttachmentCategory } from '@ujima/shared';
 import type { ApiRepository } from './repository-reader.js';
 import { sniffMimeAndCategory } from './agent-attachment-capture.js';
@@ -63,11 +72,20 @@ export interface AttachmentResolverDeps {
     | 'pinAgentAttachmentToMessage'
     | 'getAgentAttachment'
     | 'saveAttachment'
+    | 'deleteAttachment'
+    | 'deleteAgentAttachment'
   > & {
     // The user-attachment writer (existing API). Different repos may
     // expose this under different names; the orchestrator's Repository
     // class has `saveAttachment`.
     saveAttachment?: (attachment: Attachment) => Attachment;
+    /**
+     * Hard-delete for both rollback (this module) AND the LRU cleanup
+     * job (agent-attachment-capture.ts). Resolver-side tests stub
+     * these as no-ops; real Repository implementations provide them.
+     */
+    deleteAttachment?: (organizationId: string, attachmentId: string) => number;
+    deleteAgentAttachment?: (organizationId: string, attachmentId: string) => void;
   };
   agentAttachmentRoot: string;
   /** Org workspace root, when known. Null when the org has no path set. */
@@ -119,22 +137,85 @@ export async function resolveAttachmentRefs(
   const newNow = deps.now ?? (() => new Date().toISOString());
   const materializations: ResolvedAttachmentMaterialization[] = [];
 
+  // Rollback handles for atomicity (bot Round 1 medium). Each ref
+  // writer that performs side effects (file write + agent_attachments
+  // row + user-attachment row) appends a handle here. If a LATER ref
+  // fails, we walk this list in reverse and undo each — files
+  // deleted, rows removed — so the tool returns a clean rejection
+  // without leaking partial state. tool_call refs (which only
+  // write a user-attachment row pointing at an EXISTING
+  // agent_attachments file) push a partial handle without a file
+  // path; only the user-attachment row gets rolled back, since
+  // the underlying file is owned by the capture pass that wrote it.
+  const rollbacks: {
+    /** Absolute on-disk path the resolver wrote, when applicable. */
+    filePath?: string;
+    /** agent_attachments id, when this resolver created the row. */
+    agentAttachmentId?: string;
+    /** user-attachment (message_attachments source) id; always present. */
+    userAttachmentId: string;
+  }[] = [];
+
+  const failWithRollback = (err: ResolveResultErr): ResolveResultErr => {
+    // Reverse order so later writes (which might depend on earlier
+    // ones) get undone first. All operations are best-effort —
+    // failures here log but don't surface, since the caller already
+    // saw the original failure.
+    for (let i = rollbacks.length - 1; i >= 0; i -= 1) {
+      const handle = rollbacks[i];
+      if (!handle) continue;
+      if (handle.filePath) {
+        try {
+          rmSync(handle.filePath, { force: true });
+        } catch (e) {
+          console.warn('[agent-attachment-resolver] rollback file delete failed', handle.filePath, e);
+        }
+      }
+      if (handle.agentAttachmentId && deps.repo.deleteAgentAttachment) {
+        try {
+          deps.repo.deleteAgentAttachment(deps.organizationId, handle.agentAttachmentId);
+        } catch (e) {
+          console.warn('[agent-attachment-resolver] rollback agent_attachments delete failed', handle.agentAttachmentId, e);
+        }
+      }
+      if (deps.repo.deleteAttachment) {
+        try {
+          deps.repo.deleteAttachment(deps.organizationId, handle.userAttachmentId);
+        } catch (e) {
+          console.warn('[agent-attachment-resolver] rollback attachments delete failed', handle.userAttachmentId, e);
+        }
+      }
+    }
+    return err;
+  };
+
   for (const ref of refs) {
     if (ref.refType === 'tool_call') {
       const result = resolveToolCallRef(deps, ref, newAttId, newNow);
-      if (!result.ok) return result;
+      if (!result.ok) return failWithRollback(result);
+      rollbacks.push({ userAttachmentId: result.materialization.attachmentId });
       materializations.push(result.materialization);
       continue;
     }
     if (ref.refType === 'base64') {
       const result = resolveBase64Ref(deps, ref, newId, newAttId, newNow);
-      if (!result.ok) return result;
+      if (!result.ok) return failWithRollback(result);
+      rollbacks.push({
+        filePath: result.absolutePath,
+        agentAttachmentId: result.materialization.agentAttachmentId,
+        userAttachmentId: result.materialization.attachmentId,
+      });
       materializations.push(result.materialization);
       continue;
     }
     if (ref.refType === 'workspace_path') {
       const result = resolveWorkspacePathRef(deps, ref, newId, newAttId, newNow);
-      if (!result.ok) return result;
+      if (!result.ok) return failWithRollback(result);
+      rollbacks.push({
+        filePath: result.absolutePath,
+        agentAttachmentId: result.materialization.agentAttachmentId,
+        userAttachmentId: result.materialization.attachmentId,
+      });
       materializations.push(result.materialization);
       continue;
     }
@@ -147,7 +228,17 @@ export async function resolveAttachmentRefs(
         newNow,
         materializations.length,
       );
-      if (!result.ok) return result;
+      if (!result.ok) return failWithRollback(result);
+      for (let i = 0; i < result.materializations.length; i += 1) {
+        const m = result.materializations[i];
+        if (!m) continue;
+        const path = result.absolutePaths[i];
+        rollbacks.push({
+          ...(path ? { filePath: path } : {}),
+          agentAttachmentId: m.agentAttachmentId,
+          userAttachmentId: m.attachmentId,
+        });
+      }
       materializations.push(...result.materializations);
       continue;
     }
@@ -158,10 +249,18 @@ export async function resolveAttachmentRefs(
 interface SingleOk {
   ok: true;
   materialization: ResolvedAttachmentMaterialization;
+  /**
+   * Absolute on-disk path the resolver wrote, if any. tool_call refs
+   * have no file write (they reuse the captured file) so this is
+   * undefined for those. Surface for rollback bookkeeping only.
+   */
+  absolutePath?: string;
 }
 interface MultiOk {
   ok: true;
   materializations: ResolvedAttachmentMaterialization[];
+  /** Per-materialisation absolute paths, parallel to materializations. */
+  absolutePaths: (string | undefined)[];
 }
 type SingleResult = SingleOk | ResolveResultErr;
 type MultiResult = MultiOk | ResolveResultErr;
@@ -341,6 +440,7 @@ async function resolveWorkspaceGlobRef(
   matches.sort();
   let cumulativeBytes = 0;
   const materializations: ResolvedAttachmentMaterialization[] = [];
+  const absolutePaths: (string | undefined)[] = [];
   for (const rel of matches) {
     const result = resolveWorkspacePathRef(
       deps,
@@ -358,8 +458,9 @@ async function resolveWorkspaceGlobRef(
       };
     }
     materializations.push(result.materialization);
+    absolutePaths.push(result.absolutePath);
   }
-  return { ok: true, materializations };
+  return { ok: true, materializations, absolutePaths };
 }
 
 function guardWorkspacePath(
@@ -386,6 +487,46 @@ function guardWorkspacePath(
     !absolutePath.startsWith(rootResolved + '/')
   ) {
     return { ok: false, error: `workspace_path "${relative}" escapes workspace_root` };
+  }
+  // Symlink escape (bot Round 1, high). A symlink inside
+  // workspace_root pointing OUTSIDE the tree passes the string-
+  // prefix check above — but readFileSync would follow the link
+  // and exfiltrate arbitrary host bytes. Reject any symlink at
+  // either the file OR any parent dir. We use lstat on each
+  // segment + realpath on the whole path; if realpath drifts
+  // outside workspace_root, refuse.
+  //
+  // The lstat pass catches symlinks even when the target doesn't
+  // exist (realpathSync throws in that case). The realpathSync
+  // pass catches the broader case where a symlinked DIR in the
+  // middle of the path points outside.
+  let stat;
+  try {
+    stat = lstatSync(absolutePath);
+  } catch {
+    // File doesn't exist — caller handles ENOENT downstream.
+    return { ok: true, absolutePath };
+  }
+  if (stat.isSymbolicLink()) {
+    return {
+      ok: false,
+      error: `workspace_path "${relative}" is a symlink — symlinks are not allowed for attachment refs`,
+    };
+  }
+  try {
+    const realPath = realpathSync(absolutePath);
+    const realRoot = realpathSync(rootResolved);
+    if (realPath !== realRoot && !realPath.startsWith(realRoot + '/')) {
+      return {
+        ok: false,
+        error: `workspace_path "${relative}" resolves outside workspace_root via symlinked parent directory`,
+      };
+    }
+  } catch (err) {
+    return {
+      ok: false,
+      error: `workspace_path "${relative}" symlink check failed: ${err instanceof Error ? err.message : String(err)}`,
+    };
   }
   return { ok: true, absolutePath };
 }
@@ -484,6 +625,7 @@ function commitBytes(
       category,
       byteSize: bytes.length,
     },
+    absolutePath,
   };
 }
 
@@ -503,23 +645,26 @@ function matchGlob(root: string, pattern: string, cap: number): string[] {
   const matches: string[] = [];
   const walk = (relativeDir: string): void => {
     if (matches.length >= cap) return;
-    let entries: string[];
+    let dirents;
     try {
-      entries = readdirSync(resolvePath(root, relativeDir), { withFileTypes: true }).map(
-        (e) => `${e.name}${e.isDirectory() ? '/' : ''}`,
-      );
+      dirents = readdirSync(resolvePath(root, relativeDir), { withFileTypes: true });
     } catch {
       return;
     }
-    for (const entry of entries) {
-      const isDir = entry.endsWith('/');
-      const name = isDir ? entry.slice(0, -1) : entry;
+    for (const dirent of dirents) {
+      const name = dirent.name;
       if (name.startsWith('.')) continue;
       const rel = relativeDir.length === 0 ? name : `${relativeDir}/${name}`;
-      if (isDir) {
+      // Symlink hardening (bot Round 1, high). Skip ANY symlink the
+      // walker encounters — both link-to-file (attaching arbitrary
+      // host bytes) and link-to-dir (recursing outside the
+      // workspace). The matching guardWorkspacePath check covers
+      // direct workspace_path refs; this covers glob expansion.
+      if (dirent.isSymbolicLink()) continue;
+      if (dirent.isDirectory()) {
         walk(rel);
         if (matches.length >= cap) return;
-      } else if (regex.test(rel)) {
+      } else if (dirent.isFile() && regex.test(rel)) {
         matches.push(rel);
         if (matches.length >= cap) return;
       }

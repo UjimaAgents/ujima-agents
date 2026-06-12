@@ -38,6 +38,17 @@ export interface ConnectOptions {
   clientName?: string;
   clientVersion?: string;
   transport?: Transport;
+  /**
+   * Working directory for stdio MCP child processes. When set, the
+   * spawned process operates with this CWD instead of inheriting the
+   * daemon's. Without this, a stdio MCP like Playwright resolves
+   * relative filenames against `apps/api/` (where dev-local.sh
+   * starts the daemon) rather than the agent's workspace root —
+   * which means screenshots silently land in the repo tree.
+   *
+   * Ignored for non-stdio transports.
+   */
+  cwd?: string;
   onToolCall?: (
     ctx: ToolCallContext,
     mcpId: string,
@@ -54,7 +65,7 @@ export async function connectMCP(
   def: MCPDef,
   options: ConnectOptions = {},
 ): Promise<MCPConnection> {
-  const transport = options.transport ?? buildTransport(def);
+  const transport = options.transport ?? buildTransport(def, { cwd: options.cwd });
   const client = new Client(
     { name: options.clientName ?? 'ujima', version: options.clientVersion ?? '0.1.0' },
     { capabilities: {} },

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AgentAttachment } from '@ujima/shared';
@@ -101,6 +101,35 @@ describe('agent-attachment-capture — sniff + decideCapture (§3.2)', () => {
     expect(
       decideCapture({ bytes: Buffer.from('plain text only') }, undefined),
     ).toBeNull();
+  });
+
+  it('decideCapture: declared application/pdf without sniff match → captures as document (bot Round 1 medium)', () => {
+    // Pre-fix the generic detector only forwarded {data, mimeType}
+    // blobs when mimeType started with image/, so PDFs were silently
+    // dropped. The widened generic + categoryFromMime fallback now
+    // captures them as the right category.
+    const decision = decideCapture(
+      { bytes: Buffer.from('not a real pdf body'), declaredMime: 'application/pdf' },
+      undefined,
+    );
+    expect(decision?.category).toBe('document');
+    expect(decision?.mimeType).toBe('application/pdf');
+  });
+
+  it('decideCapture: declared audio/mpeg without sniff match → captures as audio', () => {
+    const decision = decideCapture(
+      { bytes: Buffer.from('not a real mp3 body'), declaredMime: 'audio/mpeg' },
+      undefined,
+    );
+    expect(decision?.category).toBe('audio');
+  });
+
+  it('decideCapture: text/plain declared mime → still skipped (not binary)', () => {
+    const decision = decideCapture(
+      { bytes: Buffer.from('hello'), declaredMime: 'text/plain' },
+      undefined,
+    );
+    expect(decision).toBeNull();
   });
 });
 
@@ -295,7 +324,7 @@ describe('cleanupExpiredAgentAttachments — LRU sweep', () => {
       );
       const result = cleanupExpiredAgentAttachments({
         repo: repo as never,
-        agentAttachmentRoot: root,
+        attachmentStoreRoot: root,
         ttlHours: 4,
         now: () => new Date('2026-06-11T00:01:00.000Z'),
       });
@@ -304,6 +333,58 @@ describe('cleanupExpiredAgentAttachments — LRU sweep', () => {
       expect(repo.deleted).toEqual(['aatt_old_unpinned']);
     } finally {
       rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('cleanup joins against the attachment store root, NOT the agent-generated subroot (bot Round 2 medium — no double-prefix)', () => {
+    // Regression: previously cleanup took agentAttachmentRoot
+    // (`<home>/attachments/agent-generated/`) and joined the
+    // already-prefixed storage_path against it, producing
+    // `<home>/attachments/agent-generated/agent-generated/...` —
+    // files were never found and never deleted. The fix gives
+    // cleanup the attachmentStoreRoot (`<home>/attachments/`) so
+    // the storage path resolves canonically.
+    const storeRoot = tempRoot();
+    try {
+      // Lay down a file at the canonical location
+      // `<storeRoot>/agent-generated/<org>/<run>/<id>.png` so we
+      // can assert it gets deleted.
+      const orgDir = join(storeRoot, 'agent-generated', 'org_test', 'run_x');
+      mkdirSync(orgDir, { recursive: true });
+      const absPath = join(orgDir, 'aatt_x.png');
+      writeFileSync(absPath, FAKE_PNG);
+      expect(existsSync(absPath)).toBe(true);
+
+      const repo = fakeRepo();
+      repo.saved.push({
+        id: 'aatt_x',
+        organizationId: 'org_test',
+        runId: 'run_x',
+        memberId: 'mem_1',
+        sourceToolCallId: null,
+        sourceServerId: null,
+        sourceToolName: null,
+        category: 'image',
+        mimeType: 'image/png',
+        filename: 'x.png',
+        // Canonical column shape — includes the agent-generated/ prefix.
+        storagePath: 'agent-generated/org_test/run_x/aatt_x.png',
+        byteSize: FAKE_PNG.length,
+        createdAt: '2026-06-01T00:00:00.000Z',
+        pinnedToMessageId: null,
+      });
+
+      cleanupExpiredAgentAttachments({
+        repo: repo as never,
+        attachmentStoreRoot: storeRoot,
+        ttlHours: 4,
+        now: () => new Date('2026-06-11T00:01:00.000Z'),
+      });
+
+      // File was actually deleted from disk.
+      expect(existsSync(absPath)).toBe(false);
+    } finally {
+      rmSync(storeRoot, { recursive: true, force: true });
     }
   });
 });

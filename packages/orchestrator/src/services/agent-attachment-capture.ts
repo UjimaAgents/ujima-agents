@@ -174,12 +174,21 @@ function extractCandidateBlobs(
       }
       return acc;
     }
-    // Generic { data, mimeType: image/* } shape (already requires the
-    // image/* mimeType; left in for non-`type:image` wrappers).
+    // Generic { data, mimeType } shape with a binary mime — covers
+    // PDFs, audio, video, archives, etc. The previous gate was
+    // `mimeType.startsWith('image/')` which silently skipped every
+    // non-image blob (bot Round 1, medium). Now anything with a
+    // recognisable binary mime is sent through; sniffMimeAndCategory
+    // / decideCapture downstream classify into the right category
+    // (document for PDF, etc.) or reject if the bytes don't
+    // actually match. We exclude `text/*` and `application/json`
+    // here so JSON tool results don't get base64-decoded.
     if (
       typeof obj.data === 'string' &&
       typeof obj.mimeType === 'string' &&
-      obj.mimeType.startsWith('image/')
+      !obj.mimeType.startsWith('text/') &&
+      obj.mimeType !== 'application/json' &&
+      obj.mimeType !== 'application/xml'
     ) {
       try {
         acc.push({
@@ -218,12 +227,57 @@ export function decideCapture(
   if (hint === 'never') return null;
   const sniff = sniffMimeAndCategory(blob.bytes);
   if (sniff) return { bytes: blob.bytes, ...sniff };
+  // Sniffer didn't recognise the bytes. Two fallback paths:
+  //   (1) Registry widens the net with a hint (`['image']` etc.) —
+  //       capture as the hint's first declared category. Pre-fix
+  //       behaviour, kept for known generators with non-standard
+  //       byte headers.
+  //   (2) The MCP declared a mime we recognise as binary
+  //       (application/pdf, audio/*, video/*, etc.) — capture as
+  //       the corresponding category. Bot Round 1 medium: prior
+  //       code dropped these silently for any non-image mime.
   if (Array.isArray(hint) && hint.length > 0) {
     return {
       bytes: blob.bytes,
       mimeType: blob.declaredMime ?? 'application/octet-stream',
       category: hint[0] ?? 'image',
     };
+  }
+  const declared = blob.declaredMime;
+  if (declared) {
+    const fromMime = categoryFromMime(declared);
+    if (fromMime) {
+      return { bytes: blob.bytes, mimeType: declared, category: fromMime };
+    }
+  }
+  return null;
+}
+
+/**
+ * Best-effort mime → category mapping for declared mime types the
+ * byte sniffer doesn't recognise. Conservative — unknown mimes
+ * fall through to null so capture skips rather than misclassify.
+ */
+function categoryFromMime(mime: string): AttachmentCategory | null {
+  if (mime.startsWith('image/')) return 'image';
+  if (mime.startsWith('audio/')) return 'audio';
+  if (mime.startsWith('video/')) return 'video';
+  if (
+    mime === 'application/pdf' ||
+    mime === 'application/msword' ||
+    mime.startsWith('application/vnd.openxmlformats-officedocument') ||
+    mime.startsWith('application/vnd.ms-')
+  ) {
+    return 'document';
+  }
+  if (
+    mime === 'application/zip' ||
+    mime === 'application/x-tar' ||
+    mime === 'application/gzip' ||
+    mime === 'application/x-7z-compressed' ||
+    mime === 'application/x-rar-compressed'
+  ) {
+    return 'archive';
   }
   return null;
 }
@@ -474,7 +528,18 @@ export interface AgentAttachmentCleanupDeps {
     // org and didn't bother to list.
     listOrganizations?: () => { id: string }[];
   };
-  agentAttachmentRoot: string;
+  /**
+   * Root of the attachment store (`<home>/attachments/`) — NOT the
+   * agent-generated subroot the writer uses. `row.storagePath`
+   * already includes the `agent-generated/` segment so it can be
+   * read directly by the web API (which joins `<home>/attachments/`
+   * + storagePath). The cleanup sweeper joins against the same
+   * root so writer, reader, and sweeper share one path contract.
+   * Previously this took the agent-generated subroot and the join
+   * produced `<home>/attachments/agent-generated/agent-generated/...`
+   * — files were never found and never deleted.
+   */
+  attachmentStoreRoot: string;
   /** Hours after which unpinned rows are eligible for cleanup. */
   ttlHours?: number;
   /** Override for tests. */
@@ -503,7 +568,7 @@ export function cleanupExpiredAgentAttachments(
   for (const org of orgs) {
     const expired = deps.repo.listExpiredUnpinnedAgentAttachments(org.id, cutoff);
     for (const row of expired) {
-      const absolutePath = `${deps.agentAttachmentRoot}/${row.storagePath}`;
+      const absolutePath = `${deps.attachmentStoreRoot}/${row.storagePath}`;
       try {
         // Use rmSync to handle missing files without throwing —
         // already-gone files just collapse to a no-op (force=true).

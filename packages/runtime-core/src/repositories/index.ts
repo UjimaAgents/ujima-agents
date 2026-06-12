@@ -113,6 +113,7 @@ import {
   saveConversationRead as writeConversationRead,
 } from './conversation-reads.js';
 import {
+  deleteAttachment as removeAttachment,
   getAttachment as readAttachment,
   linkAttachmentsToMessage as writeMessageAttachments,
   listMessageAttachments as readMessageAttachments,
@@ -489,6 +490,8 @@ export class Repository {
   getLatestHumanMessageInThread = (organizationId: string, threadId: string): Message | null =>
     readLatestHumanMessageInThread(this.db, organizationId, threadId);
   saveAttachment = (attachment: Attachment): Attachment => writeAttachment(this.db, attachment);
+  deleteAttachment = (organizationId: string, attachmentId: string): number =>
+    removeAttachment(this.db, organizationId, attachmentId);
   getAttachment = (organizationId: string, attachmentId: string): Attachment | null =>
     readAttachment(this.db, organizationId, attachmentId);
   listMessageAttachments = (messageId: string): Attachment[] =>

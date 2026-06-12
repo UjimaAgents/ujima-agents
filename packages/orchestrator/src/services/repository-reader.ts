@@ -243,6 +243,7 @@ export interface ConversationRepository extends RepositoryReader {
   saveMessage(message: Message): Message;
   updateMessage(message: Message): Message;
   saveAttachment(attachment: Attachment): Attachment;
+  deleteAttachment(organizationId: string, attachmentId: string): number;
   linkAttachmentsToMessage(messageId: string, attachmentIds: string[]): void;
   replaceMessageMentions(messageId: string, mentions: MessageMention[]): MessageMention[];
   listMessageMentions(messageId: string): MessageMention[];

@@ -113,6 +113,40 @@ function buildUserContent(message: Message): UserContent {
   }
 
   const parts: (TextPart | ImagePart | FilePart)[] = [];
+  // PR 12 — when a message carries attachments, lead with a text
+  // INVENTORY block listing each one before any binary part. Two
+  // reasons:
+  //
+  //   (1) Belt-and-braces for vision-capable models. The image/file
+  //       parts below still ride through, but if anything strips
+  //       them downstream (provider config, transcoding bug, etc.)
+  //       the agent still knows attachments exist and can ask the
+  //       sender to repost. Without this, a vision miss looked
+  //       identical to "no screenshot was sent" — exactly the
+  //       Phoebe/Layla loop the live test caught.
+  //   (2) Reasoning-only context. Agents that read scrollback for
+  //       situational awareness ("did Phoebe respond?") need to know
+  //       attachments occurred even when they're not the recipient
+  //       of the image bytes themselves.
+  //
+  // The inventory is a short XML-ish block so the model can parse
+  // it as structured context, not as the sender's prose. Each entry
+  // notes category + filename + mime — enough for the agent to
+  // reason about what's there without seeing pixels.
+  const inventory = attachments
+    .map(
+      (a, i) =>
+        `  <attachment index="${i}" category="${a.category}" filename="${a.filename}" mediaType="${a.mimeType}" />`,
+    )
+    .join('\n');
+  const inventoryBlock =
+    `<message-attachments count="${attachments.length}">\n${inventory}\n` +
+    `  <!-- The actual file content for image/document attachments follows ` +
+    `in this message as multimodal parts. If you don't see those parts ` +
+    `(e.g. your model lacks vision), you can still confirm the sender ` +
+    `attached the file(s) listed above. -->\n</message-attachments>`;
+  parts.push({ type: 'text', text: inventoryBlock });
+
   if (message.content.trim().length > 0) {
     parts.push({ type: 'text', text: message.content });
   }

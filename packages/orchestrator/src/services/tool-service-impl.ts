@@ -576,7 +576,17 @@ export class ToolServiceImpl implements ToolService {
     }
 
     const def = materializeMcpDef(this.repo, attachment.server);
-    const connection = await this.mcpPool.get(def, { agentId: invocation.memberId });
+    // Spawn the MCP child in the org's workspace_root so any file
+    // outputs (Playwright screenshots, generated reports, etc.)
+    // land where the agent expects, not in the daemon's CWD.
+    // See packages/mcp-client/src/pool.ts (PoolGetOptions.cwd) for
+    // the pooling implications.
+    const org = this.repo.getOrganization(invocation.organizationId);
+    const cwd = org?.workspace?.root;
+    const connection = await this.mcpPool.get(def, {
+      agentId: invocation.memberId,
+      ...(cwd ? { cwd } : {}),
+    });
     const result = await connection.callTool(
       {
         agentId: invocation.memberId,

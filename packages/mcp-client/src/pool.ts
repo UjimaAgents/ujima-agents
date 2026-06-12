@@ -21,6 +21,15 @@ export interface PoolGetOptions {
    * affect wrapper behavior, not which MCP process should be reused.
    */
   scopePaths?: string[];
+  /**
+   * Working directory the spawned MCP child process should run in.
+   * Almost always the agent's org workspace_root — keeps filesystem
+   * outputs (Playwright screenshots, etc.) inside the workspace
+   * instead of leaking into the daemon's CWD. Two callers requesting
+   * the same MCP with DIFFERENT cwds will get separate processes
+   * (the cwd is part of the pool key).
+   */
+  cwd?: string;
 }
 
 export interface MCPPool {
@@ -33,16 +42,29 @@ export interface MCPPool {
 
 function poolKey(def: MCPDef, opts?: PoolGetOptions): string {
   const isolated = (def as { isolation?: string }).isolation === 'per-agent';
-  if (isolated && opts?.agentId) return `${def.id}::agent::${opts.agentId}`;
-  return def.id;
+  // The cwd MUST be part of the key — two callers asking for the
+  // same MCP from different workspace roots cannot share a process.
+  // The child's CWD is fixed at spawn time and a Playwright running
+  // for org A would write screenshots into org B's workspace if we
+  // pooled them together.
+  const cwdSuffix = opts?.cwd ? `::cwd::${opts.cwd}` : '';
+  if (isolated && opts?.agentId) return `${def.id}::agent::${opts.agentId}${cwdSuffix}`;
+  return `${def.id}${cwdSuffix}`;
 }
 
 export function createMCPPool(defaults: ConnectOptions = {}): MCPPool {
   const connections = new Map<string, MCPConnection>();
   const pending = new Map<string, Promise<MCPConnection>>();
 
-  async function spawn(def: MCPDef, key: string): Promise<MCPConnection> {
-    const p = connectMCPWithCacheRecovery(def, defaults).then(
+  async function spawn(
+    def: MCPDef,
+    key: string,
+    cwd: string | undefined,
+  ): Promise<MCPConnection> {
+    const connectOptions: ConnectOptions = cwd
+      ? { ...defaults, cwd }
+      : defaults;
+    const p = connectMCPWithCacheRecovery(def, connectOptions).then(
       ({ connection: raw, recovery }) => {
         if (recovery) {
           // Single-line breadcrumb so operators can see why this MCP
@@ -54,9 +76,10 @@ export function createMCPPool(defaults: ConnectOptions = {}): MCPPool {
         }
         const wrapped = wrapWithReconnect(raw, () => {
           // On closed-connection fault, detach from cache so the next
-          // call spawns a fresh process.
+          // call spawns a fresh process. Forward the same cwd so the
+          // respawned child stays in the agent's workspace.
           if (connections.get(key) === wrapped) connections.delete(key);
-          return spawn(def, key);
+          return spawn(def, key, cwd);
         });
         connections.set(key, wrapped);
         pending.delete(key);
@@ -80,7 +103,7 @@ export function createMCPPool(defaults: ConnectOptions = {}): MCPPool {
       const inflight = pending.get(key);
       if (inflight) return inflight;
 
-      return spawn(def, key);
+      return spawn(def, key, opts?.cwd);
     },
 
     has(mcpId, opts) {

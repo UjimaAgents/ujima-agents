@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync, mkdirSync, symlinkSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AgentAttachment, Attachment } from '@ujima/shared';
@@ -358,3 +358,122 @@ describe('resolveAttachmentRefs — base64', () => {
     }
   });
 });
+
+describe('resolveAttachmentRefs — symlink escape (bot Round 1 high)', () => {
+  it('rejects a symlink inside workspace_root that points outside', async () => {
+    const { agentRoot, workspaceRoot } = tempPair();
+    const outsideDir = mkdtempSync(join(tmpdir(), 'ujima-outside-'));
+    try {
+      // Drop a file outside workspace_root, then symlink it from
+      // inside. Pre-fix the string-prefix check accepted this and
+      // readFileSync followed the link to exfiltrate the outside
+      // bytes.
+      const outsideFile = join(outsideDir, 'secret.png');
+      writeFileSync(outsideFile, SMALL_PNG);
+      symlinkSync(outsideFile, join(workspaceRoot, 'link.png'));
+
+      const repo = fakeRepo();
+      const result = await resolveAttachmentRefs(
+        {
+          repo: repo as never,
+          agentAttachmentRoot: agentRoot,
+          workspaceRoot,
+          organizationId: 'org_test',
+          runId: 'run_test',
+          memberId: 'mem_test',
+        },
+        [{ refType: 'workspace_path', value: 'link.png' }],
+      );
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error).toContain('symlink');
+    } finally {
+      rmSync(agentRoot, { recursive: true, force: true });
+      rmSync(workspaceRoot, { recursive: true, force: true });
+      rmSync(outsideDir, { recursive: true, force: true });
+    }
+  });
+
+  it('workspace_glob walker skips symlinks', async () => {
+    const { agentRoot, workspaceRoot } = tempPair();
+    const outsideDir = mkdtempSync(join(tmpdir(), 'ujima-outside-'));
+    try {
+      const dir = join(workspaceRoot, 'shots');
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, 'real.png'), SMALL_PNG);
+      const outsideFile = join(outsideDir, 'leak.png');
+      writeFileSync(outsideFile, SMALL_PNG);
+      symlinkSync(outsideFile, join(dir, 'leak.png'));
+
+      const repo = fakeRepo();
+      const result = await resolveAttachmentRefs(
+        {
+          repo: repo as never,
+          agentAttachmentRoot: agentRoot,
+          workspaceRoot,
+          organizationId: 'org_test',
+          runId: 'run_test',
+          memberId: 'mem_test',
+        },
+        [{ refType: 'workspace_glob', value: 'shots/*.png' }],
+      );
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      // Only the real file matched; the symlink was skipped.
+      expect(result.materializations).toHaveLength(1);
+    } finally {
+      rmSync(agentRoot, { recursive: true, force: true });
+      rmSync(workspaceRoot, { recursive: true, force: true });
+      rmSync(outsideDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('resolveAttachmentRefs — partial-failure rollback (bot Round 1 medium)', () => {
+  it('a failing 3rd ref rolls back the 1st and 2nd refs', async () => {
+    const { agentRoot, workspaceRoot } = tempPair();
+    try {
+      const repo = fakeRepo();
+      const result = await resolveAttachmentRefs(
+        {
+          repo: {
+            ...repo,
+            deleteAttachment: (_org: string, id: string): number => {
+              const idx = repo.attachments.findIndex((a) => a.id === id);
+              if (idx >= 0) {
+                repo.attachments.splice(idx, 1);
+                return 1;
+              }
+              return 0;
+            },
+            deleteAgentAttachment: (_org: string, id: string): void => {
+              const idx = repo.agentAttachments.findIndex((a) => a.id === id);
+              if (idx >= 0) repo.agentAttachments.splice(idx, 1);
+            },
+          } as never,
+          agentAttachmentRoot: agentRoot,
+          workspaceRoot,
+          organizationId: 'org_test',
+          runId: 'run_test',
+          memberId: 'mem_test',
+        },
+        [
+          { refType: 'base64', value: SMALL_PNG.toString('base64'), filename: 'first.png' },
+          { refType: 'base64', value: SMALL_PNG.toString('base64'), filename: 'second.png' },
+          // 2MB > 1MB cap → fails after the first two have written.
+          { refType: 'base64', value: Buffer.alloc(2 * 1024 * 1024, 0xab).toString('base64') },
+        ],
+      );
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      // All rows the first two writers added were rolled back.
+      expect(repo.agentAttachments).toHaveLength(0);
+      expect(repo.attachments).toHaveLength(0);
+    } finally {
+      rmSync(agentRoot, { recursive: true, force: true });
+      rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+});
+
+void existsSync;

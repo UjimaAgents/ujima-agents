@@ -48,6 +48,23 @@ export function saveAttachment(db: DbHandle, attachment: Attachment): Attachment
   return payload;
 }
 
+/**
+ * Hard-delete a single attachment row. Used by the agent-attachment
+ * resolver's rollback path when a later ref in a batch fails after
+ * earlier ones already wrote rows (bot Round 1 medium). Returns the
+ * number of rows affected so callers can detect double-deletes.
+ */
+export function deleteAttachment(
+  db: DbHandle,
+  organizationId: string,
+  attachmentId: string,
+): number {
+  const info = db
+    .prepare(`DELETE FROM attachments WHERE organization_id = ? AND id = ?`)
+    .run(organizationId, attachmentId);
+  return info.changes ?? 0;
+}
+
 export function getAttachment(
   db: DbHandle,
   organizationId: string,

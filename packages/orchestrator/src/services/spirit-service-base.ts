@@ -406,6 +406,57 @@ export class SpiritServiceBase {
                   ? result.error
                   : 'replay invocation failed',
           });
+          // Agent-attachments capture (live-test gap PR 12).
+          //
+          // The V2 native execute closure runs the capture pass on
+          // every successful invoke — but only for calls that go
+          // THROUGH that closure. Approval-gated MCP calls bypass
+          // it: the V2 closure returns waiting_for_approval, the
+          // run pauses, the user approves, then this replay path
+          // re-invokes via the inner ToolService directly. No
+          // upstream wrapper. So without this branch, every
+          // gated MCP tool's screenshot/image output silently
+          // misses the capture pipeline.
+          //
+          // The capture closure mutates the result.output to
+          // include `attachment_refs`. The replayed result is
+          // persisted via the inner ToolService's runStep machinery
+          // — by mutating result here BEFORE the agent reads it on
+          // the resumed turn, the agent sees the refs on the same
+          // path as a non-gated call.
+          if (success && result && this.attachmentCapture) {
+            try {
+              const capture = this.attachmentCapture({
+                organizationId: invocation.organizationId,
+                runId: invocation.runId,
+                memberId: invocation.memberId,
+                serverId,
+                toolName,
+                toolCallId: invocation.toolCallId,
+                toolResult: result.output,
+              });
+              if (capture.attachmentRefs.length > 0) {
+                const existing = result.output;
+                const wrapped: Record<string, unknown> =
+                  existing && typeof existing === 'object' && !Array.isArray(existing)
+                    ? { ...(existing as Record<string, unknown>) }
+                    : { value: existing };
+                wrapped.attachment_refs = capture.attachmentRefs;
+                wrapped._attachment_capture_note =
+                  `${capture.attachmentRefs.length} attachment(s) from this tool result ` +
+                  `have been captured and are ready to attach to a chat message. ` +
+                  `Use the refs in \`attachment_refs\` with channel.reply / channel.post / ` +
+                  `channel.dm via { refType: "tool_call", value: "<ref>" }. ` +
+                  `Do NOT save these bytes to disk first.`;
+                result.output = wrapped;
+              }
+            } catch (err) {
+              console.warn(
+                '[spirit-service-base] replay capture threw',
+                err,
+              );
+            }
+          }
         }
       }
     }

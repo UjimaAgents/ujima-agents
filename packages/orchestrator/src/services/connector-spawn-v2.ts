@@ -229,8 +229,14 @@ export async function buildMcpToolDefinitionsV2(
     // both regardless (spirit-agent-run.ts:824-879).
     let refreshed = false;
     try {
+      // Spawn the MCP child in the org's workspace_root so file
+      // outputs (Playwright screenshots, generated reports, etc.)
+      // land in the agent's workspace rather than the daemon's CWD.
+      const orgForCwd = services.repo.getOrganization(ctx.organizationId);
+      const cwd = orgForCwd?.workspace?.root;
       const connection = await services.mcpPool.get(def, {
         agentId: ctx.memberId,
+        ...(cwd ? { cwd } : {}),
       });
       const liveTools = await connection.listTools();
       toolList = liveTools.map((t) => {
@@ -455,12 +461,6 @@ export async function buildMcpToolDefinitionsV2(
                   `channel.dm via { refType: "tool_call", value: "<ref>" }. ` +
                   `Do NOT save these bytes to disk first.`;
                 result = { ...result, output: wrapped };
-                // Operator-visible signal so live-test issues are
-                // visible in the dev log without DB inspection.
-                console.warn(
-                  `[connector-spawn-v2] captured ${capture.attachmentRefs.length} attachment(s) ` +
-                    `from ${entry.serverId}:${entry.toolName} (toolCall=${toolCallId})`,
-                );
               }
             } catch (err) {
               console.warn(
