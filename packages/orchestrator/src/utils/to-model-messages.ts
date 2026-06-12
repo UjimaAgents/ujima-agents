@@ -23,29 +23,16 @@ import { mcpTool } from '../tools/mcp.js';
 import { filterVisibleMessages } from './message-visibility.js';
 import { toModelToolName } from '../tools/names.js';
 import { toModelToolErrorOutput, toModelToolOutput } from '../services/tool-loop-result.js';
-import {
-  isArchivedConversation,
-  isCompactedConversation,
-  isCompactedSelfNote,
-  isCompactionSummarySystemMessage,
-} from '../services/conversation-summary.js';
+import { isCompactionSummarySystemMessage } from '../services/conversation-summary.js';
 import { messageToolCallsToModelMessages, sanitizeModelMessages } from './run-transcript.js';
 
 export function toModelMessages(messages: Message[], selfId?: string): ModelMessage[] {
   return sanitizeModelMessages(filterVisibleMessages(messages)
     .filter(
       (message) =>
-        !isCompactedHistorySource(message) &&
         (message.kind !== 'system' || isCompactionSummarySystemMessage(message)),
     )
     .flatMap((message) => messageToModelMessages(message, selfId)));
-}
-
-function isCompactedHistorySource(message: Message): boolean {
-  if (isCompactedSelfNote(message) || isCompactedConversation(message)) {
-    return true;
-  }
-  return isArchivedConversation(message) && message.content.includes('compactedInto=');
 }
 
 function messageToModelMessages(message: Message, selfId?: string): ModelMessage[] {

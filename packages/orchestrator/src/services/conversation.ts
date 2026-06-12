@@ -24,7 +24,7 @@ import {
 import type { RealtimeService } from './context.js';
 import { selfChannelId } from './member-channels.js';
 import { buildMessage, buildSystemMessage } from './message-factory.js';
-import { formatTimestampedContent } from './conversation-summary.js';
+import { formatTimestampedContent, isCompactionSummarySystemMessage } from './conversation-summary.js';
 import type {
   ConversationRepository,
   PaginatedMessages,
@@ -414,6 +414,23 @@ export class ConversationService {
 
       if (this.onMessagePublished) {
         this.fanout('onMessagePublished', Promise.resolve(this.onMessagePublished(emittedMessage)));
+      }
+    }
+    if (!isCompactionSummarySystemMessage(emittedMessage)) {
+      if (channel?.kind === 'self') {
+        compactSelfNotesIfNeeded(
+          this.compactionContext(),
+          emittedMessage.organizationId,
+          emittedMessage.senderId,
+          emittedMessage.channelId ?? emittedMessage.threadId,
+        );
+      } else {
+        compactConversationIfNeeded(
+          this.compactionContext(),
+          emittedMessage.organizationId,
+          emittedMessage.threadId,
+          emittedMessage.senderId,
+        );
       }
     }
     return emittedMessage;
@@ -855,9 +872,7 @@ export class ConversationService {
       ...(input.clientMessageId ? { clientMessageId: input.clientMessageId } : {}),
     });
 
-    const published = this.publishMessage(message, undefined, input.attachmentIds);
-    compactConversationIfNeeded(this.compactionContext(), input.organizationId, input.threadId, input.senderId);
-    return published;
+    return this.publishMessage(message, undefined, input.attachmentIds);
   }
 
   postToChannel(input: {
@@ -1008,14 +1023,12 @@ export class ConversationService {
       createdAt: now,
     });
 
-    const published = this.publishMessage(
+    return this.publishMessage(
       message,
       undefined,
       input.attachmentIds,
       input.ignore ? { suppressDmAlerts: true } : undefined,
     );
-    compactConversationIfNeeded(this.compactionContext(), input.organizationId, threadId, input.senderId);
-    return published;
   }
 
   /** Persisted DM with `kind: system` (e.g. approval relay to owner). */
@@ -1137,9 +1150,7 @@ export class ConversationService {
       ...(input.clientMessageId ? { clientMessageId: input.clientMessageId } : {}),
     });
 
-    const published = this.publishMessage(message, [], input.attachmentIds);
-    compactSelfNotesIfNeeded(this.compactionContext(), input.organizationId, member.id, channelId);
-    return published;
+    return this.publishMessage(message, [], input.attachmentIds);
   }
 
   archiveConversation(input: {

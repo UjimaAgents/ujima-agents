@@ -138,8 +138,6 @@ export class OnboardingService {
 
     const workspaceRoot = resolve(input.workspaceRoot);
     const normalizedNewRoot = normalizeProjectFolderPath(workspaceRoot);
-    const emptyCatalog = { get: () => undefined };
-    reclaimOrphanOrganizationsAtPath(this.repo, emptyCatalog, normalizedNewRoot);
 
     const existingOrgs = this.repo.listOrganizationsWithSignIn();
     for (const org of existingOrgs) {
@@ -173,6 +171,9 @@ export class OnboardingService {
     if (missingProviders.length > 0) {
       throw new Error(`Missing provider keys: ${missingProviders.join(', ')}`);
     }
+
+    const emptyCatalog = { get: () => undefined };
+    reclaimOrphanOrganizationsAtPath(this.repo, emptyCatalog, normalizedNewRoot);
 
     const organizationId = randomUUID();
     // Owner-targeting edges win over the framework's normalised set —

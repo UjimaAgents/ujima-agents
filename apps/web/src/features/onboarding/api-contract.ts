@@ -1,6 +1,10 @@
 import type { OnboardingRequest } from "@ujima/api-schema";
 import { normalizeProviderKey, normalizeProviderToken } from "@/features/providers/catalog";
-import { OWNER_MANAGER_SENTINEL, type OnboardingDraft } from "./types";
+import {
+  OWNER_MANAGER_SENTINEL,
+  type OnboardingDraft,
+  type TeamProviderDraft,
+} from "./types";
 
 export const MIN_TEAM_AGENTS = 2;
 
@@ -22,6 +26,11 @@ const PROVIDER_NAME_MAP: Record<string, string> = {
 export function normalizeProviderName(value: string) {
   const normalized = normalizeProviderKey(value);
   return PROVIDER_NAME_MAP[normalized] ?? "openrouter";
+}
+
+export function isProviderDraftComplete(provider: TeamProviderDraft): boolean {
+  const name = provider.name.trim();
+  return Boolean(name && (normalizeProviderName(name) === "ollama" || provider.apiKey.trim()));
 }
 
 function toRoleTitle(name: string) {

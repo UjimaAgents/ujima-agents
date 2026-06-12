@@ -55,6 +55,9 @@ export function validateProviderKeys(
     if (!role.provider) {
       continue;
     }
+    if (role.provider === 'ollama') {
+      continue;
+    }
 
     if (!providerKeys[role.provider] && !missingProviders.includes(role.provider)) {
       missingProviders.push(role.provider);

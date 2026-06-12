@@ -257,6 +257,7 @@ export const MessageMetadataSchema = z.object({
   failedTrace: z.boolean().optional(),
   stoppedTrace: z.boolean().optional(),
   traceOnly: z.boolean().optional(),
+  compactedInto: IdSchema.optional(),
 }).optional();
 export type MessageMetadata = z.infer<typeof MessageMetadataSchema>;
 

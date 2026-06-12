@@ -722,6 +722,7 @@ export function DetailsSidebar({
 /* ── Changes tab (aggregated file diffs from a run) ────────────────── */
 
 interface FileChange {
+  id: string;
   file: string;
   additions: number;
   deletions: number;
@@ -732,6 +733,13 @@ interface FileChange {
 function collectFileChanges(steps: TraceStepData[]): FileChange[] {
   const seen = new Set<string>();
   const changes: FileChange[] = [];
+  const fileCounts = new Map<string, number>();
+
+  const pushChange = (change: Omit<FileChange, "id">) => {
+    const index = fileCounts.get(change.file) ?? 0;
+    fileCounts.set(change.file, index + 1);
+    changes.push({ ...change, id: `${change.file}:${change.stepTitle}:${index}` });
+  };
 
   for (const step of steps) {
     // Collect aggregated edit operations
@@ -741,7 +749,7 @@ function collectFileChanges(steps: TraceStepData[]): FileChange[] {
           const key = `${op.file}:${op.body.slice(0, 80)}`;
           if (!seen.has(key)) {
             seen.add(key);
-            changes.push({
+            pushChange({
               file: op.file,
               additions: op.additions,
               deletions: op.deletions,
@@ -758,7 +766,7 @@ function collectFileChanges(steps: TraceStepData[]): FileChange[] {
       const key = `${step.filesystem.resourcePath}:${step.filesystem.body.slice(0, 80)}`;
       if (!seen.has(key)) {
         seen.add(key);
-        changes.push({
+        pushChange({
           file: step.filesystem.resourcePath,
           additions: 0,
           deletions: 0,
@@ -788,7 +796,7 @@ export function ChangesTab({ steps }: { steps: TraceStepData[] }) {
   return (
     <div className="space-y-3">
       {changes.map((change) => (
-        <div key={change.file} className="overflow-hidden rounded-lg border border-foreground/10">
+        <div key={change.id} className="overflow-hidden rounded-lg border border-foreground/10">
           <div className="flex items-center justify-between border-b border-foreground/[0.06] bg-foreground/[0.015] px-3 py-2">
             <span className="text-xs font-semibold text-foreground/90 truncate">
               {change.file}
