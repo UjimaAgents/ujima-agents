@@ -3,7 +3,7 @@
 import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useChatScrollToBottom } from "../hooks/use-chat-scroll-to-bottom";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { File, FileArchive, FileAudio, FileImage, FileText, FileVideo, Square, SquarePen, Terminal } from "lucide-react";
+import { File, FileArchive, FileAudio, FileImage, FileText, FileVideo, Square, Terminal } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import type { BootstrapResponse, SkillInvocationResponse } from "@ujima/api-schema";
 import type { SelectedConversation } from "../types";
@@ -15,6 +15,8 @@ import {
   ChatTabs,
   ChatMessageList,
   ChatInput,
+  ChangesTab,
+  CollapsibleHeaderActions,
   DetailsSidebar,
   ChatMessage,
   ApprovalCard,
@@ -54,8 +56,6 @@ import { runToActivity } from "../activity-events";
 import { pendingApprovalVisibleInChannelView, queueApprovals } from "../approval-thread-filter";
 import { ReasoningTracePanel } from "./reasoning-trace-panel";
 import { QuestionCard } from "./chat/question-card";
-import { ChannelChatHeaderControls } from "./chat/channel-chat-header-controls";
-import { FontSizeControl } from "./chat/font-size-control";
 import {
   buildTabCounts,
   collectConversationAttachments,
@@ -63,7 +63,6 @@ import {
   countSemanticActivityEvents,
   isLiveRun,
 } from "../feed-selectors";
-import { AgentChatHeaderControls } from "./chat/agent-chat-header-controls";
 import type { Member, ShellApprovalMode, InteractiveQuestion } from "@ujima/shared/browser";
 
 const CHANNEL_TABS: ChatTab[] = [
@@ -899,33 +898,36 @@ export function ChannelView({
           status={selectedStatus.variant}
           statusLabel={selectedStatus.label}
           actions={
-            <div className="flex items-center gap-2">
-              <FontSizeControl value={chatFontSize} onChange={setChatFontSize} />
-              {isAgent && agentMember && onMemberUpdated ? (
-                <>
-                  <AgentChatHeaderControls
-                    orgId={bootstrap.organization?.id ?? ""}
-                    member={agentMember}
-                    providers={bootstrap.providers}
-                    orgShellApprovalMode={orgShellApprovalMode}
-                    goalMode={goalMode}
-                    onMemberUpdated={onMemberUpdated}
-                  />
-                  {onOpenAgentEditor ? (
-                    <button
-                      type="button"
-                      onClick={onOpenAgentEditor}
-                      className="inline-flex items-center gap-1.5 rounded-md border border-zinc-200 bg-zinc-50 px-2 py-1 text-[11px] font-semibold text-zinc-700 transition hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
-                    >
-                      <SquarePen className="h-3.5 w-3.5" />
-                      Edit
-                    </button>
-                  ) : null}
-                </>
-              ) : conversation.type === "channel" && onOrgShellApprovalModeChange ? (
-                <ChannelChatHeaderControls value={orgShellApprovalMode} onChange={onOrgShellApprovalModeChange} />
-              ) : undefined}
-            </div>
+            isAgent && agentMember && onMemberUpdated ? (
+              <CollapsibleHeaderActions
+                kind="agent"
+                chatFontSize={chatFontSize}
+                onChatFontSizeChange={setChatFontSize}
+                orgId={bootstrap.organization?.id ?? ""}
+                agentMember={agentMember}
+                providers={bootstrap.providers}
+                orgShellApprovalMode={orgShellApprovalMode}
+                goalMode={goalMode}
+                onMemberUpdated={onMemberUpdated}
+                onOpenAgentEditor={onOpenAgentEditor}
+              />
+            ) : conversation.type === "channel" && onOrgShellApprovalModeChange ? (
+              <CollapsibleHeaderActions
+                kind="channel"
+                chatFontSize={chatFontSize}
+                onChatFontSizeChange={setChatFontSize}
+                channelValue={orgShellApprovalMode}
+                onChannelChange={onOrgShellApprovalModeChange}
+              />
+            ) : (
+              <CollapsibleHeaderActions
+                kind="channel"
+                chatFontSize={chatFontSize}
+                onChatFontSizeChange={setChatFontSize}
+                channelValue={"never" as ShellApprovalMode}
+                onChannelChange={async () => {}}
+              />
+            )
           }
           showDetails={showDetails}
           onToggleDetails={() => setShowDetails(!showDetails, { userIntent: true })}
@@ -1228,11 +1230,7 @@ export function ChannelView({
         <DragHandle side="right" onResize={setDetailsWidth} />
         <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
           <DetailsSidebar
-            agentName={conversation.name}
-            agentColorIndex={conversationColorIndex}
-            statusLabel={selectedStatus.label}
-            timeLabel="—"
-            tabs={["Thinking trace", "Changes", "Metadata"]}
+            tabs={["Thinking trace", "Changes"]}
             activeTab={detailsTab}
             onTabChange={(tab) => setDetailsTab(tab as typeof detailsTab)}
             onClose={() => setShowDetails(false, { userIntent: true })}
@@ -1249,10 +1247,8 @@ export function ChannelView({
                 autoScroll={traceAutoScroll}
                 startedAt={traceStartedAt}
               />
-            ) : detailsTab === "Changes" ? (
-              <p className="text-xs text-zinc-500 dark:text-zinc-400">Diffs unavailable.</p>
             ) : (
-              <p className="text-xs text-zinc-500 dark:text-zinc-400">No metadata.</p>
+              <ChangesTab steps={reasoningTraceSteps} />
             )}
           </DetailsSidebar>
         </div>
