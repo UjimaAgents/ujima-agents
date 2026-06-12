@@ -8,7 +8,17 @@ import {
 
 export * from './conversations.js';
 export * from './auth.js';
-export * from './onboarding.js';
+export {
+  BootstrapResponseSchema,
+  OnboardingRequestSchema,
+  OnboardingResponseSchema,
+  TeamSummarySchema,
+  type BootstrapResponse,
+  type InlineTeamConfig,
+  type OnboardingRequest,
+  type OnboardingResponse,
+  type TeamSummary,
+} from './onboarding.js';
 export * from './runs.js';
 export * from './settings.js';
 export { orgWorkspaceId, organizationIdFromWorkspaceId } from '@ujima/shared';
