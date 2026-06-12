@@ -107,8 +107,16 @@ export function createMCPPool(defaults: ConnectOptions = {}): MCPPool {
     },
 
     has(mcpId, opts) {
-      // Best-effort: callers without a def can only check the shared bucket.
-      const key = opts?.agentId ? `${mcpId}::agent::${opts.agentId}` : mcpId;
+      // Best-effort: callers without a def can only check the
+      // shared bucket. Must include cwd in the key so two
+      // workspaces don't collide on the same `has()` lookup
+      // (bot Round 2 medium). Without the suffix, has() reports
+      // "no connection" for an agent in workspace A even when
+      // workspace B has a live process for the same mcpId.
+      const cwdSuffix = opts?.cwd ? `::cwd::${opts.cwd}` : '';
+      const key = opts?.agentId
+        ? `${mcpId}::agent::${opts.agentId}${cwdSuffix}`
+        : `${mcpId}${cwdSuffix}`;
       const c = connections.get(key);
       return !!c && c.isOpen();
     },
@@ -120,7 +128,14 @@ export function createMCPPool(defaults: ConnectOptions = {}): MCPPool {
     },
 
     async closeOne(mcpId, opts) {
-      const key = opts?.agentId ? `${mcpId}::agent::${opts.agentId}` : mcpId;
+      // Same cwd-suffix discipline as has() — closeOne must
+      // target the specific (agent, cwd) instance so closing the
+      // workspace-A Playwright doesn't also tear down workspace-B's
+      // copy (which shares the mcpId).
+      const cwdSuffix = opts?.cwd ? `::cwd::${opts.cwd}` : '';
+      const key = opts?.agentId
+        ? `${mcpId}::agent::${opts.agentId}${cwdSuffix}`
+        : `${mcpId}${cwdSuffix}`;
       const c = connections.get(key);
       if (c) {
         await c.close();

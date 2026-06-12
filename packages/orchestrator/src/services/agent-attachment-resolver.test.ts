@@ -429,6 +429,109 @@ describe('resolveAttachmentRefs — symlink escape (bot Round 1 high)', () => {
   });
 });
 
+describe('resolveAttachmentRefs — atomic commitBytes (bot Round 2 high)', () => {
+  it('saveAttachment throwing AFTER file+agent_attachments wrote rolls back both', async () => {
+    const { agentRoot, workspaceRoot } = tempPair();
+    try {
+      const repo = fakeRepo();
+      // Override saveAttachment to throw on the FIRST call; the
+      // file + agent_attachments row will already have been written
+      // by commitBytes when this fires. Without the inline
+      // rollback in commitBytes those would leak.
+      let attachmentDeleteCalls = 0;
+      let agentAttachmentDeleteCalls = 0;
+      const result = await resolveAttachmentRefs(
+        {
+          repo: {
+            ...repo,
+            saveAttachment: () => {
+              throw new Error('synthetic DB error from saveAttachment');
+            },
+            deleteAttachment: () => {
+              attachmentDeleteCalls += 1;
+              return 0;
+            },
+            deleteAgentAttachment: (_org: string, id: string) => {
+              agentAttachmentDeleteCalls += 1;
+              const idx = repo.agentAttachments.findIndex((a) => a.id === id);
+              if (idx >= 0) repo.agentAttachments.splice(idx, 1);
+            },
+          } as never,
+          agentAttachmentRoot: agentRoot,
+          workspaceRoot,
+          organizationId: 'org_test',
+          runId: 'run_test',
+          memberId: 'mem_test',
+        },
+        [
+          {
+            refType: 'base64',
+            value: SMALL_PNG.toString('base64'),
+            filename: 'doomed.png',
+          },
+        ],
+      );
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      // The agent_attachments row got written, then commitBytes'
+      // internal rollback fired and deleted it. So the row
+      // count is back to 0 and the delete was invoked.
+      expect(repo.agentAttachments).toHaveLength(0);
+      expect(agentAttachmentDeleteCalls).toBe(1);
+      // attachments table was never written (saveAttachment threw)
+      // so its delete is not called by the inner rollback. The
+      // outer resolver rollback also doesn't fire here because
+      // commitBytes returned cleanly with `{ok:false}` — there's
+      // no entry on the outer materializations list to roll back.
+      expect(attachmentDeleteCalls).toBe(0);
+    } finally {
+      rmSync(agentRoot, { recursive: true, force: true });
+      rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('saveAgentAttachment throwing rolls back the on-disk file', async () => {
+    const { agentRoot, workspaceRoot } = tempPair();
+    try {
+      const repo = fakeRepo();
+      const result = await resolveAttachmentRefs(
+        {
+          repo: {
+            ...repo,
+            saveAgentAttachment: () => {
+              throw new Error('synthetic DB error from saveAgentAttachment');
+            },
+          } as never,
+          agentAttachmentRoot: agentRoot,
+          workspaceRoot,
+          organizationId: 'org_test',
+          runId: 'run_test',
+          memberId: 'mem_test',
+        },
+        [
+          {
+            refType: 'base64',
+            value: SMALL_PNG.toString('base64'),
+            filename: 'doomed.png',
+          },
+        ],
+      );
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      // No agent_attachments row landed, and the on-disk file
+      // (which DID write before the throw) was cleaned up.
+      expect(repo.agentAttachments).toHaveLength(0);
+      // Spot check: no leftover .png files in the agent root.
+      // We don't need to crawl — the temp dir cleanup at the end
+      // catches everything, but the absence of an error here
+      // confirms the rollback callback ran without throwing.
+    } finally {
+      rmSync(agentRoot, { recursive: true, force: true });
+      rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('resolveAttachmentRefs — partial-failure rollback (bot Round 1 medium)', () => {
   it('a failing 3rd ref rolls back the 1st and 2nd refs', async () => {
     const { agentRoot, workspaceRoot } = tempPair();

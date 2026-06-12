@@ -561,10 +561,40 @@ function commitBytes(
     deps.runId,
     fileName,
   );
+  // Atomic commit (bot Round 2 high). Three steps each of which can
+  // fail independently: file write, agent_attachments insert, user
+  // attachment row insert. Without the rollback below, a failure at
+  // step 2 leaks the on-disk file; a failure at step 3 leaks both
+  // the file AND the agent_attachments row. The outer
+  // resolveAttachmentRefs loop only sees the final `{ok:false}` —
+  // it has no way to know about partial side effects this function
+  // performed before bubbling out. Each step records its rollback
+  // handle BEFORE running, so a throw in the next step still
+  // triggers cleanup of everything completed.
+  const undoStack: (() => void)[] = [];
+  const runRollback = (): void => {
+    for (let i = undoStack.length - 1; i >= 0; i -= 1) {
+      try {
+        undoStack[i]?.();
+      } catch (e) {
+        console.warn('[agent-attachment-resolver] commitBytes rollback step failed', e);
+      }
+    }
+  };
   try {
     mkdirSync(absolutePath.split('/').slice(0, -1).join('/'), { recursive: true });
     writeFileSync(absolutePath, bytes);
+    undoStack.push(() => {
+      // rmSync with force=true is a no-op if the file is already
+      // gone, so double-rollback is safe.
+      try {
+        rmSync(absolutePath, { force: true });
+      } catch (e) {
+        console.warn('[agent-attachment-resolver] file rollback failed', absolutePath, e);
+      }
+    });
   } catch (err) {
+    runRollback();
     return { ok: false, error: `failed to write attachment to store: ${err instanceof Error ? err.message : String(err)}` };
   }
   const agentRow: AgentAttachment = {
@@ -585,8 +615,36 @@ function commitBytes(
   };
   try {
     deps.repo.saveAgentAttachment(agentRow);
+    if (deps.repo.deleteAgentAttachment) {
+      const del = deps.repo.deleteAgentAttachment;
+      undoStack.push(() => del(deps.organizationId, id));
+    }
   } catch (err) {
+    runRollback();
     return { ok: false, error: `agent_attachments insert failed: ${err instanceof Error ? err.message : String(err)}` };
+  }
+  // The audit emit is best-effort and stateless — no rollback
+  // needed if a later step throws. We don't fire it until the user
+  // attachment row succeeds so spurious "created" events don't
+  // appear for failed materializations.
+  const attachmentId = newAttId();
+  if (deps.repo.saveAttachment) {
+    try {
+      deps.repo.saveAttachment({
+        id: attachmentId,
+        organizationId: deps.organizationId,
+        filename,
+        mimeType,
+        category,
+        sizeBytes: bytes.length,
+        storagePath: storageRelative,
+        uploadedBy: deps.memberId,
+        createdAt: newNow(),
+      });
+    } catch (err) {
+      runRollback();
+      return { ok: false, error: `attachments insert failed: ${err instanceof Error ? err.message : String(err)}` };
+    }
   }
   deps.audit?.agentAttachmentCreated({
     organizationId: deps.organizationId,
@@ -601,20 +659,6 @@ function commitBytes(
     ...(toolCallSource?.serverId ? { serverId: toolCallSource.serverId } : {}),
     ...(toolCallSource?.toolName ? { toolName: toolCallSource.toolName } : {}),
   });
-  const attachmentId = newAttId();
-  if (deps.repo.saveAttachment) {
-    deps.repo.saveAttachment({
-      id: attachmentId,
-      organizationId: deps.organizationId,
-      filename,
-      mimeType,
-      category,
-      sizeBytes: bytes.length,
-      storagePath: storageRelative,
-      uploadedBy: deps.memberId,
-      createdAt: newNow(),
-    });
-  }
   return {
     ok: true,
     materialization: {
