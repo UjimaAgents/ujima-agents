@@ -289,6 +289,16 @@ export interface AttachmentCaptureDeps {
   >;
   /** Root under which agent-generated files live. Resolved at boot. */
   agentAttachmentRoot: string;
+  /**
+   * Canonical attachment store root (`<home>/attachments/`). Required
+   * for the quota-recovery cleanup path inside this function — bot
+   * Round 3 high: previously only the DB row was deleted on quota
+   * overflow and the file leaked to disk, with the hourly sweeper
+   * no longer able to find it (no row → no enumeration). Matches
+   * the `attachmentStoreRoot` field on AgentAttachmentCleanupDeps;
+   * both paths feed the same deleteOneOnDisk helper.
+   */
+  attachmentStoreRoot: string;
   /** Optional audit writer — emits `agent_attachment_created` per row. */
   audit?: Pick<ConnectorAuditWriter, 'agentAttachmentCreated'>;
   /** Override for tests. Defaults to `aatt_<uuid>`. */
@@ -366,12 +376,18 @@ export function captureToolResultAttachments(
         input.organizationId,
         cutoff,
       );
+      // Use the shared on-disk + row deletion helper so quota
+      // recovery and the hourly sweeper share one contract. Bot
+      // Round 3 high: previously this only called
+      // deleteAgentAttachment (row only), the file leaked, and the
+      // sweeper couldn't find it anymore because the row was gone.
       for (const row of expired) {
-        try {
-          deps.repo.deleteAgentAttachment(input.organizationId, row.id);
-        } catch (err) {
-          console.warn('[agent-attachment-capture] cleanup row delete failed', err);
-        }
+        deleteOneAgentAttachmentRowAndFile({
+          row,
+          repo: deps.repo,
+          attachmentStoreRoot: deps.attachmentStoreRoot,
+          organizationId: input.organizationId,
+        });
       }
       const stillUsed = deps.repo.sumAgentAttachmentBytes(input.organizationId);
       if (stillUsed + decision.bytes.length > perOrgQuota) {
@@ -556,6 +572,46 @@ export interface AgentAttachmentCleanupDeps {
  * sweep keeps going. The scheduler tick that owns this can call
  * it without a try/catch wrapper.
  */
+/**
+ * Shared row+file cleanup primitive. The quota-recovery path inside
+ * captureToolResultAttachments AND the hourly LRU sweeper
+ * (cleanupExpiredAgentAttachments) both call this. File delete
+ * comes BEFORE row delete so a crash in between leaves a row
+ * pointing at a missing file (recoverable — same shape as a
+ * transient FS error) rather than an orphaned file with no row
+ * (unrecoverable — no enumeration path can find it). Returns the
+ * bytes that were freed when both deletions succeeded, 0
+ * otherwise.
+ */
+export function deleteOneAgentAttachmentRowAndFile(input: {
+  row: AgentAttachment;
+  repo: Pick<ApiRepository, 'deleteAgentAttachment'>;
+  attachmentStoreRoot: string;
+  organizationId: string;
+}): number {
+  const absolutePath = `${input.attachmentStoreRoot}/${input.row.storagePath}`;
+  try {
+    rmSync(absolutePath, { force: true });
+  } catch (err) {
+    console.warn(
+      '[agent-attachment-cleanup] file delete failed',
+      absolutePath,
+      err,
+    );
+  }
+  try {
+    input.repo.deleteAgentAttachment(input.organizationId, input.row.id);
+    return input.row.byteSize;
+  } catch (err) {
+    console.warn(
+      '[agent-attachment-cleanup] row delete failed',
+      input.row.id,
+      err,
+    );
+    return 0;
+  }
+}
+
 export function cleanupExpiredAgentAttachments(
   deps: AgentAttachmentCleanupDeps,
 ): { deletedRows: number; deletedBytes: number } {
@@ -568,28 +624,15 @@ export function cleanupExpiredAgentAttachments(
   for (const org of orgs) {
     const expired = deps.repo.listExpiredUnpinnedAgentAttachments(org.id, cutoff);
     for (const row of expired) {
-      const absolutePath = `${deps.attachmentStoreRoot}/${row.storagePath}`;
-      try {
-        // Use rmSync to handle missing files without throwing —
-        // already-gone files just collapse to a no-op (force=true).
-        rmSync(absolutePath, { force: true });
-      } catch (err) {
-        console.warn(
-          '[agent-attachment-cleanup] file delete failed',
-          absolutePath,
-          err,
-        );
-      }
-      try {
-        deps.repo.deleteAgentAttachment(org.id, row.id);
+      const freedBytes = deleteOneAgentAttachmentRowAndFile({
+        row,
+        repo: deps.repo,
+        attachmentStoreRoot: deps.attachmentStoreRoot,
+        organizationId: org.id,
+      });
+      if (freedBytes > 0) {
         deletedRows += 1;
-        deletedBytes += row.byteSize;
-      } catch (err) {
-        console.warn(
-          '[agent-attachment-cleanup] row delete failed',
-          row.id,
-          err,
-        );
+        deletedBytes += freedBytes;
       }
     }
   }

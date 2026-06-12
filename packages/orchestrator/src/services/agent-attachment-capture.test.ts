@@ -62,6 +62,10 @@ function fakeRepo(): {
     },
     deleteAgentAttachment(_org, id) {
       deleted.push(id);
+      // Mirror the real repo: remove from `saved` so sumBytes /
+      // listExpired reflect the deletion immediately.
+      const idx = saved.findIndex((r) => r.id === id);
+      if (idx >= 0) saved.splice(idx, 1);
     },
     listOrganizations: () => orgs,
   };
@@ -143,6 +147,7 @@ describe('captureToolResultAttachments — end-to-end', () => {
         {
           repo: repo as never,
           agentAttachmentRoot: root,
+          attachmentStoreRoot: root,
           audit,
           generateId: (() => {
             let n = 0;
@@ -191,7 +196,7 @@ describe('captureToolResultAttachments — end-to-end', () => {
     try {
       const repo = fakeRepo();
       const result = captureToolResultAttachments(
-        { repo: repo as never, agentAttachmentRoot: root },
+        { repo: repo as never, agentAttachmentRoot: root, attachmentStoreRoot: root },
         {
           organizationId: 'org_test',
           runId: 'run_test',
@@ -215,7 +220,7 @@ describe('captureToolResultAttachments — end-to-end', () => {
     try {
       const repo = fakeRepo();
       const result = captureToolResultAttachments(
-        { repo: repo as never, agentAttachmentRoot: root },
+        { repo: repo as never, agentAttachmentRoot: root, attachmentStoreRoot: root },
         {
           organizationId: 'org_test',
           runId: 'run_test',
@@ -246,6 +251,7 @@ describe('captureToolResultAttachments — end-to-end', () => {
         {
           repo: repo as never,
           agentAttachmentRoot: root,
+          attachmentStoreRoot: root,
           perFileCapBytes: 1000,
         },
         {
@@ -262,6 +268,89 @@ describe('captureToolResultAttachments — end-to-end', () => {
       expect(repo.saved).toHaveLength(0);
     } finally {
       rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('quota recovery deletes the on-disk file too — does NOT leak (bot Round 3 high)', () => {
+    // Pre-fix: quota recovery called deleteAgentAttachment (row only)
+    // and the file leaked. The hourly sweeper could no longer find
+    // it (no row → no enumeration), so it accumulated forever.
+    // Now both quota recovery and the LRU sweeper route through
+    // the shared deleteOneAgentAttachmentRowAndFile helper.
+    const storeRoot = tempRoot();
+    try {
+      // Seed an expired row whose underlying file is sitting at
+      // the canonical location.
+      const orgDir = join(storeRoot, 'agent-generated', 'org_test', 'run_old');
+      mkdirSync(orgDir, { recursive: true });
+      const expiredFile = join(orgDir, 'aatt_expired.png');
+      writeFileSync(expiredFile, FAKE_PNG);
+      expect(existsSync(expiredFile)).toBe(true);
+
+      const repo = fakeRepo();
+      repo.saved.push({
+        id: 'aatt_expired',
+        organizationId: 'org_test',
+        runId: 'run_old',
+        memberId: 'mem_1',
+        sourceToolCallId: null,
+        sourceServerId: null,
+        sourceToolName: null,
+        category: 'image',
+        mimeType: 'image/png',
+        filename: 'expired.png',
+        storagePath: 'agent-generated/org_test/run_old/aatt_expired.png',
+        // Make this row "expired" by the 24h cutoff that quota
+        // recovery applies internally.
+        byteSize: FAKE_PNG.length,
+        createdAt: '2026-06-01T00:00:00.000Z',
+        pinnedToMessageId: null,
+      });
+
+      // Push the org over quota by making the new blob bigger than
+      // the per-org quota minus the expired bytes. Use a 200-byte
+      // PNG to trigger quota recovery against a tiny quota.
+      const result = captureToolResultAttachments(
+        {
+          repo: repo as never,
+          // agentAttachmentRoot is `<root>/agent-generated/`; the
+          // writer joins bare `<org>/<run>/<id>.<ext>` against it,
+          // and the storage_path column carries the prefix so the
+          // reader's join against attachmentStoreRoot resolves
+          // canonically.
+          agentAttachmentRoot: join(storeRoot, 'agent-generated'),
+          attachmentStoreRoot: storeRoot,
+          perOrgQuotaBytes: FAKE_PNG.length, // tiny quota → recovery
+        },
+        {
+          organizationId: 'org_test',
+          runId: 'run_new',
+          memberId: 'mem_1',
+          serverId: 'srv',
+          toolName: 'screenshot',
+          toolCallId: 'call_new',
+          toolResult: {
+            content: [
+              {
+                type: 'image',
+                source: {
+                  type: 'base64',
+                  data: FAKE_PNG.toString('base64'),
+                  mediaType: 'image/png',
+                },
+              },
+            ],
+          },
+        },
+      );
+
+      // The on-disk file for the expired row is GONE (not just
+      // the DB row).
+      expect(existsSync(expiredFile)).toBe(false);
+      // The new attachment landed because recovery freed space.
+      expect(result.attachmentRefs).toHaveLength(1);
+    } finally {
+      rmSync(storeRoot, { recursive: true, force: true });
     }
   });
 });

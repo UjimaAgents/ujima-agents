@@ -802,6 +802,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
       {
         repo: context.repo,
         agentAttachmentRoot,
+        attachmentStoreRoot,
         audit: attachmentAuditWriter,
       },
       {
