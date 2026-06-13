@@ -34,7 +34,7 @@ import { goalModeEnabledFromMessage } from './goal-mode-prompt.js';
 import { isLiveSpiritStatus } from './live-status.js';
 import type { AiService } from '../ai-service.js';
 import type { AgentLoopChunk } from './agent-loop.js';
-import { accumulateStepUsage, hasTokenUsage } from './token-usage.js';
+import { hasTokenUsage, normalizeTokenUsage } from './token-usage.js';
 import { materializeMcpDef } from './mcp-runtime.js';
 import { requireOrganization } from '../utils/require-organization.js';
 import type { SpawnSpiritInput } from './spirit-types.js';
@@ -573,7 +573,7 @@ export class SpiritServiceBase {
     agentId: string,
     steps: readonly { usage?: unknown }[],
   ): void {
-    const usage = accumulateStepUsage(steps);
+    const usage = normalizeTokenUsage(steps.at(-1)?.usage);
     if (!hasTokenUsage(usage)) return;
 
     const rooms = [orgRoom(organizationId), memberRoom(agentId), runRoom(runId)];

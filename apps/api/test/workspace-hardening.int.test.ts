@@ -618,7 +618,14 @@ describe('workspace path hardening', () => {
       conversations,
       goals,
       realtime,
-      async () => ({ status: 'timed_out', agent: '', agent_id: '', thread_id: '', message_id: '' }),
+      {
+        delegateAgentTurn: async () => ({ status: 'timed_out', agent: '', agent_id: '', thread_id: '', message_id: '' }),
+        getDelegateStatus: async () => ({ status: 'timed_out', agent: '', agent_id: '', thread_id: '', message_id: '' }),
+        waitForDelegates: async () => [],
+        stopDelegate: async () => ({ stopped: false }),
+        readDelegateThread: async () => [],
+        sendToDelegate: async () => ({ sent: false, messageId: '' }),
+      },
     );
 
     const result = await onboarding.onboard({

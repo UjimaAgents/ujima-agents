@@ -474,7 +474,7 @@ ${activeMemories
         ? persistedTerminator
         : detectedTerminatingTool;
       if (persistedRun) {
-        this.saveRunAndEmit(SocketEventNames.runCompleted, {
+        const completedRun = this.saveRunAndEmit(SocketEventNames.runCompleted, {
           ...persistedRun,
           status: 'completed',
           step: 'completed',
@@ -482,6 +482,7 @@ ${activeMemories
           endedAt: new Date().toISOString(),
           terminatingTool: finalTerminatingTool,
         });
+        this.invokeRunTerminalHook(completedRun);
       }
       this.emit(SocketEventNames.spiritCompleted, completed);
       this.maybeFinalizeTaskSession(
