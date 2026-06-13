@@ -436,6 +436,13 @@ export function captureToolResultAttachments(
       index,
       extension,
     );
+    // Atomic file+row write (bot Round 4 high). Pre-fix the catch
+    // below was a silent-leak path: file already on disk, no row to
+    // discover it, so the hourly LRU sweeper couldn't reach it
+    // (no enumeration without a row). Now any throw between the
+    // file write and the row commit unwinds the file before
+    // bubbling out. The audit emit moves AFTER the row commits so
+    // a transient audit failure doesn't undo a successful capture.
     try {
       const row: AgentAttachment = {
         id,
@@ -454,6 +461,25 @@ export function captureToolResultAttachments(
         pinnedToMessageId: null,
       };
       deps.repo.saveAgentAttachment(row);
+    } catch (err) {
+      console.warn(
+        `[agent-attachment-capture] DB write failed for ${input.toolCallId}:${index} — rolling back the on-disk file`,
+        err,
+      );
+      try {
+        rmSync(absolutePath, { force: true });
+      } catch (rmErr) {
+        console.warn(
+          `[agent-attachment-capture] rollback file unlink failed for ${input.toolCallId}:${index}`,
+          rmErr,
+        );
+      }
+      continue;
+    }
+    // Audit emit is best-effort (already null-chained). Sequenced
+    // AFTER the row commit so a spurious "created" event never
+    // appears for a capture that failed to land.
+    try {
       deps.audit?.agentAttachmentCreated({
         organizationId: input.organizationId,
         actorMemberId: input.memberId,
@@ -467,32 +493,29 @@ export function captureToolResultAttachments(
         serverId: input.serverId,
         toolName: input.toolName,
       });
-      refs.push({
-        ref: `tc_${input.toolCallId}:${index}`,
-        category: decision.category,
-        filename,
-        byteSize: decision.bytes.length,
-        // Live-test gap: even with the channel.* tool schema
-        // describing tool_call refs, models tried to save bytes to
-        // workspace files before attaching. A usage_hint per ref
-        // closes that — it lives in the tool result the model
-        // reads right now, not in a schema description from many
-        // turns ago.
-        usage_hint:
-          `Already captured. To send this in a chat message, call ` +
-          `channel.reply (or channel.post / channel.dm) with attachments: ` +
-          `[{ refType: "tool_call", value: "tc_${input.toolCallId}:${index}" }]. ` +
-          `Do NOT save these bytes to a workspace file first.`,
-      });
-    } catch (err) {
+    } catch (auditErr) {
       console.warn(
-        `[agent-attachment-capture] DB write failed for ${input.toolCallId}:${index}`,
-        err,
+        `[agent-attachment-capture] audit emit failed for ${input.toolCallId}:${index}`,
+        auditErr,
       );
-      // Leave the file on disk; the next cleanup pass will skip it
-      // because there's no row — orphaned-file detection lives in
-      // the LRU job (Section E).
     }
+    refs.push({
+      ref: `tc_${input.toolCallId}:${index}`,
+      category: decision.category,
+      filename,
+      byteSize: decision.bytes.length,
+      // Live-test gap: even with the channel.* tool schema
+      // describing tool_call refs, models tried to save bytes to
+      // workspace files before attaching. A usage_hint per ref
+      // closes that — it lives in the tool result the model
+      // reads right now, not in a schema description from many
+      // turns ago.
+      usage_hint:
+        `Already captured. To send this in a chat message, call ` +
+        `channel.reply (or channel.post / channel.dm) with attachments: ` +
+        `[{ refType: "tool_call", value: "tc_${input.toolCallId}:${index}" }]. ` +
+        `Do NOT save these bytes to a workspace file first.`,
+    });
     index += 1;
   }
   return { attachmentRefs: refs };
@@ -533,17 +556,20 @@ function filenameFor(
 const DEFAULT_LRU_TTL_HOURS = 4;
 
 export interface AgentAttachmentCleanupDeps {
+  // listOrganizations is REQUIRED (bot Round 4 medium). The previous
+  // shape made it optional via an intersection override, and the
+  // body's `deps.repo.listOrganizations?.() ?? []` silently fell
+  // back to an empty list when callers stubbed it out. The sweeper
+  // became a no-op without any signal — disk grew forever in any
+  // deployment whose Repository didn't wire the method. Now any
+  // caller missing it fails at compile time, and tests must stub
+  // it explicitly.
   repo: Pick<
     ApiRepository,
     | 'listOrganizations'
     | 'listExpiredUnpinnedAgentAttachments'
     | 'deleteAgentAttachment'
-  > & {
-    // Just for the multi-org sweep: list every org so we can collect
-    // expired rows. Optional fallback below if the host runs single-
-    // org and didn't bother to list.
-    listOrganizations?: () => { id: string }[];
-  };
+  >;
   /**
    * Root of the attachment store (`<home>/attachments/`) — NOT the
    * agent-generated subroot the writer uses. `row.storagePath`
@@ -618,7 +644,7 @@ export function cleanupExpiredAgentAttachments(
   const ttlHours = deps.ttlHours ?? DEFAULT_LRU_TTL_HOURS;
   const now = (deps.now ?? (() => new Date()))();
   const cutoff = new Date(now.getTime() - ttlHours * 60 * 60 * 1000).toISOString();
-  const orgs = deps.repo.listOrganizations?.() ?? [];
+  const orgs = deps.repo.listOrganizations();
   let deletedRows = 0;
   let deletedBytes = 0;
   for (const org of orgs) {

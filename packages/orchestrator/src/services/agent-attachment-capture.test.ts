@@ -355,6 +355,112 @@ describe('captureToolResultAttachments — end-to-end', () => {
   });
 });
 
+describe('captureToolResultAttachments — atomic file+row (bot Round 4 high)', () => {
+  it('on saveAgentAttachment throw, the on-disk file is rolled back (no orphans)', () => {
+    const root = tempRoot();
+    try {
+      const repo = fakeRepo();
+      // Force the row write to throw AFTER the file was written.
+      const result = captureToolResultAttachments(
+        {
+          repo: {
+            ...repo,
+            saveAgentAttachment: () => {
+              throw new Error('synthetic DB throw from saveAgentAttachment');
+            },
+          } as never,
+          agentAttachmentRoot: root,
+          attachmentStoreRoot: root,
+          generateId: (() => {
+            let n = 0;
+            return () => `aatt_${n++}`;
+          })(),
+        },
+        {
+          organizationId: 'org_test',
+          runId: 'run_test',
+          memberId: 'mem_test',
+          serverId: 'srv',
+          toolName: 'screenshot',
+          toolCallId: 'call_doomed',
+          toolResult: {
+            content: [
+              {
+                type: 'image',
+                source: {
+                  type: 'base64',
+                  data: FAKE_PNG.toString('base64'),
+                  mediaType: 'image/png',
+                },
+              },
+            ],
+          },
+        },
+      );
+      expect(result.attachmentRefs).toHaveLength(0);
+      // Nothing on disk in the org's run dir.
+      const orgDir = join(root, 'org_test', 'run_test');
+      let entries: string[] = [];
+      try {
+        entries = readdirSync(orgDir);
+      } catch {
+        // Dir doesn't exist — also fine, file definitely not leaked.
+      }
+      expect(entries).toHaveLength(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('on audit throw AFTER the row commits, the capture still succeeds (audit is best-effort)', () => {
+    const root = tempRoot();
+    try {
+      const repo = fakeRepo();
+      const result = captureToolResultAttachments(
+        {
+          repo: repo as never,
+          agentAttachmentRoot: root,
+          attachmentStoreRoot: root,
+          audit: {
+            agentAttachmentCreated: () => {
+              throw new Error('synthetic audit throw');
+            },
+          },
+          generateId: (() => {
+            let n = 0;
+            return () => `aatt_${n++}`;
+          })(),
+        },
+        {
+          organizationId: 'org_test',
+          runId: 'run_test',
+          memberId: 'mem_test',
+          serverId: 'srv',
+          toolName: 'screenshot',
+          toolCallId: 'call_audit_fail',
+          toolResult: {
+            content: [
+              {
+                type: 'image',
+                source: {
+                  type: 'base64',
+                  data: FAKE_PNG.toString('base64'),
+                  mediaType: 'image/png',
+                },
+              },
+            ],
+          },
+        },
+      );
+      // Audit failure does NOT roll back a successful capture.
+      expect(result.attachmentRefs).toHaveLength(1);
+      expect(repo.saved).toHaveLength(1);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('cleanupExpiredAgentAttachments — LRU sweep', () => {
   it('deletes unpinned rows older than the TTL; pinned rows survive', () => {
     const root = tempRoot();
