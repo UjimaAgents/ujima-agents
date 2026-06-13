@@ -20,7 +20,7 @@ const AgentDelegateSchema = z.object({
 
 type AgentDelegateArgs = z.infer<typeof AgentDelegateSchema>;
 
-function normalizeSpawnArgs(args: AgentDelegateArgs): Array<{ to: string; message: string }> {
+function normalizeSpawnArgs(args: AgentDelegateArgs): { to: string; message: string }[] {
   if (args.delegates && args.delegates.length > 0) return args.delegates;
   if (args.to && args.message) return [{ to: args.to, message: args.message }];
   throw new Error('spawn action requires either (to + message) or a delegates array.');

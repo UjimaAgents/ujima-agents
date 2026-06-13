@@ -88,6 +88,7 @@ export async function daemonFetch(
   path: string,
   init: RequestInit = {},
   sessionToken?: string,
+  options?: { timeoutMs?: number },
 ): Promise<Response> {
   const headers = new Headers(init.headers);
   headers.set("authorization", `Bearer ${readDaemonBearerToken()}`);
@@ -108,9 +109,10 @@ export async function daemonFetch(
 
   const url = `${daemonBaseUrl()}${path}`;
   const timeoutMs =
-    Number.isFinite(DAEMON_FETCH_TIMEOUT_MS) && DAEMON_FETCH_TIMEOUT_MS > 0
+    options?.timeoutMs ??
+    (Number.isFinite(DAEMON_FETCH_TIMEOUT_MS) && DAEMON_FETCH_TIMEOUT_MS > 0
       ? DAEMON_FETCH_TIMEOUT_MS
-      : 5000;
+      : 5000);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   const upstreamSignal = init.signal;

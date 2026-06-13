@@ -111,6 +111,68 @@ export function buildStructuredConversationSummary(input: {
   return out.join("\n");
 }
 
+export function buildConversationArchiveSummary(messages: Message[]): string {
+  return buildStructuredConversationSummary({
+    marker: CONVERSATION_ARCHIVE_MARKER,
+    title: `Archived ${messages.length} earlier messages.`,
+    messages,
+    sections: [
+      {
+        heading: "Current discussion",
+        bullets: [
+          "Earlier messages in this thread were archived. The visible chat is now empty except for this archive note.",
+        ],
+      },
+      {
+        heading: "Decisions",
+        bullets: ["No separate decision extraction was run for this archive action."],
+      },
+      {
+        heading: "Open questions",
+        bullets: ["Refer to the archived message list below for unresolved items."],
+      },
+      {
+        heading: "Next actions",
+        bullets: ["Continue from a clean visible thread; archived rows remain searchable in history."],
+      },
+    ],
+  });
+}
+
+export function buildConversationSummaryFallback(
+  messages: Message[],
+  mode: "summary" | "archive",
+): string {
+  if (mode === "archive") {
+    return buildConversationArchiveSummary(messages);
+  }
+  return buildStructuredConversationSummary({
+    marker: CONVERSATION_SUMMARY_MARKER,
+    title: `Compacted ${messages.length} earlier messages.`,
+    messages,
+    sections: [
+      {
+        heading: "Current discussion",
+        bullets: [
+          "An automatic summary could not be generated. The compacted message list below preserves continuity.",
+        ],
+      },
+      {
+        heading: "Decisions",
+        bullets: ["Review the compacted messages below for explicit decisions."],
+      },
+      {
+        heading: "Open questions",
+        bullets: ["Review the compacted messages below for unresolved questions."],
+      },
+      {
+        heading: "Next actions",
+        bullets: ["Continue from the recent raw window; older rows are marked compacted."],
+      },
+    ],
+  });
+}
+
 export function buildSelfNoteSummary(messages: Message[]): string {
   return buildStructuredConversationSummary({
     marker: SELF_NOTE_SUMMARY_MARKER,
@@ -163,35 +225,40 @@ export async function buildConversationSummaryViaLlm(
   if (filtered.length === 0) {
     throw new Error("Cannot summarize a conversation with no user or agent messages.");
   }
-  const chunks = chunk(filtered, 100);
-  const partials = await Promise.all(
-    chunks.map((messages) =>
-      extractSummary(input.model, transcriptFor(messages), maxBullets),
-    ),
-  );
-  const first = partials[0];
-  if (!first) throw new Error("Conversation summarization produced no result.");
-  const facts = partials.length === 1
-    ? first
-    : await extractSummary(
-        input.model,
-        partials.map((partial, index) =>
-          `PART ${index + 1}\n${JSON.stringify(partial)}`,
-        ).join("\n\n"),
-        maxBullets,
-      );
-  const archive = input.mode === "archive";
-  return buildStructuredConversationSummary({
-    marker: archive ? CONVERSATION_ARCHIVE_MARKER : CONVERSATION_SUMMARY_MARKER,
-    title: `${archive ? "Archived" : "Compacted"} ${input.messages.length} earlier messages.`,
-    messages: [],
-    sections: [
-      {heading: "Current discussion", bullets: nonEmpty(facts.context, "No durable context extracted from the compacted window.")},
-      {heading: "Decisions", bullets: nonEmpty(facts.decisions, "No explicit decisions found in the compacted window.")},
-      {heading: "Open questions", bullets: nonEmpty(facts.openQuestions, "No open questions found in the compacted window.")},
-      {heading: "Next actions", bullets: nonEmpty(facts.nextActions, "No explicit next actions found in the compacted window.")},
-    ],
-  });
+  const mode = input.mode ?? "summary";
+  try {
+    const chunks = chunk(filtered, 100);
+    const partials = await Promise.all(
+      chunks.map((messages) =>
+        extractSummary(input.model, transcriptFor(messages), maxBullets),
+      ),
+    );
+    const first = partials[0];
+    if (!first) throw new Error("Conversation summarization produced no result.");
+    const facts = partials.length === 1
+      ? first
+      : await extractSummary(
+          input.model,
+          partials.map((partial, index) =>
+            `PART ${index + 1}\n${JSON.stringify(partial)}`,
+          ).join("\n\n"),
+          maxBullets,
+        );
+    const archive = mode === "archive";
+    return buildStructuredConversationSummary({
+      marker: archive ? CONVERSATION_ARCHIVE_MARKER : CONVERSATION_SUMMARY_MARKER,
+      title: `${archive ? "Archived" : "Compacted"} ${input.messages.length} earlier messages.`,
+      messages: [],
+      sections: [
+        {heading: "Current discussion", bullets: nonEmpty(facts.context, "No durable context extracted from the compacted window.")},
+        {heading: "Decisions", bullets: nonEmpty(facts.decisions, "No explicit decisions found in the compacted window.")},
+        {heading: "Open questions", bullets: nonEmpty(facts.openQuestions, "No open questions found in the compacted window.")},
+        {heading: "Next actions", bullets: nonEmpty(facts.nextActions, "No explicit next actions found in the compacted window.")},
+      ],
+    });
+  } catch {
+    return buildConversationSummaryFallback(input.messages, mode);
+  }
 }
 
 async function extractSummary(

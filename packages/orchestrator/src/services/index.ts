@@ -652,6 +652,10 @@ export async function runAgentDelegateTurn(input: {
     throw new Error(`Agent "${input.to}" not found. Available agents: ${names}`);
   }
 
+  if (target.id === input.fromMemberId) {
+    throw new Error('Cannot delegate to yourself. Delegate to a different agent.');
+  }
+
   const threadId = getDirectMessageThreadId(input.fromMemberId, target.id);
   const delegateMessage = input.conversations.sendDirectMessage({
     organizationId: input.organizationId,

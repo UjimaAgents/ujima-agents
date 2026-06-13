@@ -358,7 +358,10 @@ export function registerConversationRoutes(
       if (message.startsWith('Forbidden')) {
         return apiError(reply, 403, message);
       }
-      return apiError(reply, 404, message);
+      return routeError(reply, err, {
+        notFound: ['Thread not found', 'Organization not found', 'Channel not found'],
+        workspaceRoot: true,
+      });
     }
   });
 }

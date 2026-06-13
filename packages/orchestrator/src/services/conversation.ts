@@ -1203,11 +1203,6 @@ export class ConversationService {
     requireOrganization(this.repo, input.organizationId);
     this.requireThreadAccess(input.organizationId, input.threadId, input.memberId);
 
-    const thread = this.repo.getThread(input.organizationId, input.threadId);
-    if (!thread) {
-      throw new Error(`Thread not found: ${input.threadId}`);
-    }
-
     return archiveConversation(this.compactionContext(), input.organizationId, input.threadId, input.memberId, input.mode);
   }
 
