@@ -16,12 +16,13 @@ import { normalizeOrgShellApprovalMode, type ShellApprovalMode } from "@ujima/sh
 import { ChannelView } from "./channel-view";
 import { ChannelGoalsBoard } from "./channel-goals-board";
 import { CommandPalette, type SearchResult } from "@/components/ui/command-palette";
-import type { BootstrapResponse } from "@ujima/api-schema";
+import { BootstrapResponseSchema, type BootstrapResponse } from "@ujima/api-schema";
 import { resolveSelectedConversationFromSearchParams } from "../conversation-routing";
 import { resolveDefaultConversation } from "../workspace-channels";
 import type { SelectedConversation, WorkspaceRoleInput } from "../types";
 import { useWorkspaceStore } from "../workspace-store";
 import type { RolePresetTemplate } from "../../onboarding/types";
+import { runStatusToActivityState } from "../activity-state";
 import {
   goalModePreferenceKey,
   readGoalModePreference,
@@ -85,6 +86,7 @@ export function WorkspaceShell(props: {
   const {
     setSidebarWidth,
     syncWorkspace,
+    replaceConversationUnreadCounts,
     setSelectedConversation,
     appendChannel,
     appendMember,
@@ -97,6 +99,7 @@ export function WorkspaceShell(props: {
     useShallow((state) => ({
       setSidebarWidth: state.setSidebarWidth,
       syncWorkspace: state.syncWorkspace,
+      replaceConversationUnreadCounts: state.replaceConversationUnreadCounts,
       setSelectedConversation: state.setSelectedConversation,
       appendChannel: state.appendChannel,
       appendMember: state.appendMember,
@@ -110,12 +113,17 @@ export function WorkspaceShell(props: {
   const seenApprovalNotifications = useRef(new Set<string>());
   const goalModeSyncing = useRef(false);
   const activeConversationRef = useRef<SelectedConversation | undefined>(undefined);
+  const membersRef = useRef(members);
 
   // Pull localStorage-backed prefs (chat font size, details auto-open dismissal)
   // into the store after mount so the first render matches the SSR snapshot.
   useEffect(() => {
     hydrateClientPersisted();
   }, [hydrateClientPersisted]);
+
+  useEffect(() => {
+    membersRef.current = members;
+  }, [members]);
 
   const defaultConversation = useMemo(
     () => initialConversation ?? resolveDefaultConversation(channels),
@@ -311,6 +319,26 @@ export function WorkspaceShell(props: {
       : "Ujima Agents";
   }, [activeConversation?.id, activeConversation?.name, activeConversation?.type, workspaceTasksActive]);
 
+  const applyBootstrap = useCallback(
+    (snapshot: BootstrapResponse) => {
+      membersRef.current = snapshot.members;
+      syncWorkspace({
+        channels: snapshot.channels,
+        members: snapshot.members,
+        conversationUnreadCounts: snapshot.conversationUnreadCounts,
+        selectedConversation: activeConversationRef.current,
+        globalActiveRuns: snapshot.activeRuns,
+      });
+      replaceConversationUnreadCounts(snapshot.conversationUnreadCounts ?? {});
+      for (const run of snapshot.activeRuns) {
+        const member = snapshot.members.find((entry) => entry.id === run.agentId);
+        const activity = runStatusToActivityState(run.status, member?.presence);
+        if (activity) setMemberActivity(run.agentId, activity);
+      }
+    },
+    [replaceConversationUnreadCounts, setMemberActivity, syncWorkspace],
+  );
+
   // Cmd+K to open global search
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -324,28 +352,8 @@ export function WorkspaceShell(props: {
   }, []);
 
   useEffect(() => {
-    if (!bootstrap.channels) return;
-    syncWorkspace({
-      channels: bootstrap.channels,
-      members: bootstrap.members,
-      conversationUnreadCounts: bootstrap.conversationUnreadCounts,
-      selectedConversation: activeConversation,
-      globalActiveRuns: bootstrap.activeRuns,
-    });
-    for (const run of bootstrap.activeRuns) {
-      if (isLiveRunStatus(run.status)) {
-        setMemberActivity(run.agentId, "working");
-      }
-    }
-  }, [
-    bootstrap.activeRuns,
-    bootstrap.channels,
-    bootstrap.conversationUnreadCounts,
-    bootstrap.members,
-    activeConversation,
-    setMemberActivity,
-    syncWorkspace,
-  ]);
+    applyBootstrap(bootstrap);
+  }, [applyBootstrap, bootstrap]);
 
   useEffect(() => {
     const currentMemberId = bootstrap.auth.member?.id;
@@ -354,6 +362,7 @@ export function WorkspaceShell(props: {
     const source = new EventSource(
       `/api/notifications/stream?organizationId=${encodeURIComponent(organizationId)}`,
     );
+    let seenReady = false;
 
     source.onopen = () => {
       console.info("[notifications] stream connected");
@@ -365,7 +374,23 @@ export function WorkspaceShell(props: {
     };
     source.onmessage = (event) => {
       const envelope = parseNotificationEnvelope(event.data);
-      if (!envelope || envelope.type === "ready" || envelope.type === "error") return;
+      if (!envelope) return;
+      if (envelope.type === "ready") {
+        if (seenReady) {
+          void (async () => {
+            const response = await fetch("/api/bootstrap");
+            const body = await response.json().catch(() => null);
+            const parsed = response.ok ? BootstrapResponseSchema.safeParse(body) : null;
+            if (parsed?.success) {
+              applyBootstrap(parsed.data);
+            }
+          })();
+        } else {
+          seenReady = true;
+        }
+        return;
+      }
+      if (envelope.type === "error") return;
       if (
         envelope.event !== SocketEventNames.approvalRequested &&
         !isNotificationMessageEvent(envelope.event) &&
@@ -375,7 +400,7 @@ export function WorkspaceShell(props: {
       }
 
       if (isNotificationRunEvent(envelope.event)) {
-        updateRunActivity(envelope.payload, setMemberActivity);
+        updateRunActivity(envelope.payload, membersRef.current, setMemberActivity);
         const run = (envelope.payload as { run?: RunState })?.run;
         if (run) {
           upsertGlobalActiveRun(run);
@@ -399,6 +424,13 @@ export function WorkspaceShell(props: {
           currentConversation.id === conversationId) ||
           (currentConversation.type === "agent" && currentConversation.id === conversationId))
       ) {
+        if (isNotificationMessageEvent(envelope.event)) {
+          clearConversationUnreadCount(currentConversation.id);
+          void markConversationRead(
+            organizationId,
+            getConversationThreadId(currentConversation, currentMemberId),
+          );
+        }
         return;
       }
 
@@ -420,6 +452,8 @@ export function WorkspaceShell(props: {
     bootstrap.auth.member?.id,
     bootstrap.channels,
     bootstrap.organization?.id,
+    applyBootstrap,
+    clearConversationUnreadCount,
     incrementConversationUnreadCount,
     organizationId,
     setMemberActivity,
@@ -428,15 +462,11 @@ export function WorkspaceShell(props: {
 
   useEffect(() => {
     if (!organizationId || !bootstrap.auth.member || !activeConversation) return;
-    const threadId =
-      activeConversation.type === "agent"
-        ? getDirectMessageThreadId(bootstrap.auth.member.id, activeConversation.id)
-        : activeConversation.id;
     clearConversationUnreadCount(activeConversation.id);
-    void fetch(
-      `/api/conversations/${encodeURIComponent(threadId)}/read?organizationId=${encodeURIComponent(organizationId)}`,
-      { method: "POST" },
-    ).catch(() => undefined);
+    void markConversationRead(
+      organizationId,
+      getConversationThreadId(activeConversation, bootstrap.auth.member.id),
+    );
   }, [activeConversation, bootstrap.auth.member, clearConversationUnreadCount, organizationId]);
 
   const searchResults = useMemo(() => {
@@ -650,21 +680,31 @@ function isNotificationRunEvent(event: SocketEventName): boolean {
   );
 }
 
+function getConversationThreadId(conversation: SelectedConversation, currentMemberId: string): string {
+  return conversation.type === "agent"
+    ? getDirectMessageThreadId(currentMemberId, conversation.id)
+    : conversation.id;
+}
+
+async function markConversationRead(organizationId: string, threadId: string): Promise<void> {
+  await fetch(
+    `/api/conversations/${encodeURIComponent(threadId)}/read?organizationId=${encodeURIComponent(organizationId)}`,
+    { method: "POST" },
+  ).catch(() => undefined);
+}
+
 function updateRunActivity(
   payload: unknown,
+  members: WorkspaceMember[],
   setMemberActivity: (memberId: string, activity: "working" | "error" | "idle" | "online" | "offline" | "loading") => void,
 ): void {
   const run = (payload as { run?: Pick<RunState, "agentId" | "status"> })?.run;
   if (!run?.agentId) return;
-  if (isLiveRunStatus(run.status)) {
-    setMemberActivity(run.agentId, "working");
-  } else if (run.status === "completed" || run.status === "failed" || run.status === "cancelled") {
-    setMemberActivity(run.agentId, "idle");
+  const member = members.find((entry) => entry.id === run.agentId);
+  const activity = runStatusToActivityState(run.status, member?.presence);
+  if (activity) {
+    setMemberActivity(run.agentId, activity);
   }
-}
-
-function isLiveRunStatus(status: RunState["status"] | undefined): boolean {
-  return status === "queued" || status === "running" || status === "waiting_for_approval";
 }
 
 function resolveNotificationConversationId(

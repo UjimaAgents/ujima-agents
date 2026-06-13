@@ -5,7 +5,7 @@ import { normalizeOrgShellApprovalMode } from "@ujima/shared";
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { Home, Sparkles } from "lucide-react";
-import { normalizeProviderName } from "./api-contract";
+import { isProviderDraftComplete, normalizeProviderName } from "./api-contract";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { MIN_TEAM_AGENTS, buildOnboardingRequest } from "./api-contract";
 import { OnboardingForm } from "./components/onboarding-form";
@@ -228,7 +228,7 @@ function isTeamStepComplete(draft: OnboardingDraft) {
   const hasReports = draft.organizationReports.every(
     (report) => report.subjectName.trim() && report.managerName.trim(),
   );
-  const hasProviders = draft.providers.every((provider) => provider.name.trim() && provider.apiKey.trim());
+  const hasProviders = draft.providers.every(isProviderDraftComplete);
 
   return hasRoles && hasChannels && hasReports && hasProviders;
 }

@@ -28,7 +28,13 @@ import {
   type ConversationStreamEnvelope,
 } from "./conversation-transport";
 import type { ReasoningEffort } from "@ujima/shared/browser";
-import { activityStateToStatus, conversationActivityState, presenceToActivityState, type ActivityState } from "./activity-state";
+import {
+  activityStateToStatus,
+  conversationActivityState,
+  presenceToActivityState,
+  runStatusToActivityState,
+  type ActivityState,
+} from "./activity-state";
 import { pendingApprovalVisibleInChannelView } from "./approval-thread-filter";
 import { approvalToCard } from "./approval-card-data";
 import {
@@ -112,6 +118,8 @@ export function useConversationSync(
   const receiveMessage = useWorkspaceStore((state) => state.receiveMessage);
   const appendRunChunkBatchToStore = useWorkspaceStore((state) => state.appendRunChunkBatch);
   const removeMessage = useWorkspaceStore((state) => state.removeMessage);
+  const replaceApprovals = useWorkspaceStore((state) => state.replaceApprovals);
+  const replaceRuns = useWorkspaceStore((state) => state.replaceRuns);
   const upsertApproval = useWorkspaceStore((state) => state.upsertApproval);
   const upsertRun = useWorkspaceStore((state) => state.upsertRun);
   const setRunTokens = useWorkspaceStore((state) => state.setRunTokens);
@@ -120,12 +128,17 @@ export function useConversationSync(
   const setMemberActivity = useWorkspaceStore((state) => state.setMemberActivity);
   const [error, setError] = useState<{ conversationKey: string; message: string } | undefined>(undefined);
   const storeMembersRef = useRef(storeMembers);
+  const runsRef = useRef(runs);
   const runChunkSequenceRef = useRef(0);
   const runChunkBatcherRef = useRef<StreamChunkBatcher | null>(null);
 
   useEffect(() => {
     storeMembersRef.current = storeMembers;
   }, [storeMembers]);
+
+  useEffect(() => {
+    runsRef.current = runs;
+  }, [runs]);
 
   useEffect(() => {
     runChunkSequenceRef.current = 0;
@@ -163,16 +176,30 @@ export function useConversationSync(
       hydrateMessages(history, (message) => messageToChatMessage(message, storeMembersRef.current), messageToActivity);
       const activeRuns = latestBootstrap?.activeRuns ?? bootstrap.activeRuns;
       const pendingApprovals = latestBootstrap?.pendingApprovals ?? bootstrap.pendingApprovals;
-      for (const run of activeRuns.filter((item) => item.threadId === transport.threadId)) {
-        upsertRun(run, runToActivity);
-      }
-      for (const approval of pendingApprovals.filter((item) =>
-        shouldHydrateApproval(item, {
+      const latestMembers = latestBootstrap?.members ?? bootstrap.members;
+      const threadRuns = activeRuns.filter((run) => run.threadId === transport.threadId);
+      const visibleApprovals = pendingApprovals.filter((approval) =>
+        shouldHydrateApproval(approval, {
           conversation,
           currentThreadId: transport.threadId,
           runs: activeRuns,
         }),
+      );
+      replaceRuns(threadRuns);
+      replaceApprovals(
+        visibleApprovals.map((approval) => approvalToCard(approval, { members: latestMembers })),
+      );
+      const activeRunIds = new Set(activeRuns.map((run) => run.id));
+      for (const staleRun of runsRef.current.filter(
+        (run) => run.threadId === transport.threadId && !activeRunIds.has(run.id),
       )) {
+        const member = latestMembers.find((item) => item.id === staleRun.agentId);
+        setMemberActivity(staleRun.agentId, presenceToActivityState(member?.presence));
+      }
+      for (const run of threadRuns) {
+        upsertRun(run, runToActivity);
+      }
+      for (const approval of visibleApprovals) {
         upsertApproval(
           approval,
           (value, state) => approvalToCard(value, { members: state.members }),
@@ -183,12 +210,15 @@ export function useConversationSync(
     },
     [
       bootstrap.activeRuns,
+      bootstrap.members,
       bootstrap.pendingApprovals,
       conversation,
       conversationKey,
       hydrateMessages,
-      setError,
+      replaceApprovals,
+      replaceRuns,
       setLoading,
+      setMemberActivity,
       transport,
       upsertApproval,
       upsertRun,
@@ -216,11 +246,24 @@ export function useConversationSync(
 
     const params = buildConversationStreamParams(transport);
     const source = new EventSource(`/api/conversations/stream?${params.toString()}`);
+    let seenReady = false;
     source.onmessage = (event) => {
       const parsed = parseStreamEnvelope(event.data);
       if (!parsed) return;
       if (parsed.type === "ready") {
         setError(undefined);
+        if (seenReady) {
+          void loadConversationState(abortController.signal, currentConversationKey).catch((err) => {
+            if (abortController.signal.aborted || currentConversationKey !== conversationKey) return;
+            setLoading(false);
+            setError({
+              conversationKey: currentConversationKey,
+              message: err instanceof Error ? err.message : "Unable to load conversation history.",
+            });
+          });
+        } else {
+          seenReady = true;
+        }
         return;
       }
       if (parsed.type === "error") {
@@ -617,13 +660,10 @@ function handleStreamEvent(
       if (envelope.event === "run:started") {
         actions.setConversationError(undefined);
       }
-      if (run.status === "failed" || run.status === "cancelled") {
-        actions.setMemberActivity(run.agentId, "error");
-      } else if (run.status === "completed") {
-        const member = actions.storeMembers.find((m) => m.id === run.agentId);
-        actions.setMemberActivity(run.agentId, presenceToActivityState(member?.presence));
-      } else {
-        actions.setMemberActivity(run.agentId, "working");
+      const member = actions.storeMembers.find((m) => m.id === run.agentId);
+      const nextActivity = runStatusToActivityState(run.status, member?.presence);
+      if (nextActivity) {
+        actions.setMemberActivity(run.agentId, nextActivity);
       }
       return;
     }

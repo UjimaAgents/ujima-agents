@@ -75,7 +75,7 @@ export function ChatHeader({
           </div>
         </div>
       </div>
-      <div className="flex items-center gap-3">
+      <div className="chat-header-actions-container flex min-w-0 flex-1 items-center justify-end gap-3">
         {contextLabel && contextValue && (
           <div className="flex items-center gap-1.5 rounded-md border border-zinc-200 bg-zinc-50 px-2 py-1 dark:border-zinc-800 dark:bg-zinc-900">
             <span className="text-[10px] font-medium text-zinc-500">

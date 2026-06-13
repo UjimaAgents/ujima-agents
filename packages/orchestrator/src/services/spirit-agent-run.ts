@@ -50,7 +50,7 @@ import {
 import { createSpiritModelNotFoundHandler } from '../utils/model-fallback.js';
 import { wrapToolCallsAsCards } from '../utils/step-tool-calls.js';
 import { buildAgentMessage } from './message-factory.js';
-import { filterVisibleMessages } from '../utils/message-visibility.js';
+import { selectPromptContextMessages } from '../utils/prompt-context.js';
 import { RunTurnPublisher } from './run-turn-publisher.js';
 import { normalizeTokenUsage, persistMessageTokens } from './token-usage.js';
 import { pendingApprovalRunSummary } from './approval-summary.js';
@@ -95,8 +95,9 @@ export class SpiritServiceAgentRun extends SpiritServiceBase {
       }),
     );
 
-    const recent = filterVisibleMessages(
-      this.repo.listChannelMessages(input.organizationId, session.channelId, { limit: 20 }).data,
+    const recent = selectPromptContextMessages(
+      this.repo.listChannelMessages(input.organizationId, session.channelId, { limit: 600 }).data,
+      20,
     );
     const messages = toModelMessages(recent, member.id);
     const interruptCursor = createMessageCursor(recent);

@@ -10,11 +10,9 @@ import {
   buildSelfNoteSummary,
   buildConversationArchiveSummary,
   buildConversationSummary,
-  isCompactedConversation,
-  isCompactedSelfNote,
   isSelfSummaryNote,
-  isArchivedConversation,
 } from './conversation-summary.js';
+import { isCompactedSourceMessage } from '../utils/message-visibility.js';
 
 export const COMPACTION_TRIGGER = 500;
 export const SELF_NOTE_COMPACTION_BATCH_SIZE = 35;
@@ -55,8 +53,7 @@ export function compactSelfNotesIfNeeded(
   channelId: string,
 ): void {
   const messages = listAllChannelMessages(ctx.repo, organizationId, channelId);
-  const uncompacted = messages.filter((message) => !isCompactedSelfNote(message));
-  if (uncompacted.length <= COMPACTION_TRIGGER) {
+  if (messages.length <= COMPACTION_TRIGGER) {
     return;
   }
   compactThreadMessages(ctx, {
@@ -69,7 +66,6 @@ export function compactSelfNotesIfNeeded(
     keepRawCount: SELF_NOTE_RECENT_RAW_COUNT,
     batchSize: SELF_NOTE_COMPACTION_BATCH_SIZE,
     buildSummary: buildSelfNoteSummary,
-    publishSummary: true,
   });
 }
 
@@ -106,7 +102,6 @@ export function compactConversationIfNeeded(
     keepRawCount: CONVERSATION_RECENT_RAW_COUNT,
     batchSize: CONVERSATION_COMPACTION_BATCH_SIZE,
     buildSummary: buildConversationSummary,
-    publishSummary: true,
   });
 }
 
@@ -126,7 +121,6 @@ export function archiveConversation(
           keepRawCount: 0,
           batchSize: Number.MAX_SAFE_INTEGER,
           buildSummary: buildConversationArchiveSummary as (messages: Message[]) => string,
-          publishSummary: true,
         }
       : {
           summaryMarker: CONVERSATION_SUMMARY_MARKER,
@@ -134,7 +128,6 @@ export function archiveConversation(
           keepRawCount: CONVERSATION_RECENT_RAW_COUNT,
           batchSize: CONVERSATION_COMPACTION_BATCH_SIZE,
           buildSummary: buildConversationSummary,
-          publishSummary: true,
         };
 
   return compactThreadMessages(ctx, {
@@ -147,10 +140,8 @@ export function archiveConversation(
 }
 
 export function shouldHideCompactedMessage(message: Message, channel: { kind?: string } | null): boolean {
-  if (isCompactedSelfNote(message)) return true;
+  if (isCompactedSourceMessage(message)) return true;
   if (isSelfSummaryNote(message)) return true;
-  if (isCompactedConversation(message)) return true;
-  if (isArchivedConversation(message) && message.content.includes('compactedInto=')) return true;
   if (channel?.kind === 'self' && message.content.startsWith(SELF_NOTE_COMPACTED_MARKER)) return true;
   return false;
 }
@@ -167,7 +158,6 @@ function compactThreadMessages(
     keepRawCount: number;
     batchSize: number;
     buildSummary: (messages: Message[]) => string;
-    publishSummary: boolean;
   },
 ): { summaryMessage: Message | null; compactedMessageIds: string[] } {
   const activeSummaries = input.messages.filter((message) =>
@@ -197,21 +187,18 @@ function compactThreadMessages(
     content: input.buildSummary(summarySources),
     createdAt: now,
   });
-  if (input.publishSummary) {
-    ctx.publishMessage(summaryMessage, [], undefined, {
-      suppressDmAlerts: true,
-      skipMentionResolution: true,
-    });
-  } else {
-    ctx.repo.saveMessage(summaryMessage);
-  }
+  ctx.publishMessage(summaryMessage, [], undefined, {
+    suppressDmAlerts: true,
+    skipMentionResolution: true,
+  });
 
   for (const source of summarySources) {
     ctx.repo.updateMessage({
       ...source,
-      content: `${input.compactedMarker} compactedInto=${summaryMessage.id}`,
-      toolCalls: [],
-      reasoningContent: undefined,
+      metadata: {
+        ...source.metadata,
+        compactedInto: summaryMessage.id,
+      },
       editedAt: now,
     });
   }

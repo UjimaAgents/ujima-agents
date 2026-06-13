@@ -23,7 +23,7 @@ import {
   Users,
   X,
 } from "lucide-react";
-import { MIN_TEAM_AGENTS } from "../api-contract";
+import { isProviderDraftComplete, MIN_TEAM_AGENTS } from "../api-contract";
 import { getSuggestedAgentName } from "../agent-name-suggestions";
 import { Avatar } from "../../workspace/components/chat/primitives";
 import { Select } from "@/components/ui/select";
@@ -275,8 +275,8 @@ function validateTeamTab(tabId: TeamTabId, draft: OnboardingDraft): string | nul
     return "Complete all organization chart mappings before continuing.";
   }
 
-  if (tabId === "providers" && draft.providers.some((provider) => !provider.name.trim() || !provider.apiKey.trim())) {
-    return "Complete the provider names and API keys before continuing.";
+  if (tabId === "providers" && draft.providers.some((provider) => !isProviderDraftComplete(provider))) {
+    return "Complete the provider names and required API keys before continuing.";
   }
 
   return null;
@@ -1308,7 +1308,7 @@ function StepFields({
         {activeTeamTab === "providers" ? (
           <TeamSection
             title="Providers"
-            description="API keys are stored securely and used by your agents."
+            description="Hosted providers need API keys. Ollama can run keyless."
             actions={
               <button
                 type="button"

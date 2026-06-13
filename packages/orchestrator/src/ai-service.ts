@@ -37,7 +37,7 @@ import {
   filterToolsForWakeReplyPolicy,
   resolveWakeReplyPolicy,
 } from './utils/wake-reply-policy.js';
-import { filterVisibleMessages } from './utils/message-visibility.js';
+import { selectPromptContextMessages } from './utils/prompt-context.js';
 import { createMessageCursor, loadInterruptModelMessages } from './utils/interrupt-loader.js';
 import { DELEGATE_TURN_USER_MESSAGE } from './utils/delegate-turn.js';
 import { createProviderSafeFallbackHandler } from './utils/model-fallback.js';
@@ -213,12 +213,12 @@ export class AiService {
       availableToolIds: Object.keys(toolDefs),
     });
 
-    const recentThreadMessages = filterVisibleMessages(this.repo.listMessages(
+    const recentThreadMessages = selectPromptContextMessages(this.repo.listMessages(
       input.organizationId,
       input.threadId,
       undefined,
-      input.contextSize ?? 10,
-    ).data);
+      Math.max(input.contextSize ?? 10, 600),
+    ).data, input.contextSize ?? 10);
     const messages = toModelMessages(recentThreadMessages, input.memberId);
     const channelId = this.repo.getThread(input.organizationId, input.threadId)?.channelId;
     const workspaceStateBlock = buildWorkspaceStateBlock({
@@ -457,8 +457,9 @@ export class AiService {
       availableToolIds,
     });
 
-    const initialThreadMessages = filterVisibleMessages(
-      this.repo.listMessages(input.organizationId, input.threadId, undefined, 20).data,
+    const initialThreadMessages = selectPromptContextMessages(
+      this.repo.listMessages(input.organizationId, input.threadId, undefined, 600).data,
+      20,
     );
     const messages = toModelMessages(initialThreadMessages, input.agentId);
     const interruptCursor = createMessageCursor(initialThreadMessages);

@@ -1,6 +1,33 @@
 @import "tailwindcss";
 @custom-variant dark (&:where(.dark, .dark *));
 
+.chat-header-actions-container {
+  container: chat-header-actions / inline-size;
+}
+
+.chat-header-actions-full {
+  display: flex;
+}
+
+.chat-header-actions-compact,
+.chat-header-actions-menu {
+  display: none;
+}
+
+@container chat-header-actions (max-width: 34rem) {
+  .chat-header-actions-full {
+    display: none;
+  }
+
+  .chat-header-actions-compact {
+    display: inline-flex;
+  }
+
+  .chat-header-actions-menu {
+    display: block;
+  }
+}
+
 :root {
   --background: #ffffff;
   --foreground: #171717;

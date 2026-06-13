@@ -651,11 +651,9 @@ describe('ConversationService @all mentions', () => {
     }
 
     const stored = repo.listChannelMessages('org-1', 'self:agent-1', { limit: 1_000 });
-    const compacted = stored.data.filter((message) =>
-      message.content.startsWith('[[SELF_NOTE_COMPACTED_V1]]'),
-    );
-    const summaries = stored.data.filter((message) =>
-      message.content.startsWith('[[SELF_NOTE_SUMMARY_V1]]'),
+    const compacted = stored.data.filter((message) => message.metadata?.compactedInto);
+    const summaries = stored.data.filter(
+      (message) => message.content.startsWith('[[SELF_NOTE_SUMMARY_V1]]') && !message.metadata?.compactedInto,
     );
     expect(compacted.length).toBeGreaterThanOrEqual(35);
     expect(summaries.length).toBe(1);
@@ -710,12 +708,10 @@ describe('ConversationService @all mentions', () => {
     }
 
     const stored = repo.listChannelMessages('org-1', 'self:agent-1', { limit: 1_000 });
-    const summaries = stored.data.filter((message) =>
-      message.content.startsWith('[[SELF_NOTE_SUMMARY_V1]]'),
+    const summaries = stored.data.filter(
+      (message) => message.content.startsWith('[[SELF_NOTE_SUMMARY_V1]]') && !message.metadata?.compactedInto,
     );
-    const compacted = stored.data.filter((message) =>
-      message.content.startsWith('[[SELF_NOTE_COMPACTED_V1]]'),
-    );
+    const compacted = stored.data.filter((message) => message.metadata?.compactedInto);
     expect(summaries).toHaveLength(1);
     expect(compacted.length).toBeGreaterThan(35);
 
@@ -766,6 +762,28 @@ describe('ConversationService @all mentions', () => {
 
   it('auto-compacts a conversation after 500 messages', async () => {
     const { emits, repo, service } = createConversationFixture();
+    service.publishMessage({
+      id: 'rich-1',
+      organizationId: 'org-1',
+      threadId: 'general',
+      channelId: 'general',
+      senderId: 'agent-1',
+      senderKind: 'agent',
+      kind: 'agent',
+      content: 'Rich turn before compaction.',
+      reasoningContent: 'plan the next step',
+      mentions: [],
+      toolCalls: [
+        {
+          toolCallId: 'call-1',
+          toolName: 'shell',
+          args: { command: 'pwd' },
+          result: { stdout: '/workspace\n' },
+          isError: false,
+        },
+      ],
+      attachments: [],
+    });
     for (let i = 1; i <= 501; i += 1) {
       service.sendMessage({
         organizationId: 'org-1',
@@ -777,13 +795,15 @@ describe('ConversationService @all mentions', () => {
     }
 
     const stored = repo.listChannelMessages('org-1', 'general', { limit: 1_000 });
-    expect(stored.data.some((message) => message.content.startsWith('[[CONVERSATION_SUMMARY_V2]]'))).toBe(
-      true,
-    );
-    expect(stored.data.some((message) => message.content.startsWith('[[CONVERSATION_COMPACTED_V1]]'))).toBe(
-      true,
-    );
-    expect(emits.filter((entry) => entry.event === SocketEventNames.channelMessage)).toHaveLength(502);
+    const summary = stored.data.find((message) => message.content.startsWith('[[CONVERSATION_SUMMARY_V2]]'));
+    expect(summary).toBeTruthy();
+    const compactedSource = stored.data.find((message) => message.metadata?.compactedInto === summary?.id);
+    expect(compactedSource?.content).toBe('Rich turn before compaction.');
+    expect(compactedSource?.reasoningContent).toBe('plan the next step');
+    expect(compactedSource?.toolCalls).toHaveLength(1);
+    expect(compactedSource?.metadata?.compactedInto).toBe(summary?.id);
+    expect(stored.data.some((message) => message.metadata?.compactedInto)).toBe(true);
+    expect(emits.filter((entry) => entry.event === SocketEventNames.channelMessage)).toHaveLength(503);
   });
 
   it('folds earlier conversation summaries into later compactions', async () => {
@@ -800,7 +820,10 @@ describe('ConversationService @all mentions', () => {
 
     const summaries = repo
       .listMessages('org-1', 'general')
-      .data.filter((message) => message.content.startsWith('[[CONVERSATION_SUMMARY_V2]]'));
+      .data.filter(
+        (message) =>
+          message.content.startsWith('[[CONVERSATION_SUMMARY_V2]]') && !message.metadata?.compactedInto,
+      );
 
     expect(summaries).toHaveLength(1);
     expect(summaries[0]?.content).toContain('Compacted 36 earlier messages.');
