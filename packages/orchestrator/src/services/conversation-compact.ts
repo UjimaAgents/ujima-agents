@@ -8,15 +8,16 @@ import {
   SELF_NOTE_COMPACTED_MARKER,
   SELF_NOTE_SUMMARY_MARKER,
   buildSelfNoteSummary,
-  buildConversationArchiveSummary,
-  buildConversationSummary,
+  isCompactionSummarySystemMessage,
   isSelfSummaryNote,
 } from './conversation-summary.js';
 import { isCompactedSourceMessage } from '../utils/message-visibility.js';
+import { promptCharBudget } from '../utils/model-context-window.js';
+import { collectCursorPages } from '../utils/cursor-pages.js';
 
-export const COMPACTION_TRIGGER = 500;
 export const SELF_NOTE_COMPACTION_BATCH_SIZE = 35;
 export const SELF_NOTE_RECENT_RAW_COUNT = 15;
+export const SELF_NOTE_COMPACTION_TRIGGER = 500;
 export const CONVERSATION_COMPACTION_BATCH_SIZE = 35;
 export const CONVERSATION_RECENT_RAW_COUNT = 15;
 
@@ -37,6 +38,7 @@ export interface CompactionContext {
     ): { data: Message[]; hasMore: boolean; nextCursor?: string };
     saveMessage(message: Message): Message;
     updateMessage(message: Message): Message;
+    countUncompactedMessageChars?(organizationId: string, threadId: string): number;
   };
   publishMessage(
     message: Message,
@@ -44,6 +46,8 @@ export interface CompactionContext {
     attachmentIds?: undefined,
     options?: { suppressDmAlerts?: boolean; skipMentionResolution?: boolean },
   ): Message;
+  summarizeConversation(messages: Message[], mode: 'summary' | 'archive'): Promise<string>;
+  contextWindowTokens(organizationId: string, threadId: string): number;
 }
 
 export function compactSelfNotesIfNeeded(
@@ -53,7 +57,7 @@ export function compactSelfNotesIfNeeded(
   channelId: string,
 ): void {
   const messages = listAllChannelMessages(ctx.repo, organizationId, channelId);
-  if (messages.length <= COMPACTION_TRIGGER) {
+  if (messages.length <= SELF_NOTE_COMPACTION_TRIGGER) {
     return;
   }
   compactThreadMessages(ctx, {
@@ -65,19 +69,25 @@ export function compactSelfNotesIfNeeded(
     compactedMarker: SELF_NOTE_COMPACTED_MARKER,
     keepRawCount: SELF_NOTE_RECENT_RAW_COUNT,
     batchSize: SELF_NOTE_COMPACTION_BATCH_SIZE,
-    buildSummary: buildSelfNoteSummary,
   });
 }
 
-export function compactConversationIfNeeded(
+export async function compactConversationIfNeeded(
   ctx: CompactionContext,
   organizationId: string,
   threadId: string,
   senderId: string,
-): void {
+): Promise<void> {
   const thread = ctx.repo.getThread(organizationId, threadId);
   const channel = thread?.channelId ? ctx.repo.getChannel(organizationId, thread.channelId) : null;
   if (channel?.kind === 'self') return;
+
+  if (!conversationNeedsCompaction(
+    ctx.repo,
+    organizationId,
+    threadId,
+    ctx.contextWindowTokens(organizationId, threadId),
+  )) return;
 
   const messages = listAllThreadMessages(ctx.repo, organizationId, threadId);
   const uncompacted = messages.filter(
@@ -88,11 +98,11 @@ export function compactConversationIfNeeded(
         CONVERSATION_ARCHIVE_MARKER,
       ]),
   );
-  if (uncompacted.length <= COMPACTION_TRIGGER) {
+  if (uncompacted.length <= CONVERSATION_RECENT_RAW_COUNT) {
     return;
   }
 
-  compactThreadMessages(ctx, {
+  await compactThreadMessages(ctx, {
     organizationId,
     threadId,
     senderId,
@@ -101,17 +111,36 @@ export function compactConversationIfNeeded(
     compactedMarker: CONVERSATION_COMPACTED_MARKER,
     keepRawCount: CONVERSATION_RECENT_RAW_COUNT,
     batchSize: CONVERSATION_COMPACTION_BATCH_SIZE,
-    buildSummary: buildConversationSummary,
+    mode: 'summary',
   });
 }
 
-export function archiveConversation(
+export function conversationNeedsCompaction(
+  repo: CompactionContext['repo'],
+  organizationId: string,
+  threadId: string,
+  contextWindowTokens = DEFAULT_CONTEXT_WINDOW_TOKENS,
+): boolean {
+  const chars = repo.countUncompactedMessageChars
+    ? repo.countUncompactedMessageChars(organizationId, threadId)
+    : listAllThreadMessages(repo, organizationId, threadId)
+        .filter((message) =>
+          !isCompactedSourceMessage(message) &&
+          !isCompactionSummarySystemMessage(message),
+        )
+        .reduce((total, message) => total + message.content.length, 0);
+  return chars > promptCharBudget(contextWindowTokens);
+}
+
+const DEFAULT_CONTEXT_WINDOW_TOKENS = 128_000;
+
+export async function archiveConversation(
   ctx: CompactionContext,
   organizationId: string,
   threadId: string,
   memberId: string,
   mode: 'summarize' | 'clear',
-): { summaryMessage: Message | null; compactedMessageIds: string[] } {
+): Promise<{ summaryMessage: Message | null; compactedMessageIds: string[] }> {
   const messages = listAllThreadMessages(ctx.repo, organizationId, threadId);
   const plan =
     mode === 'clear'
@@ -120,14 +149,14 @@ export function archiveConversation(
           compactedMarker: CONVERSATION_ARCHIVE_MARKER,
           keepRawCount: 0,
           batchSize: Number.MAX_SAFE_INTEGER,
-          buildSummary: buildConversationArchiveSummary as (messages: Message[]) => string,
+          mode: 'archive' as const,
         }
       : {
           summaryMarker: CONVERSATION_SUMMARY_MARKER,
           compactedMarker: CONVERSATION_COMPACTED_MARKER,
           keepRawCount: CONVERSATION_RECENT_RAW_COUNT,
           batchSize: CONVERSATION_COMPACTION_BATCH_SIZE,
-          buildSummary: buildConversationSummary,
+          mode: 'summary' as const,
         };
 
   return compactThreadMessages(ctx, {
@@ -146,7 +175,7 @@ export function shouldHideCompactedMessage(message: Message, channel: { kind?: s
   return false;
 }
 
-function compactThreadMessages(
+async function compactThreadMessages(
   ctx: CompactionContext,
   input: {
     organizationId: string;
@@ -157,9 +186,9 @@ function compactThreadMessages(
     compactedMarker: string;
     keepRawCount: number;
     batchSize: number;
-    buildSummary: (messages: Message[]) => string;
+    mode?: 'summary' | 'archive';
   },
-): { summaryMessage: Message | null; compactedMessageIds: string[] } {
+): Promise<{ summaryMessage: Message | null; compactedMessageIds: string[] }> {
   const activeSummaries = input.messages.filter((message) =>
     isMessageWithAnyMarker(message, [input.summaryMarker]),
   );
@@ -184,7 +213,9 @@ function compactThreadMessages(
     organizationId: input.organizationId,
     threadId: input.threadId,
     channelId: ctx.repo.getThread(input.organizationId, input.threadId)?.channelId ?? undefined,
-    content: input.buildSummary(summarySources),
+    content: input.mode
+      ? await ctx.summarizeConversation(summarySources, input.mode)
+      : buildSelfNoteSummary(summarySources),
     createdAt: now,
   });
   ctx.publishMessage(summaryMessage, [], undefined, {
@@ -214,15 +245,11 @@ function listAllChannelMessages(
   organizationId: string,
   channelId: string,
 ): Message[] {
-  const all: Message[] = [];
-  let cursor: string | undefined;
-  do {
-    const page = repo.listChannelMessages(organizationId, channelId, { cursor, limit: 200 });
-    all.push(...filterVisibleMessages(page.data));
-    cursor = page.nextCursor;
-    if (!page.hasMore) break;
-  } while (cursor);
-  return all.sort((left, right) => {
+  return filterVisibleMessages(
+    collectCursorPages((cursor) =>
+      repo.listChannelMessages(organizationId, channelId, { cursor, limit: 200 }),
+    ),
+  ).sort((left, right) => {
     const byTime = left.createdAt.localeCompare(right.createdAt);
     return byTime !== 0 ? byTime : left.id.localeCompare(right.id);
   });
@@ -233,15 +260,11 @@ function listAllThreadMessages(
   organizationId: string,
   threadId: string,
 ): Message[] {
-  const all: Message[] = [];
-  let cursor: string | undefined;
-  do {
-    const page = repo.listMessages(organizationId, threadId, cursor, 200);
-    all.push(...filterVisibleMessages(page.data));
-    cursor = page.nextCursor;
-    if (!page.hasMore) break;
-  } while (cursor);
-  return all.sort((left, right) => {
+  return filterVisibleMessages(
+    collectCursorPages((cursor) =>
+      repo.listMessages(organizationId, threadId, cursor, 200),
+    ),
+  ).sort((left, right) => {
     const byTime = left.createdAt.localeCompare(right.createdAt);
     return byTime !== 0 ? byTime : left.id.localeCompare(right.id);
   });

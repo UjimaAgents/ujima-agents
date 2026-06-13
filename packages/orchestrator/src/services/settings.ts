@@ -38,6 +38,7 @@ import { requireOrganization } from '../utils/require-organization.js';
 import { visiblePublicChannels } from './channel-visibility.js';
 import type { ApprovalResolveInput } from './approval.js';
 import { resolveAgentMemberId } from './member-id.js';
+import { collectCursorPages } from '../utils/cursor-pages.js';
 
 function activeMembers(repo: ApiRepository, organizationId: string): Member[] {
   return repo.listMembers(organizationId).filter((member) => !member.retiredAt);
@@ -802,12 +803,7 @@ export class SettingsService {
 }
 
 export function visibleChannelsFromRepo(repo: ApiRepository, organizationId: string): Channel[] {
-  const channels: Channel[] = [];
-  let cursor: string | undefined = undefined;
-  do {
-    const page = repo.listChannels(organizationId, cursor, 500, ['self', 'dm']);
-    channels.push(...page.data);
-    cursor = page.nextCursor;
-  } while (cursor);
-  return channels;
+  return collectCursorPages((cursor) =>
+    repo.listChannels(organizationId, cursor, 500, ['self', 'dm']),
+  );
 }

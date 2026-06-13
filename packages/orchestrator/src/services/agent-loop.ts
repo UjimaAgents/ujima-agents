@@ -454,7 +454,7 @@ export async function runAgentLoop(input: {
 
     // The AI SDK surfaces 4xx/5xx from the provider through *both*
     // `fullStream` (as `{ type: 'error', error }`) AND as a Promise
-    // rejection on `result.text` / `result.usage` / the
+    // rejection on `result.text` / `result.totalUsage` / the
     // async-iterator itself. We have to classify in every branch —
     // a 400 "too many states" sometimes arrives only through the
     // text-promise rejection, and the original
@@ -475,7 +475,7 @@ export async function runAgentLoop(input: {
     let text: string;
     let usage: AgentLoopResult['usage'];
     try {
-      [text, usage] = await Promise.all([result.text, result.usage]);
+      [text, usage] = await Promise.all([result.text, result.totalUsage]);
     } catch (resolveError) {
       rethrowClassified(resolveError);
     }

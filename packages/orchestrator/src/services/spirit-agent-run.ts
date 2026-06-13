@@ -51,6 +51,10 @@ import { createSpiritModelNotFoundHandler } from '../utils/model-fallback.js';
 import { wrapToolCallsAsCards } from '../utils/step-tool-calls.js';
 import { buildAgentMessage } from './message-factory.js';
 import { selectPromptContextMessages } from '../utils/prompt-context.js';
+import {
+  modelContextWindowTokens,
+  promptCharBudget,
+} from '../utils/model-context-window.js';
 import { RunTurnPublisher } from './run-turn-publisher.js';
 import { normalizeTokenUsage, persistMessageTokens } from './token-usage.js';
 import { pendingApprovalRunSummary } from './approval-summary.js';
@@ -97,7 +101,15 @@ export class SpiritServiceAgentRun extends SpiritServiceBase {
 
     const recent = selectPromptContextMessages(
       this.repo.listChannelMessages(input.organizationId, session.channelId, { limit: 600 }).data,
-      20,
+      600,
+      promptCharBudget(
+        modelContextWindowTokens(
+          member.llm ?? teamRole.provider ?? '',
+          typeof (model as { modelId?: unknown }).modelId === 'string'
+            ? (model as { modelId: string }).modelId
+            : member.model ?? teamRole.model ?? '',
+        ),
+      ),
     );
     const messages = toModelMessages(recent, member.id);
     const interruptCursor = createMessageCursor(recent);

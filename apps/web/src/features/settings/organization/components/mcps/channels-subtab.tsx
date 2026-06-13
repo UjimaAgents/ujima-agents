@@ -1,7 +1,7 @@
 "use client";
 
 import { Check, Hash, Plug, Plus, Trash2 } from "lucide-react";
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   ChannelMcpAttachment,
   McpAttachmentScope,
@@ -16,6 +16,7 @@ import type {
 import { settingsFetch, settingsFetchVoid } from "@/features/settings/shared/settings-api";
 import { useSettingsPage } from "@/features/settings/shared/settings-workspace-context";
 import type { UseMcpCatalog } from "./use-mcp-catalog";
+import { SegmentedRadio } from "./segmented-radio";
 
 interface Props {
   orgId: string;
@@ -28,112 +29,15 @@ interface Props {
   catalog: UseMcpCatalog;
 }
 
-/**
- * Per-channel attachment tier toggle. Mirrors the agents-subtab
- * TierToggle (same ARIA radio pattern + non-jargon labels). Inlined
- * rather than extracted because the agents-subtab version uses
- * agent-scoped state and lifting the shape into a shared component
- * would force a generic that obscures more than it shares for a
- * 30-line widget.
- */
-function ChannelTierToggle({
-  tier,
-  disabled,
-  onChange,
-}: {
-  tier: McpAttachmentTier;
-  disabled: boolean;
-  onChange: (next: McpAttachmentTier) => void;
-}) {
-  const groupName = useId();
-  const options: { value: McpAttachmentTier; label: string }[] = [
-    { value: "native", label: "Always on" },
-    { value: "dispatch", label: "On demand" },
-  ];
-  return (
-    <fieldset
-      aria-label="Attachment tier"
-      disabled={disabled}
-      className="m-0 inline-flex overflow-hidden rounded-full border border-zinc-200 p-0 text-[11px] dark:border-zinc-800"
-    >
-      {options.map((opt) => {
-        const selected = opt.value === tier;
-        return (
-          <label
-            key={opt.value}
-            className={`cursor-pointer px-2 py-0.5 transition focus-within:ring-2 focus-within:ring-zinc-400 focus-within:ring-offset-0 ${
-              selected
-                ? "bg-zinc-800 text-white dark:bg-zinc-200 dark:text-zinc-900"
-                : "text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-900"
-            } ${disabled ? "cursor-not-allowed opacity-60" : ""}`}
-          >
-            <input
-              type="radio"
-              name={groupName}
-              value={opt.value}
-              checked={selected}
-              onChange={() => onChange(opt.value)}
-              className="sr-only"
-            />
-            {opt.label}
-          </label>
-        );
-      })}
-    </fieldset>
-  );
-}
-
-/**
- * Three-way scope selector for new channel attachments. Same ARIA
- * radio shape as ChannelTierToggle but with three options (worker /
- * supervisor / both). Kept inline rather than extracting because
- * the visual + interaction match is the only thing it shares with
- * the tier toggle — both are role-narrowing 2-3 way radios.
- */
-function ScopeSelector({
-  value,
-  onChange,
-}: {
-  value: McpAttachmentScope;
-  onChange: (next: McpAttachmentScope) => void;
-}) {
-  const groupName = useId();
-  const options: { value: McpAttachmentScope; label: string }[] = [
-    { value: "worker", label: "Workers" },
-    { value: "supervisor", label: "Supervisors" },
-    { value: "both", label: "Both" },
-  ];
-  return (
-    <fieldset
-      aria-label="Attachment scope"
-      className="m-0 inline-flex overflow-hidden rounded-full border border-zinc-200 p-0 text-[11px] dark:border-zinc-800"
-    >
-      {options.map((opt) => {
-        const selected = opt.value === value;
-        return (
-          <label
-            key={opt.value}
-            className={`cursor-pointer px-2 py-0.5 transition focus-within:ring-2 focus-within:ring-zinc-400 focus-within:ring-offset-0 ${
-              selected
-                ? "bg-zinc-800 text-white dark:bg-zinc-200 dark:text-zinc-900"
-                : "text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-900"
-            }`}
-          >
-            <input
-              type="radio"
-              name={groupName}
-              value={opt.value}
-              checked={selected}
-              onChange={() => onChange(opt.value)}
-              className="sr-only"
-            />
-            {opt.label}
-          </label>
-        );
-      })}
-    </fieldset>
-  );
-}
+const TIER_OPTIONS = [
+  { value: "native", label: "Always on" },
+  { value: "dispatch", label: "On demand" },
+] as const;
+const SCOPE_OPTIONS = [
+  { value: "worker", label: "Workers" },
+  { value: "supervisor", label: "Supervisors" },
+  { value: "both", label: "Both" },
+] as const;
 
 export function ChannelsSubtab({ orgId, catalog }: Props) {
   // Pull channels from the org-settings page context — the parent
@@ -408,7 +312,12 @@ export function ChannelsSubtab({ orgId, catalog }: Props) {
             */}
             <div className="flex items-center gap-2 px-1 text-[11px] text-zinc-600 dark:text-zinc-400">
               <span>Visible to:</span>
-              <ScopeSelector value={attachScope} onChange={setAttachScope} />
+              <SegmentedRadio
+                ariaLabel="Attachment scope"
+                value={attachScope}
+                options={SCOPE_OPTIONS}
+                onChange={setAttachScope}
+              />
             </div>
             {availableServers.length === 0 ? (
               <p className="px-1 py-2 text-[11px] text-zinc-500 dark:text-zinc-400">
@@ -471,8 +380,10 @@ export function ChannelsSubtab({ orgId, catalog }: Props) {
                       {toolCount} tools &middot; scope: {attachment.scope}
                     </p>
                   </div>
-                  <ChannelTierToggle
-                    tier={attachment.tier}
+                  <SegmentedRadio
+                    ariaLabel="Attachment tier"
+                    value={attachment.tier}
+                    options={TIER_OPTIONS}
                     disabled={busy === `tier:${attachment.mcpServerId}`}
                     onChange={(next) =>
                       void handleTierChange(attachment.mcpServerId, next)

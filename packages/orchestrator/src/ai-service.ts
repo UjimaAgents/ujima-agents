@@ -42,6 +42,10 @@ import { createMessageCursor, loadInterruptModelMessages } from './utils/interru
 import { DELEGATE_TURN_USER_MESSAGE } from './utils/delegate-turn.js';
 import { createProviderSafeFallbackHandler } from './utils/model-fallback.js';
 import { isDelegateMessage, filterDelegateTurnTools } from './services/run-reply-guard.js';
+import {
+  modelContextWindowTokens,
+  promptCharBudget,
+} from './utils/model-context-window.js';
 
 // Resolver now delegates to the canonical `@ujima/llm` surface so every
 // AI-SDK-driven code path (this `/api/runs` service, the upcoming
@@ -459,7 +463,15 @@ export class AiService {
 
     const initialThreadMessages = selectPromptContextMessages(
       this.repo.listMessages(input.organizationId, input.threadId, undefined, 600).data,
-      20,
+      600,
+      promptCharBudget(
+        modelContextWindowTokens(
+          member.llm ?? role.provider ?? '',
+          typeof (model as { modelId?: unknown }).modelId === 'string'
+            ? (model as { modelId: string }).modelId
+            : member.model ?? role.model ?? '',
+        ),
+      ),
     );
     const messages = toModelMessages(initialThreadMessages, input.agentId);
     const interruptCursor = createMessageCursor(initialThreadMessages);

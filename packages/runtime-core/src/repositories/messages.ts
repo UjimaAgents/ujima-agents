@@ -13,6 +13,24 @@ export interface PaginatedMessages {
   searchRanks?: Record<string, number>;
 }
 
+function messagePage(db: DbHandle, rows: Row[], limit: number): PaginatedMessages {
+  const hasMore = rows.length > limit;
+  if (hasMore) rows.shift();
+  const attachments = listMessageAttachmentsForMessageIds(
+    db,
+    rows.map((row) => rowString(row, 'id')),
+  );
+  const data = rows.map((row) =>
+    rowToMessage(row, attachments.get(rowString(row, 'id'))),
+  );
+  const head = hasMore ? data[0] : undefined;
+  return {
+    data,
+    hasMore,
+    nextCursor: head ? encodeCursor(head.createdAt, head.id) : undefined,
+  };
+}
+
 export function saveMessage(db: DbHandle, message: Message): Message {
   const payload = MessageSchema.parse(message);
 
@@ -260,21 +278,7 @@ export function listMessages(
   const query = `SELECT * FROM (${innerQuery}) ORDER BY created_at ASC, id ASC`;
   const rows = db.prepare(query).all(...params) as Row[];
 
-  const hasMore = rows.length > limit;
-  if (hasMore) {
-    rows.shift();
-  }
-
-  const attachmentsByMessageId = listMessageAttachmentsForMessageIds(
-    db,
-    rows.map((row) => rowString(row, 'id')),
-  );
-  const data = rows.map((row) => rowToMessage(row, attachmentsByMessageId.get(rowString(row, 'id'))));
-
-  const head = hasMore ? data[0] : undefined;
-  const nextCursor = head ? encodeCursor(head.createdAt, head.id) : undefined;
-
-  return { data, hasMore, nextCursor };
+  return messagePage(db, rows, limit);
 }
 
 export function countMessagesSince(
@@ -299,6 +303,24 @@ export function countMessagesSince(
   }
 
   const row = db.prepare(query).get(...params) as { count?: number } | undefined;
+  return typeof row?.count === 'number' ? row.count : 0;
+}
+
+export function countUncompactedMessageChars(
+  db: DbHandle,
+  organizationId: string,
+  threadId: string,
+): number {
+  const row = db.prepare(
+    `SELECT COALESCE(SUM(LENGTH(content)), 0) AS count
+     FROM messages
+     WHERE organization_id = ?
+       AND thread_id = ?
+       AND json_extract(metadata, '$.compactedInto') IS NULL
+       AND content NOT LIKE '[[CONVERSATION_SUMMARY_%'
+       AND content NOT LIKE '[[CONVERSATION_COMPACTED_%'
+       AND content NOT LIKE '[[CONVERSATION_ARCHIVE_%'`,
+  ).get(organizationId, threadId) as { count?: number } | undefined;
   return typeof row?.count === 'number' ? row.count : 0;
 }
 
@@ -332,15 +354,7 @@ export function listChannelMessages(
 
   const query = `SELECT * FROM (${innerQuery}) ORDER BY created_at ASC, id ASC`;
   const rows = db.prepare(query).all(...params) as Row[];
-  const hasMore = rows.length > limit;
-  if (hasMore) rows.shift();
-  const attachmentsByMessageId = listMessageAttachmentsForMessageIds(
-    db,
-    rows.map((row) => rowString(row, 'id')),
-  );
-  const data = rows.map((row) => rowToMessage(row, attachmentsByMessageId.get(rowString(row, 'id'))));
-  const head = hasMore ? data[0] : undefined;
-  return { data, hasMore, nextCursor: head ? encodeCursor(head.createdAt, head.id) : undefined };
+  return messagePage(db, rows, limit);
 }
 
 export function searchChannelMessages(
@@ -567,15 +581,7 @@ function searchChannelMessagesBySubstring(
 
   const query = `SELECT * FROM (${innerQuery}) ORDER BY created_at ASC, id ASC`;
   const rows = db.prepare(query).all(...params) as Row[];
-  const hasMore = rows.length > limit;
-  if (hasMore) rows.shift();
-  const attachmentsByMessageId = listMessageAttachmentsForMessageIds(
-    db,
-    rows.map((row) => rowString(row, 'id')),
-  );
-  const data = rows.map((row) => rowToMessage(row, attachmentsByMessageId.get(rowString(row, 'id'))));
-  const head = hasMore ? data[0] : undefined;
-  return { data, hasMore, nextCursor: head ? encodeCursor(head.createdAt, head.id) : undefined };
+  return messagePage(db, rows, limit);
 }
 
 function escapeLikePattern(value: string): string {

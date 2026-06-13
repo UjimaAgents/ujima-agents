@@ -340,7 +340,7 @@ export function registerConversationRoutes(
         authState.member.id,
       );
 
-      const result = conversations.archiveConversation({
+      const result = await conversations.archiveConversation({
         organizationId: req.body.organizationId,
         threadId: req.params.threadId,
         memberId: authState.member.id,

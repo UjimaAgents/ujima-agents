@@ -123,6 +123,7 @@ import {
   getLatestHumanMessageInThread as readLatestHumanMessageInThread,
   getMessage as readMessage,
   countMessagesSince as readMessageCountSince,
+  countUncompactedMessageChars as readUncompactedMessageChars,
   listMessages as readMessages,
   listChannelMessages as readChannelMessages,
   saveMessage as writeMessage,
@@ -495,6 +496,8 @@ export class Repository {
     threadId: string,
     input?: { since?: string; excludeSenderId?: string },
   ): number => readMessageCountSince(this.db, organizationId, threadId, input);
+  countUncompactedMessageChars = (organizationId: string, threadId: string): number =>
+    readUncompactedMessageChars(this.db, organizationId, threadId);
   listChannelMessages = (
     organizationId: string,
     channelId: string,

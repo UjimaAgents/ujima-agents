@@ -114,8 +114,7 @@ function matchStrategyFrom(args: Record<string, unknown>): 'exact' | 'whitespace
   return args.matchStrategy === 'whitespace' || args.match_strategy === 'whitespace' ? 'whitespace' : 'exact';
 }
 
-const EditSchema = z.object({
-  ...FilePathFields,
+const EditFields = {
   oldString: z.string().optional().describe('Exact text to replace. `old_string` is also accepted.'),
   old_string: z.string().optional().describe('Exact text to replace. Prefer this field.'),
   newString: z.string().optional().describe('Replacement text. `new_string` is also accepted.'),
@@ -126,41 +125,32 @@ const EditSchema = z.object({
   start_line: z.number().int().min(1).optional().describe('1-based line near the intended match. Prefer this field.'),
   matchStrategy: z.enum(['exact', 'whitespace']).optional().describe('Use whitespace only when formatting drift prevents an exact match.'),
   match_strategy: z.enum(['exact', 'whitespace']).optional().describe('Use whitespace only when formatting drift prevents an exact match. Prefer this field.'),
-}).superRefine((value, ctx) => {
-  if (!filePathFrom(value).trim()) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['file_path'], message: 'file_path is required' });
-  }
+};
+
+function validateEdit(value: Record<string, unknown>, ctx: z.RefinementCtx): void {
   if (stringFrom(value, 'oldString', 'old_string') === '') {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['old_string'], message: 'old_string is required' });
   }
   if (stringFrom(value, 'newString', 'new_string') === '') {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['new_string'], message: 'new_string is required' });
   }
+}
+
+const EditSchema = z.object({
+  ...FilePathFields,
+  ...EditFields,
+}).superRefine((value, ctx) => {
+  if (!filePathFrom(value).trim()) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['file_path'], message: 'file_path is required' });
+  }
+  validateEdit(value, ctx);
 });
 
 const MultiEditSchema = z.object({
   ...FilePathFields,
   edits: z
     .array(
-      z.object({
-        oldString: z.string().optional().describe('Exact text to replace. `old_string` is also accepted.'),
-        old_string: z.string().optional().describe('Exact text to replace. Prefer this field.'),
-        newString: z.string().optional().describe('Replacement text. `new_string` is also accepted.'),
-        new_string: z.string().optional().describe('Replacement text. Prefer this field.'),
-        replaceAll: z.boolean().optional().describe('Replace every occurrence. `replace_all` is also accepted.'),
-        replace_all: z.boolean().optional().describe('Replace every occurrence. Prefer this field.'),
-        startLine: z.number().int().min(1).optional().describe('1-based line near the intended match. `start_line` is also accepted.'),
-        start_line: z.number().int().min(1).optional().describe('1-based line near the intended match. Prefer this field.'),
-        matchStrategy: z.enum(['exact', 'whitespace']).optional().describe('Use whitespace only when formatting drift prevents an exact match.'),
-        match_strategy: z.enum(['exact', 'whitespace']).optional().describe('Use whitespace only when formatting drift prevents an exact match. Prefer this field.'),
-      }).superRefine((value, ctx) => {
-        if (stringFrom(value, 'oldString', 'old_string') === '') {
-          ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['old_string'], message: 'old_string is required' });
-        }
-        if (stringFrom(value, 'newString', 'new_string') === '') {
-          ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['new_string'], message: 'new_string is required' });
-        }
-      }),
+      z.object(EditFields).superRefine(validateEdit),
     )
     .min(1),
 }).superRefine((value, ctx) => {

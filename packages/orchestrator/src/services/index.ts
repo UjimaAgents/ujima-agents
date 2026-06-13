@@ -19,7 +19,8 @@ import { AuthService } from './auth.js';
 import { BootstrapService } from './bootstrap.js';
 import { ChannelRetentionService } from './channel-retention.js';
 import type { ApiServiceContext } from './context.js';
-import { ConversationService } from './conversation.js';
+import { ConversationService, type ConversationServiceOptions } from './conversation.js';
+import { buildConversationSummaryViaLlm } from './conversation-summary.js';
 import { GoalSystemService } from './goal-system.js';
 import { MemoryReviewService } from './memory-review.js';
 import { TrajectoryService } from './trajectory.js';
@@ -54,6 +55,7 @@ import {
 } from './tool-service.js';
 import { ToolServiceImpl, type ApprovalRequester } from './tool-service-impl.js';
 import { createSpiritModelResolver } from '../utils/create-spirit-model-resolver.js';
+import { modelContextWindowTokens } from '../utils/model-context-window.js';
 import type { AgentDelegateResult } from '../tools/types.js';
 
 export type { ApiServiceContext, RealtimeService } from './context.js';
@@ -660,6 +662,9 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   let createDelegateRun: Parameters<typeof runAgentDelegateTurn>[0]['createRun'] = async () => {
     throw new Error('createDelegateRun not wired');
   };
+  let summarizeConversation: NonNullable<ConversationServiceOptions['summarizeConversation']> = async () => {
+    throw new Error('AI conversation summarizer is not wired.');
+  };
 
   // eslint-disable-next-line prefer-const
   let handleMessagePublished: ((msg: Message) => void) | undefined;
@@ -667,6 +672,25 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     archiveStore: retention,
     onMemberAlerted: (input) => wakeMember(input),
     onMessagePublished: (msg) => handleMessagePublished?.(msg),
+    summarizeConversation: (messages, mode) => summarizeConversation(messages, mode),
+    contextWindowTokens: (organizationId) => {
+      const team = context.teamStore.getTeam(organizationId);
+      if (!team) return 128_000;
+      const windows = context.repo
+        .listMembers(organizationId)
+        .filter((member) => member.kind === AGENT_KIND && !member.retiredAt)
+        .flatMap((member) => {
+          const agent = team.getAgent(member.id) ?? team.getAgent(member.name);
+          const role = agent ? team.getRole(agent.roleName) : undefined;
+          const providerName = member.llm ?? role?.provider;
+          const provider = providerName ? team.getProvider(providerName) : undefined;
+          const modelId = member.model ?? role?.model ?? provider?.defaultModel;
+          return providerName && modelId
+            ? [modelContextWindowTokens(provider?.kind ?? providerName, modelId)]
+            : [];
+        });
+      return windows.length > 0 ? Math.min(...windows) : 128_000;
+    },
   });
 
   const delegateAgentTurn = async (input: {
@@ -717,6 +741,27 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   const spiritModelResolver =
     context.spiritModelResolver ??
     createSpiritModelResolver(context.teamStore, context.repo);
+  summarizeConversation = async (messages, mode) => {
+    const agent = [...messages]
+      .reverse()
+      .map((message) => context.repo.getMember(message.organizationId, message.senderId))
+      .find((member) => member?.kind === AGENT_KIND && !member.retiredAt)
+      ?? context.repo
+        .listMembers(messages[0]?.organizationId ?? '')
+        .find((member) => member.kind === AGENT_KIND && !member.retiredAt);
+    if (!agent || !messages[0]) {
+      throw new Error('No active agent is available to summarize this conversation.');
+    }
+    return buildConversationSummaryViaLlm({
+      messages,
+      mode,
+      model: await spiritModelResolver({
+        organizationId: messages[0].organizationId,
+        memberId: agent.id,
+        role: 'worker',
+      }),
+    });
+  };
   const goals = new GoalSystemService(
     context.repo,
     (orgId, runId) => resumeInputRun(orgId, runId),
