@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import {
   createSpeechRecognition,
-  getVoiceInputSupport,
+  getCachedVoiceInputSupport,
   idleVoiceLevels,
   levelsFromAnalyser,
   mergeVoiceTranscript,
@@ -40,7 +40,7 @@ export function useComposerVoiceInput({
 }: UseComposerVoiceInputOptions): UseComposerVoiceInputResult {
   const support = useSyncExternalStore(
     subscribeVoiceSupportNoop,
-    getVoiceInputSupport,
+    getCachedVoiceInputSupport,
     () => SSR_VOICE_SUPPORT,
   );
   const [isListening, setIsListening] = useState(false);

@@ -63,23 +63,47 @@ function getSpeechRecognitionConstructor(): SpeechRecognitionConstructor | null 
   return candidate ?? null;
 }
 
-export function getVoiceInputSupport(): VoiceInputSupport {
+const VOICE_SUPPORT_BROWSER_ONLY: VoiceInputSupport = {
+  supported: false,
+  reason: "Voice input is only available in the browser.",
+};
+
+const VOICE_SUPPORT_NO_SPEECH_API: VoiceInputSupport = {
+  supported: false,
+  reason: "Voice input isn't supported in this browser. Try Chrome or Safari.",
+};
+
+const VOICE_SUPPORT_NO_MEDIA: VoiceInputSupport = {
+  supported: false,
+  reason: "Microphone access isn't available in this browser.",
+};
+
+const VOICE_SUPPORT_AVAILABLE: VoiceInputSupport = { supported: true };
+
+let cachedVoiceInputSupport: VoiceInputSupport | null = null;
+
+function resolveVoiceInputSupport(): VoiceInputSupport {
   if (typeof window === "undefined") {
-    return { supported: false, reason: "Voice input is only available in the browser." };
+    return VOICE_SUPPORT_BROWSER_ONLY;
   }
   if (!getSpeechRecognitionConstructor()) {
-    return {
-      supported: false,
-      reason: "Voice input isn't supported in this browser. Try Chrome or Safari.",
-    };
+    return VOICE_SUPPORT_NO_SPEECH_API;
   }
   if (!navigator.mediaDevices?.getUserMedia) {
-    return {
-      supported: false,
-      reason: "Microphone access isn't available in this browser.",
-    };
+    return VOICE_SUPPORT_NO_MEDIA;
   }
-  return { supported: true };
+  return VOICE_SUPPORT_AVAILABLE;
+}
+
+export function getVoiceInputSupport(): VoiceInputSupport {
+  return resolveVoiceInputSupport();
+}
+
+export function getCachedVoiceInputSupport(): VoiceInputSupport {
+  if (!cachedVoiceInputSupport) {
+    cachedVoiceInputSupport = resolveVoiceInputSupport();
+  }
+  return cachedVoiceInputSupport;
 }
 
 export function createSpeechRecognition(): SpeechRecognitionInstance | null {

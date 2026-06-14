@@ -744,6 +744,19 @@ export function ChannelView({
     [setActiveTab],
   );
 
+  const handleOpenTasksTab = useCallback(() => {
+    handleTabChange("tasks");
+  }, [handleTabChange]);
+
+  const handleNavigateChannel = useCallback(
+    (channelId: string) => {
+      const channel = channelById.get(channelId);
+      if (!channel) return;
+      onSelectConversation?.({ type: "channel", id: channel.id, name: channel.name });
+    },
+    [channelById, onSelectConversation],
+  );
+
   const feedRef = useRef(feed);
   feedRef.current = feed;
   const replyToRef = useRef(replyTo);
@@ -971,6 +984,9 @@ export function ChannelView({
                           <ChatMessage
                             message={message}
                             organizationId={organizationId}
+                            members={members}
+                            onOpenTasksTab={handleOpenTasksTab}
+                            onNavigateChannel={handleNavigateChannel}
                             colorIndex={Math.max(memberIndexById.get(message.senderId ?? "") ?? 0, 0)}
                             onReply={setReplyTo}
                           />

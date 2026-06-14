@@ -94,7 +94,8 @@ export {
   IMPLEMENT_QUESTION_OPTION,
   IMPLEMENT_QUESTION_TEXT,
 } from './goal-system.js';
-export type { ParsedPlanTask } from './goal-system.js';
+export type { ParsedPlanTask, GoalTaskUpdateResult } from './goal-system.js';
+export { publishGoalTaskUpdatedCard } from './goal-task-card.js';
 export {
   SELF_NOTE_COMPACTED_MARKER,
   SELF_NOTE_SUMMARY_MARKER,
@@ -963,6 +964,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
         organizationId: messages[0].organizationId,
         memberId: agent.id,
         role: 'worker',
+        reasoningEffort: 'none',
       }),
     });
   };

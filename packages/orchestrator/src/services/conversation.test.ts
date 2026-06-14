@@ -866,6 +866,74 @@ describe('ConversationService @all mentions', () => {
     expect(visible.data[0]?.content.startsWith('[[CONVERSATION_ARCHIVE_V1]]')).toBe(true);
   });
 
+  it('clears a thread that already has a rolling summarize row', async () => {
+    const { service } = createConversationFixture();
+    for (let i = 1; i <= 20; i += 1) {
+      service.sendMessage({
+        organizationId: 'org-1',
+        threadId: 'general',
+        channelId: 'general',
+        senderId: 'human-1',
+        content: `prior-${i}`,
+      });
+    }
+
+    await service.archiveConversation({
+      organizationId: 'org-1',
+      threadId: 'general',
+      memberId: 'human-1',
+      mode: 'summarize',
+    });
+
+    const result = await service.archiveConversation({
+      organizationId: 'org-1',
+      threadId: 'general',
+      memberId: 'human-1',
+      mode: 'clear',
+    });
+
+    expect(result.summaryMessage?.content.startsWith('[[CONVERSATION_ARCHIVE_V1]]')).toBe(true);
+    const visible = await service.readChannel({
+      organizationId: 'org-1',
+      memberId: 'human-1',
+      channelId: 'general',
+      limit: 1_000,
+    });
+    expect(visible.data).toHaveLength(1);
+    expect(visible.data[0]?.content.startsWith('[[CONVERSATION_ARCHIVE_V1]]')).toBe(true);
+  });
+
+  it('clears long conversations in the same batch size as summarize', async () => {
+    const { service } = createConversationFixture();
+    for (let i = 1; i <= 40; i += 1) {
+      service.sendMessage({
+        organizationId: 'org-1',
+        threadId: 'general',
+        channelId: 'general',
+        senderId: 'human-1',
+        content: `cleanup-${i}`,
+      });
+    }
+
+    const result = await service.archiveConversation({
+      organizationId: 'org-1',
+      threadId: 'general',
+      memberId: 'human-1',
+      mode: 'clear',
+    });
+
+    expect(result.compactedMessageIds.length).toBeGreaterThanOrEqual(40);
+    expect(result.summaryMessage?.content.startsWith('[[CONVERSATION_ARCHIVE_V1]]')).toBe(true);
+    const visible = await service.readChannel({
+      organizationId: 'org-1',
+      memberId: 'human-1',
+      channelId: 'general',
+      limit: 1_000,
+    });
+    expect(visible.data).toHaveLength(1);
+    expect(visible.data[0]?.content.startsWith('[[CONVERSATION_ARCHIVE_V1]]')).toBe(true);
+  });
+
   it('does not wake participants when a conversation is summarized', async () => {
     const { alerts, service } = createConversationFixture();
     for (let i = 1; i <= 20; i += 1) {

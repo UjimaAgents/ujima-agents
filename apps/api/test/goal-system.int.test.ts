@@ -471,6 +471,27 @@ describe('GoalSystemService.updateTask', () => {
     ).toThrow('Goal task not found: missing-task');
   });
 
+  it('returns previousStatus when a task status changes', () => {
+    const { repo, orgId } = bootstrap();
+    const goals = new GoalSystemService(repo);
+    const { tasks } = goals.start({
+      organizationId: orgId,
+      channelId: 'channel-status-history',
+      supervisorId: 'supervisor-1',
+      title: 'Plan',
+      planMarkdown: '## Plan',
+      tasks: [{ title: 'Step 1', assigneeId: 'agent-a' }],
+    });
+    const updated = goals.updateTask({
+      organizationId: orgId,
+      taskId: tasks[0]!.id,
+      status: 'in_progress',
+      callerMemberId: 'supervisor-1',
+    });
+    expect(updated.status).toBe('in_progress');
+    expect(updated.previousStatus).toBe('pending');
+  });
+
   // Replaces the deleted commitment-sweeper hand-off behaviour.
   // When Task A completes, every PENDING task whose
   // depends_on_task_id was A must get a single DM nudge @-mentioning

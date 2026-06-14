@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { Repository } from '@ujima/runtime-core';
 import type { AuthService, AuthState, ConversationService, GoalSystemService } from '@ujima/orchestrator';
+import { publishGoalTaskUpdatedCard } from '@ujima/orchestrator';
 import { GoalTaskStatusSchema, type Goal, type InteractiveQuestion } from '@ujima/shared';
 import { z } from 'zod';
 import { readSessionToken } from '../session-token.js';
@@ -239,6 +240,16 @@ export function registerGoalRoutes(api: FastifyInstance, deps: GoalRouteDeps): v
         callerMemberId: auth.member.id,
       });
       if (!task) return reply.status(404).send({ code: 'ERR_NOT_FOUND', message: 'Task not found' });
+      if (existing.status !== task.status) {
+        publishGoalTaskUpdatedCard({
+          conversations: deps.conversations,
+          organizationId: auth.user.organizationId,
+          goal,
+          task,
+          previousStatus: existing.status,
+          actorMemberId: auth.member.id,
+        });
+      }
       return reply.status(200).send({ task });
     } catch (error) {
       return sendRouteError(reply, error);

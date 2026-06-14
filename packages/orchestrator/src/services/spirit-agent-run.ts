@@ -689,7 +689,11 @@ ${activeMemories
       taskSessionId: input.spirit.taskSessionId,
       runId: input.spirit.runId,
     });
-    const messageToolCalls = prepared.artifact ? [...wrapped, prepared.artifact] : wrapped;
+    const messageToolCalls = [
+      ...wrapped,
+      ...prepared.goalCards,
+      ...(prepared.artifact ? [prepared.artifact] : []),
+    ];
     const message = input.turn.publishMessage(
       buildAgentMessage({
         organizationId: input.organizationId,

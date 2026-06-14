@@ -2,6 +2,7 @@ import type { MessageToolCall } from '@ujima/shared';
 import { extractReasoningChunk } from '../utils/extract-reasoning.js';
 import { normalizeRunStepToolCalls } from '../utils/step-tool-calls.js';
 import { appendArtifactFileToolCall } from './artifact-file-card.js';
+import { appendGoalTaskToolCalls } from './goal-task-card.js';
 import type { AgentLoopStep } from './agent-loop.js';
 import { runUsedThreadPublishingTool, stepContainsSilentTerminator } from './run-reply-guard.js';
 
@@ -23,6 +24,7 @@ export interface PrepareAgentStepPublicationInput {
 export interface PreparedAgentStepPublication {
   content: string;
   stepToolCalls: MessageToolCall[];
+  goalCards: MessageToolCall[];
   artifact?: MessageToolCall;
   reasoningContent?: string;
   artifactPublished: boolean;
@@ -31,7 +33,11 @@ export interface PreparedAgentStepPublication {
 }
 
 export function composedStepToolCalls(prepared: PreparedAgentStepPublication): MessageToolCall[] {
-  return [...prepared.stepToolCalls, ...(prepared.artifact ? [prepared.artifact] : [])];
+  return [
+    ...prepared.stepToolCalls,
+    ...prepared.goalCards,
+    ...(prepared.artifact ? [prepared.artifact] : []),
+  ];
 }
 
 export async function prepareAgentStepPublication(
@@ -43,7 +49,9 @@ export async function prepareAgentStepPublication(
   if (!stepText && stepToolCalls.length === 0) return null;
 
   let artifact: MessageToolCall | undefined;
+  let goalCards: MessageToolCall[] = [];
   if (stepToolCalls.length > 0) {
+    goalCards = appendGoalTaskToolCalls(stepToolCalls, stepToolResults);
     artifact = await appendArtifactFileToolCall(stepToolCalls, input.teamRoot, stepToolResults);
     if (!artifact && input.resolveRunStepArtifact) {
       artifact = await input.resolveRunStepArtifact(stepToolCalls.at(-1)?.toolCallId);
@@ -55,7 +63,7 @@ export async function prepareAgentStepPublication(
     : runUsedThreadPublishingTool({ steps: [input.step] });
   const terminatorState = input.terminatorState;
   if (terminatorState) {
-    if (terminatorState.sawTerminatingTool || (stepTerminatedRun && !artifact)) {
+    if (terminatorState.sawTerminatingTool || (stepTerminatedRun && !artifact && goalCards.length === 0)) {
       if (stepTerminatedRun) terminatorState.sawTerminatingTool = true;
       return null;
     }
@@ -66,17 +74,20 @@ export async function prepareAgentStepPublication(
     return null;
   }
 
-  if (!stepText && !artifact && !input.allowEmptyWithoutArtifact) {
+  if (!stepText && !artifact && goalCards.length === 0 && !input.allowEmptyWithoutArtifact) {
     return null;
   }
 
-  const content = stepText || (artifact ? 'Artifact updated.' : '');
+  const content =
+    stepText ||
+    (artifact ? 'Artifact updated.' : goalCards.length > 0 ? 'Task board updated.' : '');
   const normalizedToolCalls = normalizeRunStepToolCalls(stepToolCalls, stepToolResults);
   const reasoningContent = extractReasoningChunk(input.step) ?? input.reasoningFallback;
 
   return {
     content,
     stepToolCalls: normalizedToolCalls,
+    goalCards,
     artifact,
     reasoningContent,
     artifactPublished: Boolean(artifact),
