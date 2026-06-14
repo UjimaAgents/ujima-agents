@@ -713,23 +713,9 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     conversations,
   );
 
-  // Agent-attachments roots — TWO related paths, kept separate to
-  // match the storage-path contract the web API + LRU cleanup
-  // depend on.
-  //
-  //   attachmentStoreRoot   = <home>/attachments/
-  //                           (the same root the web API resolves
-  //                            against; storagePath columns are
-  //                            relative to this)
-  //   agentAttachmentRoot   = <home>/attachments/agent-generated/
-  //                           (the subroot writers append to when
-  //                            building on-disk paths)
-  //
-  // storagePath is canonical = `agent-generated/<orgId>/<runId>/<id>.<ext>`,
-  // so it works for both the web API reader (joins against the
-  // store root) and the LRU sweeper (same root). Writers join
-  // bare `<orgId>/<runId>/<id>.<ext>` against the agent-generated
-  // subroot to produce the same absolute path.
+  // storagePath column is canonical `agent-generated/<org>/<run>/<id>.<ext>`,
+  // joined against attachmentStoreRoot by the web API + LRU sweeper.
+  // Writers join the bare path against the agent-generated subroot.
   const ujimaHome = context.archiveRoot ?? process.env.UJIMA_HOME ?? process.cwd();
   const attachmentStoreRoot = join(ujimaHome, 'attachments');
   const agentAttachmentRoot = join(attachmentStoreRoot, 'agent-generated');
@@ -786,13 +772,6 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   // below can pass it in.
   const attachmentAuditWriter = createConnectorAuditWriter({ repo: context.repo });
 
-  // Agent-attachments capture closure (agent_attachments_plan.md
-  // §3.2). One instance per services bootstrap; the V2 spawn calls
-  // it after every successful native MCP invoke. Looks up the
-  // server's registry hint via findRegistryMatch so Playwright
-  // captures aggressively and fetch is skipped. Uses the same
-  // `agentAttachmentRoot` constant the channel-tool resolver does
-  // (computed above for the ToolServiceImpl wire-in).
   const attachmentCaptureClosure: AttachmentCaptureClosure = (input) => {
     const server = context.repo.getMcpServer(input.organizationId, input.serverId);
     const registryHint = server ? findRegistryMatch(server)?.capturesAttachments : undefined;

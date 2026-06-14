@@ -83,28 +83,14 @@ export interface ConnectorSpawnV2Services {
     ) => ApprovalRequest;
   };
   /**
-   * Optional attachment-capture hook (agent_attachments_plan.md).
-   * When wired, runs after every successful native MCP invoke and
-   * surfaces `attachment_refs` on the tool result so the agent can
-   * forward images/documents into channel.reply without
-   * round-tripping bytes through its tool input. Absent → identity
-   * no-op; the original tool result reaches the agent verbatim.
+   * Attachment-capture hook. Runs after every successful native
+   * MCP invoke; surfaces `attachment_refs` on the tool result so
+   * the agent can pass them to channel.reply without re-encoding
+   * the bytes.
    */
   attachmentCapture?: AttachmentCaptureClosure;
 }
 
-/**
- * Public named type for the attachment-capture closure. Bot Round 5
- * (high) — services/index.ts used to derive this via
- * `Parameters<typeof buildMcpToolDefinitionsV2>[0]['attachmentCapture']`
- * with a type-only import of `buildMcpToolDefinitionsV2`. That
- * works today (verbatimModuleSyntax is off) but is fragile: turn
- * the flag on and the `typeof` query against a type-only binding
- * fails. The lint also bans `typeof import('...')`. Exporting an
- * explicit closure type sidesteps both — consumers depend on a
- * named interface, not on a function signature reflected through
- * Parameters<>.
- */
 export type AttachmentCaptureClosure = (input: {
   organizationId: string;
   runId: string;
@@ -243,9 +229,8 @@ export async function buildMcpToolDefinitionsV2(
     // both regardless (spirit-agent-run.ts:824-879).
     let refreshed = false;
     try {
-      // Spawn the MCP child in the org's workspace_root so file
-      // outputs (Playwright screenshots, generated reports, etc.)
-      // land in the agent's workspace rather than the daemon's CWD.
+      // Use the org's workspace_root as the child cwd so file
+      // outputs land where the agent expects.
       const orgForCwd = services.repo.getOrganization(ctx.organizationId);
       const cwd = orgForCwd?.workspace?.root;
       const connection = await services.mcpPool.get(def, {
@@ -436,12 +421,9 @@ export async function buildMcpToolDefinitionsV2(
                 : result.error ?? 'tool invocation failed',
             });
           }
-          // Agent-attachments capture (agent_attachments_plan.md).
-          // Runs only when the call completed successfully and the
-          // capture hook is wired. Sniffs bytes out of the tool
-          // result, writes to the agent_attachments store, and
-          // injects `attachment_refs` into the structured output so
-          // the agent can reference them in channel.reply.
+          // Agent-attachments capture — sniffs bytes from the
+          // result, writes to the agent_attachments store, injects
+          // `attachment_refs` for channel.reply to use.
           if (
             result.ok &&
             !isWaitingForApproval &&
@@ -465,9 +447,8 @@ export async function buildMcpToolDefinitionsV2(
                     ? { ...(existing as Record<string, unknown>) }
                     : { value: existing };
                 wrapped.attachment_refs = capture.attachmentRefs;
-                // Top-level prose hint so the model sees a directive,
-                // not just a refs array it has to interpret. Live test
-                // showed the schema-level description wasn't enough.
+                // Top-level prose hint — the schema-level description
+                // alone wasn't enough to steer the model.
                 wrapped._attachment_capture_note =
                   `${capture.attachmentRefs.length} attachment(s) from this tool result ` +
                   `have been captured and are ready to attach to a chat message. ` +

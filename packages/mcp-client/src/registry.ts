@@ -36,18 +36,9 @@ export interface RegistryEntry {
   // the §7.2 renderer falls back to structural facts only — closing
   // the prompt-injection surface from §17.5.7.
   curatedDescription?: string;
-  // Agent-attachments hint (agent_attachments_plan.md §3.2). When set,
-  // modifies the daemon's mime-detection default for tool results
-  // from this MCP:
-  //   * An array of categories ('image', 'document', ...) widens the
-  //     net for known generators — captures even when mime detection
-  //     is ambiguous (Playwright sometimes returns PNG bytes without
-  //     standard headers).
-  //   * `'never'` skips capture even if mime detection succeeds. For
-  //     MCPs whose output is meant for the agent to reason about
-  //     directly (fetch's HTML/Markdown, etc.) rather than file-system
-  //     into.
-  // When absent, mime detection alone governs the decision.
+  // Agent-attachments hint modifying mime-detection: an array of
+  // categories widens capture for known generators; `'never'`
+  // suppresses capture even when mime detection succeeds.
   capturesAttachments?: ('image' | 'document' | 'audio' | 'video')[] | 'never';
 }
 

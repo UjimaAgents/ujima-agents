@@ -24,19 +24,6 @@ import {
 } from '../services/agent-attachment-resolver.js';
 import { createConnectorAuditWriter } from '../services/connector-audit.js';
 
-/**
- * Agent-attachments param shared across channel.* tools
- * (agent_attachments_plan.md §3.3). Optional. Each entry references
- * an artifact the daemon resolves into a materialised attachment
- * row before the message lands.
- *
- * IMPORTANT for the model: when an MCP tool you just called (like
- * Playwright's screenshot) returned an `attachment_refs` array in
- * its result, USE THOSE REFS HERE with `refType: "tool_call"` and
- * `value` set to the ref string (e.g. `tc_<callId>:0`). Do not
- * re-encode the bytes as base64 — that wastes context and almost
- * always exceeds the cap.
- */
 const AttachmentRefSchema = z.object({
   refType: z
     .enum(['tool_call', 'base64', 'workspace_path', 'workspace_glob'])
@@ -257,17 +244,10 @@ function buildDmSchemaForOrg(ctx: BuildSchemaContext) {
 }
 
 /**
- * Resolve the agent-attachments param into materialised rows + pin
- * the parent agent_attachments rows to the just-created message id.
- * Returns the attachmentId list ready to forward to sendMessage, or
- * a structured error result the channel tool returns instead.
- *
- * The failure shape is deliberately loud (`message_sent: false`,
- * explicit `recovery` block) — the first PR 12 live test showed
- * the model received `{ok:false, error}` and could not tell the
- * message hadn't been posted. It just retried the same call. The
- * verbose shape gives it the unmistakable signal "stop, fix the
- * arguments, the body did NOT reach the channel."
+ * Resolve the agent-attachments param into materialised rows for
+ * sendMessage. The failure shape is deliberately loud so the model
+ * can tell the message wasn't posted and stop retrying the same
+ * arguments.
  */
 async function resolveAndPinAttachments(
   ctx: ToolExecutionContext,
@@ -306,11 +286,6 @@ async function resolveAndPinAttachments(
     organization?.workspace?.root && typeof organization.workspace.root === 'string'
       ? organization.workspace.root
       : null;
-  // Audit emitter is opportunistically constructed here from the
-  // repo handle in scope — the ApprovalService elsewhere shares a
-  // single writer, but channel-tool calls land per-message and we
-  // don't need cross-call state. The writer's per-call cost is a
-  // single `new` + sqlite insert.
   const audit = createConnectorAuditWriter({ repo: ctx.repo });
   const result = await resolveAttachmentRefs(
     {

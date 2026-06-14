@@ -22,12 +22,8 @@ export interface PoolGetOptions {
    */
   scopePaths?: string[];
   /**
-   * Working directory the spawned MCP child process should run in.
-   * Almost always the agent's org workspace_root — keeps filesystem
-   * outputs (Playwright screenshots, etc.) inside the workspace
-   * instead of leaking into the daemon's CWD. Two callers requesting
-   * the same MCP with DIFFERENT cwds will get separate processes
-   * (the cwd is part of the pool key).
+   * Working directory for the child process — typically the agent's
+   * org workspace_root. Different cwds get separate pool entries.
    */
   cwd?: string;
 }
@@ -42,11 +38,8 @@ export interface MCPPool {
 
 function poolKey(def: MCPDef, opts?: PoolGetOptions): string {
   const isolated = (def as { isolation?: string }).isolation === 'per-agent';
-  // The cwd MUST be part of the key — two callers asking for the
-  // same MCP from different workspace roots cannot share a process.
-  // The child's CWD is fixed at spawn time and a Playwright running
-  // for org A would write screenshots into org B's workspace if we
-  // pooled them together.
+  // cwd is fixed at spawn time, so different cwds cannot share
+  // a process.
   const cwdSuffix = opts?.cwd ? `::cwd::${opts.cwd}` : '';
   if (isolated && opts?.agentId) return `${def.id}::agent::${opts.agentId}${cwdSuffix}`;
   return `${def.id}${cwdSuffix}`;
@@ -107,12 +100,8 @@ export function createMCPPool(defaults: ConnectOptions = {}): MCPPool {
     },
 
     has(mcpId, opts) {
-      // Best-effort: callers without a def can only check the
-      // shared bucket. Must include cwd in the key so two
-      // workspaces don't collide on the same `has()` lookup
-      // (bot Round 2 medium). Without the suffix, has() reports
-      // "no connection" for an agent in workspace A even when
-      // workspace B has a live process for the same mcpId.
+      // Same keying as get() — cwd is part of the lookup so
+      // workspaces don't collide on the same mcpId.
       const cwdSuffix = opts?.cwd ? `::cwd::${opts.cwd}` : '';
       const key = opts?.agentId
         ? `${mcpId}::agent::${opts.agentId}${cwdSuffix}`
@@ -128,10 +117,6 @@ export function createMCPPool(defaults: ConnectOptions = {}): MCPPool {
     },
 
     async closeOne(mcpId, opts) {
-      // Same cwd-suffix discipline as has() — closeOne must
-      // target the specific (agent, cwd) instance so closing the
-      // workspace-A Playwright doesn't also tear down workspace-B's
-      // copy (which shares the mcpId).
       const cwdSuffix = opts?.cwd ? `::cwd::${opts.cwd}` : '';
       const key = opts?.agentId
         ? `${mcpId}::agent::${opts.agentId}${cwdSuffix}`

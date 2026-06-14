@@ -406,24 +406,10 @@ export class SpiritServiceBase {
                   ? result.error
                   : 'replay invocation failed',
           });
-          // Agent-attachments capture (live-test gap PR 12).
-          //
-          // The V2 native execute closure runs the capture pass on
-          // every successful invoke — but only for calls that go
-          // THROUGH that closure. Approval-gated MCP calls bypass
-          // it: the V2 closure returns waiting_for_approval, the
-          // run pauses, the user approves, then this replay path
-          // re-invokes via the inner ToolService directly. No
-          // upstream wrapper. So without this branch, every
-          // gated MCP tool's screenshot/image output silently
-          // misses the capture pipeline.
-          //
-          // The capture closure mutates the result.output to
-          // include `attachment_refs`. The replayed result is
-          // persisted via the inner ToolService's runStep machinery
-          // — by mutating result here BEFORE the agent reads it on
-          // the resumed turn, the agent sees the refs on the same
-          // path as a non-gated call.
+          // Approval-gated MCP calls bypass the V2 execute closure
+          // (which already runs capture), so the replay invokes
+          // ToolService directly. Capture here too so resumed
+          // turns see `attachment_refs` like non-gated turns.
           if (success && result && this.attachmentCapture) {
             try {
               const capture = this.attachmentCapture({

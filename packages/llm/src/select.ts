@@ -157,21 +157,10 @@ export function selectLanguageModel(input: SelectLanguageModelInput): LanguageMo
 
   if (input.kind === 'deepseek') {
     if (!input.apiKey) throw new LLMError('not_configured', 'deepseek provider requires apiKey');
-    // DeepSeek's public API at `api.deepseek.com/v1/chat/completions`
-    // does NOT accept multimodal `image_url` content blocks — even
-    // for V4-Flash which is marketed as a vision model. The HTTP
-    // endpoint returns
-    //   "unknown variant `image_url`, expected `text`"
-    // when an image part is included. Vision is exposed via
-    // OpenRouter / Fireworks / NVIDIA NIM gateways, not direct.
-    //
-    // The official `@ai-sdk/deepseek` client (>=1.0.40) handles this
-    // by SILENTLY DROPPING non-text parts with a warning and
-    // flattening to a single string. That's the right behaviour for
-    // DeepSeek direct — the run continues, the model gets the
-    // sender's prose + the attachments-inventory text block (PR 12,
-    // `toModelMessages.buildUserContent`), and can describe that an
-    // image was attached even though it can't see the pixels.
+    // DeepSeek's direct chat API rejects multimodal `image_url`
+    // blocks. The official SDK silently drops non-text parts so the
+    // run still completes against the sender's text + inventory
+    // block; vision-capable DeepSeek lives behind OpenRouter.
     return createDeepSeek({
       apiKey: input.apiKey,
       baseURL: input.baseUrl ?? DEEPSEEK_BASE_URL,

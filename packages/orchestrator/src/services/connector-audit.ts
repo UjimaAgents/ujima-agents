@@ -101,7 +101,7 @@ export interface ConnectorAuditWriter {
   attachmentRequestCreated(input: AttachmentRequestCreatedInput): void;
   /** PR 11 — discovery. Emit when an operator resolves an attachment_request. */
   attachmentRequestResolved(input: AttachmentRequestResolvedInput): void;
-  /** Agent-attachments — fires per capture write. */
+  /** Fires per agent-attachment row write. */
   agentAttachmentCreated(input: AgentAttachmentCreatedInput): void;
 }
 

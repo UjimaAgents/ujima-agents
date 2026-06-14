@@ -1,22 +1,11 @@
-// Agent-attachment auto-capture (agent_attachments_plan.md §3.2).
+// Agent-attachment auto-capture: when an MCP tool returns image /
+// document bytes, write them to the agent_attachments store and
+// surface short `attachment_refs` on the tool result so the agent
+// can pass them to channel.reply without round-tripping bytes.
 //
-// Hooks the MCP tool-result pipeline: when a tool returns a structured
-// result containing image / document bytes, the daemon writes them
-// into the agent_attachments store and surfaces `attachment_refs` in
-// the tool's structured output. The agent then references those refs
-// (short identifiers like `tc_<callId>:0`) in channel.reply's
-// `attachments` param — no base64 round-trip through the model.
-//
-// Three signals drive the capture decision:
-//   1. Mime detection on the payload — the safe default.
-//   2. Registry entry's `capturesAttachments` hint:
-//        ['image']  → capture even if mime detection is ambiguous
-//        'never'    → skip even if mime detection succeeds
-//   3. Per-attachment caps (size, total quota).
-//
-// The hint is a MODIFIER, not the gate. Default behaviour is mime
-// detection; registry entries can widen (for known generators like
-// Playwright) or narrow (for known non-image MCPs like fetch).
+// Capture decision = mime sniff first, registry hint modifies:
+//   capturesAttachments: ['image'] → capture even if sniff is ambiguous
+//   capturesAttachments: 'never'   → skip even if sniff succeeds
 
 import { randomUUID } from 'node:crypto';
 import { dirname, join } from 'node:path';
@@ -96,21 +85,13 @@ export function sniffMimeAndCategory(
 }
 
 /**
- * Pick out base64-encoded blobs from a tool result. MCPs vary in how
- * they encode images:
- *   * Anthropic API content-array: `{ type: 'image', source: { type:
- *       'base64', data, mediaType } }`
- *   * MCP-standard content-array: `{ type: 'image', data,
- *       mimeType }` — the spec-compliant shape Playwright MCP and
- *       most others use. THIS is what tripped up the live test —
- *       the previous detector required either the source wrapper
- *       OR an image/* mimeType already present, and Playwright
- *       doesn't always send mimeType explicitly.
- *   * Tagged objects: `{ data: '...', mimeType: 'image/png' }`
- *   * Raw base64 strings.
- * Recursive walk + base64 sniff. Conservative: only payloads at
- * least 200 bytes get considered (avoids matching random hex/uuid
- * strings).
+ * Pick out base64-encoded binary blobs from a tool result. Handles
+ * the three shapes MCPs commonly use:
+ *   - Anthropic API: `{ type: 'image', source: { type: 'base64', data, mediaType } }`
+ *   - MCP spec:      `{ type: 'image', data, mimeType? }` (no source wrapper)
+ *   - Tagged:        `{ data, mimeType: 'image/...' | binary }`
+ * Strings <200 bytes are skipped to avoid matching random hex/uuid
+ * payloads.
  */
 function extractCandidateBlobs(
   value: unknown,
@@ -157,11 +138,8 @@ function extractCandidateBlobs(
         return acc;
       }
     }
-    // MCP-standard content-array image shape (no `source` wrapper).
-    // The spec is `{ type: 'image', data: '<base64>', mimeType?: '...' }`.
-    // Playwright MCP and most spec-compliant servers use this shape.
-    // We do NOT require mimeType — when absent, the byte-sniffer
-    // recovers the mime from magic bytes.
+    // MCP spec image shape: mimeType is optional, the byte-sniffer
+    // recovers mime from magic bytes when absent.
     if (obj.type === 'image' && typeof obj.data === 'string') {
       try {
         acc.push({
@@ -174,15 +152,8 @@ function extractCandidateBlobs(
       }
       return acc;
     }
-    // Generic { data, mimeType } shape with a binary mime — covers
-    // PDFs, audio, video, archives, etc. The previous gate was
-    // `mimeType.startsWith('image/')` which silently skipped every
-    // non-image blob (bot Round 1, medium). Now anything with a
-    // recognisable binary mime is sent through; sniffMimeAndCategory
-    // / decideCapture downstream classify into the right category
-    // (document for PDF, etc.) or reject if the bytes don't
-    // actually match. We exclude `text/*` and `application/json`
-    // here so JSON tool results don't get base64-decoded.
+    // Generic { data, mimeType } binary blob. Exclude text/json/xml
+    // so JSON tool results don't get base64-decoded.
     if (
       typeof obj.data === 'string' &&
       typeof obj.mimeType === 'string' &&
@@ -227,15 +198,10 @@ export function decideCapture(
   if (hint === 'never') return null;
   const sniff = sniffMimeAndCategory(blob.bytes);
   if (sniff) return { bytes: blob.bytes, ...sniff };
-  // Sniffer didn't recognise the bytes. Two fallback paths:
-  //   (1) Registry widens the net with a hint (`['image']` etc.) —
-  //       capture as the hint's first declared category. Pre-fix
-  //       behaviour, kept for known generators with non-standard
-  //       byte headers.
-  //   (2) The MCP declared a mime we recognise as binary
-  //       (application/pdf, audio/*, video/*, etc.) — capture as
-  //       the corresponding category. Bot Round 1 medium: prior
-  //       code dropped these silently for any non-image mime.
+  // Sniff failed. Two fallbacks: registry hint widens the net
+  // (capture as the hint's first declared category), or declared
+  // mime is recognisably binary (capture as the corresponding
+  // category).
   if (Array.isArray(hint) && hint.length > 0) {
     return {
       bytes: blob.bytes,
@@ -287,16 +253,12 @@ export interface AttachmentCaptureDeps {
     ApiRepository,
     'saveAgentAttachment' | 'sumAgentAttachmentBytes' | 'listExpiredUnpinnedAgentAttachments' | 'deleteAgentAttachment'
   >;
-  /** Root under which agent-generated files live. Resolved at boot. */
+  /** Writer root: `<home>/attachments/agent-generated/`. */
   agentAttachmentRoot: string;
   /**
-   * Canonical attachment store root (`<home>/attachments/`). Required
-   * for the quota-recovery cleanup path inside this function — bot
-   * Round 3 high: previously only the DB row was deleted on quota
-   * overflow and the file leaked to disk, with the hourly sweeper
-   * no longer able to find it (no row → no enumeration). Matches
-   * the `attachmentStoreRoot` field on AgentAttachmentCleanupDeps;
-   * both paths feed the same deleteOneOnDisk helper.
+   * Canonical store root: `<home>/attachments/`. Used to construct
+   * the absolute path of an expired row's file when reclaiming
+   * space, so the file lifecycle matches the hourly sweeper.
    */
   attachmentStoreRoot: string;
   /** Optional audit writer — emits `agent_attachment_created` per row. */
@@ -331,7 +293,6 @@ export interface AttachmentCaptureResult {
     category: AttachmentCategory;
     filename: string;
     byteSize: number;
-    /** Per-ref usage hint — see live-test note in pushSite. */
     usage_hint?: string;
   }[];
 }
@@ -376,11 +337,7 @@ export function captureToolResultAttachments(
         input.organizationId,
         cutoff,
       );
-      // Use the shared on-disk + row deletion helper so quota
-      // recovery and the hourly sweeper share one contract. Bot
-      // Round 3 high: previously this only called
-      // deleteAgentAttachment (row only), the file leaked, and the
-      // sweeper couldn't find it anymore because the row was gone.
+      // Same row+file cleanup the hourly sweeper uses.
       for (const row of expired) {
         deleteOneAgentAttachmentRowAndFile({
           row,
@@ -399,12 +356,9 @@ export function captureToolResultAttachments(
     }
     const id = newId();
     const extension = extensionForMime(decision.mimeType);
-    // storageRelative MUST be relative to `<home>/attachments/`, not
-    // to agentAttachmentRoot. The web API resolves the column
-    // against `<home>/attachments/<storagePath>` and would 404 on a
-    // bare `<orgId>/<runId>/<id>.<ext>`. Include the
-    // `agent-generated/` prefix so the same column works for both
-    // writer (here) and reader (apps/api/.../attachments.ts).
+    // storageRelative must include the `agent-generated/` prefix so
+    // the web API (which joins `<home>/attachments/` + storagePath)
+    // resolves to the same on-disk file the writer below produces.
     const storageRelative = join(
       'agent-generated',
       input.organizationId,
@@ -436,13 +390,8 @@ export function captureToolResultAttachments(
       index,
       extension,
     );
-    // Atomic file+row write (bot Round 4 high). Pre-fix the catch
-    // below was a silent-leak path: file already on disk, no row to
-    // discover it, so the hourly LRU sweeper couldn't reach it
-    // (no enumeration without a row). Now any throw between the
-    // file write and the row commit unwinds the file before
-    // bubbling out. The audit emit moves AFTER the row commits so
-    // a transient audit failure doesn't undo a successful capture.
+    // File first, then row. A throw between unwinds the file so
+    // the sweeper isn't left chasing an orphan it can't enumerate.
     try {
       const row: AgentAttachment = {
         id,
@@ -476,9 +425,9 @@ export function captureToolResultAttachments(
       }
       continue;
     }
-    // Audit emit is best-effort (already null-chained). Sequenced
-    // AFTER the row commit so a spurious "created" event never
-    // appears for a capture that failed to land.
+    // Audit fires after the row commits so a failed capture never
+    // emits a spurious `created` event. Best-effort — failures
+    // here don't undo the capture.
     try {
       deps.audit?.agentAttachmentCreated({
         organizationId: input.organizationId,
@@ -504,12 +453,9 @@ export function captureToolResultAttachments(
       category: decision.category,
       filename,
       byteSize: decision.bytes.length,
-      // Live-test gap: even with the channel.* tool schema
-      // describing tool_call refs, models tried to save bytes to
-      // workspace files before attaching. A usage_hint per ref
-      // closes that — it lives in the tool result the model
-      // reads right now, not in a schema description from many
-      // turns ago.
+      // Surface the directive inside the tool result so the model
+      // sees it the moment it reads the refs, not many turns later
+      // when it reaches the channel.* schema.
       usage_hint:
         `Already captured. To send this in a chat message, call ` +
         `channel.reply (or channel.post / channel.dm) with attachments: ` +
@@ -556,31 +502,16 @@ function filenameFor(
 const DEFAULT_LRU_TTL_HOURS = 4;
 
 export interface AgentAttachmentCleanupDeps {
-  // listOrganizations is REQUIRED (bot Round 4 medium). The previous
-  // shape made it optional via an intersection override, and the
-  // body's `deps.repo.listOrganizations?.() ?? []` silently fell
-  // back to an empty list when callers stubbed it out. The sweeper
-  // became a no-op without any signal — disk grew forever in any
-  // deployment whose Repository didn't wire the method. Now any
-  // caller missing it fails at compile time, and tests must stub
-  // it explicitly.
+  // listOrganizations is required by design — without it the sweep
+  // would silently become a no-op for any caller that forgot to
+  // stub it.
   repo: Pick<
     ApiRepository,
     | 'listOrganizations'
     | 'listExpiredUnpinnedAgentAttachments'
     | 'deleteAgentAttachment'
   >;
-  /**
-   * Root of the attachment store (`<home>/attachments/`) — NOT the
-   * agent-generated subroot the writer uses. `row.storagePath`
-   * already includes the `agent-generated/` segment so it can be
-   * read directly by the web API (which joins `<home>/attachments/`
-   * + storagePath). The cleanup sweeper joins against the same
-   * root so writer, reader, and sweeper share one path contract.
-   * Previously this took the agent-generated subroot and the join
-   * produced `<home>/attachments/agent-generated/agent-generated/...`
-   * — files were never found and never deleted.
-   */
+  /** `<home>/attachments/` — same root the web API resolves against. */
   attachmentStoreRoot: string;
   /** Hours after which unpinned rows are eligible for cleanup. */
   ttlHours?: number;
@@ -589,25 +520,10 @@ export interface AgentAttachmentCleanupDeps {
 }
 
 /**
- * LRU cleanup pass over agent_attachments. Deletes the on-disk
- * file FIRST, then the row — so a crash between leaves a row
- * pointing at a missing file (recoverable / same as a transient
- * FS failure) rather than an orphaned file with no row.
- *
- * Best-effort throughout: per-row failures get logged and the
- * sweep keeps going. The scheduler tick that owns this can call
- * it without a try/catch wrapper.
- */
-/**
- * Shared row+file cleanup primitive. The quota-recovery path inside
- * captureToolResultAttachments AND the hourly LRU sweeper
- * (cleanupExpiredAgentAttachments) both call this. File delete
- * comes BEFORE row delete so a crash in between leaves a row
- * pointing at a missing file (recoverable — same shape as a
- * transient FS error) rather than an orphaned file with no row
- * (unrecoverable — no enumeration path can find it). Returns the
- * bytes that were freed when both deletions succeeded, 0
- * otherwise.
+ * Delete the on-disk file BEFORE the row. A crash between leaves
+ * a row pointing at a missing file (recoverable as a transient FS
+ * error) rather than an orphaned file with no row to enumerate.
+ * Returns bytes freed on success, 0 if the row delete failed.
  */
 export function deleteOneAgentAttachmentRowAndFile(input: {
   row: AgentAttachment;

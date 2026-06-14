@@ -1585,25 +1585,10 @@ const MIGRATIONS: {id: string; up: string}[] = [
     `,
   },
   {
-    // Agent-generated attachments (agent_attachments_plan.md).
-    //
-    // Distinct from message_attachments — staging area for files that
-    // the daemon captures from tool results (Playwright screenshots,
-    // charting MCP output) OR from workspace files the agent points
-    // at via channel.reply's attachments param. Rows live unpinned
-    // until the agent calls channel.reply / .post / .dm referencing
-    // them; once referenced, `pinned_to_message_id` is set and the
-    // row survives for the message's lifetime.
-    //
-    // LRU cleanup (PR 9 SchedulerService) deletes unpinned rows
-    // older than the configured TTL (default 4 hours) so disk usage
-    // stays bounded even when agents generate artifacts they never
-    // post. Pinned rows are never auto-deleted.
-    //
-    // Storage path: `${UJIMA_HOME}/attachments/agent-generated/
-    // <orgId>/<runId>/<uuid>.<ext>`. Resolved at write time; the
-    // column stores only the path relative to the agent-generated
-    // root so disk-tree reorganisation doesn't require a migration.
+    // Agent-generated attachments. Staging area for tool-result
+    // captures and workspace-file refs the channel.* tools attach
+    // to a message. Unpinned rows age out via the LRU sweeper;
+    // pinning to a message id makes the row permanent.
     id: '052_agent_attachments',
     up: `
       CREATE TABLE IF NOT EXISTS agent_attachments (

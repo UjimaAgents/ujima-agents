@@ -54,14 +54,9 @@ export interface SpiritServiceOptions {
     input: AttachmentApprovalRequest,
   ) => ApprovalRequest;
   /**
-   * Agent-attachments capture hook
-   * (agent_attachments_plan.md). Runs after each successful native
-   * MCP invoke. Returns refs the V2 spawn injects into the tool
-   * result so the agent can pass them to channel.reply. Optional —
-   * absent → tool results pass through unchanged. Shape is the
-   * same `AttachmentCaptureClosure` the V2 spawn declares, reused
-   * here so both modules agree on the closure contract without
-   * duplicating the structural type.
+   * Agent-attachments capture hook. Runs after each successful
+   * native MCP invoke; returns refs the V2 spawn injects into the
+   * tool result. Absent → results pass through unchanged.
    */
   attachmentCapture?: AttachmentCaptureClosure;
 }

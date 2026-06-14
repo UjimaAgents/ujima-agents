@@ -32,10 +32,8 @@ export interface ToolExecutionContext {
   }) => Promise<AgentDelegateResult>;
   reportProgress?: (output: unknown) => Promise<void> | void;
   /**
-   * Root directory the daemon uses for agent-generated attachments.
-   * Optional — present when the services bootstrap wired the
-   * attachment subsystem. When absent, channel-tool `attachments`
-   * params return a structured error rather than crashing.
+   * Root for agent-generated attachments. Absent → channel-tool
+   * `attachments` params return a structured error.
    */
   agentAttachmentRoot?: string;
 }

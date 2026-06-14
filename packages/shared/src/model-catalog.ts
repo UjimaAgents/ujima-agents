@@ -42,12 +42,8 @@ export const MODEL_OPTIONS_BY_PROVIDER: Record<string, readonly ProviderModelOpt
     { value: "devstral-latest", label: "devstral-latest" },
   ],
   deepseek: [
-    // Direct DeepSeek API is text-only — the chat endpoint rejects
-    // multimodal `image_url` content blocks. For agents that need
-    // vision (reading screenshots, charts, etc.), pick the
-    // `deepseek/*` rows under the OpenRouter provider instead;
-    // OpenRouter's gateway adds vision support for the same model
-    // family.
+    // Direct DeepSeek is text-only; for vision pick the deepseek/*
+    // rows under the openrouter provider.
     { value: "deepseek-v4-flash", label: "deepseek-v4-flash (text-only)" },
     { value: "deepseek-v4-pro", label: "deepseek-v4-pro (text-only)" },
   ],
@@ -85,13 +81,7 @@ export const MODEL_OPTIONS_BY_PROVIDER: Record<string, readonly ProviderModelOpt
     { value: "anthropic/claude-sonnet-4-20250514", label: "anthropic/claude-sonnet-4-20250514" },
     { value: "openai/gpt-5.4", label: "openai/gpt-5.4" },
     { value: "google/gemini-2.5-pro", label: "google/gemini-2.5-pro" },
-    // DeepSeek via OpenRouter. The direct DeepSeek API
-    // (api.deepseek.com/v1) rejects multimodal `image_url` content
-    // blocks. The OpenRouter gateway adds vision support for the
-    // same DeepSeek-V4 model family, so agents that need to read
-    // images should pick these variants instead of the native
-    // `deepseek` provider's listings. Labels make the capability
-    // explicit so operators don't pick the wrong row.
+    // DeepSeek through OpenRouter gains vision support.
     { value: "deepseek/deepseek-v4-flash", label: "deepseek/deepseek-v4-flash (vision)" },
     { value: "deepseek/deepseek-v4-pro", label: "deepseek/deepseek-v4-pro (vision)" },
   ],

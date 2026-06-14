@@ -48,12 +48,7 @@ export function saveAttachment(db: DbHandle, attachment: Attachment): Attachment
   return payload;
 }
 
-/**
- * Hard-delete a single attachment row. Used by the agent-attachment
- * resolver's rollback path when a later ref in a batch fails after
- * earlier ones already wrote rows (bot Round 1 medium). Returns the
- * number of rows affected so callers can detect double-deletes.
- */
+/** Hard-delete one attachment row. Returns the affected count. */
 export function deleteAttachment(
   db: DbHandle,
   organizationId: string,

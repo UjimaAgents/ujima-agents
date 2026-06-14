@@ -38,16 +38,7 @@ export interface ConnectOptions {
   clientName?: string;
   clientVersion?: string;
   transport?: Transport;
-  /**
-   * Working directory for stdio MCP child processes. When set, the
-   * spawned process operates with this CWD instead of inheriting the
-   * daemon's. Without this, a stdio MCP like Playwright resolves
-   * relative filenames against `apps/api/` (where dev-local.sh
-   * starts the daemon) rather than the agent's workspace root —
-   * which means screenshots silently land in the repo tree.
-   *
-   * Ignored for non-stdio transports.
-   */
+  /** Working directory for stdio MCPs. Ignored for non-stdio. */
   cwd?: string;
   onToolCall?: (
     ctx: ToolCallContext,

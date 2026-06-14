@@ -98,11 +98,6 @@ export class ToolServiceImpl implements ToolService {
     private readonly mcpPool?: McpRuntimePool,
     private readonly modelResolver?: ModelResolver,
     private readonly shellAutoReview = new ShellAutoReviewService(),
-    /**
-     * Filesystem root where agent-generated attachments live.
-     * Optional — without it the channel-tool `attachments` param
-     * surface degrades to a structured error rather than a crash.
-     */
     private readonly agentAttachmentRoot?: string,
   ) {}
 
@@ -576,11 +571,8 @@ export class ToolServiceImpl implements ToolService {
     }
 
     const def = materializeMcpDef(this.repo, attachment.server);
-    // Spawn the MCP child in the org's workspace_root so any file
-    // outputs (Playwright screenshots, generated reports, etc.)
-    // land where the agent expects, not in the daemon's CWD.
-    // See packages/mcp-client/src/pool.ts (PoolGetOptions.cwd) for
-    // the pooling implications.
+    // Use the org's workspace_root as the child cwd so file
+    // outputs land where the agent expects.
     const org = this.repo.getOrganization(invocation.organizationId);
     const cwd = org?.workspace?.root;
     const connection = await this.mcpPool.get(def, {

@@ -1,28 +1,15 @@
-// Agent-attachment ref resolver (agent_attachments_plan.md §3.3).
+// Resolve attachment refs (channel.reply / .post / .dm
+// `attachments`) into materialised rows the conversation service
+// can attach to a message.
 //
-// channel.reply / channel.post / channel.dm accept an optional
-// `attachments` array of refs. This module resolves each ref into
-// a materialised attachment row that can be passed to
-// sendMessage / sendDirectMessage / postToChannel via the existing
-// attachmentIds parameter.
+// Four refTypes:
+//   tool_call      — `tc_<callId>:<index>` from auto-capture
+//   base64         — inline bytes, 1 MB cap
+//   workspace_path — single file under workspace_root, copied in
+//   workspace_glob — pattern under workspace_root, 10-file / 20 MB cap
 //
-// Four refTypes the agent can pass:
-//   * tool_call      — `tc_<callId>:<index>` referring to a row the
-//                      auto-capture wrote.
-//   * base64         — raw bytes inline. Capped at 1 MB.
-//   * workspace_path — single file under the org's workspace_root.
-//                      Copied into the agent-attachments store at
-//                      attach time (so message immutability holds).
-//   * workspace_glob — pattern under workspace_root. Capped at 10
-//                      matched files / 20 MB combined.
-//
-// All four converge on writing a row into both `agent_attachments`
-// (with pinned_to_message_id set) AND the existing user-attachment
-// store so the message picks up an `attachment_id` row the
-// frontend AttachmentGrid + toModelMessages pipeline already
-// renders. The bytes live exactly once on disk — the
-// message_attachments storagePath points at the same file the
-// agent_attachments row owns.
+// Each writes a row into both `agent_attachments` AND the existing
+// message attachment table, sharing one on-disk file.
 
 import { randomUUID } from 'node:crypto';
 import { isAbsolute, join, resolve as resolvePath } from 'node:path';
@@ -75,15 +62,8 @@ export interface AttachmentResolverDeps {
     | 'deleteAttachment'
     | 'deleteAgentAttachment'
   > & {
-    // The user-attachment writer (existing API). Different repos may
-    // expose this under different names; the orchestrator's Repository
-    // class has `saveAttachment`.
+    // Optional overrides so tests can stub these as no-ops.
     saveAttachment?: (attachment: Attachment) => Attachment;
-    /**
-     * Hard-delete for both rollback (this module) AND the LRU cleanup
-     * job (agent-attachment-capture.ts). Resolver-side tests stub
-     * these as no-ops; real Repository implementations provide them.
-     */
     deleteAttachment?: (organizationId: string, attachmentId: string) => number;
     deleteAgentAttachment?: (organizationId: string, attachmentId: string) => void;
   };
@@ -114,16 +94,10 @@ export interface ResolveResultErr {
 export type ResolveAttachmentRefsResult = ResolveResultOk | ResolveResultErr;
 
 /**
- * Resolve the agent-supplied refs into materialised attachment rows.
- * Returns the rows BEFORE the message is created — the channel tool
- * binds them to the message afterwards via pinAgentAttachmentToMessage
- * and the attachment_id thread through sendMessage. On any failure
- * (cap exceeded, path escape, missing tool-call row, ...) returns a
- * structured error so the agent gets a useful message rather than a
- * crashed run.
- *
- * Caller is responsible for the pinning step + the message_attachment
- * row write because both depend on the just-created message id.
+ * Resolve agent-supplied refs into materialised rows. Returns rows
+ * BEFORE message creation — the caller pins them after sendMessage
+ * via pinAgentAttachmentToMessage. Any failure returns a structured
+ * error rather than throwing.
  */
 export async function resolveAttachmentRefs(
   deps: AttachmentResolverDeps,
@@ -137,22 +111,13 @@ export async function resolveAttachmentRefs(
   const newNow = deps.now ?? (() => new Date().toISOString());
   const materializations: ResolvedAttachmentMaterialization[] = [];
 
-  // Rollback handles for atomicity (bot Round 1 medium). Each ref
-  // writer that performs side effects (file write + agent_attachments
-  // row + user-attachment row) appends a handle here. If a LATER ref
-  // fails, we walk this list in reverse and undo each — files
-  // deleted, rows removed — so the tool returns a clean rejection
-  // without leaking partial state. tool_call refs (which only
-  // write a user-attachment row pointing at an EXISTING
-  // agent_attachments file) push a partial handle without a file
-  // path; only the user-attachment row gets rolled back, since
-  // the underlying file is owned by the capture pass that wrote it.
+  // Rollback handles. If a later ref fails, walk in reverse and
+  // undo each. tool_call refs leave filePath/agentAttachmentId
+  // empty because the underlying file belongs to the capture pass,
+  // not us.
   const rollbacks: {
-    /** Absolute on-disk path the resolver wrote, when applicable. */
     filePath?: string;
-    /** agent_attachments id, when this resolver created the row. */
     agentAttachmentId?: string;
-    /** user-attachment (message_attachments source) id; always present. */
     userAttachmentId: string;
   }[] = [];
 
@@ -423,10 +388,6 @@ async function resolveWorkspaceGlobRef(
   if (isAbsolute(ref.value)) {
     return { ok: false, error: 'workspace_glob must be a relative pattern under workspace_root' };
   }
-  // Lightweight glob: supports the patterns operators actually
-  // write (`*.png`, `screenshots/*.png`, `**/*.png`). Anything more
-  // exotic should be narrowed by the agent. Walking is bounded by
-  // the WORKSPACE_GLOB_FILE_CAP — we stop early.
   const matches = matchGlob(deps.workspaceRoot, ref.value, WORKSPACE_GLOB_FILE_CAP + 1);
   if (matches.length > WORKSPACE_GLOB_FILE_CAP) {
     return {
@@ -441,16 +402,9 @@ async function resolveWorkspaceGlobRef(
   let cumulativeBytes = 0;
   const materializations: ResolvedAttachmentMaterialization[] = [];
   const absolutePaths: (string | undefined)[] = [];
-  // Inner-loop rollback (bot Round 2 follow-up high). Each
-  // resolveWorkspacePathRef call below writes a file + agent_attachments
-  // row + attachments row before returning. If a LATER iteration
-  // fails (cap exceeded, individual file rejected for size, etc.)
-  // the outer resolveAttachmentRefs loop only sees this function's
-  // single `{ok:false}` return — it has no entries on its
-  // materializations list to roll back. Without the local rollback
-  // here, every successful earlier iteration in this glob leaks
-  // its file + rows. Track each completed iteration and walk in
-  // reverse on any failure.
+  // Inner-loop rollback: the outer resolveAttachmentRefs only sees
+  // this function's single `{ok:false}` return, so undo earlier
+  // iterations locally before returning.
   const rollbackEarlier = (): void => {
     for (let i = materializations.length - 1; i >= 0; i -= 1) {
       const m = materializations[i];
@@ -566,18 +520,10 @@ function guardWorkspacePath(
   ) {
     return { ok: false, error: `workspace_path "${relative}" escapes workspace_root` };
   }
-  // Symlink escape (bot Round 1, high). A symlink inside
-  // workspace_root pointing OUTSIDE the tree passes the string-
-  // prefix check above — but readFileSync would follow the link
-  // and exfiltrate arbitrary host bytes. Reject any symlink at
-  // either the file OR any parent dir. We use lstat on each
-  // segment + realpath on the whole path; if realpath drifts
-  // outside workspace_root, refuse.
-  //
-  // The lstat pass catches symlinks even when the target doesn't
-  // exist (realpathSync throws in that case). The realpathSync
-  // pass catches the broader case where a symlinked DIR in the
-  // middle of the path points outside.
+  // The string-prefix check above doesn't catch symlinks:
+  // readFileSync would follow them and exfiltrate arbitrary host
+  // bytes. lstat catches direct symlinks (and works even when the
+  // target doesn't exist); realpath catches symlinked parent dirs.
   let stat;
   try {
     stat = lstatSync(absolutePath);
@@ -639,16 +585,9 @@ function commitBytes(
     deps.runId,
     fileName,
   );
-  // Atomic commit (bot Round 2 high). Three steps each of which can
-  // fail independently: file write, agent_attachments insert, user
-  // attachment row insert. Without the rollback below, a failure at
-  // step 2 leaks the on-disk file; a failure at step 3 leaks both
-  // the file AND the agent_attachments row. The outer
-  // resolveAttachmentRefs loop only sees the final `{ok:false}` —
-  // it has no way to know about partial side effects this function
-  // performed before bubbling out. Each step records its rollback
-  // handle BEFORE running, so a throw in the next step still
-  // triggers cleanup of everything completed.
+  // Each step (file write, agent_attachments insert, user
+  // attachment insert) registers its rollback BEFORE the next
+  // step runs, so a throw later still cleans up earlier work.
   const undoStack: (() => void)[] = [];
   const runRollback = (): void => {
     for (let i = undoStack.length - 1; i >= 0; i -= 1) {
@@ -663,8 +602,6 @@ function commitBytes(
     mkdirSync(absolutePath.split('/').slice(0, -1).join('/'), { recursive: true });
     writeFileSync(absolutePath, bytes);
     undoStack.push(() => {
-      // rmSync with force=true is a no-op if the file is already
-      // gone, so double-rollback is safe.
       try {
         rmSync(absolutePath, { force: true });
       } catch (e) {
@@ -701,10 +638,8 @@ function commitBytes(
     runRollback();
     return { ok: false, error: `agent_attachments insert failed: ${err instanceof Error ? err.message : String(err)}` };
   }
-  // The audit emit is best-effort and stateless — no rollback
-  // needed if a later step throws. We don't fire it until the user
-  // attachment row succeeds so spurious "created" events don't
-  // appear for failed materializations.
+  // Audit emit fires after the user-attachment row succeeds so a
+  // failed materialization doesn't produce a `created` event.
   const attachmentId = newAttId();
   if (deps.repo.saveAttachment) {
     try {
@@ -777,11 +712,8 @@ function matchGlob(root: string, pattern: string, cap: number): string[] {
       const name = dirent.name;
       if (name.startsWith('.')) continue;
       const rel = relativeDir.length === 0 ? name : `${relativeDir}/${name}`;
-      // Symlink hardening (bot Round 1, high). Skip ANY symlink the
-      // walker encounters — both link-to-file (attaching arbitrary
-      // host bytes) and link-to-dir (recursing outside the
-      // workspace). The matching guardWorkspacePath check covers
-      // direct workspace_path refs; this covers glob expansion.
+      // Skip symlinks (file or dir) so the walker can't recurse
+      // outside the workspace.
       if (dirent.isSymbolicLink()) continue;
       if (dirent.isDirectory()) {
         walk(rel);

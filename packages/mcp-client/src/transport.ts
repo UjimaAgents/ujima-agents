@@ -5,13 +5,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 
 export interface BuildTransportOptions {
-  /**
-   * Working directory for stdio child processes. When set, the
-   * spawned MCP runs with this CWD instead of inheriting the daemon's.
-   * Critical for filesystem-touching MCPs (Playwright, Filesystem) so
-   * relative file paths land in the agent's workspace, not in the
-   * directory the daemon happened to be launched from.
-   */
+  /** Working directory for stdio child processes. */
   cwd?: string;
 }
 
