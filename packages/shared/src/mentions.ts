@@ -52,6 +52,20 @@ export function scanMentionsInContent(
   }
 }
 
+export const ASSET_REF_PATTERN = /@(file|folder):([^\s)}\]">]+)/g;
+
+export function scanAssetReferences(
+  content: string,
+): Array<{ kind: string; path: string }> {
+  const refs: Array<{ kind: string; path: string }> = [];
+  let match: RegExpExecArray | null;
+  ASSET_REF_PATTERN.lastIndex = 0;
+  while ((match = ASSET_REF_PATTERN.exec(content))) {
+    refs.push({ kind: match[1]!, path: match[2]! });
+  }
+  return refs;
+}
+
 export function buildMentionHandleRegistry(
   entries: Iterable<{ handle: string; value: string }>,
 ): MentionHandleRegistry & { values: Set<string> } {

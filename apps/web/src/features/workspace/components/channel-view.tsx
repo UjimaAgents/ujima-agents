@@ -571,10 +571,10 @@ export function ChannelView({
     () => Math.max(memberIndexById.get(typingMember?.id ?? "") ?? 0, 0),
     [memberIndexById, typingMember?.id],
   );
-  const mentionSuggestions = useMemo(() => {
-    const currentMemberId = bootstrap.auth.member?.id;
-    return members
-      .filter((member) => member.id !== currentMemberId)
+  const organizationId = bootstrap.organization?.id;
+  const mentionSuggestions = useMemo(() => (
+    members
+      .filter((member) => member.id !== bootstrap.auth.member?.id)
       .sort((a, b) => {
         if (a.kind === b.kind) return a.name.localeCompare(b.name);
         return a.kind === "agent" ? -1 : 1;
@@ -583,9 +583,8 @@ export function ChannelView({
         id: member.id,
         name: member.name,
         detail: member.roleName,
-      }));
-  }, [bootstrap.auth.member?.id, members]);
-  const organizationId = bootstrap.organization?.id;
+      }))
+  ), [bootstrap.auth.member?.id, members]);
   useEffect(() => {
     let cancelled = false;
     if (!organizationId || !currentThreadId) {

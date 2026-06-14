@@ -2,7 +2,6 @@
 
 import {useEffect, useState, useMemo, useCallback, useRef, memo} from "react";
 import {
-  AlertCircle,
   AlertTriangle,
   Clock,
   GripVertical,
@@ -659,19 +658,10 @@ export const ChannelGoalsBoard = memo(function ChannelGoalsBoard({
                         draggable
                         onDragStart={() => onDragStart(task.id)}
                         onDragEnd={onDragEnd}
-                        className={`group relative flex flex-col p-3 rounded-xl border bg-white dark:bg-zinc-900 shadow-[0_1px_3px_0_rgba(0,0,0,0.05)] hover:shadow-[0_4px_12px_-2px_rgba(0,0,0,0.08)] hover:-translate-y-[1px] transition-all duration-200 cursor-grab active:cursor-grabbing ${actionLoading === task.id ? "opacity-50" : ""} border-zinc-200 dark:border-zinc-800 hover:border-zinc-300 dark:hover:border-zinc-700`}
+                        className={`group relative flex flex-col p-3 rounded-xl border bg-white dark:bg-zinc-900 shadow-[0_1px_3px_0_rgba(0,0,0,0.05)] hover:shadow-[0_4px_12px_-2px_rgba(0,0,0,0.08)] hover:-translate-y-[1px] transition-all duration-200 cursor-grab active:cursor-grabbing ${actionLoading === task.id ? "opacity-50" : ""} border-zinc-200 dark:border-zinc-800 hover:border-zinc-300 dark:hover:border-zinc-700 ${task.dependsOnTaskId && task.status !== "completed" && task.status !== "in_progress" ? "border-l-[3px] border-l-amber-400 dark:border-l-amber-500" : ""}`}
                       >
-                        {task.dependsOnTaskId && task.status !== "completed" && (
-                          <div
-                            className="absolute top-3.5 right-3.5 flex items-center justify-center text-amber-500 dark:text-amber-400 bg-amber-500/5 dark:bg-amber-500/10 border border-amber-500/15 rounded-md p-1"
-                            title="Depends on prior task"
-                          >
-                            <AlertCircle className="h-3.5 w-3.5" />
-                          </div>
-                        )}
-
                         <h4
-                          className={`text-xs font-semibold text-zinc-900 dark:text-zinc-100 leading-relaxed line-clamp-2 mb-2.5 ${task.dependsOnTaskId ? "pr-6" : ""}`}
+                          className={`text-xs font-semibold text-zinc-900 dark:text-zinc-100 leading-relaxed mb-2.5`}
                         >
                           {task.title}
                         </h4>
