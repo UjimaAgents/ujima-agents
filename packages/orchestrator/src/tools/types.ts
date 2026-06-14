@@ -76,6 +76,12 @@ export interface ToolExecutionContext {
    * `attachments` params return a structured error.
    */
   agentAttachmentRoot?: string;
+  /**
+   * `<home>/attachments/` — canonical store root. Used by rollback
+   * paths to construct the absolute path of an agent-attachment
+   * file by joining against the row's storage_path column.
+   */
+  attachmentStoreRoot?: string;
 }
 
 /**

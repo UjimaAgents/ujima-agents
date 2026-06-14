@@ -11,7 +11,7 @@ import type {
   WakeReason,
 } from '@ujima/shared';
 import type { ActiveSpiritRegistry } from './active-spirit-registry.js';
-import type { AttachmentCaptureClosure } from './connector-spawn-v2.js';
+import type { AttachmentCaptureClosure } from './agent-attachment-closure.js';
 import type { ConversationService } from './conversation.js';
 import type { AiService } from '../ai-service.js';
 import type { McpRuntimePool } from './mcp-runtime.js';

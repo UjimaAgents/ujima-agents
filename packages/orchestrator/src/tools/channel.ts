@@ -23,6 +23,7 @@ import {
   type ResolvedAttachmentMaterialization,
 } from '../services/agent-attachment-resolver.js';
 import { createConnectorAuditWriter } from '../services/connector-audit.js';
+import { deleteOneAgentAttachmentRowAndFile } from '../services/agent-attachment-capture.js';
 
 const AttachmentRefSchema = z.object({
   refType: z
@@ -361,6 +362,52 @@ function pinResolvedAttachments(
   }
 }
 
+/**
+ * Roll back resolved attachments when the message publish step
+ * throws. Without this, a failed conversations.* call leaves
+ * agent_attachments rows + on-disk files + user-attachment rows
+ * with no message reference and no pin — they survive forever in
+ * quota accounting and on disk.
+ */
+function rollbackResolvedAttachments(
+  ctx: ToolExecutionContext,
+  materializations: ResolvedAttachmentMaterialization[],
+): void {
+  const orgId = ctx.invocation.organizationId;
+  for (const m of materializations) {
+    if (ctx.attachmentStoreRoot) {
+      const row = ctx.repo.getAgentAttachment(orgId, m.agentAttachmentId);
+      if (row) {
+        deleteOneAgentAttachmentRowAndFile({
+          row,
+          repo: ctx.repo,
+          attachmentStoreRoot: ctx.attachmentStoreRoot,
+          organizationId: orgId,
+        });
+      } else {
+        try {
+          ctx.repo.deleteAgentAttachment(orgId, m.agentAttachmentId);
+        } catch (err) {
+          console.warn(
+            '[channel-tool] rollback agent_attachment row delete failed',
+            m.agentAttachmentId,
+            err,
+          );
+        }
+      }
+    }
+    try {
+      ctx.repo.deleteAttachment(orgId, m.attachmentId);
+    } catch (err) {
+      console.warn(
+        '[channel-tool] rollback attachments row delete failed',
+        m.attachmentId,
+        err,
+      );
+    }
+  }
+}
+
 export const channelPostTool: OrchestratorTool<typeof ChannelPostSchema> = {
   id: 'channel.post',
   schema: ChannelPostSchema,
@@ -410,17 +457,23 @@ export const channelPostTool: OrchestratorTool<typeof ChannelPostSchema> = {
     if (!resolveResult.ok) {
       return resolveResult;
     }
-    const message = conversations.postToChannel({
-      organizationId: invocation.organizationId,
-      senderId: invocation.memberId,
-      channelId,
-      body,
-      mentions: Array.isArray(invocation.input.mentions)
-        ? invocation.input.mentions.filter((value): value is string => typeof value === 'string')
-        : [],
-      attachmentIds: resolveResult.attachmentIds,
-      metadata: { runId: invocation.runId },
-    });
+    let message;
+    try {
+      message = conversations.postToChannel({
+        organizationId: invocation.organizationId,
+        senderId: invocation.memberId,
+        channelId,
+        body,
+        mentions: Array.isArray(invocation.input.mentions)
+          ? invocation.input.mentions.filter((value): value is string => typeof value === 'string')
+          : [],
+        attachmentIds: resolveResult.attachmentIds,
+        metadata: { runId: invocation.runId },
+      });
+    } catch (err) {
+      rollbackResolvedAttachments(ctx, resolveResult.materializations);
+      throw err;
+    }
     const messageId =
       message && typeof message === 'object' && 'id' in message
         ? String((message as { id: unknown }).id)
@@ -472,17 +525,23 @@ export const channelReplyTool: OrchestratorTool<typeof ChannelReplySchema> = {
     if (!resolveResult.ok) {
       return resolveResult;
     }
-    const message = conversations.replyToMessage({
-      organizationId: invocation.organizationId,
-      senderId: invocation.memberId,
-      messageId: String(invocation.input.message_id),
-      body,
-      mentions: Array.isArray(invocation.input.mentions)
-        ? invocation.input.mentions.filter((value): value is string => typeof value === 'string')
-        : [],
-      attachmentIds: resolveResult.attachmentIds,
-      metadata: { runId: invocation.runId },
-    });
+    let message;
+    try {
+      message = conversations.replyToMessage({
+        organizationId: invocation.organizationId,
+        senderId: invocation.memberId,
+        messageId: String(invocation.input.message_id),
+        body,
+        mentions: Array.isArray(invocation.input.mentions)
+          ? invocation.input.mentions.filter((value): value is string => typeof value === 'string')
+          : [],
+        attachmentIds: resolveResult.attachmentIds,
+        metadata: { runId: invocation.runId },
+      });
+    } catch (err) {
+      rollbackResolvedAttachments(ctx, resolveResult.materializations);
+      throw err;
+    }
     const messageId =
       message && typeof message === 'object' && 'id' in message
         ? String((message as { id: unknown }).id)
@@ -534,18 +593,24 @@ export const channelDmTool: OrchestratorTool<typeof ChannelDmSchema> = {
     if (!resolveResult.ok) {
       return resolveResult;
     }
-    const message = conversations.sendDirectMessage({
-      organizationId: invocation.organizationId,
-      senderId: invocation.memberId,
-      recipientId,
-      content: body,
-      ignore: invocation.input.ignore === true,
-      mentions: Array.isArray(invocation.input.mentions)
-        ? invocation.input.mentions.filter((value): value is string => typeof value === 'string')
-        : [],
-      attachmentIds: resolveResult.attachmentIds,
-      metadata: { runId: invocation.runId },
-    });
+    let message;
+    try {
+      message = conversations.sendDirectMessage({
+        organizationId: invocation.organizationId,
+        senderId: invocation.memberId,
+        recipientId,
+        content: body,
+        ignore: invocation.input.ignore === true,
+        mentions: Array.isArray(invocation.input.mentions)
+          ? invocation.input.mentions.filter((value): value is string => typeof value === 'string')
+          : [],
+        attachmentIds: resolveResult.attachmentIds,
+        metadata: { runId: invocation.runId },
+      });
+    } catch (err) {
+      rollbackResolvedAttachments(ctx, resolveResult.materializations);
+      throw err;
+    }
     const messageId =
       message && typeof message === 'object' && 'id' in message
         ? String((message as { id: unknown }).id)

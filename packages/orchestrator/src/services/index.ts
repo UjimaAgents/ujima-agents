@@ -30,7 +30,7 @@ import { findRegistryEntry } from '@ujima/mcp-client';
 import { join } from 'node:path';
 import { findRegistryMatch } from './connector-catalog.js';
 import { captureToolResultAttachments, cleanupExpiredAgentAttachments } from './agent-attachment-capture.js';
-import type { AttachmentCaptureClosure } from './connector-spawn-v2.js';
+import type { AttachmentCaptureClosure } from './agent-attachment-closure.js';
 import { createTierCurationService, type TierCurationService } from './tier-curation.js';
 import { GovernanceService } from './governance-service.js';
 import { PluginRegistryService } from './plugin-registry.js';
@@ -998,6 +998,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     spiritModelResolver,
     undefined,
     agentAttachmentRoot,
+    attachmentStoreRoot,
   );
 
   const tools = createPermissionGatedToolService(

@@ -65,6 +65,7 @@ import {
 import type { ApprovalRequest } from '@ujima/shared';
 import type { ToolService } from './tool-service.js';
 import { createConnectorAuditWriter } from './connector-audit.js';
+import type { AttachmentCaptureClosure } from './agent-attachment-closure.js';
 
 export interface ConnectorSpawnV2Services {
   mcpPool: SpiritMcpPool;
@@ -91,17 +92,10 @@ export interface ConnectorSpawnV2Services {
   attachmentCapture?: AttachmentCaptureClosure;
 }
 
-export type AttachmentCaptureClosure = (input: {
-  organizationId: string;
-  runId: string;
-  memberId: string;
-  serverId: string;
-  toolName: string;
-  toolCallId: string;
-  toolResult: unknown;
-}) => {
-  attachmentRefs: { ref: string; category: string; filename: string; byteSize: number }[];
-};
+// Re-export so existing consumers don't break. New code should
+// import from `./agent-attachment-closure.js` to keep the type
+// path independent of this runtime-bearing module.
+export type { AttachmentCaptureClosure } from './agent-attachment-closure.js';
 
 export interface ConnectorSpawnV2Ctx {
   organizationId: string;

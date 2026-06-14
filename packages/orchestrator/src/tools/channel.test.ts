@@ -487,3 +487,121 @@ describe('channelHandoffTool', () => {
     });
   });
 });
+
+describe('channel.* tools — attachment rollback when publish throws (bot Round 6 high)', () => {
+  it('channel.post rolls back materialised attachments when conversations.postToChannel throws', async () => {
+    const { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync } =
+      await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+
+    const storeRoot = mkdtempSync(join(tmpdir(), 'ujima-rollback-'));
+    try {
+      // Seed a captured agent_attachment whose file lives at the
+      // canonical location. The base64 ref below points at a fresh
+      // row the resolver creates inline.
+      mkdirSync(join(storeRoot, 'agent-generated', 'org-1', 'run-1'), {
+        recursive: true,
+      });
+
+      const agentAttachments: { id: string; storagePath: string; byteSize: number }[] = [];
+      const userAttachments: { id: string }[] = [];
+      const deletedAgent: string[] = [];
+      const deletedUser: string[] = [];
+
+      const PNG = Buffer.from([
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+        ...Array.from({ length: 256 }).map(() => 0x42),
+      ]);
+
+      let publishCalls = 0;
+
+      const result = await channelPostTool.execute({
+        invocation: {
+          organizationId: 'org-1',
+          runId: 'run-1',
+          memberId: 'agent-1',
+          toolCallId: 'call-1',
+          toolId: 'channel.post',
+          action: 'message',
+          resourceType: 'message',
+          input: {
+            channel_id: 'general',
+            body: 'hi',
+            mentions: [],
+            attachments: [
+              { refType: 'base64', value: PNG.toString('base64'), filename: 'shot.png' },
+            ],
+          },
+        } as never,
+        team: {
+          getChannel: (name: string) =>
+            name === 'general' ? { id: 'channel-general' } : undefined,
+        } as never,
+        repo: {
+          getChannel: (_orgId: string, channelId: string) =>
+            channelId === 'channel-general' ? ({ id: 'channel-general' } as never) : null,
+          getOrganization: () => ({ id: 'org-1', workspace: { root: '/tmp/ws' } }),
+          listAllChannels: () => [],
+          saveAgentAttachment: (att: { id: string; storagePath: string; byteSize: number }) => {
+            agentAttachments.push(att);
+            return att;
+          },
+          saveAttachment: (att: { id: string }) => {
+            userAttachments.push(att);
+            return att;
+          },
+          deleteAgentAttachment: (_org: string, id: string) => {
+            deletedAgent.push(id);
+            const idx = agentAttachments.findIndex((a) => a.id === id);
+            if (idx >= 0) agentAttachments.splice(idx, 1);
+          },
+          deleteAttachment: (_org: string, id: string): number => {
+            deletedUser.push(id);
+            const idx = userAttachments.findIndex((a) => a.id === id);
+            if (idx >= 0) {
+              userAttachments.splice(idx, 1);
+              return 1;
+            }
+            return 0;
+          },
+          getAgentAttachment: (_org: string, id: string) =>
+            agentAttachments.find((a) => a.id === id) ?? null,
+          saveAuditEvent: () => undefined,
+        } as never,
+        conversations: {
+          tryMirrorSuppress: () => false,
+          postToChannel: () => {
+            publishCalls += 1;
+            throw new Error('synthetic publish failure');
+          },
+        } as never,
+        agentAttachmentRoot: join(storeRoot, 'agent-generated'),
+        attachmentStoreRoot: storeRoot,
+      }).catch((err) => err);
+
+      // The publish threw — channel.post propagated it.
+      expect(publishCalls).toBe(1);
+      expect(result).toBeInstanceOf(Error);
+      // Rollback ran: the agent_attachment row, the user
+      // attachment row, AND the on-disk file are all gone.
+      expect(agentAttachments).toHaveLength(0);
+      expect(userAttachments).toHaveLength(0);
+      expect(deletedAgent.length).toBeGreaterThanOrEqual(1);
+      expect(deletedUser.length).toBeGreaterThanOrEqual(1);
+      // The base64 ref's on-disk file was written before the publish
+      // attempt; the rollback should have unlinked it. We can't
+      // predict the filename, but we can assert the dir has nothing
+      // in it.
+      const dir = join(storeRoot, 'agent-generated', 'org-1', 'run-1');
+      const { readdirSync } = await import('node:fs');
+      const remaining = existsSync(dir) ? readdirSync(dir) : [];
+      // The original file is gone; only the dir scaffold may
+      // remain (rmSync force-unlinked the file but kept the dir).
+      expect(remaining.filter((f) => f.endsWith('.png'))).toEqual([]);
+      void writeFileSync; // silence unused
+    } finally {
+      rmSync(storeRoot, { recursive: true, force: true });
+    }
+  });
+});

@@ -93,6 +93,7 @@ export class ToolServiceImpl implements ToolService {
     private readonly modelResolver?: ModelResolver,
     private readonly shellAutoReview = new ShellAutoReviewService(),
     private readonly agentAttachmentRoot?: string,
+    private readonly attachmentStoreRoot?: string,
   ) {}
 
   allowRun(organizationId: string, runId: string, approvalScope?: string): void {
@@ -440,6 +441,7 @@ export class ToolServiceImpl implements ToolService {
         ...this.delegates,
         reportProgress: (output) => this.emitToolProgress(invocation, output),
         agentAttachmentRoot: this.agentAttachmentRoot,
+        attachmentStoreRoot: this.attachmentStoreRoot,
       });
     }
 
