@@ -287,7 +287,6 @@ describe('ALWAYS_AVAILABLE_AGENT_TOOLS', () => {
         'self.procedure.remove',
         'self.procedure.view',
         'view',
-        'agent.delegate',
         'download',
         'edit',
         'fetch',

@@ -128,7 +128,10 @@ export function useConversationSync(
   const appendMember = useWorkspaceStore((state) => state.appendMember);
   const setMemberActivity = useWorkspaceStore((state) => state.setMemberActivity);
   const [error, setError] = useState<{ conversationKey: string; message: string } | undefined>(undefined);
-  const [archiving, setArchiving] = useState<"summarize" | "clear" | null>(null);
+  const [archivingState, setArchivingState] = useState<{
+    conversationKey: string;
+    mode: "summarize" | "clear";
+  } | null>(null);
   const storeMembersRef = useRef(storeMembers);
   const runsRef = useRef(runs);
   const runChunkSequenceRef = useRef(0);
@@ -165,10 +168,6 @@ export function useConversationSync(
   const flushRunChunks = useCallback(() => {
     runChunkBatcherRef.current?.flushNow();
   }, []);
-
-  useEffect(() => {
-    setArchiving(null);
-  }, [conversationKey]);
 
   const loadConversationState = useCallback(
     async (signal: AbortSignal, currentConversationKey: string) => {
@@ -446,11 +445,11 @@ export function useConversationSync(
 
   const archiveConversation = useCallback(
     async (mode: "summarize" | "clear") => {
-      if (!transport || !bootstrap.auth.member) {
+      if (!transport || !bootstrap.auth.member || !conversationKey) {
         throw new Error("Sign in before archiving a conversation.");
       }
 
-      setArchiving(mode);
+      setArchivingState({ conversationKey, mode });
       try {
         const response = await fetch(`/api/conversations/${encodeURIComponent(transport.threadId)}/archive`, {
           method: "POST",
@@ -476,10 +475,10 @@ export function useConversationSync(
         resetConversationFeed(currentConversationKey);
         await loadConversationState(controller.signal, currentConversationKey);
       } finally {
-        setArchiving(null);
+        setArchivingState(null);
       }
     },
-    [bootstrap.auth.member, loadConversationState, resetConversationFeed, transport],
+    [bootstrap.auth.member, conversationKey, loadConversationState, resetConversationFeed, transport],
   );
 
   useEffect(() => {
@@ -499,6 +498,10 @@ export function useConversationSync(
 
   const currentError =
     error && error.conversationKey === conversationKey ? error.message : undefined;
+  const archiving =
+    archivingState && archivingState.conversationKey === conversationKey
+      ? archivingState.mode
+      : null;
 
   return {
     messages,
