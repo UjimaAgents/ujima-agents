@@ -73,7 +73,7 @@ export const memoryWriteTool: OrchestratorTool<typeof MemoryWriteSchema> = {
       kind: input.kind ?? MEMORY_KIND_DEFAULT,
       key: input.key,
       content: input.value,
-      metadata: {},
+      metadata: { threadId: invocation.threadId },
       expiresAt,
       sourceMessageId: undefined,
       lastRecalledAt: undefined,

@@ -22,7 +22,7 @@ export const MESSAGE_TOOL_USAGE_GUIDANCE = [
 ] as const;
 
 function listToolsLine(toolIds: readonly string[]): string {
-  return toolIds.length ? toolIds.join(', ') : 'none';
+  return toolIds.length ? [...toolIds].sort((left, right) => left.localeCompare(right)).join(', ') : 'none';
 }
 
 function formatAttachedMcpServers(
@@ -103,7 +103,7 @@ function listScopes(role: RoleConfig): string {
 }
 
 function listChannels(role: RoleConfig): string {
-  return role.channels.length ? role.channels.join(', ') : 'none';
+  return role.channels.length ? [...role.channels].sort((left, right) => left.localeCompare(right)).join(', ') : 'none';
 }
 
 function formatAvailableSkills(skills: readonly SkillInstall[] | undefined, legacySkills: readonly string[]): string {
@@ -129,7 +129,7 @@ function formatAvailableSkills(skills: readonly SkillInstall[] | undefined, lega
   if (legacySkills.length === 0) return '';
   return [
     'Available skills:',
-    legacySkills.map((skill) => `- ${skill}`).join('\n'),
+    [...legacySkills].sort((left, right) => left.localeCompare(right)).map((skill) => `- ${skill}`).join('\n'),
   ].join('\n');
 }
 
@@ -163,7 +163,9 @@ function formatChannelTargets(channels: Channel[]): string {
 }
 
 function formatDirectMessageTargets(currentMemberId: string, members: Member[]): string {
-  const targets = members.filter((member) => member.id !== currentMemberId);
+  const targets = members
+    .filter((member) => member.id !== currentMemberId)
+    .sort((left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id));
 
   return targets.length
     ? targets.map((member) => `- ${member.name} [${member.id}]`).join('\n')
@@ -283,9 +285,28 @@ export function buildAgentSystemPrompt(
    */
   availableConnectors?: string,
 ): string {
-  const accessibleChannels = role.channels.length
+  const sortedMembers = [...members].sort((left, right) =>
+    left.name.localeCompare(right.name) || left.id.localeCompare(right.id),
+  );
+  const sortedAgents = [...agents].sort((left, right) => left.name.localeCompare(right.name));
+  const accessibleChannels = (role.channels.length
     ? channels.filter((channel) => role.channels.includes(channel.name))
-    : channels;
+    : channels
+  ).sort((left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id));
+  const sortedSkills = availableSkills
+    ? [...availableSkills].sort((left, right) =>
+        left.commandName.localeCompare(right.commandName) || left.skillPath.localeCompare(right.skillPath),
+      )
+    : undefined;
+  const sortedToolIds = [...(availableToolIds ?? role.tools)].sort((left, right) => left.localeCompare(right));
+  const sortedServers = attachedMcpServers
+    ? [...attachedMcpServers]
+        .sort((left, right) => left.name.localeCompare(right.name))
+        .map((server) => ({
+          ...server,
+          toolNames: [...server.toolNames].sort((left, right) => left.localeCompare(right)),
+        }))
+    : undefined;
   const personality = getPersonalityPreset(agent.personalityName);
 
   return [
@@ -300,7 +321,7 @@ export function buildAgentSystemPrompt(
     role.instructions,
     personality?.instructions ?? '',
     '',
-    buildOrganizationContextPrompt(organizationName, members, agents, organizationChart),
+    buildOrganizationContextPrompt(organizationName, sortedMembers, sortedAgents, organizationChart),
     '',
     'Messaging:',
     `Current thread ID: ${currentThreadId}`,
@@ -319,17 +340,17 @@ export function buildAgentSystemPrompt(
     '',
     buildCollaborationProtocol(conversationKind),
     '',
-    formatAvailableSkills(availableSkills, role.skills),
+    formatAvailableSkills(sortedSkills, role.skills),
     'If a skill is relevant, inspect its SKILL.md before acting.',
     'Match your task to the appropriate skill proactively: before implementing code, use incremental-implementation or test-driven-development; before merging, use code-review-and-quality; when debugging, use debugging-and-error-recovery; when planning, use planning-and-task-breakdown or spec-driven-development. When in doubt about task scope, check the skill descriptions to find the best fit.',
     '',
     `Workspace root: ${workspaceRoot}`,
     `Allowed scopes: ${listScopes(role)}`,
     formatWorkspaceLayout(workspaceRoot),
-    `Available tools: ${listToolsLine(availableToolIds ?? role.tools)}`,
-    formatAttachedMcpServers(attachedMcpServers),
+    `Available tools: ${listToolsLine(sortedToolIds)}`,
+    formatAttachedMcpServers(sortedServers),
     formatAvailableConnectors(availableConnectors),
-    formatMissingCapabilities(availableToolIds),
+    formatMissingCapabilities(sortedToolIds),
     `Available channels: ${listChannels(role)}`,
   ]
     .filter(Boolean)

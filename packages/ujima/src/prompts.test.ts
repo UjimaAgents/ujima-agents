@@ -93,4 +93,66 @@ describe('buildAgentSystemPrompt', () => {
     expect(system).toContain('You are Phoebe Hunter, an employee of Ujima Demo, acting as QA Engineer (qa-engineer).');
     expect(system).toContain(`- Ivy Brooks | qa-engineer | ${getPersonalityPreset('skeptical')?.title ?? 'Skeptical'} | agent | joined 2026-05-04`);
   });
+
+  it('produces the same prompt for shuffled catalog inputs', () => {
+    const agent = createAgent('alice', 'engineer', 'direct');
+    const role = defineRole({
+      name: 'engineer',
+      title: 'Engineer',
+      instructions: 'Build.',
+      skills: ['zeta', 'alpha'],
+    });
+    const members = [
+      { id: 'b', name: 'Bob', roleName: 'engineer', kind: 'agent', createdAt: '2026-05-04T00:00:00.000Z' },
+      { id: 'a', name: 'Ada', roleName: 'engineer', kind: 'agent', createdAt: '2026-05-04T00:00:00.000Z' },
+    ] as never;
+    const agents = [
+      createAgent('bob', 'engineer', 'direct'),
+      createAgent('ada', 'engineer', 'thoughtful'),
+    ] as never;
+    const channels = [
+      { id: 'z', name: 'zeta', kind: 'public' },
+      { id: 'a', name: 'alpha', kind: 'public' },
+    ] as never;
+    const servers = [
+      { name: 'zeta', toolNames: ['write', 'read'] },
+      { name: 'alpha', toolNames: ['stop', 'start'] },
+    ];
+    const build = (
+      memberInput: typeof members,
+      agentInput: typeof agents,
+      channelInput: typeof channels,
+      toolInput: string[],
+      serverInput: typeof servers,
+    ) =>
+      buildAgentSystemPrompt(
+        '.',
+        'Ujima Demo',
+        'alice',
+        'Alice',
+        'thread-1',
+        agent,
+        role,
+        memberInput,
+        agentInput,
+        channelInput,
+        { reportsTo: {} },
+        undefined,
+        toolInput,
+        serverInput,
+      );
+
+    expect(build(members, agents, channels, ['z-tool', 'a-tool'], servers)).toBe(
+      build(
+        [...members].reverse() as never,
+        [...agents].reverse() as never,
+        [...channels].reverse() as never,
+        ['a-tool', 'z-tool'],
+        [...servers].reverse().map((server) => ({
+          ...server,
+          toolNames: [...server.toolNames].reverse(),
+        })),
+      ),
+    );
+  });
 });

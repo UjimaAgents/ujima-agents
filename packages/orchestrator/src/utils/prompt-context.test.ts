@@ -5,8 +5,6 @@ import {
   CONVERSATION_SUMMARY_MARKER,
 } from '../services/conversation-summary.js';
 import {
-  PROMPT_CONTEXT_CHAR_BUDGET,
-  PROMPT_MESSAGE_CHAR_LIMIT,
   selectPromptContextMessages,
 } from './prompt-context.js';
 
@@ -78,7 +76,7 @@ describe('selectPromptContextMessages', () => {
     expect(selected[0]?.content.startsWith(CONVERSATION_ARCHIVE_MARKER)).toBe(true);
   });
 
-  it('bounds oversized history while preserving the newest message', () => {
+  it('does not truncate or budget history when no compaction exists', () => {
     const messages: Message[] = Array.from({ length: 20 }, (_, index) => ({
       id: `message-${index}`,
       organizationId: 'org-1',
@@ -95,10 +93,6 @@ describe('selectPromptContextMessages', () => {
 
     const selected = selectPromptContextMessages(messages);
 
-    expect(selected.at(-1)?.id).toBe('message-19');
-    expect(selected.every((message) => message.content.length <= PROMPT_MESSAGE_CHAR_LIMIT)).toBe(true);
-    expect(selected.reduce((total, message) => total + message.content.length, 0)).toBeLessThanOrEqual(
-      PROMPT_CONTEXT_CHAR_BUDGET,
-    );
+    expect(selected).toEqual(messages);
   });
 });

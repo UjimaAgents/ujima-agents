@@ -47,33 +47,22 @@ describe('buildCacheableSystem — cache stability invariants', () => {
     expect(b.system).toContain('When pinging Phoebe, include the artifact path.');
   });
 
-  it('goalSuffix changes the hash (per-task goals invalidate cache by design)', () => {
-    const a = buildCacheableSystem({ baseSystem: FIXED_BASE });
-    const b = buildCacheableSystem({ baseSystem: FIXED_BASE, goalSuffix: 'Goal: deliver BRD.' });
-    expect(a.hash).not.toBe(b.hash);
-    expect(b.system).toContain('Goal: deliver BRD.');
-  });
-
   it('hashPromptZone is deterministic', () => {
     expect(hashPromptZone('abc')).toBe(hashPromptZone('abc'));
     expect(hashPromptZone('abc')).not.toBe(hashPromptZone('abd'));
   });
 
   // Procedures-as-Culture (docs/procedures-as-culture.md "Zone 1 ordering").
-  it('hoists lawText above procedures and goal suffix', () => {
+  it('hoists lawText above procedures', () => {
     const { system } = buildCacheableSystem({
       baseSystem: FIXED_BASE,
       lawText: 'LAW (do not violate): Never share customer data.',
       proceduresText: 'Workspace Culture — applies to everyone.',
-      goalSuffix: 'Goal: ship the demo.',
     });
     const lawIdx = system.indexOf('LAW (do not violate)');
     const cultureIdx = system.indexOf('Workspace Culture');
-    const goalIdx = system.indexOf('Goal: ship the demo');
     expect(lawIdx).toBeGreaterThan(-1);
     expect(cultureIdx).toBeGreaterThan(-1);
-    expect(goalIdx).toBeGreaterThan(-1);
-    expect(lawIdx).toBeLessThan(goalIdx);
     expect(lawIdx).toBeLessThan(cultureIdx);
   });
 });
@@ -115,8 +104,7 @@ describe('cache-stability invariant — buildCacheableSystem does not depend on 
     const allowedKeys: readonly (keyof Parameters<typeof buildCacheableSystem>[0])[] = [
       'baseSystem',
       'proceduresText',
-      'goalSuffix',
     ];
-    expect(allowedKeys).toEqual(['baseSystem', 'proceduresText', 'goalSuffix']);
+    expect(allowedKeys).toEqual(['baseSystem', 'proceduresText']);
   });
 });
