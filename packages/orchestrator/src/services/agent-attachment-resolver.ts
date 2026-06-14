@@ -241,6 +241,40 @@ interface MultiOk {
 type SingleResult = SingleOk | ResolveResultErr;
 type MultiResult = MultiOk | ResolveResultErr;
 
+/**
+ * Local commit/rollback primitive shared across every ref branch
+ * (tool_call's user-row write, base64/workspace_*'s file + agent
+ * row + user row sequence). Each side effect calls `register(undo)`
+ * BEFORE the operation that produces it, so a throw inside the op
+ * still unwinds the registered undo idempotently. `runRollback`
+ * walks the stack in reverse, swallowing per-step failures so one
+ * bad undo doesn't strand the rest.
+ *
+ * Returns an object instead of two free functions so the call site
+ * keeps the stack scoped to this materialization rather than a
+ * module-level singleton.
+ */
+function createRefCommitUndoStack(): {
+  register: (undo: () => void) => void;
+  runRollback: () => void;
+} {
+  const stack: (() => void)[] = [];
+  return {
+    register(undo) {
+      stack.push(undo);
+    },
+    runRollback() {
+      for (let i = stack.length - 1; i >= 0; i -= 1) {
+        try {
+          stack[i]?.();
+        } catch (e) {
+          console.warn('[agent-attachment-resolver] rollback step failed', e);
+        }
+      }
+    },
+  };
+}
+
 function resolveToolCallRef(
   deps: AttachmentResolverDeps,
   ref: AttachmentRefInput,
@@ -270,27 +304,16 @@ function resolveToolCallRef(
       error: `tool_call ref "${ref.value}" resolves to no captured attachment (was the tool call successful, and did it return capturable bytes?)`,
     };
   }
-  // Same atomic pattern commitBytes uses. The user-attachment row
-  // is the only resolver-owned side effect on this branch (the file
-  // and agent_attachments row belong to the capture pass). Register
-  // the delete BEFORE saveAttachment so a partial write inside
-  // saveAttachment still gets cleaned up — deleteAttachment is
-  // idempotent and returns 0 when there's no row.
-  const undoStack: (() => void)[] = [];
-  const runRollback = (): void => {
-    for (let i = undoStack.length - 1; i >= 0; i -= 1) {
-      try {
-        undoStack[i]?.();
-      } catch (e) {
-        console.warn('[agent-attachment-resolver] tool_call rollback step failed', e);
-      }
-    }
-  };
+  // Shared commit/rollback contract with commitBytes. The
+  // user-attachment row is the only resolver-owned side effect on
+  // this branch — the file + agent_attachments row belong to the
+  // capture pass and stay intact.
+  const { register, runRollback } = createRefCommitUndoStack();
   const attachmentId = newAttId();
   if (deps.repo.saveAttachment) {
     if (deps.repo.deleteAttachment) {
       const del = deps.repo.deleteAttachment;
-      undoStack.push(() => del(deps.organizationId, attachmentId));
+      register(() => del(deps.organizationId, attachmentId));
     }
     try {
       deps.repo.saveAttachment({
@@ -625,23 +648,14 @@ function commitBytes(
     deps.runId,
     fileName,
   );
-  // Each step (file write, agent_attachments insert, user
-  // attachment insert) registers its rollback BEFORE the next
-  // step runs, so a throw later still cleans up earlier work.
-  const undoStack: (() => void)[] = [];
-  const runRollback = (): void => {
-    for (let i = undoStack.length - 1; i >= 0; i -= 1) {
-      try {
-        undoStack[i]?.();
-      } catch (e) {
-        console.warn('[agent-attachment-resolver] commitBytes rollback step failed', e);
-      }
-    }
-  };
+  // Shared commit/rollback contract with resolveToolCallRef. Each
+  // step registers its undo BEFORE the next step's side effect so
+  // a throw later in the sequence still cleans up earlier work.
+  const { register, runRollback } = createRefCommitUndoStack();
   try {
     mkdirSync(absolutePath.split('/').slice(0, -1).join('/'), { recursive: true });
     writeFileSync(absolutePath, bytes);
-    undoStack.push(() => {
+    register(() => {
       try {
         rmSync(absolutePath, { force: true });
       } catch (e) {
@@ -672,7 +686,7 @@ function commitBytes(
     deps.repo.saveAgentAttachment(agentRow);
     if (deps.repo.deleteAgentAttachment) {
       const del = deps.repo.deleteAgentAttachment;
-      undoStack.push(() => del(deps.organizationId, id));
+      register(() => del(deps.organizationId, id));
     }
   } catch (err) {
     runRollback();
@@ -682,6 +696,10 @@ function commitBytes(
   // failed materialization doesn't produce a `created` event.
   const attachmentId = newAttId();
   if (deps.repo.saveAttachment) {
+    if (deps.repo.deleteAttachment) {
+      const del = deps.repo.deleteAttachment;
+      register(() => del(deps.organizationId, attachmentId));
+    }
     try {
       deps.repo.saveAttachment({
         id: attachmentId,

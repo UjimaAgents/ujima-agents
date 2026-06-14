@@ -537,12 +537,13 @@ describe('resolveAttachmentRefs — atomic commitBytes (bot Round 2 high)', () =
       // count is back to 0 and the delete was invoked.
       expect(repo.agentAttachments).toHaveLength(0);
       expect(agentAttachmentDeleteCalls).toBe(1);
-      // attachments table was never written (saveAttachment threw)
-      // so its delete is not called by the inner rollback. The
-      // outer resolver rollback also doesn't fire here because
-      // commitBytes returned cleanly with `{ok:false}` — there's
-      // no entry on the outer materializations list to roll back.
-      expect(attachmentDeleteCalls).toBe(0);
+      // deleteAttachment IS called once — the inner rollback
+      // registers the undo BEFORE saveAttachment, so a partial
+      // write inside the DB layer still gets cleaned up
+      // idempotently. The shared commit/rollback helper
+      // (createRefCommitUndoStack) gives commitBytes and
+      // resolveToolCallRef the same atomicity contract.
+      expect(attachmentDeleteCalls).toBe(1);
     } finally {
       rmSync(agentRoot, { recursive: true, force: true });
       rmSync(workspaceRoot, { recursive: true, force: true });
