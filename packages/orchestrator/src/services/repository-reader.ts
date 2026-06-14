@@ -131,6 +131,7 @@ export interface RepositoryReader {
     threadId: string,
     input?: { since?: string; excludeSenderId?: string },
   ): number;
+  countUncompactedMessageChars?(organizationId: string, threadId: string): number;
   getConversationRead(
     organizationId: string,
     memberId: string,

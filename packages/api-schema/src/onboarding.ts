@@ -33,6 +33,7 @@ const InlineTeamConfigSchema = z.object({
 export type InlineTeamConfig = z.infer<typeof InlineTeamConfigSchema>;
 
 export const OnboardingRequestSchema = z.object({
+  attemptId: z.string().uuid().optional(),
   organizationName: z.string().min(1),
   ownerName: z.string().min(1),
   ownerEmail: z.string().email(),

@@ -151,6 +151,18 @@ export const ALWAYS_AVAILABLE_AGENT_TOOLS = Object.freeze([
   'memory.recall',
   'memory.forget',
   'agent.delegate',
+  // Workspace write tools — agents need these out of the gate
+  'filesystem',
+  'write',
+  'edit',
+  'multiedit',
+  'shell',
+  'download',
+  'fetch',
+  'web_search',
+  // Background job management — needed when shell is baseline
+  'job_output',
+  'job_kill',
 ] as const);
 
 // Supervisor's strict tool allowlist — read-only / annotation-only tools

@@ -538,6 +538,7 @@ async function runNpmGlobalInstall(version: string): Promise<void> {
   await new Promise<void>((resolveExit, rejectExit) => {
     const child = spawn('npm', ['install', '-g', `@ujima/agents@${version}`], {
       stdio: 'inherit',
+      shell: process.platform === 'win32',
     });
     child.on('error', (err) => rejectExit(err));
     child.on('exit', (code) => {
@@ -606,6 +607,7 @@ async function cmdUpdate(argv: string[]): Promise<void> {
 
   const child = spawn('npm', ['install', '-g', `@ujima/agents@${latestVersion}`], {
     stdio: 'inherit',
+    shell: process.platform === 'win32',
   });
 
   return new Promise<void>((resolvePromise) => {
@@ -625,7 +627,7 @@ async function cmdUpdate(argv: string[]): Promise<void> {
         process.stderr.write(
           `\nnpm install exited with error code ${code}.\n` +
             `If this is a permission error, please run:\n` +
-            `  sudo npm install -g @ujima/agents\n`,
+            `  ${process.platform === 'win32' ? 'Start a terminal as Administrator and run: npm install -g @ujima/agents' : 'sudo npm install -g @ujima/agents'}\n`,
         );
         process.exit(code ?? 1);
       }

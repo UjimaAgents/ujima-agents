@@ -166,13 +166,11 @@ export function checkToolPolicy(
     return { allowed: true, requiresApproval: false };
   }
 
-  // Baseline tools (channel primitives, read-only workspace tools,
+  // Baseline tools (channel primitives, workspace tools,
   // silent terminators, `schedule`) are available to every role
   // regardless of `role.tools`. This mirrors the palette assembled by
   // `resolveToolAllowlist` / `ai-service.ts` so the run-time gate
   // doesn't reject a tool the model just received in its schema.
-  // Writes (`filesystem`, `edit`, `multiedit`, `write`, `shell`)
-  // stay opt-in via `role.tools`.
   const baselineToolIds = ALWAYS_AVAILABLE_AGENT_TOOLS as readonly string[];
   if (!baselineToolIds.includes(toolId) && !role.tools.includes(toolId)) {
     return {

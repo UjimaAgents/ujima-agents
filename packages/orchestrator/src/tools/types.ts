@@ -6,7 +6,7 @@ import type { ApiRepository, RepositoryReader } from '../services/repository-rea
 import type { ToolInvocationInput } from '../services/tool-service.js';
 
 export interface AgentDelegateResult {
-  status: 'completed' | 'no_reply' | 'timed_out' | 'delegate_failed';
+  status: 'completed' | 'no_reply' | 'timed_out' | 'delegate_failed' | 'dispatched';
   agent: string;
   agent_id: string;
   thread_id: string;
@@ -17,19 +17,59 @@ export interface AgentDelegateResult {
   error?: string;
 }
 
-export interface ToolExecutionContext {
-  invocation: ToolInvocationInput;
-  team: AgentTeamHandle;
-  repo: ApiRepository;
-  conversations: ConversationService;
-  goals: GoalSystemService;
+export interface DelegateThreadMessage {
+  id: string;
+  senderId: string;
+  content: string;
+  createdAt: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface DelegateHandlers {
   delegateAgentTurn: (input: {
     organizationId: string;
     fromMemberId: string;
     to: string;
     message: string;
     runId: string;
+    mode?: 'blocking' | 'non_blocking';
   }) => Promise<AgentDelegateResult>;
+  getDelegateStatus: (organizationId: string, delegateId: string) => Promise<AgentDelegateResult>;
+  waitForDelegates: (
+    organizationId: string,
+    delegateIds: string[],
+    timeoutMs?: number,
+    pollIntervalMs?: number,
+  ) => Promise<AgentDelegateResult[]>;
+  stopDelegate: (
+    organizationId: string,
+    delegateId: string,
+  ) => Promise<{ stopped: boolean; runId?: string }>;
+  readDelegateThread: (
+    organizationId: string,
+    delegateId: string,
+    limit?: number,
+  ) => Promise<DelegateThreadMessage[]>;
+  sendToDelegate: (
+    organizationId: string,
+    delegateId: string,
+    message: string,
+    fromMemberId: string,
+  ) => Promise<{ sent: boolean; messageId: string }>;
+}
+
+export interface ToolExecutionContext {
+  invocation: ToolInvocationInput;
+  team: AgentTeamHandle;
+  repo: ApiRepository;
+  conversations: ConversationService;
+  goals: GoalSystemService;
+  delegateAgentTurn: DelegateHandlers['delegateAgentTurn'];
+  getDelegateStatus: DelegateHandlers['getDelegateStatus'];
+  waitForDelegates: DelegateHandlers['waitForDelegates'];
+  stopDelegate: DelegateHandlers['stopDelegate'];
+  readDelegateThread: DelegateHandlers['readDelegateThread'];
+  sendToDelegate: DelegateHandlers['sendToDelegate'];
   reportProgress?: (output: unknown) => Promise<void> | void;
 }
 

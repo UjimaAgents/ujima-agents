@@ -23,6 +23,7 @@ import { createConnectorAuditWriter } from './connector-audit.js';
 import { createSpiritModelResolver } from '../utils/create-spirit-model-resolver.js';
 import { ActiveSpiritRegistry } from './active-spirit-registry.js';
 import { AsyncMutex } from '../utils/async-mutex.js';
+import { collectCursorPages } from '../utils/cursor-pages.js';
 import { filterVisibleMessages } from '../utils/message-visibility.js';
 import type { ConversationService } from './conversation.js';
 import type { RealtimeService } from './context.js';
@@ -33,7 +34,7 @@ import { goalModeEnabledFromMessage } from './goal-mode-prompt.js';
 import { isLiveSpiritStatus } from './live-status.js';
 import type { AiService } from '../ai-service.js';
 import type { AgentLoopChunk } from './agent-loop.js';
-import { accumulateStepUsage, hasTokenUsage } from './token-usage.js';
+import { hasTokenUsage, normalizeTokenUsage } from './token-usage.js';
 import { materializeMcpDef } from './mcp-runtime.js';
 import { requireOrganization } from '../utils/require-organization.js';
 import type { SpawnSpiritInput } from './spirit-types.js';
@@ -572,7 +573,7 @@ export class SpiritServiceBase {
     agentId: string,
     steps: readonly { usage?: unknown }[],
   ): void {
-    const usage = accumulateStepUsage(steps);
+    const usage = normalizeTokenUsage(steps.at(-1)?.usage);
     if (!hasTokenUsage(usage)) return;
 
     const rooms = [orgRoom(organizationId), memberRoom(agentId), runRoom(runId)];
@@ -597,25 +598,19 @@ export class SpiritServiceBase {
   }
 
   protected listAllThreadMessages(organizationId: string, threadId: string): Message[] {
-    const messages: Message[] = [];
-    let cursor: string | undefined = undefined;
-    do {
-      const page = this.repo.listMessages(organizationId, threadId, cursor, 100);
-      messages.push(...filterVisibleMessages(page.data));
-      cursor = page.nextCursor;
-    } while (cursor);
-    return messages;
+    return filterVisibleMessages(
+      collectCursorPages((cursor) =>
+        this.repo.listMessages(organizationId, threadId, cursor, 100),
+      ),
+    );
   }
 
   protected listAllChannelMessages(organizationId: string, channelId: string): Message[] {
-    const messages: Message[] = [];
-    let cursor: string | undefined = undefined;
-    do {
-      const page = this.repo.listChannelMessages(organizationId, channelId, { cursor, limit: 100 });
-      messages.push(...filterVisibleMessages(page.data));
-      cursor = page.nextCursor;
-    } while (cursor);
-    return messages;
+    return filterVisibleMessages(
+      collectCursorPages((cursor) =>
+        this.repo.listChannelMessages(organizationId, channelId, { cursor, limit: 100 }),
+      ),
+    );
   }
 
   protected runKey(organizationId: string, runId: string): string {

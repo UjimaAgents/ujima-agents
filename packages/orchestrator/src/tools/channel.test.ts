@@ -287,12 +287,22 @@ describe('ALWAYS_AVAILABLE_AGENT_TOOLS', () => {
         'self.procedure.remove',
         'self.procedure.view',
         'view',
+        'download',
+        'edit',
+        'fetch',
+        'filesystem',
+        'job_kill',
+        'job_output',
+        'multiedit',
+        'shell',
+        'web_search',
+        'write',
       ].sort(),
     );
   });
 
-  it.each(['channel.handoff', 'edit', 'write', 'multiedit', 'shell'])(
-    'does NOT include %s (write-capable / workflow opt-in via role.tools)',
+  it.each(['channel.handoff'])(
+    'does NOT include %s (workflow primitive opt-in via role.tools)',
     (toolId) => {
       expect([...ALWAYS_AVAILABLE_AGENT_TOOLS]).not.toContain(toolId);
     },

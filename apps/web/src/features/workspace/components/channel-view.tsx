@@ -3,7 +3,7 @@
 import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useChatScrollToBottom } from "../hooks/use-chat-scroll-to-bottom";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { File, FileArchive, FileAudio, FileImage, FileText, FileVideo, Square, Terminal } from "lucide-react";
+import { File, FileArchive, FileAudio, FileImage, FileText, FileVideo, Loader2, Square, Terminal } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import type { BootstrapResponse, SkillInvocationResponse } from "@ujima/api-schema";
 import type { SelectedConversation } from "../types";
@@ -939,6 +939,14 @@ export function ChannelView({
         />
         {activeTab === "conversation" ? (
           <div className="relative flex flex-1 min-h-0 flex-col">
+            {feed.archiving ? (
+              <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center bg-white/70 backdrop-blur-[1px] dark:bg-zinc-950/70">
+                <div className="flex items-center gap-2 rounded-lg border border-zinc-200 bg-white px-4 py-3 text-sm font-medium text-zinc-700 shadow-sm dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
+                  <Loader2 className="h-4 w-4 animate-spin text-violet-600 dark:text-violet-400" />
+                  {feed.archiving === "clear" ? "Clearing conversation…" : "Summarizing…"}
+                </div>
+              </div>
+            ) : null}
             <ChatMessageList ref={listRef} onScroll={handleScroll}>
             {feed.loading && feed.messages.length === 0 ? (
               <ConversationSkeleton />

@@ -218,6 +218,9 @@ function createConversationFixture() {
       alerts.push(input.memberId);
       alertWakeReasons.push({ memberId: input.memberId, wakeReason: input.wakeReason });
     },
+    summarizeConversation: async (messages, mode) =>
+      `${mode === 'archive' ? '[[CONVERSATION_ARCHIVE_V1]]' : '[[CONVERSATION_SUMMARY_V2]]'} # AI summarized ${messages.length} messages.`,
+    contextWindowTokens: () => 1_000,
   });
 
   return {
@@ -739,7 +742,7 @@ describe('ConversationService @all mentions', () => {
       });
     }
 
-    const result = service.archiveConversation({
+    const result = await service.archiveConversation({
       organizationId: 'org-1',
       threadId: 'general',
       memberId: 'human-1',
@@ -793,6 +796,7 @@ describe('ConversationService @all mentions', () => {
         content: `auto-${i}`,
       });
     }
+    await new Promise((resolve) => setImmediate(resolve));
 
     const stored = repo.listChannelMessages('org-1', 'general', { limit: 1_000 });
     const summary = stored.data.find((message) => message.content.startsWith('[[CONVERSATION_SUMMARY_V2]]'));
@@ -817,6 +821,7 @@ describe('ConversationService @all mentions', () => {
         content: `roll-${i}`,
       });
     }
+    await new Promise((resolve) => setImmediate(resolve));
 
     const summaries = repo
       .listMessages('org-1', 'general')
@@ -826,8 +831,7 @@ describe('ConversationService @all mentions', () => {
       );
 
     expect(summaries).toHaveLength(1);
-    expect(summaries[0]?.content).toContain('Compacted 36 earlier messages.');
-    expect(summaries[0]?.content).toContain('Compacted 35 earlier messages.');
+    expect(summaries[0]?.content).toContain('AI summarized 35 messages.');
   });
 
   it('archives and clears a conversation from the visible feed', async () => {
@@ -842,7 +846,7 @@ describe('ConversationService @all mentions', () => {
       });
     }
 
-    const result = service.archiveConversation({
+    const result = await service.archiveConversation({
       organizationId: 'org-1',
       threadId: 'general',
       memberId: 'human-1',
@@ -874,7 +878,7 @@ describe('ConversationService @all mentions', () => {
     }
     alerts.splice(0, alerts.length);
 
-    service.archiveConversation({
+    await service.archiveConversation({
       organizationId: 'org-1',
       threadId: 'dm:agent-1:human-1',
       memberId: 'human-1',
@@ -904,7 +908,7 @@ describe('ConversationService @all mentions', () => {
     await new Promise((resolve) => setImmediate(resolve));
     alerts.splice(0, alerts.length);
 
-    service.archiveConversation({
+    await service.archiveConversation({
       organizationId: 'org-1',
       threadId: thread.id,
       memberId: 'human-1',

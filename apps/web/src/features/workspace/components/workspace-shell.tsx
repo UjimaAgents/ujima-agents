@@ -171,12 +171,14 @@ export function WorkspaceShell(props: {
       setSelectedConversation(conversation);
       const params = new URLSearchParams(searchParams.toString());
       params.delete("view");
+      params.delete("agent");
+      params.delete("agentId");
+      params.delete("channel");
+      params.delete("channelId");
       if (conversation.type === "channel") {
         params.set("channelId", conversation.id);
-        params.delete("agentId");
       } else {
         params.set("agentId", conversation.id);
-        params.delete("channelId");
       }
       router.replace(`?${params.toString()}`, { scroll: false });
     },

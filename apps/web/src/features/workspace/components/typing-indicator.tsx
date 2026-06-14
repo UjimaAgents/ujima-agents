@@ -76,7 +76,7 @@ export const TypingIndicator = memo(function TypingIndicator({
           <div
             className="inline-flex items-center gap-1.5 px-1 text-[10px] tabular-nums text-zinc-500 dark:text-zinc-400"
             aria-live="polite"
-            aria-label={`Live token usage: ${tokenUsage.inputTokens} input, ${tokenUsage.outputTokens} output`}
+            aria-label={`Current model turn token usage: ${tokenUsage.inputTokens} input, ${tokenUsage.outputTokens} output`}
           >
             <span>
               <span className="opacity-70">in</span>{" "}

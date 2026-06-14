@@ -38,23 +38,6 @@ function extractStringField(text: string, field: string): string | undefined {
   }
 }
 
-function extractTruncatedStringField(text: string, field: string): string | undefined {
-  const marker = `"${field}"`;
-  const keyIndex = text.indexOf(marker);
-  if (keyIndex === -1) return undefined;
-  const colonIndex = text.indexOf(":", keyIndex + marker.length);
-  if (colonIndex === -1) return undefined;
-  const quoteIndex = text.indexOf('"', colonIndex + 1);
-  if (quoteIndex === -1) return undefined;
-  const raw = text.slice(quoteIndex + 1).replace(/"\s*[},]?\s*$/, "");
-  if (!raw.trim()) return undefined;
-  try {
-    return JSON.parse(`"${raw.replace(/\\$/, "")}"`) as string;
-  } catch {
-    return raw.replace(/\\n/g, "\n").replace(/\\"/g, '"');
-  }
-}
-
 function formatRecord(value: unknown): string | undefined {
   const record = toObject(value);
   if (!record) return undefined;
@@ -100,11 +83,11 @@ export function formatReadableToolOutput(value: unknown): string | undefined {
         extractStringField(text, "text") ??
         extractStringField(text, "output") ??
         extractStringField(text, "diff") ??
-        extractTruncatedStringField(text, "content") ??
-        extractTruncatedStringField(text, "body") ??
-        extractTruncatedStringField(text, "text") ??
-        extractTruncatedStringField(text, "output") ??
-        extractTruncatedStringField(text, "diff") ??
+        extractTruncatedJsonString(text, "content") ??
+        extractTruncatedJsonString(text, "body") ??
+        extractTruncatedJsonString(text, "text") ??
+        extractTruncatedJsonString(text, "output") ??
+        extractTruncatedJsonString(text, "diff") ??
         value
       );
     }
@@ -112,3 +95,4 @@ export function formatReadableToolOutput(value: unknown): string | undefined {
 
   return formatRecord(value);
 }
+import { extractTruncatedJsonString } from "@ujima/shared";
