@@ -49,6 +49,17 @@ export interface ResolvedAttachmentMaterialization {
   mimeType: string;
   category: AttachmentCategory;
   byteSize: number;
+  /**
+   * True when this resolver created the agent_attachments row +
+   * file from scratch (base64 / workspace_path / workspace_glob).
+   * False when the row + file were already owned by a previous
+   * capture pass and this resolver only added a user-attachment
+   * row (tool_call). The publish-failure rollback path in
+   * channel.* uses this flag: it must NOT delete the source
+   * artifact for borrowed tool_call refs, otherwise retries
+   * become impossible.
+   */
+  ownsAgentAttachmentRow: boolean;
 }
 
 export interface AttachmentResolverDeps {
@@ -310,6 +321,9 @@ function resolveToolCallRef(
       mimeType: row.mimeType,
       category: row.category,
       byteSize: row.byteSize,
+      // The row + file belong to the capture pass that produced
+      // them; this resolver only added the user-attachment row.
+      ownsAgentAttachmentRow: false,
     },
   };
 }
@@ -685,19 +699,30 @@ function commitBytes(
       return { ok: false, error: `attachments insert failed: ${err instanceof Error ? err.message : String(err)}` };
     }
   }
-  deps.audit?.agentAttachmentCreated({
-    organizationId: deps.organizationId,
-    actorMemberId: deps.memberId,
-    runId: deps.runId,
-    attachmentId: id,
-    category,
-    mimeType,
-    byteSize: bytes.length,
-    source: toolCallSource ? 'tool_capture' : 'agent_post',
-    ...(toolCallSource?.callId ? { toolCallId: toolCallSource.callId } : {}),
-    ...(toolCallSource?.serverId ? { serverId: toolCallSource.serverId } : {}),
-    ...(toolCallSource?.toolName ? { toolName: toolCallSource.toolName } : {}),
-  });
+  // Audit is best-effort. A throw here must not bubble out and
+  // bypass the rollback path — the file + rows are already
+  // committed successfully and the caller expects {ok:true}.
+  try {
+    deps.audit?.agentAttachmentCreated({
+      organizationId: deps.organizationId,
+      actorMemberId: deps.memberId,
+      runId: deps.runId,
+      attachmentId: id,
+      category,
+      mimeType,
+      byteSize: bytes.length,
+      source: toolCallSource ? 'tool_capture' : 'agent_post',
+      ...(toolCallSource?.callId ? { toolCallId: toolCallSource.callId } : {}),
+      ...(toolCallSource?.serverId ? { serverId: toolCallSource.serverId } : {}),
+      ...(toolCallSource?.toolName ? { toolName: toolCallSource.toolName } : {}),
+    });
+  } catch (err) {
+    console.warn(
+      '[agent-attachment-resolver] commitBytes audit emit failed',
+      id,
+      err,
+    );
+  }
   return {
     ok: true,
     materialization: {
@@ -707,6 +732,9 @@ function commitBytes(
       mimeType,
       category,
       byteSize: bytes.length,
+      // commitBytes wrote the row + file fresh, so the publish
+      // failure rollback path may safely delete both.
+      ownsAgentAttachmentRow: true,
     },
     absolutePath,
   };

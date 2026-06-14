@@ -364,10 +364,12 @@ function pinResolvedAttachments(
 
 /**
  * Roll back resolved attachments when the message publish step
- * throws. Without this, a failed conversations.* call leaves
- * agent_attachments rows + on-disk files + user-attachment rows
- * with no message reference and no pin — they survive forever in
- * quota accounting and on disk.
+ * throws. Only deletes the captured agent_attachments row + file
+ * for materializations the resolver OWNS (base64 / workspace_path
+ * / workspace_glob). For borrowed tool_call refs, the source row
+ * + file belong to the capture pass that produced them — deleting
+ * those would destroy the original artifact and break any retry
+ * path. The user-attachment row is always our own to delete.
  */
 function rollbackResolvedAttachments(
   ctx: ToolExecutionContext,
@@ -375,7 +377,7 @@ function rollbackResolvedAttachments(
 ): void {
   const orgId = ctx.invocation.organizationId;
   for (const m of materializations) {
-    if (ctx.attachmentStoreRoot) {
+    if (m.ownsAgentAttachmentRow && ctx.attachmentStoreRoot) {
       const row = ctx.repo.getAgentAttachment(orgId, m.agentAttachmentId);
       if (row) {
         deleteOneAgentAttachmentRowAndFile({

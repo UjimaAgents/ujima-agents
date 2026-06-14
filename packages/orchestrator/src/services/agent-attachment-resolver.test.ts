@@ -589,6 +589,40 @@ describe('resolveAttachmentRefs — atomic commitBytes (bot Round 2 high)', () =
       rmSync(workspaceRoot, { recursive: true, force: true });
     }
   });
+
+  it('audit emit throwing AFTER the row commits does not bubble out (bot Round 10 high)', async () => {
+    const { agentRoot, workspaceRoot } = tempPair();
+    try {
+      const repo = fakeRepo();
+      const result = await resolveAttachmentRefs(
+        {
+          repo: repo as never,
+          agentAttachmentRoot: agentRoot,
+          workspaceRoot,
+          organizationId: 'org_test',
+          runId: 'run_test',
+          memberId: 'mem_test',
+          audit: {
+            agentAttachmentCreated: () => {
+              throw new Error('synthetic audit throw');
+            },
+          },
+        },
+        [{ refType: 'base64', value: SMALL_PNG.toString('base64'), filename: 'x.png' }],
+      );
+      // Audit throw must NOT bypass the rollback machinery — the
+      // capture is successful, the function returns ok:true, and
+      // the rows persist.
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.materializations).toHaveLength(1);
+      expect(repo.agentAttachments).toHaveLength(1);
+      expect(repo.attachments).toHaveLength(1);
+    } finally {
+      rmSync(agentRoot, { recursive: true, force: true });
+      rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('resolveAttachmentRefs — workspace_glob inner-loop rollback (bot Round 2 follow-up)', () => {
