@@ -67,11 +67,11 @@ export function registerWorkspaceRoutes(
     rootAbs: string,
     query: string,
     limit = 50,
-  ): Array<{ kind: 'file' | 'folder'; name: string; path: string }> {
+  ): { kind: 'file' | 'folder'; name: string; path: string }[] {
     const normalized = query.trim().toLowerCase();
     if (!normalized) return [];
 
-    const results: Array<{ kind: 'file' | 'folder'; name: string; path: string }> = [];
+    const results: { kind: 'file' | 'folder'; name: string; path: string }[] = [];
 
     function walk(dirRel: string, depth: number): void {
       if (depth > 10 || results.length >= limit) return;
@@ -114,8 +114,8 @@ export function registerWorkspaceRoutes(
   function listWorkspaceRootFolders(
     rootAbs: string,
     limit = 30,
-  ): Array<{ kind: 'folder'; name: string; path: string }> {
-    const results: Array<{ kind: 'folder'; name: string; path: string }> = [];
+  ): { kind: 'folder'; name: string; path: string }[] {
+    const results: { kind: 'folder'; name: string; path: string }[] = [];
 
     for (const name of readWorkspaceDir(rootAbs)) {
       if (results.length >= limit) break;

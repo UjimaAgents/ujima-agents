@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import {
   createSpeechRecognition,
   getVoiceInputSupport,
@@ -28,13 +28,21 @@ interface UseComposerVoiceInputResult {
 
 const SSR_VOICE_SUPPORT: VoiceInputSupport = { supported: false };
 
+function subscribeVoiceSupportNoop(): () => void {
+  return () => {};
+}
+
 export function useComposerVoiceInput({
   enabled,
   getDraft,
   onTranscript,
   onError,
 }: UseComposerVoiceInputOptions): UseComposerVoiceInputResult {
-  const [support, setSupport] = useState<VoiceInputSupport>(SSR_VOICE_SUPPORT);
+  const support = useSyncExternalStore(
+    subscribeVoiceSupportNoop,
+    getVoiceInputSupport,
+    () => SSR_VOICE_SUPPORT,
+  );
   const [isListening, setIsListening] = useState(false);
   const [audioLevels, setAudioLevels] = useState(idleVoiceLevels);
 
@@ -62,10 +70,6 @@ export function useComposerVoiceInput({
   useEffect(() => {
     getDraftRef.current = getDraft;
   }, [getDraft]);
-
-  useEffect(() => {
-    setSupport(getVoiceInputSupport());
-  }, []);
 
   const stopAudioMonitor = useCallback(() => {
     if (rafRef.current !== null) {

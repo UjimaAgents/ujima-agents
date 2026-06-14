@@ -388,6 +388,8 @@ function ChatInputComponent({
   const mentionSearchQuery = assetSearchQuery(mentionQuery);
   const mentionAssetKind = assetKindHint(mentionQuery);
   const mentionOpen = mentionTrigger !== null;
+  const shouldFetchAssetSuggestions =
+    !readOnly && mentionOpen && !(mentionAssetKind === "file" && !mentionSearchQuery);
   const [assetSuggestions, setAssetSuggestions] = useState<MentionSuggestion[]>([]);
 
   const [prevMentionQuery, setPrevMentionQuery] = useState(mentionQuery);
@@ -396,11 +398,18 @@ function ChatInputComponent({
     setActiveMentionIndex(0);
   }
 
-  useEffect(() => {
-    if (readOnly || !mentionOpen || (mentionAssetKind === "file" && !mentionSearchQuery)) {
+  const [prevShouldFetchAssetSuggestions, setPrevShouldFetchAssetSuggestions] = useState(
+    shouldFetchAssetSuggestions,
+  );
+  if (shouldFetchAssetSuggestions !== prevShouldFetchAssetSuggestions) {
+    setPrevShouldFetchAssetSuggestions(shouldFetchAssetSuggestions);
+    if (!shouldFetchAssetSuggestions) {
       setAssetSuggestions([]);
-      return;
     }
+  }
+
+  useEffect(() => {
+    if (!shouldFetchAssetSuggestions) return;
     let cancelled = false;
     const timer = window.setTimeout(() => {
       void loadWorkspaceAssetSuggestions(mentionSearchQuery).then((items) => {
@@ -411,7 +420,7 @@ function ChatInputComponent({
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [mentionAssetKind, mentionOpen, mentionSearchQuery, readOnly]);
+  }, [mentionAssetKind, mentionSearchQuery, shouldFetchAssetSuggestions]);
 
   const groupedMentionSuggestions = useMemo(() => {
     if (!mentionTrigger) return null;

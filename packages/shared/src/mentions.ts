@@ -56,12 +56,15 @@ export const ASSET_REF_PATTERN = /@(file|folder):([^\s)}\]">]+)/g;
 
 export function scanAssetReferences(
   content: string,
-): Array<{ kind: string; path: string }> {
-  const refs: Array<{ kind: string; path: string }> = [];
+): { kind: string; path: string }[] {
+  const refs: { kind: string; path: string }[] = [];
   let match: RegExpExecArray | null;
   ASSET_REF_PATTERN.lastIndex = 0;
   while ((match = ASSET_REF_PATTERN.exec(content))) {
-    refs.push({ kind: match[1]!, path: match[2]! });
+    const kind = match[1];
+    const path = match[2];
+    if (!kind || !path) continue;
+    refs.push({ kind, path });
   }
   return refs;
 }
