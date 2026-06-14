@@ -26,16 +26,20 @@ import { toModelToolErrorOutput, toModelToolOutput } from '../services/tool-loop
 import { isCompactionSummarySystemMessage } from '../services/conversation-summary.js';
 import { messageToolCallsToModelMessages, sanitizeModelMessages } from './run-transcript.js';
 
-export function toModelMessages(messages: Message[], selfId?: string): ModelMessage[] {
+export function toModelMessages(
+  messages: Message[],
+  selfId?: string,
+  options: { includeReasoning?: boolean } = {},
+): ModelMessage[] {
   return sanitizeModelMessages(filterVisibleMessages(messages)
     .filter(
       (message) =>
         (message.kind !== 'system' || isCompactionSummarySystemMessage(message)),
     )
-    .flatMap((message) => messageToModelMessages(message, selfId)));
+    .flatMap((message) => messageToModelMessages(message, selfId, options.includeReasoning ?? false)));
 }
 
-function messageToModelMessages(message: Message, selfId?: string): ModelMessage[] {
+function messageToModelMessages(message: Message, selfId?: string, includeReasoning = false): ModelMessage[] {
   if (message.kind === 'system') {
     return [
       {
@@ -60,12 +64,12 @@ function messageToModelMessages(message: Message, selfId?: string): ModelMessage
     }
     return messageToolCallsToModelMessages(
       message.content,
-      message.reasoningContent,
+      includeReasoning ? message.reasoningContent : undefined,
       completedToolCalls,
     );
   }
 
-  const reasoning = message.reasoningContent?.trim();
+  const reasoning = includeReasoning ? message.reasoningContent?.trim() : undefined;
   if (role === 'assistant' && reasoning) {
     return [
       {

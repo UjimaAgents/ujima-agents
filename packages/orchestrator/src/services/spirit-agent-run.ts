@@ -1,4 +1,4 @@
-import { stepCountIs, tool, type ToolSet } from 'ai';
+import { stepCountIs, tool, type ModelMessage, type ToolSet } from 'ai';
 import { isMcpDispatchEnabled } from './feature-flags.js';
 import { buildMcpToolDefinitionsV2 } from './connector-spawn-v2.js';
 import { classifyTool, type McpToolDescriptor } from '@ujima/shared';
@@ -27,12 +27,11 @@ import {
   filterToolsForWakeReplyPolicy,
   resolveWakeReplyPolicy,
 } from '../utils/wake-reply-policy.js';
-import { recallMemoryEntries } from '../utils/memory.js';
 import { requireTeam } from '../utils/require-team.js';
 import { resolveVisiblePromptChannels } from '../utils/visible-prompt-channels.js';
 import { runAgentWithRetry, type AgentLoopStep } from './agent-loop.js';
 import { isDelegateMessage, filterDelegateTurnTools } from './run-reply-guard.js';
-import { toModelMessages, buildToolDefinitions } from '../utils/to-model-messages.js';
+import { buildToolDefinitions } from '../utils/to-model-messages.js';
 import {
   ALWAYS_AVAILABLE_AGENT_TOOLS,
   SUPERVISOR_TOOL_ALLOWLIST,
@@ -41,7 +40,6 @@ import {
 import type { ApiRepository } from './repository-reader.js';
 import { findToolApprovalRequiredError, findToolInputRequiredError } from './tool-loop-result.js';
 import { errorMessage } from '../utils/error-message.js';
-import { appendMissingRunStepMessages } from '../utils/run-transcript.js';
 import { DELEGATE_TURN_USER_MESSAGE } from '../utils/delegate-turn.js';
 import {
   createMessageCursor,
@@ -51,10 +49,10 @@ import { createSpiritModelNotFoundHandler } from '../utils/model-fallback.js';
 import { wrapToolCallsAsCards } from '../utils/step-tool-calls.js';
 import { buildAgentMessage } from './message-factory.js';
 import { selectPromptContextMessages } from '../utils/prompt-context.js';
-import {
-  modelContextWindowTokens,
-  promptCharBudget,
-} from '../utils/model-context-window.js';
+import { buildPromptMessages } from '../utils/prompt-assembly.js';
+import { buildThreadStateBlock } from '../utils/thread-state.js';
+import { buildWorkspaceStateBlock } from '../utils/workspace-state.js';
+import { collectCursorPages } from '../utils/cursor-pages.js';
 import { RunTurnPublisher } from './run-turn-publisher.js';
 import { normalizeTokenUsage, persistMessageTokens } from './token-usage.js';
 import { pendingApprovalRunSummary } from './approval-summary.js';
@@ -99,19 +97,10 @@ export class SpiritServiceAgentRun extends SpiritServiceBase {
       }),
     );
 
-    const recent = selectPromptContextMessages(
-      this.repo.listChannelMessages(input.organizationId, session.channelId, { limit: 600 }).data,
-      600,
-      promptCharBudget(
-        modelContextWindowTokens(
-          member.llm ?? teamRole.provider ?? '',
-          typeof (model as { modelId?: unknown }).modelId === 'string'
-            ? (model as { modelId: string }).modelId
-            : member.model ?? teamRole.model ?? '',
-        ),
-      ),
+    const threadMessages = collectCursorPages((cursor) =>
+      this.repo.listChannelMessages(input.organizationId, session.channelId, { cursor, limit: 600 }),
     );
-    const messages = toModelMessages(recent, member.id);
+    const recent = selectPromptContextMessages(threadMessages);
     const interruptCursor = createMessageCursor(recent);
 
     const spirit = this.spawn({
@@ -120,48 +109,6 @@ export class SpiritServiceAgentRun extends SpiritServiceBase {
       memberId: input.memberId,
       role,
     });
-    appendMissingRunStepMessages(
-      messages,
-      recent,
-      this.repo.listRunSteps(input.organizationId, spirit.runId ?? spirit.id),
-    );
-    if (input.extraPrompt) {
-      messages.push({ role: 'user', content: input.extraPrompt });
-    } else {
-      messages.push({
-        role: 'user',
-        content: session.prompt || 'Continue the task.',
-      });
-    }
-
-    try {
-      const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-      const memories = recallMemoryEntries(this.repo, {
-        organizationId: input.organizationId,
-        memberId: input.memberId,
-        limit: 15,
-        touch: false,
-      });
-      const activeMemories = memories.filter((m) => m.createdAt >= oneDayAgo);
-
-      if (activeMemories.length > 0) {
-        const memoryPrompt = `=== YOUR RECENT WORK MEMORY ===
-Here are key facts, actions, decisions, and corrections you've made across chats and channels within the last 24 hours. Keep these in mind as you respond to ensure seamless, unified actions:
-${activeMemories
-  .map(
-    (m) =>
-      `- [${m.kind}] (${new Date(m.createdAt).toLocaleTimeString([], {
-        hour: '2-digit',
-        minute: '2-digit',
-      })}): ${m.content}`,
-  )
-  .join('\n')}
-================================`;
-        messages.push({ role: 'user', content: memoryPrompt });
-      }
-    } catch {
-      // Degrade gracefully if memory query fails
-    }
 
     const running: Spirit = SpiritSchema.parse({
       ...spirit,
@@ -288,9 +235,52 @@ ${activeMemories
       messageContent: input.promptMessageContent,
       goalMode: input.promptGoalMode,
     });
-    const delegateSuffix = isDelegateTurn ? DELEGATE_TURN_USER_MESSAGE : '';
-    const suffixes = [systemPromptSuffix, delegateSuffix].filter(Boolean);
-    const systemPrompt = suffixes.length ? `${system}\n\n${suffixes.join('\n\n')}` : system;
+    const contextMessages: ModelMessage[] = [
+      ...(systemPromptSuffix ? [{ role: 'user' as const, content: systemPromptSuffix }] : []),
+      ...(sourceMessage && input.extraPrompt
+        ? [{ role: 'user' as const, content: input.extraPrompt }]
+        : []),
+    ];
+    const threadStateBlock = buildThreadStateBlock({
+      messages: threadMessages,
+      currentMember: { id: member.id, name: member.name },
+      sourceMessageId: sourceMessage?.id ?? undefined,
+      threadId: session.channelId,
+      members: this.repo.listMembers(input.organizationId),
+      wakeReason: supervisorRunRow?.wakeReason ?? null,
+    });
+    if (threadStateBlock) {
+      contextMessages.push({ role: 'user', content: threadStateBlock });
+    }
+    const workspaceStateBlock = buildWorkspaceStateBlock({
+      organizationId: input.organizationId,
+      memberId: member.id,
+      channelId: session.channelId,
+      threadId: session.channelId,
+      repo: this.repo,
+    });
+    if (workspaceStateBlock) {
+      contextMessages.push({ role: 'user', content: workspaceStateBlock });
+    }
+    if (isDelegateTurn) {
+      contextMessages.push({ role: 'user', content: DELEGATE_TURN_USER_MESSAGE });
+    }
+    const systemPrompt = system;
+    const historyMessages = sourceMessage ? recent.filter((message) => message.id !== sourceMessage.id) : recent;
+    const messages = buildPromptMessages({
+      historyMessages,
+      currentMemberId: member.id,
+      runSteps: this.repo.listRunSteps(input.organizationId, spirit.runId ?? spirit.id),
+      contextMessages,
+      currentRequestMessage: sourceMessage,
+      currentRequest:
+        sourceMessage
+          ? undefined
+          : {
+              role: 'user',
+              content: input.extraPrompt ?? session.prompt ?? 'Continue the task.',
+            },
+    });
 
     const maxIterations = input.maxIterations ?? this.maxIterationsPerRun;
     let totalTurns = 0;

@@ -94,4 +94,39 @@ describe('toModelMessages', () => {
       },
     ]);
   });
+
+  it('omits reasoning by default and keeps it when asked', () => {
+    const messages: Message[] = [
+      {
+        id: 'agent-1',
+        organizationId: 'org-1',
+        threadId: 'thread-1',
+        senderId: 'agent-1',
+        senderKind: 'agent',
+        kind: 'agent',
+        content: 'Done.',
+        reasoningContent: 'private trace',
+        mentions: [],
+        toolCalls: [],
+        attachments: [],
+        createdAt: '2026-06-07T00:00:01.000Z',
+      },
+    ];
+
+    expect(toModelMessages(messages, 'agent-1')).toEqual([
+      {
+        role: 'assistant',
+        content: 'Done.',
+      },
+    ]);
+    expect(toModelMessages(messages, 'agent-1', { includeReasoning: true })).toEqual([
+      {
+        role: 'assistant',
+        content: [
+          { type: 'reasoning', text: 'private trace' },
+          { type: 'text', text: 'Done.' },
+        ],
+      },
+    ]);
+  });
 });

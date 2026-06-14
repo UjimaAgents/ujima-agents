@@ -1,7 +1,12 @@
 import { randomUUID } from 'node:crypto';
-import { type ToolSet } from 'ai';
+import { type ModelMessage, type ToolSet } from 'ai';
 import { buildAgentSystemPrompt, normalizeProviderKey } from '@ujima/framework';
-import { DEFAULT_SPIRIT_TEMPERATURE, type ReasoningEffort, type SpiritRole, type WakeReason } from '@ujima/shared';
+import {
+  DEFAULT_SPIRIT_TEMPERATURE,
+  type ReasoningEffort,
+  type SpiritRole,
+  type WakeReason,
+} from '@ujima/shared';
 import {
   runAgentLoop,
   runAgentWithRetry,
@@ -23,7 +28,6 @@ import {
   buildToolDefinitions,
 } from './utils/to-model-messages.js';
 import { requireTeam } from './utils/require-team.js';
-import { appendMissingRunStepMessages } from './utils/run-transcript.js';
 import { resolveVisiblePromptChannels } from './utils/visible-prompt-channels.js';
 import {
   buildCacheableSystem,
@@ -33,6 +37,7 @@ import {
 } from './utils/system-prompt-builder.js';
 import { buildThreadStateBlock } from './utils/thread-state.js';
 import { buildWorkspaceStateBlock } from './utils/workspace-state.js';
+import { buildPromptMessages } from './utils/prompt-assembly.js';
 import {
   filterToolsForWakeReplyPolicy,
   resolveWakeReplyPolicy,
@@ -42,10 +47,7 @@ import { createMessageCursor, loadInterruptModelMessages } from './utils/interru
 import { DELEGATE_TURN_USER_MESSAGE } from './utils/delegate-turn.js';
 import { createProviderSafeFallbackHandler } from './utils/model-fallback.js';
 import { isDelegateMessage, filterDelegateTurnTools } from './services/run-reply-guard.js';
-import {
-  modelContextWindowTokens,
-  promptCharBudget,
-} from './utils/model-context-window.js';
+import { collectCursorPages } from './utils/cursor-pages.js';
 
 // Resolver now delegates to the canonical `@ujima/llm` surface so every
 // AI-SDK-driven code path (this `/api/runs` service, the upcoming
@@ -229,6 +231,7 @@ export class AiService {
       organizationId: input.organizationId,
       memberId: member.id,
       channelId,
+      threadId: input.threadId,
       repo: this.repo,
     });
     if (workspaceStateBlock) {
@@ -449,7 +452,6 @@ export class AiService {
       baseSystem: baseSystemPrompt,
       lawText: culture.lawText,
       proceduresText: culture.cultureText,
-      goalSuffix: input.systemPromptSuffix,
       // Use the DM vs channel scaffold from the wake-reply policy
       // (introduced by main as `wake-reply-policy.ts`). Per-thread
       // stable, so it remains in the cacheable prefix; the wake-
@@ -461,36 +463,18 @@ export class AiService {
       availableToolIds,
     });
 
-    const initialThreadMessages = selectPromptContextMessages(
-      this.repo.listMessages(input.organizationId, input.threadId, undefined, 600).data,
-      600,
-      promptCharBudget(
-        modelContextWindowTokens(
-          member.llm ?? role.provider ?? '',
-          typeof (model as { modelId?: unknown }).modelId === 'string'
-            ? (model as { modelId: string }).modelId
-            : member.model ?? role.model ?? '',
-        ),
-      ),
+    const threadMessages = collectCursorPages((cursor) =>
+      this.repo.listMessages(input.organizationId, input.threadId, cursor, 600),
     );
-    const messages = toModelMessages(initialThreadMessages, input.agentId);
-    const interruptCursor = createMessageCursor(initialThreadMessages);
-    appendMissingRunStepMessages(
-      messages,
-      initialThreadMessages,
-      this.repo.listRunSteps?.(input.organizationId, input.runId) ?? [],
+    const promptHistoryMessages = selectPromptContextMessages(
+      sourceMessage ? threadMessages.filter((message) => message.id !== sourceMessage.id) : threadMessages,
     );
+    const interruptCursor = createMessageCursor(promptHistoryMessages);
 
-    // Per-wake suffix blocks — appended after stable thread history so
-    // provider prompt caches on the shared prefix stay warm.
-    const wakeSuffix: typeof messages = [];
-    if (input.summary) {
-      wakeSuffix.push({
-        role: 'user',
-        content: input.summary,
-      });
-    }
-
+    const contextMessages: ModelMessage[] = [
+      ...(input.summary ? [{ role: 'user' as const, content: input.summary }] : []),
+      ...(input.systemPromptSuffix ? [{ role: 'user' as const, content: input.systemPromptSuffix }] : []),
+    ];
     // Factual thread-state injection. Gives the model ground truth
     // about who was addressed, who already responded, and how it sits
     // in the channel — instead of letting it invent claims like
@@ -499,7 +483,7 @@ export class AiService {
     // Resolved from the wake's sourceMessageId when available so the
     // "responders since wake" computation is correct on long threads.
     const threadStateBlock = buildThreadStateBlock({
-      messages: initialThreadMessages,
+      messages: threadMessages,
       currentMember: { id: member.id, name: member.name },
       sourceMessageId,
       threadId: input.threadId,
@@ -507,7 +491,7 @@ export class AiService {
       wakeReason: wakeReasonForPalette,
     });
     if (threadStateBlock) {
-      wakeSuffix.push({
+      contextMessages.push({
         role: 'user',
         content: threadStateBlock,
       });
@@ -523,10 +507,11 @@ export class AiService {
       organizationId: input.organizationId,
       memberId: member.id,
       channelId: currentChannelIdForState,
+      threadId: input.threadId,
       repo: this.repo,
     });
     if (workspaceStateBlock) {
-      wakeSuffix.push({
+      contextMessages.push({
         role: 'user',
         content: workspaceStateBlock,
       });
@@ -547,16 +532,20 @@ export class AiService {
       modelIdString,
       isMirrorFragile: isMirrorFragileModel(modelIdString),
     });
-    for (const wakeMessage of wakeContextMessages) {
-      wakeSuffix.push(wakeMessage);
-    }
+    contextMessages.push(...wakeContextMessages);
     if (isDelegateTurn) {
-      wakeSuffix.push({
+      contextMessages.push({
         role: 'user',
         content: DELEGATE_TURN_USER_MESSAGE,
       });
     }
-    messages.push(...wakeSuffix);
+    const messages = buildPromptMessages({
+      historyMessages: promptHistoryMessages,
+      currentMemberId: input.agentId,
+      runSteps: this.repo.listRunSteps?.(input.organizationId, input.runId) ?? [],
+      contextMessages,
+      currentRequestMessage: sourceMessage,
+    });
     const systemPrompt = system;
 
     // Multi-section deliverables (task lists, BRDs, PRDs, or file writing)

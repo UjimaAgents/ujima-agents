@@ -98,8 +98,6 @@ export interface CacheableSystemInput {
   lawText?: string;
   /** One-line workspace, channel, and agent procedure index. */
   proceduresText?: string;
-  /** Optional task-session goal suffix (still cache-stable per task). */
-  goalSuffix?: string;
   /**
    * Per-thread base scaffold (DM vs channel) from
    * `resolveWakeReplyPolicy().scaffoldBlock`. Stable for the
@@ -130,7 +128,6 @@ export interface CacheableSystemOutput {
 export function buildCacheableSystem(input: CacheableSystemInput): CacheableSystemOutput {
   const sections: string[] = [input.baseSystem];
   if (input.lawText) sections.push(input.lawText);
-  if (input.goalSuffix) sections.push(input.goalSuffix);
   // Bet 1b — memory/procedure write-policy guidance, gated on
   // tool availability so prompts without memory tools stay clean.
   const toolIds = new Set(input.availableToolIds ?? []);

@@ -22,6 +22,7 @@ export interface BuildWorkspaceStateInput {
   organizationId: string;
   memberId: string;
   channelId?: string;
+  threadId?: string;
   repo: ApiRepository;
 }
 
@@ -87,11 +88,20 @@ export function buildWorkspaceStateBlock(input: BuildWorkspaceStateInput): strin
     const entries = recallMemoryEntries(input.repo, {
       organizationId: input.organizationId,
       memberId: input.memberId,
-      limit: 10,
+      limit: 20,
       touch: false,
     });
-    if (entries.length > 0) {
-      const lines = entries.map(
+    const relevant = entries
+      .sort((left, right) => {
+        const leftLinked = memoryMatchesContext(left.metadata, input) ? 1 : 0;
+        const rightLinked = memoryMatchesContext(right.metadata, input) ? 1 : 0;
+        if (leftLinked !== rightLinked) return rightLinked - leftLinked;
+        return Date.parse(right.lastRecalledAt ?? right.createdAt) -
+          Date.parse(left.lastRecalledAt ?? left.createdAt);
+      })
+      .slice(0, 10);
+    if (relevant.length > 0) {
+      const lines = relevant.map(
         (e) =>
           `  <entry key="${escapeXml(e.key)}" kind="${escapeXml(e.kind)}">${escapeXml(e.content.slice(0, 200))}</entry>`,
       );
@@ -103,6 +113,16 @@ export function buildWorkspaceStateBlock(input: BuildWorkspaceStateInput): strin
 
   if (sections.length === 0) return null;
   return `<workspace-state>\n${sections.join('\n')}\n</workspace-state>`;
+}
+
+function memoryMatchesContext(
+  metadata: Record<string, unknown>,
+  input: Pick<BuildWorkspaceStateInput, 'channelId' | 'threadId'>,
+): boolean {
+  return (
+    (Boolean(input.threadId) && metadata.threadId === input.threadId) ||
+    (Boolean(input.channelId) && metadata.channelId === input.channelId)
+  );
 }
 
 function escapeXml(text: string): string {

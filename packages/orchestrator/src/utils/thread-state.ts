@@ -24,19 +24,13 @@ export interface BuildThreadStateInput {
   members: Member[];
   /** Thread id — used to detect 1:1 DM threads (`dm:…`). */
   threadId?: string;
-  /** How many recent messages to surface in the block. Default 6. */
-  recentLimit?: number;
   /** Why the run was woken. */
   wakeReason?: WakeReason | string | null;
 }
 
-const DEFAULT_RECENT = 6;
-const CONTENT_PREVIEW_CAP = 200;
-
 export function buildThreadStateBlock(input: BuildThreadStateInput): string | null {
   if (!input.messages.length) return null;
 
-  const recentLimit = input.recentLimit ?? DEFAULT_RECENT;
   const memberById = new Map(input.members.map((m) => [m.id, m]));
 
   const sortedAsc = [...input.messages].sort((left, right) => {
@@ -52,8 +46,6 @@ export function buildThreadStateBlock(input: BuildThreadStateInput): string | nu
       ? sortedAsc.find((m) => m.id === input.sourceMessageId)
       : undefined) ??
     [...sortedAsc].reverse().find((m) => m.kind === 'human');
-
-  const recent = sortedAsc.slice(-recentLimit);
 
   // Who in the thread roster has posted a non-pass agent message
   // SINCE the source message — this is the model's "already handled"
@@ -112,23 +104,6 @@ export function buildThreadStateBlock(input: BuildThreadStateInput): string | nu
   // ---------- render ----------
   const lines: string[] = [];
   lines.push('<thread-state>');
-  lines.push('  <recent-messages>');
-  for (const message of recent) {
-    const fromMember = memberById.get(message.senderId);
-    const fromName = fromMember?.name ?? message.senderId;
-    const kind = fromMember?.kind ?? message.senderKind;
-    const content = truncateContent(message.content);
-    const mentionedNames = (message.mentions ?? [])
-      .map((id) => memberById.get(id)?.name ?? id)
-      .filter((name) => name.length > 0);
-    const mentionsAttr =
-      mentionedNames.length > 0 ? ` mentions="${escapeAttr(mentionedNames.join(','))}"` : '';
-    lines.push(
-      `    <message id="${escapeAttr(message.id)}" from-name="${escapeAttr(fromName)}" kind="${escapeAttr(kind)}"${mentionsAttr}>${escapeBody(content)}</message>`,
-    );
-  }
-  lines.push('  </recent-messages>');
-
   if (sourceMessage) {
     lines.push('  <addressing>');
     lines.push(`    <conversation-kind>${isDmThread ? 'dm' : 'channel'}</conversation-kind>`);
@@ -220,20 +195,6 @@ function computeRespondersAfter(
     responders.add(message.senderId);
   }
   return responders;
-}
-
-function truncateContent(content: string): string {
-  const collapsed = content.replace(/\s+/g, ' ').trim();
-  if (collapsed.length <= CONTENT_PREVIEW_CAP) return collapsed;
-  return `${collapsed.slice(0, CONTENT_PREVIEW_CAP)}…`;
-}
-
-function escapeAttr(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/"/g, '&quot;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
 }
 
 function escapeBody(value: string): string {
