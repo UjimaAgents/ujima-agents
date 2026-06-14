@@ -15,6 +15,7 @@ import type {
   GoalTaskStatus,
   InteractiveQuestion,
 } from "@ujima/shared/browser";
+import { goalTaskColumnLabel } from "@ujima/shared/browser";
 import {Avatar} from "./chat/primitives";
 import {QuestionCard} from "./chat/question-card";
 import type {BootstrapResponse} from "@ujima/api-schema";
@@ -28,10 +29,10 @@ interface ChannelGoalsBoardProps {
 type ColumnId = "pending" | "blocked" | "in_progress" | "completed";
 
 const COLUMNS: {id: ColumnId; label: string}[] = [
-  {id: "pending", label: "To Do"},
-  {id: "blocked", label: "Blocked"},
-  {id: "in_progress", label: "In Progress"},
-  {id: "completed", label: "Done"},
+  {id: "pending", label: goalTaskColumnLabel("pending")},
+  {id: "blocked", label: goalTaskColumnLabel("blocked")},
+  {id: "in_progress", label: goalTaskColumnLabel("in_progress")},
+  {id: "completed", label: goalTaskColumnLabel("completed")},
 ];
 
 const STATUS_TO_COLUMN: Record<GoalTaskStatus, ColumnId> = {

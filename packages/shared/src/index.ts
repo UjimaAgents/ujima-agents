@@ -71,6 +71,7 @@ export {
 } from "./configured-provider-models.js";
 export type { ConfiguredProviderModelOption } from "./configured-provider-models.js";
 export * from "./goal-schemas.js";
+export * from "./goal-board-labels.js";
 export {
   SHARED_AGENT_SYSTEM_PROMPT,
   buildEnvironmentContext,

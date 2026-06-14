@@ -1,8 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import type { Goal, GoalTask, GoalTaskStatus, InteractiveQuestion } from '@ujima/shared';
+import { goalTaskColumnLabel } from '@ujima/shared';
 import type { ApiRepository } from './repository-reader.js';
 import type { ConversationService } from './conversation.js';
 import { evictStaleTimestamps } from '../utils/ttl-map.js';
+
+export type GoalTaskUpdateResult = GoalTask & { previousStatus?: GoalTaskStatus };
 
 export const QUESTION_RECOMMENDED_SUFFIX = '(Recommended)';
 export const IMPLEMENT_QUESTION_TEXT = 'Do you want me to implement?';
@@ -163,12 +166,12 @@ export class GoalSystemService {
     description?: string;
     assigneeId?: string;
     callerMemberId?: string;
-  }): GoalTask {
+  }): GoalTaskUpdateResult {
     const editsPlan =
       input.title !== undefined ||
       input.description !== undefined ||
       input.assigneeId !== undefined;
-    return this.repo.transaction((): GoalTask => {
+    return this.repo.transaction((): GoalTaskUpdateResult => {
       // Fetch existing task once — needed by plan-edit auth,
       // status-change notifications, and the handover-only path.
       const existing = this.repo.getGoalTask(input.organizationId, input.taskId);
@@ -223,7 +226,10 @@ export class GoalSystemService {
       if (input.status === 'completed') {
         this.notifyDependentsUnblocked(input.organizationId, task);
       }
-      return task;
+      return {
+        ...task,
+        ...(oldStatus !== input.status ? { previousStatus: oldStatus } : {}),
+      };
     }
     // handoverSummary-only path: when there's no status AND no plan
     // edits, persist the note on its own. (When plan edits are
@@ -276,17 +282,8 @@ export class GoalSystemService {
     if (last && now - last < NUDGE_DEDUP_WINDOW_MS) return;
     const goal = this.repo.getGoal(organizationId, task.goalId);
     if (!goal) return;
-    const columnLabels: Record<string, string> = {
-      pending: 'To Do',
-      blocked: 'Blocked',
-      in_progress: 'In Progress',
-      completed: 'Done',
-      blocked_by_failure: 'Blocked',
-      failed: 'Blocked',
-      cancelled: 'Blocked',
-    };
-    const fromLabel = columnLabels[oldStatus] || oldStatus;
-    const toLabel = columnLabels[task.status] || task.status;
+    const fromLabel = goalTaskColumnLabel(oldStatus);
+    const toLabel = goalTaskColumnLabel(task.status);
     // Include mover identity so the assignee knows who made the change
     try {
       this.postNotificationToAssignee({
@@ -294,6 +291,7 @@ export class GoalSystemService {
         goal,
         task,
         body: `@${task.assigneeId} task "${task.title}" was moved from [${fromLabel}] → [${toLabel}]. (task_id: ${task.id})`,
+        skipChannelCopy: true,
       });
       this.lastNudgedAt.set(dedupKey, now);
     } catch {
@@ -363,6 +361,7 @@ export class GoalSystemService {
     goal: Goal;
     task: GoalTask;
     body: string;
+    skipChannelCopy?: boolean;
   }): void {
     if (!this.conversations) return;
     const { organizationId, goal, task, body } = input;
@@ -386,16 +385,18 @@ export class GoalSystemService {
     // if the assignee is a member (otherwise the message would refer
     // to an agent the channel readers can't even see). No @mention
     // here — the DM already handles the wake.
-    const channel = this.repo.getChannel(organizationId, goal.channelId);
-    if (channel && channel.memberIds.includes(task.assigneeId)) {
-      this.conversations.postToChannel({
-        organizationId,
-        senderId: goal.supervisorId,
-        channelId: goal.channelId,
-        body,
-        mentions: [],
-        metadata: {},
-      });
+    if (!input.skipChannelCopy) {
+      const channel = this.repo.getChannel(organizationId, goal.channelId);
+      if (channel && channel.memberIds.includes(task.assigneeId)) {
+        this.conversations.postToChannel({
+          organizationId,
+          senderId: goal.supervisorId,
+          channelId: goal.channelId,
+          body,
+          mentions: [],
+          metadata: {},
+        });
+      }
     }
   }
 

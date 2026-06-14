@@ -4,6 +4,8 @@ import { filterVisibleMessages } from '../utils/message-visibility.js';
 import {
   CONVERSATION_ARCHIVE_MARKER,
   CONVERSATION_COMPACTED_MARKER,
+  CONVERSATION_COMPACTED_SOURCE_MARKERS,
+  CONVERSATION_ROLLING_SUMMARY_MARKERS,
   CONVERSATION_SUMMARY_MARKER,
   SELF_NOTE_COMPACTED_MARKER,
   SELF_NOTE_SUMMARY_MARKER,
@@ -90,28 +92,19 @@ export async function compactConversationIfNeeded(
   )) return;
 
   const messages = listAllThreadMessages(ctx.repo, organizationId, threadId);
-  const uncompacted = messages.filter(
-    (message) =>
-      !isMessageWithAnyMarker(message, [
-        CONVERSATION_SUMMARY_MARKER,
-        CONVERSATION_COMPACTED_MARKER,
-        CONVERSATION_ARCHIVE_MARKER,
-      ]),
+  const uncompacted = listUncompactedConversationMessages(
+    messages,
+    CONVERSATION_SUMMARIZE_COMPACTION,
   );
-  if (uncompacted.length <= CONVERSATION_RECENT_RAW_COUNT) {
+  if (uncompacted.length <= CONVERSATION_SUMMARIZE_COMPACTION.keepRawCount) {
     return;
   }
 
-  await compactThreadMessages(ctx, {
+  await compactConversationPass(ctx, {
     organizationId,
     threadId,
     senderId,
-    messages,
-    summaryMarker: CONVERSATION_SUMMARY_MARKER,
-    compactedMarker: CONVERSATION_COMPACTED_MARKER,
-    keepRawCount: CONVERSATION_RECENT_RAW_COUNT,
-    batchSize: CONVERSATION_COMPACTION_BATCH_SIZE,
-    mode: 'summary',
+    plan: CONVERSATION_SUMMARIZE_COMPACTION,
   });
 }
 
@@ -133,6 +126,82 @@ export function conversationNeedsCompaction(
 }
 
 const DEFAULT_CONTEXT_WINDOW_TOKENS = 128_000;
+const MAX_CONVERSATION_ARCHIVE_PASSES = 512;
+
+type ConversationCompactionMode = 'summary' | 'archive';
+
+interface ConversationCompactionPlan {
+  summaryMarker: string;
+  compactedMarker: string;
+  keepRawCount: number;
+  batchSize: number;
+  mode: ConversationCompactionMode;
+}
+
+const CONVERSATION_SUMMARIZE_COMPACTION: ConversationCompactionPlan = {
+  summaryMarker: CONVERSATION_SUMMARY_MARKER,
+  compactedMarker: CONVERSATION_COMPACTED_MARKER,
+  keepRawCount: CONVERSATION_RECENT_RAW_COUNT,
+  batchSize: CONVERSATION_COMPACTION_BATCH_SIZE,
+  mode: 'summary',
+};
+
+const CONVERSATION_ARCHIVE_COMPACTION: ConversationCompactionPlan = {
+  summaryMarker: CONVERSATION_ARCHIVE_MARKER,
+  compactedMarker: CONVERSATION_ARCHIVE_MARKER,
+  keepRawCount: 0,
+  batchSize: CONVERSATION_COMPACTION_BATCH_SIZE,
+  mode: 'archive',
+};
+
+function conversationCompactionPlan(mode: 'summarize' | 'clear'): ConversationCompactionPlan {
+  return mode === 'summarize' ? CONVERSATION_SUMMARIZE_COMPACTION : CONVERSATION_ARCHIVE_COMPACTION;
+}
+
+async function compactConversationPass(
+  ctx: CompactionContext,
+  input: {
+    organizationId: string;
+    threadId: string;
+    senderId: string;
+    plan: ConversationCompactionPlan;
+    pass?: number;
+  },
+): Promise<{ summaryMessage: Message | null; compactedMessageIds: string[] }> {
+  const messages = listAllThreadMessages(ctx.repo, input.organizationId, input.threadId);
+  return compactThreadMessages(ctx, {
+    organizationId: input.organizationId,
+    threadId: input.threadId,
+    senderId: input.senderId,
+    messages,
+    pass: input.pass,
+    ...input.plan,
+  });
+}
+
+async function compactConversationUntilDone(
+  ctx: CompactionContext,
+  input: {
+    organizationId: string;
+    threadId: string;
+    senderId: string;
+    plan: ConversationCompactionPlan;
+    maxPasses?: number;
+  },
+): Promise<{ summaryMessage: Message | null; compactedMessageIds: string[] }> {
+  let summaryMessage: Message | null = null;
+  const compactedMessageIds: string[] = [];
+  const maxPasses = input.maxPasses ?? MAX_CONVERSATION_ARCHIVE_PASSES;
+  for (let pass = 0; pass < maxPasses; pass += 1) {
+    const result = await compactConversationPass(ctx, { ...input, pass });
+    if (!result.summaryMessage || result.compactedMessageIds.length === 0) {
+      break;
+    }
+    summaryMessage = result.summaryMessage;
+    compactedMessageIds.push(...result.compactedMessageIds);
+  }
+  return { summaryMessage, compactedMessageIds };
+}
 
 export async function archiveConversation(
   ctx: CompactionContext,
@@ -141,31 +210,15 @@ export async function archiveConversation(
   memberId: string,
   mode: 'summarize' | 'clear',
 ): Promise<{ summaryMessage: Message | null; compactedMessageIds: string[] }> {
-  const messages = listAllThreadMessages(ctx.repo, organizationId, threadId);
-  const plan =
-    mode === 'clear'
-      ? {
-          summaryMarker: CONVERSATION_ARCHIVE_MARKER,
-          compactedMarker: CONVERSATION_ARCHIVE_MARKER,
-          keepRawCount: 0,
-          batchSize: Number.MAX_SAFE_INTEGER,
-          mode: 'archive' as const,
-        }
-      : {
-          summaryMarker: CONVERSATION_SUMMARY_MARKER,
-          compactedMarker: CONVERSATION_COMPACTED_MARKER,
-          keepRawCount: CONVERSATION_RECENT_RAW_COUNT,
-          batchSize: CONVERSATION_COMPACTION_BATCH_SIZE,
-          mode: 'summary' as const,
-        };
-
-  return compactThreadMessages(ctx, {
+  const input = {
     organizationId,
     threadId,
     senderId: memberId,
-    messages,
-    ...plan,
-  });
+    plan: conversationCompactionPlan(mode),
+  };
+  return mode === 'summarize'
+    ? compactConversationPass(ctx, input)
+    : compactConversationUntilDone(ctx, input);
 }
 
 export function shouldHideCompactedMessage(message: Message, channel: { kind?: string } | null): boolean {
@@ -173,6 +226,66 @@ export function shouldHideCompactedMessage(message: Message, channel: { kind?: s
   if (isSelfSummaryNote(message)) return true;
   if (channel?.kind === 'self' && message.content.startsWith(SELF_NOTE_COMPACTED_MARKER)) return true;
   return false;
+}
+
+export function uncompactedExclusionMarkers(plan: {
+  summaryMarker: string;
+  compactedMarker: string;
+  mode: ConversationCompactionMode;
+}): string[] {
+  const markers = new Set<string>([
+    plan.summaryMarker,
+    plan.compactedMarker,
+    ...CONVERSATION_COMPACTED_SOURCE_MARKERS,
+  ]);
+  if (plan.mode === 'summary') {
+    for (const marker of CONVERSATION_ROLLING_SUMMARY_MARKERS) {
+      markers.add(marker);
+    }
+  }
+  return [...markers];
+}
+
+export function listActiveCompactionSummaries(
+  messages: Message[],
+  summaryMarker: string,
+): Message[] {
+  return messages.filter(
+    (message) =>
+      isMessageWithAnyMarker(message, [summaryMarker]) &&
+      !message.metadata?.compactedInto,
+  );
+}
+
+export function listUncompactedConversationMessages(
+  messages: Message[],
+  plan: {
+    summaryMarker: string;
+    compactedMarker: string;
+    mode: ConversationCompactionMode;
+  },
+): Message[] {
+  const excluded = uncompactedExclusionMarkers(plan);
+  return messages.filter(
+    (message) =>
+      !isCompactedSourceMessage(message) &&
+      !isMessageWithAnyMarker(message, excluded),
+  );
+}
+
+export function selectCompactionBatch(input: {
+  messages: Message[];
+  summaryMarker: string;
+  compactedMarker: string;
+  keepRawCount: number;
+  batchSize: number;
+  mode: ConversationCompactionMode;
+}): { activeSummaries: Message[]; compactable: Message[] } {
+  const activeSummaries = listActiveCompactionSummaries(input.messages, input.summaryMarker);
+  const uncompacted = listUncompactedConversationMessages(input.messages, input);
+  const keepRawStart = Math.max(uncompacted.length - input.keepRawCount, 0);
+  const compactable = uncompacted.slice(0, keepRawStart).slice(0, input.batchSize);
+  return { activeSummaries, compactable };
 }
 
 async function compactThreadMessages(
@@ -187,26 +300,29 @@ async function compactThreadMessages(
     keepRawCount: number;
     batchSize: number;
     mode?: 'summary' | 'archive';
+    pass?: number;
   },
 ): Promise<{ summaryMessage: Message | null; compactedMessageIds: string[] }> {
-  const activeSummaries = input.messages.filter((message) =>
-    isMessageWithAnyMarker(message, [input.summaryMarker]),
-  );
-  const uncompacted = input.messages.filter(
-    (message) =>
-      !isMessageWithAnyMarker(message, [
-        input.summaryMarker,
-        input.compactedMarker,
-        CONVERSATION_COMPACTED_MARKER,
-        CONVERSATION_ARCHIVE_MARKER,
-      ]),
-  );
-  const keepRawStart = Math.max(uncompacted.length - input.keepRawCount, 0);
-  const compactable = uncompacted.slice(0, keepRawStart).slice(0, input.batchSize);
-  const summarySources = [...activeSummaries, ...compactable];
-  if (summarySources.length === 0) {
+  const { activeSummaries, compactable } = selectCompactionBatch({
+    messages: input.messages,
+    summaryMarker: input.summaryMarker,
+    compactedMarker: input.compactedMarker,
+    keepRawCount: input.keepRawCount,
+    batchSize: input.batchSize,
+    mode: input.mode ?? 'summary',
+  });
+  if (compactable.length === 0) {
     return { summaryMessage: null, compactedMessageIds: [] };
   }
+  const summarySources = [...activeSummaries, ...compactable];
+  console.warn('[conversation-compact] compacting batch', {
+    mode: input.mode ?? 'summary',
+    pass: input.pass ?? 0,
+    threadId: input.threadId,
+    activeSummaryCount: activeSummaries.length,
+    compactableCount: compactable.length,
+    sourceCount: summarySources.length,
+  });
 
   const now = new Date().toISOString();
   const summaryMessage = buildSystemMessage({

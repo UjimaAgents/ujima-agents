@@ -13,7 +13,7 @@ export function createSpiritModelResolver(
   teamStore: TeamStore,
   repo: ApiRepository,
 ): ModelResolver {
-  return ({ organizationId, memberId, role, forceSafeFallback }) => {
+  return ({ organizationId, memberId, role, forceSafeFallback, reasoningEffort }) => {
     const team = requireTeam(teamStore, organizationId);
     const member = repo.getMember(organizationId, memberId);
     if (!member) {
@@ -40,6 +40,7 @@ export function createSpiritModelResolver(
       getProviderCredential: (orgId, key) => repo.getProviderCredential(orgId, key),
       resolveProviderName: defaultResolveProviderName,
       resolveModelId,
+      reasoningEffort,
     });
   };
 }
