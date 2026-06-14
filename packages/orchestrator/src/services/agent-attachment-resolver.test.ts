@@ -126,6 +126,54 @@ describe('resolveAttachmentRefs — tool_call', () => {
       rmSync(workspaceRoot, { recursive: true, force: true });
     }
   });
+
+  it('saveAttachment throwing returns a structured error instead of letting the exception bubble', async () => {
+    const { agentRoot, workspaceRoot } = tempPair();
+    try {
+      const captured: AgentAttachment = {
+        id: 'aatt_seed',
+        organizationId: 'org_test',
+        runId: 'run_test',
+        memberId: 'mem_test',
+        sourceToolCallId: 'call_42',
+        sourceServerId: 'srv_x',
+        sourceToolName: 'screenshot',
+        category: 'image',
+        mimeType: 'image/png',
+        filename: 'shot.png',
+        storagePath: 'agent-generated/org_test/run_test/seed.png',
+        byteSize: 1234,
+        createdAt: '2026-06-11T00:00:00.000Z',
+        pinnedToMessageId: null,
+      };
+      const repo = fakeRepo([captured]);
+      const result = await resolveAttachmentRefs(
+        {
+          repo: {
+            ...repo,
+            saveAttachment: () => {
+              throw new Error('synthetic DB error from saveAttachment');
+            },
+          } as never,
+          agentAttachmentRoot: agentRoot,
+          workspaceRoot,
+          organizationId: 'org_test',
+          runId: 'run_test',
+          memberId: 'mem_test',
+        },
+        [{ refType: 'tool_call', value: 'tc_call_42:0' }],
+      );
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error).toContain('attachments insert failed');
+      // The captured agent_attachment row is preserved — its lifecycle
+      // belongs to the capture pass, not this resolver.
+      expect(repo.agentAttachments).toHaveLength(1);
+    } finally {
+      rmSync(agentRoot, { recursive: true, force: true });
+      rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('resolveAttachmentRefs — workspace_path', () => {

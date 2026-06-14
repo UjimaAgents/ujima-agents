@@ -260,20 +260,32 @@ function resolveToolCallRef(
     };
   }
   // The row already lives on disk; we just promote a parallel
-  // message_attachments row pointing at the same storage_path.
+  // message_attachments row pointing at the same storage_path. If
+  // saveAttachment throws, return a structured error so the outer
+  // resolveAttachmentRefs loop can roll back sibling refs uniformly.
+  // We do NOT delete the captured agent_attachments row on failure
+  // — it predates this resolver, the capture pass owns its
+  // lifecycle, and the LRU sweeper handles its eventual cleanup.
   const attachmentId = newAttId();
   if (deps.repo.saveAttachment) {
-    deps.repo.saveAttachment({
-      id: attachmentId,
-      organizationId: deps.organizationId,
-      filename: ref.filename ?? row.filename,
-      mimeType: row.mimeType,
-      category: row.category,
-      sizeBytes: row.byteSize,
-      storagePath: row.storagePath,
-      uploadedBy: deps.memberId,
-      createdAt: newNow(),
-    });
+    try {
+      deps.repo.saveAttachment({
+        id: attachmentId,
+        organizationId: deps.organizationId,
+        filename: ref.filename ?? row.filename,
+        mimeType: row.mimeType,
+        category: row.category,
+        sizeBytes: row.byteSize,
+        storagePath: row.storagePath,
+        uploadedBy: deps.memberId,
+        createdAt: newNow(),
+      });
+    } catch (err) {
+      return {
+        ok: false,
+        error: `tool_call ref "${ref.value}" attachments insert failed: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
   }
   return {
     ok: true,
