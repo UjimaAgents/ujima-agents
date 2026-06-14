@@ -570,10 +570,9 @@ export class ToolServiceImpl implements ToolService {
     // Use the org's workspace_root as the child cwd so file
     // outputs land where the agent expects.
     const org = this.repo.getOrganization(invocation.organizationId);
-    const cwd = org?.workspace?.root;
     const connection = await this.mcpPool.get(def, {
       agentId: invocation.memberId,
-      ...(cwd ? { cwd } : {}),
+      cwd: org?.workspace?.root,
     });
     const result = await connection.callTool(
       {

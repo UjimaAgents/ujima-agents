@@ -226,10 +226,9 @@ export async function buildMcpToolDefinitionsV2(
       // Use the org's workspace_root as the child cwd so file
       // outputs land where the agent expects.
       const orgForCwd = services.repo.getOrganization(ctx.organizationId);
-      const cwd = orgForCwd?.workspace?.root;
       const connection = await services.mcpPool.get(def, {
         agentId: ctx.memberId,
-        ...(cwd ? { cwd } : {}),
+        cwd: orgForCwd?.workspace?.root,
       });
       const liveTools = await connection.listTools();
       toolList = liveTools.map((t) => {
