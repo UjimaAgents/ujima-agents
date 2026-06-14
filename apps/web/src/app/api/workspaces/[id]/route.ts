@@ -4,6 +4,39 @@ import { daemonFetch, getSessionTokenFromCookie } from "@/server/ujima-daemon";
 
 export const dynamic = "force-dynamic";
 
+export async function GET(
+  _request: Request,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const { id } = await params;
+  if (id !== "assets") {
+    return NextResponse.json(
+      { code: "ERR_NOT_FOUND", message: "Workspace resource not found." },
+      { status: 404 },
+    );
+  }
+
+  try {
+    const response = await daemonFetch(
+      `/api/workspaces/${id}`,
+      {},
+      await getSessionTokenFromCookie(),
+    );
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+      return NextResponse.json(parseApiError(payload, `Unable to list workspace ${id}.`), {
+        status: response.status,
+      });
+    }
+    return NextResponse.json(payload, { status: response.status });
+  } catch (error) {
+    return NextResponse.json(
+      upstreamUnavailable(error instanceof Error ? error.message : "Unable to reach the daemon."),
+      { status: 503 },
+    );
+  }
+}
+
 export async function DELETE(
   request: Request,
   { params }: { params: Promise<{ id: string }> },

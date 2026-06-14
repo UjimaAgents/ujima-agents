@@ -665,8 +665,22 @@ export class SpiritServiceBase {
       goalMode = this.isGoalModeActive(input.organizationId, input.threadId);
     }
 
+    const pendingTasks = (this.repo.listGoalTasksByOrganization?.(input.organizationId) ?? [])
+      .filter((task) => task.status === 'pending');
+    const goals = new Map(
+      pendingTasks.length
+        ? (this.repo.listGoals?.(input.organizationId) ?? []).map((goal) => [goal.id, goal.title])
+        : [],
+    );
+    const pendingTaskSuffix = pendingTasks.length
+      ? `<pending_goal_tasks>
+Use these exact persisted task IDs with goal.task.update. Never infer an ID from a title.
+${pendingTasks.map((task) => `- task_id=${task.id} | goal_id=${task.goalId} | goal=${JSON.stringify(goals.get(task.goalId) ?? '')} | title=${JSON.stringify(task.title)} | assignee_id=${task.assigneeId}${task.dependsOnTaskId ? ` | depends_on_task_id=${task.dependsOnTaskId}` : ''}`).join('\n')}
+</pending_goal_tasks>`
+      : undefined;
+
     return composeSystemPromptSuffix({
-      extraSuffix: input.extraSuffix,
+      extraSuffix: [input.extraSuffix, pendingTaskSuffix].filter(Boolean).join('\n\n') || undefined,
       messageContent,
       goalMode,
     });

@@ -83,6 +83,7 @@ export {
   TaskSessionService,
   GoalSystemService,
   IMPLEMENT_QUESTION_OPTION,
+  IMPLEMENT_QUESTION_REJECT_OPTION,
   IMPLEMENT_QUESTION_TEXT,
   publishGoalTaskUpdatedCard,
   taskRunChannelId,

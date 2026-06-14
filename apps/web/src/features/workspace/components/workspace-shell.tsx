@@ -54,6 +54,7 @@ type WorkspaceTeamSettings = {
   workspace?: { root: string; roleScopes?: Record<string, string[]> };
   agents: { name: string; roleName: string; personalityName: string; kind: string }[];
   roles: WorkspaceTeamRole[];
+  tools?: Record<string, { id: string; name?: string; description?: string }>;
   policies?: {
     requireApprovalForWrites: boolean;
     shellApprovalMode: ShellApprovalMode;
@@ -71,11 +72,18 @@ export function WorkspaceShell(props: {
   const organizationId = bootstrap.organization?.id;
   const router = useRouter();
   const searchParams = useSearchParams();
+  const [teamSettings, setTeamSettings] = useState(props.teamSettings);
   const [agentEditorTargetId, setAgentEditorTargetId] = useState<string | null>(null);
   const [goalMode, setGoalMode] = useState(false);
   const [orgShellApprovalMode, setOrgShellApprovalMode] = useState(
     normalizeOrgShellApprovalMode(props.teamSettings?.policies ?? {}),
   );
+  const [prevPropsTeamSettings, setPrevPropsTeamSettings] = useState(props.teamSettings);
+  if (props.teamSettings !== prevPropsTeamSettings) {
+    setPrevPropsTeamSettings(props.teamSettings);
+    setTeamSettings(props.teamSettings);
+    setOrgShellApprovalMode(normalizeOrgShellApprovalMode(props.teamSettings?.policies ?? {}));
+  }
   const [searchPaletteOpen, setSearchPaletteOpen] = useState(false);
   const sidebarWidth = useWorkspaceStore((state) => state.sidebarWidth);
   const selected = useWorkspaceStore((state) => state.selectedConversation);
@@ -238,6 +246,16 @@ export function WorkspaceShell(props: {
     [appendChannel, handleSelect, organizationId],
   );
 
+  const refreshTeamSettings = useCallback(async () => {
+    if (!organizationId) return;
+    const response = await fetch(
+      `/api/settings/team?organizationId=${encodeURIComponent(organizationId)}`,
+    ).catch(() => null);
+    if (response?.ok) {
+      setTeamSettings((await response.json()) as WorkspaceTeamSettings);
+    }
+  }, [organizationId]);
+
   const handleCreateAgent = useCallback(
     async (input: {
       name: string;
@@ -264,9 +282,10 @@ export function WorkspaceShell(props: {
       }
       const member = (await response.json()) as WorkspaceMember;
       appendMember(member);
+      await refreshTeamSettings();
       return { type: "agent" as const, id: member.id, name: member.name };
     },
-    [appendMember, organizationId],
+    [appendMember, organizationId, refreshTeamSettings],
   );
 
   const handleUpdateAgent = useCallback(
@@ -307,9 +326,10 @@ export function WorkspaceShell(props: {
       }
       const member = (await response.json()) as WorkspaceMember;
       appendMember(member);
+      await refreshTeamSettings();
       return member;
     },
-    [appendMember, organizationId],
+    [appendMember, organizationId, refreshTeamSettings],
   );
 
   useLayoutEffect(() => {
@@ -505,7 +525,7 @@ export function WorkspaceShell(props: {
         <WorkspaceSidebar
           bootstrap={bootstrap}
           rolePresets={props.rolePresets}
-          teamSettings={props.teamSettings}
+          teamSettings={teamSettings}
           goalMode={goalMode}
           channels={channels}
           members={members}

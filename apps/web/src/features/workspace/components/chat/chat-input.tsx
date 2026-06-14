@@ -2,18 +2,23 @@
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import {
+  ArrowRight,
+  BookOpen,
   File as FileIcon,
   FileArchive,
   FileAudio,
   FileImage,
   FileText,
   FileVideo,
+  Folder,
+  ListTodo,
   Loader2,
   Mic,
   Paperclip,
   Plus,
   Send,
   Square,
+  Zap,
   X,
 } from "lucide-react";
 import { ConfirmDialog } from "@/features/settings/shared/confirm-dialog";
@@ -36,42 +41,19 @@ import { MarkdownInline } from "../markdown";
 import { useComposerVoiceInput } from "./use-composer-voice-input";
 import { VoiceInputWaves } from "./voice-input-waves";
 
+const assetKinds = ["file", "folder", "mcp", "skill", "task", "culture"] as const;
+type AssetMentionKind = (typeof assetKinds)[number];
+type NamedAssetKind = Exclude<AssetMentionKind, "file" | "folder">;
+
 export interface MentionSuggestion {
   id: string;
   name: string;
   detail?: string;
-  kind?: 'member' | 'file' | 'folder';
+  kind?: "member" | AssetMentionKind;
   path?: string;
 }
 
-export interface SlashSkillCommand {
-  id: string;
-  command: string;
-  label: string;
-  description: string;
-}
-
-export function toSlashSkillCommands(
-  skills: readonly {
-    id: string;
-    commandName: string;
-    description: string;
-    userInvocable: boolean;
-  }[],
-): SlashSkillCommand[] {
-  return skills
-    .filter((skill) => skill.userInvocable)
-    .map((skill) => ({
-      id: skill.id,
-      command: skill.commandName,
-      label: `/${skill.commandName}`,
-      description: skill.description,
-    }));
-}
-
-type SlashMenuOption =
-  | ({ kind: "builtin" } & (typeof BUILTIN_SLASH_COMMANDS)[number])
-  | ({ kind: "skill" } & SlashSkillCommand);
+type SlashMenuOption = { kind: "builtin" } & (typeof BUILTIN_SLASH_COMMANDS)[number];
 
 interface UploadedAttachment {
   id: string;
@@ -92,11 +74,11 @@ interface MentionTrigger {
 export type ComposerCommand = "summarize" | "clear" | "goal" | "schedule";
 type ThreadCommand = Exclude<ComposerCommand, "goal">;
 
-const BUILTIN_SLASH_COMMANDS: Array<{
+const BUILTIN_SLASH_COMMANDS: {
   command: ComposerCommand;
   label: string;
   description: string;
-}> = [
+}[] = [
   {
     command: "clear",
     label: "/clear",
@@ -165,16 +147,24 @@ function findMentionTrigger(value: string, caret: number): MentionTrigger | null
 }
 
 function assetSearchQuery(raw: string): string {
-  return raw.trim().replace(/^(file|folder):/i, "").trim();
+  const separator = raw.indexOf(":");
+  return separator < 0 ? raw.trim() : raw.slice(separator + 1).trim();
 }
 
-function assetKindHint(raw: string): "file" | "folder" | null {
-  if (/^folder:/i.test(raw)) return "folder";
-  if (/^file:/i.test(raw)) return "file";
-  return null;
+function assetKindHint(raw: string): AssetMentionKind | null {
+  const separator = raw.indexOf(":");
+  if (separator < 0) return null;
+  const kind = raw.slice(0, separator).toLowerCase();
+  return assetKinds.includes(kind as AssetMentionKind) ? kind as AssetMentionKind : null;
 }
 
-type WorkspaceAssetHit = { kind: "file" | "folder"; name: string; path: string };
+interface WorkspaceAssetHit {
+  kind: AssetMentionKind;
+  name: string;
+  path?: string;
+  id?: string;
+  detail?: string;
+}
 
 function toAssetSuggestion(entry: WorkspaceAssetHit): MentionSuggestion {
   return {
@@ -186,8 +176,28 @@ function toAssetSuggestion(entry: WorkspaceAssetHit): MentionSuggestion {
   };
 }
 
-const ROOT_FOLDERS_TTL_MS = 60_000;
+const CACHED_LIST_TTL_MS = 60_000;
 let cachedRootFolders: { at: number; items: MentionSuggestion[] } | null = null;
+const namedAssetKinds: NamedAssetKind[] = ["mcp", "skill", "task", "culture"];
+const assetDisplay = {
+  file: [FileIcon, "text-blue-500", "Files"],
+  folder: [Folder, "text-amber-500", "Folders"],
+  mcp: [ArrowRight, "text-emerald-500", "MCPs"],
+  skill: [Zap, "text-purple-500", "Skills"],
+  task: [ListTodo, "text-rose-500", "Tasks"],
+  culture: [BookOpen, "text-sky-500", "Culture"],
+} satisfies Record<AssetMentionKind, readonly [typeof FileIcon, string, string]>;
+let cachedNamedAssets: { at: number; items: MentionSuggestion[] } | null = null;
+
+function isNamedAssetKind(kind: AssetMentionKind | null): kind is NamedAssetKind {
+  return kind !== null && kind !== "file" && kind !== "folder";
+}
+
+function AssetSuggestionIcon({ kind }: { kind?: MentionSuggestion["kind"] }) {
+  if (!kind || kind === "member") return null;
+  const [Icon, color] = assetDisplay[kind];
+  return <Icon className={`h-3.5 w-3.5 shrink-0 ${color}`} />;
+}
 
 async function loadWorkspaceAssetSuggestions(searchQuery: string): Promise<MentionSuggestion[]> {
   const url = searchQuery
@@ -195,7 +205,7 @@ async function loadWorkspaceAssetSuggestions(searchQuery: string): Promise<Menti
     : "/api/workspaces/search";
   if (!searchQuery) {
     const now = Date.now();
-    if (cachedRootFolders && now - cachedRootFolders.at < ROOT_FOLDERS_TTL_MS) {
+    if (cachedRootFolders && now - cachedRootFolders.at < CACHED_LIST_TTL_MS) {
       return cachedRootFolders.items;
     }
     const res = await fetch(url, { credentials: "include" });
@@ -209,6 +219,21 @@ async function loadWorkspaceAssetSuggestions(searchQuery: string): Promise<Menti
   if (!res.ok) return [];
   const results = (await res.json()) as WorkspaceAssetHit[];
   return results.map(toAssetSuggestion);
+}
+
+async function loadNamedAssetSuggestions(): Promise<MentionSuggestion[]> {
+  const now = Date.now();
+  if (cachedNamedAssets && now - cachedNamedAssets.at < CACHED_LIST_TTL_MS) {
+    return cachedNamedAssets.items;
+  }
+  const res = await fetch("/api/workspaces/assets", { credentials: "include" });
+  if (!res.ok) return [];
+  const results = (await res.json()) as WorkspaceAssetHit[];
+  const items = results.map(({ id, name, kind, detail }) => ({
+    id: id ?? name, name, kind, detail: detail ?? "",
+  }));
+  cachedNamedAssets = { at: now, items };
+  return items;
 }
 
 function ChatInputComponent({
@@ -225,8 +250,6 @@ function ChatInputComponent({
   stoppableRunIds,
   onStopRun,
   readOnly = false,
-  skillCommands = [],
-  onSkillCommand,
   reasoningProvider,
   reasoningModelValue,
 }: {
@@ -243,8 +266,6 @@ function ChatInputComponent({
   stoppableRunIds?: string[];
   onStopRun?: (runId: string) => Promise<void> | void;
   readOnly?: boolean;
-  skillCommands?: SlashSkillCommand[];
-  onSkillCommand?: (skillId: string, rawContent?: string, metadata?: { goalMode?: boolean; reasoningEffort?: ReasoningEffort }) => Promise<void> | void;
   reasoningProvider?: string;
   reasoningModelValue?: string;
 }) {
@@ -339,9 +360,8 @@ function ChatInputComponent({
   const allSlashCommands = useMemo(
     () => [
       ...BUILTIN_SLASH_COMMANDS.map((option) => ({ ...option, kind: "builtin" as const })),
-      ...skillCommands.map((option) => ({ ...option, kind: "skill" as const })),
     ],
-    [skillCommands],
+    [],
   );
   const exactSlashCommand = readOnly || hasAttachments ? null : getExactSlashCommandDefinition(content, allSlashCommands);
   const slashQuery = readOnly || hasAttachments ? null : getSlashQuery(content);
@@ -391,6 +411,9 @@ function ChatInputComponent({
   const shouldFetchAssetSuggestions =
     !readOnly && mentionOpen && !(mentionAssetKind === "file" && !mentionSearchQuery);
   const [assetSuggestions, setAssetSuggestions] = useState<MentionSuggestion[]>([]);
+  const [namedAssetSuggestions, setNamedAssetSuggestions] = useState<
+    Record<NamedAssetKind, MentionSuggestion[]>
+  >({ mcp: [], skill: [], task: [], culture: [] });
 
   const [prevMentionQuery, setPrevMentionQuery] = useState(mentionQuery);
   if (mentionQuery !== prevMentionQuery) {
@@ -412,9 +435,20 @@ function ChatInputComponent({
     if (!shouldFetchAssetSuggestions) return;
     let cancelled = false;
     const timer = window.setTimeout(() => {
-      void loadWorkspaceAssetSuggestions(mentionSearchQuery).then((items) => {
-        if (!cancelled) setAssetSuggestions(items);
-      });
+      if (!mentionAssetKind || mentionAssetKind === "file" || mentionAssetKind === "folder") {
+        void loadWorkspaceAssetSuggestions(mentionSearchQuery).then((items) => {
+          if (!cancelled) setAssetSuggestions(items);
+        });
+      }
+      if (!mentionAssetKind || isNamedAssetKind(mentionAssetKind)) {
+        void loadNamedAssetSuggestions().then((items) => {
+          if (!cancelled) {
+            setNamedAssetSuggestions(Object.fromEntries(
+              namedAssetKinds.map((kind) => [kind, items.filter((item) => item.kind === kind)]),
+            ) as Record<NamedAssetKind, MentionSuggestion[]>);
+          }
+        });
+      }
     }, mentionSearchQuery ? 200 : 0);
     return () => {
       cancelled = true;
@@ -422,41 +456,31 @@ function ChatInputComponent({
     };
   }, [mentionAssetKind, mentionSearchQuery, shouldFetchAssetSuggestions]);
 
-  const groupedMentionSuggestions = useMemo(() => {
-    if (!mentionTrigger) return null;
-    const searchQuery = mentionSearchQuery.toLowerCase();
-    const members =
-      mentionAssetKind === null
-        ? mentionSuggestions.filter((s) => {
-            if (s.kind === "file" || s.kind === "folder") return false;
-            if (!searchQuery) return true;
-            return (
-              s.name.toLowerCase().includes(searchQuery) ||
-              (s.detail ?? "").toLowerCase().includes(searchQuery)
-            );
-          })
-        : [];
-    const files =
-      mentionAssetKind !== "folder"
-        ? assetSuggestions.filter((s) => s.kind === "file")
-        : [];
-    const folders =
-      mentionAssetKind !== "file"
-        ? assetSuggestions.filter((s) => s.kind === "folder")
-        : [];
-    if (!members.length && !files.length && !folders.length) return null;
-    return { members, files, folders };
-  }, [assetSuggestions, mentionAssetKind, mentionSearchQuery, mentionSuggestions, mentionTrigger]);
-
   const mentionMenuSections = useMemo(() => {
-    if (!groupedMentionSuggestions) return [];
-    const { members, folders, files } = groupedMentionSuggestions;
-    const sections: Array<{ label: string; items: MentionSuggestion[] }> = [];
-    if (members.length) sections.push({ label: "Members", items: members });
-    if (folders.length) sections.push({ label: "Folders", items: folders });
-    if (files.length) sections.push({ label: "Files", items: files });
-    return sections;
-  }, [groupedMentionSuggestions]);
+    if (!mentionTrigger) return [];
+    const searchQuery = mentionSearchQuery.toLowerCase();
+    const matches = (suggestion: MentionSuggestion) =>
+      !searchQuery ||
+      suggestion.name.toLowerCase().includes(searchQuery) ||
+      (suggestion.detail ?? "").toLowerCase().includes(searchQuery);
+    const visible = (kind: AssetMentionKind) => !mentionAssetKind || mentionAssetKind === kind;
+    return [
+      {
+        label: "Members",
+        items: !mentionAssetKind
+          ? mentionSuggestions.filter((item) => (!item.kind || item.kind === "member") && matches(item))
+          : [],
+      },
+      ...namedAssetKinds.map((kind) => ({
+        label: assetDisplay[kind][2],
+        items: visible(kind) ? namedAssetSuggestions[kind].filter(matches) : [],
+      })),
+      ...(["folder", "file"] as const).map((kind) => ({
+        label: assetDisplay[kind][2],
+        items: visible(kind) ? assetSuggestions.filter((item) => item.kind === kind) : [],
+      })),
+    ].filter((section) => section.items.length);
+  }, [assetSuggestions, mentionAssetKind, mentionSearchQuery, mentionSuggestions, mentionTrigger, namedAssetSuggestions]);
 
   const flatSuggestions = useMemo(() => {
     const items: MentionSuggestion[] = [];
@@ -665,14 +689,13 @@ function ChatInputComponent({
     if (!mentionTrigger) return;
     const before = content.slice(0, mentionTrigger.start);
     const after = content.slice(mentionTrigger.end);
-    let mentionValue: string;
-    if (suggestion.kind === 'file') {
-      mentionValue = `@file:${suggestion.path ?? suggestion.name} `;
-    } else if (suggestion.kind === 'folder') {
-      mentionValue = `@folder:${suggestion.path ?? suggestion.name} `;
-    } else {
-      mentionValue = `@${suggestion.name} `;
-    }
+    const isAsset = suggestion.kind && suggestion.kind !== "member";
+    const value = suggestion.kind === "file" || suggestion.kind === "folder"
+      ? suggestion.path ?? suggestion.name
+      : suggestion.name;
+    const mentionValue = isAsset
+      ? `@${suggestion.kind}:${encodeURIComponent(value)} `
+      : `@${suggestion.name} `;
     const next = `${before}${mentionValue}${after}`;
     const nextCaret = before.length + mentionValue.length;
     setContent(next);
@@ -734,17 +757,10 @@ function ChatInputComponent({
     voice.stopListening();
     try {
       const currentContent = content;
-      if (command.kind === "skill") {
-        await onSkillCommand?.(command.id, currentContent, {
-          ...(goalMode ? { goalMode: true } : {}),
-          reasoningEffort: selectedReasoningEffort,
-        });
-      } else {
-        await onCommand(command.command as ThreadCommand, currentContent, {
-          ...(goalMode ? { goalMode: true } : {}),
-          reasoningEffort: selectedReasoningEffort,
-        });
-      }
+      await onCommand(command.command as ThreadCommand, currentContent, {
+        ...(goalMode ? { goalMode: true } : {}),
+        reasoningEffort: selectedReasoningEffort,
+      });
       setContent("");
       setSelection({ start: 0, end: 0 });
       setAttachments([]);
@@ -876,7 +892,7 @@ function ChatInputComponent({
                 <div className="space-y-1">
                   {displayedSlashOptions.map((option, index) => (
                     <button
-                      key={option.kind === "skill" ? option.id : option.command}
+                      key={option.command}
                       type="button"
                       onMouseDown={(event) => {
                         event.preventDefault();
@@ -1126,7 +1142,7 @@ function ChatInputComponent({
               className="min-h-5 min-w-0 flex-1 resize-none bg-transparent py-0 text-sm leading-5 focus:outline-none"
             />
           {!readOnly && mentionMenuOpen ? (
-            <div className="absolute bottom-full left-0 right-0 z-20 mb-1 max-h-44 overflow-y-auto rounded-lg border border-zinc-200 bg-white p-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-950">
+            <div className="absolute bottom-full left-0 right-0 z-20 mb-1 max-h-80 overflow-y-auto rounded-lg border border-zinc-200 bg-white p-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-950">
               {mentionMenuSections.map((section, sectionIndex) => (
                   <div key={section.label}>
                     <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
@@ -1134,6 +1150,7 @@ function ChatInputComponent({
                     </div>
                     {section.items.map((suggestion, itemIndex) => {
                       const index = (mentionSectionOffsets[sectionIndex] ?? 0) + itemIndex;
+                      const isAsset = suggestion.kind && suggestion.kind !== "member";
                       return (
                         <button
                           key={suggestion.id}
@@ -1148,20 +1165,9 @@ function ChatInputComponent({
                           }`}
                         >
                           <span className="flex items-center gap-1.5">
-                            {suggestion.kind === "folder" ? (
-                              <svg className="h-3.5 w-3.5 shrink-0 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                <path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
-                              </svg>
-                            ) : suggestion.kind === "file" ? (
-                              <svg className="h-3.5 w-3.5 shrink-0 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
-                                <polyline points="14 2 14 8 20 8" />
-                              </svg>
-                            ) : null}
+                            <AssetSuggestionIcon kind={suggestion.kind} />
                             <span className="font-semibold">
-                              {suggestion.kind === "file" || suggestion.kind === "folder"
-                                ? suggestion.name
-                                : `@${suggestion.name}`}
+                              {isAsset ? suggestion.name : `@${suggestion.name}`}
                             </span>
                           </span>
                           <span

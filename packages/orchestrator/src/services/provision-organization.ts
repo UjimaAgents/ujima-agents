@@ -1,6 +1,11 @@
 import { loadAgentTeam } from '@ujima/framework';
 import { OrganizationSchema, type Organization } from '@ujima/shared';
 import { ConfigSyncService, persistTeamConfig } from './config-sync.js';
+import {
+  addMemberToDefaultChannels,
+  ensureDirectMessageConversation,
+  ensureMemberSelfChannel,
+} from './member-channels.js';
 import type { ApiRepository } from './repository-reader.js';
 import type { TeamStore } from './team-store.js';
 import { assertWorkspaceRootPathExists } from './workspace-root.js';
@@ -53,11 +58,6 @@ function grantOwner(
   );
 }
 
-/**
- * Creates an organization with a login-capable owner before team reconcile runs.
- * Owner and credentials are written immediately after the org row so a failed
- * reconcile does not leave an inaccessible workspace.
- */
 export function provisionOrganization(input: ProvisionOrganizationInput): Organization {
   const resolvedRoot = assertWorkspaceRootPathExists(input.workspaceRoot);
   const team = loadAgentTeam({
@@ -88,25 +88,50 @@ export function provisionOrganization(input: ProvisionOrganizationInput): Organi
       root: resolvedRoot,
       roleScopes: {},
     },
-    organizationChart: input.organizationChart ?? { reportsTo: {} },
+    organizationChart: input.organizationChart ?? team.organizationChart,
   });
-  input.repo.saveOrganization(organization);
-  grantOwner(input.repo, input.organizationId, input.owner);
-  if (input.copyProviderKeys === undefined || input.copyProviderKeys.length > 0) {
-    copyProviderCredentials(
-      input.repo,
-      input.credentialSourceOrganizationId,
-      input.organizationId,
-      input.copyProviderKeys,
-    );
-  }
+  try {
+    input.repo.transaction(() => {
+      input.repo.saveOrganization(organization);
+      grantOwner(input.repo, input.organizationId, input.owner);
+      if (input.copyProviderKeys === undefined || input.copyProviderKeys.length > 0) {
+        copyProviderCredentials(
+          input.repo,
+          input.credentialSourceOrganizationId,
+          input.organizationId,
+          input.copyProviderKeys,
+        );
+      }
 
-  persistTeamConfig(input.repo, input.organizationId, team);
-  const configSync = new ConfigSyncService(input.repo, input.teamStore);
-  configSync.reconcileTeamConfig({
-    team,
-    organizationId: input.organizationId,
-  });
+      persistTeamConfig(input.repo, input.organizationId, team);
+      new ConfigSyncService(input.repo, input.teamStore).reconcileTeamConfig({
+        team,
+        organizationId: input.organizationId,
+      });
+
+      const owner = input.repo.getMember(input.organizationId, WORKSPACE_OWNER_MEMBER_ID);
+      if (owner) {
+        ensureMemberSelfChannel(input.repo, input.organizationId, owner);
+        addMemberToDefaultChannels(input.repo, team, input.organizationId, owner);
+        const starterAgent = team.agents[0]
+          ? input.repo.getMember(input.organizationId, team.agents[0].name)
+          : null;
+        if (starterAgent) {
+          ensureDirectMessageConversation(
+            input.repo,
+            input.organizationId,
+            owner,
+            starterAgent,
+          );
+        }
+      }
+
+      input.repo.saveOrganization(organization);
+    });
+  } catch (error) {
+    input.teamStore.clearTeam(input.organizationId);
+    throw error;
+  }
 
   return organization;
 }

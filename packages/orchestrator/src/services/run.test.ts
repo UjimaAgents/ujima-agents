@@ -250,6 +250,23 @@ describe('SpiritService run path', () => {
       getLatestHumanMessageInThread: () => goalHuman,
       getSpiritByRunId: () => null,
       getThread: () => ({ channelId: 'channel-1' }),
+      listGoalTasksByOrganization: () => [
+        {
+          id: 'task-pending',
+          goalId: 'goal-1',
+          title: 'Ship the card',
+          assigneeId: agentId,
+          status: 'pending',
+        },
+        {
+          id: 'task-done',
+          goalId: 'goal-1',
+          title: 'Already done',
+          assigneeId: agentId,
+          status: 'completed',
+        },
+      ],
+      listGoals: () => [{ id: 'goal-1', title: 'Task action cards' }],
     } as never;
     const service = createSpiritRunService(
       {
@@ -294,6 +311,9 @@ describe('SpiritService run path', () => {
 
     expect(capturedSuffix).toContain('Goal Mode (Active)');
     expect(capturedSuffix).toContain('Markdown README only');
+    expect(capturedSuffix).toContain('task_id=task-pending');
+    expect(capturedSuffix).toContain('goal="Task action cards"');
+    expect(capturedSuffix).not.toContain('task_id=task-done');
   });
 
   it('keeps goal artifacts visible even when the run result omits the write tool call shape', async () => {

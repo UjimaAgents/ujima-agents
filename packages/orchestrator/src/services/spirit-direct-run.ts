@@ -125,9 +125,26 @@ export class SpiritService extends SpiritServiceSupervisor {
   async resumeAfterInput(
     organizationId: string,
     runId: string,
+    allowRun = true,
   ): Promise<RunSpiritOutcome | Spirit | RunState | null> {
     const spirit = this.resolveSpiritForRun(organizationId, runId);
     if (spirit) {
+      if (!allowRun) {
+        const failed = this.updateStatus(organizationId, spirit.id, 'failed', {
+          error: 'Implementation rejected by user',
+        });
+        const run = this.repo.getRun(organizationId, runId);
+        if (run) {
+          this.repo.saveRun({
+            ...run,
+            status: 'failed',
+            step: 'failed',
+            summary: 'Implementation rejected by user',
+            endedAt: run.endedAt ?? new Date().toISOString(),
+          });
+        }
+        return failed;
+      }
       if (spirit.status === 'running') {
         return spirit;
       }
@@ -155,6 +172,9 @@ export class SpiritService extends SpiritServiceSupervisor {
 
     const run = this.repo.getRun(organizationId, runId);
     if (!run) return null;
+    if (!allowRun) {
+      return this.failRun(run, 'Implementation rejected by user');
+    }
 
     if (run.status === 'running') {
       const afterApprovedTools = await this.executePendingApprovedRunTools(run);

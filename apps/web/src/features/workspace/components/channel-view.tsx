@@ -5,7 +5,7 @@ import { useChatScrollToBottom } from "../hooks/use-chat-scroll-to-bottom";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { File, FileArchive, FileAudio, FileImage, FileText, FileVideo, Loader2, Square, Terminal } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
-import type { BootstrapResponse, SkillInvocationResponse } from "@ujima/api-schema";
+import type { BootstrapResponse } from "@ujima/api-schema";
 import type { SelectedConversation } from "../types";
 import { useConversationSync } from "../use-conversation-sync";
 import { DragHandle, WORKSPACE_MAIN_GRID_TRANSITION } from "./workspace-shell";
@@ -22,7 +22,6 @@ import {
   ApprovalCard,
   type ChatTab,
   type ChatMessageData,
-  toSlashSkillCommands,
 } from "./chat";
 import { ChannelMembersTab } from "./channel-members-tab";
 import { CultureTab } from "@/features/settings/shared/culture-tab";
@@ -34,7 +33,6 @@ import {
   type RunState,
   type ActivityEvent,
 } from "@ujima/shared/browser";
-import { settingsFetch } from "@/features/settings/shared/settings-api";
 import {
   isAgentOnlyThread,
   selectActiveAgentChats,
@@ -336,10 +334,7 @@ export function ChannelView({
     }
     return conversation.id;
   }, [bootstrap.auth.member?.id, conversation.id, conversation.type]);
-  const skillCommands = useMemo(
-    () => toSlashSkillCommands(bootstrap.skills ?? []),
-    [bootstrap.skills],
-  );
+
   const isReadOnly = useMemo(() => {
     const currentMemberId = bootstrap.auth.member?.id;
     if (!currentMemberId) return false;
@@ -387,7 +382,7 @@ export function ChannelView({
       })),
     [members],
   );
-  const reasoningTraceVisible = showDetails && detailsTab === "Thinking trace";
+  const reasoningTraceVisible = showDetails;
   const reasoningTraceSteps = useReasoningTrace({
     currentThreadId,
     reasoningTraceVisible,
@@ -765,21 +760,6 @@ export function ChannelView({
   const handleCancelReply = useCallback(() => {
     setReplyTo(null);
   }, []);
-
-  const handleSkillCommand = useCallback(
-    async (skillId: string, content: string | undefined, metadata: Record<string, unknown> | undefined) => {
-      if (!organizationId) throw new Error("Missing organization context.");
-      const { content: skillContent } = await settingsFetch<SkillInvocationResponse>(
-        `/api/settings/skills/${encodeURIComponent(skillId)}?organizationId=${encodeURIComponent(organizationId)}&arguments=${encodeURIComponent(content ?? "")}`,
-        undefined,
-        "Unable to load skill.",
-      );
-      await feedRef.current.sendMessage(skillContent, undefined, undefined, metadata);
-      setReplyTo(null);
-      scrollToLatest("auto");
-    },
-    [organizationId, scrollToLatest],
-  );
 
   const handleComposerCommand = useCallback(
     async (command: string, content: string | undefined, metadata: Record<string, unknown> | undefined) => {
@@ -1226,8 +1206,6 @@ export function ChannelView({
                 readOnly={isReadOnly}
                 reasoningProvider={reasoningModelSelection?.provider}
                 reasoningModelValue={reasoningModelSelection?.model}
-                skillCommands={skillCommands}
-                onSkillCommand={handleSkillCommand}
                 onCommand={handleComposerCommand}
               placeholder={
                 isAgent

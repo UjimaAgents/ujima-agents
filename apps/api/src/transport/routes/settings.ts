@@ -267,12 +267,18 @@ export function registerSettingsRoutes(
       tags: ['Settings'],
       response: {
         200: ListOrganizationsResponseSchema,
+        401: ApiErrorSchema,
         503: ApiErrorSchema,
       },
     },
-  }, async (_req, reply) => {
+  }, async (req, reply) => {
     try {
-      return { organizations: settings.listOrganizations() };
+      const sessionToken = readSessionToken(req);
+      const authState = auth.getAuthState(sessionToken);
+      if (!authState.authenticated) {
+        return apiError(reply, 401, 'session required');
+      }
+      return { organizations: auth.listAccessibleOrganizations(sessionToken) };
     } catch (err) {
       return routeError(reply, err, { fallback: 503 });
     }

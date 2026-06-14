@@ -1,6 +1,10 @@
 import { randomUUID } from 'node:crypto';
+import { z } from 'zod';
 import {
   GoalBoardCreatedCardSchema,
+  GoalSchema,
+  GoalTaskSchema,
+  GoalTaskStatusSchema,
   GoalTaskUpdatedCardSchema,
   goalTaskColumnLabel,
   type Goal,
@@ -12,6 +16,7 @@ import {
 import { buildSystemCardMessage } from './message-factory.js';
 import { publishStoredMessage } from './message-publisher.js';
 import type { ConversationService } from './conversation.js';
+import { normalizeToDottedToolName } from './run-reply-guard.js';
 
 interface ToolCallLike {
   toolCallId?: string;
@@ -26,6 +31,11 @@ interface ToolResultLike {
   result?: unknown;
 }
 
+const GoalTaskUpdateResultSchema = GoalTaskSchema.extend({
+  previousStatus: GoalTaskStatusSchema.optional(),
+  actorMemberId: z.string().min(1).optional(),
+});
+
 export function appendGoalTaskToolCalls(
   toolCalls: readonly ToolCallLike[],
   toolResults: readonly ToolResultLike[] = [],
@@ -38,7 +48,7 @@ export function appendGoalTaskToolCalls(
 
   const cards: MessageToolCall[] = [];
   for (const call of toolCalls) {
-    const toolName = call.toolName?.toLowerCase();
+    const toolName = normalizeToDottedToolName(call.toolName?.toLowerCase() ?? '');
     const output = call.toolCallId ? resultsById.get(call.toolCallId) : undefined;
     if (toolName === 'goal.start') {
       const card = buildGoalBoardCreatedCard(output);
@@ -57,18 +67,18 @@ export function appendGoalTaskToolCalls(
 
 export function buildGoalBoardCreatedCard(output: unknown): MessageCard | undefined {
   if (!isRecord(output)) return undefined;
-  const goal = readGoal(output.goal);
-  const tasks = readGoalTasks(output.tasks);
-  if (!goal || tasks.length === 0) return undefined;
+  const goal = GoalSchema.safeParse(output.goal);
+  const tasks = GoalTaskSchema.array().safeParse(output.tasks);
+  if (!goal.success || !tasks.success || tasks.data.length === 0) return undefined;
 
   const card = GoalBoardCreatedCardSchema.parse({
     cardId: randomUUID(),
     kind: 'goal.board.created',
-    goalId: goal.id,
-    goalTitle: goal.title,
-    goalStatus: goal.status,
-    channelId: goal.channelId,
-    tasks: tasks.map((task) => ({
+    goalId: goal.data.id,
+    goalTitle: goal.data.title,
+    goalStatus: goal.data.status,
+    channelId: goal.data.channelId,
+    tasks: tasks.data.map((task) => ({
       id: task.id,
       title: task.title,
       assigneeId: task.assigneeId,
@@ -80,12 +90,10 @@ export function buildGoalBoardCreatedCard(output: unknown): MessageCard | undefi
 }
 
 export function buildGoalTaskUpdatedCard(output: unknown): MessageCard | undefined {
-  if (!isRecord(output)) return undefined;
-  const task = readGoalTask(output);
-  if (!task) return undefined;
-
-  const previousStatus = readGoalTaskStatus(output.previousStatus);
-  if (!previousStatus || previousStatus === task.status) return undefined;
+  const parsed = GoalTaskUpdateResultSchema.safeParse(output);
+  if (!parsed.success) return undefined;
+  const task = parsed.data;
+  if (!task.previousStatus || task.previousStatus === task.status) return undefined;
 
   const card = GoalTaskUpdatedCardSchema.parse({
     cardId: randomUUID(),
@@ -94,10 +102,10 @@ export function buildGoalTaskUpdatedCard(output: unknown): MessageCard | undefin
     taskId: task.id,
     taskTitle: task.title,
     assigneeId: task.assigneeId,
-    previousStatus,
+    previousStatus: task.previousStatus,
     status: task.status,
     ...(task.handoverSummary ? { handoverSummary: task.handoverSummary } : {}),
-    ...(typeof output.actorMemberId === 'string' ? { actorMemberId: output.actorMemberId } : {}),
+    ...(task.actorMemberId ? { actorMemberId: task.actorMemberId } : {}),
   });
   return card;
 }
@@ -152,38 +160,10 @@ function wrapGoalCard(toolName: string, card: MessageCard): MessageToolCall {
   return {
     toolCallId: randomUUID(),
     toolName,
-    args: card as unknown as Record<string, unknown>,
+    args: { ...card },
     result: card,
     isError: false,
   };
-}
-
-function readGoal(value: unknown): Goal | undefined {
-  if (!isRecord(value)) return undefined;
-  if (typeof value.id !== 'string' || typeof value.title !== 'string') return undefined;
-  if (typeof value.status !== 'string' || typeof value.channelId !== 'string') return undefined;
-  return value as Goal;
-}
-
-function readGoalTask(value: unknown): GoalTask | undefined {
-  if (!isRecord(value)) return undefined;
-  if (typeof value.id !== 'string' || typeof value.goalId !== 'string') return undefined;
-  if (typeof value.title !== 'string' || typeof value.assigneeId !== 'string') return undefined;
-  if (typeof value.status !== 'string') return undefined;
-  return value as GoalTask;
-}
-
-function readGoalTasks(value: unknown): GoalTask[] {
-  if (!Array.isArray(value)) return [];
-  return value.flatMap((entry) => {
-    const task = readGoalTask(entry);
-    return task ? [task] : [];
-  });
-}
-
-function readGoalTaskStatus(value: unknown): GoalTaskStatus | undefined {
-  if (typeof value !== 'string') return undefined;
-  return value as GoalTaskStatus;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
