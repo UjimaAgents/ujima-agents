@@ -7,7 +7,6 @@ import {
   CONVERSATION_SUMMARY_MARKER,
   SELF_NOTE_COMPACTED_MARKER,
   SELF_NOTE_SUMMARY_MARKER,
-  buildConversationArchiveSummary,
   buildSelfNoteSummary,
   isCompactionSummarySystemMessage,
   isSelfSummaryNote,
@@ -210,17 +209,13 @@ async function compactThreadMessages(
   }
 
   const now = new Date().toISOString();
-  const summaryContent =
-    input.mode === 'archive'
-      ? buildConversationArchiveSummary(summarySources)
-      : input.mode === 'summary'
-        ? await ctx.summarizeConversation(summarySources, input.mode)
-        : buildSelfNoteSummary(summarySources);
   const summaryMessage = buildSystemMessage({
     organizationId: input.organizationId,
     threadId: input.threadId,
     channelId: ctx.repo.getThread(input.organizationId, input.threadId)?.channelId ?? undefined,
-    content: summaryContent,
+    content: input.mode
+      ? await ctx.summarizeConversation(summarySources, input.mode)
+      : buildSelfNoteSummary(summarySources),
     createdAt: now,
   });
   ctx.publishMessage(summaryMessage, [], undefined, {

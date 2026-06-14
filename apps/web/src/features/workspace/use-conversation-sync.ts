@@ -93,6 +93,7 @@ export interface ConversationSyncResult {
     options?: { clientMessageId?: string },
   ): Promise<void>;
   archiveConversation(mode: "summarize" | "clear"): Promise<void>;
+  archiving: "summarize" | "clear" | null;
 }
 
 export function useConversationSync(
@@ -127,6 +128,7 @@ export function useConversationSync(
   const appendMember = useWorkspaceStore((state) => state.appendMember);
   const setMemberActivity = useWorkspaceStore((state) => state.setMemberActivity);
   const [error, setError] = useState<{ conversationKey: string; message: string } | undefined>(undefined);
+  const [archiving, setArchiving] = useState<"summarize" | "clear" | null>(null);
   const storeMembersRef = useRef(storeMembers);
   const runsRef = useRef(runs);
   const runChunkSequenceRef = useRef(0);
@@ -163,6 +165,10 @@ export function useConversationSync(
   const flushRunChunks = useCallback(() => {
     runChunkBatcherRef.current?.flushNow();
   }, []);
+
+  useEffect(() => {
+    setArchiving(null);
+  }, [conversationKey]);
 
   const loadConversationState = useCallback(
     async (signal: AbortSignal, currentConversationKey: string) => {
@@ -444,29 +450,34 @@ export function useConversationSync(
         throw new Error("Sign in before archiving a conversation.");
       }
 
-      const response = await fetch(`/api/conversations/${encodeURIComponent(transport.threadId)}/archive`, {
-        method: "POST",
-        body: JSON.stringify({
-          organizationId: transport.organizationId,
-          mode,
-        }),
-      });
-      const body = await response.json().catch(() => null);
-      if (!response.ok) {
-        throw new Error(
-          body &&
-            typeof body === "object" &&
-            "message" in body &&
-            typeof body.message === "string"
-            ? body.message
-            : "Unable to archive conversation.",
-        );
-      }
+      setArchiving(mode);
+      try {
+        const response = await fetch(`/api/conversations/${encodeURIComponent(transport.threadId)}/archive`, {
+          method: "POST",
+          body: JSON.stringify({
+            organizationId: transport.organizationId,
+            mode,
+          }),
+        });
+        const body = await response.json().catch(() => null);
+        if (!response.ok) {
+          throw new Error(
+            body &&
+              typeof body === "object" &&
+              "message" in body &&
+              typeof body.message === "string"
+              ? body.message
+              : "Unable to archive conversation.",
+          );
+        }
 
-      const controller = new AbortController();
-      const currentConversationKey = `${transport.organizationId}:${transport.threadId}`;
-      resetConversationFeed(currentConversationKey);
-      await loadConversationState(controller.signal, currentConversationKey);
+        const controller = new AbortController();
+        const currentConversationKey = `${transport.organizationId}:${transport.threadId}`;
+        resetConversationFeed(currentConversationKey);
+        await loadConversationState(controller.signal, currentConversationKey);
+      } finally {
+        setArchiving(null);
+      }
     },
     [bootstrap.auth.member, loadConversationState, resetConversationFeed, transport],
   );
@@ -500,6 +511,7 @@ export function useConversationSync(
     error: currentError,
     sendMessage,
     archiveConversation,
+    archiving,
   };
 }
 
